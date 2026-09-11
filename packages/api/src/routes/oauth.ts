@@ -11,32 +11,16 @@ import { auth } from "./shared-cloud.js";
 /** §2.6 — native OAuth2 (Authorization-Code + PKCE). */
 export const oauthRoutes: Route[] = [
   {
-    // RAW route: the browser flow has already authenticated (tf_session cookie),
-    // so we mint a code and 302 to the redirect_uri — no JSON envelope.
-    //
-    // ── `stepUp: true` ────────────────────────────────────────────────────────────────────
-    //
-    // What this route mints is a native authorization code, and what that code buys at
-    // `POST /oauth/token` is a session on the NATIVE surface: a new family, a new device row,
-    // and `nativeRefreshTtlMs` — four hundred rolling days — none of it reachable from the
-    // browser session that authorized it. Minting a long-lived credential is the thing step-up
-    // exists for, and this is the same gate `POST /auth/desktop-link` has carried all along for
-    // the mirror-image reason. The two doors both ADD a device; only one of them was gated.
-    //
-    // Without it, a still-live access token was enough. Not the password, not a current second
-    // factor — any 15-minute bearer could call this directly with the shipped client and its
-    // fixed redirect, exchange the code, and hold an independently-revocable 400-day session
-    // that the victim's revocation of the compromised device does not touch. That is not a
-    // longer window on one compromise; it is a different, durable one.
-    //
-    // THE FLAG IS NOT SELF-ENFORCING. `raw` routes run a reduced chain, and until this gate
-    // landed that chain had no `withStepUp` in it — so this line would have been decorative. See
-    // `app.ts#RAW_PIPELINE`, where the middleware was added and the miss is written up.
-    //
-    // `public` STAYS, and the two are not in tension: `public` is what lets `withSession` DROP
-    // an enrollment-scoped cookie here rather than 403 it, which is what keeps a password-only
-    // session from escalating into full native bearer tokens. `withStepUp` then answers 401 for
-    // the resulting anonymous caller and 403 only for a real session with a stale factor.
+    // Raw route: the browser flow already authenticated (tf_session), so mint a code and 302 to
+    // the redirect_uri — no JSON envelope. `stepUp: true`: what this mints buys, at `POST
+    // /oauth/token`, a session on the native surface — a new family, a new device row,
+    // `nativeRefreshTtlMs` (four hundred rolling days). Without the gate, any live 15-minute
+    // bearer could exchange a code for an independently-revocable 400-day session that the
+    // victim's device revocation does not touch. The flag is not self-enforcing: `raw` routes run
+    // a reduced chain, and `withStepUp` had to be added to it (`app.ts#RAW_PIPELINE`). `public`
+    // stays and the two are not in tension: `public` lets `withSession` drop an enrollment-scoped
+    // cookie rather than 403 it — what keeps a password-only session from escalating into full
+    // native tokens; `withStepUp` then answers 401 for the anonymous caller.
     method: "GET",
     pattern: "/oauth/authorize",
     relay: false,  /* the OAuth server surface */

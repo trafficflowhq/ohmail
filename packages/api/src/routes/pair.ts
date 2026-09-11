@@ -45,56 +45,14 @@ function sessionMinter(deps: ApiDeps): PairedDeviceSessionMinter {
 }
 
 /**
- * THE PAIRING CEREMONY (`/pair*`) — the MINT/LIST/REVOKE are mounted by `routes/self-host.ts`
- * and, since the managed device-pairing slice, by the HOSTED table (`routes/index.ts`); the
- * anonymous REDEEM is carved into its own export below, because the desktop-host door
- * (`routes/desktop-host.ts`) mounts the redeem and only the redeem — its mint lives on the
- * desktop's stdio door, where the machine's own login is the step-up.
- *
- * What each composition may mint and redeem is decided by ONE bag member, `services.inviteRedeem`
- * — never by a variant handler. The hosted deployment wires none, so on it the ceremony is
- * DEVICE-PAIR ONLY in both directions: the invite REDEEM refuses (the original argument stands —
- * an invite redeem there would mint a registration that bypasses the billing funnel), and the
- * invite MINT refuses symmetrically in the handler below, because a grant a composition cannot
- * redeem must not be mintable on it — the minted credential would be dead on arrival, discovered
- * at redeem time by whoever it was handed to, which is the inverse of the honest-404 contract
- * `/hello` exists to keep. The standalone server wires the real bridge and keeps both grants.
- * Still not on the local table: the single-user engine mints one session per launch and has
- * nobody to invite. `/hello`'s `features.pairing` is what makes each mount honest — a client
- * learns the ceremony's presence or absence from the descriptor, never from a 404 mid-flow —
- * and the composition censuses in `hello.test.ts`, `pair-hosted.test.ts` and
- * `desktop-host.test.ts` prove the four tables hold exactly what this paragraph claims.
- *
- * The lifecycle, the bounds and the redeem semantics live in `packages/services/src/pairing.ts`;
- * this module is transport. Authority:
- *
- *  · **Mint and revoke are step-up-gated** (`options.stepUp`) — handing out a credential that
- *    can open the account (device-pair) or the server (invite) is a ceremony, and taking one
- *    back must never be harder than handing it out. Both are `cost: "ceremony"` on
- *    `DELETE /devices/:id`'s exact reasoning: credential lifecycle, costs nothing, and for the
- *    revoke, a verification gate in front of it would keep a leaked token alive.
- *  · **The list is `cost: "read"`** — the caller's own rows, no hashes, nothing crossing
- *    accounts (the projection is creator-scoped in the service).
- *  · **Redeem is `public + raw`, `cost: "unauthenticated"`** — the token IS the credential,
- *    exactly as `POST /auth/desktop-claim`'s code is, and the redeemer by definition has no
- *    session yet. It was `anonymous` until that flag was found to make a rule unenforceable:
- *    that pipeline resolves no session, so `ctx.accountId` was always empty here and the
- *    cross-account refusal could never fire — a browser signed in as one account could redeem
- *    another's token, spend it, and be handed their session.
- *
- *    `raw` keeps everything `anonymous` was chosen for and adds only the session resolution the
- *    refusal needs: no CSRF pair to check (the setup page of a server whose first account does
- *    not exist has none), no envelope above the handler, and a stray ambient credential still
- *    cannot fail the request outside it — `withSession` populates or does not, and a `public`
- *    route never 401s for the lack. What it can no longer do is go unnoticed. The census fence
- *    holds — an
- *    anonymous route is `unauthenticated`, and an unauthenticated route is public — and the
- *    handler therefore NEVER throws: every branch, the service refusals included, is mapped to
- *    the standard `ApiError` envelope here.
- *
- * Entropy is the defense on redeem (256-bit single-use tokens, TTL-bounded, grant-scoped in the
- * burn statement); there is deliberately no lockout table and no per-IP slot claim — see the
- * service header for the argument.
+ * The pairing ceremony (`/pair*`) — mint/list/revoke on the self-host and hosted tables; the
+ * anonymous redeem is its own export below (the desktop-host door mounts the redeem alone). What
+ * each composition may mint and redeem is decided by one bag member, `services.inviteRedeem`,
+ * never a variant handler: the hosted deployment wires none, so its ceremony is device-pair only
+ * in both directions — a grant a composition cannot redeem must not be mintable on it. `/hello`'s
+ * `features.pairing` makes each mount honest; censuses prove the tables. Mint and revoke are
+ * step-up-gated (`ceremony`); the list is `read`; redeem is `public + raw`, `unauthenticated` —
+ * the token IS the credential; entropy is the defence (256-bit single-use, TTL-bounded).
  */
 const pairCeremonyRoutes: Route[] = [
   {
@@ -155,15 +113,13 @@ const pairCeremonyRoutes: Route[] = [
 ];
 
 /**
- * THE ANONYMOUS REDEEM, as its own export — one route OBJECT on THREE tables:
- * `routes/self-host.ts` and `routes/index.ts` (each via {@link pairRoutes}, whole) and
- * `routes/desktop-host.ts` (this array alone). Being the same object everywhere is what keeps
- * the burn semantics, the error envelope and the no-cookie answer from forking between the
- * standalone server, the hosted service and the desktop host. What keeps each mount honest is
- * the dependency bag, not a variant handler: the desktop-host door and the hosted deployment
- * wire no `inviteRedeem`, so the invite arm refuses `validation_failed` on both, and the
- * desktop door's `services.auth` is the bare `SessionLifecycle`, which is all the device-pair
- * arm needs (the hosted bag's full `AuthService` extends it).
+ * The anonymous redeem, as its own export — one route object on three tables: the self-host and
+ * hosted tables (via {@link pairRoutes}, whole) and the desktop-host door (this array alone).
+ * Being the same object everywhere keeps the burn semantics, the error envelope and the no-cookie
+ * answer from forking. What keeps each mount honest is the dependency bag, not a variant handler:
+ * the desktop door and the hosted deployment wire no `inviteRedeem`, so the invite arm refuses
+ * `validation_failed` on both, and the desktop's `services.auth` is the bare `SessionLifecycle`,
+ * which is all the device-pair arm needs.
  */
 export const pairRedeemRoutes: Route[] = [
   {
@@ -171,30 +127,16 @@ export const pairRedeemRoutes: Route[] = [
     pattern: "/pair/redeem",
     relay: false,  /* resolves a credential from the request body */
     cost: "unauthenticated",
-    // NOT `anonymous` ANY MORE, and the flag it lost is the one that made a rule unenforceable.
-    //
-    // ANONYMOUS_PIPELINE omits `withSession`, so `deps.session` was always null here and
-    // `ctx.accountId` always empty — and `refuseCrossAccountCredential` compares against exactly
-    // that. The cross-account refusal could therefore never fire on this route, whatever the
-    // caller presented. A browser holding a live session for A could redeem a pairing token
-    // belonging to B, spend it, and be handed B's full bearer session, while every other door
-    // answered 409 for the same shape.
-    //
-    // `raw` AND NOT PLAIN `public`, and the difference is CSRF. Plain `public` runs FULL_PIPELINE,
-    // which adds `withCsrf` — and a redeem arriving from a browser that happens to carry the
-    // minter's cookies would then need a CSRF token it has no way to have. That broke a real case
-    // the pairing suite already pins (a cookie-bearing browser redeeming, cookie-free). RAW_PIPELINE
-    // is `withRequestId, withRequestGuard, withSession, withStepUp, withSpendGate`: the session
-    // resolution this needs, without the CSRF and idempotency it does not.
-    //
-    // Safe without the JSON envelope for the reason the other raw routes are: this handler catches
-    // its own errors and answers a constructed Response on every branch, including the 409 the
-    // refusal now raises. It is also the first raw MUTATION — which `withRequestGuard` in that
-    // chain was kept for, exactly so it would not arrive unguarded.
-    //
-    // `public` still means no session is REQUIRED — a paired phone has none, which is the whole
-    // point of the route. It now means an ambient one is RESOLVED if presented. `cost` is
-    // unchanged, so the census pairing `unauthenticated` with `public` still holds.
+    // Not `anonymous` any more — the flag made a rule unenforceable: that pipeline omits
+    // `withSession`, so `ctx.accountId` was always empty and `refuseCrossAccountCredential` could
+    // never fire — a browser signed in as A could redeem B's pairing token and be handed B's
+    // session, while every other door answered 409. `raw` and not plain `public`, and the
+    // difference is CSRF: full `public` adds `withCsrf`, and a redeem from a browser carrying the
+    // minter's cookies would need a token it cannot have (a case the pairing suite pins).
+    // RAW_PIPELINE gives the session resolution this needs without CSRF or idempotency; safe
+    // without the envelope because the handler catches its own errors on every branch. It is also
+    // the first raw mutation — which `withRequestGuard` in that chain was kept for. `public`
+    // still means no session required; `cost` is unchanged, so the census pairing holds.
     options: { public: true, raw: true, credentialSubject: true },
     handler: async (req, deps) => {
       try {

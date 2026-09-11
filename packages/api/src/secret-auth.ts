@@ -1,24 +1,14 @@
 import { timingSafeEqual } from "node:crypto";
 
 /**
- * SHARED-SECRET AUTHENTICATION for the two endpoints whose caller is not a person.
- *
- * `POST /internal/alerts` is called by a scheduler; `GET /admin/*` is called by the admin
- * console's own server-side proxy. Neither has a session to resolve, neither has a user to be,
- * and inventing a service account for either would mean a credential in `users` that can be
- * phished. `Authorization: Bearer <secret>`, compared in constant time, is the whole story.
- *
- * ── WHY THIS IS ITS OWN MODULE ────────────────────────────────────────────────────────────
- * The comparison used to live inside `routes/internal.ts`. A second route needing it would
- * have made a second copy, and the third copy is where somebody writes `presented === expected`
- * because it is shorter — a length-and-prefix-leaking compare on a value an attacker can retry
- * indefinitely is exactly the shape of a recoverable secret. One implementation, two callers,
- * and a suite is where its properties are pinned.
- *
- * What this is NOT: a rate limit or a lockout. There is none behind either endpoint, so the
- * only thing standing between a guesser and the secret is its LENGTH — which is why both
- * host-side loaders refuse a secret shorter than 24 characters rather than trusting the
- * operator who typed it.
+ * Shared-secret authentication for the two endpoints whose caller is not a person: `POST
+ * /internal/alerts` (a scheduler) and `GET /admin/*` (the console's server-side proxy). Neither
+ * has a session, and a service account would be phishable. Bearer secret in constant time is the
+ * whole story. Its own module because a second caller would have made a second copy, and the
+ * third copy is where somebody writes `presented === expected` — a length-and-prefix-leaking
+ * compare on a value an attacker can retry indefinitely. Not a rate limit or lockout — there is
+ * none behind either endpoint, so the only thing between a guesser and the secret is its length;
+ * both loaders refuse one under 24 characters.
  */
 
 /**

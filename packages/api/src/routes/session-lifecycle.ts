@@ -8,21 +8,14 @@ import type { Route } from "../router.js";
 import { cookieSurface, json, noContent, parseCookies, readBody } from "./shared.js";
 
 /**
- * THE SESSION LIFECYCLE ROUTES — `/auth/refresh` and `/auth/logout`, carved out of `core.ts`
- * so a composition that runs sessions WITHOUT the sign-in ceremony can mount them.
- *
- * Two such compositions exist: the hosted service (which mounts these through `coreRoutes`,
- * exactly where they always were — the carve moved the objects, not the behaviour) and the
- * desktop-host door (`routes/desktop-host.ts`), where a paired phone rotates the bearer pair
- * the device-pair redeem minted and signs itself out. What a session IS once it exists — the
- * rotation, the reuse detection, the family revocation — is `SessionLifecycle`'s
- * (`@trafficflow/services/auth`); these two handlers are its transport, and they are mounted by
- * BOTH tables as the SAME objects, so the two doors cannot drift.
- *
- * The cookie branches below are real code on the hosted surface and DEAD code on any bearer-only
- * host: `cookieSurface(deps)` reads `allowCookieAuth`, and a host that composes `false` neither
- * reads a `tf_*` cookie nor writes one — the zero-Set-Cookie census over the desktop-host door
- * stands on exactly this gate.
+ * The session lifecycle routes — `/auth/refresh` and `/auth/logout`, carved out of `core.ts` so a
+ * composition that runs sessions without the sign-in ceremony can mount them: the hosted service
+ * (through `coreRoutes`, exactly where they were) and the desktop-host door, where a paired phone
+ * rotates the bearer pair the redeem minted. What a session IS — rotation, reuse detection,
+ * family revocation — is `SessionLifecycle`'s; these handlers are transport, mounted by both
+ * tables as the same objects so the doors cannot drift. The cookie branches are real code on the
+ * hosted surface and dead code on any bearer-only host: `cookieSurface(deps)` reads
+ * `allowCookieAuth`, and the zero-Set-Cookie census stands on this gate.
  */
 
 /**
@@ -75,47 +68,37 @@ export const sessionLifecycleRoutes: Route[] = [
       const jar = parseCookies(req.headers.get("cookie"));
       const cookieRefresh = cookieSurface(deps) ? jar["tf_refresh"] : undefined;
       if (cookieRefresh) {
-        // A FAILED COOKIE REFRESH MUST CLEAR THE JAR, not just refuse.
-        //
-        // The browser is told to resume by `tf_resume` (see `cookies.ts`), and that marker
-        // outlives a refresh token that has been revoked, rotated past, or reused. Without
-        // this, such a browser loops: the gate sees the marker, sends it to the resume splash,
-        // the splash's refresh is refused, and the next visit does it all again — for the whole
-        // ninety-day marker lifetime, on every page load. Answering the refusal with
+        // A failed cookie refresh must clear the jar, not just refuse. The browser is told to
+        // resume by `tf_resume`, which outlives a refresh token that has been revoked, rotated
+        // past, or reused — without this, such a browser loops through the resume splash on every
+        // page load for the marker's whole ninety-day life. Answering the refusal with
         // `clearSessionCookies()` makes the failure self-healing: the marker goes with the rest
-        // and the visitor lands on the marketing page, signed out, which is the truth.
-        //
-        // Rethrown as 401 rather than swallowed: the caller must still be told it failed.
+        // and the visitor lands on the marketing page, signed out, which is the truth. Rethrown
+        // as 401: the caller must still be told it failed.
         try {
-          // `concurrentGrace`: this is the COOKIE surface, where a shared browser jar lets several
-          // tabs present one `tf_refresh` at once and the client single-flights refresh only per
-          // tab — so a duplicate presentation within the grace window is a benign concurrent
-          // rotation, not theft, and must not revoke the family. The native body branch below does
-          // NOT pass it: a bearer client holds its token privately and rotates it serially, so it
-          // keeps strict reuse detection. See `SessionLifecycle.refresh`.
-          //
-          // `surface` rides the same branch and chooses the ROLLING WINDOW this rotation issues:
-          // the browser's, which is the shorter one. It is stated rather than left to the default
-          // — the default is this same value, and saying it here is what makes the pair below
-          // (`"native"`) read as a decision instead of an omission.
+          // `concurrentGrace`: this is the cookie surface, where a shared browser jar lets
+          // several tabs present one `tf_refresh` at once and the client single-flights refresh
+          // only per tab — a duplicate presentation within the grace window is a benign
+          // concurrent rotation, not theft, and must not revoke the family. The native branch
+          // below does not pass it: a bearer client holds its token privately and rotates
+          // serially, so it keeps strict reuse detection (`SessionLifecycle.refresh`). `surface`
+          // rides the same branch and picks the rolling window this rotation issues — the
+          // browser's, the shorter one — stated rather than left to the default so the pair below
+          // reads as a decision.
           const { tokens } = await sessionLifecycle(deps).refresh(
             serviceContext(deps, req), { refreshToken: cookieRefresh },
             { concurrentGrace: true, surface: "cookie" },
           );
-          // THE OWNER MARKER IS RE-STAMPED HERE, NOT MINTED. `refresh` rotates a token family and
-          // answers tokens; it resolves no user, so this handler has no account id of its own to
-          // write. What it does have is the marker the browser already holds, and extending its
-          // life is the whole job: without this, a session that keeps renewing for its full
-          // ninety days outlives the cookie that makes its next cold start fast, and warm open
-          // degrades to the old blocking path with nothing failing anywhere.
-          //
-          // Echoing a client value into a `Set-Cookie` is safe here for two reasons together, and
-          // it would not be for one alone: `ownerCookieValue` refuses anything outside an
-          // id-shaped character set, so nothing the browser sends can become an ATTRIBUTE; and the
-          // value has no authority to re-stamp — it names a local database, is read by no handler,
-          // and the client still confirms it against `GET /auth/session` before trusting a row of
-          // what it opens. An absent or malformed marker answers `null`, which sets no cookie and
-          // clears none.
+          // The `tf_owner` marker is re-stamped here, not minted: `refresh` rotates a token family and
+          // resolves no user, so this handler has no account id of its own to write — what it has
+          // is the marker the browser already holds, and extending its life is the job: without
+          // this, a session renewing for its full ninety days outlives the cookie that makes its
+          // next cold start fast. Echoing a client value into a `Set-Cookie` is safe for two
+          // reasons together: `ownerCookieValue` refuses anything outside an id-shaped character
+          // set (nothing the browser sends can become an attribute), and the value has no
+          // authority — it names a local database, is read by no handler, and the client still
+          // confirms against `GET /auth/session`. Absent or malformed answers `null`: no cookie
+          // set, none cleared.
           return noContent(sessionCookies(
             tokens!, csrfTokenFor(tokens!.accessToken), deps.authConfig, ownerCookieValue(jar[OWNER_COOKIE]),
           ));

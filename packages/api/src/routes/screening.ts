@@ -8,20 +8,14 @@ import type { Route } from "../router.js";
 import { readBody } from "./shared.js";
 
 /**
- * `GET/PATCH /account/screening` — the editable Ohbox preference.
- *
- * Two facts about how the account wants its Ohbox kept: the POSTURE (`ohboxPolicy`) that turns the
- * bulk-mail demotion on, and the BAR (`ohboxBar`) — the account owner's own words, threaded into the
- * classifier's user turn. Both live on `account_settings`, both are nullable, and NULL reads as the
- * lenient default, so an account that has never touched this is on today's behaviour.
- *
- * Its own file, on the same reasoning as `ai-settings.ts`: a new module reduces the shared surface
- * with concurrent edits under `routes/` to a single import line in `routes/index.ts`.
- *
- * No step-up: this is reversible by the same request with the opposite value, destroys nothing and
- * moves no money. The write mirrors `ai-settings.ts`/`consent.ts` — the service does the strict
- * validation (enum + byte-length) and throws a `ServiceError` the router renders; there is no
- * coercion here, because this is a consent surface and guessing what the caller meant is the bug.
+ * `GET/PATCH /account/screening` — the editable Ohbox preference: the posture (`ohboxPolicy`)
+ * that turns bulk-mail demotion on, and the bar (`ohboxBar`) — the account owner's own words,
+ * threaded into the classifier's user turn. Both live on `account_settings`, both nullable, and
+ * NULL reads as the lenient default. Its own file on `ai-settings.ts`'s reasoning: a new module
+ * reduces the shared surface with concurrent route edits to one import line. No step-up:
+ * reversible by the same request with the opposite value, destroys nothing, moves no money. The
+ * service does the strict validation (enum + byte length) and throws; there is no coercion here —
+ * this is a consent surface, and guessing what the caller meant is the bug.
  */
 export const screeningRoutes: Route[] = [
   {

@@ -5,19 +5,14 @@ import { listServerTrash, searchServerTrash, serverTrashBody } from "../trash-wi
 import type { Route } from "../router.js";
 
 /**
- * THE TRASH WINDOW'S THREE DOORS — a live, un-mirrored read of the provider's own \Trash.
- *
- * The Trash VIEW's own list is `GET /messages?view=trash`, which reads the mirror: the messages
- * ohmail deleted, with their origin folder and their restore. These three answer the other
- * population — mail deleted in another mail client, which the sync never sees because
- * `imap-types.ts`'s reading rule gives that folder no cursor.
- *
- * All three are `GET` and all three are `cost: "connection"` (they dial). NONE of them writes:
- * `trash-window.ts` carries the argument and `trash-window.test.ts` counts the mirror tables
- * before and after every read. There is deliberately no verb here — see that module's header for
- * why "put it back" has no destination for a message the mirror has never held.
- *
- * `/trash/window` contends with nothing: there is no `/trash/:id`.
+ * The Trash window's three doors — a live, un-mirrored read of the provider's own \Trash. The
+ * Trash view's list is `GET /messages?view=trash`, the mirror: what ohmail deleted. These three
+ * answer the other population — mail deleted in another client, which the sync never sees (the
+ * reading rule gives that folder no cursor). All GET, all `cost: "connection"` (they dial); none
+ * writes — `trash-window.ts` carries the argument, `trash-window.test.ts` counts the mirror
+ * tables. Deliberately no verb here: see the module header for why "put it back" has no
+ * destination for a message the mirror never held. `/trash/window` contends with nothing: there
+ * is no `/trash/:id`.
  */
 export const trashRoutes: Route[] = [
   {

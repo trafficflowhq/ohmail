@@ -10,15 +10,13 @@ import type { Route } from "../router.js";
 import { message, drafting, drafter, readBody, spendOf } from "./shared.js";
 
 /**
- * §5.2 — messages. `GET /messages?view=…` is the view-partitioned list (400
- * on a missing/unknown view). `PATCH` (unread/folder), `POST …/move` and
- * `DELETE /messages/:id` are the
- * mutations: each echoes `X-Sync-Seq` from the emitted change (§3.4). `move` and `delete` are
- * idempotent (Idempotency-Key) — the service writes the idempotency row IN its tx,
- * so `deps.idempotency` is threaded through. Every read/write is
- * account-scoped in the service (404 cross-account). NO IMAP here: a move (a delete included —
- * it is a move to the provider's Trash, never an expunge) only
- * writes DESIRED state; the worker performs the physical IMAP move.
+ * Messages. `GET /messages?view=…` is the view-partitioned list (400 on a missing or unknown
+ * view). `PATCH` (unread/folder), `POST …/move` and `DELETE /messages/:id` are the mutations;
+ * each echoes `X-Sync-Seq` from the emitted change. `move` and `delete` are idempotent (the
+ * service writes the idempotency row in its tx, so `deps.idempotency` is threaded). Every read
+ * and write is account-scoped in the service (404 cross-account). No IMAP here: a move — a delete
+ * included; it is a move to the provider's Trash, never an expunge — only writes desired state,
+ * and the worker performs the physical move.
  */
 export const messageRoutes: Route[] = [
   {
@@ -46,27 +44,15 @@ export const messageRoutes: Route[] = [
     },
   },
   {
-    // The batch body read, in TWO MODES over one route.
-    //
-    //  · `?after=<cursor>&limit=` — the keyset text pull, the foundation of the macOS
-    //    Cloud-local text mirror. Pages the account's bodies by `messages.id`, body row only.
-    //  · `?ids=a,b,c`             — the THREAD OPEN: exactly these messages, capped at 20, with
-    //    the unsubscribe posture derived per row. Ids the account does not own are silently
-    //    absent — never a 404, which would make the route an existence oracle for other
-    //    accounts' ids. `after`/`limit` are ignored when `ids` is present.
-    //
-    // ONE ROUTE because it is one read of the same rows under the same ownership proof and the
-    // same cost class; only the row selection differs, and a second route would have been a
-    // second place to write the account scoping.
-    //
-    // `read`: it reads rows already stored for the caller's own account and writes nothing.
-    //
-    // STATIC-BEATS-PARAM, verified against `router.ts#tryMatch`/`cmpSpec` and not assumed:
-    // `/messages/bodies` and `/messages/:id` are both two segments, so both match this path;
-    // their specificity vectors are [1,1] and [1,0], and `cmpSpec` compares lexicographically —
-    // `1 > 0` at index 1 — so the static `bodies` route always wins. `/messages/bodies` can
-    // therefore never resolve to `GET /messages/:id` with `id === "bodies"`. Placed before the
-    // `:id` route here only for readability; `matchRoute` picks the most specific regardless.
+    // The batch body read, two modes over one route: `?after=<cursor>&limit=` — the keyset text
+    // pull (the Cloud-local text mirror's foundation), body row only; `?ids=a,b,c` — the thread
+    // open, capped at 20, with the unsubscribe posture derived per row; ids the account does not
+    // own are silently absent — never a 404, which would be an existence oracle for other
+    // accounts' ids. One route because it is one read of the same rows under the same ownership
+    // proof; a second route would be a second place to write the account scoping.
+    // Static-beats-param, verified against `router.ts#cmpSpec`: `/messages/bodies` and
+    // `/messages/:id` are both two segments, and the static route's specificity vector wins —
+    // placement before `:id` here is readability only.
     method: "GET",
     pattern: "/messages/bodies",
     relay: true,
@@ -108,19 +94,13 @@ export const messageRoutes: Route[] = [
     },
   },
   {
-    // §5.2 — the BATCH read-state route. `{ ids, unread }`, one transaction, one
-    // `change_log` row per message, `flag_state.desired_seen` upserted per message so the worker
-    // can put `\Seen` on the real server. Capped at 200 ids (413 above it).
-    //
-    // It sits BEFORE `/messages/:id` in this table only for readability — `matchRoute` compares
-    // segment counts first, so `/messages` and `/messages/:id` can never contend.
-    //
-    // `idempotent: true` for the reason `POST …/move` carries it: this is a multi-row write
-    // whose retry after a lost response would re-emit N delta rows for changes the client
-    // already has. The service does not claim the key itself (unlike `move`, whose claim
-    // lives in its transaction) — `withIdempotency` replays the stored response, and the
-    // operation is naturally idempotent anyway, since setting `unread` to the same value twice
-    // is the same end state.
+    // The batch read-state route: `{ ids, unread }`, one transaction, one `change_log` row per
+    // message, `flag_state.desired_seen` upserted so the worker can put `\Seen` on the real
+    // server. Capped at 200 ids (413 above). Before `/messages/:id` for readability only —
+    // `matchRoute` compares segment counts first. `idempotent: true` for `move`'s reason: a
+    // multi-row write whose retry would re-emit N delta rows; the service does not claim the key
+    // itself — `withIdempotency` replays the stored response, and setting `unread` to the same
+    // value twice is the same end state anyway.
     method: "PATCH",
     pattern: "/messages",
     relay: true,
@@ -149,18 +129,13 @@ export const messageRoutes: Route[] = [
     },
   },
   {
-    // §5 POST /messages/:id/draft — AI draft-from-history. Assembles a
-    // sensitivity-safe context (KB + this thread, `no_kb`/`no_ai`/sensitive
-    // structurally excluded), calls the INJECTED drafter, and STORES a
-    // `drafts` row (never sent). A `no_ai`/sensitive target is refused 422 before
-    // the drafter is called. Echoes X-Sync-Seq.
-    //
-    // IDEMPOTENT-MARKED, and metering is what made it a prerequisite rather than a
-    // nicety: `debit_draft`'s attempt key must be the CLIENT's `Idempotency-Key`,
-    // and until this flag existed no such key reached the handler at all. On a metered
-    // deployment the key is therefore REQUIRED (400 without it) — the same shape
-    // `POST /drafts/:id/send` already uses, and for the same reason: a paid, non-repeatable
-    // action needs the client to say "this is one intent" before we spend on it.
+    // `POST /messages/:id/draft` — AI draft-from-history. Assembles a sensitivity-safe context
+    // (KB + this thread; `no_kb`/`no_ai`/sensitive structurally excluded), calls the injected
+    // drafter, and stores a `drafts` row (never sent). A `no_ai`/sensitive target is refused 422
+    // before the drafter is called. Echoes X-Sync-Seq. Idempotent-marked, and metering made it a
+    // prerequisite: `debit_draft`'s attempt key must be the client's `Idempotency-Key`, so on a
+    // metered deployment the key is required (400 without) — the `POST /drafts/:id/send` shape: a
+    // paid, non-repeatable action needs the client to say "this is one intent" before we spend.
     method: "POST",
     pattern: "/messages/:id/draft",
     relay: true,
@@ -214,31 +189,15 @@ export const messageRoutes: Route[] = [
     },
   },
   {
-    /* §5.2 POST /messages/:id/restore — PUT A DELETED MESSAGE BACK WHERE IT WAS (mail 0099).
-     *
-     * The other end of `DELETE /messages/:id`. It writes DESIRED state and nothing else — the
-     * origin `folder_state.trashed_from` recorded at the delete, resolved against the mailbox's
-     * live folders and falling back to INBOX — so the mail server performs the physical move on
-     * the organizer's next turn. It does NOT clear the tombstone: the mirror says the message is
-     * back when the SERVER has it back, which is the whole of `MessageService.restore`'s header.
-     *
-     * `cost: "work"`, the class every desired-state write here carries: it writes rows for the
-     * caller's own account and queues an IMAP move for the organizer. It opens no socket and
-     * calls no metered third party, so it is not `paid`.
-     *
-     * `options: { idempotent: true }`, and the argument it replaces was wrong about one caller.
-     * "Idempotent in the state" holds for a second PRESS — the message is no longer in Trash, so
-     * 409 `not_in_trash` is true and moves nothing. It is false for a REPLAY: a client whose
-     * first response was lost after the commit re-sends the same durable intent, and that 409
-     * reads on screen as "Couldn't restore" about a restore this server is already committed to.
-     * The key tells the two apart — a replay carries the first request's key and is answered with
-     * the first response; a new press carries a new key and meets the state check.
-     *
-     * The response is `{ restoreTo, pending }` rather than the message DTO: the DTO would still
-     * carry the Trash folder and a `deleted_at`, i.e. it would describe the state the caller is
-     * leaving. `restoreTo` is what the surface says in its toast, and `pending` is the honest
-     * middle the filing strip already renders. `X-Sync-Seq` is echoed from the recorded change
-     * exactly as the other mutations do.
+    /**
+     * `POST /messages/:id/restore` — put a deleted message back (mail 0099); the other end of
+     * `DELETE`. It writes desired state only — the `trashed_from` origin recorded at the delete,
+     * resolved against live folders, INBOX fallback — and does not clear the tombstone: the
+     * mirror says the message is back when the server has it back. `cost: "work"`: rows plus a
+     * queued IMAP move. `idempotent: true`, and the replaced argument was wrong about one caller:
+     * a second press correctly meets 409 `not_in_trash`, but a replay of a lost response would
+     * read as "Couldn't restore" about a restore already committed — the key tells them apart.
+     * The response is `{ restoreTo, pending }`, not the DTO; `X-Sync-Seq` echoed.
      */
     method: "POST",
     pattern: "/messages/:id/restore",

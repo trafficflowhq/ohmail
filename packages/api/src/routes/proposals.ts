@@ -4,20 +4,14 @@ import type { Route } from "../router.js";
 import { proposals } from "./shared-cloud.js";
 
 /**
- * AI-PROPOSED WORKFLOWS — the two routes that read the proposer's output.
- *
- * They sat in `workflows.js` beside the CRUD, and they are the only part of that file which needs
- * a proposer. The proposer calls a model, so it is not part of the mail half and is not present in
- * a local install at all: the two routes could only ever have answered "not configured" there,
- * while making the module that carries the whole workflow CRUD depend on a service it must not
- * name.
- *
- * Splitting them costs a local host nothing it had — a route it never served now returns 404
- * instead of a 500 that said the service was missing, which is the more honest of the two answers
- * for a surface this deployment genuinely does not offer.
- *
- * Proposals are INERT by construction: listing and dismissing are all that is here. A proposal
- * becomes a workflow only through the ordinary create path, disabled, with the user acting.
+ * AI-proposed workflows — the two routes that read the proposer's output. They sat beside the
+ * workflow CRUD and are the only part of that file needing a proposer, which calls a model and is
+ * not part of the mail half: on a local install the routes could only ever answer "not
+ * configured" while making the CRUD module depend on a service it must not name. Splitting costs
+ * a local host nothing it had — a route it never served now returns 404 instead of a 500, the
+ * more honest answer for a surface this deployment does not offer. Proposals are inert by
+ * construction: listing and dismissing are all that is here; a proposal becomes a workflow only
+ * through the ordinary create path, disabled, with the user acting.
  */
 export const proposalsRoutes: Route[] = [
   {

@@ -6,74 +6,24 @@ import type { Route } from "../router.js";
 import { privacy } from "./shared.js";
 
 /**
- * §5.15 — the spy-pixel blocker surface (privacy, 4 endpoints).
- *
- * ── `GET /img` IS MOUNTED AGAIN, AND THIS IS WHAT DISCHARGED THE CONDITION ─────────
- *
- * It was unmounted once it was found to be a server-side request forgery with body
- * exfiltration: `proxyImage` validated the caller-supplied url with a scheme regex
- * and nothing else, the fetch followed redirects, and the route returned the body, so
- * an authenticated caller could read `169.254.169.254` or any internal service
- * through it.
- *
- * The condition written here for its return was **"it comes back when the blocker is
- * switched on in the reading path, and not before"**, because the endpoint had no
- * consumer and therefore no caller but an attacker. It has one now: the reading
- * surface builds the proxy url, hands it to the message renderer, and the sanitizer
- * rewrites every consented `<img src>` and CSS `url()` through it — asserted on the
- * rendered output, not merely on the existence of a function.
- *
- * Three independent gates stand between a caller and the network, and each is watched
- * failing on its own:
- *
- *  · **Consent**, in `PrivacyService.proxyImage` — 403 unless the reader has actually
- *    pressed "Show images" for this message (`message_bodies.loaded_remote_content`),
- *    refused BEFORE any fetch. Without it the blocker would be a client convention:
- *    the renderer is not a boundary, and a second client or a replayed url would make
- *    the sender's server see a request. It also keeps `TrackerEventDTO.blocked`
- *    (`!loadedRemoteContent`) from reporting an image we fetched as one we blocked, in
- *    the feed whose whole subject is who tried to spy on the reader.
- *  · **The request**, also in `proxyImage` — ownership of `mid` (a
- *    cross-account id is a 404 before a DNS lookup is spent), then
- *    `assertPublicHttpUrl` through an INJECTED resolver: userinfo, odd ports,
- *    `.onion`/`.local` and any host whose literal or RESOLVED address is
- *    loopback/private/link-local/CGNAT (and their IPv4-mapped forms) are refused
- *    before a socket opens. The manual-redirect port is the other half — it never
- *    follows a `Location` itself, so a hop is only ever taken by `proxyImage` AFTER
- *    that url has been through the same gate and pinned to its own addresses (capped
- *    at three hops, under one whole-chain deadline) — plus a streaming size cap.
- *  · **The response**, {@link imageResponse} below. The service's SSRF gate says
- *    nothing about what comes BACK, and what comes back is bytes and a Content-Type
- *    chosen by the sender, served from the origin that holds the session cookie.
- *
- * `POST /messages/:id/load-remote` flips the "load anyway" opt-in (idempotent-safe).
- * `GET /messages/:id/tracker-events` + `GET /tracker-events` are the account-scoped
- * "who tried to spy on you" feeds. Every read/write is account-scoped in the
- * service (cross-account id → 404).
+ * The spy-pixel blocker surface (4 endpoints). `GET /img` is mounted again; its return condition
+ * is discharged: the sanitizer rewrites every consented `<img src>` and CSS `url()` through the
+ * proxy, asserted on rendered output. Three gates, each watched failing: consent (403 unless the
+ * reader pressed "Show images", refused before any fetch — what also keeps
+ * `TrackerEventDTO.blocked` honest); the request (ownership of `mid` before a DNS lookup, then
+ * `assertPublicHttpUrl` through an injected resolver, redirects re-gated per hop, capped at three
+ * under one deadline, a streaming size cap); the response ({@link imageResponse}). `POST
+ * /messages/:id/load-remote` flips the opt-in; the tracker feeds are account-scoped.
  */
 
 /**
- * THE IMAGE TYPES THIS ORIGIN WILL SERVE. An allow-list, so a type nobody has thought
- * about is absent by default rather than present by default.
- *
- * ── WHY A CONTENT-TYPE ALLOW-LIST IS NOT TIDINESS ─────────────────────────────────
- *
- * The bytes and the declared type both come from a host the SENDER chose, and this
- * route serves them from `ohmail.app` — the origin that holds `tf_session`. Relay a
- * sender-chosen `text/html` and a link to `/api/img?u=…` is stored XSS on the session
- * origin; the SSRF gate cannot see this, because the url it approved was perfectly
- * public.
- *
- * **`image/svg+xml` is REFUSED, not relayed, and it is the whole reason this list is
- * an allow-list.** SVG is a document format: it carries `<script>`, `<foreignObject>`
- * and external references, and a browser navigating to one executes it in this
- * origin. It is also the one entry a future editor would be most tempted to add,
- * because it is unambiguously "an image".
- *
- * There is deliberately **no `application/octet-stream` fallback**. `proxyImage`
- * returns exactly that when the upstream declared nothing, and a fallback would mean
- * an unlabelled body is served under a type the browser is most willing to sniff.
- * An image we cannot name is not an image we will serve.
+ * The image types this origin will serve — an allow-list, so a type nobody has thought about is
+ * absent by default. The bytes and declared type come from a host the sender chose, served from
+ * the origin that holds the session cookie: relay a sender-chosen `text/html` and `/api/img?u=…`
+ * is stored XSS on the session origin. `image/svg+xml` is refused — SVG is a document format
+ * (`<script>`, `<foreignObject>`) and the one entry a future editor is most tempted to add. No
+ * `application/octet-stream` fallback: an unlabelled body under the type browsers most willingly
+ * sniff. An image we cannot name is not an image we will serve.
  */
 const PROXIED_IMAGE_TYPES: ReadonlySet<string> = new Set([
   "image/gif", "image/jpeg", "image/png", "image/webp", "image/avif",
@@ -86,22 +36,14 @@ function baseType(contentType: string): string {
 }
 
 /**
- * The bytes, under headers that make them un-navigable and inert.
- *
- * Three, and none of them is redundant with another:
- *
- *  · `X-Content-Type-Options: nosniff` — the declared type is the ONLY type. Without
- *    it a browser may sniff a `image/png` that is really markup and act on what it
- *    found, which turns the allow-list above into a suggestion.
- *  · `Content-Security-Policy: default-src 'none'; sandbox` — what a person who
- *    NAVIGATES to this url gets. `img-src` in the message frame governs the
- *    subresource load; it says nothing about the top-level document a pasted url
- *    produces, and `sandbox` with no tokens is an opaque origin with no scripting.
- *  · `Content-Disposition: inline` with no filename — this is a subresource, and the
- *    sender does not get to name a file on the reader's disk.
- *
- * `Cache-Control: private` keeps a shared cache from holding one account's image
- * under a url another account could ask for.
+ * The bytes, under headers that make them un-navigable and inert. Three, none redundant:
+ * `X-Content-Type-Options: nosniff` — the declared type is the only type; without it the
+ * allow-list is a suggestion. `Content-Security-Policy: default-src 'none'; sandbox` — what a
+ * person who navigates to this url gets: an opaque origin with no scripting (`img-src` in the
+ * message frame governs only the subresource load). `Content-Disposition: inline` with no
+ * filename — a subresource; the sender does not get to name a file on the reader's disk.
+ * `Cache-Control: private` keeps a shared cache from holding one account's image under a url
+ * another account could ask for.
  */
 function imageResponse(contentType: string, body: Uint8Array): Response {
   const type = baseType(contentType);
@@ -161,23 +103,15 @@ export const privacyRoutes: Route[] = [
         );
         return imageResponse(contentType, body);
       } catch (err) {
-        /* ── EVERY REFUSAL SAYS WHICH ARM IT WAS ─────────────────────────────────────────
-           This `catch` used to answer and log NOTHING, which made the route's own record
-           useless: a production census of its 5xx found `logs[]` empty on every row, because
-           a refusal RETURNED rather than threw and so never reached `withErrorEnvelope`'s
-           line. "Why is this image missing" then has no answer anywhere — the status is in
-           the platform's log and the reason is nowhere.
-
-           `code` names the arm and is the whole point (`consent_required`, a 404 for a
-           cross-account `mid`, the SSRF gate's refusal, the 415, a 424 from the transport).
-           WHAT IS DELIBERATELY ABSENT: the `u` parameter, the resolved host, and the
-           `ServiceError` MESSAGE — the sender chose the url, several of these messages quote
-           it, and keeping the senders a reader's mail links to out of our logs is the reason
-           this proxy exists at all. The `mid` is absent for the same class of reason; the
-           `requestId` the logger already carries is what ties the line to one request.
-
-           Level follows `withErrorEnvelope`: a 4xx here is the proxy working as designed, so
-           it is `warn`; a 5xx is ours and is `error`. */
+        /**
+         * Every refusal says which arm it was. This catch used to answer and log nothing, so a
+         * census of the route's 5xx found `logs[]` empty — the status in the platform's log, the
+         * reason nowhere. `code` names the arm (`consent_required`, the cross-account 404, the
+         * SSRF refusal, the 415, the transport 424). Deliberately absent: the `u` parameter, the
+         * resolved host, and the error message — the sender chose the url, and keeping readers'
+         * senders out of our logs is why this proxy exists; the `requestId` ties the line to the
+         * request. Level follows the envelope: 4xx warn, 5xx error.
+         */
         const log = deps.logger ?? silentLogger;
         if (err instanceof ServiceError) {
           const at = { method: req.method, route: "/img", status: err.httpStatus, code: err.code };
@@ -188,17 +122,16 @@ export const privacyRoutes: Route[] = [
         /* The unknown arm keeps the repo-wide event name for "not a refusal, a bug", so the
            two are still distinguishable by name rather than only by status. */
         log.error("request_unhandled", { method: req.method, route: "/img", status: 500, err });
-        /* ── WHAT REACHES HERE IS OUR OWN FAULT, AND IT MUST STAY A 5xx ──────────────────
-           Tempting to answer 424 here, since every upstream refusal now sits off the
-           5xx class. That would be wrong, and dangerously so: the `try` above encloses the
-           ownership check, the consent read, the grants read and a `tracker_events` insert, so
-           a database outage or a `TypeError` in our own code would take the same "somebody
-           else's dependency" label — and Vercel's 5xx alerting, which the 424 exists to keep
-           honest, would then ignore a real outage of ours — the same confusion the 424 exists
-           to end, pointed the other way.
-           Transport failures are named where they happen instead (`makeNodeRemoteFetch` wraps
-           DNS/TLS/reset/timeout as a 424 `ServiceError`), so anything still unknown at this
-           point is a bug in ours and says so. */
+        /**
+         * What reaches here is our own fault, and it must stay a 5xx. Tempting to answer 424,
+         * since every upstream refusal now sits off the 5xx class — wrong, dangerously: the `try`
+         * above encloses the ownership check, the consent read, the grants read and a
+         * `tracker_events` insert, so a database outage or a `TypeError` in our own code would
+         * take the "somebody else's dependency" label, and the platform's 5xx alerting would
+         * ignore a real outage of ours. Transport failures are named where they happen
+         * (`makeNodeRemoteFetch` wraps DNS/TLS/reset/timeout as a 424 `ServiceError`), so
+         * anything still unknown here is a bug of ours and says so.
+         */
         return errorResponse("internal_error", 500, "the image proxy failed unexpectedly");
       }
     },

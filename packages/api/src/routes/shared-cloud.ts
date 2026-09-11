@@ -10,35 +10,23 @@ import { csrfTokenFor } from "../csrf.js";
 import { cookieSurface, json } from "./shared.js";
 
 /**
- * THE HOSTED ACCESSORS — the members of the dependency bag that only a hosted deployment has.
- *
- * `shared.ts` next door reaches into the per-request bag for a service and turns a misconfigured
- * host into a 500 rather than a confusing failure deeper in. Most of those services are the mail
- * half and are the same everywhere. These are not: the identity ceremony, the two paid surfaces,
- * the funnel, and the proposer that calls a model.
- *
- * They lived in `shared.ts`, which meant the module every host compiles named all of them, and the
- * comment there argued that a type-only import made this safe. It does not: erasure decides what
- * ends up in an artifact and says nothing about what a reader of the source can see, or about what
- * a checkout without those modules can compile.
- *
- * The session-cookie helpers move with them for a second reason on top of that one. They mint the
- * browser session for a completed ceremony, and their argument types ARE the ceremony's results —
- * so a local install, which mints one session per launch and runs no ceremony at all, has neither
- * the types nor a use for the functions.
+ * The hosted accessors — the bag members only a hosted deployment has: the identity ceremony, the
+ * two paid surfaces, the funnel, the proposer. They lived in `shared.ts` on the argument that a
+ * type-only import made it safe — it does not: erasure decides what lands in an artifact and says
+ * nothing about what a checkout without those modules can compile. The session-cookie helpers
+ * move with them for a second reason: they mint the browser session for a completed ceremony, and
+ * their argument types ARE the ceremony's results — a local install has neither the types nor a
+ * use.
  */
 
 /**
- * The AuthService from the per-request bag; a misconfigured deps is a 500 (not a 401).
- *
- * THE ONE WIDENING in the codebase (Phase 3): `services.auth` is statically the carved
- * `SessionLifecycle` — the machinery half every host may compile — because the LOCAL engine now
- * fills the member too. The twenty ceremony routes need the full `AuthService`, and every
- * composition that mounts them wires one (`apps/server/src/deps.ts`, `apps/api-vercel`, the
- * test helpers — all construct `makeAuthService(...)`), so the cast recovers what the wiring
- * guarantees. The probe beside it keeps the guarantee honest at runtime: a bag holding only the
- * lifecycle half — a composition bug, not a caller's — answers the same clean 500 an absent
- * service always has, instead of a mid-handler TypeError with a stack.
+ * The AuthService from the per-request bag; a misconfigured deps is a 500, not a 401. The one
+ * widening in the codebase: `services.auth` is statically the carved `SessionLifecycle` — the
+ * machinery half every host may compile — because the local engine fills the member too. The
+ * twenty ceremony routes need the full `AuthService`, and every composition that mounts them
+ * wires one, so the cast recovers what the wiring guarantees. The probe beside it keeps that
+ * honest at runtime: a bag holding only the lifecycle half — a composition bug — answers the same
+ * clean 500 an absent service always has, instead of a mid-handler TypeError.
  */
 export function auth(deps: ApiDeps): AuthService {
   const svc = deps.services?.auth;
@@ -99,15 +87,13 @@ export function webSession<T extends SessionEstablished>(deps: ApiDeps, est: T):
 }
 
 /**
- * The `/auth/register` · `/auth/login`-re-entry response: mirror the
- * enrollment token into `tf_session` + `tf_csrf` for the browser AND leave it in the
- * body for a native client. Pre-session the wire carries no client-type signal at
- * all — no cookie, no bearer header, no prior session — so a browser-only or
- * native-only answer would break the other client, and inventing a `client:` body
- * discriminator would be API surface invented for a 5-minute credential whose only
- * power is enrolling the caller's own first factor. See
- * {@link EnrollmentSessionEstablished} for why that is an acceptable exposure and why
- * the FULL session that replaces it still never puts a token in a cookie client's body.
+ * The `/auth/register` · login-re-entry response: mirror the enrollment token into `tf_session` +
+ * `tf_csrf` for the browser AND leave it in the body for a native client. Pre-session the wire
+ * carries no client-type signal — no cookie, no bearer, no prior session — so a browser-only or
+ * native-only answer would break the other client, and a `client:` body discriminator would be
+ * API surface invented for a 5-minute credential whose only power is enrolling the caller's own
+ * first factor. See {@link EnrollmentSessionEstablished} for why that exposure is acceptable and
+ * why the full session that replaces it never puts a token in a cookie client's body.
  */
 export function enrollmentSession(
   deps: ApiDeps, est: EnrollmentSessionEstablished, status = 200,

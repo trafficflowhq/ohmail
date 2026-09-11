@@ -8,21 +8,14 @@ import type { Route } from "../router.js";
 import { screener, readBody } from "./shared.js";
 
 /**
- * §5.3 — the flagship Screener. `GET /screener` is the DERIVED first-contact queue
- * (one entry per held sender). `POST /screener/:id` decides yes/no: it promotes a
- * rule, re-routes the sender's held mail to Imbox/Screened by writing DESIRED
- * folder_state (`pending`) + emitting changes, and feeds the learning loop. It is
- * idempotent (Idempotency-Key): the service writes the idempotency row IN its
- * decide tx, so `deps.idempotency` is threaded through — a replay never
- * re-creates the promoted rule. NO IMAP here: the API constructs the service
- * WITHOUT an adapter, so the physical move DEFERS to the worker.
- *
- * ── THE GET SPENDS NOTHING, AND THAT IS NEW ──────────────────────────────────────────────
- *
- * `GET /screener` used to call the model once per held sender it returned — up to 200 model
- * calls and 200 credits on one `cost: "read"` request, on the endpoint a client re-fetches on
- * every poll and scroll. Generation now lives at `POST /screener/suggest` over an explicit
- * sender set, and the read returns what is stored.
+ * The flagship Screener. `GET /screener` is the derived first-contact queue (one entry per held
+ * sender). `POST /screener/:id` decides yes/no: promotes a rule, re-routes the held mail by
+ * writing desired `folder_state` + changes, feeds the learning loop; idempotent — the service
+ * writes the row in its decide tx, so a replay never re-creates the rule. No IMAP: the service is
+ * built without an adapter, so the physical move defers to the worker. The GET spends nothing,
+ * and that is load-bearing: it used to call the model once per held sender — up to 200 calls on
+ * one `read` request, re-fetched per poll and scroll. Generation lives at `POST
+ * /screener/suggest`; the read returns what is stored.
  */
 /**
  * The wire shape of `POST /screener/suggest`, declared HERE rather than imported.
@@ -64,20 +57,14 @@ export const screenerRoutes: Route[] = [
   },
   {
     /**
-     * **Buy AI suggestions for an EXPLICIT set of senders.**
-     *
-     * `cost: "work"`, which is the whole point of the row: this is the only screener path that
-     * reaches a model, so it is the one an unverified account cannot reach and the one the
-     * spend census counts. `POST /screener/:id` is `work` for a different reason (it writes),
-     * and `GET /screener` stays `read` because it once again only reads.
-     *
-     * It sits BEFORE `/screener/:id` in this table for readability only — `matchRoute` scores
-     * a static segment above a param at the same length, so `/screener/suggest` wins
-     * whatever the order. Without that, "suggest" would arrive at `decide` as a message id.
-     *
-     * `idempotent: true` because this is a purchase: a retry after a lost response must replay
-     * the answer rather than buy again. The service claims the key itself (the same shape, though
-     * not in the same transaction as the writes — see `ScreenerService.suggest`).
+     * Buy AI suggestions for an explicit set of senders. `cost: "work"`, which is the point of
+     * the row: this is the only screener path that reaches a model, so it is the one an
+     * unverified account cannot reach and the one the spend census counts (`POST /screener/:id`
+     * is `work` because it writes; `GET /screener` stays `read`). It sits before `/screener/:id`
+     * for readability only — a static segment outranks a param, so `/screener/suggest` wins
+     * whatever the order. `idempotent: true` because this is a purchase: a retry after a lost
+     * response must replay the answer rather than buy again; the service claims the key itself
+     * (see `ScreenerService.suggest`).
      */
     method: "POST",
     pattern: "/screener/suggest",
@@ -93,27 +80,14 @@ export const screenerRoutes: Route[] = [
     },
   },
   /**
-   * ═══ THE JUNK WINDOW (FOLDERS-SPEC.md §16.2) — three routes, all `connection` class ═══════
-   *
-   * `connection`, NOT `read`, on the organizer peek's argument verbatim: each opens an IMAP
-   * socket to the user's own provider (through the admission-capped `openMailboxImap`, budget
-   * shared with attachments), and an unverified account must not be able to make this service
-   * dial a mail server. All three are gated on the folders foundation flag inside the module
-   * (409 `folders_disabled` with the flag off — no shipped flag-off client calls them, §16.7).
-   *
-   * The window NEVER writes `messages`/mirror rows — `GET` twice over — and a PLAIN rescue writes
-   * exactly one thing on OUR side: the `sync_requested_at` doorbell. `junk-window.ts` carries the
-   * argument; `junk-window.test.ts` counts the tables.
-   *
-   * **The `allow` variant is not that, and this used to say it was.** `POST /screener/junk/rescue`
-   * with `{ allow: { sender } }` runs `allowSender` BEFORE the move: it can disable a block rule,
-   * insert an allow rule and a contact, and append the change-log rows for them, in its own
-   * transaction. That is a real write to the user's screening, and it is why every refusal on that
-   * path — the folders gate, the epoch, the UID's protocol range — belongs ABOVE it. A request
-   * refused after `allowSender` would leave the user's screening changed by a call that failed.
-   *
-   * Static-beats-param (the `/messages/bodies` proof): `/screener/junk` outranks
-   * `/screener/:id` at two segments; the three-segment routes contend with nothing.
+   * The junk window (§16.2) — three routes, all `connection`: each opens an IMAP socket to the
+   * user's own provider (through the admission-capped `openMailboxImap`), and an unverified
+   * account must not make this service dial. All gated on the folders flag (409 off). The window
+   * never writes mirror rows; a plain rescue writes exactly the `sync_requested_at` doorbell
+   * (`junk-window.test.ts` counts the tables). The `allow` variant runs `allowSender` before the
+   * move in its own transaction — which is why every refusal on that path belongs above it: a
+   * request refused after `allowSender` would leave the screening changed by a failed call.
+   * Static-beats-param: `/screener/junk` outranks `/screener/:id`.
    */
   {
     method: "GET",

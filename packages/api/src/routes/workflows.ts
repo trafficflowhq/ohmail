@@ -5,17 +5,14 @@ import type { Route } from "../router.js";
 import { workflows, readBody } from "./shared.js";
 
 /**
- * §5.10 — Workflows. Account-scoped CRUD over `workflows` + the run ENQUEUE, all
- * REST-only: no `X-Sync-Seq`/change_log, so clients refetch.
- *
- * `POST /workflows` validates the tool ALLOWLIST: a step declaring `send`/`forward`
- * (anything outside file_message/draft_reply/add_kb_entry) → 400. `DELETE` is a
- * SOFT-delete → 204; the workflow leaves list/get (404) but its `workflow_runs`
- * history is retained. `POST /workflows/:id/run` is idempotent-marked: the service
- * writes the `idempotency_keys` row IN its enqueue tx, so a retried Idempotency-Key
- * replays the same `{ runId }` (202) and never double-enqueues; a disabled workflow
- * → 409. All account-scoped (404 cross-account/deleted). Enqueue is all this
- * layer does — the runner that drains `pending` runs is not part of it.
+ * Workflows. Account-scoped CRUD over `workflows` + the run enqueue, all REST-only: no
+ * `X-Sync-Seq`/change_log, so clients refetch. `POST /workflows` validates the tool allowlist: a
+ * step declaring `send`/`forward` (anything outside file_message/draft_reply/add_kb_entry) → 400.
+ * DELETE is a soft-delete → 204; the workflow leaves list/get but its `workflow_runs` history is
+ * retained. `POST /workflows/:id/run` is idempotent-marked: the service writes the
+ * `idempotency_keys` row in its enqueue tx, so a retried key replays the same `{ runId }` (202)
+ * and never double-enqueues; a disabled workflow → 409. Enqueue is all this layer does — the
+ * runner that drains `pending` runs is not part of it.
  */
 export const workflowsRoutes: Route[] = [
   {

@@ -20,38 +20,14 @@ interface CredMeta extends CredMetaAuth {
 }
 
 /**
- * Build the API's send adapter. Unlike `makeOpenAdapter`
- * (attachments) which reads ONLY the `imap` cred row — so `ImapConfig.smtp` is
- * unset and `ImapAdapter.send` would throw "SMTP not configured" — this reads BOTH
- * the `imap` AND the `smtp` `mailbox_credentials` rows (envelope-encrypted at
- * rest), decrypts each via `deps.keyProvider`, and constructs a connected
- * `ImapAdapter` with `smtp` populated so it can SMTP-send AND IMAP-append to
- * Sent. The returned handle
- * exposes the `SendAdapter` seam (`send` / `messageInSent` / `close`) SendService
- * drives; credentials never leave the server.
- *
- * If the mailbox has no dedicated `smtp` row we fall back to the imap host + the
- * imap secret (the single-credential generic-IMAP convention) rather than error —
- * many providers use one password for both transports.
- *
- * ── `newAdapter`: THE ONE TEST SEAM, AND WHY IT IS A PARAMETER RATHER THAN A SECOND FUNCTION ──
- *
- * The standalone desktop engine used to build its own send transport, because it had no stored
- * `smtp` row to read: its submission server was an environment variable. An install that holds
- * SEVERAL mailboxes ends that — each mailbox stores its own credential pair, which is exactly what
- * this function already reads — so the desktop takes this implementation instead of keeping a
- * second one beside it.
- *
- * What it loses in the move is the ability to OBSERVE which server a send dialled. That matters
- * more here than it sounds: the failure being guarded against is a send from the second mailbox
- * going out through the FIRST one's submission server with the second one's password, and against
- * a test server that accepts every login, the only way to tell that apart from a correct send is
- * to look at the configuration the transport was constructed with. So the construction is
- * injectable, defaulting to the real adapter — one line, no branch in the production path, and no
- * second implementation of the credential resolution above it.
- *
- * It is deliberately NOT on `ApiDeps`: a field on the shared dependency bag would be reachable
- * from every host and every route, and this is a seam for one function.
+ * Build the API's send adapter. Unlike `makeOpenAdapter` (attachments), this reads both
+ * credential rows, decrypts each, and constructs a connected `ImapAdapter` with `smtp` populated
+ * so it can SMTP-send and IMAP-append to Sent; credentials never leave the server. No dedicated
+ * `smtp` row falls back to the imap host + secret. `newAdapter` is the one test seam, a
+ * parameter: the guarded failure is a send from the second mailbox going out through the first
+ * one's submission server, and against a server that accepts every login the only tell is the
+ * configuration the transport was constructed with. Not on `ApiDeps`: a bag field is reachable
+ * from every host and route, and this is a seam for one function.
  */
 export async function makeSendAdapter(
   deps: ApiDeps,
@@ -94,23 +70,13 @@ export async function makeSendAdapter(
       smtpPass = await deps.keyProvider.decrypt(smtpRow.secretEnc, smtpRow.keyVersion);
     } else {
       /**
-       * ── NO `smtp` ROW: THE GUESS, AND THE ONE CASE WHERE GUESSING IS DISHONEST ─────────────
-       *
-       * `imap host:587` with the imap secret is the single-credential generic-IMAP convention and
-       * it is right for most providers — a mailbox that never had a submission server named for it
-       * has nothing better to go on, and a send that fails at the server is an honest failure.
-       *
-       * IT IS NOT RIGHT WHEN THE SUBMISSION SERVER WAS TRIED AND REFUSED. The local door stores the
-       * incoming credential and marks the outgoing half unsettled precisely so that a working
-       * mailbox is not held hostage to a blocked port — and in that state this fallback would dial
-       * a server somebody has already been told does not work, with a password it has already
-       * refused, and report whatever came back as a fresh failure. The person is owed the sentence
-       * they were given at connect, not a second opinion from a guess.
-       *
-       * So the absence of a row is read together with the marker: no marker, guess as before; a
-       * marker, refuse with its reason. `upstream_unavailable` is the class the send path already
-       * uses for "this mailbox cannot reach its server", and 502 keeps it out of the retry ladder
-       * a 5xx-with-retry would put it on — nothing about this improves by being tried again.
+       * No `smtp` row: the guess, and the one case where guessing is dishonest. `imap host:587`
+       * with the imap secret is the convention and right for most providers. Not when the
+       * submission server was tried and refused: the local door marks the outgoing half unsettled
+       * precisely so a working mailbox is not held hostage to a blocked port — and the fallback
+       * would dial a server somebody was already told does not work and report the result as a
+       * fresh failure. The absence of a row is read together with the marker: no marker, guess; a
+       * marker, refuse with its reason. 502 `smtp_not_settled` keeps it out of the retry ladder.
        */
       if (imapMeta.smtpUnsettled) {
         throw new ServiceError(

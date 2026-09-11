@@ -5,19 +5,13 @@ import type { Route } from "../router.js";
 import { tags, readBody } from "./shared.js";
 
 /**
- * /tags — the account's own labels, keyed by message.
- *
- * A tag is a row in OUR database and NEVER an IMAP folder, so there is no folder verb anywhere
- * in this file and none of these handlers can reach the mailbox. What the routes carry instead
- * is the `change_log` seq of the write, in `X-Sync-Seq`: tags ride the existing `/sync` drain
- * (a `tag` entity for identity, a `message` update for each assignment), so a client that has
- * just written can tell whether the drain it is holding already includes its own change.
- *
- * `POST /messages/:id/tags` is the assignment verb and it is a DELTA — one tag and a boolean,
- * never the full next label array. The array shape is a read-modify-write, and two concurrent
- * toggles of different tags on one message would silently drop one of them. It lives here
- * rather than in `messages.ts` because the whole subsystem it belongs to is this one; the
- * message is the subject of the URL, not what the behaviour belongs to.
+ * /tags — the account's own labels, keyed by message. A tag is a row in our database and never an
+ * IMAP folder, so there is no folder verb here and no handler can reach the mailbox. The routes
+ * carry the write's seq in `X-Sync-Seq`: tags ride the `/sync` drain (a `tag` entity for
+ * identity, a `message` update per assignment). `POST /messages/:id/tags` is the assignment verb
+ * and a delta — one tag and a boolean, never the full label array: the array shape is a
+ * read-modify-write, and two concurrent toggles of different tags would drop one. It lives here
+ * because the subsystem it belongs to is this one.
  */
 export const tagsRoutes: Route[] = [
   {

@@ -8,67 +8,26 @@ import { PROBE_TIMEOUTS } from "./imap-probe.js";
 import type { ApiDeps } from "./deps.js";
 
 /**
- * ══ THE API HOST'S HALF of the `SIZE` back-fill ═══════════════════════════════════════════════
- *
- * `mailboxes.smtp_max_size_bytes` is the only ceiling left on an attachment once the bytes stop
- * riding the send request, and nothing ever learned it for a mailbox that was already connected:
- * the column is written when a mailbox is created with an SMTP block and when a PATCH re-dials
- * SMTP — which means the person re-entering their password. Every mailbox older than the column
- * therefore announced nothing for ever and stayed pinned to the strict product constant.
- *
- * ── WHY THIS RUNS HERE AND NOT ON THE SYNC HOST, WHICH IS MEASURED ──────────────────────────
- *
- * The sync worker is the obvious home — it already walks every mailbox with these credentials
- * decrypted — and on the managed deployment it CANNOT do it, which was measured rather than
- * assumed: a dozen different submission hosts, every one answering `Connection timeout`, while an
- * IMAP dial to the same host on 993 completed in about 300 ms in the very next log line. That
- * platform blocks outbound submission ports.
- *
- * This host does not have that problem, and the proof is the product: every send dials SMTP from
- * here, and the connect-time probe that populates this column for a NEW mailbox is this host's too.
- * So the back-fill for existing mailboxes belongs on the same egress as the write that already
- * works. The worker's arm is kept for a self-hosted deployment whose egress is open.
- *
- * ── A SCHEDULED PASS, NOT A REQUEST PATH ────────────────────────────────────────────────────
- *
- * Nothing a person does waits on this. It is a bounded batch on a cron: a handful of mailboxes per
- * run, in a random order, each at most one SMTP login, and the number appears in the mailbox list
- * the compose form already reads. A route that dialled on demand would put a provider's TCP
- * handshake in front of a compose window, and a lazy dial inside `GET /mailboxes` would put one
- * per mailbox in front of every tab.
- *
- * ── AND THE PASS REMEMBERS THAT IT DIALLED, WHICH IS WHY THERE IS A COLUMN FOR IT ────────────
- *
- * `smtp_max_size_bytes IS NULL` cannot be the only filter, because a server that announces nothing
- * leaves it NULL for ever: such a mailbox was re-selected on every run, so a permanently silent
- * submission server cost a login a day, from this host, for the life of the account. Mail 0063
- * adds the two columns that end it — `smtp_size_probed_at` and `smtp_size_probe_code` — and the
- * selection below reads them as a backoff rather than as a terminal state. Nothing here ever gives
- * up: a silent server is asked again a month later, a refused one a week later, and the row goes
- * back to being due the moment its credentials change (the write is keyed to the credential stamp,
- * so a rotation leaves it unstamped) or the moment somebody re-enters a password, which writes the
- * column directly through the connect flow.
- *
- * THE STAMP IS THIS HOST'S ALONE. The sync host does not write it, deliberately: on the managed
- * deployment every dial from there fails on a blocked port, and a stamp from a host that cannot
- * reach submission would suppress the host that can — the back-fill would then converge on
- * "nothing is probeable" while the egress that works sat idle.
+ * The API host's half of the `SIZE` back-fill. `smtp_max_size_bytes` is the only ceiling left
+ * once bytes stop riding the send request, and nothing learned it for an already-connected
+ * mailbox. Here, not the sync host, measured: that platform blocks outbound submission ports;
+ * this host dials SMTP on every send. A scheduled pass: a bounded random batch per cron. The pass
+ * remembers that it dialled: `IS NULL` alone re-selects silent servers forever, so mail 0063's
+ * columns are a backoff, never terminal — due again when the backoff passes, the credentials
+ * change, or a password re-entry writes the column. The stamp is this host's alone: one from a
+ * host that cannot reach submission would suppress the one that can.
  */
 
 /** How many mailboxes one scheduled pass may probe. */
 export const SMTP_SIZE_BATCH = 8;
 
 /**
- * The bound on one pass, and it is about the INVOCATION rather than about politeness.
- *
- * This host runs under a 60-second ceiling, and each probe is a full connect + STARTTLS + AUTH
- * against somebody else's server on the probe timeouts. Eight of those, serially, against a set of
- * servers that may all be slow, can exceed the invocation — and an invocation killed mid-probe
- * records nothing for the mailboxes it had not reached yet, which is survivable only because an
- * unstamped row is still due and the next run selects it again. Eight is chosen so the common case
- * finishes in a
- * few seconds and the pathological case is still cut off by the deadline below rather than by the
- * platform.
+ * The bound on one pass, about the invocation rather than politeness: this host runs under a
+ * 60-second ceiling, and each probe is a full connect + STARTTLS + AUTH against somebody else's
+ * server. Eight of those, serially, against slow servers can exceed the invocation — and an
+ * invocation killed mid-probe records nothing for the mailboxes it had not reached, survivable
+ * only because an unstamped row is still due next run. Eight keeps the common case at a few
+ * seconds; the pathological case is cut off by the deadline below rather than by the platform.
  */
 export const SMTP_SIZE_DEADLINE_MS = 40_000;
 
@@ -100,30 +59,14 @@ interface CredMeta extends CredMetaAuth {
 export interface ProbeTarget {
   creds: SmtpSizeCreds;
   /**
-   * WHICH ROW the secret came from, and WHAT ABOUT IT the write is allowed to depend on.
-   *
-   * The transport is part of the guard, not decoration. Both rows are inserted with ONE timestamp
-   * by the env-credential bootstrap, so a predicate that accepted either transport at that instant
-   * would be satisfied by the UNROTATED imap row after the smtp row alone had been replaced — and
-   * the write it was guarding would go through against credentials it never probed.
-   *
-   * ── AND THE TWO BRANCHES GUARD ON DIFFERENT THINGS, BECAUSE ONE OF THEM MOVES ITS OWN ROW ──
-   *
-   * `stamp` is the row's `updated_at` as it stood before the dial, which is the right guard when
-   * the SECRET is the credential: a PATCH that installs a new password rewrites it.
-   *
-   * `meta` is the non-secret half — host, port, user, provider, tenant, the submission block — and
-   * it is the guard for an OAUTH row, because that row's `updated_at` is moved BY THE PROBE ITSELF.
-   * Measured on the first live pass: Microsoft returned a rotated refresh token, the token provider
-   * persisted it (which is `rotateMailboxOAuthSecret`, and it writes `secret_enc`, `key_version` and
-   * `updated_at` and nothing else), and the stamp guard then read its own side effect as somebody
-   * else's rotation and threw the measurement away. The pass reported `learned: 1` with the row
-   * still NULL and unstamped — the exact defect this whole slice exists to end, reintroduced by the
-   * guard that protects it.
-   *
-   * `meta` is the honest predicate there: what an announcement is ABOUT is the endpoint and the
-   * identity, and those live in `meta`. A reconnect to a different account or a re-dial that moves
-   * the submission host rewrites it; a token rotation does not.
+   * Which row the secret came from, and what about it the write may depend on. The transport is
+   * part of the guard: the env bootstrap inserts both rows with one timestamp, so a
+   * transport-blind predicate is satisfied by the unrotated imap row after the smtp row alone was
+   * replaced. The branches differ because one moves its own row: `stamp` is `updated_at` before
+   * the dial — right when the secret is the credential. `meta` is the non-secret half, the oauth
+   * guard: that row's `updated_at` is moved by the probe itself — a rotated refresh token made
+   * the guard read its own side effect as somebody else's rotation and discard the measurement.
+   * An announcement is about the endpoint and the identity.
    */
   credentialsTransport: "imap" | "smtp";
   credentialsGuard:
@@ -133,15 +76,13 @@ export interface ProbeTarget {
 
 /**
  * The SMTP coordinates this mailbox's send would use, decrypted — or `undefined` when there are
- * none to use.
- *
- * THE SAME RESOLUTION `makeSendAdapter` APPLIES, and it has to be: a probe that dialled a different
- * endpoint from the one the send will dial would record an announcement that is not about the
- * server the message goes to. The password branch prefers the dedicated `smtp` row and falls back
- * to the imap host and secret (the single-credential generic-IMAP convention); the oauth branch
- * returns the submission endpoint from the imap row's `meta.smtp` with NO static auth and the
- * token callback in `auth`, which `learnSmtpMaxSize` awaits into one access token and presents as
- * XOAUTH2 — the send path's own authentication, never the refresh token as a password.
+ * none. The same resolution `makeSendAdapter` applies, and it has to be: a probe that dialled a
+ * different endpoint from the one the send will dial records an announcement about the wrong
+ * server. The password branch prefers the dedicated `smtp` row and falls back to the imap host
+ * and secret; the oauth branch returns the submission endpoint from the imap row's `meta.smtp`
+ * with no static auth and the token callback in `auth`, which `learnSmtpMaxSize` awaits into one
+ * access token and presents as XOAUTH2 — the send path's own authentication, never the refresh
+ * token as a password.
  */
 async function smtpCredsFor(deps: ApiDeps, mailboxId: string): Promise<ProbeTarget | undefined> {
   const rows = await deps.db.select().from(mailboxCredentials)
@@ -150,35 +91,25 @@ async function smtpCredsFor(deps: ApiDeps, mailboxId: string): Promise<ProbeTarg
   if (!imapRow) return undefined;
   const imapMeta = (imapRow.meta ?? {}) as CredMeta;
 
-  // ── FAIL CLOSED ON THE AUTH TYPE, and the default branch is the whole point ────────────────
-  //
-  // This used to read `authType === "oauth2" ? … : password`, which means every OTHER value —
-  // a future scheme, a corrupt row, a typo — fell into the password branch, where the secret is
-  // decrypted and handed to `verifySmtpLogin` AS A PASSWORD. For an oauth-shaped row that secret
-  // is a refresh token, so the fall-through was a path from the credential store to somebody
-  // else's AUTH command. `buildImapAuth` throws on an unknown type for exactly this reason; this
-  // resolution must not be the one place that does not.
-  //
-  // So the accepted set is explicit: absent (`undefined`) or exactly `password` dials, `oauth2`
-  // produces coordinates with a token callback the rule then declines, and ANYTHING ELSE is not
-  // probed at all — `null` INCLUDED. A first pass at this wrote `!== undefined && !== null &&
-  // !== "password"`, which reads as "absent in either spelling", and that is wrong here: an
-  // untyped row and a row that stores JSON `null` are not the same claim, and an oauth-shaped row
-  // whose `authType` came back `null` would have had its refresh token decrypted and sent as a
-  // password — the exact leak this branch exists to close.
+  // Fail closed on the auth type; the default branch is the point. This used to read `authType
+  // === "oauth2" ? … : password`, so every other value — a future scheme, a corrupt row, a typo —
+  // fell into the password branch, where the secret is decrypted and handed to `verifySmtpLogin`
+  // as a password; for an oauth-shaped row that secret is a refresh token, a path from the
+  // credential store to somebody else's AUTH command. The accepted set is explicit: absent
+  // (`undefined`) or exactly `password` dials; `oauth2` produces coordinates with a token
+  // callback; anything else — `null` included — is not probed at all. A first pass wrote `!==
+  // undefined && !== null && !== "password"`, which reads as "absent in either spelling" and is
+  // wrong here: an oauth row whose `authType` came back `null` would have had its refresh token
+  // sent as a password — the exact leak this branch closes.
   const authType = imapMeta.authType;
   if (authType === "oauth2") {
-    // ── THE SECRET IS THE REFRESH TOKEN, AND IT IS DECRYPTED FOR THE TOKEN CALLBACK ─────────
-    //
-    // This used to pass the empty string here, which was harmless only because the rule then
-    // DECLINED to dial an oauth transport at all: the callback it built could never have fetched
-    // anything. Now that the rule dials XOAUTH2, the callback must be the real one — the same
-    // `deps.oauth.forMailbox(...)` factory `makeSendAdapter` binds, so the access-token cache, the
-    // client resolution and the rotated-token write are the SEND's, not a second copy.
-    //
-    // `buildImapAuth` still owns the branch. It THROWS for an oauth row this deployment cannot
-    // serve (a provider we do not speak, no token source wired), and that throw is caught by the
-    // caller as an unreadable credential — one mailbox unprobed, nothing logged from the provider.
+    // The secret is the refresh token, decrypted for the token callback. This used to pass the
+    // empty string, harmless only while the rule declined to dial oauth at all. Now that it dials
+    // XOAUTH2, the callback must be the real one — the same `deps.oauth.forMailbox(...)` factory
+    // `makeSendAdapter` binds, so the token cache, client resolution and rotated-token write are
+    // the send's, not a second copy. `buildImapAuth` still owns the branch: it throws for an
+    // oauth row this deployment cannot serve, and that throw is caught as an unreadable
+    // credential — one mailbox unprobed, nothing logged from the provider.
     const secret = await deps.keyProvider.decrypt(imapRow.secretEnc, imapRow.keyVersion);
     return {
       creds: {
@@ -233,18 +164,13 @@ async function smtpCredsFor(deps: ApiDeps, mailboxId: string): Promise<ProbeTarg
 export const SMTP_SIZE_RETRY_SILENT_MS = 30 * 24 * 60 * 60 * 1000;
 
 /**
- * HOW LONG A FAILED PROBE IS LEFT ALONE — shorter, because the cause is usually ours or the
- * account's rather than the server's.
- *
- * A refusal, an unreachable host, a token that could not be minted: each of those is a condition
- * somebody can fix, and the fix does not write this column. A week keeps a permanently broken
- * mailbox at about four logins a month (it was thirty) while still converging quickly once whatever
- * was wrong is repaired.
- *
- * The one case that needs no backoff at all is the common one: a person re-entering their password
- * re-dials SMTP inside the connect flow, which writes `smtp_max_size_bytes` directly. So the
- * ceiling after a repair is not gated on this interval — this interval only governs how often we
- * ask a server nobody has touched.
+ * How long a failed probe is left alone — shorter, because the cause is usually ours or the
+ * account's rather than the server's: a refusal, an unreachable host, a token that could not be
+ * minted are conditions somebody can fix, and the fix does not write this column. A week keeps a
+ * permanently broken mailbox at about four logins a month (it was thirty) while converging
+ * quickly once repaired. The common case needs no backoff at all: a person re-entering their
+ * password re-dials SMTP inside the connect flow, which writes `smtp_max_size_bytes` directly —
+ * this interval only governs how often we ask a server nobody has touched.
  */
 export const SMTP_SIZE_RETRY_FAILED_MS = 7 * 24 * 60 * 60 * 1000;
 
@@ -301,45 +227,14 @@ export interface SmtpSizePassResult {
 }
 
 /**
- * RECORD ONE ATTEMPT — the stamp, and the announcement when there is one, in a single statement.
- *
- * BUILT WITH `exists()` AND TYPED `eq`, not a hand-written `EXISTS (SELECT 1 …)` fragment, and that
- * is a correctness requirement rather than a preference: the credential stamp is a `Date`, and a
- * `Date` interpolated into a raw `sql` template reaches postgres-js unmapped, where the bind path
- * calls `Buffer.byteLength` on it and throws `ERR_INVALID_ARG_TYPE`. PGlite maps it silently, so
- * the in-process suites cannot see the difference. See the selection above for the full note.
- *
- * Returns whether the row was actually written, because "the probe happened" and "the row now
- * remembers it" are different facts and the second is the one that bounds the next pass.
- *
- * ── THE WRITE IS TIED TO THE CREDENTIALS THAT WERE PROBED ───────────────────────────────────
- *
- * `IS NULL` alone is not enough, and the case that breaks it is specific: a PATCH that installs NEW
- * credentials whose server advertises no usable `SIZE` deliberately writes `null` to
- * `smtp_max_size_bytes`. The row is therefore still NULL when this older, in-flight probe returns —
- * so an `IS NULL`-only predicate would store the PREVIOUS server's limit against the new
- * credentials, which is a ceiling for a server this mailbox no longer sends through.
- *
- * The credential row's `updated_at` as it stood BEFORE the dial closes it: a rotation moves that
- * stamp, so the update matches nothing, the newer measurement stands — AND the row stays unstamped,
- * which is what puts it back in the next pass's selection. That is the intended reading of a
- * rotation: the credentials changed, so what we learned about the old ones is not an answer about
- * this mailbox any more.
- *
- * THE TRANSPORT IS PART OF THE PREDICATE. `IN ('smtp','imap')` was not enough: the env bootstrap
- * writes both rows with one timestamp, so at that value the untouched imap row satisfies a
- * transport-blind check even after the smtp row alone has been rotated — and the guard would pass
- * in exactly the case it exists to catch.
- *
- * WHICH PROPERTY OF THE ROW is checked depends on the branch, and an OAUTH row is guarded on its
- * `meta` rather than its `updated_at` because the probe's own token refresh moves that timestamp —
- * measured live, with the pass reporting a learned announcement it then discarded. The argument is
- * written out at {@link ProbeTarget.credentialsGuard}; it is not a relaxation, it is the predicate
- * that names what the measurement actually depends on.
- *
- * `announced` is passed only for a learned outcome. A `null` here would MEAN something (the connect
- * flow writes it to say "this server states no ceiling"), so it is an absent property rather than an
- * explicit null: nothing in this pass may clear a number another writer put there.
+ * Record one attempt — the stamp, and the announcement when there is one, in one statement.
+ * `exists()` and typed `eq`, never a raw fragment: a `Date` in a raw `sql` template reaches
+ * postgres-js unmapped and throws; PGlite maps it silently. Returns whether the row was written.
+ * The write is tied to the credentials probed — `IS NULL` alone breaks when a PATCH installs new
+ * credentials whose server advertises no `SIZE`: the older in-flight probe's limit would land
+ * against credentials it never probed. The transport is part of the predicate; an oauth row is
+ * guarded on `meta` ({@link ProbeTarget.credentialsGuard}). `announced` only for a learned
+ * outcome: nothing here may clear a number another writer put.
  */
 export async function stampProbe(
   deps: ApiDeps,
@@ -367,38 +262,16 @@ export async function stampProbe(
               // `jsonb = jsonb`, which is key-order-insensitive and so survives a round trip
               // through the driver. The captured value came out of this very column.
               : eq(mailboxCredentials.meta, target.credentialsGuard.meta),
-            // ── AND FOR ONE CODE, THE STAMP TOO ─────────────────────────────────────────────
-            //
-            // `token_unavailable` is the only outcome that is a statement ABOUT THE CREDENTIAL
-            // rather than about the server: no token could be minted from the refresh token this
-            // pass read. A CONCURRENT rotation — the sync host or a send refreshing the same
-            // mailbox — is a plausible cause of exactly that, because a rotated refresh token
-            // invalidates the one already read into this closure. Stamping then backs the mailbox
-            // off for a week over a token that has since been replaced, and the replacement may
-            // work perfectly.
-            //
-            // Every OTHER outcome followed a SUCCESSFUL mint, which proves the credential this pass
-            // held was live; whatever the server then did (announced nothing, refused the AUTH,
-            // never answered) is a fact about the server and earns its stamp even though this
-            // probe's own refresh has since moved the row. That asymmetry is the whole point: it
-            // keeps the common Microsoft case — a tenant with SMTP AUTH disabled — bounded to one
-            // login a week instead of one a day. And there is no own-rotation to accommodate here:
-            // a rotation only happens inside a mint that SUCCEEDED, which is not this code.
-            //
-            // `updated_at` AND NOT `secret_enc`, which is a correction rather than a preference:
-            // both move under a rotation, but a KEK REWRAP re-encrypts the same plaintext and
-            // writes `secret_enc` + `key_version` while deliberately leaving `updated_at` alone
-            // (`rewrapOneRow`, and its own CAS is on the ciphertext for that reason). Keying on the
-            // ciphertext would therefore read a pure re-encryption as a credential change and drop
-            // the stamp, costing a probe slot for something that changed no credential at all.
-            //
-            // WHAT THIS STILL DOES NOT CLOSE, named rather than left to be discovered: the commit
-            // ORDER. If the concurrent rotation commits after this UPDATE's snapshot, the predicate
-            // passes and the stamp lands anyway, so the replacement token waits out one backoff
-            // interval. Closing that needs a logical revision on the credential row — a migration,
-            // and a new obligation for every writer of a path that runs on every send — to buy the
-            // difference between a millisecond-wide race and a seconds-wide one, on a value whose
-            // absence has a strict fallback. Not worth it; recorded so the trade is visible.
+            // And for one code, the stamp too. `token_unavailable` is the only outcome about the
+            // credential rather than the server: no token could be minted from the refresh token
+            // this pass read, and a concurrent rotation is a plausible cause — stamping would
+            // back the mailbox off a week over a token since replaced. Every other outcome
+            // followed a successful mint, proving the credential live; whatever the server then
+            // did earns its stamp — the asymmetry keeps the common case (SMTP AUTH disabled) at
+            // one login a week. `updated_at`, not `secret_enc`: a KEK rewrap re-encrypts the same
+            // plaintext and leaves `updated_at` alone. Not closed, named: commit order — a
+            // rotation committing after this UPDATE's snapshot lands the stamp and the
+            // replacement waits one backoff; not worth a logical revision for a millisecond race.
             ...(target.credentialsGuard.kind === "meta" && code === "token_unavailable"
               ? [eq(mailboxCredentials.updatedAt, target.credentialsGuard.updatedAt)]
               : []),
@@ -413,14 +286,10 @@ export async function stampProbe(
 
 /**
  * One scheduled pass: probe up to {@link SMTP_SIZE_BATCH} mailboxes that have never announced a
- * `SIZE`, and record what each server says.
- *
- * DISABLED mailboxes are excluded. A disabled row cannot send, so its ceiling answers no question
- * anybody is asking, and dialling it would spend a login on a mailbox whose credentials may
- * since have been retired.
- *
- * The `attempted` set is per PASS rather than per process, because a serverless invocation IS the
- * process: carrying it across would need state this host does not keep. What stops a re-dial ACROSS
+ * `SIZE`, and record what each server says. Disabled mailboxes are excluded: a disabled row
+ * cannot send, so its ceiling answers no question, and dialling it would spend a login on a
+ * mailbox whose credentials may since have been retired. The `attempted` set is per pass rather
+ * than per process, because a serverless invocation IS the process; what stops a re-dial across
  * invocations is the durable stamp (mail 0063) the selection reads and the loop writes.
  */
 export async function learnMissingSmtpSizes(
@@ -434,53 +303,16 @@ export async function learnMissingSmtpSizes(
   // other. The per-mailbox deadline check below reads the clock again, which is the point of it.
   const startedAt = now();
   const started = startedAt.getTime();
-  // ── THE SELECTION HAS TO CONVERGE, AND `IS NULL` ALONE DOES NOT ────────────────────────────
-  //
-  // A row stays NULL whenever the answer is "nothing to record": a server that advertises no
-  // `SIZE`, a login the server refuses, a mailbox with nothing to dial. A selection keyed on
-  // `IS NULL` alone therefore re-selects exactly those rows every pass, for ever — and once as
-  // many of them exist as the batch holds, no other mailbox is ever reached again. The rows that
-  // CAN be learned starve behind the rows that cannot, and the ones that cannot get dialled on
-  // every run of the schedule.
-  //
-  // Three things fix that, and only the third is durable:
-  //
-  //  · THE ORDER IS RANDOM, not oldest-first. Nothing about this pass wants a stable order — it is
-  //    a back-fill, not a queue — and a rotation cannot starve a subset the way a fixed order can:
-  //    every eligible row is reached in expectation, whatever sticks.
-  //  · THE BATCH AND THE DEADLINE bound one invocation.
-  //  · THE ATTEMPT STAMP (mail 0063) bounds the SEQUENCE of invocations, which is the only one of
-  //    the three that a permanently silent server cannot outlast. A stamped row is not due again
-  //    until its backoff has passed — {@link SMTP_SIZE_RETRY_SILENT_MS} for a server that answered
-  //    and named nothing, {@link SMTP_SIZE_RETRY_FAILED_MS} for everything else — so a mailbox
-  //    nobody can learn costs at most a login a month instead of one a day, and the finite backlog
-  //    of learnable rows drains behind it either way.
-  //
-  // OAUTH IS NO LONGER EXCLUDED. It used to be, in this very predicate, because the rule declined
-  // to dial a transport it had no password for and selecting such a row only ever spent a slot.
-  // Now that the rule presents XOAUTH2 with the token the send path mints, an oauth mailbox is
-  // exactly as probeable as any other — and it was the one class of mailbox that could never learn
-  // its ceiling from any host at all.
-  //
-  // `COALESCE` on the code, not `= 'silent'` bare: a stamped row whose code was somehow NULL would
-  // otherwise satisfy neither arm and never be due again, turning a backoff into the terminal state
-  // this design refuses to have.
-  //
-  // ── AND THE TIMESTAMPS GO THROUGH `lte`, NEVER INTO A `sql` TEMPLATE ────────────────────────
-  //
-  // This is not style. A value interpolated into a raw `sql` fragment has no COLUMN to be mapped
-  // by, so drizzle hands the JS object to the driver as-is — and postgres-js's bind path calls
-  // `Buffer.byteLength` on it, which for a `Date` throws
-  // `TypeError [ERR_INVALID_ARG_TYPE]: The "string" argument must be … Received an instance of
-  // Date`. The whole pass then 503s before it dials anything.
-  //
-  // PGLITE ACCEPTS THE DATE HAPPILY, so every in-process test is green and the failure appears
-  // only against real Postgres — which is exactly where it appeared: the first production run of
-  // this selection answered `smtp_size_pass_failed`. `lte`/`eq` on a typed column route the value
-  // through that column's `mapToDriverValue`, which is what makes it an ISO string on the wire.
-  // The same trap took the credential predicate on the write — see {@link stampProbe} — and it was
-  // ALREADY THERE before this slice, latent, because the only statement that carried a `Date` was
-  // the one that runs when a server answers with a usable ceiling.
+  // The selection has to converge, and `IS NULL` alone does not: a row stays NULL whenever the
+  // answer is "nothing to record", so it re-selects those rows forever — once as many exist as
+  // the batch holds, learnable rows starve behind unlearnable ones. Three fixes, only the third
+  // durable: random order (a back-fill, not a queue); the batch and deadline bound one
+  // invocation; the attempt stamp (mail 0063) bounds the sequence — a stamped row is not due
+  // until its backoff passes. Oauth is no longer excluded: the rule now presents XOAUTH2 with the
+  // token the send path mints. `COALESCE` on the code, not bare `= 'silent'`: a stamped row with
+  // a NULL code would satisfy neither arm and never be due again. Timestamps go through `lte`,
+  // never a `sql` template: a raw `Date` has no column to map it, postgres-js throws, PGlite
+  // accepts — the failure appears only against real Postgres, where it appeared.
   const silentCutoff = new Date(started - SMTP_SIZE_RETRY_SILENT_MS);
   const failedCutoff = new Date(started - SMTP_SIZE_RETRY_FAILED_MS);
   const rows = await deps.db.select({ id: mailboxes.id })

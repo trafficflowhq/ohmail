@@ -8,18 +8,14 @@ import type { ApiDeps } from "../deps.js";
 import { mailbox, sync } from "./shared.js";
 
 /**
- * The EntityType values a `?types=` CSV may name; unknown tokens are dropped.
- *
- * `"tag"` HAS TO BE HERE, and its absence was invisible in exactly the way this filter makes
- * things invisible: an unknown token is dropped rather than refused, so a caller asking for
- * `types=message,tag` was silently answered with messages alone and had no way to tell that from
- * an account with no tags. A client draining without `?types=` never noticed, because no filter
- * is applied at all in that case — which is why every browser tab was fine and the one caller
- * that DOES name its types (the desktop's Cloud mirror) drained a feed with no vocabulary for a
- * tag, and rendered an empty rail over an account that had several.
- *
- * Kept as a literal set rather than derived from `EntityType`: a union is erased at runtime, and
- * the point of the set is to reject a token the reader has no materializer for.
+ * The EntityType values a `?types=` CSV may name; unknown tokens are dropped. `"tag"` has to be
+ * here, and its absence was invisible in exactly the way this filter makes things invisible: an
+ * unknown token is dropped rather than refused, so a caller asking for `types=message,tag` was
+ * silently answered with messages alone — every browser tab was fine (no filter without
+ * `?types=`), and the one caller that names its types (the desktop's Cloud mirror) drained a feed
+ * with no vocabulary for a tag and rendered an empty rail over an account that had several. A
+ * literal set rather than derived from `EntityType`: a union is erased at runtime, and the point
+ * is to reject a token the reader has no materializer for.
  */
 const VALID_TYPES = new Set<EntityType>([
   "message", "thread", "routing_decision", "approval",
@@ -48,31 +44,14 @@ function parseTypes(raw: string | null): EntityType[] | undefined {
 export const DEVICE_SYNC_STAMP_MIN_GAP_MS = 5 * 60_000;
 
 /**
- * Stamp `devices.last_synced_at` (mail 0064) for the session's device AND
- * `sessions.last_synced_at` (mail 0070) for the session itself — the "last time this mirror
- * was genuinely current" that `device_sync_stale` / `session_sync_stale` read.
- *
- * Called ONLY when the response is the EMPTY TAIL — no changes, `hasMore: false`, the cursor
- * handed back unchanged. That shape is the client's own proof of a COMMITTED horizon: both
- * mirrors write their cursor only after the page it names is committed (the sidecar per page
- * transaction, the browser engine in the same flush as the rows), so a client PRESENTING the
- * horizon cursor has durably applied everything below it. The weaker form — stamping any
- * `hasMore: false` answer — stamped the final page as it was HANDED OVER, before the client
- * applied it; a client that keeps fetching that page and dying before its commit would have
- * looked current forever. A device paging a backlog (or stuck re-bootstrapping it — the
- * measured failure this column exists for) never presents the horizon and never stamps.
- *
- * TWO STAMPS, because the two alerts watch two populations. A NAMED device (a pairing redeem,
- * the desktop's native claim) has a device row and the device alert owns it. But most real
- * installs are DEVICELESS on purpose (mail 0061: a browser-door desktop, a plain web tab hold
- * `device_id IS NULL` sessions) — the incident this line exists for was exactly such a desktop,
- * wedged for days while the device alert watched a population it was never in. So the SESSION
- * is stamped for every authenticated caller; the device stamp additionally lands when the
- * session names one. Same throttle on both, carried in each UPDATE's own predicate.
- *
- * FAILURE POSTURE: swallowed, deliberately, and the direction is fail-LOUD for the alert —
- * a stamp that stops landing lets `last_synced_at` age, which makes the staleness alert FIRE,
- * never sleep. The read this rides on must not become 500s over bookkeeping.
+ * Stamp `devices.last_synced_at` (mail 0064) and `sessions.last_synced_at` (mail 0070) — what the
+ * staleness alerts read. Only on the empty tail (no changes, `hasMore: false`, cursor unchanged):
+ * both mirrors write their cursor only after the page commits, so a client presenting the horizon
+ * cursor has durably applied everything below it — stamping any `hasMore: false` stamped the
+ * final page before the client applied it. Two stamps, two watched populations: most installs are
+ * deviceless on purpose (mail 0061), and the incident this exists for was such a desktop, wedged
+ * for days while the device alert watched a population it was never in. Swallowed on failure,
+ * fail-loud for the alert: a stamp that stops landing makes the alert fire, never sleep.
  */
 async function stampDeviceSynced(deps: ApiDeps): Promise<void> {
   const sessionId = deps.session?.sessionId;
@@ -126,20 +105,13 @@ export const syncRoutes: Route[] = [
     },
   },
   /**
-   * The bootstrap reader. `SyncService.getSnapshot` documents the shape and the
-   * consistency argument; this handler does nothing but parse two query parameters.
-   *
-   * `cost: "read"` for the same reason `GET /sync` is: it selects rows already stored for the
-   * caller's own account, writes nothing, opens no socket and calls no model. It reads MORE of
-   * them than most routes do — that is what a bootstrap is — and `cost` classifies what a
-   * handler CAUSES, not how much of the caller's own data it returns. `GET /consent/seed` is
-   * already the precedent for that reading (see the census in `spend-gate.test.ts`).
-   *
-   * The account comes from `serviceContext(deps, req)`, i.e. the session, exactly as `/sync`
-   * does. There is no account parameter to get wrong.
-   *
-   * Two segments, so it can never shadow or be shadowed by `/sync` — the router matches on
-   * segment count first.
+   * The bootstrap reader. `SyncService.getSnapshot` documents the shape and the consistency
+   * argument; this handler parses two query parameters. `cost: "read"` for `GET /sync`'s reason:
+   * rows already stored for the caller's own account, no socket, no model — it reads more of them
+   * than most routes, and `cost` classifies what a handler causes, not how much of the caller's
+   * own data returns (`GET /consent/seed` is the precedent, per the spend census). The account
+   * comes from the session; there is no account parameter to get wrong. Two segments, so it can
+   * never shadow `/sync` — the router matches on segment count first.
    */
   {
     method: "GET",
@@ -160,28 +132,14 @@ export const syncRoutes: Route[] = [
     },
   },
   /**
-   * "PULL NEW MAIL" — ring the worker's doorbell for the caller's mailboxes, now.
-   *
-   * The client-side pull/refresh gestures drain the MIRROR, which answers "show me what the
-   * worker already has" and cannot make the worker look at the IMAP server any sooner. This is
-   * the missing half: it stamps `mailboxes.sync_requested_at` for every connected mailbox of the
-   * session's account (`MailboxService.requestPull` — the rate limit lives in that UPDATE's own
-   * predicate), the worker's ~3 s kick scan marks those runtimes woken, and the cycle serves them
-   * one ordinary bounded batch out of turn. Arrivals then reach the client through the wake
-   * channel exactly as any other change does.
-   *
-   * `cost: "work"`, the resync route's class: the POST causes worker-side IMAP work. It is far
-   * LIGHTER than a resync — one bounded batch against live cursors, never a re-walk — but "an
-   * unverified account must not be able to make this service do paid work" is a boundary, not a
-   * tariff, and this is on the paid side of it.
-   *
-   * The answer carries each mailbox's OWN effective request instant (`mailboxes[]`), at the
-   * DATABASE's clock — the client's honest-settle baseline: a mailbox whose `lastSyncAt` (also
-   * written with SQL `now()`, on woken visits) moves past its own baseline has demonstrably been
-   * scanned since the pull, so a spinner settles on the scan itself rather than on a timer or on
-   * the POST round trip. Per mailbox and single-clock by review finding (2026-08-26 round 1):
-   * one scalar baseline overshoots a mailbox whose young standing request predates this call,
-   * and any host-clock comparison inherits that host's skew.
+   * "Pull new mail" — ring the worker's doorbell now. The client pull gestures drain the mirror,
+   * which cannot make the worker look at IMAP sooner; this stamps `sync_requested_at` for every
+   * connected mailbox (the rate limit lives in that UPDATE's predicate), the worker's ~3 s kick
+   * scan wakes those runtimes, and the cycle serves one bounded batch out of turn. `cost:
+   * "work"`: worker-side IMAP work — lighter than a resync, but the boundary is not a tariff. The
+   * answer carries each mailbox's own effective request instant at the database's clock — the
+   * honest-settle baseline. Per mailbox and single-clock: one scalar overshoots a mailbox with a
+   * young standing request, and host-clock comparison inherits skew.
    */
   {
     method: "POST",

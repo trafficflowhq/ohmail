@@ -4,20 +4,14 @@ import { clientKind, json, noContent, readBody } from "./shared.js";
 import { auth, enrollmentResult, webSession } from "./shared-cloud.js";
 
 /**
- * §2.4 — TOTP (fallback 2FA).
- *
- * `enroll` + `activate` are `enrollmentOk` — the TOTP arm of the enrollment
- * surface — and `activate` is where an enrollment session is EXCHANGED for a full one
- * when TOTP is the first factor. Both are also step-up-gated FOR FULL SESSIONS inside
- * `AuthService` (adding a factor must be no easier than removing one); the flag cannot
- * express that, because an enrollment session must pass and can never satisfy step-up.
- *
- * `DELETE /auth/2fa/totp` is NOT `enrollmentOk`. Factor REMOVAL is not part of the
- * "2FA-enrollment + session + logout" surface the scope gate exists to open, and it
- * carried the flag only because it shares a path prefix. It was unreachable in practice
- * (double-gated by `withStepUp` and `AuthService.requireStepUp`), but that made a
- * DESTRUCTIVE route's safety rest entirely on the step-up gate rather than on the scope
- * gate built for exactly this — one relaxed step-up away from reachable.
+ * TOTP (fallback 2FA). `enroll` + `activate` are `enrollmentOk` — the TOTP arm of the enrollment
+ * surface — and `activate` is where an enrollment session is exchanged for a full one when TOTP
+ * is the first factor. Both are also step-up-gated for full sessions inside `AuthService` (adding
+ * a factor must be no easier than removing one); the flag cannot express that, because an
+ * enrollment session must pass and can never satisfy step-up. `DELETE /auth/2fa/totp` is not
+ * `enrollmentOk`: factor removal is not part of the surface the scope gate exists to open, and it
+ * carried the flag only because it shares a path prefix — leaving a destructive route's safety
+ * resting entirely on the step-up gate, one relaxed gate away from reachable.
  */
 export const totpRoutes: Route[] = [
   {

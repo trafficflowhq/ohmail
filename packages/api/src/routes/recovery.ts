@@ -4,16 +4,12 @@ import { json, readBody } from "./shared.js";
 import { auth, webSession } from "./shared-cloud.js";
 
 /**
- * §2.5 — recovery codes.
- *
- * Generation is part of the `/auth/2fa/*` enrollment surface, so it carries
- * `enrollmentOk` — but it is ALSO `stepUp`, and the two gates are independent by
- * design: an enrollment session has no `lastTwofaAt`, so `withStepUp` (and
- * `AuthService.requireStepUp`) still 403 it. Recovery codes therefore become
- * reachable only once the first factor has been enrolled and the enrollment session
- * has been exchanged for a full one whose `lastTwofaAt` is fresh — which is exactly
- * the onboarding order (passkey → codes), enforced structurally rather than by
- * client discipline.
+ * Recovery codes. Generation is part of the `/auth/2fa/*` enrollment surface, so it carries
+ * `enrollmentOk` — but it is also `stepUp`, and the two gates are independent by design: an
+ * enrollment session has no `lastTwofaAt`, so `withStepUp` (and `AuthService.requireStepUp`)
+ * still 403 it. Recovery codes therefore become reachable only once the first factor is enrolled
+ * and the enrollment session exchanged for a full one with a fresh `lastTwofaAt` — exactly the
+ * onboarding order (passkey → codes), enforced structurally rather than by client discipline.
  */
 export const recoveryRoutes: Route[] = [
   {

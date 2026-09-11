@@ -4,18 +4,14 @@ import { clientKind, json, readBody } from "./shared.js";
 import { auth, enrollmentResult, webSession } from "./shared-cloud.js";
 
 /**
- * §2.3 — WebAuthn / passkeys (primary 2FA).
- *
- * The two REGISTRATION legs are `enrollmentOk`: they are the enrollment
- * surface an enrollment-scoped session exists to reach. `register/verify` is where
- * the first factor lands, so it is also where that session is EXCHANGED for a full
- * one — `enrollmentResult` moves the new tokens into cookies (web) or leaves them in
- * the body (bearer).
- *
- * They carry no `stepUp` flag because an enrollment session must pass and can never
- * satisfy step-up; the conditional rule ("enrollment scope may enroll its first
- * factor; a FULL session needs a recent 2FA") is enforced in
- * `AuthService.requireEnrollmentOrStepUp`, which reads the scope from the session row.
+ * WebAuthn / passkeys (primary 2FA). The two registration legs are `enrollmentOk`: they are the
+ * enrollment surface an enrollment-scoped session exists to reach, and `register/verify` is where
+ * the first factor lands — so also where that session is exchanged for a full one
+ * (`enrollmentResult` moves the new tokens into cookies for web or leaves them in the body for
+ * bearer). They carry no `stepUp` flag because an enrollment session must pass and can never
+ * satisfy step-up; the conditional rule — enrollment scope may enroll its first factor, a full
+ * session needs a recent 2FA — is enforced in `AuthService.requireEnrollmentOrStepUp`, which
+ * reads the scope from the session row.
  */
 export const webauthnRoutes: Route[] = [
   {

@@ -13,43 +13,14 @@ import type { Route } from "../router.js";
 import { search } from "./shared.js";
 
 /**
- * §5.7 — hybrid search. `GET /search?q=…` runs the lexical+fuzzy RRF ranking
- * (SearchService) and returns `{ items, facets, total }`, all accountId-scoped in
- * the service. Facet filters arrive as query params:
- *   folder, sender, unread, hasAttachments, dateFrom, dateTo.
- * An empty/absent `q` yields an empty result (no error). Session-protected (the
- * default pipeline populates `deps.session`; no `public` flag).
- *
- * ── `sort` IS VALIDATED, NOT COERCED ──────────────────────────────────────────────────────
- *
- * `?sort=` takes one of {@link SEARCH_SORTS} and an unknown value is a `400`, while an ABSENT
- * one means `relevance` and is the endpoint's whole prior behaviour. The two are deliberately
- * different: falling back to relevance on a typo'd or stale value would hand back a
- * confidently-ordered list that is not in the order the caller asked for, with nothing on the
- * wire to say so. A client that sends `sort=newest` should learn that today, from a status
- * code — not later, from a user who trusted the list.
- *
- * Every other param on this route is still lenient (`boolParam` drops what it cannot read) and
- * that stays: those NARROW a result set, so a dropped one returns a superset the caller can see
- * for itself. An order cannot be checked by looking at it.
- *
- * ── `?address=` IS A DIFFERENT QUESTION ON THE SAME PATH ───────────────────────────────────
- *
- * `GET /search?address=<addr>&direction=from` answers "every message from this address",
- * newest first, by `lower(from_address)` EQUALITY. It is handled BEFORE `q` is read, and it is
- * not a filter on the text search: `SearchService.search` requires words and answers an empty
- * result without them, so `?address=x` with no `q` would otherwise be a silent empty page —
- * the one shape a caller cannot debug.
- *
- * `direction` is VALIDATED AND NOT COERCED, on `sort`'s rule one paragraph up and for a
- * sharper reason. Two of the three directions cannot be served from an index today (the
- * recipients live in two JSONB columns with no index on either — see
- * `SearchService.searchByAddress`), so the service refuses them **by name** with
- * `search_direction_unsupported`. Defaulting a missing or unknown `direction` to `from` would
- * answer `direction=to` — "mail I sent to this person" — with mail they sent to ME, which is
- * not a partial answer but a different one; and answering it with an empty list would read as
- * "you have never written to them". Absent is refused for the same reason: there is no
- * direction this door can safely assume.
+ * Hybrid search: lexical+fuzzy RRF, account-scoped; facets ride query params; an empty `q` yields
+ * an empty result. `sort` is validated, not coerced: unknown is a 400, absent means `relevance` —
+ * a fallback on a typo hands back a confidently-ordered list not in the order asked (the other
+ * params stay lenient because they narrow: a dropped one returns a visible superset). `?address=`
+ * is a different question on the same path, handled before `q`. `direction` is validated for a
+ * sharper reason: two of the three directions cannot be served from an index today, so the
+ * service refuses them by name — defaulting to `from` would answer "mail I sent" with mail they
+ * sent to me: a different answer, not a partial one.
  */
 
 /** "true"/"1" → true, "false"/"0" → false, else undefined (filter omitted). */

@@ -130,17 +130,15 @@ export const selfHostRoutes: Route[] = [
   ...mailboxDeviceOAuthRoutes,
   ...attachmentStagingRoutes,
   ...accountRoutes,
-  /* `consentRoutes` USED TO BE SPREAD HERE, AND SINCE mail 0083 THAT WAS A DOUBLE MOUNT.
-   *
+  /**
+   * `consentRoutes` used to be spread here, and since mail 0083 that was a double mount:
    * `localRoutes` gained the consent group when the screening window was extended to the
-   * standalone door, and this table spreads `localRoutes` whole — so all six consent routes were
-   * mounted twice in the self-host table. The router matches the first, so nothing behaved
-   * differently and nothing failed; what it broke is every census that counts this table, and the
-   * hello census caught it exactly as it was built to.
-   *
-   * Removed rather than made conditional: the self-host door serves consent because it serves
-   * `localRoutes`, and stating that once is what keeps the groups disjoint. A future table that
-   * wants consent WITHOUT the local group spreads it explicitly, and the census will say so.
+   * standalone door, and this table spreads `localRoutes` whole. The router matches the first, so
+   * nothing behaved differently; what it broke is every census that counts this table, and the
+   * hello census caught it exactly as built. Removed rather than made conditional: the self-host
+   * door serves consent because it serves `localRoutes`, and stating that once keeps the groups
+   * disjoint. A future table wanting consent without the local group spreads it explicitly, and
+   * the census will say so.
    */
   ...aiSettingsRoutes,
   ...proposalsRoutes,

@@ -256,17 +256,13 @@ export function workflows(deps: ApiDeps): WorkflowsService {
 }
 
 /**
- * The injected DraftPort (deployment-configured Anthropic client, or a test mock).
- *
- * ABSENT is a deployment fact, not a fault: a preview, a local run and a rules-only host all
- * legitimately have no `ANTHROPIC_API_KEY`, so this is `503 drafter_unconfigured` in the same
- * grammar as {@link waitlistSvc} above — NOT the `500 internal` it used to be, which logged a
- * healthy host as failing and told the client nothing it could render. `retryable: false`
- * because only an operator can clear it (see `errorResponse`).
- *
- * The code is shared with `WorkflowsService.enqueueRun`'s enqueue-time refusal ON PURPOSE.
- * Both mean exactly "this deployment has no drafter", and a client that learns to render
- * `drafter_unconfigured` must not have to learn it twice.
+ * The injected DraftPort (deployment-configured Anthropic client, or a test mock). Absent is a
+ * deployment fact, not a fault: a preview, a local run and a rules-only host all legitimately
+ * have no `ANTHROPIC_API_KEY`, so this is 503 `drafter_unconfigured` — not the `500 internal` it
+ * used to be, which logged a healthy host as failing and told the client nothing it could render.
+ * `retryable: false` because only an operator can clear it. The code is shared with
+ * `WorkflowsService.enqueueRun`'s enqueue-time refusal on purpose: both mean exactly "this
+ * deployment has no drafter", and a client that learns to render it must not learn it twice.
  */
 export function drafter(deps: ApiDeps): DraftPort {
   const port = deps.services?.drafter;
@@ -317,17 +313,13 @@ export function noContent(cookies: string[] = []): Response {
 }
 
 /**
- * IS THIS HOST A COOKIE SURFACE? One decision, consulted everywhere.
- *
- * `ApiDeps.allowCookieAuth` used to gate one thing: `readSessionToken`'s reading of
- * `tf_session`. That made "bearer-only" true of the SESSION cookie and of nothing else —
- * `POST /auth/refresh` still read `tf_refresh` straight off the header on any host, and
- * every public auth completion still ANSWERED with `Set-Cookie`. A bearer-only host was
- * therefore bearer-only because browsers never point at it, not because it refuses.
- *
- * So the flag now gates cookie INGRESS and cookie EGRESS alike: on a host that does not
- * accept cookies, no `tf_*` value is read and none is written. A native client is
- * unaffected — it gets the tokens in the body, which is the only place it could use them.
+ * Is this host a cookie surface? One decision, consulted everywhere. `ApiDeps.allowCookieAuth`
+ * used to gate one thing — `readSessionToken`'s reading of `tf_session` — which made
+ * "bearer-only" true of the session cookie and nothing else: `POST /auth/refresh` still read
+ * `tf_refresh` off the header on any host, and every public auth completion still answered with
+ * `Set-Cookie`. The flag now gates cookie ingress and egress alike: on a host that does not
+ * accept cookies, no `tf_*` value is read and none is written. A native client is unaffected — it
+ * gets the tokens in the body, the only place it could use them.
  */
 export function cookieSurface(deps: ApiDeps): boolean {
   return deps.allowCookieAuth !== false;

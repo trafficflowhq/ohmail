@@ -15,50 +15,14 @@ import { IMAP_DOOR_DEADLINE_MS, withinDoorBudget } from "./imap-door.js";
 import type { ApiDeps } from "./deps.js";
 
 /**
- * ═══ THE TRASH WINDOW — a live, UN-MIRRORED view of the provider's own \Trash ════════════════
- *
- * The Trash view lists what ohmail deleted: `folder_state.desired_folder` = the mailbox's Trash
- * path, ordered by the instant of the press. Mail the person deleted in Apple Mail, in Gmail's
- * web client or on their phone is not in it and could not be — `imap-types.ts`'s reading rule
- * gives the provider's Trash no cursor, so the mirror does not know it is there — and the view's
- * foot line said so rather than pretending otherwise.
- *
- * This is the other population, read the way Junk already is. The DEFINING property is the same
- * and it is the reason the shape was copied rather than improved on: **Trash never enters
- * `messages` or any client mirror.** Deleted mail is not filing, and putting it into somebody's
- * history and their search results would be inventing a decision rather than reading one — the
- * argument `imap-types.ts` makes for excluding the folder from the SYNC, unchanged. Every read
- * here writes nothing anywhere, and `trash-window.test.ts` counts the tables to keep it that way.
- *
- * ── READ-ONLY, WITH NO VERB AT ALL ───────────────────────────────────────────────────────────
- *
- * The Junk window has a rescue, because a spam verdict is the user's own and reversing it belongs
- * to them. This window has NOTHING: the restore verb that exists (`POST /messages/:id/restore`)
- * puts back a message ohmail itself deleted, which is a mirror row with a `trashed_from` origin
- * to aim at. A message the provider's Trash holds and the mirror has never seen has no origin
- * recorded anywhere, so "put it back" has no destination — it would be ohmail choosing a folder
- * for somebody else's mail. That is a product decision and it is not this module's to make; the
- * window shows the mail and names where it is.
- *
- * ── WHY THE API DIALS DIRECTLY INSTEAD OF QUEUEING ON THE WORKER ─────────────────────────────
- *
- * The architecture rule draws its line at applying ORGANIZATION: moves defer to the worker via
- * desired state so a serverless function can never leave a mailbox half-moved, while on-demand
- * reads that store nothing already open a short-lived connection. A Trash LIST/BODY read is
- * exactly that shape, so the reads go through {@link withinDoorBudget} — the same
- * admission-capped, budget-counted door every other API dial uses, and the reason this module
- * owns no dialling code of its own — and the connection is closed before the response leaves.
- * The window serves only mailboxes whose `status` is not `disabled`:
- * a stood-down mailbox is another organizer's, and this module never dials one Cloud does not
- * serve.
- *
- * ── EVERYTHING IS EPOCH-SCOPED, because \Trash is a folder providers PURGE ───────────────────
- *
- * A UID names a message only within one UIDVALIDITY epoch, and a provider empties and recreates
- * Trash on its own schedule — more aggressively than Junk, since that is what Trash is for. So
- * the list carries each row's epoch, the body read REQUIRES the row's epoch and answers 410 on a
- * mismatch rather than serving whatever message now wears the number, and a page cursor whose
- * epoch no longer matches is reported `reset` rather than silently continued.
+ * The Trash window — a live, un-mirrored view of the provider's own \Trash: the other population
+ * (mail deleted in another client), read the way Junk is. The defining property is the same:
+ * Trash never enters `messages` or any client mirror — deleted mail into somebody's history would
+ * invent a decision rather than read one. Every read writes nothing; `trash-window.test.ts`
+ * counts the tables. Read-only with no verb: the restore verb that exists aims at a
+ * `trashed_from` origin — a message the mirror never held has none, so "put it back" has no
+ * destination. Reads go through {@link withinDoorBudget}, non-`disabled` mailboxes only.
+ * Epoch-scoped: 410 on a body-read mismatch; a stale-epoch cursor reports `reset`.
  */
 
 /** The trash body read's transfer ceiling — a bounded window never pulls a 90 MB attachment. */
@@ -261,16 +225,14 @@ async function attributeOrigin(
 }
 
 /**
- * A UIDVALIDITY that arrived over the wire is only usable if it is a REAL epoch — a positive
- * integer with no leading zero, no sign, no exponent, no whitespace, inside the protocol's
- * unsigned 32-bit range (RFC 3501 §2.3.1.1).
- *
- * `"0"` is refused for the reason the Junk window refuses it: the adapter's epoch guard treats
- * zero as "this locator never claimed an epoch" — correct for the worker's internally-minted
- * cold-drain sentinels, wrong for a number a request chose, because it would switch the guard off
- * for that caller. Not `Number(v) > 0`: that accepts `"1e9"`, `" 7 "`, `"0x7"` and `"Infinity"`,
- * none of which is an epoch, and the comparison downstream is a STRING one against the server's
- * decimal digits — so such a value would fail somewhere less honest than here.
+ * A UIDVALIDITY that arrived over the wire is only usable if it is a real epoch — a positive
+ * integer, no leading zero, sign, exponent or whitespace, inside the protocol's unsigned 32-bit
+ * range (RFC 3501 §2.3.1.1). `"0"` is refused for the Junk window's reason: the adapter's epoch
+ * guard treats zero as "this locator never claimed an epoch" — correct for the worker's
+ * internally minted sentinels, wrong for a number a request chose, which would switch the guard
+ * off for that caller. Not `Number(v) > 0`: that accepts `"1e9"`, `" 7 "`, `"0x7"` and
+ * `"Infinity"`, and the downstream comparison is a string one against the server's decimal
+ * digits.
  */
 function requireRealEpoch(uidValidity: string): void {
   if (!/^[1-9][0-9]*$/.test(uidValidity) || uidValidity.length > 10
