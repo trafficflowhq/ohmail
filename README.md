@@ -678,10 +678,11 @@ npm run smoke            # → SMOKE OK — renders, offline audit included
 ### The real thing, with the mail engine in it
 
 ```bash
-# The engine, bundled with the pinned esbuild — installed off to one side
-# rather than added to the project, so nothing here depends on a bundler.
-D=$(mktemp -d) && (cd $D && npm install --no-save esbuild@0.24.0)
-OHMAIL_ESBUILD_FROM=$D node scripts/engine-bundle.mjs
+# The engine, bundled with the pinned esbuild — a devDependency of the root
+# manifest, so `npm ci` at the root is the whole resolution. The bundle is only
+# reproducible for a fixed bundler version, so a different one is refused.
+npm ci
+node scripts/engine-bundle.mjs
 
 # It boots from the layout it ships in — and refuses to when its migration
 # journal is moved away, which is what makes the first half worth anything.

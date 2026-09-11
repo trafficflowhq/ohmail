@@ -198,11 +198,12 @@ jobs:
       - name: Install the locked dependency tree
         run: npm ci --no-audit --no-fund
 
+      # The bundler is a pinned devDependency of the root manifest, so the
+      # `npm ci` above is the whole resolution and this step reaches no network.
+      # engine-bundle.mjs asserts the version it got: the bundle is only
+      # reproducible for a fixed esbuild, so a different one is refused, not used.
       - name: Build the engine bundle
-        run: |
-          set -euo pipefail
-          D="$(mktemp -d)" && (cd "$D" && npm install --no-save esbuild@0.24.0)
-          OHMAIL_ESBUILD_FROM="$D" node scripts/engine-bundle.mjs
+        run: node scripts/engine-bundle.mjs
 
       # The engine boots from the layout it ships in, and — the half that makes
       # the first half worth anything — refuses to when the migration journal is
@@ -528,11 +529,12 @@ jobs:
       - name: Install the locked dependency tree
         run: npm ci --no-audit --no-fund
 
+      # The bundler is a pinned devDependency of the root manifest, so the
+      # `npm ci` above is the whole resolution and this step reaches no network.
+      # engine-bundle.mjs asserts the version it got: the bundle is only
+      # reproducible for a fixed esbuild, so a different one is refused, not used.
       - name: Build the engine bundle
-        run: |
-          set -euo pipefail
-          D="$(mktemp -d)" && (cd "$D" && npm install --no-save esbuild@0.24.0)
-          OHMAIL_ESBUILD_FROM="$D" node scripts/engine-bundle.mjs
+        run: node scripts/engine-bundle.mjs
 
       - name: The engine boots from the shipped layout, and only from it
         run: node scripts/verify-engine-boot.mjs
@@ -847,11 +849,12 @@ jobs:
       - name: Install the locked dependency tree
         run: npm ci --no-audit --no-fund
 
+      # The bundler is a pinned devDependency of the root manifest, so the
+      # `npm ci` above is the whole resolution and this step reaches no network.
+      # engine-bundle.mjs asserts the version it got: the bundle is only
+      # reproducible for a fixed esbuild, so a different one is refused, not used.
       - name: Build the engine bundle
-        run: |
-          set -euo pipefail
-          D="$(mktemp -d)" && (cd "$D" && npm install --no-save esbuild@0.24.0)
-          OHMAIL_ESBUILD_FROM="$D" node scripts/engine-bundle.mjs
+        run: node scripts/engine-bundle.mjs
 
       - name: The engine boots from the shipped layout, and only from it
         run: node scripts/verify-engine-boot.mjs
@@ -1655,11 +1658,12 @@ jobs:
       - name: Install the locked dependency tree
         run: npm ci --no-audit --no-fund
 
+      # The bundler is a pinned devDependency of the root manifest, so the
+      # `npm ci` above is the whole resolution and this step reaches no network.
+      # engine-bundle.mjs asserts the version it got: the bundle is only
+      # reproducible for a fixed esbuild, so a different one is refused, not used.
       - name: Build the engine bundle
-        run: |
-          set -euo pipefail
-          D="$(mktemp -d)" && (cd "$D" && npm install --no-save esbuild@0.24.0)
-          OHMAIL_ESBUILD_FROM="$D" node scripts/engine-bundle.mjs
+        run: node scripts/engine-bundle.mjs
 
       - name: The engine boots from the shipped layout, and only from it
         run: node scripts/verify-engine-boot.mjs
@@ -2537,15 +2541,11 @@ jobs:
           ./node_modules/.bin/tsc --noEmit -p tsconfig.engine.json
 
       # Build the one-file engine from the published source. esbuild is pinned —
-      # the bundler asserts its own version — and installed off to one side so it
-      # is never a project dependency. The directory it lands in is carried into
-      # the following steps, which build the engine again.
+      # the bundler asserts its own version. It is a pinned devDependency of the
+      # root manifest, so the `npm ci` above resolves it and nothing has to be
+      # installed off to one side or carried into the following steps.
       - name: Build the engine bundle
-        run: |
-          set -euo pipefail
-          D="$(mktemp -d)" && (cd "$D" && npm install --no-save esbuild@0.24.0)
-          echo "OHMAIL_ESBUILD_FROM=$D" >> "$GITHUB_ENV"
-          OHMAIL_ESBUILD_FROM="$D" node scripts/engine-bundle.mjs
+        run: node scripts/engine-bundle.mjs
 
       - name: Confirm the bundle and its runtime layout
         run: |
