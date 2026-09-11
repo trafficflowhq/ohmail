@@ -1,41 +1,14 @@
 "use client";
 
 /**
- * WHERE THIS ACCOUNT STANDS IN ONBOARDING, and the dormancy window it is counted with.
- *
- * One `GET /consent` per tab. Everything the shell needs from it is a scalar: has the seed
- * review been confirmed, and how many days of quiet make a sender dormant.
- *
- * ── WHY THE DIAL COMES OVER REST AND NOT THROUGH `/sync` ─────────────────────────────────
- *
- * The mirror carries mail. A per-account integer with no history and no delete is not a
- * change to mail, and giving it an entity type would grow the change-log writers, the wire
- * union and the mirror's vocabulary for a value that moves once a year. The schema already
- * documents this shape for per-account settings tables — REST, and the client refetches.
- *
- * The accepted cost is stated rather than hidden: a second tab that is open while the dial
- * moves keeps partitioning with the old window until it reloads. The window decides which
- * senders are ASKED about, not what is stored or searchable, so the worst case is a Screener
- * queue that is briefly the wrong length in one tab.
- *
- * ── THE BOOT READS THE DEVICE'S COPY OF THE LAST ANSWER FIRST ────────────────────────────
- *
- * The warm open paints the mirror in the first frame, and a partition that waits for this
- * fetch presents the RAW piles for the whole round trip — measured live: every reload
- * resurrected the same set of already-decided Screener senders (their mail physically at the
- * gate, presented elsewhere by their rules) and held them until `GET /consent` answered, however
- * many `/sync` drains completed in between. So the effect below first applies this account's
- * CACHED last answer (`boot-cache.ts` — the three partition inputs and nothing that authorises
- * anything), then lets the live answer overwrite it and the cache both. The staleness this can
- * show is exactly the second-tab cost the paragraph above already accepts.
- *
- * ── AND WHY A FAILURE IS SILENT ──────────────────────────────────────────────────────────
- *
- * The default is the product default, which is what the client engine uses anyway. A tab that
- * could not reach this endpoint partitions exactly as it would have before the endpoint
- * existed — or, when this device holds the account's cached answer, with that answer, which is
- * strictly closer to the account's truth than the default. Either way a network blip must not
- * produce an error anybody has to read.
+ * Where this account stands in onboarding, and the dormancy window it is counted with — one `GET /consent` per
+ * tab. The dial comes over REST, not `/sync`: a per-account integer with no history is not a change to mail, and
+ * the accepted cost is stated — a second tab keeps the old window until it reloads, which only makes a Screener
+ * queue briefly the wrong length. The boot applies the device's CACHED last answer first (`boot-cache.ts` — the
+ * three partition inputs, nothing that authorises anything): a partition that waited for the fetch presented the
+ * raw piles for the whole round trip, resurrecting already-decided Screener senders on every reload. A failure is
+ * silent: the default is the product default, or the cache — strictly closer to the account's truth; a network
+ * blip must not produce an error anybody has to read.
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -46,50 +19,25 @@ import { normalizeLocale, type AppLocale } from "./locale";
 import { readOwner } from "./owner-cookie";
 
 /**
- * THE FIVE CALLS THIS HOOK MAKES, GATHERED INTO SOMETHING A HOST CAN HAND IN.
- *
- * The same seam as `AwayResponderRow`'s `AwayTransport` and `screener-suggest`'s `SuggestWire`, and
- * it exists for the identical reason. `apiConfigured()` is FALSE in every desktop build, both doors
- * — `apps/desktop/vite.config.ts` aliases `app/api-client` to a stub whose value exports refuse —
- * so the fetch below never ran there, `known` stayed false for the life of the process, and every
- * control gated on it was withheld: the dormancy dial, the auto-suggest opt-in, auto-unsubscribe.
- * That was right for a STANDALONE install, which has no account and nowhere to store any of it. It
- * was wrong for an install on the HOSTED door, which mirrors a real account: its window cannot open
- * a socket (`connect-src 'none'`), but its mail engine holds the account's session and forwards
- * `/consent` to it with the bearer, so the row that is read and written is the account's own.
- *
- * ONLY THE WIRE IS INJECTED, never the controls — the rule `AwayTransport` states. `autoSuggest` is
- * the one flag in this product that authorises spending, and its echo-not-the-argument discipline,
- * its resting values and the single `setState` every consumer reads are decided above this seam and
- * cannot be varied by supplying one. A second implementation of them would be a second answer to
- * "is auto-suggest on", and the direction that costs money is the one where they disagree.
- *
- * Every method is shaped like `api-client`'s own `consent` object, because that IS the default and a
- * shape adapted for the second caller would be a shape invented for it.
+ * The five calls this hook makes, gathered into something a host can hand in — the `AwayTransport`/`SuggestWire`
+ * seam, for the identical reason: `apiConfigured()` is false in every desktop build, so the fetch never ran there,
+ * `known` stayed false, and the dormancy dial, auto-suggest opt-in and auto-unsubscribe were withheld — right for
+ * standalone (no account), wrong for the hosted door, whose engine forwards `/consent` with the bearer. Only the
+ * WIRE is injected, never the controls: `autoSuggest` is the one flag that authorises spending, and its
+ * echo-not-the-argument discipline and single `setState` are decided above this seam — a second implementation is a
+ * second answer to "is auto-suggest on", and the direction that costs money is where they disagree. Methods are
+ * shaped like `api-client`'s own `consent` object, the default.
  */
 export interface ConsentTransport {
   /**
-   * CAN THE SERVER BEHIND THIS WIRE ACTUALLY STORE THE FOLDERS FLAG — the one capability this
-   * transport declares, because the route it names cannot be asked.
-   *
-   * ── THE PANE THAT COULD NOT WORK, AND WHY NOTHING NOTICED ───────────────────────────────
-   *
-   * `foldersRoutes` are mounted on the HOSTED table alone, so the standalone and self-host doors
-   * serve no folder verb at all. `packages/api`'s `localRoutes` therefore wraps the consent group
-   * in `withoutFoldersFlag`: the read forces `foldersEnabledAt` to null and the PATCH drops a
-   * `foldersEnabled` field silently, deliberately, so no client can raise a flag whose verbs
-   * would 404.
-   *
-   * That wrapper is right and it is invisible from here. The GET still answers 200, so
-   * `consent.known` goes true, so the shared shell drew the whole Folders pane on a standalone
-   * install: a master switch that flips, writes nothing, and snaps back off, plus a per-mailbox
-   * list under it that governs nothing. A control wired to nothing is the one thing this settings
-   * surface may not be — and the failure is silent in both directions, because "the write was
-   * dropped" and "the account has folders off" are the same two bytes on the wire.
-   *
-   * So the capability is DECLARED by whoever built the wire, which is the only place that knows
-   * which route table is behind it. Required rather than optional: an absent field would select a
-   * branch, and the branch it would select is the one that draws the dead pane.
+   * Can the server behind this wire actually STORE the folders flag — the one capability this transport
+   * declares, because the route cannot be asked. `foldersRoutes` are mounted on the hosted table alone;
+   * `localRoutes` wraps the consent group in `withoutFoldersFlag` (read forces `foldersEnabledAt` null,
+   * PATCH drops the field silently, so no client can raise a flag whose verbs would 404). That wrapper is
+   * invisible from here — the GET answers 200, `known` goes true, and the shared shell drew the whole
+   * Folders pane on standalone: a switch that flips, writes nothing, snaps back. Declared by whoever
+   * built the wire — the only place that knows the route table. Required, not optional: an absent field
+   * would select the branch that draws the dead pane.
    */
   foldersStorable: boolean;
   state: () => Promise<ConsentStateWire>;
@@ -112,15 +60,14 @@ export interface ConsentTransport {
     mailboxId: string, enabled: boolean,
   ) => Promise<{ folderMailboxesOff: Record<string, string> }>;
   /**
-   * Per-mailbox signature (mail 0075): a string stores, `null` clears; echoes the whole map.
-   *
-   * `signatureHtml` (mail 0098) carries the MARKUP shape instead, and then the server derives
-   * the text half from it. EXACTLY ONE of the two carries the value — a call supplying both is
-   * refused at the route — so the markup form passes `null` as the text.
-   *
-   * The markup echo is OPTIONAL on the way back: a host too old to have the column omits it,
-   * which reads as "no signature anywhere has formatting" and is exactly the picture that
-   * server serves.
+   * Per-mailbox signature (mail 0075): a string stores, `null` clears;
+   * echoes the whole map. `signatureHtml` (mail 0098) carries the MARKUP
+   * shape instead, and the server derives the text half from it. Exactly
+   * one of the two carries the value — a call supplying both is refused at
+   * the route — so the markup form passes `null` as the text. The markup
+   * echo is optional on the way back: a host too old to have the column
+   * omits it, which reads as "no signature anywhere has formatting" —
+   * exactly the picture that server serves.
    */
   setMailboxSignature: (
     mailboxId: string, signature: string | null, signatureHtml?: string | null,
@@ -140,24 +87,16 @@ export interface ConsentTransport {
 
 /** The hosted transport — the browser talking to the API this app was written against. */
 const CLOUD_CONSENT: ConsentTransport = {
-  /* THE MANAGED API MOUNTS `foldersRoutes`, so this is true of the browser tab this transport was
-     written for — and it is a STATIC claim about a route table this client cannot interrogate,
-     which makes it exactly true of one deployment and not of the other.
-
-     A SELF-HOST server serves `selfHostRoutes`, which spreads `localRoutes` whole and therefore
-     inherits `withoutFoldersFlag` — the same stripped consent group the standalone desktop gets,
-     and no folder verbs either. So a self-host web client draws the same pane that cannot store,
-     and this constant says otherwise. It is declared here rather than guessed because the honest
-     answer is the SERVER's to give: `/hello`'s `features` is where `pairing` already lives for
-     exactly this reason ("an older server never grows a dead entry"), and `folders` belongs beside
-     it. Until it does, this constant is exact for the managed deployment and one release ahead of
-     the truth for a self-hosted one.
-
-     THAT IS TWO OF THE THREE SURFACES THIS AFFECTS, and the third is a desktop install: the app's
-     self-host door is `{ mode: "cloud", cloudUrl: <their origin> }`, so it takes the desktop's
-     hosted wire and inherits the same wrong answer. Only the STANDALONE door is settled by a wire
-     that knows its own table. One `features.folders` word closes all three; a per-surface probe
-     would close them one at a time and then be deleted. See `apps/desktop/src/local-consent.ts`. */
+  /* The managed API mounts `foldersRoutes`, so this is true of the browser
+     tab this transport was written for — a STATIC claim about a route table
+     this client cannot interrogate. A self-host server spreads `localRoutes`
+     and inherits `withoutFoldersFlag`, so a self-host web client draws the
+     same pane that cannot store, and this constant says otherwise; a      desktop self-host door takes the hosted wire and inherits the same
+     wrong answer. The honest answer is the server's to give: `features` on
+     `/hello` is where `pairing` lives for exactly this reason, and
+     `folders` belongs beside it — one word closes all three surfaces. Until
+     then this is exact for the managed deployment and one release ahead of
+     the truth for a self-hosted one. See `apps/desktop/src/local-consent.ts`. */
   foldersStorable: true,
   state: () => consentApi.state(),
   setAutoSuggest: (enabled) => consentApi.setAutoSuggest(enabled),
@@ -180,19 +119,13 @@ export interface ConsentState {
   /** ALWAYS a number, so a partition can always be computed. */
   dormancyDays: number;
   /**
-   * WHEN THIS ACCOUNT FINISHED SCREENING ITS BACKLOG, or null for "measure from now".
-   *
-   * The second half of the cutline arithmetic, and the one field on this object that is NOT
-   * normalised to a usable value the way {@link dormancyDays} is. Null has to reach
-   * `consentPartition` as null: it selects the pre-baseline behaviour (the sliding window, unread
-   * outranking age), and substituting `now` here would silently apply the NARROWED rule to an
-   * account that never established a baseline — which drops every undecided sender whose newest
-   * mail is older than the window straight into History.
-   *
-   * Resting null, and so is a failed fetch, an API too old to carry the field, and a standalone
-   * install. All four mean "no baseline from an account", all four keep today's partition, and
-   * there is no direction here in which not knowing is dangerous — the worst case is the sliding
-   * window this field exists to replace.
+   * When this account finished screening its backlog, or null for "measure from now" — the
+   * second half of the cutline arithmetic, and the one field NOT normalised: null must reach
+   * `consentPartition` as null, since it selects the pre-baseline behaviour (sliding window,
+   * unread outranks age), and substituting `now` would apply the narrowed rule to an account
+   * that never established a baseline — dropping every undecided sender with older mail
+   * straight into History. Resting null; so is a failed fetch, an old API, and standalone — all
+   * four keep today's partition, and the worst case is the sliding window itself.
    */
   screeningBaselineAt: string | null;
   /** Senders still owed a decision, as the SERVER counts them. */
@@ -217,17 +150,14 @@ export interface ConsentState {
    */
   autoSuggestAt: string | null;
   /**
-   * DOES THIS ACCOUNT KEEP THE PER-MESSAGE "SHOW IMAGES" FLOW? True = manual, the old behaviour.
-   * False = the product default: a message's remote images load through the proxy on open.
-   *
-   * **It starts TRUE, and that direction is the opposite of every other flag on this object and
-   * is deliberate.** {@link autoSuggest} starts false because ON authorises spending, so "I do not
-   * know" must not buy anything. Here the dangerous direction is reversed: "I do not know" must
-   * not LOAD anything, because the account may have opted out and this build cannot see it. So a
-   * failed `GET /consent`, an API too old to carry the field, and a build with no API at all
-   * (`apiConfigured()` false — the desktop) all leave this true and keep today's per-message
-   * button. Only a successful read that carried `blockRemoteImagesAt: null` moves it to false, and
-   * that null is a server saying it read the row and found no opt-out.
+   * Does this account keep the per-message "Show images" flow? True = manual, the old
+   * behaviour; false = the product default (remote images load through the proxy on open). It
+   * starts TRUE — the opposite of every other flag here, deliberately: {@link autoSuggest}
+   * starts false because ON authorises spending; here the dangerous direction is reversed — "I
+   * do not know" must not LOAD anything, because the account may have opted out where this
+   * build cannot see. A failed read, an old API, and a no-API build all keep today's
+   * per-message button; only a successful read carrying `blockRemoteImagesAt: null` moves it to
+   * false.
    */
   blockRemoteImages: boolean;
   /** When they opted out, for the settings row that says so. Null whenever images load. */
@@ -246,19 +176,13 @@ export interface ConsentState {
   /** When they asked pixels to load, for the settings row that says so. Null while blocked. */
   loadTrackingPixelsAt: string | null;
   /**
-   * DOES SCREENING A SENDER OUT ALSO UNSUBSCRIBE FROM THEIR LIST? True = the product default.
-   *
-   * **It starts TRUE, and unlike {@link blockRemoteImages} — the other field whose resting value
-   * is not `false` — the safe direction here is the DEFAULT one.** The reason is what the value is
-   * used for: nothing on the client sends anything. The server reads its own row and sends or does
-   * not; this flag only decides whether the interface SAYS SO before the click and after it. So
-   * "I do not know" resolving to false would silently drop the disclosure of an irreversible
-   * outbound request that is still happening, which is worse than disclosing one that turns out
-   * not to run.
-   *
-   * A failed `GET /consent`, an API too old to carry the field, and a build with no API at all
-   * therefore all leave this true — which is also exactly what the interface did before the switch
-   * existed, so no failure mode of this fetch changes what anybody is told.
+   * Does screening a sender out also unsubscribe from their list? True = the product default —
+   * and unlike {@link blockRemoteImages}, the safe direction here IS the default: nothing on
+   * the client sends anything (the server reads its own row); this flag only decides whether
+   * the interface SAYS SO around the click. "I do not know" resolving to false would silently
+   * drop the disclosure of an irreversible outbound request that is still happening — worse
+   * than disclosing one that turns out not to run. Every failure mode leaves this true, which
+   * is also exactly what the interface did before the switch existed.
    */
   autoUnsubscribe: boolean;
   /** When they turned it off, for the settings row that says so. Null while the pass runs. */
@@ -318,17 +242,14 @@ export interface ConsentState {
    */
   signaturesKnown: boolean;
   /**
-   * THE ACCOUNT'S INTERFACE LANGUAGE, or `null` for "this account has no preference".
-   *
-   * The one field on this object whose null is a DEFERRAL rather than a switch position, and the
-   * only one a consumer must not normalise. `AppShell` adopts a non-null value at boot, overriding
-   * whatever language this device had remembered — that is the guard the whole account-tied half of
-   * the feature exists for, and it only works if `null` reaches the consumer as null.
-   *
-   * Resting `null`, and so is a failed fetch, an API too old to carry the field, and a standalone
-   * install: all four mean "nothing from an account", and all four correctly leave the device's own
-   * choice standing. There is no direction here in which not knowing is dangerous — the worst case
-   * is an interface in the language the reader last picked on this machine.
+   * The account's interface language, or `null` for "no preference" — the
+   * one field whose null is a DEFERRAL rather than a switch position, and
+   * the only one a consumer must not normalise: `AppShell` adopts a
+   * non-null value at boot, overriding the device's remembered language,
+   * and that guard only works if `null` reaches the consumer as null.
+   * Resting null; so is a failed fetch, an old API, and standalone — all
+   * four leave the device's own choice standing, and the worst case is an
+   * interface in the language the reader last picked on this machine.
    */
   locale: AppLocale | null;
   /**
@@ -352,61 +273,25 @@ export interface ConsentState {
   /** False until the first answer lands — an onboarding step must not flash before then. */
   known: boolean;
   /**
-   * THERE IS NO CONSENT ENDPOINT BEHIND THIS BUILD, AND THERE NEVER WILL BE — the desktop.
-   *
-   * {@link known} answers "has the server told us the window yet?", and everything gated on it
-   * is gated for one reason: partitioning on a GUESSED window would move mail into History on
-   * the strength of a default the account may not be using, and a request that merely failed
-   * would silently hide somebody's mail. Both halves of that reason presuppose a stored window
-   * this client has not yet read.
-   *
-   * On a standalone install there is no stored window. Nothing can be reached, the fetch never
-   * runs, `known` is false for the life of the process — and the shell read that as "the
-   * answer has not arrived", switched the cutline off, and drew the Screener over the raw
-   * mirror. No History pile at all, and every sender whose mail had already been filed into the
-   * Screener folder sat in the queue for ever. `DEFAULT_DORMANCY_DAYS` is not a guess here: it
-   * is the only window this build has, the one the engine uses unasked, and the one the dial
-   * would have to be turned away from — but there is no dial, because there is nowhere to
-   * store the number.
-   *
-   * ── IT IS "NOTHING TO REACH", NOT "NO CLOUD CLIENT IN THIS BUNDLE" ────────────────────────
-   *
-   * This used to be exactly `!apiConfigured()`, which made it true of BOTH desktop doors. It is
-   * now false wherever a host handed in a {@link ConsentTransport}, because that host has a
-   * hosted account behind it and its engine forwards these routes to it — the same widening
-   * `awaySupported` makes in `AppShell`, for the same reason and with the same effect on the
-   * consumer that matters: `autoUnsubscribeDiscloses` must warn about a request the hosted
-   * screener really does make, and must stay silent on the standalone door, which wires no
-   * unsubscribe service at all. The standalone door hands in no transport and so stays true.
-   *
-   * NOT reachable on the web. A live browser tab with no API base never renders this shell at
-   * all: `createEngine` throws `EngineUnarmedError` rather than fall back to fixtures. So this
-   * is true exactly where an engine was handed in — the desktop's seam — and the known-gate
-   * still governs everywhere a server exists.
-   *
-   * False on the demo, which is `active: false`: the demo is a fixture world with no decisions
-   * in it, and `AppShell` refuses to partition it for reasons of its own.
+   * There is no consent endpoint behind this build, and there never will be — the desktop's standalone door.
+   * {@link known} gates on "partitioning on a GUESSED window would hide somebody's mail", which presupposes a
+   * stored window this client has not yet read; standalone has no stored window, and reading `known: false`
+   * as "not yet" switched the cutline off for the whole desktop tier — no History pile, senders queued for
+   * ever. `DEFAULT_DORMANCY_DAYS` is not a guess there: it is the only window the build has. "Nothing to
+   * reach", not "no Cloud client in this bundle": false wherever a host handed in a {@link ConsentTransport}
+   * (the hosted door forwards these routes). Not reachable on the web (`createEngine` throws
+   * `EngineUnarmedError`); false on the demo, which is `active: false`.
    */
   standalone: boolean;
   /**
-   * DOES THIS BUNDLE CARRY THE BROWSER'S CLOUD CLIENT — a fact about the BUILD, and the one
-   * question {@link standalone} used to answer before it started answering a better one.
-   *
-   * Published from here because `AppShell` may not import `app/api-client` at all (it is copied
-   * into a published mirror that does not contain the module) and this hook has to read
-   * `apiConfigured()` anyway. Two questions now have different answers on the desktop's hosted
-   * door and both are needed:
-   *
-   *  · "is there a server to reach?" — {@link standalone}, transport-aware, and the gate for every
-   *    control whose read and write this hook performs;
-   *  · "can a hosted CEREMONY run in this window?" — this one. The sent-mail seed review
-   *    (`SeedReviewView`) and the remote-image proxy (`shell/remote-images.ts`) call
-   *    `app/api-client` DIRECTLY rather than through any injected wire, so no transport makes
-   *    them work. False ⇒ the shell must withhold them, or it offers a screen that can only
-   *    refuse. See `AppShell`'s `seedOwed`.
-   *
-   * Not a state field: it is settled before the first render and derived below, so a `setState`
-   * cannot leave it behind.
+   * Does this bundle carry the browser's Cloud client — a fact about the BUILD, and the question {@link
+   * standalone} used to answer before it started answering a better one. Published here because
+   * `AppShell` may not import `app/api-client` (published mirror) and this hook reads `apiConfigured()`
+   * anyway. Two questions with different answers on the desktop's hosted door: "is there a server to
+   * reach?" — {@link standalone}, transport-aware; "can a hosted CEREMONY run in this window?" — this
+   * one: the seed review and the remote-image proxy call `app/api-client` DIRECTLY, so no transport
+   * makes them work; false ⇒ the shell withholds them. Not a state field: settled before first render,
+   * derived, so a `setState` cannot leave it behind.
    */
   cloudClient: boolean;
   /**
@@ -419,35 +304,24 @@ export interface ConsentState {
    */
   foldersStorable: boolean;
   /**
-   * WHEN THE FIRST-RUN FLOW WAS LAST LEFT — finished OR cancelled, because both stamp it — or
-   * `null` for "this account has never been through setup".
-   *
-   * The one truth-condition in `deriveOnboardingStep` that is about the FLOW rather than about a
-   * mailbox, and the arm that runs before every other one: without it, an account that cancelled
-   * on the consent screen re-opens setup on that same screen at every boot, for ever.
-   *
-   * ── RESTING NULL IS THE DANGEROUS DIRECTION HERE, AND {@link known} IS THE GUARD ──────────
-   *
-   * Every other field on this object has a resting value that is safe to act on. This one does
-   * not: `null` reads as "setup has never been done", so a failed `GET /consent`, an API too old
-   * to carry the field, and the first render of every session would each be grounds to put a
-   * setup dialog over somebody's mail. That is why the stage is gated on {@link known} at the
-   * mount site and not on this field alone — this field says WHERE a run stands, `known` says
-   * whether anybody has answered at all, and only the pair is a licence to render.
+   * When the first-run flow was last left — finished OR cancelled, both stamp it — or `null`
+   * for "never been through setup". The one truth-condition in `deriveOnboardingStep` about the
+   * FLOW rather than a mailbox, and the arm that runs first: without it, an account that
+   * cancelled on the consent screen re-opens setup at every boot. Resting null is the DANGEROUS
+   * direction here, and {@link known} is the guard: `null` reads as "setup never done", so a
+   * failed read or first render would each put a setup dialog over somebody's mail — hence the
+   * stage is gated on the PAIR at the mount site: this field says where a run stands, `known`
+   * says whether anybody answered at all.
    */
   onboardingCompletedAt: string | null;
   /**
-   * THE SCREENING MODE — `'window'` (the cutline is `screeningBaselineAt − dormancyDays`) or
-   * `'all_time'` (no cutline at all; nothing is listed under History unscreened).
-   *
-   * The THIRD half of the cutline arithmetic, and the one this object was missing: a client
-   * holding two of the three partitions its mirror differently from the server that counted for
-   * it. Read here so a RE-RUN of setup can pre-fill the window choice from what the account
-   * actually stored rather than from the product default — a re-run that showed "One year" over
-   * an account on all-time would be a control that misreports the state it is about to change.
-   *
-   * `'window'` at rest, and an unrecognised string collapses to it: that is the behaviour every
-   * client had before the mode existed, so the absent case is not a guess.
+   * The screening mode — `'window'` (cutline `screeningBaselineAt − dormancyDays`) or
+   * `'all_time'` (no cutline; nothing lands in History unscreened). The third piece of the
+   * cutline arithmetic this object was missing: a client holding two of the three partitions
+   * its mirror differently from the server that counted for it. Read here so a re-run of setup
+   * pre-fills the window choice from what the account stored — a re-run showing "One year" over
+   * an all-time account would misreport the state it is about to change. `'window'` at rest; an
+   * unrecognised string collapses to it, the pre-mode behaviour.
    */
   screeningScope: "window" | "all_time";
 }
@@ -519,19 +393,14 @@ const RESTING: ConsentState = {
 export const CONSENT_BOOT_SCOPE = "consent";
 
 /**
- * WHAT MAY BE CACHED FOR THE NEXT BOOT, and the boundary that decides it.
- *
- * The three fields the boot render cannot be honest without: the two halves of the cutline
- * arithmetic (`dormancyDays`, `screeningBaselineAt` — without them `AppShell` presents the raw
- * piles and every reload resurrects the already-decided Screener senders), and
- * `seedConfirmedAt`, because `known: true` with a null seed would flash the seed review at an
- * account that confirmed it long ago.
- *
- * DELIBERATELY NOT HERE, whatever convenience says: `autoSuggest` (a cached true could spend
- * credits the account revoked in another session) and `blockRemoteImages` (a cached "images
- * load" could fetch a sender's content for somebody who opted out elsewhere). Both keep their
- * safe resting values until the live answer — the same values a tab with no cache has always
- * shown for the same interval. `test/consent-boot-cache.test.tsx` watches this boundary.
+ * What may be cached for the next boot, and the boundary that decides it: the three fields the
+ * boot render cannot be honest without — the two halves of the cutline arithmetic
+ * (`dormancyDays`, `screeningBaselineAt`) and `seedConfirmedAt` (`known: true` with a null seed
+ * would flash the seed review at an account that confirmed it long ago). Deliberately NOT here:
+ * `autoSuggest` (a cached true could spend credits revoked in another session) and
+ * `blockRemoteImages` (a cached "images load" could fetch a sender's content for somebody who
+ * opted out elsewhere) — both keep their safe resting values until the live answer.
+ * `test/consent-boot-cache.test.tsx` watches this boundary.
  */
 interface ConsentBootCache {
   v: 1;
@@ -585,18 +454,14 @@ export function useConsentState(
   active: boolean,
   transport?: ConsentTransport,
   /**
-   * THE SETTINGS STAMP FROM THE SYNC CHANNEL — `settings` entity's `updatedAt` as the mirror
-   * holds it, or null while the mirror holds no such record. Every consent-settings write on any
-   * surface appends a `settings` change row in the same transaction (`consent-seed.ts`), the
-   * wake channel rings at its commit, and the next drain lands the row in this client's mirror —
-   * so a CHANGED stamp here means "the account's settings moved somewhere; re-ask". The hook
-   * re-runs `GET /consent` on every stamp transition (the authority stays the live read — the
-   * mirror record is a doorbell, never a second consent answer), guarded so a write from THIS
-   * tab always outranks a re-ask in flight, and an older answer never lands over a newer one —
-   * the mobile folders-flag coordinator's measured rules, inherited rather than re-learned.
-   * The FIRST observed stamp also re-asks once: a settings write can land between the boot read
-   * and the first drain, and skipping the baseline would hold that stale boot answer for the
-   * session. Costs one small GET per session; correctness over the request.
+   * The settings stamp from the sync channel — the `settings` entity's `updatedAt` as the mirror
+   * holds it, or null. Every consent-settings write appends a `settings` change row in the same
+   * transaction (`consent-seed.ts`), so a CHANGED stamp means "the account's settings moved
+   * somewhere; re-ask". The hook re-runs `GET /consent` per stamp transition — the authority
+   * stays the live read; the mirror record is a doorbell, never a second consent answer — guarded
+   * so a write from THIS tab outranks a re-ask in flight and an older answer never lands over a
+   * newer one. The FIRST observed stamp also re-asks once (a write can land between boot read and
+   * first drain). One small GET per session.
    */
   settingsStamp?: string | null,
 ): ConsentState & {
@@ -617,15 +482,13 @@ export function useConsentState(
    */
   setAutoSuggest: (enabled: boolean) => Promise<boolean>;
   /**
-   * Move the dormancy dial and keep the local window in step with the stored one.
-   *
-   * Resolves to the EFFECTIVE window the server counted with, and `state.dormancyDays` is set from
-   * THAT echo, not from the argument — so passing the product default (which the server stores as
-   * NULL) leaves the state showing the real number, and a refused write is never mistaken for a
-   * move. The control MUST write through here rather than calling `consentApi` directly: the memo
-   * that partitions the mirror (`consentPartition` in `AppShell`) is keyed on `consent.dormancyDays`,
-   * so setting it from the echo re-partitions the same render — a component with its own fetch would
-   * leave the open tab counting with the stale window.
+   * Move the dormancy dial and keep the local window in step with the stored one. Resolves to
+   * the EFFECTIVE window the server counted with, and `state.dormancyDays` is set from that
+   * echo, not the argument — so passing the product default (stored as NULL) leaves the state
+   * showing the real number, and a refused write is never mistaken for a move. The control MUST
+   * write through here rather than `consentApi` directly: the partition memo is keyed on
+   * `consent.dormancyDays`, so the echo re-partitions the same render — a component with its
+   * own fetch leaves the open tab counting with the stale window.
    */
   setDormancyDays: (
     days: number | null | undefined, scope?: "window" | "all_time",
@@ -647,15 +510,14 @@ export function useConsentState(
    */
   setBlockTrackingPixels: (blocked: boolean) => Promise<boolean>;
   /**
-   * Stop auto-unsubscribe on screen-out, or let it run, and keep the local answer in step with the
-   * stored one.
-   *
-   * Resolves to `autoUnsubscribe` AS THE DATABASE HOLDS IT — so the argument is the opt-out and
-   * the answer is the feature, inverted exactly once at this seam. Set from the echo rather than
-   * the argument for the reason the three above give, with the sharper half being the write that
-   * FAILED while turning it off: a tab that drew the switch as off would be telling somebody their
-   * lists are safe while every screen-out goes on leaving one. It rethrows so the row can say the
-   * write did not land.
+   * Stop auto-unsubscribe on screen-out, or let it run, and keep the local
+   * answer in step with the stored one. Resolves to `autoUnsubscribe` AS
+   * THE DATABASE HOLDS IT — the argument is the opt-out, the answer is the
+   * feature, inverted exactly once at this seam. Set from the echo for the
+   * reasons above, the sharper half being a write that FAILED while turning
+   * it off: a tab drawing the switch as off would tell somebody their lists
+   * are safe while every screen-out goes on leaving one. It rethrows so the
+   * row can say the write did not land.
    */
   setBlockAutoUnsubscribe: (blocked: boolean) => Promise<boolean>;
   /**
@@ -856,17 +718,14 @@ export function useConsentState(
   useEffect(() => {
     if (!active || !reachable) {
       /**
-       * NO WIRE ⇒ RESTING VALUES — enforced, not merely documented. `local-consent.ts` states
-       * the rule for a failed READ ("a failed read leaves every flag at its resting value");
-       * this is the same rule for a wire that is GONE. The desktop's door chooser is an overlay
-       * OVER the mounted shell, so a cloud→local switch can land here with the hosted account's
-       * answers still in state — and a folders rail, a signatures pane or a spending switch
-       * rendered from a departed account's row over a standalone engine would be controls whose
-       * every verb refuses (review-caught: the folder verbs would 404 against the local table).
-       * A read still in flight from the old wire is already dead — the previous era's cleanup
-       * ran the moment `reachable` moved (mutation-checked: an epoch bump added here was
-       * unwatchable). setState with the RESTING constant is a React bailout when the state
-       * never left it, which is the standalone door's every render.
+       * No wire ⇒ resting values — enforced, not merely documented (`local-consent.ts` states
+       * the rule for a failed read; this is the same rule for a wire that is GONE). The
+       * desktop's door chooser is an overlay over the mounted shell, so a cloud→local switch
+       * can land here with the hosted account's answers still in state — a folders rail or
+       * spending switch rendered from a departed account's row over a standalone engine would
+       * refuse every verb (review-caught). A read in flight from the old wire is already dead
+       * (the era cleanup ran when `reachable` moved). setState with the RESTING constant is a
+       * React bailout when the state never left it.
        */
       if (active && !reachable) {
         bootCache.current = null;
@@ -875,17 +734,13 @@ export function useConsentState(
       return;
     }
     /**
-     * THE DEVICE'S LAST ANSWER, FIRST — synchronously, before the fetch below is even issued,
-     * so the live answer can only ever land on top of the cache and never under it.
-     *
-     * Keyed by the remembered account id (`owner-cookie.ts`) — the same id that names the
-     * mirror the warm open paints from, so the cached window and the cached mail can only ever
-     * describe the same account. No cookie (a first visit, the desktop) ⇒ no cache, and the
-     * boot waits for the server exactly as it did before the cache existed.
-     *
-     * The `prev.known` guard makes "the fetch already answered" unconditionally win; with the
-     * synchronous read above it is unreachable, and it is kept because the reachability is an
-     * ordering fact of this effect's body, not a property of the state machine.
+     * The device's last answer, first — synchronously, before the fetch is issued, so the live
+     * answer can only land on top of the cache, never under it. Keyed by the remembered account
+     * id (`owner-cookie.ts`) — the same id that names the mirror the warm open paints from, so
+     * the cached window and the cached mail describe the same account. No cookie (first visit,
+     * desktop) ⇒ no cache; the boot waits for the server as before. The `prev.known` guard
+     * makes "the fetch already answered" win unconditionally; unreachable with the synchronous
+     * read above, kept because that is an ordering fact of this effect's body.
      */
     const owner = readOwner();
     if (owner !== null) {
@@ -934,15 +789,13 @@ export function useConsentState(
   }, [active, reachable, settingsStamp, fetchLive]);
 
   /**
-   * A WRITE'S ECHO APPLIES ONLY IN THE ERA IT WAS ISSUED IN — the setters' half of the
-   * wire-loss rule above. The desktop bridge deliberately lets an in-flight request finish
-   * against a replaced engine, so a hosted PATCH can resolve AFTER the switch to the
-   * standalone door; applied unconditionally, its echo would resurrect the departed account's
-   * answers over an engine that serves none of them (review-caught, round 3). `era` moves on
-   * exactly the transitions that change worlds — the boot effect's cleanup — so a same-world
-   * write always lands and a cross-world one never does. The setter still RESOLVES with the
-   * echo (the write really happened, on the account it was issued against); only this hook's
-   * state refuses it.
+   * A write's echo applies only in the era it was issued in — the setters' half of the
+   * wire-loss rule. The desktop bridge lets an in-flight request finish against a replaced
+   * engine, so a hosted PATCH can resolve AFTER the switch to the standalone door; applied
+   * unconditionally, its echo would resurrect the departed account's answers (review-caught,
+   * round 3). `era` moves on exactly the transitions that change worlds — the boot effect's
+   * cleanup — so a same-world write always lands and a cross-world one never does. The setter
+   * still RESOLVES with the echo (the write happened, on the account it was issued against).
    */
   const applyEcho = useCallback(
     (at: number, updater: (prev: ConsentState) => ConsentState): void => {
@@ -1142,18 +995,16 @@ export function useConsentState(
     return on;
   }, [applyEcho]);
 
-  // Derived rather than stored, so neither can be left behind by a `setState` that forgot it:
-  // both are facts about the BUILD and the mode, settled before the first render. `active` is
-  // `!demo`; see {@link ConsentState.standalone} and {@link ConsentState.cloudClient} for why
-  // these are now two questions rather than one.
-  //
-  // PRESENTED, NOT STORED: with no wire, the ANSWER is the resting values — synchronously, in
-  // the same render that observes the wire gone. The reset effect above runs after paint, so on
-  // the overlay door switch the commit BETWEEN "reachable flipped" and "the effect fired" would
-  // otherwise still present the departed account's rail and switches for one frame
-  // (review-caught, round 3). The effect keeps its job — clearing the STORED state so a later
-  // re-entry to the hosted door cannot open on the stale answer before its own fetch lands —
-  // and this derivation is what the render reads.
+  // Derived rather than stored, so neither can be left behind by a setState
+  // that forgot it: both are facts about the BUILD and the mode, settled before first render (`active` is `!demo`; see
+  // {@link ConsentState.standalone} and {@link ConsentState.cloudClient}).
+  // Presented, not stored: with no wire, the ANSWER is the resting values —
+  // synchronously, in the same render that observes the wire gone. The
+  // reset effect runs after paint, so on the overlay door switch the commit
+  // between "reachable flipped" and "the effect fired" would present the
+  // departed account's rail for one frame (review-caught, round 3). The
+  // effect keeps its job — clearing the STORED state so a later hosted
+  // re-entry cannot open on the stale answer.
   const presented = active && !reachable ? RESTING : state;
   return {
     ...presented,

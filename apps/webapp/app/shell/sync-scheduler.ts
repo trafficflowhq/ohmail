@@ -14,74 +14,14 @@ import {
 import { readOwnerMarker, type OwnerMarker } from "./owner-cookie";
 
 /**
- * THE WAKE SIGNAL THIS APP DID NOT HAVE.
- *
- * `EngineProvider` used to call `engine.start()` once and that was every drain the tab would
- * ever perform. Three failures followed from the one omission, all of them observed in real
- * use: new mail never arrived without a manual reload; a single transient throw left a
- * permanently empty mailbox, because there was no second attempt; and a ~37-page bootstrap
- * spent twelve to fifteen seconds rendering "0 unread of 0", which is indistinguishable from
- * a broken account.
- *
- * ── THE THREE-STATE MODEL: PUSH-FED WHEN LOOKED AT, QUIET WHEN NOT, POLLING WHEN PUSH DIES ─
- *
- * This header used to argue "why a poll and not an EventSource", and that decision is
- * REVERSED — deliberately, by the realtime-wake slice, with the server's half (`GET /events`
- * fan-out off the `change_log` NOTIFY) landing in the same change. What survives of the old
- * argument is its cost logic, which is why the result is three states and not one stream:
- *
- *  · **Visible, stream healthy** — the held SSE stream is the wake signal (a `sync` frame ⇒
- *    drain now, through the same serialized path every other wake takes), and the poll drops
- *    to a slow SAFETY cadence ({@link WAKE_SAFETY_POLL_MS}) whose only job is to bound the
- *    staleness a silently dead stream could cost. New mail is on screen in the time a commit
- *    takes to fan out — ~1 s — instead of up to a poll period.
- *  · **Hidden** — NO stream is held (a background tab must not pin a server connection), and
- *    the tab polls at {@link HIDDEN_POLL_MS}. This is also a reversal, of "a hidden tab
- *    performs ZERO syncs": zero was the right floor when every request was paid attention,
- *    but it meant returning to a tab always began with a stale mailbox. One drain a minute is
- *    the cheap end of warm — ~60 requests/hour against a visible tab's ~450 — and it is the
- *    deliberate price of a mailbox that is current when you come back to it.
- *  · **Stream refused, absent, or failing** — the 8 s poll ({@link POLL_MS}), exactly as this
- *    module always behaved. A terminal stream refusal (the server's flag is off, capacity, an
- *    auth refusal — `EventSource` exposes no status, so they are indistinguishable here and the
- *    poll path's coded-envelope classification is what decides anything about auth) falls
- *    back PERMANENTLY for the session: zero reconnect attempts, no storm. A transient stream
- *    error keeps `EventSource`'s own native reconnect and the fast poll carries the gap.
- *
- * THAT LAST SENTENCE WAS A CLAIM, AND IT WAS FALSE. The fast poll did not carry the gap: a
- * stream dying at the TRANSPORT layer rather than by status re-armed the poll on every failed
- * reconnect, three seconds apart against an eight second period, and a re-arm restarted the
- * countdown — so a live tab issued one `/api/sync` in 210 seconds and then went silent. The
- * cadence is now a FLOOR that may only ever be pulled earlier (see `armFloor`), which is what
- * makes the sentence true. The state is reached by the ordinary route too, with no fault
- * anywhere: the server cycles its streams before the platform ceiling, and a reconnect that
- * cannot land leaves the tab exactly here.
- *
- * Push is a HINT, never a data path and never a dependency: every wake funnels into the same
- * `tick()` → `engine.syncOnce()` drain the timer fires, and with SSE completely dead the
- * behaviour is byte-identical to the poll-only module this used to be — `test/sync-wake.test.ts`
- * holds that equivalence directly.
- *
- * ── WHAT THIS MODULE IS NOT ─────────────────────────────────────────────────────────────
- *
- * It is deliberately not part of `OhmailEngine`. Scheduling lives with the thing that has a
- * lifecycle to hang it on, which is the React effect. (`OhmailEngine.attachWakeSignal()` still
- * exists and is deliberately NOT used here: it nudges `syncOnce()` directly, behind the back of
- * this module's failure counting, refusal confirmation and gate claim — the wake must go
- * through the same bookkeeping as every other drain.)
- *
- * This used to add "and the engine owns no timers, so a live→demo navigation drops the reference
- * and there is nothing to cancel". That was the false half, and it cost two critical findings:
- * `syncOnce()` pages internally until `hasMore` is false, so a discarded engine can very much
- * have a ~37-page drain running inside it, and dropping the reference cancels none of it. What
- * makes the teardown correct is now {@link SyncGate}, which refuses the next page — see the
- * block above it.
- *
- * It is also not in `engine.tsx`. That file is a `"use client"` React module, and a loop
- * whose contract is "a hidden tab holds no stream and drains once a minute" has to be driven
- * by fake timers to be believed. Same reason `engine-config.ts` was carved out of the same
- * file, and its header says so: a structural assertion proves the code SAYS the right thing,
- * not that it does it.
+ * The wake signal this app did not have — `engine.start()` once was every drain a tab ever performed (new mail needed a reload; one transient throw left an empty mailbox; a 37-page
+ * bootstrap rendered "0 unread of 0"). Three states: VISIBLE with a healthy SSE stream — the stream is the wake (a `sync` frame drains through the same serialized path), the poll drops to
+ * a slow safety cadence ({@link WAKE_SAFETY_POLL_MS}) bounding what a silently dead stream could cost; HIDDEN — no stream held, one drain a minute ({@link HIDDEN_POLL_MS}); stream REFUSED
+ * or failing — the 8 s poll ({@link POLL_MS}), with a terminal stream refusal falling back permanently for the session (no reconnect storm). The poll cadence is a FLOOR that may only be
+ * pulled earlier (`armFloor`): re-arming on every failed reconnect once left a live tab issuing one `/api/sync` in 210 seconds. Push is a hint, never a data path: every wake funnels into
+ * the same `tick()` → `engine.syncOnce()`, and with SSE dead the behaviour is byte-identical to poll-only (`test/sync-wake.test.ts`). Not part of `OhmailEngine` (scheduling hangs on the
+ * React effect's lifecycle; `attachWakeSignal()` is deliberately unused — it bypasses the failure counting and gate claim), and not in `engine.tsx` (this loop is believed under fake
+ * timers). Teardown correctness is {@link SyncGate}: `syncOnce` pages internally, and dropping the reference cancels nothing.
  */
 
 /** What the shell may tell the user about the sync loop. Nothing else is exposed. */
@@ -99,24 +39,14 @@ export interface SyncStatus {
    */
   terminal: boolean;
   /**
-   * OUR api refused this session ONCE, and the claim has not yet been re-made.
-   *
-   * The shell must not tell a signed-in user to sign in on this. It is published so the strip can
-   * say the weaker true thing ("Sync failed. Retrying.") instead of the stronger unverified one,
-   * and so that it says SOMETHING: a refusal answered with silence is how a half-hour silent
-   * outage happened once. Mutually exclusive with `terminal` by construction — confirmation moves
-   * the fact from one field to the other. See {@link REFUSAL_CONFIRM_MS}.
-   *
-   * ── AN INVARIANT THIS FIELD ONCE DEPENDED ON, NOW ENFORCED ──────────────────────────────
-   *
-   * `engine.tsx`'s status dedup used to compare `bootstrapping`, `failures` and `terminal` only,
-   * and could not see this field, so a transition that moved ONLY `refused` would have been
-   * swallowed and the strip would never appear. That was safe by coincidence alone: `refused` is
-   * only ever set in the publish that increments `failures`, and only ever cleared in one that
-   * zeroes `failures` or sets `terminal`. The dedup now compares all four fields through
-   * {@link sameSyncStatus}, so a `refused`-only transition is no longer dropped and that
-   * coincidence no longer has to hold. `test/sync-liveness.test.ts` guards both halves — the
-   * comparator over a `refused`-only pair, and the scheduler's own adjacent published pairs.
+   * Our API refused this session ONCE, and the claim has not been re-made. The shell must not
+   * tell a signed-in user to sign in on this; it is published so the strip says the weaker true
+   * thing ("Sync failed. Retrying.") instead of the stronger unverified one — and says
+   * SOMETHING: a refusal answered with silence was once a half-hour silent outage. Mutually
+   * exclusive with `terminal` by construction ({@link REFUSAL_CONFIRM_MS}). The status dedup
+   * compares all four fields through {@link sameSyncStatus} — it used to miss this one and
+   * survived only because `refused` happened to move with `failures`;
+   * `test/sync-liveness.test.ts` guards both halves.
    */
   refused: boolean;
 }
@@ -147,26 +77,14 @@ export function sameSyncStatus(a: SyncStatus, b: SyncStatus): boolean {
 }
 
 /**
- * How many consecutive failures the user hears about.
- *
- * One is a blip — a dropped packet, a cold serverless function, a wifi handover — and the
- * loop is back inside two seconds; saying so would train people to ignore the strip. Three
- * is ~7 s at the 1 s/2 s/4 s ceilings and well inside one backoff cap, which is the promise
- * the gap was written against: with the network down, the UI SAYS so within a cap.
- *
- * It lives here rather than in the surface because two surfaces read it — the strip that
- * reports the failure and the bootstrap counter that has to stop claiming progress at the
- * same moment. Two literals would let those drift into a window where the count is frozen
- * and nothing explains why.
- *
- * A CODED REFUSAL IS NOT SUBJECT TO IT, and used to skip it in the other direction. This said
- * "`terminal` is NOT subject to it. A refusal no retry can fix is reported on the first one",
- * and that was true of the STRONG claim: one coded 401 announced a revoked session. The strong
- * claim moved behind one confirmation ({@link REFUSAL_CONFIRM_MS}) and left the WEAK one
- * where the strong one was — {@link SyncStatus.refused} is published on the first refusal, so
- * the strip says "Sync failed. Retrying." immediately rather than waiting out three drains.
- * A statement our own API made about this identity is not a dropped packet, and the streak's
- * "one is a blip" argument does not cover it.
+ * How many consecutive failures the user hears about. One is a blip and the loop is back inside
+ * two seconds; three is ~7 s at the 1/2/4 s ceilings, inside one backoff cap — with the network
+ * down, the UI says so within a cap. It lives here because two surfaces read it: the strip and
+ * the bootstrap counter, which must stop claiming progress at the same moment. A coded refusal
+ * is not subject to it: {@link SyncStatus.refused} is published on the FIRST refusal, so the
+ * strip speaks immediately — a statement our own API made about this identity is not a dropped
+ * packet — while the strong claim (`terminal`) waits behind confirmation ({@link
+ * REFUSAL_CONFIRM_MS}).
  */
 export const SYNC_FAILURE_STREAK = 3;
 
@@ -182,15 +100,14 @@ export const SYNC_FAILURE_STREAK = 3;
 export const POLL_MS = 8_000;
 
 /**
- * The HIDDEN cadence: one drain a minute, no stream held.
- *
- * This replaces "a hidden tab performs ZERO syncs", on purpose. Zero was the correct floor
- * while every request was unaccompanied cost; what it bought was a mailbox that is always
- * stale at the moment of return. A minute is the deliberate compromise: ~60 requests/hour
- * keeps the mirror warm for the tab-switch that is coming, and a tab nobody ever returns to
- * still costs an order of magnitude less than a visible one. The stream is CLOSED while
- * hidden — a background tab must not pin a server connection whose whole justification is
- * somebody watching the screen.
+ * The hidden cadence: one drain a minute, no stream held. Replaces "a
+ * hidden tab performs ZERO syncs" on purpose — zero was the right floor
+ * when every request was unaccompanied cost, and it bought a mailbox always
+ * stale at the moment of return. A minute is the compromise: ~60
+ * requests/hour keeps the mirror warm for the tab-switch that is coming,
+ * an order of magnitude under a visible tab. The stream is closed while
+ * hidden: a background tab must not pin a server connection whose whole
+ * justification is somebody watching the screen.
  */
 export const HIDDEN_POLL_MS = 60_000;
 
@@ -214,73 +131,26 @@ export const BACKOFF_BASE_MS = 1_000;
 export const BACKOFF_CAP_MS = 60_000;
 
 /**
- * How long a coded refusal must stand before the app will call it a revoked session.
- *
- * ── THE DEFECT ──────────────────────────────────────────────────────────────────────────
- *
- * Reported from real use: "Sync stopped — this session is no longer authorized" appears and
- * then clears by itself. It appeared because ONE coded 401 latched `terminal`, and it cleared because the
- * next successful probe withdrew it. Everything in between was `role="alert"` telling a
- * signed-in user to sign in, on evidence that was one request old.
- *
- * ── WHAT IS BOUGHT, AND WHAT IS NOT ─────────────────────────────────────────────────────
- *
- * The first coded refusal now stops the poll and arms exactly ONE further ask, this far out. If
- * that ask succeeds the user is never told anything about signing in; if it is refused the same
- * way, the server has re-made the claim and the app may repeat it. So the class of false alarms
- * this removes is precisely *refusals shorter than a minute* — and it must be said plainly that
- * a multi-minute alias window still reaches STOPPED. The wake probe is what covers that one,
- * and it already does: a hide/show clears a false latch with no reload.
- *
- * ── WHY IT IS `BACKOFF_CAP_MS` AND NOT A NUMBER OF ITS OWN ──────────────────────────────
- *
- * Sixty seconds is already this module's one bounded unit of retry: it is the ceiling the
- * backoff walks up to and sits at forever, and it is the floor {@link SyncStatus.refused}'s
- * sibling `lastProbeAt` uses for the same purpose. Reusing it means one number to reason about
- * rather than two that must be kept in a relation nobody wrote down. Longer would be worse, not
- * safer: it buys a slightly larger class of suppressed false positives and charges a genuinely
- * revoked user that much longer before the one action that works.
- *
- * ── AND WHY THIS IS NOT THE TIMER THIS MODULE'S OWN RULE FORBIDS ────────────────────────
- *
- * The rule this module holds is that once `terminal` latches, no timer runs and none recurs — a
- * recurring timer in that state would re-open the abandoned-visible-tab hole the latch exists to
- * close. This one is PRE-terminal and arms at
- * most once per refusal episode: it either recovers into the ordinary poll or latches `terminal`,
- * after which there is no timer at all. The cost of a genuine revocation goes from one request to
- * two, once, and then to zero.
+ * How long a coded refusal must stand before the app calls it a revoked session. One coded 401 used to latch
+ * `terminal` — a `role="alert"` telling a signed-in user to sign in on evidence one request old, which then
+ * cleared itself. The first refusal now stops the poll and arms exactly one further ask this far out: success ⇒
+ * nobody is told anything; the same refusal ⇒ the server re-made the claim. What this removes is refusals shorter
+ * than a minute; a multi-minute alias window still reaches STOPPED, and the wake probe covers that one (a
+ * hide/show clears a false latch). It is `BACKOFF_CAP_MS`, not a number of its own: one bounded retry unit to
+ * reason about. And it is not the timer the terminal rule forbids: this is PRE-terminal and arms at most once per
+ * episode — after the latch there is no timer at all.
  */
 export const REFUSAL_CONFIRM_MS = BACKOFF_CAP_MS;
 
 /**
- * How long a coded refusal must be SUSTAINED — re-made on every confirm ask — before it is
- * believed to be a revocation and `terminal` latches.
- *
- * ── THE INCIDENT THAT SET THE NUMBER (reported from a live install, 2026-08-21) ───────────
- *
- * During a ~6-minute deploy window the API answered coded 401s. {@link REFUSAL_CONFIRM_MS} is
- * sixty seconds, so the single confirm ask landed INSIDE the window, was refused the same way,
- * and the second refusal was read as the server re-making a revocation claim: `terminal`
- * latched, every timer stopped, the wake stream was already dead — and a window nobody
- * hides/shows never emits a wake event, so nothing ever probed again. A real subscriber sat
- * behind "Sync stopped. Quit and reopen ohmail to reconnect." for a session that was perfectly
- * valid six minutes later, and the relaunch the banner demanded was the only exit.
- *
- * A minute of corroboration cannot distinguish "revoked" from "mid-deploy", because a deploy
- * window is longer than a minute. Ten minutes is comfortably past every deploy blip measured
- * here (5–6 minutes) while keeping the genuine-revocation cost bounded and small.
- *
- * ── THE COST ACCOUNTING, AGAINST THE OBJECTION THAT SET THE OLD SHAPE ─────────────────────
- *
- * The single-confirm shape existed because a retry ladder "buys N−1 invocations" against an
- * account with no entitlement — the argument that once rejected confirming more than once. That objection was to an UNBOUNDED ladder. This one is bounded
- * and priced: a genuinely revoked, visible tab now asks 1 + sustain/confirm = 11 times over ten
- * minutes — once, per episode — and then zero for ever, with no timer held. A healthy tab asks
- * ~450 times an hour; the one-time cost of not telling a signed-in user to relaunch is eleven.
- *
- * What is deliberately NOT changed: `terminal` itself still holds no timer (the abandoned-tab
- * ban stands), the wake probe still disproves a stale latch, and non-coded failures (5xx,
- * network) never enter this path at all — they ride the ordinary backoff, which never gives up.
+ * How long a coded refusal must be SUSTAINED — re-made on every confirm ask — before `terminal` latches. Set
+ * by an incident (live install, 2026-08-21): a ~6-minute deploy window answered coded 401s, the single
+ * confirm ask landed inside it, and a valid subscriber sat behind "Sync stopped. Quit and reopen ohmail." — a
+ * minute of corroboration cannot distinguish "revoked" from "mid-deploy". Ten minutes is past every deploy
+ * blip measured here (5–6 min) with the genuine-revocation cost bounded: a revoked visible tab asks 1 +
+ * sustain/confirm = 11 times over ten minutes, once per episode, then zero for ever (a healthy tab asks
+ * ~450/h). Unchanged: `terminal` holds no timer, the wake probe disproves a stale latch, and non-coded
+ * failures ride the ordinary backoff, which never gives up.
  */
 export const REFUSAL_SUSTAIN_MS = 10 * 60_000;
 
@@ -295,24 +165,14 @@ export const BACKOFF_MIN_MS = 250;
 export const BACKOFF_FLOOR_RATIO = 0.25;
 
 /**
- * Jitter over a doubling ceiling, with a FLOOR — `floor + random() * (ceiling - floor)`.
- *
- * ── WHY THE ZERO FLOOR HAD TO GO ─────────────────────────────────────────────────────────
- *
- * This was plain full jitter, `random() * ceiling`, and the comment claimed "a run of low draws
- * cannot become a tight loop — it can only spend the first few (sub-second) steps quickly".
- * That is false at the far end, which is the end that matters. The floor was zero at EVERY
- * ceiling, so a permanently failing drain sitting at the 60-second cap could still draw 0 ms,
- * and again, and again: the expected delay is 30 s but nothing bounds a run of small draws, and
- * the ceiling never becomes a minimum. With a permanent `410 CursorExpired` each drain costs
- * two requests (the engine re-bootstraps once, then surfaces the second), so the degraded state
- * a mail client is supposed to be able to sit in forever could instead spin at whatever rate
- * the network allows — paid API calls with nobody behind them, billed to an abandoned tab.
- *
- * The floor is `max(250 ms, ceiling / 4)`, so the window widens with the outage: [250 ms, 1 s]
- * at the first failure, [15 s, 60 s] at the cap. What full jitter buys is kept — N tabs, or N
- * accounts knocked offline by the same upstream blip, still do not come back in a synchronised
- * wave — because the draw is still spread across three quarters of the ceiling.
+ * Jitter over a doubling ceiling, with a FLOOR — `floor + random() * (ceiling - floor)`. Plain
+ * full jitter (`random() * ceiling`) is false at the far end: the floor was zero at every
+ * ceiling, so a permanently failing drain at the 60 s cap could draw 0 ms repeatedly — with a
+ * permanent `410 CursorExpired` each drain costs two requests, so the degraded state a mail
+ * client should sit in forever could spin at whatever rate the network allows, billed to an
+ * abandoned tab. The floor is `max(250 ms, ceiling / 4)`, widening with the outage: [250 ms, 1
+ * s] at first failure, [15 s, 60 s] at the cap. Full jitter's benefit is kept — N
+ * knocked-offline tabs still do not return in a wave.
  */
 export function backoffDelay(
   failures: number,
@@ -326,40 +186,16 @@ export function backoffDelay(
   return Math.floor(floor + random() * (ceiling - floor));
 }
 
-/* ══════════════════════════════════════════════════════════════════════════════════════════
-   ABORTING A DRAIN BETWEEN PAGES
-   ══════════════════════════════════════════════════════════════════════════════════════════
-
-   `engine.syncOnce()` is not one request. It loops internally while `hasMore` is true, and a
-   cold Cloud account's first drain is ~37 pages. The scheduler decides whether a drain STARTS;
-   nothing decided whether it CONTINUES, so closing this loop down thirty seconds into a
-   bootstrap left every remaining page to be issued anyway. Teardown had the hole in its purest
-   form: `stopped` stops the timer, not the loop already inside the engine — a live→demo
-   navigation swapped the engine and the DISCARDED one kept paging from behind a page whose
-   whole promise is that nothing leaves the tab.
-
-   The page boundary is the ENGINE'S TRANSPORT — `adapter.sync()`, called once per page — so
-   that is where the check belongs. A gate wraps the adapter at construction and refuses the
-   next page once the scheduler is gone (or its session is terminally refused); the refusal
-   throws out of `drain()` and the loop stops with the pages it already applied persisted,
-   exactly as a network failure mid-drain already does. The cursor is per-page, so the next
-   drain resumes rather than restarts.
-
-   THE GATE NO LONGER READS VISIBILITY, and that is the wake slice's reversal carried to its
-   consequence: a hidden tab is entitled to its once-a-minute drain, so "hidden" cannot also
-   mean "abort between pages" — the predicate that starts a hidden drain and the predicate that
-   continues one have to agree, or the hidden cadence would start drains only to cancel their
-   second page. What the gate still refuses — teardown, terminal — it refuses identically.
-
-   `mutate()` IS NOT GATED ON CADENCE, and that half of the old rule stands: a mutation is the
-   user's own intent and must reach the server whatever the tab is doing — hidden, torn down,
-   backing off. The cost objection is about polling, not about the click somebody just made.
-
-   It IS gated on IDENTITY, which is a different question and was not asked here until the
-   mirror learned its owner. A mutation's outcome is applied to the mirror when it returns, so
-   sending A's archive under B's session acts on the wrong account's server state AND writes
-   the answer into A's mirror. See `guard().mutate`, which refuses it RETRYABLY so the verb is
-   flushed later rather than discarded. */
+/* Aborting a drain between pages. `engine.syncOnce()` loops internally
+   while `hasMore` (a cold account's first drain is ~37 pages); the    scheduler decides whether a drain STARTS, and nothing decided whether it
+   CONTINUES — a live→demo navigation swapped the engine and the discarded
+   one kept paging behind a page that promises nothing leaves the tab. The    page boundary is the engine's transport (`adapter.sync()`, once per
+   page), so a gate wraps the adapter at construction and refuses the next
+   page once the scheduler is gone or terminally refused; the refusal throws    out of `drain()` with applied pages persisted, and the per-page cursor
+   resumes. The gate no longer reads visibility: a hidden tab is entitled to    its once-a-minute drain, so the start and continue predicates must agree.
+   `mutate()` is NOT gated on cadence (a mutation is the user's own intent)    but IS gated on identity: sending A's archive under B's session acts on
+   the wrong account AND writes the answer into A's mirror — `guard().mutate`
+   refuses it RETRYABLY so the verb is flushed later, not discarded. */
 
 /**
  * A drain was cancelled between pages. Not a failure: it must not count against the backoff,
@@ -402,28 +238,24 @@ export class ForeignSessionError extends Error {
 }
 
 /**
- * The per-page continuation gate. Built beside the engine's adapter, claimed by the scheduler.
- *
- * A gate nobody has claimed never refuses ON CADENCE, so the demo engine, the desktop bundle
- * and a bare `engine.start()` keep their timing unaffected — that part only ever narrows a
- * surface a scheduler is actively driving.
- *
- * **IDENTITY IS THE EXCEPTION, and it has to be.** A gate built for a NAMED mirror refuses to
- * sync or mutate until somebody has said whose mailbox it is, claimed or not: the claim is
- * about when a loop may run, and identity is about whose bytes these are. An unclaimed gate
- * that merged freely would leave `engine.start()` — the demo path, and the fallback branch in
- * `EngineProvider` — as an ungated drain into a named mirror.
+ * The per-page continuation gate — built beside the engine's adapter,
+ * claimed by the scheduler. A gate nobody has claimed never refuses ON
+ * CADENCE, so the demo engine, the desktop bundle and a bare
+ * `engine.start()` keep their timing. IDENTITY is the exception, and has to
+ * be: a gate built for a NAMED mirror refuses to sync or mutate until
+ * somebody says whose mailbox it is, claimed or not — the claim is about
+ * when a loop may run, identity is about whose bytes these are. An
+ * unclaimed gate that merged freely would leave `engine.start()` an ungated drain into a named mirror.
  */
 /**
- * THE TWO CAPABILITIES `EngineAdapter` DOES NOT DECLARE.
- *
- * `snapshot` and `listMessages` are STRUCTURAL in `@ohmail/client-engine` — the engine reaches
- * for them on the adapter it was handed and treats absence as a real answer, so neither is a
- * member of the interface. That is what makes them droppable HERE: an object literal that omits
- * one still satisfies `EngineAdapter` and still compiles, and the demo is never wrapped, so the
- * loss shows up on the live path alone. Naming them in the gate's own signature is what turns
- * "the wrapper forgot" from a silent behaviour change into something a reader can check against
- * a list — and the imported types are the package's own, so a rename over there fails here.
+ * The two capabilities `EngineAdapter` does not declare. `snapshot` and
+ * `listMessages` are structural in `@ohmail/client-engine` — the engine
+ * reaches for them on the adapter and treats absence as a real answer — so
+ * an object literal that omits one still compiles, and the demo is never
+ * wrapped, so the loss shows up on the live path alone. Naming them in the
+ * gate's own signature turns "the wrapper forgot" from a silent behaviour
+ * change into something a reader checks against a list; the imported types
+ * are the package's own, so a rename over there fails here.
  */
 type GatedAdapter = EngineAdapter & {
   snapshot?: SnapshotFn;
@@ -436,78 +268,25 @@ type GatedAdapter = EngineAdapter & {
 };
 
 /**
- * ═══ WHOSE MIRROR IS THIS, AND MAY IT MERGE? ══════════════════════════════════════════════
- *
- * A scheduled engine is not a merging engine, and until this existed the two were the same
- * thing. `SyncResponse` carries no account identity, the route returns the service's result
- * bare, and the adapter writes the answer straight into IndexedDB `ohmail-mirror:<owner>` —
- * so whatever session the cookie jar happens to hold decides what lands in the mirror NAMED
- * for the remembered account. The confirm's own comparison runs only inside the `owner`
- * arm, which means: bounded to the retry ladder while `checking`, unbounded at `unconfirmed`,
- * and — the case the review missed — never re-run at `ready`, so a tab confirmed for A that
- * later sees the jar rewritten to B by a sign-in in another tab merges B's log into A's
- * mirror for as long as it lives.
- *
- * Three answers, and the middle one is the whole design:
- *
- *  · `holds`         — this engine may merge. Either it has no name (an in-memory engine
- *                      cannot leak onto disk) or the confirm named it and the jar agrees.
- *  · `unconfirmed`   — nobody has told this gate whose mailbox it is YET. Built CLOSED: the
- *                      default is refusal, so a path that forgets to confirm syncs nothing
- *                      rather than syncing everything. Reads are still allowed here — this is
- *                      the ordinary warm open, the person is looking at their own mail, and
- *                      blanking it for the length of a round trip is the flicker this slice
- *                      exists to remove.
- *  · `revoked`       — it WAS confirmed and the marker has since changed. Different from
- *                      `unconfirmed` in the one way that matters: something happened. Reads
- *                      refuse alongside merges until a fresh confirm, because the answer a
- *                      read would come back with is now somebody else's business. The loop
- *                      disarms QUIETLY — nothing here is a claim about the account, so the
- *                      strip may not say the mailbox has stopped.
- *  · `contradicted`  — the jar positively names somebody else, or says a sign-out was asked
- *                      for and not confirmed. Evidence that this tab is not the one it was,
- *                      and it latches the loop terminal rather than waiting quietly.
- *
- * ── "AN ABSENT COOKIE IS NOT A CONTRADICTION" — STILL TRUE, AND NO LONGER THE WHOLE RULE ───
- *
- * That sentence stood alone here, and it was load-bearing in the wrong direction. It is right
- * about what absence MEANS: a legitimate cold-path session whose `tf_owner` was dropped would
- * otherwise never sync again, silence is not evidence, and only a present cookie naming
- * somebody else contradicts. It was wrong about what absence PERMITS.
- *
- * The sequence review found: a sign-out whose server call FAILS still did its local half, and
- * that half erased this marker while the HttpOnly session stayed live on the server. A window
- * still open for another account then read the absence as silence, read silence as permission,
- * and went on merging and reading through a session nobody in that window was signed in to.
- * Absence was not evidence of anything — and a confirmation granted while the marker said A
- * went on standing after the marker stopped saying A.
- *
- * Two changes, and they are the whole of the correction:
- *
- *  1. **A CONFIRMATION IS NOT PERMANENT.** Any change in what the marker says — A to absent, A
- *     to B, absent to A, and every leg of an A→B→A — revokes it. What was confirmed was
- *     "this browser is A's, now"; the moment "now" stops being true the grant lapses and the
- *     gate waits for a fresh one. Absence still is not a contradiction: it is the END of a
- *     confirmation, which is a different and weaker thing, and it is enough.
- *  2. **A REFUSED SIGN-OUT IS SAID, NOT ERASED.** `sign-out.ts` writes
- *     {@link OWNER_SIGNED_OUT} on that path instead of clearing, so the state that used to be
- *     indistinguishable from silence now speaks for itself and contradicts.
+ * Whose mirror is this, and may it merge? `SyncResponse` carries no account identity, so whatever session the jar holds decided what landed in the mirror
+ * NAMED for the remembered account — and the confirm's comparison never re-ran at `ready`, so a tab confirmed for A whose jar was rewritten to B merged
+ * B's log into A's mirror for as long as it lived. Answers: `holds` — may merge (no name, or confirmed and the jar agrees); `unconfirmed` — built CLOSED,
+ * nobody has said whose mailbox this is; a forgetting path syncs nothing rather than everything, and reads are still allowed (the ordinary warm open);
+ * `revoked` — was confirmed and the marker has since CHANGED: reads refuse too, the loop disarms quietly; `contradicted` — the jar positively names
+ * somebody else or records an unconfirmed sign-out: latches terminal. Absence is not a contradiction — but it ENDS a confirmation (any change revokes,
+ * A→B→A included): a failed sign-out's local half once erased the marker and the tab read silence as permission. A refused sign-out now writes {@link
+ * OWNER_SIGNED_OUT}, which contradicts instead of being indistinguishable from silence.
  */
 export type SyncIdentity = "holds" | "unconfirmed" | "revoked" | "contradicted";
 
 /**
- * MAY A READER ASK THE SERVER FOR THIS ACCOUNT'S BYTES, given an identity? — the rule itself,
- * as one function, so that every door is the same door.
- *
- * There were two copies: the adapter spelled it inline and `syncMayRead` spelled it again for the
- * doors that never reach an adapter. They agreed, and nothing made them agree — which is exactly
- * how the fourth state (`revoked`) arrived in one of them and not the other, and how the
- * reach-past body door and the mailbox-facts poll went on reading through a lapsed grant while
- * the adapter beside them refused.
- *
- * `unconfirmed` reads TRUE and that is the whole subtlety: it is the ordinary warm open, the mail
- * is the person's own, and refusing there would blank a mailbox that is already on screen for the
- * length of a round trip — the flicker this slice exists to remove.
+ * May a reader ask the server for this account's bytes, given an identity? — the rule as one
+ * function, so every door is the same door. There were two copies (the adapter's inline test
+ * and `syncMayRead`), they agreed, and nothing made them agree — which is how `revoked` arrived
+ * in one and not the other, and how the reach-past body door and the mailbox-facts poll kept
+ * reading through a lapsed grant while the adapter refused. `unconfirmed` reads TRUE, the whole
+ * subtlety: it is the ordinary warm open, the mail is the person's own, and refusing would
+ * blank a mailbox already on screen for the length of a round trip.
  */
 export function mayReadIdentity(state: SyncIdentity): boolean {
   return state !== "contradicted" && state !== "revoked";
@@ -567,15 +346,14 @@ export function createSyncGate(mirrorOwner: string | null): SyncGate {
   let askedToReconfirm = false;
 
   /**
-   * WHAT THE MARKER SAID LAST TIME ANYBODY LOOKED. `undefined` means nothing has been observed
-   * yet, which is not the same as `absent`: the first observation establishes a baseline and
-   * cannot itself be a transition, or a gate would revoke a confirmation it had just been given.
-   *
-   * SEEDED AT CONSTRUCTION for a named mirror, and the window that closes is real. The gate is
-   * built in the same act that chooses which mirror to open — from the marker — so construction
-   * is when "what it said" is known. Left to the first `identity()` call instead, a change
-   * between those two moments was the baseline rather than a transition, and the whole point of
-   * this state is that a change is what revokes.
+   * What the marker said last time anybody looked. `undefined` means
+   * nothing observed yet — not the same as `absent`: the first observation
+   * establishes a baseline and cannot itself be a transition, or a gate
+   * would revoke a confirmation it had just been given. Seeded at
+   * construction for a named mirror, and the window that closes is real:
+   * the gate is built in the same act that chooses which mirror to open,
+   * so construction is when "what it said" is known — left to the first
+   * `identity()` call, a change between those moments read as baseline rather than transition.
    */
   let lastSeen: OwnerMarker | undefined = mirrorOwner === null ? undefined : readOwnerMarker();
 
@@ -590,42 +368,26 @@ export function createSyncGate(mirrorOwner: string | null): SyncGate {
 
     const marker = readOwnerMarker();
     /*
-     * ── THE TRANSITION IS THE EVENT, AND READING IS WHEN IT IS NOTICED ────────────────────
-     *
-     * A cookie has no change event, so there is nothing to subscribe to: the only moment this
-     * gate can observe the jar is when somebody asks it a question. It is asked before every
-     * request, at every page boundary and on every tick, which is exactly the set of moments a
-     * stale answer could do damage — so noticing here is noticing in time.
-     *
-     * Revoking is a SIDE EFFECT of a read, and that is deliberate rather than sloppy. The
-     * alternative is a separate `poll()` somebody has to remember to call, which is the shape of
-     * wiring bug this file's own history is full of. It is idempotent (a second read in the same
-     * state changes nothing) and monotone (a revocation is never undone except by `confirm`).
+     * The transition is the event, and reading is when it is noticed. A
+     * cookie has no change event, so the only moment this gate can observe
+     * the jar is when somebody asks it a question — and it is asked before
+     * every request, at every page boundary and on every tick: exactly the
+     * set of moments a stale answer could do damage. Revoking is a side
+     * effect of a read, deliberately: the alternative is a separate
+     * `poll()` somebody has to remember to call — the wiring-bug shape this
+     * file's history is full of. Idempotent, and monotone (a revocation is undone only by `confirm`).
      */
     if (lastSeen !== undefined && !sameMarker(lastSeen, marker)) {
       lastSeen = marker;
       /*
-       * ANY change revokes, INCLUDING one that arrives back at the confirmed account. An
-       * A→B→A round trip leaves the marker saying exactly what it said before, and a
-       * comparison against the mirror's name cannot see that anything happened — which is
-       * precisely the window in which a response issued under B lands in A's tab. What was
-       * confirmed was "this browser is A's, NOW"; the round trip ends that, and the gate waits
-       * for the server to say it again.
-       *
-       * ── AND IT DOES NOT WAIT FOR A CONFIRMATION TO EXIST ──────────────────────────────
-       *
-       * This was `if (confirmedFor !== null)`, which sounds like a tidy no-op and is a hole.
-       * The gate spends the whole confirm ladder — up to four attempts, roughly thirty seconds
-       * — with `confirmedFor` still null while a WARM MIRROR is on screen and its reads are
-       * allowed, because that is what `unconfirmed` is for. In that window: another tab
-       * establishes B, the readable marker is then removed (an older tab, a malformed write, a
-       * hand-cleared cookie) while B's HttpOnly session lives on, and the change was seen and
-       * discarded. The gate stayed `unconfirmed`, `refuseIfForeign` kept letting search,
-       * message bodies and attachments through, and B's bytes reached the screen.
-       *
-       * So a marker change latches `revoked` on a named mirror whether or not anybody has
-       * confirmed it yet. `unconfirmed` keeps its meaning — nobody has said, and nothing has
-       * happened — and stops being reachable after something has happened.
+       * ANY change revokes, including one arriving back at the confirmed
+       * account: an A→B→A round trip leaves the marker reading as before, and a comparison against the mirror's name cannot see anything
+       * happened — precisely the window in which a response issued under B
+       * lands in A's tab. What was confirmed was "this browser is A's, NOW". And it does not wait for a confirmation to exist:
+       * `if (confirmedFor !== null)` sounds tidy and is a hole — the gate
+       * spends the whole confirm ladder with `confirmedFor` null while a warm mirror's reads are allowed; another tab establishes B, the
+       * marker is then removed, and the change was seen and discarded while `refuseIfForeign` kept letting bodies through. So a marker change
+       * latches `revoked` on a named mirror whether or not anybody confirmed it yet.
        */
       confirmedFor = null;
       revoked = true;
@@ -658,34 +420,14 @@ export function createSyncGate(mirrorOwner: string | null): SyncGate {
   };
 
   /**
-   * ═══ THE SECOND RULE: A CONTRADICTED BROWSER READS NOTHING EITHER ═════════════════════════
-   *
-   * `sync`, `snapshot` and `mutate` require `holds` — nobody may merge into a mirror until the
-   * server has named it. That rule was written to protect what lands ON DISK, and it left the
-   * READS ungated on an argument that turns out to be half true: "the server filters by the
-   * session's account and A's ids return 404 under B, so no foreign byte can land."
-   *
-   * The ids are the hole. A tab confirmed for A whose jar is rewritten to B stops syncing and
-   * stays INTERACTIVE — the strip says the mailbox has stopped, the mail underneath is still
-   * on screen and still clickable. Search and Load older mail then ask the server for a LIST,
-   * which is not keyed on any id this mirror holds: B's session answers with B's rows, the
-   * surface renders them, and opening one supplies a valid B id to the body route, which
-   * returns B's full text and HTML. Nothing was written to disk and every byte of it was on
-   * screen. `POST /sync/pull` is the same shape with a bill attached: it stamps every one of
-   * B's mailboxes and wakes worker-side IMAP work for an account nobody in this tab is.
-   *
-   * So the reads are gated too, and on a DIFFERENT predicate, which is the whole design:
-   *
-   *  · `contradicted` — refuse. A present cookie naming somebody else is positive evidence
-   *    that every answer would be another account's, and there is no request this tab can
-   *    make that is worth making.
-   *  · `unconfirmed`  — allow. Absence is silence: the jar either agrees with the mirror or
-   *    says nothing, the person is looking at their own mail in a tab that is still theirs,
-   *    and the whole point of `checking` is that a mailbox already on screen keeps working
-   *    through a confirm that has not answered yet. Refusing here would dim the mirror by
-   *    another means — which is the flicker this slice removes, wearing a third hat.
-   *
-   * @param what named in the message so a console line says which door refused.
+   * The second rule: a contradicted browser reads nothing either. `sync`/`snapshot`/`mutate` require `holds` to
+   * protect the DISK; the reads were left ungated on "A's ids 404 under B" — and the ids are the hole: a stopped
+   * tab stays interactive, Search and Load-older ask for a LIST keyed on no id, B's session answers with B's rows,
+   * and opening one supplies a valid B id to the body route — every byte on screen, nothing on disk (`POST
+   * /sync/pull` is the same shape with a bill attached). So reads are gated on a DIFFERENT predicate:
+   * `contradicted` — refuse (a present cookie naming somebody else is positive evidence); `unconfirmed` — allow
+   * (absence is silence, the person is looking at their own mail, and refusing would dim the mirror — the flicker
+   * this slice removes). @param what named so a console line says which door.
    */
   const refuseIfForeign = (what: string): void => {
     /*
@@ -702,17 +444,14 @@ export function createSyncGate(mirrorOwner: string | null): SyncGate {
   };
 
   /**
-   * One capability, wrapped so it asks {@link refuseIfForeign} before it reaches the wire.
-   *
-   * `async` rather than a bare synchronous throw, and that is not a style choice: a caller that
-   * writes `adapter.fetchBody(id).catch(…)` without a surrounding `try` would let a synchronous
-   * throw escape past its own error handling, so the refusal would surface as a crash on some
-   * call sites and as a handled failure on others. An async wrapper rejects, which is the one
-   * shape every one of these consumers already has a path for.
-   *
-   * Generic over the signature so a capability's own types survive the wrap — a rename or an
-   * added parameter in `@ohmail/client-engine` still fails here rather than being erased into
-   * `any` by a hand-written duplicate of the signature.
+   * One capability, wrapped so it asks {@link refuseIfForeign} before the
+   * wire. `async` rather than a bare synchronous throw, not a style choice:
+   * `adapter.fetchBody(id).catch(…)` without a surrounding `try` lets a
+   * synchronous throw escape past its own error handling, so the refusal
+   * would crash some call sites and be handled at others; an async wrapper
+   * rejects, the one shape every consumer has a path for. Generic over the
+   * signature so the capability's own types survive the wrap — a rename in
+   * `@ohmail/client-engine` fails here rather than being erased into `any`.
    */
   const gatedRead = <A extends unknown[], R>(
     fn: (...args: A) => Promise<R>,
@@ -721,44 +460,28 @@ export function createSyncGate(mirrorOwner: string | null): SyncGate {
     refuseIfForeign(what);
     const answer = await fn(...args);
     /*
-     * ── AND AGAIN WHEN THE ANSWER LANDS ───────────────────────────────────────────────────
-     *
-     * The check above is a check at REQUEST time, and a request is not instantaneous. Between it
-     * and the browser attaching credentials — and for the whole flight after that — another tab
-     * can rewrite the shared jar. The response then belongs to whoever the jar named when the
-     * server read it, which is not necessarily who it named when this asked, and nothing in the
-     * body says which. Returning it would put those bytes on a surface built for somebody else.
-     *
-     * ONE CHECK AND NOT TWO, and the second one is worth saying out loud because it was written
-     * and then removed. The obvious shape is to capture the marker at issue and compare it at
-     * arrival. For a NAMED mirror that comparison can never be the check that decides: every
-     * change it could detect is a change `identity()` has already turned into `contradicted` or
-     * `revoked` on this same line, because reading is when a transition is noticed. And for an
-     * UN-NAMED engine it must not fire at all — there is no mirror on disk to protect. A guard
-     * whose verdict is always somebody else's verdict is a guard nobody can watch fail, which is
-     * exactly the shape this repository keeps paying for. So the arrival check is the same
-     * question as the departure check, asked again.
-     *
-     * WHAT IT DOES NOT CATCH: a round trip that begins and ends inside one flight with no read
-     * in between — A to B and back to A — leaves `lastSeen` and the current marker both reading
-     * A, so nothing client-side observed anything. No arrangement of client-side checks closes
-     * that; it needs the server to name the account it answered for. That is a `packages/api`
-     * change, out of this slice, and filed as its own gap row rather than implied away here.
+     * And again when the answer lands: the check above is at REQUEST time,
+     * and between it and the server reading the jar another tab can rewrite
+     * it — the response belongs to whoever the jar named then, and nothing in the body says which. One check, not two: capturing the marker at
+     * issue and comparing at arrival was written and removed — for a named mirror every change it could detect is one `identity()` has already
+     * turned into `contradicted`/`revoked` on this same line, and for an un-named engine it must not fire at all: a guard whose verdict is
+     * always somebody else's is a guard nobody can watch fail. What it does
+     * NOT catch: a round trip entirely inside one flight (A→B→A) — no client-side check closes that; it needs the server to name the
+     * account it answered for (a `packages/api` change, filed as its own gap row).
      */
     refuseIfForeign(what);
     return answer;
   };
 
   /**
-   * A PAGE of the log, wrapped — `sync`'s own rule rather than {@link gatedRead}'s.
-   *
-   * Two differences, and both matter. It requires `holds` and not merely "not contradicted",
-   * because a page of the log is written STRAIGHT INTO the mirror on disk and that is the one
-   * thing an unconfirmed engine may never do. And it rejects with {@link SyncAbortedError},
-   * because this refusal travels back through the engine's drain into the scheduler's own
-   * catch, which reads that class as "the gate cancelled this drain" — no failure count, no
-   * report, no retry armed. A {@link ForeignSessionError} there would be counted as a network
-   * failure and would arm a backoff for a tab that has already stopped.
+   * A page of the log, wrapped — `sync`'s own rule rather than
+   * {@link gatedRead}'s. Two differences, both load-bearing: it requires
+   * `holds`, not merely "not contradicted", because a page of the log is
+   * written straight into the mirror on disk — the one thing an unconfirmed
+   * engine may never do; and it rejects with {@link SyncAbortedError},
+   * which the scheduler's catch reads as "the gate cancelled this drain" —
+   * no failure count, no retry armed. A {@link ForeignSessionError} there
+   * would be counted as a network failure and arm a backoff for a tab that has already stopped.
    */
   const gatedPage = <A extends unknown[], R>(
     fn: (...args: A) => Promise<R>,
