@@ -7,57 +7,14 @@ import {
 import { renderTemplate, type TemplateDataMap, type TemplateName } from "./templates.js";
 
 /**
- * `MailerPort` over plain SMTP — the self-host transport, where the operator brings their own
- * submission server (`SMTP_URL` + `MAIL_FROM` on the standalone server's config) instead of a
- * Resend account. Same closed template set, same never-throws contract, same scrubbed error
- * grammar as {@link ResendMailer}; only the wire differs.
- *
- * ── EXPORTED FROM THE FULL BARREL ONLY — never from `./index.ts` beside ResendMailer ─────────
- *
- * This file is the ONE module in the package that imports `nodemailer`, and the desktop engine
- * bundles `@trafficflow/services/mail`. The engine already carries its own nodemailer — for
- * sending the USER's mail through the user's own server — but this class must never ride along:
- * a transactional system mailer inside a local-first engine is dead weight at best and a
- * mail-bomb primitive at worst. `mail-entry-census.test.ts` walks the `/mail` module graph and
- * pins both facts: no `nodemailer` specifier in that graph, and no importer of this file other
- * than the package's full barrel.
- *
- * ── `sent` MEANS THE SERVER TOOK THE MESSAGE FOR THIS RECIPIENT ───────────────────────────────
- *
- * The one semantic that must not drift, because a DATABASE FACT keys on it:
- * `markInviteDelivered` upgrades an invite row to `confers_verified: true` exactly when the
- * mailer answers `sent` — the claim "a mail carried this code to the bound address", which is
- * what lets the account registering through that code start email-verified. An optimistic `sent`
- * (connection opened, or message merely handed to nodemailer) would stamp receipt-proof for an
- * inbox that never received anything — the forged-verification hole the column closes, re-opened
- * from the transport layer. So `sent` here is precisely: the SMTP dialogue completed and the
- * server answered 250 to DATA with this recipient accepted and none rejected. A refused RCPT, a
- * rejected DATA, a dropped connection — all `failed`, never `sent`.
- *
- * SMTP acceptance is still acceptance-for-DELIVERY-ATTEMPT, not delivery — a later bounce is
- * invisible to this process. That is the same epistemic position `ResendMailer` is in (Resend's
- * 200 precedes its own delivery attempt), so `sent` means the same thing on both transports:
- * the message left our hands and a server took responsibility for it.
- *
- * ── Retryability is SMTP's polarity, not HTTP's ───────────────────────────────────────────────
- *
- * 4yz is "transient, try later" and 5yz is "permanent, do not" (RFC 5321 §4.2.1) — the inverse
- * of the HTTP intuition where 4xx is final. Connection-level failures (refused, timeout, DNS)
- * are retryable by class, exactly like ResendMailer's transport arm.
- *
- * ── What SMTP does not have ───────────────────────────────────────────────────────────────────
- *
- * `SendOptions.idempotencyKey` is provider-side dedup and SMTP has no such header; the option is
- * accepted and unused, stated here rather than silently. The callers that rely on it
- * (`MailService`'s three keyed templates) degrade to exactly the pre-key behaviour: a re-driven
- * invocation may send twice. On a self-host box that is one duplicate mail in one operator's
- * family, not a fleet-scale incident.
- *
- * ── Under a test runner, only loopback ────────────────────────────────────────────────────────
- *
- * The suite performs zero external requests, structurally. `ResendMailer` enforces that by
- * refusing its default HTTP transport; the SMTP equivalent of "inject a double" is a loopback
- * sink, so construction under vitest refuses any host that is not 127.0.0.1/::1/localhost.
+ * `MailerPort` over plain SMTP — the self-host transport, same closed templates, never-throws
+ * contract and scrubbed errors as {@link ResendMailer}. Exported from the FULL barrel only: the
+ * one module importing `nodemailer`, and the desktop engine bundles `/mail` —
+ * `mail-entry-census.test.ts` pins both facts. `sent` means THE SERVER TOOK THE MESSAGE:
+ * `markInviteDelivered` keys `confers_verified` on it, so an optimistic `sent` would stamp
+ * receipt-proof for an inbox that received nothing. Precisely: 250 to DATA, no recipient
+ * rejected. Retryability is SMTP's polarity: 4yz transient, 5yz permanent (RFC 5321 §4.2.1).
+ * `idempotencyKey` is accepted and unused. Under a test runner, only loopback hosts construct.
  */
 export interface SmtpMailerConfig {
   /**

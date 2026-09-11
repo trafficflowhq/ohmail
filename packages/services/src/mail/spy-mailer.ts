@@ -16,18 +16,14 @@ export interface SpiedSend<K extends TemplateName = TemplateName> {
 }
 
 /**
- * The test `MailerPort`. Lives in `src/` (like `makeTestAuthDeps`) so `packages/api`
- * and any end-to-end walkthrough can inject it without reaching into another package's
- * test folder.
- *
- * It RENDERS. A spy that only recorded `(to, template, data)` would let a template
- * that throws on its own data pass every test in the suite, so the spy runs exactly
- * the same `renderTemplate` the Resend implementation runs, and stores the output for
- * assertions. What it does not do is anything network-shaped — there is no HTTP client
- * in this file, which is the structural half of "zero external requests in the suite".
- *
- * `failNext`/`skipNext` let a test drive the failure branches of a caller without
- * mocking a transport.
+ * The test `MailerPort`. Lives in `src/` (like `makeTestAuthDeps`) so `packages/api` and any
+ * end-to-end walkthrough can inject it without reaching into another package's test folder. It
+ * RENDERS: a spy that only recorded `(to, template, data)` would let a template that throws on
+ * its own data pass every test, so the spy runs exactly the same `renderTemplate` the Resend
+ * implementation runs and stores the output for assertions. What it does not do is anything
+ * network-shaped — no HTTP client in this file, the structural half of "zero external requests in
+ * the suite". `failNext`/`skipNext` drive a caller's failure branches without mocking a
+ * transport.
  */
 export class SpyMailer implements MailerPort {
   readonly sent: SpiedSend[] = [];

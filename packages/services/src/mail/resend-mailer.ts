@@ -58,42 +58,14 @@ const RESEND_ENDPOINT = "https://api.resend.com/emails";
 const DEFAULT_TIMEOUT_MS = 10_000;
 
 /**
- * `MailerPort` over Resend's REST API.
- *
- * It renders the template itself (via the shared `renderTemplate`, so the spy and the
- * snapshots see byte-identical output) and posts `{from,to,subject,html,text,headers}`.
- *
- * It NEVER throws from `send`. A network error, a timeout, a 4xx and a 5xx all come back
- * as `{status:"failed"}` with `retryable` set from the class of failure.
- *
- * ── The error string is a CODE, never a body ─────────────────────────────────────
- *
- * This class used to put a truncated copy of the provider's response into
- * `MailSendResult.error`, and the doc comment right here told callers that value goes to
- * logs. An independent review pointed out what that combination is: an
- * attacker-influenced, provider-authored string, copied verbatim into our log stream.
- * Resend's own 401 body echoes the API key back (`"API key re_… is invalid"`), a 422
- * echoes the recipient, and nothing stops a future error class from echoing a header we
- * sent. So the provider's body is now reduced to an **allow-listed machine code** —
- * `[a-z_]{1,40}` taken from Resend's `name` field, or `unrecognised_error` — and every
- * remaining error string (transport throws, render failures) goes through {@link scrub},
- * which masks the API key, `re_…` keys, email addresses, URL query strings and
- * token-shaped runs. `mail-resend.test.ts` asserts the exact secrets are absent rather
- * than asserting a length.
- *
- * ── It refuses to construct with a real socket under a test runner ───────────────
- *
- * The standing rule is "the suite performs zero external requests". `cfg.http` defaulting to
- * `nodeHttpPost` meant one future `new ResendMailer({apiKey: env.RESEND_API_KEY, …})` in
- * a route test would have made a real send to a real inbox. Under vitest the
- * default transport is therefore a construction ERROR: a test must inject one. The
- * suite-wide network trap in `test/setup/no-external-network.ts` is the second layer.
- *
- * Open and click tracking must stay OFF on the sending domain. Open tracking injects a
- * remote 1×1 into the HTML and click tracking rewrites every href through the provider —
- * i.e. exactly the two things `privacy-service.ts` strips out of other people's mail. The
- * flags live in the Resend dashboard, not in this code, so they are a deployment
- * readiness gate rather than something this class can enforce.
+ * `MailerPort` over Resend's REST API. Renders via the shared `renderTemplate`; NEVER throws from
+ * `send`. The error string is a CODE, never a body: this class used to log a truncated copy of
+ * the provider's response — an attacker-influenced string (Resend's own 401 body echoes the API
+ * key back). The body is reduced to an allow-listed machine code from Resend's `name` field, else
+ * `unrecognised_error`; remaining error strings go through {@link scrub} — `mail-resend.test.ts`
+ * asserts the exact secrets are absent. Under a test runner the default transport is a
+ * construction ERROR: inject `http`. Open and click tracking stay OFF on the sending domain — a
+ * deployment readiness gate.
  */
 export class ResendMailer implements MailerPort {
   private readonly http: HttpPost;
@@ -186,17 +158,12 @@ function short(value: unknown): string {
 }
 
 /**
- * Reduce a provider error body to a machine code we are willing to log.
- *
- * Resend answers `{"statusCode":422,"message":"…","name":"validation_error"}`. `name` is
- * the only field that is a bounded enum rather than free prose, and the regex pins that:
- * anything that is not a short lower-snake token — including a `name` an attacker somehow
- * influenced — collapses to `unrecognised_error`. The HTTP status is already in the
- * caller's string and carries the same diagnostic weight without the body.
- *
- * Losing the provider's prose is the point. Diagnosing a 422 means reading Resend's own
- * dashboard, which has the full event; it does not mean copying an unbounded remote
- * string into our logs forever.
+ * Reduce a provider error body to a machine code we are willing to log. Resend answers
+ * `{"statusCode":422,"message":"…","name":"validation_error"}`; `name` is the only field that is
+ * a bounded enum rather than free prose, and the regex pins that — anything not a short
+ * lower-snake token collapses to `unrecognised_error`. The HTTP status is already in the caller's
+ * string. Losing the provider's prose is the point: diagnosing a 422 means reading the provider's
+ * own dashboard, not copying an unbounded remote string into our logs forever.
  */
 function providerCode(body: string): string {
   try {

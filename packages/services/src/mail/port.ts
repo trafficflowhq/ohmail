@@ -1,37 +1,14 @@
 import type { RenderedEmail, TemplateDataMap, TemplateName } from "./templates.js";
 
 /**
- * The transactional-mail seam.
- *
- * `MailerPort` is injected exactly like `RemoteFetch` (privacy-service),
- * `DraftPort` (drafting-service) and `OpenSendAdapter` (send-service): the
- * production implementation talks to Resend, the test implementation is a spy, and
- * nothing in `packages/services` reaches for a network client on its own. That is
- * what makes "zero external requests in the suite" provable rather than
- * hoped for — a test can assert the spy saw the sends AND that the injected
- * transport was never handed a socket.
- *
- * Two properties are load-bearing:
- *
- * **1. `send` never throws.** Every failure mode — a 5xx from the provider, a DNS
- * error, a malformed template argument — comes back as a `MailSendResult`. A
- * transactional mail is a side effect of a request, never its purpose: a waitlist
- * row must not roll back because Resend had a bad minute, and a sign-in must not
- * 500 because a notice could not be delivered. Callers are free to ignore the
- * result; they are not free to be interrupted by it.
- *
- * **2. `send` is generic over the template.** `send("x@y", "invite", …)` will only
- * accept `InviteData`. The four templates are a closed set (see `templates.ts`);
- * the port cannot send a free-form body, so there is no path by which arbitrary
- * user content becomes outbound mail from our sending domain.
- *
- * **A port is a TRANSPORT and enforces no policy.** The per-recipient limiter, the
- * link construction and the token lifecycle all live in `MailService`; calling a
- * `MailerPort` directly bypasses every one of them. Composition roots must construct
- * `MailService` and hand *that* to callers — a route that holds a bare `MailerPort` has
- * an unthrottled mail-bomb primitive. `packages/api` holds no mailer today, and
- * `mail-service.test.ts` pins the boundary by exercising the limiter through the
- * service and proving the raw port has none.
+ * The transactional-mail seam. `MailerPort` is injected like `RemoteFetch` and `DraftPort`:
+ * production talks to Resend, tests inject a spy — "zero external requests in the suite",
+ * provable. Two load-bearing properties: (1) `send` NEVER THROWS — a transactional mail is a side
+ * effect, never a request's purpose: a waitlist row must not roll back because the provider had a
+ * bad minute. (2) `send` is generic over the closed template set, so no path turns user content
+ * into outbound mail from our domain. A port is a TRANSPORT and enforces no policy: the limiter,
+ * link construction and token lifecycle live in `MailService` — a bare `MailerPort` is an
+ * unthrottled mail-bomb primitive; `mail-service.test.ts` pins the boundary.
  */
 export interface MailerPort {
   send<K extends TemplateName>(
@@ -41,18 +18,14 @@ export interface MailerPort {
 
 export interface SendOptions {
   /**
-   * Provider-side dedup key. Resend honours an `Idempotency-Key` header on
-   * `POST /emails`; a provider that ignores it leaves us exactly where we are today.
-   * We do not retry (see `mail-service.ts`), but a serverless invocation can be
-   * killed after the provider accepted the send and then be re-driven by the
-   * client, and this is what stops that from being two mails.
-   *
-   * `MailService` supplies one for the three templates whose triggering EVENT has a
-   * stable identity: waitlist (recipient + tier), invite (code + recipient), sign-in
-   * notice (recipient + device + instant). It deliberately supplies none for email
-   * verification — each re-execution mints a fresh token, so suppressing the second
-   * mail would strand the user with a link they never received. Making the verification
-   * REQUEST idempotent is the wiring slice's job, not the transport's.
+   * Provider-side dedup key. Resend honours an `Idempotency-Key` header on `POST /emails`; a
+   * provider that ignores it leaves us where we are today. We do not retry, but a serverless
+   * invocation can be killed after the provider accepted the send and re-driven by the client,
+   * and this is what stops that being two mails. `MailService` supplies one for the three
+   * templates whose triggering EVENT has a stable identity: waitlist (recipient + tier), invite
+   * (code + recipient), sign-in notice (recipient + device + instant). Deliberately none for
+   * email verification — each re-execution mints a fresh token, so suppressing the second mail
+   * would strand the user with a link they never received.
    */
   idempotencyKey?: string;
 }
