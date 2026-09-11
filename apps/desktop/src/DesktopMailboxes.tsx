@@ -382,8 +382,8 @@ const day = dayStamp;
  * SETTINGS → MAILBOXES, on the desktop. Read out of the same context the sync line reads,
  * rather than fetched again — one poller, one answer; `null` means the read has not landed or
  * could not be made, and it says so instead of claiming the install has no mailbox. THE
- * HEADING NAMES THE DOOR: "Cloud mailboxes" on the cloud door (the browser client's own
- * catalogue key) and "Local mailboxes on this computer" on the local one, read from the same
+ * HEADING NAMES THE DOOR: the browser client's own `modeCloud` key on the cloud door and the
+ * desktop's `desktopModeLocal` on the local one, read from the same
  * `door` the rest of the pane reads so the heading cannot contradict the door row above. THE
  * COPY IS THE CATALOGUE'S, not English literals — a German install used to read this pane in
  * English; the keys are the desktop's own, worded for its subset of states.

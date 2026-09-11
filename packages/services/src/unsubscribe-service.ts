@@ -34,9 +34,9 @@ const ONE_CLICK_TIMEOUT_MS = 8_000;
  * — so no parameter exists through which the user's IP, cookies, referer or message could reach
  * the sender. `pin` is `assertPublicHttpUrl`'s output: the POST connects to a PRE-VALIDATED
  * address rather than re-resolving. `ONE_CLICK_BODY` is fixed by the implementation. Mirrors
- * `RemoteFetch`; a separate port only because it cannot POST. THERE IS NO MAIL PORT AND MUST
- * NEVER BE: a `mailto:` unsubscribe sends mail on the user's behalf; the parser refuses one, and
- * the absence of any SMTP dependency is the structural half.
+ * `RemoteFetch`; a separate port only because it cannot POST. There is no mail port here and
+ * there must never be one: a `mailto:` unsubscribe sends mail on the user's behalf; the parser
+ * refuses one, and the absence of any SMTP dependency is the structural half.
  */
 export interface OneClickPost {
   post(url: string, pin: readonly string[]): Promise<{ status: number }>;
@@ -417,15 +417,14 @@ export class UnsubscribeService {
   async onScreenOut(ctx: ServiceContext, messageIds: readonly string[]): Promise<UnsubscribeSweep> {
     const sweep: UnsubscribeSweep = { considered: 0, posted: 0, skipped: 0, failed: 0 };
 
-    // THE ACCOUNT SWITCH, READ HERE AND NOWHERE ELSE (mail 0054). `block_auto_unsubscribe_at` NOT
-    // NULL means this account asked that a screen-out stop leaving lists on their behalf. Read at
-    // the TOP of the automatic entry point: it is the seam, not the surface — a stale tab or a
+    // THE ACCOUNT SWITCH, READ HERE AND NOWHERE ELSE (mail 0054). `block_auto_unsubscribe_at`
+    // NOT NULL means this account asked that a screen-out stop leaving lists on their behalf.
+    // Read at the TOP of the automatic entry point: it is the seam, not the surface — a stale tab or a
     // direct API call cannot make a request this row forbids, because the request is made here;
-    // `unsubscribe()` is deliberately NOT gated — a switch labelled "auto" that also disabled a
-    // manual control has a lying label (`sweepScreenedOut` IS gated, it comes through here);
-    // ONCE, not per message — one read is the same answer for all ids and cannot go half-applied.
-    // The zero sweep is the honest return: `considered` counts what the pass LOOKED at, and it
-    // looked at nothing.
+    // `unsubscribe()` is deliberately NOT gated — a switch labelled "auto" that also disabled a manual
+    // control has a lying label (`sweepScreenedOut` IS gated, it comes through here); ONCE, not per
+    // message — one read is the same answer for all ids and cannot go half-applied. The zero sweep is
+    // the honest return: `considered` counts what the pass LOOKED at, and it looked at nothing.
     if (await this.blocked(ctx)) return sweep;
 
     for (const id of messageIds) {
