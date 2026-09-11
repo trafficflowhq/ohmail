@@ -118,13 +118,12 @@ export function useOlderMail(
   /**
    * "Must this fetched row stay out of the tail right now?" — asked per render, of the LIVE
    * mirror, never remembered (a filter against the surface's own list resurfaces a row moved out of
-   * scope; a remembered accept-time discard makes mail vanish when the mirror later hard-prunes the
-   * live row). Fetched copies are all kept; four verdicts: `"hide"` — the mirror positively shows
-   * the row in this scope (the surface renders it; any latch clears); `"ban"` — the row has LEFT
-   * this scope, so the stale pre-move copy is latched out and a later hard-prune cannot revive it;
-   * `"hold"` — the render cannot judge the scope (folder entity absent): the row stays out, latch
-   * untouched — a defensive hide is not an observation; `"show"` — the mirror does not hold the
-   * row (evicted, or genuinely older), so the fetched copy renders unless latched.
+   * scope; a remembered discard makes mail vanish when the mirror later hard-prunes the live row).
+   * Fetched copies are all kept; four verdicts: `"hide"` — the mirror positively shows the row in
+   * this scope (the surface renders it; any latch clears); `"ban"` — the row has LEFT this scope:
+   * the stale pre-move copy is latched out so a later hard-prune cannot revive it; `"hold"` — the
+   * render cannot judge the scope (folder entity absent): row out, latch untouched — a defensive
+   * hide is not an observation; `"show"` — not in the mirror (evicted or older): renders unless latched.
    */
 
   /**
