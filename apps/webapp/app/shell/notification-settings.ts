@@ -1,37 +1,12 @@
 /**
- * ══════════════════════════════════════════════════════════════════════════════════════════
- *  THE NOTIFICATION SWITCHES — stored per device, because delivery is a fact about a device
- * ══════════════════════════════════════════════════════════════════════════════════════════
- *
- * The DECISION lives in `@ohmail/client-engine`'s gate; this is the state the gate is handed,
- * plus the one thing the gate deliberately does not model — what the operating system says.
- *
- * ── WHY `install` REACH AND NOT `account` ─────────────────────────────────────────────────
- *
- * `LocaleContext` already had to answer "how far does this choice reach", and its answer is the
- * one this file copies: the row SAYS which, because the two hosts differ and a claim that is
- * right on one surface is false on the other.
- *
- * For notifications the answer is `install` on every surface, and that is a ruling rather than a
- * shortcut. Whether a notice may be drawn at all is the OS's answer, per device, and it cannot be
- * carried anywhere — a phone that granted permission says nothing about a laptop that refused.
- * Wanting mail to interrupt you on your phone and not on your work laptop is the ordinary case,
- * not an edge one. So these switches are about THIS device's delivery, the pane says so, and
- * nothing here travels.
- *
- * That leaves the mailbox-as-master invariant intact, because it was never about delivery: the
- * per-SENDER notification opt-ins (`notifyRules`) do travel, in the organizer profile, and are a
- * different thing from "does this laptop make a sound".
- *
- * ── WHY `localStorage` IS THE RIGHT STORE HERE AND NOT A COMPROMISE ───────────────────────
- *
- * `LocaleContext` again: "the desktop — `localStorage` IS the persistence. That is the desktop on
- * BOTH its doors." A per-install preference has no other home on a standalone build, which has no
- * account to write to. Using the same store on every surface keeps one code path.
- *
- * Every read is defensive: a blocked or absent `localStorage` throws, and a settings pane that
- * cannot read a preference must render the DEFAULTS rather than fail. Note the failure direction
- * is deliberate — see {@link readChannels}.
+ * The notification switches — stored per device, because delivery is a fact about a device. The DECISION
+ * lives in `@ohmail/client-engine`'s gate; this is the state the gate is handed, plus what the operating
+ * system says. Reach is `install`, a ruling: whether a notice may be drawn is the OS's answer, per device,
+ * and it cannot be carried anywhere — wanting mail to interrupt on the phone and not the work laptop is the
+ * ordinary case. The mailbox-as-master invariant is untouched: per-SENDER opt-ins (`notifyRules`) travel in
+ * the organizer profile; "does this laptop make a sound" does not. `localStorage` is the right store
+ * (`LocaleContext`'s argument: on the desktop it IS the persistence), and every read is defensive — a blocked
+ * storage renders the DEFAULTS ({@link readChannels}).
  */
 import {
   DEFAULT_CHANNELS,
@@ -46,15 +21,13 @@ export const NOTIFICATION_CHANNELS_KEY = "ohmail.notifications.channels";
 
 /**
  * Read this install's switches, falling back to {@link DEFAULT_CHANNELS}.
- *
- * **A FAILED READ READS AS THE DEFAULTS, NOT AS OFF, AND NOT AS ON.** The defaults are what a
- * fresh install believes, so a browser with storage blocked behaves like a fresh install rather
- * than like an account that turned everything off — the alternative silently disables a feature
- * the user enabled, with nothing on screen to explain it.
- *
- * Unknown keys are dropped and missing ones defaulted, field by field: a catalogue written by a
- * newer build must not make an older one throw, and a boolean that is not a boolean is not a
- * preference.
+ * A failed read reads as the DEFAULTS — not off, not on: the defaults are
+ * what a fresh install believes, so a browser with storage blocked behaves
+ * like a fresh install rather than like an account that turned everything
+ * off (which silently disables a feature the user enabled, with nothing on
+ * screen to explain it). Unknown keys are dropped and missing ones
+ * defaulted field by field: a newer build's catalogue must not make an
+ * older one throw, and a boolean that is not a boolean is not a preference.
  */
 export function readChannels(): NotificationChannels {
   let raw: string | null = null;
@@ -89,15 +62,14 @@ export function writeChannels(next: NotificationChannels): void {
 }
 
 /**
- * WHAT THE PLATFORM SAYS, normalized to the gate's four states.
- *
- * A host that is not a browser — the desktop shell, whose webview cannot hold the permission and
- * asks the shell instead — supplies its own reader; see {@link NotificationHost}. The browser
- * path is here because it is the only one that needs no injection.
- *
- * `unsupported` and `denied` are DIFFERENT and are never collapsed: "this platform has no
- * notification centre" is a fact about the machine and hides the controls, while "you refused" is
- * a fact about a decision somebody made and must be reported with the place to change it.
+ * What the platform says, normalized to the gate's four states. A host that
+ * is not a browser — the desktop shell, whose webview cannot hold the
+ * permission — supplies its own reader ({@link NotificationHost}); the
+ * browser path is here because it needs no injection. `unsupported` and
+ * `denied` are different and never collapsed: "this platform has no
+ * notification centre" is a fact about the machine and hides the controls;
+ * "you refused" is a decision somebody made and must be reported with the
+ * place to change it.
  */
 export function browserPermission(): NoticePermission {
   const N = (globalThis as { Notification?: { permission?: string } }).Notification;
@@ -121,42 +93,35 @@ export interface NotificationHost {
   permission: () => NoticePermission;
   request: () => Promise<NoticePermission>;
   /**
-   * Bring this surface's wake registration into line with the switches, if it has one.
-   *
-   * OPTIONAL, and the desktop is why. That build has no push subscription and no server to hold
-   * one — its shell is woken by its own engine — so it supplies no implementation and the pane
-   * calls nothing. A required method would force a do-nothing stub there, which is a promise the
-   * type makes and the surface does not keep.
-   *
-   * Never throws to the caller: a registration that could not be made is a browser that will not
-   * be woken while closed, and that is not a reason to move a control the user set.
+   * Bring this surface's wake registration into line with the switches, if
+   * it has one. Optional, and the desktop is why: that build has no push
+   * subscription and no server to hold one — its shell is woken by its own
+   * engine — so it supplies no implementation and the pane calls nothing; a
+   * required method would force a do-nothing stub, a promise the type makes
+   * and the surface does not keep. Never throws to the caller: a
+   * registration that could not be made is a browser that will not be woken
+   * while closed, not a reason to move a control the user set.
    */
   /**
-   * `opts.forceAnnounce` — do NOT accept a stored id as proof this browser owns the row.
-   *
-   * BOTH doors pass it, because both go through {@link applyWakeIntent}, which sets it
-   * unconditionally.
-   *
-   * An earlier version of this sentence said the settings pane kept the cheap `unchanged`
-   * shortcut, "because a person pressing a switch has already proved whose session it is". That
-   * was true when it was written and false one commit later, and the reasoning was wrong as well
-   * as the fact: a press proves the SESSION, never which account owns the registration already
-   * live on this browser — which is the only question `unchanged` is being asked. A mount proves
-   * even less.
+   * `opts.forceAnnounce` — do NOT accept a stored id as proof this browser
+   * owns the row. Both doors pass it, because both go through
+   * {@link applyWakeIntent}, which sets it unconditionally. An earlier
+   * version said the settings pane could keep the cheap `unchanged`
+   * shortcut "because a press has already proved whose session it is" —
+   * true when written, false one commit later, and wrong anyway: a press
+   * proves the SESSION, never which account owns the registration already
+   * live on this browser, which is the only question `unchanged` is asked.
    */
   syncSubscription?: (wanted: boolean, opts?: { forceAnnounce?: boolean }) => Promise<PushSyncOutcome | null>;
   /**
-   * THIS SURFACE CANNOT READ THE OPERATING SYSTEM'S ANSWER — its shell asks on first use.
-   *
-   * Absent (the browser) means `permission()` IS the OS answer and the pane's three sentences
-   * (`denied`, `unsupported`, `default`) describe it exactly. Set (the desktop) means
-   * `permission()` answers a narrower question — may this window ask the shell — and the pane
-   * therefore owes a sentence about who has the last word, because none of those three is true
-   * and the switch would otherwise be the only thing on screen with an opinion.
-   *
-   * A FACT ABOUT THE HOST, not copy: the wording stays in the catalogue where every other
-   * sentence on the pane lives. It exists because the released desktop had a master switch that
-   * could not be turned on and said nothing at all — see `apps/desktop/src/notify-host.ts`.
+   * This surface cannot read the operating system's answer — its shell asks
+   * on first use. Absent (the browser) means `permission()` IS the OS
+   * answer and the pane's three sentences describe it exactly. Set (the
+   * desktop) means `permission()` answers a narrower question — may this
+   * window ask the shell — and the pane owes a sentence about who has the
+   * last word. A fact about the host, not copy: the wording stays in the
+   * catalogue. It exists because the released desktop had a master switch
+   * that could not be turned on and said nothing (`apps/desktop/src/notify-host.ts`).
    */
   osHoldsPermission?: boolean;
 }
@@ -210,25 +175,14 @@ export const browserNotificationHost: NotificationHost = {
  * ══════════════════════════════════════════════════════════════════════════════════════════ */
 
 /**
- * SHOULD THIS BROWSER HAVE A PUSH SUBSCRIPTION AT ALL?
- *
- * Pure, and separated from every call it drives, because it is the whole policy and the rest is
- * plumbing.
- *
- * Three conditions, and the third is the one worth explaining. A subscription exists ONLY to wake
- * a browser that is CLOSED. While a window is open the app syncs on its own and applies every
- * per-event switch with the mirror in front of it — no push is involved in any of that. So the
- * question this answers is narrower than "does the user want notifications": it is "is there
- * something worth starting this browser up for", and the only event that can happen with nothing
- * open, and that somebody would want their machine woken for, is new mail.
- *
- * Turning NEW MAIL off therefore drops the subscription, while the other three switches keep
- * working exactly as before for as long as a window is open. That is stated in the pane rather
- * than left to be discovered.
- *
- * The happy consequence is that "fully off" needs no cooperation from the push service: with the
- * master off there is no subscription, so the server has nothing to dial and no code path can
- * fire. Nothing is delivered-then-discarded.
+ * Should this browser have a push subscription at all? Pure, and separated from every call it
+ * drives, because it is the whole policy. A subscription exists only to wake a browser that is
+ * CLOSED: while a window is open the app syncs on its own and applies every per-event switch with
+ * the mirror in front of it. So the question is "is there something worth starting this browser
+ * up for", and the only such event is new mail — turning NEW MAIL off drops the subscription
+ * while the other switches keep working for an open window (stated in the pane). Happy
+ * consequence: "fully off" needs no cooperation from the push service — no subscription, nothing
+ * to dial, nothing delivered-then-discarded.
  */
 export function subscriptionWanted(
   channels: NotificationChannels,
@@ -262,21 +216,13 @@ export function writeNotifyStateUnchecked(
 }
 
 /**
- * TELL THE WORKER TO DRAW NOTHING. The only writer a surface outside this module should reach for
- * to change the flag, and it cannot express the other direction.
- *
- * ── WHY THE ARMING WRITER IS NOT SIMPLY EXPORTED UNDER THE OBVIOUS NAME ───────────────────
- *
- * Arming has a precondition — a row the SERVER named for THIS session — and the precondition
- * lives in {@link applyWakeIntent}, not in the writer. When the ungated writer was called
- * `writeNotifyState`, it was the natural import, and BOTH doors that arm this browser reached for
- * it and armed on an INTENT instead: the shell's boot path, and the settings pane, each writing
- * `enabled: wanted` before anything had answered. On a shared browser that re-arms the worker for
- * the previous reader's still-live registration.
- *
- * Renaming is the cheap half of stopping that recurring: `writeNotifyStateUnchecked` is still
- * exported (its own behaviour is under test in `web-push-subscription.test.ts`, and this module
- * uses it), but it no longer reads like the thing to call. The census in
+ * Tell the worker to draw nothing — the only writer a surface outside this module should reach
+ * for, and it cannot express the other direction. Arming has a precondition — a row the SERVER
+ * named for THIS session — and it lives in {@link applyWakeIntent}, not the writer. When the
+ * ungated writer was called `writeNotifyState`, both arming doors imported it and armed on an
+ * INTENT — on a shared browser that re-arms the worker for the previous reader's still-live
+ * registration. `writeNotifyStateUnchecked` is still exported (under test in
+ * `web-push-subscription.test.ts`) but no longer reads like the thing to call; the census in
  * `settings-pane-rearms-wake.test.tsx` is the half that actually holds.
  */
 export function disarmNotifyState(title: string, body: string): Promise<void> {
@@ -343,22 +289,14 @@ export interface PushApi {
 }
 
 /**
- * THE PREFIX SIGN-OUT SWEEPS, and the ruling that separates these two keys from the switches.
- *
- * `ohmail.notifications.channels` is a per-INSTALL preference and survives sign-out beside
- * `ohmail.theme` and `ohmail.face` — the header above is the whole argument for why, and it does
- * not change because somebody signed out: the OS permission it mirrors is a fact about this
- * machine, not about an account.
- *
- * The two keys below are NOT that. They are a server row's id and the address that row was made
- * for — both minted inside a signed-in session, both meaningless to the next account on this
- * browser, and the endpoint is a URL a push service will deliver to. Leaving them behind on a
- * shared machine is the case the sign-out census was written for, and it has a second, quieter
- * cost: a stale id makes {@link syncWebPushNow} answer "unchanged" for the NEXT account, which
- * would then never register and never be woken, with nothing on screen to explain it.
- *
- * One prefix rather than two entries because both keys share it by construction, and a sweep
- * that names a prefix cannot be half-updated when a third key joins them.
+ * The prefix sign-out sweeps, and the ruling that separates these two keys from the switches.
+ * `ohmail.notifications.channels` is a per-install preference and survives sign-out beside
+ * `ohmail.theme` — the OS permission it mirrors is a fact about this machine. The two keys
+ * below are NOT that: a server row's id and the address it was made for, minted inside a
+ * signed-in session, meaningless to the next account — and a stale id makes {@link
+ * syncWebPushNow} answer "unchanged" for the NEXT account, which would then never register and
+ * never be woken. One prefix rather than two entries: a sweep that names a prefix cannot be
+ * half-updated when a third key joins.
  */
 export const NOTIFICATION_SUBSCRIPTION_PREFIX = "ohmail.notifications.subscription";
 
@@ -404,15 +342,13 @@ const writeId = (id: string | null, endpoint?: string): void => {
 };
 
 /**
- * ONE AT A TIME, IN THE ORDER THEY WERE ASKED FOR.
- *
- * Two presses in quick succession used to interleave: an ON that had not finished asking the
- * server for its key, and an OFF that then found no subscription to remove and reported
- * "unchanged" — after which the ON's `subscribe()` landed and the browser was registered with
- * every switch off. The mobile client already learned this and queues its wake mutations for the
- * same reason; this is that queue.
- *
- * Both arms of `then` are the operation, so a rejected predecessor still lets the next run.
+ * One at a time, in the order they were asked for. Two quick presses used
+ * to interleave: an ON that had not finished asking for its key, and an OFF
+ * that found no subscription, reported "unchanged" — after which the ON's
+ * `subscribe()` landed and the browser was registered with every switch
+ * off. The mobile client queues its wake mutations for the same reason;
+ * this is that queue. Both arms of `then` are the operation, so a rejected
+ * predecessor still lets the next run.
  */
 let chain: Promise<unknown> = Promise.resolve();
 function serialize<T>(op: () => Promise<T>): Promise<T> {
@@ -422,16 +358,14 @@ function serialize<T>(op: () => Promise<T>): Promise<T> {
 }
 
 /**
- * Bring this browser's subscription into line with the switches. Idempotent, safe to call on
- * every change AND on mount, and serialized against itself.
- *
- * Returns what actually happened, so the pane can say a true sentence instead of a silent
- * nothing — `no_server_key` and `row_remains` are both states a person can act on.
- *
- * **It never throws and never moves a switch.** A registration that could not be made is a
- * browser that will not be woken while closed; that is not a reason to flip a control somebody
- * set. What it must not do is leave a state that cannot be recovered from, which is what the
- * three orderings below are about.
+ * Bring this browser's subscription into line with the switches.
+ * Idempotent, safe on every change and on mount, serialized against itself.
+ * Returns what actually happened, so the pane can say a true sentence —
+ * `no_server_key` and `row_remains` are both states a person can act on.
+ * It never throws and never moves a switch: a registration that could not
+ * be made is a browser that will not be woken while closed, not a reason to
+ * flip a control somebody set. What it must not do is leave a state that
+ * cannot be recovered from — the three orderings below.
  */
 export function syncWebPush(
   wanted: boolean, api: PushApi, opts?: { forceAnnounce?: boolean },
@@ -440,21 +374,13 @@ export function syncWebPush(
 }
 
 /**
- * DID THE SERVER ACTUALLY NAME A ROW?
- *
- * DEFENCE, NOT A KNOWN PATH — and the difference is worth stating, because an earlier version of
- * this comment asserted the path and was wrong about a neighbouring module.
- *
- * It claimed the cross-account endpoint conflict makes `POST /push/subscriptions` answer `{}`. It
- * does not: `push-service.ts` falls back to an account-scoped lookup and that lookup THROWS
- * `ServiceError("internal", 500, …)` when it misses, which the caller's own `catch` already maps
- * to `not_registered`. So the server does not hand back an id-less 201 today.
- *
- * The guard stays because it costs nothing and the failure it prevents is silent: `writeId`
- * treats only `null` as a removal, so an absent id would be stored as the literal string
- * `"undefined"` and the sync would report `subscribed` — a browser believing it holds a
- * registration under an id that names nothing, which never retries because every later call sees
- * a subscription. Reported instead as what is true either way.
+ * Did the server actually name a row? Defence, not a known path: an earlier version asserted
+ * the cross-account endpoint conflict makes `POST /push/subscriptions` answer `{}`, and it does
+ * not — `push-service.ts` falls back to an account-scoped lookup that THROWS on a miss, which
+ * the caller's catch maps to `not_registered`. The guard stays because it costs nothing and the
+ * failure it prevents is silent: `writeId` treats only `null` as removal, so an absent id would
+ * store the literal string "undefined" and report `subscribed` — a registration under an id
+ * that names nothing, never retried.
  */
 const namedRow = (id: unknown): id is string => typeof id === "string" && id.length > 0;
 
@@ -511,21 +437,14 @@ async function syncWebPushNow(
        subscription and there IS a row — while they describe different addresses, which is the one
        case a bare id check reads as "nothing to do". */
     /*
-     * ── `unchanged` IS NOT PROOF OF OWNERSHIP, AND THE BOOT PATH MAY NOT TAKE IT ──────────
-     *
-     * This shortcut attests that a STORED id matches the live endpoint. It says nothing about
-     * WHICH ACCOUNT owns the row — and the browser cannot know that; only the server can.
-     *
-     * On a shared browser that matters. `sign-out.ts` awaits the revoke at :130 and sweeps
-     * `NOTIFICATION_SUBSCRIPTION_PREFIX` at :182, strictly after — so an unload that beat the
-     * local `unsubscribe()` (which runs inside that awaited call) necessarily beat the sweep too.
-     * A's id AND A's endpoint both survive into B's session. Without `forceAnnounce` the boot
-     * gets `unchanged`, reads it as "this browser owns a row", and re-arms the service worker for
-     * a registration that is still A's.
-     *
-     * So the boot re-announces instead. It is cheap for the legitimate case — the POST dedupes on
-     * the endpoint — and for a FOREIGN row the account-scoped lookup behind it cannot find one,
-     * which is the refusal that keeps the worker dark.
+     * `unchanged` is not proof of ownership, and the boot path may not take
+     * it: the shortcut attests a STORED id matches the live endpoint, and says nothing about which ACCOUNT owns the row. On a shared browser:
+     * `sign-out.ts` awaits the revoke and sweeps the prefix strictly after,
+     * so an unload that beat the local `unsubscribe()` beat the sweep too —
+     * A's id and endpoint survive into B's session, and without `forceAnnounce` the boot reads `unchanged` as ownership and re-arms
+     * the worker for A's registration. The boot re-announces instead: cheap
+     * for the legitimate case (the POST dedupes on the endpoint), and a
+     * foreign row fails the account-scoped lookup, keeping the worker dark.
      */
     if (!opts?.forceAnnounce && knownId !== null && readEndpoint() === existing.endpoint) {
       return "unchanged";
@@ -600,67 +519,25 @@ async function syncWebPushNow(
  * ══════════════════════════════════════════════════════════════════════════════════════════ */
 
 /**
- * TAKE THIS BROWSER'S WAKE REGISTRATION DOWN. Called by `sign-out.ts`, on both its doors.
- *
- * ── THE DEFECT THIS CLOSES ────────────────────────────────────────────────────────────────
- *
- * The server's own sign-out prune is DEVICE-scoped: `logout` reads the session's `device_id` and
- * deletes the push rows carrying it. A browser ceremony mints no device row — `establish` only
- * auto-mints one for the desktop kinds — so a browser session's `device_id` is NULL, the prune
- * returns early, and the row survives the sign-out. The sender does not care: it selects on the
- * account and the transport, so it goes on POSTing a wake to this endpoint. Nothing unregisters
- * the push service either, so the endpoint keeps answering 2xx and the sender's prune-on-404/410
- * never fires. The row and the traffic are permanent, and the next person on a shared machine is
- * the one being woken for the previous account's mail.
- *
- * ── WHY THE CLIENT IS THE RIGHT PLACE, AND NOT A WIDER SERVER PREDICATE ───────────────────
- *
- * This browser is the only party that knows WHICH deviceless row is its own — it kept the id.
- * The server cannot: deleting every deviceless registration on the account at sign-out would
- * silently end another browser's notifications, which is why the prune deliberately does not
- * guess. `DELETE /push/subscriptions/:id` is account-scoped and already exists; naming the row
- * we minted is both the sharpest handle available and no new mechanism.
- *
- * ── THREE HALVES, BECAUSE ANY ONE OF THEM CAN FAIL ────────────────────────────────────────
- *
- * `syncWebPush(false, …)` unsubscribes LOCALLY and then deletes the row, in that order and each
- * independently of the other's failure. Whichever lands helps: a dropped local subscription makes
- * the endpoint answer 404/410, which is exactly the status the sender prunes on, so the row that
- * a failed DELETE left behind is collected on the next wake. The third half is the notify-state
- * entry — the only place the words a notice may draw are kept — set to `enabled: false` so that a
- * browser which somehow keeps both a live subscription and a live row still draws nothing.
- *
- * ── AND IT PUTS NO SENTENCE ON SCREEN, DELIBERATELY ───────────────────────────────────────
- *
- * Every other failure `signOut` reports is one the reader can act on (close the other tab, try
- * again). This one is not: there is no retry a signed-out browser could make — the credential
- * that authorized the DELETE is precisely what has just been revoked — and the residue collects
- * itself through the two halves above. A row that reported it could only worry somebody with no
- * action attached, which this product treats as its own small defect.
- *
- * Never throws. `apiConfigured()` is false in every desktop build (its Cloud adapter is aliased
- * out), so this is a no-op there; and callers' tests mock `../api-client`, where a missing export
- * would otherwise throw out of the guard itself and skip the rest of the sign-out.
+ * Take this browser's wake registration down — called by `sign-out.ts` on both doors. The server's sign-out prune is
+ * device-scoped and a browser session's `device_id` is NULL, so the row survived sign-out, the sender kept POSTing, the
+ * endpoint kept answering 2xx (no 404/410 prune), and the next person on a shared machine was woken for the previous account's
+ * mail. The client is the right place: this browser is the only party that knows WHICH deviceless row is its own — deleting
+ * every deviceless row server-side would end another browser's notifications. Three independent halves: unsubscribe locally,
+ * delete the row, write `enabled: false` — whichever lands helps (a dropped subscription 404s the sender into pruning the row a
+ * failed DELETE left). No sentence on screen: there is no action a signed-out browser could take, and the residue collects
+ * itself. Never throws; a no-op on desktop builds (`apiConfigured()` false).
  */
 export async function revokeWakeRegistration(): Promise<PushSyncOutcome | null> {
   /*
-   * ── BOUNDED, AND THE BOUND IS LOAD-BEARING ──────────────────────────────────────────────
-   *
-   * FOUND BY REVIEW, and it inverted this file's neighbour's central invariant — "the wipe runs
-   * REGARDLESS". Two facts compose into a sign-out that never completes. Every call below goes
-   * through the module-global {@link serialize} queue, so it cannot START until every op already
-   * queued has settled; and the queued ops are `fetch`es with no timeout (`api-client.ts` passes
-   * an undefined `signal`, and `fetch` has no default). The settings pane fires
-   * `writeNotifyState` + `syncSubscription` on mount, and the sign-out control lives INSIDE that
-   * pane — so on a captive portal whose `GET /push/vapid-key` merely stalls, the chain never
-   * advances, `signOut` blocks here for ever, the server logout is never issued and the local
-   * wipe never runs. The session stays live and the whole mailbox stays in IndexedDB on a machine
-   * somebody has just said they are done with: strictly worse than the residue this closes.
-   *
-   * So the revoke gets a budget and the sign-out proceeds without it. The loser of the race is
-   * NOT cancelled — the queued delete may still land later, which is a free win and never a
-   * correctness question, because every store this decides about is swept unconditionally either
-   * way. `row_remains` is the honest answer on a timeout: nothing here proved the row gone.
+   * Bounded, and the bound is load-bearing (found by review — it inverted the neighbour's "the wipe runs REGARDLESS"). Every call joins the
+   * module-global {@link serialize} queue, whose ops are `fetch`es with no
+   * timeout; the settings pane fires two on mount and the sign-out control
+   * lives inside that pane — so on a captive portal whose vapid-key GET
+   * stalls, `signOut` blocked here for ever: the server logout never issued,
+   * the local wipe never ran, the whole mailbox left in IndexedDB on a machine somebody said they were done with. So the revoke gets a budget
+   * and the sign-out proceeds; the loser is not cancelled (a late delete is
+   * a free win — every store is swept unconditionally either way). `row_remains` is the honest answer on a timeout.
    */
   let timer: ReturnType<typeof setTimeout> | undefined;
   const budget = new Promise<PushSyncOutcome>((resolve) => {
@@ -674,15 +551,14 @@ export async function revokeWakeRegistration(): Promise<PushSyncOutcome | null> 
 }
 
 /**
- * How long either end of the session will wait on the push queue before going on without it.
- *
- * Long enough for an ordinary round trip on a poor connection, short enough that nobody reads it
- * as a hang. The number is a bound on a BEST-EFFORT step, not a request deadline: what it
- * protects is the acts around it, which are the ones a user is entitled to — the sign-out's
- * logout and wipe on one end ({@link revokeWakeRegistration}), the shell's own boot on the other
- * ({@link reconcileWakeRegistration}). ONE constant because it is one hazard: every call on both
- * paths goes through the same module-global {@link serialize} chain, so a single stalled `fetch`
- * is what both budgets exist to survive.
+ * How long either end of the session waits on the push queue before going
+ * on without it — long enough for a round trip on a poor connection, short
+ * enough not to read as a hang. A bound on a BEST-EFFORT step, not a
+ * request deadline: what it protects is the acts around it — the sign-out's
+ * logout and wipe ({@link revokeWakeRegistration}), the shell's boot
+ * ({@link reconcileWakeRegistration}). One constant because it is one
+ * hazard: every call on both paths goes through the same module-global
+ * {@link serialize} chain, so a single stalled `fetch` is the shared risk.
  */
 const WAKE_BUDGET_MS = 4_000;
 
@@ -702,23 +578,14 @@ async function revokeWakeRegistrationNow(): Promise<PushSyncOutcome | null> {
 }
 
 /**
- * SET THE `enabled` BYTE AND KEEP THE WORDS THAT ARE THERE.
- *
- * ── WHY THE RECONCILE MAY NOT WRITE THE WORDS ITSELF ──────────────────────────────────────
- *
- * Every call in this module goes through ONE queue, and the boot commit enqueues in an order the
- * effect order does not suggest. `reconcileWakeRegistration` runs synchronously into
- * `syncSubscription`, so the push round trip is enqueued FIRST; the locale relabel is enqueued
- * SECOND; and the reconcile's own final write is enqueued only once the round trip RESOLVES —
- * THIRD, carrying a `body` captured at boot in the DEVICE's language.
- *
- * So whenever `GET /consent` adopts the account locale while the push request is still in flight
- * — the ordinary case, one request against register-SW + getSubscription + vapidKey + subscribe —
- * the relabel wrote German at position 2 and the reconcile overwrote it with English at position
- * 3. Which is the defect the relabel was added to fix, undone by its own neighbour.
- *
- * The last writer therefore does not carry words. `body` survives only as the value to use if
- * there is no entry at all to preserve — a state the relabel normally rules out before this runs.
+ * Set the `enabled` byte and keep the words that are there. The reconcile may not write the words
+ * itself: everything goes through one queue, and the boot commit enqueues out of effect order — the
+ * push round trip first, the locale relabel second, and the reconcile's final write only when the
+ * round trip RESOLVES, third, carrying a `body` captured at boot in the DEVICE's language. Whenever
+ * `GET /consent` adopted the account locale mid-flight (the ordinary case), the relabel wrote German
+ * at position 2 and the reconcile overwrote it with English at position 3 — the defect the relabel
+ * fixed, undone by its neighbour. So the last writer carries no words; `body` survives only where
+ * there is no entry to preserve.
  */
 export function setNotifyEnabled(enabled: boolean, fallbackBody: string): Promise<void> {
   return serialize(async () => {
@@ -743,21 +610,13 @@ export function setNotifyEnabled(enabled: boolean, fallbackBody: string): Promis
 }
 
 /**
- * RE-LABEL THE WORKER'S WORDS, and touch nothing else.
- *
- * The account's locale is adopted AFTER boot, off `GET /consent`. By then the boot reconcile has
- * already written the notify-state body in the DEVICE's language, and nothing rewrote it until
- * somebody opened Settings — so a German account on an English device got "New mail." drawn on
- * the lock screen. Drawing those words is the entry's only purpose, so "the worker only reads it
- * when it draws" is a reason to fix it, not to shrug.
- *
- * It re-writes the WORDS and preserves `enabled` EXACTLY as stored. Recomputing that here would
- * undo the whole point of the reconcile's gate: `subscriptionWanted()` is an intent, and enabling
- * on an intent rather than on a row this browser owns is how the previous user's surviving
- * registration gets re-armed. A relabel is not a reconcile.
- *
- * Absent entry ⇒ nothing to relabel, and nothing is created: a worker with no entry draws
- * nothing, which is the safe direction and the state a boot that established no row leaves.
+ * Re-label the worker's words, and touch nothing else. The account locale is adopted after
+ * boot, off `GET /consent`; by then the boot reconcile has written the notify-state body in the
+ * DEVICE's language and nothing rewrote it until somebody opened Settings — a German account on
+ * an English device got "New mail." on the lock screen. It re-writes the WORDS and preserves
+ * `enabled` exactly as stored: recomputing it here from `subscriptionWanted()` — an intent — is
+ * how the previous user's surviving registration gets re-armed; a relabel is not a reconcile.
+ * Absent entry ⇒ nothing relabelled, nothing created: a worker with no entry draws nothing.
  */
 export function updateNotifyWords(title: string, body: string): Promise<void> {
   return serialize(async () => {
@@ -786,44 +645,24 @@ export function updateNotifyWords(title: string, body: string): Promise<void> {
 }
 
 /**
- * THE OTHER END OF THE SESSION — what {@link revokeWakeRegistration} undoes, put back.
- *
- * ── THE DEFECT THIS EXISTS FOR ────────────────────────────────────────────────────────────
- *
- * Sign-out deletes this browser's push row and writes the worker's notify-state `enabled: false`.
- * Nothing used to re-establish either. The channels in `localStorage` deliberately SURVIVE a
- * sign-out — they are a per-install preference, like the theme, and sweeping them at sign-out
- * would be honest about the wire and wrong about the person — and the OS permission survives
- * with them. So the same reader signing back in on their own laptop got `subscriptionWanted()`
- * true, every switch rendered ON, and no push row and a worker refusing to draw behind them.
- * Closed-browser new-mail notices were silently off, with nothing on screen to say so.
- *
- * The only reconcile in the app was the settings pane's mount effect, so the switches told the
- * truth again only if the reader happened to open Settings. This runs at shell boot instead —
- * once per sign-in, before anybody has been asked to go looking.
- *
- * ── BOUNDED, FOR THE REASON THE REVOKE IS ─────────────────────────────────────────────────
- *
- * Same hazard, same shape, same {@link WAKE_BUDGET_MS}. Every call below joins the module-global
- * {@link serialize} chain, whose ops are `fetch`es with no timeout, so an unguarded `await` here
- * would hand a captive portal the power to stall the shell's boot path. The loser of the race is
- * NOT cancelled: a late registration is a free win, because nothing downstream reads this
- * function's answer as permission to do anything. `not_registered` is the honest reply on a
- * timeout — nothing here proved a row exists.
- *
- * Never throws, for the reason the revoke does not: callers' tests mock `../api-client`, and a
- * missing export must not throw out of a boot effect and take the rest of the shell with it.
+ * The other end of the session — what {@link revokeWakeRegistration} undoes, put back. Sign-out deletes the
+ * push row and disables the worker; the channels and the OS permission deliberately survive (per-install
+ * preferences), so the same reader signing back in saw every switch ON over no registration, with
+ * closed-browser notices silently off — and the only reconcile was the settings pane's mount effect. This runs
+ * at shell boot instead: once per sign-in, before anybody goes looking. Bounded for the revoke's reason (same
+ * hazard, same {@link WAKE_BUDGET_MS}); the loser is not cancelled — a late registration is a free win, since
+ * nothing reads this answer as permission. `not_registered` is the honest reply on a timeout. Never throws: a
+ * missing mocked export must not take a boot effect down.
  */
 /**
- * APPLY A WAKE INTENT TO THIS BROWSER — the one place either door goes through.
- *
- * `host` so the settings pane can pass its injected one (and the desktop its own); `wanted` given
- * rather than derived, because the PRESS knows the intent before storage settles while the BOOT
- * has to read it. Everything after that point is identical, and it is identical ON PURPOSE: the
- * boot path and the Settings door had the same privacy defect, and a second copy of this ordering
- * is how one of them gets fixed and the other does not — which is exactly what happened once.
- *
- * Bounded by {@link WAKE_BUDGET_MS}. Never throws.
+ * Apply a wake intent to this browser — the one place either door goes
+ * through. `host` so the settings pane can pass its injected one (and the
+ * desktop its own); `wanted` given rather than derived, because the PRESS
+ * knows the intent before storage settles while the BOOT has to read it.
+ * Everything after that point is identical on purpose: the boot path and
+ * the Settings door had the same privacy defect, and a second copy of this
+ * ordering is how one gets fixed and the other does not — which happened
+ * once. Bounded by {@link WAKE_BUDGET_MS}. Never throws.
  */
 export async function applyWakeIntent(
   host: NotificationHost, wanted: boolean, body: string,
@@ -872,46 +711,24 @@ async function applyWakeIntentNow(
   }
 
   /*
-   * ── ON IS WRITTEN LAST, AND ONLY FOR A ROW THIS BOOT ESTABLISHED ────────────────────────
-   *
-   * An earlier version wrote `enabled: true` FIRST, arguing that an `enabled: true` with no
-   * subscription is inert because no push can arrive to read it. THAT ARGUMENT IS FALSE ON THE
-   * ONE MACHINE THAT MATTERS — a shared browser.
-   *
-   * Sign-out deletes the row, but a failed delete answers `row_remains` and leaves it LIVE by
-   * design, retained so a later attempt can name it. The sender goes on dialling that endpoint.
-   * So the sequence is: user A signs out, the delete fails, A's row survives behind an
-   * `enabled: false` worker — which is exactly what keeps A's mail from being drawn. User B signs
-   * in on the same browser, and a boot that writes `enabled: true` up front re-arms the worker
-   * for a registration that is still A's. The next push for A's mail is drawn, on B's screen.
-   * That is the privacy defect the sign-out revoke was written to close, reintroduced from the
-   * other end.
-   *
-   * So: announce first, and enable only on an OUTCOME that says this browser holds the row.
-   *
-   * The gate is the outcome and deliberately NOT `readId() !== null`, which was the first thing
-   * tried and is wrong for exactly the sequence above: a failed delete RETAINS the id by design,
-   * so after A's `row_remains` the id in storage is A's, and a non-null check would re-arm the
-   * worker for B on the strength of A's registration — the defect, wearing a guard.
-   *
-   * `subscribed` and `unchanged` are the two answers that mean a row exists AND names THIS
-   * browser's endpoint (`syncWebPush` compares the stored endpoint before it says `unchanged`).
-   * Every other answer — `row_remains`, `not_registered`, `no_server_key`, `unsupported` — leaves
-   * the honest state as the one that draws nothing.
+   * ON is written last, and only for a row this boot established. An earlier version wrote `enabled: true` first, arguing an enabled flag
+   * with no subscription is inert — false on the one machine that matters, a shared browser: A signs out, the delete fails (`row_remains` retains
+   * the row by design), and a boot that enables up front re-arms the worker
+   * for a registration that is still A's — the next push for A's mail drawn
+   * on B's screen. So: announce first, enable only on an OUTCOME that says this browser holds the row. The gate is the outcome, deliberately NOT
+   * `readId() !== null` — after A's `row_remains` the stored id is A's, so
+   * a non-null check is the defect wearing a guard. `subscribed` and `unchanged` are the two answers that mean a row exists and names THIS
+   * endpoint; every other answer leaves the state that draws nothing.
    */
   /*
-   * ── WHAT `forceAnnounce` COSTS, AND WHY IT IS ACCEPTED ──────────────────────────────────
-   *
-   * Every signed-in boot now issues the POST rather than trusting a stored id, so a boot on a bad
-   * connection reaches {@link WAKE_BUDGET_MS} more often than one that could shortcut. The
-   * timeout answer is `not_registered`, which leaves the worker DARK for a reader who legitimately
-   * owns the row — they get no closed-browser notices until the next boot lands the round trip.
-   *
-   * That is the direction to fail in, and it is chosen rather than inherited. The alternative is
-   * enabling on a timeout, which is exactly the defect: "I could not confirm" would render as
-   * "this browser owns the row", on the one machine — a shared browser — where the row may be
-   * somebody else's. A missed notice is recoverable on the next boot; a stranger's mail announced
-   * on your lock screen is not.
+   * What `forceAnnounce` costs, and why it is accepted: every signed-in
+   * boot now issues the POST rather than trusting a stored id, so a boot on
+   * a bad connection reaches {@link WAKE_BUDGET_MS} more often. The timeout
+   * answer is `not_registered`, which leaves the worker dark for a reader
+   * who legitimately owns the row — no closed-browser notices until the
+   * next boot lands. That is the chosen direction: enabling on a timeout
+   * would render "I could not confirm" as "this browser owns the row", on
+   * the one machine where the row may be somebody else's. A missed notice is recoverable; a stranger's mail on your lock screen is not.
    */
   let outcome: PushSyncOutcome | null;
   try {
