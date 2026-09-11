@@ -1,47 +1,12 @@
 /**
- * ═══ A MINIMAL RFC 5545 VEVENT READER, FOR SHOWING AN INVITATION AS AN EVENT ═════════════════
- *
- * Exactly the fields an inline event preview needs — what, when, where, who, and the METHOD
- * semantics (invitation / reply / proposed new time / cancellation) — and nothing else. Not a
- * calendar engine: no full RRULE expansion, no EXDATE, no VALARM, no free/busy.
- *
- * ── WHY HAND-WRITTEN AND WHY HERE ────────────────────────────────────────────────────────────
- *
- * No ICS parser exists in this workspace's dependency tree (checked against the lockfile), and
- * the well-known ones (`ical.js`, `node-ical`) are whole calendar engines — an unvetted parser
- * over attacker-controlled bytes is exactly the surface to keep small. This file has ZERO
- * imports, node or otherwise, because its consumers straddle the one boundary the rest of this
- * package does not cross: the webapp and the desktop shell run it in a BROWSER, where
- * `node:crypto` and mailparser (this package's barrel) cannot go. Hence the dedicated
- * `@trafficflow/core/ics` entry point in package.json, which maps to this SOURCE file for
- * bundler consumers; node consumers get the same module re-exported through the built barrel
- * and `./mail`. Keep it dependency-free or the browser consumers break.
- *
- * ── THE CONTRACT ─────────────────────────────────────────────────────────────────────────────
- *
- * `parseIcsEvent(text)` returns a usable {@link IcsEventPreview} or `null`. Never throws. The
- * input is entirely sender-controlled; a `null` is the renderer's signal to fall back to the
- * plain attachment row, so every malformed, truncated, oversized or alien input must land there
- * rather than in a half-filled card. Every string in the result is TEXT for the consumer to
- * escape at render — nothing here is sanitized FOR html, because nothing here may ever be
- * interpreted AS html.
- *
- * ── TIME, STATED PRECISELY ───────────────────────────────────────────────────────────────────
- *
- * Every time carries its literal wall-clock fields plus `epochMs`, the resolved UTC instant —
- * or `null` where no honest instant exists:
- *
- *   · trailing `Z` — exact, by arithmetic.
- *   · `VALUE=DATE` — an all-day CALENDAR DAY; `epochMs` is that day's UTC midnight and a
- *     consumer must format it in UTC or the day shifts west of Greenwich. Per RFC 5545 the
- *     DTEND of an all-day event is EXCLUSIVE (a one-day event ends "tomorrow").
- *   · `TZID=` — resolved through `Intl` (the platform's IANA database, no bundled tzdata).
- *     Exchange writes WINDOWS zone names, so those go through {@link WINDOWS_TZ} (the CLDR
- *     windowsZones primary mapping) first. A zone neither table knows keeps `epochMs: null`
- *     and its label — the consumer shows the wall time AS LABELED rather than claiming an
- *     instant nobody established.
- *   · floating (no TZID, no Z) — `epochMs: null`, `tzid: null`: RFC 5545 says "local time of
- *     the observer", so the CONSUMER may format the wall fields in the viewer's own zone.
+ * A minimal RFC 5545 VEVENT reader for showing an invitation as an event — not a calendar engine.
+ * Hand-written: no ICS parser exists in this tree and the well-known ones are whole calendar
+ * engines — an unvetted parser over attacker-controlled bytes is the surface to keep small. ZERO
+ * imports, because the webapp and desktop shell run it in a BROWSER (`@trafficflow/core/ics` maps
+ * to this source file). `parseIcsEvent(text)` returns a preview or `null`, never throws; every
+ * string is TEXT for the consumer to escape. Time: trailing `Z` exact; `VALUE=DATE` is UTC
+ * midnight of an all-day day (DTEND exclusive); `TZID=` resolves through `Intl`, Windows names
+ * via {@link WINDOWS_TZ}; unknown zones and floating times keep `epochMs: null`.
  */
 
 /* ── the closed vocabulary ─────────────────────────────────────────────────────────────────── */

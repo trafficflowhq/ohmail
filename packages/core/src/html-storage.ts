@@ -1,64 +1,12 @@
 /**
- * ── BOUNDING WHAT `message_bodies.html` MAY COST, SHAPED BY THE OUTAGE THAT FORCED IT ──
- *
- * One ordinary mailbox filled a half-gigabyte Postgres database and the server began answering
- * `53100 disk_full`. The shape of that database, taken from a representative mailbox before any
- * change, is the whole argument:
- *
- *   · `message_bodies` was almost all of the database — the low nineties as a percentage.
- *   · Inside it, `html` was about three quarters of the table. `headers`, `text` and the
- *     full-text index together were the remaining quarter.
- *   · `html` barely COMPRESSED. Postgres stored it at roughly 1.3x, where `text` in the same
- *     table managed about 1.8x, and a few hundred rows were stored completely UNCOMPRESSED —
- *     pglz abandons input it cannot shrink by 25%. Those few hundred rows held most of the
- *     stored html bytes on their own.
- *   · Well under one percent of the rows accounted for roughly half the entire database, and the
- *     largest single html value was tens of megabytes.
- *
- * That last line is the property this module exists for: the cost is not spread across mail, it
- * is concentrated in a tail. The cause is in {@link ../mime.ts} — mailparser was base64-inlining
- * whole image ATTACHMENTS into the html, and base64 of an already-compressed image is
- * incompressible, which is why the bytes neither shrank nor stayed put.
- *
- * `mime.ts` now passes `keepCidLinks: true`, which stops us MANUFACTURING that bloat. This
- * module is the second line, and it is not redundant with the first: **a sender can author a
- * `data:` URI in their own html**, and `keepCidLinks` has no opinion about those. Rows carrying
- * a `;base64,` payload were a small minority and held the overwhelming majority of all html
- * bytes — the same concentration, arriving from the sender instead of from us.
- *
- * ── WHY BOTH A STRIP AND A CAP, IN THAT ORDER ─────────────────────────────────────────────
- *
- * STRIP FIRST, TRUNCATE SECOND, and the order is the whole point. A 500 KB inline image sitting
- * in the first paragraph would, under truncate-first, cost the reader every word after it.
- * Stripping the payload keeps the entire message and throws away only bytes that are an
- * attachment wearing a URI. Truncation is the backstop for html that is genuinely, textually
- * enormous — it should almost never fire.
- *
- * ── THE NUMBERS THIS PICKS, AND WHY ───────────────────────────────────────────────────────
- *
- * Taken from a representative mailbox's html rows AFTER stripping `data:` payloads, the size
- * distribution is: median around 20 KB, p90 around 50 KB, p99 around 100 KB, and the largest
- * value under half a megabyte. {@link STORED_HTML_CAP_BYTES} at 256 KiB therefore sits at
- * roughly two and a half times the 99th percentile, so it fires on the extreme tail and never
- * on ordinary mail. It is a tripwire, not a routine haircut.
- *
- * {@link STRIP_DATA_URI_MIN_CHARS} at 512 exists so the strip targets bloat and nothing else: a
- * sender's 200-byte inline bullet-point icon is not what filled a database, and rewriting it
- * would damage a legible message for no measurable gain. Only payloads big enough to matter go.
- *
- * ── THE RECONCILIATION POINT IS THE CHECK CONSTRAINT, NOT A SHARED IMPLEMENTATION ─────────
- *
- * `message_bodies_html_cap` (mail `0022`) asserts `octet_length(html) <= 262144` in the
- * database. This module is what keeps that constraint from ever firing; the constraint is what
- * makes a regression in this module LOUD instead of silent. Deliberately NOT shared code with
- * the SQL — a migration freezes the moment it is applied, so the two cannot be kept identical
- * by construction. {@link STORED_HTML_CAP_BYTES} is pinned to the constraint's literal by a test
- * instead.
- *
- * Named consequence, so it is not discovered during an incident: `apps/worker/src/sync.ts` has
- * no per-message catch, so if the constraint ever DOES fire it quarantines that mailbox as a
- * poison-message loop. That is the intended failure. The alternative is silent re-bloat until
- * Postgres quarantines the whole DATABASE, which is the incident this module exists because of.
+ * Bounding what `message_bodies.html` may cost, shaped by the outage that forced it: one mailbox
+ * filled a half-gigabyte database — `html` was most of the table, barely compressing, and under
+ * one percent of rows held roughly half the database: a tail from mailparser base64-inlining
+ * image attachments. `mime.ts` now passes `keepCidLinks: true`; this is the second line: a sender
+ * can author a `data:` URI themselves. STRIP FIRST, TRUNCATE SECOND — truncate-first would cost
+ * every word after a first-paragraph image. Post-strip p99 is ~100 KB, so 256 KiB is a tripwire;
+ * the 512-char floor keeps small icons. The `message_bodies_html_cap` CHECK is pinned by a test;
+ * if it fires, `sync.ts` quarantines that mailbox — the intended failure.
  */
 
 /**
@@ -80,20 +28,14 @@ export const STORED_HTML_CAP_BYTES = 262_144;
 export const STRIP_DATA_URI_MIN_CHARS = 512;
 
 /**
- * What a stripped inline payload is replaced BY.
- *
- * A `cid:` reference rather than an empty `src` or a removed tag, because `cid:` is the shape
- * the rest of the system already understands — `packages/core/src/privacy/tracker-blocker.ts`
- * deliberately leaves `cid:` alone (it is embedded, so it cannot phone home), and the
- * `attachments` row for that part still carries `contentId` and `inline` for a client to resolve
- * through `GET /attachments/:id`.
- *
- * It is deliberately a DISTINCT, greppable marker rather than a plausible-looking cid: the
- * original cid is genuinely unrecoverable once mailparser has overwritten it, and inventing one
- * by correlating against `attachments.content_id` is exactly the guess this project's rule for
- * ambiguous data forbids: refuse and make a human look. A row that was stripped can be found with
- * `WHERE html LIKE '%ohmail-stripped%'`, and the honest repair is a re-fetch from IMAP — the
- * mailbox is the master and still holds the original with its real `cid:` links.
+ * What a stripped inline payload is replaced by. A `cid:` reference rather than an empty `src` or
+ * a removed tag, because `cid:` is the shape the rest of the system understands — the tracker
+ * blocker leaves `cid:` alone (embedded, cannot phone home), and the `attachments` row still
+ * carries `contentId` and `inline` for a client to resolve. Deliberately a DISTINCT, greppable
+ * marker rather than a plausible-looking cid: the original is unrecoverable once mailparser has
+ * overwritten it, and inventing one by correlating against `attachments.content_id` is the guess
+ * the ambiguous-data rule forbids. A stripped row is found with `WHERE html LIKE
+ * '%ohmail-stripped%'`; the honest repair is a re-fetch from IMAP — the mailbox is the master.
  */
 export const STRIPPED_DATA_URI = "cid:ohmail-stripped";
 
@@ -102,27 +44,14 @@ export const HTML_TRUNCATION_MARKER =
   "\n<!-- ohmail: body truncated at the storage cap; the full message is in your mailbox -->";
 
 /**
- * Any base64 `data:` URI. The SIZE test is applied in the replacer, not here — see below.
- *
- * The payload class is `[A-Za-z0-9+/=]` with NO whitespace: base64 produced by
- * `Buffer.toString('base64')` contains none, and admitting `\s` makes the class over-eat in an
- * unquoted `src=` context — `src=data:image/png;base64,AAAA and then some text` would match
- * straight through the following words and delete the sentence.
- *
- * ── WHY `+` AND A REPLACER, NOT `{512,}` ──────────────────────────────────────────────────
- *
- * The obvious spelling puts the minimum in the pattern: `[A-Za-z0-9+/=]{512,}`. It is WRONG,
- * and its own unit test found it. The JavaScript regex engine compiles a `{n,}` min-count
- * quantifier recursively, so on a sufficiently long match it throws `RangeError: Maximum call
- * stack size exceeded` — measured here: fine at 5,000,000 payload characters, THROWS at
- * 19,000,000. A body with whole attachments base64-inlined reaches tens of megabytes, which is
- * the header's story above, so the pathological input is not hypothetical — it is the exact
- * kind of message that took the database down. A throw here propagates out of `normalizeMime`
- * into the sync cycle, which has no per-message catch — so the "safety" net would have
- * quarantined the mailbox.
- *
- * A plain `+` is compiled as a loop and handles the same input in ~11 ms. The minimum
- * length is therefore enforced where it costs nothing: on the matched string.
+ * Any base64 `data:` URI. The SIZE test is applied in the replacer, not here. The payload class
+ * has NO whitespace: base64 from `Buffer.toString` contains none, and admitting `\s` over-eats in
+ * an unquoted `src=` context. Why `+` and a replacer, not `{512,}`: the regex engine compiles a
+ * min-count quantifier recursively — measured, RangeError at 19,000,000 payload characters — and
+ * a body with inlined attachments reaches tens of megabytes; the throw would propagate out of
+ * `normalizeMime` into a sync cycle with no per-message catch and quarantine the mailbox. A plain
+ * `+` compiles as a loop (~11 ms); the minimum is enforced on the matched string, where it costs
+ * nothing.
  */
 const DATA_URI = /data:[a-zA-Z0-9!#$&^_.+-]+\/[a-zA-Z0-9!#$&^_.+-]+;base64,[A-Za-z0-9+/=]+/g;
 
@@ -160,15 +89,12 @@ function truncateToBytes(s: string, maxBytes: number): string {
 }
 
 /**
- * The ONLY thing that should ever be written to `message_bodies.html`.
- *
- * Strips oversized inline base64 payloads, then — if what remains is still over the cap —
- * truncates on a character boundary and appends {@link HTML_TRUNCATION_MARKER}. `null` in,
- * `null` out: a body with no html, and a sensitive message (whose html is deliberately never
- * stored at all), both take that path unchanged.
- *
- * The result is guaranteed to satisfy `octet_length(html) <= STORED_HTML_CAP_BYTES`, which is
- * exactly what the `message_bodies_html_cap` CHECK constraint asserts.
+ * The only thing that should ever be written to `message_bodies.html`. Strips oversized inline
+ * base64 payloads, then — if what remains is still over the cap — truncates on a character
+ * boundary and appends {@link HTML_TRUNCATION_MARKER}. `null` in, `null` out: a body with no
+ * html, and a sensitive message whose html is deliberately never stored, both pass unchanged. The
+ * result is guaranteed to satisfy `octet_length(html) <= STORED_HTML_CAP_BYTES`, exactly what the
+ * `message_bodies_html_cap` CHECK asserts.
  */
 export function prepareHtmlForStorage(html: string | null): string | null {
   if (html === null) return null;

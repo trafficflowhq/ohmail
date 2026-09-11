@@ -30,60 +30,14 @@ export interface DedupInput {
 }
 
 /**
- * Decide how an incoming change relates to what we already store, using content
- * identity (already resolved into `existing`), pending-move correlation, and the MOVE
- * EVIDENCE that separates a user's placement from a stranger's delivery.
- *
- * - no existing row                        -> new
- * - same folder as stored                  -> duplicate (a re-observation / replay)
- * - different folder, own-authored         -> own_copy (the Sent twin of mail we already hold)
- * - different folder, pending              -> own_move (our move landing; never re-ingest)
- * - different folder, a DISAPPEARANCE      -> external_move (the user moved it; user wins)
- * - different folder, an appearance ONLY   -> external_copy (a second instance; nothing adopted)
- *
- * ── WHY `external_copy` EXISTS, AND WHAT IT KILLS ────────────────────────────────────────────
- *
- * `external_move` used to be the catch-all for "we know this message and it is somewhere we did
- * not put it". That made a PURE CREATE — a delivery — indistinguishable from a user's own filing,
- * and `commitChange` treats a user's filing as authoritative: `folder_state.desired_folder` flips
- * to the observed folder, `last_set_by` becomes `external`, an `adopt_external` audit row is
- * written and a `move` delta goes out to every client.
- *
- * So a stranger could cause ohmail to treat their message as one the user had already consented
- * to. Two deliveries and a wait, no other capability: send a message that matches an existing
- * logical identity, and its placement becomes whatever folder the second delivery lands in. The
- * founding premise of the product — first contact is held for your consent — is defeated by that,
- * because the second message escapes the Screener on the strength of the first.
- *
- * `external_copy` is the honest answer to the same observation: a second PHYSICAL instance of one
- * LOGICAL message. It records the instance (so the locator is known and its body is never
- * re-fetched), sets `folder_state.conflict`, and changes NOTHING about placement — no
- * `desired_folder`, no `change_log` row, no audit. And it is the right answer for the
- * byte-identical case as well as the different-body one: identical bytes ARE the same logical
- * message, so a second instance with no adoption is correct rather than a residue to clean up.
- *
- * ── WHY `own_copy` STILL OUTRANKS THE EVIDENCE CHECK ────────────────────────────────────────
- *
- * One message can legitimately be in TWO folders at once the moment Sent is watched. A user who
- * CCs or BCCs themselves — the oldest self-archiving habit there is — and every mailing list
- * that echoes your own post back to you both put the SAME logical identity in INBOX and in Sent.
- * So does a provider that files an SMTP submission into Sent alongside ohmail's own APPEND.
- *
- * Without this branch, the Sent observation of a message already stored in INBOX would reach the
- * evidence test — and when the user's client APPENDs to Sent and DELETES from INBOX in one
- * session, the evidence is real, so the adoption would fire: the message would DISAPPEAR from the
- * Imbox and a `move` delta would say so. The user's own filing habit would silently empty their
- * inbox. `ownAuthored` is set by the ADAPTER (only it knows the server's Sent path) and only on
- * pure creates.
- *
- * `own_copy` writes no placement and no delta — but it now DOES record its instance.
- * That is not bookkeeping: the reason it did not loop before was the Sent folder's UID watermark
- * (`DEFAULT_SENT_HISTORY_MESSAGES`) and nothing else. INBOX has no watermark, so every other
- * declined locator was re-fetched every cycle for ever.
- *
- * It is deliberately checked AFTER `duplicate`: an own-authored observation in the folder we
- * already record IS just a replay, and the ordinary duplicate path (which re-asserts the
- * locator) is the right one for it.
+ * How an incoming change relates to what we store: no row → new; same folder → duplicate;
+ * own-authored → own_copy; pending → own_move; a DISAPPEARANCE → external_move (the user moved
+ * it); an appearance only → external_copy. `external_copy` exists because the catch-all made a
+ * delivery look like a user's filing — which `commitChange` treats as authoritative, so a
+ * stranger's second delivery could set the placement and escape the Screener. It records the
+ * instance, sets `conflict`, changes nothing about placement. `own_copy` outranks the evidence
+ * check: a self-CC puts one identity in INBOX and Sent — without this branch the user's own habit
+ * would empty their inbox. It records its instance too, checked AFTER `duplicate`.
  */
 export function classifyDedup(input: DedupInput): DedupOutcome {
   const { change, existing, pendingMoveFolders, evidence } = input;

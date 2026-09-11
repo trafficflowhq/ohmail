@@ -2,21 +2,13 @@ import { createHash } from "node:crypto";
 import type { CanonicalId, NormalizedMessage } from "./types.js";
 
 /**
- * Strip ONE pair of angle brackets, trim, and **keep the case**.
- *
- * ── WHY THE `.toLowerCase()` THAT USED TO BE HERE IS GONE ─────────────────────────────────────
- *
- * RFC 5322 §3.6.4 defines `msg-id = "<" id-left "@" id-right ">"` with `id-left` a
- * `dot-atom-text`. Atoms are case-SENSITIVE; only the domain literal on the right is not. So a
- * Message-ID is an opaque token chosen by the sending mail client, and `<AbC@x>` and `<abc@x>` are two
- * different identifiers. Folding them destroyed a distinction the sender made — and since the
- * old `dedupKey` was `mid:<that value>`, two messages whose ids differ only in case collapsed
- * onto ONE `messages` row and one of them was silently never shown.
- *
- * The legacy population was written with the fold applied, which is exactly why
- * {@link legacyDedupKey} re-applies it: the key that reaches those rows has to be spelled the way
- * they were stored. Everything NEW is keyed by {@link messageFingerprint}, which reads this
- * value as it is.
+ * Strip one pair of angle brackets, trim, and KEEP THE CASE. The `.toLowerCase()` that used to be
+ * here is gone: RFC 5322 §3.6.4's `id-left` is a case-SENSITIVE atom, so `<AbC@x>` and `<abc@x>`
+ * are two different identifiers — folding them destroyed a distinction the sender made, and since
+ * the old `dedupKey` was `mid:<value>`, two messages differing only in case collapsed onto ONE
+ * row and one was silently never shown. The legacy population was written with the fold applied,
+ * which is exactly why {@link legacyDedupKey} re-applies it; everything NEW is keyed by {@link
+ * messageFingerprint}, which reads this value as it is.
  */
 export function normalizeMessageId(raw: string | null | undefined): string | null {
   if (!raw) return null;
@@ -35,25 +27,14 @@ export function canonicalId(messageIdHeader: string | null | undefined, body: st
 }
 
 /**
- * The dedup key EVERY LEGACY ROW CARRIES, written before the current fingerprint scheme.
- * Read-only vocabulary.
- *
- * `mid:<lowercased Message-ID>` or, with no Message-ID, `body:<sha256 of the canonical body>`.
- * Two questions were answered by that one string and it got both wrong:
- *
- *  · **The body-only collision** — `body:` alone. Two different messages with no Message-ID and
- *    the same body text (an empty auto-reply, a bare "thanks") are ONE row. The second is dropped.
- *  · **The message-id forgery** — `mid:` alone. The Message-ID is chosen by whoever sent the mail,
- *    so a stranger can name the id of a message the user already holds and have their bytes
- *    recognised as it.
- *
- * It survives here for exactly one purpose: step 2 of the dual-key lookup in
- * `pipeline.ts#planChange`. A row found under this key is NOT accepted as the same message on the
- * strength of the key — see {@link verifiesLegacyIdentity}, which is what makes the fallback safe.
- *
- * **`.toLowerCase()` is deliberate and must stay.** These rows were written by a
- * `normalizeMessageId` that folded case; a key computed without the fold would miss every row
- * whose Message-ID had an upper-case character, and the message would be re-inserted as new.
+ * The dedup key every LEGACY row carries: `mid:<lowercased Message-ID>` or `body:<sha256 of the
+ * canonical body>`. It answered two questions and got both wrong: the body-only collision (two
+ * Message-ID-less messages with the same body are one row, the second dropped) and the message-id
+ * forgery (the Message-ID is sender-chosen). It survives for one purpose: step 2 of the dual-key
+ * lookup in `pipeline.ts#planChange` — a row found under this key is NOT accepted on the key's
+ * strength; {@link verifiesLegacyIdentity} makes the fallback safe. `.toLowerCase()` is
+ * deliberate and must stay: these rows were written folded, and an unfolded key would miss every
+ * mixed-case row and re-insert the message as new.
  */
 export function legacyDedupKey(c: CanonicalId): string {
   return c.messageIdHeader ? `mid:${c.messageIdHeader.toLowerCase()}` : `body:${c.bodyHash}`;
@@ -98,27 +79,14 @@ const ABSENT = 0x00;
 const PRESENT = 0x01;
 
 /**
- * Append ONE length-prefixed, domain-separated field.
- *
- * ── WHY BARE CONCATENATION IS NOT AN OPTION ─────────────────────────────────────────────────
- *
- * `sha256(subject + from)` cannot tell `subject="a", from="b"` from `subject="ab", from=""` —
- * both hash the four bytes `ab`. That is not a theoretical collision: an attacker chooses both
- * halves, so they can manufacture a message whose logical identity equals one the user already
- * consented to, and the adoption attack starts from exactly that. Length-prefixing removes it
- * by construction rather than by hoping the values never line up.
- *
- * The encoding is `label SEP length SEP payload END`, where `length` is the payload's BYTE count
- * in ASCII decimal and `payload` is `[ABSENT]` or `[PRESENT, ...utf8]`. It is injective:
- *
- *  · the label is drawn from {@link LABEL} and contains no SEP, so the first SEP ends it;
- *  · the length is ASCII digits and contains no SEP, so the second SEP ends it;
- *  · the payload's own bytes are never scanned — the length says where it stops — so a value may
- *    contain SEP, END, NUL, anything at all, without becoming ambiguous.
- *
- * Therefore the whole buffer parses back to exactly one ordered list of (label, payload) pairs,
- * and two different field lists cannot produce one buffer. `identity.test.ts` proves the
- * `"a"+"b"` vs `"ab"+""` case rather than asserting the property in prose.
+ * Append one length-prefixed, domain-separated field. Bare concatenation is not an option:
+ * `sha256(subject + from)` cannot tell `subject="a", from="b"` from `subject="ab", from=""` — and
+ * an attacker chooses both halves, so they can manufacture a message whose logical identity
+ * equals one the user already consented to; the adoption attack starts exactly there. The
+ * encoding is `label SEP length SEP payload END`, injective: the label contains no SEP, the
+ * length is ASCII digits, and the payload's own bytes are never scanned — the length says where
+ * it stops, so a value may contain SEP, END or NUL without ambiguity. `identity.test.ts` proves
+ * the `"a"+"b"` vs `"ab"+""` case rather than asserting the property in prose.
  */
 function field(out: Buffer[], label: string, value: string | null): void {
   const payload = value === null
@@ -138,45 +106,14 @@ export type FingerprintInput = Pick<
 >;
 
 /**
- * THE LOGICAL IDENTITY OF ONE MESSAGE — `sha256` over every field a sender can choose,
- * length-prefixed and domain-separated.
- *
- * ── WHAT IT REPLACES, AND WHY A PATCH TO THE OLD KEY COULD NOT WORK ─────────────────────────
- *
- * One string used to answer three different questions: is this the same logical message, which
- * bytes on the server is it, and did the user move it. {@link legacyDedupKey} answered the first
- * with either the Message-ID alone or the body text alone. Both are single attacker-chosen
- * values, so both are forgeable, and neither notices a message that differs in the other.
- *
- * Every input below is present at ingest, in `change.raw`, and is derived from it and from
- * nothing else. That is the property that makes a BACKFILL impossible and it is why the ruling
- * prohibits one outright: `message_bodies.text` is redacted for sensitive mail, `html` is
- * `prepareHtmlForStorage`'d and capped at 256 KiB, `attachments` has not always carried a
- * content digest, and `messages.to_addresses` — not always written at ingest —
- * holds its `'[]'` default on every row that predates it. A batch job over stored columns would
- * compute a DIFFERENT value than ingest does for the same message, so every row it touched would
- * insert a SECOND `messages` row the first time the mail was re-observed — and no delta removes
- * the first — a convergence break. The dual-key lookup in `planChange` is the migration path instead.
- *
- * ── THE INPUT LIST, IN ORDER ────────────────────────────────────────────────────────────────
- *
- *   mid       the normalized Message-ID, CASE PRESERVED, or absent
- *   from      the author address (lowercased at parse by `mime.ts#toAddr`)
- *   to        every `To:` address, in header order, one field each
- *   cc        every `Cc:` address, in header order, one field each
- *   subj      the subject
- *   date      the `Date:` header as epoch milliseconds, or absent
- *   text      sha256 of the text body …
- *   html      … and sha256 of the html body, SEPARATELY, or absent
- *   att.*     per attachment, in MIME order: filename, content type, size, sha256(content)
- *
- * Two of those choices are worth stating. The body is hashed as TWO fields rather than one
- * because a message with text `x` and html `<p>y</p>` and a message with text `x` and no html are
- * different messages, and the pre-existing single `bodyHash` (which prefers text, falling back to
- * html only on the `skipHtmlToText` path) cannot express the difference. And `date` is IN the
- * fingerprint but deliberately OUT of {@link verifiesLegacyIdentity}: here it is computed from
- * the raw bytes on both sides, so it is stable; there it would be compared against a
- * `timestamptz` that has been through Postgres.
+ * The logical identity of one message — sha256 over every field a sender can choose,
+ * length-prefixed and domain-separated, replacing the legacy key whose halves were single
+ * attacker-chosen values. Every input derives from `change.raw` alone — which makes a BACKFILL
+ * impossible: stored columns are redacted, capped or defaulted, so a batch job would compute a
+ * DIFFERENT value and every touched row would insert a second `messages` row on re-observation.
+ * The dual-key lookup in `planChange` is the migration path. Inputs: mid (case preserved), from,
+ * to, cc, subj, date, both body hashes, per-attachment fields. `date` is IN the fingerprint and
+ * OUT of {@link verifiesLegacyIdentity}, where it would meet a Postgres `timestamptz`.
  */
 export function messageFingerprint(m: FingerprintInput): string {
   // The version tag is INSIDE the hashed bytes as well as on the key. A future `fp2` that reads
@@ -220,28 +157,14 @@ export interface LegacyIdentityColumns {
 }
 
 /**
- * IS THE ROW FOUND UNDER A LEGACY KEY REALLY THIS MESSAGE? Four columns, all of which exist.
- *
- * Step 2 of the dual-key lookup. A `mid:`/`body:` hit alone is not evidence — that key IS the
- * defect — so the row's own stored columns are compared against the message in hand:
- *
- *  · `message_id_header`, CASE-INSENSITIVELY. The stored value was folded by the pre-slice
- *    `normalizeMessageId`; the value in hand is not. Comparing them raw would refuse every
- *    mixed-case legacy row and re-insert the message as new.
- *  · `body_hash` — this is what kills the body-only collision. Two anchorless messages sharing a `body:` key now have
- *    to share the body as well, which they do by definition of that key, so the real work here is
- *    the `mid:` case: a stranger naming somebody else's Message-ID has a different body and is
- *    refused.
- *  · `subject` and `from_address` — this is what kills the message-id forgery. A forged `mid:` with the same body
- *    (a replay of the user's own bytes) still has to match the author and the subject.
- *
- * `date` is deliberately NOT in the tuple. `messages.date` is `timestamptz` and has been through
- * Postgres; `parsed.date` has not. Sub-millisecond and zone round-tripping would make the
- * comparison fail for genuine re-observations, and a failed comparison here means a SECOND
- * `messages` row — the highest-damage outcome available on this path (a convergence
- * break, plus `pipeline.ts`'s `stored.threadId` guard minting a second `threads` row).
- *
- * **ANY mismatch ⇒ the caller treats this as a NEW message. Never collapse on a partial match.**
+ * Is the row found under a legacy key really this message? Step 2 of the dual-key lookup — a
+ * `mid:`/`body:` hit alone is not evidence, that key IS the defect — so stored columns are
+ * compared: `message_id_header` CASE-INSENSITIVELY (the stored value was folded); `body_hash` —
+ * kills the body-only collision, and a stranger naming somebody's Message-ID has a different
+ * body; `subject` and `from_address` — kill the forgery: a replayed body still has to match
+ * author and subject. `date` is NOT in the tuple: `messages.date` has been through Postgres, and
+ * a failed comparison means a SECOND `messages` row — the highest-damage outcome here. ANY
+ * mismatch means NEW; never collapse on a partial match.
  */
 export function verifiesLegacyIdentity(stored: LegacyIdentityColumns, m: FingerprintInput): boolean {
   const storedMid = stored.messageIdHeader;

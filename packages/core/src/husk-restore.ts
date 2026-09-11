@@ -9,51 +9,14 @@ import { prepareHtmlForStorage } from "./html-storage.js";
 import type { NormalizedMessage } from "./types.js";
 
 /**
- * ══════════════════════════════════════════════════════════════════════════════════════════════
- *  UN-HUSKING A `junk_filed` BODY — the ONE verify/rewrite both restore doors share
- * ══════════════════════════════════════════════════════════════════════════════════════════════
- *
- * A spam verdict that filed a message to the provider's native `\Junk` husked its stored body
- * (`message_bodies.withheld_reason = 'junk_filed'`, mail 0065): the bytes live on in the Junk
- * folder, which is the master, and the durable artifact of the verdict is the sender rule. When
- * that message LEAVES Junk again, the husk must be refilled — and there are two doors it leaves
- * through:
- *
- *  · the "Not junk" RESCUE (`packages/api/src/junk-window.ts#rescueJunk`) — our own verb, which
- *    fetched the raw while the message was still in Junk and restores right after its move; and
- *  · EVERYTHING ELSE — the user drags it back in another mail client, the provider un-junks it
- *    on its own — where the worker's scan later observes the message alive in a WATCHED folder
- *    while its body is still the verdict's husk (`apps/worker/src/junk-restore.ts`).
- *
- * Both doors end at this function, deliberately: the identity witness, the at-cap posture and
- * the byte accounting are POLICY, and two copies of a policy is how one door drifts. The shape
- * is `redacted-restore.ts`'s fetch-verify-rewrite with the fetch left to the caller (each door
- * reads from a different place on a different connection); this module owns VERIFY and REWRITE.
- *
- * ── THE IDENTITY WITNESS — never store bytes into a row they do not belong to ───────────────
- *
- * Two independent witnesses, exactly `redacted-restore.ts#isSameMessage`: the normalized
- * Message-ID matches the husk's, OR the canonical-content fingerprint reproduces the husk's own
- * dedup key — the fallback that lets a legitimately Message-ID-less message restore too. A
- * locator that no longer resolves to this message writes NOTHING: storing those bytes would put
- * one person's mail into another message's row, which is worse than any husk.
- *
- * ── THE LOCK-AND-RECHECK IS THE IDEMPOTENCY AND THE RACE ANSWER ─────────────────────────────
- *
- * The rescue and the worker pass are DIFFERENT PROCESSES and can race on one husk. The rewrite
- * re-reads the row `FOR UPDATE` and requires `withheld_reason = 'junk_filed'` to still stand;
- * the loser finds it already restored and writes nothing — one restore, one byte reservation,
- * one `change_log` delta, whoever wins. A `storage_cap` husk is standing policy and is refused
- * by the same recheck; a row already restored is `not_husked`.
- *
- * ── THE CAP HOLDS HERE TOO — at cap, the husk STANDS ────────────────────────────────────────
- *
- * The verdict's husk freed these bytes; putting them back is new stored content, and an at-cap
- * account must not grow past its entitlement through restores (a review caught the uncapped
- * rescue). `reserveBodyBytes` is ingest's own atomic reserve: a decline aborts the rewrite and
- * the husk stands, with its marker still TRUE — the bytes live on in the mailbox. `capBytes:
- * null` is the unmetered tier's DECLARATION (the caller resolved it; never inferred from absent
- * config). A shrink applies its delta the repair passes' way.
+ * Un-husking a `junk_filed` body — the one verify/rewrite both restore doors share. A spam
+ * verdict that filed to native `\Junk` husked the stored body (mail 0065): the bytes live on in
+ * Junk, the master. Two doors out: the "Not junk" rescue, and everything else — the worker's scan
+ * sees the message alive in a watched folder with a husked body. Both end here: the identity
+ * witness, the at-cap posture and the byte accounting are POLICY. The witness: normalized
+ * Message-ID, or the fingerprint reproducing the husk's dedup key; an unresolved locator writes
+ * NOTHING. The lock-and-recheck is the idempotency: `FOR UPDATE`, the reason must still stand —
+ * one restore, whoever wins. At cap the husk STANDS: a declined reserve aborts the rewrite.
  */
 export type JunkUnhuskOutcome = "restored" | "not_husked" | "identity_mismatch" | "at_cap";
 

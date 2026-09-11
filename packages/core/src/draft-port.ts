@@ -1,30 +1,12 @@
 /**
- * THE DRAFTING SEAM — the port and its shapes, with no implementation behind it.
- *
- * A reply drafter is optional: a deployment that injects none simply offers no drafts, and every
- * other path — rules, the Screener, filing, search — works exactly as before. So the code that
- * merely NAMES the port (the drafting service, the route table that wires it, the workflow step
- * that calls it) needs these five shapes and nothing else. None of them constructs a drafter and
- * none of them names a model.
- *
- * ── WHY THIS IS A LEAF, AND NOT UNDER `ai/` ──────────────────────────────────────────────
- *
- * They used to be declared beside the implementation, which is where the model id, the request
- * shape and the inference-residency options live. A type-only edge is erased from the emitted
- * JavaScript and perfectly visible in the source, which is where it counted: mail-half modules
- * declared a dependency on the model half in order to say what shape they accept. `ai/` is the
- * private half wholesale, and a rule about a directory is the only kind that survives a new file
- * being added to it — so the port moved out rather than the rule bending.
- *
- * `ai/draft.ts` re-exports these, so nothing that imports them from the package barrel changes.
- *
- * ── WHAT THE SHAPES THEMSELVES GUARANTEE ─────────────────────────────────────────────────
- *
- * The input carries ONLY sensitivity-safe previews — redacted snippets and knowledge-base
- * entries, never a raw body. The caller refuses to draft against a message marked as excluded
- * from AI, and excludes such messages from the surrounding context BEFORE building this input.
- * That is structural rather than a filter someone remembers to apply: the port cannot see what
- * the caller never passes, because there is no field here for it to arrive in.
+ * The drafting seam — the port and its shapes, no implementation behind it. A drafter is
+ * optional: a deployment injecting none simply offers no drafts, so code that merely NAMES the
+ * port needs these five shapes and nothing else. A leaf and not under `ai/`: declared beside the
+ * implementation, mail-half modules depended on the model half just to say what shape they accept
+ * — and a directory rule is the only kind that survives a new file. `ai/draft.ts` re-exports
+ * these. The shapes guarantee the input carries ONLY sensitivity-safe previews — never a raw
+ * body; the caller refuses AI-excluded messages and excludes them from context BEFORE building
+ * the input — structural, because there is no field for a raw body to arrive in.
  */
 
 /** The message being replied to — subject/from/snippet only, and the snippet is redaction-safe. */

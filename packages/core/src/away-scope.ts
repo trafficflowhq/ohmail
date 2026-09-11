@@ -1,18 +1,11 @@
 /**
- * THE AWAY RESPONDER'S PILE SCOPE — the closed set, the default and the pile words.
- *
- * ── WHY IT IS ITS OWN MODULE AND NOT PART OF `away-eligibility.ts` ──────────────────────────
- *
- * Two consumers need these values and only one of them can load that file. The pass decides with
- * them; the settings control and the Ohbox banner DISPLAY with them — and `away-eligibility.ts`
- * imports `node:crypto` for {@link awayTextHash}, so a browser reaching for the constants there
- * would drag a node builtin into a client bundle. `@trafficflow/core`'s barrel is worse: a value
- * import from it conveys the whole package's import closure into the published desktop artifact.
- *
- * So the vocabulary lives here, in a leaf with NO imports at all, exported as
- * `@trafficflow/core/away-scope` (the shape `./folder-name` and `./ics` already use — a source
- * path, transpiled by whichever bundler asks for it). `away-eligibility.ts` imports it, which is
- * what makes the set the engine refuses and the set the control offers the same object rather
+ * The away responder's pile scope — the closed set, the default and the pile words. Its own
+ * module because two consumers need these values and only one can load `away-eligibility.ts`: the
+ * pass decides with them, and the settings control and Ohbox banner DISPLAY with them — that file
+ * imports `node:crypto` for {@link awayTextHash}, and the barrel is worse, conveying the whole
+ * package's import closure into the published desktop artifact. So the vocabulary lives in a leaf
+ * with NO imports, exported as `@trafficflow/core/away-scope`; `away-eligibility.ts` imports it,
+ * which makes the set the engine refuses and the set the control offers the same object rather
  * than two lists that agree today.
  */
 
@@ -20,40 +13,14 @@
 export const AWAY_SCREENER_FOLDER = "ohmail/Screener";
 
 /**
- * THE PILES A RESPONDER MAY BE ASKED TO ANSWER, as FOLDER names.
- *
- * ── FOLDERS, AND THE DIFFERENCE HAS ALREADY BITTEN ONCE ─────────────────────────────────────
- *
- * The pile a person calls "Ohbox" is the folder `INBOX`. `VIEW_OF_FOLDER` (client-engine) maps
- * the six destinations onto the six pile words, and `ohmail/Quarantine` is the one a person calls
- * "Spam". THERE IS NO FOLDER `ohmail/Ohbox` — the away responder's own test fixture carried that
- * string for three cases, so each measured a placement the router cannot produce.
- *
- * The value compared at decision time is `folder_state.desired_folder`, which holds a
- * destination. So this set holds destinations and {@link AWAY_PILE_VIEW} does the translation.
- *
- * ── FOUR MEMBERS, AND THE TWO THAT WERE ADDED ───────────────────────────────────────────────
- *
- * Receipts and the Screener are offered. Both were argued against here when the set was two, and
- * both arguments are answered rather than dropped:
- *
- *   RECEIPTS was refused as "machine mail about a transaction the account started". Most of it
- *   is, and `neverAutoReply` is what refuses it — per header, for every pile, whether or not this
- *   box is ticked. What is left is a receipt a person typed, in a pile its owner chose to answer,
- *   which is their decision and not this module's. It is no longer in the never-answered map, so
- *   ticking the box has an effect.
- *
- *   THE SCREENER was refused because it is the AUDIENCE's population and two settings ruling on
- *   one population would contradict. They cannot now: the audience decides FIRST (a stranger
- *   still held there is refused outright unless `audience: 'everyone'`), the pile decides second,
- *   and the write door refuses `ohmail/Screener` in the scope of a `screened_in` responder, so
- *   the contradictory row is not representable.
- *
- * `ohmail/Screened` and `ohmail/Quarantine` stay out and stay in the never-answered map: one is
- * the durable "no" of a screening decision, the other is mail the pipeline judged hostile.
- *
- * THE SETTINGS CONTROL IMPORTS THIS. A control offering a pile the engine refuses is a setting
- * that appears to save and changes nothing.
+ * The piles a responder may be asked to answer, as FOLDER names. The pile a person calls "Ohbox"
+ * is the folder `INBOX`; there is NO folder `ohmail/Ohbox` — the responder's own fixture once
+ * carried that string. The compared value is `folder_state.desired_folder`, so this holds
+ * destinations and {@link AWAY_PILE_VIEW} translates. Receipts is offered because
+ * `neverAutoReply` refuses the machine mail per header; the Screener because the audience decides
+ * FIRST and the write door refuses that pile beside `screened_in`. `ohmail/Screened` and
+ * `ohmail/Quarantine` stay never-answered. The settings control imports this — a control offering
+ * a pile the engine refuses appears to save and changes nothing.
  */
 export const AWAY_ANSWERABLE_PILES = [
   "INBOX", "ohmail/Reads", "ohmail/Receipts", AWAY_SCREENER_FOLDER,

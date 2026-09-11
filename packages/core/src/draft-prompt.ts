@@ -1,20 +1,13 @@
 import type { DraftInput, DraftResult } from "./draft-port.js";
 
 /**
- * THE DRAFTING QUESTION — what is asked, what may travel with it, and how an answer is read.
- *
- * The companion to `classify-prompt.ts`, and it exists for the same reason: `draft-port.ts`
- * declares the seam with no prompt behind it, the implementations under `ai/` carry a model id
- * and a vendor client, and what sits between them — the voice and reply policy, the response
- * schema, the redaction allow-list and the coercion — is the same for every implementation and
- * must stay the same for every one.
- *
- * More than one thing can reach a model now: a hosted deployment with its own account, and a
- * standalone install running against a key or a local model belonging to the person using it. A
- * second copy of the reply policy is how those two come to write in two different voices from the
- * same mailbox. One question, asked identically, however the request travels.
- *
- * It names no model and imports only the port's own shapes, so it is mail-half code.
+ * The drafting question — what is asked, what may travel with it, and how an answer is read. The
+ * companion to `classify-prompt.ts`, for the same reason: `draft-port.ts` declares the seam with
+ * no prompt behind it, the implementations under `ai/` carry a model id and a vendor client, and
+ * what sits between — the voice and reply policy, the response schema, the redaction allow-list
+ * and the coercion — must stay the same for every implementation. More than one thing can reach a
+ * model now, and a second copy of the reply policy is how two deployments write in two voices
+ * from one mailbox. It names no model and imports only the port's own shapes: mail-half code.
  */
 
 /**
@@ -67,16 +60,14 @@ const ALLOWED_THREAD_MESSAGE_KEYS: ReadonlySet<string> = new Set(["from", "snipp
 const ALLOWED_KB_ENTRY_KEYS: ReadonlySet<string> = new Set(["title", "content"]);
 
 /**
- * The redaction sink. Throws if any half of the input carries a key outside its allowlist above —
- * i.e. if a body or any other raw field ever reaches this function — BEFORE anything is
- * serialized into a model request, so a leak is a hard failure and never a silent transmission.
- *
- * It was once a private function beside one drafter, protected only by that drafter's two callers
- * each choosing to pass a redacted shape. That is a property of the callers, not of the sink, and
- * a third caller — or a future field added to {@link DraftInput} — would carry a raw body straight
- * into a request with nothing to stop it. There is now more than one drafter, and this is the one
- * they share: "no raw content in a draft request" is a structural fact of every implementation
- * rather than a habit each of them has to keep.
+ * The redaction sink. Throws if any half of the input carries a key outside its allowlist — if a
+ * body or any raw field ever reaches this function — BEFORE anything is serialized into a model
+ * request, so a leak is a hard failure and never a silent transmission. It was a private function
+ * beside one drafter, protected only by that drafter's two callers choosing to pass a redacted
+ * shape — a property of the callers, not the sink; a third caller or a future {@link DraftInput}
+ * field would carry a raw body straight into a request. There is more than one drafter now, and
+ * this is the one they share: "no raw content in a draft request" is a structural fact rather
+ * than a habit.
  */
 export function assertRedacted(input: DraftInput): void {
   const check = (obj: object, allowed: ReadonlySet<string>, where: string): void => {

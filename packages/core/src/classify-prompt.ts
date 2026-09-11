@@ -3,26 +3,13 @@ import type { ClassifierInput, ClassifierPort, ClassifierResult } from "./classi
 import { redactForModel, screenOutboundText, type OutboundScreen } from "./sensitive.js";
 
 /**
- * THE ROUTING QUESTION — what is asked, what is refused, and how an answer is made safe.
- *
- * `classifier-port.ts` next door declares the SEAM: three interfaces, so a pipeline can say it
- * may consult a model without depending on one. This file is the QUESTION, and it is deliberately
- * a third thing rather than part of either:
- *
- *  · The port carries no prompt, so code that merely names the seam carries no taxonomy.
- *  · The implementations under `ai/` carry a model id, a request shape and a vendor client.
- *  · What sits between them — the taxonomy itself, the response schema, the outbound sensitivity
- *    sink and the coercion of whatever comes back — belongs to NEITHER, because it is the same
- *    for every implementation and must stay the same for every implementation.
- *
- * That last point is the reason this file exists at all. There is more than one way to reach a
- * model now: a hosted deployment with its own account, and a standalone install running against a
- * key or a local model belonging to the person using it. Two copies of the taxonomy is how those
- * two come to file the same message into different folders — a defect nobody would see in a test,
- * because each copy passes its own. One question, asked identically, however the request travels.
- *
- * It names no model and imports only mail vocabulary, so it is mail-half code: a consumer can ask
- * the routing question and still cannot construct a client to ask it with.
+ * The routing question — what is asked, what is refused, how an answer is made safe. The port
+ * declares the SEAM; the implementations under `ai/` carry a model id and a vendor client; what
+ * sits between — the taxonomy, the schema, the outbound sensitivity sink, the coercion — must
+ * stay the same for every implementation, which is why this file exists: there is more than one
+ * way to reach a model now, and two copies of the taxonomy is how two deployments file the same
+ * message into different folders — a defect no test sees, because each copy passes its own. It
+ * names no model: a consumer can ask the question and still cannot construct a client.
  */
 
 /**
@@ -82,46 +69,15 @@ export const TAXONOMY_PREFIX = [
   "and whether the message is spam. Respond ONLY with the structured JSON object.",
 ].join("\n");
 
-/* ── THE SCREENING QUESTION ───────────────────────────────────────────────────────────────────
- *
- * A SECOND question, for the Screener's suggestion path only. Live mail keeps asking the routing
- * question above, unchanged.
- *
- * ## Why a second question rather than a second copy of the first
- *
- * The docblock at the top of this file argues for ONE question asked identically however the
- * request travels. That invariant is about one question per PURPOSE — two copies of the SAME
- * taxonomy is how two hosts file the same message differently — and it is preserved here: this
- * question is defined once, in this file, beside the one it is not.
- *
- * ## The tautology it replaces
- *
- * The Screener's suggestion path used to ask the routing question of mail that is already sitting
- * in `ohmail/Screener`. But `ohmail/Screener` is what the routing taxonomy DEFINES as the correct
- * answer for a first-contact sender, and every row the Screener reasons about is a first-contact
- * sender. So the model was being asked a question whose own rules made one answer correct in
- * advance, and it gave that answer: measured before this change, with no stated bar, nearly nine
- * in ten stored
- * suggestions came back `ohmail/Screener`. The user had paid for advice and been told, at
- * high confidence, that the mail was where it already was.
- *
- * The fix is not a better prompt for the same question. It is a different question: the user is
- * not asking "where does this belong in a mailbox that has a gate" — they are standing AT the
- * gate, and the decision in front of them is what to do with this stranger. So `ohmail/Screener`
- * is removed from the answer set. It is the question being asked; it cannot also be an answer.
- *
- * ## The user's words are BINDING here, not advisory
- *
- * On the routing path the account's bar is one input among several and is explicitly forbidden
- * from carrying a first-contact sender past the gate. Here the bar is the whole point: the person
- * wrote down who they want to hear from, and this question is "does this sender meet what they
- * wrote". The instruction below therefore names the bar as the criteria to judge against rather
- * than something to weigh.
- *
- * **The words themselves still travel in the USER turn, never in this prefix.** The prefix is sent
- * with `cache_control:{type:"ephemeral"}` and that cache is shared across accounts, so one
- * account's sentence embedded here would be served to another's request. What this constant may
- * contain is the INSTRUCTION about the field; what it may never contain is the field's value.
+/**
+ * The screening question — a SECOND question for the Screener's suggestion path only; live mail
+ * keeps the routing question. The one-question invariant is per PURPOSE. The tautology it
+ * replaces: the suggestion path asked the routing question of mail already in `ohmail/Screener` —
+ * which that taxonomy DEFINES as the answer for a first-contact sender; measured, nearly nine in
+ * ten suggestions came back `ohmail/Screener`. So the gate is removed from the answer set: it is
+ * the question, it cannot also be an answer. The user's bar is BINDING here — and its words
+ * travel in the USER turn, never this prefix: the prefix is cached across accounts, so one
+ * account's sentence would be served to another's request.
  */
 export const SCREEN_DESTINATIONS: Destination[] = [
   "INBOX",
@@ -132,115 +88,14 @@ export const SCREEN_DESTINATIONS: Destination[] = [
 ];
 
 /**
- * The screening instruction. Cacheable and account-independent, exactly like
- * {@link TAXONOMY_PREFIX}.
- *
- * Each outcome carries its own criteria, and several are written the way they are because of what
- * was measured without them:
- *
- *  · **Receipts** had to be named with a concrete first-contact example. An order confirmation from
- *    a shop the user has never mailed is the canonical case, and it is the one a "do I know this
- *    sender" reading gets wrong.
- *  · **Quarantine** had to be given criteria that separate junk from mere automation. Left
- *    undefined, "spam" collapses into "automated", and every newsletter becomes spam — or, as
- *    actually happened, nothing does.
- *
- * ── THE OHBOX BAR WAS RAISED, AND THIS IS WHY ────────────────────────────────────────────────
- *
- * The version before this one defined INBOX as "a real person writing to them, **or service mail
- * they personally have to act on — a delivery, a security alert, something with a consequence if
- * ignored**". That second clause turned out to admit essentially all of it, and the evidence is
- * the model's own rationales on a live account: of 14 senders it put in the Ohbox, **9 were
- * automated notifications**, and each rationale cited the clause by name — "a service notification
- * with a consequence if ignored", "matching your criteria for real service emails needing a
- * reply". An expired card on a storage subscription and a "your storage is 70% full" warning both
- * landed in the Ohbox at 0.92 confidence.
- *
- * The clause is not repairable by tightening its adjectives, because "has a consequence if
- * ignored" is true of every notification any platform sends — that is what a notification IS. The
- * owner's ruling is the categorical one: automated service mail is NEVER the Ohbox, whatever the
- * consequence; a payment problem is Reads at most. So the criterion is now WHO WROTE IT rather
- * than how bad it sounds, which is a question about the mail that has an answer.
- *
- * Two smaller calibrations land with it, both from named cases:
- *
- *  · **Bulk marketing nobody asked for may be Quarantine.** The old text forbade it outright
- *    ("Being automated, promotional or unwanted is NOT enough"). That sentence was written against
- *    the failure where every newsletter becomes spam, and it overshot: a product newsletter
- *    arriving at an address that never subscribed to it is, to the person receiving it, junk. The
- *    guard against the original failure is now the RELATIONSHIP test rather than a prohibition.
- *  · **A venue's own marketing is Screened, not Reads.** A hotel, restaurant or resort mailing
- *    "we miss you" to a past guest is a business selling to someone who is not currently their
- *    customer. It reads as service mail because the sender is a place the person has been.
- *
- * These are written as CRITERIA, deliberately. Four remembered examples would classify four
- * senders and generalise to nothing; the Screener has 1,698 of them.
- *
- * ── THE SCREENED/QUARANTINE BOUNDARY IS THE RELATIONSHIP, NOT THE BUSINESS ───────────────────
- *
- * Adopted with the raised Ohbox bar above, and it OVERTURNS a specific piece of reasoning rather than a folder.
- *
- * The two bullets used to contradict each other. `ohmail/Screened` claimed "cold sales
- * approaches, unrequested promotions" by name and imperatively; `ohmail/Quarantine` claimed the
- * same mail conditionally — "Quarantine is available" — behind a relationship test. A model
- * resolving that contradiction takes the imperative branch, and it did: on a live account, cold
- * business-development outreach came back `ohmail/Screened` at 0.95 reasoning, in as many words,
- * *"it's legitimate business mail, just unwanted"*, and a travel site's promotional blast came
- * back `ohmail/Screened` at 0.95 as *"bulk commercial marketing you didn't request"*. The owner's
- * ruling on both was the same word: spam.
- *
- * **The clause overturned is the legitimacy defence.** That a sender is a real, registered,
- * reputable company does not rescue unsolicited commercial contact — legitimacy is not
- * permission. So unsolicited commercial mail (promotional bulk with no prior relationship, cold
- * sales and BD outreach, a newsletter nobody subscribed to) is Quarantine, and `ohmail/Screened`
- * is now GATED on a real prior relationship: a business the person was a customer, guest, client
- * or member of, whose mail is merely unwanted.
- *
- * **The relationship must be evident IN THE MESSAGE, and that is the load-bearing half.** The
- * screening user turn carries `from`, `subject`, a redacted `snippet` and an empty
- * `headersDigest`, with `fewShot: []` — so "did this person ever book with them" is a question
- * the model cannot answer and must not be asked. What it CAN see is whether the mail addresses a
- * named guest or customer, or names a stay, an order, a booking or an account. That is why a
- * hotel writing to a named past guest is Screened while a travel site's generic blast is not,
- * even though both are plausibly places the person has spent money: the burden of proof is on the
- * message. The same operationalisation is applied to Quarantine's "a service the person actually
- * uses" clause, which is otherwise equally unanswerable and would rescue the blast.
- *
- * **"A stranger writing personally is not junk" was QUALIFIED, not deleted.** Deleting it
- * re-opens a measured failure — a tightening of the Quarantine bullet once pulled a real person
- * out of the Ohbox at 0.72 for lacking a relationship, taking the validation set from 17/18 to
- * 15/18. So the clause is qualified by PURPOSE: a stranger writing personally about anything
- * other than selling is still not junk; a stranger writing personally in order to sell is. That
- * is the meetorbitprism case, and it is also why the word "relationship" appears in this prompt
- * only inside clauses about COMMERCIAL mail — let it escape into the INBOX criteria and the model
- * starts demanding a relationship of people, which is precisely what "one human to another,
- * whether or not they have met" exists to prevent.
- *
- * ### What this calibration COST, measured rather than assumed
- *
- * Validated live against the mailbox the ruling came from, 28 senders, before and after. The
- * boundary moved as intended on every case it was aimed at, and two things moved that were not
- * aimed at. Both are recorded here instead of tuned away, because the last attempt to tune a
- * deviation out of this prompt took the set from 17/18 to 15/18 by moving an unrelated boundary.
- *
- *  · **One receipt in three now files to Reads.** A payment confirmation whose subject reads
- *    "We've received your payment for <id>" went from `ohmail/Receipts` 0.99 to `ohmail/Reads`
- *    0.98 and stayed there across four runs; the other two receipts held at 0.95–0.99. The
- *    Receipts bullet is byte-identical, and the model's rationale cites the automated-mail rule
- *    ("it's not from a person, so it belongs in Reads"), not either bullet that changed. So the
- *    cost of stating the junk criteria at this length is that the most notification-shaped
- *    receipt loses its fork. Both outcomes keep it out of the Ohbox and both are durable filings.
- *  · **Promotional mail from a vendor the person pays is now Quarantine, not Screened.** A
- *    conference invitation from an infrastructure provider they actively use came back
- *    `ohmail/Quarantine` 0.92. This one is the ruling working as written rather than a defect:
- *    the message names no account or subscription, so it carries no evidence of the
- *    relationship, and the criteria say the burden of proof is on the message. It is the same
- *    shape as the travel blast the owner called spam. Worth knowing it generalises this far.
- *
- * A third case is unchanged by this calibration and is NOT its doing: a newsletter the person
- * did subscribe to is indistinguishable, from `from`/`subject`/`snippet` alone, from one nobody
- * asked for, and files to Quarantine under both the old prompt and this one. Nothing in the
- * message says "you signed up", so no criteria written against the message can separate them.
+ * The screening instruction — cacheable, account-independent; each outcome's criteria are written
+ * against what was measured without them. The Ohbox bar was raised: "service mail with a
+ * consequence if ignored" admitted essentially all of it — automated service mail is never the
+ * Ohbox; the criterion is WHO WROTE IT. The Screened/Quarantine boundary is the RELATIONSHIP:
+ * legitimacy is not permission — unsolicited commercial mail is Quarantine, and Screened is gated
+ * on a prior relationship evident IN THE MESSAGE. "A stranger writing personally is not junk" was
+ * qualified by PURPOSE, not deleted. Recorded costs: one receipt in three files to Reads; a
+ * paying vendor's promo with no in-message evidence is Quarantine.
  */
 export const SCREENING_PREFIX = [
   "You are helping someone screen a first-contact sender for ohmail. This sender is waiting at",
@@ -312,19 +167,14 @@ export const SCREENING_RESULT_SCHEMA = {
 } as const;
 
 /**
- * A screening answer, made safe to act on.
- *
- * A label outside {@link SCREEN_DESTINATIONS} becomes `ohmail/Screener`, which every consumer
- * reads as "hold — the person decides". The safe answer does not have to be OFFERED to the model
- * to remain the fallback, and leaving it out of the enum is what removes the tautology.
- *
- * This is also what makes the change degrade safely rather than dangerously: an implementation
- * that has not been taught the screening question and answers the routing taxonomy anyway returns
- * `ohmail/Screener`, which lands here and coerces to a hold. It never coerces to an admission.
- *
- * `spam` is forced to agree with the destination rather than trusted alongside it. The two are one
- * fact in the prompt, and a reply that names `ohmail/Quarantine` with `spam:false` is not a third
- * verdict to preserve — it is the same verdict, said twice, once wrongly.
+ * A screening answer, made safe to act on. A label outside {@link SCREEN_DESTINATIONS} becomes
+ * `ohmail/Screener`, which every consumer reads as "hold — the person decides": the safe answer
+ * does not have to be OFFERED to the model to remain the fallback, and leaving it out of the enum
+ * is what removes the tautology. This is also what makes the change degrade safely: an
+ * implementation that answers the routing taxonomy anyway returns `ohmail/Screener`, which
+ * coerces to a hold — never to an admission. `spam` is forced to agree with the destination: a
+ * reply naming `ohmail/Quarantine` with `spam:false` is the same verdict said twice, once
+ * wrongly.
  */
 export function coerceScreeningResult(raw: unknown): ClassifierResult {
   const o = (raw ?? {}) as Record<string, unknown>;
@@ -395,40 +245,14 @@ export interface ClassifyUserPayload {
 }
 
 /**
- * SCREEN, THEN BUILD — the last thing that happens to a payload before it is serialised for any
- * model.
- *
- * The pipeline already declines to construct a classifier for sensitive mail on the automatic
- * path, which is what keeps a secret out of the spend ledger as well as off the wire. This is the
- * second line: it re-reads the payload that is about to leave, with the same local detector, and
- * throws. It exists because the first check lives a module away and cannot see a caller that
- * builds its own input — the Screener's explicit suggestion path does exactly that, from a stored
- * row, in a package that cannot see the pipeline.
- *
- * The order is the guarantee. The screen runs before `payload` exists, so there is no moment at
- * which a refused payload has been assembled and something could log it, cache it, or hand it to
- * a retry queue on the way out.
- *
- * ── AND THERE IS NOW A SECOND CALLER SHAPE: `outbound: "prescreened"` ─────────────────────────
- *
- * Under the AI-OPEN rule, a caller acting on a person's explicit press
- * redacts the payload itself, with `redactForModel`, and says so on the input. This sink then does
- * not throw.
- *
- * **The redaction is deliberately NOT done here, and that is the correction that matters.** Doing
- * it at this sink would only protect the ONE implementation that happens to route through this
- * function on its way to Anthropic. A `ClassifierPort` is an interface: the sidecar's local
- * Ollama and Anthropic providers implement it, and so could anything else. Those implementations
- * receive `ClassifierInput` DIRECTLY from `ScreenerService`, and a redaction applied downstream of
- * them protects nothing they do. Redacting at the caller means every port — bundled, local or
- * third-party — is handed text with the credential already gone, and this sink's job stays what it
- * always was: to check, not to launder.
- *
- * What it screens and what it deliberately does not: see `screenOutboundText`. Recognised
- * authentication material, an unframed credential shape, and an authentication URL carrying a
- * token are refused. An unsupported script and an unrecognised language are NOT — those are
- * upstream routing decisions, and a sink that threw on every non-Latin payload would break the
- * Screener for non-Latin senders while protecting nothing.
+ * Screen, then build — the last thing that happens to a payload before it is serialised for any
+ * model. The pipeline already declines to construct a classifier for sensitive mail; this second
+ * line re-reads the payload about to leave, with the same detector, and throws — the first check
+ * cannot see a caller that builds its own input. The order is the guarantee: the screen runs
+ * before `payload` exists, so a refused payload is never assembled to be logged or retried. The
+ * redaction is deliberately NOT done here: at this sink it would protect only the one
+ * implementation routing through it, while ports receive `ClassifierInput` directly — redacting
+ * at the caller hands every port text with the credential gone; this sink checks, never launders.
  */
 /** One held first-contact sender, as much of them as the screening question reads. */
 export interface ScreeningAsk {
@@ -443,37 +267,14 @@ export interface ScreeningAsk {
 }
 
 /**
- * ── ASK A MODEL ABOUT ONE HELD STRANGER — THE WHOLE REQUEST, IN ONE PLACE ────────────────────
- *
- * Four decisions travel together here, and every one of them is load-bearing. They were written
- * out at the Screener's purchase call site while that was the only caller; there is now a second
- * (the worker's always-on pass for opted-in accounts), and a second COPY of these four lines
- * would be four independent ways to get a money-and-privacy path subtly wrong:
- *
- *  1. **The credential is removed HERE, at the caller, not one layer down.** `ClassifierPort` is
- *     an interface — the bundled client is one implementation, a local Ollama and a
- *     bring-your-own-key provider are others, and they receive this object DIRECTLY. A redaction
- *     applied inside one builder protects exactly that one and leaves a local model reading the
- *     raw code. {@link redactForModel} is conditional (see its docblock): it fires only where the
- *     outbound screen says there is credential material, so ordinary mail is sent verbatim and
- *     not blanked by a detector that matches `NEWSLETTER`.
- *  2. **`outbound: "prescreened"` goes with the redaction and only with it.** It is what stops
- *     {@link classifyUserPayload}'s sink refusing a payload that has already been made safe.
- *     Absent everywhere else, which is what keeps the AUTOMATIC routing path failing closed.
- *  3. **The SCREENING question, not the routing one.** Routing asks "which folder does this
- *     belong in", and `ohmail/Screener` is that taxonomy's own definition of a first-contact
- *     sender — which is every row a caller of this function can have. Asking it there is a
- *     question with its answer built in. The fallback to `classify` exists because a port is
- *     implemented outside this repository too; it degrades the ADVICE and cannot degrade the
- *     safety, since routing's answer for a stranger coerces to a hold, never to an admission.
- *  4. **The bar reaches the model's USER turn, and a blank one is omitted**, so an account that
- *     set none produces a byte-identical request to the pre-bar one.
- *
- * It is not gated on `messages.no_ai`. That column is known-wrong for historical rows, and
- * `subject` is stored RAW even where the body was stored redacted — which is the field a one-time
- * code is usually in. The bytes are always current; the flag is a claim about them.
- *
- * @param classifier the port. The caller decides whether it may spend BEFORE calling this.
+ * Ask a model about one held stranger — the whole request in one place, because there are two
+ * callers and a second copy would be four ways to get a money-and-privacy path wrong: (1) the
+ * credential is removed HERE, at the caller — ports receive this object directly, and {@link
+ * redactForModel} fires only where the screen finds credential material; (2) `outbound:
+ * "prescreened"` goes with the redaction and only with it; (3) the SCREENING question, not the
+ * routing one — the `classify` fallback degrades advice, never safety; (4) the bar reaches the
+ * USER turn, a blank one omitted. Not gated on `messages.no_ai`: known-wrong for historical rows,
+ * and `subject` is stored raw. The caller decides whether it may spend BEFORE calling this.
  */
 export async function askScreeningQuestion(
   classifier: ClassifierPort, ask: ScreeningAsk,
@@ -510,32 +311,14 @@ export function classifyUserPayload(input: ClassifierInput): ClassifyUserPayload
 }
 
 /**
- * ── THE GATE-CONTRADICTION CHECK ─────────────────────────────────────────────────────────────
- *
- * True when the prose CONCLUDES "hold this at the Screener". It exists because a routing answer
- * has two channels — the structured `destination` and the one-line `rationale` — and only the
- * first is machine-checked. A reply whose rationale reasons its way to the gate while the field
- * names a folder past it is not advice anybody should act on; it is a coin toss with a sentence
- * attached.
- *
- * **The asymmetry is deliberate and it is the whole design.** A false positive here costs a
- * suggestion that reads "this one needs you" — which, for a queue whose every row is a
- * first-contact stranger, is the status quo and costs one human glance. A false negative admits
- * a stranger to the Ohbox and writes them an allow rule. So the check fires on the plain
- * presence of the gate's own name, and buys its narrowness back with a negation guard rather
- * than by hedging: "not a Screener case" and "no Screener hold needed" are the shapes an INBOX
- * verdict actually uses to mention the gate, and they do not fire.
- *
- * `screener` is the one word in this taxonomy with no ordinary mail meaning — nothing else in a
- * rationale is called a screener — which is why this is a keyword check and not a family
- * classifier over all six labels. `reads` is a verb, `inbox` appears in half the sentences a
- * model writes about mail, and a check built on those would fire on prose that agrees with its
- * own field.
- *
- * **It is NOT applied to routing**, and that is a decision rather than an oversight: routing
- * files live mail, and a prose heuristic that moved a message out of somebody's Ohbox would be
- * changing where real mail lands on the strength of a regex. Its one consumer is the Screener's
- * suggestion path, where the only thing it can change is which of three words a chip shows.
+ * The gate-contradiction check — true when the prose CONCLUDES "hold this at the Screener". Only
+ * the structured `destination` is machine-checked; a reply that reasons its way to the gate while
+ * the field names a folder past it is a coin toss with a sentence attached. The asymmetry is the
+ * design: a false positive costs one human glance; a false negative admits a stranger and writes
+ * an allow rule — so it fires on the plain presence of the gate's name, with a negation guard.
+ * `screener` is the one word here with no ordinary mail meaning, hence a keyword check. NOT
+ * applied to routing: a prose heuristic must not move real mail; its consumer changes which of
+ * three words a chip shows.
  */
 const GATE_NAMED = /\bscreener\b/i;
 /**

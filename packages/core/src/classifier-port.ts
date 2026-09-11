@@ -1,35 +1,13 @@
 import type { Destination, EmailAddress } from "./types.js";
 
 /**
- * THE CLASSIFIER SEAM — the port only, with no implementation behind it.
- *
- * `pipeline.ts` and `ports.ts` describe a pipeline that MAY consult a model: the port is optional
- * on `PipelineDeps`, and a deployment that supplies none routes on rules alone, which is the
- * product's floor. Both files therefore need these three shapes and nothing else — they never
- * construct a classifier and never name a model.
- *
- * They used to take them from `classify.ts`, which is also where the model implementation lives:
- * the fixed taxonomy prompt, the model id, the response schema and the outbound sensitivity sink.
- * A type-only edge is invisible in the source but not in the module graph, so every consumer of
- * the pipeline — including a local engine that configures no model at all — carried the prompts.
- *
- * ── WHY THIS IS A LEAF, AND NOT UNDER `ai/` ──────────────────────────────────────────────
- *
- * Splitting the port from the implementation is what lets the mail half of this package be
- * described without the model half, and where the file SITS is half of that split. `ai/` is the
- * model half wholesale — prompts, model ids, response schemas — and the rule that keeps it
- * private is a rule about the directory, because a rule about individual files inside it is one
- * forgotten entry away from shipping a prompt.
- *
- * This file names no model and carries no prompt: three interfaces, and the only thing it
- * imports is the mail vocabulary next door. It lived under `ai/` while the only consumers that
- * mattered were the classifier's own, and a directory-wide rule then could not tell a port from
- * an implementation — so `pipeline.ts` and `ports.ts`, which are mail-half code, reached across
- * the boundary in a type position on every build. It is a leaf here so that `ai/` is, without
- * exception, the private half.
- *
- * `classify.ts` re-exports these, so the surface of `@trafficflow/core` is unchanged and no
- * existing import outside this package has to move.
+ * The classifier seam — the port only, no implementation behind it. The port is optional on
+ * `PipelineDeps`: a deployment supplying none routes on rules alone, the product's floor. These
+ * shapes used to come from `classify.ts`, where the model implementation lives — a type-only edge
+ * is invisible in source and real in the module graph, so every pipeline consumer carried the
+ * prompts. A leaf and not under `ai/`: that directory is the model half wholesale, kept private
+ * by a rule about the DIRECTORY, and a port inside it made mail-half code cross the boundary on
+ * every build. This names no model; `classify.ts` re-exports, so no outside import moves.
  */
 
 export interface ClassifierInput {
@@ -46,26 +24,14 @@ export interface ClassifierInput {
    */
   ohboxBar?: string;
   /**
-   * WHO SCREENED THESE BYTES, AND THEREFORE WHAT THE SINK DOES IF THEY STILL LOOK SENSITIVE.
-   *
-   * Absent (the default everywhere it is not written) ⇒ `"refuse"`: the outbound screen throws a
-   * `SensitivePayloadRefusal` on credential material. That is the automatic routing path and it
-   * is unchanged.
-   *
-   * `"prescreened"` ⇒ the CALLER has already run `redactForModel` over `subject` and `snippet`,
-   * and is asking on behalf of a person who pressed a button. What is withheld from a model is
-   * the credential VALUE; that a message concerns authentication is not a secret, and it is
-   * exactly what the person is asking the model to notice.
-   *
-   * ── IT IS OPTIONAL, AND THE POLARITY IS WRITTEN SO THAT ABSENT MEANS SAFE ──────────────────
-   *
-   * The check is spelled `!== "prescreened"` rather than `=== "refuse"`, and that is not a style
-   * choice. Almost no test file in this repo is typechecked (the `packages/core` and
-   * `packages/services` tsconfigs include `src` only), so every `ClassifierInput` literal in ~3,250
-   * tests that omits this field is `undefined` at runtime rather than a compile error. Under
-   * `=== "refuse"` all of them would silently exercise the permissive branch and the refusal
-   * guard would report success while guarding nothing. Under `!== "prescreened"` they all take
-   * the refusing branch, which is the branch those tests are asserting about.
+   * Who screened these bytes, and therefore what the sink does if they still look sensitive.
+   * Absent (the default) means `"refuse"`: the outbound screen throws on credential material —
+   * the automatic path, unchanged. `"prescreened"` means the CALLER already ran `redactForModel`
+   * and asks on behalf of a person's press: what is withheld is the credential VALUE — that a
+   * message concerns authentication is not a secret. The polarity makes absent safe: `!==
+   * "prescreened"`, never `=== "refuse"` — almost no test file is typechecked, so every literal
+   * omitting this field is `undefined` at runtime, and under `=== "refuse"` all of them would
+   * silently exercise the permissive branch.
    */
   outbound?: "refuse" | "prescreened";
 }
@@ -80,20 +46,14 @@ export interface ClassifierResult {
 export interface ClassifierPort {                        // added to PipelineDeps (optional)
   classify(input: ClassifierInput): Promise<ClassifierResult>;
   /**
-   * THE SCREENING QUESTION — "what should happen to this first-contact sender".
-   *
-   * A separate method rather than a flag on {@link classify}, because it is a different question
-   * over a different answer set, not the same question with an option set. Live mail routing must
-   * never reach it, and a boolean parameter is one mistaken argument away from that.
-   *
-   * OPTIONAL, and the optionality is a compatibility statement rather than a design preference: a
-   * `ClassifierPort` is implemented outside this package too, and a required method would have
-   * been a compile break in every one of them for a capability only the Screener uses.
-   *
-   * A caller that finds it absent falls back to {@link classify}, which is what the Screener did
-   * before this method existed. That fallback is a DEGRADATION, never a hazard: the routing
-   * question's answer for a first-contact sender is `ohmail/Screener`, which every consumer reads
-   * as "hold — the person decides". The absent case gives worse advice, not unsafe advice.
+   * The screening question — "what should happen to this first-contact sender". A separate
+   * method, not a flag on {@link classify}: a different question over a different answer set, and
+   * live routing must never reach it — a boolean parameter is one mistaken argument away.
+   * OPTIONAL as compatibility: ports are implemented outside this package, and a required method
+   * would break each for a capability only the Screener uses. A caller finding it absent falls
+   * back to {@link classify} — a DEGRADATION, never a hazard: routing's answer for a
+   * first-contact sender is `ohmail/Screener`, "hold — the person decides". Worse advice, not
+   * unsafe advice.
    */
   screen?(input: ClassifierInput): Promise<ClassifierResult>;
 }

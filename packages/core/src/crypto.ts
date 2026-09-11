@@ -1,19 +1,13 @@
 import { randomBytes, createCipheriv, createDecipheriv, createHash } from "node:crypto";
 
-// ─────────────────────────────────────────────────────────────────────────────
-// KeyProvider — envelope encryption. A random per-secret DEK
-// encrypts the plaintext (AES-256-GCM); the DEK is wrapped by a versioned KEK.
-// The default `StaticKeyProvider` holds KEKs in-process (tests + a stopgap for a
-// real EU-region KMS later); `keyVersion` is carried so rotation is possible.
-//
-// MOVED to @trafficflow/core: the always-on worker needs the same
-// primitive to DECRYPT per-mailbox `mailbox_credentials` at boot, and the worker
-// may only depend on core + db, NEVER on @trafficflow/services. The auth
-// layer keeps importing the exact same symbols by re-exporting them from here, so
-// the 1b auth surface (and its tests) is unchanged. NOTE: whichever host holds a
-// KEK — the API AND now the worker — holds credential-decrypting material; both
-// run at the same trust level.
-// ─────────────────────────────────────────────────────────────────────────────
+// KeyProvider — envelope encryption. A random per-secret DEK encrypts the plaintext
+// (AES-256-GCM); the DEK is wrapped by a versioned KEK. The default `StaticKeyProvider` holds
+// KEKs in-process (tests + a stopgap for a real EU-region KMS later); `keyVersion` travels so
+// rotation is possible. Moved to `@trafficflow/core`: the always-on worker needs the same
+// primitive to decrypt `mailbox_credentials` at boot, and the worker may only depend on core +
+// db; the auth layer re-exports the same symbols, so the auth surface is unchanged. Whichever
+// host holds a KEK — the API and now the worker — holds credential-decrypting material; both run
+// at the same trust level.
 
 export interface KeyProvider {
   /** Envelope-encrypt `plaintext`; returns an opaque token + the KEK version used. */
@@ -36,20 +30,14 @@ interface Envelope {
 const AES = "aes-256-gcm";
 
 /**
- * Reject a ring in which two VERSIONS hold identical bytes. A "rotation" that reuses
- * key material is a cryptographic no-op with a persisted lie attached: new rows are
- * stamped with the new `key_version` while the old bytes still decrypt them, and —
- * because both hosts agree on the duplicated ring — the ring fingerprint that exists
- * to expose KEK drift shows nothing wrong. Failing at load is the only place this is
- * cheap; after rows carry the new version it is a data-correction exercise.
- *
- * The error names ONLY the version numbers. Never the bytes, a prefix, or any digest
- * of them: boot failures end up in logs and issue trackers, and this one describes
- * key material.
- *
- * Duplicates are detected on the BYTES (via an in-process SHA-256 of each key, so no
- * hex copy of the material is interned as a string), not on the spelling — uppercase
- * and lowercase hex of the same key are the same key.
+ * Reject a ring in which two VERSIONS hold identical bytes. A "rotation" that reuses key material
+ * is a cryptographic no-op with a persisted lie attached: new rows carry the new `key_version`
+ * while the old bytes still decrypt them, and because both hosts agree on the duplicated ring,
+ * the drift fingerprint shows nothing wrong. Failing at load is the only cheap place; after rows
+ * carry the new version it is a data-correction exercise. The error names ONLY the version
+ * numbers — never the bytes, a prefix or a digest: boot failures end up in logs. Duplicates are
+ * detected on the BYTES via an in-process SHA-256 (no hex copy interned), so uppercase and
+ * lowercase hex of one key are one key.
  */
 function assertDistinctKekBytes(keks: ReadonlyMap<number, Buffer>): void {
   const byDigest = new Map<string, number[]>();
@@ -141,59 +129,16 @@ export class StaticKeyProvider implements KeyProvider {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// The ONE KEK env loader.
-//
-// It used to live in the worker's own config module, read a single `TF_KEK_V1`, and had
-// no counterpart on the API host. A KEK that differs between the API host and the worker means
-// every `mailbox_credentials` row is undecryptable on one of them — a total outage
-// that stays invisible until a mailbox is touched. Both hosts therefore parse the
-// environment with THIS function and publish the SAME {@link KekEnvIdentity} so drift
-// is visible from `/health` without either revealing key material.
-//
-// **Env contract.** `TF_KEK_V1 … TF_KEK_Vn`, each 64 lowercase-or-uppercase hex chars
-// (a 32-byte AES-256 KEK):
-//
-//   • Versions are CONTIGUOUS from 1. A gap — `TF_KEK_V1` and `TF_KEK_V3` present but
-//     `TF_KEK_V2` missing — is a deploy mistake, not a
-//     configuration: the missing version is exactly the one that would be needed to
-//     decrypt some existing row, and silently accepting it turns a boot-time failure
-//     into a per-mailbox one later. Rejected.
-//   • The HIGHEST version present is ACTIVE: `StaticKeyProvider` encrypts new secrets
-//     under it (`currentKeyVersion()`), while every older version stays loaded so
-//     rows carrying `key_version < active` still decrypt. Every table that stores an
-//     envelope-encrypted secret persists `key_version`, so ADDING a version needs no
-//     data migration: add `TF_KEK_V{n+1}` to BOTH hosts and redeploy, and re-encryption
-//     of old rows is lazy (on next write) and never required for CORRECTNESS.
-//   • **Correctness is not revocation, and the difference is the whole of what the step
-//     above does not do.** Adding a version protects new writes only. Every row nobody
-//     has touched keeps its old envelope, the old key still opens it, and so a key that
-//     has leaked keeps opening every one of those rows — and every retained backup of
-//     them — for as long as they go unwritten. Add-and-redeploy is therefore the right
-//     move for a scheduled rotation and a no-op for the case that matters, which is
-//     rotating BECAUSE a key leaked.
-//     Retiring a version is a second, deliberate operation: re-wrap the stored envelopes
-//     onto the active version, confirm nothing references the old one any more, and only
-//     then remove it. Re-wrapping means decrypt-then-encrypt under keys that live in this
-//     process, so it is a pass over the rows and not something a schema migration can do.
-//   • Removing an old version is the one destructive step: do it only once no row
-//     references it. A provider that lacks the version a row was written under fails
-//     that row's decrypt with `no KEK for version N`.
-//   • Two versions holding IDENTICAL bytes are REJECTED at load (see
-//     `assertDistinctKekBytes`): pasting the old key into the new slot is a rotation
-//     that rotates nothing, and because both hosts agree on the duplicated ring, the
-//     drift fingerprint below cannot expose it. The error names the duplicate version
-//     numbers only — never the material.
-//   • An empty/whitespace value counts as ABSENT (a platform that materializes every
-//     declared variable as "" must not look like a broken KEK).
-//   • **The `TF_KEK_V` prefix is RESERVED.** Any non-empty variable whose name starts
-//     with it and is not canonical `TF_KEK_V<n>` (n ≥ 1, no leading zeros, a safe
-//     integer) is a HARD BOOT FAILURE. Skipping such a name — `TF_KEK_VX`,
-//     `TF_KEK_V2_`, `TF_KEK_V02` — leaves the host quietly on the versions it did
-//     parse: exactly the silent mid-rotation host drift this loader exists to make
-//     impossible. A bare, un-versioned name (the prefix with no `_V<n>`) is unrelated
-//     and untouched.
-// ─────────────────────────────────────────────────────────────────────────────
+// The ONE KEK env loader. It lived in the worker's config with no API counterpart, and a KEK
+// differing between hosts makes every credential row undecryptable on one of them; both hosts
+// parse HERE and publish the same {@link KekEnvIdentity} so drift shows on `/health`. Contract:
+// `TF_KEK_V1 … TF_KEK_Vn`, 64 hex chars each; versions CONTIGUOUS from 1 — a gap is rejected. The
+// HIGHEST version is ACTIVE; older ones stay loaded; adding a version needs no migration.
+// Correctness is not revocation: adding a version protects new writes only — a leaked key keeps
+// opening untouched rows and backups; retiring a version means re-wrapping the envelopes, then
+// removing it. Identical bytes in two versions are rejected at load. Empty counts as ABSENT. The
+// `TF_KEK_V` prefix is RESERVED: any non-canonical name (`TF_KEK_VX`, `TF_KEK_V02`) is a hard
+// boot failure — skipping it is the silent mid-rotation drift this loader exists to prevent.
 
 /** The RESERVED prefix: every non-empty `TF_KEK_V*` must be a canonical version. */
 const KEK_ENV_PREFIX = "TF_KEK_V";
@@ -273,26 +218,14 @@ export function kekFingerprint(kek: Buffer): string {
 const KEK_RING_DOMAIN = "tf-kek-ring/1\n";
 
 /**
- * Fingerprint of a WHOLE versioned key ring — the value two hosts compare.
- *
- * **Construction** (stable, and independent of how the environment happens to
- * enumerate its variables): SHA-256 over the ASCII string
- *
- * ```
- * "tf-kek-ring/1\n" + concat over versions in ASCENDING numeric order of
- *                     `${version}:${lowercase-hex-of-that-KEK}\n`
- * ```
- *
- * then the first 8 hex chars of the digest.
- *
- * It fingerprints the RING, not the active key, and that is the entire point. The
- * previous active-only fingerprint could not see the drift it existed to detect:
- * `{1=A, 2=B}` and `{1=C, 2=B}` published the SAME value even though neither host
- * can decrypt the other's `key_version = 1` rows. Including the version NUMBER beside
- * each key also separates `{1=A}` from `{1=A, 2=A}` — though a ring like the latter no
- * longer loads at all (`assertDistinctKekBytes`); the construction stays
- * version-qualified so the property holds even for a caller fingerprinting a map the
- * loader never saw.
+ * Fingerprint of a WHOLE versioned key ring — the value two hosts compare. Construction, stable
+ * and independent of env enumeration order: SHA-256 over `"tf-kek-ring/1\n"` plus
+ * `${version}:${lowercase-hex}\n` in ascending version order, first 8 hex chars. It fingerprints
+ * the RING, not the active key, and that is the point: the previous active-only fingerprint could
+ * not see the drift it existed to detect — `{1=A, 2=B}` and `{1=C, 2=B}` published the same value
+ * while neither host could decrypt the other's `key_version = 1` rows. The version number beside
+ * each key also separates `{1=A}` from `{1=A, 2=A}` — a ring the loader now refuses, kept
+ * version-qualified so the property holds for a map the loader never saw.
  */
 export function kekRingFingerprint(keks: ReadonlyMap<number, Buffer> | Record<number, Buffer>): string {
   const entries: Array<[number, Buffer]> = keks instanceof Map
