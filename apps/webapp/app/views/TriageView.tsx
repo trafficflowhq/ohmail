@@ -1,45 +1,14 @@
 "use client";
 
 /**
- * ═══ TRIAGE IS A PILE OF MAIL, SO IT LOOKS LIKE ONE ═══════════════════════════════════════
- *
- * ── WHAT IT WAS ─────────────────────────────────────────────────────────────────────────
- *
- * Three horizons rendered as `PilesStack` — a stack of tiles, one per entry, showing a title,
- * a subtitle and nothing else. Answer Later, Parked and Resurface are piles of the user's own
- * mail, and they were the only piles in the product a reader could not READ from: no sender
- * avatar, no time, no unread state, no tags, no attachment badge, and above all no way to open
- * the message. To answer something parked you had to remember where it was and find it again
- * in the Ohbox or in Search.
- *
- * ── WHAT IT IS ──────────────────────────────────────────────────────────────────────────
- *
- * The Ohbox's own composition: `ListPane` + `MessageRow` on the left, `ReadColumn` +
- * `MessagePane` on the right. Reading a triage message is now the same act, with the same
- * verbs, as reading an Ohbox message — because it IS the same components.
- *
- * NO THIRD WRAPPER. `TagView` and `HistoryView` already compose these two by hand; a
- * "pile view" abstraction extracted from three callers would be a guess about the fourth, and
- * each of the three differs in exactly the part such a wrapper would have to own (Tag has an
- * admin header, History has a place badge, this has a pile switcher and a run). Two
- * abstractions — the list pane and the message pane — are the ones that exist.
- *
- * ── THE SWITCHER AND THE RUN ARE HEADER FURNITURE ───────────────────────────────────────
- *
- * `ListPane.header` is documented for exactly this ("doorbell, segmented control, bulk bar"),
- * and putting them there is what keeps them on screen while the list scrolls. The Reply Run
- * button had been under the stack, which meant that on a pile of any length it was below the
- * fold — a primary action reachable only by scrolling past everything it operates on.
- *
- * The segmented control keeps its own argument: Answer Later, Park and Resurface are ONE idea
- * at three horizons, so they read as one control with three positions rather than three
- * siblings, and the counts are in the labels because "which of these has anything in it" is the
- * question somebody is asking when they open this screen.
- *
- * THE RUN'S WIRING IS UNTOUCHED. `onStartFR` is the same callback the `f` key has always
- * called; the shell fills it from `piles.replyLater` and a completed reply clears `reply_later`
- * through `reply-send.ts`'s settle. This slice moved where the button is, not what it does —
- * see `test/triage-split.test.ts`, which pins both ends.
+ * Triage is a pile of mail, so it looks like one. The three horizons used to render as a stack of tiles with a title
+ * and nothing else — the only piles a reader could not READ from. Now it is the Ohbox's own composition: `ListPane` +
+ * `MessageRow` on the left, `ReadColumn` + `MessagePane` on the right — the same components, the same verbs. No third
+ * wrapper: `TagView` and `HistoryView` compose the same two by hand, and each differs exactly where a shared wrapper
+ * would have to own the difference. The switcher and the Reply Run button are `ListPane.header` furniture, on screen
+ * while the list scrolls (the Run button used to sit below the fold, under the stack). The Run's wiring is untouched:
+ * `onStartFR` is the `f` key's callback, the shell fills it from `piles.replyLater`, and a completed reply clears
+ * `reply_later` — `test/triage-split.test.ts` pins both ends.
  */
 import { useEffect, useState } from "react";
 import { useTranslations } from "next-intl";
@@ -136,16 +105,12 @@ export function TriageView({
    */
   threadParticipants?: (threadId: string) => { initials: string; hue: number }[];
   /**
-   * THE DATE STAMPS — which form they are in, and the press that flips them.
-   *
-   * One boolean for every row at once: the shell owns it, resets it on a view switch and shares
-   * it with the open message, so no two dates on screen are ever in different shapes. `rowStamp`
-   * turns the pair into the row's stamp props. Optional, and absent leaves the rows exactly as
-   * they were — relative dates, the exact instant on hover, nothing to press.
-   *
-   * THE RESURFACE PILE IS OUT OF ITS REACH, and deliberately: those rows are stamped with when
-   * the message COMES BACK, not when it arrived, so there is no second form of that stamp to flip
-   * to and the message's own date is not what the row is about. See the row below.
+   * The date stamps — which form they are in, and the press that flips them. One boolean for every
+   * row at once: the shell owns it, resets it on a view switch and shares it with the open message,
+   * so no two dates on screen are ever in different shapes; `rowStamp` turns the pair into the row's
+   * stamp props. Optional — absent leaves the rows as they were. The resurface pile is out of its
+   * reach, deliberately: those rows are stamped with when the message COMES BACK, not when it
+   * arrived, so there is no second form to flip to.
    */
   absoluteTime?: boolean;
   onToggleTime?: () => void;
@@ -193,25 +158,15 @@ export function TriageView({
   }, [shown?.id, hydrateBody]);
 
   // `f` starts the Reply Run from here without the shell's "go to Triage first" hop.
-  //
-  // ═══ THE MESSAGE VERBS, ALIVE IN THE PILES ═════════════════════════════════════════════
-  //
-  // `a`, `e`, `b` and `r` were dead inside this view — no request, no toast, no state change
-  // — while the footer buttons beside them worked and the same keys worked in the Ohbox. The
-  // cause was structural: the global bindings act on the shell's `focused`, which has no arm
-  // for this view because the cursor here (`shown`) is view-local state the shell cannot see.
-  // So the view declares its own, exactly as the registry intends ("views declare their own"),
-  // acting on the message the reading column is showing — the same `onAction` seam the pane's
-  // footer dispatches through, so the key and the button remain one code path. On a message
-  // already in the pile a key names, the shell's toggle takes it OUT (`state:"none"` — the
-  // un-triage path), which is what makes a mis-key recoverable from right here.
-  // `⇧F` (Forward) joins this list for exactly the reason the four above are in it: the pill this
-  // view mounts prints a `⇧F` keycap read from the registry, and the shell's own binding is
-  // `disabled` here because `focused` has no arm for this view. Without a local declaration the
-  // bar would advertise a key that does nothing — the defect the keycap-always law exists to
-  // prevent. Gated on `no_forward` like the button it belongs to (`ActionBar#canForward`), so the
-  // key and the control disappear together; the mirror half needs no gate here, because every
-  // message in a triage pile is a local row by construction.
+  // The message verbs, alive in the piles: `a`, `e`, `b` and `r` were dead here — the global bindings act
+  // on the shell's `focused`, which has no arm for this view, because the cursor here (`shown`) is
+  // view-local state the shell cannot see. So the view declares its own, exactly as the registry intends,
+  // acting on the message the reading column shows — the same `onAction` seam the pane's footer
+  // dispatches through, so key and button remain one code path; a key naming the pile a message is
+  // already in takes it OUT (`state:"none"`), which makes a mis-key recoverable. `⇧F` joins for the same
+  // reason: the pill prints a `⇧F` keycap from the registry and the shell's binding is `disabled` here —
+  // a bar must not advertise a dead key. Gated on `no_forward` like the
+  // button (`ActionBar#canForward`); the mirror half needs no gate — every triage row is local.
   const verbs = shown
     ? ([
         { chord: "a", key: "answerLater", action: "later" },
@@ -240,21 +195,13 @@ export function TriageView({
   ]);
 
   /**
-   * OPENING A ROW MOVES THE CURSOR, ON BOTH LAYOUTS — and it used to move it on only one.
-   *
-   * `shown` falls back to `openable[0]` when `selectedId` is null, so on the
-   * NARROW layout — where opening a row raised the reader and set no cursor — the reader showed
-   * the row that was tapped while `shown` still pointed at the FIRST row of the pile. Every
-   * view-local verb reads `shown`, so pressing one acted on a message the reader was not showing:
-   * `⇧F` would have forwarded a different person's mail than the one on screen, and `a`/`e`/`b`
-   * would have filed the wrong row. `r` too. The keys are declared here precisely because the
-   * shell's own bindings cannot see this cursor, so there is no reader-aware binding underneath
-   * to fall through to — a view binding outranks the global one.
-   *
-   * The cursor is set FIRST and unconditionally, so `shown` is "the message this view is
-   * showing" on both layouts, which is what every one of those verbs already assumes it means.
-   * The wide path is unchanged (it only ever did this); the narrow path additionally raises the
-   * reader, exactly as before.
+   * Opening a row moves the cursor, on BOTH layouts — it used to move it on only one. `shown` falls
+   * back to `openable[0]` when `selectedId` is null, so on the narrow layout — where opening a row
+   * raised the reader and set no cursor — every view-local verb acted on a message the reader was
+   * not showing: `⇧F` would forward a different person's mail, `a`/`e`/`b`/`r` filed the wrong row.
+   * The cursor is set FIRST and unconditionally, so `shown` is "the message this view is showing"
+   * on both layouts — what every one of those verbs already assumes. The wide path is unchanged;
+   * the narrow path additionally raises the reader, exactly as before.
    */
   const openRow = (m: EngineMessage) => {
     setSelectedId(m.id);
@@ -308,16 +255,12 @@ export function TriageView({
   });
 
   /**
-   * One entry, as a row.
-   *
-   * `time` is the RESURFACE INSTANT on the resurface pile and the message's own date
-   * everywhere else. That is the pile's whole subject — a resurfacing message is defined by
-   * when it comes back, and its arrival date is the one fact about it nobody is asking for.
-   *
-   * `fr-done` is the Reply Run's session mark, and it is a class rather than a `MessageRow`
-   * prop for two reasons: the pane is shared with the desktop shell and knows nothing about
-   * runs, and the mark it replaces was `style={{ opacity: 0.38 }}` on a tile — a purely visual
-   * dim with no accessible signal, so nothing is lost by keeping it purely visual here.
+   * One entry, as a row. `time` is the RESURFACE INSTANT on the resurface pile and the message's own
+   * date everywhere else — a resurfacing message is defined by when it comes back, and its arrival
+   * date is the one fact nobody is asking for. `fr-done` is the Reply Run's session mark, a class
+   * rather than a `MessageRow` prop for two reasons: the pane is shared with the desktop shell and
+   * knows nothing about runs, and the mark it replaces was a purely visual dim on a tile with no
+   * accessible signal, so nothing is lost by keeping it purely visual here.
    */
   const row = (entry: TriagePileEntry, index: number) => {
     const m = entry.messageId ? messageOf(entry.messageId) : null;

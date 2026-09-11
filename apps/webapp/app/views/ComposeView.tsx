@@ -1,46 +1,14 @@
 "use client";
 
 /**
- * COMPOSE — a new message, and the three things that were wrong with it.
- *
- * ── THE THIRD ONE, AND THE WORST ────────────────────────────────────────────────────────
- *
- * This form rendered To, Subject and an editor, and **no From at all**. The sender was resolved
- * behind it by `sendingMailboxId` — the mailbox holding the account's NEWEST MESSAGE — so on an
- * account with two connected addresses the From line flipped with whichever one last received
- * mail, and nothing on screen said which had won. With ONE address it was no better: a stranger
- * could not tell what they were writing from.
- *
- * The row is now the first field, the value is a mailbox id (never an address — aliases are a
- * later slice), and it renders as static text when there is nothing to choose. `AppShell`
- * resolves it and this file shows it, so the id on the wire and the line on the screen are one
- * object — see `compose-from.ts`.
- *
- * ── WHAT WAS WRONG ──────────────────────────────────────────────────────────────────────
- *
- * Send was a PRIMARY button rendered `aria-disabled` with the title *"Sending is disabled in
- * the demo — no mail leaves this tab."* On a live account that sentence was simply false, and
- * it became sharper the day the inline reply started really sending: a customer who had
- * just answered a message found Compose inert, with an explanation about a demo they were not
- * in. Alongside it, three fields — the AI-draft tag, the editor placeholder and the note next
- * to Send — were read UNCONDITIONALLY out of `@ohmail/fixtures`, so `#/compose` showed a
- * paying customer strings written for a fictional demo world. Demo content is fiction and must
- * never be shown to somebody as their own mail; a claim the product makes is a contract.
- *
- * ── WHAT IT IS NOW ──────────────────────────────────────────────────────────────────────
- *
- * A real compose over the SAME send path the reply uses — one `mail_send` mutation, one
- * Idempotency-Key, one four-outcome failure surface, one double-send lock (`mail-send.ts`).
- * Nothing here talks to the network and nothing here decides whether a send may go: this file
- * renders the form and reports what the state machine says. `AppShell` owns the fields (so a
- * half-written message survives leaving the view) and `compose.ts` owns the address parsing.
- *
- * NO import from `@ohmail/fixtures`, and `test/demo-zero-network.test.ts` now forbids one anywhere
- * under `app/` rather than trusting this comment.
- *
- * The AI-draft card above the editor is unchanged in spirit: it renders when the mirror holds
- * a `draft` entity with a body to review, which is the demo world today and the AI drafter
- * on a Cloud account later. Its label is app copy now, not a fixture string.
+ * Compose — a new message. It used to render no From at all: the sender was resolved behind it by `sendingMailboxId`
+ * (the mailbox holding the newest message), so on an account with two addresses the From line flipped with whichever
+ * last received mail. The row is now the first field, the value a mailbox id (never an address — aliases are a later
+ * slice), static text when there is nothing to choose; `AppShell` resolves it and this file shows it
+ * (`compose-from.ts`). Send used to be `aria-disabled` with demo copy shown to real customers; it is now a real
+ * compose over the SAME send path the reply uses — one `mail_send` mutation, one Idempotency-Key, one double-send
+ * lock (`mail-send.ts`). `AppShell` owns the fields so a half-written message survives leaving the view; no import
+ * from `@ohmail/fixtures` — `test/demo-zero-network.test.ts` forbids one anywhere under `app/`.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
@@ -121,22 +89,14 @@ export function ComposeView({
    */
   from: ResolvedFrom;
   /**
-   * THIS MESSAGE IS BEING SENT AND THE FORM MAY NOT MOVE — the hold, with the sentence to say.
-   *
-   * `send` cannot express it. That state is this mount's own React state about a press this mount
-   * made; the case here is a send made by the SESSION BEFORE, whose answer is still on its way.
-   * The composer comes up holding the text — a reload restores the scratch buffer — and an edit
-   * there changes the message, so the durable record no longer matches it and the next press mints
-   * a FRESH Idempotency-Key. The server collapses two presses only under ONE key, so that is a
-   * second copy at the recipient, reachable in seconds by anybody who returns to a tab.
-   *
-   * Held rather than warned, because a warning is something to read past and this cannot be
-   * undone. Every field goes read-only and both send buttons refuse, exactly as they do while a
-   * send from THIS mount is in flight — the same rule, a different reason, so the sentence is
-   * supplied rather than derived here.
-   *
-   * ONE PRODUCER (`AppShell`), pinned by the census: two callers deciding separately when a
-   * message is held is how the send seam came to have several answers to one question.
+   * This message is being sent and the form may not move — the hold, with the sentence to say.
+   * `send` cannot express it: that is this mount's own state about its own press, and the case here
+   * is a send made by the SESSION BEFORE, its answer still on its way. The composer comes up
+   * holding the text (a reload restores the scratch buffer), and an edit changes the message, so
+   * the durable record no longer matches and the next press mints a FRESH Idempotency-Key — a
+   * second copy at the recipient. Held rather than warned, because a warning is something to read
+   * past and this cannot be undone: every field goes read-only and both send buttons refuse. ONE
+   * producer (`AppShell`), pinned by the census.
    */
   locked?: { sentence: string } | null;
   /**
@@ -219,22 +179,14 @@ export function ComposeView({
    * says.
    */
   /**
-   * ── THE "NOT AN ADDRESS" LINE WAITS FOR THE ENTRY TO BE FINISHED ────────────────────────
-   *
-   * `composePlan` re-parses the whole To field on every keystroke, so typing the `n` of a name
-   * put a red error under the field immediately — while the suggestion list for that same
-   * prefix was open above it. The field was telling the user they were wrong and offering them
-   * four ways to be right, at the same time, about the same two letters.
-   *
-   * An entry that is still being typed is UNFINISHED, not invalid. So the line withholds
-   * exactly one entry — the last one — and only while the field has focus and the value does
-   * not already end in a comma. Everything the user has committed by typing a comma is still
-   * reported the moment it is committed, and blurring reports the last one too.
-   *
-   * THIS IS A DISPLAY GATE AND NOTHING ELSE. `canSend` reads `plan.mutation.to`, which
-   * `composePlan` empties whenever ANY entry is unparseable, so a genuinely bad address still
-   * refuses to send whether or not this line is on screen. Suppressing the sentence cannot
-   * loosen the guard, because the guard never read the sentence.
+   * The "not an address" line waits for the entry to be finished. `composePlan` re-parses the whole
+   * To field on every keystroke, so typing the `n` of a name put a red error under the field while
+   * the suggestion list for the same prefix was open above it. An entry still being typed is
+   * UNFINISHED, not invalid: the line withholds exactly one entry — the last — and only while the
+   * field has focus and the value does not already end in a comma; blurring reports it. A display
+   * gate and nothing else: `canSend` reads `plan.mutation.to`, which `composePlan` empties whenever
+   * ANY entry is unparseable, so a bad address still refuses to send — the guard never read the
+   * sentence.
    */
   const [toFocused, setToFocused] = useState(false);
   const stillTyping =
@@ -247,17 +199,12 @@ export function ComposeView({
       : plan.invalid.filter((entry) => entry !== stillTyping);
 
   /**
-   * ── CC AND BCC, BEHIND ONE AFFORDANCE ──────────────────────────────────────────────────
-   *
-   * Hidden by default because most messages have neither, and a compose form that opens with two
-   * empty extra rows is answering a question nobody asked. Revealed by the "Cc/Bcc" toggle — and
-   * revealed AUTOMATICALLY when the fields already hold text, so a restored draft or an AI draft
-   * that addressed a Cc never hides recipients the user cannot see they have.
-   *
-   * The still-typing gate is the To field's, applied per field: an entry being typed is unfinished,
-   * not wrong, so its "not an address" line is withheld while the field has focus and the value
-   * does not already end in a comma. `gatedInvalid` is the shared shape; the To field keeps its own
-   * literal form above because it is the one the reported bug was about.
+   * Cc and Bcc, behind one affordance. Hidden by default — most messages have neither, and a form
+   * that opens with two empty extra rows answers a question nobody asked. Revealed by the toggle,
+   * and AUTOMATICALLY when the fields already hold text, so a restored draft or an AI draft that
+   * addressed a Cc never hides recipients the user cannot see they have. The still-typing gate is
+   * the To field's, applied per field (`gatedInvalid` is the shared shape; the To field keeps its
+   * own literal form above because it is the one the reported bug was about).
    */
   const [showCcBcc, setShowCcBcc] = useState(false);
   const [ccFocused, setCcFocused] = useState(false);
@@ -269,18 +216,14 @@ export function ComposeView({
   const bccShownInvalid = gatedInvalid(fields.bcc, bccFocused, plan.bcc.invalid);
 
   /**
-   * ── A CHIP CHANGING ROWS IS ONE STATE CHANGE ───────────────────────────────────────────
-   *
-   * Drag To→Cc (or the Alt+arrow equivalent) removes from one string and inserts into
-   * another. Done as two `onChange` calls, each would spread a STALE copy of the other row
-   * and the second write would undo the first — so the move arrives here whole and
-   * `moveRecipient` produces all three rows in one object for one `onFields`. Focus follows
-   * the chip; a keyboard move that strands focus on the row the chip just left is a
-   * mouse-only interaction wearing an `aria` costume.
-   *
-   * Starting a DRAG opens the hidden Cc/Bcc rows: a drop target that is not on screen cannot
-   * be dropped on, and the keyboard path (Alt+↓) reveals them anyway by making the row
-   * non-empty — `ccBccOpen` derives from the values, so both paths converge.
+   * A chip changing rows is ONE state change. Drag To→Cc (or Alt+arrow) removes from one string and
+   * inserts into another; as two `onChange` calls each would spread a stale copy of the other row
+   * and the second write would undo the first — so the move arrives whole and `moveRecipient`
+   * produces all three rows in one object for one `onFields`. Focus follows the chip: a keyboard
+   * move that strands focus on the row the chip left is a mouse-only interaction in an `aria`
+   * costume. Starting a drag opens the hidden Cc/Bcc rows (an off-screen drop target cannot be
+   * dropped on); the keyboard path reveals them by making the row non-empty — `ccBccOpen` derives
+   * from the values, so both paths converge.
    */
   const moveChip = useCallback(
     (mv: RecipientMove) => {
