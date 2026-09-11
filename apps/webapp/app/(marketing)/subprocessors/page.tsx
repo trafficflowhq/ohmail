@@ -7,19 +7,15 @@ export const metadata: Metadata = {
   robots: { index: false },
 };
 
-/* Legal content is intentionally NOT routed through i18n — it is the binding
- * legal text of the Swiss operator and changes only deliberately.
- *
- * SCOPE. This page is FACTS, which is why it publishes ahead of the product
- * privacy policy rather than inside it: who processes what, where, and for how
- * long. It needed no lawyer to write and it needs none to read. The full product
- * privacy policy — legal bases, transfer mechanisms, data-subject procedure —
- * publishes before the first real mailbox connects, and it will point here for
- * the list rather than restate it.
- *
- * MAINTENANCE RULE: a new vendor that touches customer data is added HERE on the
- * day it is wired, not on the day someone remembers. Retention rows are defaults;
- * counsel confirms the wording of the transfer basis, not the numbers. */
+/* Legal content is intentionally NOT routed through i18n — it is the binding legal text of the
+ * Swiss operator and changes only deliberately. SCOPE: this page is FACTS — who processes what,
+ * where, for how long — which is why it publishes ahead of the product privacy policy rather than
+ * inside it; the full policy (legal bases, transfer mechanisms, data-subject procedure) publishes
+ * before the first real mailbox connects and will point here for the list. MAINTENANCE RULE: a new
+ * vendor that touches customer data is added HERE on the day it is wired, not the day someone
+ * remembers; retention rows are defaults — counsel confirms the wording of the transfer basis, not
+ * the numbers.
+ */
 export default function SubprocessorsPage() {
   /* NOT SERVED ON A SELF-HOST BUILD. This page is FACTS about who processes data for
      ohmail.app — the vendors we contract with. An operator's install has its own hosting and

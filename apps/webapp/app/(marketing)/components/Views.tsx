@@ -2,18 +2,13 @@ import { useTranslations } from "next-intl";
 import { Reveal } from "./Reveal";
 
 /**
- * The three-view model — the page's second beat, straight after the live demo.
- *
- * The hero promises "only mail you said yes to"; this section says where everything
- * goes instead: Ohbox for people, Reads for the reading pile, Receipts for the
- * paperwork. The proof is the app itself: one still per pile, captured from the same
- * demo mailbox the visitor can click in the section above — the caption says so,
- * because imagery beside a live demo must not pretend to be the live demo.
- *
- * A triptych, not a half-column vignette: at half width a full app window turns to
- * mush, and the model is three-parted anyway. Each column is the pile's own list
- * pane over its name and its one-sentence job — the Everyday list's typographic
- * register (terms over hairlines, no tiles) with a picture on top.
+ * The three-view model — the page's second beat, straight after the live demo. The hero promises
+ * "only mail you said yes to"; this section says where everything goes instead: Ohbox for people,
+ * Reads for the reading pile, Receipts for the paperwork. The proof is the app itself: one still
+ * per pile, captured from the same demo mailbox the visitor can click above — the caption says so,
+ * because imagery beside a live demo must not pretend to be it. A triptych, not a half-column
+ * vignette: at half width a full app window turns to mush, and the model is three-parted anyway;
+ * each column is the pile's own list pane over its name and one-sentence job.
  */
 /* Each pile has a light and a dark capture of the same pane, and the page shows the one
    that matches its theme. The swap is CSS on the page's own theme mechanics (`data-theme`

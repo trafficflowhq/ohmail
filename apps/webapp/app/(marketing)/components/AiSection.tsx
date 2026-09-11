@@ -6,21 +6,14 @@ import { Switch } from "@ohmail/ui";
 import { Reveal } from "./Reveal";
 
 /**
- * AI, positively — and provably optional.
- *
- * The section makes one argument: rules do the bulk deterministically, AI
- * only ever proposes, and the product is complete either way. The last part
- * is the hard part to say in prose, so the section does not only say it: the
- * lab below is the same four mails rendered twice, and the switch is real.
- * Flip it and two rows change their offer while two do not move at all —
- * the verification code (whose code is stripped before anything reaches a
- * model, and which automatic routing never sends at all) and the newsletter
- * (filed by rule). Nothing is missing in the off state; that IS the claim.
- *
- * Both faces of a swapping row are always in the layout — one grid cell,
- * two children — so the panel never changes height and the crossfade has
- * nothing to jump against. The hidden face is `visibility: hidden`, which
- * takes it out of the accessibility tree while keeping its box.
+ * AI, positively — and provably optional. One argument: rules do the bulk deterministically, AI only
+ * ever proposes, and the product is complete either way. The last part is hard to say in prose, so
+ * the lab below is the same four mails rendered twice and the switch is real: flip it and two rows
+ * change their offer while two do not move — the verification code (stripped before anything reaches
+ * a model) and the newsletter (filed by rule). Nothing is missing in the off state; that IS the
+ * claim. Both faces of a swapping row are always in the layout — one grid cell, two children — so
+ * the panel never changes height; the hidden face is `visibility: hidden`, out of the accessibility
+ * tree while keeping its box.
  */
 export function AiSection() {
   const t = useTranslations("ai");

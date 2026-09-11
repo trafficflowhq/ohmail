@@ -17,20 +17,14 @@ import { OMARCHY_DEMO_THEMES } from "./omarchy-demo-themes";
 
 const DEMO_SRC = "/demo";
 
-/* ── the theme explorer's feed ────────────────────────────────────────
-   The demo's ohmarchy face can wear any Omarchy theme (OHMARCHY-PLAN.md
-   §2-3d): picking one injects that theme's mapped token values into the
-   iframe's own document as ONE rule scoped to `:root[data-face="ohmarchy"]`
-   — the same shape as the desktop's live theme feed (apps/desktop/src/
-   omarchy.ts), for the same reasons: scoped, the rule is inert the moment
-   the face comes off, so it can never restyle the paper face by side
-   effect. `!important` per declaration is that module's cascade argument,
-   which holds identically here: the demo document's system-dark token
-   block is a (0,3,0) selector and would silently outrank this rule's
-   (0,2,0) on every slot both define. The values are the committed,
-   law-derived set (omarchy-demo-themes.ts is generated from mapping.js
-   over the fixtures and pinned by test), so no fence is needed — nothing
-   user-authored ever reaches this rule. */
+/* The theme explorer's feed: picking an Omarchy theme injects that theme's mapped token values into
+   the iframe's document as ONE rule scoped to `:root[data-face="ohmarchy"]` — the desktop's live
+   theme feed's shape (apps/desktop/src/omarchy.ts), for the same reasons: scoped, inert the moment
+   the face comes off. `!important` per declaration is that module's cascade argument, holding
+   identically here: the demo document's system-dark token block is a (0,3,0) selector and would
+   silently outrank this rule's (0,2,0) on every slot both define. The values are the committed,
+   law-derived set (omarchy-demo-themes.ts, generated and pinned by test), so no fence is needed —
+   nothing user-authored ever reaches this rule. */
 const DEMO_THEME_STYLE_ID = "ohmail-omarchy-demo";
 
 function applyDemoTheme(doc: Document, tokens: Record<string, string> | null): void {

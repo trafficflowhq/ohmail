@@ -7,16 +7,12 @@ import { refuseOnSelfHost } from "../self-host-marketing";
 import { publicSignupEnabled } from "../signup-mode";
 
 /**
- * THE ENGLISH LANDING — `/`, and the front door of the whole origin.
- *
- * The composition lives in `components/Landing.tsx` because `/de` renders the same one; this
- * file is the English MOUNT of it. Two things belong here and nothing else:
- *
- *  · the signup posture, read ONCE. This is a server component and `/` is prerendered, so the
- *    read happens at build time and the page stays a CDN-cacheable static route.
- *  · the `hreflang` cluster, which is a property of this URL rather than of the layout — see
- *    `marketing-root.tsx` for why an `alternates` block on the layout would wrongly claim
- *    `/privacy` and `/imprint` as duplicates of the landing.
+ * The English landing — `/`, the front door of the whole origin. The composition lives in
+ * `components/Landing.tsx` because `/de` renders the same one; this file is the English MOUNT. Two
+ * things belong here and nothing else: the signup posture, read ONCE (a server component on a
+ * prerendered route, so the read happens at build time and the page stays CDN-cacheable), and the
+ * `hreflang` cluster, a property of this URL rather than the layout — see `marketing-root.tsx` for
+ * why an `alternates` block on the layout would claim `/privacy` as a duplicate of the landing.
  */
 
 export const metadata: Metadata = { alternates: marketingAlternates(DEFAULT_LOCALE) };

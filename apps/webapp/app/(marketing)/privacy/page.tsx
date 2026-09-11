@@ -7,20 +7,15 @@ export const metadata: Metadata = {
   robots: { index: false },
 };
 
-/* Legal content is intentionally NOT routed through i18n — it is the binding
- * legal text of the Swiss operator and changes only deliberately.
- * SCOPE: this policy covers the ohmail.app WEBSITE. The ohmail product's
- * per-tier data model is described on the homepage and will carry its own
- * policy at launch.
- *
- * THE SIGN-UP SECTION WAS FALSE AND IS FIXED. It said "The waitlist form
- * currently saves your entry in your own browser only — nothing is sent to us
- * yet", which stopped being true when the waitlist began writing a
- * `waitlist` row on EU infrastructure; the note-to-self that used to sit here
- * asked for exactly this update and nobody did it. It now describes the waitlist
- * row AND the account data that open registration collects. The lesson worth
- * keeping: a note-to-self in a comment is not a mechanism, and this page is the
- * one surface where a stale sentence is a legal claim rather than marketing. */
+/* Legal content is intentionally NOT routed through i18n — it is the binding legal text of the
+ * Swiss operator and changes only deliberately. SCOPE: this policy covers the ohmail.app WEBSITE;
+ * the product's per-tier data model carries its own policy at launch. The sign-up section was false
+ * and is fixed: it said the waitlist form saved "in your own browser only", which stopped being
+ * true when the waitlist began writing a `waitlist` row on EU infrastructure — the note-to-self
+ * that sat here asked for exactly this update and nobody did it. It now describes the waitlist row
+ * and the account data open registration collects. The lesson: a note-to-self in a comment is not a
+ * mechanism, and this page is the one surface where a stale sentence is a legal claim.
+ */
 export default function PrivacyPage() {
   /* NOT SERVED ON A SELF-HOST BUILD. This is the binding policy of the Swiss operator of
      ohmail.app, and on an install we neither run nor can see it names the wrong controller,

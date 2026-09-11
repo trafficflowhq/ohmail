@@ -3,15 +3,12 @@ import { Reveal } from "./Reveal";
 import { SearchDemo } from "./SearchDemo";
 
 /**
- * The feat-shaped proof sections: copy beside a "vignette" — a Blanc-material
- * sketch of the actual feature (panels, lift shadows, token palette; no stock
- * art), or, for dark mode, two captures of a real message. Sides alternate
- * for rhythm across the whole page, so each section carries its own flip and
- * `page.tsx` owns the order — the story lives there, not here.
- *
- * Exported individually since the reorder interleaved them with the wide
- * sections (Views, Providers, Compare, …); `.l-features` blocks in page.tsx
- * carry the shared grid rhythm the old single wrapper used to.
+ * The feat-shaped proof sections: copy beside a "vignette" — a Blanc-material sketch of the actual
+ * feature (panels, lift shadows, token palette; no stock art), or, for dark mode, two captures of a
+ * real message. Sides alternate for rhythm across the whole page, so each section carries its own
+ * flip and `page.tsx` owns the order — the story lives there, not here. Exported individually since
+ * the reorder interleaved them with the wide sections; `.l-features` blocks in page.tsx carry the
+ * shared grid rhythm the old single wrapper used to.
  */
 
 function Check() {

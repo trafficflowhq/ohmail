@@ -3,15 +3,12 @@ import { Reveal } from "./Reveal";
 import { SHOWCASE_FOLDERS, OHMAIL_PARENT_LABEL } from "./folders.data";
 
 /**
- * What a person's IMAP actually looks like once ohmail is organizing it: their
- * Inbox, their provider's own Junk and their Sent folder left untouched, and a
- * small `ohmail/` tree holding the folders ohmail files into. Every name here is
- * a real folder on the real server, visible in any other mail app — which is the
- * whole point of the "organize in place" promise, made concrete.
- *
- * The tree is data (`folders.data.ts`), diffed against the frozen `WATCHED_FOLDERS`
- * set by a guard so a wrong or invented folder name goes red.
- * Typographic, no fake chrome — the same restraint as the Providers strip.
+ * What a person's IMAP actually looks like once ohmail is organizing it: their Inbox, their
+ * provider's own Junk and their Sent folder untouched, and a small `ohmail/` tree holding the
+ * folders ohmail files into. Every name is a real folder on the real server, visible in any other
+ * mail app — the "organize in place" promise made concrete. The tree is data (`folders.data.ts`),
+ * diffed against the frozen `WATCHED_FOLDERS` set by a guard so a wrong or invented folder name goes
+ * red. Typographic, no fake chrome — the same restraint as the Providers strip.
  */
 export function FolderShowcase() {
   const t = useTranslations("folders");

@@ -1,13 +1,10 @@
 /**
- * The IMAP folder tree the landing showcase (and the public README) draw — as DATA,
- * so a test can diff it against the frozen folder set in `@trafficflow/core` rather
- * than trust a screenshot.
- *
- * Claims-are-contracts. Every `organizer` row here is a real member of
- * `WATCHED_FOLDERS`; the one `meta` row is `META_FOLDER`; and no row is ever a folder
- * named "Spam" — spam is `ohmail/Quarantine`, and "Spam" is only ever a view label.
- * A showcase guard diffs this data against those constants and fails red if any of that
- * stops being true.
+ * The IMAP folder tree the landing showcase (and the public README) draw — as DATA, so a test can
+ * diff it against the frozen folder set in `@trafficflow/core` rather than trust a screenshot.
+ * Claims-are-contracts: every `organizer` row is a real member of `WATCHED_FOLDERS`, the one `meta`
+ * row is `META_FOLDER`, and no row is ever a folder named "Spam" — spam is `ohmail/Quarantine`,
+ * and "Spam" is only ever a view label. A showcase guard diffs this data against those constants
+ * and fails red if any of that stops being true.
  */
 
 /**

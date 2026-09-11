@@ -1,20 +1,11 @@
 /**
- * THE FAQ'S ITEM LIST, AND THE ONE ANSWER ANOTHER SECTION LINKS INTO.
- *
- * This is a plain module rather than three lines inside `components/Faq.tsx` for one reason:
- * the plan card links to the answer that states the credit price schedule, and a link whose
- * target is derived in a component can only be checked by rendering one or by matching its
- * source with a regex. Here the id, the message key and the list they come from are values a
- * test imports, so "the anchor exists and it is the price answer" is an assertion about data
- * instead of about text — `pricing-structure.test.ts` makes it, and it goes red if either the
- * key or the id moves.
- *
- * ── WHY THE CARD LINKS AT ALL ──────────────────────────────────────────────────────────────
- *
- * The card sells an allowance ("2,000 AI credits/mo") in a unit that needs one sentence of
- * explanation, and that sentence already exists, three sections down, written correctly:
- * `faq.a4` states what each metered action costs. A link is what the card owes the visitor —
- * not a second copy of the schedule, which is a second thing to keep true, and not a hover,
+ * The FAQ's item list, and the one answer another section links into. A plain module rather than
+ * three lines inside `components/Faq.tsx` for one reason: the plan card links to the answer stating
+ * the credit price schedule, and a link whose target is derived in a component can only be checked
+ * by rendering one. Here the id, the message key and the list are values a test imports —
+ * `pricing-structure.test.ts` asserts the anchor exists and is the price answer, red if either
+ * moves. The card links because it sells an allowance in a unit needing one sentence of explanation
+ * that already exists (`faq.a4`) — a link, not a second copy of the schedule, and not a hover,
  * which a phone cannot reach.
  */
 

@@ -26,16 +26,12 @@ const HOLD_MS = 3400; //  how long an answer stays up
 const CLEAR_MS = 420; //  empty field between behaviours
 
 /**
- * "Fast is a feature", demonstrated instead of asserted: the query types
- * itself, the answer lands with its millisecond count, and the panel cycles
- * through the three things the search can actually do — tolerate a typo,
- * take a scope (`from:`), and read a tag across every mailbox.
- *
- * It runs only while on screen (an offscreen loop is a battery bug), and it
- * starts from a complete final frame — the server render, the no-JS render
- * and the reduced-motion render are all that frame, never an empty field.
- * Reduced motion additionally lists all three behaviours, since it will
- * never see them play.
+ * "Fast is a feature", demonstrated instead of asserted: the query types itself, the answer lands
+ * with its millisecond count, and the panel cycles through the three things the search can actually
+ * do — tolerate a typo, take a scope (`from:`), read a tag across every mailbox. It runs only while
+ * on screen (an offscreen loop is a battery bug) and starts from a complete final frame — the server
+ * render, the no-JS render and the reduced-motion render are all that frame, never an empty field;
+ * reduced motion additionally lists all three behaviours, since it will never see them play.
  */
 export function SearchDemo() {
   const t = useTranslations("fast");

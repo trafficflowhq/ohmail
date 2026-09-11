@@ -12,17 +12,12 @@ const PROVIDERS = [
 ] as const;
 
 /**
- * The supported-providers strip — the "all your mailboxes" beat, between
- * the mechanism sections and the in-place trust run: a typographic list
- * (no fake logos — same move as the Platforms row), closed by the
- * umbrella truth and the Microsoft note.
- *
- * That note is deliberately literal. The only adapter that exists in
- * packages/core is the IMAP one (imapflow + nodemailer, password auth);
- * `mailbox_credentials.transport` reserves a 'graph' row and `auth_kind`
- * reserves 'oauth', but neither is implemented. So the note says Microsoft
- * 365 connects over IMAP today and that Graph — and signing in with
- * Microsoft — is roadmap. Nothing here claims native Exchange support.
+ * The supported-providers strip — the "all your mailboxes" beat: a typographic list (no fake
+ * logos, same move as the Platforms row), closed by the umbrella truth and the Microsoft note. That
+ * note is deliberately literal: the only adapter in packages/core is the IMAP one (imapflow +
+ * nodemailer, password auth); `mailbox_credentials.transport` reserves a 'graph' row and `auth_kind`
+ * reserves 'oauth', but neither is implemented — so the note says Microsoft 365 connects over IMAP
+ * today and that Graph is roadmap. Nothing here claims native Exchange support.
  */
 export function Providers() {
   const t = useTranslations("providers");
