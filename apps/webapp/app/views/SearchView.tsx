@@ -1,47 +1,13 @@
 "use client";
 
 /**
- * SEARCH — TWO PASSES, AND IT SAYS WHICH ONE IT IS ON.
- *
- *  1. **This device, instantly.** `engine.search()` is synchronous over the mirror: lexical +
- *     prefix, with trigram fuzzy as a SEPARATE tier ("invoce" finds the invoice, under a
- *     heading that says these are guesses). It answers on every keystroke with
- *     no round trip, and that is not negotiable — it is the whole reason the local index
- *     exists.
- *  2. **The whole archive, a moment later.** `engine.searchServer()` runs `GET /search` — the
- *     `websearch_to_tsquery` + `word_similarity` RRF ranking over `message_bodies.body_tsv`,
- *     which was mounted, spend-classed `read`, contract-tested and had ZERO callers on any
- *     surface. Its hits EXTEND the local ones; they never replace them.
- *
- * ── WHY THE SENTENCE UNDER THE BOX IS THE POINT ──────────────────────────────────────────
- *
- * This view used to offer the archive on Enter and answer with a toast: *"Searching the
- * server archive isn't wired up yet. These local results are complete."* They were not. The
- * local index reads subject, sender and the ≤200-character `snippet` — `m.body` is a
- * fixtures-only extra the wire `MessageDTO` has no field for — and a mail body is routinely
- * many times longer than 200 characters, so most of the stored text is not on the device at
- * all. A term past character 200 of a live-shaped row was simply not findable.
- *
- * So the scope line is not decoration. Local results arrive first and are shown first, and
- * for as long as they are all we have the view says exactly that; when the archive answers it
- * says that instead; when the archive refuses it says so and offers the retry. There is no
- * moment at which the count of hits is left to imply the corpus.
- *
- * A client with no archive behind it — `?demo=1`, and the desktop tier, whose master is the
- * IMAP mailbox — gets its own sentence rather than a hidden failure. `serverSearchAvailable()`
- * is false there and nothing is requested, which is what keeps the demo at zero network.
- *
- * ── AND WHY THE GUESSES ARE IN THEIR OWN SECTION ─────────────────────────────────────────
- *
- * The two arms used to be one score, so a trigram guess weighted by the subject field could
- * outrank a literal match found in a body. Measured on the demo corpus: `graphite` put "Fotos
- * vom Grat" above the message that actually says the word, and `invoce` returned twenty rows
- * for a query with one answer — nineteen of them reached through the two-letter word `in`.
- *
- * The rule that replaced it is `@trafficflow/core/search-rank`'s, and each door applies it to
- * its own half: matches first, guesses only when there are no matches, never interleaved. This
- * view applies it once more to the MERGED list, which is the composition neither door can do —
- * see the merge below for why the obvious version of that is worse than no rule at all.
+ * Search — two passes, and it says which one it is on: this device instantly (`engine.search()`,
+ * synchronous over the mirror, per keystroke), then the whole archive (`engine.searchServer()` →
+ * `GET /search`), whose hits EXTEND the local ones, never replace them. The scope line is the
+ * point: the local index reads subject, sender and the ≤200-char snippet, so the view says what was
+ * searched at every moment; a client with no archive (`?demo=1`, the desktop) gets its own
+ * sentence, nothing requested. Guesses live in their own tier (`@trafficflow/core/search-rank`):
+ * matches first, guesses only when there are none — applied here once more to the MERGED list.
  */
 import { useEffect, useMemo, useState } from "react";
 import { useTranslations } from "next-intl";
@@ -107,23 +73,13 @@ interface MergedHit {
 const ARCHIVE_DEBOUNCE_MS = 250;
 
 /**
- * HOW LONG "SEARCHING THE WHOLE ARCHIVE…" MAY STAND — the ceiling on the `searching` state.
- *
- * Reported: a query answered "Nothing on this device. … Searching the whole archive…" and that
- * second sentence never resolved. The archive was not the problem — the hosted search's own
- * tests measure the same subject matching `websearch_to_tsquery` against real Postgres — the
- * problem was that `searching` was a state only a SETTLED promise could replace. `searchServer` never rejects (its outcome is a
- * value), which is the right shape for a refusal and no shape at all for a request that does not
- * come back: a dropped connection, a proxy holding the socket, a device that went to sleep
- * mid-request. Those leave the sentence up for the rest of the session, and a reader cannot tell
- * that from an archive that is merely slow.
- *
- * So a searching state can no longer outlive its request. Fifteen seconds: several times the
- * slowest honest `GET /search` (it is four statements for the page plus the counts) and short
- * enough that a person still has the question in mind when the answer is that there is none.
- *
- * A LATE answer still wins — the timer replaces the sentence, it does not cancel the request —
- * because the sentence is about this request, not about the session.
+ * How long "Searching the whole archive…" may stand — the ceiling on the `searching` state.
+ * Reported: the sentence never resolved — `searching` was a state only a SETTLED promise could
+ * replace, and `searchServer` never rejects, which is no shape at all for a request that does not
+ * come back (a dropped connection, a sleeping device). Fifteen seconds: several times the slowest
+ * honest `GET /search`, short enough that the person still has the question in mind. A LATE answer
+ * still wins — the timer replaces the sentence, it does not cancel the request: the sentence is
+ * about this request, not the session.
  */
 export const ARCHIVE_TIMEOUT_MS = 15_000;
 
@@ -131,26 +87,14 @@ export const ARCHIVE_TIMEOUT_MS = 15_000;
 const SHOWN = 12;
 
 /**
- * ═══ ORDERING THE MERGED LIST ═══════════════════════════════════════════════════════════════
- *
- * The sort control is not merely a parameter forwarded to the archive. This view shows TWO
- * arms — the device's own index first, the archive's extras appended — so passing `sort` to the
- * server and leaving the merge alone would put twelve relevance-ranked local hits above the
- * date-ordered ones. The reader picks "Newest first" and the top of the list does not move.
- * That is worse than not offering the control.
- *
- * So the server orders its half (which decides WHICH rows come back — the thing only it can do,
- * because it holds the whole corpus) and this comparator orders what ends up on screen.
- *
- * ── `mailbox` IS THE ONE THIS CLIENT CANNOT COMPUTE ─────────────────────────────────────────
- *
- * A message carries `mailboxId`, never the address. `"mailbox"` is not a `/sync` entity type
- * (`selectors.ts`), so a Cloud mirror holds no mailbox rows at all and there is nothing on this
- * device to resolve the id against — the address exists only on the server. The comparator
- * therefore orders by the position each mailbox first takes in the ARCHIVE's answer, which is
- * address order because the server sorted it that way. A local hit from a mailbox the archive
- * did not mention sorts after the ones it did, newest-first among themselves: honest, and the
- * only alternative is ordering by raw uuid, which looks sorted and is not.
+ * Ordering the merged list. The sort control is not merely forwarded: this view shows two arms —
+ * the device's hits first, the archive's appended — so passing `sort` to the server alone would
+ * leave twelve relevance-ranked local hits above the date-ordered ones ("Newest first" and the top
+ * does not move). The server orders its half (it decides WHICH rows come back); this comparator
+ * orders what is on screen. `mailbox` is the one order this client cannot compute: a message
+ * carries `mailboxId`, never the address, and a Cloud mirror holds no mailbox rows — so the
+ * comparator uses the position each mailbox first takes in the ARCHIVE's answer (address order,
+ * because the server sorted it); unmentioned mailboxes sort after, newest-first among themselves.
  */
 type SortRank = ReadonlyMap<string, number>;
 
@@ -231,20 +175,13 @@ export function SearchView({
   onQuery: (q: string) => void;
   onOpen: (hit: EngineSearchHit) => void;
   /**
-   * WHERE EACH MESSAGE IS PRESENTED — a folder, or `null` for History.
-   *
-   * Search reads the engine's own index, which is built over the mirror as the mail server has
-   * it, and that is right: a message must be findable by what it says, not by which pile the
-   * consent model puts it in. But the CHIP on a hit answers "where do I go to find this
-   * again?", and for a History message the folder is the INBOX while the place is History —
-   * so a chip derived from the folder alone would send somebody to a pile the message is not
-   * presented in.
-   *
-   * A map rather than a projected reader, deliberately: wrapping the index would change what
-   * is searchable, and mail in History has to stay searchable.
-   *
-   * Absent on a host with no consent partition (the desktop's fixture shell), where every
-   * message presents in its own folder and the folder is the honest answer.
+   * Where each message is presented — a folder, or `null` for History. Search reads the engine's
+   * own index over the mirror as the mail server has it, rightly: a message must be findable by
+   * what it says, not by which pile consent puts it in. But the CHIP answers "where do I go to find
+   * this again?", and a History message's folder is the INBOX — a chip from the folder alone sends
+   * somebody to a pile the message is not in. A map rather than a projected reader: wrapping the
+   * index would change what is searchable, and History mail must stay searchable. Absent on a host
+   * with no consent partition, where the folder is the honest answer.
    */
   placeOf?: ReadonlyMap<string, string | null>;
   /**
@@ -269,17 +206,13 @@ export function SearchView({
   const [filter, setFilter] = useState<Filter | null>(null);
 
   /**
-   * THE ORDER, remembered per account and per device.
-   *
-   * `storageOwner()` in a `useMemo` with no deps rather than at module scope: it reads a cookie,
-   * so it must not run while this module is being evaluated on the server, and the account
-   * cannot change without a remount. On a door with no cookie the host supplies the identity
-   * instead (`storage-owner.ts`), so the desktop keeps one order per MAILBOX rather than one
-   * order shared by the whole install; a surface with genuinely no account still gets the
-   * `local` key — see `searchSortKey`.
-   *
-   * Deliberately NOT a server setting. This is chrome, it is legitimately per-machine, and the
-   * alternative costs a column, a migration and a request on every change of a dropdown.
+   * The order, remembered per account and per device. `storageOwner()` in a deps-less `useMemo`,
+   * not module scope: it reads a cookie, so it must not run during server evaluation, and the
+   * account cannot change without a remount. On a door with no cookie the host supplies the
+   * identity (`storage-owner.ts`), so the desktop keeps one order per MAILBOX; a surface with no
+   * account gets the `local` key (`searchSortKey`). Deliberately NOT a server setting: chrome,
+   * legitimately per-machine, and the alternative costs a column, a migration and a request per
+   * dropdown change.
    */
   const sortStorageKey = useMemo(() => searchSortKey(storageOwner()), []);
   const [sort, setSort] = usePersistedChoice<ServerSearchSort>(
@@ -321,18 +254,13 @@ export function SearchView({
     let live = true;
     setArchive({ q: trimmed, outcome: { state: "searching" } });
     /*
-     * THE CEILING, armed with the state it bounds — and it fires ONLY on a state that is still
-     * `searching` for this same query.
-     *
-     * That condition is the whole mechanism, and it is deliberately the only one: this used to
-     * carry a `clearTimeout(ceiling)` in the settled `.then` beside it, which is a second way of
-     * saying the same thing and was measured unwatchable — removing it left every case green,
-     * because by then the state is `ready` and the guard below refuses anyway. Two mechanisms,
-     * one behaviour, and a later reader would have taken the redundant one for a guarantee.
-     *
-     * A late answer therefore still wins (it overwrites whatever this wrote), and an answer that
-     * arrived before the ceiling is never reported as unanswered (this refuses to write over it).
-     * The cleanup below clears the timer on every query, sort and retry change.
+     * The ceiling, armed with the state it bounds — and it fires ONLY on a state still `searching`
+     * for this same query. That condition is the whole mechanism, deliberately the only one: a
+     * `clearTimeout` in the settled `.then` beside it was a second way of saying the same thing,
+     * measured unwatchable — removing it left every case green, and a later reader would have taken
+     * the redundant one for a guarantee. A late answer still wins (it overwrites what this wrote);
+     * an answer that arrived before the ceiling is never reported as unanswered. The cleanup clears
+     * the timer on every query, sort and retry change.
      */
     const ceiling = setTimeout(() => {
       if (!live) return;
@@ -390,31 +318,14 @@ export function SearchView({
   }, [current]);
 
   /**
-   * ═══ MERGE: TWO DOORS, TWO TIERS, AND THE RULE APPLIED TO THE JOIN ═══════════════════════
-   *
-   * Each door decides its OWN tier: the local index knows whether its exact arm found anything
-   * on this device, and the archive knows whether its lexical arm found anything in the corpus.
-   * Neither knows about the other, so the composition has to happen here — and getting it wrong
-   * in the obvious way would be worse than not tiering at all.
-   *
-   * The obvious way: render each door's similar rows whenever that door had no exact ones. On a
-   * device holding a thin mirror that is a near-certainty — the local index returns guesses,
-   * the archive returns three real matches, and the screen shows both, with the guesses first
-   * because the local pass answers first. The reader sees exactly the interleaving the tier
-   * rule exists to remove.
-   *
-   * So the two exact halves are merged, the two similar halves are merged, and `showSimilar` is
-   * asked ONCE about the merged exact count. One rule, one answer, at the level the reader is
-   * actually looking at.
-   *
-   * ── THE NOISE FLOOR THAT USED TO BE HERE IS GONE, AND THAT IS NOT A REMOVAL ─────────────
-   *
-   * This memo used to filter the local hits: keep a row only if it carried a non-fuzzy match or
-   * a fuzzy one against a term of four characters or more. That was the right rule in the wrong
-   * place — it applied to the LOCAL arm only, so the archive's half was never floored, and a
-   * view is not where a ranking decides what counts as a match. It is now
-   * `MIN_FUZZY_TERM_LEN` in `@trafficflow/core/search-rank`, applied inside the index where
-   * the arm runs, which is what lets both doors be held to it.
+   * Merge: two doors, two tiers, and the rule applied to the join. Each door decides its OWN tier
+   * and neither knows about the other. The obvious composition — render each door's similar rows
+   * whenever that door had no exact ones — puts local guesses above the archive's three real
+   * matches (the guesses answer first): exactly the interleaving the tier rule removes. So the two
+   * exact halves are merged, the two similar halves are merged, and `showSimilar` is asked ONCE
+   * about the merged exact count. The old noise floor here is gone but not removed: it was the
+   * right rule in the wrong place (local arm only) and now lives as `MIN_FUZZY_TERM_LEN` in
+   * `@trafficflow/core/search-rank`, inside the index, holding both doors to it.
    */
   const { exactRaw, similarRaw } = useMemo(() => {
     const reader = current?.state === "ready" ? engine.read() : null;
@@ -562,29 +473,14 @@ export function SearchView({
     trimmed.toLowerCase() === "blanc" && items.length === 0 && similarItems.length === 0;
 
   /**
-   * ═══ THE KEYBOARD PATH THAT DID NOT EXIST ════════════════════════════════════════════
-   *
-   * Reported as "search does not allow a message to be opened". Taken literally that is wrong
-   * — every hit is a real `<button>` and has always been clickable.
-   * What was true is that **this view declared zero bindings**. In a product whose own `?`
-   * sheet is generated from a keyboard registry, the one surface you reach by pressing `/`
-   * and then typing could be left only with a mouse. That is the defect.
-   *
-   * ── THE CURSOR IS VISIBLE, WHICH IS THE HALF THAT IS NOT THE BINDING ────────────────
-   *
-   * `at` is an index into the RENDERED rows, clamped rather than remembered: the list is
-   * re-derived on every keystroke and when the archive lands, so an index held across those
-   * changes would point at a different message than the one that was highlighted. Reset to
-   * the top whenever the question changes — a cursor that survived the query would be
-   * pointing into an answer to something else.
-   *
-   * ── AND `j`/`k` ARE DELIBERATELY NOT BOUND HERE ─────────────────────────────────────
-   *
-   * The ruling is explicit: `j`/`k` follow PILE order, never search-hit order. They are the
-   * two most-used keys, their meaning is per-view and tested, and a search-session cursor
-   * that survived navigation is exactly the sort of hidden cross-view state this shell avoids. Arrow keys
-   * are the ones the box's own focus makes available (`inInput`), and after ↵ opens a hit
-   * the pile's own `j`/`k` take over from where the message actually lives.
+   * The keyboard path that did not exist. Reported as "search does not allow a message to be
+   * opened" — every hit was always clickable; what was true is that this view declared ZERO
+   * bindings, so the surface you reach by pressing `/` was mouse-only. The cursor is visible: `at`
+   * indexes the RENDERED rows, clamped rather than remembered (the list re-derives per keystroke,
+   * and an index held across that points at a different message), reset when the question changes.
+   * `j`/`k` are deliberately NOT bound here — the ruling: they follow PILE order, never search-hit
+   * order; arrows are what the box's own focus makes available (`inInput`), and after ↵ opens a hit
+   * the pile's own `j`/`k` take over where the message lives.
    */
   /**
    * THE ROWS, AS ONE SEQUENCE — matches, then the guesses under their heading.
@@ -652,19 +548,16 @@ export function SearchView({
       run: () => {
         if (trimmed !== "") {
           onQuery("");
-          /* ── AND THE CARET GOES BACK IN THE BOX, WHICH CLEARING ALONE DOES NOT DO ────────
-           *
-           * The sentence this binding is documented by is "clear the search — again to leave",
-           * and clearing is only half of it: the person who got here with ↓ has focus on a HIT
-           * ROW, and clearing the query removes every row from the DOM. Focus then falls to
-           * `<body>`, where `isTypingTarget` is false — so the next letter typed is not typed
-           * at all, it is dispatched as a BINDING. Measured: after Escape on a non-empty
-           * result, typing the next question ran the shell's global verbs (`c` opened Compose)
-           * instead of asking it.
-           *
-           * So the box is re-focused whenever the query is what was cleared. Not on the
-           * LEAVE arm: that hands the screen back to the view `/` was pressed in, and focusing
-           * a box on a view being unmounted is a caret in a field nobody can see. */
+          /* And the caret goes back in the box, which clearing alone does
+           * not do: the person who got here with ↓ has focus on a HIT ROW,
+           * and clearing the query removes every row — focus falls to
+           * `<body>`, where `isTypingTarget` is false, so the next letter is
+           * dispatched as a BINDING (measured: after Escape on a non-empty
+           * result, `c` opened Compose instead of asking). So the box is
+           * re-focused whenever the query is what was cleared — not on the
+           * LEAVE arm, which hands the screen back to the view `/` was
+           * pressed in; focusing a box on an unmounting view is a caret in a
+           * field nobody can see. */
           searchBox()?.focus();
         } else onExit?.();
       },
@@ -693,18 +586,13 @@ export function SearchView({
       label: t("keyOpen"),
       inInput: true,
       /**
-       * `disabled` WHEN THERE IS NOTHING TO OPEN — a statement to the `?` sheet, not a
-       * guard, and it is worth being exact about which.
-       *
-       * `SearchBox` fires `onSubmit` from its own `onKeyDown` (that is how Enter re-asks the
-       * archive), and the registry's dispatcher does not stop it: `preventDefault` suppresses
-       * the browser's default, not another listener. So the two DO both run when a hit is
-       * open — harmless, because the view unmounts on navigation and the archive effect's
-       * cleanup cancels its own debounce before it can spend anything.
-       *
-       * What this line buys is that the sheet reads "open the result where it lives" as inert
-       * on an empty search, which is the registry's rule for every other binding in the
-       * product: listed because it exists, greyed because there is nothing to act on.
+       * `disabled` when there is nothing to open — a statement to the `?` sheet, not a guard.
+       * `SearchBox` fires `onSubmit` from its own `onKeyDown` (how Enter re-asks the archive), and
+       * the dispatcher does not stop it: `preventDefault` suppresses the browser default, not
+       * another listener — so both DO run when a hit is open, harmlessly (the view unmounts on
+       * navigation and the archive effect's cleanup cancels its debounce). What this buys is the
+       * sheet reading "open the result where it lives" as inert on an empty search — the registry's
+       * rule: listed because it exists, greyed because nothing to act on.
        */
       disabled: cursor < 0 || zone !== "list",
       run: () => {
@@ -718,37 +606,14 @@ export function SearchView({
   useKeyBindings(keys);
 
   /**
-   * THE HONEST SENTENCE. One of six, and one of them is always on screen while a query is.
-   *
-   * `scopeDevice` is the load-bearing one: it is what the view says while only local results
-   * are in hand, and it names the three fields the local index actually reads.
-   *
-   * ── IT USED TO BREAK AT ZERO, AND THE BREAK WAS A CONTRADICTION ────────────────────────
-   *
-   * On an empty index the pane rendered **"Nothing on this device."** and, directly beneath it, "…plus the full text of
-   * **none**." — the plural's `=0` arm. Two sentences one line apart, the first saying the
-   * device holds nothing and the second describing in detail what it holds. Nobody would write
-   * that; it was assembled.
-   *
-   * So the DEVICE half is suppressed when the mirror is empty, and only the ARCHIVE clause
-   * renders. `coverage.messages`, not `coverage.full`: `full` is a subset, and a device holding
-   * 400 messages of which none is hydrated still holds subjects, senders and previews — the
-   * sentence is true and worth saying. It is `messages === 0` that makes the whole claim vacuous.
-   *
-   * ── AND THE COUNT IT NAMED WAS NOT THE COUNT THE READER WOULD COUNT ────────────────────
-   *
-   * It said "the 6 you have opened" after three deliberate opens, because the Screener's held
-   * previews hydrate a body too and `coverage.full` counts every hydration. Both numbers are
-   * correct and they measure different things, which is the one situation where printing the
-   * number is worse than not printing it — the reader can check it, and it will not match. The
-   * sentence keeps the FACT (this device holds the full text only of what has been opened) and
-   * drops the arithmetic.
-   *
-   * The arms and their order are untouched apart from the SIXTH, `timeout`, which is the state
-   * that used to be unrepresentable: `searching` could only be replaced by a settled promise, so
-   * a request that never came back left "Searching the whole archive…" on screen for the rest of
-   * the session. See {@link ARCHIVE_TIMEOUT_MS}. The mid-flight → settled transition was walked
-   * and found true at every moment; it is the part of this that works.
+   * The honest sentence — one of six, one always on screen while a query is. `scopeDevice` is load-bearing:
+   * what the view says while only local results are in hand, naming the three fields the index reads. It used
+   * to break at zero: "Nothing on this device." directly above "…plus the full text of none." — assembled, not
+   * written. So the device half is suppressed when the mirror is empty (`coverage.messages === 0`, not `full` —
+   * a device with 400 unhydrated messages still holds subjects and previews, and the sentence is worth saying).
+   * The opened-count is gone: Screener previews hydrate bodies too, so "the 6 you have opened" never matched
+   * what a reader would count — the fact stays, the arithmetic goes. The sixth arm, `timeout`, was the
+   * unrepresentable state ({@link ARCHIVE_TIMEOUT_MS}).
    */
   const device = !result || result.coverage.messages === 0 ? null : <>{t("scopeDevice")} </>;
   const scope = !result ? null : current === null || current.state === "searching" ? (
@@ -791,17 +656,14 @@ export function SearchView({
       <div className="vhead">
         <h1>{t("title")}</h1>
         {/*
-          THE ORDER CONTROL. `.vhead-action` is the header row's existing right-aligned slot and
-          `.c-select` its existing borderless-with-a-caret select treatment (`app.css`) — reused
-          rather than invented, because a second visual language for a dropdown in a header is
-          how a design system stops being one.
-
-          A native `<select>` and not a `SegmentedControl`: five options do not fit a segmented
-          row at the widths this view is used at, and the native control brings its own keyboard
-          handling, its own mobile presentation and its own label association for free.
-
-          Hidden while the box is empty — there is no order to choose for no results, and the
-          control would be the only thing on an otherwise empty screen.
+          The order control. `.vhead-action` is the header row's existing
+          right-aligned slot and `.c-select` its existing select treatment —
+          reused, because a second visual language for a dropdown in a
+          header is how a design system stops being one. A native `<select>`
+          rather than a `SegmentedControl`: five options do not fit a
+          segmented row at these widths, and the native control brings its
+          own keyboard handling, mobile presentation and label association.
+          Hidden while the box is empty — no order to choose for no results.
         */}
         {trimmed === "" ? null : (
           <div className="vhead-action c-select search-sort">

@@ -41,33 +41,14 @@ const LANDING_LEAD_PX = 14;
 const ANCHOR_TOLERANCE_PX = 2;
 
 /**
- * ═══ WHY A DEEP LANDING IS ANCHORED OVER SEVERAL FRAMES AND NOT SCROLLED TO ONCE ═══════════
- *
- * `.view-reads .stream .scast` carries `content-visibility: auto` with
- * `contain-intrinsic-size: auto 200px` (`app.css`), so a mounted card the reader has never
- * approached has a BOX but no layout: its height is the 200px guess until the browser renders
- * it. The stream also mounts a growing prefix rather than the pile (`stream-window.ts`), so a
- * jump deep into Reads mounts hundreds of cards that are all still at that guess.
- *
- * A single `scrollTo({ top: card.top, behavior: "smooth" })` therefore aims at an offset
- * computed from guesses, and every card the flight passes replaces its guess with its real
- * height mid-flight while the destination offset stays fixed. Measured in a real Chromium against
- * this component over a synthetic pile eight hundred cards deep, jumping to the four-hundredth: the
- * stream settled 18 301px short — the requested card eighty cards below the fold, three other cards
- * on screen instead, and it never arrived. What that looks like to a reader is a search result that
- * "scrolls to a position where there is no message". On a pile whose cards run SHORTER than the
- * guess the same arithmetic overshoots instead, into the reserved tail spacer, where there is
- * literally nothing.
- *
- * So the landing re-measures. Each frame reads the card's CURRENT offset — layout the browser
- * has already done — and corrects, until the card is at the line. It converges because every
- * correction renders the cards around the new position, which is what replaces their guesses;
- * the budget is what stops a card whose height will not settle from holding the loop open.
- *
- * A CARD ALREADY NEAR THE FOLD KEEPS THE SMOOTH SCROLL. The browser has laid it out, so no guess
- * is in play and there is nothing to correct — that is the j/k step and the click on an adjacent
- * row, where the animation is the product's feel. Anything further is a teleport nobody's eye
- * follows anyway, so it is instant and exact.
+ * Why a deep landing is anchored over several frames, not scrolled to once. `.scast` carries
+ * `content-visibility: auto` with a 200px intrinsic guess, and the stream mounts a growing prefix — so a deep
+ * jump aims at an offset computed from guesses, and every card the flight passes replaces its guess mid-flight
+ * while the destination stays fixed (measured: an 800-card pile, jumping to card 400, settled 18 301px short
+ * and never arrived; short cards overshoot into the tail spacer instead). So the landing re-measures: each
+ * frame reads the card's CURRENT offset and corrects until it is at the line; the budget stops an unsettled
+ * card from holding the loop open. A card already near the fold keeps the smooth scroll — laid out, no guess in
+ * play; anything further is a teleport nobody's eye follows, so it is instant and exact.
  */
 const ANCHOR_FRAMES = 90;
 
@@ -85,14 +66,13 @@ const ANCHOR_STABLE_FRAMES = 3;
 
 /**
  * What the stream knew when it was left — the leave-commit's whole input.
- *
- * `newestSeenId` is "the top of what was on screen": the newest card that was actually
- * DISPLAYED at any point during the visit. A reader enters at the top, so this is normally
- * the first card — but a card that arrives above a reader who is already deep in the pile
- * was never displayed and never becomes it, which is exactly what keeps unseen arrivals
- * above the committed line. `bottomVisibleId` is the last card on screen when the reader
- * left. `drove` is `useSeenOnScroll`'s user-intent authority, verbatim: false means no
- * human ever drove this scroller and NOTHING may be written on the way out.
+ * `newestSeenId` is the newest card actually DISPLAYED at any point during
+ * the visit — normally the first card, but a card arriving above a reader
+ * already deep in the pile was never displayed and never becomes it, which
+ * is what keeps unseen arrivals above the committed line. `bottomVisibleId`
+ * is the last card on screen at leave. `drove` is `useSeenOnScroll`'s
+ * user-intent authority, verbatim: false means no human ever drove this
+ * scroller and NOTHING may be written on the way out.
  */
 export interface StreamLeaveState {
   drove: boolean;
@@ -117,17 +97,13 @@ export const StreamShell = forwardRef<
      */
     onNear?: (id: string) => void;
     /**
-     * THE LEAVE-COMMIT SEAM. Called exactly once, from the unmount cleanup — and the views
-     * unmount precisely when the route changes away from them, so "component unmount" and
-     * "route-change away" are one event here. That pair is the DELIBERATE definition of
-     * leaving; tab-hide is deliberately NOT it (it fires on every cmd-tab, and a reader
-     * glancing at another window has not left the pile). Closing the tab outright commits
-     * nothing, which is the conservative side: the per-card sweep already wrote what was
-     * scrolled past, and a line that failed to advance shows old mail as new — never the
-     * reverse.
-     *
-     * The visible range is TRACKED continuously (scroll + content passes) rather than read
-     * here, because a passive cleanup runs against detached DOM whose geometry is gone.
+     * The leave-commit seam — called exactly once, from the unmount cleanup; the views unmount
+     * precisely when the route changes away, so those are one event, and that pair is the
+     * DELIBERATE definition of leaving. Tab-hide is deliberately not it (it fires on every
+     * cmd-tab). Closing the tab outright commits nothing — the conservative side: the per-card
+     * sweep already wrote what was scrolled past, and a line that failed to advance shows old mail
+     * as new, never the reverse. The visible range is TRACKED continuously rather than read here: a
+     * passive cleanup runs against detached DOM whose geometry is gone.
      */
     onLeave?: (state: StreamLeaveState) => void;
     /**
@@ -147,19 +123,14 @@ export const StreamShell = forwardRef<
   const dwellRef = useRef(0);
   const curRef = useRef<string | null>(null);
   /**
-   * A PROGRAMMATIC JUMP IN FLIGHT — its target, and when to stop protecting it.
-   *
-   * `scrollTo` animates (`behavior: "smooth"`), and every frame of that animation fires the
-   * scroll-spy below, which reads "current" off the geometry mid-flight: each intermediate
-   * card became current in turn, and when the target sat near the END of the pile the
-   * pinned-to-end rule handed the cursor to the LAST card — permanently, because a card
-   * below the reading line never reaches it. So a search jump landed cursor, highlight and
-   * (via the dwell, on a session the user had already scrolled) a `\Seen` write on a message
-   * nobody clicked. While a jump is in flight the spy stands down; it resumes when the
-   * target arrives at the line, when the scroller bottoms out with the target on screen
-   * (the cursor is then the TARGET, stated explicitly, not the pile's last card), or at a
-   * deadline that covers a smooth scroll with margin — so a jump that never lands (the card
-   * unmounted mid-flight) cannot mute the spy for the life of the view.
+   * A programmatic jump in flight — its target, and when to stop protecting it. `scrollTo`
+   * animates, and every frame fires the scroll-spy, which reads "current" off mid-flight geometry:
+   * each intermediate card became current, and a target near the END handed the cursor to the LAST
+   * card, permanently — a search jump landed cursor, highlight and (via the dwell) a `\Seen` write
+   * on a message nobody clicked. While a jump is in flight the spy stands down; it resumes when the
+   * target reaches the line, when the scroller bottoms out with the target on screen (the cursor is
+   * then the TARGET, stated explicitly), or at a deadline — so a jump that never lands cannot mute
+   * the spy for the life of the view.
    */
   const jumpRef = useRef<{ id: string; until: number } | null>(null);
   /** The anchoring loop's live frame — see {@link ANCHOR_FRAMES}. 0 when nothing is in flight. */
@@ -277,17 +248,13 @@ export const StreamShell = forwardRef<
   }, []);
 
   /**
-   * THE TAB GOING AWAY IS A LEAVE TOO — `pagehide`, the OhboxView #4 twin, because the
-   * unmount commit above structurally cannot run on a tab close: React never unmounts a page
-   * the browser is killing. Without this the stream's waterline — the whole "new since last
-   * visit" statement — evaporated on exactly the departure a phone reader takes most often.
-   * The same range and the same authority go up through the same handler; downstream,
-   * `commitFeedSeen` skips a commit that says nothing new and `feed_mark_seen` is idempotent,
-   * so the unmount commit that MAY still follow (a bfcache freeze that resumes, then a real
-   * navigation) double-charges nothing. The dispatched verb is persisted by the engine's
-   * durable outbox before the wire, which is what makes a flush during a dying tab's last
-   * milliseconds deliverable on the next boot even when its fetch never leaves the machine.
-   * Registered once, reads only refs — the exact discipline the unmount commit documents.
+   * The tab going away is a leave too — `pagehide`, the OhboxView #4 twin: React never unmounts a
+   * page the browser is killing, so without this the stream's waterline evaporated on exactly the
+   * departure a phone reader takes most often. The same range and authority go up through the same
+   * handler; `commitFeedSeen` skips a commit that says nothing new and `feed_mark_seen` is
+   * idempotent, so an unmount commit that may still follow double-charges nothing. The verb is
+   * persisted by the engine's durable outbox before the wire, so a flush in a dying tab's last
+   * milliseconds is deliverable on the next boot. Registered once, reads only refs.
    */
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -349,104 +316,24 @@ export const StreamShell = forwardRef<
   }, [contentKey]);
 
   /**
-   * ═══ THE STREAM HOLDS ITS PLACE WHEN A CARD ABOVE THE READER CHANGES HEIGHT ═══════════════
-   *
-   * The reader's report is "the list often jumps 50–100px during the scroll and flickers". The
-   * cause is not the scroll and not a re-keyed list: it is a card ABOVE the viewport getting
-   * taller or shorter while the reader is somewhere below it. Everything under that card moves
-   * by the difference, and since `scrollTop` is measured from the top of the content, the
-   * viewport keeps its offset and the content slides through it.
-   *
-   * Measured on a 300-card fixture, one 40-step scroll with no expands at all, every change
-   * attributed to its cause:
-   *
-   *   the intrinsic estimate resolving    `200 → 653`, `200 → 545`, `200 → 536`, `200 → 450`
-   *   a body arriving (snippet → viewer)  `653 → 500`, `567 → 414`, `545 → 455` — both directions
-   *   the viewer's content filling the clamp  `436 → 672`, `414 → 650`, `288 → 524`
-   *   the message frame re-measuring      `329 → 416`, `267 → 329`, `476 → 563`
-   *
-   * The first is fixed at its source (`stream-estimate.ts` — the estimate is now this card's own
-   * data rather than a flat 200). The other three are not estimates: they are the mail arriving,
-   * and no reservation can predict the height of a document that has not been fetched. What CAN
-   * be done is what the browser's own scroll anchoring would do — move `scrollTop` by the same
-   * amount, in the same frame, so the reader's view does not move.
-   *
-   * ── WHY THE BROWSER IS NOT DOING THIS ────────────────────────────────────────────────────
-   *
-   * The stream deliberately keeps `overflow-anchor` ON (`app.css` says so, and the reason is
-   * that the stream is not windowed the way the list columns are). Anchoring still did not fire:
-   * measured at 1440, expanding a card BELOW a fully visible reference moved that reference
-   * −63.25px with `scrollTop` unchanged at 3600 — i.e. the browser made no adjustment for a
-   * change it should have adjusted for. The cards carry `content-visibility: auto`, and a change
-   * inside a skipped subtree is not a change anchoring's candidate selection can see. So the
-   * compensation is done here, from the measurement, rather than argued about from the cascade.
-   *
-   * ── THE RULE, AND WHAT IT DELIBERATELY DOES NOT DO ───────────────────────────────────────
-   *
-   * A card whose box lies ENTIRELY ABOVE the scrollport's top and whose height changed by `d`
-   * costs `scrollTop += d`. A card that is on screen or below it costs nothing: content below
-   * the fold growing does not move anything the reader can see, and content the reader is
-   * looking at growing is the reader's own expand — moving the viewport for that would take the
-   * card they just opened out from under them.
-   *
-   * `behavior: "instant"`, because `.stream` carries `scroll-behavior: smooth` and a bare
-   * `scrollTop +=` is a scrolling API: it would ANIMATE the correction, which is the visible
-   * slide this exists to remove.
-   *
-   * SUSPENDED WHILE A LANDING IS IN FLIGHT (`jumpRef`): that loop owns `scrollTop` for the
-   * duration and re-reads the card's position every frame, so a second writer would be two
-   * loops fighting over one offset — the failure `scrollTo` documents at length.
-   *
-   * The observer is rebuilt on `contentKey` beside the near-observer, so cards a delta added are
-   * covered; heights are remembered per card id, and an id that leaves the pile is forgotten,
-   * so a card that unmounts and remounts is measured fresh rather than against a stale number.
+   * The stream holds its place when a card ABOVE the reader changes height ("the list jumps
+   * 50–100px during the scroll"): everything below moves by the difference while the viewport keeps
+   * its offset. The estimate cause is fixed at its source (`stream-estimate.ts`); the rest — a body
+   * arriving, the viewer filling its clamp, the frame re-measuring — is the mail arriving, so
+   * `scrollTop` moves by the same amount in the same frame. The browser's anchoring did not fire:
+   * `content-visibility: auto` hides changes inside skipped subtrees (measured, −63.25px
+   * unadjusted). Only a card ENTIRELY ABOVE the port costs a correction; `behavior: "instant"`;
+   * suspended while a landing is in flight (`jumpRef`); heights per card id, forgotten on unmount.
    */
   /**
-   * ── HOLDING THE ANCHOR, ONE RECT PER FRAME ───────────────────────────────────────────────
-   *
-   * The mechanism is scroll anchoring's, done by hand because the browser's cannot see the
-   * changes that matter here. A card that is at least partly on screen is the ANCHOR; its offset
-   * from the top of the scrollport is remembered with the `scrollTop` it was read at. On every
-   * frame the offset is predicted from the scroll that has happened since — `remembered −
-   * (scrollTop_now − scrollTop_then)` — and any difference between that prediction and the
-   * reading is content that moved on its own. `scrollTop` absorbs exactly that difference, in
-   * the same frame, before the reader can see it.
-   *
-   * Predicting rather than "compensate only when scrollTop did not change" is the whole point:
-   * the report is of a jump DURING a scroll, so the two happen in the same frame and a rule
-   * that treats a moved scroll as permission to re-anchor would ignore precisely the case it
-   * exists for.
-   *
-   * ── WHY NOT A ResizeObserver OVER THE CARDS ──────────────────────────────────────────────
-   *
-   * That was tried first and it is the wrong instrument here, measured: over a 20-step scroll in
-   * which a per-frame poll recorded 27 card-height changes, an observer over all 60 mounted
-   * cards delivered THREE callbacks. `.scast` carries `content-visibility: auto`, and an
-   * element whose contents are skipped does not deliver resize observations for changes inside
-   * them — the observer reports when a card becomes relevant to the user and then stays quiet
-   * through the hydration, the clamp fill and the frame's re-measure, which are the three
-   * mechanisms that actually move the stream. One rect on one element per frame sees all of
-   * them, and it sees changes that are not a card at all (the waterline, the chip row).
-   *
-   * ── WHAT MOVES, MEASURED, AND WHAT IS FIXED ELSEWHERE ────────────────────────────────────
-   *
-   * One 40-step scroll over a 300-card fixture, no expands, every height change attributed:
-   *
-   *   the intrinsic estimate resolving        `200 → 653`, `200 → 545`, `200 → 536`, `200 → 450`
-   *   a body arriving (snippet → viewer)      `653 → 500`, `567 → 414`, `545 → 455` — both ways
-   *   the viewer's content filling the clamp  `436 → 672`, `414 → 650`, `288 → 524`
-   *   the message frame re-measuring          `329 → 416`, `267 → 329`, `476 → 563`
-   *
-   * The first is fixed at its source: the estimate is now the card's own data rather than a flat
-   * 200px (`stream-estimate.ts`). The other three are the mail arriving, and no reservation can
-   * predict the height of a document that has not been fetched — so they are absorbed here.
-   *
-   * SUSPENDED WHILE A LANDING IS IN FLIGHT (`jumpRef`): that loop owns `scrollTop` for its
-   * duration and re-reads the card's position every frame, so a second writer would be two loops
-   * fighting over one offset — the failure `scrollTo` documents at length below.
-   *
-   * `behavior: "instant"`, because `.stream` carries `scroll-behavior: smooth` and every
-   * scrolling API honours it: a correction left to animate is the visible slide this removes.
+   * Holding the anchor, one rect per frame — scroll anchoring by hand, because the browser's cannot see these
+   * changes. The on-screen card is the anchor; its offset is remembered with the `scrollTop` it was read at,
+   * each frame's offset is PREDICTED from the scroll since (`remembered − Δ scrollTop`), and any difference is
+   * content that moved on its own — absorbed the same frame. Predicting matters: the jump happens DURING a
+   * scroll, and "compensate only when scrollTop did not change" ignores exactly that case. Not a
+   * ResizeObserver: measured, 27 height changes delivered THREE callbacks — `content-visibility: auto`
+   * suppresses observations inside skipped subtrees; one rect per frame sees hydration, clamp fill and
+   * re-measure, plus non-card changes. Suspended during a landing (`jumpRef`); `behavior: "instant"`.
    */
   const holdRef = useRef<{ sid: string; offset: number; scrollTop: number } | null>(null);
   const holdRafRef = useRef(0);
@@ -457,21 +344,14 @@ export const StreamShell = forwardRef<
     if (!el || typeof requestAnimationFrame === "undefined") return;
 
     /**
-     * THE TOPMOST CARD THAT HAS FULLY ENTERED THE SCROLLPORT — its top at or below the top edge,
-     * not merely its bottom.
-     *
-     * The obvious choice is the topmost card with ANY part of it on screen, which is what the
-     * browser's own anchoring approximates, and it holds the wrong thing: that card STRADDLES
-     * the top edge, so a change inside it leaves its top exactly where it was and moves
-     * everything below — including the card the reader is actually reading. Measured at 1440,
-     * expanding a card below a fully visible reference: the reference moved 63.25px with
-     * `scrollTop` unchanged and the straddling card's own offset drifting by 0. Holding the
-     * straddler reports no drift for precisely the shift a reader complains about.
-     *
-     * Holding the first card FULLY inside the port makes "content above the anchor" include the
-     * straddler's own contents, which is what the reader sees move. A reader's own expand of the
-     * straddling card is not affected: clicking a card selects it, and the view lands the
-     * selection at the reading line, which sets `jumpRef` and suspends this loop for the flight.
+     * The topmost card that has FULLY entered the scrollport — its top at or below the top edge,
+     * not merely its bottom. The obvious choice (any part on screen) holds the wrong thing: that
+     * card STRADDLES the top edge, so a change inside it leaves its own top where it was and moves
+     * everything below — including the card being read (measured: the reference moved 63.25px while
+     * the straddler's offset drifted 0, so holding the straddler reports no drift for exactly the
+     * shift readers complain about). A reader's own expand of the straddler is unaffected: clicking
+     * selects, the selection lands at the reading line, and `jumpRef` suspends this loop for the
+     * flight.
      */
     const pick = (rootTop: number): HTMLElement | null => {
       for (const c of el.querySelectorAll<HTMLElement>(".scast[data-sid]")) {
@@ -501,16 +381,13 @@ export const StreamShell = forwardRef<
       const scrolled = el.scrollTop - held.scrollTop;
       const drift = offset - (held.offset - scrolled);
       /**
-       * THE REMAINDER IS CARRIED, NOT DISCARDED — and the first version of this discarded it.
-       *
-       * A deadband is needed: a sub-pixel drift every frame is layout noise, and writing
-       * `scrollTop` for it would be a correction nobody asked for. But a change that arrives
-       * OVER many frames — the clamp's own half-second transition is the ordinary case — is a
-       * long run of sub-threshold drifts, and throwing each one away throws away the whole
-       * change. Measured: expanding a card above the scrollport moved the held card 13px while
-       * the loop had already absorbed 26 of the 39, i.e. it lost exactly the part that arrived
-       * a third of a pixel at a time. The accumulator keeps it and spends it when it is worth
-       * a pixel.
+       * The remainder is carried, not discarded — the first version discarded it. A deadband is
+       * needed (sub-pixel drift per frame is layout noise), but a change arriving OVER many frames
+       * — the clamp's half-second transition is the ordinary case — is a long run of sub-threshold
+       * drifts, and dropping each drops the whole change. Measured: expanding a card above the
+       * scrollport moved the held card 13px while the loop had absorbed 26 of the 39 — it lost
+       * exactly the part that arrived a third of a pixel at a time. The accumulator keeps it and
+       * spends it when it is worth a pixel.
        */
       holdAccRef.current += drift;
       if (Math.abs(holdAccRef.current) > 0.5 && !jumpRef.current) {
@@ -636,20 +513,13 @@ export const StreamShell = forwardRef<
       const rawTop = (c: HTMLElement): number => lineOf(c) + el.scrollTop - LANDING_LEAD_PX;
 
       /**
-       * …and the same offset CLAMPED to what this scroller can actually reach.
-       *
-       * The clamp is what a card that cannot reach the line needs: the last card in a pile is held
-       * short of it because the scroller bottoms out first, so its raw offset is past the maximum
-       * for ever, and aiming at the reachable one is the honest answer — the same fact the
-       * scroll-spy's own bottomed-out branch acts on, where the target is the cursor although it
-       * never reached the line.
-       *
-       * THE MAXIMUM IS ITSELF AN ESTIMATE, which is why reaching it is not on its own a landing.
-       * `scrollHeight` sums cards that have mostly not been laid out, so it GROWS as they render.
-       * Measured against the fixture Reads pile: a jump to the last of fifteen cards reached a
-       * clamped aim of 4 638 on one frame, the scroller's real maximum turned out to be 5 128 a
-       * frame later, and the card was left 63px BELOW the fold — reached, clamped, and invisible.
-       * So a clamped aim only ends the landing once the card is actually on screen; see `settle`.
+       * …and the same offset CLAMPED to what this scroller can actually reach — what a card that
+       * cannot reach the line needs: the last card in a pile is held short of it because the
+       * scroller bottoms out first, so aiming at the reachable offset is the honest answer (the
+       * scroll-spy's bottomed-out branch acts on the same fact). The maximum is itself an estimate:
+       * `scrollHeight` sums unrendered cards and GROWS as they render — measured, a clamped aim of
+       * 4 638 met a real maximum of 5 128 a frame later, leaving the card 63px below the fold — so
+       * a clamped aim only ends the landing once the card is actually on screen (`settle`).
        */
       const aimTop = (c: HTMLElement): number =>
         Math.min(Math.max(rawTop(c), 0), Math.max(0, el.scrollHeight - el.clientHeight));
@@ -663,19 +533,13 @@ export const StreamShell = forwardRef<
       protect();
 
       /**
-       * IS THE CARD ALREADY LAID OUT NEAR THE FOLD — measured on the CARD, never on an offset.
-       *
-       * Read straight off the card's own rect relative to the scrollport: a card within a viewport
-       * above or two below has been rendered by the browser, so its position is a fact and one
-       * exact scroll reaches it. That is the j/k step and the click on a neighbouring row, where the
-       * smooth animation is the product's feel.
-       *
-       * It deliberately does NOT compare the wanted OFFSET against `scrollTop`, which is what this
-       * test used to do: the wanted offset is clamped by `scrollHeight`, `scrollHeight` is a sum of
-       * unrendered estimates, and a clamp can squash a jump to the far end of a pile into an offset
-       * that looks like a one-viewport hop. Measured on the fixture Reads pile: a jump to the last
-       * of fifteen cards took the smooth one-shot path, landed 63px below the fold, and — having
-       * declared itself a hop — never corrected.
+       * Is the card already laid out near the fold — measured on the CARD, never on an offset. Read
+       * off the card's own rect: within a viewport above or two below, its position is a fact and
+       * one exact scroll reaches it — the j/k step and the neighbouring click, where the smooth
+       * animation is the product's feel. Deliberately NOT "wanted offset vs scrollTop", which this
+       * used to be: the wanted offset is clamped by `scrollHeight`, a sum of unrendered estimates,
+       * so a jump to the far end can masquerade as a one-viewport hop — measured, it took the
+       * smooth path, landed 63px below the fold, and never corrected.
        */
       const near = lineOf(card) > -el.clientHeight && lineOf(card) < el.clientHeight * 2;
       // `behavior` is always explicit: `stream.css` sets `scroll-behavior: smooth` on `.stream`,
@@ -693,18 +557,13 @@ export const StreamShell = forwardRef<
       let frames = 0;
       let held = 0;
       /**
-       * ONE FRAME OF THE LANDING. Two ways to be there, and the second one is the whole reason this
-       * is a loop rather than a second scroll:
-       *
-       *   · `atLine`   the card sits exactly where a landed card sits. The ordinary success.
-       *   · `parked`   the scroller is at the offset it can reach AND the card is on screen. This is
-       *                the last card in a pile, which the scroller bottoms out before reaching the
-       *                line. The "on screen" half is not decoration: `scrollHeight` grows as cards
-       *                render, so reaching a clamped aim while the card is still below the fold
-       *                means the maximum was an under-estimate and there is further to go.
-       *
-       * Either has to HOLD for {@link ANCHOR_STABLE_FRAMES}, and the whole loop is bounded by
-       * {@link ANCHOR_FRAMES} so a card whose height never settles cannot keep it open.
+       * One frame of the landing. Two ways to be there — the second is why this is a loop rather
+       * than a second scroll: `atLine` — the card sits where a landed card sits, the ordinary
+       * success; `parked` — the scroller is at the offset it can reach AND the card is on screen
+       * (the last card in a pile). The "on screen" half is not decoration: `scrollHeight` grows as
+       * cards render, so reaching a clamped aim with the card below the fold means the maximum was
+       * an under-estimate. Either must hold for {@link ANCHOR_STABLE_FRAMES}; the loop is bounded
+       * by {@link ANCHOR_FRAMES} so an unsettled card cannot keep it open.
        */
       const settle = () => {
         anchorRef.current = 0;
