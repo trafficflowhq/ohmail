@@ -1,54 +1,32 @@
 "use client";
 
 /**
- * SETTINGS → DEVICES — pair another device with this account, see what is signed in, take one
- * back.
- *
- * Two behaviors of this pane are DECISIONS, not decoration:
- *
- *  · **A stale step-up window is a ceremony, not a dead end.** Every credential verb here is
- *    step-up-gated on a five-minute factor window; `step_up_required` parks the verb and opens
- *    {@link StepUpPrompt} — the second factor, verified inline against the session the browser
- *    already holds — then re-runs the verb. The sign-in-again sentence survives only for a
- *    genuinely dead session.
- *  · **Plain browser sessions collapse into one group** ("N other web sessions", one bulk
- *    sign-out), keyed on the SERVER's `named` discriminator (a device row means a named
- *    device) and offered only where `/hello`'s flavor says the bulk route is mounted — see
- *    `collapseWeb` below for the desktop-host argument. The current session stays pinned
- *    first; named devices keep their individual rows and verbs.
- *
- * The Cloud half of the one pairing mechanism every flavor shares: mint (`POST /pair`,
- * device-pair grant, step-up gated) → ONE link, `<apiOrigin>/pair#<token>` → shown once, as a
- * QR for the ohmail app's scanner plus the raw link for typed entry → the app redeems it
- * anonymously for a bearer pair and starts reading mail. `GET /devices` below is what makes the
- * offer safe: every session is visible here and revocable here.
- *
- * Injected as a ReactNode by `CloudShell` — the `InvitesSection` seam exactly — and injected
- * only when `/hello` answers `features.pairing: true` ({@link useDevicePairing}). Unlike the
- * Invites pane there is NO compiled flavor gate: the managed service mounts the device-pair
- * ceremony too (its invite arms stay refused server-side), so the runtime capability word is
- * the whole gate, on both builds, and an older server that does not announce pairing gets no
- * pane rather than a pane whose verbs would bounce.
- *
- * ── THE LINK'S ORIGIN IS THE API'S, NOT THIS PAGE'S ───────────────────────────────────────
- *
- * The scanning device redeems at `${origin}/pair/redeem` and then lives on `${origin}/sync`,
- * so the origin in the link must be one where the API answers at the ROOT. On a self-host
- * install that IS the page origin (the reference Caddyfile routes `/hello`, `/pair*`, `/auth*`
- * at the root to the api container). On the managed deployment it is NOT: ohmail.app serves
- * the API under the `/api` rewrite only, and the address a device talks to is
- * `https://api.ohmail.app` — the single member of the compiled allow-list, imported from
- * `app/api-origin.ts` so this file cannot drift from the origin the deployment actually pins.
- * A link minted on the page origin instead would scan, negotiate against a Next 404 and refuse
- * — the wrong door discovered by whoever is holding the phone.
- *
- * The token rides the FRAGMENT (`#<token>`), never the path or query: a fragment is not sent
- * in any request, so it cannot land in an access log and never rides a `Referer`. The raw
- * token appears exactly once (this mint response); the list below carries metadata only, and
- * the server stores only a hash. Unlike the Invites pane, the raw LINK is printed beside the
- * QR deliberately: the ordinary redeemer is the ohmail app's scanner, but a device without a
- * camera path needs the link typed, and five minutes of single-use lifetime is what bounds
- * that exposure.
+ * Settings → Devices — pair another device with this account, see what is signed in, take one back. Two decisions: a
+ * stale step-up window is a ceremony, not a dead end — `step_up_required` parks the verb, opens {@link StepUpPrompt}
+ * and re-runs it, and the sign-in-again sentence survives only for a genuinely dead session; plain browser sessions
+ * collapse into one group ("N other web sessions"), keyed on the server's `named` discriminator and offered only
+ * where `/hello` says the bulk route is mounted.
+ */
+
+/**
+ * The pairing mechanism: mint (`POST /pair`, step-up gated) → ONE link `<apiOrigin>/pair#<token>` shown once as QR
+ * plus raw link → redeemed anonymously for a bearer pair; `GET /devices` is what makes the offer safe. Injected by
+ * `CloudShell` only when `features.pairing` answers true — no compiled flavor gate, because the managed service
+ * mounts the ceremony too.
+ */
+
+/**
+ * The link's origin is the API's, not this page's: the scanning device redeems at `${origin}/pair/redeem` and lives
+ * on `${origin}/sync`, so the origin must answer the API at the ROOT. On self-host that IS the page origin (the
+ * reference Caddyfile routes `/pair*` to the api container); on the managed deployment it is `https://api.ohmail.app`
+ * — the single member of the compiled allow-list, imported from `app/api-origin.ts` so this file cannot drift.
+ */
+
+/**
+ * A link minted on the page origin would scan, negotiate against a Next 404 and refuse. The token rides the FRAGMENT
+ * — never sent in a request, so no access log and no `Referer`; the raw token appears exactly once, the list carries
+ * metadata only, the server stores only a hash. The raw link is printed beside the QR deliberately: a device without
+ * a camera needs it typed, and five minutes of single-use lifetime bounds that exposure.
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -63,23 +41,17 @@ import { QrCode } from "../../shell/QrCode";
 import { StepUpPrompt } from "./StepUpPrompt";
 
 /**
- * Should this client offer the Devices pane? One gate, the server's own runtime word —
- * `features.pairing` from `/hello` — because the capability handshake exists so a client
- * learns a ceremony's presence from the descriptor, never from a 404 mid-flow. `false` while
- * the answer is pending: a nav entry appearing a beat after mount is cheaper than one that
- * appears instantly and opens onto refusals.
- *
- * ── `demo` IS THE FIRST WORD, AND IT ENDS THE QUESTION ────────────────────────────────────
- *
- * In the demo the answer is a constant `false` and NO `/hello` round trip is ever paid.
- * Before this parameter existed, a signed-in browser's `/?demo=1` paid that round trip (the
- * demo promises zero fetches), grew a Devices entry in the demo's Settings nav — the ONE
- * account pane that leaked, every sibling being demo-masked in `AppShell` — and the opened
- * pane rendered the account's REAL device list inside the fixtures UI, with a live mint verb
- * beside it. Every verb here is a cookie-authenticated credential mutation, which is exactly
- * what a fixtures world must not be able to reach. The flag is the same authoritative `demo`
- * the shell masks its other account panes by (`CloudShell` forwards its own prop), and
- * `AppShell` withholds the seam under the same flag as defense in depth.
+ * Should this client offer the Devices pane? One gate, the server's own runtime word — `features.pairing` from
+ * `/hello` — because the capability handshake exists so a client learns a ceremony's presence from the descriptor,
+ * never from a 404 mid-flow; `false` while pending. `demo` is the first word and it ends the question: a constant
+ * `false`, no `/hello` round trip.
+ */
+
+/**
+ * Before this parameter, a signed-in browser's `/?demo=1` paid that trip, grew a Devices entry in the demo's Settings
+ * nav — the one account pane that leaked — and rendered the account's REAL device list inside the fixtures UI with a
+ * live mint verb beside it; every verb here is a cookie-authenticated credential mutation, exactly what a fixtures
+ * world must not reach. The flag is the same authoritative `demo` the shell masks its other panes by.
  */
 export function useDevicePairing(demo: boolean): boolean {
   const [pairing, setPairing] = useState(false);

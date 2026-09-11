@@ -6,15 +6,12 @@ import { SettingsRow, SettingsSection } from "@ohmail/ui";
 import { account, apiConfigured } from "../../api-client";
 
 /**
- * THE SUBSCRIPTION PANE — a link, and nothing else.
- *
- * Whoever operates this service holds the plan, the balance and the payment method; this app
- * holds none of them and therefore states none of them. What it can do is take the customer to
- * the page that does, which is what the entitlements port answers with.
- *
- * The `settings` namespace and not one of its own: whole namespaces travel into the desktop
- * binary (`SHELL_MESSAGE_NAMESPACES`), so a pane's copy lives where the rest of the desktop's
- * settings copy lives. `DesktopSubscription` reads the same two keys.
+ * The subscription pane — a link, and nothing else. Whoever operates this service holds the plan,
+ * the balance and the payment method; this app holds none of them and therefore states none of
+ * them. What it can do is take the customer to the page that does, which is what the entitlements
+ * port answers with. The `settings` namespace and not one of its own: whole namespaces travel into
+ * the desktop binary (`SHELL_MESSAGE_NAMESPACES`), so a pane's copy lives where the rest of the
+ * desktop's settings copy lives — `DesktopSubscription` reads the same two keys.
  */
 export function SubscriptionSection({ url }: { url: string }) {
   const t = useTranslations("settings");
@@ -37,17 +34,13 @@ export function SubscriptionSection({ url }: { url: string }) {
 }
 
 /**
- * WHERE THIS ACCOUNT MANAGES ITS SUBSCRIPTION, or `null` for "nowhere".
- *
- * `null` is the answer for a self-hosted or unmetered install, for an account whose address is
- * not yet verified, for a server too old to know the route, and for the moment before the first
- * answer arrives. All four mean the same thing to the caller — DO NOT OFFER THE PANE — and
- * collapsing them is deliberate: the alternative is a nav entry above an empty pane, which is
- * the shape `invitesSection` and `devicesSection` are written to avoid.
- *
- * It never sets an error. A manage link nobody could fetch is not a failure a person can act on
- * from a settings screen, and the refusal they would actually meet — the lock screen — comes
- * from the port through a different door.
+ * Where this account manages its subscription, or `null` for "nowhere". `null` is the answer for
+ * a self-hosted or unmetered install, an unverified address, a server too old to know the route,
+ * and the moment before the first answer arrives — all four mean DO NOT OFFER THE PANE, and
+ * collapsing them is deliberate: the alternative is a nav entry above an empty pane, the shape
+ * `invitesSection` and `devicesSection` are written to avoid. It never sets an error: a manage link
+ * nobody could fetch is not a failure a person can act on from a settings screen, and the refusal
+ * they would actually meet — the lock screen — comes from the port through a different door.
  */
 export function useManageLink(demo: boolean): string | null {
   const [url, setUrl] = useState<string | null>(null);

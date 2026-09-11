@@ -1,45 +1,20 @@
 "use client";
 
 /**
- * SETTINGS → SECURITY. The pane that did not exist.
- *
- * Every route this calls already shipped; what was missing was any way to reach them once
- * onboarding was over. `JoinScreen` enrolled a factor and issued recovery codes exactly once,
- * and after that the API surface was unreachable from the product:
- *
- *  · **no way to see whether you still hold recovery codes.** `enrolledMethods()` offers
- *    `recovery_code` at login only while at least one UNUSED code remains, so burning the last
- *    one silently removes the option from the sign-in screen — with no message, and no page
- *    anywhere that says so.
- *  · **no way to mint new ones.** `POST /auth/2fa/recovery-codes` existed and had one caller,
- *    in the signup wizard.
- *  · **no way to re-enrol or remove TOTP** after the fact — so a lost authenticator meant a lost
- *    account for anyone who had also used up their codes.
- *
- * Injected as a ReactNode by `CloudShell`, exactly like `AccountSection`, and for the same
- * reason: this pane is `auth`, `apiConfigured()` and a step-up ceremony, none of which exist in
- * the Desktop mirror or under `?demo=1`. `SettingsView` renders the slot and knows nothing.
- *
- * REGENERATION IS DESTRUCTIVE AND SAYS SO. `recoveryCodes()` replaces the whole set, so the old
- * codes — possibly the ones in the user's password manager — stop working the moment the new
- * list appears. The confirm step exists for that, not for ceremony.
- *
- * ── AND IT IS BUILT OUT OF THE SAME PARTS AS EVERY OTHER PANE ───────────────────────────
- *
- * Reported as looking unlike the rest of Settings, and it did, for a plain reason: the markup
- * it shipped with named a private set of classes — `.set-security`, `.set-sec-block`,
- * `.set-sec-actions`, `.set-sec-warn`, `.set-sec-codes`, `.set-sec-secret`, `.set-sec-error` —
- * and **not one of them had a rule anywhere in the stylesheet**. Its controls were bare
- * `<button>` elements, so they never picked up the `.btn` capsule either. The pane was not
- * styled differently; it was unstyled, next to four panes that are.
- *
- * So it is rebuilt on what Account, Subscription and Mailboxes already use: `SettingsSection`
- * for the panel, `SettingsRow` for a fact with a control beside it, `Button` for every verb,
- * and the `acct-*` / `join-*` classes that exist. The recovery-code list reuses `.join-codes`
- * — the same grid the signup wizard prints the same codes into, which is the one place a user
- * has seen them before.
- *
- * Behaviour is untouched: same calls, same order, same states, same sentences.
+ * Settings → Security. Every route this calls already shipped; what was missing was any way to reach them after
+ * onboarding: no way to see whether you still hold recovery codes (burning the last one silently removed the option
+ * from the sign-in screen), no way to mint new ones (`POST /auth/2fa/recovery-codes` had one caller, in the signup
+ * wizard), no way to re-enrol or remove TOTP — a lost authenticator meant a lost account for anyone who had used up
+ * their codes.
+ */
+
+/**
+ * Injected as a ReactNode by `CloudShell`, like `AccountSection` and for the same reason: `auth`, `apiConfigured()`
+ * and a step-up ceremony exist neither in the Desktop mirror nor under `?demo=1`. Regeneration is destructive and
+ * says so: `recoveryCodes()` replaces the whole set, so the confirm step exists for that, not ceremony. Rebuilt on
+ * the parts every other pane uses (`SettingsSection`, `SettingsRow`, `Button`, the `.join-codes` grid the wizard
+ * prints into) — the shipped markup named a private class set with no rule anywhere in the stylesheet, so the pane
+ * was not styled differently, it was unstyled. Behaviour untouched.
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -83,25 +58,18 @@ export function SecuritySection() {
       setReadFailed(false);
     } catch (err) {
       /**
-       * ── A FAILED READ IS NOT AN EMPTY RESULT — THE COMMENT HERE WAS THE CLAIM, AND IT WAS FALSE ──────────────────
-       *
-       * It said an unreadable session "renders nothing actionable rather than something
-       * false". Both halves were wrong, and this is the worst of the five panes it was wrong
-       * in, because of what the second half offers.
-       *
-       * `enrolled` stayed `null`, `loading` was cleared in the `finally`, and the pane
-       * painted: `:139` reads **"You have no unused recovery codes. Without them, losing
-       * your authenticator locks you out."**, `:174` reads **"No authenticator app is set
-       * up."**, and `:166` — because `enrolled?.recoveryCodes` is falsy — offers
-       * **"Generate recovery codes"** rather than "Replace". That call REPLACES the set the
-       * account already holds. So a swallowed read did not merely say something false: it
-       * argued a person into destroying credentials they were relying on, using an alarming
-       * sentence about being locked out as the argument.
-       *
-       * A pane whose entire content is assertions about `enrolled` has nothing honest to
-       * render when `enrolled` was never read. So it renders the reason and stops — which is
-       * what the old comment claimed and what a read-failure guard now holds
-       * it to.
+       * A failed read is not an empty result — the comment here was the claim, and it was false. It said an
+       * unreadable session "renders nothing actionable rather than something false"; both halves were wrong, and this
+       * is the worst of the five panes it was wrong in: `enrolled` stayed `null`, the pane painted "You have no
+       * unused recovery codes… losing your authenticator locks you out.", "No authenticator app is set up.", and
+       * offered "Generate recovery codes" — a call that REPLACES the set the account already holds.
+       */
+
+      /**
+       * A swallowed read did not merely say something false: it argued a person into destroying credentials they were
+       * relying on, with an alarming sentence as the argument. A pane whose entire content is assertions about
+       * `enrolled` has nothing honest to render when `enrolled` was never read — it renders the reason and stops,
+       * which a read-failure guard now holds it to.
        */
       if (alive.current) { setReadFailed(true); setError(messageOf(err)); }
     } finally {

@@ -1,38 +1,25 @@
 "use client";
 
 /**
- * SETTINGS → INVITES — the self-host household pane: invite a user onto the server, see the
- * invites still open, take one back.
- *
- * A self-host server never opens signup to strangers; every account after the operator's
- * arrives by invitation (`docs/self-host/VPS.md` §8). This pane is that flow's whole surface:
- *
- *   mint (`POST /pair`, invite grant, step-up gated) → ONE link, `<origin>/join/invite#<token>`
- *   → shown once, as a QR for a phone camera and a copy button for everything else → the
- *   invited person opens it, sets a password, done.
- *
- * Injected as a ReactNode by `CloudShell` — the `SecuritySection` seam exactly — and injected
- * ONLY on the self-host build with `/hello` announcing `features.pairing`
- * ({@link useUserInvites}): the managed service deliberately does not mount the mint routes
- * (an invite redeem there would bypass the billing funnel), so on the managed bundle every
- * branch of this pane is compiled out and the Settings nav never grows the entry.
- *
- * ── THE LINK'S SHAPE, AND WHY THE TOKEN RIDES THE FRAGMENT ────────────────────────────────
- *
- * The token goes in the URL FRAGMENT (`#<token>`), never the path or query: a fragment is not
- * sent in the page request, so it cannot land in the server's or a proxy's access log, and it
- * never rides a `Referer`. Possession of the link IS the invitation — the operator hands it
- * over a channel they already trust, the same standing as handing over a house key — and the
- * server-side bounds do the rest: single-use, seven-day default expiry, revocable right here.
- * The raw token appears exactly once (this mint response); the list below carries metadata
- * only, and the server stores only a hash.
- *
- * ── WHAT THE PANE DELIBERATELY DOES NOT SAY ───────────────────────────────────────────────
- *
- * No role talk, no admin talk: there is no RBAC on a household server, so anyone with an
- * account here can invite (and can only see and revoke their OWN invites — the list is
- * creator-scoped in the service). The one privacy fact worth a sentence is in the lead: each
- * person gets their own account and their own mail.
+ * Settings → Invites — the self-host household pane: invite a user onto the server, see the open
+ * invites, take one back. A self-host server never opens signup to strangers; every account after
+ * the operator's arrives by invitation (`docs/self-host/VPS.md` §8): mint (`POST /pair`, invite
+ * grant, step-up gated) → ONE link `<origin>/join/invite#<token>` shown once, as QR and copy button
+ * → the invited person opens it, sets a password, done. Injected by `CloudShell` ONLY on the
+ * self-host build with `/hello` announcing `features.pairing`: the managed service deliberately
+ * does not mount the mint routes (an invite redeem there would bypass the billing funnel), so on
+ * the managed bundle every branch is compiled out.
+ */
+
+/**
+ * The token rides the FRAGMENT — never sent in the page request, so it cannot land in an access
+ * log and never rides a `Referer`. Possession of the link IS the invitation — handed over a
+ * channel the operator already trusts, the standing of a house key — and the server-side bounds do
+ * the rest: single-use, seven-day default expiry, revocable right here; the raw token appears
+ * exactly once, the list carries metadata only, the server stores only a hash. No role talk, no
+ * admin talk: there is no RBAC on a household server — anyone with an account can invite, and sees
+ * and revokes only their OWN invites (creator-scoped in the service). The one privacy fact worth a
+ * sentence is in the lead: each person gets their own account and their own mail.
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -44,17 +31,12 @@ import { QrCode } from "../../shell/QrCode";
 
 /**
  * Should this client offer the Invites pane at all? Two gates, one per kind of truth:
- *
- *  · `SELF_HOST_BUILD` is COMPILED (`app/hello.ts`) — on the managed bundle the effect body is
- *    a constant `return`, so no `/hello` round-trip is ever paid and the answer is `false`
- *    forever, structurally.
- *  · `features.pairing` is the SERVER's runtime word — the capability handshake exists so a
- *    client learns a ceremony's absence from the descriptor, never from a 404 mid-flow. An
- *    older or oddly-composed server that does not announce pairing gets no pane rather than a
- *    pane whose every verb would bounce.
- *
- * `false` while the answer is pending: the nav entry appearing a beat after mount is cheaper
- * than an entry that appears instantly and opens onto refusals.
+ * `SELF_HOST_BUILD` is COMPILED (`app/hello.ts`) — on the managed bundle the effect body is a
+ * constant `return`, no `/hello` round trip, `false` for ever, structurally; `features.pairing` is
+ * the SERVER's runtime word — the capability handshake exists so a client learns a ceremony's
+ * absence from the descriptor, never from a 404 mid-flow, and an older server that does not
+ * announce pairing gets no pane rather than one whose every verb would bounce. `false` while
+ * pending: a nav entry appearing a beat after mount is cheaper than one that opens onto refusals.
  */
 export function useUserInvites(): boolean {
   const [pairing, setPairing] = useState(false);
