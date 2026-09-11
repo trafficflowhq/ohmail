@@ -539,6 +539,33 @@ export interface Sidecar {
    */
   wake(): Promise<void>;
   /**
+   * HAND EVERY MAILBOX BACK — the other half of {@link wake}, and only a phone has a caller.
+   *
+   * One call for the whole install, because the event is one event: the app is leaving the
+   * foreground on a platform that will not let it keep running. Per mailbox it is
+   * {@link LocalMailboxRuntime.handBack}, whose header carries the argument for why a hand-back
+   * removes the CLAIM and writes no row.
+   *
+   * Answers one entry per mailbox with that mailbox's own outcome, rather than a single
+   * true/false: "the claim was removed" and "the search was refused" are different facts about
+   * different mailboxes, and a caller that renders "handed back" must not do so for a mailbox
+   * whose claim may still be standing. `null` is that state.
+   *
+   * Nothing on the desktop calls this. A desktop that is not running is a machine somebody
+   * switched off, and the lapse is the right mechanism for it; a phone leaves the foreground many
+   * times an hour and the lapse would hold a mailbox hostage for the staleness window each time.
+   */
+  handBack(): Promise<readonly { mailboxId: string; released: number | null }[]>;
+  /**
+   * TAKE EVERY MAILBOX BACK IF NOBODY ELSE HAS IT — {@link handBack}'s other half, and only a
+   * phone has a caller. Per mailbox it is {@link LocalMailboxRuntime.resume}: the hand-back is
+   * cleared and one gated cycle runs, so a free mailbox is claimed and a held one is not.
+   *
+   * Best-effort and never throws, for {@link wake}'s reason. What it produced is read back from
+   * {@link organizerStates}, which is the fact the app renders.
+   */
+  resume(): Promise<void>;
+  /**
    * THE DESKTOP-HOST DOOR — `Request → Response` over `desktopHostRoutes`, the surface a paired
    * phone reaches. Present IFF host mode is armed; a disarmed install has no second door at all,
    * not a refusing one. It serves the same engine, the same store and the same fresh-deps
@@ -3657,6 +3684,21 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
        * words. The values were computed and dropped. */
       const takeoverRequested = mb.takeoverAuthorizedAt !== null;
       /**
+       * THIS INSTALL HAS HANDED THE MAILBOX BACK AND HAS NOT BEEN ASKED TO RESUME.
+       *
+       * In memory only, and set by nothing but {@link LocalMailboxRuntime.handBack}. Without it the
+       * hand-back was a release the very next poll undid: the timer is still armed, the row still
+       * says organizer, and the gate claimed the mailbox again — so an iPhone that was suspended a
+       * second later held a live claim while running nothing, which is the one state the hand-back
+       * exists to prevent. `handBack` clears the timer AND arms this, because a timer is not the
+       * only way into the gate (a resync, a wake, a caller's `syncUntilQuiet`).
+       *
+       * NOT a second `priorStandDown`. That memory says another install holds the mailbox and needs
+       * a press to clear; this one says "nobody is running here at the moment" and is cleared by
+       * `resume()` alone, with no press and no row write on either side.
+       */
+      let handedBack = false;
+      /**
        * THE STAND-DOWN THIS PROCESS REMEMBERS — and it is a `let` because the process now OUTLIVES
        * the stand-down that sets it.
        *
@@ -4420,6 +4462,21 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
          * arm exists to wait for, and the stamp is re-read above precisely so a press that landed
          * after assembly is seen.
          */
+        /* ══ HANDED BACK — AND THE REFUSAL IS AHEAD OF THE LEASE READ ═══════════════════════
+         *
+         * `runLeaseGate` does not merely report: on an empty `ohmail/_meta` it takes the first arm
+         * and APPENDS this install's claim, so asking it at all is already taking the mailbox. A
+         * check placed after it would re-claim the very mailbox this install has just given back —
+         * which is the defect this arm closes, measured as a poll landing behind a hand-back.
+         *
+         * It is ABOVE the reader arm because it is not about roles: the row still says organizer
+         * and is meant to, so `resume()` can promote with no press. `notePeekedHolder` is skipped
+         * too — a phone about to be suspended has no pane to feed and no reason to spend a read.
+         */
+        if (handedBack) {
+          organizer = { ...organizer, organizing: false };
+          return false;
+        }
         if (!rowRead || (rowRole === "reader" && !takeoverAuthorized)) {
           if (!rowRead) {
             log("organizer_row_unreadable", {
@@ -6425,6 +6482,75 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
             log("adapter_close_failed", { err });
           }
         },
+        /**
+         * THE CLAIM GOES BACK; THE ROW DOES NOT MOVE. See `LocalMailboxRuntime.handBack`.
+         *
+         * Inside `serialize`, so it cannot land between a gate's claim and the drain that claim
+         * authorises — the window `detach()` documents as the most likely place for a teardown to
+         * arrive. `releaseOwnClaim` is the SAME function the detach arm and the release route call:
+         * this adds a caller, not a second way to give a claim up.
+         *
+         * `organizing` goes false whatever the release answered, and that is deliberate rather
+         * than sloppy. `drain` decides organizer-only work from that field, and the caller of this
+         * is an app about to be suspended: a state saying "organizing" over a process that is not
+         * running is the two-organizers reading. What the ANSWER decides is whether the caller may
+         * say the mailbox was handed back — `null` means it may not.
+         */
+        async handBack() {
+          return serialize(async () => {
+            if (stopped) return 0;
+            const released = await releaseOwnClaim(
+              adapter, installId, mb.id, leaseNonce, log,
+              "this install was asked to hand the mailbox back and the claim could not be "
+                + "removed; it ages out of ohmail/_meta on its own and another install takes the "
+                + "mailbox then",
+            );
+            if (released !== null && released > 0) {
+              log("organizer_claim_handed_back", {
+                mailboxId: mb.id,
+                claims: released,
+                reason: "the app is leaving the foreground and cannot organize while it is not "
+                  + "running, so the claim is given back rather than left to age out. The row is "
+                  + "untouched: this install is still the organizer of record and the next gated "
+                  + "cycle claims the mailbox again unless another install has taken it",
+              });
+            }
+            /* THE NONCE GOES WITH THE CLAIM, and what it buys is the STAND-DOWN'S OWN READING.
+               `ownClaimTerm` answers `our_last_nonce` while this field still names a claim we
+               armed and `no_armed_nonce` once it is null — and after a hand-back the second is the
+               true one. It is also what a fresh launch holds, so a resume enters the gate in a
+               launch's state. Removing this line reddens no cell: the next successful gate arms
+               its own nonce over it, so the claim here is the log's truthfulness, not a defect. */
+            leaseNonce = null;
+            organizer = { organizing: false, reason: null, heldBy: null, unreadableSince: null };
+            /* THE TIMER GOES WITH THE CLAIM, and the flag closes the doors the timer is not.
+               Releasing alone left the poll armed: it fired, the gate read a row that still says
+               organizer, and the mailbox was claimed again — by an install that was about to be
+               suspended. See {@link handedBack}. */
+            handedBack = true;
+            if (timer) { clearTimeout(timer); timer = null; }
+            return released;
+          });
+        },
+        /**
+         * TAKE THE MAILBOX BACK IF NOBODY ELSE HAS IT — the other half of `handBack`.
+         *
+         * It clears the hand-back and runs ONE forced cycle, which is the ordinary gated cycle: the
+         * gate reads `ohmail/_meta` and either claims a free mailbox or stands this install down
+         * against a holder. No press, no row write, and no way to displace anybody — a resume that
+         * could take a mailbox from another machine would be the press without the person.
+         *
+         * `force` for the resync route's reason: this is somebody opening the app, so the re-dial
+         * backoff wait must not hold the first cycle behind it. The cycle re-arms the poll timer on
+         * its way out, which is what `handBack` cleared.
+         *
+         * Answers how many cycles ran — `0` means the cycle could not be served, and the caller
+         * must not report the mailbox as taken back.
+         */
+        async resume() {
+          handedBack = false;
+          return syncUntilQuiet(undefined, { force: true });
+        },
       };
       runtimes.add(rt);
       return rt;
@@ -7891,6 +8017,24 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
          logs its own failure and a caller has nothing to do with them. */
       wake: async (): Promise<void> => {
         await Promise.allSettled(runtimes.all().map((rt) => rt.redial()));
+      },
+      /* SETTLED AND REPORTED, which is where this differs from `wake`. A wake's results are
+         dropped because each dial logs its own failure and a caller has nothing to do with them;
+         a hand-back's outcome decides what the app may SAY, so a rejection becomes this
+         mailbox's `null` — "could not look" — rather than a missing entry. */
+      handBack: async () => {
+        const runs = runtimes.all();
+        const settled = await Promise.allSettled(runs.map((rt) => rt.handBack()));
+        return settled.map((r, i) => ({
+          mailboxId: runs[i]!.mailboxId,
+          released: r.status === "fulfilled" ? r.value : null,
+        }));
+      },
+      /* Every mailbox, settled, and the results dropped: each cycle logs its own failure and the
+         caller's next read of `organizerStates()` is the answer that matters. A refusal here must
+         not stop the other mailboxes resuming. */
+      resume: async (): Promise<void> => {
+        await Promise.allSettled(runtimes.all().map((rt) => rt.resume()));
       },
       credentialState: async () => (await seedRuntime()?.credentialState()) ?? "absent",
       forgetStoredLogin: async () => (await seedRuntime()?.forgetStoredLogin()) ?? false,

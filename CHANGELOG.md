@@ -18,6 +18,19 @@ See [Status](README.md#status--read-this-first).
 The sentence above the list of places that can organize your mailbox said "One question, three
 answers" while the list offers four. It names four now, in both languages.
 
+### Organizing on a phone, when the app is not in front of you
+
+On Android the phone keeps organizing while its notification is shown; on iPhone it hands the
+mailbox back when you leave the app and picks it up again when you return. The notification names
+the mailbox it is organizing, and it is also how you stop — its "Stop organizing" action, or
+swiping it away. If your battery saver is on, ohmail organizes while it is open instead, and says
+so once. The notification only stands while the organizing is really happening: if another machine
+takes the mailbox, or the phone stops being able to do the work, it comes down.
+
+Coming back asks the mailbox who holds it: free, and the phone takes it again; held by your
+computer or by ohmail Cloud, and the phone reads it instead. Nothing is taken from a machine that
+has it.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See

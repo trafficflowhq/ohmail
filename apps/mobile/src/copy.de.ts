@@ -656,6 +656,16 @@ export const DE: Deck = {
     + "es: Sie liegt in den Dokumenten dieser App, und die Cloud- und Computer-Backups des "
     + "Telefons schließen sie ein. Auf Android ist sie aus beiden ausgenommen.",
 
+  /* --------------------------------------------- organizing in the background */
+
+  stateOrganizing: "Organisiert",
+  notifBody: (address: string): string => `Organisiert ${address}.`,
+  notifStop: "Nicht mehr organisieren",
+  organizerRestricted:
+    "Der Energiesparmodus lässt ohmail auf diesem Telefon nicht im Hintergrund organisieren. "
+    + "Es organisiert, solange die App offen ist, und gibt das Postfach zurück, wenn du sie "
+    + "verlässt.",
+
   /* ------------------------------------------------------------- new mail */
 
   wake: "Neue Mail",

@@ -198,6 +198,35 @@ export interface PhoneEngine {
    * two installs organize one mailbox.
    */
   wake(): Promise<void>;
+  /**
+   * HAND THE MAILBOX BACK — call this when the app leaves the foreground and cannot keep running.
+   *
+   * The claim is removed from `ohmail/_meta`; the row is not touched. So a desktop or Cloud asked
+   * to take the mailbox while this phone is suspended gets it honestly and immediately, and the
+   * phone claims it back on the next gated cycle after it returns — unless somebody took it, in
+   * which case the same gate stands this install down. Neither half needs a press.
+   *
+   * One entry per mailbox: a count of claims removed, `0` for "none of ours were there", `null`
+   * for "could not look", where this install may still hold the claim and nothing may report the
+   * mailbox as handed back.
+   *
+   * NOT {@link stop}. Stop closes the store and ends the engine, and it leaves the claim to age
+   * out — twelve minutes in which a person's other machine refuses the mailbox it was just told
+   * to take. This is the act "it hands the mailbox back when you leave the app" names.
+   */
+  handBack(): Promise<readonly { mailboxId: string; released: number | null }[]>;
+  /**
+   * TAKE IT BACK — call this when the app returns to the foreground after a {@link handBack}.
+   *
+   * It asks the mailbox who holds it: free, and this install claims it again; held by a computer or
+   * by Cloud, and this install stands down and reads instead. Neither needs a press, and a resume
+   * can never take a mailbox from a machine that has it.
+   *
+   * NOT {@link wake}, which restores a dead SOCKET and deliberately runs no cycle. A hand-back left
+   * no socket problem to fix — it gave up a claim — so a wake would find nothing to do and the
+   * mailbox would stay unclaimed until the next poll tick, which `handBack` has cleared.
+   */
+  resume(): Promise<void>;
   /** What each mailbox reports — the row's answer, not the gate's optimism. */
   runtimes(): { organizer: Record<string, OrganizerState>; connection: Record<string, MailboxConnectionState> };
   /** Flush and release. */
@@ -566,6 +595,8 @@ export async function startPhoneEngine(deps: PhoneEngineDeps): Promise<PhoneEngi
     handle: (req) => sidecar.handle(req),
     sessionToken: sidecar.sessionToken,
     wake: () => sidecar.wake(),
+    handBack: () => sidecar.handBack(),
+    resume: () => sidecar.resume(),
     runtimes: () => ({ organizer: sidecar.organizerStates(), connection: sidecar.connectionStates() }),
     stop: () => sidecar.stop(),
   };

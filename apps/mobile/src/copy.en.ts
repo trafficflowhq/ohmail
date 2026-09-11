@@ -1092,6 +1092,51 @@ const TABLE = {
     + "backup. On iPhone and iPad the copied mail is: it lives in this app's documents, which the "
     + "phone's cloud and computer backups include. On Android it is excluded from both.",
 
+  /* --------------------------------------------- organizing in the background */
+
+  /**
+   * ═══ THE ANDROID NOTIFICATION, AND THE ONE SENTENCE IT HAS TO KEEP TRUE ═════════════════
+   *
+   * A standalone phone is the organizer of its mailbox, and Android freezes an app it has put in
+   * the background. A foreground service is what keeps this app running there, and its
+   * notification is not a courtesy: it is the only surface saying a mailbox is being organized,
+   * and dismissing it is how a person ends that. The fourth door promises exactly this —
+   * *"It organizes while its notification is shown. Dismiss the notification to stop."*
+   *
+   * All three strings are read from this deck at the moment the service starts, and handed to the
+   * platform. The alternative — Android string resources — would be a second copy of three
+   * sentences in two languages, and could not hold the ADDRESS, which is not copy.
+   */
+
+  /** The channel's name in system notification settings, and nothing else. */
+  stateOrganizing: "Organizing",
+  /**
+   * The notification's body. The address comes from the mailbox row, and it is the whole point:
+   * a person with two phones needs to know WHICH mailbox this one is holding.
+   *
+   * It does NOT say "tap to stop". A tap opens the app — the platform's convention for every
+   * notification anybody has ever touched — and a body promising otherwise would fire the stop
+   * from the open-the-app reflex. The stop is the action button beside it.
+   */
+  notifBody: (address: string): string => `Organizing ${address}.`,
+  /** The one action. The words of the desktop's own stop verb, so the two cannot drift. */
+  notifStop: "Stop organizing",
+  /**
+   * BATTERY SAVER, SAID ONCE.
+   *
+   * Under battery saver — or a per-app background restriction somebody set — Android may kill the
+   * service at any moment with nothing anywhere saying why, so this app does not start one: it
+   * hands the mailbox back and organizes while it is open, which is the iPhone behaviour and is
+   * true on any phone. The sentence names the setting because that is the thing a person can
+   * change, and it does not ask them to change it.
+   *
+   * Shown once per launch rather than at every background: somebody who has battery saver on has
+   * it on all day, and a sentence repeated hourly is a sentence nobody reads.
+   */
+  organizerRestricted:
+    "Battery saver does not let ohmail organize in the background on this phone. It organizes "
+    + "while the app is open, and hands the mailbox back when you leave.",
+
   /* ------------------------------------------------------------- new mail */
 
   wake: "New mail",

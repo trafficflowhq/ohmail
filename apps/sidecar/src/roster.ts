@@ -253,6 +253,35 @@ export interface LocalMailboxRuntime {
    * return without doing anything.
    */
   redial(): Promise<void>;
+  /**
+   * GIVE THE CLAIM BACK AND STAY THE ORGANIZER OF RECORD — the phone's leave-the-app hand-back.
+   *
+   * Neither of the two acts that already exist. `detach()` closes the login and leaves the claim
+   * standing in `ohmail/_meta` to age out, so a desktop asked to take the mailbox stands itself
+   * down against a claim nobody is honouring for the length of the staleness window. The release
+   * ROUTE removes the claim and writes the row to `reader`, and a reader never re-enters the gate
+   * without a human press — which is right for "stop organizing here" and wrong for an iPhone
+   * that is being put in a pocket.
+   *
+   * So this removes the CLAIM and writes no row: the next gated cycle reads the lease and either
+   * claims it back (nobody took it) or stands down (somebody did). That is what makes the
+   * resume automatic and what keeps it from ever displacing whoever took the mailbox meanwhile.
+   *
+   * Answers {@link releaseMailboxClaim}'s own three outcomes, unflattened: a count of this
+   * install's records removed, `0` for a complete read that found none of ours, and `null` for
+   * "could not look" — where this install may still hold the claim and the caller must not say
+   * the mailbox was handed back.
+   */
+  handBack(): Promise<number | null>;
+  /**
+   * TAKE IT BACK IF NOBODY ELSE HAS IT — clears the hand-back and runs one gated cycle.
+   *
+   * The gate claims a free mailbox and stands this install down against a holder, so a resume can
+   * never displace anybody: that is the press's job and this is not a press. Answers how many
+   * cycles ran; `0` is a cycle that could not be served, and nothing may then report the mailbox
+   * as taken back.
+   */
+  resume(): Promise<number>;
   /** Can this install open this mailbox right now? Read fresh from the store on every call. */
   credentialState(): Promise<CredentialState>;
   /** Forget this mailbox's sealed password. Answers whether there was one to forget. */
