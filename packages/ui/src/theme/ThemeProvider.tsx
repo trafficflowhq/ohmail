@@ -286,10 +286,14 @@ export function ThemeProvider({
   const persistence: ThemePersistence =
     storage !== undefined && storageKey !== null ? "door" : "unpersisted";
   /**
-   * The door through a ref, so which door a MOUNTED provider uses is not a dependency that can
-   * change under it: a door is a capability, not data, and swapping one mid-session is not a
-   * supported act. This also keeps every effect's dependency list exactly what it was before the
-   * door existed.
+   * THE ONE GATE. Every read and every write below goes through this ref and nothing else checks
+   * `storageKey === null` again — six such checks stood beside it, and a second mechanism covering
+   * the first is a pair of guards neither of which can be watched fail (measured: mutating this
+   * line left every case green).
+   *
+   * A ref rather than a dependency because a door is a CAPABILITY, not data: which door a mounted
+   * provider uses cannot change under it, and this keeps every effect's dependency list exactly
+   * what it was before the door existed.
    */
   const doorRef = useRef<StorageDoor>(NO_DOOR);
   doorRef.current = persistence === "door" && storage ? storage : NO_DOOR;
@@ -325,19 +329,16 @@ export function ThemeProvider({
     if (!faces) return; // the axis is not active on this host — leave storage and state alone
     setDevicePin((current) => {
       if (current !== undefined) return current; // a click beat us to it — user wins
-      if (storageKey === null) return null; // persistence disabled (tests, showcases)
       const raw = doorRef.current.get(faceStorageKey);
       return isFace(raw) ? raw : null;
     });
     setAccountFaceState((current) => {
       if (current !== null) return current; // a live adoption beat the mirror — it wins
-      if (storageKey === null) return null;
       const raw = doorRef.current.get(accountFaceStorageKey);
       return isFace(raw) ? raw : null;
     });
     setLayoutPin((current) => {
       if (current !== undefined) return current; // a click beat us to it — user wins
-      if (storageKey === null) return null;
       const raw = doorRef.current.get(layoutStorageKey);
       return isLayout(raw) ? raw : null;
     });
@@ -400,7 +401,6 @@ export function ThemeProvider({
   const setFace = useCallback(
     (next: FaceName | null) => {
       setDevicePin(next);
-      if (storageKey === null) return;
       // The in-memory choice applies either way; "lost" is what the host's notice is for.
       if (next === null) doorRef.current.remove(faceStorageKey);
       else doorRef.current.set(faceStorageKey, next);
@@ -411,7 +411,6 @@ export function ThemeProvider({
   const setLayout = useCallback(
     (next: LayoutName | null) => {
       setLayoutPin(next);
-      if (storageKey === null) return;
       if (next === null) doorRef.current.remove(layoutStorageKey);
       else doorRef.current.set(layoutStorageKey, next);
     },
@@ -421,7 +420,6 @@ export function ThemeProvider({
   const adoptAccountFace = useCallback(
     (next: FaceName | null) => {
       setAccountFaceState(next);
-      if (storageKey === null) return;
       // A lost mirror write means the NEXT boot's init script cannot stamp the account's face
       // pre-paint; the account answer itself lives on the server and is re-adopted then.
       if (next === null) doorRef.current.remove(accountFaceStorageKey);
