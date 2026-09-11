@@ -4,73 +4,26 @@ import type { NormalizedMessage, Destination } from "./types.js";
 export type RuleKind = "sender" | "domain" | "header";
 
 /**
- * WHAT A RULE SAYS ABOUT THE CONSENT GATE — modelled, not inferred at the point of use.
- *
- * `deny` is the user holding a sender AT the gate (`ohmail/Screener`), putting them behind it
- * (`ohmail/Screened`), or quarantining them. `allow` is the user letting them through to a real
- * folder. The distinction only ever decides a TIE between two rules of equal numeric priority —
- * see {@link compareRules} — and it exists as a field because a review found precisely
- * that a broad `allow` could beat the user's sender-specific "no" on nothing but array position.
- *
- * ── WHY IT IS ON THE TYPE AND NOT A `destination === "ohmail/Screened"` TEST INSIDE THE
- *    EVALUATOR ────────────────────────────────────────────────────────────────────────────────
- *
- * A folder name is a routing target; whether the user was saying yes or no is a separate claim
- * about their intent, and the evaluator must not be the place those two are conflated. Today the
- * two happen to be a total function of each other ({@link effectForDestination}) because the only
- * writers — `screener-service.ts` `decide`, `rules-service.ts` create, `learning-service.ts`,
- * `hey-migration.ts` — can express intent no other way: `rules` has no `effect` column. So the
- * mapping is applied ONCE, at the adapter boundary (`drizzle-repo.ts#listRules`), and
- * {@link evaluateRules} reads the field. When an `effect` column lands, the mapper is the only
- * line that changes and no consent logic moves.
+ * What a rule says about the consent gate — modelled, not inferred at the point of use. `deny` is
+ * the user holding a sender at the gate, putting them behind it, or quarantining them; `allow`
+ * lets them through. The distinction only decides a TIE between rules of equal priority ({@link
+ * compareRules}), and it is a field because a broad `allow` once beat the user's sender-specific
+ * "no" on nothing but array position. On the type and not a destination test in the evaluator: a
+ * folder name is a routing target and intent is a separate claim. Today the two are a total
+ * function of each other ({@link effectForDestination}), mapped ONCE at the adapter boundary;
+ * when an `effect` column lands, the mapper is the only line that changes.
  */
 export type RuleEffect = "allow" | "deny";
 
 /**
- * The authentication evidence the caller holds about the CLAIMED author of this message.
- *
- * ── DEMOTE-ONLY: THE UNION IS NOW FOUR MEMBERS, AND ONE OF THEM IS
- *    READ ──────────────────────────────────────────────────────────────────────────────────
- *
- * Exactly one member changes a routing answer: `"fail"`. Everything else — including both
- * shapes of "I have no evidence" — routes a message EXACTLY as it routed before this rule
- * existed. That asymmetry is the whole design and it is not stylistic:
- *
- *  · **Absent evidence must never select the destructive branch.** The worker's kickstart
- *    re-route pass only reroutes a Screener row when {@link evaluateRules} does *not* answer
- *    Screener. Gate the known-sender match on a POSITIVE verdict and every row of a
- *    large backlog answers Screener, `continue` fires, nothing reroutes, and the measured
- *    empty-Ohbox condition returns (most rows screened, `ohmail/Receipts` = 0). So there is no
- *    `if (auth !== "pass") screen` in this file and there must never be one.
- *    **Authentication may DEMOTE a message it has evidence against. It may never be REQUIRED
- *    before an identity the user has already consented to is honoured.**
- *  · The field stays required so that every call site NAMES its evidence in a diff. A default
- *    would select a branch silently, which is the shape of a bug that has already shipped in this
- *    repository once.
- *
- * The members, and why two of them mean "no evidence" rather than one:
- *
- *  · `"unauthenticated"` — the caller DID NOT LOOK. Every earlier call site states this
- *    (`pipeline.ts`, `kickstart.ts`, `sensitive-rescreen.ts`), and it is what the column's
- *    `NULL` resolves to. Permissive.
- *  · `"unavailable"` — the caller LOOKED and found nothing it is entitled to believe: no
- *    `Authentication-Results` at all, or one that no trusted position wrote. Permissive, and
- *    distinguishable from the above only so that a stored verdict says which of the two happened.
- *  · `"pass"` — a trusted position reported an ALIGNED pass. **Routing does not read this**, by
- *    the rule above; it exists to be persisted and shown.
- *  · `"fail"` — a trusted position reported an explicit failure for the claimed author. This is
- *    evidence AGAINST the sender, not the absence of evidence for them, so it is the one member
- *    that moves a message — and it moves it in one direction only, towards the Screener.
- *
- * A verdict is only ever produced by {@link authVerdictFromHeaders}, which reads
- * `Authentication-Results` **only** from an authserv-id the account's own provider is known to
- * sign with. `"aligned"`, `"signed_unaligned"` and `"unsigned"` are deliberately still NOT
- * members: those are the vocabulary of the offline DKIM check
- * (`verifyAlignedDkim`), which is not implemented here.
- *
- * A compile-time fixture pins the field as required, and it has a tsconfig of its own whose only
- * job is to compile that claim — a type-level guard sitting in a `test/` directory is not compiled
- * by anything in this repository, so it would silently not guard.
+ * The authentication evidence about the CLAIMED author. Demote-only: exactly one member changes
+ * routing — `"fail"`. Absent evidence must never select the destructive branch: gating the
+ * known-sender match on a positive verdict makes every row of a large backlog answer Screener —
+ * so there is no `auth !== "pass"` here and there must never be one. Authentication may DEMOTE on
+ * evidence against; it may never be REQUIRED before a consented identity is honoured. Members:
+ * `"unauthenticated"` — the caller did not look (NULL resolves here); `"unavailable"` — looked,
+ * found nothing it may believe; `"pass"` — persisted and shown, never read by routing; `"fail"` —
+ * evidence AGAINST, toward the Screener only. A compile-time fixture pins the field required.
  */
 export type AuthVerdict = "unauthenticated" | "unavailable" | "pass" | "fail";
 
@@ -84,82 +37,36 @@ export interface Rule {
   priority: number;
   /**
    * Where the rule came from — and, since the `people_only` demotion, which HALF of consent it
-   * records. Consent has two axes: ADMISSION (this sender is past the Screener gate) and PLACEMENT
-   * (which allow-side pile their mail lands in).
-   *
-   *  · `seeded-from-sent` — the onboarding seed: the user wrote to this address, so the rule
-   *    records the ADMISSION they gave by writing to a *person*. Its `destination: "INBOX"` was a
-   *    bulk default WE chose (`consent-seed.ts#confirmSeed`), never a placement the user decided —
-   *    so under `people_only` an automated-shaped message from a seeded sender may be demoted to
-   *    Reads/Receipts. Admission is honoured; the placement we inferred is refined.
-   *  · `promoted` — a Screener decision the user pressed. Admission is explicit; the pile it named
-   *    is also demotable-past, because the button admits a *sender* and the same header refinement
-   *    applies (the ruling groups it with `seeded-from-sent`).
-   *  · `manual` and `migrated` — a rule the user AUTHORED (here, or elsewhere and imported). Both
-   *    axes are the user's own decision, so the demotion never touches them: a `manual`
-   *    sender→INBOX rule is absolute, and writing one is how the "keep in my Ohbox" affordance ends
-   *    the demotion for a sender for good.
+   * records: ADMISSION (past the gate) and PLACEMENT (which pile). `seeded-from-sent` — the
+   * onboarding seed: the user wrote to this address, so admission is theirs, and `destination:
+   * "INBOX"` was a bulk default WE chose — under `people_only` an automated-shaped message may be
+   * demoted to Reads/Receipts; admission honoured, the inferred placement refined. `promoted` — a
+   * Screener press: explicit admission, demotable placement, grouped with the seed by the ruling.
+   * `manual` and `migrated` — the user AUTHORED the rule, both axes theirs, and the demotion
+   * never touches them: a `manual` sender→INBOX rule is absolute.
    */
   provenance: "manual" | "migrated" | "promoted" | "seeded-from-sent";
   enabled: boolean;
   /**
-   * A SECOND TERM, AND IT IS A CONJUNCTION — `null` for every rule that does not carry one.
-   *
-   * One sender sends two kinds of mail. `info@` at a small host sends the invoice AND the nightly
-   * `[NinjaFirewall]` alert, and until this a sender rule could only say "all of it goes to Reads",
-   * which files the invoice with the alerts. This is the other half of what the user means: *from
-   * this address AND with this in the subject*.
-   *
-   * ── IT MAY ONLY EVER NARROW ────────────────────────────────────────────────────────────────
-   *
-   * {@link matches} reads it as an EXTRA term the message must satisfy, never as an alternative
-   * one, and it reads it for EVERY kind rather than only for `sender`. Both halves of that are
-   * deliberate:
-   *
-   *  · A present term can only make a rule fire LESS often than it did. So no value of this field
-   *    can admit a sender the same rule without it would have refused, which is what makes adding
-   *    the column safe next to the consent gate. There is no branch below where a term WIDENS a
-   *    match, and there must never be one.
-   *  · `RulesService` only accepts a term on `kind: "sender"`, but `kind` reaches the evaluator
-   *    through an unvalidated `as` cast off a bare `text` column (see {@link rank}), so a
-   *    `domain`/`header` row carrying a term IS representable. Honouring it there is the
-   *    fail-closed reading: the alternative — ignore the term for kinds the API does not offer —
-   *    would make such a row match EVERY subject while its own data says it is specific. A stored
-   *    term is always applied.
-   *
-   * `null` and `""` both mean "no term" here, and the database forbids the second
-   * (`rules_subject_contains_nonempty`, mail 0050) so that absence has ONE representation at rest.
-   * This function still treats an empty or whitespace-only string as absent rather than as a
-   * substring test that always passes, because a constraint added by a migration is not a
-   * guarantee about a value that arrives from somewhere else.
-   *
-   * REQUIRED on the type, not optional. `drizzle-repo.ts#listRules` is the only production
-   * construction site and a named field cannot be forgotten there; a `?` would let a future
-   * producer drop the term silently, which defeats the feature at exactly the moment somebody
-   * reaches for it.
+   * A second term, and it is a CONJUNCTION — `null` for every rule without one: from this address
+   * AND with this in the subject. It may only ever NARROW: {@link matches} reads it as an extra
+   * term for EVERY kind, so no value can admit a sender the bare rule would refuse — and a
+   * `domain`/`header` row carrying a term (representable, since `kind` arrives through an `as`
+   * cast) is honoured rather than ignored, the fail-closed reading. `null` and `""` both mean no
+   * term; the database forbids the second (mail 0050), and this still handles it — a CHECK
+   * constrains rows, not values from elsewhere. REQUIRED on the type: a `?` would let a future
+   * producer drop the term silently.
    */
   subjectContains: string | null;
   /**
-   * A THIRD TERM, SAME CONTRACT AS {@link subjectContains} ONE FIELD DEEPER — `null` for every
-   * rule that does not carry one (mail 0052).
-   *
-   * Some senders write the SAME subject on every message — "Notification", "Alert" — and put the
-   * distinguishing text in the body, which defeats a subject term entirely. This is the identical
-   * conjunction against the message's canonical plain text: *from this address AND with this in
-   * the message text*.
-   *
-   * Everything `subjectContains` documents holds here verbatim: {@link matches} reads it as an
-   * EXTRA term above the kind switch and for EVERY kind, so a present term can only make a rule
-   * fire LESS often and no value of this field can admit a sender; a stored term is applied even
-   * on kinds `RulesService` refuses to write it for; `null` and `""` both mean "no term" and the
-   * database forbids the second (`rules_body_contains_nonempty`); and it is REQUIRED on the type
-   * for the same reason — a `?` would let a future producer drop the term silently.
-   *
-   * The haystack is {@link NormalizedMessage.textBody}: mailparser's text part, or its html→text
-   * derivation for html-only mail, and the byte-identical string `message_bodies.text` stores —
-   * so arrival and the retroactive passes consult the SAME text. A message whose body is not on
-   * disk reaches the passes as `""`, which satisfies no term: fail-closed for a narrowing
-   * conjunct, the rule declines to fire and the mail stays put.
+   * A third term, same contract as {@link subjectContains} one field deeper (mail 0052). Some
+   * senders write the SAME subject on every message and put the distinguishing text in the body;
+   * this is the identical conjunction against the canonical plain text. Everything
+   * `subjectContains` documents holds verbatim: an extra term for every kind, only narrowing,
+   * applied even on kinds `RulesService` refuses to write it for, `null` and `""` both absent,
+   * REQUIRED on the type. The haystack is {@link NormalizedMessage.textBody} — the byte-identical
+   * string `message_bodies.text` stores, so arrival and the retro passes consult the SAME text; a
+   * body not on disk reads as `""`, satisfying no term: fail-closed.
    */
   bodyContains: string | null;
 }
@@ -171,24 +78,14 @@ export interface Rule {
  * others; a named required field cannot be forgotten and cannot be defaulted.
  */
 /**
- * HOW HARD TO KEEP THE OHBOX RELEVANT — the per-account posture that turns the bulk-mail demotion
- * on. It is about RELEVANCE, not humans-versus-machines: the Ohbox is for real people AND for
- * genuinely relevant service mail (a receipt belongs in Receipts, a security alert can stay in the
- * Ohbox), and only the obvious irrelevant bulk is filed out. Two states, and the delicate one is
- * what it does NOT touch:
- *
- *  · `people_and_replied` — today's behaviour, and the day-one/absent-config value. A sender the
- *    account has ever admitted (a seeded/promoted allow rule) delivers ALL of their mail to the
- *    Ohbox, promotional bulk included. NULL `account_settings.ohbox_policy` resolves here, so
- *    shipping this demotes nobody until they choose otherwise. (The two literals are internal
- *    identifiers; the user-facing name is framed around relevance, never "only real people".)
- *  · `people_only` — the RELEVANCE-FOCUSED posture: obvious BULK mail (a newsletter/promotion, by
- *    its List-* / Feedback-ID markers) from an INFERRED-admission sender (`seeded-from-sent` or
- *    `promoted`) is filed to its right pile — Reads, or Receipts on a money subject — instead of
- *    the Ohbox. A relevant service message with no bulk markers is LEFT in place (the AI and the
- *    bar judge the ambiguous middle). It never touches a `manual`/`migrated` rule (a placement the
- *    USER decided), never a deny, and never pulls a stranger through the gate. See
- *    {@link evaluateRules} and {@link headerHeuristic}.
+ * How hard to keep the Ohbox relevant — the per-account posture that turns the bulk-mail demotion
+ * on. About RELEVANCE, not humans-versus-machines: the Ohbox is for real people AND genuinely
+ * relevant service mail; only obvious irrelevant bulk is filed out. `people_and_replied` —
+ * today's behaviour and the absent-config value: an admitted sender delivers ALL their mail to
+ * the Ohbox; NULL resolves here, so shipping this demotes nobody until they choose. `people_only`
+ * — obvious BULK (by List-* or Feedback-ID markers) from an INFERRED-admission sender is filed
+ * to its right pile; a relevant service message with no bulk markers is left in place. It never
+ * touches a `manual`/`migrated` rule, never a deny, and never pulls a stranger through the gate.
  */
 export type OhboxPolicy = "people_only" | "people_and_replied";
 
@@ -206,45 +103,32 @@ export function resolveOhboxPolicy(raw: string | null | undefined): OhboxPolicy 
 }
 
 /**
- * HOW RECENTLY A SENDER MUST HAVE WRITTEN to still be worth a decision. Days.
- *
- * A default, not a constant — an account may carry its own `account_settings.dormancy_days`, and
- * every reader takes the window as an argument. It is stated here, in core, because THREE
- * independent consumers need the same number and two of them cannot import each other: the
- * cutline (`services/src/consent-cutline.ts`, which re-exports this rather than declaring a second
- * literal), the client engine's own copy (`client-engine/src/consent-cutline.ts` — a separate
- * package with no core dependency, pinned equal to this one by `consent-cutline.pg.test.ts`), and
- * the worker, which resolves the router's cutoff below. A number written out three times is a
- * number that will eventually be three different numbers.
+ * How recently a sender must have written to still be worth a decision, in days. A default, not a
+ * constant — an account may carry its own `account_settings.dormancy_days`, and every reader
+ * takes the window as an argument. Stated here, in core, because THREE independent consumers need
+ * the same number and two cannot import each other: the cutline (which re-exports this), the
+ * client engine's own copy (a separate package, pinned equal by `consent-cutline.pg.test.ts`),
+ * and the worker. A number written out three times will eventually be three different numbers.
  */
 export const DEFAULT_DORMANCY_DAYS = 60;
 
 /**
- * Resolve a stored `account_settings.screening_baseline_at` + `dormancy_days` into the instant the
- * router treats as the edge of the backlog, or `undefined` for "no cutoff" (mail 0056).
- *
- * `undefined` means the gate behaves exactly as it did before the baseline existed — every unruled
- * sender's mail is held, whatever its date — and it is what a NULL baseline, an absent settings
- * row and an unparseable stored value all produce. That last case is deliberate rather than
- * defensive: a `Date` that is `Invalid` would make every comparison against it false, which is the
- * same routing as no cutoff but reached silently and by accident; answering `undefined` makes the
- * two the same thing on purpose.
- *
- * In core, next to {@link resolveOhboxPolicy}, for that function's reason: the worker's resolution
- * and any later reader must not drift apart, and the arithmetic belongs on one side of the seam —
- * `PlanDeps.screeningCutoff` takes a resolved instant precisely so the engine never repeats it.
+ * Resolve a stored `screening_baseline_at` + `dormancy_days` into the instant the router treats
+ * as the edge of the backlog, or `undefined` for no cutoff (mail 0056). `undefined` means the
+ * gate behaves as before the baseline existed, and it is what a NULL baseline, an absent row and
+ * an unparseable value all produce. The last is deliberate: an `Invalid` Date makes every
+ * comparison false — the same routing as no cutoff, reached silently; answering `undefined` makes
+ * the two the same thing on purpose. In core, next to {@link resolveOhboxPolicy}: the arithmetic
+ * belongs on one side of the seam — `PlanDeps.screeningCutoff` takes a resolved instant so the
+ * engine never repeats it.
  */
 /**
- * SCREENING SCOPE — `account_settings.screening_scope` (mail 0083).
- *
- * `'window'` is the product default and everything below it. `'all_time'` is a MODE and not a
- * window value, which is the whole reason it needed a column: `dormancy_days` is bounded 1-365
- * at the write site and NULL means the default, so NO number in that column spells "no cutoff".
- *
- * It is here, beside {@link DEFAULT_DORMANCY_DAYS}, for that constant's stated reason — the rule
- * has three implementations (this resolver, the server's `consent-cutline.ts`, the client
- * engine's own copy) and a mode written out three times is a mode that will eventually be three
- * different modes.
+ * Screening scope — `account_settings.screening_scope` (mail 0083). `'window'` is the product
+ * default; `'all_time'` is a MODE and not a window value, which is why it needed a column:
+ * `dormancy_days` is bounded 1-365 at the write site and NULL means the default, so no number in
+ * that column spells "no cutoff". Beside {@link DEFAULT_DORMANCY_DAYS} for that constant's
+ * reason: the rule has three implementations, and a mode written out three times will eventually
+ * be three different modes.
  */
 export type ScreeningScope = "window" | "all_time";
 
@@ -252,20 +136,15 @@ export function resolveScreeningCutoff(
   baselineAt: Date | null | undefined, dormancyDays: number | null | undefined,
   scope?: ScreeningScope | string | null,
 ): Date | undefined {
-  /* -- "ALL TIME" IS NO CUTOFF, AND IT IS THE FIRST TEST FOR A REASON (mail 0083) ------------
-   *
-   * The person asked for everything to be screened, so nothing is backlog: the gate holds every
-   * unruled sender's mail whatever its date, which is precisely what `undefined` already means
-   * here and has meant since mail 0056. So the mode needs no new branch downstream — it selects
-   * the behaviour the absent-baseline case already has, on purpose instead of by accident.
-   *
-   * ABOVE the baseline test, so `all_time` wins even for an account that HAS a baseline. The
-   * other order would make the mode silently inert for every account that has ever screened
-   * anything, which is every account the switch is offered to.
-   *
-   * Anything that is not exactly `'all_time'` is the window — an unrecognised stored value reads
-   * as the default rather than as the wider mode, which is the direction a bad value must fail
-   * in: screening everything is a lot of moved mail to undo by hand.
+  /**
+   * "All time" is no cutoff, and it is the first test for a reason (mail 0083): the person asked
+   * for everything to be screened, so nothing is backlog — the mode selects the behaviour the
+   * absent-baseline case already has, on purpose instead of by accident, and needs no new branch
+   * downstream. ABOVE the baseline test, so `all_time` wins even for an account that HAS a
+   * baseline — the other order would make the mode silently inert for every account that has ever
+   * screened anything. Anything not exactly `'all_time'` reads as the window: a bad stored value
+   * must fail toward the default, because screening everything is a lot of moved mail to undo by
+   * hand.
    */
   if (scope === "all_time") return undefined;
   if (!(baselineAt instanceof Date)) return undefined;
@@ -382,20 +261,16 @@ export function effectForDestination(destination: Destination): RuleEffect {
   }
 }
 
-/* ══════════════════════════════════════════════════════════════════════════════════════════
-   THE TOTAL ORDER OVER RULES
-   ══════════════════════════════════════════════════════════════════════════════════════════
-
-   The reported defect was "equal priorities fall back to array position". The real one is worse:
-   `drizzle-repo.ts#listRules` had **no `ORDER BY`**, so the array position was PostgreSQL's
-   PHYSICAL ROW ORDER — which moves under UPDATE and VACUUM. The same message routed differently
-   on different days with no rule change, and PGlite (stable insertion order) could never show it.
-
-   So the order below is total: for any two rules with distinct ids it returns non-zero, and it
-   reads nothing that a sender controls. `listRules` also sorts in SQL now — the same order,
-   mirrored — because a total order in TypeScript over a nondeterministic input is correct but
-   unauditable: `psql` must be able to show the winner first.
-   ══════════════════════════════════════════════════════════════════════════════════════════ */
+/**
+ * The total order over rules. The reported defect was "equal priorities fall back to array
+ * position"; the real one is worse: `listRules` had no `ORDER BY`, so the array position was
+ * PostgreSQL's PHYSICAL ROW ORDER, which moves under UPDATE and VACUUM — the same message routed
+ * differently on different days with no rule change, and PGlite (stable insertion order) could
+ * never show it. The order below is total: for any two rules with distinct ids it returns
+ * non-zero, and it reads nothing a sender controls. `listRules` sorts in SQL too — the same
+ * order, mirrored — because a total order over a nondeterministic input is correct but
+ * unauditable: `psql` must be able to show the winner first.
+ */
 
 /** deny outranks allow at equal priority — the user's explicit "no" is never lost to a tie. */
 const EFFECT_RANK: Readonly<Record<RuleEffect, number>> = { deny: 0, allow: 1 };
@@ -406,56 +281,35 @@ const EFFECT_RANK: Readonly<Record<RuleEffect, number>> = { deny: 0, allow: 1 };
  */
 const KIND_RANK: Readonly<Record<RuleKind, number>> = { sender: 0, domain: 1, header: 2 };
 /**
- * SPECIFICITY WITHIN ONE KIND: a rule carrying a subject term outranks one that does not.
- *
- * This clause is the reason the feature works at all, and it sits directly BELOW `kind` because it
- * refines a claim about the same principal rather than changing which principal is named. A
- * subject-carrying `sender` rule beats a bare `sender` rule; it does not beat nothing, and it never
- * reaches across kinds (a `domain` rule with a term still loses to any `sender` rule).
- *
- * Without it, the ordinary case is a coin toss. The user has "from info@… → Ohbox" and adds "from
- * info@… AND subject contains [NinjaFirewall] → Reads": same priority, same effect, same kind, same
- * provenance, so the winner would fall through to the `id` tie-break — two random UUIDs. Half the
- * accounts would see the new rule work and half would see it do nothing, with no way to tell which
- * from the surface. The more specific of two statements about one sender has to win.
- *
- * The direction is also what makes the pair COMPOSABLE rather than contradictory: the narrow rule
- * takes the mail it names and the broad rule keeps the rest, which is precisely what somebody
- * writing the second rule is asking for. Reversing it would make the broad rule swallow everything
- * and the narrow one unreachable.
- *
- * `drizzle-repo.ts#listRules` states this same clause in SQL, in the same position, and the pg test
- * sorts the adapter's output with {@link compareRules} and requires that nothing moves — the two
- * expressions of one order are not allowed to disagree.
+ * Specificity within one kind: a rule carrying a subject term outranks one that does not.
+ * Directly BELOW `kind`, because it refines a claim about the same principal — a term-carrying
+ * `domain` rule still loses to any `sender` rule. Without it, the ordinary case is a coin toss: a
+ * broad rule and its narrow twin tie on everything and fall through to two random UUIDs — half
+ * the accounts see the new rule work. The direction makes the pair COMPOSABLE: the narrow rule
+ * takes the mail it names, the broad rule keeps the rest. `listRules` states this clause in SQL
+ * in the same position, and the pg test sorts the adapter's output with {@link compareRules} and
+ * requires nothing to move.
  */
 const subjectRank = (r: Rule): number => (subjectTermOf(r) === null ? 1 : 0);
 /**
  * The same specificity clause for the BODY term (mail 0052), ranked directly BELOW the subject
- * clause: a body-carrying rule outranks a bare one for the same address, for exactly
- * {@link subjectRank}'s reasons — without it the broad-plus-narrow pair is a UUID coin toss.
- *
- * The subject clause coming first is a decision, not an accident of ordering: where one rule
- * carries a subject term and another a body term, ties are broken the same way on every machine
- * and in SQL, and a rule carrying BOTH terms outranks either single-term rule (it loses neither
- * clause). No claim that a subject term is semantically "more specific" than a body term is being
- * made — the claim is that the two statements of this order (`drizzle-repo.ts#listRules`' `ORDER
- * BY` and this comparator) must agree literally, and an order must pick a direction.
+ * clause: a body-carrying rule outranks a bare one for {@link subjectRank}'s reasons — without it
+ * the broad-plus-narrow pair is a UUID coin toss. The subject clause coming first is a decision,
+ * not an accident: ties break the same way on every machine and in SQL, and a rule carrying BOTH
+ * terms outranks either single-term rule. No claim that a subject term is semantically more
+ * specific — the claim is that the two statements of this order (the SQL `ORDER BY` and this
+ * comparator) must agree literally, and an order must pick a direction.
  */
 const bodyRank = (r: Rule): number => (bodyTermOf(r) === null ? 1 : 0);
 /**
  * What the user typed beats what we imported for them, which beats what we learned.
- *
- * `seeded-from-sent` sorts LAST, below `promoted`, and the tie it breaks is a real one: a user
- * screens a sender the onboarding seed already wrote a rule for. Both rules allow, both are
- * `kind: "sender"`, both sit at the default priority — so at equal provenance rank the winner
- * would fall through to comparing two random UUIDs, which is precisely the nondeterminism this
+ * `seeded-from-sent` sorts LAST, below `promoted`, and the tie it breaks is real: a user screens
+ * a sender the onboarding seed already wrote a rule for — both allow, both `sender`, both default
+ * priority, so the winner would fall through to two random UUIDs, the nondeterminism this
  * comparator exists to end. The decision taken deliberately, one sender at a time, outranks the
- * one inferred in bulk from the Sent folder.
- *
- * `drizzle-repo.ts#listRules` states this same order in SQL. The two must agree literally: a
- * value left to fall into the SQL `else` arm gets rank 2 there while this table's absent-key
- * path ranks it last, and the server and the client would then order the same two rules
- * differently.
+ * one inferred in bulk. `listRules` states the same order in SQL, and the two must agree
+ * literally: a value falling into the SQL `else` arm gets rank 2 there while the absent-key path
+ * here ranks it last, and server and client would order the same two rules differently.
  */
 const PROVENANCE_RANK: Readonly<Record<Rule["provenance"], number>> = {
   manual: 0, migrated: 1, promoted: 2, "seeded-from-sent": 3,
@@ -521,41 +375,26 @@ function domainOf(addr: string): string {
 }
 
 /**
- * THE WHITESPACE A SUBJECT TERM IS TRIMMED OF, and it is deliberately NOT what
- * `String.prototype.trim` strips.
- *
- * Six characters — space, tab, newline, carriage return, form feed, vertical tab — because the SQL
- * side of this decision can express exactly those and no more. `rules_subject_contains_nonempty`
- * (mail 0050) and `drizzle-repo.ts#listRules`' `ORDER BY` both read
- * `subject_contains ~ '[^ \t\n\r\f\v]'`, so a term is "blank" in Postgres precisely when it is
- * blank under this class.
- *
- * `trim()` strips more than that — U+00A0, U+2028, the Unicode space separators — so using it here
- * would make Postgres and this file disagree about one shape of row: a term of a single non-breaking
- * space would rank as SPECIFIC in SQL and read as ABSENT here, which is the narrow rule winning the
- * tie and then matching every subject. That is the one failure this column must be incapable of, so
- * the two predicates are written from the same six characters and verified equal against real
- * Postgres over every one of them (`rules-subject.pg.test.ts`).
- *
- * Anchored at both ends with a single pass, so it is a trim and not a strip: interior whitespace is
- * part of the term ("Alert: brute force" is a legitimate thing to match on).
+ * The whitespace a subject term is trimmed of — deliberately NOT what `trim()` strips. Six
+ * characters, because the SQL side can express exactly those: the CHECK and the `ORDER BY` both
+ * read `[^ \t\n\r\f\v]`, so a term is "blank" in Postgres precisely when it is blank under this
+ * class. `trim()` strips more — U+00A0, the Unicode separators — so a term of a single
+ * non-breaking space would rank SPECIFIC in SQL and read ABSENT here: the narrow rule winning the
+ * tie and then matching every subject, the one failure this column must be incapable of. Verified
+ * equal against real Postgres over all six (`rules-subject.pg.test.ts`). Anchored at both ends: a
+ * trim, not a strip — interior whitespace is part of the term.
  */
 const SUBJECT_TERM_TRIM = /^[ \t\n\r\f\v]+|[ \t\n\r\f\v]+$/g;
 
 /**
- * The rule's subject term, case-folded and trimmed — or `null` when it does not carry one.
- *
- * THE ONE PLACE "does this rule have a subject term?" IS ANSWERED. {@link matches} and
- * {@link subjectRank} both consult it, and they must agree: a rule the matcher treats as
- * subject-bearing has to be the same rule the order ranks as more specific, or the narrow rule wins
- * the tie and then declines to fire — which files nothing anywhere and looks like the column is
- * being ignored.
- *
- * `null`, `""` and a blank string all answer `null`. The database forbids the last two
- * (`rules_subject_contains_nonempty`, mail 0050), and this is still written to handle them, because
- * a CHECK constrains rows the migration reached and says nothing about a value handed to this
- * function by a caller — a fixture, a `sidecar` mirror row, an older client's echo. A blank term
- * read as a substring test would pass on almost every subject, so "absent" is the only safe reading.
+ * The rule's subject term, case-folded and trimmed — or `null` when it does not carry one. THE
+ * one place "does this rule have a subject term?" is answered: {@link matches} and {@link
+ * subjectRank} both consult it and must agree, or the narrow rule wins the tie and then declines
+ * to fire — which files nothing anywhere and looks like the column is being ignored. `null`, `""`
+ * and a blank string all answer `null`. The database forbids the last two, and this still handles
+ * them: a CHECK constrains rows the migration reached, not a value handed in by a fixture, a
+ * mirror row or an older client's echo — and a blank term read as a substring test would pass on
+ * almost every subject.
  */
 function subjectTermOf(r: Rule): string | null {
   const raw = r.subjectContains;
@@ -565,17 +404,13 @@ function subjectTermOf(r: Rule): string | null {
 }
 
 /**
- * Does the message's subject satisfy the rule's subject term?
- *
- * `true` when there is no term — the term is a CONJUNCTION and an absent conjunct is satisfied, so
- * every rule written before mail 0050 keeps its exact pre-column behaviour.
- *
- * Case-folded substring, and deliberately nothing cleverer. No regex (a user-supplied pattern is a
- * ReDoS on the ingest path and nobody typing `[NinjaFirewall]` means a character class), no unicode
- * normalisation and no whitespace collapsing (the subject is compared as it was received; a term
- * that does not appear literally does not match). `subject` is `string` on
- * {@link NormalizedMessage} — `mime.ts` writes `""` for an absent header — so an absent subject
- * simply satisfies no term, which is the fail-closed direction for a narrowing conjunct.
+ * Does the message's subject satisfy the rule's subject term? `true` when there is no term — the
+ * term is a CONJUNCTION and an absent conjunct is satisfied, so every rule written before mail
+ * 0050 keeps its exact pre-column behaviour. Case-folded substring, and deliberately nothing
+ * cleverer: no regex (a user-supplied pattern is a ReDoS on the ingest path, and nobody typing
+ * `[NinjaFirewall]` means a character class), no unicode normalisation, no whitespace collapsing.
+ * `subject` is `string` — `mime.ts` writes `""` for an absent header — so an absent subject
+ * satisfies no term, the fail-closed direction for a narrowing conjunct.
  */
 function subjectSatisfies(r: Rule, msg: NormalizedMessage): boolean {
   const term = subjectTermOf(r);
@@ -584,17 +419,14 @@ function subjectSatisfies(r: Rule, msg: NormalizedMessage): boolean {
 }
 
 /**
- * The rule's BODY term, case-folded and trimmed — or `null` when it does not carry one.
- *
- * `subjectTermOf`'s contract, applied to `bodyContains` (mail 0052), and the ONE place "does this
- * rule have a body term?" is answered: {@link matches} and {@link bodyRank} both consult it and
- * must agree, or the narrow rule wins its tie and then declines to fire. The trim class is
- * {@link SUBJECT_TERM_TRIM} — the SAME six characters, shared deliberately rather than
- * duplicated, because both columns' CHECKs state the identical `[^ \t\n\r\f\v]` class in SQL and
- * one definition of "blank" is the whole point of that constraint. `null`, `""` and a blank
- * string all answer `null` here even though the database forbids the last two
- * (`rules_body_contains_nonempty`): a CHECK constrains rows the migration reached, not a value a
- * fixture or a mirror row hands this function.
+ * The rule's BODY term, case-folded and trimmed — `subjectTermOf`'s contract applied to
+ * `bodyContains` (mail 0052), and the one place "does this rule have a body term?" is answered:
+ * {@link matches} and {@link bodyRank} must agree, or the narrow rule wins its tie and declines
+ * to fire. The trim class is {@link SUBJECT_TERM_TRIM} — the SAME six characters, shared
+ * deliberately: both columns' CHECKs state the identical class in SQL, and one definition of
+ * "blank" is the point of the constraint. `null`, `""` and a blank string all answer `null` even
+ * though the database forbids the last two: a CHECK constrains rows, not values a fixture hands
+ * this function.
  */
 function bodyTermOf(r: Rule): string | null {
   const raw = r.bodyContains;
@@ -604,21 +436,14 @@ function bodyTermOf(r: Rule): string | null {
 }
 
 /**
- * Does the message's text satisfy the rule's body term?
- *
- * `true` when there is no term — an absent conjunct is satisfied, so every rule written before
- * mail 0052 keeps its exact prior behaviour. Case-folded substring over
- * {@link NormalizedMessage.textBody} and deliberately nothing cleverer, for `subjectSatisfies`'
- * reasons: no regex (a user-supplied pattern over a stranger's multi-kilobyte body is a ReDoS on
- * the ingest path), no normalisation, no whitespace collapsing. `textBody` is the canonical
- * plain text — mailparser's text part or its html→text derivation — and the byte-identical
- * string `message_bodies.text` stores, so the retro passes that read the column back consult the
- * same haystack this does on arrival. `""` (no body part, or a stored row the pass could not
- * find) satisfies no term, which is the fail-closed direction for a narrowing conjunct.
- *
- * The fold allocates a lowercased copy of the whole body per carrying rule. Accepted knowingly:
- * bodies are capped upstream (`mime.ts`' html→text ceiling), accounts hold few body-carrying
- * rules, and a shared fold cache would be a place for the term and the haystack to disagree.
+ * Does the message's text satisfy the rule's body term? `true` when there is no term — an absent
+ * conjunct is satisfied, so a rule with no body term keeps its behaviour. Case-folded substring over
+ * {@link NormalizedMessage.textBody}, nothing cleverer: no regex (a ReDoS on the ingest path), no
+ * normalisation. `textBody` is the byte-identical string `message_bodies.text` stores, so the
+ * retro passes consult the same haystack; `""` satisfies no term — fail-closed. The fold
+ * allocates a lowercased copy of the body per carrying rule, accepted knowingly: bodies are
+ * capped upstream, accounts hold few body-carrying rules, and a shared fold cache would be a
+ * place for the term and the haystack to disagree.
  */
 function bodySatisfies(r: Rule, msg: NormalizedMessage): boolean {
   const term = bodyTermOf(r);
@@ -627,23 +452,14 @@ function bodySatisfies(r: Rule, msg: NormalizedMessage): boolean {
 }
 
 /**
- * Does this rule fire on this message?
- *
- * `author === null` means the claimed author is absent, unparseable, or ambiguous
- * ({@link authorAddress}), and then NO sender or domain rule may fire: matching a rule against a
+ * Does this rule fire on this message? `author === null` means the claimed author is absent,
+ * unparseable or ambiguous, and then NO sender or domain rule may fire: matching against a
  * guessed author would let a malformed `From` inherit a decision the user made about somebody
- * else. A `header` rule still fires, because it names a header rather than a principal.
- *
- * `hasOwnProperty` rather than `Boolean(msg.headers[name])`: `message_bodies.headers` comes back
- * through `JSON.parse` and therefore inherits from `Object.prototype`, so a rule
- * whose `match` is `constructor` or `toString` matched EVERY message under the old test.
- *
- * ── AND ONE MORE TERM, WHICH IS A CONJUNCT AND NOT A BRANCH ─────────────────────────────────
- *
- * `subject_contains` (mail 0050) is checked FIRST and for every kind, so it is impossible to add a
- * kind below that forgets it. It is an `AND`, so it can only ever make this function return `false`
- * where it used to return `true` — never the reverse. See {@link Rule.subjectContains} for why a
- * term is honoured even on the kinds `RulesService` refuses to write one for.
+ * else. A `header` rule still fires — it names a header, not a principal. `hasOwnProperty` rather
+ * than `Boolean(msg.headers[name])`: the map comes back through `JSON.parse` and inherits from
+ * `Object.prototype`, so a rule whose `match` is `constructor` matched EVERY message under the
+ * old test. The subject term is checked FIRST and for every kind — an `AND` that can only make
+ * this return `false` where it used to return `true`, and impossible for a new kind to forget.
  */
 function matches(r: Rule, msg: NormalizedMessage, author: string | null): boolean {
   // Placed above the switch rather than inside the `sender` arm: a conjunct that lives in one arm is
@@ -685,20 +501,15 @@ function winningRule(
   return winner;
 }
 
-/* ══════════════════════════════════════════════════════════════════════════════════════════
-   THE AUTHOR ADDRESS — A POSITIVE PREDICATE
-   ══════════════════════════════════════════════════════════════════════════════════════════
-
-   The old gate was `if (from && !knownSenders.has(from))`. A message with no `From`, or one whose
-   `From` mailparser could not resolve to a mailbox, leaves `msg.from.address` as the EMPTY STRING
-   (`mime.ts:381`, `toAddr`), so the guard was false **on truthiness alone** and the function
-   answered `unclear` — a stranger past the consent gate with no trusted address to spoof and no
-   user action at all.
-
-   The replacement is positive: an address either passes {@link isSingleUsableAddress} and is
-   present in `contacts`, or the message is screened. There is no value of `msg.from.address` that
-   satisfies it by being empty.
-   ══════════════════════════════════════════════════════════════════════════════════════════ */
+/**
+ * The author address — a POSITIVE predicate. The old gate was `if (from &&
+ * !knownSenders.has(from))`: a message with no `From`, or one mailparser could not resolve,
+ * leaves `msg.from.address` as the EMPTY STRING, so the guard was false on truthiness alone and
+ * the function answered `unclear` — a stranger past the consent gate with no trusted address to
+ * spoof and no user action. The replacement is positive: an address either passes {@link
+ * isSingleUsableAddress} and is present in `contacts`, or the message is screened. No value of
+ * `msg.from.address` satisfies it by being empty.
+ */
 
 /**
  * The RFC 5322 specials that SEPARATE or QUOTE addresses, and therefore cannot appear in a bare
@@ -770,17 +581,14 @@ function countMailboxSeparators(value: string): number {
 }
 
 /**
- * Does the RAW header claim more than one author?
- *
- * This has to be asked of the header because `mime.ts:363` keeps `parsed.from.value[0]` and
- * silently drops the rest, so `From: a@x.com, b@y.com` reaches us looking exactly like
- * `From: a@x.com`. Two `From:` LINES are the same question with a worse answer: the two hops that
- * wrote them disagree about who sent this.
- *
- * `undefined` (no `from` key in the map at all) is NOT treated as ambiguity. Absence of a `From`
- * header already produces an empty `msg.from.address`, which {@link isSingleUsableAddress}
- * refuses; treating an absent map ENTRY as ambiguous instead would screen every known sender in
- * any caller whose header map is incomplete — the one regression this must not cause.
+ * Does the RAW header claim more than one author? Asked of the header because `mime.ts` keeps
+ * `parsed.from.value[0]` and silently drops the rest, so `From: a@x.com, b@y.com` reaches us
+ * looking exactly like `From: a@x.com`. Two `From:` LINES are the same question with a worse
+ * answer: the two hops that wrote them disagree about who sent this. `undefined` (no `from` key
+ * at all) is NOT ambiguity: absence of a `From` already produces an empty `msg.from.address`,
+ * which {@link isSingleUsableAddress} refuses — treating an absent map ENTRY as ambiguous would
+ * screen every known sender in any caller whose header map is incomplete, the one regression this
+ * must not cause.
  */
 function claimsMultipleAuthors(raw: string[] | undefined): boolean {
   if (raw === undefined || raw.length === 0) return false;
@@ -827,33 +635,14 @@ function machineSent(msg: NormalizedMessage): boolean {
 }
 
 /**
- * WHY AN AUTOMATIC REPLY MUST NOT BE SENT TO THIS MESSAGE'S AUTHOR — or `null` when nothing in the
- * headers or the address says so. The header/address half of the away responder's suppression set.
- *
- * ── IT IS `machineSent` UNDER A NAME THAT SAYS WHAT IT DECIDES ────────────────────────────────
- *
- * The three tests are exactly the three {@link machineSent} has always run, in the same order, and
- * `machineSent` is now a call to this — so there is ONE implementation, not a copy in the worker.
- * That matters more here than the usual tidiness argument: an auto-reply sent to a mailing list is
- * delivered to every subscriber, and an auto-reply sent to another responder is an unbounded loop
- * between two mail systems. A second, drifting encoding of "this was generated, not typed" is
- * precisely how one of those ships.
- *
- * The reason it returns a REASON rather than a boolean is that the caller has to be able to report
- * which guard held — a suppression nobody can attribute is indistinguishable from a pass that never
- * ran, and the away responder's whole safety claim is a set of guards each of which has been watched
- * to fire.
- *
- *  · `list_mail` — {@link isBulkSend}: `List-Unsubscribe`, `List-Unsubscribe-Post`, `List-Id`,
- *    `Feedback-ID`, or `Precedence: bulk`. ANY one is enough. Broader than RFC 3834's minimum on
- *    purpose: replying to a list is the loudest possible failure, and it is public.
- *  · `auto_submitted` — RFC 3834's own loop stop. `Auto-Submitted: no` explicitly means "a human
- *    wrote this" and therefore does NOT count, which is why presence alone is the wrong test.
- *  · `service_sender` — {@link isServiceSender}: `no-reply@`, `bounce@`, `postmaster@` and the rest.
- *    A reply to one of these reaches nobody at best and a bounce loop at worst.
- *
- * This function knows nothing about a database. The suppressions that need one — the account's own
- * addresses, sensitivity flags, the at-most-once record — are the caller's, and are applied there.
+ * Why an automatic reply must not be sent to this message's author — or `null`. `machineSent`
+ * under a name that says what it decides: the same three tests, one implementation — an
+ * auto-reply to a list reaches every subscriber, and one to another responder is an unbounded
+ * loop. A REASON, not a boolean: the caller must report which guard held — a suppression nobody
+ * can attribute is indistinguishable from a pass that never ran. `list_mail` — {@link
+ * isBulkSend}, any one marker, broader than RFC 3834's minimum on purpose; `auto_submitted` — the
+ * loop stop (`Auto-Submitted: no` does NOT count); `service_sender` — `no-reply@` and the rest.
+ * This knows nothing about a database; the suppressions that need one are the caller's.
  */
 export type AutoReplySuppression = "list_mail" | "auto_submitted" | "service_sender";
 
@@ -869,22 +658,13 @@ export function autoReplySuppression(
 }
 
 /**
- * The BULK-SEND half of the machine-sent test — a newsletter, a mailing list, or an ESP campaign,
- * as opposed to one person writing to another. Every header here is set by a MACHINE and never by
- * a client composing a personal message, and until this the router keyed only on the first two:
- *
- *  · `List-Unsubscribe` / `List-Unsubscribe-Post` — RFC 2369 / RFC 8058, a list offering a way out.
- *  · `List-Id` — RFC 2919 list membership; a personal message never carries it.
- *  · `Feedback-ID` — an ESP's per-campaign feedback-loop tag. The single most common bulk marker on
- *    the measured Ohbox mail, and the one the heuristic did not look at.
- *  · `Precedence: bulk` — the oldest of the family.
- *
- * Read through {@link headerValues} for the reason the whole file reads headers that way: a bare
- * `h["list-id"]` is a truthy INHERITED value on a `JSON.parse`d map (see the accessor's note).
- *
- * Like everything in {@link headerHeuristic}, it REFINES placement and never establishes consent —
- * it is reachable only for a sender already past the gate, and it only ever demotes to a visible,
- * reversible pile. It can never pull an unknown sender through the Screener.
+ * The bulk-send half of the machine-sent test — a newsletter, a list, or an ESP campaign. Every
+ * header here is set by a MACHINE: `List-Unsubscribe`/`List-Unsubscribe-Post`, `List-Id` (a
+ * personal message never carries it), `Feedback-ID` (the most common bulk marker on the measured
+ * Ohbox mail, and the one the heuristic did not look at), `Precedence: bulk`. Read through {@link
+ * headerValues}: a bare `h["list-id"]` is a truthy INHERITED value on a `JSON.parse`d map. Like
+ * everything in {@link headerHeuristic}, it REFINES placement and never establishes consent —
+ * reachable only past the gate, demoting only to a visible, reversible pile.
  */
 function isBulkSend(headers: Readonly<Record<string, unknown>>): boolean {
   if (headerValues(headers, LIST_UNSUBSCRIBE_HEADER) !== null) return true;
@@ -895,26 +675,14 @@ function isBulkSend(headers: Readonly<Record<string, unknown>>): boolean {
 }
 
 /**
- * THE STRONG-BULK FLOOR — a STRICTER conjunction than {@link isBulkSend}, for the migration
- * backfill and for nothing else.
- *
- * `isBulkSend` fires on ANY one marker, and that is correct where it is used: {@link headerHeuristic}
- * only ever consults it to refine the placement of a sender ALREADY past the consent gate (a contact,
- * or an inferred-admission allow rule). {@link migrationBulkPlacement} reaches a THIRD population —
- * mail the legacy migration filed into the Ohbox under a blanket default, whose sender is NEITHER a
- * contact NOR carries a rule — and for that population one marker is too weak to demote on: a Google
- * account/security notice carries a `Feedback-ID` and no `List-Unsubscribe`, and that is exactly the
- * "genuinely relevant service alert" that must stay in the Ohbox.
- *
- * So the floor is a CONJUNCTION:
- *  · `List-Unsubscribe` REQUIRED — the sender's own declaration that the mail is optional. A security
- *    alert / OTP / account action does not carry it; a newsletter does.
- *  · AND at least one corroborating list/ESP marker: `List-Id`, `List-Unsubscribe-Post`, `Feedback-ID`,
- *    or `Precedence: bulk`.
- *
- * `Feedback-ID` ALONE is deliberately not enough — see above. This makes the backfill's plan count
- * land BELOW the raw `List-Unsubscribe` population on purpose: the shortfall IS the safety margin, and
- * it is the relevant-service-alert class. Do NOT "fix" the shortfall by loosening this to an OR.
+ * The strong-bulk floor — a STRICTER conjunction than {@link isBulkSend}, for the migration
+ * backfill and nothing else. `isBulkSend` fires on any one marker, correct where it refines a
+ * sender already past the gate; {@link migrationBulkPlacement} reaches mail the legacy migration
+ * filed under a blanket default, neither contact nor ruled — and there one marker is too weak: a
+ * Google security notice carries a `Feedback-ID` and no `List-Unsubscribe`, exactly the relevant
+ * alert that must stay. The floor is a CONJUNCTION: `List-Unsubscribe` REQUIRED, AND at least one
+ * corroborating list/ESP marker. `Feedback-ID` alone is deliberately not enough — the count
+ * landing below the raw population IS the safety margin. Do NOT loosen this to an OR.
  */
 function hasStrongBulkFloor(headers: Readonly<Record<string, unknown>>): boolean {
   if (headerValues(headers, LIST_UNSUBSCRIBE_HEADER) === null) return false;
@@ -925,27 +693,14 @@ function hasStrongBulkFloor(headers: Readonly<Record<string, unknown>>): boolean
 }
 
 /**
- * THE MIGRATION BACKFILL'S PLACEMENT for a strong-bulk message — Reads, or Receipts on a money
- * subject — or `null` to KEEP the message where it is.
- *
- * ── ONE ROUTER, NOT TWO ─────────────────────────────────────────────────────────────────────
- *
- * It composes {@link headerHeuristic}'s Receipts-before-Reads ordering, but gated on
- * {@link hasStrongBulkFloor} rather than the bare {@link isBulkSend}, and it reuses {@link isMoneySubject}
- * for the split. The marker/ordering logic therefore lives in THIS file exactly once; the worker
- * backfill (`ohbox-tidy.ts`) must never re-encode it. The floor guarantees `List-Unsubscribe` is
- * present ⇒ {@link isBulkSend} ⇒ {@link machineSent}, so the Receipts branch of the heuristic reduces
- * here to a money subject.
- *
- * ── WHY IT IS NOT REACHABLE FROM {@link evaluateRules} ──────────────────────────────────────
- *
- * The backfill applies this to a sender who is NOT a contact and carries NO rule — the population
- * {@link headerHeuristic} must never see, because running the heuristic before the gate is the
- * pre-gate consent bypass {@link evaluateRules} exists to forbid ("Never move this call above the
- * gate"). This helper is a MIGRATION decision, not a live routing one: it only ever DEMOTES mail that
- * the legacy migration ALREADY admitted to the Ohbox, moving it to a visible, reversible pile. It
- * establishes no consent, writes no rule, and never pulls a stranger through the Screener. Sensitivity
- * is the CALLER's exclusion (jurisdiction is `sensitive-rescreen.ts`); this helper does not read it.
+ * The migration backfill's placement for a strong-bulk message — Reads, or Receipts on a money
+ * subject — or `null` to KEEP the message where it is. One router, not two: it composes {@link
+ * headerHeuristic}'s Receipts-before-Reads ordering, gated on {@link hasStrongBulkFloor}, reusing
+ * {@link isMoneySubject} — the logic lives in THIS file once, and the worker backfill must never
+ * re-encode it. Not reachable from {@link evaluateRules}: the backfill's population is the one
+ * the heuristic must never see, since running it before the gate is the pre-gate consent bypass.
+ * A MIGRATION decision: it only demotes mail already admitted, establishes no consent, writes no
+ * rule. Sensitivity is the CALLER's exclusion.
  */
 export function migrationBulkPlacement(msg: NormalizedMessage): Destination | null {
   if (!hasStrongBulkFloor(msg.headers)) return null;
@@ -953,24 +708,14 @@ export function migrationBulkPlacement(msg: NormalizedMessage): Destination | nu
 }
 
 /**
- * Is the CLAIMED author a service mailbox rather than a person? `no-reply@`, `notifications@`,
- * `mailer@`, `newsletter@`, `bounce@`, `postmaster@`, and the auto-responder locals — punctuation
- * stripped, so `no-reply`/`no_reply`/`noreply` are one entry, the same normalisation
- * `consent-seed.ts#isRobotAddress` uses for the same family.
- *
- * ── IT IS A "MACHINE-GENERATED" SIGNAL, NOT A "DEMOTE THIS" SIGNAL. ──────────────────────────
- *
- * This feeds ONLY {@link machineSent}, whose sole consumer is the Receipts conjunction
- * (machine-sent AND a money subject ⇒ Receipts). It does NOT route anything to Reads on its own —
- * a `no-reply@`/`notifications@` sender delivers relevant transactional mail (a security alert, an
- * account action) as often as marketing, and burying that out of the Ohbox is the failure this
- * whole slice must avoid. Obvious bulk is caught by {@link isBulkSend}; the ambiguous middle is
- * left `unclear` for the AI and the account's bar to judge for relevance.
- *
- * The list is still deliberately tight — human-ambiguous roles a small business answers itself
- * (`info@`, `support@`, `contact@`, `sales@`, `hello@`, `team@`) are NOT here — because a false
- * "machine" verdict on a personal `noreply-ish` address would file a real receipt for a person who
- * wrote one by hand.
+ * Is the claimed author a service mailbox rather than a person? `no-reply@`, `notifications@`,
+ * `bounce@`, `postmaster@` and the auto-responder locals — punctuation stripped, the same
+ * normalisation `consent-seed.ts#isRobotAddress` uses. A "machine-generated" signal, NOT a
+ * "demote this" signal: it feeds only {@link machineSent}, whose sole consumer is the Receipts
+ * conjunction — a `no-reply@` sender delivers relevant transactional mail as often as marketing,
+ * and burying that is the failure this slice must avoid. The list stays tight — human-ambiguous
+ * roles (`info@`, `support@`, `hello@`) are NOT here: a false machine verdict would file a real
+ * receipt from a person who wrote one by hand.
  */
 const SERVICE_LOCAL_PREFIXES = [
   "noreply", "donotreply", "notification", "mailer", "postmaster",
@@ -985,20 +730,16 @@ function isServiceSender(addr: string): boolean {
   return SERVICE_LOCAL_PREFIXES.some((p) => local.startsWith(p));
 }
 
-/* ══════════════════════════════════════════════════════════════════════════════════════════
-   READING HEADERS SAFELY — THE ONE ACCESSOR EVERYTHING BELOW USES
-   ══════════════════════════════════════════════════════════════════════════════════════════
-
-   `mime.ts` builds its header map on `Object.create(null)`, but that guarantee **does not
-   survive a database round trip**: `drizzle-repo.ts` rebuilds `message_bodies.headers` with
-   `JSON.parse`, which inherits from `Object.prototype`, and the unsubscribe
-   service reads exactly that persisted map. So `h["constructor"]` is a FUNCTION on a round-
-   tripped map and `h["toString"]?.length` is a number — a bare index would make every message
-   in the database look like it carried a `List-Unsubscribe-Post`.
-
-   Every read below goes through here, and the type is `string[] | null` so that "absent" is a
-   value a caller has to handle rather than a truthiness accident.
-   ══════════════════════════════════════════════════════════════════════════════════════════ */
+/**
+ * Reading headers safely — the one accessor everything below uses. `mime.ts` builds its map on
+ * `Object.create(null)`, but that guarantee does not survive a database round trip:
+ * `drizzle-repo.ts` rebuilds `message_bodies.headers` with `JSON.parse`, which inherits from
+ * `Object.prototype`, and the unsubscribe service reads exactly that persisted map. So
+ * `h["constructor"]` is a FUNCTION on a round-tripped map — a bare index would make every message
+ * in the database look like it carried a `List-Unsubscribe-Post`. Every read goes through here,
+ * and the type is `string[] | null` so "absent" is a value a caller has to handle rather than a
+ * truthiness accident.
+ */
 
 /** Own-property header values, or `null` when the header is genuinely absent. */
 function headerValues(
@@ -1011,44 +752,16 @@ function headerValues(
   return out.length === 0 ? null : out;
 }
 
-/* ══════════════════════════════════════════════════════════════════════════════════════════
-   `Authentication-Results` — TRUSTED POSITION ONLY (demote-only)
-   ══════════════════════════════════════════════════════════════════════════════════════════
-
-   **An `Authentication-Results` header is worth nothing because it is present.** It is an
-   ordinary header: anyone who knows the user's address can put one in the message they send,
-   claiming whatever they like. RFC 8601 §5 is explicit that a receiver must consume only the
-   ones its own trusted boundary added, and must strip pre-existing ones bearing its own
-   authserv-id on the way in.
-
-   We cannot verify that stripping happened, so the rule here is the strictest one available
-   without a cryptographic check of our own:
-
-     · `trustedAuthservIds` is supplied by the CALLER and is EMPTY by default. An empty set
-       means every message answers {@link AuthVerdict} `"unavailable"` and nothing is demoted —
-       so wiring this up on a deployment that has not named its provider changes no routing at
-       all. That is the intended migration path, not a stub.
-     · Among the `Authentication-Results` headers, the FIRST one (top of the message, i.e. the
-       most recently prepended) whose authserv-id is in that set is the only one read. Not the
-       first header found: a message that carries only a sender's own forged header must reach
-       the same answer as a message that carries none.
-     · A verdict is only ever `"fail"` on a DKIM or DMARC failure — never on SPF. SPF fails on
-       every ordinary forward and on most mailing lists, and demoting a real correspondent's
-       forwarded mail to the Screener is precisely the regression this must not cause.
-       DMARC is aligned by definition and DKIM survives forwarding, so those two are the ones
-       whose failure says something about the CLAIMED AUTHOR.
-
-   What this is NOT: it is not DKIM verification. We are believing our own provider's report of
-   somebody else's cryptography. That is a real trust dependency, and it is why the allowlist —
-   the thing that decides whose report we believe — is required rather than defaulted.
-
-   RESIDUAL, stated so nobody has to rediscover it: a sender who forges our provider's exact
-   authserv-id **on a message our provider adds no header to** is believed. Under demote-only
-   that buys an attacker nothing — a forged `"pass"` is not read by {@link evaluateRules} at
-   all, and a forged `"fail"` only demotes the attacker's own message. It would buy them
-   something the moment anybody makes a positive verdict a precondition, which is the third
-   reason this file refuses to.
-   ══════════════════════════════════════════════════════════════════════════════════════════ */
+/**
+ * `Authentication-Results` — trusted position only, demote-only. The header is worth nothing
+ * because it is present: anyone can put one in the mail they send; RFC 8601 §5 says consume only
+ * what your own boundary added. `trustedAuthservIds` comes from the CALLER, empty by default — an
+ * empty set answers `"unavailable"` and demotes nothing; only the FIRST header whose authserv-id
+ * is in the set is read; `"fail"` only on DKIM or DMARC, never SPF, which fails on every ordinary
+ * forward. Not DKIM verification: we believe our own provider's report, which is why the
+ * allowlist is required. Residual: forging our provider's authserv-id on a message it adds no
+ * header to is believed — under demote-only that buys nothing.
+ */
 
 const AUTH_RESULTS_HEADER = "authentication-results";
 
@@ -1170,15 +883,12 @@ function collapseWsAroundEq(part: string): string {
 }
 
 /**
- * Parse one `method[/version]=result [ptype.property=value]*` part.
- *
- * Returns `null` for anything that is not that shape — a trailing empty segment, a bare comment,
- * a `none` line with no `=`. An unparseable clause contributes no evidence; it never contributes
- * a failure, because "I could not read this" is not "the sender failed".
- *
- * RFC 8601 CFWS (comments and folding whitespace) is normalised away FIRST — comments dropped, then
- * whitespace collapsed around every `=` — so a valid result written `dkim = fail` or
- * `dkim (ok)= fail` is not silently discarded.
+ * Parse one `method[/version]=result [ptype.property=value]*` part. `null` for anything not that
+ * shape — a trailing empty segment, a bare comment, a `none` line with no `=`. An unparseable
+ * clause contributes no evidence; it never contributes a failure, because "I could not read this"
+ * is not "the sender failed". RFC 8601 CFWS is normalised FIRST — comments dropped, whitespace
+ * collapsed around every `=` — so a valid result written `dkim = fail` or `dkim (ok)= fail` is
+ * not silently discarded.
  */
 function parseAuthMethodResult(part: string): AuthMethodResult | null {
   const tokens = collapseWsAroundEq(stripAuthComments(part)).trim().split(/\s+/).filter((t) => t.length > 0);
@@ -1206,24 +916,14 @@ function domainPart(value: string): string {
 }
 
 /**
- * Is a DKIM signing domain aligned with the claimed author's domain?
- *
- * Deliberately RELAXED and deliberately not a Public-Suffix-List check: `tldts` is not a dependency
- * of this package. It treats any exact match or parent/child suffix relationship as aligned, so it
- * OVER-declares alignment only across a domain boundary a real PSL check would separate — most
- * notably a bare public suffix (`co.uk`) as `header.d`.
- *
- * {@link authVerdictFromHeaders} consults this in both directions now:
- *  · to promote an aligned dkim=pass to {@link AuthVerdict} `"pass"`, which {@link evaluateRules}
- *    never reads — over-declaring alignment there is harmless, the original reason an approximation
- *    was acceptable;
- *  · to gate an aligned dkim=fail to `"fail"`, which DOES demote. Here the over-declared
- *    direction could in principle demote a message whose signature merely shares a suffix with the
- *    author. That residual is bounded and acceptable because: it is strictly LESS demotion than the
- *    unconditional fail it replaces; the case this gate targets — an unrelated third-party ESP/list
- *    signature with no suffix relationship at all — is correctly judged not-aligned and does not
- *    demote; a demote only routes to the recoverable Screener; and the whole path is inert until an
- *    authserv-id is trusted. A real PSL check is the follow-up if Axis C is ever run hot.
+ * Is a DKIM signing domain aligned with the claimed author's domain? Deliberately RELAXED, not a
+ * Public-Suffix-List check: any exact match or suffix relationship counts, so it OVER-declares
+ * alignment across boundaries a real PSL would separate. Consulted in both directions: promoting
+ * an aligned pass to `"pass"` (never read by routing — harmless), and gating an aligned fail to
+ * `"fail"`, which DOES demote — the over-declared direction could demote a message whose
+ * signature merely shares a suffix. Bounded: strictly less demotion than the unconditional fail
+ * it replaces; an unrelated ESP signature is correctly not-aligned; a demote routes to the
+ * recoverable Screener; the path is inert until an authserv-id is trusted.
  */
 function dkimAligned(signing: string, authorDomain: string): boolean {
   const d = domainPart(signing);
@@ -1233,26 +933,14 @@ function dkimAligned(signing: string, authorDomain: string): boolean {
 }
 
 /**
- * NO TRUST DECISION EXISTS FOR THIS MAILBOX — the state of every mailbox at an unlisted
- * provider, and the day-one state every producer started in.
- *
- * A named symbol rather than an anonymous `new Set()` at each call site, for two reasons that
- * are both about the next reader:
- *
- *  · It is the ONE thing to grep for to enumerate every path that is currently blind
- *    ({@link authVerdictFromHeaders} answers `"unavailable"` for every message when the set is
- *    empty, so a producer holding this is exactly as permissive as the `"unauthenticated"`
- *    literal it replaced — see {@link AuthVerdict}). "Which paths are wired but unconfigured"
- *    is then a question with a mechanical answer.
- *  · An empty set is a CONFIGURATION state, not a defect, and naming it says so. The
- *    production population is `authserv-ids.ts#providerAuthservIds`, keyed on the IMAP host
- *    the mailbox's own connection dials — Gmail and Microsoft resolve to their signing
- *    authserv-id, and every other host resolves to THIS symbol, because for a server nobody
- *    vouches for the honest trust decision is still "nobody".
- *
- * `Set<never>` and not `Set<string>` so a `.add()` on it does not typecheck. It is frozen at
- * the type level rather than by `Object.freeze` because `ReadonlySet` is what every consumer
- * takes and a runtime freeze would be a claim no consumer can violate anyway.
+ * No trust decision exists for this mailbox — the state of every mailbox at an unlisted provider,
+ * and the day-one state of every producer. A named symbol rather than an anonymous `new Set()`:
+ * it is the ONE thing to grep for to enumerate every path currently blind ({@link
+ * authVerdictFromHeaders} answers `"unavailable"` for everything when the set is empty), and an
+ * empty set is a CONFIGURATION state, not a defect — the production population is
+ * `providerAuthservIds`, keyed on the IMAP host, and every unlisted host resolves to THIS symbol,
+ * because for a server nobody vouches for the honest trust decision is still "nobody".
+ * `Set<never>` so `.add()` does not typecheck.
  */
 export const NO_TRUSTED_AUTHSERV_IDS: ReadonlySet<string> = new Set<never>();
 
@@ -1322,29 +1010,16 @@ export function authVerdictFromHeaders(
   return "unavailable";
 }
 
-/* ══════════════════════════════════════════════════════════════════════════════════════════
-   RFC 8058 ONE-CLICK UNSUBSCRIBE — THE HEADER HALF
-   ══════════════════════════════════════════════════════════════════════════════════════════
-
-   Four refusals, and each one is a deliberate constraint rather than a nicety:
-
-     · **A `mailto:` unsubscribe is NEVER used.** Acting on one means sending mail on the user's
-       behalf to a third party, which this product does not do under any circumstances. It is not
-       "supported later" — it is refused, and the refusal is here, in the parser, so that no
-       caller can be handed one by accident. The service that acts on the result has no mail port
-       at all, so even a defeated parser could not send.
-     · **`https:` only.** RFC 8058 §3.1 requires it, and a one-click POST over `http:` puts the
-       user's subscription token on the wire in clear.
-     · **`List-Unsubscribe-Post: List-Unsubscribe=One-Click` must be present.** Without it the
-       `List-Unsubscribe` URI is an ordinary link meant for a human to click and confirm; POSTing
-       to it is not what the sender advertised, and one-click is the only shape whose semantics
-       RFC 8058 actually pins down.
-     · **Nothing is read from the message BODY, ever.** This function takes the header map and
-       has no access to a body, which is the structural form of that rule.
-
-   Ambiguity is refused rather than resolved. Two `List-Unsubscribe` lines mean two hops disagree
-   about where this list lives, and picking one is guessing with the user's subscription.
-   ══════════════════════════════════════════════════════════════════════════════════════════ */
+/**
+ * RFC 8058 one-click unsubscribe — the header half. Four refusals: a `mailto:` unsubscribe is
+ * NEVER used — acting on one sends mail on the user's behalf to a third party, which this product
+ * does not do; refused in the parser, and the acting service has no mail port anyway. `https:`
+ * only — RFC 8058 §3.1, and a one-click POST over `http:` puts the token on the wire in clear.
+ * `List-Unsubscribe-Post: List-Unsubscribe=One-Click` must be present — without it the URI is an
+ * ordinary link meant for a human. Nothing is read from the BODY, structurally: this takes the
+ * header map and has no body. Ambiguity is refused: two `List-Unsubscribe` lines mean two hops
+ * disagree, and picking one is guessing with the user's subscription.
+ */
 
 const LIST_UNSUBSCRIBE_HEADER = "list-unsubscribe";
 const LIST_UNSUBSCRIBE_POST_HEADER = "list-unsubscribe-post";
@@ -1440,15 +1115,13 @@ export function unsubscribeHeaderState(
 }
 
 /**
- * The first `https:` unsubscribe URI a message publishes, or `null`.
- *
- * This is the link behind {@link UnsubscribeHeaderState}'s `not_one_click`: a page the SENDER
- * offers for a person to open in their OWN browser. It is deliberately NOT
- * {@link oneClickUnsubscribeUri}, which additionally requires `List-Unsubscribe-Post` and is a
- * POST target this server acts on — never something handed to the client. A surface offers this
- * as a plain outbound link when one-click is not on offer, so the reader can still leave the
- * list; the same {@link isOneClickUri} https-only, no-userinfo filter applies, so a `mailto:` or
- * a userinfo-bearing URL is never returned.
+ * The first `https:` unsubscribe URI a message publishes, or `null` — the link behind
+ * `not_one_click`: a page the SENDER offers for a person to open in their OWN browser.
+ * Deliberately NOT {@link oneClickUnsubscribeUri}, which additionally requires
+ * `List-Unsubscribe-Post` and is a POST target this server acts on — never handed to the client.
+ * A surface offers this as a plain outbound link when one-click is not available, so the reader
+ * can still leave the list; the same {@link isOneClickUri} https-only, no-userinfo filter
+ * applies, so a `mailto:` or a userinfo-bearing URL is never returned.
  */
 export function httpsUnsubscribeUri(headers: Readonly<Record<string, unknown>>): string | null {
   const list = headerValues(headers, LIST_UNSUBSCRIBE_HEADER);
@@ -1477,95 +1150,24 @@ function isMoneySubject(subject: string): boolean {
 }
 
 /**
- * The deterministic header layer — Receipts, then Reads.
- *
- * ── IT REFINES PLACEMENT. IT NEVER ESTABLISHES CONSENT. ─────────────────────────────────────
- *
- * Every signal in here is chosen by the SENDER: the bulk/list headers {@link isBulkSend} reads
- * (`List-Unsubscribe`, `List-Unsubscribe-Post`, `List-Id`, `Feedback-ID`, `Precedence: bulk`),
- * `Auto-Submitted`, the subject line, and a service-shaped local part ({@link isServiceSender}).
- * A review found that this function ran BEFORE the Screener gate, so an unknown sender wrote
- * `Precedence: bulk` and landed in `ohmail/Reads` — a remote, unauthenticated, one-message defeat
- * of the consent boundary needing no knowledge of the user's contacts and no action by the user.
- * It is now reachable only for a sender the account already knows. **Never move this call above the
- * gate in {@link evaluateRules}.**
- *
- * ── THE ORDER INSIDE IT IS ALSO CORRECTNESS, AND IT IS THE OTHER THING TO NOT "TIDY" ────────
- *
- * A receipt routinely carries a `List-Unsubscribe` footer: the same ESP sends a shop's order
- * confirmations and its marketing, and the compliance header goes on both. So the Reads branch
- * matches nearly every receipt, and whichever branch is tested FIRST wins the message. Put the
- * receipts test second and `ohmail/Receipts` stays empty forever while every order confirmation
- * files itself under newsletters — which is exactly what was measured: the seeded receipts all
- * filed under newsletters, `ohmail/Receipts` = 0.
- *
- * A test pins the ordering with a receipt that carries `List-Unsubscribe`: swapping these two
- * blocks turns it red.
- *
- * ── AND WHY BOTH SIGNALS ARE REQUIRED ───────────────────────────────────────────────────────
- *
- * Machine-sent alone is most of the world's mail. A money subject alone is a colleague writing
- * "invoice question". Only the conjunction is evidence, and everything the conjunction misses
- * stays `unclear` for the AI layer to propose on later (rules first, ~80%, not 100%).
+ * The deterministic header layer — Receipts, then Reads. IT REFINES PLACEMENT, NEVER ESTABLISHES
+ * CONSENT: every signal is sender-chosen, and this once ran BEFORE the gate — an unknown sender
+ * wrote `Precedence: bulk` and landed in `ohmail/Reads`, a remote one-message defeat of the
+ * consent boundary. Never move this call above the gate. The order inside is also correctness: a
+ * receipt routinely carries a `List-Unsubscribe` footer, so whichever branch is tested FIRST wins
+ * — receipts second meant `ohmail/Receipts` = 0, measured; a test pins the ordering. Both signals
+ * required: machine-sent alone is most of the world's mail; a money subject alone is a colleague
+ * writing "invoice question". What the conjunction misses stays `unclear`.
  */
 /**
- * ═══ A BOUNCE OF THE READER'S OWN MAIL, AND THE BACKSCATTER THAT IMPERSONATES ONE ═════════
- *
- * ── THE FAILURE ─────────────────────────────────────────────────────────────────────────
- *
- * You send a message; the recipient's server refuses it; the delivery report comes back from
- * `MAILER-DAEMON@their-host`, whom you have never corresponded with. `evaluateRules` sees a
- * first-contact sender and does exactly what the consent gate is for: it files the report in
- * `ohmail/Screener` and waits for you to decide about the daemon. So the one message that says
- * "the mail you sent did not arrive" is the one message held back from you — and held back at
- * precisely the moment it is most actionable, because a bounce is only useful before you have
- * assumed the mail landed.
- *
- * ── AND WHY THE OBVIOUS FIX IS A CONSENT-GATE BYPASS ────────────────────────────────────
- *
- * "File anything that looks like a delivery report into the Ohbox" is one line, and it hands
- * every spammer on earth a way past the gate: `Content-Type: multipart/report;
- * report-type=delivery-status` is a string anybody can type. This module already carries a
- * scar of that exact shape — `pipeline.ts` records `sensitivity.sensitive ? "INBOX" : …` as a
- * remote, unauthenticated, one-message defeat of the consent boundary — and the rule it
- * learned is the rule here: **a signal the SENDER chooses may refine placement and may never
- * establish consent.** Shape is chosen by the sender. Shape alone can therefore prove nothing.
- *
- * That is also the whole of BACKSCATTER, which is not a hypothetical: a spammer forges YOUR
- * address as the envelope sender, some real MTA rejects the mail, and its genuine, correctly
- * formed delivery report arrives in your mailbox. It has the right Content-Type, it comes from
- * a real daemon, and it carries a real `X-Failed-Recipients`. Every property of "shape" is
- * satisfied by mail you had nothing to do with.
- *
- * ── SO THE VERDICT IS SHAPE **AND** OWN-SEND EVIDENCE, AND OWN-SEND MEANS A LOOKUP ──────
- *
- * This function answers the half that is pure — is this DSN-shaped, and what does it claim
- * about the original message — and it deliberately does NOT answer "is that original ours".
- * Both of the answers to that require data this module does not have and must not fetch:
- *
- *  · {@link DsnEvidence.originalMessageIds} — the Message-IDs the report quotes. The caller
- *    matches them against the account's own `messages.message_id_header`
- *    (`messages_account_message_id_header_idx`, mail 0026 — the index already exists, so this
- *    slice adds no migration). A backscatter report quotes the SPAMMER's Message-ID, which the
- *    account has never held, so the lookup misses and the message takes the ordinary path.
- *  · {@link DsnEvidence.failedRecipients} — the addresses `X-Failed-Recipients` names. The
- *    caller checks them against the account's known correspondents. The header on its own is
- *    NOT evidence and must never be treated as any: it is a string the sender writes, so
- *    accepting its mere presence would reinstate the bypass this docblock exists to refuse.
- *    What makes it evidence is that the failed recipient is somebody this account actually
- *    corresponds with — a fact about our data, which a stranger cannot forge into existence.
- *
- * Neither answer available ⇒ ordinary path, which for a stranger's daemon is the Screener. The
- * report is not deleted, not quarantined and not hidden; it waits, exactly like any other
- * first-contact sender, and the user can admit it in one press. Failing toward the gate is the
- * correct direction for a signal that cannot be corroborated.
- *
- * ── THE RESIDUAL, NAMED ────────────────────────────────────────────────────────────────
- *
- * A genuine bounce for a brand-new recipient — first mail to an address that is not yet a
- * contact — whose report also quotes no Message-ID this account holds, still lands in the
- * Screener. That is a miss, and it is the direction to miss in: one extra press versus a
- * standing hole in the consent gate.
+ * A bounce of the reader's own mail, and the backscatter that impersonates one. A report from
+ * `MAILER-DAEMON@their-host` is a first-contact sender, so the gate holds the one message that
+ * says "your mail did not arrive". The obvious fix is a bypass: `report-type=delivery-status` is
+ * a string anybody can type, and backscatter is real — a spammer forges YOUR address, a real MTA
+ * rejects, and its genuine report satisfies every property of "shape". So the verdict is shape
+ * AND own-send evidence, and this answers only the pure half: the caller matches the quoted
+ * Message-IDs against its own rows (backscatter's misses) and `X-Failed-Recipients` against known
+ * correspondents. Neither means the Screener, one press away.
  */
 export interface DsnEvidence {
   /**
@@ -1634,18 +1236,15 @@ export function dsnVerdict(msg: NormalizedMessage, raw?: Uint8Array): DsnEvidenc
   push(...(msg.headers["in-reply-to"] ?? []), ...(msg.headers["references"] ?? []));
   // Then the human-readable part, which is where several MTAs restate the original's id.
   push(...(msg.textBody.slice(0, DSN_BODY_SCAN_LIMIT).match(MESSAGE_ID_TOKEN) ?? []));
-  // ── AND THEN THE RAW BYTES, WHICH IS THE ONLY PLACE THE QUOTED HEADERS EXIST ──────────
-  //
-  // RFC 3462 puts the original in a `message/rfc822-headers` (or `message/rfc822`) part, and
-  // the parser does NOT flatten those into `textBody` — measured, not assumed: a Gmail-shaped
-  // three-part report normalises to a `textBody` holding only the human-readable paragraph, so
-  // a scan of the parsed message finds nothing and the corroboration never fires. That is the
-  // silent-degrade version of this feature: shape recognised, evidence unreachable, every real
-  // bounce held at the gate exactly as before.
-  //
-  // OPTIONAL, so a caller that has only the parsed form still gets the structured ids. Bounded
-  // by the same {@link DSN_BODY_SCAN_LIMIT} for the same reason — these are a stranger's bytes
-  // and they feed an `IN (…)` on the ingest path.
+  // And then the raw bytes, which is the only place the quoted headers exist. RFC 3462 puts the
+  // original in a `message/rfc822-headers` (or `message/rfc822`) part, and the parser does NOT
+  // flatten those into `textBody` — measured: a Gmail-shaped three-part report normalises to a
+  // `textBody` holding only the human-readable paragraph, so a scan of the parsed message finds
+  // nothing and the corroboration never fires — the silent-degrade version of this feature: shape
+  // recognised, evidence unreachable, every real bounce held at the gate exactly as before.
+  // OPTIONAL, so a caller with only the parsed form still gets the structured ids; bounded by
+  // {@link DSN_BODY_SCAN_LIMIT} — these are a stranger's bytes feeding an `IN (…)` on the ingest
+  // path.
   if (raw) push(...(decodeAscii(raw.subarray(0, DSN_BODY_SCAN_LIMIT)).match(MESSAGE_ID_TOKEN) ?? []));
 
   // THE REPORT'S OWN ID IS NOT A CLAIM ABOUT AN ORIGINAL. It sits in the raw bytes above and
@@ -1688,38 +1287,25 @@ function headerHeuristic(msg: NormalizedMessage): RuleDecision | null {
 }
 
 /**
- * The rules whose PLACEMENT the `people_only` demotion is allowed to refine — an ALLOWLIST, and
- * never `provenance !== "manual"`.
- *
- * `provenance` reaches us through an unvalidated `as` cast off a bare `text` column
- * ({@link rank}'s note), so a value outside the union IS representable. A negation would make that
- * garbage DEMOTABLE — exactly the wrong direction, because the failure it produces is a real
- * person's rule being overridden. An allowlist makes garbage EXEMPT: an unknown provenance falls
- * through to the rule's own destination, which is failing toward the user. `migrated` (a rule the
- * user authored elsewhere) and `manual` are both absent, and that absence is the whole ruling.
+ * The rules whose PLACEMENT the `people_only` demotion may refine — an ALLOWLIST, never
+ * `provenance !== "manual"`. `provenance` reaches us through an unvalidated `as` cast off a bare
+ * `text` column, so a value outside the union IS representable. A negation would make that
+ * garbage DEMOTABLE — exactly the wrong direction, because the failure is a real person's rule
+ * being overridden. An allowlist makes garbage EXEMPT: an unknown provenance falls through to the
+ * rule's own destination, failing toward the user. `migrated` and `manual` are both absent, and
+ * that absence is the whole ruling.
  */
 const DEMOTABLE_PROVENANCE: ReadonlySet<Rule["provenance"]> = new Set(["seeded-from-sent", "promoted"]);
 
 /**
- * The `people_only` placement refinement, or `null` to leave the winning rule's destination alone.
- *
- * Reached ONLY from inside {@link evaluateRules}' winning-allow branch, after the deny and
- * `auth === "fail"` checks, so it can never weaken a denial, screen a message, or run for a
- * sender who is not already admitted. Five conditions, each a refusal to over-reach:
- *
- *  1. the posture is `people_only` (the switch — absent/`people_and_replied` demotes nobody);
- *  2. the rule places into the Ohbox (`destination === "INBOX"`) — a rule that already names Reads
- *     or Receipts is a placement we must not reshuffle;
- *  3. the rule's provenance is INFERRED admission ({@link DEMOTABLE_PROVENANCE}) — never a rule the
- *     user authored;
- *  4. the message is automated-shaped — {@link headerHeuristic} answers Reads/Receipts. If it does
- *     not, the sender is writing personally and the rule's Ohbox placement is exactly right;
- *  5. the answer is that Reads/Receipts destination, carried as `source: "policy"` with the
- *     overridden rule as {@link RuleDecision.overriddenRuleId}, NOT as `matchedRuleId`.
- *
- * {@link headerHeuristic} only ever returns Reads or Receipts, so a demotion output is always one
- * of those two — never the Screener, never Quarantine, never a promotion. A test mutates this to
- * return the Screener and must go red.
+ * The `people_only` placement refinement, or `null` to leave the winner's destination alone.
+ * Reached ONLY inside the winning-allow branch, after the deny and `auth === "fail"` checks, so
+ * it can never weaken a denial, screen a message, or run for an unadmitted sender. Five refusals:
+ * the posture is `people_only`; the rule places into the Ohbox; the provenance is INFERRED
+ * admission; the message is automated-shaped — {@link headerHeuristic} answers Reads/Receipts,
+ * otherwise the sender is writing personally; the answer carries `source: "policy"` with
+ * `overriddenRuleId`, NOT `matchedRuleId`. The heuristic only returns Reads or Receipts, so a
+ * demotion is always one of those — never the Screener; a test mutates this and must go red.
  */
 function policyDemotion(
   msg: NormalizedMessage, winner: Rule, policy: OhboxPolicy,
@@ -1733,53 +1319,14 @@ function policyDemotion(
 }
 
 /**
- * ── THE CONSENT GATE, IN THE ONLY ORDER THAT IS CORRECT ─────────────────────────────────────
- *
- * ohmail's founding premise is that an unknown sender waits in `ohmail/Screener` until the human
- * decides. Four steps, and three of them are a fix for a confirmed bypass:
- *
- *  1. **The user's own rules**, resolved by a TOTAL order ({@link compareRules}). A decision the
- *     user made outranks anything we infer, including the gate itself — that is what "the user
- *     always wins" means, and it is how a sender they already screened stays screened.
- *  2. **A positive authenticated-known check** ({@link isKnownAuthor}). Not `if (from && …)`.
- *  3. **Fail closed to `ohmail/Screener`** for an unknown sender, an absent `From`, an
- *     unparseable `From`, an empty group, and two or more author mailboxes.
- *  4. **THEN** {@link headerHeuristic}, which may only refine placement for a sender that is
- *     already past the gate.
- *
- * Steps 3 and 4 were once in the opposite order — a critical bypass; step 2 was a truthiness
- * test — a further one.
- *
- * ── AND ONE DEMOTION, WHICH IS THE ONLY THING `input.auth` DOES ──────────────────────────────
- *
- * `auth === "fail"` — and no other value — sends a message to `ohmail/Screener` that would
- * otherwise have been allowed through. It is a DEMOTION in every case:
- *
- *  · A DENY rule is never weakened by it. `ohmail/Quarantine` is stricter than the Screener, so
- *    "demoting" a quarantined message to the Screener would be a promotion wearing the wrong
- *    name. Either signal of denial — the modelled `Rule.effect` or
- *    {@link effectForDestination} — is enough to keep the rule's own answer.
- *  · An unknown sender is already screened, so the branch is unreachable for them.
- *  · Nothing is ever REQUIRED. There is no `auth !== "pass"` here, and there must never be:
- *    every earlier caller states `"unauthenticated"`, so on the day this shipped it changed no
- *    routing anywhere, and the large-backlog case in {@link AuthVerdict} is why that
- *    property has to survive every later edit.
- *
- * `matchedRuleId` is `null` on the demotion even when a rule matched: that rule did not decide
- * where this message went, and recording it as though it had would teach the learning path a
- * consent signal the user never gave.
- *
- * ── AND ONE PLACEMENT REFINEMENT, WHICH IS THE ONLY THING `input.ohboxPolicy` DOES ───────────
- *
- * Under `people_only`, an automated-shaped message from an INFERRED-admission allow rule
- * (`seeded-from-sent`/`promoted`) whose destination is the Ohbox is demoted to Reads/Receipts
- * ({@link policyDemotion}). It runs AFTER the deny and auth-fail checks and only inside the
- * winning-allow branch, so it never weakens a denial and never crosses the consent gate — it moves
- * a *consented* sender's mail between allow-side piles and nothing else. A `manual`/`migrated` rule
- * is exempt (the user authored the placement), and the demotion carries `source: "policy"` with
- * `overriddenRuleId`, never `matchedRuleId`, for the learning-path reason above. Sensitivity
- * promotion sits ABOVE this in `pipeline.ts` and is untouched — an OTP from a seeded sender still
- * reaches the Ohbox.
+ * The consent gate, in the only order that is correct. Four steps: (1) the user's own rules,
+ * resolved by a TOTAL order — a user decision outranks anything we infer, including the gate; (2)
+ * a POSITIVE authenticated-known check, not `if (from && …)`; (3) fail closed to
+ * `ohmail/Screener` for an unknown, absent, unparseable or ambiguous sender; (4) THEN {@link
+ * headerHeuristic}, refinement only. `"fail"` — the only thing `input.auth` does — screens a
+ * message otherwise allowed: a DENY rule is never weakened, nothing is ever REQUIRED.
+ * `matchedRuleId` is `null` on the demotion: recording the rule would teach the learning path a
+ * false consent signal. One refinement: {@link policyDemotion}, between allow-side piles only.
  */
 export function evaluateRules(input: EvaluateRulesInput): RuleDecision {
   const { msg, rules, knownSenders, auth, ohboxPolicy } = input;
