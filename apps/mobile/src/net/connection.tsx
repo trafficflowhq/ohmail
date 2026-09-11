@@ -39,9 +39,12 @@ import { Copy } from "../copy";
 import { faultDetail, refuse, type Refusal, type RefusalArg } from "../refusal";
 import { LOCAL_ENGINE_ORIGIN, mirrorExists, mirrorOwnerKey } from "../engine/boot";
 import { nativeEngineDeps } from "../engine/native";
-import { endStandaloneHere, holdStandaloneDoor, organizerDoor } from "../engine/organizer-session";
 import {
-  PHONE_CLAIM_NAME, reopenStandaloneMailbox, type StandaloneEngine,
+  endStandaloneHere, holdStandaloneDoor, organizerDoor, sayOrganizerRestricted,
+} from "../engine/organizer-session";
+import {
+  PHONE_CLAIM_NAME, reopenStandaloneMailbox,
+  type ReopenOutcome, type StandaloneEngine,
 } from "../engine/standalone-door";
 import { phoneEngineReopen } from "../engine/engine-artifact";
 import { installGeneration } from "../state/install-marker";
@@ -176,6 +179,31 @@ export function useConnection(): Connection {
  */
 const SUPERSEDED = (): Refusal => refuse("connectSuperseded");
 
+/**
+ * OPEN IT AGAIN, AND WIRE IT TO THE APP'S LIFECYCLE — the relaunch's twin of the door screen.
+ *
+ * `app/standalone.tsx` does two things in its success arm: it adopts the door and it starts the
+ * organizer session. A relaunch is the same moment with no screen in front of it, and without this
+ * the second half was simply absent — the app would organize while it was open, post no
+ * notification, and hand nothing back when it left the foreground, which is the whole mechanism
+ * `background.ts` exists for and exactly the state it renders as healthy.
+ *
+ * Native behind a dynamic import for `local-engine-native.ts`'s reason, `void` because a mailbox
+ * that is open must not wait on a notification, and the catch RECORDS the restriction rather than
+ * swallowing it — a build that cannot reach its own background half says so.
+ */
+async function reopenWithBackground(
+  deps: Parameters<typeof reopenStandaloneMailbox>[0],
+): Promise<ReopenOutcome> {
+  const opened = await reopenStandaloneMailbox(deps);
+  if (!opened.ok) return opened;
+  const { door } = opened;
+  void import("../engine/organizer-session-native")
+    .then((m) => { m.startOrganizerSessionNative(door, door.address); })
+    .catch(() => { sayOrganizerRestricted(); });
+  return opened;
+}
+
 export function ConnectionProvider({ children }: { children: ReactNode }) {
   const env = useMemo<PairingEnv>(
     // `deviceKind` — what THIS phone is, declared at pairing time so the server's device list
@@ -204,7 +232,7 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
            platform's SQLite, its key ring and the install marker are all `-native` modules. */
         standalone: {
           door: organizerDoor,
-          reopen: () => reopenStandaloneMailbox({
+          reopen: () => reopenWithBackground({
             startFromSealed: phoneEngineReopen(),
             platform: async () => {
               /* BEHIND A DYNAMIC IMPORT, never at module scope: the expo packages are Flow-typed

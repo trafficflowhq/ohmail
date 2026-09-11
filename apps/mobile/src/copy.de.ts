@@ -202,6 +202,9 @@ export const DE: Deck = {
   serversForget: "Vergessen",
   serversForgetNote:
     "Vergessen löscht die Kopplung und die Post, die dieses Telefon kopiert hatte. Über die Geräteliste des Servers lässt sie sich auch dort widerrufen.",
+  /* Dieselbe Notiz, wo es keinen Server gibt — siehe die englische Fassung. */
+  serversForgetNoteHere:
+    "Entfernen gibt das Postfach zurück, ohmail sortiert es hier nicht weiter ein, und die Post, die dieses Telefon kopiert hatte, wird gelöscht. Das Postfach auf deinem Mailserver bleibt unberührt.",
   serversForgetFailed: (reason: string) => reason,
   serversEmpty: "Noch keine Kopplungen.",
   serversInstallUnknown: (detail: string) =>

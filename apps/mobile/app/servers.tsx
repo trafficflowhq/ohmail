@@ -61,9 +61,14 @@ export default function ServersScreen() {
                 onForgetFailed={setForgetFailure}
               />
             ))}
+            {/* ── THE NOTE NAMES A DEVICES LIST ONLY WHERE THERE IS A SERVER TO HOLD ONE ────
+                A list holding nothing but this phone's own mailbox has no server and no Devices
+                pane, so that sentence had no referent — a true-sounding instruction a person
+                cannot follow. Decided by the ROWS rather than by the live session: the note is
+                about every row under it. */}
             <View style={{ paddingHorizontal: 20, paddingTop: 6 }}>
               <Txt variant="hint" tone="ink3">
-                {Copy.serversForgetNote}
+                {conn.profiles.every(organizesHere) ? Copy.serversForgetNoteHere : Copy.serversForgetNote}
               </Txt>
             </View>
           </Panel>
@@ -155,7 +160,10 @@ function LiveFacts() {
   const total = engine.read().list("message").length;
   return (
     <>
-      <Txt variant="settingsLabel">{s.session.profile.origin}</Txt>
+      {/* THE SAME RULE AS THE ROW BELOW: on this door the origin is a name nothing dials. */}
+      <Txt variant="settingsLabel">
+        {organizesHere(s.session.profile) ? PHONE_CLAIM_NAME : s.session.profile.origin}
+      </Txt>
       <Txt variant="caption" tone="ink3" tabular>
         {conn.syncing ? Copy.connectSyncing : Copy.connectMirrored(total, s.session.store.getCursor())}
       </Txt>

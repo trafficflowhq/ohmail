@@ -356,6 +356,10 @@ const TABLE = {
   // the code keeps — and `serversForgetFailed` is what gets said on the launch where it cannot.
   serversForgetNote:
     "Forgetting deletes the pairing and the mail this phone had copied. The server's Devices list can revoke it there too.",
+  /* THE SAME NOTE WHERE THERE IS NO SERVER — a list holding only this phone's own mailbox has no
+     Devices pane, so naming one is an instruction nobody can follow. */
+  serversForgetNoteHere:
+    "Removing it hands the mailbox back, stops ohmail from filing it here, and deletes the mail this phone had copied. The mailbox on your mail server is untouched.",
   /** A take-back that did not fully land says what remains and what will happen next. */
   serversForgetFailed: (reason: string) => reason,
   serversEmpty: "No pairings yet.",

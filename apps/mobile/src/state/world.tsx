@@ -48,6 +48,7 @@ import {
   type FoldersConsent,
 } from "../net/consent";
 import { readMailboxes, type PhoneMailbox } from "../net/mailboxes";
+import { PHONE_CLAIM_NAME, organizesHere } from "../engine/standalone-door";
 import { readFolderSummary } from "../net/folder-ops";
 import * as Crypto from "expo-crypto";
 import type { FaceName } from "../theme/face";
@@ -943,7 +944,22 @@ export function WorldProvider({ children }: { children: ReactNode }) {
       },
       abandoned: engine.abandoned(),
       worldKey: session.ownerKey,
-      account: { name: session.profile.origin, email: session.profile.accountId },
+      /**
+       * ── WHOSE MAIL THIS IS, AND THE STANDALONE DOOR HAS NO ADDRESS TO NAME ────────────────
+       *
+       * On every paired door these two fields are a server address and the account it opens, which
+       * is what the More header is for. On the standalone door the origin is `LOCAL_ENGINE_ORIGIN`
+       * — a name nothing dials — and the id is opaque, so the header read as a URL and a UUID to a
+       * person whose mailbox is on the phone in their hand. Measured on a device.
+       *
+       * The same two facts in the words this door has: the phone's own claim name, and the mailbox
+       * the engine says it serves. The address comes from the ROW rather than from the profile,
+       * because the profile has never held one; an unread roster leaves it empty rather than
+       * guessing.
+       */
+      account: organizesHere(session.profile)
+        ? { name: PHONE_CLAIM_NAME, email: mailboxes?.[0]?.address ?? "" }
+        : { name: session.profile.origin, email: session.profile.accountId },
       // THE DOOR, derived once by the layer that composes the session. See the field.
       standalone: session.standalone,
       mailboxes: {
