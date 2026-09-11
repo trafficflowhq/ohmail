@@ -3047,71 +3047,36 @@ export class OhmailEngine {
   // ── message bodies ───────────────────────────────────────────────────────
 
   /**
-   * FETCH ONE MESSAGE'S BODY, ON EXPLICIT INTENT.
-   *
-   * The one capability behind every reading surface. Before it, the wire `MessageDTO`
-   * carried `snippet` and never `body`, so on a live account `m.body ?? m.snippet` rendered
-   * a single line in the Ohbox, in Reads, in Receipts and in the Screener; every
-   * `StreamCard` measured "short"; and `.scast.short .sc-x{display:none}` hid the Expand
-   * pill. There was no pill because there was nothing to expand.
-   *
-   * ── THE RESULT DOES NOT GO ON THE MESSAGE ROW ──────────────────────────────────────────
-   *
-   * It goes into a client-local `message_body` record — see {@link MessageBodyRecord} for
-   * the mechanism and for the live-only bug that shape makes unreachable. Nothing here
-   * touches `message`.
-   *
-   * ── IDEMPOTENT, SINGLE-FLIGHT ──────────────────────────────────────────────────────────
-   *
-   * Two surfaces can want the same body at once — the Ohbox read column and the reader sheet
-   * render the same message simultaneously — so concurrent callers join one request. A body
-   * already `ready` is never re-fetched.
-   *
-   * A `loading` record with no promise behind it — a tab that died mid-request; the record
-   * persists, the promise does not — IS re-fetched. That cannot loop, because a `loading`
-   * record written by THIS engine always has an entry in the in-flight map above it. The map
-   * is the dedup that matters; deciding from the record's state alone would make a zombie
-   * `loading` a permanent spinner with no way out.
-   *
-   * ── `retry` — WHY A FAILURE IS NOT RETRIED BY DEFAULT ───────────────────────────────────
-   *
-   * Most callers are React effects: "the card became current", "this sender was selected".
-   * They re-run whenever their inputs change, and a failed fetch writes a record, which bumps
-   * the mirror version, which re-renders — so a `failed` state that re-fetched on the default
-   * path would be a request loop against a server that is already refusing, billed per
-   * attempt, for as long as the view stays open, with nobody behind any of it. Found by exactly
-   * that: a
-   * 500-ing adapter under a view whose callback identity changed per render spun until the
-   * test timed out.
-   *
-   * So the rule is about WHO is asking, not about the state. An automatic trigger asks once
-   * and reports the failure; a HUMAN act — re-expanding a card, pressing Retry — passes
-   * `retry` and asks again. That also makes the failed state's exit a thing the user chose,
-   * which is what a control on screen is for.
-   *
-   * ── WHY IT NEVER REJECTS ───────────────────────────────────────────────────────────────
-   *
-   * Every caller is a React effect or a click handler; a rejection there is an unhandled
-   * promise and, at worst, an error boundary over somebody's mailbox. The outcome is the
-   * RECORD — `ready` or `failed` — which is a thing the UI can render. The failure is
-   * reported on screen, not thrown at the DOM.
-   *
-   * ── `urgent` — A MESSAGE SOMEBODY IS LOOKING AT DOES NOT WAIT BEHIND A BACKLOG ────────────
-   *
-   * {@link bodySlot} lets four fetches run at once and queues the rest, which is what keeps a
-   * forty-message sender from opening forty connections. But the queue is FIFO and has no notion
-   * of what is on screen, so the message the reader just SELECTED could be queued behind a
-   * Screener preview's backlog that nobody is watching — the one body that is the whole screen
-   * waiting on bodies that are not.
-   *
-   * `urgent` jumps that queue. It is passed by the shell's two selection effects and by nothing
-   * else, because "this is the message being opened" is knowledge only the selection has.
-   *
-   * IT IS A SEPARATE FLAG FROM `retry`, DELIBERATELY. `retry` also jumps the queue — a human
-   * pressing "try again" must not wait — and overloading it here would have been one word
-   * shorter and wrong: `retry` ALSO bypasses the failed-guard above, so a selection effect
-   * carrying it would re-ask a refusing server on every render, which is exactly the billed
-   * poll-with-nobody-behind-it that guard exists to prevent. Two facts, two flags.
+   * Fetch one message's body, on explicit intent — the capability behind every reading surface (before it, the wire
+   * carried `snippet` only, so every stream card measured "short" and the Expand pill never appeared). The result
+   * goes into a client-local `message_body` record ({@link MessageBodyRecord}), never onto the message row.
+   * Idempotent, single-flight: two surfaces render the same message at once, so concurrent callers join one request,
+   * and a `ready` body is never re-fetched. A `loading` record with no promise behind it (a tab died mid-request; the
+   * record persists, the promise does not) IS re-fetched — that cannot loop, because a `loading` record this engine
+   * writes always has an in-flight entry above it; the map is the dedup, and deciding from the record alone would
+   * make a zombie `loading` a permanent spinner.
+   */
+
+  /**
+   * `retry` — why a failure is not retried by default: most callers are React effects that re-run
+   * whenever inputs change, and a failed fetch writes a record, bumps the version, re-renders — a
+   * `failed` state that re-fetched on the default path is a billed request loop against a server
+   * already refusing (found by exactly that: a 500-ing adapter under a per-render callback spun
+   * until the test timed out). The rule is about WHO asks: an automatic trigger asks once; a HUMAN
+   * act passes `retry` and asks again, which also makes the failed state's exit a thing the user
+   * chose. It never rejects: the outcome is the RECORD (`ready` or `failed`), a thing the UI
+   * renders — reported on screen, not thrown at the DOM.
+   */
+
+  /**
+   * `urgent` — a message somebody is looking at does not wait behind a backlog. {@link bodySlot}
+   * runs four fetches and queues the rest, FIFO with no notion of what is on screen, so the
+   * message just SELECTED could queue behind a Screener preview nobody is watching. `urgent`
+   * jumps that queue, passed by the shell's two selection effects and nothing else — "this is the
+   * message being opened" is knowledge only the selection has. A separate flag from `retry`,
+   * deliberately: `retry` also jumps the queue, but it ALSO bypasses the failed-guard, so a
+   * selection effect carrying it would re-ask a refusing server on every render — exactly the
+   * billed poll the guard prevents. Two facts, two flags.
    */
   async hydrateBody(messageId: string, opts: { retry?: boolean; urgent?: boolean } = {}): Promise<void> {
     /**
@@ -3195,61 +3160,29 @@ export class OhmailEngine {
     }
     const held = this.read().get<MessageBodyRecord>("message_body", messageId);
     /**
-     * ── ALREADY READY — **AND FROM A BUILD THAT KNEW ABOUT `html`** ─────────────────────
-     *
-     * The html part and a renderer for it shipped together, and a message already opened was
-     * STILL a text dump ending in a tracking pixel's url. Not a stale deploy (the live mailbox
-     * chunk contains the renderer) and not a missing server field (that message's `html` was
-     * there, and long): it was THIS LINE.
-     *
-     * `message_body` records are persisted (`IndexedDbMirrorStore`), and one written by any
-     * build from before it is `{messageId, state, text}` with no `html` key at all. `ready`
-     * suppressed the fetch, `bodyOf` read `rec.html ?? null`, and every message the reader had
-     * already opened stayed frozen in the pre-fix shape for ever — while newly-arrived mail
-     * rendered correctly, which is why the product looked unfixed only to the people already
-     * using it.
-     *
-     * `html !== undefined` and NOT `html != null`, and the difference is the whole of it:
-     *
-     *   `undefined`  no build ever answered this record's question. Ask now.
-     *   `null`       a build DID ask, and the answer was "this message has no html" — a
-     *                plain-text mail, or a sensitive one whose html is deliberately not stored
-     *                (`pipeline.ts`). Re-asking would be a permanent billed poll with nobody
-     *                behind it, against a server that will keep answering the same thing.
-     *
-     * It is a re-read, not a migration: {@link MessageBodyRecord} says why inventing `html:
-     * null` for these rows is forbidden — it is indistinguishable from a message that genuinely
-     * has none. And it is not a sweep. `hydrateBody` is called per message on explicit intent,
-     * so this costs ONE extra `GET /messages/:id/body` per message the reader opens again,
-     * once, and nothing for mail they never open.
-     *
-     * IT TERMINATES BECAUSE `fetchBodyInto` ALWAYS WRITES THE KEY — `HttpAdapter.fetchBody`
-     * normalises a missing wire field to `null`, and the `failed` arm sets it explicitly — so
-     * no transport can produce a record that lands back in this branch. `body-hydration.test.ts`
-     * asserts the count, not just the outcome, for exactly that reason.
+     * Already ready — AND from a build that knew about `html`. The html renderer shipped, and a message already
+     * opened was still a text dump: `message_body` records persist, one written by an older build has no `html` key
+     * at all, `ready` suppressed the fetch, and every message the reader had already opened stayed frozen in the
+     * pre-fix shape — while new mail rendered correctly, which is why the product looked unfixed only to the people
+     * already using it. `html !== undefined` and NOT `!= null`, and the difference is the whole of it: `undefined` —
+     * no build ever answered; ask now. `null` — a build asked and the answer was "no html" (a plain-text mail, or a
+     * sensitive one whose html is deliberately not stored); re-asking is a permanent billed poll.
+     */
+
+    /**
+     * A re-read, not a migration ({@link MessageBodyRecord} says why inventing `html: null` is forbidden) and not a
+     * sweep — one extra request per message the reader opens again. It terminates because `fetchBodyInto` always
+     * writes the key; `body-hydration.test.ts` asserts the COUNT, not just the outcome.
      */
     if (held?.state === "ready" && held.html !== undefined) {
       /**
-       * ── THE ONE READY RECORD THAT IS STILL WORTH ASKING ABOUT ───────────────────────────────
-       *
-       * A record written by a build that predates the storage-cap marker cannot be told from a
-       * genuinely empty message: `{state: "ready", text: "", html: null}` is exactly what a
-       * pre-slice client persists for a body the server has begun WITHHOLDING, because it drops
-       * the wire field it does not know. Left alone, the clause above skips it for ever and
-       * `bodyOf` reports `full` over nothing — the marker's whole purpose defeated, permanently,
-       * for every tab that was open across the deploy.
-       *
-       * `withheld === undefined` is the discriminator, and it exists only because both write
-       * sites now ALWAYS set the key (`null` for an ordinarily stored body). So this is not a
-       * poll: one re-ask heals the record, the answer writes the key either way, and the record
-       * can never match this branch again.
-       *
-       * NARROW ON PURPOSE — the cost argument above is load-bearing. Only `text === ""` AND
-       * `html === null` qualifies, which is the shape a withheld body has. A plain-text mail with
-       * real text and `html: null` is the common `html`-absence case and must never become a
-       * request; a record already carrying the key, in either value, has been answered by a build
-       * that could tell. And `bodyHealed` bounds it to ONCE per engine even if the mirror write
-       * is refused, exactly as the `failed` arm below does.
+       * The one ready record still worth asking about: a record from a build predating the storage-cap marker cannot
+       * be told from a genuinely empty message — `{state: "ready", text: "", html: null}` is exactly what a pre-slice
+       * client persists for a body the server has begun WITHHOLDING. Left alone, `bodyOf` reports `full` over nothing
+       * for ever. `withheld === undefined` is the discriminator, and it works only because both write sites now
+       * ALWAYS set the key — one re-ask heals the record and it can never match this branch again. Narrow on purpose:
+       * only `text === ""` AND `html === null` qualifies (the withheld shape); a plain-text mail with real text must
+       * never become a request, and `bodyHealed` bounds it to once per engine even if the mirror write is refused.
        */
       const preCapEmpty = held.text === "" && held.html === null && held.withheld === undefined;
       if (!preCapEmpty || this.bodyHealed.has(messageId)) return { kind: "skip" };
@@ -3311,26 +3244,14 @@ export class OhmailEngine {
   }
 
   /**
-   * ── `held` IS HERE SO A RE-READ DOES NOT TAKE THE MESSAGE OFF THE SCREEN ────────────────
-   *
-   * This write used to be unconditional, and that is destructive: `bodyOf` answers a `loading`
-   * record with the SNIPPET, so a message the reader is looking at collapsed to one line the
-   * instant anything asked for it again. The re-read above (`ready` with no `html` key, from a
-   * build that predates the html part) is exactly such a caller, and it fires on a message the
-   * reader has just opened — so the visible effect of fixing that record was the body
-   * disappearing first. If the fetch then failed or hung, they had LOST a body they already had.
-   *
-   * A record that is already `ready` is therefore left alone until there is something better to
-   * put in its place. The reader keeps reading; the swap happens when the answer arrives.
-   *
-   * ── AND THE REFUSAL IS SWALLOWED, WHICH IS NOT A TIDY-UP ────────────────────────────────
-   *
-   * `putBody` reaches IndexedDB, and IndexedDB refuses: a quota that is full, a private window, a
-   * connection closed by a version change, an `IdbMirrorStore` whose owner moved. This write now
-   * sits OUTSIDE `fetchBodyInto`'s try, so an unguarded rejection here would propagate out of
-   * `hydrateBody` — breaking its "WHY IT NEVER REJECTS" contract, in a React effect, where the
-   * outcome is an unhandled rejection over somebody's mailbox. The fetch still goes ahead: a
-   * mirror that cannot hold a marker can very well hold the answer.
+   * `held` is here so a re-read does not take the message off the screen. The write used to be unconditional, and
+   * that is destructive: `bodyOf` answers a `loading` record with the SNIPPET, so a message being read collapsed to
+   * one line the instant anything asked again — and the legacy re-read fires on exactly the message the reader just
+   * opened; if the fetch then failed, they had LOST a body they already had. A `ready` record is left alone until
+   * there is something better to put in its place. The refusal is swallowed, and that is not a tidy-up: this write
+   * sits outside `fetchBodyInto`'s try, so an unguarded IndexedDB rejection (full quota, private window, a
+   * version-changed connection) would propagate out of `hydrateBody` and break its never-rejects contract in a React
+   * effect. The fetch still goes ahead: a mirror that cannot hold a marker can very well hold the answer.
    */
   private async markLoading(messageId: string, held: MessageBodyRecord | undefined): Promise<void> {
     if (held?.state === "ready") return;
@@ -3344,29 +3265,19 @@ export class OhmailEngine {
   }
 
   /**
-   * ── ONE REQUEST FOR A WHOLE CONVERSATION ────────────────────────────────────────────────
-   *
-   * Opening a thread needs every sibling's body, and until this existed the surface asked for them
-   * one at a time from a single effect: eight siblings were eight `GET /messages/:id/body` calls
-   * through a four-wide limiter, so the last two did not even START until a full round trip had
-   * finished, and the reader watched the conversation assemble itself in visible steps. The
-   * batch route answers all of them in one.
-   *
-   * ── WHAT THIS DOES NOT CHANGE ───────────────────────────────────────────────────────────
-   *
-   * The admission rules are `hydrateBody`'s own, through {@link bodyPlan}: a demo row that carries
-   * its body is not asked for, a protected sibling is PURGED rather than fetched (which is why
-   * these ids are passed in rather than filtered by the caller), a `ready` body with an `html` key
-   * is left alone, and a failure is re-asked only across a session boundary. The markers are
-   * written for the whole set BEFORE anything leaves, for the reason {@link startBody} gives, and
-   * the single-flight entries are registered synchronously so that React's double-invoked effect
-   * produces one request rather than two.
-   *
-   * ── AND IT IS NOT REQUIRED TO EXIST ─────────────────────────────────────────────────────
-   *
-   * An adapter with no batch route falls back to asking per message — the FixturesAdapter, the
-   * desktop shell, a test with a bare double. That fallback is also what makes a server which
-   * ignores the parameter merely slower: ids the answer did not carry are fetched singly below.
+   * One request for a whole conversation. Opening a thread needs every sibling's body, and the surface used to ask
+   * one at a time through a four-wide limiter — eight siblings were eight requests, the last two not even STARTING
+   * until a round trip finished, and the reader watched the conversation assemble in steps; the batch route answers
+   * all in one. It changes nothing else: admission is `hydrateBody`'s own through {@link bodyPlan} (a demo row is not
+   * asked, a protected sibling is PURGED rather than fetched — why the ids are passed in, not filtered by the caller
+   * — a `ready` body with an `html` key is left alone, a failure re-asks only across a session boundary); markers are
+   * written for the whole set BEFORE anything leaves, and the single-flight entries register synchronously so a
+   * double-invoked effect produces one request.
+   */
+
+  /**
+   * Not required to exist: an adapter with no batch route falls back to per-message, and a server that ignores the
+   * parameter is merely slower — unanswered ids are fetched singly below.
    */
   hydrateThread(messageIds: string[]): Promise<void> {
     return this.hydrateMany(messageIds, { rendered: true });
