@@ -12,9 +12,13 @@
  * So the fetching happens here, in a step that holds no key, and every byte is checked against a
  * pin before the signing step is allowed to run it:
  *
- *   · The Tauri signer is pinned by the `integrity` this repository's own committed
- *     `pnpm-lock.yaml` already records — the same sha512 `pnpm install --frozen-lockfile`
- *     enforces everywhere else. No second constant to keep in step with the dependency.
+ *   · The Tauri signer is pinned HERE, in `TAURI` below: a version and the sha512 `integrity`
+ *     npm serves for that exact tarball, one row per package. It used to be read out of this
+ *     repository's committed `pnpm-lock.yaml` — one constant instead of two — but the workflow
+ *     that runs this file runs in the PUBLISHED repository, which ships no lockfile, so the read
+ *     failed there with `ENOENT … pnpm-lock.yaml` and the signing step could not start at all.
+ *     The rows are the same bytes `pnpm install --frozen-lockfile` enforces; `--selftest` checks
+ *     their shape and watches a wrong pin refuse.
  *   · Sparkle is pinned twice: the sha256 of the distribution archive, and the sha256 of the
  *     `sign_update` binary taken out of it. The second is not redundant. The archive carries
  *     THREE files named `sign_update` — `bin/sign_update`, the retired `bin/old_dsa_scripts/
@@ -28,6 +32,7 @@
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync, rmSync, existsSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
 /* Sparkle ships no lockfile here, so both pins are written down. They move together with the
@@ -62,34 +67,9 @@ function integrityOf(path) {
   return `sha512-${createHash("sha512").update(readFileSync(path)).digest("base64")}`;
 }
 
-/* The lockfile is read as TEXT rather than parsed as YAML: this script runs on a release runner
- * with no install, so it has no yaml parser, and the two lines it needs are unambiguous. A
- * package with no entry, or more than one version of it, is a refusal — picking one would be the
- * arbitrary choice this whole file exists to remove. */
-function lockedPackage(name) {
-  const lock = readFileSync(join(ROOT, "pnpm-lock.yaml"), "utf8").split("\n");
-  const found = [];
-  for (let i = 0; i < lock.length; i++) {
-    const m = /^ {2}'?(@?[^'@\s]+(?:\/[^'@\s]+)?)@([^'@\s]+)'?:$/.exec(lock[i]);
-    if (!m || m[1] !== name) continue;
-    const res = /integrity: (sha512-[A-Za-z0-9+/=]+)/.exec(lock[i + 1] ?? "");
-    if (res) found.push({ version: m[2], integrity: res[1] });
-  }
-  if (found.length !== 1) {
-    throw new Error(
-      `pnpm-lock.yaml records ${found.length} versions of ${name} ` +
-      `(${found.map((f) => f.version).join(", ") || "none"}), and this needs exactly one.`);
-  }
-  return found[0];
-}
-
 function fetchTo(url, dest) {
   execFileSync("curl", ["-fsSL", "--retry", "3", url, "-o", dest], { stdio: ["ignore", "inherit", "inherit"] });
 }
-
-const outDir = resolve(process.argv[2] ?? join(ROOT, "signers"));
-rmSync(outDir, { recursive: true, force: true });
-mkdirSync(outDir, { recursive: true });
 
 /* ── 1 · THE TAURI SIGNER, laid out as node_modules so the wrapper finds its own binary ────────
  * `@tauri-apps/cli` is a JS shim that requires the platform package for the machine it is on, so
@@ -102,18 +82,76 @@ const PLATFORM_PKG = {
   "linux-x64": "@tauri-apps/cli-linux-x64-gnu",
   "linux-arm64": "@tauri-apps/cli-linux-arm64-gnu",
 };
+/* THE TAURI SIGNER'S PINS — version + the sha512 npm serves for that tarball, one row per
+ * package, for every platform `PLATFORM_PKG` names. A package this script is asked for and does
+ * not find here is a refusal by name: fetching an unpinned tarball while the keys are in the
+ * environment is the thing this file exists to prevent. */
+const TAURI = {
+  "@tauri-apps/cli": { version: "2.9.2", integrity: "sha512-aGzdVgxQW6WQ7e5nydPZ/30u8HvltHjO3Ytzf1wOxX1N5Yj2TsjKWRb/AWJlB95Huml3k3c/b6s0ijAvlSo9xw==" },
+  "@tauri-apps/cli-darwin-arm64": { version: "2.9.2", integrity: "sha512-g1OtCXydOZFYRUEAyGYdJ2lLaE3l5jk8o+Bro8y2WOLwBLtbWjBoJIVobOKFanfjG/Xr8H/UA+umEVILPhMc2A==" },
+  "@tauri-apps/cli-darwin-x64": { version: "2.9.2", integrity: "sha512-nHHIY33noUmMOyFwAJz0xQyrYIXU+bae8MNos4TGsTo491YWAF2uzr6iW+Bq0N530xDcbe7EyRvDHgK43RmmVw==" },
+  "@tauri-apps/cli-linux-x64-gnu": { version: "2.9.2", integrity: "sha512-tg85cGIM9PWwsbQg8m3uah3SfoNapgUr4vhWtkqgeTDZOjQuQ2duTwCH4UiM7acBpbZHNzvRrxSFpv0U53TqQQ==" },
+  "@tauri-apps/cli-linux-arm64-gnu": { version: "2.9.2", integrity: "sha512-Pxj5k29Rxj9xEht4gdE744t5HLXTwBojkjYDXXyJ3mE+BEg9hFX5WkStg7OkyZwH60u8NSkDSMpo7MJTH9srmA==" },
+};
+
+function pinnedPackage(name) {
+  const row = TAURI[name];
+  if (!row) throw new Error(`${name} has no row in TAURI — add its version and sha512 integrity before the signing step can fetch it.`);
+  if (!/^\d+\.\d+\.\d+/.test(row.version ?? "")) throw new Error(`TAURI["${name}"] has no version.`);
+  if (!/^sha512-[A-Za-z0-9+/=]+$/.test(row.integrity ?? "")) throw new Error(`TAURI["${name}"] has no sha512 integrity.`);
+  return row;
+}
+
+/* ── --selftest: the pins are checked before anything is fetched ───────────────────────────────
+ * Offline, no key, no network. Three arms, and the middle one is the point: a pin that does not
+ * match must REFUSE and must name what it was checking, because the whole file exists to stop the
+ * signing step from starting. Every platform `PLATFORM_PKG` names must have a row — a platform
+ * added without its pin would otherwise fetch an unpinned tarball on that runner only. */
+if (process.argv[2] === "--selftest") {
+  let pass = 0, n = 0, bad = 0;
+  const ok = (m) => { pass++; process.stdout.write(`  ok   ${m}\n`); };
+  const no = (m) => { bad = 1; process.stdout.write(`  BAD  ${m}\n`); };
+  n++;
+  try {
+    for (const name of Object.keys(TAURI)) pinnedPackage(name);
+    ok(`${Object.keys(TAURI).length} TAURI row(s), every one a version and a sha512`);
+  } catch (e) { no(`a TAURI row is malformed: ${e.message}`); }
+  n++;
+  const missing = Object.values(PLATFORM_PKG).filter((x) => !TAURI[x]);
+  if (missing.length === 0) ok(`every PLATFORM_PKG target has a pin (${Object.values(PLATFORM_PKG).length})`);
+  else no(`no pin for: ${missing.join(", ")}`);
+  n++;
+  try { pinnedPackage("@tauri-apps/cli-nosuch-arch"); no("an unpinned package was admitted"); }
+  catch (e) { e.message.includes("@tauri-apps/cli-nosuch-arch") ? ok("an unpinned package refuses BY NAME") : no(`refused without naming it: ${e.message}`); }
+  n++;
+  const tmp = join(tmpdir(), `pinned-signers-selftest-${process.pid}`);
+  writeFileSync(tmp, "not the pinned bytes");
+  try {
+    requirePin("the selftest's own file", tmp, "sha512-AAAA", "sha512");
+    no("a wrong pin was admitted");
+  } catch (e) {
+    e.message.includes("the selftest's own file") ? ok("a wrong pin refuses, naming the subject") : no(`refused without naming the subject: ${e.message}`);
+  } finally { rmSync(tmp, { force: true }); }
+  process.stdout.write(bad ? `SELFTEST_FAIL fetch-pinned-signers ${pass}/${n}\n` : `SELFTEST_OK fetch-pinned-signers ${pass}/${n}\n`);
+  process.exit(bad ? 1 : 0);
+}
+
+const outDir = resolve(process.argv[2] ?? join(ROOT, "signers"));
+rmSync(outDir, { recursive: true, force: true });
+mkdirSync(outDir, { recursive: true });
+
 const hostKey = `${process.platform}-${process.arch}`;
 const platformName = PLATFORM_PKG[hostKey];
 if (!platformName) {
   throw new Error(
     `no @tauri-apps/cli platform package is named here for ${hostKey}. ` +
-    `Add it to PLATFORM_PKG once its integrity is in pnpm-lock.yaml.`);
+    `Add it to PLATFORM_PKG and TAURI, with its version and sha512 integrity.`);
 }
 
 const nm = join(outDir, "node_modules", "@tauri-apps");
 mkdirSync(nm, { recursive: true });
 for (const name of ["@tauri-apps/cli", platformName]) {
-  const { version, integrity } = lockedPackage(name);
+  const { version, integrity } = pinnedPackage(name);
   const bare = name.split("/")[1];
   const tgz = join(outDir, `${bare}-${version}.tgz`);
   fetchTo(`https://registry.npmjs.org/${name}/-/${bare}-${version}.tgz`, tgz);

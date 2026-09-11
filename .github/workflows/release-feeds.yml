@@ -118,6 +118,17 @@ jobs:
         with:
           ref: ${{ github.event.release.tag_name || inputs.tag }}
 
+      # AND THE TOOLS FROM THE LAUNCHING REF, in a directory of their own. The checkout above is
+      # pinned to the tag on purpose — the version label must come from the same commit as the
+      # binaries — but that also pins the SCRIPTS this job runs to a released tree, and a fix to
+      # one of them could then never be used for a release already tagged. That is not
+      # hypothetical: the signer pinning read the monorepo's `pnpm-lock.yaml`, which the published
+      # repository does not carry, and the step died with ENOENT on a tag that could not be moved.
+      # So the release tree supplies the version and the artifacts; this one supplies the tools.
+      - uses: actions/checkout@v7
+        with:
+          path: .tools
+
       - uses: actions/setup-node@v7
         with:
           node-version: 22
@@ -446,7 +457,7 @@ jobs:
           # `integrity` this repository's own pnpm-lock.yaml records, and Sparkle's
           # `sign_update` by the sha256 of the archive AND of the binary inside it.
           # The script says why each one is there.
-          node scripts/fetch-pinned-signers.mjs signers
+          node .tools/scripts/fetch-pinned-signers.mjs signers
 
           # What the next two steps need, so neither has to re-derive it.
           {
