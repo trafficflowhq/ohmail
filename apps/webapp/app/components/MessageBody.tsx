@@ -1,116 +1,14 @@
 "use client";
 
 /**
- * ── THE MAIL RENDERER. THE HTML PART, SANITIZED, IN A FRAME THAT CANNOT PHONE HOME ──────
- *
- * ── WHAT WAS WRONG, AND IT WAS NOT THE RENDERER ─────────────────────────────────────────
- *
- * An ordinary vendor billing notice, shown from its `text/plain` part, reads like this:
- * `Acme [cdn.example.com/email/logo_chip.p…]`, a call to action flattened to
- * `[tracker.example.com/ls/click?u=…]`, and — as the last visible line —
- * `[tracker.example.com/wf/open?u=…]`, **which is a tracking pixel printed as prose**.
- * Every bracket is `htmlToText` inlining a `src` or an `href` it had nowhere else to put.
- * That output is the `text/plain` ALTERNATIVE of a `multipart/alternative`, and adding
- * paragraphs and linkification to it — which is what the plain-text renderer does — cannot
- * fix a wrong input.
- *
- * The html was there the whole time. `normalizeMime` keeps `htmlBody`; `pipeline.ts` stores
- * it in `message_bodies.html`; `message-service.ts` `getBody` returns it; the route ships
- * it. It died at `http-adapter.ts`, whose `fetchBody` narrowed the wire to `{ text }` with
- * a comment saying html was not read because rendering it "would need a sanitiser, and it
- * is also where a tracking pixel re-enters a product whose spy-pixel blocker is a feature".
- * Both of those objections are what this file is.
- *
- * ── THE SHAPE: SANITIZE, THEN CONTAIN. THEY ARE NOT THE SAME JOB ────────────────────────
- *
- * The sanitizer decides WHAT THE DOCUMENT SAYS: no script, no event handler, no form, no
- * frame, no `javascript:`, no `<base>`, no `<meta refresh>`, and no remote reference of any
- * kind. It is DOMPurify — cure53's, `(MPL-2.0 OR Apache-2.0)`, zero runtime dependencies —
- * chosen over hand-rolling because it parses with the BROWSER'S OWN parser, which is the
- * only way to have no parser differential between what the sanitizer inspects and what the
- * renderer later builds. (Licence check: Apache-2.0 is permissive and AGPLv3-compatible,
- * so it is safe beside the AGPL-3.0 desktop.)
- *
- * The frame decides WHAT THE BROWSER MAY DO: a `sandbox`ed `<iframe srcdoc>` carrying its
- * own `Content-Security-Policy` meta. Not belt-and-braces — a second mechanism answering a
- * different question. The sanitizer cannot contain layout: a `<style>` in the app's own
- * document reaches the app's own chrome, and the one thing a mail must never do is restyle
- * the client around it. And the frame cannot enumerate: it will happily render a `<form>`
- * that asks for a password. Each one is watched failing on its own in `test/message-body.test.ts`.
- *
- * The frame is also what lets the sender's `<style>` SURVIVE, which is most of why mail
- * looks like mail here at all. A stylesheet that cannot escape its document is not a threat;
- * stripping it is what turns a designed newsletter into a ransom note.
- *
- * ── `sandbox` — EVERY TOKEN, AND WHY THE TWO ABSENT ONES MATTER MOST ────────────────────
- *
- *   allow-same-origin                 the parent must read `contentDocument` to size the
- *                                     frame to the mail. **Safe only because
- *                                     `allow-scripts` is absent**: same-origin without script
- *                                     hands the document no principal that could use it. The
- *                                     pair `allow-scripts allow-same-origin` is the
- *                                     combination that lets a frame remove its own sandbox,
- *                                     and it is exactly the pair this never has.
- *   allow-popups                      a clicked link opens a tab. Nothing can open one
- *                                     WITHOUT a click: `window.open` needs script, and
- *                                     `<meta refresh>` is not an allowed tag.
- *   allow-popups-to-escape-sandbox    the tab a reader chose to open is an ordinary tab.
- *
- *   NOT allow-scripts                 nothing executes. Ever.
- *   NOT allow-forms                   the credential prompt inside a phishing mail submits
- *                                     nowhere.
- *   NOT allow-top-navigation          the mail cannot navigate the app away, with or
- *                                     without a gesture.
- *
- * ── REMOTE CONTENT IS BLOCKED, AND "BLOCKED" MEANS NOT REQUESTED ────────────────────────
- *
- * Opening a message performs ZERO requests to any host the sender named. Not a proxied one,
- * not a cached one, none. Every `src`, `srcset`, `background`, CSS `url()`, `image-set()` and
- * `@import` is removed before the document is built, and the injected `default-src 'none'` is
- * what makes that true for whatever shape of remote reference this file has not thought of
- * yet — a rewriting rule I forgot is a bug; a CSP I forgot is not reachable, because the
- * policy is a deny-list of nothing and an allow-list of `data:`.
- *
- * The last three of those shapes were ADDED in a later hardening pass, and the sentence above was false
- * until then: `image-set("https://…")`, a scheme written in CSS escapes (`url(htt\70 s://…)`)
- * and `@import"…"` with no whitespace each reached Chromium's network stack and were refused
- * by the CSP alone, while the bar counted zero and said nothing. The CSP held. The claim did
- * not, and a claim is the thing under test here.
- *
- * ── AND THE DOCUMENT THE BROWSER BUILDS IS THE ONE THE SANITIZER APPROVED ────────────────
- *
- * That was also untrue until the same hardening pass. The `@import` rewrite ran on a `<style>` element's
- * TEXT after DOMPurify had finished, `<style>` serializes raw, and a DELETION can join the two
- * halves of a close tag that were never adjacent — so `sanitizeMailHtml` returned markup that
- * read as cleared and became a live `<form>` the moment the frame parsed it. The arrangement
- * that closes it is one rule, stated on {@link sanitizeMailHtml}: **text is rewritten only
- * BEFORE the sanitizer; after the sanitizer only attributes change.**
- *
- * This is the promise the product is named for, and until this file it was unkept in the one
- * place it is made: the server-side privacy service and its tracker blocker were built,
- * hardened and tested, and **nothing in the reading path ever called them** — which is why
- * `en.json` still says "Spy pixels, not yet".
- *
- * ── WHAT THIS FILE DELIBERATELY DOES NOT DO ─────────────────────────────────────────────
- *
- * It never fetches an image from the host the SENDER named — not before consent and not
- * after it. The only road is `GET /img`, the server-side proxy whose whole purpose is that
- * the sender never sees the reader's IP, and `imageProxy` below is the seam it lands on.
- * That route was unmounted when this file was written and is mounted now
- * (`packages/api/src/routes/privacy.ts` records the condition that discharged it); the
- * property this file is responsible for did not move. **The frame's policy names the proxy's
- * own path and nothing else** — see {@link proxyImgSource} — so a url of any other shape
- * fetches nothing even when the sanitizer has been defeated.
- *
- * `cid:` images are the one exception, and they are not an exception to the PROMISE: a `cid:`
- * names a part of this very message, so it cannot phone home. The engine fetches those bytes
- * from the part itself and hands them in as `data:` URIs ({@link SanitizeOptions.cidImages});
- * an unresolved reference stays a blanked box, exactly as every one did before.
- *
- * ── NOTHING RENDERED IS STORED ──────────────────────────────────────────────────────────
- *
- * `buildMailDocument` is called during render from the html the engine already holds. No
- * sanitized output is persisted, mirrored, or sent anywhere.
+ * The mail renderer: the html part, sanitized, in a frame that cannot phone home. Sanitize, then contain — two jobs: DOMPurify decides what the document SAYS (no script, handler, form,
+ * frame, `javascript:`, `<base>`, `<meta refresh>`, or remote reference; it parses with the browser's own parser, so no parser differential); the sandboxed `<iframe srcdoc>` with its
+ * own CSP decides what the browser MAY DO — each is watched failing alone in `test/message-body.test.ts`. The frame is also what lets the sender's `<style>` survive. Sandbox:
+ * `allow-same-origin` (safe only because `allow-scripts` is absent — that pair lets a frame remove its own sandbox), `allow-popups`, `allow-popups-to-escape-sandbox`; never
+ * allow-scripts, allow-forms, or allow-top-navigation. Remote content is not requested at all: every `src`, `srcset`, `background`, CSS `url()`, `image-set()` and `@import` is removed
+ * before the document is built, and the injected `default-src 'none'` covers whatever shape the rewrite has not thought of — a forgotten rewrite is a bug; a forgotten CSP entry is
+ * unreachable. Text is rewritten only BEFORE the sanitizer; after it only attributes change ({@link sanitizeMailHtml}). Images travel only through `GET /img` ({@link proxyImgSource}
+ * names the proxy's own path in the policy); `cid:` images are this message's own bytes as `data:` URIs. Nothing rendered is stored.
  */
 
 import DOMPurify from "dompurify";
@@ -135,19 +33,14 @@ import { liveCopy } from "../shell/locale";
 import { CAPTION_KEY, type BlockNotice, type NoticeKind } from "./BlockNotice";
 
 /**
- * THE ENGLISH SENTENCES — the FALLBACK, not the source. Every string this component draws comes out
- * of the `mailBody` namespace of `messages/<locale>.json`; `COPY` below is the resolved view.
- *
- * The exit this constant's header used to name has been taken, in the other of the two directions it
- * offered. NOT the hook: this component is rendered BARE — no intl provider anywhere above it — in a
- * dozen unit tests (`remote-images`, `stale-body-cache`, `message-body-ssr` and the rest), three of
- * which import `COPY` to assert against the text on screen, and `useTranslations` throws without a
- * provider. Rewiring the sanitizer's test scaffolding for a copy edit is the wrong trade.
- *
- * So it stays a table and gains a catalogue behind it. It also stays the PARITY ORACLE:
- * `test/locale-shim-parity.test.ts` holds it against `en.json` key for key and text for text, so
- * "the catalogue says what this component says" is a checked claim and not one somebody eyeballed
- * once. Deleting it deletes the check.
+ * The English sentences — the FALLBACK, not the source: every string comes
+ * from the `mailBody` namespace of `messages/<locale>.json`, and `COPY` is
+ * the resolved view. Not the intl hook: this component renders BARE (no
+ * provider) in a dozen unit tests, three of which import `COPY` to assert
+ * on-screen text, and `useTranslations` throws without a provider. It stays
+ * a table and stays the parity oracle: `test/locale-shim-parity.test.ts`
+ * holds it against `en.json` key for key and text for text — deleting it
+ * deletes the check.
  */
 const EN = {
   blockedOne: "1 remote image blocked.",
@@ -356,15 +249,14 @@ const CID_URL = /^cid:/i;
 const INERT_CSS_URL = /^(?:data:|cid:)/i;
 
 /**
- * THE ONLY SHAPE A RESOLVED EMBEDDED IMAGE MAY TAKE: a base64 `data:` URI of one of the four
- * raster image types — the same closed set the engine mints from (`INLINE_IMAGE_MIME`).
- *
- * Enforced HERE, at the write into the document, not only at the mint: the map arrives through a
- * prop, and "the engine is the only caller" is a fact about today's wiring rather than a property
- * of this function. A value that is not this shape — `javascript:`, `data:text/html`,
- * `data:image/svg+xml`, anything with characters outside the base64 alphabet — is treated exactly
- * like an absent entry and the image stays blanked. `test/message-body.test.ts` proves the gate by
- * handing this a hostile map and watching the src stay {@link BLANK_GIF}.
+ * The only shape a resolved embedded image may take: a base64 `data:` URI
+ * of one of the four raster types (`INLINE_IMAGE_MIME`). Enforced HERE, at
+ * the write into the document, not only at the mint: the map arrives
+ * through a prop, and "the engine is the only caller" is a fact about
+ * today's wiring, not a property of this function. A value of any other
+ * shape — `javascript:`, `data:text/html`, `data:image/svg+xml`, non-base64
+ * characters — reads as absent and the image stays blanked;
+ * `test/message-body.test.ts` hands this a hostile map and watches.
  */
 const INLINE_IMAGE_SRC = /^data:image\/(?:png|jpeg|gif|webp);base64,[A-Za-z0-9+/]+={0,2}$/;
 
@@ -434,24 +326,14 @@ function declaresPixel(el: Element): boolean {
 // ── CSS ────────────────────────────────────────────────────────────────────────────────
 
 /**
- * ── WHAT REPLACES A CUT RULE, AND WHY IT IS NOT THE EMPTY STRING ────────────────────────
- *
- * ONE PASS OVER A STYLESHEET HAS TO BE A FIXED POINT, and an empty replacement is what stops
- * it being one. Deleting `@import q;` from `@im@import q;port"https://…";` leaves
- * `@import"https://…";` — a rule that was nowhere in the input and that this pass has already
- * walked past. Measured: that stylesheet reached the frame and the sheet was
- * requested. `;` makes the arithmetic impossible instead of merely unlikely, and it is correct
- * CSS in every position an `@import` may appear — an empty statement at the top of a sheet, an
- * empty declaration inside a block, discarded either way.
- *
- * **This is a claim about CSS TOKENS and not about markup.** What keeps a rewrite from
- * inventing an ELEMENT is `sanitizeMailHtml`'s arrangement: this runs BEFORE
- * `purify.sanitize`, on text that the sanitizer then re-parses, so anything it invents is
- * something the allow-list reads and refuses. Saying it twice here would be the shape this
- * repo keeps paying for — two guards that read as belt-and-braces and behave as neither.
- *
- * The watched claim is idempotency: `neutraliseCss(neutraliseCss(x)) === neutraliseCss(x)`,
- * and `test/message-body-mutation-xss.test.ts` mutates this constant to `""` to prove it.
+ * What replaces a cut rule, and why it is not the empty string: one pass over a stylesheet has
+ * to be a fixed point, and an empty replacement is what stops it being one — deleting `@import
+ * q;` from `@im@import q;port"https://…";` leaves an `@import` the pass has already walked past
+ * (measured: the sheet was requested). `;` makes the arithmetic impossible and is correct CSS
+ * in every position. A claim about CSS tokens, not markup — the sanitizer re-parses this text
+ * afterwards. The watched claim is idempotency: `neutraliseCss(neutraliseCss(x)) ===
+ * neutraliseCss(x)`; `test/message-body-mutation-xss.test.ts` mutates this constant to `""` to
+ * prove it.
  */
 const CUT = ";";
 
@@ -473,49 +355,25 @@ function continuesIdent(code: number): boolean {
 }
 
 /**
- * The three token starts this file understands, found in ONE forward scan.
- *
- * ── IT IS A TOKEN FINDER, NOT A TOKEN MATCHER, AND THAT IS THE POINT ────────────────────
- *
- * The rule this replaces was `/url\(\s*(['"]?)([^'")]+)\1\s*\)/gi`, and `[^'")]+` cannot
- * cross `)` — so on an input with no `)` at all, EVERY `url(` start scans to the end of the
- * string before failing. That is quadratic, it runs synchronously inside `useMemo` on the
- * main thread during render, and it was measured at 125 KB → 6.1 s, 500 KB → 95.3 s. A
- * 500 KB marketing email is an ordinary marketing email.
- *
- * This pattern has no quantifier that can backtrack; every terminator below is found with a
- * single `indexOf` from a position that only ever moves forward, so the whole pass is linear
- * in the length of the stylesheet. An unterminated token ends the scan and the remainder is
- * copied verbatim — a token the browser will not parse either.
+ * The three token starts this file understands, found in one forward scan. A token FINDER, not
+ * a matcher: the regexp it replaced (`/url\(\s*(['"]?)([^'")]+)\1\s*\)/gi`) was quadratic on
+ * input with no `)` — measured 125 KB → 6.1 s, 500 KB → 95.3 s, synchronously inside `useMemo`
+ * on the main thread, and a 500 KB marketing email is ordinary. This pattern has no
+ * backtracking quantifier; every terminator is found with `indexOf` from a forward-only
+ * position, so the pass is linear. An unterminated token ends the scan; the remainder is copied
+ * verbatim — a token the browser will not parse either.
  */
 const CSS_TOKEN = /@import|(?:-webkit-)?image-set\(|url\(|\\(?:[0-9a-fA-F]{1,6}[ \t\n\r\f]?|[^\n\r\f])/gi;
 
 /**
- * THE NAME OF A FUNCTION CAN BE ESCAPED TOO, AND FOR A WHILE ONLY ITS ARGUMENT WAS.
- *
- * {@link decodeCssEscapes} was added because `url(htt\70 s://…)` hid a SCHEME from a regexp
- * reading raw text. The same trick works one token to the left: `\75 rl(…)` and
- * `\69 mage-set("…")` are a `url` and an `image-set` to the CSS tokenizer — an ident's escapes
- * are decoded before its name is compared — and were not to the literal alternatives above. A
- * stylesheet could therefore name a resource in a spelling this scanner never saw, and the shape
- * that matters is the same one the relative-url branch exists for: `\75 rl(/api/…)` has no
- * `<base>` to resolve against, so it becomes an authenticated same-origin GET, which the frame's
- * CSP permitted once the reader had pressed "Show images" (`img-src data: 'self'`, as it then
- * was — {@link proxyImgSource} narrowed that to the proxy's own path, which is what stops this
- * particular ending from being reachable by whatever the NEXT unread spelling turns out to be).
- *
- * The scan therefore also stops on an ESCAPE, and from there reads the identifier it sits in.
- *
- * ── WHY IT IS ANCHORED ON THE BACKSLASH AND BOUNDED ─────────────────────────────────────
- *
- * This file's whole tokenizer exists because the rule it replaced was quadratic on hostile
- * input — 500 KB measured at 95.3 s on the main thread — so a pattern that scans an identifier
- * run from every position would reintroduce exactly that. A backslash is a single literal, found
- * by the same forward-only scan as the other three starts, and the walk out from it is capped:
- * the longest name this cares about is `-webkit-image-set`, and every character of it written as
- * a six-digit hex escape is 17 × 8 = 136 characters. {@link ESCAPED_NAME_MAX} is that, rounded
- * up. Past the cap the token is not one of ours by construction, so the walk stops rather than
- * running to the end of the sheet.
+ * The name of a function can be escaped too — for a while only the argument was. `\75 rl(…)` and
+ * `\69 mage-set("…")` are `url` and `image-set` to the CSS tokenizer, and a relative `\75
+ * rl(/api/…)` in a srcdoc document (no `<base>`) resolves against the embedder — an authenticated
+ * same-origin GET the old `img-src data: 'self'` permitted ({@link proxyImgSource} narrowed that).
+ * So the scan also stops on an ESCAPE and reads the identifier it sits in — anchored on the
+ * backslash and bounded by {@link ESCAPED_NAME_MAX} (the longest relevant name,
+ * `-webkit-image-set`, fully escaped is 136 chars), because an unbounded identifier walk from every
+ * position is the quadratic this tokenizer exists to end.
  */
 const ESCAPED_NAME_MAX = 160;
 
@@ -525,17 +383,14 @@ function isHexDigit(code: number): boolean {
 }
 
 /**
- * The identifier an escape at `at` belongs to, and where it ends.
- *
- * `name` is the RAW text; the caller decodes it. Nothing read here is ever emitted, so a reading
- * this gets wrong can cost a picture and can never manufacture a url — {@link decodeCssEscapes}'s
- * rule, and this walk lives under it.
- *
- * The forward walk consumes ESCAPE SEQUENCES, not merely identifier characters, and that is the
- * one thing a naive version gets wrong: the space in `\75 rl` terminates the escape and belongs
- * to it, so a walk that stopped at the first non-identifier character read the name of
- * `\75 rl(…)` as `\75` and concluded it was not a function at all. Both directions are capped by
- * {@link ESCAPED_NAME_MAX} so the walk is O(1) per backslash and the scan stays linear.
+ * The identifier an escape at `at` belongs to, and where it ends. `name` is
+ * the raw text; the caller decodes it. Nothing read here is ever emitted,
+ * so a wrong reading can cost a picture and can never manufacture a url
+ * ({@link decodeCssEscapes}'s rule). The forward walk consumes ESCAPE
+ * SEQUENCES, not merely identifier characters — the space in `\75 rl`
+ * terminates the escape and belongs to it, so a naive walk read the name
+ * as `\75` and concluded it was not a function. Both directions are capped
+ * by {@link ESCAPED_NAME_MAX}, so the walk is O(1) per backslash.
  */
 function escapedIdentAt(css: string, at: number): { start: number; name: string; end: number } {
   let start = at;
@@ -624,19 +479,14 @@ function closingParen(css: string, from: number): number {
 }
 
 /**
- * WHERE AN `@import` ACTUALLY ENDS — the first `;` that CSS would read as one.
- *
- * `indexOf(";")` was not that. A semicolon inside the import's own quoted URL is STRING DATA, and
- * cutting there did not merely truncate: the replacement removed the opening quote and left the
- * remainder of the string as live CSS, so
- * `@import url("https://evil.example/a;}.x{background:\75 rl(/api/x)}");` emitted a working
- * `background:url(/api/x)` that had not existed in the message. A rewrite that MANUFACTURES a
- * reference is worse than one that misses it, and it also broke the standing idempotency property
- * — a second pass removed what the first had created.
- *
- * Strings and comments are skipped, for the same reason and by the same rules as everywhere else
- * in this file. An at-rule with no terminator runs to EOF, which is what CSS Syntax §5.4.2 says
- * and what the caller already assumed.
+ * Where an `@import` actually ends — the first `;` CSS would read as one.
+ * `indexOf(";")` was not that: a semicolon inside the import's quoted URL
+ * is string data, and cutting there removed the opening quote and left the
+ * remainder as live CSS — the rewrite MANUFACTURED a working
+ * `background:url(/api/x)` that had not existed in the message, and broke
+ * idempotency (a second pass removed what the first created). Strings and
+ * comments are skipped by the same rules as everywhere else; an at-rule
+ * with no terminator runs to EOF (CSS Syntax §5.4.2).
  */
 function endOfAtRule(css: string, from: number): number {
   for (let i = from; i < css.length; i++) {
@@ -677,30 +527,14 @@ function readUrlToken(css: string, from: number): { raw: string; end: number } |
 }
 
 /**
- * WALK A CSS VALUE THE WAY THE TOKENIZER DOES — strings are strings, escapes are characters,
- * comments are nothing.
- *
- * ── WHY A WALK AND NOT A REGEXP ─────────────────────────────────────────────────────────
- *
- * Everything this file got wrong about `image-set` bodies was the same mistake in a different
- * costume: a literal pattern asked a question about text that CSS reads differently.
- *
- *  · `/url\(/` missed `\75 rl(…)`, so an escaped candidate presented NO candidates and the
- *    vacuous `[].every(inert)` kept the whole set — a live reference, uncounted.
- *  · `/\btype\(/` missed `\74 ype(…)`, so a MIME hint was read as a url and a valid inline
- *    image was deleted.
- *  · Decoding the WHOLE body first fixed both and broke a third thing: `\22` inside a quoted
- *    data URL is the CHARACTER `"`, and decoding it turned payload into a delimiter, splitting
- *    one valid `data:` candidate into two bogus ones and deleting the image.
- *  · `/\bvar\(/` on the raw body missed `v\61 r(` in one direction and matched `var(` inside a
- *    quoted SVG payload in the other — a bypass and a false positive from one line.
- *
- * A walk answers all four, because the distinctions are structural: what is inside a string, what
- * is a function NAME, and what is merely a character in a value. Decoding still happens — but per
- * TOKEN, on text already known to be a name or a value, which is the only place it is meaningful.
- *
- * Linear: one forward pass, every character visited once, no backtracking. That is the property
- * the whole tokenizer exists to have.
+ * Walk a CSS value the way the tokenizer does — strings are strings, escapes are characters,
+ * comments are nothing. Every `image-set` defect was a literal pattern asking a question CSS
+ * reads differently: `/url\(/` missed `\75 rl(` (a live reference, uncounted); `/\btype\(/`
+ * missed `\74 ype(` (a valid image deleted); decoding the whole body first turned `\22` payload
+ * into a delimiter (another valid image deleted); `/\bvar\(/` missed `v\61 r(` and matched
+ * `var(` inside a quoted SVG payload. A walk answers all four because the distinctions are
+ * structural; decoding happens per token, on text known to be a name or a value. Linear: one
+ * forward pass, no backtracking.
  */
 interface CssValueScan {
   /** Every string literal and every `url()`/escaped-`url()` argument, decoded. */
@@ -806,21 +640,13 @@ function urlsIn(inner: string): string[] {
 }
 
 /**
- * DOES THIS TOKEN BODY NAME SOMETHING THAT IS NOT SUBSTITUTED UNTIL AFTER WE HAVE DECIDED?
- *
- * `var()` is resolved at computed-value time, long after this function has run and returned its
- * verdict. So `image-set(var(--x) 1x)` presented an EMPTY candidate list to the inert test —
- * `[].every(inert)` is `true` — and was therefore kept verbatim, while `--x: "/api/…"` two rules
- * above it survived on its own (a custom-property declaration holding a bare string contains no
- * `url(`, no `image-set(` and no `@import`, so nothing here ever looked at it). The pair fetched.
- *
- * A construct this scanner cannot normalise is dropped rather than passed. That is the same rule
- * the unterminated-token branches already follow, applied to the other direction of the same
- * problem: there, the text runs past where we can read; here, the VALUE arrives after.
- *
- * Asked of the WALK, not of the raw text, which is what makes it both tighter and looser in the
- * right places: `v\61 r(` is a substitution and a literal test missed it, while `var(` inside a
- * quoted SVG data URL is payload and a literal test deleted a legitimate image for it.
+ * Does this token body name something not substituted until after we have decided? `var()`
+ * resolves at computed-value time, so `image-set(var(--x) 1x)` presented an EMPTY candidate
+ * list — `[].every(inert)` is true — and was kept verbatim while `--x: "/api/…"` survived on
+ * its own; the pair fetched. A construct this scanner cannot normalise is dropped rather than
+ * passed — the unterminated-token rule, applied to a value that arrives later. Asked of the
+ * WALK, not the raw text: `v\61 r(` is a substitution a literal test missed, and `var(` inside
+ * a quoted SVG data URL is payload a literal test deleted a legitimate image for.
  */
 function defersSubstitution(inner: string): boolean {
   return scanCssValue(inner).functions.includes("var");
@@ -832,37 +658,14 @@ function remoteUrlsIn(inner: string): string[] {
 }
 
 /**
- * Take everything out of a stylesheet that names a network resource: `@import` outright, and
- * every remote `url(…)` through `onRemote`, which decides what replaces it.
- *
- * WHAT THIS IS FOR, precisely — it is not the enforcement. `default-src 'none'` in the
- * frame's own CSP is what makes a remote `url()` unfetchable, and it holds for CSS shapes
- * this scanner does not understand. This exists so the reader is not shown a broken box where
- * a background was, so the bar can COUNT what the mail tried to fetch, and so a CONSENTED
- * background can be pointed at the proxy like any other image. Delete it and nothing leaks;
- * delete the CSP and everything does. `test/message-body.test.ts` watches the CSP assertion fail
- * on its own for that reason.
- *
- * ── THREE SHAPES IT USED TO MISS, AND EACH ONE REACHED THE NETWORK ──────────────────────
- *
- *   `@import"…";`           legal CSS, and the old rule required `\s+` after `@import`.
- *   `url(htt\70 s://…)`     the scheme written in CSS escapes; see {@link decodeCssEscapes}.
- *   `image-set("…" 1x)`     names an image with a bare string and no `url()` token at all.
- *
- * All three were requested by Chromium and refused by the frame's CSP, so nothing leaked —
- * and `blocked` stayed empty, so the reader was shown no notice. That is the defect: the
- * accounting layer said a thing had not happened. `image-set()` collapses to `none` rather
- * than being rewritten candidate by candidate, which costs a consented image-set background
- * (there is no consent path mounted today, and the shape is vanishingly rare in mail) and
- * keeps this function's output impossible to get subtly wrong.
- *
- * `@import` is cut whole rather than rewritten: it names a STYLESHEET, and there is no consent
- * story for handing a sender's css through a proxy that only understands images. That is also
- * why it reports through `onSheet` and not through `onRemote`: `blocked` feeds the "Show
- * images" affordance, and an entry in it that can never be consented to would make that button
- * lie. It is still SAID — see {@link COPY.sheetOne} — because an `@import`-only newsletter
- * renders unstyled, and letting the reader guess why is the "blocking silently is its own
- * defect" case in its purest form.
+ * Take everything out of a stylesheet that names a network resource: `@import` outright, and every remote `url(…)` through
+ * `onRemote`. Not the enforcement — the frame's `default-src 'none'` is what makes a remote url unfetchable, and it holds for
+ * shapes this scanner does not know. This exists so the reader is not shown a broken box, so the bar can COUNT what the mail
+ * tried, and so a consented background can point at the proxy. Three shapes it used to miss (`@import"…"`, `url(htt\70
+ * s://…)`, `image-set("…" 1x)`) were each requested and refused by the CSP alone — the accounting said a thing had not
+ * happened. `image-set()` collapses to `none`; `@import` is cut whole and reports through `onSheet`, not `onRemote` — no
+ * consent story exists for a sender's stylesheet, and an unconsentable entry in `blocked` would make "Show images" lie. It is
+ * still said ({@link COPY.sheetOne}): blocking silently is its own defect.
  */
 export function neutraliseCss(
   css: string,
@@ -874,22 +677,13 @@ export function neutraliseCss(
   let copied = 0;
 
   /**
-   * IS THIS POSITION INSIDE A CSS STRING? — carried forward, never recomputed.
-   *
-   * Only the escape branch asks. `content:"\\75 rl(/api/x)"` is a STRING whose visible text is
-   * `url(/api/x)`; it names no resource and the browser fetches nothing. The escape-aware branch
-   * had no notion of quoting, so it decoded the identifier, saw the `(` beside it and rewrote a
-   * piece of the sender's visible text into `none` — a sanitizer silently editing a message that
-   * was never dangerous.
-   *
-   * The three LITERAL branches deliberately keep their existing behaviour, quoted or not: they
-   * are what the mutation-XSS guards are written against (a sheet is neutralised so that no
-   * arrangement of quotes the browser resolves differently can leave a live token), and narrowing
-   * them here would be a security change smuggled in behind a false-positive fix. This restricts
-   * only the branch this file just added.
-   *
-   * The cursor only moves forward and every character is visited once, so the whole thing stays
-   * linear — the property this tokenizer exists to have.
+   * Is this position inside a CSS string? — carried forward, never recomputed. Only the escape
+   * branch asks: `content:"\\75 rl(/api/x)"` is a STRING whose visible text is `url(/api/x)` —
+   * it names no resource, and the escape-aware branch, having no notion of quoting, rewrote a
+   * piece of the sender's visible text into `none`. The three LITERAL branches deliberately
+   * keep their behaviour, quoted or not: they are what the mutation-XSS guards are written
+   * against, and narrowing them would be a security change smuggled behind a false-positive
+   * fix. The cursor only moves forward; the pass stays linear.
    */
   let quote: '"' | "'" | null = null;
   let inComment = false;
@@ -1048,18 +842,13 @@ export function neutraliseCss(
 function neutraliseStyleAttr(el: Element, onRemote: (url: string) => string | null): void {
   const style = el.getAttribute("style");
   /**
-   * THE FAST PATH HAS TO KNOW EVERY SPELLING THE SCANNER KNOWS, or it decides on the scanner's
-   * behalf that there is nothing to scan.
-   *
-   * This precheck exists to skip `neutraliseCss` on the overwhelming majority of style attributes
-   * that name no resource. It listed the three LITERAL token starts — and when the scanner
-   * learned to read an escaped function name, this did not, so `style="background:\75 rl(/api/…)"`
-   * returned here untouched and reached the frame intact. An inline style is the easiest place in
-   * a message to put one, so the fix one function up bought nothing on the most likely surface.
-   *
-   * A backslash is now enough to hand it to the scanner: it is the same anchor `CSS_TOKEN` uses,
-   * it costs one extra character in the test, and being over-inclusive here is free — the scanner
-   * is what decides, and on text that names nothing it returns the input unchanged.
+   * The fast path has to know every spelling the scanner knows, or it decides on the scanner's
+   * behalf that there is nothing to scan. This precheck skips `neutraliseCss` on the majority
+   * of style attributes; it listed the three LITERAL token starts, and when the scanner learned
+   * escaped function names this did not — so `style="background:\75 rl(/api/…)"` reached the
+   * frame intact, on the easiest surface to put one. A backslash now hands it to the scanner:
+   * the same anchor `CSS_TOKEN` uses, and over-inclusion here is free — on text that names
+   * nothing the scanner returns the input unchanged.
    */
   if (!style || !/url\(|image-set\(|@import|\\/i.test(style)) return;
   el.setAttribute("style", neutraliseCss(style, onRemote));
@@ -1068,16 +857,13 @@ function neutraliseStyleAttr(el: Element, onRemote: (url: string) => string | nu
 // ── links ──────────────────────────────────────────────────────────────────────────────
 
 /**
- * Does the visible text of this link DISAGREE with where it goes?
- *
- * The case this exists for is the ordinary click-tracked call to action: a link labelled
- * "Manage your subscription" pointing at `tracker.example.com/ls/click?u=…`. A reader cannot
- * tell from the page that the click is counted, and the honest thing is to say the
- * destination out loud rather than to hide it or to refuse the link.
- *
- * The test is deliberately narrow — the visible text NAMES A HOST, and it is not the host
- * the link goes to. Broadening it to "the text is not the url" would flag every ordinary
- * link in every ordinary message, which is a warning that means nothing by the second one.
+ * Does the visible text of this link disagree with where it goes? The case:
+ * a link labelled "Manage your subscription" pointing at
+ * `tracker.example.com/ls/click?u=…` — the honest thing is to say the
+ * destination out loud rather than hide it or refuse the link. The test is
+ * deliberately narrow: the visible text NAMES A HOST, and it is not the
+ * host the link goes to. Broadening to "the text is not the url" would
+ * flag every ordinary link — a warning that means nothing by the second one.
  */
 export function textDisagreesWithHref(text: string, host: string): boolean {
   // BOUNDED BEFORE IT IS MATCHED. The subject is a sender-authored link label, so it can be
@@ -1724,41 +1510,26 @@ function stripCssComments(css: string): string {
 }
 
 /**
- * The STYLESHEET half of the same question — rule-wise, because a sheet's declarations belong
- * to selectors and a canvas is a property of LAYOUT elements. An ordinary letter that pastes
- * `img.hero { max-width:600px }` is capping a PICTURE, which is exactly the reflow-that-costs-
- * nothing `CANVAS_TAGS` excludes images for — reading the sheet as one flat string would move
- * that letter into a frame on the strength of an image-size rule. So each `selector { block }`
- * is read on its own, and a rule whose selector names `img` (as a tag token — `.imgwrap` is a
- * class and does not match) contributes nothing. A mixed list (`td, img { … }`) is skipped
- * whole: the cost is one designed mail rendered as a letter, which is the pre-existing
- * behaviour, and the shape is not one mail templates use.
- *
- * The rule regex cannot cross braces, so a media query's PRELUDE is never read as a block —
- * only the rules inside it are, each under its own selector — and inline `style` attributes
- * (no braces) never reach this function at all: the element loops in {@link isRigidLayout} and
- * {@link isDesignedLayout} read those, and both already walk only {@link CANVAS_TAGS}.
- *
- * BOTH canvas predicates read sheets through this one walk — the responsive scan
- * ({@link declaresResponsiveCanvas}) and the fixed-width one ({@link declaresCanvas}) — because
- * everything above is about what a SHEET is, not about which width property is asked after.
- * The walk takes the predicate as a parameter rather than existing twice, so the two scans
- * cannot drift apart again one fix at a time.
+ * The stylesheet half of the same question — rule-wise, because a sheet's declarations belong to selectors
+ * and a canvas is a property of LAYOUT elements: `img.hero { max-width:600px }` caps a picture, and reading
+ * the sheet flat would frame a letter on the strength of an image-size rule. A rule whose selector names
+ * `img` as a tag token contributes nothing (`.imgwrap` is a class and does not match); a mixed list (`td,
+ * img`) is skipped whole — one designed mail rendered as a letter, the pre-existing behaviour, in a shape
+ * templates do not use. The rule regex cannot cross braces, so a media prelude is never read as a block.
+ * Both canvas predicates read sheets through this one walk, taking the predicate as a parameter, so the two
+ * scans cannot drift apart one fix at a time.
  */
 /** A selector list that targets images — `img` as a TAG token; `.imgwrap` is a class and is not. */
 const IMG_SELECTOR = /(?:^|[\s,>+~(])img\b/i;
 
 /**
- * IMG as a decoded TAG token — `i\6dg` spells `img` in CSS escapes and must read as it.
- *
- * The decode PRESERVES TOKEN BOUNDARIES, which a plain decode does not (a review finding from
- * each direction): an escape that decodes to a letter or digit keeps its identity, so the
- * escaped img spelling matches; any other decoded character becomes a word placeholder, so an
- * escaped combinator stays identifier DATA — `.foo\+img` is a class named `foo+img`, and a
- * plain decode would hand {@link IMG_SELECTOR} a `+` boundary with an img tag behind it. The
- * placeholder is a letter for the same reason in miniature: a non-word character after a
- * decoded `img` would satisfy the regex's word boundary and forge the match the escape was
- * preventing.
+ * IMG as a decoded tag token — `i\6dg` spells `img` in CSS escapes and must read as it. The
+ * decode PRESERVES TOKEN BOUNDARIES, which a plain decode does not: an escape decoding to a
+ * letter or digit keeps its identity, so the escaped img spelling matches; any other decoded
+ * character becomes a word placeholder, so an escaped combinator stays identifier data —
+ * `.foo\+img` is a class named `foo+img`, and a plain decode would hand {@link IMG_SELECTOR} a
+ * `+` boundary with an img tag behind it. The placeholder is a letter so a non-word character
+ * after a decoded `img` cannot forge the word-boundary match.
  */
 function selectsImage(selector: string): boolean {
   if (!selector.includes("\\")) return IMG_SELECTOR.test(selector);
@@ -1792,25 +1563,14 @@ function selectsImage(selector: string): boolean {
 type Evidence = "live" | "image" | "gone";
 
 /**
- * Resolve a selector NESTED in an image-subject rule. Substring heuristics failed review here
- * twice, in both directions at once, so this is the real (small) decision: per
- * comma-alternative, resolve the implicit parent and read the SUBJECT — with CSS escapes
- * respected, because `\&` is identifier data (not a nesting token) and `i\6dg` decodes to
- * the `img` tag (a further pair of defects in the same seam).
- *
- *   · `.card`            → implicit `& .card` — a descendant of an image: `"gone"`.
- *   · `& + .card`        → a live canvas BESIDE the image: `"live"`.
- *   · `+ .card`          → relative nesting, the same selector with the `&` implicit.
- *   · `& + .card &`      → the subject resolves back to the image: `"image"`.
- *   · `& + img.hero`     → the subject IS an image: `"image"`.
- *   · `.foo\&bar + .card` → no nesting token at all — implicit descendant: `"gone"`.
- *
- * Aggregation over alternatives is by permissiveness: any live alternative makes the rule
- * live; else any image-subject alternative keeps it escapable; else it is gone. A parent
- * reference inside a functional pseudo-class (`:is(& + .x)`) reads as parent-in-subject and
- * therefore `"image"` — conservative, costing one designed mail read as a letter in a shape
- * mail never uses. Splitting respects escapes, parens and brackets, so `:is(a, b)` is one
- * compound and `[data-x~=y]` is data.
+ * Resolve a selector nested in an image-subject rule — per comma-alternative, resolve the
+ * implicit parent and read the SUBJECT, with CSS escapes respected (`\&` is identifier data;
+ * `i\6dg` decodes to the img tag). `.card` → implicit `& .card`, a descendant of an image:
+ * "gone"; `& + .card` → a live canvas beside it: "live"; `+ .card` → the same with `&` implicit;
+ * `& + .card &` and `& + img.hero` → subject is an image: "image". Aggregation is by
+ * permissiveness: any live alternative makes the rule live, else any image-subject keeps it
+ * escapable, else gone. A parent reference inside `:is()` reads as "image" — conservative.
+ * Splitting respects escapes, parens and brackets.
  */
 function nestedEvidence(sel: string): Evidence {
   const alternatives: string[] = [];
@@ -1951,48 +1711,16 @@ function oneSheetDeclares(styleText: string, declares: (block: string) => boolea
   // for why this is a forward scan and not a regex.
   const sheet = stripCssComments(styleText);
 
-  // ── THE BLOCK STRUCTURE, READ THE WAY THE BROWSER READS IT ─────────────────────────────
-  // One escape-aware forward pass maintains a stack of open blocks and, per block, the text of
-  // its DIRECT declarations — nested blocks contribute nothing to the parent's text, so an
-  // inner rule's width is never attributed to the outer selector. Three shapes the previous
-  // innermost-pair read got wrong, each measured against the browser before this was
-  // rewritten:
-  //   · a sheet ending inside an open block (`.card{width:600px` at EOF) — the browser closes
-  //     every open block at end-of-sheet and applies the declarations, so the stack is
-  //     unwound and evaluated at EOF too;
-  //   · an escaped brace (`--x:\}` — data, not structure) — the escape is consumed whole, so
-  //     the literal brace inside it never opens or closes anything;
-  //   · CSS nesting (`.card{width:600px;.child{color:red}}`) — the outer rule's own
-  //     declarations count even though an inner block sits beside them.
-  // Whether a block's OWN declaration text is read follows the browser's attribution:
-  //   · a STYLE RULE reads it under its selector — unless the rule is dead, and there are TWO
-  //     kinds of dead which must not be conflated (conflating them was a review finding):
-  //     PARSE-dead — an empty selector (string debris like `content:"{{…}"` can produce one)
-  //     is a parse error, the browser drops the rule WHOLE, and nothing nested inside it can
-  //     come back; and EVIDENCE-skipped — a selector list naming `img` as a tag token
-  //     ({@link IMG_SELECTOR} — a picture cap is not a canvas, the same rule
-  //     {@link CANVAS_TAGS} applies to `width` attributes) is real, applying CSS whose
-  //     declarations just are not canvas evidence. A rule NESTED in an img rule is implicitly
-  //     `& <sel>` — a descendant of an image, which cannot exist — and that scope is GONE:
-  //     nothing nested inside an unmatchable rule comes back, because a sibling of a
-  //     nonexistent element does not exist either. An IMAGE-subject scope is different — real
-  //     CSS, escapable: `img{& + .card{width:600px}}` → `img + .card`, a live canvas, and the
-  //     relative spelling `img{+ .card{…}}` resolves the same way. What decides is the
-  //     RESOLVED SUBJECT with escapes read as CSS reads them (`\&` is identifier data,
-  //     `i\6dg` is the img tag) — see {@link nestedEvidence} and {@link Evidence}. Nothing
-  //     escapes a PARSE-dead ancestor.
-  //   · an at-rule is TRANSPARENT: `@media` neither owns declarations nor kills the rules
-  //     inside it. Its direct declaration text belongs to the nearest enclosing STYLE rule
-  //     (`.card{@media (…){width:600px}}` sets the card's width), and at the top level —
-  //     `@media screen{width:600px}` — there is no such rule and the browser drops the text,
-  //     so neither does the walk read it.
-  //   · the SHEET TOP LEVEL never reads declarations: `width:600px` outside any block is a
-  //     prelude the browser discards — precisely the fragment a flat scan misread.
-  // The walk reads PLAIN BRACES, and may: the classifier view it walks has no string or url
-  // CONTENTS left (see {@link stripCssComments} — string and unquoted-url tokens are blanked,
-  // not merely skipped) and escapes are stepped over, so every brace read here is structure
-  // the browser would also see. Still linear: each character lands in at most one level's
-  // text, and `declares` runs once per block over text no other block shares.
+  // The block structure, read the way the browser reads it: one
+  // escape-aware forward pass keeps a stack of open blocks and, per block, its DIRECT declaration text — an inner rule's width is never attributed
+  // to the outer selector. Three measured shapes the innermost-pair read got wrong: a sheet ending inside an open block (the browser closes and
+  // applies at EOF — so does the walk); an escaped brace (`--x:\}` is data);
+  // CSS nesting (the outer rule's own declarations still count). A STYLE rule reads its text under its selector unless dead — PARSE-dead (empty
+  // selector: the browser drops the rule whole, nothing nested returns) is
+  // not EVIDENCE-skipped (an `img`-token selector is real CSS, just not canvas evidence; a rule nested in it resolves by SUBJECT — see
+  // {@link nestedEvidence}). At-rules are transparent: their direct text
+  // belongs to the nearest enclosing style rule, and at top level is dropped, as is any top-level declaration. Every brace read is structure: the classifier view has string and url contents blanked
+  // ({@link stripCssComments}) and escapes stepped over. Still linear.
   type Level = {
     /** May this level's own declaration text be evaluated (and under a live selector)? */
     evalDecls: boolean;
@@ -2071,32 +1799,14 @@ function oneSheetDeclares(styleText: string, declares: (block: string) => boolea
 }
 
 /**
- * IS THIS MAIL DESIGNED — did the sender lay something out — even where no fixed canvas says so?
- *
- * The rule this implements: an html mail with its own design is shown as the html mail it is,
- * in its own presentation — not flattened into the app's typography, because it is not a
- * text-based message that happens to carry markup. {@link isRigidLayout} caught the fixed-width
- * half of that class and missed the other half, twice over:
- *
- *   · A RESPONSIVE CANVAS — `max-width` in the {@link RIGID_MIN_PX}–{@link RIGID_MAX_PX} band,
- *     in the mail's stylesheet or on a layout element's inline style. See
- *     {@link declaresResponsiveCanvas} for why the fixed-width spelling of the same template
- *     never survives sanitization.
- *   · NESTED LAYOUT TABLES — a `table` inside a `table`. Nesting is how table-based layout is
- *     BUILT (`markDataTables` refuses nested tables as data for exactly that reason: "a wrapper
- *     is a wrapper"), and no letter-writing client emits one: Gmail quotes with `blockquote`,
- *     Outlook with a bordered `div`. What DOES nest tables is a designed grid — and, rarely, a
- *     Word-built signature, which this then renders framed with its logo actually drawn, a
- *     strictly better outcome than the prose path's imageless flattening of it.
- *
- * The costs are asymmetric the same way `markDataTables` argues them. Designed-read-as-letter
- * is the reported defect: the app draws its own table borders over a design that draws none.
- * Letter-read-as-designed renders that one message in the sender's type inside the frame —
- * which was every html message's rendering until the prose class existed, and the frame still
- * reflows it at the column ({@link SanitizedMail.reflow} is unchanged by this predicate).
- *
- * Exported for the same reason {@link isRigidLayout} is: the classification is watched against
- * document shapes directly (`test/message-body-designed.test.ts`), not inferred from a frame.
+ * Is this mail designed — did the sender lay something out — even where no fixed canvas says so? {@link
+ * isRigidLayout} caught the fixed-width half and missed two: a RESPONSIVE canvas (`max-width` in the {@link
+ * RIGID_MIN_PX}–{@link RIGID_MAX_PX} band, in the sheet or on a layout element — {@link
+ * declaresResponsiveCanvas}), and NESTED LAYOUT TABLES — nesting is how table layout is built, and no
+ * letter-writing client emits one (Gmail quotes with `blockquote`, Outlook with a div). The costs are
+ * asymmetric: designed-read-as-letter draws borders over a design that draws none (the reported defect);
+ * letter-read-as-designed renders one message in the sender's type, still reflowed at the column. Exported: the
+ * classification is watched against document shapes directly (`test/message-body-designed.test.ts`).
  */
 export function isDesignedLayout(root: Element, styleText: string | readonly string[]): boolean {
   if (sheetsDeclare(styleText, declaresResponsiveCanvas)) return true;
@@ -2110,40 +1820,14 @@ export function isDesignedLayout(root: Element, styleText: string | readonly str
 // ── the rich walker: the prose rendering's OWN allow-list ──────────────────────────────
 
 /**
- * ── A SECOND, NARROWER ALLOW-LIST, AND WHY THE FIRST ONE IS NOT ENOUGH ──────────────────
- *
- * The sanitizer's {@link ALLOWED_TAGS} answers "what may a mail document SAY inside the
- * sandboxed frame" — where a `<style>`, an `<img>`, a `width="600"` are all legitimate,
- * because the frame contains them. The prose rendering has no frame: its elements live in
- * the app's own document, so the question changes to "what STRUCTURE does a letter actually
- * have", and the answer is this walker. It reads the sanitized DOM — the same element
- * `sanitizeMailHtml` is about to serialize for the frame — and emits `BodyText`'s node
- * model: paragraphs, headings, lists, tables, quotes, emphasis, gated links.
- *
- * The invariant, stated once and arranged for everywhere below: **no sender byte leaves this
- * walker except as the `text` of a text run, and no sender attribute leaves it at all.** An
- * `href` is re-derived through {@link anchorFor} (a parsed URL or nothing), a `colspan` is
- * {@link boundedSpan}'s int, and `style`/`class`/`width`/`id` are simply never read — the
- * viewer's own type is the point of the prose class. There is no serialized markup anywhere
- * between the sanitized DOM and React: the builder emits data, `BodyText` builds elements.
- *
- * What is ABSENT is absent on purpose:
- *   `img`     pictures are not in the native rendering; the attachment strip lists them and
- *             "Show original" brings the sender's layout back. Skipped wholesale.
- *   `style`   its TEXT is a stylesheet, not prose. The one element whose content must not
- *             fall through to a text run, so it is the other member of {@link RICH_SKIP}.
- *   everything else the sanitizer admits (`span`, `font`, `center`, `section`, …) is
- *             TRANSPARENT: its words flow through, the element itself is never constructed.
- *
- * `pre` is the one block read as literal TEXT instead of walked for structure ({@link preTextOf}):
- * its whitespace is its content, and the renderer gives it a container that scrolls rather than a
- * column that reflows.
- *
- * `blockquote` maps to the SAME QuoteNode the plain-text parser builds, clamped by the same
- * {@link MAX_QUOTE_DEPTH}, which is what makes the trailing-history fold apply to html mail
- * with no further wiring. And the whole walk runs under {@link MAX_RICH_NODES}: past the cap
- * the builder answers `null` and the component falls back to the text part — the
- * MAX_QUOTE_DEPTH precedent, applied to breadth.
+ * A second, narrower allow-list. {@link ALLOWED_TAGS} answers what a mail may say inside the sandboxed frame; the prose rendering has
+ * no frame — its elements live in the app's own document — so the question becomes what structure a letter has, and this walker emits
+ * `BodyText`'s node model. The invariant: no sender byte leaves this walker except as the `text` of a text run, and no sender
+ * attribute leaves it at all — `href` re-derived through {@link anchorFor}, `colspan` through {@link boundedSpan},
+ * `style`/`class`/`width`/`id` never read; no serialized markup exists between the sanitized DOM and React. Absent on purpose: `img`
+ * (the strip lists them; "Show original" brings the layout back) and `style` ({@link RICH_SKIP}); everything else is transparent.
+ * `pre` is read as literal text ({@link preTextOf}); `blockquote` maps to the same QuoteNode as the text parser, clamped by {@link
+ * MAX_QUOTE_DEPTH}; the walk runs under {@link MAX_RICH_NODES}, past which it answers `null`.
  */
 export const MAX_RICH_NODES = 4096;
 
@@ -2226,17 +1910,13 @@ function appendInline(node: ChildNode, out: InlineNode[], b: RichBudget, nest: n
   }
   if (tag === "a") {
     /**
-     * ONE GATE, the same one the plain-text path trusts. `anchorFor` re-parses the href and
-     * answers with a URL it constructed or with `null` — and the `null` branch is the
-     * DEFAULT branch: the label stays in the run as text, exactly as the sender wrote it,
-     * with no anchor around it. That covers `mailto:`/`tel:`/`cid:` (which the sanitizer's
-     * {@link SAFE_HREF} admits for the frame but this rendering does not link), a relative
-     * href, and an href the post-pass already removed.
-     *
-     * The label is the sender's — which is precisely the property the plain path's
-     * label≡href construction never had to defend — so the disagreement check rides along:
-     * a label that names a host other than the destination's gets the destination's host
-     * printed beside it by the renderer.
+     * One gate, the same one the plain-text path trusts: `anchorFor` re-parses the href and
+     * answers with a URL it constructed or `null` — and null is the DEFAULT branch: the label
+     * stays as text, exactly as the sender wrote it, with no anchor. That covers
+     * `mailto:`/`tel:`/ `cid:` (admitted for the frame, not linked here), relative hrefs, and
+     * hrefs the post-pass removed. The label is the sender's — the property the plain path's
+     * label≡href construction never had to defend — so the disagreement check rides along: a
+     * label naming another host gets the destination's host printed beside it.
      */
     const gate = anchorFor((el.getAttribute("href") ?? "").trim());
     const children = inlineOf(el, b, nest);
@@ -2258,17 +1938,13 @@ function appendInline(node: ChildNode, out: InlineNode[], b: RichBudget, nest: n
 }
 
 /**
- * The literal text of a `pre` subtree — the one place this walker reads a subtree as a string,
- * and deliberately NOT `el.textContent`, for two reasons that are both invariants stated above.
- *
- *   · {@link RICH_SKIP}. `textContent` would fold a `<style>`'s stylesheet into the snippet as
- *     if the sender had typed it there. The rule that "`style` content must not fall through to
- *     a text run" does not stop being true inside a `pre`.
- *   · `<br>`. Inside preformatted text a `br` is a line the sender drew, and `textContent`
- *     silently drops it, joining two lines of a stack trace into one.
- *
- * The result is still only ever sender BYTES, never sender markup: it reaches the DOM as one
- * React text node.
+ * The literal text of a `pre` subtree — the one place this walker reads a
+ * subtree as a string, and deliberately NOT `el.textContent`:
+ * {@link RICH_SKIP} (textContent would fold a `<style>`'s stylesheet into
+ * the snippet as if the sender typed it — that rule holds inside a `pre`
+ * too), and `<br>` (inside preformatted text a br is a line the sender
+ * drew, and textContent silently joins two lines of a stack trace). The
+ * result is only ever sender BYTES, never markup: one React text node.
  */
 function preTextOf(node: ChildNode, b: RichBudget, nest: number): string {
   if (nest > MAX_WALK_DEPTH) { poison(b); return ""; }
@@ -2437,16 +2113,14 @@ export interface SanitizeOptions {
    */
   imageProxy?: ((url: string) => string) | null;
   /**
-   * THE MESSAGE'S OWN EMBEDDED IMAGES: `contentId → data: URI`, minted by the engine from the
+   * The message's own embedded images: `contentId → data: URI`, minted by the engine from the
    * part's own bytes (`OhmailEngine.loadInlineImages`). A `cid:` `<img>` whose Content-ID is
-   * here renders in place; one that is not stays the blanked box it has always been and is
-   * reported in {@link SanitizedMail.cids} so a caller can go fetch it.
-   *
-   * Nothing here is fetched BY the document — the URI carries the bytes — so this admits no
-   * network reference of any shape, and the frame's CSP (`img-src data:`) needs no widening.
-   * The values are still not trusted on arrival: {@link INLINE_IMAGE_SRC} gates every one at
-   * the point of use, so a caller wired to something other than the engine cannot smuggle a
-   * `javascript:` or a `data:text/html` into a src through this map.
+   * here renders in place; one that is not stays blanked and is reported in {@link
+   * SanitizedMail.cids}. Nothing is fetched by the document — the URI carries the bytes — so
+   * the frame's CSP needs no widening. The values are still not trusted: {@link
+   * INLINE_IMAGE_SRC} gates every one at the point of use, so a caller wired to something other
+   * than the engine cannot smuggle a `javascript:` or `data:text/html` into a src through this
+   * map.
    */
   cidImages?: ReadonlyMap<string, string> | null;
   /**
@@ -2495,21 +2169,14 @@ export interface SanitizedMail {
    */
   reflow: boolean;
   /**
-   * IS THIS A LETTER RATHER THAN A LAYOUT? The one input to the frameless path — see the note
-   * above {@link isRigidLayout}, which is the whole test.
-   *
-   * `true` means the component may skip the iframe and render the message in the app's own type
-   * — {@link rich} when the walker produced it, the TEXT part otherwise. It NEVER means the
-   * sanitized html STRING may be inlined: the srcdoc sandbox is where that string renders, and
-   * this flag decides which of two SAFE renderings is used, not whether the boundary applies.
-   *
-   * NO LONGER EQUAL TO {@link reflow}, and the divergence was earned by real mail rather than a
-   * fixture — this field's earlier header said one must have somewhere to land, and this is it.
-   * `reflow` still means "no FIXED canvas" (the only mail that must be scale-to-fit);
-   * `prose` means "no design at all": a responsive `max-width` canvas and a nested layout grid
-   * ({@link isDesignedLayout}) keep their frame — reflowed at the column, drawn in the sender's
-   * own presentation — because rendering a designed mail through the app's table typography puts
-   * a drawn border around every layout cell of a design that draws none.
+   * Is this a letter rather than a layout? The one input to the frameless path. `true` means the
+   * component may skip the iframe and render in the app's own type — {@link rich} when the walker
+   * produced it, the text part otherwise. It never means the sanitized html string may be inlined:
+   * this flag chooses between two SAFE renderings. No longer equal to {@link reflow}: `reflow`
+   * means "no FIXED canvas" (the only mail that must scale-to-fit); `prose` means "no design at
+   * all" — a responsive canvas or a nested layout grid ({@link isDesignedLayout}) keeps its frame,
+   * reflowed at the column, because the app's table typography would draw a border around every
+   * layout cell of a design that draws none.
    */
   prose: boolean;
   /**
@@ -2543,16 +2210,14 @@ export interface SanitizedMail {
 }
 
 /**
- * THE FLOOR UNDER THE MAIN THREAD, AND IT IS NOT A PERFORMANCE PREFERENCE.
- *
- * Everything below runs synchronously inside `useMemo` — during render, on the thread that
- * paints the app. Linear is a claim about the shapes measured; a cap is a claim about the
- * shape nobody has measured yet. Crossing it renders the text part with {@link COPY.oversize}
- * saying why, which is the honest outcome; hanging is not an outcome at all.
- *
- * 512 KiB is deliberately generous: `prepareHtmlForStorage` already cuts `message_bodies.html`
- * at 256 KiB, so nothing that arrives through the product can reach this. It exists for the
- * path that does not go through storage and for the day that cap moves.
+ * The floor under the main thread — not a performance preference.
+ * Everything below runs synchronously inside `useMemo`, on the thread that
+ * paints the app: linear is a claim about the shapes measured; a cap is a
+ * claim about the shape nobody has measured yet. Crossing it renders the
+ * text part with {@link COPY.oversize} saying why — honest; hanging is not
+ * an outcome. 512 KiB is deliberately generous: `prepareHtmlForStorage`
+ * cuts stored html at 256 KiB, so this exists for the path that skips
+ * storage and for the day that cap moves.
  */
 export const MAX_HTML_CHARS = 512 * 1024;
 
@@ -2562,46 +2227,14 @@ export function sanitizerAvailable(): boolean {
 }
 
 /**
- * Sanitize one message's html.
- *
- * Returns markup, not a document — {@link buildMailDocument} is what wraps it, and keeping
- * the two apart is what lets a test assert on the CSP and on the sanitization separately.
- *
- * THROWS nothing. An input this cannot parse yields empty markup, and the component falls
- * back to the text part, which is the same outcome as a message that had no html at all.
- *
- * ── ONE RULE, AND IT REPLACED A DOMPURIFY HOOK: TEXT BEFORE, ATTRIBUTES AFTER ────────────
- *
- * This used to be a single `afterSanitizeAttributes` hook that did everything. It shipped a
- * mutation-XSS, and the shape of the bug is worth more than the payload: **it edited the
- * sanitizer's output as TEXT.** A `<style>` element serializes raw, so rewriting its text
- * after DOMPurify has approved the document means the browser builds a different document
- * from the one that was approved — see {@link CUT} for the arithmetic and the payload.
- *
- * So the work is split by what it touches, and the split is the invariant:
- *
- *   PRE-PASS   the ONLY text rewrite in this file, and it runs before `purify.sanitize`, on
- *              every `<style>` in the parsed document — head and body alike, because the head
- *              hoist above moves NODES and this walks the result. Whatever markup a rewrite
- *              could invent is therefore markup the sanitizer then reads and refuses. The
- *              sanitizer has the last word by construction rather than by care.
- *
- *   POST-PASS  attributes only, over the document the FRAME will have. That is what closes
- *              the second half of the same finding: the hook could only reach nodes DOMPurify
- *              walked, so an `<a>` that appeared later carried no `rel`, no `target`, no
- *              `data-ohmail-host` and no mismatch marker — every anti-phishing affordance the
- *              sanitizer pass was built around, silently absent on the one link that was hostile.
- *              "There are no injected nodes" is exactly the assumption that failed, so this
- *              pass assumes nothing and annotates whatever is there.
- *
- * An attribute write cannot re-open the parser the way a text write can: the html serializer
- * quotes every attribute value and escapes `&` and `"` within it, so no composed value ends
- * its own attribute. That asymmetry is the whole reason the line falls where it does.
- *
- * `RETURN_DOM: true` is what makes the post-pass possible without a second parse. Measured
- * against dompurify 3.4.13's own source: the string path is literally `body.innerHTML` of the
- * node this returns (`purify.cjs.js:2389-2414`), so the two are the same document and no
- * behaviour is traded for the seam. It returns `null` for empty input, which is handled.
+ * Sanitize one message's html. Returns markup, not a document — {@link buildMailDocument} wraps it, so tests assert CSP and sanitization
+ * separately. Throws nothing: unparseable input yields empty markup and the component falls back to the text part. One rule, which replaced
+ * a DOMPurify hook that shipped a mutation-XSS by editing the sanitizer's output as TEXT (`<style>` serializes raw — see {@link CUT}): text
+ * is rewritten only BEFORE `purify.sanitize` (the pre-pass, over every `<style>` in the parsed document, so anything a rewrite could invent
+ * is markup the sanitizer then reads and refuses), and after it only ATTRIBUTES change (the post-pass, over the document the frame will
+ * have, annotating whatever is there — the hook missed injected `<a>`s). An attribute write cannot re-open the parser: the serializer
+ * quotes and escapes values. `RETURN_DOM: true` makes the post-pass possible without a second parse — measured against dompurify's own
+ * source, the string path is `body.innerHTML` of the node this returns.
  */
 export function sanitizeMailHtml(html: string, opts: SanitizeOptions = {}): SanitizedMail {
   const blocked: BlockedAsset[] = [];
@@ -2948,17 +2581,15 @@ export function sanitizeMailHtml(html: string, opts: SanitizeOptions = {}): Sani
       // `data-ohmail-inert`, `target`, `rel` — is written by the post-pass, which runs AFTER
       // DOMPurify has filtered every attribute, so none of them needs to be allowed here.
       // A SENDER'S copy of them must not survive: `<a href="mailto:x@y" data-ohmail-host=
-      // "paypal.example">` would otherwise print a host of the sender's choosing beside a
-      // link that goes somewhere else — and the post-pass cannot overwrite it, because a
-      // `mailto:` has no host to write. This line is what refuses it, and it is the ONLY
-      // thing that does: the post-pass deliberately does not clear markers it did not set,
-      // because a second removal here would leave this flag unwatchable — deleting either one
-      // would keep the suite green and neither would ever be proven to do anything.
-      //
-      // Measured, not assumed: adding `ADD_ATTR: ["data-ohmail-host", "target"]` — the
-      // obvious way to break this — leaves the suite GREEN, because the post-pass overwrites
-      // both on any http(s) link. Flipping THIS to `true` is what goes red. The mutation in
-      // `test/message-body.test.ts` is therefore on this flag, and the fixture is a `mailto:`.
+      // A `mailto:` has no host, so the post-pass cannot overwrite a forged
+      // `data-ohmail-host` on one — this line is the ONLY thing that
+      // refuses it, and the post-pass deliberately does not clear markers
+      // it did not set: a second removal would leave this flag unwatchable
+      // (deleting either would keep the suite green). Measured: adding
+      // `ADD_ATTR: ["data-ohmail-host", "target"]` leaves the suite GREEN
+      // (the post-pass overwrites both on any http(s) link); flipping THIS
+      // to `true` goes red. The mutation in `test/message-body.test.ts` is
+      // therefore on this flag, and the fixture is a `mailto:`.
       ALLOW_DATA_ATTR: false,
       ALLOW_ARIA_ATTR: true,
       KEEP_CONTENT: true,
@@ -2977,25 +2608,16 @@ export function sanitizeMailHtml(html: string, opts: SanitizeOptions = {}): Sani
   // post-pass above is the last thing that writes, and it writes attributes only, which is the
   // rule this whole function is arranged around.
   const background = effectiveBackground(parsed.body, sanitized, styleText);
-  // THE DIVERGENCE `prose` RESERVED ROOM FOR, TAKEN. `reflow` still answers `isRigidLayout`
-  // alone — a fixed canvas is the only mail that must be scaled rather than laid out at the
-  // column. `prose` now answers the broader question ("did the sender lay something out?"):
-  // rigid OR designed keeps its frame, and only the remainder — the letter — is set in the
-  // app's own type. A designed-but-not-rigid mail (the responsive template, the nested layout
-  // grid) is therefore FRAMED AND REFLOWED at once: the sender's own presentation, laid out at
-  // the column's width, with no reader-drawn table borders because no reader CSS exists inside
-  // the frame at all. Both readings come from the one sanitized document, never from a second
-  // parse.
-  // BOTH layout classifiers read the SANITIZED document's own sheets — the document the frame
-  // will build. DOMPurify drops a `<style>` whose text smells of markup (its own mXSS rule),
-  // and a canvas living only in a dropped sheet — fixed `width` or responsive `max-width`
-  // alike — is a canvas the rendered document has not got: classifying from the pre-sanitize
-  // aggregate framed (or scaled) a letter for a rule the frame never receives. BOTH scans take
-  // the sheets ONE ELEMENT PER ENTRY — a browser tokenizes each `<style>` at its own EOF — and
-  // both read them rule-wise through the one walk ({@link sheetsDeclare}): a joined view
-  // manufactured declarations across sheet EOFs (`.a{` + `width:600px`), and a flat per-sheet
-  // regex read ruleless fragments, comment text and string data as canvas evidence. No joined
-  // view of the sheets exists on this path at all.
+  // The divergence `prose` reserved room for, taken: `reflow` still answers
+  // `isRigidLayout` alone (a fixed canvas is the only mail that must be
+  // scaled); `prose` answers "did the sender lay something out?" — rigid OR
+  // designed keeps its frame, only the letter is set in the app's type. A designed-but-not-rigid mail is framed AND reflowed: the sender's own
+  // presentation at the column's width. Both classifiers read the SANITIZED
+  // document's own sheets — DOMPurify drops a `<style>` whose text smells of markup, and a canvas living only in a dropped sheet is one the
+  // rendered document has not got. Both scans take the sheets one element
+  // per entry (a browser tokenizes each `<style>` at its own EOF) and read
+  // them rule-wise through {@link sheetsDeclare}: a joined view manufactured declarations across sheet EOFs, and a flat regex read
+  // comment text and string data as canvas evidence.
   const sanitizedSheets = [...sanitized.querySelectorAll("style")].map((s) => s.textContent ?? "");
   const rigid = isRigidLayout(sanitized, sanitizedSheets);
   const designed = rigid || isDesignedLayout(sanitized, sanitizedSheets);
@@ -3025,108 +2647,26 @@ export function sanitizeMailHtml(html: string, opts: SanitizeOptions = {}): Sani
 const CSP_PROBE_URL = "https://csp-probe.invalid/probe.png";
 
 /**
- * A CSP `host-source` this file is willing to write into a double-quoted `<meta content="…">`.
- *
- * IT IS A SYNTAX GATE, NOT A POLICY ONE, and it exists because the source is DERIVED from a
- * caller's function rather than written here. Two characters would be catastrophic in that
- * position and both are legal in a url path: `;` ends the directive, so `/api/img;script-src
- * 'unsafe-inline'` would append a directive of the caller's choosing to the frame's policy,
- * and `"` ends the attribute, so a path could close the `<meta>` and open an element. `URL`
- * percent-encodes the second and NOT the first (`new URL("http://x/a;b").pathname` is
- * `/a;b`), which is exactly the kind of asymmetry that is easier to refuse than to remember.
- *
- * So the shape is a positive list: scheme, host, optional port, and a path of unreserved
- * characters and `/`. `%` is excluded as well — CSP path-matches after percent-decoding, so an
- * encoded path would be a second spelling of the same source and this file would have two.
- * Anything else is not a source this file will name, and the caller gets `null`, which is the
- * blocked policy. {@link proxyImgSource} is where that decision is made.
+ * A CSP `host-source` this file is willing to write into a double-quoted `<meta content="…">`. A syntax
+ * gate, not a policy one — the source is derived from a caller's function. Two characters would be
+ * catastrophic and both are legal in a url path: `;` ends the directive (a path could append `script-src
+ * 'unsafe-inline'`) and `"` ends the attribute. `URL` percent-encodes the second and NOT the first — the
+ * asymmetry that is easier to refuse than remember. So the shape is a positive list: scheme, host,
+ * optional port, a path of unreserved characters and `/`. `%` is excluded too — CSP matches after
+ * percent-decoding, so an encoded path is a second spelling of the same source. Anything else answers
+ * `null`, which is the blocked policy ({@link proxyImgSource}).
  */
 const CSP_HOST_SOURCE = /^https?:\/\/[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?(?::\d{1,5})?\/[A-Za-z0-9._~/-]*$/;
 
 /**
- * THE ONE URL THE FRAME MAY FETCH, WRITTEN AS A CSP SOURCE — or `null`, which means the frame
- * may fetch nothing over the network at all.
- *
- * ── WHY THIS IS NOT `'self'`, AND WHY THAT WAS THE HIGHEST-VALUE LINE IN THE FILE ───────
- *
- * The consented policy used to be `img-src data: 'self'`, and `'self'` is EVERY url on this
- * origin. The frame needs exactly one of them — the image proxy's own path. The set between
- * those two is the door that two separate hardening passes each closed a single SPELLING of,
- * and both bugs ended the same way: a url the sanitizer left behind resolved against the
- * EMBEDDER (a `srcdoc` document has no `<base>`), became `https://ohmail.app/<any path>`, and
- * was PERMITTED — an authenticated, cookie-bearing GET at a path of the SENDER's choosing,
- * because the sandbox keeps `allow-same-origin`. One was a relative `url(/api/…)` in a
- * stylesheet; the other was the same url spelled `\75 rl(…)` and through a `var()`. Neither
- * was reachable from any list of shapes, because the list is the thing that keeps being
- * incomplete.
- *
- * Naming the PATH ends the family by construction rather than by enumeration. A CSP source
- * expression carries a path (CSP3 §6.6.2.6), so `https://ohmail.app/api/img` admits the proxy
- * and refuses every other url on this origin, including the next spelling of the next
- * sanitizer defect, before anybody finds it. **The acceptance test is that both prior fixes
- * become redundant**: revert either one and its payload still fetches nothing, because the
- * policy — not the rewrite — is what refuses it.
- *
- * ── WHAT THE PATH ACTUALLY MATCHES, MEASURED IN CHROMIUM RATHER THAN READ ───────────────
- *
- * Against `img-src data: <origin>/api/img`, inside a sandboxed `srcdoc` frame, with the app's
- * own policy in force — the exact shape this file builds:
- *
- *   `/api/img`, `/api/img?u=…`, `/api/img#f`   FETCHED — the match is exact and the query and
- *                                              fragment are ignored, which is why no policy
- *                                              can ever constrain the `u=` a sender chose
- *   `/api/imgx`, `/api/img/sub`, `/other`      blocked — an exact path is a whole segment run,
- *                                              not a prefix
- *   `/API/IMG`                                 blocked — path matching is CASE-SENSITIVE, so
- *                                              the source must be the spelling the app serves
- *   `/api/%69mg`                               FETCHED — matched after percent-DECODING. Not a
- *                                              widening (it is the same endpoint, which the
- *                                              router decodes too) but it is a second spelling
- *                                              of one source, which is why {@link
- *                                              CSP_HOST_SOURCE} refuses `%` in the source it
- *                                              writes rather than admitting both.
- *   a source ending in `/`                     becomes a PREFIX and stops matching the bare
- *                                              path — `/api/img/` admits `/api/img/sub` and
- *                                              refuses `/api/img`. `URL.pathname` never adds
- *                                              one here, and this is why it must not.
- *
- * **AND THE ONE HOLE, WHICH IS IN THE SPEC RATHER THAN IN THIS FILE: a path is not matched
- * across a REDIRECT.** Measured the same way — a `302` from an admitted url to a path the
- * policy does not name was followed and fetched. That is deliberate (matching there would leak
- * cross-origin path information), and it means the single url this policy admits is the single
- * place the narrowing could be walked around. It is closed where it can be: `GET /img` answers
- * bytes or an error and never a `3xx`, pinned by a mutation-watched guard in
- * the API's privacy suite, so a later editor cannot make it one by accident.
- *
- * ── IT IS MINTED BY THE PROXY, NOT WRITTEN BESIDE IT ────────────────────────────────────
- *
- * A constant spelling `/api/img` here would be a second copy of `imageProxyUrl`, and this
- * repo's rule about second copies applies with unusual force: the drift is SILENT in both
- * directions. Name a path the proxy no longer uses and every consented image quietly stops
- * loading; keep naming an old path the app still serves and the narrowing is a widening
- * nobody notices. So the source is produced by calling the caller's own proxy function with
- * {@link CSP_PROBE_URL} and reading the origin and path back out of the answer. One value,
- * two uses, one place to delete.
- *
- * ── WHAT MAKES IT RETURN `null`, AND WHY EVERY ONE OF THOSE IS FAIL-CLOSED ──────────────
- *
- * A proxy that mints a url on ANOTHER origin, a non-http(s) scheme, an unparseable answer, a
- * throw, or a path this file will not write ({@link CSP_HOST_SOURCE}). All of them mean the
- * same thing: this file cannot state truthfully where a consented image comes from, so it
- * states nothing and the frame keeps the blocked policy. **The caller must then not use the
- * proxy either** — an `<img>` rewritten to a url the policy refuses is a broken picture and a
- * blocked-content bar that has already stopped counting it. `MessageBody` gates both on this
- * one value for exactly that reason.
- *
- * The cross-origin refusal is the file's oldest rule, restated where it can be enforced:
- * there is no policy under which this frame may name a host it does not serve from. Today
- * that is not reachable — `next.config.mjs` fails the BUILD if `NEXT_PUBLIC_API_BASE` is ever
- * an absolute origin — and it is checked here anyway, because "unreachable" is a fact about
- * today's config and this is a fact about the policy.
- *
- * @param proxy       the caller's url-minting function, called ONCE, with a url that is not real
- * @param pageOrigin  the embedder's origin — `window.location.origin`, passed so a test can drive
- *                    the real function rather than a copy of it
+ * The one url the frame may fetch, written as a CSP source — or `null`, meaning the frame may fetch nothing. Not `'self'`: that is every url on this origin, and twice a
+ * url the sanitizer left behind resolved against the embedder (srcdoc has no `<base>`) into an authenticated same-origin GET the old `img-src data: 'self'` permitted.
+ * Naming the PATH ends the family by construction: `https://ohmail.app/api/img` admits the proxy and refuses every other url — the acceptance test is that both prior
+ * fixes become redundant. Measured in Chromium: exact path matches (query and fragment ignored), prefixes and case variants blocked, `%`-encoded spellings matched after
+ * decoding ({@link CSP_HOST_SOURCE} refuses `%` for that reason), and a trailing `/` turns the source into a prefix. The one spec hole: a path is not matched across a
+ * REDIRECT — closed at the proxy, which never answers 3xx (mutation-watched in the API's privacy suite). Minted by calling the caller's own proxy function with {@link
+ * CSP_PROBE_URL} and reading origin and path back — a constant here would drift silently in both directions. Fail-closed `null` on another origin, a non-http(s) scheme,
+ * an unparseable answer, a throw, or a refused path; the caller must then not use the proxy either.
  */
 export function proxyImgSource(proxy: (url: string) => string, pageOrigin: string): string | null {
   let minted: string;
@@ -3234,37 +2774,27 @@ export function frameCsp(imgSource: string | null): string {
 }
 
 /**
- * THE APP'S OWN READING SIZE, so a reflowed mail is set in the same type as the rest of the
- * product rather than in the frame's own idea of a default.
- *
- * These two values are `.msg-body`'s (`packages/ui/src/composites/message.css`) and they are
- * duplicated here because the frame is a separate document that inherits nothing from the app.
- * A duplicated constant drifts, so it is not left to be noticed: `test/message-body.test.ts` PARSES
- * `.msg-body` out of that stylesheet and asserts these two strings against it, which makes the
- * drift a red test rather than a mail that is subtly the wrong size.
- *
- * It is the base only, and deliberately unqualified — a sender who sets their own sizes still
- * wins, exactly as they do for every other rule in this sheet. What it fixes is the mail that
- * declares nothing, which is the mail this reflow path exists for.
+ * The app's own reading size, so a reflowed mail is set in the same type as
+ * the rest of the product. These two values are `.msg-body`'s
+ * (`packages/ui/src/composites/message.css`), duplicated because the frame
+ * is a separate document that inherits nothing — and the duplication is
+ * watched: `test/message-body.test.ts` parses `.msg-body` out of that
+ * stylesheet and asserts these strings against it. Base only, deliberately
+ * unqualified: a sender who sets their own sizes still wins; what it fixes
+ * is the mail that declares nothing.
  */
 export const NATIVE_FONT_SIZE = "calc(14.5px + var(--type-up))";
 export const NATIVE_LINE_HEIGHT = "1.55";
 
 /**
- * The stylesheet the frame starts from — the sheet the letter is printed on, and nothing
- * more. It must lose to anything the sender declares, which is why every rule here is
- * unqualified and — with the two documented exceptions below — none of them is `!important`.
- *
- * The exceptions are both LAYOUT DECISIONS rather than style preferences, and that is the line:
- * `:root,:root>body{height:auto}` because the frame is measured under a probe viewport, and the
- * reflow block at the bottom because capping a declared width at the column IS the reflow. A
- * rule that lost to the sender there would do nothing at all, since the width it has to beat is
- * the width the sender declared.
- *
- * `img:not([width])` rather than a blanket `img{max-width:100%}`: bulk mail lays itself out
- * with `width=` attributes on images inside fixed-width tables, and clamping those collapses
- * the design. What the clamp is FOR is the other case — a photograph someone pasted at its
- * natural 4 000 px — and that one never carries a width attribute.
+ * The stylesheet the frame starts from — the sheet the letter is printed on. It must lose to
+ * anything the sender declares: every rule is unqualified and none is `!important` except two
+ * LAYOUT decisions — `:root,:root>body{height:auto}` (the frame is measured under a probe
+ * viewport) and the reflow block (capping a declared width at the column IS the reflow; a rule
+ * that lost to the sender there would do nothing). `img:not([width])` rather than a blanket
+ * `img{max-width:100%}`: bulk mail lays itself out with `width=` attributes inside fixed tables,
+ * and clamping those collapses the design — the clamp is for the pasted 4000 px photograph,
+ * which never carries a width attribute.
  */
 const FRAME_CSS = `
 html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
@@ -4294,68 +3824,23 @@ export function MessageBody({
     );
   }
 
-  // `remote`, `sheets`, `pixels`, `remoteShown`, `pixelsRefused`, `hasBlocked` and the sentences
-  // (`said`) are computed ABOVE the early returns, beside `framelessView`, because a hook reads them.
-  //
-  // The bar also carries the dark-viewer toggle, so it appears in a dark theme even when there
-  // is nothing blocked to report. The empty text span below still takes the flex space, which
-  // is what pushes the toggle to the right whether or not the blocked-content sentence is there.
-  //
-  // `adaptable` and not `themeDark` alone: a mail the sender already drew dark has no adaptation
-  // to offer, so the button would toggle an attribute that changes nothing on screen. A control
-  // that visibly does nothing is worse than an absent one, and an empty bar carrying only that
-  // control is worse still — hence both this and the button below read the same term.
+  // `remote`, `sheets`, `pixels`, `remoteShown`, `pixelsRefused`,
+  // `hasBlocked` and `said` are computed above the early returns, beside
+  // `framelessView`, because a hook reads them. The bar also carries the
+  // dark-viewer toggle, so it appears in a dark theme even with nothing
+  // blocked; the empty text span still takes the flex space, pushing the
+  // toggle right. `adaptable`, not `themeDark` alone: a mail the sender
+  // already drew dark has no adaptation to offer, and a control that
+  // visibly does nothing is worse than an absent one.
   /**
-   * ── THE FRAMELESS PATH — A LETTER, SET IN THE APP'S OWN TYPE ────────────────────────────
-   *
-   * `mail.prose` is the document's answer (it declares no canvas — see {@link isRigidLayout});
-   * the other two terms are this component's, and both are about props the classifier cannot see.
-   *
-   *   · AN EMPTY TEXT PART keeps its frame. A message classified prose whose text part is empty
-   *     has nothing to render frameless — the words exist only inside the html.
-   *   · "SHOW ORIGINAL" — a press, and only a press. The frameless path draws no images and no
-   *     layout, so there must be a way back to the sender's own rendering; `showOriginal` is it,
-   *     and it is per message and per mount (see its declaration).
-   *
-   *     THIS WAS FIRST WRITTEN AS AN INFERENCE AND THE INFERENCE WAS WRONG. The term was
-   *     `remoteLoaded && remote.some((b) => !b.pixel)` — "the reader has consented to this
-   *     message's pictures, so they must want the design" — which is true of a press and false
-   *     of the account-wide setting that loads remote images by default, because that setting
-   *     makes `remoteLoaded` true from the first paint. With that setting on, every message of
-   *     a business thread that carries any picture comes back FRAMED — i.e. the flip this
-   *     component was rearranged to make has no effect at all for exactly the readers it is for.
-   *     A decision about one message cannot be read out of a setting someone made once about
-   *     something else.
-   *
-   * ── WHAT IS RENDERED, AND THE LINE THAT MUST NOT MOVE ──────────────────────────────────
-   *
-   * The walker's node tree when there is one, the TEXT PART when there is not — both through
-   * the same {@link BodyText} a message with no html has always used. **No markup string is
-   * ever put into the app's document, here or anywhere**: the native rendering is built
-   * element by element from data the walker emitted, so sender bytes exist in the app's tree
-   * only as text nodes and every attribute is one this code constructed. The srcdoc sandbox is
-   * where the sanitized STRING renders; this flag chooses between two safe renderings and has
-   * no power to relax that. `test/message-body-prose.test.ts` plants hostile markup in a
-   * prose-classified message and asserts none of it — no element it named, no class, no
-   * handler, no unvetted href — reaches the app's DOM.
-   *
-   * ── THE BAR STAYS WHEN IT HAS SOMETHING TO SAY ─────────────────────────────────────────
-   *
-   * A prose message can still have named a beacon, a background image or a remote stylesheet —
-   * none of which paints anything, which is why the message qualifies — and the bar is the only
-   * place the product says so. Dropping it to render "just the text" would delete a privacy
-   * disclosure the site makes in as many words, for a message where the disclosure is the ONLY
-   * thing there was to report. So the frame is what this path replaces, not that disclosure.
-   *
-   * But the bar is put up ONLY for a sentence (`showBar` reads `hasBlocked || canAdapt`), never
-   * for the flip alone: a plain letter with nothing blocked used to raise a whole bar to hold a
-   * single "Show original" button — a strip of chrome above an otherwise clean message. The flip
-   * moved out to its own quiet control after the body, so that message now shows no bar at all.
-   *
-   * The dark toggle is suppressed on this path: the transform is a filter on the FRAME's
-   * document, and there is no frame here. `BodyText` is app-native and already themed, so the
-   * control would be a button that visibly does nothing — the same rule `canAdapt` applies to a
-   * mail the sender already drew dark.
+   * The frameless path — a letter, set in the app's own type. `mail.prose` is the document's answer; the other two terms are this
+   * component's: an empty text part keeps its frame (the words exist only in the html), and "Show original" is a press and only a
+   * press — the earlier inference (`remoteLoaded && …`) was true of a press and false of the account-wide load-by-default setting,
+   * which framed every pictured message for exactly the readers the flip was for. What renders: the walker's node tree, else the
+   * text part, both through {@link BodyText} — no markup string ever enters the app's document; sender bytes exist only as text
+   * nodes (`test/message-body-prose.test.ts` plants hostile markup and asserts none reaches the DOM). The bar stays when it has
+   * something to say — a prose mail can still have named a beacon, and the bar is the only place the product says so — but never
+   * for the flip alone; the dark toggle is suppressed (no frame to filter).
    */
   /**
    * IS THIS MAIL ELIGIBLE for the frameless rendering — the document's answer plus the text part
