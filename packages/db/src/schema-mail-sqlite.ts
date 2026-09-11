@@ -1090,36 +1090,25 @@ export const accounts = sqliteTable("accounts", {
    */
   aiEnabled: integer("ai_enabled", { mode: "boolean" }).notNull().default(true),
   /**
-   * WHEN THE AI QUESTION WAS ANSWERED for this account, or NULL for "nobody has been asked"
-   * (migration 0084).
-   *
-   * `accounts.ai_enabled` says whether AI is ON. It cannot say whether anybody was ASKED,
-   * because its resting value is `true` (`NOT NULL DEFAULT true`, and `aiEnabledFor` falls back
-   * to `true` for a missing row) and a resting value is indistinguishable from an answer. The
-   * onboarding posture needs both facts — `OnboardingAi` is a four-state union precisely because
-   * "answered no" and "never asked" select opposite screens — and one boolean cannot carry two
-   * independent facts however it is read.
-   *
-   * The measured cost of not having it: a fresh hosted account reported `on`, so
-   * `deriveOnboardingStep`'s AI row never fired and the question was never asked at all, on an
-   * account whose AI was already spending its credits.
-   *
-   * READ AS `IS NOT NULL`, never as a deadline — `autoSuggestAt`'s rule directly above, and for
-   * its reason: a skewed clock must not be able to turn it into a different answer.
+   * When the AI question was ANSWERED for this account, or NULL for "nobody has been asked"
+   * (migration 0084). `accounts.ai_enabled` says whether AI is ON; it cannot say whether anybody
+   * was ASKED, because its resting value is `true` and a resting value is indistinguishable from
+   * an answer. Onboarding needs both facts — "answered no" and "never asked" select opposite
+   * screens — and one boolean cannot carry two independent facts. The measured cost: a fresh
+   * hosted account reported `on`, so the AI question was never asked at all, on an account whose
+   * AI was already spending its credits. READ AS `IS NOT NULL`, never as a deadline: a skewed
+   * clock must not turn it into a different answer.
    */
   aiAnsweredAt: integer("ai_answered_at", { mode: "timestamp_ms" }),
   /**
-   * THE ERASURE FENCE (migration 0079). NULL for every live account; the instant of the account's
+   * The erasure fence (migration 0079). NULL for every live account; the instant of the account's
    * Art. 17 erasure otherwise — stamped FIRST inside `deleteAccount`'s transaction, with
-   * `coalesce` so a retried erasure keeps the first stamp.
-   *
-   * This row SURVIVES erasure by design (the pseudonymous billing subject), so nothing structural
-   * refuses a late writer: without this column, a consent-settings PATCH in flight across the
-   * erasure could recreate `account_settings` / doorbell rows a millisecond after the catalog
-   * sweep counted zero. Every settings writer opens its transaction by reading this row
-   * `FOR SHARE` and refusing on a stamp (`erasure-fence.ts`); the stamp-first order means
-   * whichever side wins the row lock, zero rows survive. The migration file carries the full
-   * two-sided argument.
+   * `coalesce` so a retried erasure keeps the first stamp. This row SURVIVES erasure by design
+   * (the pseudonymous billing subject), so nothing structural refuses a late writer: without this
+   * column, a consent PATCH in flight across the erasure could recreate settings rows a
+   * millisecond after the catalog sweep counted zero. Every settings writer opens its transaction
+   * by reading this row `FOR SHARE` and refusing on a stamp; the stamp-first order means
+   * whichever side wins the row lock, zero rows survive.
    */
   erasedAt: integer("erased_at", { mode: "timestamp_ms" }),
   createdAt: integer("created_at", { mode: "timestamp_ms" }).default(NOW_MS).notNull(),
@@ -1131,41 +1120,27 @@ export const users = sqliteTable("users", {
   email: text("email").notNull(),                 // lowercased at write
   displayName: text("display_name").notNull().default(""),
   /**
-   * WHEN this address was proven to be real and to belong to this account (migration 0023).
-   *
-   * `NULL` means unproven. Two things write it and neither ever writes it back to `NULL`
-   * (verification is monotonic — the writers `COALESCE`):
-   *
-   *  · `AuthService.register` on the INVITE path, at creation. The invite row is email-BOUND
-   *    and was mailed to that address by the invite flow, so consuming it inside the account-creating
-   *    transaction IS the proof. The unbound `cfg.inviteCodes` bootstrap
-   *    is deliberately NOT covered — it proves nothing about an address.
-   *  · `AuthService.verifyEmail`, on a token that was mailed to the address PLUS the account
-   *    password. Both halves are required; see that method for the pre-hijack it closes.
-   *
-   * It is a timestamp and not a boolean because the column answers "how long has this account
-   * been able to spend money", which is the question an abuse investigation actually asks.
-   *
-   * READ by `resolveSession` (so the privilege travels with the session at no extra query) and
-   * enforced by `withVerifiedEmail` on `POST /billing/checkout` and `POST /mailboxes`.
+   * When this address was proven real and owned by this account (migration 0023). NULL means
+   * unproven; both writers `COALESCE`, so verification is monotonic. `AuthService.register`
+   * writes it on the INVITE path — the invite is email-BOUND and was mailed to that address, so
+   * consuming it inside the account-creating transaction IS the proof (the unbound bootstrap
+   * codes are not covered). `AuthService.verifyEmail` writes it on a token mailed to the address
+   * PLUS the account password — both halves required. A timestamp, not a boolean: the column
+   * answers "how long has this account been able to spend money". Read by `resolveSession`;
+   * enforced by `withVerifiedEmail` on checkout and `POST /mailboxes`.
    */
   emailVerifiedAt: integer("email_verified_at", { mode: "timestamp_ms" }),
   createdAt: integer("created_at", { mode: "timestamp_ms" }).default(NOW_MS).notNull(),
 }, (t) => ({
   uqEmail: unique().on(t.accountId, t.email),
   /**
-   * THE LOGIN IDENTITY, and the only constraint that actually enforces it (migration 0021).
-   *
-   * `uqEmail` above cannot: `register` inserts a fresh `accounts` row before the `users` row,
-   * so no two registrations ever share an `account_id` and the composite is satisfied by
-   * construction whatever the address. Before this index the sole guard was an unlocked
-   * SELECT-then-INSERT, which two concurrent registrations for one address (using two live
-   * invites — `invite mint --force` used to leave both working) both pass. `login` then does
-   * `where email = $1 limit 1` with no ORDER BY, so the password opens an arbitrary one of
-   * the two accounts.
-   *
-   * Unique, and it REPLACES the old non-unique `users_email_idx` rather than joining it: the
-   * old index was the same single column and could only cost writes.
+   * The login identity, and the only constraint that actually enforces it (migration 0021).
+   * `uqEmail` above cannot: `register` inserts a fresh `accounts` row before the `users` row, so
+   * no two registrations ever share an `account_id` and the composite is satisfied whatever the
+   * address. Before this index the sole guard was an unlocked SELECT-then-INSERT, which two
+   * concurrent registrations for one address both pass; `login` then does `where email = $1 limit
+   * 1` with no ORDER BY, so the password opens an arbitrary one of the two accounts. Unique, and
+   * it REPLACES the old non-unique single-column index, which could only cost writes.
    */
   uqEmailGlobal: uniqueIndex("users_email_unique_idx").on(t.email),
 }));
@@ -1222,23 +1197,14 @@ export const sessions = sqliteTable("sessions", {
 }));
 
 /**
- * REFRESH TOKENS (mail 0060 — moved from the Cloud half) — the rotating-refresh history per
- * session family. A presented refresh token that is already `consumedAt` ⇒ reuse ⇒ the whole
- * family is revoked (`packages/services/src/auth/session-lifecycle.ts`).
- *
- * MAIL-half since Phase 3, and not by analogy: QR device pairing signs a REMOTE device into
- * the desktop-as-host tier, and that device's bearer pair rotates against the store that serves
- * it — the desktop arm runs the mail journal only, the same argument that put `users`/`devices`/
- * `sessions`/`pairing_tokens` here. The old placement's justification ("a local install mints a
- * session per launch: no refresh rotation") was true until paired devices existed and is false
- * now. What stays private is the identity CEREMONY — password hashes, login tokens, factors,
- * PKCE codes: everything that proves WHO somebody is. A refresh row proves nothing about
- * identity; it is a digest of a credential this same database minted, exactly the
- * `sessions.access_token_hash` / `pairing_tokens.token_hash` discipline.
- *
- * The hosted database already has this table from cloud 0000; mail 0060 creates it guarded, so
- * either journal order converges on one catalog object (the migration's own header carries the
- * mechanics). Per-table justification lives in `test/journal-split.test.ts` beside the partition.
+ * Refresh tokens (mail 0060 — moved from the Cloud half): the rotating-refresh history per
+ * session family. A presented token already `consumedAt` is reuse, and the whole family is
+ * revoked (`session-lifecycle.ts`). MAIL-half, not by analogy: QR pairing signs a remote device
+ * into the desktop-as-host tier, and that device's bearer pair rotates against the store that
+ * serves it — the desktop arm runs the mail journal only. What stays private is the identity
+ * CEREMONY; a refresh row proves nothing about identity — it is a digest of a credential this
+ * same database minted. The hosted database already has this table from cloud 0000; mail 0060
+ * creates it guarded, so either journal order converges on one catalog object.
  */
 export const refreshTokens = sqliteTable("refresh_tokens", {
   id: text("id").default(UUID_V4).primaryKey(),
@@ -1258,24 +1224,14 @@ export const refreshTokens = sqliteTable("refresh_tokens", {
 }));
 
 /**
- * PAIRING TOKENS (mail 0059) — the consumable credential behind every pairing ceremony: the
- * standalone server's first-account setup token, a family invite, and QR device pairing.
- *
- * MAIL-half and not by analogy: a pairing token is redeemed against the server that will serve
- * the resulting session, and the desktop-as-host arm runs the mail journal only — the same
- * argument that put `users`/`devices`/`sessions` here. It is NOT part of the identity ceremony
- * (that stays Cloud): its whole authority is its own entropy, single-use + TTL, exactly like an
- * invite.
- *
- * The discipline is `login_tokens`': `tokenHash` is sha256 of a ≥128-bit random value that is
- * returned ONCE at mint and never stored; redeem is one atomic
- * `UPDATE … SET consumed_at = now() WHERE token_hash = $1 AND "grant" = $2 AND consumed_at IS
- * NULL AND revoked_at IS NULL AND expires_at > now() RETURNING`, so the row lock decides a race
- * and a token can only be spent as the grant it was minted with. `createdByUserId` is NULL for
- * exactly one mint — the first-boot setup token, made by the composition root before any user
- * exists — and REQUIRED for `device-pair`, whose redeem mints a session for the creator. The
- * grant CHECK ('invite' | 'device-pair') lives in the migration. See
- * `packages/services/src/pairing.ts` for the lifecycle and its bounds.
+ * Pairing tokens (mail 0059) — the consumable credential behind every pairing ceremony: the
+ * standalone server's first-account setup token, a family invite, QR device pairing. MAIL-half: a
+ * pairing token is redeemed against the server that will serve the resulting session, and the
+ * desktop-as-host arm runs the mail journal only. Not part of the identity ceremony: its whole
+ * authority is its own entropy, single-use + TTL. `tokenHash` is sha256 of a ≥128-bit random
+ * returned ONCE at mint; redeem is one atomic guarded `UPDATE … RETURNING`, so the row lock
+ * decides a race and a token can only be spent as the grant it was minted with. `createdByUserId`
+ * is NULL for exactly one mint — the first-boot setup token — and REQUIRED for `device-pair`.
  */
 export const pairingTokens = sqliteTable("pairing_tokens", {
   id: text("id").default(UUID_V4).primaryKey(),
@@ -1333,18 +1289,13 @@ export const trackerEvents = sqliteTable("tracker_events", {
   ixDetected: index("tracker_events_account_detected_idx").on(t.accountId, t.detectedAt),
 }));
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Migration 0010 — reference & compose niceties. Five additive,
-// account-scoped tables served purely over REST (no change_log / EntityType
-// growth — the mailbox/tracker precedent): clients refetch rather than sync.
-//
-// `contact_notes` / `thread_notes` are the free-text notes pinned to a contact
-// reference card or a thread; PATCH/DELETE /notes/:id resolves an id in EITHER
-// table (account-scoped). `snippets` is the compose-time canned-text library.
-// `notify_rules` opts specific senders/threads back INTO notifications (off by
-// default). `away_responders` is the single per-account autoresponder
-// row (UNIQUE(account_id) ⇒ PUT upserts it).
-// ─────────────────────────────────────────────────────────────────────────────
+// Migration 0010 — reference and compose niceties. Five additive, account-scoped tables served
+// purely over REST (no `change_log`/`EntityType` growth — the mailbox/tracker precedent): clients
+// refetch rather than sync. `contact_notes`/`thread_notes` are the free-text notes pinned to a
+// contact card or a thread (PATCH/DELETE `/notes/:id` resolves an id in either table,
+// account-scoped). `snippets` is the compose-time canned-text library. `notify_rules` opts
+// specific senders/threads back INTO notifications (off by default). `away_responders` is the
+// single per-account autoresponder row (UNIQUE(account_id) means PUT upserts it).
 
 export const contactNotes = sqliteTable("contact_notes", {
   id: text("id").default(UUID_V4).primaryKey(),
@@ -1391,55 +1342,36 @@ export const awayResponders = sqliteTable("away_responders", {
   startsAt: integer("starts_at", { mode: "timestamp_ms" }),
   endsAt: integer("ends_at", { mode: "timestamp_ms" }),
   /**
-   * WHO GETS AN AUTOMATIC REPLY — `'screened_in'` (the default) or `'everyone'` (mail 0051).
-   *
+   * Who gets an automatic reply — `'screened_in'` (default) or `'everyone'` (mail 0051).
    * `screened_in` means only a sender the account has already let past the Screener: a message
-   * still HELD in `ohmail/Screener` gets no reply. That is the default because the Screener is a
-   * consent gate in both directions — a stranger who has not been admitted has not been told
-   * anything about this account, and an away reply tells them somebody is travelling and that the
-   * address is live and read by a person. `everyone` is the explicit opposite choice, and it is
-   * only ever reachable by someone changing this field.
-   *
-   * NOT NULL with a default rather than a nullable column, because unlike every `account_settings`
-   * flag this one is not an on/off — an absent value would have to mean one of the two members, and
-   * a reader that guessed differently from the writer would widen an audience nobody widened. The
-   * CHECK (a closed two-member enum) lives in the migration.
+   * still HELD gets no reply. That is the default because the Screener is a consent gate in both
+   * directions — an away reply tells a stranger somebody is travelling and that the address is
+   * live and read by a person. `everyone` is the explicit opposite choice. NOT NULL with a
+   * default rather than nullable: this is not an on/off — an absent value would have to mean one
+   * of the two members, and a reader guessing differently from the writer would widen an audience
+   * nobody widened. The CHECK lives in the migration.
    */
   audience: text("audience").notNull().default("screened_in"),
   /**
-   * HOW OFTEN ONE PERSON MAY BE ANSWERED — `'per_day'` by default (mail 0087).
-   *
-   *   always       every message gets a reply.
-   *   per_message  once, until the responder's TEXT changes — keyed by `awayTextHash(body)` and
-   *                deliberately not by this row's `updated_at`: a save is not an edit, and keying
-   *                on the row made switching the responder off and on again re-answer everybody.
-   *   per_day      (DEFAULT) at most one reply per person per 24 h.
-   *   per_week     at most one per person per 7 days.
-   *
-   * NOT NULL with a default, for `audience`'s reason one line up: there is no "off" reading of an
-   * absent value here — a responder that is enabled is answering somebody at SOME rate — so an
-   * absent value would have to be guessed, and a reader guessing `always` where the writer meant
-   * `per_week` would answer a correspondent seven times. The CHECK (a closed four-member enum)
-   * lives in the migration. The DEFAULT is the middle of the range rather than the narrowest
-   * member on purpose: it is what the copy calls "at most once a day", it is what every existing
-   * row gets, and `always` is a choice somebody makes rather than one they inherit.
+   * How often one person may be answered — `'per_day'` by default (mail 0087). `always`: every
+   * message. `per_message`: once, until the responder's TEXT changes — keyed by
+   * `awayTextHash(body)`, not the row's `updated_at`: a save is not an edit, and keying on the
+   * row made switching off and on re-answer everybody. `per_day` (default): one reply per person
+   * per 24 h. `per_week`: one per 7 days. NOT NULL with a default: there is no "off" reading of
+   * an absent value, and a reader guessing `always` where the writer meant `per_week` would
+   * answer a correspondent seven times. The DEFAULT is the middle of the range: `always` is a
+   * choice somebody makes, never one they inherit.
    */
   throttle: text("throttle").notNull().default("per_day"),
   /**
-   * WHEN THE RESPONDER WAS LAST TURNED ON — the episode floor's first half, and the column that
-   * stops an edit stranding the correspondents who wrote before it.
-   *
-   * The floor used to be `updated_at`, which made EVERY save move it: somebody who fixed a typo
-   * mid-trip pushed the floor past the mail that had already arrived, and every correspondent
-   * behind it was never answered at all — not by the old text and not by the new one. `enabled_at`
-   * moves only on the OFF → ON transition (`nextEnabledAt`, one implementation, used by `put` and
-   * by the profile import), so an edit while away leaves the floor where it was and the backlog
-   * inside the window stays answerable.
-   *
-   * Nullable because a responder that has never been enabled has no such instant, and the pass
-   * reads a NULL as "not live" rather than as "the beginning of time". Backfilled `= updated_at`
-   * for rows already enabled when 0087 ran, which is the closest true statement available about a
-   * row whose enablement instant was never recorded.
+   * When the responder was last turned ON — the episode floor's first half. The floor used to be
+   * `updated_at`, which every save moved: somebody who fixed a typo mid-trip pushed the floor
+   * past mail that had already arrived, and every correspondent behind it was never answered at
+   * all. `enabled_at` moves only on the OFF to ON transition (`nextEnabledAt`, one
+   * implementation, used by `put` and the profile import), so an edit while away leaves the floor
+   * where it was and the backlog inside the window stays answerable. Nullable: a never-enabled
+   * responder has no such instant, and the pass reads NULL as "not live". Backfilled to
+   * `updated_at` for rows already enabled when 0087 ran — the closest true statement available.
    */
   enabledAt: integer("enabled_at", { mode: "timestamp_ms" }),
   updatedAt: integer("updated_at", { mode: "timestamp_ms" }).default(NOW_MS).notNull(),
@@ -1500,39 +1432,14 @@ export const awayResponderSent = sqliteTable("away_responder_sent", {
 }));
 
 /**
- * THE AWAY REPLY LEDGER (mail 0087) — one row per DECIDED candidate, and the reservation that
- * makes "one automatic reply per message" a property of the schema.
- *
- * ── IT REPLACES `away_responder_sent`, AND THE DIFFERENCE IS WHAT IT RECORDS ────────────────
- *
- * That table records only the sends that HAPPENED, keyed by an enablement episode. This one
- * records every candidate the pass examined and what it decided, which is a different and more
- * useful fact for three reasons:
- *
- *   · A suppression nobody can attribute is indistinguishable from a pass that never ran. The old
- *     shape wrote nothing for a message it declined, so the only evidence a correspondent was
- *     deliberately not answered lived in a log line that ages out. `outcome` + `reason` is the
- *     durable answer to "why did my colleague not get a reply".
- *   · A held candidate that writes nothing stays a candidate for ever, and a first-time backfill
- *     contributes thousands of them — they pin the oldest page of every cycle and a genuine
- *     arrival behind them is never examined — a pass that cannot converge, starved by its own
- *     oldest page. A ledger row per examined candidate is what fixes that: `LEFT JOIN … WHERE
- *     ar.id IS NULL` takes each decided row out of the candidate set permanently, so the window
- *     shrinks as an away period proceeds instead of growing.
- *   · `UNIQUE (account_id, message_id)` is the structural half of at-most-once. Two runners racing
- *     one message both attempt the INSERT, exactly one gets a row, and the loser stops — no
- *     read-then-write window, and no dependence on either runner's control flow.
- *
- * ── THE ROW IS WRITTEN BEFORE THE SEND, NEVER AFTER ────────────────────────────────────────
- *
- * SMTP is not transactional, so the choice is at-most-once or at-least-once and there is no third
- * option. `pending` is committed with the throttle reservation BEFORE anything dials; the send
- * follows; the finalize is a compare-and-swap on `outcome='pending'` so exactly one writer ever
- * records a terminal state. A crash between the reservation and the send costs ONE unsent reply. A
- * crash after it leaves `pending`, which is never retried — see `unverified`.
- *
- * `message_id` carries NO foreign key, for `away_responder_sent`'s reason: the record has to
- * outlive the message it was triggered by, and an expunge must not un-answer a correspondent.
+ * The away reply ledger (mail 0087) — one row per DECIDED candidate, not only the sends: a
+ * suppression nobody can attribute is indistinguishable from a pass that never ran — `outcome` +
+ * `reason` is the durable answer; a held candidate that wrote nothing stayed a candidate forever,
+ * pinning the oldest page of every cycle — a ledger row takes each decided row out of the
+ * candidate set, so the window shrinks; and `UNIQUE (account_id, message_id)` is the structural
+ * half of at-most-once — two runners race the INSERT, one gets a row. Written BEFORE the send:
+ * `pending` commits with the throttle reservation, and the finalize is a compare-and-swap on
+ * `outcome='pending'`. No FK on `message_id`: an expunge must not un-answer a correspondent.
  */
 export const awayReplies = sqliteTable("away_replies", {
   id: text("id").default(UUID_V4).primaryKey(),
@@ -1544,15 +1451,13 @@ export const awayReplies = sqliteTable("away_replies", {
   /** The lowercased envelope author. Never a display name. */
   sender: text("sender").notNull(),
   /**
-   * WHAT WAS DECIDED. The CHECK (a closed five-member enum) lives in the migration.
-   *
-   *   pending      reserved, not yet sent. Terminal ONLY in the crash case, and never retried.
-   *   sent         SMTP accepted it.
-   *   unverified   SMTP threw. The delivery is AMBIGUOUS — it may have reached the server before
-   *                the failure — so the claim is KEPT and no second copy is ever offered. The
-   *                interactive send path answers the same ambiguity the same way.
-   *   throttled    the per-sender reservation refused: this person was answered recently enough.
-   *   suppressed   an eligibility guard held. `reason` names which.
+   * What was decided; the CHECK (a closed five-member enum) lives in the migration. `pending` —
+   * reserved, not yet sent; terminal only in the crash case, never retried. `sent` — SMTP
+   * accepted it. `unverified` — SMTP threw: the delivery is AMBIGUOUS (it may have reached the
+   * server), so the claim is KEPT and no second copy is ever offered; the interactive send path
+   * answers the same ambiguity the same way. `throttled` — the per-sender reservation refused:
+   * this person was answered recently enough. `suppressed` — an eligibility guard held; `reason`
+   * names which.
    */
   outcome: text("outcome").notNull(),
   /** The suppression member, or the throttle setting that refused. Null for `sent`/`pending`. */
@@ -1576,29 +1481,14 @@ export const awayReplies = sqliteTable("away_replies", {
 }));
 
 /**
- * THE PER-SENDER THROTTLE STATE (mail 0087) — one row per correspondent, and its
- * `ON CONFLICT DO UPDATE … WHERE` IS the throttle.
- *
- * ── WHY THIS IS A TABLE AND NOT A QUERY OVER THE LEDGER ────────────────────────────────────
- *
- * "Has this person been answered in the last 24 hours" is answerable from `away_replies` with a
- * MAX over an index, and that answer would be a READ — after which the pass would decide, and then
- * write. Two runners can both read "no" before either writes, and the correspondent gets two
- * replies. Serialising it needs a row to lock, and there is no row to lock for a sender who has
- * never been answered (`INSERT … WHERE NOT EXISTS` and `SELECT … FOR UPDATE` both fail on exactly
- * that case — a row that does not exist yet cannot be locked).
- *
- * An upsert against a PRIMARY KEY has no such gap: the INSERT arm and the UPDATE arm are one
- * statement, the key is what serialises them, and the `WHERE` on the DO UPDATE decides. Zero rows
- * returned means "the predicate said no" — the throttle refused — and that is a decision, not a
- * race. It is the same shape `unsubscribe_records` uses and the same argument.
- *
- * ── WHAT IT DELIBERATELY IS NOT ────────────────────────────────────────────────────────────
- *
- * Not per-mailbox: the throttle is a promise to a PERSON ("at most once a day"), and somebody who
- * writes to two of the account's addresses is still one person. Not shared across installs either
- * — this is per-install data, and a handover mid-window may cost one duplicate per sender, which
- * is filed rather than defended.
+ * The per-sender throttle state (mail 0087) — one row per correspondent, and its `ON CONFLICT DO
+ * UPDATE … WHERE` IS the throttle. A query over the ledger would be a READ: two runners can both
+ * read "no" before either writes, and the correspondent gets two replies; serialising needs a row
+ * to lock, and a row that does not exist cannot be locked. An upsert against a PRIMARY KEY has no
+ * such gap: the two arms are one statement, the key serialises them, and the `WHERE` decides —
+ * zero rows returned means the throttle refused, a decision, not a race. Not per-mailbox: the
+ * throttle is a promise to a PERSON. Not shared across installs: a handover mid-window may cost
+ * one duplicate per sender — filed rather than defended.
  */
 export const awaySenderState = sqliteTable("away_sender_state", {
   accountId: text("account_id").notNull(),
@@ -1617,34 +1507,14 @@ export const awaySenderState = sqliteTable("away_sender_state", {
 }));
 
 /**
- * A DECISION MADE WHERE THE MAILBOX IS READ, WAITING FOR THE INSTALL THAT ORGANIZES IT (0.14.1).
- *
- * ── WHY THE ROW IS NOT THE RECORD ──────────────────────────────────────────────────────────
- *
- * The IMAP mailbox is the master, and it is the only medium two installs share — so the thing an
- * organizer actually acts on is a message the reader appends to `ohmail/_meta`, never this row.
- * What this table holds is the READER'S OWN BOOKKEEPING: which of its decisions have been handed
- * to the mailbox, which the organizer has taken, and which have sat there long enough that the
- * person should be told nobody is organizing.
- *
- * Reading it the other way round — the row as the record, the mailbox as a cache — would make a
- * decision travel through a database two installs may not share, which is precisely the
- * arrangement the lease exists to avoid.
- *
- * ── THE FOUR STATES, AND WHAT MOVES BETWEEN THEM ───────────────────────────────────────────
- *
- *   pending  the door wrote it and the reader's cycle has not appended it yet.
- *   sent     it is in the mailbox. The organizer has not drained it.
- *   applied  its id is no longer in the mailbox, so the organizer took and expunged it.
- *   expired  it was still there 24 h later. Nobody is organizing, and the sender returns to the
- *            reader's queue with a sentence saying so.
- *
- * Only the READER advances any of them, and it advances them by LOOKING at the folder — never by
- * hearing from the organizer, which would need a channel neither side has.
- *
- * NO FOREIGN KEYS, on `away_replies`'s rule: the record has to outlive the message it decides
- * about and the mailbox row it was made against, so a cascade would erase the evidence that a
- * decision was ever made. The account erasure deletes these rows by `account_id` instead.
+ * A decision made where the mailbox is READ, waiting for the install that ORGANIZES it (0.14.1).
+ * The row is not the record: the IMAP mailbox is the only medium two installs share, so the thing
+ * an organizer acts on is a message the reader appends to `ohmail/_meta` — this table is the
+ * READER'S OWN BOOKKEEPING. Four states: `pending` (not yet appended), `sent` (in the mailbox),
+ * `applied` (the organizer took it), `expired` (still there 24 h later — the sender returns to
+ * the queue with a sentence saying so). Only the READER advances them, by LOOKING at the folder —
+ * never by hearing from the organizer, which would need a channel neither side has. NO foreign
+ * keys: the record must outlive the message and the mailbox row; erasure deletes by `account_id`.
  */
 export const organizerRequests = sqliteTable("organizer_requests", {
   /** Also the `X-Ohmail-Request-Id` of the appended record — the two identities are one. */
@@ -1678,17 +1548,14 @@ export const organizerRequests = sqliteTable("organizer_requests", {
   /** When it became `applied`, `refused` or `expired`. NULL before that. */
   resolvedAt: integer("resolved_at", { mode: "timestamp_ms" }),
   /**
-   * WHAT THE ORGANIZER SAID NO TO, carried back on its ack record and shown to the person (mail
-   * 0090). NULL in every state but `refused`.
-   *
-   * It exists because 0088's four states could not tell a person the one thing they need after
-   * pressing: a reader inferred `applied` from the record's ABSENCE from the folder, and a record
-   * the organizer REFUSED and expunged is absent in exactly the same way. The two mean opposite
-   * things, so absence stopped being evidence and an ack carries the outcome instead.
-   *
-   * A CLOSED VOCABULARY THIS INSTALL DEFINES, not free text and not a stranger's: the value is
-   * chosen by the drain from `RequestRefusal` and travels back through a header the same drain
-   * writes. It is never a sentence a payload supplied.
+   * What the organizer said NO to, carried back on its ack record and shown to the person (mail
+   * 0090). NULL in every state but `refused`. It exists because the four states could not tell a
+   * person the one thing they need after pressing: a reader inferred `applied` from the record's
+   * ABSENCE from the folder, and a record the organizer REFUSED and expunged is absent in exactly
+   * the same way — the two mean opposite things, so absence stopped being evidence and an ack
+   * carries the outcome. A CLOSED vocabulary this install defines, not free text and not a
+   * stranger's: chosen by the drain from `RequestRefusal`, travelling through a header the same
+   * drain writes — never a sentence a payload supplied.
    */
   refusedReason: text("refused_reason"),
   createdAt: integer("created_at", { mode: "timestamp_ms" }).default(NOW_MS).notNull(),
@@ -1723,17 +1590,14 @@ export const attachments = sqliteTable("attachments", {
   contentId: text("content_id"),                            // for inline (cid:) parts
   inline: integer("inline", { mode: "boolean" }).notNull().default(false),
   /**
-   * `sha256(decoded bytes)`, hex — mail 0028.
-   *
-   * Computed in `packages/core/src/mime.ts#toAttachmentMeta`, the one moment the bytes are
-   * resident, because the privacy rules forbid persisting them and no later job can recover them. It is
-   * the attachment half of {@link messageFingerprint}: without it two messages identical in every
-   * header and body but carrying DIFFERENT files of the same name, type and size share one logical
-   * identity, and the second is filed as a duplicate and never shown.
-   *
-   * NULLABLE and NOT backfilled. Every row written before this migration has no digest and none
+   * `sha256(decoded bytes)`, hex — mail 0028. Computed in `mime.ts#toAttachmentMeta`, the one
+   * moment the bytes are resident: the privacy rules forbid persisting them, and no later job can
+   * recover them. The attachment half of {@link messageFingerprint}: without it, two messages
+   * identical in every header and body but carrying DIFFERENT files of the same name, type and
+   * size share one logical identity, and the second is filed as a duplicate and never shown.
+   * NULLABLE and NOT backfilled: every row written before this migration has no digest and none
    * can be invented — the bytes are gone. That is exactly why the fingerprint is never computed
-   * from stored columns; see the migration header.
+   * from stored columns.
    */
   contentSha256: text("content_sha256"),
   createdAt: integer("created_at", { mode: "timestamp_ms" }).default(NOW_MS).notNull(),
@@ -1741,23 +1605,15 @@ export const attachments = sqliteTable("attachments", {
   ixMessage: index("attachments_account_message_idx").on(t.accountId, t.messageId),
 }));
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Migration 0012 — Knowledge Base + manual drafts (the NO-AI foundation
-// for the drafts feature; the AI drafter + gated send land later).
-//
-// `kb_entries` — the account's knowledge base: free-text title/content the AI
-// drafter will later retrieve over for grounded replies. A DB-managed `kb_tsv`
-// `GENERATED ALWAYS AS (…) STORED` tsvector (mirroring 0008's subject/body_tsv) +
-// its GIN index back `KbService.retrieve` (KB has its OWN lexical
-// retrieval, NOT routed through SearchService's messages joins). Core Postgres —
-// no CREATE EXTENSION — so it replays into PGlite. REST-only (no
-// `change_log` / EntityType growth); clients refetch.
-//
-// `drafts` — a STORED, never-auto-sent reply. `mailboxId` is NOT NULL (an
-// account may have >1 mailbox; send must pick the identity/SMTP). `status`
-// (draft|sending|sent|unverified) is the send-progress state a `draft` change_log
-// row surfaces to clients. `to`/`cc` are `EmailAddress[]` JSON.
-// ─────────────────────────────────────────────────────────────────────────────
+// Migration 0012 — Knowledge Base + manual drafts (the no-AI foundation; the AI drafter and gated
+// send land later). `kb_entries` is the account's knowledge base: free-text title/content the
+// drafter will retrieve over. A DB-managed `kb_tsv` generated column plus its GIN index back
+// `KbService.retrieve` — the KB has its OWN lexical retrieval, not routed through SearchService.
+// Core Postgres, no CREATE EXTENSION, so it replays into PGlite. REST-only: no
+// `change_log`/`EntityType` growth; clients refetch. `drafts` is a STORED, never-auto-sent reply:
+// `mailboxId` is NOT NULL (send must pick the identity/SMTP); `status`
+// (draft|sending|sent|unverified) is the send-progress state a `draft` change row surfaces;
+// `to`/`cc` are `EmailAddress[]` JSON.
 export const kbEntries = sqliteTable("kb_entries", {
   id: text("id").default(UUID_V4).primaryKey(),
   accountId: text("account_id").notNull(),
@@ -1808,19 +1664,16 @@ export const drafts = sqliteTable("drafts", {
   // `${runId}:${stepIndex}`; UNIQUE + ON CONFLICT DO NOTHING means a re-drain never
   // stores a second draft. NULL for manual/AI-route drafts. ──
   workflowDedupKey: text("workflow_dedup_key"),
-  // ── Mail 0077 — SEND LATER: the draft carries WHEN it should leave. `send_at` + `status =
+  // Mail 0077 — send later: the draft carries WHEN it should leave. `send_at` + `status =
   // 'scheduled'` are written together by `ScheduleService.schedule`; the worker's scheduled-send
   // pass claims due rows and runs the ordinary gated send. `send_key` is the send's
   // Idempotency-Key, minted AT SCHEDULE TIME so a crashed claim retries with the same key and
-  // replays instead of re-delivering; both survive the claim (crash-recovery predicate) and are
-  // cleared on a terminal outcome or a cancel. `send_error` is the failure sentence from an
-  // appointment that could not be kept, shown in the Drafts row, cleared by the next edit or
-  // schedule. The appointment lives HERE and never on `outbound_sends`, whose `pending` rows mean
-  // "an invocation is live right now, OR one died holding this" — no reservation exists until the
-  // appointment is due, and the reconciling pass (`send-reconcile-pass.ts`) is what tells the two
-  // apart, ten minutes on. The stuck-send alarm reads the RESIDUE of that: a row still `pending`
-  // past its threshold is one the reconciler has not drained, not merely one that is live.
-  // The migration file carries the full design. ──
+  // replays instead of re-delivering; both survive the claim and are cleared on a terminal
+  // outcome or a cancel. `send_error` is the failure sentence from an appointment that could not
+  // be kept, cleared by the next edit. The appointment lives HERE and never on `outbound_sends`,
+  // whose `pending` rows mean "an invocation is live right now, OR one died holding this" — the
+  // reconciling pass tells the two apart, and the stuck-send alarm reads the residue: a row still
+  // `pending` past its threshold is one the reconciler has not drained.
   sendAt: integer("send_at", { mode: "timestamp_ms" }),
   sendKey: text("send_key"),
   sendError: text("send_error"),
@@ -1835,22 +1688,16 @@ export const drafts = sqliteTable("drafts", {
     .where(sql`${t.status} = 'scheduled'`),
 }));
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Migration 0013 — the gated idempotent send state machine. ONE row per
-// (accountId, idempotencyKey) send attempt: `UNIQUE(account_id, idempotency_key)`
-// is the reservation gate the SendService inserts through with `ON CONFLICT DO
-// NOTHING` BEFORE any SMTP call (no network in a tx). `minted_message_id`
-// (`<uuid@domain>`) is minted UP FRONT on the pending reservation and passed to
-// SMTP as the Message-ID mandated by RFC 5322: a crashed attempt is later VERIFIED by
-// searching the Sent folder for exactly that id rather than blindly resent. The
-// `status` progression pending → sent captures a delivered+finalized send;
-// `unverified` is the terminal AMBIGUOUS outcome (SMTP result unknown, id NOT in
-// Sent) surfaced to the user ("couldn't confirm — check Sent before retrying"),
-// NEVER auto-resent; `failed` is a definitively-undelivered attempt. This is a
-// domain state machine the generic verbatim `idempotency_keys` cache cannot model
-// (it has no `pending` state), so `/drafts/:id/send` is NOT idempotent-marked and
-// SendService owns this reservation itself.
-// ─────────────────────────────────────────────────────────────────────────────
+// Migration 0013 — the gated idempotent send state machine. ONE row per (accountId,
+// idempotencyKey): the UNIQUE is the reservation gate SendService inserts through with `ON
+// CONFLICT DO NOTHING` BEFORE any SMTP call (no network in a transaction). `minted_message_id`
+// (`<uuid@domain>`) is minted UP FRONT and passed to SMTP as the Message-ID, so a crashed attempt
+// is later VERIFIED by searching the Sent folder for exactly that id rather than blindly resent.
+// `pending → sent` is a delivered send; `unverified` is the terminal AMBIGUOUS outcome (SMTP
+// result unknown, id not in Sent), surfaced to the user and NEVER auto-resent; `failed` is
+// definitively undelivered. A domain state machine the generic `idempotency_keys` cache cannot
+// model (no `pending` state), so `/drafts/:id/send` is not idempotent-marked — SendService owns
+// this reservation itself.
 export const outboundSends = sqliteTable("outbound_sends", {
   id: text("id").default(UUID_V4).primaryKey(),
   accountId: text("account_id").notNull(),
@@ -1870,30 +1717,15 @@ export const outboundSends = sqliteTable("outbound_sends", {
   uqKey: unique().on(t.accountId, t.idempotencyKey),         // the per-account idempotency reservation gate
 }));
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Migration 0014 — workflow automation storage. Two
-// additive, account-scoped, REST-only tables (kb_entries/tracker precedent):
-// NEITHER writes `change_log` and NEITHER grows `EntityType` — clients refetch via
-// `GET /workflows` + `GET /workflow-runs`. The workflow EFFECTS (a `file_message`
-// move, a `draft_reply` draft) still sync as their own `message`/`draft` changes;
-// only the envelope is REST-only.
-//
-// `workflows` — a user- (or later AI-proposed-) authored automation. `trigger`/
-// `steps` are jsonb (WorkflowTrigger / WorkflowStep[] — the ONLY tools a step may
-// declare are file_message/draft_reply/add_kb_entry; send/forward are rejected at
-// the service boundary). `enabled` defaults FALSE (enabling IS the user's
-// consent to auto-apply). `deletedAt` is the SOFT-DELETE marker: a DELETE
-// nulls-out nothing physical so `workflow_runs` history + its `audit_log` inverses
-// survive; every read excludes `deletedAt IS NOT NULL`.
-//
-// `workflow_runs` — one row per enqueued run. `POST /workflows/:id/run` inserts a
-// `pending` row (a separate worker drains them); a retried
-// Idempotency-Key replays the same runId (the row + the `idempotency_keys` verbatim
-// response commit in ONE tx, mirroring MessageService.move). `workflowId` is
-// NULLABLE (a soft-deleted workflow's runs are retained, FK set to no-action).
-// `stepCursor` is the durable per-run resume cursor; `log` is the convenience
-// step index for the run DTO (the canonical inverse home is `audit_log`).
-// ─────────────────────────────────────────────────────────────────────────────
+// Migration 0014 — workflow automation storage. Two additive, account-scoped, REST-only tables:
+// neither writes `change_log` nor grows `EntityType` — clients refetch; the workflow EFFECTS (a
+// `file_message` move, a `draft_reply` draft) still sync as their own changes. `workflows` is a
+// user-authored automation: `trigger`/`steps` are jsonb (the only tools a step may declare are
+// file_message/draft_reply/add_kb_entry — send/forward are rejected at the service boundary);
+// `enabled` defaults FALSE (enabling IS the consent to auto-apply); `deletedAt` is a soft delete
+// so `workflow_runs` history survives. `workflow_runs` is one row per enqueued run: a retried
+// Idempotency-Key replays the same runId (row + verbatim response commit in one transaction);
+// `workflowId` is nullable; `stepCursor` is the durable per-run resume cursor.
 export const workflows = sqliteTable("workflows", {
   id: text("id").default(UUID_V4).primaryKey(),
   accountId: text("account_id").notNull(),
@@ -1918,39 +1750,26 @@ export const workflowRuns = sqliteTable("workflow_runs", {
   reason: text("reason"),                                          // failure/skip reason (nullable)
   createdAt: integer("created_at", { mode: "timestamp_ms" }).default(NOW_MS).notNull(),
   finishedAt: integer("finished_at", { mode: "timestamp_ms" }),
-  // ── mail 0033 — WHEN THE `running` CLAIM WAS MADE ──
-  //
-  // Written once, by the drain's guarded `pending → running` UPDATE, and read only by the
-  // reaper that requeues a run whose worker died holding it (`workflowDrainPass`). It exists
-  // because neither existing column can answer "how long has this been unattended": `createdAt`
-  // dates the ENQUEUE, so a run drained out of an hour-old backlog would read as stale the
-  // instant it was claimed, and `finishedAt` is precisely the column a stranded row lacks.
-  //
-  // NULLABLE with no default, and both halves are load-bearing. A default would stamp every
-  // `pending` row at insert with a claim no worker ever made. NULL means "claimed by code that
-  // predates this column" — the runs already stranded when this column shipped, plus anything the old
-  // build claims during the deploy window — and the reaper resolves those through `createdAt`.
-  //
-  // **WRITE IT ONLY FROM A JS `Date`.** Never `defaultNow()`, never `sql`now()``, never a copy
-  // of another column. The reaper's guarded requeue re-asserts the stamp it observed, and that
-  // observation round-trips through a millisecond-precision JS `Date`: a value carrying
-  // microseconds (which is what `now()` stores) can never be matched again, so the row is
-  // selected as stale on every pass and requeued on none of them. Silently, and with no test
-  // able to see it. Migration `0033` names the measurement.
+  // Mail 0033 — when the `running` claim was made. Written once, by the drain's guarded `pending
+  // → running` UPDATE, read only by the reaper that requeues a run whose worker died holding it.
+  // Neither existing column answers "how long unattended": `createdAt` dates the ENQUEUE,
+  // `finishedAt` is what a stranded row lacks. NULLABLE with no default: a default would stamp
+  // every `pending` row with a claim no worker made; NULL means "claimed by code predating this
+  // column", resolved through `createdAt`. WRITE IT ONLY FROM A JS `Date` — never `defaultNow()`
+  // or `sql`now()``: the reaper's guarded requeue re-asserts the stamp it observed, round-tripped
+  // through a millisecond `Date`, and a value carrying microseconds can never be matched again —
+  // selected as stale on every pass, requeued on none, silently. Migration 0033 names the
+  // measurement.
   claimedAt: integer("claimed_at", { mode: "timestamp_ms" }),
 }, (t) => ({ ixAccountStatus: index("workflow_runs_account_status_idx").on(t.accountId, t.status) }));
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Migration 0016 — AI workflow PROPOSALS. The AI proposer
-// reads NON-SENSITIVE pattern METADATA only (sender/domain/destination/count/
-// provenance from learning_signals/routing_decisions/rules — never bodies/snippets)
-// and stores suggested automations here. A proposal is INERT: it is NEVER a workflow
-// until the user explicitly `POST /workflows { fromProposalId }`, which materializes
-// it into a `provenance='proposed', enabled=false` row (never auto-enabled). REST-only
-// (kb_entries/tracker precedent): no change_log / EntityType growth — clients
-// refetch via `GET /workflows/proposals`. `sourcePattern` records the redacted metadata
-// the suggestion was derived from (audit/UI only). `status` open|materialized|dismissed.
-// ─────────────────────────────────────────────────────────────────────────────
+// Migration 0016 — AI workflow PROPOSALS. The proposer reads NON-SENSITIVE pattern metadata only
+// (sender/domain/destination/count/provenance from learning signals, routing decisions and rules
+// — never bodies or snippets) and stores suggested automations here. A proposal is INERT: never a
+// workflow until the user explicitly materializes it (`POST /workflows { fromProposalId }`),
+// which creates a `provenance='proposed', enabled=false` row — never auto-enabled. REST-only: no
+// `change_log`/`EntityType` growth; clients refetch. `sourcePattern` records the redacted
+// metadata the suggestion was derived from (audit/UI only). `status` open|materialized|dismissed.
 export const workflowProposals = sqliteTable("workflow_proposals", {
   id: text("id").default(UUID_V4).primaryKey(),
   accountId: text("account_id").notNull(),
@@ -1963,34 +1782,14 @@ export const workflowProposals = sqliteTable("workflow_proposals", {
   createdAt: integer("created_at", { mode: "timestamp_ms" }).default(NOW_MS).notNull(),
 }, (t) => ({ ixAccountStatus: index("workflow_proposals_account_status_idx").on(t.accountId, t.status) }));
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Migration 0031 — TAGS. OURS, never IMAP.
-//
-// ══ THE RULING THIS SCHEMA ENCODES ═════════════════════════════════════════
-//
-// A tag is a row in OUR Postgres, keyed by message. It is NEVER an IMAP folder,
-// and that is the whole reason these two tables exist rather than a sixth entry
-// in the fixed `ohmail/*` folder set. ohmail organizes the mailbox IN PLACE with
-// exactly `ohmail/Screener|Reads|Receipts|Screened|Quarantine` + `INBOX`
-// ("the IMAP mailbox is the master"); a tag is a cross-cutting
-// dimension OVER those places, not a seventh place. Writing tags as folders
-// would also make them a per-message IMAP COPY, which is exactly the mailbox
-// rewrite leave-anytime exists to refuse.
-//
-// The honest consequence, which the UI states rather than hides: because a tag
-// lives only here, it is not in the mailbox. It survives a DISCONNECT — that is
-// a soft delete to `status='disabled'` (see `mailboxes.status`) and re-enabling
-// is supported, so deleting on disconnect would destroy data on a reversible
-// action — but it does NOT survive account erase, and it does not outlive its
-// message. `apps/webapp/messages/en.json` says so in those terms.
-//
-// ══ NO `class_name` COLUMN ═════════════════════════════════════════════════
-//
-// `TagDTO.className` is presentation the fixture world carries; a CSS class is
-// not account data and a server has no business minting one. `hue` is the stored
-// dimension and the client maps it (`format.ts:hueOf`). The DTO field is now
-// optional so the fixture adapter keeps compiling.
-// ─────────────────────────────────────────────────────────────────────────────
+// Migration 0031 — TAGS. Ours, never IMAP. A tag is a row in OUR store, keyed by message — never
+// an IMAP folder: ohmail organizes the mailbox in place with exactly the fixed `ohmail/*` set
+// plus INBOX, and a tag is a cross-cutting dimension OVER those places, not a seventh place; tags
+// as folders would also mean a per-message IMAP COPY, which leave-anytime refuses. The honest
+// consequence, stated in the UI: a tag lives only here, so it survives a disconnect (a soft
+// delete, reversible) but not account erasure, and it does not outlive its message. NO
+// `class_name` column: a CSS class is not account data and a server has no business minting one —
+// `hue` is the stored dimension and the client maps it.
 export const tags = sqliteTable("tags", {
   id: text("id").default(UUID_V4).primaryKey(),
   accountId: text("account_id").notNull(),
@@ -2012,16 +1811,13 @@ export const tags = sqliteTable("tags", {
 }));
 
 /**
- * The assignment. PK `(message_id, tag_id)` — the natural key, and the thing that
- * makes a double-assign a no-op instead of a duplicate row: `INSERT … ON CONFLICT
- * DO NOTHING` on this PK is what carries two concurrent toggles of the SAME tag on
- * the SAME message, with no read-modify-write and therefore no lost update.
- *
- * `account_id` is DENORMALIZED onto the row deliberately. Every read is
- * account-scoped and the materialize path fetches labels for a page of
- * messages at once; carrying the account here means that lookup is one index scan
- * on `(account_id, message_id)` instead of a join back through `messages` on every
- * page of every sync drain.
+ * The assignment. PK `(message_id, tag_id)` — the natural key, and what makes a double-assign a
+ * no-op instead of a duplicate row: `INSERT … ON CONFLICT DO NOTHING` on this PK carries two
+ * concurrent toggles of the same tag on the same message, with no read-modify-write and no lost
+ * update. `account_id` is DENORMALIZED deliberately: every read is account-scoped and the
+ * materialize path fetches labels for a page of messages at once, so the lookup is one index scan
+ * on `(account_id, message_id)` instead of a join back through `messages` on every page of every
+ * sync drain.
  */
 export const messageTags = sqliteTable("message_tags", {
   accountId: text("account_id").notNull(),
@@ -2037,26 +1833,14 @@ export const messageTags = sqliteTable("message_tags", {
 }));
 
 /**
- * AUTO-UNSUBSCRIBE LEAVES A LIST ONCE, AND THIS IS THE ROW THAT MAKES IT ONCE.
- *
- * One row per (mailbox, list) the account has ever asked to leave. The migration that creates it
- * carries the full argument; the two things worth repeating where the code reads them:
- *
- * `uqMailboxList` IS THE CONCURRENCY DESIGN, not an optimisation. The claim is `INSERT … ON
- * CONFLICT DO NOTHING RETURNING id`, so two workers racing the same list both attempt it,
- * exactly one gets a row back, and the loser sends nothing. There is no `FOR UPDATE` here
- * because there is nothing to lock — the unique index IS the mutual exclusion, which is the one
- * form of it a refactor cannot quietly delete.
- *
- * `listKey` is the RFC 2919 `List-ID` when the sender publishes one, else `lower(from_address)`.
- * NOT the unsubscribe URL: that URL normally carries a per-message token, so keying on it would
- * mint a fresh key per message and send once per message — the exact defect this table prevents.
- * NOT `from_address` alone: senders like `no-reply-kbdtwjmegmd_he…@x.com` vary the address per
- * send, and the user experiences one list.
- *
- * Scoped to the MAILBOX and not the account, because the subscription is: two mailboxes on one
- * account subscribed to the same newsletter are two subscriptions at the sender, with two
- * different tokens. `accountId` rides along for account-scoped reads and for erasure only.
+ * Auto-unsubscribe leaves a list ONCE — one row per (mailbox, list) the account has asked to
+ * leave. `uqMailboxList` IS the concurrency design: the claim is `INSERT … ON CONFLICT DO NOTHING
+ * RETURNING id`; two workers racing the same list both attempt it, one gets a row, the loser
+ * sends nothing — the unique index IS the mutual exclusion. `listKey` is the RFC 2919 `List-ID`
+ * when published, else `lower(from_address)` — NOT the unsubscribe URL (its per-message token
+ * would send once per message, the exact defect this prevents) and not `from_address` alone
+ * (senders vary the address per send; the user experiences one list). Scoped to the MAILBOX: two
+ * mailboxes subscribed to one newsletter are two subscriptions with two tokens.
  */
 export const unsubscribeRecords = sqliteTable("unsubscribe_records", {
   id: text("id").default(UUID_V4).primaryKey(),
@@ -2079,24 +1863,13 @@ export const unsubscribeRecords = sqliteTable("unsubscribe_records", {
 }));
 
 /**
- * ONE ROW PER ACCOUNT THAT HAS CHANGED SOMETHING — and no row for anyone who has not.
- *
- * Absence is a legal state and means "all defaults". Every reader must treat a missing row that
- * way rather than as an error, which is why nothing here is backfilled and why the row is
- * created lazily on first write (mail 0035).
- *
- * The table is deliberately GENERAL. Preferences arrive one feature at a time, and the
- * alternative to one table is three tables nobody can name from memory. A new per-account
- * setting is a column here.
- *
- * `dormancyDays` NULL means "use the product default" rather than storing the default, so
- * changing the default moves every account that never touched the dial. Storing it would freeze
- * each account at whatever the default was on the day their row happened to be created — the
- * spec calls this "a dial, not a constant to hard-code", and a snapshot of the default is a
- * constant wearing a dial's name.
- *
- * `seedConfirmedAt` is NOT derivable from "does a rule with provenance 'seeded-from-sent'
- * exist". Unchecking every row and confirming is a real answer — "none of these" — and the
+ * One row per account that has CHANGED something — and no row for anyone who has not. Absence is
+ * a legal state meaning "all defaults": every reader treats a missing row that way, nothing is
+ * backfilled, and the row is created lazily on first write (mail 0035). Deliberately GENERAL:
+ * preferences arrive one feature at a time, and a new per-account setting is a column here.
+ * `dormancyDays` NULL means "use the product default" rather than storing it, so changing the
+ * default moves every account that never touched the dial. `seedConfirmedAt` is NOT derivable
+ * from "does a seeded rule exist": unchecking every row and confirming is a real answer, and the
  * derived form reads it as "never asked", so onboarding would offer the seed forever.
  */
 export const accountSettings = sqliteTable("account_settings", {
