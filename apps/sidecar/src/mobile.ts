@@ -954,7 +954,7 @@ async function composePhoneEngine(
     try {
       holder = await liveForeignHolder(store.db, mailboxId, deps.installId);
     } catch (err) {
-      log("organizer_consent_row_unreadable", {
+      log("organizer_consent_row_read_failed", {
         err,
         reason: "the row that says who holds this mailbox could not be read, so no consent was "
           + "recorded; an unreadable row is not permission and the next press asks again",

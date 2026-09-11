@@ -461,9 +461,9 @@ function ThisPhonePanel() {
                     variant="quiet"
                     onPress={() => {
                       setStartFailed(false);
-                      /* A FINGER, SO THE CONSENT PRESS IS LICENSED. `claimHereStandalone` records
-                         it through the engine's own door and the door refuses a live foreign claim,
-                         so this press can never produce a second organizer. */
+                      /* THE ENGINE'S OWN VERB, not the launch path's arm: this press records the
+                         consent through the door in this process, and the door refuses a live
+                         foreign claim, so it can never produce a second organizer. */
                       void claimHereStandalone().then((outcome) => {
                         setStartFailed(outcome === "refused");
                       });
