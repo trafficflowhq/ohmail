@@ -2564,7 +2564,10 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
       // repair. Never fatal to the pull — the mirror is exactly as correct as it was before.
       cfg.log?.("cloud_cap_marker_repair_deferred", {
         reason: "a bodies page failed; the mirror is unaffected and the next launch retries",
-        err: String(err),
+        // The THROWN value, as the two deferral lines above it pass it: `String(err)` collapses
+        // every failure to `errorClass: "String"` with no code and no cause, which is the whole
+        // record this line is. Held by the `err` census at the foot of `log-census.test.ts`.
+        err,
       });
       return written;
     }
