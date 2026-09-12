@@ -1,4 +1,4 @@
-import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync, rmSync, statSync, writeSync } from "node:fs";
+import { closeSync, existsSync, fstatSync, mkdirSync, openSync, readFileSync, readdirSync, rmSync, statSync, writeSync } from "node:fs";
 import { join } from "node:path";
 import { uptime as osUptime } from "node:os";
 import { PGlite } from "@electric-sql/pglite";
@@ -542,6 +542,54 @@ function parseLockRecord(raw: string): LockRecord | null {
   return Number.isInteger(pid) && pid > 0 ? { pid } : null;
 }
 
+/** A lock file's bytes together with the inode they came from — see {@link removeIfUnchanged}. */
+interface HeldLock {
+  raw: string;
+  dev: bigint;
+  ino: bigint;
+}
+
+/**
+ * Read the lock file THROUGH ONE DESCRIPTOR, so the bytes and the inode describe the same file.
+ * `null` when there is nothing there to read.
+ *
+ * Reading the path and then stat-ing the path is two resolutions of one name, which is the defect
+ * this exists to avoid: between them the name can come to mean a different file entirely.
+ */
+function readLockFile(path: string): HeldLock | null {
+  let fd: number | undefined;
+  try {
+    fd = openSync(path, "r");
+    const st = fstatSync(fd, { bigint: true });
+    return { raw: readFileSync(fd, "utf8").trim(), dev: st.dev, ino: st.ino };
+  } catch {
+    return null;
+  } finally {
+    if (fd !== undefined) closeSync(fd);
+  }
+}
+
+/**
+ * ── COMPARE AND DELETE, NEVER DELETE ─────────────────────────────────────────────────────────
+ *
+ * Remove the lock only while the path still names the FILE THAT WAS JUDGED, and say whether it
+ * did. Judging a lock stale takes a signal, a `/proc` read and a boot-id read, and the unlink used
+ * to name the path rather than that file: a launcher that judged in that window went on to delete
+ * the lock a second launcher had already replaced it with, after which both held the directory.
+ *
+ * Identity is the inode AND the bytes: the inode alone would admit a record rewritten in place,
+ * and the bytes alone would admit a new file that happens to say the same thing. The residual
+ * window is the two adjacent syscalls below, which is as narrow as this gets without `unlinkat`.
+ */
+function removeIfUnchanged(path: string, judged: HeldLock): boolean {
+  const now = readLockFile(path);
+  // Already gone — somebody else cleared the same stale lock. Nothing of theirs is at risk.
+  if (now === null) return true;
+  if (now.dev !== judged.dev || now.ino !== judged.ino || now.raw !== judged.raw) return false;
+  rmSync(path, { force: true });
+  return true;
+}
+
 /**
  * Take an exclusive lock on the data directory, or refuse. `wx` is `O_CREAT|O_EXCL`, atomic — two
  * processes racing cannot both win. A lock left by a crash names a pid, and a pid that is gone
@@ -552,9 +600,12 @@ function parseLockRecord(raw: string): LockRecord | null {
  * — permanently, until a file was deleted. {@link LockRecord} records WHICH process, and a live pid
  * whose identity does not match the record is taken over.
  */
-function lockDataDir(dataDir: string): () => void {
+export function lockDataDir(dataDir: string): () => void {
   const path = join(dataDir, LOCK_FILE);
-  for (let attempt = 0; attempt < 2; attempt++) {
+  /* Three passes, not two: a pass that finds the lock REPLACED underneath it removes nothing and
+     spends its turn judging the replacement instead, and the O_EXCL retry after a real removal
+     still needs one of its own. */
+  for (let attempt = 0; attempt < 3; attempt++) {
     try {
       const fd = openSync(path, "wx");
       // A TRAILING NEWLINE, as before: `cat`ing this file in a terminal is how somebody debugs it.
@@ -563,20 +614,29 @@ function lockDataDir(dataDir: string): () => void {
       return () => rmSync(path, { force: true });
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
-      const raw = (() => {
-        try {
-          return readFileSync(path, "utf8").trim();
-        } catch {
-          return "";
-        }
-      })();
-      const rec = parseLockRecord(raw);
-      if (rec && alive(rec.pid) && lockStillOurs(rec, bootIdentity())) {
+      const held = readLockFile(path);
+      // Gone between the refused create and the read: nothing to judge, race for it again.
+      if (held === null) continue;
+      const rec = parseLockRecord(held.raw);
+      /* ── NO RECORD IS NOT EVIDENCE THAT A PROCESS IS GONE ──────────────────────────────────
+       *
+       * The rule the legacy bare pid one function above already follows, completed for the record
+       * that is not there at all. An EMPTY lock file is the ordinary state of a lock another
+       * launcher is HALFWAY THROUGH TAKING — the file is created `O_EXCL` and the record written a
+       * statement later — so reading empty as stale deleted a live lock on no evidence and put two
+       * PGlite instances on one directory, which is the one thing this function exists to stop.
+       * Truncated and unreadable bytes take the same answer, and the refusal already tells the
+       * person the way out: delete the file if that process is definitely gone.
+       */
+      if (rec === null) {
+        throw new DataDirLockedError(dataDir, "a lock file this build cannot read");
+      }
+      if (alive(rec.pid) && lockStillOurs(rec, bootIdentity())) {
         throw new DataDirLockedError(dataDir, `pid ${rec.pid}`);
       }
-      // Stale (or unreadable, or a recycled pid): clear it and try exactly once more, so two
-      // processes both finding it stale still resolve to one winner via the O_EXCL race above.
-      rmSync(path, { force: true });
+      // Stale (or a recycled pid): clear THE FILE THAT WAS JUDGED and try again, so two processes
+      // both finding it stale still resolve to one winner via the O_EXCL race above.
+      if (!removeIfUnchanged(path, held)) continue;
     }
   }
   throw new DataDirLockedError(dataDir, "another process that keeps re-taking the lock");
