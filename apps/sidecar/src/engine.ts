@@ -593,7 +593,13 @@ export interface Sidecar {
    * and serves the mirror — the documented no-password state.
    */
   forgetStoredLogin(): Promise<boolean>;
-  /** Stop polling, let the in-flight cycle finish, close IMAP, close and unlock the database. */
+  /**
+   * Stop polling, let the in-flight cycle finish, GIVE EVERY CLAIM BACK, close IMAP, close and
+   * unlock the database. The release is inside each mailbox's `detach()`, between the queue
+   * settling and the logout: an install that is going down organizes nothing, and a claim left to
+   * age out is `DEFAULT_STALE_AFTER_MS` in which NOBODY organizes the mailbox. The ROW is
+   * untouched, so the next launch claims it back unless another install has taken it.
+   */
   stop(): Promise<void>;
 }
 
@@ -1112,10 +1118,21 @@ export const redialStepMs = (profile: ReconnectProfile, attempt: number): number
  * wait can never be the thing that holds a process open.
  */
 export async function settledWithin(work: Promise<unknown>, ms: number): Promise<boolean> {
+  /* THE DEADLINE IS A WALL-CLOCK INSTANT, AND THE TIMER IS RE-ARMED AGAINST IT.
+   * `setTimeout` schedules against the event loop's cached clock, which is not refreshed while
+   * synchronous work runs, so a single-shot timer can fire up to a millisecond before `Date.now()`
+   * reaches the deadline — a bounded wait that returns early is a bound that does not hold, and
+   * `detach()` measured it as a 299 against the 300 ms interval it promises. */
+  const deadline = Date.now() + Math.max(0, ms);
   let timer: ReturnType<typeof setTimeout> | undefined;
   const elapsed = new Promise<false>((resolve) => {
-    timer = setTimeout(() => resolve(false), Math.max(0, ms));
-    timer.unref?.();
+    const arm = (): void => {
+      const left = deadline - Date.now();
+      if (left <= 0) { resolve(false); return; }
+      timer = setTimeout(arm, left);
+      timer.unref?.();
+    };
+    arm();
   });
   try {
     return await Promise.race([work.then(() => true, () => true), elapsed]);
@@ -5092,7 +5109,8 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           armHeartbeat();
         },
         /**
-         * Stop this mailbox and leave the store alone. The install's `stop()` used to close the
+         * Stop this mailbox, give its claim back, and leave the store alone. The install's
+         * `stop()` used to close the
          * store too, because one mailbox going down WAS the engine going down; with several, this
          * stops one login and one timer while the others serve out of the same database. The
          * in-flight cycle is AWAITED, not cancelled: a drain mid-batch has rows committed and a
@@ -5119,13 +5137,41 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
              It SHARES the budget rather than getting its own: two bounds in sequence would be a
              stop that can take twice as long as the number this method promises. */
           if (!wedged) wedged = !(await settledWithin(redialInFlight, left()));
-          /* AND THE LOGOUT, which is where a preflight-parked drain actually holds it. Raced
-             rather than awaited, and its rejection still reaches the log: a server that answers
-             the LOGOUT with an error is a different thing from one that answers nothing. */
+          /* AND THE CLAIM GOES BACK, then the LOGOUT — ONE wait, in that order.
+             The claim first because the release needs the login; left standing it obstructs every
+             other install for `DEFAULT_STALE_AFTER_MS` while the machine that wrote it is gone.
+             `releaseOwnClaim` is the function the gate's stopped arm and the removal route call,
+             and only where this install believes it organizes — a reader's would be an IMAP read
+             that can only fail over a claim it does not hold. The logout keeps its own rule: its
+             rejection reaches the log, because a server that answers the LOGOUT with an error is
+             a different thing from one that answers nothing.
+             ONE `settledWithin` and started in a MICROTASK, both for the same bound: a fourth hop
+             re-derives its deadline from the clock, and `setTimeout` schedules against the loop's
+             clock, which a synchronous prologue does not refresh. Either spends a millisecond of
+             the interval this method promises — measured, as a 299 against a 300 ms bound. */
           if (!wedged) {
-            const politely = Promise.resolve(adapter.close()).catch((err: unknown) => {
-              log("adapter_close_failed", { err });
-            });
+            const politely = Promise.resolve().then(() => (organizer.organizing
+              ? releaseOwnClaim(
+                adapter, installId, mb.id, leaseNonce, log,
+                "this install is stopping and its claim could not be removed; it ages out of "
+                  + "ohmail/_meta on its own and another install takes the mailbox then",
+              ).then((released) => {
+                leaseNonce = null;
+                organizer = { ...organizer, organizing: false };
+                if (released !== null && released > 0) {
+                  log("organizer_claim_released_on_stop", {
+                    mailboxId: mb.id,
+                    claims: released,
+                    reason: "this install stopped organizing this mailbox because it is shutting "
+                      + "down, so the claim is given back rather than left to age out; the row is "
+                      + "untouched and the next launch claims the mailbox again unless another "
+                      + "install has taken it",
+                  });
+                }
+              })
+              : Promise.resolve()))
+              .then(() => Promise.resolve(adapter.close()))
+              .catch((err: unknown) => { log("adapter_close_failed", { err }); });
             wedged = !(await settledWithin(politely, left()));
           }
           if (!wedged) return;
@@ -6386,6 +6432,11 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         // engine, and one taken between the last detach and the store close would describe a
         // process mid-teardown as though it were serving.
         stopVitals();
+        /* AND THE CLAIM GOES BACK WITH EACH MAILBOX, inside `detach()` — see the block there.
+           NOT a `handBack()` pass in front of this one: that queues BEHIND an in-flight cycle, so
+           a gate parked in the lease read would run its whole drain before anything told it to
+           stop. `detach()` sets `stopped` first and releases after the queue has settled, which is
+           the only ordering where both are true. */
         await Promise.allSettled(runtimes.all().map((r) => r.detach()));
         await opened.close();
       },

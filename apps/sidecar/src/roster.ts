@@ -220,8 +220,8 @@ export interface LocalMailboxRuntime {
   redial(): Promise<void>;
   /**
    * Give the claim back and stay the organizer of record — the phone's leave-the-app hand-back.
-   * Neither existing act: `detach()` closes the login and leaves the claim to age out (a desktop
-   * asked to take the mailbox stands down for the staleness window against a claim nobody honours),
+   * Neither existing act: `detach()` gives the claim back and then closes the login and the timer
+   * (this mailbox stops being served at all — right for a shutdown, wrong for a pocketed phone),
    * and the release ROUTE removes the claim and writes the row to `reader` (a reader never re-enters
    * the gate without a human press — right for "stop organizing here", wrong for a pocketed iPhone).
    * So this removes the CLAIM and writes no row: the next gated cycle reads the lease and either

@@ -276,8 +276,8 @@ export interface PhoneEngine {
    * take the mailbox gets it honestly and at once, and this phone claims it back on the next gated
    * cycle after it returns (or stands down if somebody took it — neither half needs a press). One
    * entry per mailbox: a count of claims removed, `0` for "none of ours", `null` for "could not
-   * look". NOT {@link stop}, which closes the store and leaves the claim to age out — twelve minutes
-   * in which another machine refuses a mailbox it was just told to take.
+   * look". NOT {@link stop}, which also gives the claim back and then closes the store — the
+   * difference is that a hand-back leaves this install running, reading, and able to resume.
    */
   handBack(): Promise<readonly { mailboxId: string; released: number | null }[]>;
   /**
@@ -321,7 +321,12 @@ export interface PhoneEngine {
   forgetStoredLogin(): Promise<boolean>;
   /** What each mailbox reports — the row's answer, not the gate's optimism. */
   runtimes(): { organizer: Record<string, OrganizerState>; connection: Record<string, MailboxConnectionState> };
-  /** Flush and release. */
+  /**
+   * Flush, give every claim back, and release. A phone whose engine is going down organizes
+   * nothing, and a claim left to age out is `DEFAULT_STALE_AFTER_MS` in which the person's other
+   * machine is refused a mailbox nothing is renewing. The ROW is untouched — a stop is not
+   * {@link stopOrganizing}, which records a release the row remembers.
+   */
   stop(): Promise<void>;
 }
 
