@@ -1182,13 +1182,16 @@ async function buildLocalSession(env: PairingEnv, profile: ServerProfile): Promi
     try {
       opened = await port.reopen();
       /**
-       * Held here, not by the port: this is the one place a door becomes the session's. A port
-       * implementation that forgot would leave `organizerDoor()` null with an engine running, so
-       * a second connect in the same launch opens a second engine — two organizers of one mailbox
-       * — the forget finds nothing to hand back, and the engine keeps polling a mailbox the person
-       * removed. First-start-wins, so a port that holds it itself is not a conflict. INSIDE THE
-       * SLOT, so the two are never both open: releasing first would leave a gap in which the door
-       * is still null and the slot free again.
+       * Held here, not by the port: this is the one place a door becomes the
+       * session's. A port implementation that forgot would leave
+       * `organizerDoor()` null with an engine running, so a second connect in
+       * the same launch opens a second engine — two organizers of one mailbox —
+       * the forget finds nothing to hand back, and the engine keeps polling a
+       * mailbox the person removed. First-start-wins, so a port that holds it
+       * itself is not a conflict.
+       *
+       * INSIDE THE SLOT, so the two are never both open: releasing first would leave a gap in
+       * which the door is still null and the slot is free again.
        */
       if (opened.ok) holdStandaloneDoor(opened.door);
     } finally {

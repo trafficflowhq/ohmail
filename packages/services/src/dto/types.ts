@@ -89,16 +89,6 @@ export interface MessageDTO {
   to: EmailAddress[];
   cc: EmailAddress[];
   date: ISODateTime | null;
-  /**
-   * WHEN THE MAILBOX RECORDED THIS MESSAGE — `messages.created_at`, never null.
-   *
-   * {@link date} is the sender's own `Date:` header and any stranger can omit it; this is the
-   * fact beside it that nobody outside can withhold, and the cutline dates a message by the
-   * header ELSE this (`@trafficflow/db#cutlineInstant`, and the client engine's `messageMs`).
-   * Without it on the wire the client had no arrival to fall back to, so an undated message
-   * retired its sender on a mirror the server counted active.
-   */
-  arrivedAt: ISODateTime;
   folder: Folder;
   snippet: string;
   unread: boolean;
@@ -874,22 +864,14 @@ export interface DraftDTO {
   inReplyToMessageId: string | null;
   subject: string;
   /**
-   * The text/plain body, authoritative for a plain draft.
+   * The text/plain body. Always present and always authoritative for a plain draft.
    *
    * When {@link html} is set this is the alternative DERIVED from it on the server rather than
    * anything a client supplied — see `outbound-html.ts`. A `multipart/alternative` is a promise
-   * that its two parts say the same thing, and deriving one from the other makes that structural.
-   *
-   * `null` on ONE path: a bounded page will not carry a stored body past `DRAFT_BODY_MAX_BYTES`,
-   * and {@link bodyOmitted} says so. Never truncated, and never on a single-row read.
+   * that its two parts say the same thing, and deriving one from the other is what makes that
+   * promise structural instead of a convention two clients have to keep.
    */
-  body: string | null;
-  /**
-   * Why {@link body} is `null` — present exactly when it is, absent otherwise. A reader that
-   * knows only "no body" cannot tell a page that omitted it from a server that never sends one,
-   * so the pairing is held in both directions by a test beside the snapshot writer.
-   */
-  bodyOmitted?: "over_ceiling";
+  body: string;
   /** The rich body, sanitized. `null` for a plain-text draft — the ordinary case. */
   html: string | null;
   to: EmailAddress[];
@@ -996,18 +978,17 @@ export interface SyncResponse {
 }
 
 /**
- * How far back the snapshot reaches, SERVED rather than agreed: a constant compiled into the
- * client disagrees with the server the first time either moves. `days` is the recency floor,
- * `minRows` the volume floor, and a snapshot serves whichever is LARGER — a quiet mailbox still
- * bootstraps into something usable, a busy one is not cut at ninety days minus one message.
- * `maxRows` is the CEILING over both, which makes the window a function of the POLICY rather than
- * of the mailbox: `days` alone keeps everything recent. Optional on the wire because a server
- * older than the field states no ceiling, which is what that server does.
+ * How far back the snapshot reaches, SERVED rather than agreed. The client needs the numbers to
+ * say "this is everything since March" and to decide when to fall back to the delta replay, and a
+ * constant compiled into the client disagrees with the server the first time either moves — so
+ * the server states its own window in every response. `days` is the recency floor; `minRows` the
+ * volume floor. A snapshot serves whichever is LARGER: every message of the last `days`, and
+ * never fewer than `minRows` when the mailbox has that many — a quiet mailbox still bootstraps
+ * into something usable, and a busy one is not truncated at ninety days minus one message.
  */
 export interface SnapshotWindow {
   days: number;
   minRows: number;
-  maxRows?: number;
 }
 
 /**

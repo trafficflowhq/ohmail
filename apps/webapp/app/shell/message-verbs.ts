@@ -28,9 +28,6 @@
 import { useTranslations } from "next-intl";
 import type { EngineMessage } from "@ohmail/client-engine";
 import { useKeyBindings } from "./keymap";
-/* The one cursor placer, claimed at `view` scope so this seam answers instead of the shell,
-   which holds no cursor for the views that mount it. See `cursor-placer.ts`. */
-import { useRowCursorPlacer } from "./cursor-placer";
 /* The two destructive chords, from the module that owns them — see the `⌫ · ⌦` binding below. */
 import { deleteKeyBindings } from "./delete-undo";
 import { useMessageChrome } from "./message-chrome";
@@ -65,20 +62,6 @@ export interface MessageVerbsInput {
    * account's, not a view's.
    */
   canReplyAll: (message: EngineMessage) => boolean;
-  /**
-   * THE ROWS THIS VIEW IS SHOWING, in the order it shows them — the first of the two things the
-   * cursor placer needs. Required, not optional: a host that mounts these verbs and supplies no
-   * list is a host whose first press is silent, which is the whole defect this seam was built to
-   * end, one level down. Empty is a perfectly good answer; absent is not.
-   */
-  rows: readonly EngineMessage[];
-  /**
-   * …AND THE ROW SELECTOR THIS VIEW ALREADY HAS — the same one `↑`/`↓` walk with, never a second
-   * one. The placer puts the cursor on `rows[0]` through it, so a view whose selection does more
-   * than set an id (scroll, hydrate, clear a live pick) gets all of it, and a key and an arrow
-   * cannot come to mean two different placements.
-   */
-  select: (id: string) => void;
 }
 
 /** The row a verb should anchor its menu to, or null when the window has not mounted it. */
@@ -93,7 +76,7 @@ function anchorFor(scope: string, id: string): HTMLElement | null {
  * `a` whether the Ohbox's binding answers or this one does — and only the target changes.
  */
 export function useMessageVerbs(input: MessageVerbsInput): void {
-  const { shown, scope, onAction, onAddTag, onScreen, canDelete, canReplyAll, rows, select } = input;
+  const { shown, scope, onAction, onAddTag, onScreen, canDelete, canReplyAll } = input;
   /* THE LABELS ARE READ HERE, not passed in, and that is the point of reading them at all: the
      `?` sheet must print one sentence for `a` whether the Ohbox's binding answers or this one
      does. A host that supplied its own wording would be a second copy of every verb's name.
@@ -125,15 +108,6 @@ export function useMessageVerbs(input: MessageVerbsInput): void {
    * because the host that supplies a placer is the only thing missing; a gap row names that half.
    */
   const parked = none ? ({ disabledReason: "no_cursor" } as const) : {};
-  /**
-   * …AND THE HOST THAT ANSWERS IT. The declaration above says WHY the verbs are resting; this is
-   * what the dispatcher then asks. Claimed at `view` scope, which is the half that was missing:
-   * the shell claims `global` and answers `false` for any route it holds no cursor for, and it is
-   * the more recent claim on every render (React runs a child's effects first), so without a scope
-   * a view's placer could never be reached. The rows are this view's own and `shown` is its cursor,
-   * so a list already showing a row declines — there is nothing to place.
-   */
-  useRowCursorPlacer({ rows, current: shown?.id ?? null, scope, select });
 
   useKeyBindings([
     /**

@@ -1,14 +1,74 @@
 #!/usr/bin/env node
 /**
- * vendor-node.mjs — fetch the official Node build for one platform, verify it, and put the runtime in
- * `build/vendor/` where the packager copies it in. (`node scripts/vendor-node.mjs [--platform darwin|linux|
- * linux-arm64|windows]`, or `OHMAIL_NODE_ARCHIVES=<dir> node …` to work offline.) A script not a paragraph:
- * the packager used to refuse with a block of shell for a person to paste, and CI cannot follow prose — an
- * artifact assembled by hand is not the one the tag describes. The app carries a runtime because the mail
- * engine is a Node program and a shipped app's `PATH` (a Finder/launchd launch gets no Homebrew or nvm) is
- * not a developer's, so "install Node first" was a build that failed to find its own engine
- * (`engine.rs::resolve_node` resolves this vendored one first). THE CHECKSUM IS THE POINT: bytes are
- * verified against the release's own `SHASUMS256.txt` before unpacking, a mismatch a hard refusal. ONE platform per run, on that platform's runner, because the one cheap thing this can prove is that the binary RUNS (`--version`), only available on the target (macOS `lipo`s both slices and asserts both present; Linux ships x86_64 and arm64 separately, no `lipo` for ELF). Offline mode uses PINS in this file (digests of the pinned release, the online arm asserting the pin agrees with the fetched manifest). */
+ * vendor-node.mjs — fetch the official Node build for one platform, verify it, and put the runtime
+ * in `build/vendor/` where the packager copies it into the app.
+ *
+ *     node scripts/vendor-node.mjs                        # this machine's platform
+ *     node scripts/vendor-node.mjs --platform linux       # darwin | linux | linux-arm64 | windows
+ *     OHMAIL_NODE_ARCHIVES=<dir> node scripts/vendor-node.mjs   # offline: nothing is downloaded
+ *
+ * ── WHY THIS IS A SCRIPT AND NOT A PARAGRAPH ──────────────────────────────────────────────
+ *
+ * The app carries its own Node runtime, and until this existed the packager refused with a block of
+ * shell for a person to paste. That is a laptop step: CI cannot follow prose, so the one thing
+ * standing between a tagged commit and an installable app was a human running four commands from
+ * memory — and an artifact assembled by hand is not the artifact the tag describes. Everything a
+ * downloader gets should come out of a run anyone can inspect.
+ *
+ * ── WHY THE APP CARRIES A RUNTIME AT ALL ──────────────────────────────────────────────────
+ *
+ * The mail engine is a Node program. Relying on the user's own Node meant relying on `PATH`, and the
+ * `PATH` a shipped app is opened with is not the one a developer has: a macOS Finder or launchd
+ * launch gets `/usr/bin:/bin:/usr/sbin:/sbin` — no Homebrew, no nvm — and a Windows or Linux desktop
+ * launch is no better. So "install Node 20+ first" was not a requirement a product could state; it
+ * was a build that started and then failed to find its own engine. The shell resolves this vendored
+ * runtime first (`engine.rs::resolve_node`) precisely so a normal machine needs nothing installed.
+ *
+ * ── THE CHECKSUM IS THE POINT, NOT A COURTESY ─────────────────────────────────────────────
+ *
+ * This downloads an executable and puts it inside an application other people will run, so the bytes
+ * are verified against the release's own `SHASUMS256.txt` before anything unpacks them. A mismatch
+ * is a hard refusal: shipping a runtime fetched over a connection nobody checked would make the
+ * signature on the outer bundle a statement about the wrong thing.
+ *
+ * The manifest is fetched over HTTPS from the same host as the archives, which is the limit of what
+ * this can prove on its own — it establishes that the archive matches the release the project
+ * published, not that the release is itself trustworthy. Verifying the detached signature on
+ * `SHASUMS256.txt` needs the release keyring and belongs with whoever pins the version.
+ *
+ * ── ONE PLATFORM PER RUN, AND WHY THERE IS NO CROSS-VENDORING ─────────────────────────────
+ *
+ * Each platform's runtime is fetched on that platform's own build runner, beside the app it goes
+ * into. Fetching all three anywhere would be possible — they are just archives — and it would let a
+ * macOS box produce a Linux package whose runtime nothing on that box ever executed. The one thing
+ * this script can cheaply prove is that the binary it just wrote RUNS (see the `--version` check at
+ * the end), and that proof is only available on the target platform.
+ *
+ * macOS is the exception that proves it: there the app is universal, so both slices are fetched and
+ * `lipo`d into one binary — and the check afterwards asserts every slice is present, because a
+ * runtime with one slice inside a two-slice app is an app that works on the machine that built it
+ * and fails on half the machines that download it.
+ *
+ * LINUX IS THE SAME ARGUMENT ONE LEVEL DOWN. It ships two artifacts, x86_64 and arm64, and there is
+ * no `lipo` for ELF: each is single-architecture and each is built on a runner of its own. So the
+ * two are separate targets here rather than one target with a switch, for exactly the reason the
+ * three platforms are — the only cheap thing this script can prove about a runtime is that it RAN,
+ * and that proof exists only on the machine it was fetched for.
+ *
+ * ── THE OFFLINE ARM, AND WHY THE DIGESTS ARE PINNED IN THIS FILE ──────────────────────────
+ *
+ * A sandboxed packaging build (Flathub is the case that forced this) resolves only DECLARED,
+ * checksummed sources: it has no network at the moment the app is built, so a step that fetches
+ * `SHASUMS256.txt` cannot run there at all. `OHMAIL_NODE_ARCHIVES` names a directory holding the
+ * release archives already, and in that mode nothing is downloaded — not the archive, not the
+ * manifest.
+ *
+ * Which means the manifest cannot be the authority any more, so PINS below is: the digests of the
+ * pinned release, in the repository, moving only when somebody bumps VERSION on purpose. The
+ * online arm keeps fetching and verifying against the release's own manifest AND asserts the pin
+ * agrees with it, because a pinned list nothing compares is a second truth that drifts quietly
+ * until the first offline build — which would then refuse a correct archive.
+ */
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
@@ -117,27 +177,42 @@ const PLATFORMS = {
   },
 };
 
-/* THE TAR THAT ACTUALLY RUNS, NAMED RATHER THAN LOOKED UP. There are two `tar`s on a Windows runner:
- * `%SystemRoot%\System32\tar.exe` (bsdtar — reads zip, understands `C:\…`) and Git Bash's `/usr/bin/tar`
- * (GNU tar — reads neither). The workflow step runs under `shell: bash`, so node inherits a PATH with Git
- * Bash's bin FIRST and a bare "tar" resolves to GNU tar, which reads the leading `C:` of the temp directory
- * as a REMOTE HOST (`host:path` is its tape-drive syntax) and fails `tar: Cannot connect to C: resolve
- * failed`, naming neither the archive nor the problem — and would then fail again on the zip it cannot read.
- * The spec always meant bsdtar; naming it makes that true rather than a hope about PATH order (macOS and
- * Linux tar is already right). Extraction also runs with `cwd` set and a RELATIVE archive name, so no drive letter reaches any tar. */
+/* THE TAR THAT ACTUALLY RUNS, NAMED RATHER THAN LOOKED UP.
+ *
+ * There are two `tar`s on a Windows runner and they are different programs:
+ *
+ *   · %SystemRoot%\System32\tar.exe   — bsdtar. Reads zip. Understands `C:\…`.
+ *   · Git Bash's /usr/bin/tar         — GNU tar. Reads neither.
+ *
+ * The workflow step runs under `shell: bash`, so node inherits a PATH with Git Bash's bin FIRST,
+ * and a bare "tar" resolves to GNU tar. It then reads the leading `C:` of the temp directory as a
+ * REMOTE HOST — `host:path` is its syntax for tape drives on other machines — and fails with
+ * `tar: Cannot connect to C: resolve failed`, which names neither the archive nor the real problem.
+ * Had it got past that it would have failed again on the zip, which GNU tar cannot read at all.
+ *
+ * The spec above always meant bsdtar; naming it is what makes that true rather than a hope about
+ * PATH order. On macOS and Linux the platform tar is already the right one and is left alone.
+ *
+ * Extraction also runs with `cwd` set to the work directory and a RELATIVE archive name, so no
+ * absolute path — and therefore no drive letter — is ever passed to any tar. bsdtar would cope;
+ * costing nothing to avoid, it stops this from depending on which one was found. */
 const TAR = process.platform === "win32"
   ? path.join(process.env.SystemRoot ?? String.raw`C:\Windows`, "System32", "tar.exe")
   : "tar";
 
 /**
- * `process.platform` (and, on Linux, `process.arch`) → the key above. ARCHITECTURE IS PART OF THE ANSWER ON
- * LINUX, and it has to be because of what this value is used for: the vendored binary is EXECUTED only when
- * the target matches the host. A bare `"linux"` on an arm64 machine would make a `--platform linux` run
- * (which fetches the x86_64 archive) look native, and the `--version` check would be attempted on a binary
- * this machine cannot run — reporting "the vendored runtime would not run on this machine" for a request
- * answered exactly as asked. Distinguishing them turns that into the honest line the else-branch prints
- * (vendored for one architecture, on another). macOS is deliberately NOT split: its app is universal and its
- * runtime is `lipo`d from both slices, so one key is the whole truth and an arch-dependent answer would be wrong.
+ * `process.platform` (and, on Linux, `process.arch`) → the key above.
+ *
+ * ARCHITECTURE IS PART OF THE ANSWER ON LINUX, and it has to be, because of what this value is
+ * used for at the bottom of this file: the vendored binary is EXECUTED only when the target matches
+ * the host. Returning a bare `"linux"` on an arm64 machine would make a `--platform linux` run —
+ * which fetches the x86_64 archive — look like a native one, and the `--version` check would then
+ * be attempted on a binary this machine cannot run, reporting "the vendored runtime would not run
+ * on this machine" for a request that was answered exactly as asked. Distinguishing them turns that
+ * into the honest line the else-branch prints: vendored for one architecture, on another.
+ *
+ * macOS is deliberately NOT split. Its app is universal and its runtime is `lipo`d from both
+ * slices, so one key is the whole truth there and an arch-dependent answer would be wrong.
  */
 function hostPlatform() {
   if (process.platform === "darwin") return "darwin";

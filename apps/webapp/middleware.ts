@@ -223,13 +223,6 @@ export async function middleware(request: NextRequest): Promise<NextResponse> {
       // strict nonce policy is what stops an injected inline script from reading the code out
       // of the DOM the moment it appears.
       pathname === "/link-desktop" ||
-      // `/authorize-desktop` carries a REQUEST HANDLE in its query string and its press hands out
-      // a long-lived native credential. `no-referrer` is the one that matters: under the
-      // single-origin merge the default policy would put the full URL, handle and all, in the
-      // `Referer` of the page's own API calls. `no-store` and the nonce policy come with it for
-      // `/link-desktop`'s reasons — no cache may hold this document and no injected inline script
-      // may read the handle out of the URL.
-      pathname === "/authorize-desktop" ||
       // `/setup` takes the self-host first-run token in a FORM — a credential page exactly as
       // `/login` is, so it gets the strict nonce policy plus no-referrer/no-store.
       pathname === "/setup" ||
@@ -389,10 +382,9 @@ function withPathname(request: NextRequest, pathname: string): URL {
 /**
  * The matcher is STATICALLY ANALYSED by `next build` — it is read out of the source,
  * not evaluated — so `APP_ROUTE` cannot appear here and the paths have to be spelled
- * again as literals. A drift guard asserts they never drift from `EDGE_PATHS` — the routes
- * marked `edge: true` in `routes.mjs`, the one table this app's split is declared in — because
- * a silent divergence would leave the rewrite target publicly reachable or a legacy host
- * serving the product.
+ * again as literals. A drift guard asserts they never drift from
+ * `OWN_PATHS` in `next.config.mjs`, because a silent divergence would leave the rewrite
+ * target publicly reachable or a legacy host serving the product.
  *
  * `/de` — the German landing — sits with the other MARKETING documents rather than beside `/`,
  * because that is what it is: a static page this origin answers, matched for the canonical-host
@@ -401,12 +393,12 @@ function withPathname(request: NextRequest, pathname: string): URL {
  *
  * NOTHING BUT PATH LITERALS BELONGS INSIDE THE ARRAY, comments included. Both drift guards read
  * this list by pulling every double-quoted string out of the bracket span, so a note containing
- * `"/"` reads as a duplicate matcher entry and fails the comparison against the table — which
+ * `"/"` reads as a duplicate matcher entry and fails the comparison against `OWN_PATHS` — which
  * is a guard failure that looks exactly like a routing mistake. Measured while adding `/de`.
  */
 export const config = {
   matcher: [
     "/", "/mailbox", "/resume", "/login", "/join", "/join/invite", "/setup", "/verify-email",
-    "/link-desktop", "/authorize-desktop", "/de", "/privacy", "/imprint", "/subprocessors",
+    "/link-desktop", "/de", "/privacy", "/imprint", "/subprocessors",
   ],
 };

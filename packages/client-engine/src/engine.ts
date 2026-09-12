@@ -22,7 +22,6 @@ import {
 } from "./search.js";
 import { sendingMailboxId } from "./selectors.js";
 import { flattenResponse } from "./apply.js";
-import { countNotify } from "./client-vitals.js";
 import { MemoryMirrorStore, type EntityReader, type MirrorStore } from "./store.js";
 // THE SHARED DRAIN POLICY — the staleness threshold, the dense-page limit and the two
 // derivations over the drain stamp, held in one module with the desktop sidecar's mirror
@@ -767,11 +766,11 @@ export const BODIES_IDS_MAX = 20;
 /**
  * `GET /sync/snapshot` as the engine calls it — see {@link SyncSnapshotPage} for the protocol. `cursor` is the
  * server's own opaque paging token from the previous page, absent on the first. `limit` is a hint the engine does not
- * currently send. PAGE 1 IS NOT "ALL LIVE STATE": a message's children ride with the page carrying their parent and
- * DRAFTS ride the pages newest-first, so no page holds the whole of anything and a client-imposed limit would cut a
- * message away from its own children. Page 1 is the newest page of messages, their state, the newest page of drafts,
- * and the rows too small to have a page — rules, tags, settings. The drain follows `nextCursor` and nothing else: it
- * stays non-null when drafts outlive the window and its tail, and stopping early leaves them below the cursor adopted.
+ * currently send. PAGE 1 IS NOT "ALL LIVE STATE" ANY MORE, and that is what this sentence used to say. A message's
+ * children — its state, a pending routing decision, an approval — ride with the page that carries their parent, so no
+ * page holds the whole of anything and a client-imposed limit would cut a message away from its own children rather
+ * than merely shortening a list. What page 1 still is: the newest page of messages, the state belonging to them, and
+ * the account-wide rows small enough to have no page of their own.
  */
 export type SnapshotFn = (params: { cursor?: string; limit?: number }) => Promise<SyncSnapshotPage>;
 
@@ -3040,10 +3039,6 @@ export class OhmailEngine {
   }
 
   private notify(): void {
-    /* COUNTED. Every one of these makes the shell re-derive over the whole mirror, and the
-       incident's eager pass produced two thousand in one session — the `ui_vitals` line reports
-       how many arrived in the last five minutes beside what the derivation cost. */
-    countNotify();
     for (const l of this.listeners) l();
   }
 

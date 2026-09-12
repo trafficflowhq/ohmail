@@ -4,15 +4,68 @@ import { SensitivePayloadRefusal } from "@trafficflow/core";
 import type { ClassifierPort, ClassifierInput, ClassifierResult, Logger } from "@trafficflow/core";
 
 /**
- * THE CLASSIFIER CIRCUIT BREAKER — what stops a model-provider incident from becoming "ohmail stopped
- * delivering mail". `pipeline.ts` RETHROWS a classifier fault (message un-ingested, cursor unadvanced, so
- * `runSyncCycle` re-plans it free) — right for a blip, but for an OUTAGE it stops mail (the throw aborts
- * the batch) and quarantines the mailbox (`cycle()` counts throws to `maxSyncFailures` = 3, then
- * `status='error'`). So after N consecutive faults the circuit OPENS, {@link port} returns `undefined`,
- * `pipeline.ts`'s `classifier &&` short-circuits, and mail flows rules-only (no model call, no debit — the
- * gate is asked LAST). It decides OUTSIDE the pipeline so `pipeline.ts` stays byte-identical; ONE circuit
- * per process (the failure domain is the shared API key). Charges are per mailbox: a trip refunds via
- * `attempt` (not `gate.refund(source)`, whose marker the `duplicate` cleared), and a success clears only that mailbox's record ({@link ClassifierCircuit.port}); the TRIP is unscoped (every open charge is owed). */
+ * THE CLASSIFIER CIRCUIT BREAKER. What stops a model-provider incident from becoming
+ * "ohmail stopped delivering mail".
+ *
+ * ## The failure it exists for, stated exactly
+ *
+ * `pipeline.ts` RETHROWS a classifier fault, deliberately: the message stays un-ingested
+ * and the sync cursor unadvanced, so `runSyncCycle` re-plans the same mail next pass and the
+ * charge is honoured by a retry that is both guaranteed and free. That is the right behaviour
+ * for a blip. For an OUTAGE it composes into two failures the product cannot accept:
+ *
+ *  · **Mail stops.** The throw aborts `runSyncCycle`'s whole batch — every later create/move,
+ *    the cursor upsert and `reconcileMailbox` are all skipped. One unclear message at the head
+ *    of the batch therefore blocks the mailbox, not just itself.
+ *  · **The mailbox is quarantined.** `cycle()` counts every `runSyncCycle` throw toward
+ *    `maxSyncFailures` (3), then DETACHES the mailbox and writes `status='error'`. Three failed
+ *    polls of a third-party API and the customer's mailbox is marked broken.
+ *
+ * Both contradict the published promise that "rules with no AI at all run first and are meant to
+ * handle most mail". So: after N consecutive model faults the circuit OPENS and {@link port}
+ * returns `undefined`. The worker composes that into `runSyncCycle`, `pipeline.ts`'s
+ * `classifier &&` short-circuits, and mail flows rules-only — no model call, and (because the
+ * gate is asked LAST in that `&&` chain) no debit either.
+ *
+ * ## Why it lives here and not in `pipeline.ts`
+ *
+ * The design rules out a throwing decorator around `ClassifierPort` by name: `pipeline.ts` has no
+ * try/catch around the classify call, so anything that throws there aborts the message's whole
+ * ROUTING rather than degrading it. The breaker therefore decides OUTSIDE the pipeline, by
+ * withholding the port, and `pipeline.ts` stays byte-identical.
+ *
+ * ## Why ONE circuit per process, not one per mailbox
+ *
+ * The failure domain is the shared API key and endpoint. Per-mailbox circuits would each burn
+ * their own N faults into the same global outage — N × (mailboxes) stalled cycles instead of N —
+ * and `cycle()` iterates the rotation serially, so a single process-wide counter converges after
+ * at most N faults in total. The CHARGE records below are still per mailbox, because a classify
+ * ledger source is mailbox-scoped.
+ *
+ * ## The money, which is the part that is easy to get wrong
+ *
+ * When the circuit trips, the message that was already charged gets filed rules-only and is
+ * never re-classified — so H2's "the guaranteed free retry honours the charge" stops being true
+ * for exactly that message, and the charge must come back. It cannot come back through
+ * `gate.refund(source)`: by trip time the second attempt's `duplicate` outcome has already
+ * CLEARED that source's marker, so `refund` finds nothing and silently does nothing.
+ * The port therefore answers `attempt` for a charged spend, and this module records it. At most
+ * one refund per trip per mailbox.
+ *
+ * ## Which mailbox's record a success clears — the part that was wrong
+ *
+ * A success used to clear EVERY mailbox's open charge, because the counting wrapper did not know
+ * which mailbox it was classifying for. That is reachable in the ordinary serial rotation: a
+ * fault below the threshold leaves mailbox A's charge on record, the next mailbox B classifies
+ * successfully, and A's record is dropped — so the later trip refunds nothing for A and A's
+ * customer has paid for a classification that was abandoned and will never be re-run. Nothing
+ * fails; the money is simply gone.
+ *
+ * So the wrapper is bound to a mailbox ({@link ClassifierCircuit.port}) and a success clears
+ * that mailbox's record and no other. The TRIP stays deliberately unscoped: when the circuit
+ * opens, the AI branch is abandoned for every message in flight, so every open charge is owed
+ * back — that one is a property of the outage, not of a mailbox.
+ */
 
 /** Consecutive model faults before the circuit opens. */
 export const DEFAULT_FAULT_THRESHOLD = 2;
@@ -37,23 +90,32 @@ export interface ClassifierCircuitState {
   /** When the current OPEN state stops withholding the port (epoch ms), or `null`. */
   retryAt: number | null;
   /**
-   * When the circuit FIRST opened in its current unbroken run of trips, or `null` while it has never
-   * opened since the last success. DIFFERENT from `retryAt` and from the newest trip: {@link cooldownMs}
-   * doubles per consecutive trip and the breaker half-opens between them, so a provider down an hour has
-   * tripped ~six times and the newest trip is minutes old — anything reading `retryAt` for "how long has
-   * AI been unavailable" reads minutes for ever. Set on the trip that opens a CLOSED circuit, left alone
-   * by every re-trip, cleared by {@link close}. Published on the worker heartbeat, the only evidence
-   * outside this process that mail is being filed rules-only.
+   * When the circuit FIRST opened in its current unbroken run of trips, or `null` while it has
+   * never opened since the last success.
+   *
+   * DIFFERENT FROM `retryAt` and from the newest trip, and the difference is the whole reason it
+   * exists. {@link cooldownMs} doubles per consecutive trip and the breaker half-opens between
+   * them, so a provider that has been down for an hour has tripped perhaps six times and the
+   * newest trip is minutes old. Anything reading `retryAt` to answer "how long has the AI been
+   * unavailable" therefore reads minutes, for ever, however long the outage runs.
+   *
+   * Set on the trip that opens a CLOSED circuit and left alone by every re-trip after it;
+   * cleared by {@link close}, which is the one event that means the provider answered. Published
+   * on the worker heartbeat, where it is the only evidence outside this process that mail is
+   * being filed rules-only.
    */
   firstOpenedAt: Date | null;
   /**
-   * When this process last saw the provider ANSWER, or `null` if it never has. `firstOpenedAt` being null
-   * is two states in one value — the provider is fine, or this process has not asked yet — which a worker
-   * that just replaced another cannot tell apart, and neither could the database it beats into, so a deploy
-   * mid-outage read as a recovery and restarted the alert clock. This is the missing half: set by
-   * {@link close} (called on every success, the one event meaning the provider responded). A replacement
-   * worker publishes `null` until its first successful call, and the heartbeat writer keeps the inherited
-   * outage until then.
+   * When this process last saw the provider ANSWER, or `null` if it never has.
+   *
+   * `firstOpenedAt` being null is two different states wearing one value: the provider is fine,
+   * or this process has not asked it yet. A worker that has just replaced another cannot tell
+   * them apart, and the database it beats into could not either — so a deploy in the middle of an
+   * outage read as a recovery and restarted the clock on the alert for it.
+   *
+   * This is the missing half: set by {@link close}, which is called on every success and is the
+   * one event meaning the provider responded. A replacement worker publishes `null` here until
+   * its first successful call, and the heartbeat writer keeps the inherited outage until then.
    */
   lastSuccessAt: Date | null;
   /** The cooldown the NEXT trip will use. */
@@ -70,13 +132,18 @@ export interface ClassifierCircuitOptions {
 
 export interface ClassifierCircuit {
   /**
-   * The classifier to use for THIS cycle: a counting wrapper while the circuit is closed or half-open,
-   * `undefined` while open. Resolve it ONCE per cycle and pass the result in — never hold a wrapper across
-   * the open transition, because a present-but-open classifier lets `pipeline.ts`'s `&&` chain reach the
-   * spend, charge, and only then fail: one orphaned charge per message per cycle for the whole outage.
-   * `mailboxId` names whose charge record a success clears, the SAME id passed to {@link meter}. Omitted
-   * by a caller that took no metered port (the account-scoped auto-suggest pass); a wrapper with no mailbox
-   * clears nobody's record, which is what it means for a caller that has none of its own.
+   * The classifier to use for THIS cycle: a counting wrapper while the circuit is closed or
+   * half-open, `undefined` while it is open.
+   *
+   * Resolve it ONCE per cycle and pass the result in — never hold a wrapper across the open
+   * transition. A present-but-open classifier would let `pipeline.ts`'s `&&` chain reach the
+   * spend, charge, and only then fail: one orphaned charge per message per cycle, for the whole
+   * outage.
+   *
+   * `mailboxId` names whose charge record a success clears, and it is the SAME id passed to
+   * {@link meter}. Omitted by a caller that took no metered port and so recorded nothing — the
+   * account-scoped auto-suggest pass; a wrapper with no mailbox clears nobody's record, which
+   * is what it means for a caller that has none of its own.
    */
   port(mailboxId?: string): ClassifierPort | undefined;
   /**
@@ -177,14 +244,20 @@ export function makeClassifierCircuit(
   }
 
   /**
-   * ONE counting wrapper around ONE question — used for BOTH methods of the port. `screen` was not
-   * forwarded while the only caller was the routing pipeline, and an absent method is not a compile error:
-   * `ClassifierPort.screen` is optional, so a consumer falls back to `classify`, whose answer for a
-   * first-contact sender is `ohmail/Screener` ("hold") — a caller getting the fallback pays full price for
-   * advice that says nothing. The auto-suggest pass is that caller, so `screen` is forwarded through the
-   * same breaker (a screening fault is the same endpoint and key; counting it elsewhere gives one outage
-   * two thresholds). Forwarded ONLY when `inner` implements it, so the wrapper never claims a capability
-   * the real classifier lacks.
+   * ONE counting wrapper around ONE question — used for BOTH methods of the port.
+   *
+   * `screen` was not forwarded at all while the only caller was the routing pipeline, and an
+   * absent method is not a compile error: `ClassifierPort.screen` is optional, so a consumer that
+   * asks for it falls back to `classify`. That fallback is documented as a degradation and it is
+   * a real one — the routing question's answer for a first-contact sender is `ohmail/Screener`,
+   * which the Screener reads as "hold", so a caller getting the fallback pays full price for
+   * advice that says nothing. The worker's auto-suggest pass is that caller, so the method is
+   * forwarded, through the same breaker: a screening fault is a fault of the same endpoint and the
+   * same key, and counting it anywhere else would give one outage two thresholds.
+   *
+   * `screen` is forwarded ONLY when `inner` implements it, so the wrapper keeps answering the
+   * optionality question the same way the port it wraps does — never claiming a capability the
+   * real classifier does not have.
    */
   async function guard(
     mailboxId: string | undefined,
@@ -194,16 +267,59 @@ export function makeClassifierCircuit(
     try {
       result = await ask(input);
     } catch (err) {
-      // A REFUSAL AT THE SINK IS NOT A MODEL FAULT, AND COUNTING IT AS ONE WAS THE BUG.
-      // `SensitivePayloadRefusal` says on the class the breaker must never count it as an outage; without
-      // this the sensitivity gate FIRING incremented `consecutiveFaults` and `DEFAULT_FAULT_THRESHOLD` of
-      // them withheld the classifier from the whole mailbox (nothing leaked; the cost was availability).
-      // This wrapper is on the AUTOMATIC path the outbound-consent ruling did NOT change; the pressed
-      // `ScreenerService.suggest` redacts via `redactForModel`. BY CLASS, never `err.name` (`dead-letter.ts`'s
-      // rule), like `ClassifierFaultError`/`LeaseUnavailableError`/`MimeParseError` — a VALUE import of
-      // `@trafficflow/core` `deps.test.ts` permits (its `FORBIDDEN_IN_SRC` is matched as raw substrings, so
-      // do not spell specifiers here). NEUTRAL, not a success (thrown before `consecutiveFaults++`/`close()`),
-      // and rethrown UNWRAPPED to the message-scoped dead-letter boundary; the full fix is `pipeline.ts`'s catch (`test/ai-refusal.test.ts`).
+      // ── A REFUSAL AT THE SINK IS NOT A MODEL FAULT, AND COUNTING IT AS ONE WAS THE BUG ────
+      //
+      // `SensitivePayloadRefusal` says so on the class itself: "a caller must never treat it as
+      // retryable, and the worker's circuit breaker must never count it as an outage." This
+      // clause is that sentence being true. Without it the sensitivity gate FIRING — the
+      // sensitive-mail invariant failing closed at the sink, exactly as designed — incremented `consecutiveFaults`,
+      //
+      // NOTE, after the ruling that opened AI to outbound-consented mail: this wrapper is on the
+      // AUTOMATIC routing path, which is the path the ruling deliberately did not change. It
+      // sets no `outbound` on its input, so the sink still refuses credential mail here and
+      // this clause is still the one that keeps that refusal from tripping the breaker. What
+      // changed is elsewhere — `ScreenerService.suggest`, where a person's press redacts the
+      // payload and declares it, so no refusal can arise. If a `classifier_sensitive_refusal`
+      // is ever attributed to the Screener's path, the caller skipped `redactForModel` and
+      // somebody paid for a throw.
+      // and `DEFAULT_FAULT_THRESHOLD` of them withheld the classifier from the WHOLE mailbox
+      // and flapped it through the doubling cooldown for as long as such mail kept arriving.
+      // Nothing ever leaked; the cost was availability, plus a `classifier_fault` log line
+      // blaming Anthropic for our own detector.
+      //
+      // BY CLASS, never by `err.name`. `dead-letter.ts` states the rule — "membership cannot be
+      // forged by a mail server; a shape test can" — and every other typed arm in the worker
+      // (`ClassifierFaultError`, `LeaseUnavailableError`, `MimeParseError`) is matched the same
+      // way. The import is a VALUE import of `@trafficflow/core`, which `deps.test.ts` permits:
+      // its `FORBIDDEN_IN_SRC` covers services, api and the client packages, and core is one of
+      // the worker's two declared runtime dependencies — so this resolves inside the worker's
+      // Docker image and not merely through the vitest alias. There is one copy of the class,
+      // the same module instance `index.ts` builds `makeHaikuClassifier` from, so `instanceof`
+      // holds. (That list is matched as RAW SUBSTRINGS against the whole file, comments
+      // included, so do not spell the forbidden specifiers out here.)
+      //
+      // ── IT IS NEUTRAL, NOT A SUCCESS ─────────────────────────────────────────────────────
+      //
+      // The throw happens before `consecutiveFaults++` and before `close()`, so a refusal
+      // neither counts toward a trip nor clears a genuine outage that is already accumulating.
+      // A refusal carries no information about whether the model is answering, and inventing
+      // either reading from it would make the breaker's threshold depend on the mail mix.
+      //
+      // ── AND IT IS RETHROWN UNWRAPPED, WHICH IS A DELIBERATE HANDOVER ─────────────────────
+      //
+      // `sync.ts#attempt` rethrows `ClassifierFaultError` IMMEDIATELY and by class, which exits
+      // the ingest loop and holds every folder's cursor — the poison-batch shape. An unwrapped
+      // refusal instead reaches the dead-letter boundary, where it is message-scoped, so
+      // the rest of the batch is ingested and later mail keeps flowing.
+      //
+      // THAT IS NOT THE WHOLE FIX AND MUST NOT BE READ AS ONE. The boundary retries the message
+      // once and then WRITES IT OFF, so the message is never ingested at all — and a refusal is
+      // deterministic in the bytes, so it will never ingest later either. The right end state is
+      // that the message arrives WITHOUT an AI suggestion (mail with no suggestion is a smaller
+      // failure than mail that does not arrive), and that decision belongs to `pipeline.ts`,
+      // whose `catch` is the only place that can drop the AI branch and keep the message.
+      // This clause is the prerequisite for it: `pipeline.ts` cannot recognise a refusal that
+      // has already been wrapped here. See `test/ai-refusal.test.ts`, which pins both halves.
       if (err instanceof SensitivePayloadRefusal) {
         // ERROR level, not warn. `pipeline.ts` refuses sensitive mail before the credit gate and
         // before the classifier is touched, so a refusal arriving HERE means `classifySensitivity`

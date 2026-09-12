@@ -1,9 +1,14 @@
 /**
- * ONE-OFF RUNNER for the thread-name heal (`thread-subject-heal.ts`). DB-ONLY, dry-run by default: it
- * renames threads whose stored name still carries a reply/forward prefix the localized clients emit
- * ("WG: …", "Antw.: …") — names written at create before `baseSubject` knew the full prefix table — and
- * appends a `thread` update per healed row so mirrors pick the new name up on their next sync. It never
- * opens IMAP. Idempotent: a second run selects nothing. Run: `tsx apps/worker/src/run-thread-subject-heal.ts [--apply]`.
+ * ONE-OFF RUNNER for the thread-name heal (`thread-subject-heal.ts`).
+ *
+ * DB-ONLY and dry-run by default. It renames threads whose stored name still carries a
+ * reply/forward prefix the localized clients emit ("WG: …", "Antw.: …") — names written at
+ * create before `baseSubject` knew the full prefix table — and appends a `thread` update to
+ * the change log per healed row so client mirrors pick the new name up on their next sync.
+ * It never opens IMAP and needs no credentials. Idempotent: a second run selects nothing.
+ *
+ *   TF_DB_URL=… tsx apps/worker/src/run-thread-subject-heal.ts            # dry run: counts
+ *   TF_DB_URL=… tsx apps/worker/src/run-thread-subject-heal.ts --apply    # write
  */
 import { makeOwnedDb } from "@trafficflow/db/cloud";
 import { type Tx } from "@trafficflow/db";

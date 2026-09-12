@@ -1,6 +1,4 @@
-import type {
-  CreateMailboxBody, UpdateMailboxBody, OrganizeHereInput,
-} from "@trafficflow/services/mail";
+import type { CreateMailboxBody, UpdateMailboxBody } from "@trafficflow/services/mail";
 /* The mirror read (mail 0094). From `/mail`, the LOCAL barrel — this route is mounted by the
    desktop engine too, and naming the root barrel here would pull the hosted schema into a shipped
    app (the rule at the top of `packages/db/src/index.ts`). */
@@ -28,21 +26,10 @@ import { mailbox, profileImport, readBody, noContent } from "./shared.js";
  * write is — a check in a route is a check one caller can be added past.
  */
 function organizeInputOf(body: Record<string, unknown>): {
-  intent: OrganizeHereInput["intent"];
   imap?: { pass: string };
   screening?: { dormancyDays?: number; scope?: "window" | "all_time" };
 } {
-  /* THE VERB, AND THE BODY MAY ONLY WEAKEN IT. `"join"` is the one value admitted from the wire;
-     everything else — absent, misspelled, or the word `"takeover"` itself — is `takeover`, which
-     is what this door has always done. So a caller can say "I am only joining" and can never ask
-     for more than the button it pressed, which is what makes the key safe to admit on every host
-     this route is mounted on, Cloud included. The PHONE's door does not rely on a client sending
-     it: `apps/sidecar/src/mobile.ts` writes it over every consent request it forwards. */
-  const out: {
-    intent: OrganizeHereInput["intent"];
-    imap?: { pass: string };
-    screening?: { dormancyDays?: number; scope?: "window" | "all_time" };
-  } = { intent: body.intent === "join" ? "join" : "takeover" };
+  const out: { imap?: { pass: string }; screening?: { dormancyDays?: number; scope?: "window" | "all_time" } } = {};
   const imap = body.imap;
   if (imap && typeof imap === "object" && typeof (imap as { pass?: unknown }).pass === "string") {
     const pass = (imap as { pass: string }).pass;

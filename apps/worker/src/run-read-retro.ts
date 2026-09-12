@@ -1,11 +1,13 @@
 /**
- * ONE-OFF RUNNER for the read-state retro (`read-retro.ts`), scoped to ONE mailbox. DB-ONLY, dry-run by
- * default: it writes `flag_state.desired_seen = true` (+ the `unread` mirror and a delta) for the unread
- * backlog in `ohmail/Screened` and `ohmail/Quarantine`, and the always-on worker's `reconcileFlags` adds
- * `\Seen` on the real server. It never opens IMAP itself, so it needs no credentials. Additive and
- * reversible (an undo runner exists in the operator tooling).
+ * ONE-OFF RUNNER for the read-state retro (`read-retro.ts`), scoped to ONE mailbox.
  *
- *   TF_DB_URL=… tsx apps/worker/src/run-read-retro.ts --mailbox <id> [--apply]
+ * DB-ONLY and dry-run by default. It writes `flag_state.desired_seen = true` (+ the `unread`
+ * mirror and a delta) for the unread backlog in `ohmail/Screened` and `ohmail/Quarantine`, and the
+ * ALWAYS-ON worker's `reconcileFlags` adds `\Seen` on the real server. It never opens IMAP itself,
+ * so it needs no credentials. Additive and reversible — an undo runner exists in the operator tooling.
+ *
+ *   TF_DB_URL=… tsx apps/worker/src/run-read-retro.ts --mailbox <id>            # dry run: counts
+ *   TF_DB_URL=… tsx apps/worker/src/run-read-retro.ts --mailbox <id> --apply    # write
  */
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { makeOwnedDb } from "@trafficflow/db/cloud";

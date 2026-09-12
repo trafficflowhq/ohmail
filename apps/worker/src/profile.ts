@@ -23,14 +23,31 @@ import {
 } from "@trafficflow/core/adapters/organizer-profile";
 
 /**
- * THE WORKER'S HALF OF THE PORTABLE ORGANIZER PROFILE — composition only.
- * `packages/core/src/adapters/organizer-profile.ts` is the engine (format, read/write, IO); this
- * module supplies WHERE the configuration lives (the organizer's store) and WHEN to write (after an
- * admitted cycle, debounced), shared by hosted worker, desktop sidecar and self-hosted server like
- * `lease.ts` — which makes each one's document byte-comparable. Only the active organizer writes:
- * {@link OrganizerProfileSync.onOrganize} is reachable only after `readMailboxLease` answered
- * `organize`, so the lease gate is the single writer. Write-behind is debounced by the cycle: at most
- * once per {@link DEFAULT_PROFILE_FLUSH_INTERVAL_MS}, one write in flight per mailbox (`inFlight`).
+ * THE WORKER'S HALF OF THE PORTABLE ORGANIZER PROFILE — composition, and nothing else.
+ *
+ * `packages/core/src/adapters/organizer-profile.ts` is the engine: the document format, the
+ * read/write dance, the IO. This module supplies what the engine deliberately does not have —
+ * WHERE the configuration lives (the organizer's own store) and WHEN to write (after a cycle the
+ * lease gate admitted, debounced) — and it is shared by every organizer the same way `lease.ts`
+ * is: the hosted worker, the desktop sidecar and a self-hosted server all run THIS composition,
+ * which is what makes the document each of them writes byte-comparable with the others'.
+ *
+ * ── ONLY THE ACTIVE ORGANIZER WRITES, AND THAT IS INHERITED, NOT RE-DERIVED ────────────────
+ *
+ * {@link OrganizerProfileSync.onOrganize} is called from exactly one place in each host: the
+ * point in the sync cycle that is only reachable after `readMailboxLease` answered `organize`.
+ * A stood-down install never reaches it, so it never reads and never writes — the lease gate at
+ * the top of every cycle is the single-writer mechanism, and a second lease check here would be
+ * a second reading of one decision table, which is the divergence the lease composition exists
+ * to forbid.
+ *
+ * ── WRITE-BEHIND, DEBOUNCED BY THE CYCLE ITSELF ────────────────────────────────────────────
+ *
+ * Configuration changes land in the store as they happen; this module notices them by
+ * fingerprint at the NEXT admitted cycle, at most once per {@link DEFAULT_PROFILE_FLUSH_INTERVAL_MS}.
+ * A burst of screener verdicts between two flushes is therefore ONE append, and there is never
+ * more than one write in flight per mailbox — the per-mailbox cycle is serial in both hosts, and
+ * `inFlight` makes that assumption checkable rather than assumed.
  */
 
 /** How often the store is re-serialized and compared, at most. Tests inject smaller values. */
@@ -45,13 +62,16 @@ export const DEFAULT_PROFILE_FLUSH_INTERVAL_MS = 5 * 60 * 1000;
 export const EVAL_TAKEOVER_TTL_MS = 30 * 1000;
 
 /**
- * The `audit_log.action` under which a found FOREIGN profile is recorded — the durable marker the
- * confirm-import flow reads. `audit_log` because it is the one generic account-scoped marker table
- * both journals carry (the `ohbox_tidy_move` precedent) and this feature adds no schema. The
- * constant lives in `@trafficflow/db` (`organizer-profile-import.ts`) because the import surface's
- * half runs in the services package and a package cannot import an app; re-exported here so callers
- * keep one name. The package is not written out: the worker's dependency-boundary test refuses its
- * name anywhere under src/, comments included.
+ * The `audit_log.action` under which a found FOREIGN profile is recorded — the durable marker
+ * the confirm-import flow reads. Written by the organizer at read-on-takeover; consumed by the
+ * import surface. `audit_log` because it is the one generic, account-scoped marker table both
+ * journals already carry (the `ohbox_tidy_move` precedent), and this feature may not add schema.
+ *
+ * The constant itself lives in `@trafficflow/db` now (`organizer-profile-import.ts`), because
+ * the import surface's half runs in the services package and a package cannot import an app —
+ * re-exported here so this module's callers and tests keep their one name for it. (The package
+ * is deliberately not written out: the worker's dependency-boundary test refuses its name
+ * anywhere under src/, comments included, and that bluntness is the guard's value.)
  */
 export { PROFILE_FOUND_AUDIT_ACTION };
 
@@ -102,14 +122,35 @@ export interface OrganizerProfileSyncDeps {
 }
 
 /**
- * ONE MAILBOX'S PROFILE STATE for the life of one attachment — created beside the runtime like the
- * known-set memo and dropped with it, so a mailbox that changes hands starts cold. READ-ON-TAKEOVER:
- * the first admitted cycle reads the folder before writing, and the verdict gates write-behind.
- * `none`/`unreadable` ⇒ write-behind runs. `found` and OURS ⇒ our own (maybe stale) write, seeds the
- * dirty check. `found`, FOREIGN, content-identical ⇒ in sync. `found`, FOREIGN, DIFFERENT ⇒ the import
- * case, write-behind HOLDS: the decision is the human confirm flow's, surfaced by a log line and a
- * durable `audit_log` marker; the hold releases on CONVERGENCE (local equals the document) or the
- * durable `organizer_profile_import_resolved` marker. `newer` (later format) ⇒ never overwritten.
+ * ONE MAILBOX'S PROFILE STATE, for the life of one attachment — created beside the runtime the
+ * way the known-set memo is, and dropped with it, so a mailbox that changes hands starts cold
+ * and re-reads what the folder actually holds.
+ *
+ * ── READ-ON-TAKEOVER, AND THE RULE THAT KEEPS IT FROM DESTROYING THE THING IT FOUND ────────
+ *
+ * The first admitted cycle READS the folder before anything is written. What it finds decides
+ * whether write-behind may run at all:
+ *
+ *  · `none` / `unreadable` — nothing to preserve. Write-behind runs; an EMPTY local
+ *    configuration still writes nothing (a mailbox that has said nothing gets no document).
+ *  · `found`, and it is OURS (the message's install id is this organizer's) — our own previous
+ *    write, possibly stale if configuration changed while the process was down. The found
+ *    fingerprint seeds the dirty check, so a difference is flushed on this very cycle.
+ *  · `found`, FOREIGN, and CONTENT-IDENTICAL to local state — already in sync (the ordinary
+ *    hand-back between two installs that share a history). Write-behind resumes.
+ *  · `found`, FOREIGN, and DIFFERENT — **the import case, and the write-behind HOLDS.** The
+ *    document is somebody's configuration that this organizer has not been told to adopt, and
+ *    the import decision belongs to a human (the confirm flow), never to this module. The fact
+ *    is surfaced twice: a log line, and a durable `audit_log` marker the confirm flow reads.
+ *    The hold releases only on the user's answer, which reaches this module two ways: by
+ *    CONVERGENCE — local state comes to equal the document, which is what an import applied
+ *    into an empty store produces — or by the durable RESOLUTION marker the confirm flow
+ *    writes (`organizer_profile_import_resolved`), which covers the two answers convergence
+ *    cannot see: an import merged into existing local configuration, and a decline. Until one
+ *    of those, this organizer writes nothing, so the found document survives exactly as long
+ *    as the decision is open.
+ *  · `newer` — written by a later format. Never overwritten (the engine refuses too, but this
+ *    module does not even try); surfaced the same two ways.
  */
 export class OrganizerProfileSync {
   private seeded = false;
@@ -136,13 +177,15 @@ export class OrganizerProfileSync {
   private holdSince: Date | null = null;
   private lastWrittenFingerprint: string | null = null;
   /**
-   * Foreign documents discovered and SURFACED (recorded durably) — the next write may supersede them.
-   * A SET, not a slot: the folder can hold two distinct foreign documents at once (crash residue), and
-   * a single slot would let each refusal evict the other's fingerprint, the write oscillating and never
-   * landing. The asymmetry with {@link holdFingerprint} is principled: at SEED we may be a NEW organizer
-   * meeting travelling configuration (hold); mid-flight we are ESTABLISHED and an appearing document is
-   * a transient overlap's loser (last-incumbent-wins), and the engine's `foreign` refusal guarantees we
-   * surfaced it before superseding it.
+   * Foreign documents discovered and SURFACED (recorded durably) — the next write may supersede
+   * them. A SET, not a slot: the folder can hold two distinct foreign documents at once (crash
+   * residue from another install's own append-then-expunge dance), and a single slot would let
+   * each refusal evict the other document's fingerprint — the write oscillating between two
+   * surfacings and never landing. The asymmetry with {@link holdFingerprint} is principled: at SEED we
+   * may be a NEW organizer meeting configuration that travelled here (an open import decision,
+   * so we hold); mid-flight we are the ESTABLISHED organizer and a document that appears under
+   * us is the loser of a transient overlap — last-incumbent-wins says our store is the mailbox's
+   * truth, and the engine's `foreign` refusal guarantees we surfaced it before superseding it.
    */
   private seenForeignFingerprints = new Set<string>();
   /** A detection marker that could not be written durably yet — owed, and retried next tick. */
@@ -153,12 +196,19 @@ export class OrganizerProfileSync {
   private inFlight = false;
   /**
    * THE FAILURE THIS ATTACHMENT HAS ALREADY REPORTED, or null while nothing is wrong.
-   * Both arms run on the DRAIN's cadence (~15 s on desktop) and once logged
-   * `organizer_profile_write_failed` per tick, so a lasting condition logged for as long as it lasted
-   * (measured 2026-09-07: `op: "list_profiles"` every 15 s). The line now says a STATE keyed by
-   * `(op, errorClass)` — a different operation or class is a different fault worth saying, which keeps
-   * the latch from becoming a mute button. Both are read as the logger reads them (`ProfileOp` off the
-   * error, the class through {@link describeError}), so this cannot disagree with the line it suppresses.
+   *
+   * Both arms below run on the DRAIN's cadence — fifteen seconds on a desktop install — and both
+   * used to log `organizer_profile_write_failed` from a per-tick catch. A condition that lasts
+   * therefore logged for as long as it lasted: measured on the release candidate, 2026-09-07, a
+   * mailbox taken over from another door produced `op: "list_profiles"` every fifteen seconds
+   * for as long as anybody watched. A line that fires on a cadence is a line people learn to
+   * skip, and the next real profile fault then arrives in a log already full of this one.
+   *
+   * So the line says a STATE. `(op, errorClass)` is the state's identity: a different operation
+   * or a different class is a DIFFERENT fault and is worth saying, which is what keeps the latch
+   * from becoming a mute button. Both are read the way the logger reads them — `ProfileOp` off
+   * the engine's own error, the class through {@link describeError} — so this cannot come to
+   * disagree with the line it suppresses.
    */
   private lastFailure: { op: ProfileOp | null; errorClass: string } | null = null;
   /**
@@ -203,13 +253,21 @@ export class OrganizerProfileSync {
   }
 
   /**
-   * A TICK COMPLETED WITHOUT FAILING, so a standing failure is over — said exactly once. A latch with
-   * no recovery line would leave a reader unable to tell a standing fault from an ended one.
-   * CALLED FROM THE TICK, NEVER THE PREFLIGHT: {@link armHoldFromFolder} is a narrow READ beside the
-   * tick — its success proves the folder can be listed, not that the profile is being maintained (a
-   * mailbox whose `ohmail/_meta` reads fine but whose CREATE is refused fails only in the write path).
-   * If the preflight announced recovery, every drain would print recovery then failure for ever; so
-   * the preflight only NOTES failures into the shared latch and the tick alone says the condition ended.
+   * A TICK COMPLETED WITHOUT FAILING, so a standing failure is over — said exactly once.
+   *
+   * A latch with no recovery line would be worse than the noise it replaces: a reader would have
+   * no way to tell a fault that is still standing from one that ended twenty minutes ago, and
+   * the silence would mean both.
+   *
+   * ── CALLED FROM THE TICK, NEVER FROM THE PREFLIGHT, AND THE ASYMMETRY IS THE POINT ───────
+   *
+   * {@link armHoldFromFolder} is a narrow READ that runs beside and inside the tick. Its success
+   * proves the folder can be listed; it does not prove the profile is being maintained — a
+   * mailbox whose `ohmail/_meta` reads fine and whose CREATE is refused fails only in the tick's
+   * write path. If the preflight announced recovery there, every drain would print a recovery
+   * and then a failure, for ever: two lines per drain where the defect this replaces printed
+   * one. So the preflight NOTES failures into the shared latch and never clears it, and the
+   * tick — the whole operation — is what says the condition is over.
    */
   private noteTickSucceeded(
     log: (event: string, detail: Record<string, unknown>) => void,
@@ -229,13 +287,28 @@ export class OrganizerProfileSync {
 
   /**
    * FORGET EVERYTHING THIS PROCESS BELIEVED ABOUT OWNING THIS MAILBOX'S DOCUMENT.
-   * Called when the lease demotes this install to a reader; it exists because mail 0083 made the
-   * runtime OUTLIVE the role (kept and re-promoted in place), so without this the second organizing
-   * life holds the first's beliefs. Two are actively wrong after a handover: `seeded` +
-   * `lastWrittenFingerprint` make {@link armHoldFromFolder} return at its second guard (the promotion
-   * probes nothing), and `lastWrittenFingerprint` makes the evaluator treat the OTHER organizer's
-   * document as mid-flight residue and supersede it instead of offering it for import.
-   * `seenForeignFingerprints` goes too; the durable marker rows are untouched. Nothing here writes.
+   *
+   * Called when the lease demotes this install to a reader, and it exists because mail 0083 made
+   * the runtime OUTLIVE the role. Before it, a demotion detached: the `OrganizerProfileSync`
+   * object went with the runtime, and a later promotion built a new one that had never seen the
+   * mailbox. A demoted runtime is now kept and re-promoted in place, so without this the second
+   * organizing life starts holding the FIRST one's beliefs.
+   *
+   * Two of them are actively wrong after a handover, and they compound:
+   *
+   *  · `seeded` + `lastWrittenFingerprint` make {@link armHoldFromFolder} return at its second
+   *    guard, so the promotion's preflight probes nothing;
+   *  · and `lastWrittenFingerprint` makes the evaluator classify the document the OTHER organizer
+   *    wrote while it held the mailbox as an established incumbent's mid-flight residue — the one
+   *    case it deliberately does not hold on. The re-promoted install would route on its own
+   *    stale rules and then supersede the inherited document instead of offering it for import,
+   *    which is the takeover re-screen this whole hold exists to prevent, reached by a longer
+   *    road.
+   *
+   * `seenForeignFingerprints` goes for the same reason: those surfacings belong to the previous
+   * life. The durable half — the marker rows — is untouched and is what a re-derivation reads.
+   * Nothing here writes to the mailbox or to the database; it is one process's memory being told
+   * that it is no longer this mailbox's organizer.
    */
   forgetOrganizerLife(): void {
     this.seeded = false;
@@ -280,14 +353,46 @@ export class OrganizerProfileSync {
   } | null = null;
 
   /**
-   * "IS AN IMPORT DECISION OPEN?" — EVALUATED, never choreographed, because an in-memory hold cannot
-   * TRACK a question whose truth lives in three independently-moving places (folder, account store,
-   * resolutions table). ROUTING evaluates it: found, foreign, never-owned-by-us, ≠ local store,
-   * unanswered → open (the takeover hold); newer format, undismissed → open; else → closed, including a
-   * foreign document under an organizer that already OWNS the config (`lastWrittenFingerprint`, round
-   * 16). The FOLDER verdict is cached and re-read every {@link EVAL_TAKEOVER_TTL_MS} while UNSEEDED /
-   * every flush interval while SEEDED, to bound `readOrganizerProfile`'s fetch; the DB side is read
-   * every call while the verdict is a question. NEVER THROWS: answers the armed hold, else the previous evaluation (round 17).
+   * ══ THE STRUCTURAL ANSWER TO "IS AN IMPORT DECISION OPEN?" — EVALUATED, NEVER CHOREOGRAPHED ══
+   *
+   * Everything here circles one mechanism: an in-memory hold trying to TRACK a question
+   * whose truth lives in three places that all move independently — the folder (the previous
+   * organizer can write, a hand can expunge, a newer build can pass through), the account store
+   * (a sibling mailbox's import converges it), and the resolutions table (any tab can answer).
+   * Every arm/release ordering had a mirror-image race, because a cached distributed fact always
+   * does — the known-set memo's header states the same law for UIDs.
+   *
+   * So ROUTING evaluates the question instead:
+   *
+   *   found, foreign, never-owned-by-us, ≠ local store, unanswered → open  (the takeover hold)
+   *   newer format, undismissed                                    → open  (unreadable decisions)
+   *   anything else — including a foreign document under an organizer that already OWNS this
+   *   mailbox's configuration (`lastWrittenFingerprint`), which is the permitted overlap's loser
+   *   writing late and is superseded, never held (round 16)        → closed
+   *
+   * ── WHAT IS RE-READ WHEN, AND WHY THAT IS BOUNDED (round 18) ────────────────────────────────
+   *
+   * `readOrganizerProfile` fetches the document's full source, so an unconditional per-cycle
+   * read would re-download an unbounded document once per batch — a backlog drain re-fetching
+   * the same profile hundreds of times, the exact over-fetch family the Sent-scan fix in this
+   * slice exists to kill. The FOLDER verdict is therefore cached and re-read on a clock:
+   *
+   *   · UNSEEDED (the takeover window, bounded to the first drain): every
+   *     {@link EVAL_TAKEOVER_TTL_MS} — hot back-to-back drain cycles collapse onto one read,
+   *     and a document landing in the permitted overlap's window is seen within the TTL, the
+   *     same one-step bound every accepted residual in this family carries.
+   *   · SEEDED (the incumbent steady state): every flush interval — the cadence this module's
+   *     own verify pass has always read the folder at, so the steady-state IMAP cost is
+   *     unchanged from before this slice.
+   *
+   * The DATABASE side — the answer and the convergence, which can change with no folder motion —
+   * is read on EVERY call while the cached verdict is a question, releasing at the cycle edge.
+   * While the verdict is closed, a call between folder reads costs nothing at all.
+   *
+   * NEVER THROWS: a faulted evaluation answers the ARMED write-side hold when one is known
+   * (round 17 — stronger evidence than any fallback), else what the previous evaluation
+   * answered. The write-side hold machinery is no longer load-bearing for where a message
+   * lands; it remains the write-behind's overwrite gate and the durable marker's writer.
    */
   async importDecisionOpenNow(): Promise<boolean> {
     const { deps } = this;
@@ -410,13 +515,19 @@ export class OrganizerProfileSync {
       } else if (this.holdFingerprint !== null) {
         const localFp = profileFingerprint(await serializeOrganizerProfile(deps.db, deps.accountId, deps.mailboxId));
         if (localFp === this.holdFingerprint) {
-          // CONVERGENCE: the store is ACCOUNT-scoped, so the same travelling profile imported through
-          // a SIBLING mailbox — or a hand-edit — can make local state equal the held document with no
-          // resolution row for THIS mailbox; the candidate leaves the confirm surface the moment they
-          // match, so the hold must not outlive the comparison. Round 8: the folder is re-read BEFORE
-          // the release commits (the held document may have moved to B while local converged onto A),
-          // and when it still holds the converged document it becomes our own last-written baseline
-          // with NOTHING rewritten — putting it on `seenForeignFingerprints` would supersede a
+          // CONVERGENCE: the store is ACCOUNT-scoped, so the same travelling
+          // profile imported through a SIBLING mailbox — or a hand-edit — can make local state
+          // equal the held document with no resolution row for THIS mailbox. The candidate is
+          // gone from the confirm surface the moment they match, so the hold must not outlive
+          // the comparison by a debounce interval.
+          //
+          // Round 8: the folder is re-read BEFORE the release commits, exactly like the
+          // answered arm above — the held document may have been REPLACED since (local
+          // converged onto A, the folder moved to B), and a convergence release that never
+          // looked would lose B deterministically. When the folder still holds the converged
+          // document, it is released as the debounced convergence arm releases it: it becomes
+          // our own last-written baseline and NOTHING is rewritten — putting it on
+          // `seenForeignFingerprints` instead would have the next tick supersede a
           // byte-equivalent document just to change its author.
           let next: Awaited<ReturnType<OrganizerProfileSync["deriveNextHold"]>> | null = null;
           let stillConverged = true;
@@ -450,13 +561,21 @@ export class OrganizerProfileSync {
 
   /**
    * ARM THE HOLD BEFORE THE FIRST ORGANIZE — called from `attach()`, before any routing cycle.
-   * The seed inside {@link onOrganize} discovers a travelling document too, but runs at the END of a
-   * completed cycle, so the first takeover cycles moved screened-in history into the Screener while the
-   * answering document was one FETCH away. This is the narrow read-only slice the ROUTING needs early:
-   * read the folder, and on a foreign/different/unanswered document arm the hold and write the durable
-   * marker the confirm surface reads. Nothing is written to the mailbox, `seeded` stays false (the full
-   * seed still runs on the first tick), and none/unreadable/newer/ours/in-sync are left for the seed.
-   * Never throws: a failure leaves the hold UNARMED and logged (ordinary routing for at most one cycle).
+   *
+   * The seed inside {@link onOrganize} discovers a travelling document too, but it runs at the
+   * END of a completed cycle — and the drill measured exactly what that ordering costs: the first
+   * cycles of a takeover ingested and MOVED the mailbox's screened-in history into the Screener
+   * while the document answering for those senders was one FETCH away. This is the narrow,
+   * read-only slice of the seed that the ROUTING needs early: read the folder, and when what it
+   * holds is a foreign, different, not-yet-answered document, arm the hold and write the durable
+   * marker the confirm surface reads. Nothing is written to the mailbox, `seeded` stays false
+   * (the full seed still runs on the first tick and re-derives everything from the folder), and
+   * every other state — none, unreadable, newer, ours, in-sync — is left for the seed to handle.
+   *
+   * Never throws. A failure here leaves the hold UNARMED and is logged: the residual is ordinary
+   * routing until the first tick's seed retries, which is the pre-fix behaviour for at most one
+   * cycle — against holding the gate closed for every mailbox whose `ohmail/_meta` read hiccuped,
+   * the bounded residual is the right side.
    */
   async armHoldFromFolder(): Promise<void> {
     const { deps } = this;
@@ -530,13 +649,23 @@ export class OrganizerProfileSync {
 
   /**
    * A HELD QUESTION THE FOLDER NO LONGER ASKS — re-derive the hold from what stands there NOW.
-   * Called from the hold blocks when the durable answer has not arrived: the folder can change while
-   * the question is open, and the confirm surface reads the FOLDER, so the hold must track it or the
-   * two disagree about whether a question is open. Three outcomes: the folder still asks the HELD
-   * question ⇒ untouched; a DIFFERENT one (another foreign-different unanswered document, or newer
-   * format) ⇒ RE-ARMED and the marker written; NOTHING (gone, ours, in-sync, corrupt, answered) ⇒ the
-   * hold lapses (`hold_lapsed`). One folder read per flush interval, only while a decision is open; a
-   * read FAULT throws into the caller's catch and the hold stands (the reversible direction).
+   *
+   * Called from the hold blocks when the durable answer has not arrived: the folder can change
+   * while the question is open (the previous organizer writes again, a hand-expunge, a newer
+   * build passing through), and the confirm surface reads the FOLDER — so the hold must track
+   * the folder or the two disagree about whether a question is open (a held
+   * document REPLACED by another foreign one cleared the hold while the surface kept offering
+   * the replacement, and screening resumed under an open prompt). Three outcomes:
+   *
+   *  · the folder still asks the HELD question — the hold stands untouched;
+   *  · it asks a DIFFERENT one (another foreign-different unanswered document, or a newer
+   *    format) — the hold is RE-ARMED on the new subject and the marker written, because the
+   *    question changed rather than closed;
+   *  · it asks NOTHING (gone, ours, in-sync, corrupt, or already answered) — the hold lapses
+   *    (`hold_lapsed`), and the next tick takes the ordinary arms for what stands there.
+   *
+   * One folder read per flush interval, only while a decision is open. A read FAULT throws into
+   * the caller's catch and the hold stands — the reversible direction.
    */
   private async reholdFromFolder(
     io: ProfileIo,
@@ -676,12 +805,16 @@ export class OrganizerProfileSync {
    */
   /**
    * @param pinned the connection the CALLER read its organizer lease on, when it has one.
-   * The desktop supplies it and the hosted worker does not, and the difference is not stylistic: on
-   * the desktop a re-dial can replace the connection under a running pass, and `deps.adapter` is a live
-   * getter, so publishing through it means publishing through whatever connection is current when the
-   * line runs — possibly one this pass never gated. Handing the connection in makes the pin EXPLICIT
-   * rather than an accident of statement order (the capture happened to sit above every `await`, which
-   * one added `await` above it would have silently undone, every test still green).
+   *
+   * The desktop supplies it and the hosted worker does not, and that difference is not stylistic.
+   * On the desktop a re-dial can replace the connection under a pass that is already running, and
+   * `deps.adapter` is a live getter — so publishing through it means publishing through whatever
+   * connection is current when the line runs, which may be one this pass never gated.
+   *
+   * Handing the connection in makes the pin EXPLICIT rather than an accident of statement order.
+   * The capture below happened to sit above every `await` in this method, so it read the right
+   * adapter for a reason no comment stated and one added `await` anywhere above it would have
+   * silently undone — with every test still green, because the capture is synchronous today.
    */
   async onOrganize(pinned?: MailboxAdapter): Promise<void> {
     const { deps } = this;
@@ -779,15 +912,24 @@ export class OrganizerProfileSync {
           await this.writeMarker({ state: "lapsed", fingerprint: fp, v: null }, log);
           return;
         }
-        // THE OTHER RELEASE: the user answered, and the answer did not equal the document.
-        // Convergence alone cannot end an import MERGED into existing local config (fingerprints never
-        // meet) or a DECLINE; both are recorded durably by the import surface
-        // (`organizer_profile_import_resolved`, keyed to the held document's fingerprint), and either
-        // means the local store is the user-ratified truth. The hold releases; the held fingerprint
-        // moves to `seenForeignFingerprint` so the next write may supersede THROUGH the engine's
-        // foreign gate. One indexed read per flush interval on the EXACT held fingerprint only; the
-        // old "any answer since the hold began" valve is gone because `reholdFromFolder` now moves the
-        // hold onto the folder's CURRENT document, so a STALE answer cannot release an open question.
+        // ── THE OTHER RELEASE: THE USER ANSWERED, AND THE ANSWER DID NOT EQUAL THE DOCUMENT ──
+        //
+        // Convergence alone cannot end two legitimate outcomes of the confirm flow: an import
+        // MERGED into existing local configuration (local ⊃ document, so the fingerprints never
+        // meet), and a DECLINE (keep local). Both are recorded durably by the import surface —
+        // `organizer_profile_import_resolved`, keyed to the held document's fingerprint — and
+        // either one means the local store is the user-ratified truth for this mailbox. The
+        // hold releases; the held fingerprint moves to `seenForeignFingerprint` so the next
+        // write may supersede the document THROUGH the engine's foreign gate (it was surfaced,
+        // and now answered); the dirty check is already open (nothing was written since seed).
+        // One indexed read per flush interval, only while a decision is open — and the EXACT
+        // held fingerprint only. The "any answer since the hold began" valve
+        // that used to ride here belonged to the era when a hold never re-armed: the confirm
+        // surface answers the folder's CURRENT document, and `reholdFromFolder` below now moves
+        // this hold onto exactly that document — its replacement check refuses one that is
+        // already answered, so a hold keyed to an older fingerprint converges through the
+        // rehold, while a STALE answer to a superseded document can no longer release a
+        // question that is still open.
         const resolved = await profileImportResolutionExists(deps.db, {
           accountId: deps.accountId, mailboxId: deps.mailboxId, fingerprint: this.holdFingerprint,
         });
@@ -907,14 +1049,21 @@ export class OrganizerProfileSync {
         }, log);
       }
     } catch (err) {
-      // One failure arm for the whole tick; the event names the feature, `err` reduces to class +
-      // code in `log.ts` and `ProfileUnavailableError.op` names the step. THE THROWN VALUE itself,
-      // never `err.message` (0.14.1): this slot once carried the MESSAGE STRING, so the logger was
-      // handed a string and truthfully reported `errorClass:"String" errorCode:null`, discarding a
-      // real `ProfileUnavailableError` and the provider's refusal in its `cause` — a live provider's
-      // every profile failure logged as a bare "String" (measured at RC3). The line moved into
-      // {@link noteFailure} (0.14.2) with the arm beside it, so latch and wrapping are decided once;
-      // what the value slot carries is unchanged.
+      // One failure arm for the whole tick, and the event names the feature rather than the
+      // step: `err` reduces to class + code in `log.ts`, and `ProfileUnavailableError.op` names
+      // the step when there is one.
+      //
+      // THE THROWN VALUE ITSELF, never `err.message` (0.14.1). This slot carried the MESSAGE
+      // STRING, so the logger — whose whole job is reducing a thrown value to class + code +
+      // causeClass — was handed a string and truthfully reported `errorClass:"String"
+      // errorCode:null` with nothing else: a real `ProfileUnavailableError` and the provider's
+      // refusal in its `cause` were discarded at this call site, and a live provider's every
+      // profile failure logged as a bare "String" (measured at RC3). The comment above was the
+      // claim; the ternary was the contradiction.
+      //
+      // THE LINE ITSELF MOVED into {@link noteFailure} (0.14.2), with the arm beside it, so the
+      // latch and the wrapping are decided in one place rather than twice. What the value slot
+      // carries is unchanged; what changed is how often it is written.
       this.noteFailure(err, log);
       // A seed that threw is retried by the next tick; nothing was marked seeded.
     } finally {
@@ -1024,12 +1173,14 @@ export class OrganizerProfileSync {
    */
   /**
    * ONCE PER INTERVAL, WHEN THERE IS NOTHING TO WRITE: read what the folder actually holds.
-   * The fingerprint comparison cannot see two failure shapes from a transient overlap the lease
-   * permits for one cycle: (a) TWO documents from two writers, neither store ever changing again, so
-   * nothing expunges the loser and a later reader may coalesce onto it; (b) a foreign document that
-   * OVERWROTE ours with no local change to trigger a write. Both heal here: force the dirty check open
+   *
+   * The fingerprint comparison alone cannot see two failure shapes, both from the same transient
+   * overlap the lease permits for one cycle: (a) TWO documents left by two writers, neither of
+   * whose stores will ever change again — nothing dirty, so nothing ever expunges the loser's
+   * copy, and a later reader may coalesce onto it; (b) a foreign document that OVERWROTE ours
+   * with no local change to trigger a write. Both heal here: force the dirty check open
    * (`lastWrittenFingerprint = null`) after recording what was seen, and the next tick's write
-   * supersedes through the engine's foreign gate, so nothing is expunged unsurfaced.
+   * supersedes — through the engine's foreign gate, so nothing is expunged unsurfaced.
    */
   private async verifyFolder(
     io: ProfileIo,
@@ -1176,14 +1327,33 @@ type MarkerFact =
   | { state: "lapsed"; fingerprint?: string | null; v?: number | null };
 
 /**
- * THE READER'S SIDE — caching the organizer's document in `mailbox_profile_mirror` (mail 0094).
- * An install that only READS has responder/rule/window/signature rows nothing acts on (the ones in
- * force are in the organizer's published document), and ruling 6's Critical is that the panes rendered
- * the local rows; so the reader caches the document it sees and `GET /mailboxes/:id/profile` serves
- * that. Here, not beside the reader arms, so `apps/worker`'s hosted reader and `apps/sidecar`'s local
- * one share one implementation (the sidecar already imports `@trafficflow/worker/profile`). THE PAIR
- * (`uidvalidity`, `uid`) is written together or not at all, the generation taken from {@link
- * ProfileReadResult}'s `found` arm inside the fetch lock; a `null` generation ⇒ no usable locator, no write.
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *  THE READER'S SIDE — caching the organizer's document in `mailbox_profile_mirror` (mail 0094)
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *
+ * Everything above is the ORGANIZER's half: serialize this store, publish it. This is the other
+ * half. An install that only READS a mailbox has responder, rule, window and signature rows of its
+ * own that nothing acts on — the ones in force are in the organizing install's published document —
+ * and ruling 6's Critical is that the panes rendered the local rows anyway. So the reader caches
+ * the document it can see, and `GET /mailboxes/:id/profile` serves that instead.
+ *
+ * Here rather than beside the reader arms because BOTH of them need it and there must be one
+ * implementation: `apps/worker`'s hosted reader cycle and `apps/sidecar`'s local one, the same
+ * argument this module's own header makes for the write-behind. The sidecar already imports
+ * `@trafficflow/worker/profile`, so this needs no new subpath and nothing new in the publish
+ * allow-set.
+ *
+ * ── THE PAIR IS WRITTEN TOGETHER OR NOT AT ALL ─────────────────────────────────────────────
+ *
+ * `uidvalidity` and `uid` are one fact. A remembered IMAP uid means nothing except under the
+ * generation it was read under: a folder deleted and recreated numbers from one again, so a uid
+ * that survived a renumber points confidently at the wrong message. The generation therefore comes
+ * from {@link ProfileReadResult}'s own `found` arm — taken inside the same lock as the fetch that
+ * produced the uid, so the two are consistent BY CONSTRUCTION — and never from a second read at
+ * this call site, which is the whole defect the pair exists to prevent.
+ *
+ * A `null` generation is NOT "any generation will do". It means the server reported no epoch, so
+ * the locator is unusable, so nothing is written and the log says why.
  */
 
 /** What one mirror pass did, for the log and for the tests. */
@@ -1209,23 +1379,73 @@ export interface MirrorDeps {
 }
 
 /**
- * READ THE ORGANIZER'S DOCUMENT ONCE AND CACHE IT — once per CADENCE. Never throws: a profile IO
- * failure is a mailbox fault for the logs, and a one-poll-stale cache beats an invented absence. A
- * reader's view is at most ONE CADENCE + ONE POLL behind: {@link DEFAULT_PROFILE_FLUSH_INTERVAL_MS}
- * (5 min) plus the reader arm's 60 s `pollIntervalMs` — the public note says "every few minutes". The
- * row's `read_at` turns per-poll calls into one read per cadence (2026-09-02 removed a per-30 s fetch;
- * `FakeMetaFolder.profileReads` counts it), used instead of the `(uidvalidity, uid)` pair because the
- * pair needs a current listing whose search lives in the fetch and `LeasePeek` carries neither. The
- * four answers differ: `found` ⇒ REPLACE the row WHOLE; `none` ⇒ DELETE (renumber case too);
- * `unreadable` ⇒ LEAVE ALONE; `newer` ⇒ left alone, not parsed. */
-/* THE CADENCE'S SECOND SOURCE, without which the bound is vacuous where it matters most.
- * The row's `read_at` bounds a mailbox whose organizer HAS published; the commoner state is a reader
- * on a mailbox whose organizer published NOTHING, where the read answers `none`, `none` DELETES rather
- * than writing, so no `read_at` is stamped and a row-only cadence reads every poll for ever (measured:
- * nine cycles, nine reads). So the last ATTEMPT is remembered in process, keyed by account and mailbox
- * — in process because the fact is about OUR POLLING, and a restart paying one extra read beats a
- * lying row shape. The key is joined with `JSON.stringify`, not a separator, because a control byte in
- * a key is a defect this repository has already paid for.
+ * READ THE ORGANIZER'S DOCUMENT ONCE AND CACHE IT — once per CADENCE, which is what makes that
+ * sentence true. Never throws: a profile IO failure is a mailbox fault for the logs, exactly as
+ * this module's write-behind treats one, and a reader whose cache is one poll stale is in a far
+ * better state than one that replaced a real document with an invented absence.
+ *
+ * ── THE STALENESS BOUND, STATED BECAUSE IT IS THE PRICE ────────────────────────────────────
+ *
+ * A reader's view of the organizer's profile is at most ONE CADENCE PLUS ONE POLL behind:
+ * {@link DEFAULT_PROFILE_FLUSH_INTERVAL_MS} (five minutes) before the copy is due, and up to the
+ * reader arm's 60 s `pollIntervalMs` before the next pass comes to fetch it. Six minutes, not
+ * five, and the extra minute is stated rather than rounded away — "within five minutes" is a
+ * claim a 5 m 59 s observation falsifies, and the public note therefore says "every few minutes".
+ *
+ * A reader cannot act on what it shows: the document is rendered, never applied, so nothing here
+ * can be pressed into a wrong decision by being a few minutes old.
+ *
+ * THAT BOUND IS WHAT KEEPS A SHIPPED FIX. "the profile module outlives the role now, and a reader
+ * was still paying for it" (2026-09-02) removed exactly this cost from the import path: an attached
+ * reader was fetching the whole profile source out of the customer's `ohmail/_meta` every 30 s for
+ * the life of the attachment instead of settling into the five-minute cadence, and nothing counted
+ * those reads. Mail 0094 gives a reader a REASON to read the document — it renders the organizer's
+ * settings instead of its own dead rows — and that reason does not buy back the per-cycle cost. The
+ * reader arm calls this once per poll (60 s); the row's own `read_at` is what turns those polls into
+ * one read per cadence. `FakeMetaFolder.profileReads` still counts full document reads and a
+ * reader's steady state is still one per cadence rather than one per cycle.
+ *
+ * WHY `read_at` AND NOT THE `(uidvalidity, uid)` PAIR, which would be the sharper test: the pair
+ * can only be compared against a CURRENT listing, and the cheap uid search that would supply one
+ * lives inside `listProfileMessages` — the full-source read itself, under its own mailbox lock — so
+ * asking costs the fetch it would save. The lease peek the same cycle already performs obtains the
+ * pair and discards it (`LeasePeek` carries neither a generation nor a ref). Exposing either would
+ * widen a published `@trafficflow/core` contract or take a second mailbox lock per cycle, to buy
+ * freshness inside a five-minute window that nobody can act on.
+ *
+ * ── THE FOUR ANSWERS ARE NOT INTERCHANGEABLE, WHICH IS THE WHOLE CARE HERE ─────────────────
+ *
+ * The lease peek's rule, restated for this table: *"I could not look" and "nobody holds it" must
+ * not be reachable from one another.* So:
+ *
+ *  · `found`      ⇒ REPLACE the row WHOLE. Both columns move together, so a stale generation can
+ *                   never end up beside a fresh uid — the state that would make the row a lie.
+ *  · `none`       ⇒ the folder genuinely holds no profile message. A cached copy would now be a
+ *                   document under a locator pointing at nothing, so the row is DELETED. This is
+ *                   also the renumber case: after a UIDVALIDITY bump the old uid addresses
+ *                   whatever now holds that small integer, and keeping it is worse than having no
+ *                   answer at all.
+ *  · `unreadable` ⇒ we could not read it. The row is LEFT ALONE. Deleting here is what would make
+ *                   a transient FETCH failure indistinguishable from the organizer clearing its
+ *                   settings.
+ *  · `newer`      ⇒ a later format. Left alone and not parsed, on the document engine's own rule:
+ *                   a reader that cannot understand a document does not overwrite or reinterpret
+ *                   it.
+ */
+/* ── THE CADENCE'S SECOND SOURCE, WITHOUT WHICH THE BOUND IS VACUOUS WHERE IT MATTERS MOST ──
+ *
+ * The row's `read_at` bounds a mailbox whose organizer HAS published a document. The commoner
+ * steady state is the other one — a reader attached to a mailbox whose organizer has published
+ * nothing — and there the read answers `none`, `none` DELETES rather than writing (a row of nulls
+ * would be indistinguishable from a document that says nothing: this module's own rule, stated at
+ * the discard), so no `read_at` is ever stamped and a row-only cadence reads every poll for ever.
+ * Measured on the lease fixture before this line existed: nine cycles, nine reads.
+ *
+ * So the last ATTEMPT is remembered in process, keyed by account and mailbox. In process rather
+ * than in the table because the fact is about OUR POLLING and not about the mailbox, and a restart
+ * paying one extra read is the right price for not inventing a row shape that lies. One small
+ * entry per mailbox this process has read for; the key is joined with `JSON.stringify` rather than
+ * a separator, because a control byte in a key is a defect this repository has already paid for.
  */
 const lastMirrorAttemptAt = new Map<string, number>();
 
@@ -1287,12 +1507,15 @@ export async function syncProfileMirror(deps: MirrorDeps): Promise<MirrorOutcome
 }
 
 /**
- * WHAT TO DO WITH EACH OF THE FOUR ANSWERS — split from the read above, and the split is a testable
- * seam. The decision logic must be driven through every union member, and an ES module namespace
- * cannot be monkey-patched, so a test would otherwise have to replace the whole document engine.
- * Taking the already-read result as an argument makes each answer a plain call, and leaves
- * {@link syncProfileMirror} with one behaviour of its own worth a case (a read that THROWS keeps the
- * cached copy), drivable through a real `ProfileIo` that fails the way one fails.
+ * WHAT TO DO WITH EACH OF THE FOUR ANSWERS — split from the read above, and the split is the
+ * testable seam rather than a tidying.
+ *
+ * The decision logic is what has to be driven through every union member, and an ES module
+ * namespace cannot be monkey-patched, so a test that wanted to feed answers to
+ * {@link syncProfileMirror} would have to replace the whole document engine for its file. Taking
+ * the already-read result as an argument makes each answer a plain call — and leaves
+ * `syncProfileMirror` with exactly one behaviour of its own worth a case (a read that THROWS keeps
+ * the cached copy), which is drivable through a real `ProfileIo` that fails the way one fails.
  */
 export async function applyProfileRead(
   deps: Omit<MirrorDeps, "io">, read: ProfileReadResult,

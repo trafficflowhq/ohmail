@@ -1498,27 +1498,8 @@ export function useScreenerState(
      * exactly as this effect always did.
      */
     if (restoredIntents.current === null) {
-      const swept = takeScreenerIntents(Date.now());
-      restoredIntents.current = swept.live.filter((r) => !s.pending.has(r.id));
-      /**
-       * AND WHAT DIED AT THE HORIZON IS SAID OUT LOUD, ONCE, AT THE READ.
-       *
-       * An expired intent is a press that will never be carried out. Removing it in silence
-       * leaves a person who decided about a stranger yesterday looking at that stranger again
-       * today with nothing to explain it — the defect this journal closes, reached through the
-       * journal's own bound. The sentence names the sender when there is one and asks for the
-       * press again; the row is already back in the queue, undecided, which is what it describes.
-       */
-      if (swept.expired.length > 0) {
-        const first = swept.expired[0]!;
-        toast(
-          t("toastIntentExpired", {
-            count: swept.expired.length,
-            name: displayAddressee(first.from.name, first.from.address),
-          }),
-          { duration: UNDO_MS },
-        );
-      }
+      restoredIntents.current = takeScreenerIntents(Date.now())
+        .filter((r) => !s.pending.has(r.id));
     }
     if (!asked.current) return;
     /* A ROW ANOTHER TAB HAS RESOLVED LEAVES THIS SNAPSHOT FOR GOOD. The journal read is taken

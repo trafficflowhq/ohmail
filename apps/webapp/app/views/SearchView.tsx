@@ -30,7 +30,6 @@ import { useKeyBindings, type KeyBinding } from "../shell/keymap";
 import { useZoneNav } from "../shell/zone-nav";
 import { storageOwner } from "../shell/storage-owner";
 import { searchSortKey, usePersistedChoice } from "../shell/persisted-ui";
-import { endSearch } from "../shell/ui-vitals";
 import "./search-keys.css";
 
 interface Filter {
@@ -230,17 +229,6 @@ export function SearchView({
     return { result: r, tookMs: Math.max(1, Math.round(performance.now() - t0)) };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [engine, trimmed, version]);
-
-  /**
-   * THE SEARCH MARK ENDS AT THE FIRST RESULTS — the budget's "first results < 500 ms", measured
-   * from the keystroke the shell started it on. The LOCAL pass is what ends it: those rows are
-   * what a person sees, and waiting for the archive would report a network round trip as the
-   * search's latency on every query that has one. Silent when nothing was pending, so a render
-   * for a query the mark already closed records nothing rather than a zero.
-   */
-  useEffect(() => {
-    if (result !== null) endSearch();
-  }, [result]);
 
   // ── the archive pass ──────────────────────────────────────────────────────
   //

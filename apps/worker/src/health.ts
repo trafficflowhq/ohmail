@@ -3,23 +3,61 @@ import type { AlertSinkHealth } from "@trafficflow/db/cloud";
 import type { ApiCronTargetHealth } from "./api-cron.js";
 
 /**
- * What the worker's health endpoint reports. It answers 200 in the STANDBY state as well as the leader
- * one for the length of a deploy (the platform kills anything else, and a killed hot spare can never
- * take over), bounded by {@link evaluateHealth}'s clock. It must not LIE the other way:
- * `lastCycleAt`/`lagSeconds` advance ONLY on a cycle that synced a mailbox (or had nothing to sync),
- * and `healthy` is FALSE for a leader with mailboxes to serve that served none past the bound (with
- * `expected`/`mailboxes`/`quarantined`/`awaitingCredentials`/`truncated` published beside it). A 503
- * gates a DEPLOYMENT going active, never a running instance. `kekFingerprint` + `kekActiveVersion` +
- * `kekVersionCount` are the KEK-drift tripwire from `kekEnvIdentity()` in `@trafficflow/core`; ALL
- * THREE must match (fingerprint covers the whole ring; `kekActiveVersion` persists as `key_version`). */
+ * What the worker's health endpoint reports, and for how long it is
+ * willing to call an idle instance healthy.
+ *
+ * It answers **200 in the standby state as well as the leader one, for the length of a
+ * deploy** — the platform's health check kills anything else, and a hot spare that gets killed can
+ * never take over. What later changed is the phrase "for the length of a
+ * deploy": the verdict is {@link evaluateHealth}, and it is bounded by a clock. Read that
+ * function's header for why each rule exists; this one is about the FIELDS.
+ *
+ * It must also never LIE the other way. `leader: true` + a fresh `lagSeconds` used to be
+ * reachable while sync was entirely dead: per-mailbox failures were swallowed and the
+ * empty timer cycle refreshed freshness regardless, so a worker with zero connected
+ * mailboxes looked perfectly healthy. Two rules fix that:
+ *
+ *  • `lastCycleAt`/`lagSeconds` advance ONLY on a cycle in which at least one mailbox
+ *    actually synced (or in which there was genuinely nothing to sync), so the
+ *    "no cycle for N minutes" alert fires on a dead leader instead of being lulled — and it
+ *    is what {@link evaluateHealth} measures the serving-nothing rule against;
+ *  • `expected` / `mailboxes` / `quarantined` / `awaitingCredentials` / `truncated` are
+ *    published side by side, and `healthy` is FALSE for a leader that has mailboxes to serve
+ *    and has served none of them past the bound — whatever the reason, which is the
+ *    correction: the old rule needed a recorded quarantine and so answered 200 for every
+ *    other way of serving nothing. A partial failure (one bad customer) stays 200: one broken
+ *    mailbox must never take down every other account's sync.
+ *
+ * A 503 does NOT cause the platform to replace the instance. The platform's health check gates a
+ * DEPLOYMENT becoming active and never re-probes a running service,
+ * so on a live worker this is a signal for a human and for the alert pass,
+ * and nothing else acts on it. That is precisely why the bounds are generous: the cost of
+ * being late is a slow page, and the cost of being early is a deployment that cannot go live.
+ *
+ * `kekFingerprint` + `kekActiveVersion` + `kekVersionCount` are the KEK-drift tripwire: the
+ * API host reports the SAME three fields from the same `kekEnvIdentity()` in
+ * `@trafficflow/core`, so a KEK drift between hosts (⇒ every mailbox credential
+ * undecryptable, invisible until a mailbox is touched) is a one-glance comparison instead
+ * of a silent total outage. ALL THREE must match, and none of them alone is sufficient:
+ * the fingerprint covers the whole RING (so a differing HISTORICAL key shows up, which an
+ * active-key-only fingerprint could not see), while `kekActiveVersion` is what new writes
+ * persist as `key_version` — two hosts holding identical bytes under different active
+ * versions are still incompatible.
+ */
 export interface HealthSnapshot {
   /**
-   * WHICH BUILD IS ANSWERING — the commit sha, or `"dev"` when nothing said. Named `version`, not
-   * `buildVersion`, so it is the same key the API publishes (the operator check compares two `/health`
-   * bodies, and a differently-named field makes that a translation exercise). Until this existed a
-   * worker deploy could only be confirmed out of band; the webapp is provable per chunk and the API
-   * echoes `TF_BUILD_VERSION`, and this is the third host answering the same question. Resolution and
-   * source order: {@link buildVersionOf} in `config.ts`.
+   * WHICH BUILD IS ANSWERING — the commit sha, or `"dev"` when nothing said.
+   *
+   * Named `version` and not `buildVersion` so it is the same key the API publishes, for the
+   * same reason `kek` exists beside the three flat KEK fields: the operator check is meant to be
+   * a comparison of two `/health` bodies, and a field that means the same thing under a
+   * different name makes that comparison a translation exercise.
+   *
+   * Until this existed a worker deploy could only be confirmed out of band — matching a
+   * deployment UUID from the platform CLI's listing against what its upload printed, which is
+   * the deploy tool agreeing with itself. The webapp has long been provable per chunk and
+   * the API echoes `TF_BUILD_VERSION`; this is the third host finally answering the same
+   * question. Resolution and source order: {@link buildVersionOf} in `config.ts`.
    */
   version: string;
   /**
@@ -58,22 +96,37 @@ export interface HealthSnapshot {
    */
   degraded: boolean;
   /**
-   * WHY it is degraded — a fixed token from {@link DegradedReason}, NEVER null while {@link degraded}
-   * is true. That clause did not hold until the causes were named: `degradedReason` named only two of
-   * six conditions, and a ROSTER SHORTFALL published `degraded: true, degradedReason: null` (measured
-   * twice on real deploy probes), leaving the reader to derive the cause from `expected` vs `mailboxes`.
-   * The invariant is now STRUCTURAL: {@link evaluateHealth} computes this token first and derives
-   * `degraded` from it (`degraded === (degradedReason !== null)`), so a nameless degraded state cannot
-   * be constructed. `test/health-verdict.test.ts` walks every cause and checks it anyway.
+   * WHY it is degraded — a fixed token from {@link DegradedReason}, and NEVER null while
+   * {@link degraded} is true.
+   *
+   * That last clause is the whole field, and it did not hold until the causes were named. `degradedReason` named
+   * exactly two conditions (`stale_cycle`, then `database_fault`) out of the six that can raise
+   * `degraded`, and the sentence that used to stand here — "the worker's other degraded causes are
+   * readable from the counts beside it" — was an assumption nobody had checked against a deploy.
+   * It is false in the commonest case: a ROSTER SHORTFALL published `degraded: true,
+   * degradedReason: null` and left the reader to derive the cause from `expected` vs `mailboxes`,
+   * which tells you a mailbox is missing and not one word about why. Measured twice on real
+   * deploy probes as `degraded: true, degradedReason: null` over a one-mailbox shortfall — both
+   * times the reader
+   * went looking for a fault that was not there.
+   *
+   * The invariant is now STRUCTURAL rather than asserted: {@link evaluateHealth} computes this
+   * token first and derives `degraded` from it (`degraded === (degradedReason !== null)`), so a
+   * degraded state with no name is not a bug to be caught but a value that cannot be constructed.
+   * `test/health-verdict.test.ts` walks every cause and checks it anyway, because a
+   * structural argument about code is worth exactly as much as the code it describes.
    */
   degradedReason: DegradedReason | null;
   /**
-   * The mailboxes this shard is supposed to serve and is NOT serving, decomposed by cause. `expected`
-   * minus `mailboxes` is already a subtraction anybody can do; what it never said is which of five
-   * situations produced it, and those want five different responses — from "dual mode working" to "a
-   * paying customer's mail is not syncing and no code path admits it". COUNTS ONLY: which mailbox is in
-   * which bucket is in the worker's log and `mailboxes.sync_blocked_reason`, neither of which belongs
-   * on an endpoint anybody can reach.
+   * The mailboxes this shard is supposed to serve and is NOT serving, decomposed by cause.
+   *
+   * `expected` minus `mailboxes` was already published and is already a subtraction anybody can do;
+   * what it never said is which of five different situations produced it, and those situations want
+   * five different responses — from "do nothing, this is dual mode working" through to "a paying
+   * customer's mail is not syncing and no code path admits it".
+   *
+   * COUNTS ONLY. Which mailbox is in which bucket is in the worker's log and in
+   * `mailboxes.sync_blocked_reason`; neither belongs on an endpoint anybody can reach.
    */
   unserved: UnservedBreakdown;
   /**
@@ -120,21 +173,30 @@ export interface HealthSnapshot {
   kek: { active: number; count: number; fingerprint: string } | null;
   shard: { index: number; shards: number };
   /**
-   * EVERY CONFIGURED PAGER ARM AND WHETHER IT IS ACTUALLY DELIVERING — one entry per arm, in compose
-   * order. `[]` on a standby instance. The state it closes is the one the pager cannot report: an arm
-   * that has refused every delivery since it was configured, beside one that works — `attempts: 0`
-   * says "never exercised", not healthy. CLOSED CODES ONLY (`ok`/`misconfigured`/`refused`/
-   * `unreachable`/`timeout`/`threw`); the vendor's error sentence stays in the gated log line, not on
-   * this reachable endpoint. A memory read, so `/health` still touches no database.
+   * EVERY CONFIGURED PAGER ARM AND WHETHER IT IS ACTUALLY DELIVERING — one entry per arm, in
+   * the order the worker composed them. `[]` on a standby instance (no worker, no pass yet).
+   *
+   * The state this closes is the one the pager itself cannot report: an arm that has refused
+   * every delivery since it was configured, beside an arm that works. Nothing fails, no
+   * escalation fires, the pages land — and the deployment has one vendor while believing it
+   * has two. `attempts: 0` says "never exercised", which is not the same claim as healthy.
+   *
+   * CLOSED CODES ONLY (`ok` / `misconfigured` / `refused` / `unreachable` / `timeout` /
+   * `threw`). The vendor's own error sentence stays in the log line, where a drain gates it;
+   * this endpoint is reachable by anyone and an unbounded third-party string does not belong
+   * on it. A memory read like every other field here, so `/health` still touches no database.
    */
   alertSinks: AlertSinkHealth[];
   /**
    * THE API-CRON SCHEDULE, PER TARGET — the internal API routes this worker drives on a clock
    * (`api-cron.ts`: billing reconcile hourly, session reap and the SMTP SIZE back-fill daily).
-   * Published because its predecessor (the API deployment's platform cron) failed by SAYING NOTHING
-   * for three weeks: a schedule that stops must be a row going visibly stale (`lastOkAt` ageing past
-   * `everySeconds`, a closed `outcome`), never an absence. `[]` where unconfigured, on shards > 0, and
-   * on a standby. Closed codes and clocks only, a memory read, so `/health` touches no database.
+   *
+   * Published for the reason the schedule moved here at all: its predecessor (the API
+   * deployment's platform cron) failed by SAYING NOTHING, for three weeks of deploys. A
+   * schedule that stops must be a row going visibly stale — `lastOkAt` ageing past
+   * `everySeconds`, a closed `outcome` naming the refusal — never an absence. `[]` where the
+   * arm is unconfigured, on shards > 0, and on a standby. Closed codes and clocks only, and a
+   * memory read, so `/health` still touches no database.
    */
   apiCron: ApiCronTargetHealth[];
   /** Present in the fatal state (a failed takeover, or a LOST leader lock). */
@@ -153,15 +215,50 @@ export interface HealthSnapshot {
 export type UnhealthyReason = "fatal" | "serving_nothing" | "waiting_for_lock";
 
 /**
- * Why `degraded` is true while nothing is unhealthy. A closed set, published, ranked so the cause
- * names the incident. `stale_cycle` — a connected leader whose last COMPLETED cycle is older than the
- * bound (invisible to `serving_nothing`, which needs `connected === 0`). `database_fault` — the
- * worker's own DB failing (a token because `expected`/`mailboxes`/`quarantined`/`truncated` read
- * healthy under it). `duty_gap` — enabled mailboxes in NO accounted-for bucket
- * (`roster_invariant_violated`), the one cause that is a BUG here. `roster_shortfall` — owed and
- * unserved for an accounted cause (`unserved` carries the breakdown). `at_capacity` — `maxMailboxes`
- * (`TF_MAX_MAILBOXES` or a shard). The three unhealthy tokens are the FLOOR, ranked last. NOT a cause:
- * `organized_elsewhere:*` (see {@link UnservedBreakdown.standDown}). */
+ * Why `degraded` is true while nothing is unhealthy. A closed set, because it is published.
+ *
+ * · `stale_cycle` — a leader with mailboxes CONNECTED whose last COMPLETED cycle is older than
+ *   the bound. `serving_nothing` cannot see this state (it requires `connected === 0`), so a
+ *   connected leader stayed `healthy: true, degraded: false` however stale its cycle — measured
+ *   in production at `lagSeconds: 560` during a cold backfill. DEGRADED and never unhealthy:
+ *   the platform gates deployments on this endpoint and never re-probes a running service, so an
+ *   unhealthy verdict here could refuse a deploy over a slow backfill while changing nothing on
+ *   a live instance. A signal for a human and the alert pass, exactly like `degraded` itself.
+ * · `database_fault` — the worker's own database is failing. It gets a TOKEN rather than
+ *   riding `workerDegraded` anonymously because the sentence above it — "the worker's other
+ *   degraded causes are readable from the counts" — is false for this one and for no other: the
+ *   correct behaviour under a database outage is that every mailbox stays attached, so
+ *   `expected`, `mailboxes`, `quarantined` and `truncated` all read exactly as they do on a
+ *   healthy shard. Without the token the published body would say `degraded: true` and offer
+ *   nothing that explains it.
+ *
+ *   Degraded and NEVER unhealthy, on the stale-cycle rule's argument taken one step further: a
+ *   503 does not restart a running instance, so the only thing it could change is whether a
+ *   DEPLOYMENT is allowed to go live — and refusing to ship during a database incident is
+ *   refusing to ship the fix. It ranks ABOVE `stale_cycle` because a database outage produces
+ *   stale cycles, so naming the cause beats naming the symptom.
+ * · `duty_gap` — enabled mailboxes of this shard are in NO accounted-for bucket: not served, not
+ *   awaiting credentials, not quarantined, not held by another organizer. The worker already
+ *   logs this as `roster_invariant_violated` and it is the one cause here that is a bug in the
+ *   worker rather than a condition it is reporting.
+ * · `roster_shortfall` — mailboxes this shard owes and is not serving, for a cause that IS
+ *   accounted for. `unserved` beside it carries the breakdown, which is the whole point: a
+ *   shortfall of quarantined mailboxes and a shortfall of credential-less ones look identical in
+ *   `expected` vs `mailboxes` and want opposite responses.
+ * · `at_capacity` — `maxMailboxes` dropped enabled mailboxes of this shard. Nothing in this
+ *   deployment serves them, and no clock will ever fix it: it is `TF_MAX_MAILBOXES` or a shard.
+ *
+ * The three unhealthy tokens are members too, so that the FLOOR of the ranking is total. They are
+ * ranked last deliberately — when the worker is 503 the reader already has `unhealthyReason`, so
+ * echoing it into this field adds nothing and any other cause present adds something. A `fatal`
+ * with a duty gap answers `degradedReason: "duty_gap", unhealthyReason: "fatal"`; a `fatal` with
+ * nothing else to say answers `"fatal"` in both, which is redundant and never null.
+ *
+ * ── WHAT IS DELIBERATELY *NOT* A DEGRADED CAUSE ────────────────────────────────────────────
+ *
+ * A mailbox another organizer legitimately holds (`organized_elsewhere:*` — the desktop
+ * stand-down of the dual-mode design). See {@link UnservedBreakdown.standDown}.
+ */
 export type DegradedReason =
   | "database_fault"
   | "duty_gap"
@@ -185,13 +282,25 @@ export interface UnservedBreakdown {
   awaitingCredentials: number;
   /**
    * ANOTHER ORGANIZER HOLDS THE LEASE, AND THIS IS NOT A FAULT — the one bucket excluded from the
-   * degraded calculus. Dual mode's invariant is EXACTLY ONE active organizer per mailbox, by a lease
-   * in `ohmail/_meta`; a Cloud worker meeting a fresh `local` claim stands down (`status='disabled'`,
-   * `disabled_reason='organized_elsewhere:local'`, zero passes) — the product working. Counting it
-   * degraded was half the measured oscillation this field was added for (`13/13 degraded: false` ↔
-   * `12/13 degraded: true`) and scales with desktop adoption. `index.ts`'s `SyncBlock` header records
-   * the two lease populations differ: {@link leaseUnreadable} degrades (nothing syncing); a stand-down
-   * does not (another organizer is, by design).
+   * degraded calculus, by a deliberate ruling against the dual-mode design.
+   *
+   * Dual mode's whole invariant is EXACTLY ONE active organizer per mailbox, arbitrated by a lease
+   * in `ohmail/_meta`. A Cloud worker meeting a fresh `local` claim stands down — writes
+   * `status='disabled'` with `disabled_reason='organized_elsewhere:local'`, runs zero pipeline
+   * passes, and is at that moment doing precisely what the product says it does. Counting that as
+   * a degraded worker is the health endpoint calling a correct hand-off a defect.
+   *
+   * IT WAS COUNTED, and it is half of the measured oscillation this field was added for: a
+   * mailbox flipping between enabled and stood-down moved the shard between `13/13 degraded: false`
+   * and `12/13 degraded: true` with nothing to name, on an account whose desktop install holds the
+   * lease exactly as designed. That reading was not merely unexplained, it was WRONG — and the
+   * error scales with desktop adoption, since every dual-mode user's mailbox would contribute one.
+   *
+   * The comment this replaces argued the other way ("a lease-unavailable mailbox still counts
+   * toward `expected` … nothing is syncing it. That is the honest answer") and it is honest about
+   * the wrong population. `index.ts`'s own `SyncBlock` header already records that the two lease
+   * populations "are not the same state": for {@link leaseUnreadable} nothing IS syncing the
+   * mailbox and it degrades; for a stand-down something is — another organizer, by design.
    */
   standDown: number;
   /**
@@ -209,12 +318,15 @@ export interface UnservedBreakdown {
 }
 
 /**
- * THE WORKER-SIDE DEGRADED CAUSES, as one named struct — the structural half of the invariant. Before
- * HEALTH-REASON this was a single `workerDegraded: boolean` ORing four conditions in `index.ts`, and
- * that anonymous true is exactly what made `degradedReason: null` reachable. There is now no anonymous
- * channel: `index.ts` builds this struct once, derives its own `degraded` (and the `worker_heartbeats`
- * column) from it via {@link anyDegradedCause}, and hands the SAME struct to {@link evaluateHealth} —
- * so heartbeat row and endpoint cannot disagree, and a fifth cause must be a named field here first.
+ * THE WORKER-SIDE DEGRADED CAUSES, as one named struct — the structural half of the invariant.
+ *
+ * Before HEALTH-REASON this was a single `workerDegraded: boolean` ORing four conditions together in
+ * `index.ts`, and the boolean is exactly what made `degradedReason: null` reachable: an anonymous
+ * true has no name to publish. There is now no anonymous channel. `index.ts` builds this struct
+ * once, derives its own `degraded` (and the `worker_heartbeats` column) from it via
+ * {@link anyDegradedCause}, and hands the SAME struct to {@link evaluateHealth} — so the heartbeat
+ * row and the endpoint cannot disagree, and a fifth cause has to be a named field here before it
+ * can raise anything.
  */
 export interface DegradedCauses {
   /** The worker's own database is failing. */
@@ -278,34 +390,84 @@ export interface HealthVerdict {
 }
 
 /**
- * THE VERDICT. Pure, so its truth table is a unit test. Two states reported 200 while nothing synced,
- * each a production outage. `leader: false, standby: true, mailboxes: 0` is a hot spare AND a worker
- * wedged in lock acquisition; the fix is a CLOCK (a deploy spare waits ~5 s). And `leader: true` with
- * zero of N was 503 only when a QUARANTINE was recorded — every other way of serving nothing answered
- * 200. The second rule has a GRACE PERIOD so it cannot lock the door on its own fix: on a COLD start an
- * instance is leader within seconds and an external outage would else instantly-503 the deploy, so
- * `maxMs` is above the health-check timeout (the platform accepts the deployment first). The clock is
- * `lastCycleAt ?? leaderSince`. It still cannot see a fast crash loop (detector is DB-side:
- * `worker_heartbeats.started_at` advancing while `last_cycle_at` does not). */
+ * THE VERDICT. Pure, so its truth table is a unit test and not an integration guess.
+ *
+ * ── WHAT WAS WRONG ─────────────────────────────────────────────────────────────────────────
+ *
+ * Two states reported 200 while nothing synced, and both cost a production outage.
+ *
+ * `leader: false, standby: true, mailboxes: 0` is what a hot spare looks like AND what a worker
+ * wedged inside lock acquisition looks like — a recorded open blind
+ * spot, and once it hid eight minutes of dead sync while
+ * the operator read a green probe. The fix is a CLOCK: a spare during a rolling deploy waits
+ * ~5 s, so anything past the bound is not a spare.
+ *
+ * And `leader: true` with zero of N mailboxes was 503 only when a QUARANTINE had been recorded
+ * (`quarantined > 0`). Every other way of serving nothing — a mailbox with no credential row, a
+ * roster pass that never finished, the `roster_invariant_violated` gap — answered 200. Zero of
+ * N is zero of N; the reason belongs in the log line, not in the verdict.
+ *
+ * ── AND WHY THE SECOND RULE HAS A GRACE PERIOD, WHICH THE BRIEF DID NOT ASK FOR ────────────
+ *
+ * Because without one it is a deploy gate that can lock the door on the fix. The platform evaluates
+ * the health check while a deployment comes up: on a COLD start (nothing holding the lock —
+ * i.e. after the previous instance crashed, i.e. exactly during an incident) an instance can be
+ * leader within seconds, and if the cause of the incident is external — the provider is down,
+ * every attach fails — an instantly-503 check fails the deploy of the very build that fixes
+ * something else. Measuring the state against the same bound as the standby clock keeps the
+ * alarm honest and keeps the door open: `maxMs` is above the health-check timeout, so the platform has
+ * already accepted the deployment before this rule can fire.
+ *
+ * The clock is `lastCycleAt ?? leaderSince`, both of which the process already tracks, so it
+ * needs no polling: a leader that is serving nothing completes no successful cycle, so
+ * `lastCycleAt` stops advancing the moment the last mailbox drops out — and for a leader that
+ * never had one, the takeover instant is the honest start.
+ *
+ * ── WHAT IT STILL CANNOT SEE, SAID PLAINLY ────────────────────────────────────────────────
+ *
+ * A fast crash loop. One early outage restarted the process every ~26 s; every clock here restarts
+ * with it, and a dead process serves no endpoint at all. No rule shaped like this one can catch
+ * that — the detector is DB-side (`worker_heartbeats.started_at` advancing while
+ * `last_cycle_at` does not), and it is a recorded follow-up.
+ */
 export function evaluateHealth(input: HealthInput): HealthVerdict {
-  // THE STALE-CYCLE RULE — degraded, never unhealthy. The serving-nothing rule requires
-  // `connected === 0`, so a leader whose mailboxes are all attached but whose cycle stopped COMPLETING
-  // was invisible (`healthy: true, degraded: false` however stale `lastCycleAt` went — measured
-  // `lagSeconds: 560` during a cold backfill). This names that without touching the deploy-gate
-  // verdict. Keyed on `lastCycleAt` ALONE, never the `?? leaderSince` fallback, so the one legitimate
-  // long window — the first post-takeover cycle (~5 min) — cannot trip it. The bound
-  // (8 min, `DEFAULT_STALE_CYCLE_MAX_MS`) clears that shape with margin.
+  // ── THE STALE-CYCLE RULE — degraded, never unhealthy ─────────────────────────────────────
+  //
+  // The serving-nothing rule requires `connected === 0`, so a leader whose mailboxes are all
+  // attached but whose cycle has stopped COMPLETING was invisible: `healthy: true, degraded:
+  // false` however stale `lastCycleAt` went (measured in production, `lagSeconds: 560` during a
+  // cold backfill, green throughout). This names that state without touching the verdict
+  // the platform's deploy gate reads.
+  //
+  // Keyed on `lastCycleAt` ALONE — never the `?? leaderSince` fallback the serving-nothing
+  // clock uses — so the one legitimately long window, the first post-takeover cycle (measured
+  // ~5 min in production), cannot trip it: a fresh leader has no completed cycle to be
+  // stale about until its first one lands. The bound (8 min, `DEFAULT_STALE_CYCLE_MAX_MS`)
+  // still clears that measured shape with margin, for the day the long cycle is the second one.
   const staleCycle = input.leader && input.connected > 0 && input.lastCycleAt !== null
     && input.now - input.lastCycleAt >= input.staleCycleMaxMs;
 
-  // THE RANKED CAUSE, AND `degraded` DERIVED FROM IT. This order is the whole change: it was a
-  // two-arm ternary over six conditions where the four with no arm published `degraded: true,
-  // degradedReason: null`. Ranked by which one NAMES THE INCIDENT, cause before symptom:
-  // `database_fault` first (an outage produces stale cycles and shortfalls); `duty_gap` next (the one
-  // BUG in this file's roster, meaning mail that will never sync); `roster_shortfall` (breakdown in
-  // `unserved`); `at_capacity` (a deliberate `TF_MAX_MAILBOXES`/shard decision); `stale_cycle` last of
-  // the real causes; and the unhealthy token as the FLOOR (a 503 body already carries `unhealthyReason`).
-  // `degraded` is then DERIVED, not ORed — there is no expression that raises it without a name.
+  // ── THE RANKED CAUSE, AND `degraded` DERIVED FROM IT ─────────────────────────────────────
+  //
+  // This order is the whole change. It used to be a two-arm ternary over six conditions, and the
+  // four with no arm published `degraded: true, degradedReason: null` — a state that says "this
+  // worker is not right" and refuses to say how, which is worse than silence because somebody
+  // acts on it. Ranked by WHICH ONE NAMES THE INCIDENT, cause before symptom throughout:
+  //
+  //  · `database_fault` first, on the origin tag's own argument — an outage produces stale cycles and, once
+  //    the roster pass stops resolving, shortfalls too, and only one of the three is the incident;
+  //  · `duty_gap` next: it is the one cause here that is a BUG in this file's roster rather than a
+  //    condition being reported, and it means mail that will never sync;
+  //  · `roster_shortfall`, whose breakdown rides beside it in `unserved`;
+  //  · `at_capacity` below the shortfall because it is a decision this deployment made on purpose
+  //    (raise `TF_MAX_MAILBOXES`, add a shard), not something that went wrong;
+  //  · `stale_cycle` last of the real causes — every cause above it can produce one;
+  //  · and the unhealthy token as the FLOOR, so the chain is total. It is last because a 503 body
+  //    already carries `unhealthyReason`: echoing it here adds nothing, while any other cause
+  //    present adds something.
+  //
+  // `degraded` is then DERIVED, not ORed independently. That is what makes the invariant
+  // structural: there is no expression anywhere that can raise `degraded` without choosing a name.
   const causeOf = (unhealthyReason: UnhealthyReason | null): DegradedReason | null =>
     input.databaseFault ? "database_fault"
       : input.dutyGap ? "duty_gap"
@@ -326,27 +488,44 @@ export function evaluateHealth(input: HealthInput): HealthVerdict {
 
   if (input.fatal) return verdict("fatal");
 
-  // WHAT THIS SHARD IS ACTUALLY OWED — `expected` minus the mailboxes another organizer legitimately
-  // holds. The stand-down ruling (`UnservedBreakdown.standDown`) must reach this rule and not only the
-  // degraded one, or it is a preference: a Cloud shard whose whole duty is organized by desktop
-  // installs serves zero for a correct reason, and 503 there would refuse deployments over the product
-  // working. Not a new policy — `expected: 0` has never been a fault — this only says a mailbox someone
-  // else organizes is not what this worker owes. The window is short (a stand-down writes
-  // `status='disabled'`, so the next roster pass drops it from `expected`).
+  // ── WHAT THIS SHARD IS ACTUALLY OWED ─────────────────────────────────────────────────────
+  //
+  // `expected` minus the mailboxes another organizer legitimately holds. The stand-down ruling
+  // (see `UnservedBreakdown.standDown`) has to reach this rule and not only the degraded one, or
+  // it is not a ruling but a preference: a Cloud shard whose whole duty is organized by desktop
+  // installs serves zero mailboxes for a correct reason, and answering 503 to that would refuse
+  // deployments over the product working as designed.
+  //
+  // It is also not a new policy — `expected: 0` has never been a fault ("a leader with nothing to
+  // serve is healthy"), and this says only that a mailbox somebody else is organizing is not part
+  // of what this worker has to serve. In practice the window is short (a stand-down writes
+  // `status='disabled'`, so the next roster pass drops the mailbox from `expected` outright); the
+  // rule is corrected because the short window is an accident of another component's timing.
   const owed = Math.max(0, input.expected - input.standDown);
   if (input.leader && owed > 0 && input.connected === 0) {
     const since = input.lastCycleAt ?? input.leaderSince;
     if (since !== null && input.now - since >= input.maxMs) return verdict("serving_nothing");
   }
 
-  // A takeover in flight is NOT waiting for the lock — it holds it, so the standby clock must not fire
-  // on it. The exemption is UNBOUNDED, the honest limit of the rule: a takeover that WEDGES is
-  // indistinguishable from one working hard. It used to cover a first sync (`attach()` drained inline,
-  // so a takeover spent MINUTES per mailbox — ~six measured in production — and at `maxMailboxes=64`
-  // that was hours of green `/health`). Now attach is connect + lease + folders + kickstart + IDLE and
-  // syncs nothing, so the window shrank from drain-time to connect-time; it did NOT close (64 mailboxes
-  // × a hung dial is still unbounded). The detector is DB-side (`worker_heartbeats.started_at`
-  // advancing while `last_cycle_at` does not). Do not read the smaller window as a fixed bound.
+  // A takeover in flight is NOT waiting for the lock — it holds it, so the standby clock must not
+  // fire on it. The exemption is UNBOUNDED, and that is the honest limit of the rule, recorded
+  // here rather than discovered: a takeover that WEDGES is indistinguishable, from the
+  // supervisor's vantage point, from one that is working hard.
+  //
+  // ── WHAT THE NON-BLOCKING ATTACH CHANGED, AND WHAT IT DID NOT ─────────────────────────────
+  //
+  // This exemption used to have to cover a first sync: `attach()` drained inline, so a takeover
+  // legitimately spent MINUTES per mailbox (an early measure was most of an hour for one large
+  // first import, and about six minutes per mailbox was measured in production later). At
+  // `maxMailboxes=64`
+  // that was hours of green `/health` over a boot serving almost nothing.
+  //
+  // Now attach is connect + lease + folders + kickstart + IDLE and syncs nothing, so
+  // the window this exemption hides shrank from drain-time to connect-time — seconds per mailbox.
+  // It did NOT close: 64 mailboxes × a hung provider dial is still unbounded, and no rule shaped
+  // like this one can see it, for the same reason it cannot see a fast crash loop. The detector is
+  // DB-side (`worker_heartbeats.started_at` advancing while `last_cycle_at` does not) and stays
+  // a recorded follow-up. Do not read the smaller window as a fixed bound.
   if (input.standby && !input.takingOver && input.now - input.standbySince >= input.maxMs) {
     return verdict("waiting_for_lock");
   }

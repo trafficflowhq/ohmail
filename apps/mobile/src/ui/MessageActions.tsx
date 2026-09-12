@@ -38,7 +38,6 @@ import {
   type WorldTag,
 } from "../state/live";
 import { useWorld } from "../state/world";
-import { BAR, PILL } from "./action-bar-layout";
 import { Button, Rule, Tap, Txt } from "./base";
 import { Icon, type IconName } from "./Icon";
 import { sendLaterOffered } from "./standalone-form";
@@ -93,42 +92,35 @@ export function MessageActions({
             backgroundColor: t.c.float,
             borderTopLeftRadius: t.radius.panel,
             borderTopRightRadius: t.radius.panel,
-            paddingHorizontal: BAR.padH,
-            // Six points of each vertical pad live INSIDE the verb block (below), not here: RN
-            // clips `hitSlop` at parent bounds, so a block measuring exactly the capsules' 38pt
-            // would cut their touch targets under the 48dp `Tap` reaches. Same visual bar,
-            // uncut hit rectangles.
+            paddingHorizontal: 12,
+            // Six points of each vertical pad live INSIDE the scroller (below), not here: RN
+            // clips `hitSlop` at parent bounds, and a content-sized horizontal ScrollView
+            // measuring exactly the capsules' 38pt would cut their touch targets under the
+            // 44pt contract `Tap` documents. Same visual bar, uncut hit rectangles.
             paddingTop: 4,
             paddingBottom: 2 + insets.bottom,
             flexDirection: "row",
             alignItems: "center",
-            gap: BAR.gap,
+            gap: 7,
           },
           t.liftUp("l3"),
           t.liftUp("barEdge"),
         ]}
       >
-        {/* THE VERBS WRAP; More is pinned OUTSIDE the wrap. A scroller stood here and a
-            horizontal ScrollView clips: at 1080 px / 420 dpi the fourth verb was cut mid-glyph
-            — "Resurface" at the pill's right edge, "Wieder auftauchen" as a bare "W". Wrapping
-            is what every other pill group on this phone already does. More is a sibling of the
-            wrap, not a member, so it can neither overlap a pill nor land alone on a line — the
-            shape the first release-binary walk produced and the scroller was answering. */}
-        <View
-          style={{
-            flex: 1,
-            flexDirection: "row",
-            flexWrap: "wrap",
-            alignItems: "center",
-            gap: BAR.gap,
-            paddingVertical: PILL.padV,
-          }}
+        {/* ONE ROW, NEVER TWO. The verbs ride a horizontal scroller and More is pinned outside
+            it, because a wrapping bar puts More alone on a second line as a stray glyph — the
+            first release-binary walk produced exactly that. A narrow phone scrolls the verbs;
+            the disclosure stays where a thumb expects it. */}
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          style={{ flexGrow: 1, flexShrink: 1 }}
+          contentContainerStyle={{ flexDirection: "row", alignItems: "center", gap: 7, paddingRight: 4, paddingVertical: 6 }}
         >
           <Button
             label={Copy.actionReply}
             icon="pen"
             variant="solid"
-            style={{ maxWidth: "100%" }}
             onPress={() => setOpen({ compose: "reply" })}
           />
           {/* The three horizons — toggles, with the pile that holds the message shown pressed. */}
@@ -152,12 +144,12 @@ export function MessageActions({
             on={m.pile === "bubbled_up"}
             onPress={() => (m.pile === "bubbled_up" ? a.resurfaceToggle(m.id) : setOpen("resurface"))}
           />
-        </View>
+        </ScrollView>
         <Tap
           onPress={() => setOpen("more")}
           accessibilityRole="button"
           accessibilityLabel={Copy.actionMore}
-          style={{ padding: (BAR.moreBox - 16) / 2 }}
+          style={{ padding: 10 }}
         >
           <Icon name="more" size={16} color={t.c.ink2} />
         </Tap>
@@ -859,13 +851,9 @@ function BarToggle({
         {
           flexDirection: "row",
           alignItems: "center",
-          gap: PILL.iconGap,
-          minHeight: PILL.minH,
-          // A capsule never outgrows its line: at a big font scale the LABEL wraps inside the
-          // pill instead — a second line of the verb's own words, never an ellipsis and never
-          // a shorter word. `Icon` keeps its size; only the text gives.
-          maxWidth: "100%",
-          paddingHorizontal: PILL.padH,
+          gap: 6,
+          minHeight: 38,
+          paddingHorizontal: 12,
           paddingVertical: 8,
           borderRadius: t.radius.pill,
           backgroundColor: on ? t.c.accentSoft : t.c.panel,
@@ -874,8 +862,8 @@ function BarToggle({
         t.lift("l0"),
       ]}
     >
-      <Icon name={icon} size={PILL.icon} color={on ? t.c.accentInk : t.c.ink} />
-      <Txt variant="button" tone={on ? "accent" : "ink"} style={{ flexShrink: 1 }}>
+      <Icon name={icon} size={13} color={on ? t.c.accentInk : t.c.ink} />
+      <Txt variant="button" tone={on ? "accent" : "ink"}>
         {label}
       </Txt>
     </Tap>

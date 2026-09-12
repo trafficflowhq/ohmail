@@ -12,7 +12,7 @@ import {
 // `ai/workflows/`, which calls the drafter; a type import is erased at emit, so naming it here
 // does not put that module — or any prompt — into an artifact built from this file.
 import type { WorkflowInverse } from "@trafficflow/core/mail";
-import { withAccountTx, type ServiceContext } from "./context.js";
+import type { ServiceContext } from "./context.js";
 import { ServiceError, IdempotencyRaceLost } from "./errors.js";
 import { refuseBulkMoveOnReader } from "./reader-request.js";
 import { clampLimit, decodeKeysetCursor, encodeListCursor } from "./pagination.js";
@@ -107,16 +107,12 @@ export class WorkflowsService {
     const steps = this.validSteps(body.steps);
     const enabled = this.validEnabled(body.enabled);
     const now = ctx.now();
-    // Through the fenced door — `workflows` hangs off the account alone. See `withAccountTx`.
-    const row = await withAccountTx(ctx, async (tx) => {
-      const [created] = await tx.insert(workflows).values({
-        accountId: ctx.accountId,
-        name, trigger, steps, enabled,
-        provenance: "user",   // AI-proposed workflows (provenance 'proposed', fromProposalId) arrive later
-        createdAt: now, updatedAt: now,
-      }).returning();
-      return created;
-    });
+    const [row] = await ctx.db.insert(workflows).values({
+      accountId: ctx.accountId,
+      name, trigger, steps, enabled,
+      provenance: "user",   // AI-proposed workflows (provenance 'proposed', fromProposalId) arrive later
+      createdAt: now, updatedAt: now,
+    }).returning();
     return toWorkflowDTO(row!);
   }
 
@@ -133,7 +129,7 @@ export class WorkflowsService {
       throw new ServiceError("validation_failed", 400, "fromProposalId must be a string");
     }
     const proposalId = proposalIdRaw;
-    return withAccountTx(ctx, async (tx) => {
+    return asTx(ctx).transaction(async (tx) => {
       const [proposal] = await tx.select().from(workflowProposals)
         .where(and(
           eq(workflowProposals.id, proposalId),
@@ -198,7 +194,7 @@ export class WorkflowsService {
     ctx: ServiceContext, workflowId: string,
     opts: { idempotency?: RunIdempotency | null; drafterConfigured?: boolean } = {},
   ): Promise<{ runId: string }> {
-    return withAccountTx(ctx, async (tx) => {
+    return asTx(ctx).transaction(async (tx) => {
       const wf = await this.load(tx, ctx.accountId, workflowId);
       if (!wf) throw new ServiceError("not_found", 404, "workflow not found");
       if (!wf.enabled) throw new ServiceError("conflict", 409, "workflow is disabled");

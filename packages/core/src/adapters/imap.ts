@@ -102,15 +102,9 @@ import {
   IMAP_READ_DEADLINE_MS, IMAP_CYCLE_DEADLINE_MS,
 } from "./imap-bounds.js";
 import type { MetaIdentity } from "./meta-memo.js";
-// THE EPOCH REPRESENTATION. A UIDVALIDITY is a named epoch or nothing; `0`, an absent field and
-// `String(undefined)` are all the same state, and this module is the only place that says so.
-import { epochOf, epochOfRef, epochVerdict, sameEpoch, UNKNOWN_EPOCH } from "../epoch.js";
 
 // Re-export the adapter types + folder constants so consumers can import them from this entrypoint.
 export * from "./imap-types.js";
-// …and the epoch door, so the worker and the API compare epochs through the same three answers
-// this file does rather than each spelling `!== "0"` its own way.
-export * from "../epoch.js";
 // …and the server-value ceilings, so a consumer bounding its own IMAP read reaches for the same
 // numbers rather than inventing a second set.
 export * from "./imap-bounds.js";
@@ -1546,17 +1540,16 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
 
       /**
        * A sequence window, and no SEARCH — the whole read is bounded by `limit`, not merely the
-       * response (the first version sorted every UID in the folder: "one bounded page" true of
-       * the answer, false of the work). Seqs are 1..exists with no holes, so the newest `limit`
-       * messages are exactly `exists-limit+1 : exists`. The cursor is therefore a SEQ, meaningful
-       * only within one epoch; unless `expectUidValidity` and this page name the SAME epoch it is
-       * DISCARDED and the top page served, because paging a renumbered folder skips everything
-       * above the stale watermark. An unnamed epoch reads `"0"` here, and a cursor carrying that
-       * `"0"` back compared EQUAL to it — the case the check exists for was the case it sat out.
+       * response. The first version ran `SEARCH ALL` and sorted every UID in the folder: "one
+       * bounded page" true of the answer, false of the work. Sequence numbers are 1..exists with
+       * no holes, so the newest `limit` messages are exactly `exists-limit+1 : exists` — one
+       * FETCH of at most `limit` envelopes. The cursor is therefore a SEQ, meaningful only within
+       * one epoch and one connection's view; `expectUidValidity` is the caller's cursor epoch,
+       * and on a mismatch the cursor is DISCARDED and the top page served — paging a renumbered
+       * folder would silently skip everything above the stale watermark.
        */
       const paged =
-        opts.expectUidValidity !== undefined
-          && !sameEpoch(epochOf(opts.expectUidValidity), epochOf(uidValidity))
+        opts.expectUidValidity !== undefined && opts.expectUidValidity !== uidValidity
           ? undefined
           : opts.beforeSeq;
       const end = Math.min(paged !== undefined ? paged - 1 : total, total);
@@ -2101,7 +2094,7 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
   ): Promise<Map<number, number>> {
     const epoch = String(curUidValidity);
     let entry = this.dateCache.get(folder);
-    if (!entry || !sameEpoch(epochOf(entry.uidValidity), epochOf(epoch))) {
+    if (!entry || entry.uidValidity !== epoch) {
       entry = { uidValidity: epoch, dates: new Map<number, number>() };
       this.dateCache.set(folder, entry);
     }
@@ -2566,11 +2559,8 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
         const mb = this.client.mailbox as MailboxObject;
         const curUidValidity = mb.uidValidity;
         const knownMap = new Map<number, KnownEntry>((prev?.known ?? []).map((k) => [k.uid, k]));
-        // A reset is a CONTRADICTION between two named epochs. A cold cursor names none and a
-        // silent server names none, and neither is evidence that the folder was recreated — read
-        // as strings, the second wiped the known-set every cycle (`"undefined"` matches nothing).
         const uidValidityChanged =
-          !!prev && epochVerdict(epochOf(prev.uidValidity), epochOf(curUidValidity)) === "stale";
+          !!prev && prev.uidValidity !== "0" && prev.uidValidity !== String(curUidValidity);
         // On a UIDVALIDITY change every prior UID is stale: treat the known-set as empty for
         // create/flag detection (so all current UIDs are re-learned) and emit every prior UID as a
         // delete; correlateMoves then re-pairs create↔delete by Message-ID into a single locator refresh.
@@ -2777,12 +2767,7 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
           }
         }
         // Deletes: previously-known UIDs that are gone (or ALL prior UIDs on a UIDVALIDITY change).
-        // A delete's ref carries the PRIOR epoch. Where the cursor names none, the folder's own
-        // is used — and it must be read as an epoch, not spliced into a string: `BigInt` of the
-        // `String(undefined)` a silent server persisted THROWS, which is the drain dying mid-cycle
-        // on a mailbox whose only fault is a server that does not answer the field.
-        const priorEpoch = prev ? epochOf(prev.uidValidity) : UNKNOWN_EPOCH;
-        const priorUidValidity = priorEpoch.known ? BigInt(priorEpoch.value) : curUidValidity;
+        const priorUidValidity = prev ? BigInt(prev.uidValidity === "0" ? String(curUidValidity) : prev.uidValidity) : curUidValidity;
         for (const [uid, { messageId }] of knownMap) {
           if (uidValidityChanged) {
             deletes.push({ folder, uidValidity: priorUidValidity, uid, messageId });
@@ -3154,9 +3139,9 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
    * is the epoch the next command runs against. A recreated folder re-issues UIDs, so a ref
    * committed under epoch V addresses a different message under V′ — unguarded, a move, flag,
    * expunge or body read lands on somebody else's mail. The refusal is {@link MessageGoneError};
-   * adoption re-finds the message. An epoch that is unnamed on EITHER side — unreported, zero, or
-   * a ref that carries no epoch — refuses with {@link EpochUnknownError}: unknown identity fails
-   * closed, and it is not a contradiction. Unconditional, no opt-out.
+   * adoption re-finds the message. `refEpoch === "0"` passes — the sentinel a cold drain
+   * persists. An unreported or zero CURRENT epoch refuses with {@link EpochUnknownError}: both
+   * mean UNKNOWN, and unknown identity fails closed. Unconditional, no opt-out.
    */
   private assertLocatorEpoch(locator: NativeLocator): void {
     const verdict = this.locatorEpochVerdict(locator);
@@ -3176,15 +3161,17 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
 
   /**
    * The three answers the comparison can have, kept apart because they want different refusals:
-   * `usable` (both epochs named and agreeing), `stale` (both named and contradicting — the
-   * message is not at this locator), `unknown` (either side unnamed, so nothing can be proved).
-   * Both sides go through {@link epochOf}, which is the whole representation decision: a `0`, an
-   * absent field and a `String(undefined)` are one state — UNKNOWN — and an unknown can neither
-   * match nor contradict. See {@link assertLocatorEpoch} for why the last is not the second.
+   * `usable` (the ref's epoch matches, or the ref claims none), `stale` (a contradiction — the
+   * message is not at this locator), `unknown` (the server named no epoch, or named zero, so
+   * nothing can be proved). See {@link assertLocatorEpoch} for why the last is not the second.
    */
   private locatorEpochVerdict(locator: NativeLocator): "usable" | "stale" | "unknown" {
+    const { uidValidity: refEpoch } = parseRef(locator.ref);
+    if (refEpoch === "0") return "usable";
     const mb = this.client.mailbox as MailboxObject | false;
-    return epochVerdict(epochOfRef(locator.ref), epochOf(mb ? mb.uidValidity : null));
+    const reported = mb && mb.uidValidity != null ? String(mb.uidValidity) : null;
+    if (reported === null || reported === "0") return "unknown";
+    return refEpoch === reported ? "usable" : "stale";
   }
 
   /**
@@ -3357,23 +3344,20 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
 
     // The batch is one UID set, so it is one epoch or it is not a batch: `UID MOVE 1,2,3`
     // addresses whatever the SELECTed mailbox currently numbers, so a set from two epochs cannot
-    // be right about more than one — and a member whose epoch nobody named cannot be proved to
-    // belong to the one the others agree on. Any unknown member, or two known epochs, declines
-    // (`batched: false`) rather than throwing: the caller re-files one at a time and `move`'s
-    // guard gives each row its own verdict. The old precheck FILTERED the unknown members out
-    // before looking, so `{0:10, 8:11}` moved uid 10 on uid 11's agreement and an all-unknown
-    // chunk moved with no comparison at all. Every member now carries the same named epoch, so
-    // any one speaks for all.
+    // be right about more than one. Declining (`batched: false`) rather than throwing: the caller
+    // re-files one at a time and `move`'s epoch guard gives each row its own verdict. Sentinel
+    // `"0"` refs are excluded, per {@link assertLocatorEpoch}. The representative is a
+    // NON-SENTINEL member, never `locators[0]`: `{0:10, 7:11, 7:12}` passes the set test and then
+    // checks `0:10`, which never reports stale — a folder now at epoch 8 would relocate three
+    // strangers. Every non-sentinel member carries the same epoch, so any one speaks for all;
+    // `undefined` means the whole chunk is sentinels.
     let epochRep: NativeLocator | undefined;
     {
-      const epochs = new Set<string>();
-      for (const l of locators) {
-        const e = epochOfRef(l.ref);
-        if (!e.known) return empty;
-        epochs.add(e.value);
-      }
+      const epochs = new Set(
+        locators.map((l) => parseRef(l.ref).uidValidity).filter((e) => e !== "0"),
+      );
       if (epochs.size > 1) return empty;
-      epochRep = locators[0];
+      epochRep = locators.find((l) => parseRef(l.ref).uidValidity !== "0");
     }
 
     // Step 1: the existence probe and the Message-IDs, for the whole set, under one source lock.
@@ -3549,12 +3533,9 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
     try {
       const mb = this.client.mailbox as MailboxObject | false;
       const seen = this.lastInboxSeen;
-      // The growth claim is "more mail arrived UNDER THE SAME EPOCH", so both epochs must be
-      // named and agree: a server answering zero made `"0" === "0"` and the uidNext comparison
-      // was taken across a numbering nobody identified.
       if (
         mb && seen
-        && sameEpoch(epochOf(mb.uidValidity), epochOf(seen.uidValidity))
+        && String(mb.uidValidity ?? "") === seen.uidValidity
         && typeof mb.uidNext === "number" && mb.uidNext > seen.uidNext
       ) {
         grew = true;

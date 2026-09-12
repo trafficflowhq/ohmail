@@ -6,7 +6,7 @@ import {
   rules as rulesTbl, type Tx,
 } from "@trafficflow/db";
 import {
-  FOLDER_PAGE_MAX, MessageGoneError, makeRef, epochOf, sameEpoch,
+  FOLDER_PAGE_MAX, MessageGoneError, makeRef,
   type FolderPage, type FolderPageItem, type FolderSearchPage,
 } from "@trafficflow/core/adapters/imap";
 /* `core/mail`, never the default barrel: the barrel re-exports `ai/workflows/*`, whose workflow runner
@@ -16,7 +16,7 @@ import {
 import { UNMETERED_STORAGE_CAP, normalizeMime, unhuskJunkFiledBody } from "@trafficflow/core/mail";
 import {
   ServiceError, foldersEnabled, isUuid, requireImapUint32, requireUuid, IMAP_UINT32_MAX,
-  withAccountTx, type ServiceContext,
+  type ServiceContext,
 } from "@trafficflow/services/mail";
 import { IMAP_DOOR_DEADLINE_MS, withinDoorBudget } from "./imap-door.js";
 import type { ApiDeps } from "./deps.js";
@@ -216,7 +216,7 @@ export async function listJunk(
       const held = before[box.id];
       states.push({
         id: box.id, address: box.address, window: "ok",
-        ...(held !== undefined && !sameEpoch(epochOf(held.v), epochOf(page.uidValidity)) ? { reset: true } : {}),
+        ...(held !== undefined && held.v !== page.uidValidity ? { reset: true } : {}),
       });
       return { boxId: box.id, page };
     } catch (err) {
@@ -267,7 +267,7 @@ export async function listJunk(
     } else if (lane.rows.length > 0) {
       // Nothing of this mailbox fit the page: resume exactly where this request began.
       const held = before[lane.boxId];
-      nextBefore[lane.boxId] = held !== undefined && sameEpoch(epochOf(held.v), epochOf(lane.uidValidity))
+      nextBefore[lane.boxId] = held !== undefined && held.v === lane.uidValidity
         ? held
         : { v: lane.uidValidity, s: lane.rows[0]!.seq + 1 };
     } else if (lane.adapterNext !== null) {
@@ -290,7 +290,7 @@ export async function listJunk(
       const held = before[lane.boxId];
       const s = lane.tookAny
         ? lane.lowestTakenSeq
-        : held !== undefined && sameEpoch(epochOf(held.v), epochOf(lane.uidValidity))
+        : held !== undefined && held.v === lane.uidValidity
           ? held.s
           : (lane.rows[0]?.seq ?? 0) + 1;
       nextBefore[lane.boxId] = { v: lane.uidValidity, s: Math.max(1, s) };
@@ -474,7 +474,7 @@ export async function junkBody(
     (adapter) => adapter.fetchByUid(box.junkFolder!, [args.uid], { maxBytes: JUNK_BODY_MAX_BYTES }),
     { budgetMs: JUNK_READ_TIMEOUT_MS },
   );
-  if (!sameEpoch(epochOf(fetched.uidValidity), epochOf(args.uidValidity))) {
+  if (fetched.uidValidity !== args.uidValidity) {
     throw new ServiceError("junk_message_gone", 410, "the Junk folder changed under this row — reload the list");
   }
   if (fetched.oversize.includes(args.uid)) {
@@ -520,11 +520,8 @@ export async function allowSender(
     throw new ServiceError("unprocessable", 422, "this message has no sender address to allow");
   }
   const nowAt = ctx.now();
-  // Through the services' FENCED transaction door, on the host's own handle: this writes
-  // `contacts` and `rules`, both of which hang off the account alone, and `accounts` survives
-  // Art. 17 erasure — so an unfenced rescue in flight across a deletion would recreate a
-  // correspondent's address under the pseudonymous row.
-  return withAccountTx(ctx, async (tx) => {
+  // The services' `asTx` cast: the host's `Db` is the same drizzle handle under a narrower type.
+  return (deps.db as unknown as Tx).transaction(async (tx) => {
     // 1. The spam-promoting rules for THIS address, switched off. `.returning()` so the change
     //    rows describe exactly the rows that flipped — an already-disabled rule is not re-announced.
     const disabled = await tx.update(rulesTbl)
@@ -572,7 +569,7 @@ export async function allowSender(
     }).returning({ id: rulesTbl.id });
     await recordChange(tx, { accountId, entityType: "rule", entityId: rule!.id, op: "create", meta: null });
     return { disabledRuleIds: disabled.map((r) => r.id), createdRuleId: rule!.id };
-  }, { db: deps.db });
+  });
 }
 
 /**
@@ -659,7 +656,7 @@ export async function rescueJunk(
             const fetched = await adapter.fetchByUid(box.junkFolder!, [args.uid], {
               maxBytes: JUNK_BODY_MAX_BYTES,
             });
-            const c = sameEpoch(epochOf(fetched.uidValidity), epochOf(args.uidValidity))
+            const c = fetched.uidValidity === args.uidValidity
               ? fetched.creates.find((x) => x.raw !== undefined)
               : undefined;
             raw = (c?.raw as Buffer | undefined) ?? null;

@@ -60,15 +60,6 @@ export type DisabledReason = "no_cursor" | "no_erase" | "trash_unavailable";
  */
 export type CursorPlacer = (label: string) => boolean;
 
-/**
- * WHICH LAYER A PLACER SPEAKS FOR — the placer's half of {@link BindingScope}, and for the same
- * reason: `view` beats `global`, whatever the component tree says. A view that holds its own list
- * cursor mounts BELOW the shell, so React runs its effect FIRST and the shell's claim is always
- * the more recent one — "most recently" would hand every split view's placement to a host that
- * answers `false` for that route. Within one scope the most recent claim still wins.
- */
-export type PlacerScope = "view" | "global";
-
 /** How long the first key of a sequence stays armed. */
 const SEQUENCE_MS = 1200;
 
@@ -174,12 +165,13 @@ interface Registry {
    * Offer to place the cursor for as long as the caller is mounted — see {@link CursorPlacer};
    * returns the release. A claim rather than a prop: the host that owns the cursor (`AppShell`) is
    * a CHILD of this provider. Exactly one placer answers — the one claimed most recently — and
-   * nothing falls through, not even on decline, or a second host would draw a selection ring on a
-   * list the pressed verb does not act on. "Most recently" is not "innermost" (React runs a
-   * child's effects first), which is why the claim carries a {@link PlacerScope}: a view's claim
-   * beats the shell's, and only then does recency decide. `global` is the default.
+   * nothing falls through, not even on decline: a placer answers `false` both for "my list is
+   * empty" and "not my surface", and a second host asked after a decline would draw a selection
+   * ring on a list the pressed verb does not act on. "Most recently" is not "innermost" (React runs
+   * a child's effects first — {@link BindingScope} carries that scar); `AppShell` is the only
+   * claimant today, and a second would need a scope.
    */
-  claimCursorPlacer: (place: CursorPlacer, scope?: PlacerScope) => () => void;
+  claimCursorPlacer: (place: CursorPlacer) => () => void;
 }
 
 const KeymapContext = createContext<Registry | null>(null);
@@ -359,26 +351,12 @@ export function KeymapProvider({ children }: { children: ReactNode }) {
    * rather than one slot so that a claim released out of order cannot clear somebody else's —
    * the argument `writingSurfaces` makes for being a count.
    */
-  const placers = useRef<Array<{ place: CursorPlacer; scope: PlacerScope }>>([]);
-  const claimCursorPlacer = useCallback((place: CursorPlacer, scope: PlacerScope = "global") => {
-    /* The ENTRY is the identity, not the closure: two views claiming one shared placer function
-       would otherwise release each other's claim — `useKeyBindings`' layer ids make the same
-       argument about the same hazard. */
-    const entry = { place, scope };
-    placers.current = [...placers.current, entry];
+  const placers = useRef<CursorPlacer[]>([]);
+  const claimCursorPlacer = useCallback((place: CursorPlacer) => {
+    placers.current = [...placers.current, place];
     return () => {
-      placers.current = placers.current.filter((p) => p !== entry);
+      placers.current = placers.current.filter((p) => p !== place);
     };
-  }, []);
-  /** The claim that answers: the most recent VIEW one, else the most recent global one. */
-  const placerNow = useCallback((): CursorPlacer | null => {
-    for (const scope of ["view", "global"] as const) {
-      for (let i = placers.current.length - 1; i >= 0; i--) {
-        const held = placers.current[i]!;
-        if (held.scope === scope) return held.place;
-      }
-    }
-    return null;
   }, []);
 
   useEffect(() => {
@@ -489,10 +467,9 @@ export function KeymapProvider({ children }: { children: ReactNode }) {
       for (const b of parked) {
         if (chordPrefix(b.chord)) continue;
         if (!chordMatches(b.chord, e) || !eligible(b)) continue;
-        /* ONE CLAIM ANSWERS, AND ONLY IT — the innermost scope's most recent, see
-           {@link Registry.claimCursorPlacer} for why a declining placer is not followed by a
-           second one. */
-        const place = placerNow();
+        /* THE MOST RECENT CLAIM, AND ONLY IT — see {@link Registry.claimCursorPlacer} for why a
+           declining placer is not followed by a second one. */
+        const place = placers.current[placers.current.length - 1];
         /* NOTHING PLACED ⇒ NOTHING CONSUMED. An empty list, or a surface whose cursor no
            claimant holds: the press stays exactly as inert as it is today, `preventDefault`
            included, rather than being swallowed by a rule that could not act on it. */
@@ -503,7 +480,7 @@ export function KeymapProvider({ children }: { children: ReactNode }) {
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [ordered, placerNow]);
+  }, [ordered]);
 
   /**
    * The dispatcher's own walk, reachable from a click. See {@link Registry.press}.
@@ -564,13 +541,13 @@ export function useWritingSurface(): void {
  * is to read the list and the cursor as they are at the keypress, and a stale one would place a
  * cursor from a list the user has since left.
  */
-export function useCursorPlacer(place: CursorPlacer, scope: PlacerScope = "global"): void {
+export function useCursorPlacer(place: CursorPlacer): void {
   const { claimCursorPlacer } = useKeymap();
   const latest = useRef(place);
   latest.current = place;
   useEffect(
-    () => claimCursorPlacer((label) => latest.current(label), scope),
-    [claimCursorPlacer, scope],
+    () => claimCursorPlacer((label) => latest.current(label)),
+    [claimCursorPlacer],
   );
 }
 

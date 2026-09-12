@@ -128,12 +128,8 @@ export interface SyncSnapshotPage {
   changes: SyncChange[];
   /** The server's opaque paging token; `null` ⇒ this was the last page. */
   nextCursor: string | null;
-  /**
-   * What the server paged with. Informational — see the note above. `maxRows` is the server's ROW
-   * ceiling beside `days` and `minRows`; optional because a server older than the field states no
-   * ceiling, which is what that server does.
-   */
-  window: { days: number; minRows: number; maxRows?: number };
+  /** What the server paged with. Informational — see the note above. */
+  window: { days: number; minRows: number };
 }
 
 // ── entity DTO mirrors ─────────────────────────────────────────────────────
@@ -223,16 +219,6 @@ export interface EngineMessage extends EngineMessageExtras {
   to: EmailAddress[];
   cc: EmailAddress[];
   date: ISODateTime | null;
-  /**
-   * WHEN THE MAILBOX RECORDED THIS MESSAGE — the wire's `arrivedAt` (`messages.created_at`).
-   *
-   * The cutline dates a message by {@link date} ELSE this, because `Date:` is sender-written and
-   * any stranger can omit it — see `consent-cutline.ts#messageMs`. OPTIONAL for
-   * {@link lastReadAt}'s reason: a mirror row written before the field is `undefined`, which
-   * means "no arrival recorded" and falls back to the pre-field answer rather than to an
-   * invented instant. Every server this engine talks to sends it; fixture rows may leave it out.
-   */
-  arrivedAt?: ISODateTime;
   folder: Folder;
   snippet: string;
   unread: boolean;
@@ -568,16 +554,6 @@ export interface EngineDraft {
    * can seed an editor from a body nobody sent. {@link draftBodyKnown} is the one predicate.
    */
   body: string | null;
-  /**
-   * Why {@link body} is `null`, when the page that dropped it said so — `over_ceiling` is a
-   * stored body past `DRAFT_BODY_MAX_BYTES`, which `/sync/snapshot` will not carry.
-   *
-   * Optional, and it changes NO decision: {@link draftBodyKnown} is still the one predicate, and
-   * a body is unknown whether or not a reason arrived (an older server sends none). It is here so
-   * "this page left it out" and "this body is too large for a page" are not one state — a
-   * distinction a support answer needs and a truncation would have destroyed.
-   */
-  bodyOmitted?: "over_ceiling";
   to: EmailAddress[];
   cc: EmailAddress[];
   /** Blind-carbon recipients. Delivered on the envelope only; never a header on the sent mail. */

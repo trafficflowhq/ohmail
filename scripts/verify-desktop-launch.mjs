@@ -1,14 +1,23 @@
 #!/usr/bin/env node
 /**
- * verify-desktop-launch.mjs — start the packaged app and prove its window RENDERED. Every job that builds
- * this app is a build or a static read, so a panic that only exists at runtime is invisible until a release
- * is in people's hands: 0.9.7 aborted on every platform on every launch and shipped past a green five-job
- * matrix; 0.13.7 opened its window and threw on the FIRST RENDER, which no liveness check tells from a
- * working app. So "alive" is not the question — the verdict is a captured frame with content in it: (1) a
- * window exists with real geometry (a WebView that cannot initialise leaves one 1×1) and (2) the frame is
- * RENDERED (a band across it carries edges on many rows). Both, because either alone passes the failure the
- * other catches. DISPLAY comes from the caller (runnable outside CI); the capture is `xwd -root` (an
- * app-window capture is black here, the compositor draws elsewhere). */
+ * verify-desktop-launch.mjs — start the packaged app and prove its window RENDERED.
+ *
+ * Every job that builds this app is a build or a static read, so a panic that only exists at
+ * runtime is invisible until a release is in people's hands. 0.9.7 aborted on every platform on
+ * every launch and shipped past a green five-job matrix; 0.13.7 opened its window and threw on the
+ * FIRST RENDER, which no liveness check can tell from a working app.
+ *
+ * So "alive" is not the question. The verdict is a captured frame with content in it:
+ *
+ *   1 · a window exists with real geometry — a WebView that cannot initialise leaves one 1×1
+ *   2 · the frame is RENDERED — a band across it carries edges, on many rows
+ *
+ * Both, because either alone passes the failure the other exists to catch: a correctly sized
+ * window can be blank, and a rendered frame belongs to some window.
+ *
+ * DISPLAY comes from the caller, which is what makes this runnable outside CI. The capture is
+ * `xwd -root`: an app-window capture is black here, because the compositor draws elsewhere.
+ */
 import { execFileSync, spawn } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
@@ -78,14 +87,23 @@ function readXwd(file) {
   };
 }
 
-/* THE VERDICT: EDGES, NOT COLOUR COUNTS. A band across the middle, because a first-run screen puts its text
- * and control there while the top and bottom can legitimately be one flat colour. The measure is HORIZONTAL
- * TRANSITIONS — adjacent pixels along a row differing by more than a threshold — over many rows. Two weaker
- * measures are wrong: distinct-colour counts count ANTIALIASING (a real capture reads 408 colours, but text
- * drawn without smoothing is two, so the floor would refuse a rendered window); and the share of pixels
- * differing from the dominant colour is 87% for a smooth VERTICAL gradient, a window that painted its
- * background and rendered nothing (the 0.13.7 shape). Edges separate all four cases: a flat fill has none, a
- * gradient in either direction has none (its per-pixel steps are below threshold), and content has many, on many rows. */
+/* ── THE VERDICT: EDGES, NOT COLOUR COUNTS ────────────────────────────────────────────────────
+ * A band across the middle, because a first-run screen puts its text and its control there while
+ * the top and bottom can legitimately be one flat colour.
+ *
+ * The measure is HORIZONTAL TRANSITIONS — adjacent pixels along a row differing by more than a
+ * threshold — spread over many rows. Two weaker measures were tried and both are wrong:
+ *
+ *   · distinct colours counts ANTIALIASING. A real capture of this app reads 408 colours, but
+ *     text drawn without smoothing is two, so the floor would refuse a rendered window.
+ *   · the share of pixels differing from the dominant colour is 87% for a smooth VERTICAL
+ *     gradient, which is a window that painted its background and rendered nothing — the exact
+ *     0.13.7 shape this check exists to catch.
+ *
+ * Edges separate all four cases: a flat fill has none, a gradient in either direction has none
+ * (its per-pixel steps are below the threshold, and a vertical one varies down the frame rather
+ * than across it), and content — text, a control, a border — has many, on many rows.
+ */
 export function frameVerdict(img, { minEdgeRows = 8, minEdges = 200, delta = 24 } = {}) {
   const y0 = Math.floor(img.height * 0.25);
   const y1 = Math.floor(img.height * 0.75);

@@ -1,4 +1,4 @@
-import { classifyRefreshFailure, type SessionLifecycle } from "@trafficflow/services/auth";
+import type { SessionLifecycle } from "@trafficflow/services/auth";
 import { ServiceError } from "@trafficflow/services/mail";
 import { serviceContext } from "../context.js";
 import { clearSessionCookies, ownerCookieValue, sessionCookies, OWNER_COOKIE } from "../cookies.js";
@@ -68,14 +68,13 @@ export const sessionLifecycleRoutes: Route[] = [
       const jar = parseCookies(req.headers.get("cookie"));
       const cookieRefresh = cookieSurface(deps) ? jar["tf_refresh"] : undefined;
       if (cookieRefresh) {
-        // A REFUSED cookie refresh must clear the jar, not just refuse. The browser is told to
+        // A failed cookie refresh must clear the jar, not just refuse. The browser is told to
         // resume by `tf_resume`, which outlives a refresh token that has been revoked, rotated
         // past, or reused — without this, such a browser loops through the resume splash on every
         // page load for the marker's whole ninety-day life. Answering the refusal with
         // `clearSessionCookies()` makes the failure self-healing: the marker goes with the rest
-        // and the visitor lands on the marketing page, signed out, which is the truth.
-        //
-        // REFUSED, not FAILED: see the catch — the two are not the same answer.
+        // and the visitor lands on the marketing page, signed out, which is the truth. Rethrown
+        // as 401: the caller must still be told it failed.
         try {
           // `concurrentGrace`: this is the cookie surface, where a shared browser jar lets
           // several tabs present one `tf_refresh` at once and the client single-flights refresh
@@ -103,24 +102,11 @@ export const sessionLifecycleRoutes: Route[] = [
           return noContent(sessionCookies(
             tokens!, csrfTokenFor(tokens!.accessToken), deps.authConfig, ownerCookieValue(jar[OWNER_COOKIE]),
           ));
-        } catch (err) {
-          /*
-           * DECIDED BY THE THROWN VALUE'S CLASS. This answered every failure with one coded 401
-           * and `clearSessionCookies()`, so a busy pool or a driver error destroyed the browser's
-           * only copy of a token the server still honours — and the client reads a coded 401 here
-           * as "your session is gone". A FAULT is rethrown to `withErrorEnvelope` (503 `db_busy`,
-           * else 500) with NO `Set-Cookie`, so the token survives and the next attempt spends it;
-           * a REQUEST refusal (the cross-account 409) keeps the jar too, its session unjudged.
-           * Only a 401 clears it, and the refusal is relayed by NAME rather than flattened into
-           * one sentence, so an expiry and a replay are told apart by the client and in the log.
-           */
-          const failure = classifyRefreshFailure(err);
-          if (failure === "fault") throw err;
-          const refusal = err as ServiceError;
+        } catch {
           return json(
-            { error: { code: refusal.code, message: refusal.message } },
-            refusal.httpStatus,
-            failure === "session_refused" ? clearSessionCookies() : [],
+            { error: { code: "unauthorized", message: "this session cannot be resumed" } },
+            401,
+            clearSessionCookies(),
           );
         }
       }

@@ -13,7 +13,7 @@ import {
   type OrganizerProfileDoc, type ProfileReadResult, type ProfileRuleEntry,
 } from "@trafficflow/core/adapters/organizer-profile";
 import { serializeOrganizerProfile } from "@trafficflow/core/adapters/organizer-profile-store";
-import { withAccountTx, type ServiceContext } from "./context.js";
+import type { ServiceContext } from "./context.js";
 import { ServiceError } from "./errors.js";
 import { MAX_BODY_CONTAINS_CHARS, MAX_SUBJECT_CONTAINS_CHARS } from "./rules-service.js";
 import { AWAY_AUDIENCES, nextEnabledAt, type AwayAudience } from "./away-responder-service.js";
@@ -374,7 +374,7 @@ export class ProfileImportService {
     }
     const doc = fresh.doc;
 
-    return withAccountTx(ctx, async (tx) => {
+    return asTx(ctx).transaction(async (tx) => {
       // FIRST, before any read the merge will act on — see {@link PROFILE_IMPORT_LOCK_CLASS}.
       await dialect(ctx.db).advisoryLock(tx, PROFILE_IMPORT_LOCK_CLASS, ctx.accountId);
       const changes: ChangeInput[] = [];

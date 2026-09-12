@@ -51,9 +51,6 @@
     "android": {
       "package": "app.ohmail",
       "versionCode": 8,
-      "permissions": [
-        "android.permission.POST_NOTIFICATIONS"
-      ],
       "adaptiveIcon": {
         "backgroundColor": "#fbfaf9",
         "foregroundImage": "./assets/android-icon-foreground.png",

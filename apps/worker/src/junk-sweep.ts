@@ -1,13 +1,27 @@
 /**
- * THE ONE-TIME QUARANTINE→\Junk SWEEP — explicitly invoked, never scheduled, dry-run by default. The
- * 2026-08-22 amendment sends NEW spam verdicts to the provider's native `\Junk` (`junk-filing.ts`); mail
- * already in `ohmail/Quarantine` stays until moved, and this pass is that mover — invoked once per mailbox
- * by an operator (`run-junk-sweep.ts`) with the account owner's standing spam verdicts as its authority. NOT
- * SCHEDULED and never must be: a recurring pass would be the organizer acting on its own initiative. Two
- * explicit callers: the operator runner, and the worker cycle's sweep-command consumption (`sync.ts`) once
- * per recorded press (`mailboxes.junk_sweep_requested_at`, mail 0076, `POST /screener/junk/sweep`) —
- * §16.1's carve-out. Same claims discipline as the live path: `completeFiling` runs only for members the
- * server named, so a vanished member (`gone`) is left for `changesSince` and nothing is husked in error. */
+ * THE ONE-TIME QUARANTINE→\Junk SWEEP — explicitly invoked, never scheduled, dry-run by default.
+ *
+ * The 2026-08-22 amendment sends NEW spam verdicts to the provider's native `\Junk`
+ * (`junk-filing.ts`). Mail already sitting in `ohmail/Quarantine` from earlier verdicts stays
+ * there until somebody moves it, and this pass is that somebody — invoked once per mailbox by an
+ * operator (`run-junk-sweep.ts`), with the account owner's standing spam verdicts as its whole
+ * authority: everything physically in the pile is there because a verdict or a promoted rule put
+ * it there, and the sweep executes those same verdicts against the destination they would choose
+ * today.
+ *
+ * It is NOT SCHEDULED and must never be: the product rule allows user-commanded writes into
+ * `\Junk`, and a RECURRING pass would be the organizer acting on its own initiative — the exact
+ * boundary the amendment keeps. Two callers, both explicit: the operator runner above, and the
+ * worker cycle's sweep-command consumption (`sync.ts`), which runs this pass ONCE per recorded
+ * press — `mailboxes.junk_sweep_requested_at` (mail 0076), stamped by `POST /screener/junk/sweep`
+ * on the account owner's own click. That is §16.1's carve-out to the letter: "an explicit human
+ * press, recorded, executed by the worker under the organizer lease". A cycle with no stamp
+ * runs nothing here.
+ *
+ * Same completion, same claims discipline as the live path: `completeFiling` runs only for
+ * members the server's move actually named, so a member that vanished mid-sweep (`gone`) is left
+ * for `changesSince` to adopt, and nothing is husked or marked that did not land in Junk.
+ */
 
 import { and, eq, gt, inArray } from "drizzle-orm";
 import { folderState, junkSweepCandidateWhere, messages, type Tx } from "@trafficflow/db";
@@ -20,23 +34,29 @@ import { completeFiling, SPAM_PILE, type SpecialFolderMap } from "./junk-filing.
 import { assertMayWriteToMailbox, type MailboxWriteAuthority } from "./lease.js";
 
 /**
- * THE SCAN'S STATE ACROSS CYCLES — a pure decision, extracted so it can be pinned by test (a fully
- * refused pile larger than one window never reported `examinedAll`, because the tail window had not
- * "started at the top"; the stamp then stood for ever and the mailbox re-kicked the same refusals every
- * cycle). One window per cycle: the cursor advances while a scan is unfinished (a window that moved keeps
- * advancing, its refusals shrinking as later scans revisit them) and resets to the top when it runs off
- * the end. `examinedAll` is true precisely when a WHOLE scan moved nothing — the one reading that licenses
- * the cycle to retire the command over a non-empty pile.
+ * THE SCAN'S STATE ACROSS CYCLES — a pure decision, extracted so it can be pinned by test
+ * (a fully refused pile larger than one window never reported `examinedAll`,
+ * because the tail window had not "started at the top"; the stamp then stood for ever and the
+ * mailbox re-kicked the same refusals every cycle).
+ *
+ * One window per cycle. The cursor advances while a scan is unfinished — a window that landed
+ * moves keeps advancing too (its refusals shrink on their own as later scans revisit them) —
+ * and resets to the top when the scan runs off the end. `examinedAll` is true precisely when a
+ * WHOLE scan — top to end, however many cycles it took — moved nothing: that is the one reading
+ * that licenses the cycle to retire the command over a non-empty pile.
  */
 export interface SweepScanState {
   /**
-   * WHICH PRESS this state describes — the observed `junk_sweep_requested_at` token, or null before any
-   * press has been seen. The cursor, the moved-since-top flag and the deferral allowance are all progress
-   * through ONE command, and keyed to nothing they outlived it: a command that spent its allowance and
-   * retired left the counter at its ceiling on a live attachment, so the person's NEXT press inherited a
-   * spent allowance and its first barren scan retired it on the spot. A re-stamp mid-scan inherited the
-   * previous cursor for the same reason. {@link sweepStateForPress} is the reset — a named function, not
-   * an `if` at the call site, so it can be tested.
+   * WHICH PRESS this state describes — the observed `junk_sweep_requested_at` token, or null
+   * before any press has been seen.
+   *
+   * The cursor, the moved-since-top flag and the deferral allowance are all progress through ONE
+   * command, and keyed to nothing they outlived it: review found that a command which spent its
+   * allowance and retired left the counter at its ceiling on a live mailbox attachment, so the
+   * person's NEXT press inherited a spent allowance and its first barren scan retired it on the
+   * spot — a fresh command that never got the retries it was entitled to. A re-stamp mid-scan
+   * inherited the previous press's cursor for the same reason. {@link sweepStateForPress} is the
+   * reset, and it is a named function rather than an `if` at the call site so it can be tested.
    */
   command: string | null;
   /** The last examined id, or null for "the next window starts at the top". */
@@ -44,24 +64,52 @@ export interface SweepScanState {
   /** Whether the scan IN PROGRESS (since the last top) has moved anything. */
   movedSinceTop: boolean;
   /**
-   * Whether the scan IN PROGRESS has deferred anything — a member skipped because its source locator was
-   * stale rather than because the server refused it. Per SCAN, exactly like {@link movedSinceTop}, and for
-   * the same reason: a deferral in an early window is a fact about the whole scan (the cursor moves past
-   * that message), so the FINAL window can honestly report zero deferrals while the deferred row still
-   * sits in the pile — and reading only the last window's count retired the command over exactly the mail
-   * the deferral was protecting. Found by review, not test: the existing cases all fit inside one window.
+   * Whether the scan IN PROGRESS has deferred anything — a member skipped because its source
+   * locator was stale rather than because the server refused it.
+   *
+   * **Per SCAN, exactly like {@link movedSinceTop}, and for the same reason.** A deferral in an
+   * early window is a fact about the whole scan: the cursor moves past that message, so the FINAL
+   * window can honestly report zero deferrals while the row that was deferred is still sitting in
+   * the pile. Reading only the last window's count therefore retired the command over exactly the
+   * mail the deferral was protecting. Found by review, not by test — the existing cases all fit
+   * inside one window, where the two readings are identical.
    */
   deferredSinceTop: boolean;
   /**
-   * How many CONSECUTIVE completed scans have been kept alive by deferrals alone — the termination bound;
-   * without it the exemption is unbounded. A recreated folder can leave a stale locator on a row the
-   * candidate predicate still admits while the old-epoch delete is never enumerated, so `remaining()` never
-   * reaches zero and every scan defers the same row (re-kicking the mailbox for ever). So the exemption
-   * holds for {@link SWEEP_MAX_DEFERRED_SCANS} completed scans and then stops — the same shape as the
-   * sensitivity repair's bounded re-walks. It is PROCESS-LOCAL: a restart/reconnect/roster re-add resets it
-   * to zero, so it bounds how long ONE attachment holds a press open, not the press's life (a durable
-   * per-press column beside `junk_sweep_requested_at` is its own slice). Any scan that MOVES something
-   * resets the counter — correct, because a draining pile has not stalled. */
+   * How many CONSECUTIVE completed scans have been kept alive by deferrals alone.
+   *
+   * **This is the termination bound, and without it the exemption is unbounded.** The retirement
+   * rule exists because a pile the server will never accept must not be retried for ever; making
+   * deferrals exempt re-opened that hole through a different door. Review found the sequence: a
+   * folder is recreated, a message that no longer exists keeps a stale locator and an instance row
+   * the candidate predicate still admits, the old-epoch delete is deliberately never enumerated,
+   * so `remaining()` never reaches zero and every scan defers the same row — a command that is
+   * queued and re-kicks the mailbox for ever.
+   *
+   * So the exemption is allowed to hold for {@link SWEEP_MAX_DEFERRED_SCANS} completed scans and
+   * then stops. That is the same shape, and the same argument, as the bounded re-walks the
+   * sensitivity repair uses before it certifies an incomplete pass: give the self-healing path a
+   * real chance, then stop spending somebody's mail server on it and say so.
+   *
+   * ── WHAT THIS BOUND IS AND IS NOT, BECAUSE THE FIRST VERSION OVERSTATED IT ──────────────────
+   *
+   * It is **PROCESS-LOCAL**. This counter lives in the mailbox attachment, so a worker restart, a
+   * reconnect, or a roster pass that drops and re-adds the mailbox all put it back to zero — after
+   * which the exemption is granted again from scratch. Review named that and it is true: the bound
+   * limits how long ONE attachment will hold a press open, not how long the press can live.
+   *
+   * That is a real residual and it is recorded rather than papered over. It is also a much smaller
+   * one than the unbounded version: without any bound a single attachment re-kicks the mailbox
+   * every cycle for ever, which is a hot loop; with it, the worst case is a slow loop paced by
+   * however often the worker restarts. Closing it properly means a durable per-press counter —
+   * a column beside `junk_sweep_requested_at` — which is a migration and belongs to its own slice.
+   *
+   * The second half review noted is deliberate rather than residual: **any scan that MOVES
+   * something resets the counter.** That is correct — a pile that is draining has not stalled, and
+   * the press is being served. It does mean a mailbox receiving a steady trickle of new spam can
+   * keep one permanently-stale row's press alive; the press is doing useful work in that case, so
+   * the trade is the right way round.
+   */
   deferredScans: number;
 }
 
@@ -163,14 +211,24 @@ export interface JunkSweepResult {
   /** Members the source no longer held (adopted later by sync), or whose move failed. */
   skipped: Array<{ messageId: string; reason: string }>;
   /**
-   * How many of {@link skipped} were skipped because the SOURCE LOCATOR WAS STALE — the message moved, or
-   * `ohmail/Quarantine` was recreated under a new UIDVALIDITY — as opposed to the server refusing the move.
-   * Opposite facts in one shape: a REFUSED move is evidence about the pile (it refuses again next cycle); a
-   * stale locator is about our bookkeeping (the next `changesSince` re-finds the message by Message-ID and
-   * repoints it, then the sweep moves it). `sync.ts` retires the one-time command when a full scan moved
-   * NOTHING; a folder recycled between scans makes EVERY member skip at once, indistinguishable from that
-   * if you only count moves — so the press was consumed by a self-clearing condition. This count tells the
-   * two apart, and is a count rather than a parse of reason strings so it cannot go wrong on a reword.
+   * How many of {@link skipped} were skipped because the SOURCE LOCATOR WAS STALE — the message
+   * moved, or `ohmail/Quarantine` was recreated under a new UIDVALIDITY — as opposed to the server
+   * refusing the move.
+   *
+   * ── WHY THIS COUNT EXISTS RATHER THAN THE CALLER READING THE REASONS ────────────────────────
+   *
+   * The two are opposite facts wearing one shape. A REFUSED move is evidence about the pile: ask
+   * again next cycle and the server will refuse again. A stale locator is evidence about our
+   * bookkeeping and nothing else — the very next `changesSince` re-finds the message by Message-ID
+   * and repoints it, after which the same sweep moves it without complaint.
+   *
+   * `sync.ts` retires the user's one-time sweep command when a full scan moved NOTHING, on the
+   * reading that the server refuses every member. A folder recycled between the mirror's last scan
+   * and the sweep makes EVERY member skip at once, which is indistinguishable from that reading if
+   * you only count moves — so the press was consumed by a condition that would have cleared on its
+   * own, and the offer came back asking the user to press again for mail nothing was wrong with.
+   * This is the number that tells the two apart, and it is a count rather than a parse of English
+   * reason strings so that it cannot go quietly wrong when a sentence is reworded.
    */
   deferred: number;
   dryRun: boolean;
@@ -245,13 +303,15 @@ export async function junkSweepPass(opts: {
   }));
 
   /**
-   * THE COMPLETION RUNS OUTSIDE EVERY CATCH BELOW, and that is the fence's whole protection here. The IMAP
-   * half of a member may fail on its own (a UID the server no longer holds, a refused MOVE) and is SKIPPED
-   * and reported; the database half rides the repo's `transaction` — from the worker cycle, the fenced
-   * group — and a throw out of it is proof of lost leadership or a database fault, never about a message. A
-   * catch would read a fence refusal as "skip this one and carry on", and a stale worker would keep issuing
-   * MOVEs beside the new leader. So it propagates, the sweep aborts consistent (moved-but-uncompleted
-   * members adopted by the next cycle's `changesSince`), and the command stamp is not retired.
+   * THE COMPLETION RUNS OUTSIDE EVERY CATCH BELOW, and that is the fence's whole protection here.
+   * The IMAP half of a member may fail on its own account (a UID the server no longer holds, a
+   * refused MOVE) and is then SKIPPED and reported; the database half rides the repo's
+   * `transaction` — which, from the worker cycle, IS the fenced group — and a throw out of it
+   * is proof of lost leadership or a database fault, never evidence about a message. A catch
+   * around it would read a fence refusal as "skip this one and carry on", and a stale worker
+   * would keep issuing MOVEs beside the new leader. So it propagates, and the sweep aborts with
+   * everything consistent: moved-but-uncompleted members are adopted by the next cycle's
+   * `changesSince`, and the command stamp that requested the sweep is not retired.
    */
   const complete = async (p: PendingFolderState, newLoc: NativeLocator): Promise<void> => {
     await repo.transaction(async (r) => {
@@ -264,15 +324,42 @@ export async function junkSweepPass(opts: {
   };
 
   /**
-   * IS THIS STILL THE USER'S DECISION? — asked at the WRITE boundary, not the read. The candidate set is
-   * read ONCE and the moves run for as long as the pile takes; `desired_folder` has six writers taking no
-   * mailbox row (the API move, the Screener's apply, `rule-retro`, `ohbox-tidy`, `screener-auto`, the
-   * one-time re-screen), so a user restoring a message or screening its sender in commits a NEWER decision.
-   * `completeFolderState`'s witness catches that AFTER the move, but this pass writes to a real mail server,
-   * so the same predicate the candidates came from (`junkSweepCandidateWhere`, carrying the Quarantine
-   * physical-locator test) is re-asked for THIS CHUNK before the network call — it narrows the window, the
-   * witness closes the rest. The old "asks only about the DESIRE" claim was false; a row dropped for a
-   * moved locator is mis-reported as a withdrawn verdict, named here rather than fixed in the reason string. */
+   * IS THIS STILL THE USER'S DECISION? — asked at the WRITE boundary, not at the read.
+   *
+   * The candidate set above is read ONCE and the moves that act on it run for as long as the pile
+   * takes. `desired_folder` has six writers that take no mailbox row (the API's move, the
+   * Screener's apply, `rule-retro`, `ohbox-tidy`, `screener-auto`, the one-time re-screen), so a
+   * user who restores a message out of the spam pile — or screens its sender in — while this pass
+   * is working commits a NEWER decision against a set this pass already made up its mind about.
+   *
+   * `completeFolderState`'s witness catches that, and catches it correctly: the completion
+   * declines and the newer intent stands. But it catches it AFTER the move, and this pass writes
+   * to somebody's real mail server — the message is physically in `\Junk` by then, and the row is
+   * left PENDING for the reconciler to carry back out. That self-heal needs a running worker and
+   * costs the user a round trip through their spam folder for mail they had just rescued.
+   *
+   * So the same predicate the candidates came from is asked again, for THIS CHUNK only, one
+   * indexed statement immediately before the network call. It does not close the window — nothing
+   * short of holding a transaction open across an IMAP round trip would, and that trade is worse —
+   * it narrows it from the whole pass to one chunk's latency, and the witness closes the rest.
+   * The two are complementary and neither is redundant: this one stops the SERVER write, the
+   * witness stops the DATABASE write.
+   *
+   * ── AND IT IS NOT ONLY ABOUT THE DESIRE, WHICH THE SKIP REASON GETS WRONG ─────────────────
+   *
+   * This used to end *"deliberately NOT a re-read of `messages.native_locator` … this asks only
+   * about the DESIRE"*, and that was false: the predicate is `junkSweepCandidateWhere`, the SAME one
+   * the candidates came from, and it carries the Quarantine-folder test on the physical locator along
+   * with everything else. Being the same predicate is the point of it — a narrower one here would
+   * drift from the one that selected the work — so the fix is to the CLAIM, not the query.
+   *
+   * The consequence is a wrong sentence in an operator's log. Every row this re-read drops is
+   * reported below as *"the spam verdict was withdrawn after this sweep began"*, and a row dropped
+   * because its LOCATOR moved has had no verdict withdrawn: somebody moved the message out of
+   * Quarantine, which is a different event with a different remedy. Named here rather than fixed in
+   * the reason string, because splitting the two would mean asking which clause failed and that is a
+   * second query on a path this one exists to keep to one statement.
+   */
   const stillDesired = async (chunk: readonly PendingFolderState[]): Promise<Set<string>> => {
     const ids = chunk.map((p) => p.messageId);
     const live = await db.select({ messageId: messages.id }).from(messages)
@@ -331,14 +418,23 @@ export async function junkSweepPass(opts: {
       }
       continue;
     }
-    // THE PER-MESSAGE FALLBACK ASKS PER MESSAGE, NOT ONCE FOR THE RUN. It used to ask ONCE and then issue
-    // up to `FILING_BATCH_MAX` separate `adapter.move()` commands under a comment claiming "the same fresh
-    // leadership read as before the batch" — one read before FIFTY writes, so a takeover after the third
-    // move let the remaining forty-seven proceed unchecked. This module's rule is *"EVERY IMAP mutation is
-    // preceded by `fenceImapMutation`"*; the batched arm above is one command (where "before the batch" and
-    // "before every write" coincide), and here they do not. The cost is real and right: under the worker's
-    // fence a fifty-message fallback costs fifty indexed reads, under the CLI's permit a comparison until
-    // the TTL lapses. This is the RARE path (no `moveMany`, or a refused batch) and every write is destructive.
+    // ── THE PER-MESSAGE FALLBACK ASKS PER MESSAGE, NOT ONCE FOR THE RUN OF THEM ──────────────
+    //
+    // This used to ask ONCE here and then issue up to `FILING_BATCH_MAX` separate
+    // `adapter.move()` commands beneath it, under a comment claiming "the same fresh leadership read
+    // before them as before the batch it replaces". It was one read before FIFTY writes: a takeover
+    // (or a lost leadership, or an expired permit) landing after the third move let the remaining
+    // forty-seven proceed on a receipt nobody re-checked. This module's own header states the rule
+    // — *"EVERY IMAP mutation is preceded by `fenceImapMutation`"* — and the batched arm above is
+    // one command for the chunk, so it is the one place where "before the batch" and "before every
+    // write" genuinely coincide. Here they do not, and the comment read as though they did.
+    //
+    // THE COST IS REAL AND IS THE RIGHT TRADE. Under the worker's fence each iteration is one fresh
+    // leadership read, so a fifty-message fallback chunk costs fifty indexed reads instead of one;
+    // under the CLI's permit it is a comparison until the TTL lapses. This is already the RARE path
+    // (an adapter with no `moveMany`, or a batch the server refused) and every iteration of it is a
+    // destructive move on somebody's real mailbox, which is the last place to amortize a safety
+    // check across writes.
     for (const p of chunk) {
       let newLoc: NativeLocator;
       // OUTSIDE the `try`, and the placement is load-bearing: the catch below ends in a generic arm

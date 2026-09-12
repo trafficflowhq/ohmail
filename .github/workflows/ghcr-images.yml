@@ -70,10 +70,7 @@ on:
     inputs:
       version:
         description: "Version tag for the images (e.g. 0.9.8). Must match the tree's own version; 'latest' is always also promoted."
-        required: false
-      candidate:
-        description: "A release CANDIDATE: the 40-hex commit these images are built from. Pushes only rc-<sha>; no version tag and no latest."
-        required: false
+        required: true
 
 permissions:
   contents: read
@@ -86,39 +83,44 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  # One place decides the tags, and it is DATA, never shell source: a dispatch input (or a
+  # One place decides the version, and it is DATA, never shell source: a dispatch input (or a
   # tag name — git allows `$` and parentheses in one) interpolated into a run: block would
   # execute with this workflow's packages:write token. Read through the environment, validate
-  # against docker's own tag grammar, and refuse anything else.
-  #
-  # THE DECISION LIVES IN A SCRIPT (`.github/scripts/ghcr-image-tags.sh`) because a workflow's
-  # YAML can be read by a test and a workflow's shell can only be run by GitHub. It answers with
-  # four values, and `promote_public` is the one that decides whether any public tag moves:
-  # a CANDIDATE run (`candidate: <40 hex>`) builds `rc-<sha>` and moves nothing.
+  # against docker's own tag grammar, and refuse anything else. The version must also BE the
+  # version of the tree being built: an image labeled 0.9.7 built from a 0.9.8 tree is a lie
+  # the compose's tag pinning would then serve to operators.
   version:
     if: github.repository == 'trafficflowhq/ohmail'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
       version: ${{ steps.decide.outputs.version }}
-      candidate: ${{ steps.decide.outputs.candidate }}
-      image_tag: ${{ steps.decide.outputs.image_tag }}
-      promote_public: ${{ steps.decide.outputs.promote_public }}
     steps:
       - uses: actions/checkout@v4
 
-      - name: Decide and validate the tags
+      - name: Decide and validate the version tag
         id: decide
         env:
-          EVENT_NAME: ${{ github.event_name }}
           DISPATCH_VERSION: ${{ github.event.inputs.version }}
-          DISPATCH_CANDIDATE: ${{ github.event.inputs.candidate }}
           REF_NAME: ${{ github.ref_name }}
         run: |
           set -euo pipefail
-          TREE_VERSION="$(node -p 'require("./package.json").version')" \
-            bash .github/scripts/ghcr-image-tags.sh >> "$GITHUB_OUTPUT"
-          cat "$GITHUB_OUTPUT"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            V="$DISPATCH_VERSION"
+          else
+            V="${REF_NAME#v}"
+          fi
+          case "$V" in
+            ("" | .* | -* | *[!A-Za-z0-9._-]* ) echo "refusing version tag: $V"; exit 1 ;;
+          esac
+          if [ "${#V}" -gt 100 ] || [ "$V" = "latest" ]; then echo "refusing version tag: $V"; exit 1; fi
+          TREE_V="$(node -p 'require("./package.json").version')"
+          if [ "$V" != "$TREE_V" ]; then
+            echo "refusing: the requested image version ($V) is not this tree's version ($TREE_V)."
+            echo "Images are built from the checked-out source and must be labeled as what they are."
+            exit 1
+          fi
+          echo "version=$V" >> "$GITHUB_OUTPUT"
 
   build-push:
     if: github.repository == 'trafficflowhq/ohmail'
@@ -340,66 +342,12 @@ jobs:
   # gates are green do the real tags move, as manifest-list compositions of the staged pair —
   # no rebuild, so what was checked is what ships. Each composition is retried once; a
   # failure prints exactly which images moved, and re-running the workflow heals forward.
-  # THE CANDIDATE'S OWN PROMOTION: one tag per image, `rc-<sha>`, composed from the same staged
-  # pair the gates booted. No version tag, no `latest` — an unreleased build reaching an unpinned
-  # install is the whole thing this shape exists to prevent, so the two promotions are two jobs
-  # rather than one job with a flag inside it.
-  promote-candidate:
-    if: github.repository == 'trafficflowhq/ohmail' && needs.version.outputs.promote_public == 'no'
-    needs: [version, build-push, gate-boot, gate-visibility]
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - name: Log in to GHCR
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: One manifest list per image, under rc-<sha> and nothing else
-        env:
-          V: ${{ needs.version.outputs.version }}
-          TAG: ${{ needs.version.outputs.image_tag }}
-          RUN: ${{ github.run_id }}
-        run: |
-          set -euo pipefail
-          # The guard, on the tag this job is about to write: a candidate job that found itself
-          # holding a public tag would be the defect, so it refuses rather than writes.
-          case "$TAG" in
-            (rc-*) : ;;
-            (*) echo "refusing: the candidate job may only write rc-* tags, and was given '$TAG'"; exit 1 ;;
-          esac
-          for IMG in ohmail-server ohmail-worker ohmail-web; do
-            docker buildx imagetools create \
-              -t "ghcr.io/trafficflowhq/$IMG:$TAG" \
-              "ghcr.io/trafficflowhq/$IMG:stage-$V-$RUN-amd64" \
-              "ghcr.io/trafficflowhq/$IMG:stage-$V-$RUN-arm64"
-          done
-          for IMG in ohmail-server ohmail-worker ohmail-web; do
-            docker buildx imagetools inspect --raw "ghcr.io/trafficflowhq/$IMG:$TAG" > /dev/null
-          done
-          echo "candidate images ready: OHMAIL_IMAGE_TAG=$TAG"
-
   promote:
-    if: github.repository == 'trafficflowhq/ohmail' && needs.version.outputs.promote_public == 'yes'
+    if: github.repository == 'trafficflowhq/ohmail'
     needs: [version, build-push, gate-boot, gate-visibility]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      # The same refusal as a step, not only as a job condition: an `if:` edited away is a public
-      # tag moved, and this is the one place where that is unrecoverable for every unpinned install.
-      - name: Refuse to promote a candidate
-        env:
-          CANDIDATE: ${{ needs.version.outputs.candidate }}
-          PROMOTE: ${{ needs.version.outputs.promote_public }}
-        run: |
-          set -euo pipefail
-          if [ -n "$CANDIDATE" ] || [ "$PROMOTE" != "yes" ]; then
-            echo "refusing: this run is a candidate ($CANDIDATE); latest and the version tag stay where they are"
-            exit 1
-          fi
-
       - name: Log in to GHCR
         uses: docker/login-action@v3
         with:

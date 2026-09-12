@@ -183,10 +183,6 @@ export function FolderView({
      nine keys that print a cap and do nothing. See `message-verbs.ts`. */
   useMessageVerbs({
     shown, scope: ".view-folder", onAction, onAddTag, onScreen, canDelete, canReplyAll,
-    /* The list as rendered and the walk's own selector — the cursor placer's two inputs
-       (`cursor-placer.ts`). The mirror rows first, then the fetched older ones: the SAME order
-       `navOrder` walks, so a placed cursor and a `↓` from nowhere land on one row. */
-    rows: [...ordered, ...olderRows], select: selectRow,
   });
 
   useZoneNav({

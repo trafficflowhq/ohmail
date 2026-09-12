@@ -1,15 +1,68 @@
 import { silentLogger, type Logger } from "@trafficflow/core";
 
 /**
- * THE SCHEDULE FOR THE API HOST'S INTERNAL PASSES — driven from HERE, the always-on process, because
- * the platform layer that was supposed to drive them measurably does not. Three API routes run on a
- * clock (billing reconciliation hourly, `/internal/sessions/reap` daily, `/internal/mailboxes/smtp-size`
- * daily — it MUST run on the API host, whose SMTP egress works; measured in `./smtp-size.ts`). Scheduled
- * as Vercel Cron in the API's `vercel.json`, that layer was DARK: an entry from 2026-08-01 still read
- * "not deployed" on 2026-08-22 (`vercel crons ls`), no run ever fired, nothing errored. This process is
- * always on, its timers fire, it holds a leader lock (one driver per route), and `/health` makes a
- * stopped schedule VISIBLE (`apiCron`). `/internal/alerts/run` is NOT here (in-process every minute; a
- * dead worker cannot report its own death). Cadence restarts with leadership (all three passes idempotent and self-bounding); `AlertSinkHealth` is a closed set and the body is never quoted. */
+ * THE SCHEDULE FOR THE API HOST'S INTERNAL PASSES — driven from HERE, the always-on process,
+ * because the platform layer that was supposed to drive them measurably does not.
+ *
+ * ── WHY THE WORKER AND NOT VERCEL CRON, WHICH IS THE OBVIOUS THING ──────────────────────────
+ *
+ * Three of the API's internal routes exist to be run on a clock: the billing reconciliation
+ * the web-session reaper (`/internal/sessions/reap`,
+ * daily) and the SMTP `SIZE` back-fill (`/internal/mailboxes/smtp-size`, daily — it MUST run on
+ * the API host, whose SMTP egress works; the sync host's is port-blocked, measured in
+ * `./smtp-size.ts`). All three were scheduled as Vercel Cron entries in the API deployment's
+ * own `vercel.json`, and that layer was DARK: the alerts cron sat in that file from 2026-08-01, dozens of
+ * production deploys carried it, and on 2026-08-22 `vercel crons ls` still reported every entry
+ * "not deployed" — no build log ever mentioned crons, no run ever fired, and nothing errored.
+ * A schedule that fails to register SILENTLY, on a platform whose "Ready" status has already
+ * been caught serving a stale build, cannot be the thing correctness leans on.
+ *
+ * This process is the opposite case on every axis: it is always on, its timers demonstrably
+ * fire (the 60 s alert pass), it already holds a leader lock that makes "exactly one of me"
+ * structural rather than hoped, and it has a `/health` surface where a schedule that stops is
+ * VISIBLE (`apiCron`, below) instead of silently absent. So the worker pokes the API's routes
+ * over HTTPS with the same bearer secret the routes already accept, and the platform cron
+ * entries for these three routes are gone — one driver per route, so "no route runs twice
+ * concurrently" is a property of the shape rather than of luck.
+ *
+ * `/internal/alerts/run` is deliberately NOT in this table, twice over: this process already
+ * runs the alert pass in-process every minute (poking the API's copy would double-page), and
+ * the pass's job includes reporting THIS WORKER'S DEATH — a dead worker stops poking, so the
+ * one route whose driver must outlive the worker cannot be driven from it. Its off-worker
+ * drivers stay what they were: the one surviving platform cron entry (kept, would-be primary)
+ * and an external scheduler on a third platform, so no single vendor's outage silences it.
+ *
+ * ── THE CADENCE RESTARTS WITH LEADERSHIP, AND THAT IS A DECISION, NOT AN ACCIDENT ────────────
+ *
+ * Every target runs once shortly after this instance becomes leader, then on its interval.
+ * The alternative — anchor the dailies to the clock and wait out the full interval — starves
+ * them on a fleet that redeploys more than once a day, which this one does: a process that
+ * never lives 24 h never fires a boot-anchored daily AT ALL. Running early instead of late is
+ * safe because all three passes are idempotent and self-bounding: the reconciler heals toward
+ * the same fixed point every run, the reaper deletes only what is already expired, and the
+ * SIZE back-fill carries its own per-mailbox probe backoff on the API side. The cost of a
+ * deploy-happy day is a few extra bounded passes; the cost of the other choice is a daily
+ * that structurally never runs.
+ *
+ * ── OVERLAP, ALL THREE WAYS IT COULD HAPPEN ─────────────────────────────────────────────────
+ *
+ *  · same target, same process: the next timer is armed only AFTER the in-flight attempt
+ *    settles (a `setTimeout` chain, not `setInterval`), and `runOnce` additionally refuses
+ *    re-entry — belt and suspenders, because the chain is one refactor away from an interval.
+ *  · two replicas (a rolling deploy): this starts inside `startWorkerWithLock`, so only the
+ *    lock holder schedules; the first poke is further delayed past the takeover window so an
+ *    outgoing leader's in-flight request has settled long before the incoming one's first.
+ *  · two shards: gated to shard 0 at the call site — these passes are deployment-wide, not
+ *    per-shard, and N shards poking hourly is N− 1 too many.
+ *
+ * ── WHAT `/health` SAYS, AND WHY CLOSED CODES ───────────────────────────────────────────────
+ *
+ * `AlertSinkHealth`'s vocabulary, deliberately: per target, the last closed outcome, attempt
+ * and success clocks, and a failure streak. `attempts: 0` with `lastOkAt: null` is "never
+ * exercised", which is not the same claim as healthy — absence of evidence, said out loud.
+ * Outcomes are a closed set and the response body is never quoted: this endpoint is reachable
+ * by anyone, and the API host logs its own passes' particulars.
+ */
 export interface ApiCronTarget {
   /** Closed name, stable across renames of the path — the key an operator greps for. */
   target: "sessions_reap" | "smtp_size" | "scheduled_send"
@@ -112,15 +165,22 @@ export const API_CRON_TARGETS: readonly ApiCronTarget[] = [
     jitterMs: 6 * 1000,
   },
   {
-    // THE AWAY RESPONDER'S SENDER (mail 0087) — its being here at all is the fix. The pass used to run
-    // INSIDE this worker on the cycle tail and could not work: this platform blocks outbound SMTP at the
-    // port (`smtp-size.ts` measured twelve hosts, every dial a timeout, IMAP to the same host 300 ms), so
-    // every reply threw, and each throw kept the at-most-once claim that silenced that correspondent. The
-    // pass now lives in `@trafficflow/services` and runs on the API host, which can dial; this entry is the
-    // clock that pokes it, like `scheduled_send` above (plus the shared reason: services may not enter this
-    // app's runtime dependency set). EVERY MINUTE, matching the sender clock — "away" is about mail that
-    // just arrived. The route bounds its own work (`AWAY_SENDS_PER_RUN`, one candidate page per account),
-    // so an idle minute is one indexed read.
+    // THE AWAY RESPONDER'S SENDER (mail 0087) — and its being here at all is the fix.
+    //
+    // The pass used to run INSIDE this worker, on the cycle tail. It could not work: this platform
+    // blocks outbound SMTP submission at the port level — `smtp-size.ts` measured twelve hosts,
+    // every dial a timeout, IMAP to the same host 300 ms — so every reply this app ever tried to
+    // send threw, and each throw kept the at-most-once claim that silenced that correspondent for
+    // the rest of the episode. The pass now lives in `@trafficflow/services` and runs on the API
+    // host, which can dial; this entry is the clock that pokes it, exactly as `scheduled_send`
+    // above is for the same reason (plus the second one both share: the services package may not
+    // enter this app's runtime dependency set — see package.json).
+    //
+    // EVERY MINUTE, matching the sender clock beside it: "away" is a promise about mail that has
+    // just arrived, and a coarser cadence would make the reply's delay visible to the person who
+    // wrote. The route bounds its own work (AWAY_SENDS_PER_RUN, one bounded candidate page per
+    // account), so an idle minute costs one indexed read of a table with no live responder in it —
+    // which is ~every minute, for ~every deployment.
     target: "away_responder",
     route: "/internal/away/run",
     everyMs: 60 * 1000,
@@ -134,14 +194,25 @@ export const API_CRON_TARGETS: readonly ApiCronTarget[] = [
     jitterMs: 6 * 1000,
   },
   {
-    // WHAT THE PLATFORM SERVED (cloud 0030) — the API host's own 5xx rate, which it cannot measure about
-    // itself: a 502-and-die invocation writes nothing to the database, so only the platform's request log
-    // knows. This clock pokes the route that reads it; the route lives on the API host because the token
-    // that can read the log is an env var on THAT deployment (polling here would provision the credential
-    // onto a second host). EVERY FIVE MINUTES — the alert reads a fifteen-minute window, so three rows
-    // mean one missed poll still leaves two windows; a coarser clock would make GAPS (one poll writes one
-    // aligned window), and a gap is indistinguishable from a quiet period once summed. A deployment with no
-    // platform token writes NOTHING and says so ("5xx: not measured"), distinguishable from a real zero.
+    // WHAT THE PLATFORM SERVED (cloud 0030) — the API host's own 5xx rate, which the API host
+    // cannot measure about itself.
+    //
+    // A serverless invocation that returns a 502 and dies writes nothing to the database, so the
+    // only surface that knows is the platform's request log. This clock pokes the route that
+    // reads it; the route lives on the API host because the token that can read that log is an
+    // env var on THAT deployment, and putting the poll here would mean provisioning the platform
+    // credential onto a second host to measure the first.
+    //
+    // EVERY FIVE MINUTES, the finest cadence in this table after the three one-minute senders,
+    // and the number is the rule's arithmetic rather than a preference: the alert reads a
+    // fifteen-minute window, and a window is only worth what its number of independent samples
+    // is. Three five-minute rows mean one missed poll still leaves two windows of evidence. A
+    // coarser clock would not make bigger windows — one poll writes one aligned window — it would
+    // make GAPS, and a gap and a quiet period are indistinguishable once summed.
+    //
+    // A deployment with no platform token writes NOTHING and says so, which the board renders as
+    // "5xx: not measured" — deliberately distinguishable both from a real zero and from a clock
+    // that never fired.
     target: "platform_signals",
     route: "/internal/platform-signals/run",
     everyMs: 5 * 60 * 1000,

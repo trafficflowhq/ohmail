@@ -13,12 +13,8 @@ export const SERVICES_VERSION = "0.0.0";
 
 export { ServiceError, IdempotencyRaceLost } from "./errors.js";
 export type { ServiceContext, Db } from "./context.js";
-// The fenced transaction door — see `context.ts`. On the mail leaf because the API's own
-// account-owned writers (the Junk window's rescue) reach it without the AI half.
-export { withAccountTx } from "./context.js";
 export {
-  SyncService, syncService, SNAPSHOT_WINDOW, SNAPSHOT_DRAFT_PAGE, assertSnapshotWindow,
-  STALE_COALESCE_SPAN, COALESCE_SCAN_WINDOW,
+  SyncService, syncService, SNAPSHOT_WINDOW, STALE_COALESCE_SPAN, COALESCE_SCAN_WINDOW,
   type GetChangesOptions, type GetSnapshotOptions,
 } from "./sync-service.js";
 export * from "./dto/types.js";
@@ -97,10 +93,6 @@ export {
   // The gate's TYPE, so a host can state its tier. No permissive VALUE is exported from this
   // package — the only one that exists is in `apps/sidecar`, where the hosted API cannot name it.
   type MailboxAllowancePolicy,
-  // The consent door's input, so the route that validates a body can name the verb it admits
-  // without reaching for the lease module — which `mailbox-takeover.no-imap.test.ts` refuses to
-  // this package's own source and the engine's barrel rule refuses to that route.
-  type OrganizeHereInput,
 } from "./mailbox-service.js";
 // The plan-limit gate the mailbox write path runs inside its transaction.
 /* PUSH: the TYPES only, never the class or the singleton — and from the module that holds only

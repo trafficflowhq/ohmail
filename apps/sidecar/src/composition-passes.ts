@@ -2,13 +2,16 @@ import { ScheduleService, ServiceError } from "@trafficflow/services/mail";
 import type { OrganizerKind } from "@trafficflow/core/adapters/organizer-lease";
 
 /**
- * Which outbound passes each composition of this engine runs. An outbound pass acts for the mailbox
- * on its own clock with nobody watching — a promise about a later moment — so a composition may only
- * run one it can keep. A phone organizes the mailbox only while ohmail is running on it, so it keeps
- * no appointments. This table says that once, for the pass and the door both. The record is
- * EXHAUSTIVE over the claim kinds deliberately: a fourth kind cannot reach the claim without an
- * answer here, which is the failure `organizerKind` was made a field to prevent — a composition that
- * is not the desktop behaving like one because nobody decided.
+ * WHICH OUTBOUND PASSES EACH COMPOSITION OF THIS ENGINE RUNS.
+ *
+ * An outbound pass acts for the mailbox on its own clock, with nobody watching — so it is a
+ * promise about a later moment, and a composition may only run one it can keep. A phone organizes
+ * the mailbox only while ohmail is running on it, so it keeps no appointments. This table is
+ * where that is said once, for the pass and the door both.
+ *
+ * The record is EXHAUSTIVE over the claim kinds deliberately: a fourth kind cannot reach the
+ * claim without an answer here, which is the failure `organizerKind` itself was made a field to
+ * prevent — a composition that is not the desktop behaving like one because nobody decided.
  */
 export type OutboundPass = "scheduled-send";
 

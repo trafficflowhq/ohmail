@@ -177,12 +177,15 @@ export function focusTargetFor(step: StandaloneStep): "title" | "address" {
 export type HolderKind = "local" | "cloud" | "mobile" | "unknown";
 
 /**
- * THE ONE READER OF THE KIND, AND IT TAKES BOTH SPELLINGS ON PURPOSE. The two doors say it
- * differently and neither is wrong: the STANDALONE door hands the engine's stand-down reason
- * (`organized_elsewhere:mobile`), the PAIRED door the roster's bare kind word (`mobile`). One reader
- * is the point — two would let the two arms of one panel put different sentences on the same fact.
- * Anything outside the four is `unknown`, a real answer not a fallback: what a claim written by a
- * build this one cannot rank looks like, and it has its own sentence.
+ * THE ONE READER OF THE KIND, AND IT TAKES BOTH SPELLINGS ON PURPOSE.
+ *
+ * The two doors say it differently and neither is wrong: the STANDALONE door hands the engine's own
+ * stand-down reason (`organized_elsewhere:mobile`), the PAIRED door hands the roster's bare kind
+ * word (`mobile`). One reader is the point — two would let the two arms of one panel put different
+ * sentences on the same fact, which is the defect this whole row is about.
+ *
+ * Anything outside the four is `unknown`, which is a real answer and not a fallback: it is what a
+ * claim written by a build this one cannot rank looks like, and it has its own sentence.
  */
 export function holderKind(said: string | null | undefined): HolderKind {
   const word = (said ?? "").toLowerCase().split(":").pop() ?? "";
@@ -203,17 +206,6 @@ export type PhoneClaim =
   | { k: "ours"; stopping: boolean }
   /** Read, and no install holds it. `starting` = a start is asked for and not yet confirmed. */
   | { k: "free"; starting: boolean }
-  /**
-   * THIS INSTALL GAVE THE MAILBOX BACK AND HAS NOT TAKEN IT AGAIN — the transitional state.
-   *
-   * A refinement of `free` and not a sixth unrelated arm: the engine says this install organizes
-   * nothing and nobody else holds it, which is what `free` means, plus the one fact only this
-   * install knows — that the release was ours and was completed on every mailbox. Read as `free`
-   * the panel said `Nothing organizes this mailbox` about a mailbox this phone had just released
-   * and is about to take back, which invites a person to press a verb for something already
-   * happening.
-   */
-  | { k: "handedBack" }
   /** Somebody else holds it, and named itself. */
   | { k: "theirs"; name: string; kind: HolderKind }
   /** Somebody else holds it and named nothing — an install from before the holder columns. */
@@ -228,8 +220,6 @@ export function claimChipLabel(claim: PhoneClaim): string | null {
       return claim.stopping ? Copy.phoneStateStopping : Copy.phoneStateOrganizing;
     case "free":
       return claim.starting ? Copy.phoneStateStarting : Copy.phoneStateNotOrganized;
-    case "handedBack":
-      return Copy.phoneStateHandedBack;
     case "theirs":
       return Copy.phoneStateReader(claim.name);
     case "theirsUnnamed":
@@ -314,12 +304,15 @@ export function claimFrom(
 }
 
 /**
- * THE SAME CLAIM FOR THE DOOR IN THIS PROCESS, AND IT ASKS NOBODY'S NAME. {@link claimFrom}
- * recognises our own claim BY NAME, all a roster read offers, but every ohmail phone writes the SAME
- * `PHONE_CLAIM_NAME`, so on the two-phone case the name test answers `ours` for the OTHER phone's
- * claim (the panel would offer a hand-back over a mailbox this phone organizes nothing of). The engine
- * already answers what the name test stood in for — `organizing` is this install's verdict on its own
- * claim — so this reads that and compares nothing. `null` stays `unknown`: no chip, no verb.
+ * ═══ THE SAME CLAIM FOR THE DOOR IN THIS PROCESS, AND IT ASKS NOBODY'S NAME ════════════════════
+ *
+ * {@link claimFrom} recognises our own claim BY NAME, which is all a roster read offers. Every
+ * ohmail phone writes the SAME display name (`PHONE_CLAIM_NAME`), so on the ordinary two-phone case
+ * the name test answers `ours` for the OTHER phone's claim: the panel would wear "Organizing" and
+ * offer a hand-back over a mailbox this phone organizes nothing of. The engine already answers what
+ * the name test stood in for — `organizing` is this install's verdict on its own claim — so this
+ * reads that and compares nothing. `null` stays `unknown`: no chip, no verb, no sentence about a
+ * mailbox opened a second ago.
  */
 export function claimHere(
   here: {
@@ -345,37 +338,26 @@ export function claimHere(
    * (`organizerInstruction`), so a transition ends when the engine says it has.
    */
   instruction: OrganizeInstruction = "idle",
-  /**
-   * THE ONE FACT ONLY THIS INSTALL HOLDS — did WE give the mailbox back, and not take it again?
-   *
-   * `organizerHandedBack()`. Nothing in the engine's answer can say it: a mailbox this install
-   * released and a mailbox nobody ever claimed are the same three fields, so without this the
-   * transitional state renders as `Nothing organizes this mailbox` and offers a start for
-   * something the next foreground already does. It may only ever refine the FREE arm — a holder
-   * is the truer sentence, and our own claim outranks a stale flag.
-   */
-  handedBack: boolean = false,
 ): PhoneClaim {
   if (here.organizing === null) return { k: "unknown" };
   if (here.organizing) return { k: "ours", stopping: instruction === "stopping" };
   const held = here.heldBy;
-  /* A STOP THE MAIL SERVER HAS NOT HONOURED IS STILL OURS. The engine arranges nothing while it
-   * carries out a release, so `organizing` is false on both of its endings — and on a device that
-   * read as a FREE mailbox, with "Start organizing here" beside it, while the claim was still in
-   * `ohmail/_meta`. Nobody else holds a mailbox whose claim is ours and standing, so this arm sits
-   * above `free` and below `theirs`. `stopping` comes from the INSTRUCTION exactly as the
-   * organizing arm above takes it, not from the standing request: a stop still being carried out
-   * reads `Stopping`, one the server refused reads `Organizing`. Pinned `true` here, the chip said
-   * `Stopping` for ever and the Stop verb — the only way to ask again — stayed hidden. */
+  /* ══ A STOP THE MAIL SERVER HAS NOT HONOURED IS STILL OURS ═══════════════════════════════
+   *
+   * The engine arranges nothing while it carries out a release, so `organizing` is false on both
+   * of its endings — and on a device that read as a FREE mailbox, with "Start organizing here"
+   * beside it, while the claim was still in `ohmail/_meta`. Nobody else holds a mailbox whose
+   * claim is ours and standing, so this arm sits above `free` and below `theirs`.
+   *
+   * `stopping` comes from the INSTRUCTION exactly as the organizing arm above takes it, and not
+   * from the standing request: a stop still being carried out reads `Stopping`, and one the
+   * server refused reads `Organizing` — which is what is true, and what the sentence beside it
+   * says. Pinned `true` here, the chip said `Stopping` for ever over a stop that had already
+   * failed, and the Stop verb — the only way to ask again — stayed hidden. */
   if (held === null && here.releaseRequestedAt !== null) {
     return { k: "ours", stopping: instruction === "stopping" };
   }
-  if (held === null) {
-    /* NOT WHILE A PRESS IS IN FLIGHT: `starting` is a transition a person asked for and is the
-       sentence they are waiting on, and a hand-back flag from before it would replace it. */
-    if (handedBack && instruction !== "starting") return { k: "handedBack" };
-    return { k: "free", starting: instruction === "starting" };
-  }
+  if (held === null) return { k: "free", starting: instruction === "starting" };
   const kind = holderKind(held.standDownReason);
   return held.name.length > 0
     ? { k: "theirs", name: held.name, kind }
@@ -383,13 +365,15 @@ export function claimHere(
 }
 
 /**
- * THE SENTENCE UNDER THE CHIP — what this phone does about THIS mailbox. The panel rendered
- * {@link platformRuleLine} in every state (it describes what organizing on a phone means, "It
- * organizes while its notification is shown"), which over a mailbox another machine holds is false
- * and was the only sentence a standing-down phone got. So the note follows the claim: `ours`, `free`
- * and `unknown` keep the platform rule, and the two foreign arms name the holder and say what this
- * phone does instead, in the desktop's words (`mailboxes.readerReadsOnly`). No arm offers a takeover —
- * there is no such press in this panel.
+ * ═══ THE SENTENCE UNDER THE CHIP — what this phone does about THIS mailbox ═════════════════════
+ *
+ * The panel rendered {@link platformRuleLine} in every state, and that sentence describes what
+ * organizing on a phone means ("It organizes while its notification is shown"). Over a mailbox
+ * another machine holds it is false, and it was the only sentence a standing-down phone got beside
+ * a chip naming nobody. So the note follows the claim: `ours`, `free` and `unknown` keep the
+ * platform rule, and the two foreign arms name the holder and say what this phone does instead, in
+ * the desktop's words (`mailboxes.readerReadsOnly`). No arm offers a takeover — there is no such
+ * press in this panel, and promising one would be a claim the screen makes false.
  */
 export function claimNoteLine(claim: PhoneClaim, os: string): string | null {
   switch (claim.k) {
@@ -401,12 +385,6 @@ export function claimNoteLine(claim: PhoneClaim, os: string): string | null {
       return null;
     case "unknown":
       return null;
-    case "handedBack":
-      /* AND THIS ONE DOES GET A SENTENCE, where `free` gets none: the chip names a state a person
-         has never seen a word for, and what it means for them is that their laptop may take the
-         mailbox right now. The platform rule is not said here — it describes a notification that
-         is deliberately not showing. */
-      return Copy.phoneStateHandedBackWhy;
     case "theirs":
       return claim.kind === "mobile"
         ? Copy.phoneStateReaderWhyPhone(claim.name)

@@ -18,13 +18,22 @@ import { bubbleUpPass } from "./bubble-up-pass.js";
 export { bubbleUpPass } from "./bubble-up-pass.js";
 
 /**
- * MANUAL BACKSTOP — for a dead worker, not a scheduler. Guarded by the shard's session-level leader lock
- * (the same one the always-on worker and the other three backstops use): if the live worker holds it, this
- * exits without touching the DB; otherwise one resurfacing pass PER SERVED ACCOUNT (its shard, each
- * isolated so one failure never skips the rest) and release. That lock is exactly why this is NOT a
- * platform cron: while the worker is healthy a scheduled process would only start, fail to acquire and
- * exit — the resurfacing production depends on happens inline in `cycle()`. Recorded `MANUAL_BACKSTOP` in
- * `SCHEDULE_MANIFEST` (`test/every-pass-has-a-producer.test.ts`). `log` defaults to `silentLogger` — see `cron-log.ts`.
+ * MANUAL BACKSTOP — for a worker that is dead, not for a scheduler.
+ *
+ * Guarded by the shard's session-level leader lock — the same one the always-on worker and the
+ * other three backstops use: if the live worker holds it, this run exits without touching the
+ * DB. Otherwise it performs one resurfacing pass PER SERVED ACCOUNT (its shard's duty, each
+ * isolated so one account's failure never skips the rest) and releases. Scoping by account is
+ * what keeps the shard-specific lock meaningful.
+ *
+ * That lock is exactly why this is NOT a platform cron service: while the worker is
+ * healthy, a scheduled process here would only ever start, fail to acquire, and exit. The
+ * resurfacing that production depends on happens inline in `cycle()`; this exists so an
+ * operator can flush the backlog by hand when the worker is down. It is recorded as
+ * `MANUAL_BACKSTOP` in `SCHEDULE_MANIFEST` (`test/every-pass-has-a-producer.test.ts`).
+ *
+ * `log` defaults to `silentLogger` — see `cron-log.ts` for why the process that deploys is
+ * the only one that turns it on.
  */
 export async function runBubbleUpCron(
   config: WorkerConfig, log: Logger = silentLogger,

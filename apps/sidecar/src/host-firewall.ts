@@ -3,14 +3,62 @@ import { isIPv4 } from "node:net";
 import { networkInterfaces } from "node:os";
 
 /**
- * Is this computer's own firewall holding the LAN door shut? — the honesty half of same-network
- * access. The door binds and says so, and on a default-deny firewall (Omarchy/Arch ufw) BOTH are
- * true while nothing on the network can reach the port. The self-probe is the obvious answer and is
- * WRONG, measured: a packet this machine sends to an address it holds routes over `lo`, and ufw's
- * first rule accepts `lo`, so the probe reports reachable over a firewall dropping every real client.
- * So this READS ufw's own world-readable state (`ufw.conf`, `default/ufw`, the `### tuple ###`
- * lines), and the verdict is FOUR-WAY with `unreadable` load-bearing: on macOS/Windows/nftables it
- * manufactures no certainty, and it does NOT open the port — silently acquiring root to widen exposure is a worse product.
+ * IS THIS COMPUTER'S OWN FIREWALL HOLDING THE LAN DOOR SHUT? — the honesty half of same-network
+ * access.
+ *
+ * The LAN door binds correctly and then says so, and on a distribution that ships a default-deny
+ * firewall (Omarchy/Arch with ufw, which is the platform this was measured on) BOTH of those
+ * things are true while nothing on the network can reach the port. The pane said the mail API was
+ * served "for apps on your network"; it was not. This module is what lets the pane stop saying it.
+ *
+ * ── THE SELF-PROBE IS THE OBVIOUS ANSWER AND IT IS WRONG. MEASURED, NOT REASONED ─────────────
+ *
+ * The first design here was: after binding, open a TCP connection to our own bound address and
+ * see whether it answers. It answers. It answers *precisely in the broken case*, and here is the
+ * kernel-level reason it always will:
+ *
+ *   $ ip route get 10.0.2.15
+ *   local 10.0.2.15 dev lo src 10.0.2.15
+ *
+ * A packet this machine sends to an address this machine holds never leaves the box — it is
+ * routed over `lo`. And ufw's very first filter rule is:
+ *
+ *   -A ufw-before-input -i lo -j ACCEPT          (/etc/ufw/before.rules:21)
+ *
+ * So the self-probe is accepted by the rule that exists to make loopback always work, and reports
+ * a reachable door over a firewall that is dropping every real client. Measured on the Omarchy
+ * 4.0.2 guest, both halves in one run: a listener on `10.0.2.15:6299` with no ufw rule answered
+ * `HELLO-FROM-LAN-DOOR` to a probe on the machine itself, and timed out for a connection from
+ * off-box. **A guard built on that probe would have gone green on the exact defect it was written
+ * to catch** — `CLAUDE.md`'s failure-reports-success family, bought and paid for. Do not
+ * reintroduce it; a probe that can only be honest from another machine cannot run here.
+ *
+ * ── SO: READ THE FIREWALL'S OWN STATE, AND SAY NOTHING WHEN IT CANNOT BE READ ────────────────
+ *
+ * ufw keeps its state in three world-readable files (verified `-rw-r--r-- root root` on the
+ * measured guest; the reader treats every one of them as optional anyway):
+ *
+ *   /etc/ufw/ufw.conf       ENABLED=yes|no          — is ufw meant to be on
+ *   /etc/default/ufw        DEFAULT_INPUT_POLICY    — is a rule even needed
+ *   /etc/ufw/user.rules     `### tuple ###` lines   — the rules themselves
+ *
+ * The `### tuple ###` comments are parsed rather than the iptables lines beneath them: they are
+ * ufw's own normalized summary of each rule, one line each, and they survive the differences
+ * between iptables/nft backends that the generated `-A` lines do not.
+ *
+ * **THE VERDICT IS FOUR-WAY AND `unreadable` IS LOAD-BEARING.** This runs on macOS and Windows
+ * too, and on Linux boxes with nftables, firewalld, or no firewall at all, where none of the above
+ * exists and this module knows nothing. Reporting "open" there would be the same overclaim in a
+ * new place. The one thing this module must never do is manufacture certainty: it answers
+ * `unreadable`, the engine logs nothing, and the pane keeps a claim it can actually support.
+ *
+ * ── WHY THIS DOES NOT OPEN THE PORT ITSELF ───────────────────────────────────────────────────
+ *
+ * Editing a firewall needs root, and a mail client that silently acquires root to widen a
+ * machine's network exposure is a worse product than one that cannot reach a phone. The remedy is
+ * a sentence and a command the operator runs knowingly. Packaging may legitimately own the rule
+ * (a ufw application profile shipped by a distribution package is a normal pattern); that is a
+ * packaging decision and it does not change what this code is allowed to assert.
  */
 
 /** Where ufw keeps the three facts. Overridable so tests never read the host's real firewall. */
@@ -61,13 +109,21 @@ function shellValue(body: string, key: string): string | null {
 }
 
 /**
- * The direction token, found by SCANNING rather than by index — because neither "field 7" nor "the
- * last field" is right, and both were wrong before the shapes were measured on a real ufw. Four
- * forms came out of `/etc/ufw/user.rules`: the ordinary rule (`… in`), a comment appended AFTER the
- * direction, an app profile inserting TWO positional fields BEFORE it (`… MailHost - in`), and an
- * interface-qualified `in_enp0s2`. A fixed index read the PROFILE NAME as the direction and rejected
- * every rule made with `ufw allow <profile>` — which this module's header calls a supported
- * packaging path, so it would have nagged exactly the machines that did it the recommended way.
+ * The direction token, found by SCANNING rather than by index — because neither "field 7" nor
+ * "the last field" is right, and both were wrong here before the shapes were measured on a real
+ * ufw. All four forms below came out of `/etc/ufw/user.rules` on the Omarchy guest:
+ *
+ * ```
+ * allow tcp 6245 0.0.0.0/0 any 0.0.0.0/0 in                       the ordinary rule
+ * allow udp 53 172.17.0.1 any 172.16.0.0/12 in comment=616c…      a comment is appended AFTER dir
+ * allow tcp 6777 0.0.0.0/0 any 0.0.0.0/0 MailHost - in            an app profile inserts TWO
+ *                                                                 positional fields BEFORE dir
+ * allow tcp 6779 0.0.0.0/0 any 0.0.0.0/0 in_enp0s2                interface-qualified
+ * ```
+ *
+ * A fixed index read the PROFILE NAME as the direction and rejected every rule made with
+ * `ufw allow <profile>` — which this module's own header calls a supported packaging path, so it
+ * would have nagged exactly the machines that had done it the recommended way.
  */
 function directionOf(fields: readonly string[]): string | null {
   for (let i = fields.length - 1; i >= 0; i -= 1) {
@@ -107,14 +163,22 @@ function coversAddress(spec: string, address: string | null): boolean {
 }
 
 /**
- * Does one `### tuple ###` field list admit inbound TCP on `port` at `address`? The tuple is ufw's
- * own normalization (`action proto dport dst sport src dir`). Most tests here are deliberately
- * GENEROUS — a rule that plausibly covers the port counts — because a missed allow only nags about a
- * firewall that is already open, while a missed BLOCK is the defect this module exists to remove. The
- * interface qualifier is the one place that asymmetry FLIPS: `in_wlan0` admits the port on wlan0 and
- * nowhere else, so counting it for a door bound on eth0 would report a reachable door over a firewall
- * dropping every packet — a false SERVING. So an interface-qualified rule counts only when the
- * interface is demonstrably the one holding the bound address, and an unknown interface does not.
+ * Does one `### tuple ###` field list admit inbound TCP on `port` at `address`?
+ *
+ * The tuple is ufw's own normalization:
+ *   `### tuple ### allow tcp 6245 0.0.0.0/0 any 0.0.0.0/0 in`
+ *    fields:        action proto dport dst   sport src     dir
+ *
+ * Most tests here are deliberately GENEROUS — a rule that plausibly covers the port counts as
+ * admitting it. A missed allow makes the app nag about a firewall that is already open, which is a
+ * small annoyance; a missed BLOCK is the defect this module exists to remove.
+ *
+ * **The interface qualifier is the one place that asymmetry FLIPS, and it flips for the same
+ * reason it exists.** `in_wlan0` admits the port on wlan0 and nowhere else, so counting it for a
+ * door bound on eth0 would report a reachable door over a firewall that is dropping every packet
+ * to it — a false SERVING, which is the overclaim, not the annoyance. So an interface-qualified
+ * rule counts only when the interface is demonstrably the one holding the bound address, and an
+ * unknown interface does not count.
  */
 function tupleAdmits(
   fields: readonly string[],

@@ -1,12 +1,30 @@
 /**
- * Declarations for the phone's alias table, so the suite that reads it can be typechecked.
- * `aliases.js` is JavaScript on purpose: its one production reader is the phone-bundle build script,
- * a plain ESM script that runs before any build step, so a `.ts` table would need compiling before
- * the thing that compiles it. The cost was paid by the TESTS: the substitution suite imports the
- * table, and with no declarations every value was `unknown` behind `TS7016` — fourteen errors from
- * one missing file, so the test was EXCLUDED from `tsconfig.tests.json`, the state this file ends.
- * `SCHEMA_TWIN` is `{ from, to }` and NOT a record like its neighbours, because the substitution is
- * anchored to one specifier and a record would invite a second entry the bundler cannot express. Both the named-export surface and the default object are declared.
+ * ══════════════════════════════════════════════════════════════════════════════════════════
+ *  DECLARATIONS FOR THE PHONE'S ALIAS TABLE — so the suite that reads it can be typechecked
+ * ══════════════════════════════════════════════════════════════════════════════════════════
+ *
+ * `aliases.js` is JavaScript on purpose: its one production reader is the script that builds the
+ * phone bundle, a plain ESM script that runs before any build step exists, so a `.ts` table would
+ * need compiling before the thing that compiles it.
+ *
+ * The cost of that was paid by the TESTS. The suite that checks the substitutions imports the
+ * table, and with no declarations every value read off it was `unknown` behind a
+ * `TS7016` — fourteen errors descending from one missing file. That test was therefore EXCLUDED
+ * from `tsconfig.tests.json`, which is the state this file exists to end: a guard about which
+ * modules a phone's artifact contains, and it was the one file in the composition suite whose
+ * compilation nobody checked.
+ *
+ * ── WHAT IS DECLARED IS WHAT THE TABLE IS, NOT A CONVENIENT WIDENING ──────────────────────
+ *
+ * `SCHEMA_TWIN` is `{ from, to }` and NOT a specifier→target record like its four neighbours,
+ * because the substitution it describes is anchored to one exact specifier (`./schema-mail.js`)
+ * and a record would invite a second entry that the bundler's rule 3 cannot express. Declaring
+ * it as a record would compile, and the first person to add a row would find the build silently
+ * ignoring it. The shape is the contract.
+ *
+ * Both an ESM named-export surface AND a default object are declared, because the module has
+ * both: the build script imports the default, the census imports the names, and dropping either
+ * from here would red a caller that works.
  */
 
 /** A bundler substitution: the specifier a module writes → the file that answers it. */

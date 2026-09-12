@@ -1,16 +1,49 @@
 import { resolveThread, silentLogger, type Logger } from "@trafficflow/core";
 import type { ThreadBacklogRow, WorkerRepo } from "@trafficflow/core/adapters/drizzle-repo";
 
-/* THE THREAD BACKFILL — and where it was re-placed. It runs behind the sync cycle, one bounded slice per
- * completed cycle, one account per slice (`kickThreadBackfill` in `index.ts`) — NOT on the attach path,
- * where it first ran to exhaustion between `adapter.connect()` and `adapter.watch()` holding an idle IMAP
- * connection: on a large mailbox that outlasted the socket timeout, the connection died, imapflow emitted
- * on a client with no `error` listener (uncaught), and the platform restarted the process every ~26 s for
- * eight minutes. Threading at ingest fixes new mail only; every existing row carried `thread_id` NULL, so
- * without this the mailbox reads as singletons. NO IMAP: the chain is read from `message_bodies.headers`
- * (`commitChange` has persisted them since the first build). NO marker column, unlike `runKickstart`
- * (`mailboxes.kickstart_at` + cursor): the predicate is `thread_id IS NULL` and every examined row gets one,
- * so the set strictly shrinks and an empty page is a real end — one indexed probe per slice (`messages_account_thread_idx`). */
+/* ══════════════════════════════════════════════════════════════════════════════════════════
+   THE THREAD BACKFILL — and where it was re-placed
+   ══════════════════════════════════════════════════════════════════════════════════════════
+
+   ── WHERE IT RUNS, WHICH IS THE ONLY THING THE FIRST VERSION GOT WRONG ─────────────────────
+
+   Behind the sync cycle, one bounded slice per completed cycle, one account per slice —
+   `kickThreadBackfill` in `index.ts`. NOT on the attach path, where it first ran: there it ran to
+   exhaustion between `adapter.connect()` and `adapter.watch()`, i.e. while holding a
+   freshly-dialled IMAP connection that was not yet in IDLE and had nothing awaiting it. On a
+   large real mailbox that idle stretch outlasted the socket timeout, the connection
+   died, and imapflow emitted the error on a client with no `error` listener — an UNCAUGHT
+   exception, so the process exited and the platform restarted it every ~26 s for eight minutes with
+   nothing syncing.
+
+   Threading at ingest fixes every message that arrives from now on. It fixes nothing that is
+   already in the database, and what is already in the database is the entire product as its
+   owner sees it: every existing row, seeded worlds and real mailboxes alike, carried
+   `thread_id` NULL. Without this pass, threading ships and the mailbox still reads as singletons.
+
+   ── NO IMAP ────────────────────────────────────────────────────────────────────────────────
+
+   The chain is read from `message_bodies.headers`, which `commitChange` has persisted for every
+   message since the first ingest build. Re-fetching thousands of messages over IMAP to read three
+   headers we already
+   have would be minutes of somebody's mail server for data sitting on disk, and it would put a
+   network call inside the pass that writes `change_log` (the delta contract forbids exactly that).
+
+   ── AND NO MARKER COLUMN, WHICH IS THE ONE PLACE IT DIVERGES FROM THE KICKSTART ────────────
+
+   `runKickstart` needs `mailboxes.kickstart_at` and a monotone cursor because its candidate set
+   never empties: most of the Screener backlog is genuine first contact and STAYS in the
+   Screener, so "loop until nothing comes back" would read the same hundred strangers for ever.
+
+   This pass has the opposite property. Its predicate is `thread_id IS NULL`, and every row it
+   examines gets a `thread_id` — so the candidate set strictly shrinks and an empty page is a
+   real end condition. The work item IS the marker, which is strictly better than a stamped
+   flag: a message that somehow reaches the database without a thread is picked up by the next
+   slice instead of being permanently excluded by a bit that says "done". It is also what makes
+   the slice budget free — a pass that stops half-way has nothing to record, because where it
+   stopped is where the predicate now starts. The steady-state cost of a drained account is one
+   indexed probe per slice, served by `messages_account_thread_idx (account_id, thread_id)`.
+   ══════════════════════════════════════════════════════════════════════════════════════════ */
 
 /**
  * Messages resolved per transaction.
@@ -24,21 +57,29 @@ import type { ThreadBacklogRow, WorkerRepo } from "@trafficflow/core/adapters/dr
 export const THREAD_BACKFILL_BATCH = 100;
 
 /**
- * Pages the pass will walk before giving up and saying so — fifty thousand messages at the batch above. A
- * bound, not a `while (true)`, because (unlike the kickstart) this loop's termination depends on every
- * examined row LEAVING the predicate: if `setMessageThread` ever stopped stamping, the same hundred rows
- * would come back for ever, and the cap turns that regression into a warning line instead of a pinned CPU.
- * It is the ABSOLUTE ceiling, not the per-pass budget ({@link ThreadBackfillDeps.maxPages} bounds a slice
- * and is clamped to this); reaching THIS number is the regression signal and the only case that warns.
+ * Pages the pass will walk before giving up and saying so — fifty thousand messages at the batch above.
+ *
+ * A bound and not a `while (true)`, because unlike the kickstart this loop's termination
+ * depends on every examined row LEAVING the predicate. If `setMessageThread` ever stopped
+ * stamping, the same hundred rows would come back for ever against the live database. The cap turns
+ * that regression into a warning line instead of a pinned CPU.
+ *
+ * It is the ABSOLUTE ceiling, not the per-pass budget: {@link ThreadBackfillDeps.maxPages}
+ * bounds a slice and is clamped to this. Reaching THIS number is the regression signal and is
+ * the only case that warns.
  */
 export const THREAD_BACKFILL_MAX_PAGES = 500;
 
 /**
- * Pages ONE slice of the worker's paced drain walks — two thousand messages. This constant and the
- * deadline below are the whole placement correction: the first version ran to exhaustion on the attach
- * path, holding a freshly-dialled IMAP connection idle for minutes on a large mailbox until the socket
- * died and the error escaped uncaught. The pass was never the problem — an unbounded pass in front of a
- * connection was. See `kickThreadBackfill` in `index.ts` for where it runs now.
+ * Pages ONE slice of the worker's paced drain walks — two thousand messages.
+ *
+ * This constant, and the deadline below, are the whole of the placement correction. The first
+ * version ran the pass to
+ * exhaustion on the attach path: on a large real mailbox that held a freshly-dialled
+ * IMAP connection open and idle for minutes, the socket died, and the error escaped as an
+ * uncaught exception. The pass itself was never the
+ * problem — an unbounded pass in front of a connection was. See `kickThreadBackfill` in
+ * `index.ts` for where it runs now.
  */
 export const THREAD_BACKFILL_SLICE_PAGES = 20;
 
@@ -96,14 +137,32 @@ export type ThreadBackfillPass = (deps: ThreadBackfillDeps) => Promise<ThreadBac
 
 /**
  * Resolve the unthreaded messages of ONE account, oldest first, 100 per transaction, up to
- * {@link ThreadBackfillDeps.maxPages} pages or {@link ThreadBackfillDeps.deadlineMs}. ACCOUNT-scoped, not
- * mailbox-scoped, because the threading key is: a reply to one mailbox can answer mail in another, and the
- * worker's slices are round-robin over ACCOUNTS for the same reason. Date ascending is an OPTIMISATION, not
- * correctness — a parent resolves before its replies (the cheap `parent.thread_id` path), but
- * `root_message_id_header` makes any order converge (`threading.test.ts` ingests a 4-deep chain backwards).
- * TWO passes at once: one worker cannot (serial slices) but two WORKERS can, and `listThreadBacklog` takes
- * `FOR UPDATE OF messages`, so the loser re-reads under READ COMMITTED, the rows no longer satisfy
- * `thread_id IS NULL` and drop out (`thread-backfill.pg.test.ts` on real Postgres). */
+ * {@link ThreadBackfillDeps.maxPages} pages or {@link ThreadBackfillDeps.deadlineMs}.
+ *
+ * ── ACCOUNT-SCOPED, NOT MAILBOX-SCOPED ─────────────────────────────────────────────────────
+ *
+ * Because the threading key is. A reply delivered to one of the user's mailboxes can answer
+ * mail that arrived in another, and a per-mailbox pass would split that conversation in two.
+ * It is also why the worker's slices are round-robin over ACCOUNTS and not over mailboxes: a
+ * second mailbox of the same account would only find the backlog already drained.
+ *
+ * ── DATE ASCENDING IS AN OPTIMISATION, NOT A CORRECTNESS REQUIREMENT ───────────────────────
+ *
+ * Oldest first means a parent is resolved before its replies, so each reply takes the cheap
+ * path (`parent.thread_id` already set) rather than the anchor path. Correctness does not
+ * depend on it: `root_message_id_header` makes any arrival order converge on one thread, which
+ * is the property `threading.test.ts` proves by ingesting a 4-deep chain backwards.
+ *
+ * ── TWO PASSES AT ONCE ─────────────────────────────────────────────────────────────────────
+ *
+ * One worker cannot produce this any more — slices run on the serial queue, one account at a
+ * time — but two WORKERS can (a deploy overlap, a shard split, the desktop engine beside Cloud),
+ * and the property is cheap to keep. `listThreadBacklog` takes `FOR UPDATE OF messages`, so the
+ * loser blocks; when it re-reads under READ COMMITTED the rows no longer satisfy
+ * `thread_id IS NULL` and drop out of its result set. One thread per conversation, one
+ * `change_log` row per message. That claim is `thread-backfill.pg.test.ts` on real Postgres,
+ * because PGlite is single-connection and cannot host the race at all.
+ */
 export async function runThreadBackfill(deps: ThreadBackfillDeps): Promise<ThreadBackfillResult> {
   const { repo, accountId } = deps;
   const log = deps.log ?? silentLogger;

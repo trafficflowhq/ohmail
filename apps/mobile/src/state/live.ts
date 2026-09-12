@@ -59,7 +59,6 @@ import { Copy } from "../copy";
 import { refuse, type RefusalArg } from "../refusal";
 import { folderLeafOf, folderUnreadCounts } from "./folders";
 import type { ScreeningAnswer } from "../net/consent";
-import type { ServerWaitingSender } from "../net/screener";
 import {
   destDone,
   domainOf,
@@ -127,8 +126,8 @@ export function readerZone(): string {
  * cutline takes the account's answer, never this package's default: `screening` is
  * `GET /consent`'s three fields, `ownAddresses` is `GET /mailboxes`'. `null` is not-answered
  * and files nobody into History: every undecided sender stays at the gate until the account's
- * answer lands, so a boot shows a superset rather than a drop. An undated message is dated by
- * its arrival and `all_time` is read as a mode, so this posture retires nobody at all.
+ * answer lands, so a boot shows a superset rather than a drop. (Residual: an undated message
+ * cannot make its sender active even under `all_time`. Unchanged here, never a new drop.)
  */
 export interface PresentedWorld {
   /** The projection the pile selectors read — History's rows are absent from its `message` list. */
@@ -278,11 +277,6 @@ function toMail(reader: EntityReader, m: EngineMessage, v: WorldView): WorldMail
     // A message in one of the user's OWN folders (no view owns its path) names itself by its
     // leaf — see {@link WorldMail.folderLeaf}.
     ...(VIEW_OF_FOLDER[physical as Folder] === undefined ? { folderLeaf: folderLeafOf(physical) } : {}),
-    // HELD AT THE GATE — see {@link Mail.gateHeld}. Off the PHYSICAL folder, because the place
-    // is exactly what cannot say it: `Place` has three values and none of them is the Screener,
-    // so every message the server holds at the gate fell to the ohbox default and the reading
-    // screen titled it Ohbox — nine of nine, measured on a device.
-    ...(physical === FOLDER_OF_VIEW.screener ? { gateHeld: true as const } : {}),
     id: m.id,
     place: placeOfFolder(m.folder),
     // The PHYSICAL folder, not the presented one: this reader is the projection, which
@@ -730,13 +724,6 @@ export interface WorldScreener {
   waiting: ScreenerRow[];
   screened: ScreenerRow[];
   spam: ScreenerRow[];
-  /**
-   * WHERE THE WAITING LIST CAME FROM — `"server"` when `GET /screener` answered this session,
-   * `"device"` when this phone had to work it out for itself (the standalone door, an unread
-   * route, a refusal). Only the waiting shelf has two sources; the other two are the mirror's
-   * alone. The surface states `"device"` rather than passing a count off as the mailbox's.
-   */
-  source: "server" | "device";
 }
 
 const AI_DESTS = new Set<string>(["ohbox", "reads", "receipts", "screened", "spam"]);
@@ -776,121 +763,24 @@ function rowOf(dto: ScreenerSenderDTO, scope: Scope | undefined): ScreenerRow {
 }
 
 /**
- * A reader in which the server's waiting senders are at the gate. `screenerSegments` groups over
- * the PROJECTION, which re-homes a DECIDED sender's gate mail to the rule's destination
- * (`consent-cutline.ts`) — right for the Ohbox, wrong for this queue: the mail is still physically
- * in `ohmail/Screener` and the server still asks about that sender, so the phone was answering a
- * question the server had not asked. So for the queue alone, a message whose PHYSICAL folder is the
- * gate and whose sender the route names is read at the gate. Nothing else moves — the same
- * projection still feeds the Ohbox, the piles and the folders, so only which senders the Screener
- * asks about changes.
- */
-function gateReader(pres: EntityReader, waiting: ReadonlySet<string>): EntityReader {
-  const atGate = (m: EngineMessage): EngineMessage => {
-    const physical = physicalFolderOf(m);
-    if (physical !== FOLDER_OF_VIEW.screener || m.folder === physical) return m;
-    return waiting.has(senderKey(m.from.address)) ? { ...m, folder: physical as Folder } : m;
-  };
-  return {
-    version: () => pres.version(),
-    get<T = unknown>(type: string, id: string): T | undefined {
-      const v = pres.get<T>(type, id);
-      if (type !== "message" || v === undefined) return v;
-      return atGate(v as unknown as EngineMessage) as unknown as T;
-    },
-    list<T = unknown>(type: string): T[] {
-      const rows = pres.list<T>(type);
-      return type === "message"
-        ? rows.map((r) => atGate(r as unknown as EngineMessage) as unknown as T)
-        : rows;
-    },
-    entries<T = unknown>(type: string): Array<{ id: string; entity: T; seq: number }> {
-      const rows = pres.entries<T>(type);
-      return type === "message"
-        ? rows.map((r) => ({ id: r.id, seq: r.seq, entity: atGate(r.entity as unknown as EngineMessage) as unknown as T }))
-        : rows;
-    },
-  };
-}
-
-/**
- * A ROW FOR A SENDER THE ROUTE NAMES AND THIS MIRROR CANNOT BACK.
- *
- * The mirror is WINDOWED (90 days, a floor of rows) while the queue is not, so the route can
- * name a sender whose mail this phone does not hold. Such a sender still gets a row — dropping
- * them would put the phone back to showing fewer senders than the server, which is the whole
- * defect — built from what the route itself states. `held` carries the one message the route
- * named, at its own stamp; the sender screen hydrates nothing further, because there is nothing
- * on this device to hydrate from.
- */
-function rowOfServer(s: ServerWaitingSender, v: WorldView, scope: Scope | undefined): ScreenerRow {
-  const name = s.name || s.address;
-  const time = messageDisplayTime({ date: s.receivedAt }, v.now, v.zone, v.locale ?? "en");
-  return {
-    id: s.messageId,
-    routeKey: senderKey(s.address),
-    name,
-    address: s.address,
-    initial: (name.trim()[0] ?? "?").toUpperCase(),
-    time,
-    newestSubject: s.subject,
-    dull: false,
-    scope: scope ?? "sender",
-    ai: null,
-    held: [{ id: s.messageId, subject: s.subject, time, body: s.snippet, bodyState: "snippet", seen: false }],
-    screenedOn: "",
-    detection: "",
-    // The route only ever names mail it is holding at the gate.
-    gatePhysical: true,
-  };
-}
-
-/**
  * The three shelves — `screenerSegments` over the projection (the queue the webapp renders),
- * reshaped. `scopes` carries the reader's per-sender scope choice (this sender / whole domain),
- * view state rather than a mirror fact, keyed by the STABLE {@link ScreenerRow.routeKey}. On a
- * paired door the waiting shelf is the server's set exactly: `server` is `GET /screener`'s answer
- * ({@link readScreenerWaiting}), one row per sender it names, in its order — the mirror supplies
- * each row's held mail and a sender it cannot back rides the route's words. `null` is "nobody
- * answered": the standalone door where this phone IS the engine, or a paired read not yet landed;
- * then the derived list stands and {@link WorldScreener.source} says so.
+ * reshaped. `scopes` carries the reader's per-sender scope choice (this sender / whole
+ * domain), which is view state on a live account rather than a mirror fact — keyed by the
+ * STABLE {@link ScreenerRow.routeKey}, never the representative id a drain re-mints.
  */
 export function liveScreener(
   pres: EntityReader, v: WorldView, scopes: Readonly<Record<string, Scope>> = {},
-  server: readonly ServerWaitingSender[] | null = null,
 ): WorldScreener {
-  const waitingKeys = new Set((server ?? []).map((s) => senderKey(s.address)));
   // `v.ownAddresses` rides in for the reason it rides into `presentedWorld`: the projection keeps
   // an own-address row in its own place, so without it a self-addressed message in the Screener
   // folder is a waiting row and the reader queues in their own queue.
-  const queueReader = server === null ? pres : gateReader(pres, waitingKeys);
-  const segments = screenerSegments(queueReader, v.now, v.locale ?? "en", v.zone, v.ownAddresses);
+  const segments = screenerSegments(pres, v.now, v.locale ?? "en", v.zone, v.ownAddresses);
   const map = (rows: ScreenerSenderDTO[]) =>
     rows.map((dto) => rowOf(dto, scopes[senderKey(dto.from.address)]));
-  if (server === null) {
-    return {
-      waiting: map(segments.waiting),
-      screened: map(segments.screenedOut),
-      spam: map(segments.spam),
-      source: "device",
-    };
-  }
-  /* THE ROUTE'S SET, IN THE ROUTE'S ORDER — a join, never a union. The derived rows are matched
-     in by sender key for their held mail; a derived sender the route does not name is dropped
-     (decided on another door, or outside the server's own cutline), and a named sender the
-     mirror cannot back is minted. So the count on screen is the number the route answered, and
-     the two ends cannot disagree about who is waiting. */
-  const derived = new Map(segments.waiting.map((dto) => [senderKey(dto.from.address), dto]));
-  const waiting = server.map((s) => {
-    const key = senderKey(s.address);
-    const dto = derived.get(key);
-    return dto ? rowOf(dto, scopes[key]) : rowOfServer(s, v, scopes[key]);
-  });
   return {
-    waiting,
+    waiting: map(segments.waiting),
     screened: map(segments.screenedOut),
     spam: map(segments.spam),
-    source: "server",
   };
 }
 
@@ -2317,14 +2207,20 @@ export function staleAsOf(
 export const RECONNECT_PROMISE_MS = 5 * 60_000;
 
 /**
- * What the connection is doing, as one of three answers a surface can render. `null` is the fourth
- * and the important one: nothing has said yet — a paired session, a phone with no engine, or a door
- * whose first cycle has not run — and a surface renders no sentence for it rather than "Connection
- * lost" a second after the mailbox opened. The discriminant is `kind`, not `say`: `say` is a
- * rendered name on this app's copy census (`refusal.ts`), so a union keyed on it would read as
- * English words outside the deck. `refused` is separated from `lost` because the remedies are
- * opposite — an unreachable server is re-dialled and heals, a rejected sign-in is not retried and
- * needs a person — so this keeps the freshness line from claiming a reconnect nothing attempts.
+ * WHAT THE CONNECTION IS DOING, as one of three answers a surface can render.
+ *
+ * `null` is the fourth and it is the important one: nothing has said yet — a paired session, a
+ * phone with no engine, or a door whose first cycle has not run. A surface renders no sentence
+ * for it, rather than "Connection lost" a second after the mailbox opened.
+ *
+ * The discriminant is `kind` and not `say`: `say` is a RENDERED name on this app's own copy
+ * census (`refusal.ts` uses it for a sentence), so a union keyed on it reads as four English
+ * words sitting outside the deck.
+ *
+ * `refused` is separated from `lost` because the remedies are opposite: an unreachable server is
+ * being re-dialled and heals on its own, a rejected sign-in is not retried at all and needs a
+ * person. The door's own refusal owns that sentence, so this answer exists to keep the freshness
+ * line from claiming a reconnect nothing is attempting.
  */
 export type ConnectionSay =
   | { readonly kind: "reachable" }
@@ -2375,39 +2271,6 @@ export function connectionSay(
   return now.getTime() - since < RECONNECT_PROMISE_MS
     ? { kind: "lost" }
     : { kind: "gone", since: whenLabel(stamp, zone) };
-}
-
-/**
- * WHAT THE FIRST SYNC OF THIS MAILBOX PRODUCED, as one verdict — the engine answers, this ranks.
- *
- * BESIDE {@link connectionSay} and deliberately not folded into it: two surfaces need both at
- * once, and a single ranking would have to drop one. Measured against a server that signs you in
- * and refuses to hand over the mail, the link reads dead AND the first sync has produced nothing
- * — "Reconnecting…" alone sends somebody to look at a network that is fine. `null` is "nothing
- * has said" (a paired session, no engine, a first drain not back) and is its own state, for
- * `connectionSay`'s reason.
- */
-export type FirstSyncSay = "pending" | "finished" | "nothingReadable";
-
-export function firstSyncSay(here: { firstSync: string | null } | null): FirstSyncSay | null {
-  if (here === null || here.firstSync === null) return null;
-  if (here.firstSync === "produced_nothing_readable") return "nothingReadable";
-  if (here.firstSync === "finished") return "finished";
-  if (here.firstSync === "pending") return "pending";
-  /* A SPELLING THIS BUILD HAS NEVER HEARD OF is "nothing has said", never a guess. The engine is
-     a pre-bundled artifact and may be newer than this app; inventing a verdict for an unknown
-     value is how a surface ends up asserting something no engine ever claimed. */
-  return null;
-}
-
-/**
- * THE SENTENCE FOR A VERDICT, or `null` where a surface says nothing — ONE ranking, two surfaces,
- * on {@link connectionSaid}'s rule. `pending` and `finished` are silent: a first sync still
- * working is what the skeleton and the freshness label already say, and a finished one is the
- * ordinary state.
- */
-export function firstSyncSaid(verdict: FirstSyncSay | null): string | null {
-  return verdict === "nothingReadable" ? Copy.firstSyncNothingReadable : null;
 }
 
 

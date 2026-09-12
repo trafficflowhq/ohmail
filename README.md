@@ -387,42 +387,6 @@ WebKitGTK: the mail engine and its Node runtime are inside the package, and the
 webview stack is your desktop's. Any Fedora or openSUSE desktop that ships a GTK
 browser engine already has it.
 
-#### Flatpak
-
-A Flatpak manifest is in this repository at
-`apps/desktop/flatpak/app.ohmail.Desktop.yml`, and it builds the app with no
-network access — every crate, every npm package and the Node runtime the mail
-engine runs on are declared, checksummed sources. Build and install it yourself:
-
-```bash
-flatpak install flathub org.flatpak.Builder org.gnome.Sdk//50 \
-  org.freedesktop.Sdk.Extension.rust-stable//25.08 \
-  org.freedesktop.Sdk.Extension.node22//25.08
-
-flatpak run org.flatpak.Builder --user --force-clean --install \
-  build-dir apps/desktop/flatpak/app.ohmail.Desktop.yml
-
-flatpak run app.ohmail.Desktop
-```
-
-The app id is `app.ohmail.Desktop`, which is not the identifier the AppImage,
-`.deb` and `.rpm` use. That is deliberate: a Flatpak may claim desktop names
-only under its own id, and a sandbox has its own data directory regardless — so
-this build does not read a mailbox another Linux build of ohmail already
-mirrored. Connect it to your mail server and it mirrors the mailbox itself; the
-server is the master copy either way.
-
-It asks for the network, a window, your login keyring and notifications, and
-nothing else — no access to your files. Attachments you open go out through the
-desktop portal. Start-at-login is not offered in this build.
-
-> [!NOTE]
-> **It is not on Flathub yet.** The manifest is here and it builds; the listing
-> is a submission that has not been made. When it is live, the install will be
-> `flatpak install flathub app.ohmail.Desktop` and this section will say so.
-> Follow [issue
-> #6](https://github.com/trafficflowhq/ohmail/issues/6) for that.
-
 > [!TIP]
 > **If the window opens and never draws anything**, run it against your own
 > distribution's GTK and WebKitGTK instead of the copies inside the AppImage:
@@ -484,9 +448,8 @@ it may install. There is no repeating timer and no other phone-home.
 release.
 
 A build that cannot replace its own files does not make that request at all: a
-`.deb` or `.rpm` install, a Flatpak, and a build from source read how they were
-installed and say where updates come from instead — a Flatpak says your software
-centre, because that is what updates it. The AppImage, the Windows setup and the
+`.deb` or `.rpm` install, and a build from source, read how they were installed
+and say where updates come from instead. The AppImage, the Windows setup and the
 macOS app are the three that check and install.
 
 ## Where your mail is, and what the app talks to

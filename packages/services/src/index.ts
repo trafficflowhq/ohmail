@@ -1,10 +1,7 @@
 export const SERVICES_VERSION = "0.0.0";
 
-export { ServiceError, IdempotencyRaceLost, OAuthCodeReplayed, SettleFailed, TransientDialRefusal } from "./errors.js";
+export { ServiceError, IdempotencyRaceLost, SettleFailed, TransientDialRefusal } from "./errors.js";
 export type { ServiceContext, Db } from "./context.js";
-// The fenced transaction door — every request-scoped write against a table Art. 17 erasure
-// empties opens here, so the fence cannot be forgotten. See `context.ts`.
-export { withAccountTx } from "./context.js";
 /* THE HOSTED DATABASE HANDLES. `context.ts` declares the registry with the one member a local
  * install can offer; this adds the two a hosted deployment has, by augmenting that interface.
  * Re-exporting a name from it is what carries the augmentation into every program built from this
@@ -14,8 +11,7 @@ export { withAccountTx } from "./context.js";
  * truth about itself. */
 export type { CloudDb } from "./context-cloud.js";
 export {
-  SyncService, syncService, SNAPSHOT_WINDOW, SNAPSHOT_DRAFT_PAGE, assertSnapshotWindow,
-  STALE_COALESCE_SPAN, COALESCE_SCAN_WINDOW,
+  SyncService, syncService, SNAPSHOT_WINDOW, STALE_COALESCE_SPAN, COALESCE_SCAN_WINDOW,
   type GetChangesOptions, type GetSnapshotOptions,
 } from "./sync-service.js";
 export * from "./dto/types.js";

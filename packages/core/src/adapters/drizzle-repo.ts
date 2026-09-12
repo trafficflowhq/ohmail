@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray, isNull, lte, or, sql, type SQL, type SQLWrapper } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, lte, or, sql, type SQL } from "drizzle-orm";
 import type { AnyPgColumn } from "drizzle-orm/pg-core";
 import { accountStorage, changeLog, messages, messageInstances, messageFailures, folderOps, folderState, flagState, mailboxes, mailboxCredentials, mailboxFolders, threads, rules as rulesTbl, contacts as contactsTbl, auditLog, messageBodies, attachments as attachmentsTbl, routingDecisions, approvals, graduations, recordRouteOverride, routeOverrideActionId, awayReplies, recordChange as recordChangeTx, recordChanges as recordChangesTx, bodyBytesOf, reserveBodyBytes, reserveBodyBytesEvicting, releaseBodyBytes, type ChangeInput, type LedgerTx, type Tx, type EntityType, ACCOUNT_THREAD_STRUCTURE_LOCK_CLASS, dueNow as sharedDueNow, type FilingRefusalClass } from "@trafficflow/db";
 import type {
@@ -569,12 +569,7 @@ function dueNow(col: AnyPgColumn): SQL | undefined {
 /** Rows per `recordChanges` INSERT inside the rename swap — see the chunk note at the call. */
 const RENAME_CHANGE_CHUNK = 2000;
 
-/* `SQLWrapper` and never `unknown`: what this takes is a column or a fragment, and both are
-   SQL entities. Typed `unknown` the parameter also admitted a bare JavaScript value, which reaches
-   a raw template with no column encoder — the class that made a phone's stop record nothing. The
-   dialect census's binding arm reads this signature, so the loose type was a hole in the census
-   as much as in the call. */
-function inSubtree(col: SQLWrapper, path: string) {
+function inSubtree(col: unknown, path: string) {
   // `length(${path})` in SQL and never a JS `path.length`: both stores count CHARACTERS here while
   // `String.length` counts UTF-16 code units, so any astral character in a folder name (an emoji is
   // one character and two JS units) would shear the prefix arithmetic and leave descendants under
@@ -2008,7 +2003,7 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
     const { accountId, mailboxId, folder: from, toFolder: to } = op;
     // SQL `length`, not JS `.length` — inSubtree's argument, one screen up. `||` here is string
     // concatenation, which both stores spell that way.
-    const swap = (col: SQLWrapper) => sql`${to} || substr(${col}, length(${from}) + 1)`;
+    const swap = (col: unknown) => sql`${to} || substr(${col}, length(${from}) + 1)`;
     const now = new Date();
     const changes: ChangeInput[] = [];
 

@@ -6,9 +6,9 @@ export {
 // can run it without the ceremony. See `session-lifecycle.ts`'s header for the boundary.
 export {
   SessionLifecycle, makeSessionLifecycle, PAIRED_DEVICE_KINDS,
-  assertWebSessionAge, classifyRefreshFailure,
+  assertWebSessionAge,
   REVOKE_WEB_SESSIONS_MIN_AGE_DAYS, REVOKE_WEB_SESSIONS_MAX_AGE_DAYS,
-  type SessionLifecycleDeps, type PairedDeviceKind, type RefreshFailure,
+  type SessionLifecycleDeps, type PairedDeviceKind,
 } from "./session-lifecycle.js";
 // The stale-web-session reaper — HOSTED-barrel only, deliberately: `src/auth.ts` (the engine
 // entry) must not re-export it, because a hosted maintenance pass has no business in the

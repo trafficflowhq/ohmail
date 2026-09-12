@@ -1,30 +1,17 @@
 import { and, eq, inArray, isNull, ne } from "drizzle-orm";
 import {
-  claimIdempotencyKey, drafts, mailboxes, messages, outboundSends, recordChange, recordChanges,
-  threads, type LedgerTx, type Tx,
+  claimIdempotencyKey, drafts, mailboxes, messages, outboundSends, recordChange, threads, type Tx,
 } from "@trafficflow/db";
 import { dialect } from "@trafficflow/db/dialect";
-import {
-  DRAFT_BODY_MAX_BYTES, createLogger, draftBodyOverCeiling, utf8ByteLength, type EmailAddress,
-} from "@trafficflow/core/mail";
+import type { EmailAddress } from "@trafficflow/core/mail";
 import type { ServiceContext } from "./context.js";
 import { IdempotencyRaceLost, ServiceError } from "./errors.js";
 import { materializeDraft } from "./dto/materialize.js";
 import type { DraftDTO } from "./dto/types.js";
 import { DRAFT_HTML_CAP_BYTES, htmlByteLength, prepareOutboundBody } from "./outbound-html.js";
-
 // The per-MESSAGE ceiling, imported rather than restated: two ceilings on one list that can
 // disagree is how the reply-all regression happened. See {@link DRAFT_MAX_RECIPIENTS}.
-// The per-MESSAGE ceiling and the staleness cutoff, imported rather than restated: `resolve`
-// refuses an attempt younger than this window because it may still be running, and a second
-// spelling of that number is a second answer to "is this send over".
-import { SEND_MAX_RECIPIENTS, SEND_STALE_AFTER_MS } from "./send-service.js";
-
-/**
- * Where a person's answer for a stuck send is recorded — the same `service` the machine's own
- * endings use (`send_phases`), so one log read shows both ways a send can finish.
- */
-const resolveLog = createLogger({ service: "send" });
+import { SEND_MAX_RECIPIENTS } from "./send-service.js";
 
 /**
  * For `create`: claim the idempotency row INSIDE the transaction that writes the draft.
@@ -176,14 +163,6 @@ export type SendResolution = "arrived" | "not_arrived";
  */
 const SEND_ON_RECORD_STATUSES = ["pending", "unverified"] as const;
 
-/**
- * The two draft statuses a person can be stuck in, and the only ones {@link DraftsService.resolve}
- * moves. `unverified` is the server's own word for an ambiguous ending; `sending` is a row whose
- * attempt never came back to say anything at all. Both hold the only copy of a message and
- * neither has a clock that will free it, so both answer to the same two verbs.
- */
-const HELD_DRAFT_STATUSES = ["unverified", "sending"] as const;
-
 export class DraftsService {
   /**
    * Is an attempt still on record for this draft? One predicate, three callers. Takes `tx` rather
@@ -205,29 +184,6 @@ export class DraftsService {
     return row !== undefined;
   }
 
-  /**
-   * A DRAFT CHANGE THAT MAKES A ROW POINT AT A MESSAGE CARRIES THAT MESSAGE WITH IT.
-   *
-   * A windowed mirror pins whatever it is still using — a draft replying to a message pins that
-   * message. A pin arriving for a message the client evicted BEFORE the pin existed protects a row
-   * that is not there, so the reply renders a hole. Every other server writer of a pinning row
-   * already re-emits the message beside it; this one did not. Emitted only when the change is what
-   * ESTABLISHES the reference, and the message goes FIRST so a page boundary delivers the mail
-   * before the thing that points at it. The draft's seq is the higher of the pair.
-   */
-  private async recordDraftChange(
-    tx: LedgerTx, accountId: string, id: string, op: "create" | "update", pinned: string | null,
-  ): Promise<bigint> {
-    if (pinned === null) {
-      return recordChange(tx, { accountId, entityType: "draft", entityId: id, op, meta: null });
-    }
-    const seqs = await recordChanges(tx, [
-      { accountId, entityType: "message", entityId: pinned, op: "update", meta: null },
-      { accountId, entityType: "draft", entityId: id, op, meta: null },
-    ]);
-    return seqs[1]!;
-  }
-
   async get(ctx: ServiceContext, id: string): Promise<DraftDTO> {
     const dto = await materializeDraft(ctx.db, ctx.accountId, id);
     if (!dto) throw new ServiceError("not_found", 404, "draft not found");
@@ -242,7 +198,7 @@ export class DraftsService {
     const mailboxId = await this.validMailbox(ctx, body.mailboxId);
     const subject = this.validSubject(body.subject);
     const rich = this.richBody(body.html, body.body);
-    const text = rich ? rich.text : this.validBody(body.body);
+    const text = rich ? rich.text : this.validString(body.body, "body");
     const html = rich ? rich.html : null;
     const to = this.validAddresses(body.to, "to");
     const cc = this.validAddresses(body.cc, "cc");
@@ -275,9 +231,9 @@ export class DraftsService {
         status: "draft",
         createdAt: now, updatedAt: now,
       }).returning({ id: drafts.id });
-      const s = await this.recordDraftChange(
-        tx, ctx.accountId, row!.id, "create", body.inReplyToMessageId ?? null,
-      );
+      const s = await recordChange(tx, {
+        accountId: ctx.accountId, entityType: "draft", entityId: row!.id, op: "create", meta: null,
+      });
       // The stored response commits atomically with the draft, closing the
       // commit-then-crash window in which a retry would store a SECOND draft.
       let inTx: DraftDTO | null = null;
@@ -330,7 +286,7 @@ export class DraftsService {
     } else {
       if (patch.html === null) set.html = null;
       if (patch.body !== undefined) {
-        set.body = this.validBody(patch.body);
+        set.body = this.validString(patch.body, "body");
         // A PLAIN edit of a RICH draft is refused rather than resolved. Writing `body` alone
         // would leave the row holding two bodies that disagree â the html the sender still sees
         // in their editor, and the text every plaintext recipient would get â and silently
@@ -421,37 +377,23 @@ export class DraftsService {
         }
         throw new ServiceError("not_found", 404, "draft not found");
       }
-      // The patch is what establishes the reference; a patch that does not mention the reply
-      // target leaves whatever the row already named, which every client holding this draft
-      // already knows about.
-      return this.recordDraftChange(
-        tx, ctx.accountId, id, "update", patch.inReplyToMessageId ?? null,
-      );
+      return recordChange(tx, {
+        accountId: ctx.accountId, entityType: "draft", entityId: id, op: "update", meta: null,
+      });
     });
 
     return this.finish(ctx, id, seq);
   }
 
   /**
-   * A person answers for a send this server could not confirm, or for one that never answered at
-   * all. `finalizeUnverified` leaves the draft at `unverified` ("check your Sent folder") and a
-   * died-mid-flight attempt leaves it at `sending` for ever — two questions with nowhere to put
-   * the answer, because both rows were frozen on STATUS. One transaction; lock order draft THEN
-   * its sends. `arrived` → ledger and draft `sent`, row kept. `not_arrived` → ledger `failed`,
-   * draft ordinary again with its text; the next Send mints a fresh key, which is the retry.
+   * A person answers for a send this server could not confirm. `finalizeUnverified` leaves the
+   * draft at `unverified` ("check your Sent folder") — a question with nowhere to put the answer:
+   * the row was frozen, keyed on STATUS. One transaction; lock order draft THEN its sends. Every
+   * write is a compare-and-swap on `unverified`: a repeated resolve answers 200 with the row as
+   * it stands; the other outcome arriving second cannot reopen the first (`not_arrived` after
+   * `arrived` would manufacture a duplicate send). `arrived` → ledger and draft `sent`, row kept.
+   * `not_arrived` → ledger `failed`, draft ordinary again; the next Send mints a fresh key.
    * Neither touches the IMAP mailbox: the mailbox is the master.
-   */
-
-  /**
-   * THE ONE THING A PERSON MAY NOT ANSWER FOR is a send that may still be running: marking a live
-   * attempt `failed` frees the row for a second delivery of mail already on the wire. A `pending`
-   * attempt younger than {@link SEND_STALE_AFTER_MS} is refused by name, writing nothing.
-   */
-
-  /**
-   * Every write is a compare-and-swap, so a repeat is the asked-for state and the other outcome
-   * arriving second cannot reopen the first. With no OPEN attempt left the LEDGER names the state
-   * and not the person — a recorded `sent` is a fact, and a verb must never overwrite one.
    */
   async resolve(ctx: ServiceContext, id: string, outcome: SendResolution): Promise<DraftMutation> {
     if (outcome !== "arrived" && outcome !== "not_arrived") {
@@ -460,7 +402,6 @@ export class DraftsService {
       );
     }
     const now = ctx.now();
-    let line: { sendId: string | null; status: string | null } = { sendId: null, status: null };
     const seq = await asTx(ctx).transaction(async (tx) => {
       // The draft first — see the header: this is the row a concurrent reservation takes
       // `FOR KEY SHARE` on, and `FOR UPDATE` is the mode that conflicts with it.
@@ -469,60 +410,30 @@ export class DraftsService {
         .limit(1));
       if (!row) throw new ServiceError("not_found", 404, "draft not found");
 
-      // EVERY attempt whose outcome is still open — not one of them. Read AFTER the draft lock,
-      // so a concurrent `reserve` is either seen here or blocked until this commits.
-      const open = await tx.select({ status: outboundSends.status, createdAt: outboundSends.createdAt })
-        .from(outboundSends)
-        .where(and(
-          eq(outboundSends.draftId, id),
-          eq(outboundSends.accountId, ctx.accountId),
-          inArray(outboundSends.status, [...SEND_ON_RECORD_STATUSES]),
-        ));
-
-      if (open.some((a) => a.status === "pending"
-        && now.getTime() - a.createdAt.getTime() < SEND_STALE_AFTER_MS)) {
-        throw new ServiceError(
-          "send_still_running", 409,
-          "this send may still be running; it can be answered once it has stopped",
-        );
-      }
-
       const ledgerStatus = outcome === "arrived" ? "sent" : "failed";
-      const settled = open.length === 0 ? [] : await tx.update(outboundSends)
+      const settled = await tx.update(outboundSends)
         .set({ status: ledgerStatus, resolvedBy: "person", resolvedAt: now })
         .where(and(
           eq(outboundSends.draftId, id),
           eq(outboundSends.accountId, ctx.accountId),
-          // THE COMPARE-AND-SWAP, by the DRAFT and not by a row id: this is the predicate the
-          // `unverified`-only version used, widened. Re-asserted here because the reconcile pass
-          // can finish a row without the draft lock, between the read above and this write.
-          inArray(outboundSends.status, [...SEND_ON_RECORD_STATUSES]),
+          // THE COMPARE-AND-SWAP. Only an ambiguous attempt is a person's to settle.
+          eq(outboundSends.status, "unverified"),
         ))
         .returning({ id: outboundSends.id });
 
-      /**
-       * WHICH STATE THE DRAFT IS RESOLVED TO. The person decides only when their answer moved an
-       * open attempt. Otherwise the ledger decides: a terminal `sent` attempt means the message
-       * went, whatever was pressed — the draft is freed from `sending`/`unverified` either way,
-       * which is the whole point of the verb, but never into a state the record contradicts.
-       */
-      let named: "sent" | "draft";
-      if (settled.length > 0) {
-        named = outcome === "arrived" ? "sent" : "draft";
-      } else {
-        const [delivered] = await tx.select({ id: outboundSends.id }).from(outboundSends)
-          .where(and(
-            eq(outboundSends.draftId, id),
-            eq(outboundSends.accountId, ctx.accountId),
-            eq(outboundSends.status, "sent"),
-          ))
-          .limit(1);
-        named = delivered === undefined ? "draft" : "sent";
+      // Nothing ambiguous was on record: already resolved, or never held. The asked-for state, so
+      // it is reported as success — and the `change_log` row is still emitted, because the caller
+      // is entitled to a seq it can drain against whether or not this call was the one that moved
+      // the row (`ScheduleService.cancel`'s idempotent arm does exactly this).
+      if (settled.length === 0) {
+        return recordChange(tx, {
+          accountId: ctx.accountId, entityType: "draft", entityId: id, op: "update", meta: null,
+        });
       }
 
-      const freed = await tx.update(drafts)
+      await tx.update(drafts)
         .set({
-          status: named,
+          status: outcome === "arrived" ? "sent" : "draft",
           // An appointment's failure sentence does not survive a resolution: it was about a
           // scheduled send that is now definitively over, and leaving it would put a stale
           // explanation on a row that has just become an ordinary draft.
@@ -535,32 +446,12 @@ export class DraftsService {
           eq(drafts.id, id), eq(drafts.accountId, ctx.accountId),
           // The draft's OWN compare-and-swap — `finalizeSent`'s rule. A row somebody has already
           // recovered by hand must not be dragged back out of the state it is in.
-          inArray(drafts.status, [...HELD_DRAFT_STATUSES]),
-        ))
-        .returning({ id: drafts.id });
+          eq(drafts.status, "unverified"),
+        ));
 
-      line = { sendId: settled[0]?.id ?? null, status: freed.length > 0 ? named : null };
-
-      // The `change_log` row is emitted whether or not this call was the one that moved the row:
-      // the caller is entitled to a seq it can drain against (`ScheduleService.cancel`'s
-      // idempotent arm does exactly this).
       return recordChange(tx, {
         accountId: ctx.accountId, entityType: "draft", entityId: id, op: "update", meta: null,
       });
-    });
-
-    /**
-     * The ending, recorded where the machine's endings are. `state` tells an operator whether
-     * this call was the one that freed the row or found it already answered — without it a log
-     * full of `send_resolved` cannot distinguish a stuck row from a double-tap.
-     */
-    resolveLog.info("send_resolved", {
-      draftId: id,
-      accountId: ctx.accountId,
-      sendId: line.sendId ?? undefined,
-      outcome,
-      status: line.status ?? undefined,
-      state: line.status === null ? "already" : "moved",
     });
 
     return this.finish(ctx, id, seq);
@@ -734,32 +625,13 @@ export class DraftsService {
   }
 
   /**
-   * The PLAIN body, type-checked and bounded. Its own validator for {@link validSubject}'s reason:
-   * the shared {@link validString} bounds nothing, so this column was the one size-proportional
-   * field on the route with no ceiling of its own. {@link DRAFT_BODY_MAX_BYTES} is the rich half's
-   * number, so the two formats agree; the rich arm never reaches here, its `body` being derived
-   * from html already held to that ceiling. `draft_too_large`/413 is the class the rich half
-   * already answers with — two codes for one fact would be a distinction buying nothing.
-   */
-  private validBody(v: unknown): string {
-    const body = this.validString(v, "body");
-    if (draftBodyOverCeiling(body)) {
-      throw new ServiceError(
-        "draft_too_large", 413,
-        `this message is ${utf8ByteLength(body)} bytes of text; the limit is ${DRAFT_BODY_MAX_BYTES}`,
-      );
-    }
-    return body;
-  }
-
-  /**
    * The subject, type-checked and bounded — its own validator: the ceiling was briefly inside the
    * shared {@link validString}, and `body` goes through that too, so a plain-text draft with a
    * long body was refused about a limit that has nothing to do with it while a rich draft of the
    * same length passed. A bound that depends on the format the user chose is not a bound. The
-   * plain body has its own too ({@link validBody}), and it is the rich half's number — markup is
-   * where a megabyte hides, but a plain body with no ceiling was the same megabyte through a
-   * wider door.
+   * plain body's ceiling is the request door and nothing else; the rich body has its own
+   * (`DRAFT_HTML_CAP_BYTES`) — markup is where a megabyte hides, plain text is what a person
+   * typed.
    */
   private validSubject(v: unknown): string {
     const subject = this.validString(v, "subject");

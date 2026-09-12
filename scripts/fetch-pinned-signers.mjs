@@ -1,14 +1,34 @@
 #!/usr/bin/env node
 /**
- * fetch-pinned-signers.mjs — materialise the two update signers, each pinned to bytes. The release-feeds
- * workflow holds two long-lived private keys, and whatever it runs while it holds them runs with them. It
- * used to fetch both signers in the signing step — `npx --yes @tauri-apps/cli@2` resolved a FLOATING major
- * from the registry, and Sparkle was curled beside it — so either publisher could change what that step
- * executes, blast radius remote code execution on every install. So fetching happens here, in a step
- * holding no key, and every byte is pinned before the signing step may run it: the Tauri signer is pinned in
- * `TAURI` below (version + npm's sha512 `integrity`, since the published repo ships no `pnpm-lock.yaml` to read it
- * from), and Sparkle twice (sha256 of the archive, and sha256 of the `sign_update` binary taken out of it —
- * the archive carries THREE files named `sign_update`, and `find … | head -1` once selected a retired DSA-signing shell script). A pin that does not match is a refusal, never a warning: the point is the signing step cannot start. */
+ * fetch-pinned-signers.mjs — materialise the two update signers, each pinned to bytes.
+ *
+ * The release-feeds workflow holds two long-lived private keys, and whatever it runs while it
+ * holds them runs with them. It used to fetch both signers in the same step: `npx --yes
+ * @tauri-apps/cli@2` resolved a FLOATING major range from the registry at signing time, and the
+ * Sparkle distribution was curled and unpacked beside it. Either publisher can change what that
+ * step executes without anything here changing, and the blast radius is remote code execution on
+ * every install — the update channel is the one place where that is the whole product.
+ *
+ * So the fetching happens here, in a step that holds no key, and every byte is checked against a
+ * pin before the signing step is allowed to run it:
+ *
+ *   · The Tauri signer is pinned HERE, in `TAURI` below: a version and the sha512 `integrity`
+ *     npm serves for that exact tarball, one row per package. It used to be read out of this
+ *     repository's committed `pnpm-lock.yaml` — one constant instead of two — but the workflow
+ *     that runs this file runs in the PUBLISHED repository, which ships no lockfile, so the read
+ *     failed there with `ENOENT … pnpm-lock.yaml` and the signing step could not start at all.
+ *     The rows are the same bytes `pnpm install --frozen-lockfile` enforces; `--selftest` checks
+ *     their shape and watches a wrong pin refuse.
+ *   · Sparkle is pinned twice: the sha256 of the distribution archive, and the sha256 of the
+ *     `sign_update` binary taken out of it. The second is not redundant. The archive carries
+ *     THREE files named `sign_update` — `bin/sign_update`, the retired `bin/old_dsa_scripts/
+ *     sign_update`, and a debug-symbol copy — and the workflow used to select one with `find …
+ *     | head -1`, which is directory order. The retired one is an executable shell script that
+ *     signs with DSA.
+ *
+ * A pin that does not match is a refusal, never a warning: the point is that the signing step
+ * cannot start.
+ */
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync, rmSync, existsSync } from "node:fs";

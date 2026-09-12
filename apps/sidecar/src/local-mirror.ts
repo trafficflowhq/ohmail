@@ -1,12 +1,53 @@
 /**
- * Taking a removed mailbox's mail off this machine — the standalone door's half of "start empty".
- * Not in `MailboxService.delete`, which is the HOSTED door's too, where the row and the mirror are
- * separate (deleting mail rows would delete the wrong copy); on the standalone door the local
- * database is BOTH server and mirror, so a removal that leaves the mail removed nothing a person can
- * see. Measured without it: the credential went, the mail stayed, and re-connecting the address
- * inserted a SECOND row (a tombstone is correctly not reused) after which the feed served both rows'
- * copies of every message. The order here is the FK graph's (children first, nothing cascades), kept
- * topological by `local-mirror-census.test.ts`. Deliberately left: `threads`/`tags`, `mailbox_credentials`, `account_settings`, and the tombstoned row.
+ * TAKING A REMOVED MAILBOX'S MAIL OFF THIS MACHINE — the standalone door's half of "start empty".
+ *
+ * ── WHY THIS IS NOT IN `MailboxService.delete` ────────────────────────────────────────────────
+ *
+ * That method is the HOSTED door's too, and there the two things are genuinely separate: the
+ * server keeps the row and the mirror lives in somebody's browser, so deleting mail rows would be
+ * deleting the wrong copy. On the standalone door the local database is BOTH — it is the server
+ * the window talks to and the mirror the window renders — so a removal that tombstones the row and
+ * leaves the mail is a removal that removed nothing a person can see.
+ *
+ * ── WHAT WAS MEASURED WITHOUT IT ──────────────────────────────────────────────────────────────
+ *
+ * "Forget it and start empty" was pressed. The credential went, the appointments were closed with
+ * an honest sentence, and the mail list stayed on screen behind the welcome dialog. Then the same
+ * address was connected again — and `ensureLocalWorld` correctly does NOT reuse a tombstone (a
+ * tombstone is not a mailbox), so a SECOND row was inserted beside the first.
+ *
+ * From that moment the feed served BOTH rows' copies of every message. The counters in the rail
+ * doubled, the sync line reported twice the mailbox's size, and every conversation in every list
+ * was a thread with one other message in it: its own duplicate. That is not a rendering fault to
+ * be papered over downstream — the second copy is really in the store, it really has its own id,
+ * and every view derived from the store agrees with every other one about it.
+ *
+ * The doubling is the visible end of it. The removal is where it starts.
+ *
+ * ── THE ORDER IS THE WHOLE IMPLEMENTATION, AND IT IS THE FOREIGN KEYS' ORDER ──────────────────
+ *
+ * Nothing here is `ON DELETE CASCADE`, so children go first or the statement throws. The list
+ * below is a topological order over the FK graph the mail schema declares, and
+ * `local-mirror-census.test.ts` is what keeps it one: it re-derives the set of tables that
+ * reference `messages` or `mailboxes` from `schema-mail.ts` and fails when one of them is missing
+ * here. A table added later without a line here would otherwise either throw on a real removal or —
+ * worse, if its FK were nullable — leave rows behind and reintroduce the doubling quietly.
+ *
+ * ── WHAT IS DELIBERATELY LEFT ─────────────────────────────────────────────────────────────────
+ *
+ *  · `threads` and `tags` are ACCOUNT-scoped, not mailbox-scoped. A thread with no messages left
+ *    in it is inert (every read of it is through `messages`), and deleting them would reach across
+ *    into a mailbox this removal is not about.
+ *  · `mailbox_credentials` is deleted by `MailboxService.delete`, inside its own transaction, and
+ *    is not repeated here. One writer.
+ *  · `account_settings` — the screening window, the dormancy dial, the onboarding stamp. These are
+ *    the INSTALL's answers, not the mailbox's, and re-adding a mailbox should not re-ask somebody
+ *    what they already told this machine. The consent stamp that matters is on the mailbox row and
+ *    goes with it.
+ *  · The MAILBOX ROW ITSELF. `MailboxService.delete` tombstones it and the tombstone is
+ *    load-bearing: `ensureLocalWorld` reads it to know this address was removed rather than never
+ *    seen, and the change log the window is holding refers to it. Deleting the row would also make
+ *    every `mailbox_id` in the change feed dangle.
  */
 
 import { and, eq, inArray, isNotNull, sql, type SQL } from "drizzle-orm";
@@ -109,27 +150,4 @@ export async function mirroredMessageCount(db: LocalDb, mailboxId: string): Prom
     .from(messages)
     .where(eq(messages.mailboxId, mailboxId));
   return row?.n ?? 0;
-}
-
-/**
- * HAS THIS MAILBOX EVER PUT ANYTHING IN THE MIRROR, AND HAS ANYTHING BEEN WRITTEN OFF —
- * the two facts the first-sync state is derived from, in one read each.
- *
- * `limit(1)` and never a count: the question is "any", it is asked on every unsettled drain, and
- * both columns are indexed by `mailboxId`. `wroteOff` tells an EMPTY mailbox apart from one whose
- * mail could not be stored — the ingest's quarantine writes a `message_failures` row when a
- * message exhausts its attempts. Read only where there are no messages at all: one written-off
- * message among thousands of good ones says nothing about the first sync.
- */
-export async function mirroredFirstSyncFacts(
-  db: LocalDb, mailboxId: string,
-): Promise<{ hasMessage: boolean; wroteOff: boolean }> {
-  const seen = await db
-    .select({ id: messages.id }).from(messages)
-    .where(eq(messages.mailboxId, mailboxId)).limit(1);
-  if (seen.length > 0) return { hasMessage: true, wroteOff: false };
-  const failed = await db
-    .select({ id: messageFailures.id }).from(messageFailures)
-    .where(eq(messageFailures.mailboxId, mailboxId)).limit(1);
-  return { hasMessage: false, wroteOff: failed.length > 0 };
 }

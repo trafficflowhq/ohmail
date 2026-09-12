@@ -9,14 +9,50 @@ import { spkiFingerprint } from "./host-lan-tls.js";
 import type { Diagnostic } from "./log.js";
 
 /**
- * Pinning another machine's desktop. A desktop set up as a CLIENT opens a mailbox held by another
- * computer's desktop, which serves TLS with a key of its own (`host-lan-tls.ts`) because no CA
- * vouches for a DHCP address. Trust travels in the ceremony: the link carries
- * `SHA-256(SubjectPublicKeyInfo)` of the door's key, all this client accepts. Node cannot validate a
- * self-signed leaf from a fingerprint, so the bootstrap must SEE the certificate first — one
- * handshake with verification off, on a socket that writes ZERO bytes and is destroyed at once
- * (`host-pin-census.test.ts` keeps the count at one); every later connection is verified TLS against
- * the stored leaf. `checkServerIdentity` is REPLACED by the pin check. Never `NODE_EXTRA_CA_CERTS`.
+ * ═══ PINNING ANOTHER MACHINE'S DESKTOP ═════════════════════════════════════════════════════════
+ *
+ * A desktop set up as a CLIENT opens a mailbox held by another computer's desktop. That other
+ * machine serves its door over TLS with a key of its own (`host-lan-tls.ts`), because no
+ * certificate authority will vouch for an address a router handed out this morning. The trust
+ * therefore travels in the pairing ceremony: the link carries `SHA-256(SubjectPublicKeyInfo)` of
+ * the door's key, and that fingerprint — nothing else — is what this client will accept.
+ *
+ * ── WHY THIS IS ONE FILE, AND WHY IT IS THE ONLY ONE ───────────────────────────────────────────
+ *
+ * Node cannot validate a self-signed leaf from a fingerprint alone. There is no "verify against
+ * this pin" option: `tls.connect` either checks a chain against a trust store or it checks
+ * nothing. So the bootstrap has to see the certificate BEFORE it can judge it, and the only way to
+ * see it is a handshake with verification off. That is a genuinely dangerous option and it appears
+ * exactly once in this whole directory — here, inside {@link probeHostPin}, on a socket that
+ * writes ZERO application bytes and is destroyed the instant the certificate has been read.
+ * `host-pin-census.test.ts` is what keeps that count at one.
+ *
+ * Everything after the bootstrap is ordinary verified TLS. The leaf is written to the data
+ * directory and every later connection passes it as the trust anchor (`ca: [leaf]`), so
+ * `rejectUnauthorized` stays TRUE and a chain that does not lead to that exact certificate is
+ * refused by OpenSSL, not by us.
+ *
+ * ── AND WHY `checkServerIdentity` IS REPLACED RATHER THAN SATISFIED ────────────────────────────
+ *
+ * The door's certificate names `ohmail-desktop-host.invalid` — a name RFC 2606 guarantees can
+ * never be delegated to anyone, chosen precisely so the certificate asserts NOTHING about where it
+ * is served from. The client dials an IP address or a tailnet name, neither of which is in that
+ * certificate, so the default hostname check fails every time and would have to be turned off.
+ *
+ * Turning it off is not what happens here. It is REPLACED by the check that is actually meaningful
+ * for a pinned door: the peer's public key must hash to the fingerprint the ceremony carried. That
+ * is a stronger statement than a name — a name says "somebody who could get a certificate for this
+ * label", the pin says "the key the person read off the other machine's screen" — and it is the
+ * same predicate the bootstrap used, so the two cannot disagree about what this door is.
+ *
+ * ── NEVER `NODE_EXTRA_CA_CERTS` ────────────────────────────────────────────────────────────────
+ *
+ * That variable is process-wide: it widens who may satisfy verification for EVERY connection the
+ * engine makes, and this engine also holds a hosted session. A trust anchor for one machine on
+ * somebody's LAN must not become a trust anchor for the account's own service. The anchor here is
+ * attached to ONE agent, used by ONE base, and is a value in memory rather than an environment
+ * variable a child process inherits. `apps/desktop/src-tauri/src/config.rs` composes that variable
+ * only for the self-hosted door and the census in this file's test keeps it out of here.
  */
 
 /** The pinned door's certificate, cached beside the mirror. Public bytes; the KEY never leaves the host. */
@@ -45,13 +81,18 @@ export const PIN_CHANGED_SENTENCE =
   "use that. If you did not, do not continue: something else is answering at this address.";
 
 /**
- * `SHA-256(SubjectPublicKeyInfo)`, base64url, of a certificate's key — the pin, as the link carries
- * it. Deliberately NOT a second spelling of the hash: it hands the key to `spkiFingerprint`, the one
- * derivation in this repository and what the HOST composes its own link from. Two spellings would
- * agree the day they were written and break the pairing the day either moved; one means a mutation
- * reddens both sides at once. The certificate is parsed with the platform's X.509 reader rather than
- * `PeerCertificate.pubkey`: the DER of the whole certificate is the only field guaranteed present on
- * every peer object, and deriving the key from it is the same operation the host performs.
+ * `SHA-256(SubjectPublicKeyInfo)`, base64url, of a certificate's key — the pin, as the link
+ * carries it.
+ *
+ * Deliberately NOT a second spelling of the hash. It hands the key to `spkiFingerprint`, which is
+ * the one derivation in this repository and is what the HOST composes its own link from. Two
+ * spellings would agree on the day they were written and the pairing would break on the day either
+ * moved; one means a mutation reddens both sides at once.
+ *
+ * The certificate is parsed with the platform's own X.509 reader rather than by reaching for
+ * `PeerCertificate.pubkey`: the DER of the whole certificate is the only field guaranteed present
+ * on every peer object, and deriving the key from it is the same operation the host performs on
+ * the key it generated.
  */
 export function pinOfCertificate(der: Buffer): string {
   return spkiFingerprint(new X509Certificate(der).publicKey);
@@ -75,14 +116,21 @@ export interface HostPinProbeOptions {
 }
 
 /**
- * See the door's certificate, judge it against the pin, and keep it if it matches. Three properties
- * make the unverified handshake safe: (1) NOTHING is sent — the socket is never written to, so a
- * peer that fails the pin learns only that a TLS connection opened, and the token is spent afterwards
- * over the VERIFIED connection only if this returned `ok`; (2) NOTHING is kept on a mismatch — the
- * leaf is written after the comparison, so a refused peer leaves no trust anchor; (3) the handshake
- * is PROVEN to have happened — `encrypted` and a non-empty certificate are both asserted, because a
- * connection event can fire on the TCP connect, and the peer's own certificate cannot exist without
- * a completed TLS handshake.
+ * SEE THE DOOR'S CERTIFICATE, JUDGE IT AGAINST THE PIN, AND KEEP IT IF IT MATCHES.
+ *
+ * ── THE THREE PROPERTIES THAT MAKE THE UNVERIFIED HANDSHAKE SAFE ───────────────────────────────
+ *
+ *  1. **Nothing is sent.** The socket is never written to. There is no request, no header, no
+ *     token — a peer that fails the pin learns only that something opened a TLS connection, which
+ *     it would learn from a port scan. The credential (the pairing token) is spent afterwards,
+ *     over the VERIFIED connection, and only if this returned `ok`.
+ *  2. **Nothing is kept on a mismatch.** The leaf is written after the comparison, never before,
+ *     so a refused peer leaves no trust anchor behind for a later connection to pick up.
+ *  3. **The handshake is PROVEN to have happened.** `encrypted` and a non-empty certificate are
+ *     both asserted before anything is judged. A connection event that fires on the TCP connect
+ *     rather than on the handshake is indistinguishable from cleartext to anything that only
+ *     measures timing, so the evidence taken here is the peer's own certificate — a thing that
+ *     cannot exist without a completed TLS handshake.
  */
 export async function probeHostPin(opts: HostPinProbeOptions): Promise<HostPinOutcome> {
   const timeoutMs = opts.timeoutMs ?? PIN_PROBE_DEADLINE_MS;
@@ -195,14 +243,26 @@ function isIpLiteral(host: string): boolean {
 }
 
 /**
- * Is the key on the other end the one the ceremony carried? — `checkServerIdentity`'s replacement,
- * exported so it can be watched failing on its own. At the call site a MISMATCH IS UNREACHABLE
- * TODAY: the trust anchor is the door's own leaf, so a verifying chain is exactly one certificate and
- * one that is not the anchor never reaches this — OpenSSL already refused it. The repository's rule
- * is that an unreachable condition is removed or made reachable, so it is kept and made reachable
- * HERE, because this replaces the hostname check (the cert names `ohmail-desktop-host.invalid`) and
- * something must occupy that slot; what occupies it decides what happens the day the anchor stops
- * being a bare leaf, and this keeps the pin decisive. Watched in `host-pin-probe.test.ts`.
+ * IS THE KEY ON THE OTHER END THE ONE THE CEREMONY CARRIED? — `checkServerIdentity`'s replacement,
+ * exported so it can be watched failing on its own rather than only through a connection.
+ *
+ * ── THE HONEST LIMIT, STATED BECAUSE IT WOULD OTHERWISE READ AS A GUARANTEE ────────────────────
+ *
+ * At the call site below, a MISMATCH IS UNREACHABLE TODAY. The trust anchor is the door's own leaf,
+ * so a chain that verifies is a chain of exactly one certificate — the anchor itself — and a
+ * certificate that is not the anchor never reaches this function: OpenSSL has already refused it.
+ * The rule of this repository is that a condition whose contrary state is unreachable is either
+ * removed or made reachable, because a later reader takes it for a guarantee.
+ *
+ * It is kept, and made reachable HERE, for a reason that is worth naming rather than implying:
+ * this function is what replaces the hostname check, and the hostname check has to be replaced —
+ * the door's certificate names `ohmail-desktop-host.invalid`, so the default check refuses every
+ * connection. Something must occupy that slot. What occupies it decides what happens the day the
+ * anchor stops being a bare leaf (a real authority, an intermediate, a rotation scheme that keeps
+ * a signing key), and the two candidates are "return undefined" — accept anything the anchor
+ * vouches for, hostname unchecked, which is a genuinely weaker door — and this, which keeps the
+ * pin decisive whatever the anchor becomes. Its two outcomes are watched directly in
+ * `host-pin-probe.test.ts`.
  */
 export function pinnedIdentity(pin: string): (host: string, cert: PeerCertificate) => Error | undefined {
   return (_host: string, cert: PeerCertificate): Error | undefined => {
@@ -219,28 +279,63 @@ export interface PinnedFetchOptions {
   /** The fingerprint from the link, re-checked on every single connection. */
   pin: string;
   /**
-   * Re-run the bootstrap and hand back a fresh leaf — the recovery for a door that has restarted. The
-   * host does NOT keep its certificate: `ensureLanIdentity` keeps the KEY and rebuilds the cert
-   * around it every launch with a fresh serial, so a corrupt cert file costs a rebuild instead of
-   * un-pairing a household — the fingerprint does not move, the bytes do. So a cached leaf is a cache,
-   * never an identity: measured, a pinned connection after the door restarts fails
-   * `DEPTH_ZERO_SELF_SIGNED_CERT` though the key and pin are unchanged. The recovery is the
-   * bootstrap, judging by the PIN and re-persisting the new leaf, attempted at most ONCE per request
-   * and only for a verification failure. Absent ⇒ no recovery, correct for a caller that cannot re-probe.
+   * RE-RUN THE BOOTSTRAP AND HAND BACK A FRESH LEAF — the recovery for a door that has restarted.
+   *
+   * ── THE FACT THAT MAKES THIS NECESSARY, MEASURED RATHER THAN ASSUMED ────────────────────────
+   *
+   * The host does NOT keep its certificate. `ensureLanIdentity` keeps the KEY for ever and rebuilds
+   * the certificate around it on every launch, with a fresh random serial — deliberately, so that a
+   * corrupt certificate file costs a rebuild instead of un-pairing a household. The fingerprint is
+   * the key's and does not move; the bytes do.
+   *
+   * So a cached leaf is a cache and never an identity. Measured against the real thing: pin a
+   * client to a door, restart the door, and the pinned connection fails
+   * `DEPTH_ZERO_SELF_SIGNED_CERT` — the anchor no longer covers the certificate being served, even
+   * though the key is the same and the pin still matches. Without a recovery a client would pair
+   * once, work until the other machine reboots, and then refuse for ever with a TLS error that
+   * names nothing a person can act on.
+   *
+   * The recovery is the bootstrap, which judges by the PIN — the durable half — and re-persists the
+   * new leaf. It is attempted at most ONCE per request and only for a verification failure, so a
+   * door whose key genuinely changed is refused rather than retried into acceptance: the bootstrap
+   * compares the pin and returns nothing on a mismatch.
+   *
+   * Absent ⇒ no recovery, and a rotated door simply fails. That is the correct reading for a
+   * caller that has no way to re-probe (a test driving one connection), and it is why this is
+   * optional rather than defaulted to something.
    */
   refreshLeaf?: () => Promise<string | null>;
   log?: Diagnostic;
 }
 
 /**
- * A `fetch` that will talk to ONE door and nothing else — hand-built on `node:https` because the
- * platform's `fetch` has no seam for a trust anchor (its TLS options belong to a dispatcher this
- * package does not depend on, and adding it would put a second HTTP client in a published artifact).
- * `node:https` carries every option; what it does not carry is the `Response` shape, so this composes
- * one, and each decision is deliberate: redirects are NOT followed (a pinned door answering one is
- * answering something this will not chase); `set-cookie` survives via the array (joining is
- * unrecoverable — a cookie's `Expires` contains a comma); the body STREAMS (the wake channel reads
- * it live); and a body shape this cannot send is REFUSED BY NAME rather than sent empty.
+ * A `fetch` that will talk to ONE door and to nothing else.
+ *
+ * ── WHY THIS IS HAND-BUILT ON `node:https` ─────────────────────────────────────────────────────
+ *
+ * The platform's own `fetch` has no seam for a trust anchor: its TLS options belong to a
+ * dispatcher this package does not depend on, and adding that dependency to pin one connection
+ * would put a second HTTP client in a published artifact. `node:https` already carries every
+ * option needed and is in the runtime. What it does not carry is the `Response` shape the sidecar's
+ * callers are written against, so this composes one — and the composition is the whole of the
+ * module's remaining risk, which is why each of the following is a deliberate decision rather than
+ * an omission:
+ *
+ *  · **Redirects are NOT followed.** `fetch` follows them and re-sends a body on 307/308, which the
+ *    write-through proxy already had to guard against for the hosted door. A pinned door answering
+ *    a redirect is answering something this client will not chase: the 3xx is handed back as it
+ *    stands and the caller treats it as the refusal it is.
+ *  · **`set-cookie` survives.** Node hands repeated headers as an array, and each value is appended
+ *    separately so `getSetCookie()` returns them apart. Joining them would be unrecoverable — a
+ *    cookie's own `Expires=Wed, 09 Jun 2027` contains the separator.
+ *  · **The body streams.** The wake channel holds one response open and reads it with
+ *    `res.body.getReader()`, so the body is the incoming message itself rather than a buffer
+ *    collected first; a buffering implementation would have deadlocked that stream and looked like
+ *    a host that never sends anything.
+ *  · **A body shape this cannot send is REFUSED BY NAME.** Silently sending nothing for a body
+ *    kind that was not anticipated is the absent-configuration-selects-the-quiet-branch failure:
+ *    the request would go out empty and the door would answer a validation error about a field the
+ *    caller believed it had sent.
  */
 export function createPinnedFetch(opts: PinnedFetchOptions): typeof fetch {
   /* THE TRUST ANCHOR IS THE LEAF ITSELF. A self-signed certificate placed in the trust store
@@ -339,12 +434,15 @@ function bodyBytes(body: BodyInit | null | undefined): Buffer | null {
 }
 
 /**
- * Was this a TLS VERIFICATION refusal — the shape a rotated certificate makes — rather than a network
- * answer? Read off the CAUSE as well as the error, for `describeProbeFailure`'s reason: a transport
- * failure may arrive wrapped, and reading only the outer error classifies every failure as the same
- * shrug. The set is the one Node raises for a chain it cannot build or trust, plus this module's own
- * refusal — a pin that did not match is returned from `checkServerIdentity` as an `Error` that Node
- * surfaces without a code of its own, so it is matched by its sentence.
+ * Was this a TLS VERIFICATION refusal — the shape a rotated certificate makes — rather than a
+ * network answer?
+ *
+ * Read off the CAUSE as well as the error, for `describeProbeFailure`'s reason: a transport failure
+ * may arrive wrapped, and reading only the outer error classifies every failure as the same shrug.
+ * The set is the one Node raises for a chain it cannot build or trust, plus this module's own
+ * refusal — a pin that did not match is returned from `checkServerIdentity` as an `Error`, and
+ * Node surfaces it with `ERR_TLS_CERT_ALTNAME_INVALID`'s sibling shape rather than a code of its
+ * own, so it is matched by its sentence.
  */
 function isVerificationFailure(err: unknown): boolean {
   const codes = new Set([
@@ -384,14 +482,33 @@ export interface HostFetchOptions {
 }
 
 /**
- * The pinned seam — one `fetch` for everything this install says to its host, with the bootstrap,
- * cache and recovery behind it. The lifecycle lives here because the engine composes ONE `fetchImpl`
- * and threads it through the bearer client, mirror, proxy and wake channel: a second way to reach the
- * host is a second place the pin could be forgotten, so every decision (cached cert, does it cover
- * what is served, was identity established) is behind that one function. A missing leaf is NOT a
- * failed launch — the bootstrap is deferred to the first REQUEST, so an engine whose desktop is
- * asleep still serves its local mirror. ONE probe at a time: a restarted host makes every in-flight
- * request fail verification at once, and one in-flight probe serves them all (single-flight).
+ * THE PINNED SEAM — one `fetch` for everything this install says to its host, with the bootstrap,
+ * the cache and the recovery behind it.
+ *
+ * ── WHY THE LIFECYCLE LIVES HERE AND NOT AT THE CALL SITE ─────────────────────────────────────
+ *
+ * The engine composes ONE `fetchImpl` and threads it through the bearer client, the mirror, the
+ * write-through proxy and the wake channel. That is the property worth protecting: a second way to
+ * reach the host is a second place the pin could be forgotten. So everything this needs to decide
+ * — is there a cached certificate, does it still cover what is being served, was the identity ever
+ * established at all — is decided behind that one function, and the engine passes it along like
+ * any other `fetch`.
+ *
+ * ── A MISSING LEAF IS NOT A FAILED LAUNCH ─────────────────────────────────────────────────────
+ *
+ * The bootstrap is deferred to the first REQUEST rather than run at construction, and that is a
+ * decision about what happens when the other machine is off. An engine that refused to start
+ * without a handshake would leave a person looking at a window that will not open, on a laptop
+ * whose desktop is asleep, with the mirror they already hold unreadable — the mirror is local and
+ * there is nothing wrong with it. Deferring means the app comes up, serves what it has, and the
+ * requests that need the host fail with the sentence the probe composed.
+ *
+ * ── ONE PROBE AT A TIME ───────────────────────────────────────────────────────────────────────
+ *
+ * The pull loop has several requests in flight, so a host that has just restarted makes all of
+ * them fail verification at once. Each starting its own bootstrap would open a handshake per
+ * in-flight request at a machine that is already busy coming back. One in-flight probe serves them
+ * all — `createCloudAuth`'s single-flight refresh, for the same reason and with the same shape.
  */
 export function createHostFetch(opts: HostFetchOptions): typeof fetch {
   const url = new URL(opts.origin);

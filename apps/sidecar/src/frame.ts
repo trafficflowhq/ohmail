@@ -1,14 +1,50 @@
 import type { Writable } from "node:stream";
 
 /**
- * The stdio frame codec. The LOCAL engine is a Node sidecar reached over the shell's stdin/stdout —
- * this transport has NO TCP listener, so there is no port to authenticate and nothing on the machine
- * can speak it but the process that spawned it (host mode opens a SEPARATE loopback door,
- * `host-listener.ts`, nothing of which passes through these frames). The wire is `uint32BE headerLen
- * · uint32BE bodyLen · header JSON · body`, both lengths read together so BOTH caps are checked
- * before a byte is allocated. It cannot deadlock on a large body: the reader never stops reading (a
- * pure push decoder), dispatch is decoupled, and the writer awaits `drain`. A cap breach is FATAL —
- * `bodyLen` comes off the wire and the stream has no resync point, so a breach throws {@link FrameError}.
+ * THE STDIO FRAME CODEC.
+ *
+ * The LOCAL engine is a Node sidecar reached over the shell's stdin/stdout — **this transport has
+ * no TCP listener**, so there is no port to authenticate here and nothing on the machine that can
+ * speak it except the process that spawned it. (Host mode, when armed, opens a SEPARATE loopback
+ * HTTP door for the user's own paired devices — `host-listener.ts`, off by default and
+ * mutation-pinned off; nothing about it passes through these frames.) This file is the whole of
+ * the stdio transport, and it has to survive the two things a pipe does that an HTTP socket hides
+ * from you: chunks arrive at arbitrary boundaries, and a writer that outruns its reader blocks.
+ *
+ * ── THE WIRE ───────────────────────────────────────────────────────────────────────────────
+ *
+ *     uint32BE headerLen · uint32BE bodyLen · header JSON (headerLen bytes) · body (bodyLen bytes)
+ *
+ * Both lengths are read together, in one 8-byte preamble, so BOTH caps are checked before a
+ * single byte of either is allocated. Length-prefixed rather than delimited because the body is
+ * arbitrary bytes — an RFC822 message, an attachment, a `/sync` page — and a delimiter would need
+ * escaping, which costs a scan and a copy of every byte and gets the encoding wrong exactly once.
+ *
+ * ── WHY THIS CANNOT DEADLOCK ON A LARGE BODY ───────────────────────────────────────────────
+ *
+ * The classic pipe deadlock is symmetric: A is blocked writing a big response because B's pipe
+ * buffer is full, while B is blocked writing a big request because A's is full, and neither is
+ * reading. Three properties close it, and each is a rule about this file rather than a statement
+ * of intent:
+ *
+ *  1. **The reader never stops reading.** {@link FrameDecoder} is a pure push decoder: chunk in,
+ *     completed frames out, no `await` anywhere. The `data` handler driving it therefore cannot
+ *     be the thing that stalls, whatever the handler behind it is doing.
+ *  2. **Dispatch is decoupled from the read.** `host.ts` and `client.ts` start the work for a
+ *     frame WITHOUT the read loop awaiting it, so a slow handler cannot stop the pipe draining.
+ *  3. **The writer respects backpressure instead of ignoring it.** {@link FrameWriter} awaits
+ *     `drain` rather than queueing unboundedly in userland.
+ *
+ * Frames carry a correlation `id`, so responses may come back out of order and one slow request
+ * cannot head-of-line-block the rest.
+ *
+ * ── A CAP BREACH IS FATAL, DELIBERATELY ────────────────────────────────────────────────────
+ *
+ * `bodyLen` comes off the wire. Without {@link MAX_BODY_BYTES} a corrupted or hostile length makes
+ * the decoder wait for — and eventually allocate — as many bytes as the number says. And there is
+ * **no resync point** in a length-prefixed stream: once the two ends disagree about where a frame
+ * starts, every subsequent byte is misread. So a breach throws {@link FrameError} and the caller
+ * tears the stream down rather than trying to recover from a position it cannot know.
  */
 
 /** Bumped when a change would make an older peer misread a frame. */

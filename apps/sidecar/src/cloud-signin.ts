@@ -4,14 +4,83 @@ import type { CloudTokens } from "./cloud-auth.js";
 import type { Diagnostic } from "./log.js";
 
 /**
- * Signing in to the hosted account, from a Cloud-mode install with no session yet. Cloud mode used
- * to require a token pair already in the environment; there is nowhere else, so this turns an email,
- * password and code into the pair the mirror pulls with. A second path is a code from the browser:
- * it signs in at `ohmail.app`, mints a one-use handoff code, and this exchanges it at
- * `POST /auth/desktop-claim`. Handing that code back over the `ohmail://` scheme is unsafe, so this
- * invents a VERIFIER (32 random bytes) kept in memory and publishes only `sha256(verifier)` as the
- * CHALLENGE — the account binds the code to the digest and refuses a caller that cannot produce it.
- * The verifier is never a body or log field and dies with the process; the retype path is unchanged.
+ * SIGNING IN TO THE HOSTED ACCOUNT, from a Cloud-mode install that has no session yet.
+ *
+ * ── WHY THIS EXISTS, AND WHAT IT REPLACES ─────────────────────────────────────────────────────
+ *
+ * Cloud mode used to be reachable only by a launch that already carried a token pair in its
+ * environment: the shell had to obtain one somewhere else and hand it over. There is nowhere else.
+ * A person who installs the app and picks the hosted door has an email address, a password and a
+ * six-digit code, and this module is what turns those three into the pair the mirror pulls with.
+ *
+ * ── AND THE OTHER WAY IN: A CODE FROM THE BROWSER ─────────────────────────────────────────────
+ *
+ * Typing a password into a native window is the one place a person cannot check an address bar,
+ * so there is a second path and it is one request: the browser signs in at `ohmail.app`, mints a
+ * one-use handoff code (`POST /auth/desktop-link`, behind a step-up gate), and this exchanges it
+ * at `POST /auth/desktop-claim` for the same pair the password path ends with. The code is worth
+ * a session for about two minutes and only once. The password path stays the default; this is
+ * the alternative, not the replacement, because it needs a browser signed in to the account and
+ * that is not always where somebody is standing.
+ *
+ * ── AND WHY THAT CODE NO LONGER HAS TO BE RETYPED ─────────────────────────────────────────────
+ *
+ * A code a person carries in their fingers is safe because nothing but a person can read it off a
+ * screen. Handing it back over a URL scheme is not: `ohmail://` is claimed by whichever program on
+ * the machine registered it, and nothing authenticates that. So before the browser is opened this
+ * process invents a VERIFIER — 32 random bytes, base64url, 43 characters — keeps it in memory, and
+ * publishes only `sha256(verifier)` as the CHALLENGE that travels in the page's URL. The account
+ * binds the code it mints to that digest, and refuses to spend it for any caller that cannot
+ * produce the verifier the digest was made from. A program that intercepts the scheme therefore
+ * receives a code it cannot use, and a failed attempt does not consume it either.
+ *
+ * Three properties of the verifier are load-bearing and each one is a rule about this file:
+ *
+ *  · it is generated HERE and never leaves this process except as the claim's own field. It is
+ *    not a parameter of the sign-in body, so no caller over the bridge can supply one — the
+ *    engine uses the verifier it is holding or none at all;
+ *  · it is never a log field. The diagnostics here carry a step name and an HTTP status, and
+ *    nothing that could be exchanged for a session;
+ *  · it dies with the process. That is not a defect to work around: a code minted against a
+ *    challenge whose verifier no longer exists is a code nobody can spend, which is exactly the
+ *    property that makes it safe to send over a scheme in the first place.
+ *
+ * The retype path is UNCHANGED and coexists with it. A code minted with no challenge is claimed
+ * with no verifier, exactly as it always was; the hosted side decides which of the two it is
+ * looking at from the row, at mint, and never afterwards.
+ *
+ * ── THE TWO STEPS, AND THE FIELD NAME THAT IS NOT THE ONE YOU EXPECT ──────────────────────────
+ *
+ *  1. `POST /auth/login` `{email, password}` → **200** `{status: "twofa_required", loginToken}`.
+ *     A 200 here is NOT a session; it is a challenge. Treating it as success is the mistake this
+ *     comment exists to prevent.
+ *  2. `POST /auth/2fa/totp/verify` `{loginToken, code}` → the session. The parameter is
+ *     `loginToken` and not `challengeToken`.
+ *
+ * ── WHERE THE TOKENS ARE, AND WHY BOTH PLACES HAVE TO BE READ ─────────────────────────────────
+ *
+ * The hosted API decides per HOST whether it speaks cookies. On a cookie host the session is
+ * established with `Set-Cookie` and the token pair is STRIPPED from the JSON body; on a bearer-only
+ * host the cookies are omitted and the pair stays in the body. Both are the same session — only the
+ * transport differs — so this reads the body first and falls back to the cookies. Reading only one
+ * would work against one deployment and silently return "no session" against the other.
+ *
+ * `tf_session` carries the access token verbatim and `tf_refresh` the refresh token verbatim, so
+ * lifting them needs no decoding. `Set-Cookie` must be read with `getSetCookie()`: iterating a
+ * `Headers` joins repeated names with `", "`, and a cookie's own `Expires=Wed, 09 Jun 2027` contains
+ * a comma, so the joined string cannot be split back apart.
+ *
+ * ── WHAT THIS MODULE DELIBERATELY DOES NOT REACH ──────────────────────────────────────────────
+ *
+ * No IMAP adapter, no organizer lease, no sync loop — it is `fetch` and JSON and nothing else. It
+ * is imported from `cloud-engine.ts`, so the structural census over that file's graph covers it:
+ * the sign-in surface cannot become a door into the organizer.
+ *
+ * ── AND WHAT IT NEVER SAYS OUT LOUD ───────────────────────────────────────────────────────────
+ *
+ * The address, the password and the code are arguments and never log fields. The diagnostics here
+ * carry a step name and an HTTP status, which is everything an operator needs to tell "the server
+ * refused" apart from "the server was not there".
  */
 
 /** Why a sign-in did not produce a session. `code` is for the surface; `message` is for a person. */
@@ -29,12 +98,17 @@ export class CloudSignInError extends Error {
 }
 
 /**
- * Two shapes, and `handoffCode` selects between them: the PASSWORD path (`{email, password, totp}`,
- * the two-step hosted sign-in, still the default) and the BROWSER path (`{handoffCode}` alone — the
- * person signed in on ohmail.app, that page minted a one-use code, and they retyped it here; one
- * request, no password in this process at any point). Every field is optional because this arrives
- * as JSON over the bridge and a type is not a validation — {@link cloudSignIn} decides which branch
- * it is on and refuses a request that satisfies neither.
+ * TWO SHAPES, and `handoffCode` is what selects between them.
+ *
+ *  · **the password path** — `{email, password, totp}`, the two-step hosted sign-in described
+ *    above. Still the default the app offers.
+ *  · **the browser path** — `{handoffCode}` alone. The person signed in on ohmail.app, that page
+ *    minted a one-use code, and they retyped it here. One request, no password in this process
+ *    at any point.
+ *
+ * Every field is optional because this arrives as JSON over the bridge and a type is not a
+ * validation. {@link cloudSignIn} decides which branch it is on and refuses a request that
+ * satisfies neither, rather than trusting the shape it was handed.
  */
 export interface CloudSignInRequest {
   email?: string;
@@ -71,22 +145,29 @@ export interface CloudSignInOptions {
   fetchImpl?: typeof fetch;
   log?: Diagnostic;
   /**
-   * The kind this install declares on both sign-in paths: `kind` beside the code on
-   * `POST /auth/desktop-claim`, and beside the six digits on `POST /auth/2fa/totp/verify` — so the
-   * account's device list can say WHICH install a session is. ON THE OPTIONS and not the request,
-   * the verifier's placement rule: the request is JSON from the bridge, and what this process runs
-   * on is not a caller's to assert. Composed from {@link desktopDeviceKind}(process.platform);
-   * absent (an unrecognized platform, an older engine) omits the field and the host reads the sign-in
-   * as it read every one before the vocabulary existed.
+   * The kind this install declares itself as, on both sign-in paths: `kind` beside the code on
+   * `POST /auth/desktop-claim`, and `kind` beside the six digits on `POST /auth/2fa/totp/verify`
+   * — so the hosted account's device list and its staleness attribution can say WHICH install a
+   * session is, not merely that one exists.
+   *
+   * ON THE OPTIONS AND NOT ON THE REQUEST, the verifier's own placement rule: the request is
+   * JSON that arrived over the bridge, and what this process runs on is not a caller's to
+   * assert. Composed by the engine from {@link desktopDeviceKind}(process.platform). Absent —
+   * an unrecognized platform, or an older engine — means the field is omitted and the hosted
+   * side reads the sign-in exactly as it read every sign-in before the vocabulary existed.
    */
   deviceKind?: DesktopDeviceKind;
   /**
-   * The PKCE verifier this install is holding, if it minted one before opening the browser. ON THE
-   * OPTIONS and not the request, and that placement is the whole rule: the request is JSON from the
-   * bridge, the options are composed by the engine from its own memory. Putting the verifier on the
-   * request shape would let any caller reaching `POST /cloud/signin` name the verifier a code is
-   * claimed with — the capability the binding exists to withhold from whoever intercepted the scheme.
-   * Absent is not a lesser call: it is the retype flow, where the code was minted unbound.
+   * The PKCE verifier this install is holding, if it minted one before opening the browser.
+   *
+   * ON THE OPTIONS AND NOT ON THE REQUEST, and that placement is the whole of the rule. The
+   * request is JSON that arrived over the bridge; the options are composed by the engine from its
+   * own memory. Putting the verifier on the request shape would mean any caller that can reach
+   * `POST /cloud/signin` could name the verifier a code is claimed with — which is precisely the
+   * capability the binding exists to withhold from whoever intercepted the scheme.
+   *
+   * Absent is not a lesser call. It is the retype flow, where the code was minted unbound and is
+   * claimed exactly as it was before any of this existed.
    */
   verifier?: string;
 }
@@ -167,14 +248,22 @@ async function readJson(res: Response): Promise<unknown> {
 const trimmed = (v: unknown): string => (typeof v === "string" ? v.trim() : "");
 
 /**
- * Whose account a token pair belongs to — asked of the hosted service, never of the caller. A
- * sign-in body names an address, but that is an INPUT (typed into a field, and not sent at all on
- * the browser path) and is no evidence of which account the pair opens. The mirror-owner decision
- * may not rest on an input, so it rests on one authenticated read of `GET /auth/session`, composed
- * by the account from the row the access token resolves to. FAIL CLOSED: this returns an address or
- * throws rather than "unknown", because its caller decides whether to activate over a mirror already
- * holding mail — an unconfirmed identity that fell through as a match would be a leak via a network
- * blip. Cheap (once per sign-in) and deliberately NOT on the launch path.
+ * WHOSE ACCOUNT A TOKEN PAIR BELONGS TO — asked of the hosted service, never of the caller.
+ *
+ * A sign-in body names an address, and that address is an INPUT: it is what the person typed into
+ * a field, and on the browser path it is not sent at all. Neither is evidence of which account the
+ * pair that came back actually opens. The mirror-owner decision may not rest on an input, so it
+ * rests on this: one authenticated read of `GET /auth/session`, whose answer is composed by the
+ * account itself from the row the access token resolves to.
+ *
+ * FAIL CLOSED, and that is the whole reason this returns an address or throws rather than
+ * answering "unknown". Its one caller uses the result to decide whether a session may be activated
+ * over a mirror already holding somebody's mail; an unconfirmed identity that fell through as a
+ * match would be the leak this exists to prevent, arriving by way of a network blip. A sign-in that
+ * cannot be attributed is refused, and the pair is discarded unsealed.
+ *
+ * Cheap by construction: it runs once per sign-in, against a host that answered a login a moment
+ * ago. It is deliberately NOT on the launch path — see the sealed-token note in `cloud-engine.ts`.
  */
 export async function cloudIdentity(opts: CloudSignInOptions, tokens: CloudTokens): Promise<string> {
   const fetchImpl = opts.fetchImpl ?? fetch;
@@ -374,14 +463,37 @@ export async function cloudSignIn(
 }
 
 /**
- * Redeeming a pairing code printed by another machine's desktop — the third way in, structurally
- * simplest (one request, one single-use token, a bearer pair back). Its own function because its two
- * facts are not the sign-in's. `kind` is REQUIRED here (the sign-in paths only prefer it): an absent
- * kind defaults to `"web"` on the host, so a desktop that omitted it appears in the Devices pane as a
- * browser — a false state where a person decides what to revoke — so a platform this build has no
- * word for is REFUSED rather than mislabelled. The account is asked of the host and recorded so a
- * LATER answer naming a different account can be refused (a reinstall at the same address is a
- * different world). `null` is kept DISTINCT, and {@link accountIsForeign} refuses only on disagreement.
+ * REDEEMING A PAIRING CODE PRINTED BY ANOTHER MACHINE'S DESKTOP.
+ *
+ * The third way in, beside the password and the browser hand-off, and structurally the simplest:
+ * one request, one single-use token, a bearer pair back. What makes it worth its own function
+ * rather than a branch of {@link cloudSignIn} is that the two facts it must get right are not the
+ * sign-in's facts.
+ *
+ * ── `kind` IS REQUIRED HERE, AND THE SIGN-IN PATHS ONLY PREFER IT ─────────────────────────────
+ *
+ * On the sign-in paths an unrecognised platform omits the field and the account keeps its legacy
+ * reading — an honest silence about a device that is otherwise fully described. Here the silence
+ * is not honest: the host defaults an absent kind to `"web"`, so a desktop that omitted it appears
+ * in somebody's Devices pane as a browser. That pane is where a person decides what to revoke, and
+ * a row naming the wrong kind of thing is a false state shown at exactly the moment accuracy
+ * matters. A platform this build has no word for is therefore REFUSED by name rather than
+ * mislabelled — a refusal names a machine nobody can pair yet, which is a smaller wrong than a
+ * device list that lies about what is on it.
+ *
+ * ── THE ACCOUNT IS ASKED OF THE HOST, AND `null` IS ITS OWN ANSWER ────────────────────────────
+ *
+ * The response names the account the pair belongs to in {@link ACCOUNT_HEADER}. A freshly paired
+ * install has no other way to learn it: the bearer opens an account whose id is not in the body,
+ * and asking afterwards means already trusting whatever answers. It is recorded so that a LATER
+ * answer naming a different account can be refused — a host reinstalled at the same address is a
+ * different world, and merging its mirror into this one would be two accounts in one database.
+ *
+ * `null` — the host named nobody — is kept DISTINCT from a recorded id, and that distinction is
+ * load-bearing rather than tidy. Collapsing them means either refusing every pairing with a
+ * composition that does not name accounts, or treating "never told" as agreement with whatever
+ * arrives next. Neither is right, so the value says which state it is in and the comparison that
+ * uses it refuses only on a POSITIVE disagreement — `baseIsForeign`'s rule, for the same reason.
  */
 export interface PairRedeemResult {
   tokens: CloudTokens;

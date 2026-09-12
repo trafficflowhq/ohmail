@@ -9,14 +9,63 @@ import {
 } from "@trafficflow/services/mail";
 
 /**
- * The Cloud-mode local read surface — the full mail READ routes, served from the mirror in PGlite.
- * Not `packages/api`'s `localRoutes`: those import `deps.ts` (the IMAP admission port) and reach the
- * adapter, which would put the organizer's machinery back in the graph `cloud-engine-census.test.ts`
- * forbids. So this is a curated GET-only table reaching only the census-clean read services. And only
- * reads the mirror can answer truthfully: a read whose QUESTION is about what the mirror does NOT
- * hold must forward — `GET /messages` (the reach-past list) is absent on purpose, and
- * `/messages/:id/body` falls through for a reach-past row. A mirrored MESSAGE is not a mirrored BODY:
- * bodies fill in a second pass, so an absent body row means "not copied yet", not empty ({@link mirroredBodyIds}).
+ * THE CLOUD-MODE LOCAL READ SURFACE — the full mail READ routes, served from the mirror in PGlite.
+ *
+ * ── WHY THIS FILE EXISTS INSTEAD OF `packages/api`'s ROUTE TABLE ───────────────────────────────
+ *
+ * The Swift client speaks the same `GET /messages`, `/threads/:id`, `/search`, `/mailboxes`,
+ * `/tags`, `/rules` surface it does against the hosted API. The obvious move — mount
+ * `packages/api`'s `localRoutes` — is exactly the one Cloud mode may not make: those route modules
+ * import `routes/shared.ts`, which imports `deps.ts`, which carries the IMAP admission port; and
+ * `/mailboxes`, `/attachments`, `/drafts` reach the IMAP adapter itself. Pulling that table in
+ * would put the organizer's machinery back in the Cloud engine's graph — the one thing
+ * `test/cloud-engine-census.test.ts` forbids by construction.
+ *
+ * So this is a curated, READ-ONLY route table that reaches ONLY the read services
+ * (`messageService`, `threadService`, `searchService`, `mailboxService`, `tagsService`,
+ * `rulesService`) — every one of them already in the census-clean `@trafficflow/services/mail`
+ * graph the Cloud engine imports, so importing them here adds NOTHING new to reach. There is no
+ * IMAP adapter, no lease, no worker loop behind any handler in this file, and the expanded census
+ * proves it: add an IMAP import to this module and the census goes red.
+ *
+ * ── A MIRROR IS READ-ONLY, SO THIS TABLE IS GET-ONLY ──────────────────────────────────────────
+ *
+ * The hosted worker is the single organizer of the mailbox; a Cloud-mode install mutates nothing
+ * locally. Every mutation the client issues is a WRITE against the hosted account and is forwarded
+ * by the write-through proxy (`cloud-proxy.ts`), never served here. This table therefore carries
+ * only reads — the projection the mirror already holds — and a request that matches nothing here
+ * falls through to the proxy.
+ *
+ * ── AND ONLY READS THE MIRROR CAN ANSWER TRUTHFULLY ───────────────────────────────────────────
+ *
+ * The converse boundary, learned from the folder-contents defect: a read whose QUESTION is about
+ * what the mirror does NOT hold must forward, however read-shaped it looks. `GET /messages` (the
+ * list route) is the reach-past door — a page of mail beyond the local window — and is therefore
+ * absent from this table on purpose; see the note at its former position below. The same rule
+ * gives `GET /messages/:id/body` a fall-through in `cloud-engine.ts`: served from the mirror when
+ * the message is mirrored, forwarded to the hosted account when it is a reach-past row the mirror
+ * never held.
+ *
+ * ── AND A MIRRORED MESSAGE IS NOT THE SAME FACT AS A MIRRORED BODY ────────────────────────────
+ *
+ * That rule was applied to one half of the question and the other half is where the first load
+ * went wrong. A mirrored install fills in TWO passes — `cloud-mirror.ts`: bodies "are not a
+ * `/sync` entity", so `backfillBodies` runs only after `drainSync` has returned to the horizon —
+ * and the gap between them is not an edge case, it is every first launch, running for hours on a
+ * large account. In that gap `messages` holds the row and `message_bodies` does not.
+ *
+ * `MessageService.getBody` is written for the HOSTED server, where an absent body row can only
+ * mean "never ingested", and its documented answer is the honest one there: "a message with no
+ * ingested body yields an empty body" — `200 {text: "", html: null}`. Served out of a MIRROR the
+ * same bytes are a fabrication, because here an absent row means "not copied yet" about mail the
+ * hosted account is holding in full.
+ *
+ * The client cannot tell those apart and does not treat either as provisional: an answered body is
+ * `ready`, and `OhmailEngine.bodyPlan` never re-fetches a `ready` record. So one empty answer in
+ * that window is permanent — the desktop window's mirror is in memory, so quitting and reopening
+ * the app is what "fixes" it, which is why this reads as flakiness rather than as a defect.
+ * {@link mirroredBodyIds} is the distinction the read surface was missing, and both body routes
+ * now ask it before they answer.
  */
 
 export interface ReadRoute {
@@ -40,24 +89,31 @@ function boolParam(v: string | null): boolean | undefined {
 }
 
 /**
- * Which of these messages this mirror actually holds a body for — the fact the body routes were
- * answering without. A row's PRESENCE is the whole signal, its contents deliberately not consulted:
- * a withheld body (`storage_cap`, `junk_filed`, `expunged`) is a real row carrying its marker, and
- * an ordinarily empty message is a real row too — both settled answers the mirror genuinely holds.
- * What must not be served is the case with NO row, which in a mirror means the copy has not arrived.
- * Scoped through `messages.account_id` for `MessageService.getBody`'s reason: `message_bodies` has no
- * account column, so the join IS the authorization, and this question must not become a way to learn
- * that somebody else's message exists.
+ * WHICH OF THESE MESSAGES THIS MIRROR ACTUALLY HOLDS A BODY FOR — the fact the body routes were
+ * answering without.
+ *
+ * A row's PRESENCE is the whole signal, and its contents are deliberately not consulted. A body
+ * the hosted account is withholding (`storage_cap`, `junk_filed`, `expunged`) is stored as a real
+ * row carrying its marker, and an ordinarily empty message is a real row too — both are settled
+ * answers the mirror genuinely holds, and both must keep being served from here. What must not be
+ * served is the case with no row at all, which in a mirror means the copy has not arrived.
+ *
+ * Scoped through `messages.account_id` for the reason `MessageService.getBody` gives about the
+ * same join: `message_bodies` has no account column, so the join IS the authorization, and asking
+ * this question about an id must not become a way to learn that somebody else's message exists.
  */
 /**
- * Both questions under one snapshot — presence and content, or the fix reintroduces the defect.
- * `MessageService.getBodies` reads inside its own `repeatable read` transaction, so asking it for
- * bodies and then asking THIS database which ids have a row are two snapshots with a gap — and the
- * mirror's backfill runs in this same process and fills that gap: a body absent when `getBodies`
- * read it (so the wire item carries the left join's `text: ""`) and present when the presence query
- * ran (so the id is admitted) would be answered as an ordinary empty body and cached as settled,
- * the very failure this file prevents in a narrower window. One transaction, `read only` at the same
- * isolation, so the two answers describe one instant.
+ * BOTH QUESTIONS UNDER ONE SNAPSHOT — presence and content, or the fix reintroduces the defect.
+ *
+ * `MessageService.getBodies` already reads inside its own `repeatable read` transaction, so asking
+ * it for the bodies and then asking THIS database which ids have a row are two snapshots with a
+ * gap between them. The mirror's backfill runs in this same process, and it fills that gap: a body
+ * absent when `getBodies` read it (so the wire item carries the left join's `text: ""`) and present
+ * when the presence query ran (so the id is admitted) is answered as an ordinary empty body — and
+ * cached as a settled one, which is exactly the failure this file exists to prevent, in a narrower
+ * window. Review-caught.
+ *
+ * One transaction, `read only` and at the same isolation, so the two answers describe one instant.
  */
 async function inSnapshot<T>(ctx: ServiceContext, fn: (snap: ServiceContext) => Promise<T>): Promise<T> {
   const tx = ctx.db as unknown as {
@@ -90,14 +146,23 @@ async function mirroredBodyIds(ctx: ServiceContext, ids: readonly string[]): Pro
  */
 export const READ_ROUTES: ReadRoute[] = [
   /**
-   * The cold-start read, and the one route where forwarding is wrong rather than slow.
-   * `GET /sync/snapshot` answers the account's current state newest-first plus `asOfSeq`, which the
-   * client commits as its `/sync` cursor. Two unrelated sequences exist in a mirrored install — the
-   * hosted account's (the mirror's pull is counted in it) and this database's local `change_log`
-   * (what `GET /sync` is answered from) — so forwarding returns a cursor in the first to a client
-   * whose next request is answered in the second: the mailbox bootstraps once, looks complete, and
-   * never receives another change. It was forwarded, so a cold start filled OLDEST first; serving it
-   * here from `syncService` (a read service already in the graph) is what let newest-first come back.
+   * THE COLD-START READ, AND THE ONE ROUTE WHERE FORWARDING IS WRONG RATHER THAN SLOW.
+   *
+   * `GET /sync/snapshot` answers with the account's current state — newest first — plus `asOfSeq`,
+   * the point it was read at, which the client commits as its `/sync` cursor. Two sequences exist
+   * in a mirrored install and they are unrelated numbers: the hosted account's, which the mirror's
+   * own pull is counted in, and this database's local `change_log`, which is what `GET /sync` is
+   * answered from. Forwarding this route returns a cursor in the first and hands it to a client
+   * whose next request is answered in the second, so the mailbox bootstraps once, looks complete,
+   * and never receives another change.
+   *
+   * It was forwarded, and the desktop client compensated by refusing to use the route at all —
+   * which is why a cold start filled OLDEST first, a page of the change log at a time, instead of
+   * painting the newest mail immediately. Serving it here is what let that capability come back.
+   *
+   * `syncService` is a read service like every other one in this table: it selects rows for the
+   * caller's own account and writes nothing, and it is already in the Cloud engine's graph, so the
+   * census over this module is unchanged.
    */
   {
     method: "GET",
@@ -115,24 +180,54 @@ export const READ_ROUTES: ReadRoute[] = [
       );
     },
   },
-  /* `GET /messages` (the LIST route) is deliberately NOT in this table, and its absence is the
-   * folder-contents fix, recorded here rather than re-derived. The JS client calls it for one thing:
-   * the reach-past door (`HttpAdapter.listMessages`, "one keyset page oldest-ward"), which by
-   * definition asks for mail BEYOND what the local store kept. The mirror is a window over the hosted
-   * account, so serving it from the mirror re-serves rows the client already renders and then says
-   * `nextCursor: null` about a mailbox whose older mail is all hosted — worse for folders, where the
-   * handler predated `view=folder` and answered `400 view=folder requires folderId`. So the list ask
-   * falls through to the write-through proxy and the hosted account answers it (ids are verbatim, so
-   * rows compose with the client's mirror-preferred merge); offline it is `503 offline_read_only`. */
+  /*
+   * `GET /messages` (the LIST route) is DELIBERATELY NOT IN THIS TABLE, and its absence is the
+   * folder-contents fix, so it is recorded here rather than left to be re-derived.
+   *
+   * The JS client calls that route for exactly one thing: the reach-past door
+   * (`HttpAdapter.listMessages` — "one keyset page of a view, oldest-ward"), which by definition
+   * asks for mail BEYOND what the local store kept. The mirror in this database is a window over
+   * the hosted account, so serving the route from the mirror answers the one question the mirror
+   * cannot answer: it re-serves the rows the client already renders and then says `nextCursor:
+   * null` — "your mail ends here" — about a mailbox whose older mail is all on the hosted
+   * account. Worse for folders: this table's handler predated `view=folder` and dropped
+   * `folderId`/`beforeId`/`beforeDate` on the floor, so the service answered
+   * `400 view=folder requires folderId` and every folder on the desktop's hosted door rendered
+   * nothing but the reach-past failure line.
+   *
+   * So the list ask falls through to the write-through proxy and is answered by the hosted
+   * account — the same treatment as the attachment/media byte reads the mirror never holds.
+   * The hosted ids are the local ids (the mirror stores hosted entity ids verbatim), so the
+   * answered rows compose with the mirror-preferred merge on the client. Offline, the proxy
+   * answers `503 offline_read_only`, which the reach-past surface renders as its honest failed
+   * state with a retry — a paused door, never a claim that the mail ends here.
+   */
   /**
-   * The batch body read — and it has TWO modes, which this door used to collapse into one.
-   * `MessageService.getBodies` selects its mode from `ids`: with ids it answers those, without them
-   * it keyset-pages the account. This handler read only `after`/`limit`, so `ids` was dropped and
-   * every `?ids=` ask (what `HttpAdapter.fetchBodies` sends) was answered as the KEYSET WALK — a page
-   * from the account's beginning, about other messages; the client matched by `messageId`, found
-   * none, and fell back to per-message. The ids mode also OMITS what the mirror has no body for (a
-   * body not copied yet drops out and the next ask forwards); answering `text: ""` would be the
-   * fabrication cached as settled. The KEYSET mode is left as it was — a walk over what this database holds.
+   * THE BATCH BODY READ — and it has TWO modes, which this door used to collapse into one.
+   *
+   * `MessageService.getBodies` selects its mode from the `ids` option: with ids it answers those
+   * messages, without them it keyset-pages the account. This handler read only `after` and `limit`,
+   * so `ids` was dropped on the floor and every `?ids=` ask — which is what `HttpAdapter.fetchBodies`
+   * sends, the door a thread open and the eager recent-window pass both use — was answered as the
+   * KEYSET WALK: a page of the account's bodies from the beginning, about other messages entirely.
+   * The client matches rows by `messageId` and never by position, so it found none of what it asked
+   * for and fell back to asking per message; the visible cost was a wasted page on every thread
+   * open, and the invisible one was that the batch door never worked on this door at all.
+   *
+   * ── AND THE IDS MODE OMITS WHAT THE MIRROR HAS NO BODY FOR ────────────────────────────────
+   *
+   * Same distinction as the single-body route above, expressed the way THIS route already
+   * expresses absence. Omission is not a new shape here: the ids mode omits ids the account does
+   * not own (deliberately, so the route is not an existence oracle), the wire rows carry their own
+   * `messageId`, and `HttpAdapter.fetchBodies`' contract says a short answer is normal and the
+   * engine "asks for what is missing per message". So a body the mirror has not copied yet drops
+   * out of the batch and the reader's next ask goes down the per-message door, which forwards.
+   * Answering `text: ""` for it instead is the fabrication the header describes, and it would be
+   * cached as a settled body exactly as the single-body one was.
+   *
+   * The KEYSET mode is left exactly as it was. It is a walk over what this database holds — its
+   * question is "what have you got", not "what does this message say" — and a caller paging it is
+   * asking about the mirror rather than about the mail.
    */
   {
     method: "GET",
@@ -164,14 +259,20 @@ export const READ_ROUTES: ReadRoute[] = [
     handler: async (_req, ctx, params) => json(await messageService.get(ctx, params.id!)),
   },
   /**
-   * One body — from the mirror when the mirror has it, and NOT INVENTED when it does not. The
-   * `not_found` routes this to the hosted account: `cloud-engine.ts` already forwards this route on
-   * this code for the reach-past row whose MESSAGE the mirror never held, and a mirrored message
-   * whose BODY has not been copied yet is the same question ("can the mirror answer truthfully?"),
-   * so it takes the same signal. The cost is one forwarded round trip per body opened ahead of the
-   * walk; the walk keeps filling behind it and later opens are local. Offline the proxy answers
-   * `503 offline_read_only`, which the pane renders as "couldn't load the full message" with Retry —
-   * a stated failure, not a blank message that looks like mail with nothing in it.
+   * ONE BODY — from the mirror when the mirror has it, and NOT INVENTED when it does not.
+   *
+   * The `not_found` is what routes this to the hosted account: `cloud-engine.ts` already forwards
+   * exactly this route on exactly this code, for the reach-past row whose MESSAGE the mirror never
+   * held. A mirrored message whose BODY has not been copied yet is the same question wearing a
+   * different hat — "is this something the mirror can answer truthfully?" — and it takes the same
+   * answer, so it is expressed as the same signal rather than as a second forwarding path.
+   *
+   * The cost is one forwarded round trip per body the reader opens ahead of the walk, against a
+   * hosted account that holds the mail; the walk keeps filling the mirror behind it and later
+   * opens are local again. Offline, the proxy answers `503 offline_read_only`, which the reading
+   * pane renders as "couldn't load the full message" with a Retry — a stated failure the reader
+   * can act on, and one the engine re-asks on its next launch, rather than a blank message that
+   * looks like mail with nothing in it.
    */
   {
     method: "GET",
@@ -198,13 +299,16 @@ export const READ_ROUTES: ReadRoute[] = [
       const url = new URL(req.url);
 
       /**
-       * `?address=` — the same arm `packages/api/src/routes/search.ts` grew, repeated here for the
-       * reason the `sort` refusal below is: this door cannot import that route table, so the two are
-       * held together by shape. The cost of NOT repeating it is the defect that comment names:
-       * `address` would fall through to the text search with `q: ""`, which `SearchService.search`
-       * answers with `emptyResult()` — so the desktop's address view would show an empty archive for
-       * a person it holds mail from, with a 200 and nothing to say why, while the web client showed
-       * the rows. A door that accepts a parameter and ignores it is worse than one that refuses it.
+       * `?address=` — THE SAME ARM `packages/api/src/routes/search.ts` grew, repeated here for
+       * the reason the `sort` refusal below is repeated: this door cannot import that route
+       * table, so the two are held together by shape.
+       *
+       * And the cost of NOT repeating it is exactly the defect that comment names. `address`
+       * would fall through to the text search with `q: ""`, which `SearchService.search`
+       * answers with `emptyResult()` — so the desktop's address view would show an empty
+       * archive for a person it holds mail from, with a 200 and nothing to say why, while the
+       * web client showed the rows. A door that accepts a parameter and ignores it is worse
+       * than one that refuses it.
        */
       const address = url.searchParams.get("address");
       if (address !== null) {

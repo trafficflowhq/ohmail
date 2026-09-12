@@ -13,16 +13,97 @@ import {
   parseStoredAddressHeaders, silentLogger, type EmailAddress, type Logger,
 } from "@trafficflow/core/mail";
 
-/* THE SENDER-NAME / RECIPIENTS BACKFILL — DB-only. Three columns went in after the rows that need them:
- * `messages.from_name` (a later migration; earlier rows reached the reader as a bare address) and
- * `messages.to_addresses`/`cc_addresses` (columns existed, but no ingest wrote them until `commitChange`
- * named them). Repaired from the source the store still holds — `message_bodies.headers`, the raw bag
- * `normalizeMime` wrote — via `parseStoredAddressHeaders` (`packages/core/src/mime.ts`, sharing
- * `simpleParser`/`PARSE_OPTIONS` with ingest so the two populations cannot disagree, and a real parse, not
- * a split — RFC 2047 words, quoted commas, folded lines). ONLY FILLS, never overwrites (guarded on
- * `from_name IS NULL`/`to_addresses = '[]'`/`cc_addresses = '[]'`, repeated in the UPDATE). KEYSET
- * pagination (`id > last`), not predicate extinction, because unfillable rows stay candidates;
- * {@link SenderNameBackfillDeps.startAfterId}/`cursor`/`exhausted` are the handover. Each written row appends a `change_log` `message` update; lock order: `messages` first, `allocateSeq` last. */
+/* ══════════════════════════════════════════════════════════════════════════════════════════
+   THE SENDER-NAME / RECIPIENTS BACKFILL — DB-only, over whichever store is authoritative
+   ══════════════════════════════════════════════════════════════════════════════════════════
+
+   ── WHAT IT REPAIRS ────────────────────────────────────────────────────────────────────────
+
+   Three columns went in after the rows that need them, all for the same reason: the parser had
+   produced the value since it was written and ingest had nowhere to put it.
+
+     · `messages.from_name`     — added by a later migration. Every message stored before it
+                                  reached the reader as a bare address, because the message
+                                  projection hardcoded `from: { name: null, … }` for want of a
+                                  column to read.
+     · `messages.to_addresses`  — the columns have existed since the mail schema landed and the
+     · `messages.cc_addresses`    projection has always read them, but no ingest wrote either
+                                  until `commitChange` named them, so every earlier message
+                                  rendered no "To" line at all.
+
+   The migration that added `from_name` deliberately left the repair to a separate pass: filling
+   historical rows means re-parsing the headers those rows still carry, which is not something a
+   schema change can express, and each touched row owes a `change_log` update or no mirror ever
+   re-reads it. This is that pass. All three columns together, because they come from one read of
+   one header bag and one row deserves one change-log entry, not two passes' worth.
+
+   ── THE SOURCE IS STILL THERE, WHICH IS THE ONLY REASON THIS IS POSSIBLE ───────────────────
+
+   A historical row can only be repaired from something the store still holds. It holds the
+   headers: `message_bodies.headers` is the RAW header-value bag `normalizeMime` wrote on the
+   way past, so a message stored long before the column existed still carries
+   `from: ["Papierwerk Studio <hello@papierwerk.example>"]` whatever its `messages` row says.
+
+   What is NOT possible is inventing a name for the rows whose `From` is a bare address with no
+   display name in it. Those stay NULL, which is the same NULL the reader already falls back on.
+   A name derived from an address would be a value no sender ever wrote, and it would be
+   indistinguishable afterwards from one they did.
+
+   ── THE PARSE IS INGEST'S PARSE ────────────────────────────────────────────────────────────
+
+   `parseStoredAddressHeaders` is in `packages/core/src/mime.ts` beside `normalizeMime` and
+   shares `simpleParser`, `PARSE_OPTIONS`, `toAddr` and `addrList` with it — a backfill whose
+   names disagreed with ingest's would leave two populations of rows decided by different rules,
+   and the disagreement would be invisible per row. Its own suite pins the round trip
+   (`parseStoredAddressHeaders(normalizeMime(raw).headers)` equals that same `normalizeMime`'s
+   `from`/`to`/`cc`) rather than pinning hand-written expectations.
+
+   It matters that it is a real parse and not a string split. A stored `From` may be an RFC 2047
+   encoded word rather than the characters it stands for, a quoted display name containing a
+   comma that a naive split would tear in half, or a folded line stored with its newlines intact.
+
+   ── ONLY EVER FILLS, NEVER OVERWRITES ──────────────────────────────────────────────────────
+
+   Each column is written only from its own unset state — `from_name IS NULL`, `to_addresses =
+   '[]'`, `cc_addresses = '[]'` — and the UPDATE repeats that predicate, so a value written by
+   ingest, by a mirror or by a concurrent run of this pass wins over anything computed here.
+   A row where the parse yields nothing new is not written at all and costs no change-log entry.
+
+   ── KEYSET PAGINATION, NOT PREDICATE EXTINCTION ────────────────────────────────────────────
+
+   The obvious loop — "select the candidates until none are left" — cannot terminate here, in
+   BOTH modes and for two different reasons. A dry run writes nothing, so it would re-read page
+   one for ever. And an APPLY leaves rows in the candidate set on purpose: a message whose
+   sender set no display name still has a NULL `from_name` and a `from` header afterwards, and a
+   message genuinely addressed to nobody still has an empty `to_addresses`. The cursor
+   (`id > last`) is what makes both modes walk the same pages exactly once, and it is why the
+   honest "is it done?" number is `written`, not the size of the candidate set.
+
+   THE SAME SENTENCE IS WHY THE CURSOR IS AN INPUT AND AN OUTPUT. A caller that runs this in
+   BOUNDED VISITS rather than in one sitting — the local engine does, so that a repair cannot
+   delay the mail — has to be able to say where the last visit stopped. Restarting each visit at
+   the beginning would be correct and would still converge on a store with nothing unfillable in
+   it; on a real one it degrades until it stalls, because the rows that stay candidates for ever
+   accumulate at the FRONT of the walk and eventually fill a whole visit's budget on their own.
+   {@link SenderNameBackfillDeps.startAfterId} and {@link SenderNameBackfillResult.cursor} are
+   that handover, and {@link SenderNameBackfillResult.exhausted} is the only honest "there is
+   nothing after this point" — a page can come back empty at any budget.
+
+   ── MIRRORS LEARN THROUGH THE CHANGE LOG ───────────────────────────────────────────────────
+
+   Every written row appends a `message` update in the same transaction. The sync service
+   re-materializes each changed message through the one projection, and every mirror above this
+   store upserts `fromName`, `toAddresses` and `ccAddresses` from the result unconditionally, so
+   a mirror converges on its next ordinary `/sync`. Without the change-log row the columns would
+   be correct in the store and wrong on every mirror above it until someone re-bootstrapped
+   them, which is the failure the migration wrote down in advance. That holds on a LOCAL store
+   too, and there for a nearer reason: the window's own view of the mail is a mirror driven by
+   this feed, so the change-log row is what repaints a message in the same session rather than
+   after the next launch.
+
+   Lock order matches ingest and the other passes: all `messages` row locks first,
+   `allocateSeq`'s account row lock last, one allocation per account per page.
+   ══════════════════════════════════════════════════════════════════════════════════════════ */
 
 /** Rows read per page — one transaction per page in apply mode. */
 export const SENDER_NAME_BACKFILL_BATCH = 200;
@@ -53,12 +134,15 @@ export interface SenderNameBackfillDeps {
    */
   accountId?: string;
   /**
-   * Called with the page's ids after it is read and parsed, before the write transaction opens. A TEST
-   * SEAM, and it exists because the property cannot be observed otherwise: the page SELECT runs OUTSIDE the
-   * transaction (a read of hundreds of rows holding locks would block ingest), so there is a real window in
-   * which another writer can fill a column this pass has already decided to write. The guarded UPDATE makes
-   * that harmless, and a guard nobody has watched fail is not evidence — this hook is how the pg test lands
-   * a competing write inside that exact window. Production passes nothing and pays one `undefined` check per page.
+   * Called with the page's ids after it is read and parsed, before the write transaction opens.
+   *
+   * A TEST SEAM, and it exists because the property it opens up cannot be observed any other
+   * way. The page SELECT deliberately runs outside the transaction (a read of hundreds of rows
+   * holding locks would block ingest for its whole duration), so there is a real window in which
+   * another writer can fill a column this pass has already decided to write. The guarded UPDATE
+   * is what makes that harmless, and a guard nobody has watched fail is not evidence — this hook
+   * is how the pg test lands a competing write inside that exact window. Production passes
+   * nothing and pays one `undefined` check per page.
    */
   onPageRead?: (ids: readonly string[]) => Promise<void> | void;
 }
@@ -158,13 +242,18 @@ export async function runSenderNameBackfill(
     // headers are a few hundred bytes of it. Selecting `headers` would move an entire table of
     // stored bodies over the wire to read three keys out of each one.
     /**
-     * THE ONE CONSTRUCT HERE THE CENSUS COULD NOT SEE, and the dangerous one. `${headers} ? 'from'` is the
-     * jsonb KEY-EXISTS operator; the construct table catches its two-character forms and not the single
-     * one, so these three sites read clean. On the device store `?` is a PARAMETER PLACEHOLDER, not an
-     * operator — so it would not fail, it would bind the next value into the wrong position and shift every
-     * binding after it. `d.jsonHasAny(col, [key])` asks the same question in each store's own terms. The
-     * empty-array comparisons go through the seam for the ordinary reason: the column is `jsonb` on one
-     * store and JSON-in-text on the other, and the literal has to be cast to whichever it is.
+     * THE ONE CONSTRUCT HERE THE CENSUS COULD NOT SEE, and it is the dangerous one.
+     *
+     * `${headers} ? 'from'` is the jsonb KEY-EXISTS operator. The construct table catches its
+     * two-character forms and not the single one, so these three sites read as clean. On the
+     * device store `?` is not an operator at all — it is a PARAMETER PLACEHOLDER, so the
+     * statement would not fail, it would bind the next value into the wrong position and shift
+     * every binding after it. `d.jsonHasAny(col, [key])` asks the same question in each store's
+     * own terms.
+     *
+     * The empty-array comparisons go through the seam for the ordinary reason: the column is
+     * `jsonb` on one store and JSON-in-text on the other, and the literal has to be cast to
+     * whichever the column is.
      */
     const d = dialect(db);
     const emptyJson = d.castJsonb(sql`'[]'`);
@@ -258,15 +347,19 @@ export async function runSenderNameBackfill(
     const page_result = await db.transaction(async (tx) => {
       const done: typeof work = [];
       for (const w of work) {
-        /* Guarded on the SAME unset state every value was computed from — one predicate per column being
-           written, ANDed. A concurrent ingest, mirror write or second run of this pass wins; this pass
-           never overwrites. THE GUARD IS PER ROW, NOT PER COLUMN, deliberately: if a competitor fills
-           `from_name` between the page read and here, the whole UPDATE matches nothing — so this row's
-           recipients are not written either, even though still fillable. The alternative (three separately
-           guarded statements) buys one round trip's freshness and costs the property that makes this pass
-           safe to kill: a row is either wholly as this pass computed it or wholly untouched, never a
-           mixture. The row is reported `skipped` and the next run picks it up with the competitor's
-           `from_name` visible — which is what resumability is for. */
+        /* Guarded on the SAME unset state every value was computed from — one predicate per
+           column being written, ANDed. A concurrent ingest, mirror write or second run of this
+           pass wins; this pass never overwrites.
+
+           THE GUARD IS PER ROW, NOT PER COLUMN, AND THAT IS THE DELIBERATE CHOICE. If a
+           competitor fills `from_name` between the page read and here, the whole UPDATE matches
+           nothing — so this row's recipients are not written either, even though that column is
+           still empty and still fillable. The alternative (three statements, each guarded
+           separately) buys one round trip's worth of freshness and costs the property that makes
+           this pass safe to kill: as written, a row is either wholly as this pass computed it or
+           wholly untouched, never a mixture of one run's parse and another's. The row is
+           reported as `skipped` and the next run picks it up with the competitor's `from_name`
+           now visible — which is what resumability is for. */
         const guards = [eq(messages.id, w.row.id)];
         if (w.fill.fromName !== undefined) guards.push(sql`${messages.fromName} is null`);
         if (w.fill.toAddresses !== undefined) guards.push(sql`${messages.toAddresses} = ${d.castJsonb(sql`'[]'`)}`);

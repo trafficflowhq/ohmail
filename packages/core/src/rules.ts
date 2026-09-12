@@ -452,25 +452,10 @@ function bodySatisfies(r: Rule, msg: NormalizedMessage): boolean {
 }
 
 /**
- * Does this rule name this PERSON? The address half of {@link matches} with the term conjuncts
- * left out, and the ONE place the sender/domain claim is spelled — {@link matches} asks it of a
- * message, {@link standingRule} asks it of the account's standing decision about a sender, and a
- * second spelling is how those two came to disagree. `author === null` (absent, unparseable or
- * ambiguous `From`) names nobody: a guessed author must never inherit a decision made about
- * somebody else. A `header` rule names a header and not a principal, so it names nobody here.
- */
-function namesAuthor(r: Rule, author: string | null): boolean {
-  if (author === null) return false;
-  if (r.kind === "sender") return r.match.toLowerCase() === author;
-  if (r.kind === "domain") return r.match.toLowerCase() === domainOf(author);
-  return false;
-}
-
-/**
- * Does this rule fire on this message? The sender and domain arms are {@link namesAuthor} — one
- * spelling of the address claim, including its refusal to let a malformed `From` inherit a
- * decision the user made about somebody else. A `header` rule still fires here — it names a
- * header, not a principal, which is also why it names nobody there. `hasOwnProperty` rather
+ * Does this rule fire on this message? `author === null` means the claimed author is absent,
+ * unparseable or ambiguous, and then NO sender or domain rule may fire: matching against a
+ * guessed author would let a malformed `From` inherit a decision the user made about somebody
+ * else. A `header` rule still fires — it names a header, not a principal. `hasOwnProperty` rather
  * than `Boolean(msg.headers[name])`: the map comes back through `JSON.parse` and inherits from
  * `Object.prototype`, so a rule whose `match` is `constructor` matched EVERY message under the
  * old test. The subject term is checked FIRST and for every kind — an `AND` that can only make
@@ -486,8 +471,9 @@ function matches(r: Rule, msg: NormalizedMessage, author: string | null): boolea
   if (!bodySatisfies(r, msg)) return false;
   switch (r.kind) {
     case "sender":
+      return author !== null && r.match.toLowerCase() === author;
     case "domain":
-      return namesAuthor(r, author);
+      return author !== null && r.match.toLowerCase() === domainOf(author);
     case "header": {
       const name = r.match.toLowerCase();
       return name.length > 0
@@ -510,26 +496,6 @@ function winningRule(
   for (const r of rules) {
     if (!r.enabled) continue;
     if (!matches(r, msg, author)) continue;
-    if (winner === null || compareRules(r, winner) < 0) winner = r;
-  }
-  return winner;
-}
-
-/**
- * THE ACCOUNT'S STANDING DECISION ABOUT A SENDER — a rule that names this person, whatever mail
- * of theirs it claims. A subject- or body-narrowed rule still decided about the WHOLE sender:
- * terms narrow PLACEMENT, never admission (mail 0050/0052). That is already the reading the
- * consent cutline's `decided` predicate and the client's `consentIndex` take, and this is the
- * routing side of the same question, so the gate stops asking about somebody the account has
- * answered for. A rule pointing AT the Screener is the absence of a decision written down and is
- * not one. The winner is the minimum under {@link compareRules}, as {@link winningRule}'s is.
- */
-export function standingRule(rules: readonly Rule[], author: string | null): Rule | null {
-  let winner: Rule | null = null;
-  for (const r of rules) {
-    if (!r.enabled) continue;
-    if (r.destination === "ohmail/Screener") continue;
-    if (!namesAuthor(r, author)) continue;
     if (winner === null || compareRules(r, winner) < 0) winner = r;
   }
   return winner;
@@ -1353,14 +1319,14 @@ function policyDemotion(
 }
 
 /**
- * The consent gate, in the only order that is correct. Five steps: (1) the user's own rules,
+ * The consent gate, in the only order that is correct. Four steps: (1) the user's own rules,
  * resolved by a TOTAL order — a user decision outranks anything we infer, including the gate; (2)
- * the account's {@link standingRule} for this sender, whether or not a term claimed THIS message;
- * (3) a POSITIVE authenticated-known check; (4) fail closed to `ohmail/Screener` for an unknown,
- * absent, unparseable or ambiguous sender; (5) THEN {@link headerHeuristic}, refinement only.
- * `"fail"` — the only thing `input.auth` does — screens a message otherwise allowed: a DENY rule
- * is never weakened, nothing is ever REQUIRED. One refinement, {@link policyDemotion}, between
- * allow-side piles only; its `matchedRuleId` is `null` so the learning path is taught no consent.
+ * a POSITIVE authenticated-known check, not `if (from && …)`; (3) fail closed to
+ * `ohmail/Screener` for an unknown, absent, unparseable or ambiguous sender; (4) THEN {@link
+ * headerHeuristic}, refinement only. `"fail"` — the only thing `input.auth` does — screens a
+ * message otherwise allowed: a DENY rule is never weakened, nothing is ever REQUIRED.
+ * `matchedRuleId` is `null` on the demotion: recording the rule would teach the learning path a
+ * false consent signal. One refinement: {@link policyDemotion}, between allow-side piles only.
  */
 export function evaluateRules(input: EvaluateRulesInput): RuleDecision {
   const { msg, rules, knownSenders, auth, ohboxPolicy } = input;
@@ -1378,18 +1344,7 @@ export function evaluateRules(input: EvaluateRulesInput): RuleDecision {
     return { destination: winner.destination, matchedRuleId: winner.id, source: "rule" };
   }
 
-  /* A RULE THAT DID NOT CLAIM THIS MESSAGE STILL DECIDED ABOUT THIS PERSON ({@link standingRule}).
-     A narrowed rule left the sender's other mail at the gate while every consent surface read them
-     as decided, so one message was in the Ohbox by the rule and behind a waiting row by the gate at
-     once. A DENIAL is carried out — above `auth` as every denial is, and never weakened. An
-     ADMISSION admits and does not PLACE: the standing arm is reached only when a term did not
-     match, so filing to that rule's destination would make the term inert for this sender. The
-     admitted message takes the ordinary post-gate path, exactly as a known correspondent's does. */
-  const standing = standingRule(rules, author);
-  if (standing && effectForDestination(standing.destination) === "deny") {
-    return { destination: standing.destination, matchedRuleId: standing.id, source: "rule" };
-  }
-  if (standing === null && !isKnownAuthor(author, knownSenders)) return screened;
+  if (!isKnownAuthor(author, knownSenders)) return screened;
   if (auth === "fail") return screened;
 
   const heur = headerHeuristic(msg);

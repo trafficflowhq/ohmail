@@ -147,10 +147,6 @@ export function TagView({
      nine keys that print a cap and do nothing. See `message-verbs.ts`. */
   useMessageVerbs({
     shown, scope: ".view-tag", onAction, onAddTag, onScreen, canDelete, canReplyAll,
-    /* The list as rendered and the walk's own selector — the cursor placer's two inputs, so the
-       first press of a verb on a cursorless list places a cursor here rather than doing nothing
-       (`cursor-placer.ts`). `messages` is what the rows below are drawn from, in their order. */
-    rows: messages, select: selectRow,
   });
 
   useZoneNav({

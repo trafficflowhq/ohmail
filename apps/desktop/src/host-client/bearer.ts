@@ -14,14 +14,15 @@
  */
 
 /*
- * ROTATION: `/auth/refresh` takes the body token (strict reuse detection, no concurrent grace), so
- * this manager rotates SERIALLY, single-flighted — presenting one refresh token twice IS the theft
- * signal. Three sharpenings: only a 401/403 from the refresh is an authentication judgment (`503
- * host_busy` is the listener's admission bound — clearing over it signed a working phone out); storage
- * is the family's shared head (a stale in-memory copy re-reads storage and presents the FRESHEST
- * token, the whole rotation under `navigator.locks` — without it the re-read narrows the
- * double-present window, it cannot close it); recovery is bound to the token GENERATION (a 401 judged
- * against a replaced stamp restamps and replays, never re-rotates).
+ * ROTATION: `/auth/refresh` takes the body token (strict reuse detection, no concurrent
+ * grace), so this manager rotates SERIALLY, single-flighted — presenting one refresh token
+ * twice IS the theft signal. Three sharpenings: only a 401/403 from the refresh is an
+ * authentication judgment (`503 host_busy` is the listener's admission bound — clearing over
+ * it signed a working phone out because the laptop was busy); storage is the family's shared
+ * head (a stale in-memory copy re-reads storage and presents the FRESHEST token, the whole
+ * rotation under `navigator.locks` where the browser has it — without the Locks API the
+ * re-read narrows the double-present window, it cannot close it); recovery is bound to the token
+ * GENERATION (a 401 judged against a replaced stamp restamps and replays, never re-rotates).
  */
 
 /*

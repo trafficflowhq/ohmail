@@ -159,9 +159,6 @@ export function HistoryView({
      nine keys that print a cap and do nothing. See `message-verbs.ts`. */
   useMessageVerbs({
     shown, scope: ".view-history", onAction, onAddTag, onScreen, canDelete, canReplyAll,
-    /* The list as rendered and the walk's own selector — the cursor placer's two inputs
-       (`cursor-placer.ts`). `messages` is what the rows below are drawn from, in their order. */
-    rows: messages, select: selectRow,
   });
 
   useZoneNav({

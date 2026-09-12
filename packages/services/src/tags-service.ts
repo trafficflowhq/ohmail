@@ -1,7 +1,7 @@
 import { and, asc, eq, sql } from "drizzle-orm";
 import { dialect } from "@trafficflow/db/dialect";
 import { assertOrganizerRole, assertAccountOrganizes, tags, messages, messageTags, recordChange, type Tx } from "@trafficflow/db";
-import { withAccountTx, type ServiceContext } from "./context.js";
+import type { ServiceContext } from "./context.js";
 import { ServiceError } from "./errors.js";
 import { materializeTag } from "./dto/materialize.js";
 import type { TagDTO } from "./dto/types.js";
@@ -107,7 +107,7 @@ export class TagsService {
     const hue = this.validHue(body?.hue);
     const now = ctx.now();
 
-    const { id, seq } = await withAccountTx(ctx, async (tx) => {
+    const { id, seq } = await asTx(ctx).transaction(async (tx) => {
       // A READER'S ACCOUNT DEFINES NO TAGS (mail 0083). Account-scoped, not per-mailbox: a tag
       // name belongs to the account and is carried in the travelling profile, so the question is
       // whether this install organizes ANYTHING. On a one-mailbox standalone that collapses to
@@ -226,7 +226,7 @@ export class TagsService {
     }
     const name = createName === undefined ? undefined : this.validName(createName);
 
-    const { seq, effectiveTagId } = await withAccountTx(ctx, async (tx) => {
+    const { seq, effectiveTagId } = await asTx(ctx).transaction(async (tx) => {
       // Both rows must belong to the caller. Checked here rather than trusted from the URL:
       // `message_tags` is the one table that references two account-scoped parents, and a
       // cross-account id must be a 404 rather than a row nobody can see but that exists.

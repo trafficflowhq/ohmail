@@ -4,15 +4,46 @@ import type { Logger } from "@trafficflow/core/mail";
 import { assertMayWriteToMailbox, type MailboxWriteAuthority } from "./lease.js";
 
 /**
- * THE FOLDER-OP PASS — user-commanded CREATE/RENAME/DELETE (FOLDERS-SPEC.md stage 2). The API records the
- * command (`folder_ops`, mail 0074) and rings the doorbell; this pass, once per cycle per mailbox at the
- * top (so the same cycle's `changesSince` observes the result), executes it and applies the DB
- * consequences through the caller's fenced `write`, inside the mailbox's serial cycle (one organizer per
- * mailbox, so no second copy runs beside it). Every command is TWO-PHASE, IMAP LEADING (the `fencedGroup`
- * header in `sync.ts`): a crash leaves it PENDING and each verb's IMAP half is idempotent (`mailboxCreate`,
- * `renameFolder`, `deleteFolder` all read the crash window as `"already"`), and the rename's DB swap is ONE
- * transaction (`applyFolderRename`). Failure honesty: a SEMANTIC refusal fails immediately
- * (`status='failed'` + a closed `FolderDTO.op.error`); a TRANSIENT miss defers and after {@link FOLDER_OP_MAX_ATTEMPTS} fails `"refused"`; a fence refusal leaves it unreclassified. A failed DELETE leaves a consistent, stated state. */
+ * ═══ THE FOLDER-OP PASS — user-commanded CREATE / RENAME / DELETE (FOLDERS-SPEC.md stage 2) ═══
+ *
+ * The API records the user's command (`folder_ops`, mail 0074) and rings the doorbell; THIS pass
+ * — once per sync cycle per mailbox, at the top of the cycle so the same cycle's `changesSince`
+ * already observes the result — executes the command against the user's own mailbox and applies
+ * the database consequences through the caller's fenced `write`. It runs inside the mailbox's
+ * serial cycle, which is the concurrency design: exactly one organizer per mailbox (the lease),
+ * so no reconcile, no discovery and no second copy of this pass ever runs beside it on this mailbox.
+ *
+ * ── EVERY COMMAND IS TWO-PHASE, AND THE ORDER IS THE MASTER RULE ────────────────────────────
+ *
+ * IMAP leads; the database records what was done (the `fencedGroup` header in sync.ts carries
+ * the whole argument). A crash between the phases leaves the command PENDING and the database
+ * un-swapped, and each verb's IMAP half is idempotent so the re-run converges:
+ *
+ *  · CREATE — `mailboxCreate` reads "already exists" as success;
+ *  · RENAME — `renameFolder` answers `"already"` when the source is gone and the target exists
+ *    (the crash window's exact signature), and the caller proceeds straight to the swap;
+ *  · DELETE — the sweep finds nothing left to move, `deleteFolder` answers `"already"`, and the
+ *    per-folder row removal is keyed by rows that still exist.
+ *
+ * The database half of the rename — the multi-table swap — is ONE transaction
+ * (`applyFolderRename`), all-or-nothing, proven by the pg test that aborts it mid-flight: a
+ * kill mid-rename leaves the OLD spelling everywhere, never half a swap.
+ *
+ * ── FAILURE HONESTY ─────────────────────────────────────────────────────────────────────────
+ *
+ * A SEMANTIC refusal — a name the server's own delimiter forbids, a collision, a subject that
+ * vanished, a folder that will not empty — fails the command immediately: `status='failed'` plus
+ * a closed code, carried to every client on the entity (`FolderDTO.op.error`) until the user
+ * dismisses it. A TRANSIENT miss (the network, the server hiccuping) defers: the command stays
+ * pending, `attempts` counts, and after {@link FOLDER_OP_MAX_ATTEMPTS} it fails as `"refused"`
+ * rather than retrying for ever. Fence refusals leave this pass unreclassified — lost
+ * leadership is never evidence about a command.
+ *
+ * A failed DELETE leaves a consistent, stated state: whatever the sweep already moved is
+ * honestly in the provider's Trash (a move, reversible in any client), the folder still exists,
+ * and nothing is half-removed — the pass deletes a folder's inventory row only AFTER the
+ * server confirmed the folder is gone.
+ */
 
 export const FOLDER_OP_MAX_ATTEMPTS = 5;
 

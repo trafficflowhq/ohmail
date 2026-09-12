@@ -229,17 +229,16 @@ export function DraftsView({
                       {t("discard")}
                     </button>
                   </div>
-                  {/* The stuck row's way out — BOTH stuck rows, which is the correction. A send
-                      whose outcome could not be confirmed was a dead end, and so was one that
-                      never answered at all: each note asked a question with nowhere to put the
-                      answer, so Discard refused the row for ever. These are that answer — the only
-                      two things a reader can know: they looked in Sent, and the message is there
-                      or it is not. `!== "draft"` is exactly the rows carrying a note above, and
-                      `draftsList` only lists a `sending` row once it is past every invocation's
-                      lifetime, so the verbs are never offered for a send still running. Only the
-                      mutation dispatches from here; whether the row may then be discarded is the
-                      shell's predicate on the next render. */}
-                  {d.status !== "draft" ? (
+                  {/* The held row's way out. A send whose outcome could not be confirmed used to
+                      be a dead end: the note asked a question with nowhere to put the answer, so
+                      Discard refused the row for ever. These are that answer — the only two things
+                      a reader can know: they looked in Sent, and the message is there or it is
+                      not. NOT offered for `interruptedNote` rows: `resolve` moves an `unverified`
+                      reservation and nothing else, so the verbs on a `sending` row would be a
+                      control the server correctly ignores. Only the mutation dispatches from here;
+                      whether the row may then be discarded is the shell's predicate on the next
+                      render, once the mirror says the row is an ordinary draft. */}
+                  {d.status === "unverified" ? (
                     <HeldSendResolve draftId={d.id} onResolve={onResolve} />
                   ) : null}
                   {confirming === d.id ? (

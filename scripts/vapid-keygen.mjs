@@ -1,14 +1,52 @@
 #!/usr/bin/env node
 /**
- * MINT THIS DEPLOYMENT'S OWN VAPID KEYPAIR — for the new-mail wake, and for nothing else. A UnifiedPush
- * connector registers with the phone's distributor by handing it a VAPID PUBLIC key (RFC 8292) and then
- * renders only messages carrying a signature it can check against it, so the sending server holds the
- * matching PRIVATE key: the pair identifies YOUR server to YOUR phones and is the whole of what this makes.
- * EVERY DEPLOYMENT GENERATES ITS OWN — the private key is not a shared secret with a value but the thing
- * that proves a server is the one the phone registered with; two deployments sharing it means either can
- * send wakes the other's phones accept. Rotating it costs a re-registration per phone (mail keeps arriving,
- * the wake is a latency improvement). Both values are base64url unpadded: the PUBLIC key is the uncompressed
- * P-256 point (65 bytes, 87 chars, not a secret, in the `k=` field of every wake) and the PRIVATE key is the raw 32-byte scalar (43 chars, environment only, never a repo/log/ticket/mirror). `node scripts/vapid-keygen.mjs` / `--out DIR` (0600 + README) / `--check` (verifies `TF_VAPID_PUBLIC_KEY`/`TF_VAPID_PRIVATE_KEY` are each other's counterpart by deriving the point). It prints no private material on any path, including failures. */
+ * ══════════════════════════════════════════════════════════════════════════════════════════
+ *  MINT THIS DEPLOYMENT'S OWN VAPID KEYPAIR — for the new-mail wake, and for nothing else
+ * ══════════════════════════════════════════════════════════════════════════════════════════
+ *
+ * A UnifiedPush connector registers with the phone's distributor by handing it a VAPID PUBLIC
+ * key (RFC 8292), and from then on it renders only messages carrying a signature it can check
+ * against that key. So the server that sends the wake must hold the matching PRIVATE key. That
+ * pair identifies YOUR server to YOUR phones and it is the whole of what this script makes.
+ *
+ * ── EVERY DEPLOYMENT GENERATES ITS OWN. NEVER COPY ANYBODY ELSE'S, INCLUDING OURS. ────────────
+ *
+ * The private key is not a shared secret with a value — it is the thing that lets a server
+ * prove it is the one your phone registered with. Two deployments sharing a private key means
+ * either of them can send wakes that the other's phones accept, and neither operator can tell.
+ * There is no registry to enrol in and nothing to pay for: run this, keep the private half, and
+ * the pair is yours. It never expires and it never needs rotating unless it leaks.
+ *
+ * Rotating it DOES cost something, which is why it is worth generating once and keeping: every
+ * phone registered with the old public key stops rendering wakes until it registers again. That
+ * is a re-registration, not a re-pairing — mail keeps arriving throughout, because the wake is a
+ * latency improvement over the foreground sync the app does regardless.
+ *
+ * ── WHAT THE TWO VALUES ARE, PRECISELY ────────────────────────────────────────────────────────
+ *
+ * Both are base64url, unpadded, which is the encoding the Web Push ecosystem uses everywhere:
+ *
+ *   · the PUBLIC key is the uncompressed P-256 point (X9.62 `0x04 || X || Y`) — 65 bytes, so
+ *     always exactly 87 characters. This is what the phone is given, and it is not a secret: it
+ *     is served to clients by the API and it appears in the `k=` field of every wake's
+ *     `Authorization` header.
+ *   · the PRIVATE key is the raw 32-byte scalar — always exactly 43 characters. It belongs in
+ *     the organizer's environment and NOWHERE else: not in a repository, not in a log, not in a
+ *     support ticket, not in the mirror.
+ *
+ * ── USAGE ─────────────────────────────────────────────────────────────────────────────────────
+ *
+ *   node scripts/vapid-keygen.mjs                  print a fresh pair, for pasting into `.env`
+ *   node scripts/vapid-keygen.mjs --out DIR        write the pair into DIR (0600) plus a README
+ *   node scripts/vapid-keygen.mjs --check          verify the pair already in the environment
+ *
+ * `--check` reads `TF_VAPID_PUBLIC_KEY` and `TF_VAPID_PRIVATE_KEY` and answers whether they are
+ * each well formed and are actually each other's counterpart. It derives the public point from
+ * the private scalar and compares — so a pair from two different generations, which is the
+ * failure a copy-paste produces and the one that looks like nothing at all until a phone never
+ * rings, is caught by a command an operator can run. **It prints no private material, on any
+ * path, including its failures.**
+ */
 import { createECDH, generateKeyPairSync, timingSafeEqual } from "node:crypto";
 import { chmodSync, mkdirSync, renameSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -131,14 +169,25 @@ function main(argv) {
     }
     const at = resolve(dir);
     /**
-     * THE PRIVATE KEY IS NEVER WRITTEN WHERE ANYTHING ELSE CAN SEE IT, AT ANY INSTANT. Three attempts, the
-     * first two wrong in ways worth recording: (1) `writeFileSync(path, key, { mode: 0o600 })` — `mode`
-     * applies only when the file is CREATED, so re-running `--out` over an already-0644 `private.key` wrote a
-     * fresh secret and KEPT the permissive mode while printing "0600"; (2) write then `chmodSync` converges
-     * but the secret is world-readable between the two calls, and chmod-ing the directory afterwards leaves a
-     * pre-existing group-writable directory open to a symlink swap. So the order is: TIGHTEN THE DIRECTORY
-     * FIRST, create a fresh temp file with `wx` (O_CREAT|O_EXCL, refuses to follow or clobber, at 0600), then
-     * `rename` it over the destination (atomic within one directory, the mode travels with the inode, no window to lose).
+     * ── THE PRIVATE KEY IS NEVER WRITTEN WHERE ANYTHING ELSE CAN SEE IT, AT ANY INSTANT ────────
+     *
+     * Three attempts at this, and the first two were wrong in ways worth recording because each
+     * looked finished:
+     *
+     *  1. `writeFileSync(path, key, { mode: 0o600 })`. `mode` applies only when the file is
+     *     CREATED — Node ignores it for an existing inode. So re-running `--out` over a
+     *     `private.key` that was already 0644 wrote a fresh secret and KEPT the permissive mode,
+     *     while printing "0600". Reproduced: chmod 0644, re-run, still `-rw-r--r--`.
+     *  2. write, then `chmodSync`. That converges, but the secret is on disk world-readable for
+     *     the interval between the two calls, and chmod-ing the DIRECTORY afterwards leaves a
+     *     pre-existing group-writable directory open to a symlink swap in the same window. Review
+     *     caught both.
+     *
+     * So the order is: TIGHTEN THE DIRECTORY FIRST, then create a fresh temporary file with
+     * `wx` (O_CREAT|O_EXCL — it refuses to follow or clobber anything, including a planted
+     * symlink) at 0600, then `rename` it over the destination. Rename within one directory is
+     * atomic, so a reader sees either the old file or the new one and never a partial or a
+     * momentarily-loose one. The mode travels with the inode, so there is no window to lose.
      */
     mkdirSync(at, { recursive: true, mode: 0o700 });
     // `mkdirSync`'s mode is creation-only too, so an existing 0755 `vapid/` stayed traversable.

@@ -650,13 +650,6 @@ export const MAIL_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // `MAIL_CHECK_DEFINITION_MARKERS` and the tag's "newest" sentence sits there — the tag is
   // single-valued, so the sentence moves with it).
   ["folder_state", "trashed_from"],
-  // mail 0104_mailbox_takeover_intent — one column: WHICH VERB wrote the takeover stamp beside
-  // it, which is what lets the lease refuse a press that asked to join a mailbox rather than take
-  // it. Probed on the whole-row-select rule `signature_html` states above: `MailboxService.list`
-  // selects whole rows, so an API deployed ahead of the migration 42703s the mailbox panel and
-  // the connect flow. Its CHECK arrives under a NEW name in the same migration, so a name probe
-  // would add nothing the column probe does not already answer, and it gets no separate entry.
-  ["mailboxes", "takeover_intent"],
 ] as const;
 
 /**
@@ -892,19 +885,15 @@ export type FunctionDefinitionMarker = readonly [proname: string, bodySubstring:
  * The MAIL constraints probed by definition — see {@link CheckDefinitionMarker}.
  * `away_responders_piles_closed` was created by 0096 over two members and replaced by 0101 over
  * four; the name is identical on both databases, so a name probe certifies a 0096 host while the
- * constraint refuses every scope the settings pane offers. `mailboxes_sync_blocked_reason_closed`
- * is the same shape from 0102 and again from 0105. The needle in both is the vocabulary the
- * migration adds, and it moves with each replacement — the newest is strictly the stronger probe,
- * since a database carrying it carries every earlier member too.
+ * constraint refuses every scope the settings pane offers — a save the person is told succeeded,
+ * rejected inside the write's transaction. `mailboxes_sync_blocked_reason_closed` is the same
+ * shape from 0102: a fourth member under the existing name, and against a three-member database
+ * the worker's soft-block write is refused at the one moment it exists to record. The needle in
+ * both is the vocabulary the migration adds.
  */
 export const MAIL_CHECK_DEFINITION_MARKERS: ReadonlyArray<CheckDefinitionMarker> = [
   ["away_responders_piles_closed", "ohmail/Screener"],
-  /* Mail 0105 — `clock_off`, so an install whose clock disagrees with its mail server says that
-     rather than reporting a folder it could not read. The needle MOVED from 0102's `read_limited`
-     rather than being added beside it: this is one constraint with one definition, and against a
-     0104 database the worker's `clock_off` write is refused by the old CHECK — which is the same
-     sentence the entry above it makes, one member on. */
-  ["mailboxes_sync_blocked_reason_closed", "clock_off"],
+  ["mailboxes_sync_blocked_reason_closed", "read_limited"],
   /* Mail 0103 — `mobile` joins the organizer kinds. TWO entries, because the kind reaches this
      table twice and the migration replaces BOTH constraints under their existing names, so a
      name-presence probe cannot tell an 0102 database from an 0103 one. What a missing entry costs
@@ -933,7 +922,7 @@ export const MAIL_EXPECTED_MARKERS =
 // 0067/0068 (the device-sync alert's withdrawn SECURITY DEFINER carrier and its retirement)
 // add no column and get no marker: a function's absence is the ALERT RULE's own isolated,
 // tolerated state, not a schema fault a serving API should 503 over.
-export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0105_sync_blocked_reason_clock_off";
+export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0103_organizer_kind_mobile";
 
 
 /* `CLOUD_SCHEMA_MARKER_JOURNAL_TAG` moved to `./health-cloud.js`: it is the NAME of a cloud

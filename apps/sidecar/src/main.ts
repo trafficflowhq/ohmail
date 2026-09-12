@@ -3,9 +3,7 @@ import { Writable } from "node:stream";
 import { fileURLToPath } from "node:url";
 import { createSidecar, type Sidecar, type SidecarConfig } from "./engine.js";
 import { createCloudSidecar, type CloudSidecar, type CloudSidecarConfig } from "./cloud-engine.js";
-import {
-  createAdmission, maybeHoldStoodDownPort, maybeStartHostListener, type HostListener,
-} from "./host-listener.js";
+import { createAdmission, maybeStartHostListener, type HostListener } from "./host-listener.js";
 import { maybeStartLanListener, type LanListener } from "./host-lan.js";
 import { encodeFrame, PROTOCOL_VERSION } from "./frame.js";
 import { serveOverStdio, type StdioHost } from "./host.js";
@@ -13,25 +11,46 @@ import { createSidecarLog, createSidecarLogger, diagnosticFor } from "./log.js";
 import type { PhaseHeader } from "./protocol.js";
 
 /**
- * The runnable sidecar — the process the desktop shell spawns (`node --import tsx src/main.ts` in
- * dev, `node dist/main.js` packaged). stdin/stdout are the transport; stderr is the only place
- * anything may be said out loud. STDOUT PURITY IS A MECHANISM, not a convention: one stray
- * `console.log` injects bytes into the middle of a length-prefixed frame with no resync point — the
- * peer reads the next header as a preamble and the connection is finished, its symptom pointing
- * nowhere near the cause. So {@link claimStdout} takes the real `write` for the frame writer and
- * REPLACES `process.stdout.write` with one forwarding to stderr; it cannot cover a direct write to
- * fd 1 (nothing here does — imapflow is `logger: false`), and the redirect is pinned by tests.
+ * THE RUNNABLE SIDECAR — the process the desktop shell spawns.
+ *
+ *   node --import tsx src/main.ts        (development)
+ *   node dist/main.js                    (packaged)
+ *
+ * stdin and stdout are the transport. stderr is the only place anything may be said out loud.
+ *
+ * ── STDOUT PURITY IS A MECHANISM, NOT A CONVENTION ────────────────────────────────────────
+ *
+ * One stray `console.log` anywhere in the module graph — ours, a dependency's, a debug line
+ * somebody forgot — injects bytes into the middle of a frame. Because the framing is
+ * length-prefixed there is no resync point: the peer reads the next 8 bytes of a JSON header as a
+ * preamble and the connection is finished, with a symptom ("the app stopped talking to the
+ * engine") that points nowhere near the cause.
+ *
+ * So {@link claimStdout} takes the real `write` for the frame writer and then REPLACES
+ * `process.stdout.write` with one that forwards to stderr. `console.log`, a library's progress
+ * line, and anything else that goes through the stream lands in the log instead of in the wire.
+ * It cannot cover a direct write to fd 1 — nothing in this stack does that (imapflow is
+ * constructed with `logger: false`), and the redirect itself is pinned by tests that write through
+ * `console.log` and assert the bytes land on stderr rather than in the frame stream.
  */
 
 /**
- * Capture the real stdout for the frame stream, then point `process.stdout` at stderr. The sink is a
- * genuine `Writable` that delegates to the captured `write` and PROPAGATES BACKPRESSURE: `_write`'s
- * callback is withheld until the underlying stream drains, so `write()` returns false exactly when
- * the real one does — `FrameWriter` depends on it, or a 32 MB response buffers in userland. Two
- * shapes were wrong and are recorded so they are not retried: a prototype clone overriding only
- * `write` (the `on("drain")` listener registers on the CLONE, so the writer waits for a drain that
- * never arrives and the sidecar hangs), and `fs.createWriteStream("", { fd: 1 })` (`destroy()`
- * closes fd 1 even with `autoClose: false`). Delegating to `process.stdout` reuses Node's pipe handling.
+ * Capture the real stdout for the frame stream, then point `process.stdout` at stderr.
+ *
+ * The sink is a genuine `Writable` that delegates to the captured `write` and, crucially,
+ * PROPAGATES BACKPRESSURE: `_write`'s callback is withheld until the underlying stream drains, so
+ * this stream's own buffer fills and `write()` starts returning false exactly when the real one
+ * does. `FrameWriter` depends on that — a sink that always claimed to have accepted the bytes
+ * would buffer a 32 MB response in userland instead of waiting for the UI to read it.
+ *
+ * Two shapes were tried first and are wrong, recorded so they are not tried again:
+ *
+ *  · **A prototype clone that only overrides `write`.** `on("drain")` then registers the listener
+ *    on the CLONE while the real stream emits on itself, so the writer waits for a drain that can
+ *    never arrive and the sidecar hangs on the first response bigger than a pipe buffer.
+ *  · **`fs.createWriteStream("", { fd: 1 })`.** `destroy()` closes fd 1 even with
+ *    `autoClose: false`, and `fs.write` is the wrong primitive for a non-blocking pipe. Delegating
+ *    to `process.stdout` reuses Node's own handling of pipes, TTYs and files.
  */
 export function claimStdout(): Writable {
   const real = process.stdout;
@@ -65,14 +84,23 @@ export function claimStdout(): Writable {
 }
 
 /**
- * Narrate the boot down the wire — `phase` frames, so the window can say what the wait is. The
- * engine's constructor runs BEFORE `serveOverStdio` exists, exactly the stretch these describe, so
- * they are written straight to the claimed stdout. The invariant that makes that safe: a phase frame
- * may be written only while this process is SINGLE-VOICED — after `claimStdout` and before
- * `serveOverStdio` attaches. `encodeFrame` produces one buffer and a phase frame carries no body, so
- * each write is atomic; once the host's `FrameWriter` interleaves multi-write frames a second writer
- * would corrupt the stream. The emitter is handed only to the constructors, which return before the
- * host is built. Best-effort both ways — a write failure means the parent is gone, an old shell skips it.
+ * NARRATE THE BOOT DOWN THE WIRE — `phase` frames, so the window can say what the wait is.
+ *
+ * The engine's constructor runs BEFORE `serveOverStdio` exists, and that is exactly the stretch
+ * these frames describe: "opening the store", "replaying the log", the phases a launch can spend
+ * a minute in. So they are written straight to the claimed stdout rather than through the host's
+ * writer — and that is safe for one reason worth stating as the invariant it is:
+ *
+ * **A phase frame may be written only while this process is single-voiced** — after `claimStdout`
+ * and before `serveOverStdio` attaches. `encodeFrame` produces the whole frame as one buffer and
+ * a phase frame carries no body, so each write is a single atomic `write()` on the stream; once
+ * the host's own `FrameWriter` starts interleaving multi-write response frames, a second writer
+ * would corrupt the stream with no resync point. The emitter is handed only to the constructors,
+ * which return before the host is built, so the window is closed by construction.
+ *
+ * Best-effort in both directions: a write failure here means the parent is gone, which the
+ * transport discovers on its own terms, and a shell built before this frame existed skips it
+ * unread (an unknown `t` has always been "skip and carry on").
  */
 export function bootPhaseEmitter(stdout: Writable): (phase: string) => void {
   return (phase: string): void => {
@@ -98,14 +126,25 @@ const KEK_VAR_RE = /^OHMAIL_KEK_V([1-9][0-9]*)$/;
 const KEK_HEX_RE = /^[0-9a-f]{64}$/i;
 
 /**
- * The key ring the host hands over, from the environment it spawned this process with. `OHMAIL_KEK`
- * is one key, version 1 — the spelling a shell that never rotated passes; `OHMAIL_KEK_V1 …
- * OHMAIL_KEK_Vn` lets a SECOND key exist beside it, which is what rotation is. Three rules, each a
- * failure otherwise debugged at length: versions are CONTIGUOUS from 1 (a gap is the version some
- * stored row needs, so accepting it defers a startup failure into an unopenable mailbox); `OHMAIL_KEK`
- * and `OHMAIL_KEK_V1` may not DISAGREE (a host that does not know its own key); and EMPTY is absent
- * (a launcher materializing every variable as `""` must not look like a broken key). A value is
- * validated and converted, never echoed.
+ * THE KEY RING THE HOST HANDS OVER, read from the environment it spawned this process with.
+ *
+ * `OHMAIL_KEK` is one key and means version 1 — the spelling a shell that has never rotated
+ * passes, and the only one it ever needs. `OHMAIL_KEK_V1 … OHMAIL_KEK_Vn` is the same thing said
+ * so that a SECOND key can exist beside the first, which is what rotation is: install the new
+ * version, keep the old one until no stored credential still references it, then drop it.
+ *
+ * Three rules, each of them a failure somebody would otherwise debug at length:
+ *
+ *  · **Versions are contiguous from 1.** A gap means the missing version is exactly the one some
+ *    stored row needs, so accepting it converts a startup failure into an unopenable mailbox
+ *    later.
+ *  · **`OHMAIL_KEK` and `OHMAIL_KEK_V1` may not disagree.** Two spellings of one version with
+ *    different bytes is a host that does not know its own key; guessing which one is meant is how
+ *    a credential gets sealed under a key nobody has.
+ *  · **Empty is absent.** A launcher that materializes every declared variable as `""` must not
+ *    look like a broken key.
+ *
+ * A value is validated and converted; it is never echoed, in an error message or anywhere else.
  */
 function keksFromEnv(env: NodeJS.ProcessEnv): Record<number, Buffer> {
   const hex = new Map<number, string>();
@@ -163,13 +202,17 @@ export function configFromEnv(env: NodeJS.ProcessEnv = process.env): SidecarConf
       port: Number(env.OHMAIL_IMAP_PORT ?? 993),
       secure: env.OHMAIL_IMAP_SECURE !== "0",
       auth: { user, ...(pass ? { pass } : {}) },
-      // The send server — host, port and TLS from the shell, authenticated with the SAME login. One
-      // credential per mailbox: `user`/`pass` are the IMAP login's, not a second SMTP secret, so
-      // there is deliberately no `OHMAIL_SMTP_USER`/`_PASS`; the password is sealed once (the KEK
-      // ring above, the stored-login block in `engine.ts`). `pass` is present only on the launch the
-      // user types it — after that the send adapter reads the sealed credential from the store, the
-      // same precedence the IMAP side follows. `secure` is implicit TLS: `true` for 465, `false` for
-      // 587 STARTTLS, and the shell spells the false case "0" exactly, so unset means secure.
+      // THE SEND SERVER — host, port and TLS from the shell, authenticated with the SAME login.
+      //
+      // One credential per mailbox: `user` and `pass` here are the IMAP login's, not a second SMTP
+      // secret. There is deliberately no `OHMAIL_SMTP_USER`/`OHMAIL_SMTP_PASS`, because a mailbox has
+      // one password and it is sealed once (see the KEK ring above and the stored-login block in
+      // `engine.ts`). `pass` is only present on the launch the user types it; after that the sealed
+      // credential is the source, and the send adapter reads it back from the store rather than from
+      // the environment — the same precedence the IMAP side follows.
+      //
+      // `secure` is implicit TLS: `true` for 465 (Gmail, Fastmail), `false` for 587 STARTTLS
+      // (iCloud). The shell spells the false case as "0" exactly, so an unset value means secure.
       ...(env.OHMAIL_SMTP_HOST
         ? {
             smtp: {
@@ -215,31 +258,23 @@ export function configFromEnv(env: NodeJS.ProcessEnv = process.env): SidecarConf
 }
 
 /**
- * The stand-down knob, read APART from `configFromEnv` because it composes nothing: no route, no
- * handler and no state of the engine changes. `OHMAIL_HOST_STAND_DOWN=<port>` says host mode is
- * off and this port must stay held; `resolveStandDownPort` is the one place that rules on the
- * value, and it refuses the knob outright while host mode is armed.
- */
-export function standDownFromEnv(
-  env: NodeJS.ProcessEnv = process.env,
-): { hostMode?: boolean; standDownPort?: number } {
-  return {
-    ...(env.OHMAIL_HOST_MODE === "1" ? { hostMode: true } : {}),
-    ...(env.OHMAIL_HOST_STAND_DOWN?.trim()
-      ? { standDownPort: Number(env.OHMAIL_HOST_STAND_DOWN) }
-      : {}),
-  };
-}
-
-/**
- * The Cloud configuration — and the refusal that makes the safe branch STRUCTURAL. Cloud mode
- * mirrors a hosted account and never opens IMAP, not enforced by the ABSENCE of IMAP settings: the
- * presence of ANY non-empty `OHMAIL_IMAP_*` is a hard refusal, so a launcher materializing every
- * variable, or a stale IMAP block, cannot quietly hand this process a mailbox to organize. With the
- * import census over `cloud-engine.ts`, an install in this mode cannot become a second organizer.
- * `OHMAIL_CLOUD_ACCESS_TOKEN`/`_REFRESH_TOKEN` are optional (tests, headless); in steady state the
- * pair lives sealed on disk and only `OHMAIL_KEK` is in the environment, and a launch with neither
- * is not a refusal — the engine serves the sign-in surface, so this requires a URL and address only.
+ * THE CLOUD CONFIGURATION — and the refusal that makes the safe branch STRUCTURAL.
+ *
+ * Cloud mode mirrors a hosted account and never opens IMAP. That is not enforced by the ABSENCE of
+ * IMAP settings — a launcher that materializes every declared variable, or a stale IMAP block left
+ * in a script, must not be able to quietly hand this process a mailbox to organize. So the presence
+ * of ANY non-empty `OHMAIL_IMAP_*` is a hard refusal: the safe branch is selected by construction,
+ * and there is no configuration under which Cloud mode reaches the IMAP path. Together with the
+ * import census over `cloud-engine.ts`, an install running this mode cannot become a second
+ * organizer of a mailbox the hosted worker already holds.
+ *
+ * `OHMAIL_CLOUD_ACCESS_TOKEN` / `OHMAIL_CLOUD_REFRESH_TOKEN` are optional and exist for tests and
+ * headless runs; a desktop install has neither. In steady state the pair lives sealed on disk and
+ * the environment carries only `OHMAIL_KEK` (see `cloud-auth.ts`), and a launch with NEITHER a
+ * sealed pair nor an environment token is not a refusal at all: the engine comes up serving the
+ * sign-in surface, and `POST /cloud/signin` is how a person establishes the first session. That is
+ * the whole reason this function requires a URL and an address and requires no credential — the two
+ * it requires are settings the shell knows, and the one it does not require is the secret.
  */
 export function cloudConfigFromEnv(env: NodeJS.ProcessEnv = process.env): CloudSidecarConfig {
   const imapPresent = Object.entries(env)
@@ -256,14 +291,20 @@ export function cloudConfigFromEnv(env: NodeJS.ProcessEnv = process.env): CloudS
   const access = env.OHMAIL_CLOUD_ACCESS_TOKEN;
   const refresh = env.OHMAIL_CLOUD_REFRESH_TOKEN;
   const keks = keksFromEnv(env);
-  // Which door this is, and it is the PIN that says so. A paired door is configured with NO mailbox
-  // address (a pairing link names a computer, and which mailboxes it reads is the host's answer),
-  // while every other cloud door names a mailbox and an absent address there is a mirror belonging
-  // to nobody — a hard refusal, since `enforceMirrorOwner` rests on that value. The discriminator is
-  // `OHMAIL_HOST_PIN`, NOT the absence of the address: reading "no address" as "the paired door"
-  // would turn a hosted launch that lost its address into a silently address-less mirror. The pin is
-  // a POSITIVE fact the shell writes only for this door and refuses without the flavor (`config.rs`),
-  // so a door carrying one is paired by construction, not by inference.
+  // ── WHICH DOOR THIS IS, AND IT IS THE PIN THAT SAYS SO ──────────────────────────────────────
+  //
+  // A paired door is configured with NO mailbox address: a pairing link names a computer, and
+  // which mailboxes this install reads is the host's answer to the redeem. Every other cloud door
+  // is entered by naming a mailbox, and an absent address there is a mirror belonging to nobody —
+  // which stays a hard refusal, because the whole of `enforceMirrorOwner` rests on that value.
+  //
+  // THE DISCRIMINATOR IS `OHMAIL_HOST_PIN` AND NOT THE ABSENCE OF THE ADDRESS, which is the
+  // difference between a rule and a hole. Reading "no address" as "this must be the paired door"
+  // would turn a hosted launch that lost its address — a truncated settings file, a launcher that
+  // dropped a variable — into a silently address-less mirror instead of the refusal it has always
+  // been. The pin is a POSITIVE fact the shell writes only for this door and refuses to write for
+  // any other (`config.rs` refuses the flavor without the pin and the pin without the flavor), so
+  // a door that carries one is a paired door by construction rather than by inference.
   const pairedDoor = (env.OHMAIL_HOST_PIN ?? "").trim() !== "";
   const address = env.OHMAIL_MAILBOX_ADDRESS?.trim();
   return {
@@ -277,14 +318,18 @@ export function cloudConfigFromEnv(env: NodeJS.ProcessEnv = process.env): CloudS
     ...(access && refresh ? { tokens: { accessToken: access, refreshToken: refresh } } : {}),
     ...(env.OHMAIL_POLL_MS ? { pollIntervalMs: Number(env.OHMAIL_POLL_MS) } : {}),
     ...(Object.keys(keks).length > 0 ? { keks } : {}),
-    // The paired desktop's fingerprint — the door that opens another machine's mailbox. Present only
-    // when the shell wrote a desktop-host door, and what makes every connection this engine opens a
-    // pinned one (`CloudSidecarConfig.hostPin`). ABSENT means unpinned, right for the hosted and
-    // self-hosted doors and never a fallback for this one: a desktop-host door with no pin cannot
-    // authenticate what answers, so the shell writes the two together and the door refuses a link
-    // with no fingerprint. NO VALIDATION here beyond "present and not blank" — the value's shape is
-    // `host-pin-probe.ts`'s to rule on, and a mismatch refuses the connection with an actionable
-    // sentence, better than a launch dying here with a parse error.
+    // ── THE PAIRED DESKTOP'S FINGERPRINT — the door that opens another machine's mailbox ──────
+    //
+    // Present only when the shell wrote a desktop-host door, and it is what makes every connection
+    // this engine opens a pinned one (see `CloudSidecarConfig.hostPin`). ABSENT means unpinned,
+    // which is right for the hosted and self-hosted doors and is never a fallback for this one: a
+    // desktop-host door with no pin cannot authenticate what answers at all, so the shell writes
+    // the two together and the door refuses a link that carries no fingerprint.
+    //
+    // NO VALIDATION HERE beyond "present and not blank", the host-mode knobs' rule: the value's
+    // shape is `host-pin-probe.ts`'s to rule on, and it does — a fingerprint that matches nothing
+    // refuses the connection with a sentence a person can act on, which is a better outcome than
+    // a launch that dies here with a parse error.
     ...(env.OHMAIL_HOST_PIN?.trim() ? { hostPin: env.OHMAIL_HOST_PIN.trim() } : {}),
   };
 }
@@ -316,13 +361,19 @@ export async function runSidecar(): Promise<void> {
   let lanListener: LanListener | null = null;
   let shuttingDown: Promise<void> | null = null;
   /**
-   * Order matters, and getting it wrong corrupts the local mirror. Stop accepting requests → let the
-   * in-flight ones finish → only THEN close IMAP and the database. `sidecar.stop()` closes PGlite;
-   * a handler still reading it gets a dead connection at best and a mid-write close at worst. The
-   * stdin path already waited (through `host.finished()`); SIGTERM did not, which was the hole. The
-   * HOST-DOOR LISTENER goes first for the same reason one door over — a paired phone's request reads
-   * the same store — so the socket stops admitting and drains before anything it could be mid-read of
-   * closes; its `close()` never throws, and the shell's process grace is the backstop for a hung handler.
+   * ORDER MATTERS, and getting it wrong corrupts the local mirror.
+   *
+   * Stop accepting requests → let the in-flight ones finish → only THEN close IMAP and the
+   * database. `sidecar.stop()` closes PGlite; a handler still reading it at that moment gets a
+   * dead connection at best, and at worst the mirror is closed mid-write. The stdin path already
+   * waited (it goes through `host.finished()`); SIGTERM did not, which was the hole.
+   *
+   * The HOST-DOOR LISTENER goes first, for the same sentence one door over: a paired phone's
+   * request is a reader of the same store, so the socket stops admitting and drains before
+   * anything it could be mid-read of closes. Its `close()` never throws; the SOCKETS are bounded
+   * by its grace, and it then waits for every in-flight handler to settle — destroyed sockets
+   * feed a handler nothing, so that wait is short in practice, and the shell's own process grace
+   * is the backstop for a genuinely hung one.
    */
   const shutdown = (reason: string, code: number): Promise<void> => {
     shuttingDown ??= (async () => {
@@ -392,12 +443,6 @@ export async function runSidecar(): Promise<void> {
   // rather than doubling it. See `createAdmission` in host-listener.ts.
   const admission = createAdmission();
   hostListener = await maybeStartHostListener(sidecar, log, admission);
-  // …and when host mode is OFF, the port it used to publish may still need HOLDING. A
-  // `tailscale serve` registration outlives a withdrawal that refused, so a released port is a
-  // published route to whatever binds it next; `OHMAIL_HOST_STAND_DOWN=<port>` is the shell
-  // asking for the door to stay bound and say it has stopped. Never both: the knob is refused
-  // by name while host mode is armed, so this can only ever run where the mount above declined.
-  hostListener ??= await maybeHoldStoodDownPort(standDownFromEnv(), log);
   // The LAN fallback's second bind — mounted iff the operator chose an interface, on the
   // same port. API-only; `host-lan.ts` carries the audit. A refusal degrades with a
   // named line and every other door keeps serving.
@@ -536,14 +581,20 @@ export async function runCloudSidecar(): Promise<void> {
 }
 
 /**
- * Is this process running the bundle, rather than importing it? `@trafficflow/worker/entry`'s
- * `isCliEntry` compares `import.meta.url` to `process.argv[1]` as literal strings — right for the
- * worker, WRONG for the desktop engine, and the failure is silent: the shell spawns this bundle by
- * path, the kernel's shebang hands node an `argv[1]` with `/private` STRIPPED (a `/var` temp
- * install, a mounted image) while node resolves the symlink INSIDE `import.meta.url`, so the two
- * differ by exactly `/private`, `runSidecar` never runs, and the engine serves nothing — reported as
- * a start failure. Resolving BOTH sides to their real path is the fix; on an IMPORT the two still
- * differ (argv[1] is the runner) so nothing auto-runs. Measured against a packaged `.app` from `/var`.
+ * IS THIS PROCESS RUNNING THE BUNDLE, rather than importing it?
+ *
+ * `@trafficflow/worker/entry`'s `isCliEntry` compares `import.meta.url` to `process.argv[1]` as
+ * literal strings, which is right for the worker but WRONG for the desktop engine, and the failure
+ * is silent. The shell spawns this bundle by a path, and when the kernel runs the file's shebang it
+ * hands node an `argv[1]` with the `/private` prefix STRIPPED (a temp install under `/var`, an app
+ * on a mounted image), while node resolves that same symlink INSIDE `import.meta.url`. The two then
+ * differ by exactly `/private`, the check is false, `runSidecar` never runs, and the engine exits
+ * having served nothing — which the shell reports as a start failure over and over. Resolving BOTH
+ * sides to their real path is what lets the bundle recognise itself wherever the app was installed.
+ *
+ * On an IMPORT — a test loading this module — `argv[1]` is the test runner, so the two real paths
+ * still differ and nothing auto-runs. Measured against a packaged `.app` spawned from a `/var` path,
+ * where the literal comparison left the engine dead on arrival.
  */
 function isRunAsProgram(): boolean {
   const argv1 = process.argv[1];

@@ -13,14 +13,32 @@ import {
 } from "./ai-transport.js";
 
 /**
- * An Anthropic API key you own — the primary way a standalone install gets AI. Requests go to
- * Anthropic, billed to the key's account; this app's publisher is not in the path and receives
- * neither key nor content. {@link ANTHROPIC_BASE} is a LITERAL, a security decision: a pane that
- * let you name both a key AND its host would be a supported way to configure key exfiltration, so
- * the provider carrying a stored secret has a fixed destination and the one with a configurable
- * destination (a local model) carries none. `redirect: "error"` likewise. What travels: sender,
- * subject and a short redacted snippet (a draft adds thread snippets and knowledge-base entries) —
- * never a raw body, refused with authentication material by the shared allow-list in `@trafficflow/core/mail`.
+ * AN ANTHROPIC API KEY YOU OWN — the primary way a standalone install gets AI.
+ *
+ * Requests go to Anthropic, billed to the account the key belongs to. This app's publisher is
+ * not in the path: it operates no proxy for this, sees none of these requests, and receives
+ * neither the key nor the message content. That is the whole point of the option, and the two
+ * constants immediately below are what make it structurally true rather than a promise.
+ *
+ * ── THE ENDPOINT IS NOT CONFIGURABLE, AND THAT IS A SECURITY DECISION ───────────────────────
+ *
+ * {@link ANTHROPIC_BASE} is a literal. A settings pane that let you name both a key AND the host
+ * it is sent to would be a supported way to configure key exfiltration — anything that could
+ * write the settings file could redirect a live credential to a host of its choosing, and every
+ * request would look exactly like normal operation. The provider that carries a stored secret
+ * has a fixed destination; the provider with a configurable destination (a model on your own
+ * machine) carries no secret. Neither one is ever both.
+ *
+ * `redirect: "error"` for the same reason one level down: a 302 is a destination somebody else
+ * chose, and this request carries an API key header.
+ *
+ * ── WHAT TRAVELS ───────────────────────────────────────────────────────────────────────────
+ *
+ * The sender, the subject and a short redacted snippet for a routing suggestion; the same plus
+ * the thread's other snippets and knowledge-base entries you wrote, for a draft. Never a raw
+ * message body — the shared allow-list in `@trafficflow/core/mail` refuses one before a request
+ * is built. Mail that carries authentication material is refused outright by the same shared
+ * sink and is never sent to any model, under any provider.
  */
 
 /** NOT configurable. See the header. */
@@ -29,13 +47,17 @@ export const ANTHROPIC_BASE = "https://api.anthropic.com";
 export const ANTHROPIC_VERSION = "2023-06-01";
 
 /**
- * The models a fresh install asks for. Classification is pinned to a DATED id and drafting is not —
- * the same split the hosted deployment makes: classification runs once per message and is the
- * cost-dominant call, so the model behind it is a billing input, and an alias that silently rolls
- * to a new snapshot moves both cost and quality with a bill changing for no visible reason.
- * Drafting runs when a person asks, so freshness is worth more there than reproducibility. Both are
- * replaceable from settings, and the verification lists what the key can reach so the choice is made
- * from a real list rather than from memory.
+ * The models a fresh install asks for.
+ *
+ * Classification is pinned to a DATED id and drafting is not, which is the same split the hosted
+ * deployment makes and for the same reason. Classification runs once per message and is the
+ * cost-dominant call, so the model behind it is a billing input as much as a quality one: an
+ * alias that silently rolls to a new snapshot moves both, and the first evidence would be a bill
+ * changing for no visible reason. Drafting runs when a person asks for it, so freshness is worth
+ * more there than reproducibility.
+ *
+ * Both are replaceable from the settings surface, and the verification lists what the key can
+ * actually reach so the choice is made from a real list rather than from memory.
  */
 export const DEFAULT_ANTHROPIC_MODELS = {
   classify: "claude-haiku-4-5-20251001",
@@ -80,13 +102,20 @@ export function anthropicTransport(opts: AnthropicTransportOptions): AiTransport
   };
 
   /**
-   * One request to the messages endpoint, and the one place a failure becomes an Error. The
-   * `thinking` field is sent, then DROPPED if the model refuses it: `max_tokens` bounds thinking and
-   * response text together, so a model that thinks adaptively can spend the budget before it writes;
-   * the hosted deployment disables thinking because it picks its own model, but here the model is the
-   * user's choice and some refuse to run without it, answering 400 for the field. That is a fact
-   * about the chosen model, so the request is remade ONCE without the field, conditional on the
-   * endpoint naming `thinking` in its refusal — an unrelated 400 stays a 400 and is not retried.
+   * One request to the messages endpoint, and the one place a failure becomes an Error.
+   *
+   * ── THE THINKING FIELD IS SENT, THEN DROPPED IF THE MODEL REFUSES IT ──────────────────────
+   *
+   * Turning thinking off is a cost and truncation decision: `max_tokens` bounds thinking and
+   * response text TOGETHER, so a model that thinks adaptively can spend most of the budget
+   * before it starts writing and lose the end of a reply. The hosted deployment can simply
+   * disable it, because it chooses its own model. Here the model is the user's choice, and some
+   * models refuse to run without thinking and answer 400 for the field rather than ignoring it.
+   *
+   * That is a fact about the chosen model, not a fault, so the request is made ONCE MORE without
+   * the field instead of being reported as a failure. The retry is bounded to exactly one and is
+   * conditional on the endpoint naming `thinking` in its own refusal, so an unrelated 400 is
+   * still a 400 and is not retried into a second charge.
    */
   const call = async (body: Record<string, unknown>, what: string): Promise<unknown> => {
     const send = async (payload: Record<string, unknown>): Promise<Response> =>
@@ -137,14 +166,23 @@ export function anthropicTransport(opts: AnthropicTransportOptions): AiTransport
     },
 
     /**
-     * The screening question — the same transport, the same sink, a different question. Everything
-     * that differs from {@link classify} is a constant imported from `@trafficflow/core/mail` (the
-     * instruction and the answer set); nothing about the question is written here, because a second
-     * copy is how a hosted deployment and a standalone install come to give one sender two different
-     * answers, each passing its own test. `classifyUserPayload` is shared for the same reason: the
-     * outbound sensitivity screen is a property of what leaves this process, not of the question. The
-     * CLASSIFY model answers it — one call per first-contact sender, same size and difficulty, so a
-     * model chosen for routing is chosen for this.
+     * THE SCREENING QUESTION — the same transport, the same sink, a different question.
+     *
+     * Everything that differs from {@link classify} is a constant imported from
+     * `@trafficflow/core/mail`: the instruction and the answer set. Nothing about the question is
+     * written here, and that is the point rather than a convenience — a hosted deployment and a
+     * standalone install are two ways to reach a model, and a second copy of a question is how the
+     * two come to give one sender two different answers. Each copy would pass its own test.
+     *
+     * `classifyUserPayload` is shared with the routing question above for the same reason it is
+     * shared with the hosted classifier: the outbound sensitivity screen is a property of what
+     * leaves this process, not of which question it is attached to. A second builder here is how
+     * one of the two questions eventually ships without one.
+     *
+     * The CLASSIFY model answers it. The two questions are one call per first-contact sender each,
+     * of the same size and the same difficulty, so a person who chose a model for routing has
+     * chosen it for this — and a second model setting would be a second thing to get wrong for no
+     * decision anybody wants to make.
      */
     async screen(input: ClassifierInput): Promise<ClassifierResult> {
       const userPayload = classifyUserPayload(input);
@@ -174,11 +212,15 @@ export function anthropicTransport(opts: AnthropicTransportOptions): AiTransport
     },
 
     /**
-     * Verify the key and the two models WITHOUT running inference. Listing models authenticates (a
-     * wrong, revoked or empty key is a 401 here) and asking for each configured model by name is
-     * exact, which a list is not — aliases and dated snapshots need not both appear in one page for
-     * both to be valid. Deliberately free: a verification that ran a real completion would spend the
-     * account holder's money every time they pressed Save, a settings pane charging for being opened.
+     * Verify the key and the two models WITHOUT running inference.
+     *
+     * Listing models authenticates — a wrong, revoked or empty key is a 401 here — and asking for
+     * each configured model by name is exact, which a list is not: aliases and dated snapshots do
+     * not both have to appear in one page for both to be valid.
+     *
+     * Deliberately free. A verification that ran a real completion would spend the account
+     * holder's money every time they pressed Save, which is a settings pane charging for being
+     * opened.
      */
     async probe(): Promise<ProbeOutcome> {
       let models: string[] = [];

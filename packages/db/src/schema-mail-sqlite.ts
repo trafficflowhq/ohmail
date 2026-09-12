@@ -126,17 +126,6 @@ export const mailboxes = sqliteTable("mailboxes", {
   // or a lapse-then-resubscribe would silently seize a mailbox back from a deliberate local
   // choice (the lease's "No seize-back" rule).
   takeoverAuthorizedAt: integer("takeover_authorized_at", { mode: "timestamp_ms" }),
-  // Mail 0104 — WHICH VERB WROTE THE STAMP ABOVE, and therefore whether it may displace a live
-  // holder. The press and the fence run in different passes, so the row is the only medium
-  // between the verb a person pressed and `decideLease`; a `join` asks for a mailbox nobody is
-  // organizing and yields to a live foreign claim however recently it was pressed. DEFAULT
-  // `'join'` and not `'takeover'`: a stamp whose verb nobody recorded may take an available
-  // mailbox and may NOT take a live holder's, which is the direction that cannot produce two
-  // organizers. Every writer names the value explicitly in the same statement as the stamp, so
-  // the default is a belt for a writer nobody added, never the ordinary path. Closed by
-  // `mailboxes_takeover_intent_closed`; members are `OrganizerIntent` in
-  // `packages/core/src/adapters/organizer-lease.ts`.
-  takeoverIntent: text("takeover_intent").notNull().default("join"),
   // Mail 0083 — the ORGANIZING ROLE, which is not the connection. A row carries two independent
   // facts and `status` used to hold both: `status` is whether ohmail can REACH this mailbox; this
   // column is whether ohmail ORGANIZES it. Encoding the second in the first was right while the
@@ -419,7 +408,7 @@ export const mailboxes = sqliteTable("mailboxes", {
   // honest; the constraint is created by the migration.
   ckSyncBlockedReason: check(
     "mailboxes_sync_blocked_reason_closed",
-    sql`${t.syncBlockedReason} is null or ${t.syncBlockedReason} in ('lease_unreadable', 'awaiting_credentials', 'at_capacity', 'read_limited', 'clock_off')`,
+    sql`${t.syncBlockedReason} is null or ${t.syncBlockedReason} in ('lease_unreadable', 'awaiting_credentials', 'at_capacity', 'read_limited')`,
   ),
   // THE THIRD AND FOURTH CLOSED SETS . `organizerRole` has no `is null` arm because
   // the column is NOT NULL — the set really is two members, and spelling a third state that
@@ -440,12 +429,6 @@ export const mailboxes = sqliteTable("mailboxes", {
   ckOrganizerState: check(
     "mailboxes_organizer_state_closed",
     sql`${t.organizerState} is null or ${t.organizerState} in ('held', 'stopped')`,
-  ),
-  // THE SIXTH . The verb behind `takeoverAuthorizedAt`, closed so a value outside the
-  // vocabulary cannot reach the column and be read as one of the two by a `!== 'join'` test.
-  ckTakeoverIntent: check(
-    "mailboxes_takeover_intent_closed",
-    sql`${t.takeoverIntent} in ('join', 'takeover')`,
   ),
 }));
 

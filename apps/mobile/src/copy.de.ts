@@ -126,9 +126,6 @@ export const DE: Deck = {
   /* Ohne Desktop-Zwilling: nur auf dem Telefon kann ein Start hinter einem Stopp warten. */
   phoneStateStarting: "Wird gestartet",
   phoneStateNotOrganized: "Dieses Postfach wird von nichts organisiert",
-  /* Der Übergangszustand: zurückgegeben und noch nicht wieder übernommen. */
-  phoneStateHandedBack: "Zurückgegeben",
-  phoneStateHandedBackWhy: "Ein anderer Computer kann dieses Postfach jetzt übernehmen.",
   phoneStateReader: (name: string) => `Organisiert von ${name}`,
   phoneStateReaderLegacy: "Organisiert von einer anderen Installation",
   /* Der zweite Satz ist `mailboxes.readerReadsOnly` aus dem Web-Katalog, mit "dieses Telefon"
@@ -152,10 +149,6 @@ export const DE: Deck = {
   settingsStopHereFailed:
     "Dieses Telefon konnte dieses Postfach nicht zurückgeben und organisiert es weiter. Versuche "
     + "es in einem Moment noch einmal.",
-  /* Ein Blick, der nicht angekommen ist — eigener Satz, nicht der darüber: hier ist auf diesem
-     Telefon nichts schiefgegangen, das Postfach konnte nur nicht gefragt werden. */
-  settingsStartHereUnreadable:
-    "Dieses Telefon konnte nicht lesen, ob ein anderer Computer dieses Postfach organisiert. Nichts hat sich geändert. Versuche es noch einmal.",
 
   /* Die Absagen der eigenständigen Tür. Keine davon trägt je das Passwort. */
   standaloneNoEngine:
@@ -278,8 +271,6 @@ export const DE: Deck = {
 
   connectionLost: "Verbindung verloren. Verbinde neu …",
   connectionGoneSince: (time: string) => `Seit ${time} keine Verbindung`,
-
-  firstSyncNothingReadable: "Aus diesem Postfach konnte noch nichts gelesen werden.",
 
   pairingBusy: "Wird gekoppelt…",
   pairedOk: "Gekoppelt. Deine Post wird synchronisiert.",
@@ -424,8 +415,6 @@ export const DE: Deck = {
   metaNew: (n: number) => `${n} neu`,
   metaWaiting: (n: number) =>
     `${n} ${n === 1 ? "Erstabsender wartet" : "Erstabsender warten"}`,
-  metaWaitingOnDevice: (n: number) =>
-    `${n} ${n === 1 ? "Erstabsender wartet" : "Erstabsender warten"}, auf diesem Telefon gezählt`,
   metaItems: (n: number) => `${n} ${n === 1 ? "Eintrag" : "Einträge"}`,
   mailRowAria: (from: string, subject: string, time: string, unread: boolean) =>
     `${from}. ${subject}. ${time}.${unread ? " Ungelesen." : ""}`,
@@ -448,8 +437,6 @@ export const DE: Deck = {
       : `Alle ${shown} angenommenen Nachrichten werden gezeigt.`,
   ohboxEmptyTitle: "Hier ist noch nichts.",
   ohboxEmptyHint: "Post von Absendern, zu denen du Ja gesagt hast, landet hier, sobald sie synchronisiert wird.",
-  ohboxEmptyNothingReadable:
-    "Aus diesem Postfach konnte noch nichts gelesen werden. Deine Post liegt weiter auf deinem Server.",
   /*
    * The verb lives on this side in German, and it has to. The doorbell is drawn as two pieces —
    * the count, then a quieter tail — and `chrome.tsx` renders them from two separate keys, so
@@ -712,15 +699,6 @@ export const DE: Deck = {
     "Der Energiesparmodus lässt ohmail auf diesem Telefon nicht im Hintergrund organisieren. "
     + "Es organisiert, solange die App offen ist, und gibt das Postfach zurück, wenn du sie "
     + "verlässt.",
-  organizerNotifyTitle: "Im Hintergrund organisieren",
-  organizerNotifyWhy:
-    "ohmail zeigt eine Benachrichtigung, während es dein Postfach im Hintergrund ordnet. Ohne sie "
-    + "endet das Ordnen, wenn du die App verlässt.",
-  organizerNotifyGo: "Weiter",
-  organizerNotifyNotNow: "Jetzt nicht",
-  organizerNotificationsOff:
-    "Benachrichtigungen sind aus — organisiert wird nur, solange die App offen ist.",
-  organizerNotificationsSettings: "Benachrichtigungen einstellen",
 
   /* ------------------------------------------------------------- new mail */
 

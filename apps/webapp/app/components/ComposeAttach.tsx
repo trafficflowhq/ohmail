@@ -41,7 +41,7 @@
  */
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
-import { Button, Icon, formatFileSize } from "@ohmail/ui";
+import { Button, Icon } from "@ohmail/ui";
 import type { ComposeAttachment } from "@ohmail/client-engine";
 import {
   DEFAULT_IMAGE_QUALITY_LEVEL,
@@ -52,7 +52,6 @@ import {
   readImageQualityLevel,
   writeImageQualityLevel,
 } from "./image-quality";
-import { activeFormatLocale } from "../shell/locale";
 import { storageOwner } from "../shell/storage-owner";
 
 /**
@@ -163,15 +162,18 @@ function totalBytes(items: readonly ComposeAttachment[]): number {
   return items.reduce((n, a) => n + base64Bytes(a.contentBase64), 0);
 }
 
-/**
- * The shared formatter, in the reader's own language — see `@ohmail/ui`'s `formatFileSize`.
- *
- * This copy was 1024-based where the two reading surfaces are 1000-based, so the composer and the
- * attachment strip named different sizes for the same file, and the cap sentence stated a number
- * the reading pane would not have agreed with. One law now; the cap reads as the Finder reads it.
- */
+/** "2.3 MB" / "748 KB" / "512 B" — never a trailing ".0". */
 function formatSize(bytes: number): string {
-  return formatFileSize(bytes, activeFormatLocale());
+  if (bytes < 1024) return `${bytes} B`;
+  let n = bytes / 1024;
+  for (const unit of ["KB", "MB", "GB"]) {
+    if (n < 1024 || unit === "GB") {
+      const s = n < 10 ? n.toFixed(1).replace(/\.0$/, "") : String(Math.round(n));
+      return `${s} ${unit}`;
+    }
+    n /= 1024;
+  }
+  return `${bytes} B`;
 }
 
 /**

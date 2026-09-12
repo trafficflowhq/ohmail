@@ -8,16 +8,65 @@ import {
   type Destination, type Logger, type NormalizedMessage,
 } from "@trafficflow/core";
 
-/* SCREENER AUTO-APPLY — file the OBVIOUS bulk out of the Screener when the account opted in. The Screener
- * stays a consent gate for first-contact strangers; this OPT-IN clears the newsletters and receipts a
- * human would wave through. DETERMINISTIC routing only: each held sender is judged by the strong-bulk
- * floor the live engine and Ohbox backfill use (`rules.ts#migrationBulkPlacement`: `List-Unsubscribe`
- * REQUIRED plus a corroborating `List-Id`/`List-Unsubscribe-Post`/`Feedback-ID`/`Precedence: bulk`) and
- * only that bulk is filed to Reads/Receipts. It does NOT call the model and does NOT spend (imports
- * neither). SENSITIVITY (`sensitivity_category`/`no_ai`) is KEPT, one guard in the loop, matching
- * `pipeline.ts:563-567`. Durable and reversible: `folder_state.desired_folder` + a `change_log` move + an
- * `audit_log` inverse; NO `rules` row (grants no admission), never IMAP (organize-in-place). OPT-IN and
- * continuous while on (`screener_auto_apply_at IS NOT NULL`), idempotent, paced by `SCREENER_AUTO_WRITES_PER_CYCLE`. */
+/* ══════════════════════════════════════════════════════════════════════════════════════════
+   SCREENER AUTO-APPLY — file the OBVIOUS bulk out of the Screener, when the account opted in
+   ══════════════════════════════════════════════════════════════════════════════════════════
+
+   ── WHAT IT IS, AND THE ONE THING IT DELIBERATELY IS NOT ────────────────────────────────────
+
+   The Screener is a consent gate: a first-contact stranger is HELD there for a human to place. That
+   is the product, and it stays the product. This pass is an OPT-IN that clears the part of the queue
+   a human would only ever wave through — the plain newsletters and receipts — so the strangers who
+   actually need a decision are not buried under them.
+
+   It applies DETERMINISTIC routing only. Each held sender is judged by the SAME strong-bulk floor the
+   live engine and the Ohbox backfill use — `rules.ts#migrationBulkPlacement`: `List-Unsubscribe`
+   REQUIRED plus a corroborating list/ESP marker (`List-Id`, `List-Unsubscribe-Post`, `Feedback-ID`,
+   or `Precedence: bulk`) — and only that obvious bulk is filed to Reads (or Receipts on a money
+   subject). Nothing else moves. First-time PEOPLE do not carry the floor's headers, so they are never
+   touched; they wait for a human, as they always have.
+
+   It does NOT call the model and it does NOT spend. There is no classifier here, no credit gate, and
+   no path that buys a paid suggestion — auto-BUYING AI advice would be a money contract and is out of
+   scope by construction (this file imports neither). The account's already-bought suggestions are
+   advisory and this pass never applies them: "AI proposes, the user decides" stays true.
+
+   ── SENSITIVITY KEEPS. THIS IS `pipeline.ts:563-567`, ONE CLASS. ────────────────────────────
+
+   A sensitivity-flagged message (`sensitivity_category` set OR `no_ai`) is KEPT in the Screener,
+   never auto-moved — exactly as the live router force-keeps sensitive mail in the Ohbox
+   (`sensitivity.sensitive && !deniedByConsent ⇒ INBOX`) so a login code, password reset or security
+   alert reaches a human and is never buried. The guard is read ONTO the row and applied in the loop,
+   not pushed into the candidate query, so it holds for every mover and a review can watch it fail:
+   drop it and a flagged strong-bulk row moves. Re-screening flagged strangers is
+   `sensitive-rescreen.ts`'s job; this pass only leaves them where they are.
+
+   ── EVERYTHING IT DOES IS DURABLE AND REVERSIBLE. IT NEVER DELETES, IT NEVER ADMITS. ────────
+
+   A move is `folder_state.desired_folder → Reads/Receipts` plus a `change_log` move (so every client
+   mirror shows the Screener→Reads transition) plus an `audit_log` row carrying the INVERSE, which is
+   the undo the account is owed for mail it did not individually place. It writes NO `rules` row: the
+   move grants no admission, so the next message from that sender still screens — the same property the
+   Ohbox backfill keeps. Nothing is ever deleted; "put it back" is a drag, or the recorded inverse.
+
+   ── USER ALWAYS WINS, AND IT WRITES AN INTENT, NOT AN IMAP MOVE ─────────────────────────────
+
+   The candidate set excludes any message the user has already expressed intent about (triaged,
+   replied to, ruled on), the same exclusions the sibling passes use. And like them it opens no IMAP
+   connection: it writes desired state plus a `move` change and stops. The worker's reconcile pass
+   performs the physical move on its next cycle, through the one code path that moves mail crash-safely
+   and holds the mailbox's lease (organize-in-place). Every input the decision needs is already on disk.
+
+   ── OPT-IN, AND CONTINUOUS WHILE ON — NO "OWED" MARKER ──────────────────────────────────────
+
+   Unlike the one-time backfills (`ohbox-tidy.ts`, `sensitive-rescreen.ts`) this is not owed-once work
+   with a done marker: it is a standing preference. It runs every cycle for an account whose
+   `screener_auto_apply_at IS NOT NULL`, and it is a single PK read for every account that has NOT
+   opted in — the default, which reads OFF for a NULL, an absent row, and a failed read alike. It is
+   idempotent by construction: a row it moves leaves `ohmail/Screener` and drops out of the candidate
+   set, so a re-run writes nothing new; the per-cycle write budget bounds how much physical mail one
+   poll interval absorbs, for the reconciler-pacing reason `ohbox-tidy.ts` spells out.
+   ══════════════════════════════════════════════════════════════════════════════════════════ */
 
 /** Where held strangers wait. */
 const SCREENER: Destination = "ohmail/Screener";
@@ -151,16 +200,39 @@ export async function screenerAutoApplyPass(
     if (result.moved >= budget) { result.capped = true; break; }
 
     const outcome = await db.transaction(async (tx) => {
-      // THE OPT-IN IS RE-READ HERE, LOCKED, AND IT IS THE REVOKE CHECK. The probe above runs ONCE; the
-      // pass then files up to SCREENER_AUTO_WRITES_PER_CYCLE across `maxPages` transactions, and an account
-      // that turns auto-apply OFF mid-walk had the rest applied anyway — a completed opt-out then up to a
-      // hundred moves on their real mailbox. `ohbox-tidy.ts` holds this shape (its settings row is
-      // serialization point AND revoke check); `screener-auto-revoke.pg.test.ts` watches both. TWO
-      // properties: the RE-READ catches the withdrawn opt-in (each page reads fresh under READ COMMITTED,
-      // with or without the lock — dropping `.for("update")` does not redden the revoke test); the LOCK
-      // serializes two drivers (a cycle tail and a failover worker). LOCK ORDER: `account_settings` first,
-      // before `folder_state` (`selectCandidates` FOR UPDATE OF) and the `account_sync_state` counter — the
-      // one order this tree uses. The 30 s posture cache in `index.ts` gates whether the pass STARTS, not this.
+      // ── THE OPT-IN IS RE-READ HERE, LOCKED, AND IT IS THE REVOKE CHECK ────────────────────────
+      //
+      // The probe above runs ONCE, before the first page. The pass then files up to
+      // SCREENER_AUTO_WRITES_PER_CYCLE messages across `maxPages` transactions, and an account that
+      // turns auto-apply OFF during that walk had the rest of the walk applied anyway: a completed
+      // opt-out followed by as many as a hundred automatic moves on their real mailbox, carried
+      // there by the reconciler, with nothing anywhere saying a withdrawn decision was acted on.
+      // The user's newer intent loses to a boolean this pass read minutes earlier.
+      //
+      // `ohbox-tidy.ts` already holds exactly this shape and says why in the same words — its
+      // settings row is its serialization point AND its revoke check. This is that, for the sibling
+      // pass, so the two opt-ins behave the same way when withdrawn.
+      //
+      // TWO SEPARATE PROPERTIES, AND ONLY ONE OF THEM IS THE REVOKE CHECK — worth stating because
+      // it was measured rather than assumed — `screener-auto-revoke.pg.test.ts` watches both under
+      // mutation, and the second of them is what established the split below:
+      //
+      //  · THE RE-READ is what catches a withdrawn opt-in. Under READ COMMITTED each page's read is
+      //    a fresh statement and sees the committed opt-out with or WITHOUT the lock. Dropping
+      //    `.for("update")` does not redden the revoke test, and this comment does not pretend it
+      //    does.
+      //  · THE LOCK buys the other thing: it serializes two drivers — a cycle tail and a second
+      //    worker mid-failover — so the loser wakes with the winner's committed state instead of
+      //    re-deciding the same page. That is the sibling passes' `FOR UPDATE` argument, unchanged.
+      //
+      // LOCK ORDER IS THE SAME ONE EVERY WRITER HERE USES: `account_settings` first, before
+      // `folder_state` (which `selectCandidates` takes FOR UPDATE OF) and before the
+      // `account_sync_state` counter `recordChange` locks. No path in this tree takes them the
+      // other way round, and taking them in a new order here is how this pass would deadlock
+      // against `ohbox-tidy` on the same account.
+      //
+      // The 30 s posture cache in `index.ts` is deliberately not trusted for this: that gates
+      // whether the pass STARTS. The authoritative, serialized read is here.
       const [live] = await tx.select({ autoApplyAt: accountSettings.screenerAutoApplyAt })
         .from(accountSettings).where(eq(accountSettings.accountId, accountId)).limit(1).for("update");
       if (!live?.autoApplyAt) {
@@ -257,14 +329,36 @@ export async function screenerAutoApplyPass(
 
 /**
  * ONE page of the held Screener queue this pass may reconsider — LOCKED FOR UPDATE, oldest id first.
- * Candidates: `folder_state.desired_folder = 'ohmail/Screener'` (held, and the idempotency — a moved row
- * is desired into Reads/Receipts and drops out); `last_set_by = 'us'` (`external` is the user's own client;
- * `'peer'` excluded, since auto-applying to mail nobody on this install decided about is what this pass may
- * not do — only `rule-retro` admits `'peer'`, behind a press); mailbox not `disabled`. User-intent
- * exclusions (siblings' predicates): no enabled `rules` row for sender/domain; no non-`none`
- * `message_states`; no `drafts` reply; no DECIDED `approvals` (`status <> 'pending'`); no same-thread
- * own-address reply. SENSITIVITY is NOT a candidate predicate — applied by the single KEEP guard in
- * {@link screenerAutoApplyPass}. `FOR UPDATE OF folder_state` (not `message_bodies`, LEFT JOIN nullable side). */
+ *
+ * ── THE CANDIDATE SET ──────────────────────────────────────────────────────────────────────
+ *
+ *  · `folder_state.desired_folder = 'ohmail/Screener'` — it is held at the gate. Also the whole of
+ *    the idempotency: a row this pass has moved is desired into Reads/Receipts and drops out.
+ *  · `folder_state.last_set_by = 'us'` — a row set `external` is a placement the USER made in their
+ *    own mail client, which the reconciler already refuses to revert. **`'peer'` is excluded here
+ *    too, deliberately:** a graduated pattern auto-applying to mail nobody on this install decided
+ *    about is precisely what this pass may not do. Only `rule-retro` admits `'peer'`, and only
+ *    behind a press.
+ *  · the mailbox is not `disabled` — nothing will ever reconcile a `pending` row written for one.
+ *
+ * ── AND THE USER-INTENT EXCLUSIONS — a message the user has acted on is not ours to move ────────
+ *
+ * The same predicates the sibling passes use, one direction over:
+ *  1. no enabled `rules` row for the sender or its domain — they have been ruled on. (Redundant for
+ *     correctness — a ruled-on sender would not be held here — and kept for cost and belt-and-braces.)
+ *  2. no `message_states` row other than `none` (reply-later / set-aside / bubbled-up / muted).
+ *  3. no `drafts` row replying to it.
+ *  4. no DECIDED `approvals` row (`status <> 'pending'` — a pending one is OURS, unanswered).
+ *  5. no message in the same thread from the account's own address (they replied from their client).
+ *
+ * SENSITIVITY is deliberately NOT a candidate predicate — it is read onto the row and applied by the
+ * single KEEP guard in {@link screenerAutoApplyPass}, so the guard holds for every mover and a review
+ * can watch it fail rather than have the query silently pre-exclude the case.
+ *
+ * `FOR UPDATE OF folder_state` — `of` the one table, because `message_bodies` is on the NULLABLE side
+ * of a LEFT JOIN (Postgres refuses to lock it) and locking `messages` would serialize against
+ * ordinary ingest for no benefit. This is what makes a concurrent user drag safe.
+ */
 async function selectCandidates(
   t: Tx,
   opts: { accountId: string; ownAddresses: readonly string[]; limit: number; afterId: string | null },
@@ -285,16 +379,33 @@ async function selectCandidates(
        where mb.id = ${messages.mailboxId}
          and (mb.status = 'disabled' or mb.organizer_role <> 'organizer')
     )`,
-    // 1 — the user has ruled on this sender. ANY enabled rule, narrowed or not. THIS PASS MUST NOT NARROW
-    // IT. The identical predicate in `sensitive-rescreen.ts` and `drizzle-repo.ts#listScreenerBacklog` was
-    // narrowed to un-narrowed rules because `subject_contains`/`body_contains` (mail 0050, 0052) are
-    // CONJUNCTIONS, so a narrowed rule speaks only for the mail it matches — right there, and it does not
-    // transfer here: {@link screenerAutoApplyPass} decides with `migrationBulkPlacement` and NEVER calls
-    // `evaluateRules`, and {@link AutoRow} carries no body text, so narrowing the SQL DISCARDS the question
-    // and a held message matching the user's narrowed rule gets auto-moved over the destination they wrote,
-    // silently. Conservative is correct here: excluding too much leaves a message at the gate (visible);
-    // too little moves their mail where they said not to. If auto-apply grows a real evaluator, this
-    // narrows with it, in the same commit — not before.
+    // 1 — the user has ruled on this sender. ANY enabled rule, narrowed or not.
+    //
+    // ── AND THIS PASS IS THE ONE THAT MUST NOT NARROW IT, WHICH IS NOT OBVIOUS ──────────────
+    //
+    // The identical predicate in `sensitive-rescreen.ts` and `drizzle-repo.ts#listScreenerBacklog`
+    // WAS narrowed to un-narrowed rules, because `subject_contains`/`body_contains` (mail 0050,
+    // 0052) are CONJUNCTIONS — *from this address AND with this term* — so a narrowed rule speaks
+    // only for the mail it matches. That reasoning is right, and it does not transfer here.
+    //
+    // The reason is one line of this file: {@link screenerAutoApplyPass} decides with
+    // `migrationBulkPlacement` and NEVER CALLS `evaluateRules`. There is no evaluator downstream
+    // to notice that the rule does not match, and {@link AutoRow} carries no body text to run one
+    // with. Narrowing the SQL here therefore does not hand the question to the router — it
+    // DISCARDS the question, and a held message that DOES match the user's narrowed rule gets
+    // auto-moved to Reads or Receipts over the destination they wrote — overriding a decision the
+    // user made, by the very change meant to stop that — and it is silent: this pass writes no
+    // rule and leaves nothing on screen to explain the move.
+    //
+    // So the conservative direction is the correct one here, and the two failure modes are not
+    // symmetric. Excluding too much leaves a message at the Screener gate, where the user can see
+    // it and act; excluding too little moves their mail somewhere they said it should not go. A
+    // narrowed sender's other mail waiting at the gate is a cost this pass is allowed to pay.
+    //
+    // Caught by review of the narrowing change, which had shipped with a comment in this file
+    // asserting that "the narrowed sender's messages now reach `evaluateRules`" — false of this
+    // pass, and false in the direction that loses. If auto-apply ever grows a real evaluator, this
+    // predicate can narrow with it, in the same commit and not before.
     sql`not exists (
       select 1 from ${rulesTbl} r
        where r.account_id = ${messages.accountId}
@@ -339,14 +450,22 @@ async function selectCandidates(
     subject: messages.subject,
     observedFolder: folderState.observedFolder,
     desiredFolder: folderState.desiredFolder,
-    // ONLY THE FIVE KEYS THE FLOOR READS CROSS THE WIRE. `message_bodies.headers` is the whole RFC-822
-    // header map (~4 kB per row in production), and this pass re-reads its page every cycle — shipping the
-    // full map to answer `hasStrongBulkFloor` sends ~4 kB to read ~86 B. Exact rather than heuristic: this
-    // pass runs MIGRATION-BULK ONLY (see {@link asRuleInput}, never `evaluateRules`), so the only header
-    // reader downstream is `hasStrongBulkFloor`, which reads exactly these five names — any new header
-    // reader MUST be added here or silently see an absent header. `jsonb_strip_nulls` makes an absent key
-    // absent rather than `"key": null` (what `headerValues`' `hasOwnProperty` distinguishes); a missing
-    // body row (LEFT JOIN nullable side) yields `{}`. `mime.ts` lower-cases header names at ingest.
+    // ── ONLY THE FIVE KEYS THE FLOOR READS CROSS THE WIRE ─────────────────────────────────────
+    //
+    // `message_bodies.headers` is the whole RFC-822 header map — `received`, `authentication-results`
+    // and `dkim-signature` chains make it ~4 kB per row in production, and this pass re-reads its
+    // page of the held Screener queue on every cycle. Shipping the full map to answer
+    // `hasStrongBulkFloor` sends ~4 kB to read ~86 B.
+    //
+    // The projection is exact rather than a heuristic: this pass runs MIGRATION-BULK ONLY (see
+    // {@link asRuleInput} — it never calls `evaluateRules`), so the only header reader downstream is
+    // `hasStrongBulkFloor`, and it reads exactly these five names and no others. Any new header
+    // reader on this path MUST be added here or it will silently see an absent header.
+    //
+    // `jsonb_strip_nulls` makes an absent key absent rather than `"key": null`, which is what
+    // `headerValues`' `hasOwnProperty` check distinguishes; a missing body row (this is the nullable
+    // side of a LEFT JOIN) yields `{}`, exactly what the `?? {}` below already produced.
+    // `mime.ts` lower-cases every header name at ingest, so these literals match what is stored.
     headers: sql<Record<string, string[]> | null>`jsonb_strip_nulls(jsonb_build_object(
       'list-unsubscribe',      ${messageBodies.headers} -> 'list-unsubscribe',
       'list-unsubscribe-post', ${messageBodies.headers} -> 'list-unsubscribe-post',

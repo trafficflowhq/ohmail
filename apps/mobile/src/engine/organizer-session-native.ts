@@ -58,9 +58,6 @@ export function startOrganizerSessionNative(
           mailboxId,
           organizing: state.organizing,
           standDown: state.reason !== null,
-          /* THE ENGINE'S OWN, straight through. The background half decides on this and not on
-             `organizing`, which is still false for a round trip after the claim has landed. */
-          claimed: state.claimed,
         })),
     },
     /* `null` on iOS, and that is the platform rather than a gap — see `background-native.ts`. */
@@ -75,11 +72,5 @@ export function startOrganizerSessionNative(
       const sub = AppState.addEventListener("change", (status) => { listener(status); });
       return () => { sub.remove(); };
     },
-    /* THE ENGINE'S OWN LOGGER, so the background half's decisions land in `adb logcat` in the
-       line shape a computer writes. This argument was missing, and with it every decline: a
-       refused notification, battery saver and a build with no service were all invisible, and
-       two lanes read them off the service table and the mail server's wire instead. The engine
-       decides what may be in the line — the app names the event and hands over the fields. */
-    log: engine.log,
   });
 }

@@ -1,7 +1,6 @@
 import { createHmac, hkdfSync, randomUUID, timingSafeEqual } from "node:crypto";
 import {
   CAPABILITY_REQUESTS, CAPABILITY_MOVES, CAPABILITY_RULES, CAPABILITY_PROFILE,
-  type OrganizerIntent,
 } from "@trafficflow/db";
 import { WATCHED_FOLDERS, type ImapAuth } from "./imap-types.js";
 import {
@@ -355,25 +354,7 @@ export type OrganizerKind = "local" | "cloud" | "mobile";
 export interface TakeoverAuthorization {
   /** The instant the press was recorded, as the row holds it. */
   authorizedAt: Date;
-  /**
-   * WHICH VERB WAS PRESSED — required, and the one field here whose absence would be dangerous.
-   *
-   * Optional it would default at every call site to the value that displaces, so the install with
-   * no takeover verb would keep taking live holders' mailboxes behind a green suite. The five
-   * call sites are all in `src` and the compiler names them.
-   */
-  intent: OrganizerIntent;
 }
-
-/**
- * WHAT THE PERSON PRESSED, per claim — never which KIND of machine they pressed it on.
- *
- * `takeover` asks for the mailbox whoever holds it; `join` asks only for a mailbox nobody is
- * organizing, and yields to a live holder however recently it was pressed. The distinction is the
- * verb's, so an install that grows a second verb carries both, and `kind` stays out of the
- * decision table the 0.14.1 ruling emptied of it.
- */
-export { ORGANIZER_INTENTS, type OrganizerIntent } from "@trafficflow/db";
 
 /** A claim message, parsed. */
 export interface OrganizerClaim {
@@ -382,24 +363,6 @@ export interface OrganizerClaim {
   protocol: number;
   /** ISO instant of the last renew. NOT IMAP INTERNALDATE — that is the server's clock. */
   heartbeat: Date;
-  /**
-   * THE SERVER'S OWN STAMP FOR THIS RECORD — IMAP INTERNALDATE, the instant the mail server took
-   * delivery of it, and the one time in this folder no install's clock can be wrong about.
-   *
-   * The decision layer ages and ranks by it ({@link withServerClock}), so a laptop reading 2099
-   * can neither age every honest claim nor look newer than one. `null` where the READ could not
-   * report it, and absence keeps the writer's own stamp rather than inventing a time.
-   */
-  serverStamp: Date | null;
-  /**
-   * WHAT THE WRITER'S OWN CLOCK SAID, kept beside the substitution rather than under it.
-   *
-   * `withServerClock` replaces `heartbeat` with {@link serverStamp}, which is right for every
-   * comparison BETWEEN machines. One comparison is between two records of ONE machine — which of
-   * its own appends came last — and the server's second-resolution stamp cannot answer it for a
-   * renew's two appends. See {@link compareRecency}.
-   */
-  writerStamp: Date;
   /** ISO instant this install BECAME organizer, as distinct from last seen. */
   claimedAt: Date;
   displayName: string;
@@ -414,13 +377,6 @@ export interface OrganizerClaim {
    * All three mean "nobody pressed for this", which is the honest thing to rank below a press.
    */
   authorizedAt: Date | null;
-  /**
-   * WHICH VERB THIS TENURE RESTS ON. Descriptive here: a FOREIGN claim's intent decides nothing,
-   * so an unreadable one is folded to `takeover` rather than refused — see {@link parseClaim}.
-   * Its one reader is the gate's own carry-forward, so a tenure keeps the verb it was taken with.
-   * A record written before this field says `takeover`, which is what those installs do.
-   */
-  intent: OrganizerIntent;
   /**
    * WHAT THIS ORGANIZER OFFERS A READER, as the claim advertises it. Empty means none — which is
    * what every pre-0.14.1 claim says, and it is a true statement about those installs rather than
@@ -559,14 +515,6 @@ const H = {
    * on a machine that is never going to answer.
    */
   capabilities: "X-Ohmail-Capabilities",
-  /**
-   * WHICH VERB THIS TENURE RESTS ON — written only for `join`, absent for `takeover`.
-   *
-   * Absent is the only spelling of "takeover" on purpose: every record any shipped build wrote
-   * lacks the header, and those installs DO take over, so no record needs migrating and an older
-   * reader that ignores the key still ranks the folder the way its own build always did.
-   */
-  intent: "X-Ohmail-Intent",
 } as const;
 
 /**
@@ -614,14 +562,6 @@ export interface ClaimInput {
    * sees anyway.
    */
   capabilities: readonly string[];
-  /**
-   * WHICH VERB THIS TENURE RESTS ON. OPTIONAL, and deliberately not required the way
-   * {@link authorizedAt} is: there the default was the dangerous value — an omitted press ranked
-   * every claim unpressed and turned the feature off behind a green suite — while here the
-   * default is `takeover`, which is exactly what every call site written before this field
-   * already did. Nothing reads a foreign claim's intent, so an omitted one decides nothing.
-   */
-  intent?: OrganizerIntent;
 }
 
 /**
@@ -650,8 +590,6 @@ export function formatClaim(c: ClaimInput): string {
     `${H.heartbeat}: ${c.heartbeat.toISOString()}`,
     `${H.claimedAt}: ${c.claimedAt.toISOString()}`,
     ...(c.authorizedAt ? [`${H.authorizedAt}: ${c.authorizedAt.toISOString()}`] : []),
-    // ONLY `join` IS WRITTEN — the absent header is "takeover", on the rule three lines above.
-    ...(c.intent === "join" ? [`${H.intent}: join`] : []),
     ...(capabilities.length > 0 ? [`${H.capabilities}: ${capabilities.join(", ")}`] : []),
     `${H.displayName}: ${headerSafe(c.displayName)}`,
     `${H.nonce}: ${headerSafe(c.nonce)}`,
@@ -667,14 +605,8 @@ export function formatClaim(c: ClaimInput): string {
   return lines.join("\r\n");
 }
 
-/**
- * Read the headers of one message. Returns `null` when it is not a claim at all.
- *
- * `serverStamp` is the record's IMAP INTERNALDATE, which is not a header and so cannot be parsed
- * out of `raw` — it is carried BESIDE the source by every read ({@link RawClaimMessage}) and
- * handed in here so that one object holds both of a record's two times.
- */
-export function parseClaim(raw: string, ref?: unknown, serverStamp?: Date | null): ClaimRecord | null {
+/** Read the headers of one message. Returns `null` when it is not a claim at all. */
+export function parseClaim(raw: string, ref?: unknown): ClaimRecord | null {
   const headerBlock = raw.split(/\r?\n\r?\n/, 1)[0] ?? "";
   const headers = new Map<string, string>();
   const seen = new Map<string, number>();
@@ -774,31 +706,15 @@ export function parseClaim(raw: string, ref?: unknown, serverStamp?: Date | null
     .map((v) => v.trim().toLowerCase())
     .filter((v) => v !== "");
 
-  /* ── AN INTENT THIS READER CANNOT READ IS `takeover`, AND THAT IS NOT `authorizedAt`'S RULE ──
-   *
-   * `X-Ohmail-Authorized-At` is refused when present-and-unreadable, and duplicated when the
-   * election RANKS it: a crafted stamp that two readers read differently elects two organizers.
-   * Nothing ranks a foreign claim's intent — the only intent the decision consults is the one on
-   * the press being offered — so a claim whose intent is absent, misspelled or stated twice is
-   * read as `takeover`, the value every record written before this field means. Refusing it here
-   * would let an unreadable header decide the election through the back door, and folding it to
-   * `join` would let a corrupted byte quietly demote a real press.
-   */
-  const intent: OrganizerIntent =
-    count(H.intent) === 1 && (get(H.intent) ?? "").toLowerCase() === "join" ? "join" : "takeover";
-
   const claim: OrganizerClaim = {
     installId,
     kind,
     protocol,
     heartbeat,
-    writerStamp: heartbeat,
-    serverStamp: serverStamp instanceof Date && !Number.isNaN(serverStamp.getTime()) ? serverStamp : null,
     claimedAt: Number.isNaN(claimedAt.getTime()) ? heartbeat : claimedAt,
     displayName: get(H.displayName) ?? "",
     nonce: get(H.nonce) ?? "",
     authorizedAt,
-    intent,
     capabilities,
   };
   return ref === undefined ? claim : { ...claim, ref };
@@ -832,76 +748,23 @@ export function ownClockSkewMs(
 }
 
 /**
- * A QUARTER OF THE STALENESS WINDOW — how far this install's own clock may sit from the mail
- * server's and still write a claim.
- *
- * A FRACTION of the window rather than a fixed figure, because the window is a parameter and the
- * damage scales with it: at a one-minute window, 61 seconds of lag was enough for a reader to take
- * the mailbox with our live record in `displace`. A quarter leaves three quarters of the window for
- * the thing the window is actually for — a machine that slept through a renew.
- */
-export const CLOCK_SKEW_WINDOW_FRACTION = 4;
-
-/**
- * The bound, in both directions, for a given window. Capped at {@link MAX_FUTURE_SKEW_MS} on the
- * way up: a window above forty minutes would otherwise license a writer to stamp a heartbeat
- * further ahead than any reader will believe, which is the one state a writer-side check exists to
- * make unreachable. The cap is what closes the configured-window case — the tolerance is not
- * widened to meet the window (that is the seventy-three-year lockout with a shorter number); the
- * WRITER is held to the smaller of the two.
- */
-export function clockSkewBoundMs(staleAfterMs: number): number {
-  return Math.min(Math.floor(staleAfterMs / CLOCK_SKEW_WINDOW_FRACTION), MAX_FUTURE_SKEW_MS);
-}
-
-/**
  * Is this install's clock fit to write a claim — the WRITER-side check, and it has to be here: no
  * reader-side rule can fix a wrong writer clock, and the tie-breaker is the server's clock, which
- * both machines see. SYMMETRIC, because both directions cost the same thing: ahead, our heartbeat
- * outranks and ages every honest peer and our press outranks every honest press; behind, our live
- * record reads as residue and the mailbox is handed to somebody else while we go on filing mail
- * into it. Two organizers either way. The refusal names which bound fired. `null` skew — an
- * install that has never written a claim here — refuses nothing.
+ * both machines see. Two bounds, because the directions are not symmetric: AHEAD is tolerated to
+ * {@link MAX_FUTURE_SKEW_MS} — past it every reader excludes our heartbeat from the renewal
+ * evidence and the mailbox is offered to somebody else while we go on organizing it; BEHIND only
+ * to `staleAfterMs` — at a one-minute window, 61 seconds of lag lets a reader take the mailbox
+ * with our live record in `displace`. The refusal names which bound fired. `null` skew refuses
+ * nothing.
  */
 export function clockSkewRefusal(input: {
   skewMs: number | null; staleAfterMs: number;
 }): { skewMs: number; bound: "ahead" | "behind"; boundMs: number } | null {
   const { skewMs, staleAfterMs } = input;
   if (skewMs === null) return null;
-  const boundMs = clockSkewBoundMs(staleAfterMs);
-  if (skewMs > boundMs) return { skewMs, bound: "ahead", boundMs };
-  if (-skewMs > boundMs) return { skewMs, bound: "behind", boundMs };
+  if (skewMs > MAX_FUTURE_SKEW_MS) return { skewMs, bound: "ahead", boundMs: MAX_FUTURE_SKEW_MS };
+  if (-skewMs >= staleAfterMs) return { skewMs, bound: "behind", boundMs: staleAfterMs };
   return null;
-}
-
-/**
- * THE REFERENCE CLOCK, SUBSTITUTED ONCE — every decision about AGE and RECENCY reads the mail
- * server's stamp, never the writer's.
- *
- * `X-Ohmail-Heartbeat` is a claim about time by the machine whose clock is in question: a laptop
- * booting at 2099 outranked every honest peer and one 61 seconds slow read as residue, and no
- * reader-side rule told either from the truth. INTERNALDATE is the SERVER's. ONE substitution, at
- * the two doors ({@link decideLease}, {@link peekLease}), over ADJUSTED COPIES; a record with NO
- * server stamp is left as it is, because absence means this READ could not ask.
- */
-export function withServerClock(claims: readonly ClaimRecord[]): readonly ClaimRecord[] {
-  let changed = false;
-  const out = claims.map((c) => {
-    if (isMalformed(c)) return c;
-    /* READ STRUCTURALLY, not as the type promises. `serverStamp` is REQUIRED on the claim so that
-       the one producer — the parser — cannot forget it; but this package's tests are not
-       typechecked and build claims as object literals, so an absent field arrives here as
-       `undefined` and the type says otherwise. Absent and `null` are the same answer anyway: this
-       read could not ask the server. */
-    const stamp = c.serverStamp;
-    if (!(stamp instanceof Date) || Number.isNaN(stamp.getTime())) return c;
-    if (stamp.getTime() === c.heartbeat.getTime()) return c;
-    changed = true;
-    return { ...c, heartbeat: stamp };
-  });
-  /* The same array back when nothing moved, so the ordinary path allocates nothing and an identity
-     comparison a caller makes across the two is not quietly broken by a no-op substitution. */
-  return changed ? out : claims;
 }
 
 export interface DecideLeaseInput {
@@ -960,32 +823,11 @@ function coalesce(claims: readonly ClaimRecord[]): { valid: OrganizerClaim[]; ma
   return { valid: [...newest.values()], malformed };
 }
 
-/**
- * Newest first, and the ONLY comparison in this module between two records of ONE INSTALL: which
- * of these did this machine write last.
- *
- * THE SERVER'S STAMP DECIDES FIRST. But INTERNALDATE has SECOND resolution, and a renew is
- * append-then-expunge — two appends inside one second, same stamp. Falling straight to the nonce
- * ordered our own two claims at RANDOM, the clone defence read the survivor as a live clone of us
- * and the gate answered `available` about a mailbox it had just renewed (one run in three against
- * a real server). So a tie falls to the WRITER's stamp: one clock cannot be wrong about ORDER.
- */
+/** Newest heartbeat first; equal heartbeats break on the nonce, so the result is order-free. */
 function compareRecency(a: OrganizerClaim, b: OrganizerClaim): number {
   const d = b.heartbeat.getTime() - a.heartbeat.getTime();
   if (d !== 0) return d;
-  const w = writerStampOf(b) - writerStampOf(a);
-  if (w !== 0) return w;
   return a.nonce < b.nonce ? -1 : a.nonce > b.nonce ? 1 : 0;
-}
-
-/**
- * The instant the WRITER put on this record, whether or not the decision layer has substituted the
- * server's over it. `withServerClock` replaces `heartbeat`, so the original survives only on
- * `serverStamp`'s twin — which is the point: this is the one term that must read the writer's clock
- * on purpose, and it says so rather than reaching for a field that may already have been replaced.
- */
-function writerStampOf(c: OrganizerClaim): number {
-  return c.writerStamp instanceof Date ? c.writerStamp.getTime() : c.heartbeat.getTime();
 }
 
 /**
@@ -1247,9 +1089,9 @@ function runElection(claims: readonly ClaimRecord[], now: Date, staleAfterMs: nu
  * unrecognised KIND — stand down. (3) We hold the strongest live claim — organize; continuation
  * covers resumption. (4) No readable claim — organize. (5) DELETED — it refused an authorized
  * local over a live Cloud; the numbering keeps the names tests use. (6) A human pressed for THIS
- * install more recently than any live rival, AND pressed a verb that displaces — organize and
- * DISPLACE; STRICT, and no stamp-older-than-claimedAt check, which would break the two-press
- * race. (7) Lost, folder renewing — stand down. (8) Lost, folder quiet — offerable, never taken.
+ * install more recently than any live rival — organize and DISPLACE; STRICT, and no
+ * stamp-older-than-claimedAt check, which would break the two-press race. (7) Lost, folder
+ * renewing — stand down. (8) Lost, folder quiet — `available`: offerable, never taken.
  */
 export function decideLease(input: DecideLeaseInput): LeaseVerdict {
   const { self, now } = input;
@@ -1257,14 +1099,7 @@ export function decideLease(input: DecideLeaseInput): LeaseVerdict {
   const takeover = input.takeover ?? null;
   const ourProtocol = self.protocol ?? CLAIM_PROTOCOL;
 
-  /* THE SERVER'S CLOCK ENTERS HERE AND NOWHERE ELSE BELOW — see {@link withServerClock}. Every
-     read of the claim list in this function is of `claims` rather than `input.claims`, including
-     the RAW scans: a raw scan against the un-substituted list would judge liveness on the writer's
-     own stamp, which is the whole of the defect, and the two lists would disagree about one
-     record. */
-  const claims = withServerClock(input.claims);
-
-  const election = runElection(claims, now, staleAfterMs);
+  const election = runElection(input.claims, now, staleAfterMs);
 
   /**
    * Is this claim OURS? The clone defence, unchanged in substance.
@@ -1305,7 +1140,7 @@ export function decideLease(input: DecideLeaseInput): LeaseVerdict {
   // OLDER record hidden behind a rankable newer sibling would otherwise never trip this arm —
   // and every downstream consumer of this verdict (the takeover's displacement above all)
   // would treat a live claim in a format we cannot read as beatable residue.
-  const unrankable = claims.find((c): c is OrganizerClaim =>
+  const unrankable = input.claims.find((c): c is OrganizerClaim =>
     !isMalformed(c) && !rawOurs(c) && (c.protocol > ourProtocol || c.kind === "unknown") && rawIsLive(c));
   if (unrankable) return { verdict: "stand_down", reason: "organized_elsewhere:unknown", by: unrankable };
 
@@ -1362,19 +1197,7 @@ export function decideLease(input: DecideLeaseInput): LeaseVerdict {
     // reads 2099 must not be able to press its way past every honest organizer for ever. The row
     // is not a more trustworthy clock than the folder — it is the SAME machine's clock.
     : Math.min(takeover.authorizedAt.getTime(), now.getTime() + MAX_FUTURE_SKEW_MS);
-  /**
-   * AND THE VERB DECIDES WHETHER A NEWER PRESS MAY DISPLACE AT ALL. A `join` asks for a mailbox
-   * nobody is organizing; against a live foreign claim it yields however recent it is, and rules
-   * 7/8 name the holder. Liveness is the RAW predicate rules 1/2 use, never `election.live`:
-   * that set has no `renewing` term, so on a folder holding only stale residue every candidate
-   * is "live" against the newest of them and a join would be refused the mailbox it is entitled
-   * to. Tested as `=== "takeover"`, so an untyped caller reads as a join — the direction that
-   * can only produce FEWER organizers.
-   */
-  const liveForeign = claims.some((c): boolean =>
-    !isMalformed(c) && !rawOurs(c) && rawIsLive(c));
-  const mayDisplace = takeover !== null && (takeover.intent === "takeover" || !liveForeign);
-  if (mayDisplace && ourPress > livePress) {
+  if (takeover !== null && ourPress > livePress) {
     // Every ref the read held for the beaten organizers — the RAW claim list, not the candidates:
     // coalesce keeps one claim per install, the folder legitimately holds duplicates
     // (append-then-expunge crash residue), and a displacement built from the coalesced set misses
@@ -1385,7 +1208,7 @@ export function decideLease(input: DecideLeaseInput): LeaseVerdict {
     // nonce, anything bearing our id). A same-id claim with a different nonce while ours is armed
     // is a restored clone's and displaces like any other. Rules 1/2 hold over the raw list too:
     // an authorized expunge of a record we cannot read must be impossible by construction.
-    const displaced = claims
+    const displaced = input.claims
       .filter((c) => (isMalformed(c)
         ? true
         : !(c.installId === self.installId && (self.lastNonce === null || c.nonce === self.lastNonce))
@@ -1500,12 +1323,7 @@ export interface PeekLeaseInput {
 /** Pure. No IO, no identity, no side effects — the whole table is unit-testable. */
 export function peekLease(input: PeekLeaseInput): LeasePeek {
   const staleAfterMs = input.staleAfterMs ?? DEFAULT_STALE_AFTER_MS;
-  /* The SAME substitution the gate makes, at this surface's own door — see {@link
-     withServerClock}. The preview and the gate reading one folder through two clocks is
-     `LEASE-PREVIEW-BELIEVABILITY-BOUNDARY`: the preview offered a takeover the gate then refused,
-     and the caller's stand-down path spent the person's one-shot press on it. */
-  const claims = withServerClock(input.claims);
-  const { valid, malformed } = coalesce(claims);
+  const { valid, malformed } = coalesce(input.claims);
 
   /**
    * The preview sees what the gate sees, raw duplicates included. Rule 1/2 scans the RAW list: a
@@ -1524,7 +1342,7 @@ export function peekLease(input: PeekLeaseInput): LeasePeek {
   // as a live holder while the gate had already stopped refusing over it, so a person was told
   // another computer was organizing their mailbox by a build that would have let them take it.
   // This is the seam the two copies of the folder-relative test hid from each other.
-  const rawValid = claims.filter((c): c is OrganizerClaim => !isMalformed(c));
+  const rawValid = input.claims.filter((c): c is OrganizerClaim => !isMalformed(c));
   const clock = readFolderClock(rawValid, input.now, staleAfterMs);
   /**
    * An install is renewing if ANY of its raw records says so. Coalesce keeps the newest heartbeat
@@ -1715,102 +1533,13 @@ export async function readLeasePeek(input: ReadLeasePeekInput): Promise<LeasePee
     );
   }
   const claims = messages
-    .map((m) => parseClaim(m.raw, m.ref, m.internalDate ?? null))
+    .map((m) => parseClaim(m.raw, m.ref))
     .filter((c): c is ClaimRecord => c !== null);
   return peekLease({
     claims,
     now: input.now,
     ...(input.staleAfterMs !== undefined ? { staleAfterMs: input.staleAfterMs } : {}),
   });
-}
-
-// ── THE PEEK'S THREE ANSWERS ────────────────────────────────────────────────────────────────
-
-/**
- * WHAT A LOOK AT `ohmail/_meta` ANSWERED — three answers, and the third is why this type exists.
- *
- * `free` and `held` are facts about the folder. `unreadable` is a fact about the LOOK, and the one
- * a caller keeps collapsing into `free` because both leave it with no holder to name. Measured on
- * the phone's consent door: an install whose adapter could not read the folder left the holder
- * columns exactly as an unorganized mailbox leaves them, so the door admitted the press, wrote the
- * consent and answered "claimed". So the answers are a VALUE rather than a return-or-throw, and
- * the compiler names the third arm. Only `free` means "nothing holds this mailbox".
- */
-export type LeasePeekAnswer =
-  /** The folder was read and nothing is renewing a claim in it. The only answer that admits one. */
-  | { readonly answer: "free"; readonly peek: LeasePeek }
-  /** The folder was read and somebody is renewing. `holder` is the freshest, as `peekLease` sorts. */
-  | { readonly answer: "held"; readonly peek: LeasePeek; readonly holder: LeaseHolder }
-  /**
-   * The folder was NOT read. Says nothing about who holds the mailbox — in particular not that
-   * nobody does.
-   *
-   * `op` is `no_lease_peek_io` for an adapter with no read-only accessor, and otherwise whatever
-   * {@link readLeasePeek} assigned — measured as `list_claims` for every fault out of `listClaims`,
-   * a folder over the read ceiling INCLUDED. A folder too full to read is told apart by the
-   * `lease_meta_truncated` line the read emits, not by this field.
-   */
-  | { readonly answer: "unreadable"; readonly op: LeaseOp; readonly cause: unknown };
-
-export interface AnswerLeasePeekInput {
-  /**
-   * The read-only IO, or `undefined` where the adapter has none.
-   *
-   * `undefined` is admitted DELIBERATELY rather than pushed back to the caller as a guard: every
-   * call site reaches this through a structural probe (`typeof adapter.leasePeekIo === "function"`)
-   * because `MailboxAdapter` does not declare the accessor, and each of them answered a failed
-   * probe with a bare `return` — a silent skip that leaves the holder columns saying what an
-   * unorganized mailbox says. Taking `undefined` here makes the missing capability an ANSWER.
-   */
-  io: LeasePeekIo | undefined;
-  now: Date;
-  staleAfterMs?: number;
-  log?: (event: string, detail: Record<string, unknown>) => void;
-}
-
-/**
- * READ `ohmail/_meta` AND ANSWER IN THREE WORDS. Never throws.
- *
- * {@link readLeasePeek} is still the layer that reads; this is the layer that DECIDES, and the
- * difference is the throw. A `LeaseUnavailableError` is the truthful shape for a reader that will
- * render an apology, and the wrong shape for a door with a press in its hand: a `try` around a
- * decision is where "could not look" turns back into "nobody is there", once per call site.
- */
-export async function answerLeasePeek(input: AnswerLeasePeekInput): Promise<LeasePeekAnswer> {
-  if (input.io === undefined) {
-    return { answer: "unreadable", op: "no_lease_peek_io", cause: undefined };
-  }
-  let peek: LeasePeek;
-  try {
-    peek = await readLeasePeek({
-      io: input.io,
-      now: input.now,
-      ...(input.staleAfterMs !== undefined ? { staleAfterMs: input.staleAfterMs } : {}),
-      ...(input.log !== undefined ? { log: input.log } : {}),
-    });
-  } catch (err) {
-    /* BY CLASS, as every other caller exempts it. Anything else is a fault this function has no
-       reading of, and swallowing it would answer `unreadable` for a programming error — safe in
-       direction and indistinguishable from a folder fault in a report, which is how one gets
-       diagnosed for a week as the other. */
-    if (err instanceof LeaseUnavailableError) {
-      return { answer: "unreadable", op: err.op, cause: err };
-    }
-    throw err;
-  }
-  /* `held` IS THE LIVENESS, not the presence of records. `peekLease` already decides it from the
-     same `isClaimLive` the gate uses, and `holders[0]` is the freshest believable one — so a
-     `stopped` folder answers `free`, which is what the gate's `available` verdict means and what
-     a person pressing "organize here" on a machine whose other install went quiet expects. */
-  if (peek.state === "held") {
-    const holder = peek.holders.find((h) => h.fresh) ?? peek.holders[0];
-    /* A `held` with no holder is unrepresentable through `peekLease` — `state` is `held` only
-       because some holder is fresh — but this narrowing is the compiler's, not a comment's, and
-       the safe reading of "held by nobody nameable" is still not `free`. */
-    if (holder !== undefined) return { answer: "held", peek, holder };
-    return { answer: "unreadable", op: "list_claims", cause: undefined };
-  }
-  return { answer: "free", peek };
 }
 
 // ── LAYER 3: IO ─────────────────────────────────────────────────────────────────────────────
@@ -1879,39 +1608,6 @@ export class LeaseUnavailableError extends Error {
     super(message, options);
     this.name = "LeaseUnavailableError";
     this.op = options.op;
-  }
-}
-
-/**
- * THIS COMPUTER'S CLOCK DISAGREES WITH THE MAIL SERVER'S, so no claim was written.
- *
- * A {@link LeaseUnavailableError} and deliberately a SUBCLASS of it rather than a fourth verdict:
- * every host already exempts that class by name, so a wrong clock leaves the mailbox unattached and
- * un-quarantined and our own claim ages out un-renewed — while a STAND-DOWN would void a one-shot
- * press this pass could never have honoured, which is the defect the preview row names. The numbers
- * ride on the error because the sentence a person is shown needs them, and an optional field on the
- * base class would be a field absent at the one site that reads it.
- */
-export class LeaseClockSkewError extends LeaseUnavailableError {
-  /** Our stamp minus the server's. Positive is ahead. */
-  readonly skewMs: number;
-  /** Which bound fired, and what it was — {@link clockSkewBoundMs}. */
-  readonly bound: "ahead" | "behind";
-  readonly boundMs: number;
-  constructor(message: string, detail: { skewMs: number; bound: "ahead" | "behind"; boundMs: number }) {
-    super(message, { op: "clock_skew" });
-    this.name = "LeaseClockSkewError";
-    this.skewMs = detail.skewMs;
-    this.bound = detail.bound;
-    this.boundMs = detail.boundMs;
-  }
-  /**
-   * How far off, in whole minutes, never below one — the figure the sentence quotes. A skew of
-   * forty seconds rounds to zero, and "your clock is off by 0 minutes" is a sentence that tells
-   * somebody nothing is wrong while their mailbox is not being organized.
-   */
-  get offByMinutes(): number {
-    return Math.max(1, Math.round(Math.abs(this.skewMs) / 60_000));
   }
 }
 
@@ -2796,18 +2492,9 @@ async function searchHeaders(
   const out: RawClaimMessage[] = [];
   for (let i = 0; i < capped.length; i += SEARCH_FETCH_BATCH) {
     const batch = capped.slice(i, i + SEARCH_FETCH_BATCH);
-    /* `internalDate` is asked for HERE for the reason it is asked for in `readMetaFolderWindow`,
-       and the two are the only places a claim is built from the wire: a read that drops the
-       server's stamp hands the decision layer records it can only age by the writer's own clock —
-       silently, and exactly on the busy folders this path exists to serve. */
-    for await (const m of client.fetch(
-      batch.join(","), { uid: true, headers: true, internalDate: true }, { uid: true },
-    )) {
+    for await (const m of client.fetch(batch.join(","), { uid: true, headers: true }, { uid: true })) {
       if (!m.headers) continue;
-      out.push({
-        ref: m.uid, raw: m.headers.toString("utf8"),
-        internalDate: m.internalDate instanceof Date ? m.internalDate : null,
-      });
+      out.push({ ref: m.uid, raw: m.headers.toString("utf8") });
     }
   }
   return out;
@@ -3153,15 +2840,6 @@ interface GateRead {
   uidValidity: number | bigint | null;
 }
 
-/**
- * WHICH IOs HAVE ALREADY REPORTED A WRONG CLOCK. See the refusal in {@link runLeaseGate}.
- *
- * A `WeakSet` so a mailbox that goes away takes its entry with it — this module holds no registry
- * and must not start one. The only state in the decision path, and it decides nothing: dropping it
- * would cost log volume, never a verdict.
- */
-const clockSkewReported = new WeakSet<object>();
-
 export async function runLeaseGate(input: LeaseGateInput): Promise<LeaseGateResult> {
   const { io, self, now } = input;
   const log = input.log ?? ((): void => undefined);
@@ -3253,12 +2931,8 @@ export async function runLeaseGate(input: LeaseGateInput): Promise<LeaseGateResu
        * protocol licenses an install to remove what it wrote, so its own residue is pruned to the
        * newest and the cycle refuses; next cycle the set is smaller. Nothing another install wrote
        * is touched — the folder is the customer's. */
-      /* Ordered by THIS install's own stamps, and that is licensed rather than overlooked: the
-         set holds only records this install wrote, and the skew check above has already refused
-         the cycle if its clock is outside the bound — so the order of its own appends is the
-         server's order too, to within a quarter of the window. */
       const ours = set
-        .map((m) => ({ ref: m.ref, claim: parseClaim(m.raw, m.ref, m.internalDate ?? null) }))
+        .map((m) => ({ ref: m.ref, claim: parseClaim(m.raw, m.ref) }))
         .filter((c): c is { ref: unknown; claim: OrganizerClaim } =>
           c.claim !== null && !isMalformed(c.claim) && c.claim.installId === self.installId);
       /**
@@ -3317,12 +2991,12 @@ export async function runLeaseGate(input: LeaseGateInput): Promise<LeaseGateResu
   /**
    * The writer's own clock, before any append — read from the election's records (our own claim
    * carries both stamps for one instant), so it costs no round trip and is judged before this
-   * gate can write. A refusal is {@link LeaseClockSkewError}, a `LeaseUnavailableError` and
-   * deliberately not a stand-down: both hosts exempt the class, the mailbox does not sync and is
-   * not quarantined, our claim ages out un-renewed — while a stand-down would void a one-shot
-   * press this pass could never have honoured. One-cycle residual, stated: an install that has
-   * never written a claim has no pair to measure, so its first gate run is unchecked; its own
-   * append supplies the pair and the next cycle refuses.
+   * gate can write. A refusal is `LeaseUnavailableError`, deliberately not a stand-down: both
+   * hosts exempt the class, the mailbox does not sync and is not quarantined, our claim ages out
+   * un-renewed — while a stand-down would void a one-shot press this pass could never have
+   * honoured. One-cycle residual, stated: an install that has never written a claim has no pair
+   * to measure, so its first gate run is unchecked; its own append supplies the pair and the next
+   * cycle refuses.
    */
   const staleWindowMs = input.staleAfterMs ?? DEFAULT_STALE_AFTER_MS;
   if (staleWindowMs > MAX_FUTURE_SKEW_MS) {
@@ -3333,31 +3007,19 @@ export async function runLeaseGate(input: LeaseGateInput): Promise<LeaseGateResu
   const skew = clockSkewRefusal({
     skewMs: ownClockSkewMs(messages, self.installId), staleAfterMs: staleWindowMs,
   });
-  if (skew === null) {
-    /* Re-armed the moment the clock is inside the bound again, so the line is written once PER
-       EPISODE rather than once per process: a clock corrected and then broken again is a second
-       thing worth reading about. */
-    clockSkewReported.delete(io);
-  } else {
-    /* ONCE, not once a cycle. A wrong clock lasts days and this gate runs every poll, so the
-       unlatched form wrote thousands of identical lines and buried the one that mattered. The
-       latch is per IO — one connection's view of one mailbox — because that is the granularity a
-       person's fix (correct the clock) clears. */
-    if (!clockSkewReported.has(io)) {
-      clockSkewReported.add(io);
-      log("lease_clock_skew_refused", { skewMs: skew.skewMs, bound: skew.bound, boundMs: skew.boundMs });
-    }
-    throw new LeaseClockSkewError(
+  if (skew !== null) {
+    log("lease_clock_skew_refused", { skewMs: skew.skewMs, bound: skew.bound, boundMs: skew.boundMs });
+    throw new LeaseUnavailableError(
       `this computer's clock is ${Math.round(Math.abs(skew.skewMs) / 1000)}s ` +
       `${skew.bound === "ahead" ? "ahead of" : "behind"} the mail server's, which is more than the ` +
       `${Math.round(skew.boundMs / 1000)}s the organizer lease can tolerate; no claim is written ` +
       `until the clock is corrected`,
-      skew,
+      { op: "clock_skew" },
     );
   }
 
   const claims = messages
-    .map((m) => parseClaim(m.raw, m.ref, m.internalDate ?? null))
+    .map((m) => parseClaim(m.raw, m.ref))
     .filter((c): c is ClaimRecord => c !== null);
 
   const verdict = decideLease({
@@ -3443,14 +3105,6 @@ export async function runLeaseGate(input: LeaseGateInput): Promise<LeaseGateResu
   const authorizedAt = verdict.authorized
     ? (input.takeover?.authorizedAt ?? null)
     : (newestOwn?.authorizedAt ?? null);
-  /* The VERB travels with the tenure exactly as the press does, off the same two sources: an
-     authorized win carries the verb it rested on, every other win carries forward the one the
-     prior claim recorded. A renewal that wrote nothing would make a join tenure describe itself
-     as a takeover one cycle later — harmless to the election, which never reads a foreign
-     claim's intent, and a lie in the folder a person can open. */
-  const intent: OrganizerIntent = verdict.authorized
-    ? (input.takeover?.intent ?? "takeover")
-    : (newestOwn?.intent ?? "takeover");
 
   const nonce = newNonce();
   try {
@@ -3464,7 +3118,6 @@ export async function runLeaseGate(input: LeaseGateInput): Promise<LeaseGateResu
         nonce,
         protocol: self.protocol ?? CLAIM_PROTOCOL,
         authorizedAt,
-        intent,
         capabilities: input.capabilities,
       }),
     );
@@ -3499,7 +3152,7 @@ export async function runLeaseGate(input: LeaseGateInput): Promise<LeaseGateResu
      */
     const after = (await electionRead(await readClaims(() => io.listClaims()))).records;
     verifyClaims = after
-      .map((m) => parseClaim(m.raw, m.ref, m.internalDate ?? null))
+      .map((m) => parseClaim(m.raw, m.ref))
       .filter((c): c is ClaimRecord => c !== null);
   } catch (err) {
     throw new LeaseUnavailableError(
@@ -3664,7 +3317,7 @@ export async function runLeaseGate(input: LeaseGateInput): Promise<LeaseGateResu
       }
       const after = read.records;
       const afterClaims = after
-        .map((m) => parseClaim(m.raw, m.ref, m.internalDate ?? null))
+        .map((m) => parseClaim(m.raw, m.ref))
         .filter((c): c is ClaimRecord => c !== null);
       const ownStanding = afterClaims
         .filter((c): c is OrganizerClaim => !isMalformed(c) && c.installId === self.installId && c.nonce === nonce);

@@ -1,12 +1,20 @@
 /**
- * `@ohmail/sidecar` — the LOCAL engine of the desktop's dual-mode design: the mailbox itself is the
- * master copy, and exactly one active organizer works it at a time. A Node process the desktop shell
- * spawns and owns; it runs `createApp(apiRoutes)` over PGlite on disk, an `ImapAdapter` against the
- * user's own server, and the worker's sync loop, while the UI keeps `HttpAdapter` given a `fetch`
- * that marshals over stdin/stdout. There is NO TCP listener unless host mode is armed — three
- * explicit knobs deep, never a default — so the stdio pipe stays the whole transport. Host mode
- * (Phase 3) adds a SECOND door bound to `127.0.0.1:<port>` and published by `tailscale serve`; a
- * disarmed install constructs no listener object at all, pinned by connecting and being refused.
+ * `@ohmail/sidecar` — the LOCAL engine of the desktop's dual-mode design: the mailbox itself is
+ * the master copy, and exactly one active organizer works it at a time.
+ *
+ * A Node process the desktop shell spawns and owns. It runs `createApp(apiRoutes)` from
+ * `packages/api` over PGlite on disk, an `ImapAdapter` against the user's own server, and the
+ * worker's sync/reconcile loop; the UI keeps `HttpAdapter` and is given a `fetch` that marshals
+ * `Request`/`Response` over this process's stdin and stdout.
+ *
+ * **There is no TCP listener unless host mode is armed** — and "unless" is three explicit knobs
+ * deep, never a default. The stdio pipe stays the window's whole transport and its security
+ * argument is unchanged: no port to authenticate, nothing else on the machine can reach it, and
+ * the only party holding the pipe is the parent process. Host mode (Phase 3) adds a SECOND door
+ * beside it — `handleHost` over `desktopHostRoutes`, bound by `host-listener.ts` to
+ * `127.0.0.1:<port>` and nothing else, published to its owner's tailnet by `tailscale serve` —
+ * and a disarmed install still constructs no listener object at all, which its suite pins by
+ * connecting and being refused.
  */
 export {
   createSidecar, refusingKeyProvider, DEFAULT_POLL_INTERVAL_MS,

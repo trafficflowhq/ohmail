@@ -1,14 +1,43 @@
 #!/usr/bin/env node
 /**
- * stage-desktop-resources.mjs — assemble EXACTLY what the desktop app carries in its resources, and refuse
- * to stage anything half-built (`node scripts/build-engine.mjs`, `node scripts/vendor-node.mjs`, then this).
- * A staging step rather than `bundle.resources` straight at `build/`: Tauri copies a resource DIRECTORY
- * wholesale, and `build/engine` is a BUILD output that grows things (a metafile, a source map, a stray
- * `.tsbuildinfo`) each of which would silently join a hundreds-of-megabytes download people are invited to
- * audit — staging makes the shipped set a written list. It also gives the three refusals somewhere to live
- * (each otherwise surfaces as an app that installs cleanly and cannot start its engine). THE LAYOUT is a
- * contract with `engine.rs`: `<resources>/engine/bin/ohmail-engine.mjs`, `.../bin/node_modules/`,
- * `.../engine/drizzle/` (ONE LEVEL UP), `.../runtime/node[.exe]` and its LICENSE. `engine.rs` composes the engine and the runtime from `resource_dir()` and `the_packaged_layout_is_the_one_the_bundler_stages` pins them; the journal's position is fixed by the bundle resolving `dirname(import.meta.url)/../drizzle`. The staged tree is what `apps/desktop/src-tauri/tauri.engine.conf.json` names. */
+ * stage-desktop-resources.mjs — assemble EXACTLY what the desktop app carries in its resources, and
+ * refuse to stage anything half-built.
+ *
+ *     node scripts/build-engine.mjs      # → build/engine
+ *     node scripts/vendor-node.mjs       # → build/vendor
+ *     node scripts/stage-desktop-resources.mjs
+ *
+ * ── WHY A STAGING STEP AND NOT `bundle.resources` STRAIGHT AT `build/` ────────────────────
+ *
+ * Tauri copies a resource DIRECTORY wholesale, preserving its tree. That is the behaviour this
+ * layout wants, and it is also why the source of the copy has to be a directory that contains
+ * nothing but the app's runtime needs: `build/engine` is a BUILD output, and a build output grows
+ * things — a metafile, a source map, a stray `.tsbuildinfo` — each of which would silently become
+ * part of a hundreds-of-megabytes download that people are invited to audit. Staging makes the
+ * shipped set a written list rather than a side effect of what the last build happened to leave
+ * behind.
+ *
+ * It also gives the three refusals below somewhere to live. Every one of them is a failure that
+ * otherwise surfaces as a packaged app that installs cleanly and cannot start its engine — the
+ * worst place to find out, because the artifact looks finished.
+ *
+ * ── THE LAYOUT, WHICH IS A CONTRACT WITH `engine.rs` ──────────────────────────────────────
+ *
+ *     <resources>/engine/bin/ohmail-engine.mjs       the engine
+ *     <resources>/engine/bin/node_modules/…          the storage layer it loads off disk
+ *     <resources>/engine/drizzle/…                   its migration journal, ONE LEVEL UP
+ *     <resources>/runtime/node[.exe]                 the Node runtime it is spawned with
+ *     <resources>/runtime/node.LICENSE               that runtime's licence
+ *
+ * `engine.rs` composes the first and the fourth of those from `app.path().resource_dir()`
+ * (`engine_path_in` / `vendored_node_in`), and `the_packaged_layout_is_the_one_the_bundler_stages`
+ * pins them from the Rust side. The journal's position is not a choice: the bundle resolves it as
+ * `dirname(import.meta.url)/../drizzle`, so it sits beside `bin/` and not inside it.
+ *
+ * The staged tree is what `apps/desktop/src-tauri/tauri.engine.conf.json` names, and that overlay is
+ * the only config that names it — the preview artifact has no engine and must stay buildable without
+ * one, which it cannot be if the base config demands a resource that is not there.
+ */
 import { chmodSync, cpSync, existsSync, mkdirSync, readdirSync, rmSync, statSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";

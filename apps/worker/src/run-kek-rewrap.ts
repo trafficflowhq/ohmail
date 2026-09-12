@@ -1,13 +1,37 @@
 /**
- * ONE-OFF RUNNER for the KEK re-wrap pass (`@trafficflow/db/cloud` → `kek-rewrap.ts`). DB-ONLY, dry-run by
- * default. It moves every stored envelope — IMAP/SMTP/Graph credentials, TOTP secrets, the staff second
- * factor, live PKCE verifiers, the OAuth client secret — onto the host's CURRENT KEK version, so an old
- * version can be retired. It never opens IMAP. Rotation is three steps: (1) add `TF_KEK_V{n+1}` to BOTH
- * hosts and redeploy; (2) run with `--apply` until it reports `0 outstanding`; (3) run with no flags and
- * read the census — only when nothing references V<n> may V<n> be removed. Safe to re-run and kill:
- * resumability IS `key_version` (a finished row leaves the candidate query); nothing is written until the
- * new envelope has been decrypted back and compared in the same transaction, and a value that will not
- * decrypt is reported and SKIPPED. A ring missing a historical version reports those rows `no_kek_for_version`. */
+ * ONE-OFF RUNNER for the KEK re-wrap pass (`@trafficflow/db/cloud` → `kek-rewrap.ts`).
+ *
+ * DB-ONLY and dry-run by default. It moves every stored envelope — IMAP/SMTP/Graph credentials,
+ * TOTP secrets, the staff second factor, live PKCE verifiers and the OAuth client secret — onto
+ * the host's CURRENT KEK version, so an old version can actually be retired. It never opens IMAP.
+ *
+ * ── THE PROCEDURE THIS RUNNER EXISTS FOR ───────────────────────────────────────────────────
+ *
+ * Incident rotation is three steps, and this runner is the
+ * middle one and the instrument for the third:
+ *
+ *   1. add `TF_KEK_V{n+1}` to BOTH hosts (API and worker) and redeploy — new writes land on it;
+ *   2. run this with `--apply` until it reports `0 outstanding`;
+ *   3. run it again with no flags and read the census — only when it says nothing references
+ *      V<n> may V<n> be removed from the hosts and from secret history.
+ *
+ * Step 3 is a plain read and is the whole reason step 1 is not already a revocation.
+ *
+ * ── SAFE TO RE-RUN, SAFE TO KILL ───────────────────────────────────────────────────────────
+ *
+ * Resumability is `key_version` itself: a finished row no longer matches the candidate query, so
+ * a killed run resumes by being run again and a run over a finished database is two SELECTs per
+ * site. Nothing is written until the new envelope has been decrypted back and compared, inside
+ * the same transaction as the write. A value that will not decrypt is reported and SKIPPED —
+ * never blanked, never dropped.
+ *
+ *   TF_DB_URL=… tsx apps/worker/src/run-kek-rewrap.ts            # census only, writes nothing
+ *   TF_DB_URL=… tsx apps/worker/src/run-kek-rewrap.ts --apply    # re-wrap
+ *
+ * `TF_KEK_V1…Vn` must be set exactly as they are on the hosts: the pass can only re-wrap what it
+ * can decrypt, and a ring missing a historical version reports those rows as
+ * `no_kek_for_version` and leaves them alone.
+ */
 import { makeOwnedDb, runKekRewrap, formatCensus, kekRewrapCensus } from "@trafficflow/db/cloud";
 import { type Tx } from "@trafficflow/db";
 import { createLogger, keyProviderFromEnv } from "@trafficflow/core";

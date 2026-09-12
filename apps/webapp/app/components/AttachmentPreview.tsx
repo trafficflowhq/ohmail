@@ -45,8 +45,7 @@ import type { PDFDocumentLoadingTask, PDFDocumentProxy, RenderTask } from "pdfjs
 import type { AttachmentItem } from "./AttachmentStrip";
 import { useKeyBindings } from "../shell/keymap";
 import "./attachment-preview.css";
-import { formatFileSize } from "@ohmail/ui";
-import { activeFormatLocale, liveCopy } from "../shell/locale";
+import { liveCopy } from "../shell/locale";
 
 /* ── what can be looked at, and what merely downloads ─────────────────────────────────── */
 
@@ -128,9 +127,18 @@ const EN = {
 export const COPY: typeof EN = liveCopy("attachmentPreview", EN, { count: ["index", "total"], page: ["page", "total"] });
 
 
-/** The shared formatter, in the reader's own language — see `@ohmail/ui`'s `formatFileSize`. */
+/** 1000-based, matching `AttachmentStrip.formatSize` so both surfaces name one size. */
 function formatSize(bytes: number): string {
-  return formatFileSize(bytes, activeFormatLocale());
+  if (bytes < 1000) return `${bytes} B`;
+  let value = bytes / 1000;
+  for (const unit of ["KB", "MB", "GB"]) {
+    if (value < 1000 || unit === "GB") {
+      const text = value < 100 ? value.toFixed(1).replace(/\.0$/, "") : String(Math.round(value));
+      return `${text} ${unit}`;
+    }
+    value /= 1000;
+  }
+  return `${bytes} B`;
 }
 
 /* ── pdf.js, loaded on demand and configured once ─────────────────────────────────────── */

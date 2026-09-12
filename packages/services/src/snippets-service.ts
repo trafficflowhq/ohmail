@@ -1,6 +1,6 @@
 import { and, asc, eq, gt } from "drizzle-orm";
 import { snippets } from "@trafficflow/db";
-import { withAccountTx, type ServiceContext } from "./context.js";
+import type { ServiceContext } from "./context.js";
 import { ServiceError } from "./errors.js";
 import { clampLimit, decodeListCursor, encodeListCursor } from "./pagination.js";
 import type { Page, SnippetDTO } from "./dto/types.js";
@@ -50,14 +50,9 @@ export class SnippetsService {
     const text = this.validText(body.body, "body");
     const shortcut = this.validShortcut(body.shortcut);
     const now = ctx.now();
-    // Through the fenced door: `snippets` hangs off the account alone, and `accounts` survives
-    // Art. 17 erasure — see `withAccountTx` for why an unfenced insert here recreates erased state.
-    const row = await withAccountTx(ctx, async (tx) => {
-      const [created] = await tx.insert(snippets).values({
-        accountId: ctx.accountId, title, body: text, shortcut, createdAt: now, updatedAt: now,
-      }).returning();
-      return created;
-    });
+    const [row] = await ctx.db.insert(snippets).values({
+      accountId: ctx.accountId, title, body: text, shortcut, createdAt: now, updatedAt: now,
+    }).returning();
     return toDTO(row!);
   }
 

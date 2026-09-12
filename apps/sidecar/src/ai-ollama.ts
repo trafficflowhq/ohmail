@@ -13,14 +13,30 @@ import {
 } from "./ai-transport.js";
 
 /**
- * A model running on this machine — the second way a standalone install gets AI. Ollama serves
- * models over plain HTTP on the machine it runs on; content goes there and no further (no account,
- * no key, no third party). The address IS configurable here, safe because no secret travels: the
- * mirror image of the API-key provider, which carries a credential and so has a fixed destination —
- * a configurable destination WITH a stored credential would redirect a live key, so neither is ever
- * both. The address is narrowed to an http(s) origin and requests refuse redirects. Both calls pass
- * the shared response schema as Ollama's `format` (smaller local models drift further producing
- * JSON alone), and `@trafficflow/core/mail`'s coercion is a floor: an unrecognised label lands at the Screener.
+ * A MODEL RUNNING ON THIS MACHINE — the second way a standalone install gets AI.
+ *
+ * Ollama serves models over plain HTTP on the machine it runs on. Message content goes to that
+ * address and no further: no account, no API key, no third party, and nothing that leaves the
+ * machine unless the address names another one.
+ *
+ * ── THE ADDRESS IS CONFIGURABLE HERE, AND THAT IS SAFE BECAUSE NO SECRET TRAVELS ────────────
+ *
+ * The mirror image of the API-key provider next door, and the pairing is deliberate: that one
+ * carries a stored credential and therefore has a fixed destination; this one has a
+ * configurable destination and therefore carries no credential. A configurable destination
+ * WITH a stored credential would be a supported way to redirect a live key, so neither provider
+ * is ever both.
+ *
+ * The address is still narrowed to an http(s) origin when it is saved, and requests refuse to
+ * follow redirects — a model server that answers with a 302 is not a model server.
+ *
+ * ── STRUCTURED OUTPUT, NOT PROSE PARSING ────────────────────────────────────────────────────
+ *
+ * Both calls pass the shared response schema as Ollama's `format`, so the answer is constrained
+ * to the same object the hosted path constrains it to. Smaller local models drift much further
+ * than large hosted ones when asked to produce JSON by instruction alone, and the coercion in
+ * `@trafficflow/core/mail` is a floor rather than a substitute: an unrecognised routing label
+ * lands at the Screener, where a person decides, and never auto-files.
  */
 
 /** Where a default install of Ollama listens, and the models a fresh configuration asks for. */
@@ -31,14 +47,23 @@ export const DEFAULT_OLLAMA = {
 } as const;
 
 /**
- * How many tokens a local answer may run to, and why its absence was a hang. The two hosted
- * providers bound their own answers (512 for a verdict, 2048 for a draft); this sent no bound, and
- * Ollama generates until the context window is exhausted, so the ceiling was the client deadline.
- * Measured against a real daemon: `qwen2.5:0.5b` fell into a repetition loop and never emitted a
- * stop token — unbounded it ran past 300 s; bounded at 2048 it stopped in 21 s with `done_reason:
- * "length"`. Small models drift this way far more readily, and this is the provider whose models are
- * small by definition. The numbers deliberately MATCH the hosted providers': the same question
- * deserves the same room, and a per-provider budget is a second thing that makes installs differ.
+ * HOW MANY TOKENS A LOCAL ANSWER MAY RUN TO, and why the absence of this was a hang.
+ *
+ * The two hosted providers bound their own answers (`max_tokens`: 512 for a routing or screening
+ * verdict, 2048 for a draft). This one sent no bound at all, and Ollama's default is to generate
+ * until the context window is exhausted — so the ceiling was the client deadline rather than a
+ * number anybody chose.
+ *
+ * That is not a theoretical gap. Measured against a real daemon: `qwen2.5:0.5b`, greedy-decoded
+ * under the drafting schema, fell into a repetition loop — `"Are you free Thursday? - Re: Are you
+ * free Thursday? - …"` — and never emitted a stopping token. Unbounded it ran past 45 s and past
+ * 300 s; bounded at 2048 it stopped in 21 s with `done_reason: "length"`. Small models drift this
+ * way far more readily than large ones, and this is the provider whose models are small by
+ * definition, on hardware whose owner is paying for the electricity.
+ *
+ * The numbers deliberately MATCH the hosted providers' rather than being tuned for local models:
+ * the same question deserves the same room to answer it, and a budget that differed per provider
+ * would be a second thing that makes one install answer differently from another.
  */
 const OLLAMA_MAX_TOKENS = {
   classify: 512,
@@ -111,11 +136,15 @@ export function ollamaTransport(opts: OllamaTransportOptions): AiTransport {
       throw new Error(`${what}: the local model server returned no message content`);
     }
     /**
-     * Parse first — hitting the ceiling is not the same as failing. `done_reason: "length"` means
-     * the model was still going when the budget ran out, and the intuitive reading ("truncated,
-     * refuse it") is wrong often enough to matter: when the last allowed token closes the object the
-     * content is complete and schema-valid, the model simply had not emitted its stop token. Refusing
-     * that throws away a good verdict, and MORE often on the small models this provider exists for.
+     * PARSE FIRST — hitting the ceiling is not the same as failing.
+     *
+     * `done_reason: "length"` means the model was still going when the budget ran out, and the
+     * intuitive reading of that ("the answer is truncated, refuse it") is wrong often enough to
+     * matter: when the last allowed token happens to close the object, the content is complete and
+     * schema-valid, and the model simply had not emitted its stop token yet. Refusing that would
+     * throw away a perfectly good verdict — and it would do it MORE often on the small models this
+     * provider exists for, where the budget is likeliest to be reached.
+     *
      * So the ceiling is only ever a DIAGNOSIS for content that does not parse, never a verdict on
      * content that does.
      */
@@ -151,12 +180,17 @@ export function ollamaTransport(opts: OllamaTransportOptions): AiTransport {
     },
 
     /**
-     * The screening question, on a model running on this machine. The same two constants the API-key
-     * provider next door sends, from the same module — so the question a person gets does not depend
-     * on where their model runs; a per-provider copy passes its own test while the two hosts answer
-     * one sender differently. The five-pile schema goes over as Ollama's `format`, which matters more
-     * here than on the hosted path (smaller local models drift further producing JSON alone), and
-     * `coerceScreeningResult` is the floor beneath it — an unrecognised label lands at the gate.
+     * THE SCREENING QUESTION, on a model running on this machine.
+     *
+     * The same two constants the API-key provider next door sends, from the same module — so the
+     * question a person gets does not depend on where their model happens to run. That is the whole
+     * claim of a shared prompt, and it is the one a per-provider copy would quietly break: each
+     * copy passes its own test while the two hosts answer one sender differently.
+     *
+     * The five-pile schema goes over as Ollama's `format`, which matters more here than it does on
+     * the hosted path: smaller local models drift much further when asked to produce JSON by
+     * instruction alone. `coerceScreeningResult` is still the floor beneath it — an unrecognised
+     * label lands at the gate, where a person decides, and never auto-files.
      */
     async screen(input: ClassifierInput): Promise<ClassifierResult> {
       const userPayload = classifyUserPayload(input);

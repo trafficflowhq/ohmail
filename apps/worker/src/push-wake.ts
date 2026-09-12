@@ -8,15 +8,71 @@ import {
 } from "@trafficflow/core/net";
 
 /**
- * THE WAKE SENDER — a content-free "something changed", and NOTHING ELSE, ever. `push_subscriptions`
- * gains its sender here: when an account's `change_log` advances, POST a CONSTANT to every registered
- * endpoint; the device then pulls `/sync` over its own authenticated connection. {@link WAKE_BODY} is a
- * module-level `const` with no interpolation — a wake travels through a third party (often somebody's
- * `ntfy`), so no count/folder/sender rides it; the only thing learned from the hub is `(accountId, seq)`,
- * the id used only to SELECT rows and `seq` dropped. Two wire forms: a row with `p256dh` AND `auth` gets
- * the constant SEALED (RFC 8291 `aes128gcm`) and signed (RFC 8292 VAPID); neither gets `application/json`,
- * fifteen bytes. NOT here: a wake to a DEAD process (`{"type":"wake"}` has no `id`, connector renders
- * nothing) and desktop-host wake (`push_subscriptions` is cloud-half) — both need native/foreground work. */
+ * ══════════════════════════════════════════════════════════════════════════════════════════
+ *  THE WAKE SENDER — a content-free "something changed", and NOTHING ELSE, ever
+ * ══════════════════════════════════════════════════════════════════════════════════════════
+ *
+ * `push_subscriptions` has existed for months with no sender anywhere. This is the sender, for the
+ * `unifiedpush` transport only: when an account's `change_log` advances, POST a CONSTANT to every
+ * UnifiedPush endpoint that account registered. The device then does what it would have done on a
+ * foreground open — pull from `/sync` — and gets its mail from us over its own authenticated
+ * connection.
+ *
+ * ── THE PAYLOAD IS A CLOSED CONSTANT. THIS IS THE INVARIANT, NOT A PREFERENCE. ────────────────
+ *
+ * {@link WAKE_BODY} is a module-level `const` with no interpolation, no template hole, no
+ * parameter and no caller-supplied part. A wake travels through a third party's servers — the
+ * distributor the user chose, which is very often somebody else's ntfy — so anything in the body
+ * is a fact about a person's mail handed to an operator they have no relationship with. Not the
+ * subject, not the sender, not a count, not "you have new mail in Ohbox": a COUNT is a fact, and
+ * a folder name is a fact.
+ *
+ * What that rules out is written down here because it is the shape of every plausible future
+ * regression: no argument to the POST derived from a message, a thread, a mailbox or an account;
+ * no query string appended to the endpoint; no header carrying a value from the database. The
+ * ONLY thing this module learns from the change-wake hub is `(accountId, seq)`, and the only
+ * thing it does with the account id is SELECT the rows to dial — the id never reaches the wire.
+ * `seq` is read and dropped: a sequence number is a per-account activity counter, and putting it
+ * in the body would let a distributor operator count somebody's mail.
+ *
+ * The content-free census beside this app's other tests is the evidence, and it is watched red by
+ * threading a subject through — not by reading this comment.
+ *
+ * ── TWO WIRE FORMS FOR ONE PAYLOAD, CHOSEN BY WHAT THE DEVICE REGISTERED ─────────────────────
+ *
+ * UnifiedPush 3.x endpoints are Web Push endpoints, and a connector that implements the encrypted
+ * profile renders ONLY an RFC 8291 `aes128gcm` body under an RFC 8292 VAPID `Authorization`. A
+ * distributor forwards whatever bytes arrive either way, so a plaintext constant does reach the
+ * device — and is then dropped by the connector, silently, with every status code on the path
+ * saying 2xx. So this module sends whichever form the registration asked for:
+ *
+ *  · the row has `p256dh` AND `auth` → the constant is SEALED to that device's key and signed
+ *    with this deployment's VAPID identity. Only the phone that registered can open it, and the
+ *    signature is what tells the connector the wake came from the server it paired with rather
+ *    than from anybody who learned the endpoint URL.
+ *  · the row has neither → the constant goes as it always did, `application/json`, fifteen bytes.
+ *    That arm is not legacy and is not deprecated: a raw consumer — an `ntfy` topic somebody
+ *    watches directly, a script — is a supported way to use this, and it has no keys to seal to.
+ *
+ * **The PLAINTEXT is identical in both.** Encryption changes who can read the fifteen bytes, not
+ * what they are, and the censuses are written to keep saying so: the ciphertext necessarily differs
+ * per device and per message (a fresh salt and ephemeral key each time — reusing either would leak
+ * the AES-GCM authentication key), so what they pin is the CONSTANT going in, the absence of any
+ * message-derived input, and — since a signed token is the obvious place for one to hide — the
+ * exact claim set of the VAPID JWT.
+ *
+ * ── WHAT IS *NOT* HERE, SO NOBODY READS THIS AS DONE ─────────────────────────────────────────
+ *
+ * A wake that arrives while the app's process is DEAD currently does nothing on the phone. The
+ * connector's service starts, decrypts, finds no `id` field in the payload — because the payload is
+ * `{"type":"wake"}` — and renders no notification, which is exactly what is wanted while the app is
+ * alive (a wake is not a notification) and is a dead end when it is not. Closing that needs native
+ * code on the device, not a change here. The app's copy says which of the two it does.
+ *
+ * Desktop-host wake is not here either and is not owed: `push_subscriptions` is a cloud-half
+ * table, so a desktop-host profile has nothing to register against. Foreground sync plus
+ * pull-to-refresh is that arm's story and the copy says so.
+ */
 
 /**
  * THE WAKE. Byte-identical, forever, on every deployment.
@@ -32,11 +88,16 @@ export const WAKE_BODY = '{"type":"wake"}';
 export const WAKE_BODY_BYTES = 15;
 
 /**
- * How long to sit on a wake before sending it. A mailbox that receives ten messages in one sync cycle
- * emits ten `change_log` advances, and ten POSTs would tell the distributor operator the SHAPE of
- * somebody's morning even with an empty body — arrival timing is itself metadata. The device pulls
- * everything in one `/sync` regardless, so the ninth wake buys nothing. Two seconds: long enough to
- * swallow a batch, short enough that "new mail wakes my phone" stays true.
+ * How long to sit on a wake before sending it.
+ *
+ * A mailbox that receives ten messages in one sync cycle emits ten `change_log` advances, and ten
+ * POSTs would tell the distributor operator the SHAPE of somebody's morning even with an empty
+ * body — arrival timing is itself metadata, which is the second reason to coalesce and the one
+ * that is easy to forget. The first is ordinary: the device is going to pull everything in one
+ * `/sync` regardless, so the ninth wake buys nothing and costs a request.
+ *
+ * Two seconds: long enough to swallow a batch, short enough that "new mail wakes my phone" is
+ * still true rather than technically true.
  */
 export const WAKE_DEBOUNCE_MS = 2_000;
 
@@ -56,12 +117,16 @@ export const WAKE_MIN_INTERVAL_MS = 2_000;
 export const WAKE_TIMEOUT_MS = 8_000;
 
 /**
- * The statuses that mean THIS REGISTRATION IS DEAD and the row must go. 404 and 410 only, and the
- * narrowness is the point: a UnifiedPush endpoint is deleted when the user removes the distributor,
- * uninstalls, or the distributor rotates its topic, and those are the codes an HTTP resource uses for
- * "gone". Everything else is a bad moment — a 429 throttle, a 5xx outage, a socket error — and pruning
- * on those would delete a working registration during an incident. Prune what is provably gone, retry
- * everything else on the next wake, never count failures toward a deletion.
+ * The statuses that mean THIS REGISTRATION IS DEAD and the row must go.
+ *
+ * 404 and 410 only, and the narrowness is the point. A UnifiedPush endpoint is deleted when the
+ * user removes the distributor, uninstalls the app, or the distributor rotates its topic — and
+ * those are the two codes an HTTP resource uses to say "gone". Everything else is a bad moment:
+ * a 429 is a distributor throttling us, a 5xx is a distributor having an outage, a socket error is
+ * a network. Pruning on any of those would delete a working registration during an incident and
+ * the user would have to re-register from Settings to get wakes back — a self-inflicted outage
+ * with no error anyone can act on. So the rule is: prune what is provably gone, retry everything
+ * else on the next wake, and never count failures toward a deletion.
  */
 const DEAD_ENDPOINT_STATUS = new Set([404, 410]);
 
@@ -88,25 +153,43 @@ export interface PushWakeDeps {
    */
   guard: PushEndpointGuard;
   /**
-   * DOES THIS PROCESS OWN THIS ACCOUNT? REQUIRED, with no default. The hub's `subscribeAll` hears
-   * EVERY account (it cannot enumerate accounts with a registered device up front), but a sharded
-   * deployment runs one leader PER SHARD and each reaches this module — without a filter every shard
-   * leader would POST to every registration (N duplicate wakes). `apps/worker/src/mailboxes.ts`'s
-   * `accountInShard` is the predicate (the same one the cron backstops use), INJECTED to keep the db
-   * surface narrow and REQUIRED because "own everything" is the wrong answer to get by forgetting: the
-   * shipped config is one shard, so a default would be correct today and silently duplicating when
-   * sharding turns on.
+   * DOES THIS PROCESS OWN THIS ACCOUNT? REQUIRED, with no default.
+   *
+   * The hub's `subscribeAll` hears EVERY account, which is what the sender needs (it cannot
+   * enumerate the accounts with a registered device up front — the set changes without it being
+   * told). But a sharded deployment runs one leader PER SHARD, each under its own advisory lock,
+   * and each of those leaders reaches this module. Without a filter every shard leader would POST
+   * to every registration: N duplicate wakes per message, and a device with no way to tell which
+   * instance is authoritative.
+   *
+   * `apps/worker/src/mailboxes.ts`'s `accountInShard` is the predicate, and it is the same one the
+   * cron backstops already use to refuse work outside their own shard. It is INJECTED rather than
+   * imported so this module keeps its narrow db surface, and it is REQUIRED rather than defaulted
+   * because "own everything" is the wrong answer to get by forgetting: the shipped configuration
+   * is one shard, so a default would be correct today and silently duplicating on the day sharding
+   * is turned on.
    */
   ownsAccount: (accountId: string) => Promise<boolean>;
   /**
-   * THIS DEPLOYMENT'S VAPID IDENTITY, OR THE REASON IT HAS NONE. REQUIRED, no default — a defaulted
-   * absence is the untested branch shipping. The discriminated `VapidFromEnv`, not a nullable identity,
-   * because three answers are three behaviours: `configured` — keyed registrations sealed and signed,
-   * keyless get the plaintext constant; `absent` — keyless runs, keyed SKIPPED (counted, warned once)
-   * because a plaintext body to a connector expecting the encrypted profile is dropped on the device;
-   * `invalid` — the operator configured something unusable, so this sender does not start at all
-   * (falling back to keyless would hide that the configured thing does nothing). The worker keeps
-   * running — mail sync is never held hostage — and the refusal is logged with the reason.
+   * THIS DEPLOYMENT'S VAPID IDENTITY, OR THE REASON IT HAS NONE. REQUIRED, with no default.
+   *
+   * Required for `guard`'s and `ownsAccount`'s reason — a defaulted absence is the untested branch
+   * shipping — and it is the discriminated `VapidFromEnv` rather than a nullable identity because
+   * the three answers are three different behaviours and a nullable value cannot tell two of them
+   * apart:
+   *
+   *  · `configured` — keyed registrations are sealed and signed; keyless ones still get the
+   *    plaintext constant.
+   *  · `absent` — the operator configured nothing. The keyless arm runs; keyed registrations are
+   *    SKIPPED (counted, and warned about exactly once) because a plaintext body sent to a
+   *    connector that expects the encrypted profile is dropped on the device with nothing on the
+   *    wire to show it. Sending it anyway would look like a delivery and be a discard.
+   *  · `invalid` — the operator configured SOMETHING and it is unusable: a truncated paste, a
+   *    mismatched pair, one half of it. Then this sender does not start at all, and that is the
+   *    point: if it fell back to the keyless arm, the wakes an operator could still see working
+   *    would hide the fact that the thing they configured does nothing. A configuration error must
+   *    not be masked by a partially working feature. The worker keeps running — mail syncing is
+   *    never held hostage to this — and the refusal is logged with the reason.
    */
   vapid: VapidFromEnv;
   log?: WakeLog;
@@ -120,13 +203,19 @@ export interface PushWakeDeps {
 }
 
 /**
- * The one network operation, as a port. `url`, `pin` and `keys` are the ONLY arguments, and the
- * signature is the census's first line of defence: no parameter here that a MESSAGE could be threaded
- * through. A body argument would be exactly that, which is why the constant is read from module scope
- * rather than passed in (and why an "opaque already-framed request" seam was rejected — a body
- * parameter in a hat). `keys` is not content: `p256dh` and `auth` are registration provenance, the same
- * class as the endpoint URL, and the census pins their SHAPE to those two fields; `null` means no keys
- * were offered and the plaintext constant goes out.
+ * The one network operation, as a port.
+ *
+ * `url`, `pin` and `keys` are the ONLY arguments, and the signature is the census's first line of
+ * defence: there is no parameter here that a MESSAGE could be threaded through. A body argument
+ * would be exactly such a parameter, which is why the constant is read from module scope by the
+ * implementation rather than passed in — and why an "opaque already-framed request" seam was
+ * rejected: that is a body parameter wearing a hat.
+ *
+ * `keys` is the third argument and it is not content. `p256dh` and `auth` are registration
+ * provenance — the same class of value as the endpoint URL, which has always crossed this seam:
+ * they came from the device at registration time, they say nothing about any message, and the
+ * census pins their SHAPE to exactly those two fields so a threaded value fails it. `null` means
+ * the registration offered no keys and the plaintext constant is what goes out.
  */
 export type PushWakePost = (
   url: string, pin: readonly string[], keys: WebPushKeys | null,
@@ -149,15 +238,47 @@ export interface RunningPushWake {
 }
 
 /**
- * The default POST: pinned to the addresses the guard cleared, redirects NOT followed, the response
- * body DESTROYED rather than read. A distributor answering `302 Location: http://169.254.169.254/`
- * would under a following client dial cloud metadata; `pinnedHttpRequest` is built on `http(s).request`
- * (follows nothing), so this holds by construction. The response is a HOSTILE input (the distributor
- * was chosen by whoever registered the endpoint): the first version ran `clearTimeout` in a `finally`
- * that fires at the HEADERS, so a slow-drip body held a socket open for ever — the timer now lives
- * until the response is DONE. It also lacked an `'error'` listener; a mid-body RST routes to the
- * `ClientRequest` (which has one) and is absorbed, but the local listener stays so the safety is local.
- * `destroy()`, not `resume()`: we want no bytes. */
+ * The default POST: pinned to the addresses the guard cleared, redirects NOT followed, and the
+ * response body DESTROYED rather than read.
+ *
+ * Redirects matter more here than in most places. A distributor that answers `302 Location:
+ * http://169.254.169.254/` would, under a following client, turn a cleared endpoint into a dial
+ * at cloud metadata — the gate can only ever speak about the URL it was given. `pinnedHttpRequest`
+ * is built on `http(s).request`, which follows nothing, so this holds by construction rather than
+ * by remembering to pass an option.
+ *
+ * ── THE RESPONSE IS A HOSTILE INPUT, AND THE FIRST VERSION OF THIS FUNCTION TREATED IT AS DATA ──
+ *
+ * The distributor at the other end of this socket was chosen by whoever registered the endpoint. On
+ * a multi-account server that is any authenticated account, and "the endpoint I registered points
+ * at a server I wrote" is the ordinary case rather than the exotic one. So the response is not a
+ * message, it is an attack surface, and the first version of this function got two things wrong
+ * about it, both reachable from any account:
+ *
+ *  · **`clearTimeout` ran in a `finally` that fires when the HEADERS arrive.** `pinnedHttpRequest`
+ *    resolves at the response head, not at its end, so the abort that was supposed to bound this
+ *    request stopped covering it exactly when the body began. A server that answered `200` and then
+ *    dripped one byte every few seconds held a socket open for ever, and every later wake added
+ *    another. The timer now lives until the response is DONE — and since nothing here ever reads a
+ *    body, "done" means destroyed immediately.
+ *  · **`resume()` with no `'error'` listener.** The review that found the timer also called this a
+ *    process death: a mid-body RST emits `'error'` on an `IncomingMessage` nobody is listening to,
+ *    which in Node is an unhandled error, and it arrives after this function has resolved so the
+ *    caller's `try/catch` cannot see it. **MEASURED, AND THAT SECOND HALF IS NOT REACHABLE HERE** —
+ *    a standalone reproduction of exactly this shape (headers, one byte, `socket.destroy()`, an
+ *    error listener on the REQUEST and none on the response, which is `pinnedHttpRequest`'s shape
+ *    verbatim) reports `req 'error' fired` and NO uncaught exception. Node routes a mid-body socket
+ *    fault to the `ClientRequest`, and `pinnedHttpRequest` has a listener there, so it is absorbed.
+ *    The listener below stays anyway, and the reason is worth stating rather than leaving it as
+ *    cargo: without it, this function's safety is a property of a DIFFERENT module's `reject`
+ *    continuing to exist. That is a fine thing to rely on and a bad thing to depend on silently.
+ *    It costs one no-op closure to make the property local.
+ *
+ * `destroy()` rather than `resume()` because we categorically do not want the bytes: it releases the
+ * socket at once instead of waiting out however long the peer takes to finish talking. The cost is
+ * that the connection is not reused, which for a per-account-debounced wake is not a cost worth
+ * measuring. Nothing about the response is logged except its status.
+ */
 function makeDefaultPost(
   opts: { signal: AbortSignal; timeoutMs: number; vapid: VapidIdentity | null },
 ): PushWakePost {
@@ -166,13 +287,17 @@ function makeDefaultPost(
     url: string, pin: readonly string[], keys: WebPushKeys | null,
   ): Promise<{ status: number }> {
     /**
-     * SEAL, OR DO NOT — and the headers follow from that one decision. `sealed === null` is the
-     * plaintext arm, byte-identical to what this sender has always put on the wire; otherwise the
-     * constant is encrypted to the device's key and the request grows two headers (content coding and
-     * the signature saying which server sent it). The `throw` is unreachable by construction — `fire`
-     * skips a keyed row when there is no identity, which `skipped()` counts — and is here rather than a
-     * non-null assertion because the alternative bug is silently sending plaintext to a device that
-     * discards it (a delivery that is not one); a throw is caught and retried, a silent discard is forever.
+     * ── SEAL, OR DO NOT — and the headers follow from that one decision ──────────────────────
+     *
+     * `sealed === null` is the plaintext arm, byte-identical to what this sender has always put on
+     * the wire. Otherwise the constant is encrypted to the device's own key and the request grows
+     * exactly two headers: the content coding, and the signature that says which server sent it.
+     *
+     * The `throw` is unreachable by construction — `fire` skips a keyed row when there is no
+     * identity, which is what `skipped()` counts — and it is here rather than a non-null assertion
+     * because the alternative shape of this bug is silently sending a plaintext body to a device
+     * that will discard it, i.e. a delivery that is not one. A throw is caught by the caller's
+     * per-endpoint `catch` and retried on the next wake; a silent discard is forever.
      */
     let sealed: Buffer | null = null;
     let sealedHeaders: Record<string, string> = {};
@@ -255,13 +380,17 @@ export function vapidFromEnv(env: NodeJS.ProcessEnv = process.env): VapidFromEnv
 }
 
 /**
- * Start the sender. Returns immediately; everything after is the hub's callback. FAILURE IS ALWAYS
- * DEGRADATION, NEVER A CRASH: this runs inside the always-on worker beside the sync loop, so an
- * unhandled rejection is an outage of the whole organizer for a nice-to-have latency improvement (the
- * device polls on foreground regardless). Every path is wrapped — the hub callback cannot throw, the
- * debounce timer's body cannot throw, the query cannot throw out, and one endpoint's failure cannot
- * stop the one beside it. A wake that does not go out is unnoticed; a worker that dies takes
- * everybody's mail with it.
+ * Start the sender. Returns immediately; everything after that is the hub's callback.
+ *
+ * ── FAILURE IS ALWAYS DEGRADATION, NEVER A CRASH ─────────────────────────────────────────────
+ *
+ * This runs inside the always-on worker beside the sync loop, so an unhandled rejection here is
+ * an outage of the whole organizer for a feature whose entire job is a nice-to-have latency
+ * improvement — the device polls on foreground regardless. So every path is wrapped: the hub
+ * callback cannot throw (the hub swallows it anyway, and relying on that would be relying on
+ * somebody else's catch), the debounce timer's body cannot throw, the query cannot throw out, and
+ * one endpoint's failure cannot stop the endpoint beside it. A wake that does not go out is a
+ * wake nobody notices; a worker that dies takes everybody's mail with it.
  */
 export function startPushWake(deps: PushWakeDeps): RunningPushWake {
   const { db, source, guard, ownsAccount, log } = deps;
@@ -271,23 +400,31 @@ export function startPushWake(deps: PushWakeDeps): RunningPushWake {
   const now = deps.now ?? Date.now;
 
   /**
-   * AN UNUSABLE VAPID CONFIGURATION STOPS THE SENDER HERE, BEFORE IT SUBSCRIBES TO ANYTHING. Not a
-   * degraded mode, and the one place this module deliberately does LESS than it could on a failure:
-   * the keyless arm would still work, so an operator watching their own `ntfy` topic would see wakes
-   * and conclude the feature is fine while every phone they care about gets nothing. A half-working
-   * feature is worse than an off one when the working half is the half nobody tests with. The worker
-   * is untouched — this returns an inert handle, mail keeps syncing, and the reason is in the log with
-   * no key material in it.
+   * AN UNUSABLE VAPID CONFIGURATION STOPS THE SENDER HERE, BEFORE IT SUBSCRIBES TO ANYTHING.
+   *
+   * Not a degraded mode, and this is the one place in this module that deliberately does LESS on a
+   * failure than it could. The keyless arm would still work — so an operator watching their own
+   * `ntfy` topic would see wakes arriving and conclude the feature is fine, while every phone they
+   * actually care about gets nothing. A half-working feature is worse than an off one when the
+   * working half is the half nobody is testing with.
+   *
+   * The worker itself is untouched: this returns an inert handle, mail keeps syncing, and the
+   * reason is in the log with no key material in it.
    */
   if (deps.vapid.kind === "invalid") {
     /**
-     * ONE `reason` STRING, with the specific cause folded in — not a second `why` field. The logger
-     * applies an allow-list to field NAMES and silently drops the rest as `droppedFields`; `why` is not
-     * on the list, so a `{ why, reason }` pair loses the half that says WHICH misconfiguration this is.
-     * Measured on the first managed deploy: `push_wake_started` shipped `vapid` and `encryptedWakes`
-     * and logged `droppedFields=["vapid","encryptedWakes"]`. Folding rather than widening the list is
-     * deliberate (`log.ts` argues a per-caller widening stops it being enumerable), and `reason` already
-     * exists for a sentence an operator can act on.
+     * ONE `reason` STRING, with the specific cause folded into it — not a second `why` field.
+     *
+     * The logger applies an allow-list to field NAMES and silently drops anything not on it,
+     * reporting the omission as `droppedFields`. `why` is not on that list, so a `{ why, reason }`
+     * pair loses exactly the half that says WHICH misconfiguration this is. Measured on the first
+     * managed deploy of this module: `push_wake_started` shipped `vapid` and `encryptedWakes` and
+     * logged `droppedFields=["vapid","encryptedWakes"]` — a line whose entire purpose was to state
+     * whether encrypted wakes were on, conveying nothing.
+     *
+     * Folding rather than widening the allow-list is deliberate: `log.ts` argues that a per-caller
+     * widening is how that list stops being enumerable, and `reason` already exists for precisely
+     * this — a sentence an operator can act on.
      */
     log?.warn("push_wake_vapid_invalid", {
       state: deps.vapid.kind,
@@ -358,14 +495,22 @@ export function startPushWake(deps: PushWakeDeps): RunningPushWake {
     }).from(pushSubscriptions).where(and(
       eq(pushSubscriptions.accountId, accountId),
       /**
-       * BOTH WEB-PUSH-SHAPED TRANSPORTS, and `apns` deliberately absent. This read `unifiedpush` alone
-       * while the phone was the only client that could receive a wake. A browser registration has
-       * always been storable — `POST /push/subscriptions` validates and writes `webpush` rows with
-       * `endpoint`, `p256dh`, `auth` — but nothing dialled them. Widening the predicate is the whole
-       * fix; the sender needed no change because a `webpush` row carries both key columns and takes the
-       * SEALED arm. `apns` stays out and its absence is load-bearing: an Apple device token is not an
-       * endpoint URL, so it cannot be POSTed to, and it is refused by omission until that sender exists.
-       * The payload does not move — both arms send the same closed constant, and the census keeps saying so.
+       * BOTH WEB-PUSH-SHAPED TRANSPORTS, and `apns` deliberately absent.
+       *
+       * This read `unifiedpush` alone for as long as the phone was the only client that could
+       * receive a wake. A browser registration has always been storable — `POST /push/subscriptions`
+       * validates and writes `webpush` rows with their `endpoint`, `p256dh` and `auth` — and
+       * nothing ever dialled them, so the rows sat there and the browser was never woken. Widening
+       * the predicate is the whole of that fix; the sender below needed no change, because a
+       * `webpush` row carries both key columns by validation and therefore takes the SEALED arm
+       * that already existed for connectors that offer keys.
+       *
+       * `apns` stays out and its absence is load-bearing rather than an oversight: an Apple device
+       * token is not an endpoint URL, so it cannot be POSTed to, and this function would have to
+       * grow a second protocol. It is refused by omission until that sender exists.
+       *
+       * The payload does not move. Both arms send the same closed constant, and the census over
+       * this file's source is what keeps saying so.
        */
       inArray(pushSubscriptions.transport, ["unifiedpush", "webpush"]),
     ));

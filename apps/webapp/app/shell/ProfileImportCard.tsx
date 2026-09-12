@@ -335,9 +335,6 @@ export function ProfileImportCard({
   onAcknowledge: () => void;
 }) {
   const t = useTranslations("profileImport");
-  // The phone holder's sentence is one sentence for the whole app, and it lives with the other
-  // holder copy (`mailboxes.reader*`) rather than being spelled a second time here.
-  const tm = useTranslations("mailboxes");
   const locale = useLocale();
   const format = useFormatter();
   const busy = phase.kind === "applying";
@@ -401,13 +398,6 @@ export function ProfileImportCard({
               : t("savedBy", { when })}
         </p>
       ) : null}
-      {/* WHO SAVED IT, WHEN IT WAS A PHONE. The dated line above has no phone arm — a phone fell
-          into the bare "Saved {when}.", which names nobody, and the local arm one line up says
-          "on another computer". The holder line is its own paragraph so it is said whether or not
-          the stamp parsed, in the same words every other surface uses for a phone. */}
-      {producer.kind === "mobile"
-        ? <p className="pfi-meta">{tm("readerHolderPhoneShort")}</p>
-        : null}
       {errorLine}
       {/* What the button will do, before it is pressed — including what it will not do. */}
       <p className="pfi-note">{t("willDo")}</p>

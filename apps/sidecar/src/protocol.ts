@@ -7,14 +7,36 @@ import { FrameError, MAX_BODY_BYTES, PROTOCOL_VERSION } from "./frame.js";
 import type { CredentialState } from "./engine.js";
 
 /**
- * `Request`/`Response` ⇄ frame marshalling. `createApp(...).handle` is a plain `Request → Response`
- * function with no server binding, which lets the stdio bridge be a shim rather than a port; this is
- * that shim, and the ONLY place that knows how a request becomes bytes (host and client both go
- * through these four functions). SET-COOKIE is special and silently lossy: iterating a `Headers`
- * joins repeated names with `", "`, destructive for a cookie value with a comma, so it travels in its
- * own array via `getSetCookie()` — the local sidecar mints no cookies, and this keeps that true by
- * evidence. The response body is read with a CEILING: `/events` (SSE) would buffer indefinitely, so
- * the deps turn it OFF (the structural fix), and {@link readBodyBounded} is the backstop that aborts a merely-enormous response with a 502.
+ * `Request`/`Response` ⇄ frame marshalling.
+ *
+ * `createApp(...).handle` is a plain `Request → Response` function with no server binding, which
+ * is what lets the stdio bridge be a shim rather than a port: nothing has to be listening for the
+ * app to answer a request. This file is that shim, and it is deliberately the ONLY place that
+ * knows how a request becomes bytes: the host and the client both go through these four
+ * functions, so there is one encoding to get right and one place a mismatch shows up.
+ *
+ * ── SET-COOKIE IS SPECIAL AND SILENTLY LOSSY IF YOU FORGET ────────────────────────────────
+ *
+ * Iterating a `Headers` combines repeated names with `", "`, and for `Set-Cookie` that is
+ * destructive: two cookies become one malformed string, because a cookie value may itself contain
+ * a comma (`Expires=Wed, 09 Jun 2027 …`). `Response.headers.getSetCookie()` is the only correct
+ * reader, so set-cookie travels in its own array field and is re-`append`ed on the far side. The
+ * LOCAL sidecar is bearer-only (`allowCookieAuth: false`) and mints no cookies — this exists so
+ * that stays true by evidence rather than by nobody having looked.
+ *
+ * ── THE RESPONSE BODY IS READ WITH A CEILING ──────────────────────────────────────────────
+ *
+ * A whole `Response` has to be buffered before it can be framed, so a route that streams
+ * indefinitely would buffer indefinitely. `GET /events` (SSE) is exactly that route, and
+ * `DEFAULT_SSE.enabled` is `true`, so the sidecar's deps turn it OFF — the structural fix, since a
+ * disabled `/events` answers a finite `503 sse_disabled` and `HttpAdapter` already treats SSE as
+ * an optional wake signal it can live without.
+ *
+ * {@link readBodyBounded} is the second lock: it drains the body through a reader and aborts the
+ * moment the total passes the cap, so a merely-enormous response fails loudly with a 502 instead
+ * of growing until the process dies. It does NOT rescue an infinite stream that never reaches the
+ * cap — nothing at this layer can, which is why the `sse` switch is the primary defence and this
+ * is the backstop.
  */
 
 /** A request travelling to the sidecar. */
@@ -71,14 +93,27 @@ export interface ReadyInfo {
   userId: string;
   mailboxId: string;
   /**
-   * Whether this launch has a mailbox password it can actually use. `ready` already means "serving",
-   * and serving is deliberately not "connected": the engine comes up and serves the mirror with no
-   * password, because a missing credential is a prompt rather than a broken app. The shell has to SAY
-   * which happened, and without this field its only evidence is that the mailbox never syncs — a
-   * symptom identical to a slow first sync, an unreachable server and a stand-down. `absent` (nothing
-   * stored or supplied), `unreadable` (stored but this install's key does not open it), `ready`. It
-   * is the value AT LAUNCH and describes the SEED's state at boot; a mailbox added from Settings is
-   * re-pointed by its own door within the request, so this frame is a launch-time snapshot the shell re-reads.
+   * Whether this launch has a mailbox password it can actually use.
+   *
+   * `ready` already means "serving", and serving is deliberately not the same as connected: the
+   * engine comes up and serves the mirror with no password at all, because a missing credential is
+   * a prompt rather than a broken app (`engine.ts`'s `start()`). The shell is the thing that has to
+   * SAY which of the two happened, and without this field its only evidence is that the mailbox
+   * never syncs — a symptom that looks identical to a slow first sync, an unreachable server and a
+   * stand-down.
+   *
+   * `absent` — nothing stored and nothing supplied. `unreadable` — a credential is stored and this
+   * install's key does not open it. `ready` — there is a password to log in with.
+   *
+   * It is the value AT LAUNCH and is never updated in place, and the shell re-reads it rather
+   * than trusting this field to age well.
+   *
+   * It used to say a password entered afterwards "takes effect on the next launch". That is still
+   * true of THIS FRAME — it is a launch-time snapshot and nothing rewrites it — but it is no
+   * longer true of the install: a mailbox added from Settings is re-pointed by its own door,
+   * which detaches its runtime and attaches a fresh one, so its new password is in force within
+   * the request rather than after a restart. The frame describes the SEED's state at boot, which
+   * is the one the shell renders before any mailbox list exists.
    */
   credentialState: CredentialState;
   /**

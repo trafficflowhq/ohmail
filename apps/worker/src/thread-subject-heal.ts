@@ -2,16 +2,44 @@ import { and, asc, eq, sql } from "drizzle-orm";
 import { recordChanges, threads, type LedgerTx, type Tx } from "@trafficflow/db";
 import { baseSubject, SUBJECT_PREFIX_PATTERN, silentLogger, type Logger } from "@trafficflow/core";
 
-/* THE THREAD-NAME HEAL — one-shot, DB-only. `thread-backfill.ts` heals thread IDENTITY
- * (`messages.thread_id IS NULL`); this heals thread NAMES. A thread's subject is written ONCE at create
- * through `baseSubject`, and until the localized prefix table existed a localized FORWARD kept its prefix
- * ("WG: …" while the same conversation's "AW:" replies were stripped). Fixing `baseSubject` renames nothing
- * retroactively (a subject is never overwritten at ingest — `POST /threads/:id/rename` is a user write), so
- * the heal is a separate, explicit, one-shot decision. The transform is exactly `subject →
- * baseSubject(subject)` where it changes something, guarded `WHERE subject = <the value read>` so a user
- * rename mid-pass wins. Every healed row appends a `thread` update to `change_log` in the same transaction
- * (else invisible until re-bootstrap); lock order is `threads` first, `allocateSeq` last
- * (`ThreadResolution.changes`). KEYSET-paged (`id > last`), not predicate extinction (a dry run changes nothing). */
+/* ══════════════════════════════════════════════════════════════════════════════════════════
+   THE THREAD-NAME HEAL — one-shot, DB-only
+   ══════════════════════════════════════════════════════════════════════════════════════════
+
+   ── WHAT IT REPAIRS, AND WHY IT IS NOT THE THREAD BACKFILL ─────────────────────────────────
+
+   `thread-backfill.ts` heals thread IDENTITY (`messages.thread_id IS NULL`), and its backlog
+   is drained: identity comes from the header chain, which was always stored. This pass heals
+   thread NAMES. A thread's subject is written ONCE, at create, through `baseSubject` — and
+   until the localized prefix table existed, a thread created by a localized FORWARD kept the
+   prefix ("WG: …" while the same conversation's "AW:" replies were stripped). Those rows are
+   already written; fixing `baseSubject` renames nothing retroactively, because a thread's
+   subject is deliberately never overwritten at ingest (`POST /threads/:id/rename` is a user
+   write). So the heal is a separate, explicit, one-shot decision — not something ingest may do.
+
+   ── THE RENAME INVARIANT, AND WHY THIS PASS DOES NOT VIOLATE IT IN PRACTICE ────────────────
+
+   The transform is exactly `subject → baseSubject(subject)`, applied only where it changes
+   something. A user rename is clobbered only if the user deliberately renamed a conversation
+   TO a reply/forward-prefixed string — which is byte-indistinguishable from the stored defect
+   this pass exists to repair, and the outcome is the same string the product would have named
+   it at create. The update is guarded (`WHERE subject = <the value read>`), so a rename that
+   lands mid-pass wins over the heal, not the other way round.
+
+   ── MIRRORS LEARN THROUGH THE CHANGE LOG, WHICH IS WHY THIS IS NOT AN UPDATE STATEMENT ─────
+
+   Every healed row appends a `thread` update to `change_log` in the same transaction, or the
+   fix would be invisible on every client until a re-bootstrap. Lock order matches ingest and
+   the thread backfill: ALL `threads` row locks first, `allocateSeq`'s account row lock last
+   (see `ThreadResolution.changes` in packages/core for why that order is load-bearing).
+
+   ── KEYSET PAGINATION, NOT PREDICATE EXTINCTION ────────────────────────────────────────────
+
+   The backfill can loop "select WHERE thread_id IS NULL until empty" because every row it
+   touches leaves the predicate. A DRY RUN of this pass changes nothing, so a predicate loop
+   would re-read the first page for ever; the cursor (`id > last`) makes dry and apply walk
+   the same pages exactly once.
+   ══════════════════════════════════════════════════════════════════════════════════════════ */
 
 /** Rows examined per page — one transaction per page in apply mode, same figure as the backfill. */
 export const SUBJECT_HEAL_BATCH = 100;

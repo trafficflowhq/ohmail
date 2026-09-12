@@ -1,17 +1,88 @@
 import { UNMETERED_STORAGE_CAP, normalizeMime, type Logger, type NormalizedMessage, type StorageCap } from "@trafficflow/core/mail";
-import { epochOf, parseRef, sameEpoch, type MailboxAdapter } from "@trafficflow/core/adapters/imap";
+import { parseRef, type MailboxAdapter } from "@trafficflow/core/adapters/imap";
 import type { JunkFiledHuskRow, WorkerRepo } from "@trafficflow/core/adapters/drizzle-repo";
 
 /**
- * THE `junk_filed` CONVERGENCE PASS — a body husked by a spam verdict (`message_bodies.withheld_reason =
- * 'junk_filed'`, mail 0065) is refilled once its message is demonstrably alive in watched space again,
- * whoever moved it. The "Not junk" RESCUE (`junk-window.ts#rescueJunk`) refills at move time; the adopt
- * path refills an arrival that CARRIES bytes (`pipeline.ts` → `restoreWithheldBody`); this pass owns the
- * rest (a drag back in another client, a provider un-junk). Candidate predicate IS the idempotency:
- * `listJunkFiledHusks` answers husks with a live primary instance and no tombstone, and the filing
- * completion `forgetInstanceAt`s the parked Junk locator (`junk-filing.ts`), so "has a primary instance" is
- * "alive outside Junk" (mail 0071's partial index; no `done_at`). One VERIFY/REWRITE, shared with the
- * rescue (`core/husk-restore.ts#unhuskJunkFiledBody`), never a second path. Three per-cycle bounds (`JUNK_RESTORE_MAX_PAGES`, `JUNK_RESTORE_FETCHES_PER_CYCLE`, `JUNK_RESTORE_FETCH_CHUNK`), keyset-paged; refusals shelved in `refusedFor` (new build) and `capDeferredFor` (clock `AT_CAP_RETRY_MS`). Reads with BODY.PEEK, moves/flags/deletes nothing. */
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *  THE `junk_filed` CONVERGENCE PASS — a body husked by a verdict is refilled once its message
+ *  is demonstrably alive in watched space again, whoever moved it there
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *
+ * A spam verdict that filed a message to the provider's native `\Junk` husked its stored body
+ * (`message_bodies.withheld_reason = 'junk_filed'`, mail 0065): the bytes live on in Junk, which
+ * is the master. When that message LEAVES Junk again there are two doors, and only one of them
+ * was closed:
+ *
+ *  · the "Not junk" RESCUE (`packages/api/src/junk-window.ts#rescueJunk`) — our own verb, which
+ *    fetches the raw while the message is still in Junk and refills the husk right after the
+ *    move; and
+ *  · EVERYTHING ELSE — the user drags it back to the Imbox in another mail client, the provider
+ *    un-junks it on its own — where nobody pressed anything here. The ordinary scan then records
+ *    the message alive in a WATCHED folder while its body row is still the verdict's husk.
+ *
+ * The adopt path already refills a husk whose arrival CARRIES bytes (`pipeline.ts` →
+ * `restoreWithheldBody`), so the population this pass owns is what that left behind: an arrival
+ * that carried no body (a flag-only observation, an instance recorded as a second copy), a
+ * refill declined at cap that the account has since made room for, or a husk that predates the
+ * adopt-time refill. Without this pass, every such row renders as an empty message for ever —
+ * on webmail, on the desktop, on mobile — for mail the user demonstrably wants back.
+ *
+ * ── THE CANDIDATE PREDICATE IS STRUCTURAL, AND IT IS THE IDEMPOTENCY ─────────────────────────
+ *
+ * `listJunkFiledHusks` answers `junk_filed` husks whose message has a LIVE PRIMARY INSTANCE and
+ * no tombstone. Instances exist only for enumerated folders, and the filing completion
+ * `forgetInstanceAt`s the parked Junk locator (`junk-filing.ts`), so "has a primary instance"
+ * IS "alive outside Junk" — no junk-path comparison to drift. A restored row loses its marker
+ * and drops out of the predicate; a finished mailbox selects nothing and costs one indexed read
+ * per cycle (mail 0071's partial index). No `done_at` column, on `redacted-restore.ts`'s
+ * argument: the shrinking set is the bookmark.
+ *
+ * ── ONE VERIFY/REWRITE, SHARED WITH THE RESCUE — NEVER A SECOND RESTORE PATH ────────────────
+ *
+ * The fetch here is the worker's (the adapter's `fetchByUid` against the instance's folder, on
+ * the connection the lease already holds); VERIFY and REWRITE are `core/husk-restore.ts`'s
+ * `unhuskJunkFiledBody`, the same function the rescue calls. That is where the two-witness
+ * identity check (Message-ID or content fingerprint — bytes are never stored into a row they do
+ * not belong to), the lock-and-recheck (`FOR UPDATE`, `withheld_reason = 'junk_filed'` must
+ * still stand: the rescue and this pass are different processes and can race on one husk; the
+ * loser writes nothing) and the at-cap posture (`reserveBodyBytes`; a decline keeps the husk,
+ * marker still TRUE, the bytes live on in the mailbox) all live. Two copies of that policy is
+ * how one door drifts, so this module owns none of it.
+ *
+ * ── BOUNDED PER CYCLE, RESUMABLE, AND IT NEVER THROWS FOR A POLICY OUTCOME ──────────────────
+ *
+ * Three bounds, all per cycle: SQL pages walked (`JUNK_RESTORE_MAX_PAGES` — a bound, not
+ * `while (true)`, `redacted-restore.ts`'s shape), messages RE-READ from the server
+ * (`JUNK_RESTORE_FETCHES_PER_CYCLE`, its 50 — every one is a full-body FETCH), and bytes in
+ * flight per FETCH (`JUNK_RESTORE_FETCH_CHUNK` locators per adapter call — the adapter
+ * accumulates every source buffer of one call before returning, so a 50-wide ask at the 8 MiB
+ * ceiling could hold ~400 MiB; four at a time caps one call at ingest's own 32 MiB batch
+ * bound, and each chunk's buffers release before the next is read — what caught the
+ * unchunked version). The walk is keyset-paged on `messages.id` within a cycle, because a
+ * refused row keeps its husk and stays a candidate: a cursorless page would re-offer the same
+ * refusals for ever (`redacted-restore.ts#selectCandidates`, verbatim). Rows this process
+ * already declined are SKIPPED WITHOUT A FETCH and — deliberately — without consuming the walk:
+ * the page bound is the only thing they cost, so a mailbox whose first two hundred candidates
+ * are all remembered refusals still reaches the fresh candidate behind them in the same cycle
+ * (the examined-based bound starved exactly that row).
+ *
+ * The refusal memory has two shelves, because two different things can change a verdict:
+ *  · {@link refusedFor} — per process, for outcomes only a NEW BUILD changes: over the
+ *    ceiling, unparseable, identity mismatch. A restart retries them.
+ *  · {@link capDeferredFor} — per process WITH A CLOCK (`AT_CAP_RETRY_MS`): an at-cap decline
+ *    is retried after the interval, because the CAP side changes under a running worker (mail
+ *    deleted, a tier upgraded) and a permanent memo would leave the body empty until a
+ *    redeploy on an account that has long since made room.
+ *
+ * What is NOT remembered at all, only deferred to a later cycle: an epoch mismatch (the
+ * instance row is stale — a UID means nothing outside the epoch that issued it, and the scan
+ * owns re-numbering) and a UID the server no longer holds there (moved or expunged since the
+ * instance was written; the scan's next delete observation forgets the instance and the
+ * predicate self-heals). Both are the scan's evidence to record, not this pass's.
+ *
+ * It reads with the adapter's targeted fetch and NOTHING ELSE: no move, no flag, no delete. The
+ * only writes are the shared rewrite's — body, snippet, marker, one `change_log` `update`.
+ */
 
 /** SQL pages one cycle may walk before giving up and saying so. A bound, not `while (true)`. */
 export const JUNK_RESTORE_MAX_PAGES = 20;
@@ -40,16 +111,34 @@ export const AT_CAP_RETRY_MS = 60 * 60 * 1000;
  */
 export const JUNK_RESTORE_MAX_BYTES = 8 * 1024 * 1024;
 
-/* THE THREE SHELVES BELOW ARE PER-PROCESS, AND THE RULE THAT MAKES THAT CORRECT. Stated as a rule because
- * the sibling that broke it cost somebody's mail: `sensitive-backfill.ts` kept this kind of shelf AND was
- * gated by a DURABLE completion marker, so one dropped connection refused a message for the life of the
- * process, the walk finished, the marker landed, and the message stayed redacted for ever (fixed 2026-09-01
- * by splitting decided from undecided refusals). THE RULE: process-scoped progress state is safe exactly
- * while it cannot be LAUNDERED INTO A DURABLE CLAIM — losing it must cost work, never correctness. This
- * pass satisfies it structurally: THERE IS NO COMPLETION MARKER, so a restart clears all three shelves
- * (`refusedByMailbox`, `capDeferredByMailbox`, `resumeAfterByMailbox`) together and re-walks from the top,
- * every loss toward MORE looking. A future durable "done" marker must move these three to disk in the same
- * commit, or it re-creates the sibling's defect one file over. */
+/* ════════════════════════════════════════════════════════════════════════════════════════════
+   THE THREE SHELVES BELOW ARE PER-PROCESS, AND THE RULE THAT MAKES THAT CORRECT
+
+   Stated here as a rule rather than left as three separate coincidences, because the sibling pass
+   that broke it cost somebody's mail. `sensitive-backfill.ts` kept exactly this kind of shelf AND
+   was gated by a DURABLE completion marker, so one dropped connection refused a message for the
+   life of the process, the walk then finished, the marker landed, and that message stayed
+   redacted for ever. Fixed 2026-09-01 by splitting refusals the classifier DECIDED from refusals
+   it could not decide, and refusing to certify over the second kind.
+
+   THE RULE: process-scoped progress state is safe exactly while it cannot be LAUNDERED INTO A
+   DURABLE CLAIM. Losing it must cost work, never correctness.
+
+   This pass satisfies it structurally, and the reason is worth naming because it is not luck:
+   THERE IS NO COMPLETION MARKER HERE. Nothing durable ever says "this mailbox's junk restores are
+   done", so a restart clears all three shelves together and the next visit walks from the top and
+   re-learns them. The direction of every loss is towards MORE looking:
+
+     · `refusedByMailbox` — a restart re-attempts what it had declined. Safe direction.
+     · `capDeferredByMailbox` — a retry CLOCK, so a restart costs one wasted fetch.
+     · `resumeAfterByMailbox` — a rotation cursor whose WALL (`refusedByMailbox`) is per-process
+       too, so the two are lost together and a walk from the top makes real progress. That
+       pairing is the whole argument: a durable cursor over a per-process wall would resume PAST
+       rows nothing remembers refusing, which is the shape that starves.
+
+   A future change that gives this pass a durable "done" marker must move these three to disk in
+   the same commit, or it re-creates the sibling's defect one file over.
+   ════════════════════════════════════════════════════════════════════════════════════════════ */
 
 const refusedByMailbox = new Map<string, Set<string>>();
 /** The per-process memory of rows a new BUILD might change — see the header's two shelves. */
@@ -217,26 +306,10 @@ export async function junkRestorePass(deps: JunkRestoreDeps): Promise<JunkRestor
       }
       result.fetched += rows.length;
 
-      // An UNNAMED folder epoch proves nothing about any row in this chunk, so the whole chunk
-      // waits rather than being restored onto whatever now wears those UIDs. Said once per
-      // chunk: the fact is the folder's, not each row's.
-      if (!epochOf(found.uidValidity).known) {
-        result.deferred += rows.length;
-        log?.warn("junk_restore_epoch_unknown", {
-          mailboxId, accountId, folder,
-          reason: "the server named no UIDVALIDITY for this folder; the husks stand and are re-offered",
-        });
-        continue;
-      }
-
       for (const row of rows) {
         // THE EPOCH GUARD — the retry pass's, verbatim: a UID number means nothing outside the
         // epoch that issued it. The instance row is stale; the scan re-numbers, we wait.
-        // Anything but a NAMED epoch on both sides that AGREE defers: a contradiction means the
-        // scan re-numbered, and an unnamed one (the server answered zero, or nothing) proves
-        // nothing at all. `!== "0"` used to wave the unnamed case through and restore a husk
-        // onto whatever now wears the UID.
-        if (!sameEpoch(epochOf(found.uidValidity), epochOf(row.uidValidity))) { result.deferred++; continue; }
+        if (found.uidValidity !== "0" && found.uidValidity !== row.uidValidity) { result.deferred++; continue; }
         // Moved or expunged since the instance was written. The scan's next delete observation
         // forgets the instance and the predicate heals itself; nothing to remember here.
         if (found.absent.includes(row.uid)) { result.deferred++; continue; }

@@ -63,10 +63,6 @@ export const accountRoutes: Route[] = [
           // key the sweep removes them BY — so erasure brings their expiry forward and the next
           // maintenance pass takes row and object together. See `account-deletion-service.ts`.
           stagingTicketsExpired: result.stagingTicketsExpired,
-          // The signup funnel, reported separately for the same reason: these rows are
-          // PSEUDONYMISED, not deleted. The operator's count of who was waiting, invited and
-          // registered is a fact about the service; the address on the row is not, and it goes.
-          redactedTables: result.redacted,
           // Said plainly rather than buried: the operator's own audit trail and the
           // customer's confirmation mail both read from this.
           retained: "billing records only, under a pseudonymous account id",

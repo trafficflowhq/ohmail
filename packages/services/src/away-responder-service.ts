@@ -6,7 +6,7 @@ import {
   type AwayPile,
 } from "@trafficflow/core/mail";
 import { AWAY_THROTTLES, type AwayThrottle } from "./away-responder-pass.js";
-import { withAccountTx, type ServiceContext } from "./context.js";
+import type { ServiceContext } from "./context.js";
 import { ServiceError } from "./errors.js";
 import type { AwayResponderDTO } from "./dto/types.js";
 import { planAccountFanOut } from "./reader-request.js";
@@ -197,7 +197,7 @@ export class AwayResponderService {
      * this install organizes, plus one request per install holding the others. Wrapped in a
      * transaction because the plan, the local write and the request rows are one decision.
      */
-    return withAccountTx(ctx, async (tx) => {
+    return asTx(ctx).transaction(async (tx) => {
       const plan = await planAccountFanOut(tx as unknown as Tx, ctx.accountId, "profile.update");
 
       const travelling = {

@@ -31,9 +31,8 @@ const escapeText = (s: string): string =>
  * Promote a plain-text body to `{html, text}`.
  *
  * Empty in, empty out — a whitespace-only body promotes to `{html: "", text: ""}` rather than to
- * an empty paragraph, so a caller can tell an absent body from a blank one and store no html at
- * all. (Said without quoted phrases on purpose: this leaf is admitted into the client bundle only
- * while it imports nothing, and the guard that proves that reads text, not syntax.)
+ * an empty paragraph, so a caller can tell "there is nothing here" from "here is a blank
+ * message" and store no html at all.
  */
 export function plainTextToOutboundBody(source: string): PromotedBody {
   // Line endings first. A model answer is not guaranteed to use `\n`, and a stray `\r` left in
@@ -81,66 +80,4 @@ export function plainTextToOutboundBody(source: string): PromotedBody {
   closeParagraph();
 
   return { html, text: lines.join("\n") };
-}
-
-/**
- * Ceiling on one stored or sent PLAIN body, in bytes. 262144 = 256 KiB — `drafts.html`'s own
- * number (`0037_draft_html.sql`), for that migration's stated reason: two ceilings that differ are
- * a second number to keep true. A rich draft's `body` is DERIVED from html already held to it, so
- * plain-only was the one arm bounded by nothing but the 4 MiB request door.
- *
- * A tripwire, not a working part: 256 KiB of plain text is a quarter of a million characters, far
- * past anything a person types into a compose form.
- */
-export const DRAFT_BODY_MAX_BYTES = 262144;
-
-/**
- * UTF-8 length, counted the way Postgres `octet_length` counts it, without allocating.
- *
- * Not `TextEncoder`/`Buffer`: this runs in the compose editor's change handler, and encoding a
- * quarter-megabyte body on every keystroke is a quarter-megabyte of garbage per keystroke. A lone
- * surrogate encodes as U+FFFD, which is three bytes — the same answer both standard encoders give.
- * A test beside this file reconciles the count against `Buffer.byteLength`.
- */
-export function utf8ByteLength(text: string): number {
-  let bytes = 0;
-  for (let i = 0; i < text.length; i += 1) {
-    const c = text.charCodeAt(i);
-    if (c < 0x80) bytes += 1;
-    else if (c < 0x800) bytes += 2;
-    else if (c >= 0xd800 && c <= 0xdbff && i + 1 < text.length
-      && text.charCodeAt(i + 1) >= 0xdc00 && text.charCodeAt(i + 1) <= 0xdfff) {
-      bytes += 4;
-      i += 1;
-    } else bytes += 3;
-  }
-  return bytes;
-}
-
-/**
- * Is this body past {@link DRAFT_BODY_MAX_BYTES}? The fast paths are what let it be asked per
- * keystroke: one UTF-16 unit weighs one to three UTF-8 bytes, so only the band between those
- * bounds is walked.
- *
- * The whole client rule, and the repair path falls out of it: an oversized draft still opens and
- * still takes edits — only the SAVE is refused — so cutting it down brings it back under.
- */
-export function draftBodyOverCeiling(text: string): boolean {
-  if (text.length > DRAFT_BODY_MAX_BYTES) return true;
-  if (text.length * 3 <= DRAFT_BODY_MAX_BYTES) return false;
-  return utf8ByteLength(text) > DRAFT_BODY_MAX_BYTES;
-}
-
-/**
- * Is this DRAFT past the ceiling — whichever half of it will be stored?
- *
- * The effective body is the larger of the two halves, which is how the request door is priced
- * (`input-bounds-census.test.ts` takes the MAXIMUM of the two caps, never their sum: a request
- * carrying `body` alongside `html` is a 400). One predicate and one number, so the composer's
- * sentence cannot be true of one half and false of the other. The markup is measured as the editor
- * holds it; the server measures what it stores, and its 413 stays the authority for anything the
- * sanitizer grows.
- */
-export function draftOverCeiling(body: string, html?: string | null): boolean {
-  return draftBodyOverCeiling(body) || (html != null && draftBodyOverCeiling(html));
 }

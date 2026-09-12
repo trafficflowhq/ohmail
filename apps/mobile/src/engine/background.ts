@@ -1,12 +1,12 @@
 /**
- * What happens to the mailbox when the app leaves the screen — one state machine, two platforms.
- * A standalone phone IS the organizer, and an app that is not running organizes nothing. Android
- * keeps a foreground service alive; iOS suspends the process, and a claim held by a suspended app
- * is the double-organizer hazard, so it is given back on the way out and taken again on the way
- * in. TWO questions, each asked once: `organizerRuns` — can the organizer run? — read from the
- * service's own state, never from {@link BackgroundDeps.platform}; and `stateNow().claimed` — is
- * the mailbox ours? — read from the engine's record of the claim, never from whether a pass has
- * reported itself organizing. The release is `handBack()`; nothing here writes `ohmail/_meta`.
+ * What happens to the mailbox when the app leaves the screen — one state machine, two
+ * platforms. A standalone phone IS the organizer, and an app that is not running organizes
+ * nothing; the fourth door's sentences say each platform's answer. Android: a foreground
+ * service keeps the process alive — no notification, nothing organizing. iPhone: iOS suspends
+ * the process, and a claim held by a suspended app is the double-organizer hazard, so the claim
+ * is given back on the way out and taken again on the way in. One module: what forks is
+ * {@link BackgroundDeps.platform} and whether `service` is present (`background-native.ts`
+ * binds Android). The release is the engine's own `handBack()` — nothing writes `ohmail/_meta`.
  */
 import type { StopOrganizingOutcome } from "./standalone-door";
 
@@ -102,12 +102,14 @@ export interface BackgroundEngine {
   resume(): Promise<void>;
   /**
    * THE PERSON'S STOP, RECORDED WHERE A RELAUNCH READS IT — the engine's `stopOrganizing`.
+   *
    * Separate from {@link handBack} because the two are opposite instructions with opposite
-   * durability: `handBack` leaves the ROW saying organizer so the next resume takes the mailbox
-   * back with no press, which is what an app leaving the foreground needs, while a person's stop
-   * must survive the app being killed, so it goes through the release the row records — and a
-   * reader with no press never re-enters the gate again. Three answers, not a boolean; see
-   * {@link StopOrganizingOutcome}.
+   * durability. `handBack` leaves the ROW saying organizer so the next resume takes the mailbox
+   * back with no press, which is what an app leaving the foreground needs. A person's stop must
+   * survive the app being killed, so it goes through the release the row records — and a reader
+   * with no press never re-enters the gate again.
+   *
+   * Three answers, not a boolean — see {@link StopOrganizingOutcome}.
    */
   stopOrganizing(): Promise<StopOrganizingOutcome>;
   /**
@@ -115,22 +117,18 @@ export interface BackgroundEngine {
    * door; it is the ordinary answer while another machine organizes the mailbox and owes nobody a
    * sentence.
    */
-  claimHere(): Promise<"claimed" | "held" | "unreadable" | "refused">;
+  claimHere(): Promise<"claimed" | "held" | "refused">;
   /**
-   * What the engine says about each mailbox right now — THREE facts, and no two of them are the
-   * negation of another.
+   * What the engine says about each mailbox right now.
    *
-   * `claimed` is the one this module decides on: is this mailbox's claim ours? `organizing` flips
-   * a round trip LATER — the claim is appended to `ohmail/_meta` and the permit is a second write
-   * — so between them a mailbox just given to this phone reads like one nobody consented to.
-   * `standDown` is true both before anybody consents and after another machine took the mailbox,
-   * and only the second is a state the claim watch may try to come back from.
+   * `standDown` is the second fact and it is not the negation of the first: this install organizes
+   * nothing both before anybody has consented and after another machine took the mailbox, and only
+   * the second of those is a stand-down the claim watch may try to come back from.
    */
   organizing(): readonly {
     readonly mailboxId: string;
     readonly organizing: boolean;
     readonly standDown: boolean;
-    readonly claimed: boolean;
   }[];
 }
 
@@ -142,25 +140,14 @@ export interface BackgroundDeps {
   /** The notice, re-read per start so a language change between backgrounds is picked up. */
   readonly notice: () => ServiceNotice;
   /**
-   * SAY IT IN THE APP, ONCE — the battery-saver announcement, and ONLY that one.
+   * SAY IT IN THE APP, ONCE — the battery-saver announcement.
    *
-   * Called at most once per {@link BackgroundOrganizing} for battery saver or a per-app background
-   * restriction: a person who has battery saver on has it on all day, and a sentence repeated at
-   * every background is a sentence nobody reads. The app renders it the next time it is open; this
-   * machine does not decide where.
+   * Called at most once per {@link BackgroundOrganizing} for the whole class of "the system will
+   * not let this organize in the background": a person who has battery saver on has it on all day,
+   * and a sentence repeated at every background is a sentence nobody reads. The app renders it the
+   * next time it is open; this machine does not decide where.
    */
   readonly announceRestricted: () => void;
-  /**
-   * AND THE OTHER CAUSE, WHICH IS NOT THAT ONE — the notification permission.
-   *
-   * Both declines used to arrive as `announceRestricted`, and the sentence it reaches names battery
-   * saver: *"Battery saver does not let ohmail organize in the background on this phone."* On an
-   * Android 13+ first install, where `POST_NOTIFICATIONS` starts denied and the service refuses to
-   * start behind a notification nobody can see, that sentence is FALSE and it is the only thing the
-   * panel said. Two causes, two records, two sentences — and the person can act on this one, which
-   * is the whole reason it is worth telling them apart. Once per session, for the same reason.
-   */
-  readonly announceNotificationsOff: () => void;
   /**
    * How often the service asks the engine whether it still organizes anything — armed with
    * the service and cleared with it, never otherwise. The claim can be lost while the app is
@@ -172,28 +159,28 @@ export interface BackgroundDeps {
    */
   readonly checkEveryMs?: number;
   /**
-   * Say that the mailbox's state may have moved — the screen's cue to ask again. Settings' "This
-   * phone" panel read the door at RENDER and nothing re-rendered it, so it showed the state from
-   * when it was opened. Every arm that can move the claim calls this, and so does the claim watch,
+   * SAY THAT THE MAILBOX'S STATE MAY HAVE MOVED — the screen's cue to ask again.
+   *
+   * Settings' "This phone" panel read the door at RENDER and nothing re-rendered it, so it showed
+   * the state from the moment it was opened: measured on a device saying `Stopping` for two and a
+   * half minutes over a finished stop and `Organizing` for two minutes over a mailbox another
+   * machine held. Every arm here that can move the claim calls this, and so does the claim watch —
    * which is what carries an ENGINE-side change (a stand-down mid-poll, a holder going away) onto
-   * a screen already open. It carries no state: the caller's own reader decides whether anything
-   * changed, and a payload here would be a second copy of the answer the engine already gives.
+   * a screen that is already open.
+   *
+   * It carries no state. The caller's own reader decides whether anything actually changed; a
+   * payload here would be a second copy of the answer the engine already gives.
    */
   readonly stateChanged?: () => void;
-  /**
-   * Diagnostics — the ENGINE's own hardened logger, handed back out to the app. NEVER the address:
-   * see {@link ServiceNotice}, the notice's body is not logged. `detail` is required rather than
-   * optional so the artifact's `Diagnostic` fits here without an adapter — an app wrapping this
-   * seam is an app one edit away from composing its own line.
-   */
-  readonly log?: (event: string, detail: Record<string, unknown>) => void;
+  /** Diagnostics. NEVER the address — see {@link ServiceNotice}; the body is not logged. */
+  readonly log?: (event: string, detail?: Record<string, unknown>) => void;
 }
 
 /** The claim watch's cadence. A minute: the engine's own poll is slower, so this never leads it. */
 export const CLAIM_WATCH_MS = 60_000;
 
 /**
- * WHY THE MAILBOX WAS GIVEN BACK, KEPT, OR THE NOTIFICATION TAKEN DOWN — a closed set of CODES.
+ * WHY THE MAILBOX WAS GIVEN BACK, OR THE NOTIFICATION TAKEN DOWN — a closed set of CODES.
  *
  * Codes and not sentences, for two reasons that point the same way. Nobody reads these but a
  * developer holding a log, so an English sentence here is prose in a file the copy census scans —
@@ -214,25 +201,11 @@ export type BackgroundReason =
   | "notification_not_showing"
   /** The person's stop: the notification's action, or a swipe-dismiss. */
   | "stopped_from_notification"
-  /** This install HAD the mailbox and no longer does — another machine took it. The claim is NOT
-   *  ours to hand back here. */
+  /** This install organizes nothing any more — another machine took the mailbox, the lease could
+   *  not be read, or the mailbox was removed. The claim is NOT ours to hand back here. */
   | "claim_lost"
-  /** Nothing of ours: no claim this install wrote — before anybody has consented to this phone,
-   *  and after it has given the mailbox back. Not a loss; there was never anything to lose. */
-  | "no_claim_here"
   /** The mailbox this install had stood down from is free again, and this install took it back. */
-  | "holder_left"
-  /** The organizer is running behind its notification and goes on running, so leaving the screen
-   *  gives nothing back — the only code here that is not about something ending. */
-  | "organizer_still_running";
-
-/**
- * Whether the SYSTEM declined — battery saver, or a notification it will not show — rather than
- * this build having no background service at all. From the person's side those two are one fact,
- * which is why the line carries this beside the code that tells them apart.
- */
-const systemDeclined = (why: BackgroundReason): boolean =>
-  why === "system_restricted" || why === "notification_not_showing";
+  | "holder_left";
 
 /** What the app holds. One per standalone engine; disposed with it. */
 export interface BackgroundOrganizing {
@@ -264,14 +237,8 @@ export function createBackgroundOrganizing(deps: BackgroundDeps): BackgroundOrga
       /* See above: a subscriber's failure is its own. */
     }
   };
-  /**
-   * Announced at most once EACH — see {@link BackgroundDeps.announceRestricted}. Two latches and
-   * not one: a phone can meet battery saver and a denied notification in one session, and a shared
-   * latch would spend the first sentence's turn on the second cause and leave one of the two facts
-   * unsaid for the rest of the session.
-   */
-  let announcedRestricted = false;
-  let announcedNotificationsOff = false;
+  /** Announced at most once — see {@link BackgroundDeps.announceRestricted}. */
+  let announced = false;
   /** True from a completed hand-back until a resume has been asked for. */
   let handedBack = false;
   let disposed = false;
@@ -311,7 +278,7 @@ export function createBackgroundOrganizing(deps: BackgroundDeps): BackgroundOrga
     }
     const unknown = all.filter((m) => m.released === null).length;
     handedBack = all.length > 0 && unknown === 0;
-    log("organizer_hand_back", { why, mailboxes: all.length, unresolved: unknown, handedBack });
+    log("organizer_hand_back", { why, mailboxes: all.length, unknown, handedBack });
     moved();
     return handedBack;
   };
@@ -330,14 +297,25 @@ export function createBackgroundOrganizing(deps: BackgroundDeps): BackgroundOrga
   };
 
   /**
-   * The person's stop — REMEMBERED, which a hand-back is not. The notification action and a
-   * swipe-dismiss used to run {@link stopBackground}, which removes the claim but leaves the ROW
-   * saying organizer — wrong here, because the row is what the next launch reads: dismiss, reopen,
-   * and the resume wrote a fresh claim nothing serviced (a message unfiled, Settings saying
-   * `Organizing`), and the mailbox reads as taken so the laptop is refused. So this goes through
-   * the engine's own release, which the row records; the notification comes down second so the
-   * claim is not still standing when the surface that advertises it disappears. A release that
-   * recorded nothing still takes it down — the person pressed stop, and the claim lapses on its own.
+   * ══ THE PERSON'S STOP — REMEMBERED, WHICH A HAND-BACK IS NOT ═══════════════════════════════
+   *
+   * The notification's action and a swipe-dismiss are the documented way to stop organizing on
+   * this phone, and they used to run {@link stopBackground}: the claim out of the folder, the ROW
+   * left saying organizer. Correct for every automatic decline beside it, and wrong for this one,
+   * because the row is the only thing the next launch reads. Measured twice on a device: dismiss
+   * the notification, reopen the app with no kill, and the foreground path's resume wrote a fresh
+   * claim into `ohmail/_meta` that nothing then serviced — frozen heartbeat, no notification, no
+   * service, a message unfiled for 70 s, and Settings saying `Organizing` the whole time. A
+   * mailbox reading as taken by a phone that is organizing nothing also refuses the person's
+   * laptop until the claim goes stale.
+   *
+   * So this goes through the engine's own release, which the row records. The notification comes
+   * down second, on {@link stopBackground}'s order and for its reason: the claim must not still be
+   * standing when the one surface that says it is disappears.
+   *
+   * A release that recorded nothing still takes the notification down. The person pressed stop;
+   * "Organizing" over an install that has been asked to stop is the false state either way, and
+   * the claim lapses on its own.
    */
   const stopByPerson = async (): Promise<void> => {
     let stopped: StopOrganizingOutcome = "refused";
@@ -376,13 +354,16 @@ export function createBackgroundOrganizing(deps: BackgroundDeps): BackgroundOrga
   };
 
   /**
-   * The stood-down watch's own timer — a second interval, because its LIFETIME differs. The claim
-   * watch above lives with the NOTIFICATION (armed and disarmed with the service, defending
-   * against a notification outliving its claim); this one lives with the SESSION — the app being
-   * open — defending against a stand-down nothing re-reads. Folding them would tie "may this phone
-   * take its mailbox back" to whether a notification is showing, which on Android is backwards: the
-   * phone is in front of the person when it is NOT showing. The CADENCE is the claim watch's own
-   * ({@link beatEveryMs}).
+   * THE STOOD-DOWN WATCH'S OWN TIMER — a second interval, because its LIFETIME is different.
+   *
+   * The claim watch above lives with the NOTIFICATION: it is armed when the service starts and
+   * disarmed with it, because what it defends against is a notification outliving the claim it
+   * advertises. This one lives with the SESSION — the app being open — because what it defends
+   * against is a stand-down nothing ever re-reads. Folding them into one timer would tie
+   * "may this phone take its mailbox back" to whether a notification happens to be showing, which
+   * on Android is exactly backwards: the phone is in front of the person when it is NOT showing.
+   *
+   * The CADENCE is the claim watch's own ({@link beatEveryMs}) rather than a number of its own.
    */
   let reclaim: ReturnType<typeof setInterval> | null = null;
 
@@ -483,121 +464,63 @@ export function createBackgroundOrganizing(deps: BackgroundDeps): BackgroundOrga
     void serial(() => stopByPerson());
   }) ?? ((): void => undefined);
 
-  /**
-   * ══ IS THE ORGANIZER RUNNING — the ONE predicate the claim follows ══════════════════════════
-   *
-   * The claim stands exactly while the thing that renews it can run. On Android that is the
-   * notification's own lifecycle, read from the platform at the moment of asking; with no service
-   * — iOS, and a build without the module — nothing runs once the app leaves, so the mailbox goes
-   * back. NEVER THE PLATFORM NAME: `deps.platform` decides nothing, it only picks which code
-   * names the same absence ({@link absentReason}). Asked, never remembered — the system can take
-   * the service at any moment, and a cached `true` is the false state this exists to prevent.
-   */
-  const organizerRuns = (): boolean => {
-    if (deps.service === null) return false;
-    try {
-      return deps.service.running();
-    } catch (err) {
-      /* A platform that cannot say is not evidence that it is organizing — the same direction as
-         every other unreadable state here. */
-      log("organizer_service_state_unreadable", { err });
-      return false;
-    }
-  };
-
-  /** Which absence it is, for the LOG's sake only — see {@link organizerRuns}. */
-  const absentReason = (): BackgroundReason =>
-    deps.platform === "ios" ? "left_the_foreground" : "no_background_service";
-
-  /**
-   * Android's way out. Every arm that declines to organize in the background lands here.
-   *
-   * THE LINE COMES FIRST, before the hand-back's IMAP round trip: a line written after the
-   * release says nothing about a release that hangs. THE REASON DECIDES WHICH SENTENCE — the
-   * caller carries no flag, which was `true` on both declines and collapsed them onto the
-   * battery-saver sentence. The announcement and the line's `restricted` field are derived from
-   * the reason rather than passed beside it and able to disagree.
-   */
-  const declineBackground = async (why: BackgroundReason): Promise<void> => {
-    log("organizer_background_declined", { why, restricted: systemDeclined(why) });
-    if (why === "system_restricted" && !announcedRestricted) {
-      announcedRestricted = true;
+  /** Android's way out. Every arm that declines to organize in the background lands here. */
+  const declineBackground = async (why: BackgroundReason, restricted: boolean): Promise<void> => {
+    if (restricted && !announced) {
+      announced = true;
       deps.announceRestricted();
-    } else if (why === "notification_not_showing" && !announcedNotificationsOff) {
-      announcedNotificationsOff = true;
-      deps.announceNotificationsOff();
     }
     await stopBackground(why);
   };
 
   const toBackground = async (): Promise<void> => {
-    if (deps.service === null) {
-      /* NOTHING CAN RUN ONCE THE APP LEAVES, so the mailbox goes back and somebody's desktop can
-         have it while this phone is asleep. On iOS that is the platform and not a gap; the code
-         says which absence it is and decides nothing — see {@link organizerRuns}. `restricted:
-         false` is load-bearing: nothing on this phone said no, so announcing battery saver here
-         would be a false sentence. Not through {@link declineBackground} — no service to drop. */
-      const why = absentReason();
-      log("organizer_background_declined", { why, restricted: false });
-      await handBack(why);
+    if (deps.platform === "ios" || deps.service === null) {
+      /* NO SERVICE, NO BACKGROUND ORGANIZING — and on iOS that is the platform, not a gap. The
+         claim goes back so somebody's desktop can have the mailbox while this phone is asleep. */
+      await handBack(deps.platform === "ios" ? "left_the_foreground" : "no_background_service");
       return;
     }
-    /* ══ IS THE CLAIM OURS — the second predicate, and it is about OWNERSHIP ═════════════════
-     *
-     * A reader does not post "Organizing": a notification naming this phone as the organizer
-     * would state something false until the claim watch ran. But "does this install organize
-     * anything" was the wrong question — the claim reaches `ohmail/_meta` a round trip BEFORE the
-     * runtime reports itself organizing, and inside that window a phone just GIVEN the mailbox
-     * read as a reader. So the fact is `claimed`. `!== false` and not `=== true`: an engine that
-     * cannot say is not evidence the mailbox is not ours. */
-    /* ONE READ for the whole transition — see {@link stateNow}: the decision, the code it logs
-       and the word the hold carries all name the same instant. */
-    const state = stateNow();
-    if (state?.claimed === false) {
-      log("organizer_background_declined_reader", { why: nothingOfOurs(state) });
-      /* NO HAND-BACK, in both states. Either another install holds the mailbox or nobody ever
-         asked this phone for it, and asking the server to expunge records by our own id is a
-         write about a mailbox this install has just been told is not its own. */
+    /* A reader does not post "Organizing". Another install took the mailbox and this
+     * install's gate stood down; the notification names this phone as the organizer, so
+     * starting one states something false on a surface a person cannot argue with — and it
+     * would stand until the claim watch ran, a minute away at best. The watch is the belt for
+     * a claim lost later; this is the state at the moment of backgrounding. `!== false` and
+     * not `=== true`: an engine that cannot say is not evidence that it organizes nothing,
+     * and taking that as a decline would hand the mailbox back over a momentary failure.
+     */
+    if (organizingNow() === false) {
+      log("organizer_background_declined_reader", { why: "claim_lost" });
+      /* NO HAND-BACK. The claim is not ours — the gate has already stood down — and asking the
+         server to expunge records by our own id would be a write about a mailbox this install has
+         been told it does not hold. */
       disarmWatch();
       moved();
       return;
     }
-    /* ALREADY UP? Then the restriction is not this transition's question. It is asked BEFORE a
-       start, because a service the system may kill at any moment should not be started — but a
-       service that is STANDING is organizing whatever the battery-saver flag says, and tearing
-       down a live organizer because somebody turned battery saver on between two backgrounds was
-       the mailbox locked for the staleness window with nothing running. If the system does take
-       it, the beat and the watchdog say so within two intervals and the claim goes back then. */
-    const alreadyUp = organizerRuns();
-    if (!alreadyUp && deps.service.restricted()) {
-      await declineBackground("system_restricted");
+    if (deps.service.restricted()) {
+      await declineBackground("system_restricted", true);
       return;
     }
+    let showing = false;
     try {
-      /* RE-READ PER START — a language change between backgrounds re-posts the notice. On a
-         service that is already standing this refreshes the words and nothing else; what it
-         ANSWERS is not read, because the next line asks the service itself. */
-      await deps.service.start(deps.notice());
+      showing = await deps.service.start(deps.notice());
     } catch (err) {
       log("organizer_service_start_failed", { err });
+      showing = false;
     }
-    if (!organizerRuns()) {
+    if (!showing) {
       /* THE SENTENCE THE DOOR MADE — "it organizes while its notification is shown". A service
          whose notification is not showing (a denied permission, a refused background start) may
          not go on organizing, so this hands the mailbox back like every other decline. It counts
          as restricted for the announcement: from the person's side it is the same fact. */
-      await declineBackground("notification_not_showing");
+      await declineBackground("notification_not_showing", true);
       return;
     }
-    /* THE CLAIM STANDS, and this line is the only place that says so. A device run reads the
-       background machine's decision off the log and nowhere else; without it the difference
-       between "kept the mailbox" and "did nothing" is invisible until the mail server is asked. */
-    log("organizer_background_holds", { why: "organizer_still_running", state: organizingWord(state) });
     armWatch();
   };
 
   const toForeground = async (): Promise<void> => {
-    if (organizerRuns()) {
+    if (deps.platform === "android" && deps.service !== null && deps.service.running()) {
       /* THE SERVICE STAYS UP. It holds a claim that is live and a notification that is true, and
          tearing it down here would release a mailbox this app is now in the foreground of only to
          claim it again — two IMAP writes and a window, for nothing. Settings reads
@@ -636,29 +559,17 @@ export function createBackgroundOrganizing(deps: BackgroundDeps): BackgroundOrga
    * surface a person cannot argue with. So the service goes when the claim does.
    */
   /**
-   * WHAT THE ENGINE SAYS ABOUT THIS INSTALL'S MAILBOXES — one read, three answers, or `null`.
+   * DOES THIS INSTALL ORGANIZE ANYTHING RIGHT NOW — `true`, `false`, or `null` for "cannot say".
    *
-   * ONE read per act, and that is not thrift: the claim can move between two reads, so a decision
-   * taken on one and a line written from another contradict each other about the same instant.
-   * `null` is the third answer every caller treats apart from a negative one — an engine that
-   * cannot answer is not evidence the mailbox is not ours, and a decline or a teardown over a
-   * momentary failure is a decision taken on nothing.
+   * Three answers and not two, because the two arms that read this must treat a failed read
+   * differently from a negative one: an engine that cannot answer is not evidence that it organizes
+   * nothing, and both a decline and a notification teardown over that would be a decision taken on
+   * a momentary failure.
    */
-  const stateNow = (): { claimed: boolean; standDown: boolean; organizing: boolean } | null => {
+  const organizingNow = (): boolean | null => {
     try {
       const states = deps.engine.organizing();
-      return {
-        /* THE FACT THE DECISIONS TURN ON. Not the negation of the others and not a slower copy of
-           `organizing`: the engine calls the mailbox ours from the moment its gate is entitled to
-           the lease, which is before the claim is in the folder and a round trip before the pass
-           reports itself organizing — see {@link BackgroundEngine.organizing}. */
-        claimed: states.some((m) => m.claimed),
-        /* A SEPARATE QUESTION, because both of the others are false before anybody has consented
-           and only a stand-down is a state the claim watch may come back from. */
-        standDown: states.some((m) => m.standDown),
-        /* READ FOR THE LOG'S WORD AND NOTHING ELSE — see {@link organizingWord}. */
-        organizing: states.some((m) => m.organizing),
-      };
+      return states.some((m) => m.organizing);
     } catch (err) {
       log("organizer_state_unreadable", { err });
       return null;
@@ -666,34 +577,36 @@ export function createBackgroundOrganizing(deps: BackgroundDeps): BackgroundOrga
   };
 
   /**
-   * WHICH of the two ways a mailbox is not ours, for the LOG's sake only.
+   * IS THIS INSTALL STOOD DOWN FROM A MAILBOX ANOTHER MACHINE TOOK — `true`, `false`, or `null`.
    *
-   * Decides nothing — {@link absentReason}'s shape, for its reason: "another machine took it" and
-   * "there was never a claim here" want different remedies from a person reading a device log,
-   * and neither is a different act.
+   * The third answer is `organizingNow`'s and for its reason: a read that failed is not evidence.
+   * It is a SEPARATE question from "does this install organize anything", because both answers are
+   * false before anybody has consented, and only a stand-down is a state to come back from.
    */
-  const nothingOfOurs = (state: { standDown: boolean }): BackgroundReason =>
-    state.standDown ? "claim_lost" : "no_claim_here";
+  const standDownNow = (): boolean | null => {
+    try {
+      return deps.engine.organizing().some((m) => m.standDown);
+    } catch (err) {
+      log("organizer_state_unreadable", { err });
+      return null;
+    }
+  };
 
   /**
-   * THE RUNTIME'S OWN WORD for a claim this phone holds, for the hold line — the only thing
-   * `organizing` decides. A claim taken a moment ago reads `starting` until the gate's permit
-   * lands, so a device log shows the hold AND the state it was held in; the sentence a person
-   * sees is the engine's rather than the copy's.
+   * ══ A REFUSAL COSTS TICKS, AND IT IS ONE LINE PER CLASS ════════════════════════════════════
+   *
+   * Measured on a device: a holder released its claim, and this watch pressed every ten seconds
+   * for 4 min 24 s — twenty-nine presses, every one refused for the same permanent reason, every
+   * one a log line and a re-render, while nothing about the answer was going to change. The cause
+   * of that particular refusal is gone (`net/mailboxes.ts`), but a watch that answers a standing
+   * refusal by asking again immediately is the shape, not that one cause: the next permanent
+   * refusal would spend a person's battery the same way and bury the one line that says why.
+   *
+   * So a refusal doubles the number of ticks skipped before the next press, to a ceiling, and any
+   * other answer clears it. `held` clears it too — it is the ordinary state of a stood-down phone
+   * and says nothing is wrong. The line is written only where the VERDICT CHANGES CLASS, so a
+   * standing refusal is one line and the press that finally works is the next one.
    */
-  const organizingWord = (state: { organizing: boolean } | null): string =>
-    state === null ? "unknown" : state.organizing ? "organizing" : "starting";
-
-    /**
-     * ══ A REFUSAL COSTS TICKS, AND IT IS ONE LINE PER CLASS ════════════════════════════════════
-     *
-     * Measured on a device: twenty-nine re-claims over 4 min 24 s, every one refused for the same
-     * permanent reason, every one a log line and a re-render. A watch that answers a standing
-     * refusal by asking again immediately is the shape, not that one cause.
-     *
-     * So a refusal doubles the ticks skipped before the next press, to a ceiling; any other answer
-     * clears it, `held` included. The line is written only where the VERDICT CHANGES CLASS.
-     */
   const RECLAIM_BACKOFF_MAX_TICKS = 8;
   /** Ticks still to skip before the next press. */
   let reclaimSkip = 0;
@@ -722,35 +635,34 @@ export function createBackgroundOrganizing(deps: BackgroundDeps): BackgroundOrga
   };
 
   /**
-   * The holder left, and this phone is the one in front of the person — a stand-down is a one-way
-   * door without this. Measured on a device: the laptop handed the mailbox back, the claim was
-   * gone, and minutes later the phone had not re-claimed while its panel still named the machine
-   * that left. A phone organizes WHILE OPEN, so a stood-down session keeps asking on the claim
-   * watch's cadence and takes the mailbox back when nothing holds it — it cannot displace anybody,
-   * since {@link BackgroundEngine.claimHere} is refused while a foreign claim is renewed (where the
-   * one-organizer invariant is enforced). Bounded three ways — only while the session is live, only
-   * where the engine says this install is STOOD DOWN, and on the claim watch's clock.
+   * ══ THE HOLDER LEFT, AND THIS PHONE IS THE ONE IN FRONT OF THE PERSON ══════════════════════
+   *
+   * A stand-down is a one-way door without this. Measured on a device: the laptop handed the
+   * mailbox back through the ordinary path, the claim record was gone, and 5 min 43 s later the
+   * phone had not re-claimed and its panel still named a machine that had left. Only a relaunch
+   * recovered, and it recovered for the wrong reason — the launch-time consent press, which is the
+   * takeover this lane removes.
+   *
+   * A phone organizes the mailbox WHILE IT IS OPEN, so a stood-down session
+   * keeps asking on the claim watch's own cadence and takes the mailbox back when nothing holds it.
+   * It cannot displace anybody: {@link BackgroundEngine.claimHere} is refused at the engine's door
+   * while a foreign claim is still being renewed, which is where the one-organizer invariant is
+   * enforced rather than here. `held` is therefore the ordinary answer and says nothing to anyone.
+   *
+   * Bounded three ways: it runs only while this session is live (so it stops when the app is
+   * closed and when the person stops), only where the engine says this install is STOOD DOWN, and
+   * on the same clock the claim watch uses — never its own number.
    */
   const reclaimCheck = async (): Promise<void> => {
     if (disposed) return;
-    /* ══ AND THE PANEL RE-DERIVES ON EVERY TICK, NOT ONLY WHERE SOMETHING WAS RECLAIMED ═══════
-     *
-     * Measured on a device: the engine stood the phone down under an open Settings panel and it
-     * read `Organizing` for 2 min 2 s over a mailbox another phone held. Every other arm already
-     * told the screen; the STAND-DOWN direction told it nothing. `moved()` costs a fingerprint
-     * comparison, which is why it is unconditional and why the cue lives on this timer rather
-     * than on the claim watch — that one is armed with the NOTIFICATION, and a phone is in front
-     * of a person exactly when no notification is showing. */
-    moved();
     /* `=== true` and not `!== false`: a read that could not answer is not a licence to ask for
        somebody else's mailbox, which is the opposite direction from the notification teardown's. */
-    /* ONE READ for the whole tick — see {@link stateNow}. */
-    if (stateNow()?.standDown !== true) return;
+    if (standDownNow() !== true) return;
     if (reclaimSkip > 0) {
       reclaimSkip -= 1;
       return;
     }
-    let outcome: "claimed" | "held" | "unreadable" | "refused";
+    let outcome: "claimed" | "held" | "refused";
     try {
       outcome = await deps.engine.claimHere();
     } catch (err) {
@@ -762,26 +674,16 @@ export function createBackgroundOrganizing(deps: BackgroundDeps): BackgroundOrga
       reclaimVerdict = "refused";
       return;
     }
-    /* `unreadable` MOVES NOTHING. The door refused a press it could not check, so the claim
-       stands exactly where it stood, and telling the screen something changed would redraw a
-       panel whose facts are unchanged. It IS logged — unlike `held`, this one is a look that did
-       not land, and the watch asks again rather than backing off. */
-    if (outcome === "unreadable") {
-      log("organizer_reclaim_unreadable", { why: "holder_left" });
-      return;
-    }
     reclaimSettled(outcome);
   };
 
   const claimLostCheck = async (): Promise<void> => {
-    if (!organizerRuns()) return;
-    /* THE SAME OWNERSHIP FACT the background arm reads, and for its reason. "Organizes nothing"
-       takes the notification down over an unreadable lease — an outage, where the claim is still
-       ours and the next poll asks again — and over the window between a fresh claim and the
-       gate's permit. THREE ANSWERS: `null` — the engine could not say — leaves the notification
-       standing and asks again next tick, because a teardown over a momentary failure would end a
-       person's organizing and leave the claim to lapse from a mailbox nobody gave up. */
-    if (stateNow()?.claimed !== false) return;
+    if (deps.service === null || !deps.service.running()) return;
+    /* THREE ANSWERS. `null` — the engine could not say — leaves the notification standing and asks
+       again next tick: a teardown over a momentary failure would end a person's organizing and
+       leave the claim to lapse from a mailbox nothing had decided to give up. */
+    const organizing = organizingNow();
+    if (organizing !== false) return;
     log("organizer_service_stopped_claim_lost", { why: "claim_lost" });
     moved();
     /* NO HAND-BACK HERE. The claim is not ours to give back: either another install holds it, or
@@ -811,7 +713,7 @@ export function createBackgroundOrganizing(deps: BackgroundDeps): BackgroundOrga
       await toForeground();
     }),
     handedBack: () => handedBack,
-    backgrounded: () => organizerRuns(),
+    backgrounded: () => deps.service !== null && deps.service.running(),
     dispose() {
       disposed = true;
       disarmWatch();

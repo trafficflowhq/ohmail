@@ -60,7 +60,6 @@ import {
   authEvents,
   authThrottle,
   credentials,
-  invites,
   loginTokens,
   mailboxOauthCeremonies,
   mailboxOauthDeviceCeremonies,
@@ -68,7 +67,6 @@ import {
   pushSubscriptions,
   recoveryCodes,
   totpSecrets,
-  waitlist,
   webauthnChallenges,
   webauthnCredentials,
 } from "@trafficflow/db/cloud";
@@ -85,10 +83,6 @@ import { rowsAffected } from "./rows-affected.js";
  * each must be NAMED in {@link DeleteAccountResult.deleted} or exempted. `attachment_staging` is
  * EXPIRED, not deleted — its row is the delete key for bucket bytes.
  */
-/*
- * The signup funnel (`invites`, `waitlist`) is keyed by ADDRESS and sits outside that graph
- * entirely, so it has its own scope and its own guard — {@link DeleteAccountResult.redacted}.
- */
 export interface DeleteAccountResult {
   accountId: string;
   /** Rows removed, per table, for the audit trail the operator keeps. */
@@ -101,15 +95,6 @@ export interface DeleteAccountResult {
   stagingTicketsExpired: number;
   /** Users whose personal data was erased (count only — the addresses are gone). */
   usersErased: number;
-  /**
-   * Rows PSEUDONYMISED in place, per table — the signup funnel, which is keyed by a person's
-   * address and by nothing else. The row survives because the operator's funnel count is a fact
-   * about the service; the address does not, because it is a fact about a person. Separate from
-   * {@link deleted} because the guard asks a different question of it: `emailBearingTables` in
-   * `helpers/erasure-fixture.ts` demands that every email-bearing table outside the account's
-   * foreign-key graph appear HERE or on a written exemption list.
-   */
-  redacted: Record<string, number>;
 }
 
 /** Rows affected across the three drivers — see `rows-affected.ts` for why there is one copy. */
@@ -130,10 +115,6 @@ export async function deleteAccount(ctx: ServiceContext): Promise<DeleteAccountR
     const deleted: Record<string, number> = {};
     const drop = async (table: string, run: Promise<unknown>) => {
       deleted[table] = n(await run);
-    };
-    const redacted: Record<string, number> = {};
-    const redact = async (table: string, run: Promise<unknown>) => {
-      redacted[table] = n(await run);
     };
 
     /**
@@ -398,28 +379,6 @@ export async function deleteAccount(ctx: ServiceContext): Promise<DeleteAccountR
       inArray(authThrottle.key, throttleUserKeys),
       inArray(authThrottle.key, throttleEmailKeys),
     )));
-    // ── 7b. THE SIGNUP FUNNEL — pseudonymised, not deleted ─────────────────────
-    // `invites.email` and `waitlist.email` are the only thing in either row that names a person,
-    // and neither table is in the account's foreign-key graph — deliberately, so an erasure never
-    // has to choose between Art. 17 and the invite record. That is why the structural guard could
-    // not see them and the sweep did not reach them.
-
-    // REDACTED, not dropped: the funnel COUNT is a record about the service, the address is a
-    // record about a person. The pseudonym carries the row's own id, so `waitlist_email_unique`
-    // holds when two of an account's users were both listed. Built in Postgres, like
-    // `auth_throttle` above. BEFORE the `users` delete, which the addresses are read from; an
-    // invite matches by binding AND by consumer, so a changed address leaves no row behind.
-    const ownEmails = tx.select({ e: users.email }).from(users).where(eq(users.accountId, accountId));
-    await redact("invites", tx.update(invites)
-      .set({ email: sql`'erased-' || ${invites.id}::text || '@invalid'` })
-      .where(or(
-        inArray(invites.email, ownEmails),
-        and(isNotNull(invites.consumedByUserId), inArray(invites.consumedByUserId, ownUserIds)),
-      )));
-    await redact("waitlist", tx.update(waitlist)
-      .set({ email: sql`'erased-' || ${waitlist.id}::text || '@invalid'` })
-      .where(inArray(waitlist.email, ownEmails)));
-
     // auth_events carries ip + device per login. Account-scoped rows go with the
     // account; user-scoped rows that predate the account (unknown-email attempts)
     // are already anonymous, and there is no key to find them by.
@@ -432,6 +391,6 @@ export async function deleteAccount(ctx: ServiceContext): Promise<DeleteAccountR
     // Not a soft delete: there is nothing personal left to protect. The row is the
     // billing subject the ledger points at, and a uuid is not personal data.
     await tx.update(accounts).set({ name: "" }).where(eq(accounts.id, accountId));
-    return { accountId, deleted, redacted, stagingTicketsExpired, usersErased: userRows.length };
+    return { accountId, deleted, stagingTicketsExpired, usersErased: userRows.length };
   });
 }

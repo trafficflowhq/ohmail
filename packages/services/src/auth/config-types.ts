@@ -88,14 +88,6 @@ export interface AuthConfig {
   webauthnChallengeTtlMs: number;
   oauthCodeTtlMs: number;
   /**
-   * How long an unconfirmed `GET /oauth/authorize` request waits for its person.
-   *
-   * The window is a decision, not a credential's lifetime: the request buys nothing on its own —
-   * only the session that started it can confirm it — so what this bounds is how long a page left
-   * open still means what it said. See `config.ts`.
-   */
-  oauthAuthorizeRequestTtlMs: number;
-  /**
    * How long a `POST /auth/desktop-link` code stays claimable.
    *
    * It is the ONE bound that is not about an attacker's search space: 128 bits of entropy

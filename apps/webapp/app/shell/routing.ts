@@ -8,7 +8,6 @@
  * The query string (?demo=1) is untouched by navigation.
  */
 import { useCallback, useEffect, useMemo, useSyncExternalStore } from "react";
-import { beginOpen, beginSwitch } from "./ui-vitals";
 
 export const VIEWS = [
   "ohbox",
@@ -415,10 +414,6 @@ export function useHashRoute(): Route {
 }
 
 export function go(view: Exclude<ViewId, "tag" | "folder">): void {
-  /* THE SWITCH MARK STARTS AT THE NAVIGATION AND ENDS AT THE NEXT PAINT — one call site per
-     verb, and the paint side schedules itself (`beginSwitch`). Here rather than in the controls
-     because the rail, the palette, the number keys and a deep link all arrive through these. */
-  beginSwitch();
   window.location.hash = `#/${view}`;
 }
 
@@ -455,12 +450,10 @@ export function nameFirstRunMailbox(mailboxId: string): void {
 }
 
 export function goTag(tagId: string): void {
-  beginSwitch();
   window.location.hash = `#/tag/${tagId}`;
 }
 
 export function goFolder(folderId: string): void {
-  beginSwitch();
   window.location.hash = `#/folder/${folderId}`;
 }
 
@@ -473,18 +466,15 @@ export function goFolder(folderId: string): void {
  * `addressHref` also use, so the link a control renders and the hash this writes cannot differ.
  */
 export function goAddress(address: string): void {
-  beginSwitch();
   window.location.hash = addressHash(address);
 }
 
 export function goScreener(segment: ScreenerSegmentId): void {
-  beginSwitch();
   window.location.hash = segment === "waiting" ? "#/screener" : `#/screener/${segment}`;
 }
 
 /** The first pile keeps the bare `#/triage`, so every link that already exists still lands. */
 export function goTriage(pile: TriagePileId): void {
-  beginSwitch();
   window.location.hash = pile === "reply" ? "#/triage" : `#/triage/${pile}`;
 }
 
@@ -517,11 +507,6 @@ export function goSettings(pane: PaneId): void {
 export function reflectMessage(route: Route, messageId: string | null): void {
   const next = canonicalHash({ ...route, messageId });
   if (`#${window.location.hash.replace(/^#/, "")}` === next) return;
-  /* THE OPEN MARK STARTS HERE, because this is the shell's ONE writer of the `m/<id>` tail: a
-     click, `j` down a pile, a search hit and a deep link all arrive through it, and instrumenting
-     the controls instead would have counted some opens and not others. It ends when THAT
-     message's body is painted (`MessagePane`). Closing a reading writes `null` and marks nothing. */
-  if (messageId !== null && messageId !== route.messageId) beginOpen(messageId);
   if (messageId !== null && route.messageId === null) {
     window.location.hash = next; // an OPEN pushes
     return;

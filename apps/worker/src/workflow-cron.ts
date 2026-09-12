@@ -13,15 +13,31 @@ import { isCliEntry } from "./entry.js";
 import { cronEvent, runCronCli } from "./cron-log.js";
 
 /**
- * The workflow DRAIN pass, in TWO phases. REAP requeues runs stranded in `running` by a dead worker; SCAN
- * reads `pending` `workflow_runs` (now including what reap requeued) and, per run, does a GUARDED
- * `pending → running` transition that RE-ASSERTS `status='pending'` in the UPDATE WHERE, like
- * `bubbleUpPass`, so a concurrent drain that loses matches 0 rows and never double-claims. The claimed run
- * goes to `WorkflowExecutor` (pre-flights sensitivity, runs each step in its own tx with a durable cursor +
- * `audit_log` inverse). Pure and hermetic (db/tx + injected DraftPort + clock). The PRIMARY caller is
- * `apps/worker/src/index.ts`'s `cycle()` (this + {@link workflowTimeScanPass} once per poll per account),
- * so a `POST /workflows/:id/run` 202 is honoured by the always-on worker; {@link runWorkflowCron} is the
- * dead-worker backstop, on no schedule. `test/every-pass-has-a-producer.test.ts` asserts which caller is which. */
+ * The workflow DRAIN pass. It runs in TWO phases.
+ *
+ * The REAP phase requeues runs stranded in `running` by a worker that died holding them
+ * (below). The SCAN phase then reads `pending` workflow_runs — which now includes anything the
+ * reap just requeued — and, for each, performs a GUARDED status transition `pending → running` that
+ * RE-ASSERTS `status='pending'` in the UPDATE WHERE, exactly like `bubbleUpPass`. A concurrent
+ * drain (the worker cycle + this cron backstop) that loses the race matches 0 rows and
+ * skips, so a run can NEVER be double-claimed. The claimed run is then handed to the
+ * `WorkflowExecutor`, which pre-flights sensitivity, runs each step in its own tx
+ * with a durable cursor + `audit_log` inverse, and marks succeeded/failed.
+ *
+ * Pure and hermetic: takes a db/tx executor + the injected DraftPort + a clock, so a
+ * test drives it against PGlite with a MOCK drafter and no leader lock or network.
+ *
+ * ── WHO CALLS IT: `index.ts` FIRST, THIS FILE'S WRAPPER SECOND ────────────────────────────
+ *
+ * The PRIMARY caller is `apps/worker/src/index.ts`'s `cycle()`, which runs this and
+ * {@link workflowTimeScanPass} once per poll interval per account of its shard — so the 202
+ * from `POST /workflows/:id/run` is honoured by the always-on worker, not by a cron.
+ * {@link runWorkflowCron} at the bottom of this file is the manual backstop for a dead worker
+ * and is on no schedule: it takes the lock the live worker holds. Stated here because an
+ * earlier reading took this file's cron wrapper as the only producer and concluded the
+ * drain never ran — it does, and `test/every-pass-has-a-producer.test.ts` asserts which
+ * caller is which rather than leaving it to a grep.
+ */
 export interface WorkflowDrainDeps {
   drafter: DraftPort;
   /**
@@ -39,15 +55,23 @@ export interface WorkflowDrainDeps {
 const executor = new WorkflowExecutor();
 
 /**
- * How old a `running` claim must be before the reaper takes it back. It is RESUME LATENCY, not a liveness
- * contest, and that follows from the deployment: one shard has ONE draining process (the worker holds
- * `leaderLockKeyFor(shardIndex)` for life and `runWorkflowCron` takes the same lock), `cycle()` awaits each
- * drain, and reap runs BEFORE the drain in one call — so every `running` row a reaper sees belongs to a
- * process that is gone (no per-step heartbeat). The number buys margin against the non-structural case: a
- * claim written by a worker whose clock differs, a container paused between the two. Fifteen minutes is far
- * beyond both, and the cost runs one way (too LONG delays a stranded run; too SHORT puts a second executor
- * on a live one — survivable via the audit marker, unique dedup keys and the ledger's `duplicate`, but not
- * something that should happen). */
+ * How old a `running` claim must be before the reaper takes it back.
+ *
+ * It is RESUME LATENCY, not a liveness contest, and that is a consequence of the deployment
+ * rather than of this number: one shard has ONE draining process (the worker holds
+ * `leaderLockKeyFor(shardIndex)` for its whole life and `runWorkflowCron` takes the same lock),
+ * `cycle()` awaits each drain, and the reap phase runs BEFORE the drain inside one call. So no
+ * executor can be running while a reaper looks at its row — every `running` row a reaper sees
+ * belongs to a process that is gone. There is deliberately no per-step heartbeat; the executor
+ * says why at its cursor advance.
+ *
+ * What the number buys is margin against the one thing that is not structural: a claim written
+ * by a worker whose clock differs from the reaper's, and a container paused between the two.
+ * Fifteen minutes is far beyond both, and the cost runs one way — too LONG only delays a
+ * stranded run, too SHORT puts a second executor on a live one. That is survivable (the audit
+ * row is each step's commit marker, the dedup keys are unique, the ledger answers `duplicate`)
+ * but "survivable" is not "should happen".
+ */
 export const STALE_CLAIM_MS = 15 * 60_000;
 
 export async function workflowDrainPass(
@@ -88,15 +112,80 @@ export async function workflowDrainPass(
 }
 
 /**
- * THE REAPER. Requeue runs whose `running` claim went unrefreshed, rather than FAILING them (which throws
- * away everything a resumption needs, including a paid `prepare` charge). Resumption is safe by
- * CONSTRUCTION: nothing in the step registry sends (`file_message`, `draft_reply`, `add_kb_entry` in
- * `executor.ts`); a step's commit marker is its `audit_log` row keyed `(runId, stepIndex)`, checked by
- * `stepAlreadyApplied` before `prepare`; effects are keyed (`workflow_dedup_key = "<runId>:<stepIndex>"`,
- * `ON CONFLICT DO NOTHING`); and the money is keyed (`credit_ledger_source_uq` UNIQUE `(account_id,
- * source)`, source `workflow_run:<runId>:<stepIndex>`, no `retryWindowMs`, so a resumed step answers
- * `duplicate` charged NOTHING). Two accepted residuals (a duplicate model call on a crash between prepare
- * and commit; a resumed `prepare`'s failed refund being a no-op). `failed` is untouched (terminal). The GUARD re-asserts `status='running'` AND the observed `claimed_at` (like `workflowTimeScanPass`'s `nextRunAt`); `claimed_at` is a JS `Date` (microseconds break the equality — migration `0033`), NULL falls back to `created_at`. */
+ * THE REAPER. Requeue runs whose `running` claim has gone unrefreshed, so a worker that
+ * died holding one does not strand it for ever.
+ *
+ * ── WHY IT REQUEUES AND RESUMES RATHER THAN FAILING THE RUN ───────────────────────────────
+ *
+ * Failing outright is the safer-sounding option and it is the wrong one, because the row already
+ * carries everything a correct resumption needs and failing throws it away — including, when the
+ * crash landed after a `prepare`, an AI charge the customer has paid and would then never
+ * receive the work for.
+ *
+ * Resumption is safe here by CONSTRUCTION, not by argument, and the construction is worth naming
+ * because it is what a future step tool must not break:
+ *
+ *  1. **Nothing in the step registry sends.** It is exactly `file_message`, `draft_reply` and
+ *     `add_kb_entry` (`packages/core/src/ai/workflows/executor.ts`). A draft is stored
+ *     `status='draft'` and only the send path sends it, on explicit user action — nothing is
+ *     ever sent without the user saying so. So
+ *     no repeated step can put anything in front of a third party.
+ *  2. **A step's commit marker is its `audit_log` row**, keyed `(runId, stepIndex)` and written
+ *     in the SAME transaction as the effect. `stepAlreadyApplied` is asked BEFORE
+ *     `prepare`, so a step that committed costs the resumed run neither a model call nor a
+ *     charge — it only advances the cursor.
+ *  3. **The effects are keyed, not appended.** `file_message` is a desired-state upsert keyed by
+ *     messageId; `draft_reply` and `add_kb_entry` insert under a unique
+ *     `workflow_dedup_key = "<runId>:<stepIndex>"` with `ON CONFLICT DO NOTHING`.
+ *  4. **The money is keyed too.** `credit_ledger_source_uq` is `UNIQUE (account_id, source)` and
+ *     the source is `workflow_run:<runId>:<stepIndex>`. The workflow gate declares no
+ *     `retryWindowMs`, so an un-refunded attempt never ages out: a resumed step answers
+ *     `duplicate` → proceed, charged NOTHING. This is the retry the ledger design already
+ *     provided for — *"a crash between debit and refund is no longer a loss: the attempt stays
+ *     OPEN, so the retry is free and delivers the work the charge paid for"* — which until now
+ *     nothing deployed could actually perform.
+ *
+ * TWO RESIDUALS, stated rather than hidden. Both are accepted, and neither is created by this
+ * pass — they are the shape the money machinery already had, now that a retry finally exists:
+ *
+ *  · A crash in the window between `prepare` committing its charge + making the paid model call,
+ *    and the step transaction committing, makes the resumed run call the model a SECOND time. We
+ *    pay for that call; the customer does not (4), and no user-visible action is repeated (1).
+ *    One extra model call per crashed run is the price of not abandoning a paid charge, and it
+ *    is the cheaper side of the trade. Eliminating it needs a durable "prepare committed" marker
+ *    and two-phase bookkeeping, to close a seconds-wide window at deploy frequency.
+ *  · If the RESUMED `prepare`'s model call fails, its `refund` is a no-op — the gate's marker
+ *    doctrine says a refund may only reverse a charge THIS gate instance made, and this one was
+ *    a free retry of an open attempt. So the first attempt's charge stands on a run that then
+ *    fails terminally. That is the marker doctrine working as designed (it is what stops
+ *    refund-plus-retry composing into unlimited free drafts), not a regression.
+ *
+ * `failed` is NOT touched. It is terminal by design — the refund doctrine in `executor.ts`
+ * depends on it — and requeueing it would turn every permanent failure into an infinite loop.
+ *
+ * ── THE GUARD, WHICH IS THE HALF THAT CAN GO WRONG QUIETLY ────────────────────────────────
+ *
+ * The deployment already makes a same-shard race hard (one leader lock, one draining process,
+ * reap before drain inside one call), so the guard is defence against the case the lock does not
+ * cover: an operator running the backstop against a shard whose worker is mid-restart, and any
+ * future caller. The UPDATE re-asserts `status='running'` AND the OBSERVED `claimed_at`, which
+ * is strictly stronger than status alone and mirrors how `workflowTimeScanPass` re-asserts the
+ * observed `nextRunAt`: the winner sets `pending` and NULLs the stamp, so the loser matches 0
+ * rows. Proven on real Postgres across two pools, because a single-connection harness cannot
+ * decide it — two `drainPass` calls there would simply serialize and a broken guard would
+ * still look green.
+ *
+ * That equality is also the reason `claimed_at` may only ever be written from a JS `Date`. A
+ * value carrying microseconds — which is what `now()` or a copy of `created_at` stores — cannot
+ * survive the round trip through a millisecond-precision `Date`, so the re-assertion matches
+ * nothing and the row is selected here on every pass and requeued on none of them. Migration
+ * `0033` has the measurement, and is the reason it ships no backfill.
+ *
+ * A NULL `claimed_at` on a `running` row means the claim was made by code that predates the
+ * column — the rows already stranded when this shipped, plus anything claimed in the deploy
+ * window — so the predicate falls back to `created_at`. That arm, and not a backfill, is what
+ * rescues the existing backlog.
+ */
 async function reapStaleClaims(db: Tx, deps: WorkflowDrainDeps, now: Date): Promise<number> {
   const staleBefore = new Date(now.getTime() - STALE_CLAIM_MS);
   const filters = [
@@ -233,13 +322,20 @@ export const unconfiguredDrafter: DraftPort = {
 };
 
 /**
- * MANUAL BACKSTOP (correctness), not a scheduled job. Guarded by the SAME session-level leader lock the
- * always-on worker + reconcile/bubble-up crons use: if the live worker holds it, this exits without
- * touching the DB; otherwise one drain pass and release. Nothing invokes it on a timer, and nothing can
- * while a worker is up. `index.ts`'s `cycle()` is the producer of record; this is what an operator runs
- * when the worker is not (recorded `MANUAL_BACKSTOP` in `SCHEDULE_MANIFEST`,
- * `test/every-pass-has-a-producer.test.ts`). It loops the SERVED accounts (its shard, dev-filter narrowed,
- * each isolated in its own try/catch). `log` defaults to `silentLogger` — see `cron-log.ts`.
+ * MANUAL BACKSTOP (correctness), not a scheduled job. Guarded by the SAME session-level leader
+ * lock the always-on worker + reconcile/bubble-up crons use: if the live worker holds it, this
+ * exits without touching the DB. Otherwise it performs one drain pass and releases. Nothing
+ * invokes it on a timer, and nothing can while a worker is up — it would only fail to take the
+ * lock. `index.ts`'s `cycle()` is the producer of record; this is what an operator runs when
+ * the worker is not. Recorded as `MANUAL_BACKSTOP` in `SCHEDULE_MANIFEST`
+ * (`test/every-pass-has-a-producer.test.ts`).
+ *
+ * It loops the SERVED accounts (its shard, narrowed by the optional dev account
+ * filter) exactly like the worker cycle, so a sharded deployment's cron never touches
+ * another shard's accounts, and each account is isolated in its own try/catch.
+ *
+ * `log` defaults to `silentLogger` — see `cron-log.ts` for why the process that deploys is
+ * the only one that turns it on.
  */
 export async function runWorkflowCron(
   config: WorkerConfig, log: Logger = silentLogger,

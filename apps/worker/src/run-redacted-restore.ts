@@ -1,12 +1,14 @@
 /**
- * ONE-OFF RUNNER for the [REDACTED] body restore (`redacted-restore.ts`), scoped to ONE mailbox. It
- * re-reads originals with BODY.PEEK (no `\Seen`) and stores the full body, KEEPING sensitivity flags. It
- * opens IMAP, so it needs `TF_KEK_V1` to decrypt the mailbox's stored credentials (the same material the
- * always-on worker holds). Dry-run by default; `--apply` writes, `--limit N` caps the fetches for a bounded
- * proof run. Reversible in the sense that matters: it MUTATES NOTHING ON THE MAIL SERVER (peek-only) and
- * only overwrites a DB body with the server's authoritative copy.
+ * ONE-OFF RUNNER for the [REDACTED] body restore (`redacted-restore.ts`), scoped to ONE mailbox.
  *
- *   TF_DB_URL=… TF_KEK_V1=… tsx apps/worker/src/run-redacted-restore.ts --mailbox <id> [--apply --limit 5]
+ * It re-reads originals with BODY.PEEK (no `\Seen`) and stores the full body, KEEPING sensitivity
+ * flags. It opens IMAP, so it needs `TF_KEK_V1` to decrypt the mailbox's stored credentials — the
+ * same material the always-on worker holds. Dry-run by default; `--apply` writes. `--limit N` caps
+ * the fetches for a bounded proof run. Reversible in the sense that matters: it MUTATES NOTHING ON
+ * THE MAIL SERVER (peek-only) and only overwrites a DB body with the server's authoritative copy.
+ *
+ *   TF_DB_URL=… TF_KEK_V1=… tsx apps/worker/src/run-redacted-restore.ts --mailbox <id>
+ *   TF_DB_URL=… TF_KEK_V1=… tsx apps/worker/src/run-redacted-restore.ts --mailbox <id> --apply --limit 5
  */
 import { and, eq, like, sql } from "drizzle-orm";
 import { makeOwnedDb } from "@trafficflow/db/cloud";
@@ -42,14 +44,17 @@ const db = owned.db as unknown as Tx;
 
 const [mb] = await db.select({
   id: mailboxes.id, accountId: mailboxes.accountId, address: mailboxes.address,
-  /* "STOP ORGANIZING THIS MAILBOX" IS A REFUSAL FOR THIS TOOL TOO (mail 0088). The lease gate below cannot
-   * answer this: a pending release leaves the row `organizer` on purpose (the claim is in the customer's
-   * IMAP folder and expunging it belongs to the process holding that connection), so every lease-shaped
-   * check passes and this runner would take the permit, renew the very claim the person asked removed, and
-   * move their mail. REFUSED rather than honoured, on the reconcile backstop's reasoning: releasing means
-   * expunging a claim, writing the row and closing appointments, and a second copy of that sequence is a
-   * second answer to what stopping means. The always-on gate performs it; this tool declines to act past a
-   * request it can see.
+  /* ── "STOP ORGANIZING THIS MAILBOX" IS A REFUSAL FOR THIS TOOL TOO (mail 0088) ─────────────
+   *
+   * The lease gate below cannot answer this. A pending release leaves the row as `organizer` on
+   * purpose — the claim is in the customer's IMAP folder and expunging it belongs to the process
+   * holding that connection — so every lease-shaped check passes and this runner would take the
+   * permit, renewing the very claim the person asked to have removed, and then move their mail.
+   *
+   * It is REFUSED rather than honoured, on the reconcile backstop's reasoning: releasing means
+   * expunging a claim, writing the row and closing the appointments the install can no longer
+   * keep, and a second copy of that sequence here would be a second answer to what stopping means.
+   * The always-on gate performs it; this tool declines to act past a request it can see.
    */
   releaseRequestedAt: mailboxes.releaseRequestedAt,
 })
@@ -91,16 +96,40 @@ let restored = 0, fetched = 0, mismatched = 0, unreadable = 0;
 try {
   await adapter.connect();
 
-  // THE ORGANIZER LEASE, BEFORE `ensureFolders()` — WHICH IS A WRITE. The pass only FETCHES bodies and
-  // writes our own database, so it looks read-only; `ensureFolders()` is not — it CREATES the `ohmail/*`
-  // tree in somebody else's mailbox. `reconcile-cron.ts` gates at this seam, and the pass registry ALREADY
-  // CLAIMED this runner took a lease (it did not; same seam as `run-junk-sweep.ts`). No `guard` or `check()`
-  // beyond this: the acquisition IS the check (`acquireLeasePermit` reads the lease and throws on a
-  // stand-down, and `ensureFolders()` is the next statement). `ensureFolders()` is not one write — it issues
-  // a `mailboxCreate` per missing folder (up to five), so a takeover after the second leaves this creating
-  // folders in a mailbox it no longer organizes; NOT fixed here because the check would have to live in
-  // `packages/core/src/adapters/imap.ts` (the same seam that bounds `moveMany` and `move`'s COPY-then-DELETE),
-  // and creating a folder is additive where a move is destructive. The dry-run path returns before `connect()`.
+  // ── THE ORGANIZER LEASE, BEFORE `ensureFolders()` — WHICH IS A WRITE ─────────────────────────
+  //
+  // The pass below only FETCHES bodies and writes to our own database, so it looks like a
+  // read-only tool. `ensureFolders()` is not: it CREATES the `ohmail/*` tree, in somebody else's
+  // mailbox. `reconcile-cron.ts` runs its gate at exactly this seam and says why in those words,
+  // and the pass registry ALREADY CLAIMED this runner "takes the mailbox's lease for its fetches"
+  // — it did not take one at all. The seam is the same one `run-junk-sweep.ts` had.
+  //
+  // No `guard` beyond this point and no `check()` call. **The acquisition IS the check** —
+  // `acquireLeasePermit` reads the lease before it returns and throws on a stand-down, and
+  // `ensureFolders()` is the very next statement — so a `check()` here would be served from inside
+  // the TTL and re-read nothing. Said explicitly because a reviewer read the discarded return value
+  // as a missing guard, which is a fair reading of a permit that is acquired and never consulted;
+  // what this needs is the read, and the permit type is used for its throwing shape.
+  //
+  // ── `ensureFolders()` IS NOT ONE WRITE, AND THIS USED TO SAY IT WAS ────────────────────────
+  //
+  // The sentence here was *"`ensureFolders()` is the only server MUTATION this process performs, so
+  // there is no later write boundary for a permit to be re-verified at"*. The first clause is true;
+  // the inference is not. `ensureFolders()` issues a `mailboxCreate` per missing `ohmail/*` folder —
+  // up to five separate commands — so there ARE later write boundaries, they are just all inside one
+  // call. A takeover landing after the second CREATE leaves this process creating folders in a
+  // mailbox it no longer organizes.
+  //
+  // NOT fixed here, and the reason is the seam rather than the effort: a check between those CREATEs
+  // has to live inside the adapter, which would put the organizer lease into
+  // `packages/core/src/adapters/imap.ts` — a shared surface with its own consumers and its own
+  // review. The same seam is what bounds `moveMany`'s preflights and `move`'s COPY-then-DELETE on a
+  // server without MOVE. Ledgered as one row rather than three half-fixes. **The residual here is
+  // materially milder than those two: creating a folder is additive and idempotent, where a move is
+  // destructive** — which is why this is a written-down bound and not a blocker.
+  //
+  // The dry-run path returns before `connect()` and so never reaches the lease, keeping its promise
+  // to write nothing anywhere, `ohmail/_meta` included.
   try {
     // Before the gate, and for the reason `assertNoLiveTwin` sets out: this runner shares the
     // always-on worker's install id and holds no leader lock, so `lastNonce: null` would let it

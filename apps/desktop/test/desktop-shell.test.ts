@@ -603,14 +603,12 @@ describe("the Rust side", () => {
       "updater_tests.rs",
       // WHAT THE RENDERER COSTS. `engine_vitals` measures the sidecar, which is the process that
       // behaved correctly; the webview was never measured, and that is where a 4.1 GB session
-      // went while ohmail's own telemetry stayed flat. Reports every webview process's RSS every
-      // five minutes in the engine's own log shape — `/proc` on Linux, libproc on macOS, the
-      // toolhelp snapshot on Windows — one `renderer_memory_high` line per crossing of the
-      // budget, and on Linux raises the children's `oom_score_adj` so the kernel reclaims THIS
-      // app rather than a neighbour. It also composes the `ui_vitals` line the window reports.
-      // Compiled only under `local-engine` (it writes to that log); Tauri-free otherwise, and its
-      // tests drive fixture process tables rather than the real one, so every platform's rule is
-      // watched on every platform's CI.
+      // went while ohmail's own telemetry stayed flat. Reports each WebKit child's RSS every five
+      // minutes in the engine's own log shape, one `renderer_memory_high` line per crossing of
+      // the budget, and on Linux raises the children's `oom_score_adj` so the kernel reclaims
+      // THIS app rather than a neighbour. Compiled only under `local-engine` (it writes to that
+      // log); Tauri-free otherwise, and its tests read a fixture `/proc` tree rather than the
+      // real one so they need no privileges and run anywhere.
       "vitals.rs",
       "vitals_tests.rs",
     ]);
@@ -723,7 +721,7 @@ describe("the Rust side", () => {
    * naming its `allow-…` permission cannot be resolved — so neither `cargo check` nor `cargo test`
    * can see it. The set equality below is the only thing that does.
    */
-  it("declares and registers its twenty-three commands only in the local build", () => {
+  it("declares and registers its twenty-two commands only in the local build", () => {
     const build = read("src-tauri/build.rs");
     const engine = read("src-tauri/src/engine.rs");
     // Host mode's, the default-mail and the Omarchy commands are DEFINED in their own modules;
@@ -744,13 +742,6 @@ describe("the Rust side", () => {
       // notification centre, and the count on the dock icon.
       "notify",
       "set_badge",
-      // The window's own performance numbers into the engine's log — startup marks, the open,
-      // switch and search percentiles, long frames, and what the client engine's derivation
-      // costs. It is the one command whose ARGUMENT is free-form JSON, and the reason that is
-      // safe is that the shell never forwards it: `vitals.rs` reads a fixed list of names, takes
-      // a number or nothing from each, and composes the line itself, so a subject or an address
-      // is not something this path can carry.
-      "ui_vitals",
       // The one place the window may reach the web, and it may not name it: the command takes a
       // KEY and the shell's own table decides which ohmail.app page that is. A URL argument would
       // mean anything that got a string into the page could open an arbitrary address in the

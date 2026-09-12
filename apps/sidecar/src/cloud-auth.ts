@@ -3,14 +3,30 @@ import type { KeyProvider } from "@trafficflow/core/mail";
 import type { Diagnostic } from "./log.js";
 
 /**
- * The cloud bearer client — a plain `Authorization: Bearer` fetch against the hosted API, with a
- * single-flight refresh on 401 and a sealed-to-disk token store. Not `HttpAdapter`, which is
- * browser-shaped (a `tf_csrf` cookie, `X-CSRF-Token`, a cookie jar); this is a Node child
- * authenticating with a token the shell handed it, and the hosted API prefers the `Authorization`
- * header and exempts a bearer from CSRF — so the client is small: no cookie jar, no CSRF, one header.
- * The 401 refresh is SINGLE-FLIGHT: the pull loop has several requests in flight and an expiring
- * token 401s all at once, and refreshing per-401 would rotate the refresh-token family, which the API
- * treats as compromise and revokes. So one in-flight refresh promise serves them all.
+ * THE CLOUD BEARER CLIENT — a plain `Authorization: Bearer` fetch against the hosted API, with a
+ * single-flight refresh on 401 and a sealed-to-disk token store.
+ *
+ * ── WHY A NEW CLIENT AND NOT `HttpAdapter` ────────────────────────────────────────────────────
+ *
+ * `packages/client-engine`'s `HttpAdapter` is browser-shaped: it reads a `tf_csrf` cookie, echoes
+ * an `X-CSRF-Token` on unsafe methods, and assumes an ambient cookie jar. None of that exists here
+ * — this is a Node child talking to `api.ohmail.app` over `fetch`, authenticating with a token the
+ * shell handed it, and the hosted API accepts a bearer on any host (`middleware.ts` prefers the
+ * `Authorization` header, and a bearer caller is exempt from CSRF by construction). So the correct
+ * client is the small one below: no cookie jar, no CSRF, one header.
+ *
+ * ── THE 401 REFRESH IS SINGLE-FLIGHT ──────────────────────────────────────────────────────────
+ *
+ * The pull loop can have several requests in flight (a `/sync` page and a `/messages/bodies` page
+ * overlap across cycles), and an access token expiring makes all of them 401 at once. Refreshing
+ * once per 401 would rotate the refresh-token family several times in a burst — the hosted API
+ * treats a reused refresh token as a compromise signal and revokes the family, so a naive
+ * per-request refresh would log the install out. {@link createCloudAuth} therefore shares ONE
+ * in-flight refresh promise: the first 401 starts it, every concurrent 401 awaits the same one, and
+ * all of them retry with the single rotated access token.
+ *
+ * `POST /auth/refresh` has a NATIVE body branch — `{ refreshToken }` in the body answers
+ * `200 { tokens }` (`routes/core.ts`) — so no cookie is involved on this path either.
  */
 
 export interface CloudTokens {

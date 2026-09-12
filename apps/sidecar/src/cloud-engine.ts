@@ -41,14 +41,94 @@ import type { Diagnostic } from "./log.js";
 import { startEngineVitals } from "./vitals.js";
 
 /**
- * The cloud engine — a read-only mirror of a hosted account, in the same stdio process the shell
- * spawns. Unlike `engine.ts` (the LOCAL organizer), a Cloud install must never become a second
- * organizer, so this module's import graph reaches NO IMAP adapter, lease or sync loop
- * (`cloud-engine-census.test.ts` fails the moment one enters), and `main.ts` refuses Cloud mode if
- * any `OHMAIL_IMAP_*` is set. It pulls (`cloud-mirror.ts`) over a bearer client and serves READS
- * from the mirror (`cloud-read.ts`), forwarding every WRITE to Cloud (`cloud-proxy.ts`; a failed
- * pull answers `503 offline_read_only`). Signed-out is a served STATE: it comes up pre-auth serving
- * `/health` and `/cloud/signin` (the PKCE verifier in memory only), and secrets travel the bridge.
+ * THE CLOUD ENGINE — a read-only mirror of a hosted account, assembled into the same stdio process
+ * the shell already knows how to spawn.
+ *
+ * ── WHY THIS FILE EXISTS BESIDE `engine.ts`, AND WHAT IT DELIBERATELY LACKS ───────────────────
+ *
+ * `engine.ts` is the LOCAL organizer: an `ImapAdapter` against the user's own server, the organizer
+ * lease in `@trafficflow/worker/lease`, and the shared sync loop in `@trafficflow/worker/sync`. In
+ * Cloud mode the hosted worker is the single organizer, and this process must never become a
+ * second one. That is not left to discipline: this module's transitive import graph reaches NONE of
+ * those three — no IMAP adapter, no lease, no sync loop — and `test/cloud-engine-census.test.ts` is
+ * a static census that fails the moment one of them enters the graph. The safe branch is selected
+ * by construction, and `main.ts` refuses to start Cloud mode if any `OHMAIL_IMAP_*` is present at
+ * all, so the IMAP path cannot be reached even by misconfiguration.
+ *
+ * What this engine does instead is pull (`cloud-mirror.ts`) over a bearer client (`cloud-auth.ts`)
+ * and serve the Swift client three things: `/sync` and the full mail READ surface out of the local
+ * mirror (`cloud-read.ts`), and a write-through proxy (`cloud-proxy.ts`) for everything else.
+ *
+ * ── THE SURFACE IS NOT A SECOND MIDDLEWARE CHAIN ──────────────────────────────────────────────
+ *
+ * The local organizer serves the full `packages/api` route table through the full middleware chain,
+ * because it answers mutations locally. A Cloud-mode install owns no mailbox — the hosted worker
+ * does — so it splits the surface: READS are served from the mirror it already holds, and every
+ * WRITE (and the attachment/media byte reads the mirror does not hold) is FORWARDED to Cloud with
+ * the bearer. The one gate that matters over stdio is a valid launch bearer (`resolveSession`, the
+ * same primitive the hosted chain uses); the hosted API applies its own gates to the forwarded call.
+ *
+ * Reusing `packages/api`'s `createApp` (or its `localRoutes`) would drag the whole route table —
+ * and with it the IMAP adapter the `/mailboxes`, `/attachments` and `/drafts` routes carry — into
+ * this module's graph, which is exactly what the census forbids. So the read table is curated in
+ * `cloud-read.ts` from read services alone, and the census over this file's expanded graph proves
+ * it reaches no organizer module.
+ *
+ * ── THE WRITE-THROUGH ECHO, AND OFFLINE ───────────────────────────────────────────────────────
+ *
+ * A forwarded 2xx mutation echoes `X-Sync-Seq`; the proxy waits for the mirror to pull that far
+ * before answering, so the client's immediate local `/sync` re-drain already holds its own write.
+ * When a pull fails the mirror goes offline and the proxy answers `503 offline_read_only` writing
+ * nothing locally — `online` rides `/health` and the ready frame so the shell can say which it is.
+ *
+ * ── SIGNED OUT IS A STATE THIS ENGINE SERVES, NOT A REASON TO REFUSE TO START ─────────────────
+ *
+ * A launch with no token pair — a fresh install that has just picked the hosted door, or one whose
+ * session was cleared — used to be a startup failure. That is the wrong shape: the shell would show
+ * "the engine did not start" to somebody whose only problem is that they have not signed in yet,
+ * and the only way out was for the shell to obtain a token pair from somewhere it has no way to
+ * reach. So this engine now comes up in a PRE-AUTH state and serves two things:
+ *
+ *   · `GET  /health`                   — public, and says `signedIn: false` so the shell can render
+ *                                        the door;
+ *   · `POST /cloud/signin/challenge`   — mint the PKCE pair for a browser handoff; answers the
+ *                                        CHALLENGE and keeps the verifier here;
+ *   · `POST /cloud/signin`             — `{email, password, totp}` or `{handoffCode}`.
+ *
+ * ── THE VERIFIER LIVES IN THIS PROCESS'S MEMORY AND NOWHERE ELSE ─────────────────────────────
+ *
+ * `POST /cloud/signin/challenge` is what makes a code safe to hand back over the `ohmail://`
+ * scheme instead of through a person's fingers: it invents a PKCE pair, answers with the public
+ * half, and holds the secret half in the binding below. The account binds the code the browser
+ * mints to that digest, so a program that claims the scheme first receives a code it cannot spend.
+ *
+ * The verifier is a `let` in this closure — not a row, not a file, not a field on any response.
+ * Three consequences, all deliberate:
+ *
+ *  · **It cannot be supplied from the wire.** `POST /cloud/signin` reads a body that has no
+ *    verifier field at all; the claim is made with what this process is holding or with nothing.
+ *    A caller that could name the verifier would be a caller that could spend an intercepted code.
+ *  · **It dies with the engine.** A reconfigure REPLACES this process, so a handoff has to be
+ *    started after the door is configured, not before. That is a real constraint on the window's
+ *    ordering and it is written down in `doors.ts` where the ordering lives.
+ *  · **It is cleared on a successful sign-in**, so a second handoff mints a second pair rather
+ *    than reusing a commitment the browser has already published.
+ *
+ * Everything else answers `409 not_signed_in`. Deliberately NOT the mirror: after a sign-out the
+ * mirror still holds the previous account's mail, and serving it to a signed-out window would be a
+ * reader gaining access by the absence of a credential rather than by one.
+ *
+ * A successful sign-in seals the pair and TRANSITIONS IN PLACE — the same process, the same open
+ * database, the same bridge — because a restart here would tear down the stdio host the window is
+ * mid-request on. Only the authed half (`cloud-auth`, the mirror, the write-through proxy) is
+ * assembled at that point, which is why it lives in {@link activate} rather than inline.
+ *
+ * ── SECRETS NEVER TRAVEL THROUGH THE SHELL ────────────────────────────────────────────────────
+ *
+ * The password and the code arrive over the same bridge every other request uses, addressed to this
+ * process, and leave it as a sealed file. The shell composes no credential into the engine's
+ * environment and holds none in its own state; what it holds is the per-install key the seal is
+ * written under, which is the arrangement the IMAP password already uses.
  */
 
 export interface CloudSidecarConfig {
@@ -84,13 +164,24 @@ export interface CloudSidecarConfig {
   /** Injected for tests; production dials the real hosted API. */
   fetchImpl?: typeof fetch;
   /**
-   * The fingerprint of the desktop this install paired with — present only on the desktop-host
-   * door, turning every connection into a pinned one. No CA vouches for a machine on someone's
-   * network, so trust comes from the pairing ceremony: the link carried `SHA-256(SubjectPublicKeyInfo)`
-   * of the door's key, which is all this install accepts (see `host-pin-probe.ts` — the cert is a
-   * cache, the KEY is the identity). ABSENT means UNPINNED, correct for the hosted service and a
-   * self-host box (verified against the platform trust store); a desktop-host door refuses a link
-   * with no fingerprint. An explicit {@link fetchImpl} wins — the test seam, unreachable from config.
+   * THE FINGERPRINT OF THE DESKTOP THIS INSTALL PAIRED WITH — present only on the desktop-host
+   * door, and what turns every connection this engine makes into a pinned one.
+   *
+   * No certificate authority will vouch for a machine on somebody's network, so the trust comes
+   * from the pairing ceremony instead: the link carried `SHA-256(SubjectPublicKeyInfo)` of the
+   * door's key, and that value is the whole of what this install will accept. See
+   * `host-pin-probe.ts` for the bootstrap and for why the certificate is a cache and the KEY is
+   * the identity.
+   *
+   * ABSENT MEANS UNPINNED, and that is correct for the two doors that predate this one: the hosted
+   * service and a self-host box are verified against the platform's trust store exactly as any
+   * other site is, and a pin there would add a way for the connection to break on a certificate
+   * renewal without adding anything. It is NOT a fallback for a desktop host — a desktop-host door
+   * configured without a pin has no way to authenticate what answers, which is why the shell
+   * writes the two together and the door refuses a link that carries no fingerprint.
+   *
+   * An explicit {@link fetchImpl} WINS over this. That is the test seam, and it is deliberately not
+   * reachable from any configuration a person can write: `main.ts` composes no `fetchImpl`.
    */
   hostPin?: string;
   pageLimit?: number;
@@ -132,13 +223,28 @@ const json = (body: unknown, status = 200): Response =>
   new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 
 /**
- * Add the hosted message count to a local `GET /mailboxes` answer, per mailbox that has one. The
- * window's status strip needs two numbers; in Cloud mode only one is local (`cloud-read.ts` serves
- * the list from the mirror), and the other is what the mirror drains toward, learned from the hosted
- * `?counts=1` on its own cadence. It writes `hostedMessageCount`, NOT `messageCount`: the latter is
- * the shared DTO field, so filling it here would make the strip compare the mirror against itself.
- * ABSENT, NEVER ZERO — a mailbox the map has nothing for is left as the read produced it, since `0`
- * asserts an empty account. A non-JSON or non-list body passes through untouched (a decoration).
+ * ADD THE HOSTED MESSAGE COUNT TO A LOCAL `GET /mailboxes` ANSWER, per mailbox that has one.
+ *
+ * The window's status strip needs two numbers to say how much of the account this device is
+ * holding, and in Cloud mode only ONE of them is here: `cloud-read.ts` serves this list out of the mirror,
+ * so everything on those rows is a fact about the copy. The other number is what the mirror is
+ * draining toward, and `cloud-mirror.ts` learns it from the hosted `?counts=1` on a cadence of its
+ * own (see `HOSTED_COUNTS_TTL_MS` — this function costs nothing and asks for nothing).
+ *
+ * `hostedMessageCount`, NOT `messageCount`. The latter is the shared DTO's field and means "how
+ * much mail is in this mailbox" as answered by whoever was asked — so filling it from here would
+ * make the strip compare the mirror against itself and read "N of N" for ever, and would put a
+ * number about the hosted account into the field Settings renders as this install's own count. A
+ * separate name is what keeps those two facts from being spent as one.
+ *
+ * ABSENT, NEVER ZERO. A mailbox the map has nothing for — the launch before the first counted
+ * refresh, an account that answers no counts, a mailbox added since — is left exactly as the read
+ * surface produced it. `0` would assert an empty account, which is the shape of lie the shell's
+ * ladder is built to refuse: it would read as "this device is ahead of your account" and go
+ * silent, or, with the comparison written the other way, announce a negative shortfall.
+ *
+ * A non-JSON or non-list body is passed through untouched: this is a decoration, and a decoration
+ * that can fail a response is worse than one that quietly does nothing.
  */
 async function decorateHostedCounts(
   res: Response,
@@ -182,13 +288,16 @@ export const MIRROR_OWNER_FILE = "mirror-owner";
 const sameOwner = (v: string): string => v.trim().toLowerCase();
 
 /**
- * The address this mirror was bootstrapped for, or null when the marker file is ABSENT. Written by
- * {@link enforceMirrorOwner} at construction, so from the moment the engine serves it holds exactly
- * the address the local world was built for and reads are scoped by. A file that EXISTS AND IS
- * EMPTY returns `""`, deliberately distinct: absent means "predates the marker" (adopted), empty
- * means "a write was torn" (an owner that cannot be established and must never read as a match) —
- * collapsing the two would turn a crash between the discard and the rewrite into the one thing this
- * whole mechanism exists to refuse.
+ * The address this mirror was bootstrapped for, or null when the marker file is ABSENT.
+ *
+ * Written by {@link enforceMirrorOwner} at construction, so from the moment the engine is serving
+ * it holds exactly the address the local world was built for and the reads are scoped by.
+ *
+ * A file that EXISTS AND IS EMPTY returns `""`, and the distinction is deliberate rather than
+ * pedantic: absent means "this install predates the marker", which is adopted, and empty means "a
+ * write of this marker was torn", which is an owner that cannot be established and must never be
+ * read as a match. Collapsing the two would turn a crash between the discard and the rewrite into
+ * the one thing this whole mechanism exists to refuse.
  */
 export function readMirrorOwner(dataDir: string): string | null {
   const raw = readMirrorRecordRaw(dataDir);
@@ -220,13 +329,17 @@ export function readMirrorAccount(dataDir: string): string | null {
 }
 
 /**
- * Is this directory waiting for a discard that has not happened yet? The DURABLE answer, read from
- * the record rather than a process flag — the flag says what THIS process did, and every caller
- * here asks what state the DIRECTORY is in. A pairing stages a discard by stamping the record;
- * until a construction performs it, the mail on disk belongs to the world being left while the
- * record already names the world being arrived at. `false` for an absent or unreadable record — the
- * ordinary, safe state; reading an unreadable one as "pending" would refuse every pairing on an
- * install whose marker was damaged.
+ * IS THIS DIRECTORY WAITING FOR A DISCARD THAT HAS NOT HAPPENED YET?
+ *
+ * The DURABLE answer, read from the record rather than from a flag in this process, and that
+ * distinction is the whole point: the flag says what THIS process did, and the question every
+ * caller here actually has is what state the DIRECTORY is in. A pairing stages a discard by
+ * stamping the record; until a construction performs it, the mail on disk belongs to the world
+ * being left while the record already names the world being arrived at.
+ *
+ * `false` for an absent or unreadable record, which is the ordinary state and the safe one: a
+ * directory with no record has nothing staged, and reading an unreadable one as "pending" would
+ * refuse every pairing on an install whose marker was damaged.
  */
 export function readMirrorDiscardPending(dataDir: string): boolean {
   const raw = readMirrorRecordRaw(dataDir);
@@ -240,14 +353,62 @@ function readMirrorRecordRaw(dataDir: string): string | null {
 }
 
 /**
- * One mirror, one account — enforced before the database is opened. The cloud directory is keyed by
- * MODE, not account, and `ensureLocalWorld` reuses one `accounts` row, so re-pointing the door at a
- * DIFFERENT hosted address would reopen a database holding the previous account's mail under the
- * `accountId` the new session reads by — the worst failure shape this product has (measured). The
- * mirror is a CACHE, so the answer is to discard and re-bootstrap, never reconcile two accounts (the
- * sealed session and cursor go with it). Called before {@link openLocalDb}, idempotent, marker-less
- * installs adopted. A mirror belongs to an account on a SERVER, so `cloudUrl` is compared as hard as the
- * address; sign-in and pair-redeem re-ask after the database is open (this settles only a launch).
+ * ONE MIRROR, ONE ACCOUNT — enforced before the database is opened.
+ *
+ * The cloud mirror's directory is keyed by MODE, not by account: `src-tauri/src/config.rs`
+ * derives `engine-cloud/` from the door alone and DELIBERATELY FREEZES it across a switch. And
+ * `identity.ts`'s `ensureLocalWorld` reuses the single local `accounts` row for every address it
+ * is ever asked for — the reads the shell issues scope by that one `accountId`. Put those two
+ * facts together and re-pointing the cloud door at a DIFFERENT hosted address reopens a database
+ * still holding the previous account's mail, under the very `accountId` the new session reads by,
+ * so the previous account's messages render in the new account's Ohbox and Screener.
+ *
+ * That is not hypothetical. A mirror that had been bootstrapped against a different account's
+ * mailbox went on rendering that account's messages after the door was re-pointed — a signed-in
+ * account showing another mailbox's mail, which is the worst failure shape this product has.
+ *
+ * The mirror is a CACHE and the hosted account is master, so the only correct response to a
+ * change of owner is to throw the cache away and re-bootstrap clean — never to reconcile two
+ * accounts in one database. The sealed session and the sync cursor belong to the OLD account too,
+ * so they are discarded with it; the next launch establishes a session for the new address and
+ * bootstraps from `since=0`.
+ *
+ * ── AND IT IS NOT THE ONLY PLACE THE QUESTION IS ASKED ────────────────────────────────────────
+ *
+ * This settles a LAUNCH. It cannot settle a sign-in, which happens after the database is open and
+ * against a mirror this function has already approved for a different address: `signOut` leaves
+ * the mirror, the cursor and the marker where they are, so the next `POST /cloud/signin` may carry
+ * another account's credentials. That handler therefore resolves the hosted identity from the
+ * minted pair and compares it against the marker written here, and refuses rather than activating.
+ * The DISCARD stays here — the only point at which the files can be removed without a live PGlite
+ * holding them — and a refused sign-in sends the shell back through a door configure, which is a
+ * relaunch, which is this function.
+ *
+ * Called BEFORE {@link openLocalDb}, so nothing holds the files being removed. Idempotent: a
+ * launch whose owner matches — every ordinary relaunch — removes nothing and only rewrites the
+ * same marker. An install that predates this marker (a `pgdata` with no owner file) is ADOPTED as
+ * the current address rather than wiped: its owner is unknowable in retrospect, and the common
+ * case is that it already belongs to the address now being served; the guarantee this makes is
+ * forward — no future owner change can mix two accounts.
+ *
+ * ── AND THE OWNER IS AN ACCOUNT ON A SERVER, NOT AN ADDRESS ───────────────────────────────────
+ *
+ * `cloudUrl` is compared with the same force as the address, and for a reason the address alone
+ * cannot cover: with a self-hosted door, `me@example.com` on the hosted service and
+ * `me@example.com` on an operator's own machine are DIFFERENT ACCOUNTS spelled identically. The
+ * address check reads them as the same owner and keeps the mirror; the reads are then scoped by an
+ * `accountId` that belongs to neither in particular, and one server's mail renders under the
+ * other's session. It is the same defect this function was written for, reached by moving a
+ * different field.
+ *
+ * The discard is what closes the SESSION half too. `cloud-tokens.seal` holds a bearer minted by the
+ * server being left, and a launch that kept it would send it to the server being arrived at — our
+ * service's token to a machine somebody else runs, or an operator's to ours. It is already in the
+ * list of things removed, so widening what counts as foreign is the entire fix; there is no second
+ * place where a session has to be revoked, and deliberately no second enforcement point to keep in
+ * step. See `cloud-origin.ts` for the one-sided default that keeps every existing install running.
+ *
+ * @returns whether a foreign mirror was discarded — for the log line and the test, nothing reads it.
  */
 export function enforceMirrorOwner(
   dataDir: string,
@@ -278,13 +439,24 @@ export function enforceMirrorOwner(
   const prior = priorRecord?.address == null ? null : sameOwner(priorRecord.address);
   const addressChanged = prior !== null && served !== null && prior !== served;
   /**
-   * Which server the state already in this directory belongs to. `null` means "nothing here to
-   * protect" and is the only reading that may skip the comparison; everything else resolves to a
-   * base, because a Cloud directory holding anything was filled by SOME server. A record naming one
-   * is the ordinary case; a record naming NONE is an earlier one-line marker (compared against that);
-   * NO record but state on disk is a real upgrade state (the seal predates the marker), which gating
-   * the comparison on the record missed — that profile kept its seal and had the hosted bearer
-   * activated against whatever server the door pointed at; a genuinely empty directory is adopted.
+   * ── WHICH SERVER THE STATE ALREADY IN THIS DIRECTORY BELONGS TO ────────────────────────────
+   *
+   * `null` means "there is nothing here to protect", and it is the ONLY reading that may skip the
+   * comparison. Everything else resolves to a base, because a Cloud directory that holds anything
+   * at all was filled by SOME server, and the question is only which.
+   *
+   *  · A RECORD THAT NAMES ONE — the ordinary case since this field existed.
+   *  · A RECORD THAT NAMES NONE — a one-line marker from an earlier build, which could dial exactly
+   *    one address, and `mirrorIsForeign` compares against that.
+   *  · NO RECORD AT ALL, BUT STATE ON DISK — and this is the case the first fix missed. The seal
+   *    predates the marker in this repository's own history, so a Cloud profile with
+   *    `cloud-tokens.seal` and `pgdata` and NO `mirror-owner` is a real upgrade state rather than a
+   *    fabricated one. Gating the comparison on the record existing meant that profile reported
+   *    neither an address change nor a server change, kept its seal, and had the hosted bearer
+   *    activated against whatever server the door was then pointed at — the same leak as the
+   *    one-line case, through the door the first fix left open. Raised by the second review round.
+   *  · A GENUINELY EMPTY DIRECTORY — a fresh install, with no mirror and no session in existence.
+   *    Nothing to lose and nothing to compare, so it is adopted.
    */
   const holdsCloudState = ["pgdata", "cloud-cursor.json", "cloud-tokens.seal"].some((f) =>
     existsSync(join(dataDir, f)),
@@ -366,14 +538,36 @@ export function enforceMirrorOwner(
 export const PROBE_DEADLINE_MS = 12_000;
 
 /**
- * What answered at the configured address — the self-hosted door's probe. Exported and pure-ish
- * (the `fetch` is a parameter) so the classification can be test-driven, which matters because
- * every branch is a SENTENCE somebody reads when least able to guess. Every refusal names what was
- * tried — the full base — so an operator can see the app dialled `https://…/api/hello` and not
- * something else. The private-CA branch is what this route exists for: a self-host stack issues its
- * own certificates and Node verifies against its compiled-in roots, so it fails
- * `UNABLE_TO_GET_ISSUER_CERT_LOCALLY` (measured against the running stack) — the honest answer names
- * the `NODE_EXTRA_CA_CERTS` file to install, never an offer to skip verification, which nothing here can do.
+ * WHAT ANSWERED AT THE CONFIGURED ADDRESS — the self-hosted door's probe.
+ *
+ * Exported and pure-ish (the `fetch` is a parameter) so the classification below can be driven by
+ * a test without a server, which matters more here than almost anywhere else in this file: every
+ * branch is a SENTENCE somebody will read at the exact moment they are least able to guess.
+ *
+ * ── EVERY REFUSAL NAMES WHAT WAS TRIED ────────────────────────────────────────────────────────
+ *
+ * The base, in full, in every single message. An operator debugging their own server has to be
+ * able to see that the app dialled `https://ohmail.example.com/api/hello` and not something else —
+ * that one line answers "did it use the right port", "did it keep my scheme", "did it add the
+ * `/api`", and it is the difference between a bug report and a fixed typo. The value is the
+ * operator's OWN address, typed by them into this app, so there is nothing to withhold; the only
+ * reason it does not go into the log is that the LOG is read by us and this sentence is not.
+ *
+ * ── THE PRIVATE-CA BRANCH IS THE ONE THIS WHOLE ROUTE EXISTS FOR ──────────────────────────────
+ *
+ * A self-host stack on a private name issues its own certificates — the shipped compose stack does
+ * exactly that (`OHMAIL_TLS_INTERNAL=1` selects Caddy's local CA), and that is the RIGHT thing for
+ * a name no public authority can validate. Node does not read the operating system's trust store:
+ * it verifies against its own compiled-in root list, so a certificate from the operator's CA fails
+ * with `UNABLE_TO_GET_ISSUER_CERT_LOCALLY` — measured against the running stack, where a default
+ * `tls.connect` to `ohmail.test:443` threw exactly that and the same connection with
+ * `NODE_EXTRA_CA_CERTS` pointed at the stack's exported root came back `authorized`.
+ *
+ * So the honest answer is a FILE, and the sentence names it. It is not "we could not connect", and
+ * it is emphatically not an offer to skip verification: nothing in this app has a way to turn
+ * certificate checking off, and adding one would hand every self-hoster's mail to whatever answers
+ * on their network. Installing the CA is a step the operator performs once, on the machine, and
+ * the sentence tells them where to put it.
  */
 export async function probeCloudServer(cloudUrl: string, fetchImpl: typeof fetch): Promise<Response> {
   const base = cloudUrl.replace(/\/+$/, "");
@@ -478,13 +672,17 @@ export async function probeCloudServer(cloudUrl: string, fetchImpl: typeof fetch
 }
 
 /**
- * A probe's answer, narrowed to the one flavor the paired-desktop door may configure.
- * `probeCloudServer` already refuses the two flavors nothing may pair with (the hosted service, and
- * a desktop not offering itself) with sentences that name what to do. What it does not refuse is a
- * SELF-HOSTED server, right on the self-hosted door but the wrong DOOR when reached from a pairing
- * link — saying so is the difference between moving one screen back and re-printing a pairing code
- * that was never the problem. A refusal is passed through untouched: it was composed where the
- * failure happened, and a second classification here would describe something this function did not observe.
+ * A PROBE'S ANSWER, NARROWED TO THE ONE FLAVOR THE PAIRED-DESKTOP DOOR MAY CONFIGURE.
+ *
+ * `probeCloudServer` already refuses the two flavors nothing may pair with — the hosted service,
+ * and a desktop that is not offering itself — with sentences that name what to do instead. What it
+ * does not refuse is a SELF-HOSTED server, because on the self-hosted door that is the right
+ * answer. Reached from a pairing link it is the wrong door rather than the wrong address, and
+ * saying so is the difference between somebody moving one screen back and somebody re-printing a
+ * pairing code that was never the problem.
+ *
+ * A refusal is passed through untouched: it was composed where the failure happened, and a second
+ * classification here would be a worse description of something this function did not observe.
  */
 async function refuseUnlessDesktopHost(said: Response, origin: string): Promise<Response> {
   if (!said.ok) return said;
@@ -505,14 +703,33 @@ async function refuseUnlessDesktopHost(said: Response, origin: string): Promise<
 }
 
 /**
- * Where is the API at this origin? — the root, or under `/api`. Discovered, not configured: the
- * hosted service and a desktop host answer at the ROOT, a self-host stack answers under `/api` (one
- * Caddy site carries the web app too), and the person typing the address cannot know which. So both
- * are tried, root first, and the greeting decides (`probeCloudServer` composes every sentence). A
- * second dial is only worth making when the first proved nothing about the ADDRESS: "something
- * answered and was not an ohmail greeting" (`not_ohmail`) is exactly a self-host root, so that is
- * retried; a transport failure or an ohmail server already identified and REFUSED is not — repeating
- * it at a longer path produces the same failure and a worse sentence.
+ * WHERE IS THE API AT THIS ORIGIN? — the root, or under `/api`.
+ *
+ * ── WHY THIS IS DISCOVERED AND NOT CONFIGURED ─────────────────────────────────────────────────
+ *
+ * The three server-shaped doors do not agree, and the person typing the address has no way to
+ * know which one they are looking at: the hosted service and a desktop acting as a host answer at
+ * the ROOT, and a self-host stack answers under `/api` because one Caddy site carries the web app
+ * as well. Asking somebody to know that is asking them to debug a deployment.
+ *
+ * So both are tried, root first, and the greeting decides. `probeCloudServer` composes every
+ * sentence and every refusal code; this only chooses which base is asked and passes the answer
+ * through whole.
+ *
+ * ── THE ROOT'S REFUSAL IS SOMETIMES FINAL, AND THAT IS THE WHOLE OF THE CARE HERE ─────────────
+ *
+ * A second dial is only worth making when the first one proved nothing about the ADDRESS. Two
+ * classes:
+ *
+ *  · **Something answered and it was not an ohmail greeting** (`status`, `not_ohmail`). That is
+ *    exactly what a self-host stack's root looks like — Caddy hands `/hello` to the web container,
+ *    which answers a 404 HTML page — so this is the case the second dial exists for.
+ *  · **Anything else.** A transport failure (nothing listening, a name that does not resolve, a
+ *    certificate that will not verify) is a fact about the ADDRESS and repeating it at a longer
+ *    path produces the same failure and a worse sentence — the person would be told their machine
+ *    could not be reached at `…/api/hello`, which invites them to go and look for a path that was
+ *    never the problem. And an ohmail server that answered and was REFUSED (`managed`, `local`,
+ *    `needs_setup`) has already been identified; dialling it again cannot change what it is.
  */
 export async function probeCloudDoor(origin: string, fetchImpl: typeof fetch): Promise<Response> {
   const root = origin.replace(/\/+$/, "");
@@ -604,14 +821,26 @@ export function describeProbeFailure(err: unknown, target: string): [message: st
 }
 
 /**
- * The first transport code in a thrown value, down `cause` AND through `AggregateError.errors` —
- * both branches load-bearing. `fetch` throws `TypeError: fetch failed` with the real error on
- * `cause`, so reading the outer error alone classifies every failure as the same shrug (measured:
- * an untrusted cert surfaces as `cause.code = UNABLE_TO_GET_ISSUER_CERT_LOCALLY`). And a host with
- * more than one address — every dual-stack server — reports the lot as an `AggregateError` with no
- * `code` and no `cause`; a walker following only `cause` would report "unreachable" for a cert
- * problem it was holding. The first code found wins — a mixed aggregate is a judgement call, and the
- * first attempt's answer is the one the connection would have used.
+ * The first transport code in a thrown value, down `cause` AND through `AggregateError.errors`.
+ *
+ * ── BOTH BRANCHES ARE LOAD-BEARING, AND THE SECOND ONE IS THE COMMON CASE ─────────────────────
+ *
+ * `fetch` never throws the real error. It throws `TypeError: fetch failed` and hangs the cause off
+ * it, so a reader of the outer error alone classifies every failure — a wrong name, a refused port,
+ * an untrusted certificate — as the same shrug. Measured against the running self-host stack with
+ * its CA withheld: `TypeError(fetch failed)` → `cause: Error(code:
+ * UNABLE_TO_GET_ISSUER_CERT_LOCALLY)`.
+ *
+ * And when a host resolves to more than one address — which is EVERY dual-stack server, so most of
+ * them — undici tries them in turn and reports the lot as an `AggregateError`. That has no `code`
+ * and no `cause`: the real errors are in `.errors`, and a walker that followed only `cause` would
+ * fall off the end and report "unreachable" for a certificate problem it was holding. The
+ * self-hosted door is exactly where that matters, because its whole value is saying WHICH thing
+ * went wrong.
+ *
+ * The first code found wins. A mixed aggregate — say IPv6 refused and IPv4 untrusted — is a
+ * judgement call either way; taking the first attempt's answer is at least the one the connection
+ * would have used, and no ordering here could be right for every mix.
  */
 function errorCode(err: unknown): string | null {
   const seen = new Set<unknown>();
@@ -635,13 +864,25 @@ function errorCode(err: unknown): string | null {
 
 export async function createCloudSidecar(config: CloudSidecarConfig): Promise<CloudSidecar> {
   /**
-   * The transport for a question about somebody else's address — the injected seam, NEVER the one
-   * this door is pinned to. Captured before the pinning below, because after it `config.fetchImpl`
-   * is either the test seam or the transport built for the CONFIGURED host: a candidate probe that
-   * read it asked "is there an ohmail server at the address I just typed" over the transport of the
-   * door the person is trying to LEAVE, so a self-hosted server that was up read as unreachable
-   * (`cloud-probe-candidate-transport.test.ts`). The NO-CANDIDATE arm still reads `config.fetchImpl`
-   * — it asks about the door this engine IS on, which belongs on that door's pinned connection.
+   * THE TRANSPORT FOR A QUESTION ABOUT SOMEBODY ELSE'S ADDRESS — the injected seam, and NEVER the
+   * one this door is pinned to.
+   *
+   * Captured before the pinning below, because after it `config.fetchImpl` is two different things
+   * wearing one name: the test seam, or the transport built for the CONFIGURED host. A candidate
+   * probe that read it got the second — so the question "is there an ohmail server at the address I
+   * just typed" went out through the transport belonging to the door the person is trying to LEAVE.
+   *
+   * The reachable shape is the ordinary one. Somebody paired with a computer of their own, that
+   * computer is off, and they open the middle door to move to a server they run. The pinned
+   * transport refuses before it dials anything — it cannot establish the other machine's identity —
+   * so a self-hosted server that is up and answering was reported as unreachable with a sentence
+   * about a machine that has nothing to do with the address they typed, telling them to check it is
+   * switched on. `cloud-probe-candidate-transport.test.ts` is that case.
+   *
+   * The NO-CANDIDATE arm deliberately still reads `config.fetchImpl`: it asks about the door this
+   * engine IS on, and that question belongs on that door's own connection, pin included. Answering
+   * it over an unpinned one would be the opposite mistake and a worse one, so both arms are pinned
+   * by test rather than by whichever value happened to be in scope.
    */
   const injectedFetch = config.fetchImpl;
   /* THE ONE SEAM. Everything this engine says to its server goes through the `fetchImpl` the
@@ -660,14 +901,23 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
   const now = config.now ?? ((): Date => new Date());
 
   /**
-   * The server's base, canonicalized once — nothing below reads the raw value. Every URL is
-   * `${base}${path}`, and the base is a string the WINDOW can choose (`engine_configure`), so a base
-   * carrying a FRAGMENT turns concatenation into a different request — `http://host#/` + `/hello` is
-   * `http://host#//hello`, the fragment is never sent, and `GET /` goes out instead (every route
-   * collapses the same way). So the base is parsed and re-composed as scheme + host + path, so a
-   * query, fragment or embedded credentials cannot survive into any request. A base that will not
-   * parse REFUSES THE LAUNCH — continuing with the raw value is the hazard, and a default would
-   * silently point the install at a server nobody chose.
+   * ── THE SERVER'S BASE, CANONICALIZED ONCE, AND NOTHING BELOW READS THE RAW VALUE ────────────
+   *
+   * Every URL this process composes is `${base}${path}`, and until this line the base was whatever
+   * arrived in the environment. That is a string the WINDOW can choose: `engine_configure` is one of
+   * the commands it holds, and the shell stores what it is given. So a base carrying a FRAGMENT
+   * turns concatenation into a different request entirely — `http://host:port#/` + `/hello` is
+   * `http://host:port#//hello`, and the fragment is never sent, so what actually goes out is
+   * `GET /` at that address. Every one of `/auth/login`, `/sync` and the probe collapses the same
+   * way. Raised by review of this slice, which is where the reach became a designed feature rather
+   * than an unused capability, and the honest fix is at the seam rather than in one route: the base
+   * is parsed and re-composed as scheme + host + path, so a query, a fragment and embedded
+   * credentials cannot survive into any request.
+   *
+   * A base that will not parse REFUSES THE LAUNCH. Every other reading is worse: continuing with
+   * the raw value is the hazard above, and falling back to a default would silently point somebody's
+   * install at a server they did not choose — which on this door is the one thing that must never
+   * happen quietly.
    */
   const cloudBase = normalizeBase(config.cloudUrl);
   if (cloudBase === null) {
@@ -762,14 +1012,24 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
      */
     let sessionExpired = false;
     /**
-     * A pairing finished here and cannot take effect until this process is replaced. Set by a
-     * `startOver` redeem, which seals the new world's session and stages the old mirror's discard —
-     * a discard only the constructor can perform (`pgdata` is open here). Between that answer and the
-     * relaunch every other reading is a LIE: `signedIn: false` alone renders the hosted PASSWORD
-     * FORM for an account that does not exist, and `sessionExpired: true` (deliberately NOT set)
-     * would say this machine is no longer paired — the opposite of what happened. So the state says
-     * what it is. PROCESS-LOCAL and never read back: the on-disk flag is cleared by the launch that
-     * acts on it, and a fresh process is by definition one where this window has passed.
+     * A PAIRING FINISHED HERE AND CANNOT TAKE EFFECT UNTIL THIS PROCESS IS REPLACED.
+     *
+     * Set by a `startOver` redeem, which seals the new world's session and stages the discard of
+     * the old world's mirror — a discard only the constructor can perform, because `pgdata` is an
+     * open database in this process. Between that answer and the relaunch there is a state the
+     * shell has no other way to name, and every reading it could otherwise reach is a LIE:
+     *
+     *  · `signedIn: false` alone is the pre-auth state, and a window renders the hosted PASSWORD
+     *    FORM for it — asking for an ohmail Cloud password, for an account that does not exist, at
+     *    the exact moment the pairing succeeded;
+     *  · `sessionExpired: true` is worse and is deliberately NOT set here: it means the server
+     *    ended the session, and the surface for it says this machine is no longer paired — the
+     *    precise opposite of what just happened.
+     *
+     * So the state says what it is. PROCESS-LOCAL and never read back from the record: the flag on
+     * disk is cleared by the very launch that acts on it, and a fresh process is by definition one
+     * where this window has passed. Raised by the window lane, which found both wrong renderings
+     * before either shipped.
      */
     let restartRequired = false;
     /**
@@ -970,16 +1230,69 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
       const core = token ? await resolveSession(db, token, now()) : null;
       if (!core) return json({ error: { code: "unauthorized", message: "authentication required" } }, 401);
 
-      // Signing in, and signing out — both addressed to THIS process over the pipe the shell holds;
-      // the password and code are exchanged for a token pair, sealed, and never seen again (the
-      // shell composes no credential). The browser handoff's first half answers the CHALLENGE and
-      // keeps the verifier here, so the code the browser mints is spendable only by this process;
-      // it is refused once signed in. `/cloud/probe` is the self-hosted door's question about
-      // somebody else's machine, asked here because the window's CSP is `connect-src 'none'`. It
-      // takes a CANDIDATE origin deliberately: probing the configured base forced configuring first,
-      // which runs `enforceMirrorOwner` and destroyed a whole mirror on a MISTYPED address. The cost
-      // (a window can make this dial an origin it chooses) is bounded by `normalizeOrigin`. It uses
-      // `/hello`, not `/health`, because only `/hello` names the product and flavor; behind the launch bearer.
+      // ── SIGNING IN, AND SIGNING OUT ────────────────────────────────────────────────────────
+      //
+      // Both are addressed to THIS process over the pipe the shell already holds. The password and
+      // the code are read here, exchanged for a token pair, sealed, and never seen again — the
+      // shell composes no credential and stores none.
+      // ── HALF ONE OF THE BROWSER HANDOFF: THE COMMITMENT ───────────────────────────────────
+      //
+      // Answers the CHALLENGE and keeps the verifier. The window passes the challenge to the shell,
+      // which appends it to the `link-desktop` address it already owns — so the code the browser
+      // mints is spendable only by this process, and the `ohmail://` link that carries it back is
+      // worth nothing to whatever else on the machine may have claimed the scheme.
+      //
+      // Behind the same launch bearer as everything below, and refused once signed in for the
+      // reason the sign-in itself is: there is nothing to hand off to an install that already
+      // holds a session, and minting a commitment would leave a live code bound to a process
+      // nobody is waiting on.
+      // ── IS THERE AN OHMAIL SERVER AT THE ADDRESS THIS ENGINE WAS POINTED AT? ───────────────
+      //
+      // The self-hosted door's question, and the only one in this file whose answer is a fact
+      // about somebody else's machine. The window cannot ask it — its CSP is `connect-src 'none'`
+      // and `offline-guard.ts` replaces every API that could leave the process — so it has to be
+      // asked here, by the process that already dials this server for everything else.
+      //
+      // ── IT TAKES A CANDIDATE ORIGIN, AND THAT IS A DELIBERATE WIDENING ────────────────────
+      //
+      // The first version probed only the CONFIGURED base, on the reasoning that a route dialling an
+      // address out of the request would turn the one bridge the window is allowed into a
+      // general-purpose request forwarder. Two things were wrong with that, both raised by review.
+      //
+      // THE REASONING DID NOT HOLD. `engine_configure` is also a command the window holds, so the
+      // window could already choose the address and then ask this route what answered. The reach was
+      // never bounded by where the value was read from — only by what the value may BE.
+      //
+      // AND THE ORDER IT FORCED WAS DESTRUCTIVE. Probing the configured base means configuring
+      // first, and configuring for a different server runs `enforceMirrorOwner`, which discards the
+      // previous mirror and its sealed session before the database opens. So a MISTYPED address
+      // cost somebody their whole hosted mirror and a full re-sync — for a typo, before anything had
+      // been proved, with Back offering no way to undo it. That contradicts what the door is for:
+      // the address step exists precisely so that nothing is committed until the server has
+      // answered.
+      //
+      // So the candidate is read from the body and the door probes BEFORE it configures anything.
+      // What that costs, stated plainly rather than argued away: a window running hostile script can
+      // make this process issue `GET <origin>/api/hello` for an origin it chooses, without a restart
+      // between attempts. It is bounded — `normalizeOrigin` admits only https, or http on loopback,
+      // with no path, query, fragment or credentials, and the path is always `/api/hello` — and it
+      // is a cheaper version of something the window could already do. That trade buys removing a
+      // real, reachable-by-accident data loss from every self-hoster's first attempt.
+      //
+      // ── `/hello` AND NOT `/health`, BECAUSE ONLY ONE OF THEM SAYS *WHAT* ANSWERED ───────────
+      //
+      // `/health` says a service is alive. `/hello` is the capability handshake and names the
+      // product, the flavor (`selfhost` / `managed`), whether the install still needs its
+      // first-run setup, and which sign-in methods it has. That difference is what lets the door
+      // tell "nothing is there" from "something is there and it is not ohmail" — the second being
+      // what an operator gets when they type the address of their router, their NAS, or the
+      // machine they MEANT to install this on. Measured on both deployments: `flavor:"selfhost"`
+      // from a stack at `https://ohmail.test`, `flavor:"managed"` from `https://api.ohmail.app`.
+      //
+      // BEHIND THE LAUNCH BEARER, like `/cloud/signin` and unlike `/health`. The bearer is minted
+      // per launch and added SHELL-SIDE (`bridge-fetch.ts` never sees it), so requiring it costs
+      // the door nothing — it is on the far end of the same pipe — and means nothing that is not
+      // this window can make this process dial anything.
       if (req.method === "POST" && path === "/cloud/probe") {
         let candidate: unknown = null;
         let wantFlavor: unknown = null;
@@ -1111,14 +1424,24 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
       }
 
       if (req.method === "POST" && path === "/cloud/signin/challenge") {
-        /* A browser hand-off only ever makes sense against the hosted service. Its other half is a
-           PAGE, and the only page the shell can open is one whose address it owns — all ohmail.app's
-           — so on a self-hosted base the sign-in surface would send the browser to OUR service, mint
-           a code there, and claim it against the OPERATOR's server. And the claim carries the
-           VERIFIER (`cloudSignIn` posts `{code, verifier}`), so it would hand a third party a
-           complete account-takeover primitive for the person's HOSTED account from a screen that
-           says "Sign in". REFUSED here rather than hidden in the window, whose wording is not a guard
-           — an expired self-hosted session renders the shared hosted sign-in surface. */
+        /* ── A BROWSER HAND-OFF ONLY EVER MAKES SENSE AGAINST THE HOSTED SERVICE ──────────────
+           The ceremony's other half is a PAGE, and the only page the shell can open is one whose
+           address it owns — all of them ohmail.app's. So on a self-hosted base the sign-in surface
+           would send somebody's browser to OUR service, mint a code there, and then claim it
+           against the OPERATOR's server.
+
+           AND THE CLAIM CARRIES THE VERIFIER. `cloudSignIn` posts `{code, verifier}` to the
+           configured base (`cloud-signin.ts`, the browser path), and that pair is exactly what is
+           needed to spend the code at ohmail.app. So the ceremony would not merely fail on the
+           wrong server — it would hand a third party a complete, two-minute account-takeover
+           primitive for the person's HOSTED account, from a screen that says "Sign in". Raised by
+           review, which found the path reachable through the reconnect surface after a self-hosted
+           session expires.
+
+           REFUSED HERE rather than hidden in the window, because the window's wording is not a
+           guard: an install whose session expired renders the shared hosted sign-in surface for any
+           cloud door. This makes the attempt impossible instead of unlikely, and names the path
+           that does work. */
         if (baseIsForeign(cloudBase, config.handoffBase ?? MANAGED_CLOUD_BASE)) {
           return json(
             {
@@ -1167,13 +1490,18 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
           return json({ error: { code: "invalid_request", message: "the sign-in body is not JSON" } }, 400);
         }
 
-        /* And the code itself is refused here, not only the ceremony that mints one. Guarding
-           `/cloud/signin/challenge` stops this install STARTING a hand-off on a self-hosted door; it
-           does not stop one being FINISHED, because the browser path also accepts a code typed in by
-           hand, and a typed code came from the hosted service. Sent to an operator's server it is a
-           live, spendable credential for the person's hosted account. So the CODE is refused,
-           wherever it came from, on any base that is not the hand-off's own; a password sign-in is
-           unaffected, since that credential belongs to the server being dialled. */
+        /* ── AND THE CODE ITSELF IS REFUSED HERE, NOT ONLY THE CEREMONY THAT MINTS ONE ────────
+           Guarding `/cloud/signin/challenge` stops this install STARTING a hand-off on a
+           self-hosted door. It does not stop one being FINISHED: the browser path also accepts a
+           code somebody typed in by hand, and a code typed in came from the hosted service. Sent to
+           an operator's server that code is a live, spendable credential for the person's hosted
+           account — unbound, so worth less than the bound pair the challenge guard prevents, and
+           still theirs to spend within its couple of minutes. Raised by the second review round,
+           which found the retype path left open by the first fix.
+
+           So the CODE is what is refused, wherever it came from, on any base that is not the
+           hand-off's own. A password sign-in on this door is unaffected: that credential belongs to
+           the server being dialled. */
         /* PRESENT AT ALL, not "present and a non-empty string". The narrower test would have to
            agree with `cloudSignIn`'s own branch predicate (`trimmed(req.handoffCode) !== ""`, which
            yields "" for any non-string) across two files, and a later change to either — a coercion
@@ -1230,14 +1558,24 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
         // has still spent it.
         linkVerifier = null;
 
-        // One mirror, one account — the second enforcement point. `enforceMirrorOwner` settles a
-        // LAUNCH but not a sign-in, which happens after the database is open: signing out leaves the
-        // mirror, cursor and marker in place, so the next `POST /cloud/signin` can carry a DIFFERENT
-        // account's credentials into an engine whose `world`, `db` and cursor are still the previous
-        // account's. The comparison is against the mirror's RECORDED OWNER and the resolved HOSTED
-        // identity — never `body.email` or the browser path's absent address, which would check the
-        // attacker's own claim. The marker always equals `config.address` from a serving engine; the
-        // fallback covers only a marker gone missing under a running engine.
+        // ── ONE MIRROR, ONE ACCOUNT — THE SECOND ENFORCEMENT POINT ────────────────────────────
+        //
+        // `enforceMirrorOwner` runs at construction and settles the question for a LAUNCH. It
+        // cannot settle it for a sign-in, because a sign-in happens after the database is open:
+        // signing out leaves the mirror, the cursor and the marker exactly where they are (see
+        // `signOut`), so the very next `POST /cloud/signin` can carry a DIFFERENT account's
+        // credentials into an engine whose `world`, `db` and cursor are still the previous
+        // account's — and `ctxFor(core.accountId, …)` would then serve that account's mail to this
+        // session. Construction was one entry point too few.
+        //
+        // The comparison is against the mirror's RECORDED OWNER and the resolved HOSTED identity,
+        // and neither of those is an input. `body.email` is what somebody typed and the browser
+        // path sends no address at all, so a check against either would be a check against the
+        // attacker's own claim; `cloudIdentity` asks the account instead. The marker is what
+        // `enforceMirrorOwner` wrote for this data directory, and from a serving engine it always
+        // equals `config.address` — the fallback covers only the impossible-in-practice case of a
+        // marker that has gone missing under a running engine, where the address the local world
+        // was actually built for is the honest thing to compare against.
         let hostedAddress: string;
         try {
           hostedAddress = await cloudIdentity(
@@ -1266,14 +1604,19 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
            refuse. Every hosted and self-hosted door is unaffected: `config.address` is a string
            there, so the fallback always establishes one and this arm is unreachable. */
         if (recordedOwner === null || sameOwner(hostedAddress) !== sameOwner(recordedOwner)) {
-          // Refused, and nothing is kept: the pair is not sealed and `activate` is not called, so
-          // `authed` stays null and every read stays `409 not_signed_in` — no window in which this
-          // session reaches the previous account's rows. The DISCARD is deliberately not done here:
-          // removing `pgdata` under an open PGlite and rebuilding the world is what the constructor
-          // already does, before the database opens. So this refuses and names the remedy, and the
-          // shell re-points the door — a restart, the one code path that has always done this. One
-          // discard, one place. The message never names the other account: somebody signing in with
-          // their own credentials must not be told whose mail is on the machine.
+          // REFUSED, AND NOTHING IS KEPT. The pair is not sealed and `activate` is not called, so
+          // `authed` stays null and every read below this stays a `409 not_signed_in` — there is
+          // no window in which this session can reach the previous account's rows.
+          //
+          // The DISCARD is deliberately not done here. Throwing the mirror away means removing
+          // `pgdata` out from under an open PGlite instance and rebuilding the world, the launch
+          // session and every closure that captured them; the constructor already does all of it,
+          // correctly, before the database is opened. So this refuses and names the remedy, and
+          // the shell re-points the door — which restarts the engine and takes the ONE code path
+          // that has always been able to do this. One discard, one place.
+          //
+          // The message never names the other account. Somebody standing at this machine signing
+          // in with their own credentials must not be told whose mail is on it.
           log?.("cloud_signin_owner_mismatch", { changed: true });
           return json(
             {
@@ -1309,14 +1652,36 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
       }
 
       /**
-       * `POST /cloud/pair-redeem` — the third way in. A pairing code printed by ANOTHER machine's
-       * desktop, spent here for a bearer pair; it takes its shape from `/cloud/signin` because this
-       * is the one process allowed to hold a credential for the configured server. The body carries
-       * the TOKEN and nothing else — the origin is not the caller's to name (this engine dials what
-       * it was configured for) and neither is the KIND (the platform is this process's own fact). It
-       * is the THIRD enforcement point of one-mirror-one-account, for a host REINSTALLED at the same
-       * address (same base, new world): the account it names is compared with the one recorded and a
-       * disagreement is REFUSED, never merged — the remedy is the shell re-pointing the door.
+       * ── `POST /cloud/pair-redeem` — THE THIRD WAY IN ────────────────────────────────────────
+       *
+       * A pairing code printed by ANOTHER machine's desktop, spent here for a bearer pair. It sits
+       * beside `/cloud/signin` and takes its whole shape from it, because it does the same job:
+       * this is the one process allowed to hold a credential for the configured server, and the
+       * only place a session may be sealed.
+       *
+       * ── WHAT THE BODY CARRIES, AND WHAT IT DELIBERATELY DOES NOT ───────────────────────────
+       *
+       * The TOKEN, and nothing else. The origin is not the caller's to name — this engine dials
+       * exactly what it was configured for, which is `enforceMirrorOwner`'s premise and the reason
+       * `/cloud/probe` takes a candidate but never adopts one. And the KIND is not the caller's
+       * either: what platform this install runs on is this process's own fact, the verifier's
+       * placement rule, applied to the field that decides what somebody else's Devices pane says
+       * this machine is.
+       *
+       * ── ONE MIRROR, ONE ACCOUNT — THE THIRD ENFORCEMENT POINT ──────────────────────────────
+       *
+       * `enforceMirrorOwner` settles the question for a LAUNCH and the sign-in settles it for a
+       * password. Neither can settle it here, and the case is one neither of them can see: a host
+       * REINSTALLED at the same address. The address is unchanged, the base is unchanged, and the
+       * world behind it is new — so the two comparisons that exist both say "same server" while
+       * the mail on the other side belongs to a different account.
+       *
+       * The account the host names is therefore compared with the one this directory recorded, and
+       * a positive disagreement is REFUSED rather than merged. The remedy named is re-pairing from
+       * scratch, which is the shell re-pointing the door — the one code path that has always been
+       * able to discard a mirror, done once, in one place. Merging is never offered: two accounts
+       * in one database is the failure `enforceMirrorOwner`'s own header calls the worst this
+       * product has.
        */
       if (req.method === "POST" && path === "/cloud/pair-redeem") {
         // The expiry teardown's tail removes the seal; sealing a fresh pair before it runs hands
@@ -1346,13 +1711,21 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
             400,
           );
         }
-        /* A staged discard is not done until a relaunch has done it — the hole the account
-           comparison cannot see: a `startOver` stamps the record with the NEW account, so from that
-           moment `accountIsForeign` compares B against B and answers no. An ordinary redeem in that
-           window would fall through to `activate()` and serve the new account's session over the OLD
-           account's `pgdata`, still on disk because the discard has not run — the exact mixing every
-           guard here refuses. REFUSED before the token is spent, so a single-use code is not burned
-           to say "restart". A `startOver` is exempt: it replaces this world rather than joining it. */
+        /* ── A STAGED DISCARD IS NOT DONE UNTIL A RELAUNCH HAS DONE IT ──────────────────────
+           The hole this closes, and it is the one the account comparison cannot see: a `startOver`
+           stamps the record with the NEW account, so from that moment `accountIsForeign` compares
+           B against B and answers no. An ordinary redeem in that window therefore falls straight
+           through to `activate()` — and serves the new account's session over the OLD account's
+           `pgdata`, which is still on disk because the discard has not run. That is the exact
+           mixing every other guard in this file exists to refuse, reached through the one state
+           where none of them are looking.
+
+           REFUSED BEFORE THE TOKEN IS SPENT, deliberately: a refusal after the redeem would burn a
+           single-use pairing code to tell somebody to restart, and they would need a fresh one from
+           the other machine to do the thing they were already trying to do.
+
+           A `startOver` is exempt because it is not asking to join this directory's world — it is
+           asking to replace it, and re-stamping a record that already says so is a no-op. */
         if (!startOver && readMirrorDiscardPending(config.dataDir)) {
           return json(
             {
@@ -1413,14 +1786,23 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
            it is: while a discard is staged, no redeem of any kind may activate. */
         if (startOver && (accountIsForeign(recordedAccount, redeemed.accountId)
           || readMirrorDiscardPending(config.dataDir))) {
-          /* The way out of the refusal below, only ever taken on purpose. Without it the mismatch is
-             a dead end: the constructor discards on a change of ADDRESS or SERVER, and a host
-             reinstalled at the same address changes neither, so an install refused here stays refused
-             with nothing to press. This is that press — the caller's explicit `startOver`, never an
-             inference from the mismatch. THE DISCARD IS STAGED, not done: `pgdata` is open, so the
-             record is stamped and the next launch performs it (`enforceMirrorOwner`); the pair sealed
-             below is spared, because it belongs to the world being arrived at. NOTHING IS ACTIVATED —
-             reads stay `409 not_signed_in` until the relaunch. */
+          /* ── THE WAY OUT OF THE REFUSAL BELOW, AND IT IS ONLY EVER TAKEN ON PURPOSE ─────────
+             Without this the mismatch is a dead end: the constructor discards on a change of
+             ADDRESS or of SERVER, and a host reinstalled at the same address changes neither — so
+             an install refused here would go on being refused, with nothing a person could press.
+             This is that press, and it is the caller's explicit `startOver`, never an inference
+             from the mismatch itself.
+
+             THE DISCARD IS STAGED, NOT DONE. `pgdata` is an open database at this moment and
+             removing it under the process holding it corrupts that process; `enforceMirrorOwner`
+             already does the discard correctly, before anything is opened, so the record is
+             stamped and the next launch performs it. The pair sealed below is deliberately spared
+             by that discard — see the seal note there — because it belongs to the world being
+             arrived at rather than the one being left.
+
+             NOTHING IS ACTIVATED. Reads stay `409 not_signed_in` until the relaunch, so there is
+             no window in which this session can reach the previous world's rows — which is the
+             whole reason the refusal exists and is not weakened by giving it a way out. */
           if (keyProvider) await sealTokens(sealPath, keyProvider, redeemed.tokens);
           writeFileSync(
             join(config.dataDir, MIRROR_OWNER_FILE),
@@ -1576,13 +1958,18 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
         } catch (err) {
           if (err instanceof ServiceError) {
             /**
-             * A body the mirror never held is a reach-past body — forward it, don't 404 it. The
-             * reach-past list (`GET /messages`, forwarded above the table) hands the client rows the
-             * mirror does not hold; opening one asks this route for its body, and the local read
-             * honestly answers `not_found`. That is the one `not_found` that is not the end: the
-             * hosted account holds the row and its body (or its `withheld` marker), so the ask
-             * travels the same door the list did — a genuinely unknown id comes back as the hosted
-             * 404. Scoped to the BODY read alone; every other local `not_found` stays a local 404.
+             * A BODY THE MIRROR NEVER HELD IS A REACH-PAST BODY — forward it, don't 404 it.
+             *
+             * The reach-past list (`GET /messages`, forwarded above the table) hands the client
+             * rows the local mirror does not hold; opening one asks THIS route for its body, and
+             * the local read service honestly answers `not_found` because the message row is not
+             * in the mirror. That is the one `not_found` that is not the end of the story: the
+             * hosted account holds the row (it just listed it) and its stored body — or the
+             * body's honest `withheld` marker — so the ask travels the same door the list did.
+             * A genuinely unknown id costs one forwarded round trip and comes back as the hosted
+             * 404, which is the same answer with better provenance. Scoped to the BODY read
+             * alone: every other local `not_found` (a thread, a rule, a message row) stays a
+             * local 404, because nothing hands the client those ids from beyond the mirror.
              */
             if (err.code === "not_found" && req.method === "GET" && read.route.pattern === "/messages/:id/body") {
               return proxy.forward(req);

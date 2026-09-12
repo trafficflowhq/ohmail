@@ -99,16 +99,3 @@ export function useToast(): ToastFn {
   if (!ctx) throw new Error("useToast must be used inside <ToastHost>");
   return ctx;
 }
-
-/**
- * The same reader where a host may legitimately be absent — `null` rather than a throw.
- *
- * `useToast`'s throw is a real guard and stays: a surface that MEANS to say something and says it
- * into nowhere is a bug, silently. This variant is for a caller that can answer "then I will not
- * act": a view mounted bare in a test or on a surface with no toast layer must still render, and a
- * caller here has to decide what a missing host means rather than being handed a no-op that hides
- * the question. Never a stand-in `show` that drops the message on the floor.
- */
-export function useOptionalToast(): ToastFn | null {
-  return useContext(ToastContext) ?? null;
-}

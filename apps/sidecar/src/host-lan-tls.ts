@@ -12,14 +12,84 @@ import { join } from "node:path";
 import type { Diagnostic } from "./log.js";
 
 /**
- * The LAN door's own key — TLS whose trust is established by the PAIRING CEREMONY. The door served
- * plain HTTP and its only client cannot speak it: a release Android build (targetSdk 36) refuses
- * cleartext before a byte moves, and iOS ATS the same, so it only ever worked from DEBUG builds. A
- * cleartext exemption was rejected (Android's config has no CIDR syntax), so the DOOR grows TLS with
- * trust from the ceremony, not a CA: no public CA issues for a DHCP address, and a trusted private
- * key in a binary is a universal cert for our domain. The link carries this key's SPKI fingerprint
- * and the client's rule is "the key presented must be the key scanned" — no chain, no hostname match
- * (`ohmail-desktop-host.invalid`), no expiry (take-back is the Devices pane). The key persists loudly.
+ * ══════════════════════════════════════════════════════════════════════════════════════════
+ *  THE LAN DOOR'S OWN KEY — TLS whose trust is established by the PAIRING CEREMONY
+ * ══════════════════════════════════════════════════════════════════════════════════════════
+ *
+ * ── WHAT THIS EXISTS TO FIX, MEASURED ────────────────────────────────────────────────────────
+ *
+ * The LAN door served plain HTTP, and the only client it was ever built for cannot speak plain
+ * HTTP. A release Android build targets API 36, where `cleartextTrafficPermitted` defaults to
+ * FALSE, and the shipped manifest declares no exemption — so the app refuses to open the socket
+ * at all (`java.net.UnknownServiceException: CLEARTEXT communication to <addr> not permitted by
+ * network security policy`), before a byte moves. iOS App Transport Security imposes the same
+ * refusal by default on any `http://` load. Every earlier exercise of this path was a DEBUG
+ * build, whose manifest carries `usesCleartextTraffic="true"`, which is why the door looked
+ * reachable for its whole life.
+ *
+ * The obvious fix — a `network_security_config.xml` permitting cleartext — was rejected. Android's
+ * config grammar has no CIDR syntax, so "private ranges only" cannot be expressed declaratively;
+ * the honest spellings are a blanket cleartext exemption (which turns every request the app makes
+ * anywhere into a downgradable one) or a per-address list that cannot be written for an address
+ * chosen at pairing time. Trading a functional break for a transport downgrade on the app that
+ * carries a person's whole mailbox is a worse product, not a shipped feature.
+ *
+ * So the DOOR grows TLS, and the trust comes from the ceremony rather than from a certificate
+ * authority.
+ *
+ * ── WHY NOT A REAL CERTIFICATE, AND WHY NOT THE PLEX TRICK ───────────────────────────────────
+ *
+ * No public CA issues for `10.0.2.15`, and there is no name to be issued for: the address is
+ * whatever DHCP handed this machine this morning. The well-known workaround (Plex's
+ * `*.plex.direct`) mints a per-server certificate from a wildcard the vendor controls, resolved
+ * through the vendor's own DNS — which requires an always-on issuing service and an account.
+ * This product's desktop app has neither by design, and shipping a publicly-trusted private key
+ * inside a downloadable binary would be handing every user a universal certificate for our own
+ * domain. Rejected on both counts.
+ *
+ * ── WHAT IS ENFORCED, AND WHAT IS DELIBERATELY NOT ───────────────────────────────────────────
+ *
+ * The pairing link carries this key's SPKI fingerprint (`host-lan-pin.ts` composes it; the phone
+ * pins it for that host). The client's rule is then exactly one thing:
+ *
+ *   **the key the door presents must be the key the person scanned, byte for byte.**
+ *
+ * Everything a normal TLS client checks is deliberately NOT checked, and each absence is a
+ * decision rather than an omission:
+ *
+ *  · **No chain.** There is no issuer to trust — the pin IS the trust anchor, and it is a
+ *    stronger one than a CA (it names one key, not every key a CA will ever sign).
+ *  · **No hostname match.** The pin is bound to `(host, port)` on the phone's side, so the name
+ *    in the certificate adds nothing; an attacker at a different address still cannot present
+ *    the pinned key. The subject alternative name is therefore one fixed reserved name
+ *    (`ohmail-desktop-host.invalid`, RFC 2606 — a TLD that can never be delegated), which is an
+ *    honest way of saying "this certificate asserts no identity". Putting the machine's current
+ *    IP in it would be worse: it would suggest an identity claim the address can invalidate by
+ *    the next DHCP lease, while the key — the thing that actually matters — had not changed.
+ *  · **No expiry.** A pinned self-signed key's `notAfter` is theatre: nothing renews it, nobody
+ *    checks a revocation list for it, and the only thing an expiry could do is un-pair every
+ *    phone in the household on a date nobody chose — including on a machine whose clock is
+ *    simply wrong. The validity window is therefore wide and fixed. What replaces the expiry is
+ *    the take-back that already exists and is stronger: the Devices pane revokes a device, and
+ *    a re-pair re-pins.
+ *
+ * ── THE KEY IS PERSISTENT, AND LOSING IT IS LOUD ─────────────────────────────────────────────
+ *
+ * The key is generated once and kept, so disarming and re-arming host mode — or restarting the
+ * machine — leaves every paired phone paired. It is only ever generated when the file is
+ * genuinely ABSENT: any other read failure (a permission problem, a half-written file) turns the
+ * LAN door OFF with a named reason instead of minting a new identity, because a new identity is
+ * an un-pairing of every device in the household and a transient `EACCES` must not be able to
+ * cause one. The recoverable failure is always preferred to the destructive one.
+ *
+ * ── NO DEPENDENCY ────────────────────────────────────────────────────────────────────────────
+ *
+ * `node:crypto` generates the key and signs, but it has no certificate builder, so the X.509 is
+ * written here as DER by hand. That follows `packages/core/src/net/webpush.ts`'s ruling for the
+ * same reasons it gives: this is a long-running process holding mail and credentials, the surface
+ * needed is one signature over one structure, and every byte of that structure is fixed by a
+ * published specification and asserted against a parser (`node:crypto`'s own, plus the TLS
+ * handshake in the e2e test) rather than against itself.
  */
 
 /** Where the door's identity lives, under the engine's data directory. */
@@ -208,13 +278,16 @@ export function spkiFingerprint(publicKey: KeyObject): string {
 }
 
 /**
- * The door's identity, generated on first use and kept for ever afterwards. THE ONLY GENERATION
- * TRIGGER IS ENOENT, and that is the whole safety argument: minting a new key un-pairs every device
- * in the household, and a missing file is the one state where that is certainly correct (there was
- * nothing to un-pair). Every other failure — `EACCES`, a truncated file, an unparseable key — is a
- * state where an existing identity may still be on disk and recoverable, so this REFUSES and the LAN
- * door stays shut with a sentence the pane can show. A door that is off is a fixable afternoon; a
- * re-keyed door is every phone in the house needing a fresh QR code, caused by a permission bit.
+ * The door's identity, generated on first use and kept for ever afterwards.
+ *
+ * ── THE ONLY GENERATION TRIGGER IS ENOENT, AND THAT IS THE WHOLE SAFETY ARGUMENT ─────────────
+ *
+ * Minting a new key un-pairs every device in the household. A missing file is the one state where
+ * that is certainly correct (there was nothing to un-pair). Every other failure — `EACCES`, a
+ * truncated file, a key node will not parse — is a state where an existing identity may still be
+ * on disk and recoverable, so this REFUSES and the LAN door stays shut with a sentence the pane
+ * can show. A door that is off is a fixable afternoon; a re-keyed door is every phone in the house
+ * needing a fresh QR code, caused by a permission bit.
  */
 export function ensureLanIdentity(dataDir: string, log?: Diagnostic): LanIdentityOutcome {
   const keyPath = join(dataDir, LAN_KEY_FILE);

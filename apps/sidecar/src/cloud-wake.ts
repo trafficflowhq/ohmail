@@ -1,14 +1,37 @@
 import type { Diagnostic } from "./log.js";
 
 /**
- * The cloud door's wake subscription — the sidecar's half of the realtime wake channel. The hosted
- * `GET /events` emits a content-free `event: sync` frame whenever the account's `change_log`
- * advances; this holds ONE stream over `authedFetch` and answers every frame with `mirror.kick()`.
- * IT IS A HINT, NEVER A DEPENDENCY — the mirror's poll is the reliability floor, so every failure
- * degrades to silence. Any non-200 except 429 ⇒ OFF for the process's life (the production default
- * until the deploy flips the flag, and what a refusing endpoint answers); a 429 means LATER, redialed
- * on `Retry-After` (floored at {@link WAKE_THROTTLE_RETRY_MS}); a THROW before any success ⇒ up to
- * {@link NEVER_CONNECTED_ATTEMPTS} then OFF; a drop AFTER success ⇒ reconnect on backoff for ever.
+ * THE CLOUD DOOR'S WAKE SUBSCRIPTION — the sidecar's half of the realtime wake channel.
+ *
+ * The hosted `GET /events` emits a content-free `event: sync` frame whenever the account's
+ * `change_log` advances (every writer NOTIFYs at the append chokepoint; the API fans out).
+ * This module holds ONE such stream over `authedFetch` — the sidecar is the thing with the
+ * session, not the webapp inside the desktop window — and answers every frame with
+ * `mirror.kick()`, which pulls now and queues at most one follow-up for a burst.
+ *
+ * IT IS A HINT, NEVER A DEPENDENCY. The mirror's poll (`DEFAULT_CLOUD_POLL_MS`, with its own
+ * backoff) is untouched and remains the reliability floor: with this stream dead, the door
+ * behaves exactly as it did before the wake channel existed. Which is why every failure here
+ * degrades to silence rather than to an error the door can feel:
+ *
+ *  · **Any non-200 except 429** ⇒ OFF for the process's lifetime, zero retries. This is the production
+ *    default until the deploy flips the server's flag (503 `sse_disabled`), it is what an
+ *    unknown route answers (404), and it is what capacity or an auth refusal answers — and a
+ *    subscriber that re-dialed a refusing endpoint on a timer is a reconnect storm against
+ *    the exact deployment that asked it to stop. One line says it happened; the poll carries
+ *    the door from there. A **429** is the one refusal that means LATER rather than never —
+ *    measured live: the launch bootstrap's own `/sync` paging tripped the limiter over the
+ *    `/events` dial beside it — so a throttle redials on a slow cadence (`Retry-After`,
+ *    floored at {@link WAKE_THROTTLE_RETRY_MS}) instead of dying for the process's lifetime.
+ *  · **A connect that THROWS before the stream ever succeeded** ⇒ up to
+ *    {@link NEVER_CONNECTED_ATTEMPTS} tries, then OFF. A host that never once answered is a
+ *    host without the channel; endless redials would be pure noise (and in tests, pure churn).
+ *  · **A drop AFTER a successful connect** ⇒ reconnect on backoff, forever. The server ends
+ *    every stream on a cadence by design (its platform bounds an invocation's lifetime), so a
+ *    clean end is the ordinary case and reconnects immediately with the backoff reset.
+ *
+ * The frames themselves are trusted for nothing: `event: sync` means "ask /sync", data is
+ * ignored, and everything else (heartbeat comments, retry hints, unknown events) is skipped.
  */
 export const NEVER_CONNECTED_ATTEMPTS = 3;
 /** Reconnect after a CLEAN server close — the stream cycling, not failing. */

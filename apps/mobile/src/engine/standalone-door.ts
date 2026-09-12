@@ -15,16 +15,15 @@ import type { EngineLogSink } from "./engine-log";
 import type { StandaloneFields } from "../ui/standalone-form";
 
 /**
- * WHAT ASKING FOR THIS PHONE ANSWERED — four states, named, and no `null` among them.
+ * WHAT ASKING FOR THIS PHONE ANSWERED — three states, named, and no `null` among them.
  *
- * `held` and `refused` are separate because only one is worth a sentence: a live foreign holder is
- * the ordinary state of a phone whose mailbox a laptop organizes, and collapsed, the claim watch
- * would write "we could not start organizing" under that chip once a minute. `unreadable` is the
- * fourth and is not `refused` either — the door says it exactly where it could not see whether
- * anybody holds the mailbox, and the sentence there is "try again". It must never arrive as
- * `claimed`. `refused` is what is left: everything else the door said.
+ * `held` and `refused` are separate because only one of them is worth a sentence. A live foreign
+ * holder is the ordinary state of a phone whose mailbox a laptop organizes: nothing is wrong and
+ * the panel already says which machine has it. `refused` is everything else the door said, and
+ * that one a person reads. Collapsed, the claim watch would write "we could not start organizing"
+ * under that chip once a minute for as long as the laptop kept the mailbox.
  */
-export type ClaimHereOutcome = "claimed" | "held" | "unreadable" | "refused";
+export type ClaimHereOutcome = "claimed" | "held" | "refused";
 
 /**
  * WHAT THE PERSON'S STOP SETTLED — the engine's own three answers, mirrored here.
@@ -95,16 +94,6 @@ export interface StandaloneEngine {
    */
   stopOrganizing(): Promise<StopOrganizingOutcome>;
   /**
-   * THE ENGINE'S OWN HARDENED LOGGER, FOR THE APP'S BACKGROUND HALF — the sink's return trip.
-   *
-   * The app hands a DESTINATION at launch ({@link StandaloneDeps.logSink}) and may never build a
-   * logger; this is the other end of that seam. `background.ts` decides what happens to the
-   * mailbox at every app-state edge and had no channel at all, so every decline was invisible in
-   * `adb logcat` and was read off the mail server's wire instead. The caller names the event and
-   * the fields; the ENGINE decides what may be in the line. Never an address.
-   */
-  readonly log: (event: string, detail: Record<string, unknown>) => void;
-  /**
    * What each mailbox reports — the row's answer, not the gate's optimism.
    *
    * `heldBy` is the OTHER install's name when this one has stood down, and `reason` is WHY it stood
@@ -128,15 +117,6 @@ export interface StandaloneEngine {
        * and the press both read it rather than inferring a stop from `organizing: false`.
        */
       releaseRequestedAt: string | null;
-      /**
-       * IS THIS MAILBOX CLAIMED BY THIS INSTALL — the instruction, not the pass's progress.
-       *
-       * `organizing` flips one IMAP round trip after the claim is already standing in
-       * `ohmail/_meta`, so in that window it reads exactly as a mailbox nobody has consented to.
-       * This is the fact the background arm decides on: true from the moment the gate is entitled
-       * to the lease, false once the claim leaves or where it was never ours.
-       */
-      claimed: boolean;
     }>;
     /**
      * CAN THIS INSTALL REACH THE MAIL SERVER RIGHT NOW — the engine's own connection facts, which
@@ -152,15 +132,6 @@ export interface StandaloneEngine {
       reachable: boolean;
       unreachableSince: Date | null;
       signInRefused: boolean;
-      /**
-       * AND WHAT THE FIRST SYNC OF THIS MAILBOX PRODUCED — `pending`, `finished`, or
-       * `produced_nothing_readable`. The third is the one no surface could report: a drain came
-       * back, not one message reached the mirror, and every other field here says the install is
-       * fine. Typed as a string rather than the engine's union because this declaration is a
-       * claim about an UNTYPED artifact — `test/engine-bundle-loads.test.ts` reads the members off
-       * a booted one — and a union here would be this app asserting the engine's closed set.
-       */
-      firstSync: string;
     }>;
   };
 }
