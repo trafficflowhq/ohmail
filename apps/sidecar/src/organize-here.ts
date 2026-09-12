@@ -85,6 +85,11 @@ export async function authorizeOrganizerTakeover(
   const [row] = await db
     .select({
       id: mailboxes.id,
+      /* THE ACCOUNT THAT OWNS THIS MAILBOX, and therefore the one whose screening baseline this
+         consent establishes. Read off the row rather than taken from the caller: the baseline is
+         now stamped by EVERY door, including the two that ask no window and were given no account,
+         and a stamp a caller can forget to enable is the defect this closes. */
+      accountId: mailboxes.accountId,
       status: mailboxes.status,
       disabledReason: mailboxes.disabledReason,
       // Mail 0083 — the precondition moved off `status`. A demoted install is now `connected`
@@ -150,7 +155,15 @@ export async function authorizeOrganizerTakeover(
   //
   // `coalesce` on the consent so a re-run does not move the record of when the person first
   // agreed; the stamp is unconditional because it authorizes THIS becoming.
-  await db
+  //
+  // ONE TRANSACTION, SETTINGS FIRST. This arm asks no window, and for that reason alone it used
+  // to write no `account_settings` row at all — leaving a consented mailbox with a NULL screening
+  // baseline, which is "no cutoff" and moves the whole backlog. The baseline is stamped by every
+  // door now; `writeConsentScreening` is the one writer, and the settings/mailbox order is the one
+  // every other writer of that table takes so the lock chain runs one direction.
+  await db.transaction(async (tx) => {
+    await writeConsentScreening(tx, dialect(db), { accountId: row.accountId, now: input.now });
+    await tx
     .update(mailboxes)
     .set({
       disabledReason: null,
@@ -172,7 +185,8 @@ export async function authorizeOrganizerTakeover(
          it in its own claim-back transaction for exactly this reason. */
       releaseRequestedAt: null,
     })
-    .where(and(eq(mailboxes.id, row.id), ne(mailboxes.status, "disabled")));
+      .where(and(eq(mailboxes.id, row.id), ne(mailboxes.status, "disabled")));
+  });
 
   /* -- `previousReason` IS DERIVED, AND READING THE COLUMN RETURNED NULL FOR A YEAR OF ROWS --
    *
@@ -224,31 +238,46 @@ export class LocalConsentRefusal extends Error {
 type LocalTx = Parameters<Parameters<LocalDb["transaction"]>[0]>[0];
 
 /**
- * The screening answer, written — extracted because it has TWO callers, the two states a person can
- * press "Agree and start organizing" in. The first consent writes it beside the mailbox row in one
- * transaction (the baseline is what the window is measured from); a RE-RUN of setup on a mailbox
- * this install already organizes writes only this half — the mailbox row must not be re-stamped (a
- * second press is not a second becoming) but the dials must still be stored, being the answer just
- * given. Until 2026-09-02 that second path wrote nothing and the window control was decorative on
- * every re-run. The bounds are the caller's, checked before any transaction opens.
+ * THE ONE WRITER OF `screening_baseline_at` ON THIS DOOR — and it always writes it.
+ *
+ * The baseline is a property of "this mailbox is organized from now", not of a request field. It
+ * was stamped only when a window rode along, so the two doors that ask no window (the CLI, and
+ * Settings’ "Organize from this machine") left it NULL — and NULL is "no cutoff", so the gate
+ * holds every unruled sender’s mail whatever its age, which on a long-established mailbox is its
+ * whole history. The dials are OPTIONAL because they are the answer a person gave to a second
+ * question; the stamp is not optional, because consent is the answer to the first.
+ *
+ * `coalesce` in SQL rather than read-then-write: two racing consents produce ONE baseline without
+ * reading the row first, and a re-run cannot slide a live install’s cutline forward.
  */
-async function upsertScreeningAnswer(
+async function writeConsentScreening(
   tx: LocalTx,
   /* HANDED IN, never looked up from `tx`. A transaction object is built by the query builder and
      carries no dialect brand of its own, so resolving it here would throw inside the one block
      where the write must succeed. The caller has the handle that knows. */
   d: Dialect,
-  o: { accountId: string; days: number | undefined; scope: ScreeningScope; now: Date },
+  o: {
+    accountId: string; now: Date;
+    /** The window just chosen, when the door asked for one. Absent ⇒ consent alone. */
+    dials?: { days: number | undefined; scope: ScreeningScope };
+  },
 ): Promise<void> {
   // NEVER STORE THE DEFAULT for the dial — `setDormancyDays`' rule and the hosted door's,
   // verbatim, so the product default can move without rewriting every install that never
   // chose. NULL here reads back as the default, and that is the point.
-  const stored = o.days === undefined || o.days === DEFAULT_DORMANCY_DAYS ? null : o.days;
+  const dials = o.dials === undefined
+    ? {}
+    : {
+        dormancyDays:
+          o.dials.days === undefined || o.dials.days === DEFAULT_DORMANCY_DAYS ? null : o.dials.days,
+        screeningScope: o.dials.scope,
+      };
   await tx.insert(accountSettings)
     .values({
       accountId: o.accountId,
-      dormancyDays: stored,
-      screeningScope: o.scope,
+      // Spread rather than written twice: a door that asked nothing must leave the scope at the
+      // column's own default, and naming it here would store a choice nobody made.
+      ...dials,
       screeningBaselineAt: o.now,
       updatedAt: o.now,
     })
@@ -256,16 +285,7 @@ async function upsertScreeningAnswer(
       target: accountSettings.accountId,
       set: {
         // The two dials ARE the answer the person just gave, so they are overwritten.
-        dormancyDays: stored,
-        screeningScope: o.scope,
-        /* The baseline is written only while NULL, and in SQL. It is the instant the account's
-         * screening history begins; moving it forward on a re-run would slide a live install's
-         * cutline — every message between the original baseline and now falls outside the window and
-         * the backlog moves, the same damage as no baseline, arriving later and looking like a sync
-         * bug. It also makes the re-run path safe: that path writes the dials on an account that
-         * already has a baseline, and this `coalesce` is why it cannot disturb it. `coalesce` in SQL
-         * rather than read-then-write so two racing consents produce ONE baseline without reading
-         * the row first. */
+        ...dials,
         screeningBaselineAt: sql`coalesce(${accountSettings.screeningBaselineAt}, ${d.ts(o.now)})`,
         updatedAt: o.now,
       },
@@ -284,11 +304,12 @@ export async function requestOrganizerTakeover(
      */
     intent: OrganizerIntent;
     /**
-     * THE ACCOUNT THE SCREENING STATE BELONGS TO. Required WITH `screening` and meaningless
-     * without it: `account_settings` is keyed by account, and this install serves exactly one —
-     * the launch session's, resolved by the route before this is called. It is a parameter
-     * rather than a lookup so this function never has to guess which account a local store is
-     * for, which is the kind of guess that silently writes the wrong row on a store with two.
+     * THE ACCOUNT THE CALLER BELIEVES THIS MAILBOX BELONGS TO — an assertion, not the source.
+     *
+     * The write reads the owning account off the mailbox ROW, because the baseline is stamped by
+     * every door and two of them are given no account at all. This stays required WITH `screening`
+     * and is compared against the row: a caller naming a different account is refused rather than
+     * writing one account’s settings for another’s consent.
      */
     accountId?: string;
     /** See {@link LocalScreeningConsent}. Absent ⇒ the Settings claim-back, which asks nothing. */
@@ -317,6 +338,11 @@ export async function requestOrganizerTakeover(
   const [row] = await db
     .select({
       id: mailboxes.id,
+      /* THE ACCOUNT THAT OWNS THIS MAILBOX, and therefore the one whose screening baseline this
+         consent establishes. Read off the row rather than taken from the caller: the baseline is
+         now stamped by EVERY door, including the two that ask no window and were given no account,
+         and a stamp a caller can forget to enable is the defect this closes. */
+      accountId: mailboxes.accountId,
       status: mailboxes.status,
       disabledReason: mailboxes.disabledReason,
       // Mail 0083 — the precondition moved off `status`. A demoted install is now `connected`
@@ -345,6 +371,14 @@ export async function requestOrganizerTakeover(
     .limit(1);
 
   if (!row) return { outcome: "no_mailbox", previousReason: null, mailboxId: null };
+  /* THE CALLER’S ACCOUNT IS AN ASSERTION, CHECKED. The screening state is keyed by account and
+     the baseline is now read off the ROW, so a caller naming a different account would have been
+     writing one account’s settings for another’s consent — silently, on a store with two. Before
+     any write, and before the outcomes below, because a mismatch is a caller bug and not an
+     answer about this mailbox. */
+  if (input.accountId !== undefined && input.accountId !== row.accountId) {
+    throw new LocalConsentRefusal("accountId does not own this mailbox");
+  }
   // The tombstone first, then the role — see the CLI arm above for why that order.
   if (row.status === "disabled") {
     return { outcome: "removed", previousReason: null, mailboxId: row.id };
@@ -372,8 +406,8 @@ export async function requestOrganizerTakeover(
      * transaction, because there is no mailbox write here to share one with. */
     if (input.screening) {
       await db.transaction(async (tx) => {
-        await upsertScreeningAnswer(tx, dialect(db), {
-          accountId: input.accountId!, days, scope, now: input.now,
+        await writeConsentScreening(tx, dialect(db), {
+          accountId: row.accountId, now: input.now, dials: { days, scope },
         });
       });
     }
@@ -389,11 +423,14 @@ export async function requestOrganizerTakeover(
    * which is the exact defect this closes, reached by a narrower window.
    */
   await db.transaction(async (tx) => {
-    if (input.screening) {
-      await upsertScreeningAnswer(tx, dialect(db), {
-        accountId: input.accountId!, days, scope, now: input.now,
-      });
-    }
+    /* UNCONDITIONAL. The window, when one came, only chooses the DIALS; the baseline is stamped
+       because somebody consented, which is the same fact whether or not the door asked a second
+       question. Guarded by `if (input.screening)` this left "Organize from this machine" — a door
+       that asks nothing — writing a consent with no cutoff. */
+    await writeConsentScreening(tx, dialect(db), {
+      accountId: row.accountId, now: input.now,
+      ...(input.screening ? { dials: { days, scope } } : {}),
+    });
     await tx
       .update(mailboxes)
       .set({
