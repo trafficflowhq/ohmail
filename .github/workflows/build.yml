@@ -759,7 +759,9 @@ jobs:
   linux:
     name: Linux · smoke · engine · appimage + deb + rpm
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    # Seventy-five and not sixty since the perf smoke joined this job: importing ten thousand
+    # messages and letting the process group settle is minutes on top of three packaged artifacts.
+    timeout-minutes: 75
     defaults:
       run:
         shell: bash
@@ -1463,6 +1465,211 @@ jobs:
           set -e
           kill "$XVFB" 2>/dev/null || true
           exit "$RC"
+
+      # ── WHAT THE APP COSTS, ON A MAILBOX BIG ENOUGH TO SHOW IT ──────────
+      #
+      # The check above proves the packaged app opens a window. It says
+      # nothing about what the app COSTS, and a release that starts slowly or
+      # holds a gigabyte of a laptop's memory is green all the way through
+      # this file and slow on every machine it installs onto. A released build
+      # did exactly that: an 8 GB machine, a large mailbox, 4.1 GB resident
+      # and a core held at 93.7 % for 29 minutes, with nothing watching.
+      #
+      # So: ten thousand messages on a mail server in a container, the app
+      # signed in against it, and its own numbers read back against budgets.
+      # Every budget and the derivation behind it is in the header of
+      # `scripts/perf-smoke-check.mjs`, which is also the verdict.
+      #
+      # Nothing here is a real account. The mailbox is generated in this step,
+      # the server is thrown away with the runner, and the password is the one
+      # the container's own configuration sets a few lines down.
+      - name: Serve a ten-thousand-message mailbox
+        env:
+          PERF_FIXTURE_MESSAGES: "10000"
+        run: |
+          set -euo pipefail
+          # THE TOOLS FIRST, BY NAME, before anything is started — the rule the
+          # launch check above learned: a tool that is missing otherwise
+          # arrives later wearing a product verdict's clothes.
+          for t in docker node; do
+            command -v "$t" > /dev/null || { echo "perf smoke: $t is not installed"; exit 1; }
+          done
+          mkdir -p perf-smoke/vmail/perf/Maildir/cur
+          mkdir -p perf-smoke/vmail/perf/Maildir/new
+          mkdir -p perf-smoke/vmail/perf/Maildir/tmp
+          # Written as files rather than appended over IMAP: ten thousand
+          # appends is a protocol conversation measured in minutes, and the
+          # subject of this step is the app, not the seeding.
+          node -e '
+            const { writeFileSync } = require("node:fs");
+            const dir = "perf-smoke/vmail/perf/Maildir/cur";
+            const N = Number(process.env.PERF_FIXTURE_MESSAGES);
+            for (let i = 0; i < N; i++) {
+              const when = new Date(Date.UTC(2026, 0, 1 + (i % 300), i % 24, i % 60)).toUTCString();
+              const body = ("Message " + i + " of the generated fixture. ").repeat(12);
+              writeFileSync(dir + "/" + (1700000000 + i) + "." + i + ".fixture:2,S",
+                "From: sender" + (i % 400) + "@example.invalid\r\n" +
+                "To: perf@example.invalid\r\n" +
+                "Subject: Generated fixture message " + i + "\r\n" +
+                "Date: " + when + "\r\n" +
+                "Message-Id: <" + i + ".fixture@example.invalid>\r\n" +
+                "\r\n" + body + "\r\n");
+            }
+            console.log("wrote " + N + " messages");
+          '
+          # The container runs its mail process as uid 1000 and the runner is
+          # not that user, so the fixture is opened to it. A throwaway tree on
+          # a throwaway machine.
+          chmod -R 0777 perf-smoke/vmail
+          # Piped through `sed` because this block scalar's own indentation
+          # would otherwise be part of every line of the file.
+          sed 's/^          //' > perf-smoke/dovecot.conf <<'CONF'
+          protocols = imap
+          listen = *
+          ssl = no
+          disable_plaintext_auth = no
+          auth_mechanisms = plain login
+          log_path = /dev/stderr
+          info_log_path = /dev/stderr
+          # This server refuses uid 0 for a mail process regardless of
+          # first_valid_uid, and it refuses AFTER a successful login — so the
+          # symptom is a session that closes mid-read, not an auth error.
+          first_valid_uid = 1000
+          mail_uid = 1000
+          mail_gid = 1000
+          mail_location = maildir:/tmp/vmail/%u/Maildir
+          passdb {
+            driver = static
+            args = password=fixture-password
+          }
+          userdb {
+            driver = static
+            args = uid=1000 gid=1000 home=/tmp/vmail/%u
+          }
+          namespace inbox {
+            inbox = yes
+            separator = /
+          }
+          CONF
+          docker run -d --name ohmail-perf-imap \
+            -p 127.0.0.1:11143:143 \
+            -v "$PWD/perf-smoke/dovecot.conf:/etc/dovecot/dovecot.conf:ro" \
+            -v "$PWD/perf-smoke/vmail:/tmp/vmail" \
+            dovecot/dovecot:2.3.21
+          # Waited for, not slept on: a login against a server that is not up
+          # yet fails for a reason that is not the app.
+          UP=0
+          for _ in $(seq 60); do
+            if node -e 'require("node:net").connect(11143,"127.0.0.1").on("connect",()=>process.exit(0)).on("error",()=>process.exit(1))'; then UP=1; break; fi
+            sleep 1
+          done
+          [ "$UP" = "1" ] || { echo "perf smoke: the mail server never answered on 127.0.0.1:11143"; docker logs ohmail-perf-imap; exit 1; }
+
+      - name: The packaged app's start and memory on that mailbox
+        env:
+          PERF_FIXTURE_MESSAGES: "10000"
+          # Long enough for the import to finish and for the group to settle,
+          # and long enough that the verdict's own floors — twelve samples over
+          # a hundred seconds — cannot be met by a window too short to read.
+          PERF_SMOKE_WINDOW_S: "420"
+          # The fixture's own password, set by the container configuration in
+          # the step above. The app takes a file for everything that is not a
+          # secret and the password from here, which is also the path somebody
+          # reproducing this run by hand takes.
+          OHMAIL_IMAP_PASS: fixture-password
+          # ── THIS IS OFF UNTIL A RUN HAS PRODUCED A VERDICT ───────────────
+          # A verdict of RED — the app measurably over a budget — fails this
+          # step whatever this is set to. A REFUSAL is a different answer: it
+          # means the rig above produced no measurement at all, and until one
+          # run on a real runner has shown that it does, a refusal here would
+          # be this file failing every build for a reason that is not the app.
+          # The first run that prints a verdict is the one that turns this to
+          # "1", in a commit of its own.
+          PERF_SMOKE_REQUIRED: "0"
+        run: |
+          set -euo pipefail
+          for t in Xvfb xwininfo docker node; do
+            command -v "$t" > /dev/null || { echo "perf smoke: $t is not installed"; exit 1; }
+          done
+          HOME_DIR="$PWD/perf-smoke/home"
+          APP_DATA="$HOME_DIR/.local/share/io.ohmail.desktop"
+          mkdir -p "$APP_DATA"
+          mkdir -p "$PWD/perf-smoke/run"
+          chmod 700 "$PWD/perf-smoke/run"
+          # WHICH DOOR, AND THE KEY THAT SEALS WHAT THE ENGINE STORES. The app
+          # writes both itself when a person signs in; written here, the run
+          # starts on a mailbox instead of on the first-run screen, and no
+          # keychain is involved on a machine that has none. 127.0.0.1 is why
+          # the server needs no certificate: the app's transport floor exempts
+          # the loopback range and nothing else.
+          printf '%s\n' '{"mode":"local","imap":{"host":"127.0.0.1","user":"perf","port":11143,"secure":false},"address":"perf@example.invalid"}' > "$APP_DATA/config.json"
+          node -e 'process.stdout.write(require("node:crypto").randomBytes(32).toString("hex"))' > "$APP_DATA/install-key"
+          chmod 600 "$APP_DATA/install-key"
+
+          Xvfb :99 -screen 0 1400x900x24 &
+          XVFB=$!
+          for _ in $(seq 30); do xwininfo -display :99 -root > /dev/null 2>&1 && break; sleep 1; done
+
+          # `set +e` around the whole measurement on purpose: under `set -e` a
+          # red would exit the step here and the verdict below — the thing this
+          # step reports — would never be read at all.
+          set +e
+          APPIMAGE_EXTRACT_AND_RUN=1 DISPLAY=:99 HOME="$HOME_DIR" \
+            XDG_RUNTIME_DIR="$PWD/perf-smoke/run" \
+            build/ohmail-linux-x86_64.AppImage &
+          APP=$!
+          # The sampler reads the app's own process tree from /proc and
+          # classifies by ARGUMENTS: the kernel truncates a process name at
+          # fifteen characters, so a list of the full WebKit spellings matches
+          # none of them and reads a busy renderer as no renderer at all.
+          node scripts/perf-smoke-check.mjs --sample --pid "$APP" \
+            --out perf-smoke/samples.tsv --seconds "$PERF_SMOKE_WINDOW_S" --interval 5 &
+          SAMPLER=$!
+          LOG="$APP_DATA/logs/engine.log"
+          # Waited for by the app's OWN report that the import finished, so the
+          # figures below are a full mailbox's and not a half-imported one's.
+          for _ in $(seq "$PERF_SMOKE_WINDOW_S"); do
+            grep -a -q '"event":"first_sync_finished"' "$LOG" 2>/dev/null && break
+            sleep 1
+          done
+          wait "$SAMPLER"
+          node scripts/perf-smoke-check.mjs \
+            --samples perf-smoke/samples.tsv \
+            --engine-log "$LOG" \
+            --bundle build/ohmail-linux-x86_64.AppImage \
+            --expect-messages "$PERF_FIXTURE_MESSAGES" \
+            --fixture-messages "$PERF_FIXTURE_MESSAGES" | tee perf-smoke/verdict.txt
+          RC="${PIPESTATUS[0]}"
+          set -e
+          kill "$APP" 2>/dev/null || true
+          kill "$XVFB" 2>/dev/null || true
+          docker rm -f ohmail-perf-imap > /dev/null 2>&1 || true
+          {
+            echo '### the app on a ten-thousand-message mailbox'
+            echo
+            echo '```'
+            cat perf-smoke/verdict.txt 2>/dev/null || echo 'the check produced no verdict'
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          # rc 1 is the app over a budget and always fails. rc 3 is a refusal —
+          # the rig produced no measurement — and fails only once this file
+          # says the rig has been seen working.
+          if [ "$RC" = "1" ]; then exit 1; fi
+          if [ "$RC" = "3" ] && [ "$PERF_SMOKE_REQUIRED" = "1" ]; then exit 1; fi
+          if [ "$RC" = "3" ]; then
+            echo "perf smoke: refused, and this file does not yet require a verdict — see PERF_SMOKE_REQUIRED"
+          fi
+          exit 0
+
+      - name: Keep the perf smoke's own files
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: perf-smoke-linux-x86_64-${{ github.run_number }}
+          path: |
+            perf-smoke/samples.tsv
+            perf-smoke/verdict.txt
+          if-no-files-found: ignore
 
       - name: Keep the launch captures when it fails
         if: failure()
