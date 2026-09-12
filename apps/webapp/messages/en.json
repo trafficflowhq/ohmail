@@ -746,6 +746,7 @@
     "toastUndo": "Undo",
     "toastUndone": "{count, plural, one {Undone — 1 waiting again.} other {Undone — # waiting again.}}",
     "toastUndoExpired": "Too late to undo — that decision has already been sent.",
+    "toastIntentExpired": "{count, plural, one {That decision about {name} waited too long to be sent. Decide again.} other {# decisions waited too long to be sent. Decide again.}}",
     "toastDecideFailed": "{sender} is back in the queue — that decision could not be saved. Try it again.",
     "toastReleaseFailed": "{sender} is still in {place} — that change could not be saved. Try it again.",
     "rowNotSaved": "Not saved",

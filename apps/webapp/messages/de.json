@@ -746,6 +746,7 @@
     "toastUndo": "Rückgängig",
     "toastUndone": "{count, plural, one {Rückgängig — 1 wartet wieder.} other {Rückgängig — # warten wieder.}}",
     "toastUndoExpired": "Zu spät — diese Entscheidung ist schon raus.",
+    "toastIntentExpired": "{count, plural, one {Die Entscheidung über {name} hat zu lange gewartet und ging nicht raus. Entscheide noch einmal.} other {# Entscheidungen haben zu lange gewartet und gingen nicht raus. Entscheide noch einmal.}}",
     "toastDecideFailed": "{sender} wartet wieder — diese Entscheidung konnte nicht gespeichert werden. Versuch es noch einmal.",
     "toastReleaseFailed": "{sender} ist weiterhin in {place} — diese Änderung konnte nicht gespeichert werden. Versuch es noch einmal.",
     "rowNotSaved": "Nicht gespeichert",

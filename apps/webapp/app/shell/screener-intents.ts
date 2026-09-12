@@ -163,19 +163,46 @@ export function disarmScreenerIntent(id: string): void {
 }
 
 /**
- * EVERY INTENT THIS BOOT SHOULD ACT ON, and the expired ones swept in the same pass.
+ * WHAT A SWEEP FOUND — what this boot should act on, and what died at the horizon.
+ *
+ * The expired half used to be dropped inside the sweep and never mentioned again: a decision the
+ * reader took, that survived a crash, removed with no word to anybody — the silent loss this file
+ * exists to close, arriving at the file's own edge. The signature has room for it now, and the
+ * caller owes the reader a sentence.
+ */
+export interface ScreenerIntentSweep {
+  /** Still the reader's decision, oldest press first. */
+  live: ScreenerIntent[];
+  /** Past {@link INTENT_TTL_MS}: off the journal, and owed a sentence. */
+  expired: ScreenerIntent[];
+}
+
+/** The class an expiry is counted under — one name, so the log line and its guard cannot drift. */
+export const INTENT_EXPIRED_CLASS = "screener.intent.expired";
+
+/**
+ * EVERY INTENT THIS BOOT SHOULD ACT ON, and the expired ones reported in the same pass.
  *
  * `nowMs` is injected rather than read, so the TTL is testable without a fake clock over the whole
  * suite and so the caller's clock is the engine's clock.
  *
  * The sweep WRITES: an expired intent is removed here rather than left to be re-read and
- * re-rejected on every boot for ever. A journal that only ever grows is a second defect wearing
- * the first one's clothes.
+ * re-rejected on every boot for ever. It is also RETURNED and COUNTED, which is the half that was
+ * missing: removal is not the fact — a press that will never be carried out is — and the line
+ * carries the class and how many, never a sender.
  */
-export function takeScreenerIntents(nowMs: number): ScreenerIntent[] {
+export function takeScreenerIntents(nowMs: number): ScreenerIntentSweep {
   const rows = load();
-  if (rows.length === 0) return [];
-  const live = rows.filter((r) => nowMs - r.at <= INTENT_TTL_MS);
-  if (live.length !== rows.length) save(live);
-  return live.slice().sort((a, b) => a.at - b.at);
+  if (rows.length === 0) return { live: [], expired: [] };
+  const live: ScreenerIntent[] = [];
+  const expired: ScreenerIntent[] = [];
+  for (const r of rows) (nowMs - r.at <= INTENT_TTL_MS ? live : expired).push(r);
+  if (expired.length > 0) {
+    save(live);
+    console.warn("ohmail: screener intents expired", {
+      class: INTENT_EXPIRED_CLASS,
+      count: expired.length,
+    });
+  }
+  return { live: live.slice().sort((a, b) => a.at - b.at), expired };
 }
