@@ -1,20 +1,14 @@
 import type { ConnectedSession } from "./pairing.js";
 
 /**
- * THE WAITING QUEUE AS THE SERVER HOLDS IT — `GET /screener` over the paired server.
- *
- * The server's queue is a derivation over mail physically in `ohmail/Screener`, one row per
- * sender (`screener-service.ts#list`). It consults no rules: a sender whose mail is at the gate
- * is waiting, whatever this account decided about them afterwards. The client partition answers
- * a different question — it re-homes a DECIDED sender's gate mail for display, so that sender
- * leaves the derived queue while their mail is still held. Measured on a device: server 9,
- * phone 4, the five missing each carrying an enabled rule written weeks before the mail arrived.
- * On a paired door this read is the Screener's source of truth; the partition stays as the
- * offline fallback, and the surface says which it is showing.
- *
- * Transport: `session.fetch` only, bound to one origin — this file holds no origin of its own.
- * `null` means "could not ask", never "nobody is waiting": an empty list is a real answer, and a
- * caller reading them alike would empty the queue on every flaky request.
+ * The waiting queue as the server holds it — `GET /screener` over the paired server. The server's
+ * queue is a derivation over mail physically in `ohmail/Screener`, one row per sender
+ * (`screener-service.ts#list`), consulting no rules: a sender whose mail is at the gate is waiting,
+ * whatever this account decided later. The client partition re-homes a DECIDED sender's gate mail
+ * for display, so that sender leaves the derived queue while their mail is still held. On a paired
+ * door this read is the Screener's source of truth; the partition is the offline fallback, and the
+ * surface says which it shows. Transport is `session.fetch` only; `null` means "could not ask",
+ * never "nobody is waiting".
  */
 
 /** One waiting sender, as the route states them. The representative message, and who sent it. */
@@ -57,16 +51,13 @@ function rowOf(raw: unknown): ServerWaitingSender | null {
 }
 
 /**
- * Read the whole waiting queue, or `null` for "could not ask".
- *
- * A PAGE CAN COME BACK EMPTY WITH A CURSOR STILL SET, AND THAT MEANS "KEEP GOING"
- * (`screener-service.ts:523`): the page filters decided senders out AFTER the keyset took its
- * rows, so a page whose whole window was decided on another door answers `items: []` with plenty
- * of queue behind it. Stopping on an empty page would read a full queue as an empty one — the
- * failure this loop is written against. Only `nextCursor === null` ends it.
- *
- * A refused page in the middle abandons the WHOLE read: a partial queue is a queue that is
- * missing senders, which is the defect this route was brought in to fix.
+ * Read the whole waiting queue, or `null` for "could not ask". A page can come back EMPTY WITH A
+ * CURSOR STILL SET, meaning "keep going" (`screener-service.ts:523`): the page filters decided
+ * senders out after the keyset took its rows, so a window all-decided on another door answers
+ * `items: []` with queue behind it. Stopping on an empty page would read a full queue as empty —
+ * the failure this loop is written against — so only `nextCursor === null` ends it. A refused page
+ * in the middle abandons the WHOLE read: a partial queue is one missing senders, the defect this
+ * route was brought in to fix.
  */
 export async function readScreenerWaiting(
   session: ConnectedSession,

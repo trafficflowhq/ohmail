@@ -335,18 +335,13 @@ function ThisPhonePanel() {
      record: a person pressing Start is owed an answer about the press they just made. */
   const [startFailed, setStartFailed] = useState(false);
   /**
-   * ══ THE DOOR'S STATE, LIVE — this panel was correct only at MOUNT ═══════════════════════════
-   *
-   * Measured on a device: `Stopping` stood for two and a half minutes over a stop that had
-   * finished (claim gone, zero bytes on the wire), and `Organizing` for two minutes over a mailbox
-   * another machine held and the engine had already logged a stand-down for. Both settled the
-   * instant Settings was left and re-entered, which is the diagnosis: `standaloneHere()` is read in
-   * the render and nothing re-rendered.
-   *
-   * `useSyncExternalStore` over the organizer session's own version counter — the same mechanism
-   * `world.tsx` subscribes to the mirror engine with. No state is copied: a notify means "ask
-   * again", and the read below is the same `standaloneHere()` it always was, so there is still one
-   * answer to "does this phone organize this mailbox".
+   * The door's state, live — this panel was correct only at MOUNT. `standaloneHere()` was read in
+   * the render and nothing re-rendered, so `Stopping` and `Organizing` stood for minutes over a
+   * finished stop or a mailbox another machine held, settling only when Settings was re-entered.
+   * `useSyncExternalStore` over the organizer session's own version counter — the mechanism
+   * `world.tsx` uses for the mirror engine — fixes it. No state is copied: a notify means "ask
+   * again", and the read below is the same `standaloneHere()`, so there is one answer to whether
+   * this phone organizes this mailbox.
    */
   useSyncExternalStore(
     useCallback((cb: () => void) => onOrganizerState(cb), []),

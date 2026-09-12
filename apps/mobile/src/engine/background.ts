@@ -156,17 +156,12 @@ export interface BackgroundDeps {
    */
   readonly checkEveryMs?: number;
   /**
-   * SAY THAT THE MAILBOX'S STATE MAY HAVE MOVED — the screen's cue to ask again.
-   *
-   * Settings' "This phone" panel read the door at RENDER and nothing re-rendered it, so it showed
-   * the state from the moment it was opened: measured on a device saying `Stopping` for two and a
-   * half minutes over a finished stop and `Organizing` for two minutes over a mailbox another
-   * machine held. Every arm here that can move the claim calls this, and so does the claim watch —
+   * Say that the mailbox's state may have moved — the screen's cue to ask again. Settings' "This
+   * phone" panel read the door at RENDER and nothing re-rendered it, so it showed the state from
+   * when it was opened. Every arm that can move the claim calls this, and so does the claim watch,
    * which is what carries an ENGINE-side change (a stand-down mid-poll, a holder going away) onto
-   * a screen that is already open.
-   *
-   * It carries no state. The caller's own reader decides whether anything actually changed; a
-   * payload here would be a second copy of the answer the engine already gives.
+   * a screen already open. It carries no state: the caller's own reader decides whether anything
+   * changed, and a payload here would be a second copy of the answer the engine already gives.
    */
   readonly stateChanged?: () => void;
   /** Diagnostics. NEVER the address — see {@link ServiceNotice}; the body is not logged. */
@@ -294,25 +289,14 @@ export function createBackgroundOrganizing(deps: BackgroundDeps): BackgroundOrga
   };
 
   /**
-   * ══ THE PERSON'S STOP — REMEMBERED, WHICH A HAND-BACK IS NOT ═══════════════════════════════
-   *
-   * The notification's action and a swipe-dismiss are the documented way to stop organizing on
-   * this phone, and they used to run {@link stopBackground}: the claim out of the folder, the ROW
-   * left saying organizer. Correct for every automatic decline beside it, and wrong for this one,
-   * because the row is the only thing the next launch reads. Measured twice on a device: dismiss
-   * the notification, reopen the app with no kill, and the foreground path's resume wrote a fresh
-   * claim into `ohmail/_meta` that nothing then serviced — frozen heartbeat, no notification, no
-   * service, a message unfiled for 70 s, and Settings saying `Organizing` the whole time. A
-   * mailbox reading as taken by a phone that is organizing nothing also refuses the person's
-   * laptop until the claim goes stale.
-   *
-   * So this goes through the engine's own release, which the row records. The notification comes
-   * down second, on {@link stopBackground}'s order and for its reason: the claim must not still be
-   * standing when the one surface that says it is disappears.
-   *
-   * A release that recorded nothing still takes the notification down. The person pressed stop;
-   * "Organizing" over an install that has been asked to stop is the false state either way, and
-   * the claim lapses on its own.
+   * The person's stop — REMEMBERED, which a hand-back is not. The notification action and a
+   * swipe-dismiss used to run {@link stopBackground}, which removes the claim but leaves the ROW
+   * saying organizer — wrong here, because the row is what the next launch reads: dismiss, reopen,
+   * and the resume wrote a fresh claim nothing serviced (a message unfiled, Settings saying
+   * `Organizing`), and the mailbox reads as taken so the laptop is refused. So this goes through
+   * the engine's own release, which the row records; the notification comes down second so the
+   * claim is not still standing when the surface that advertises it disappears. A release that
+   * recorded nothing still takes it down — the person pressed stop, and the claim lapses on its own.
    */
   const stopByPerson = async (): Promise<void> => {
     let stopped = false;
@@ -348,16 +332,13 @@ export function createBackgroundOrganizing(deps: BackgroundDeps): BackgroundOrga
   };
 
   /**
-   * THE STOOD-DOWN WATCH'S OWN TIMER — a second interval, because its LIFETIME is different.
-   *
-   * The claim watch above lives with the NOTIFICATION: it is armed when the service starts and
-   * disarmed with it, because what it defends against is a notification outliving the claim it
-   * advertises. This one lives with the SESSION — the app being open — because what it defends
-   * against is a stand-down nothing ever re-reads. Folding them into one timer would tie
-   * "may this phone take its mailbox back" to whether a notification happens to be showing, which
-   * on Android is exactly backwards: the phone is in front of the person when it is NOT showing.
-   *
-   * The CADENCE is the claim watch's own ({@link beatEveryMs}) rather than a number of its own.
+   * The stood-down watch's own timer — a second interval, because its LIFETIME differs. The claim
+   * watch above lives with the NOTIFICATION (armed and disarmed with the service, defending
+   * against a notification outliving its claim); this one lives with the SESSION — the app being
+   * open — defending against a stand-down nothing re-reads. Folding them would tie "may this phone
+   * take its mailbox back" to whether a notification is showing, which on Android is backwards: the
+   * phone is in front of the person when it is NOT showing. The CADENCE is the claim watch's own
+   * ({@link beatEveryMs}).
    */
   let reclaim: ReturnType<typeof setInterval> | null = null;
 
@@ -587,23 +568,14 @@ export function createBackgroundOrganizing(deps: BackgroundDeps): BackgroundOrga
   };
 
   /**
-   * ══ THE HOLDER LEFT, AND THIS PHONE IS THE ONE IN FRONT OF THE PERSON ══════════════════════
-   *
-   * A stand-down is a one-way door without this. Measured on a device: the laptop handed the
-   * mailbox back through the ordinary path, the claim record was gone, and 5 min 43 s later the
-   * phone had not re-claimed and its panel still named a machine that had left. Only a relaunch
-   * recovered, and it recovered for the wrong reason — the launch-time consent press, which is the
-   * takeover this lane removes.
-   *
-   * A phone organizes the mailbox WHILE IT IS OPEN, so a stood-down session
-   * keeps asking on the claim watch's own cadence and takes the mailbox back when nothing holds it.
-   * It cannot displace anybody: {@link BackgroundEngine.claimHere} is refused at the engine's door
-   * while a foreign claim is still being renewed, which is where the one-organizer invariant is
-   * enforced rather than here. `held` is therefore the ordinary answer and says nothing to anyone.
-   *
-   * Bounded three ways: it runs only while this session is live (so it stops when the app is
-   * closed and when the person stops), only where the engine says this install is STOOD DOWN, and
-   * on the same clock the claim watch uses — never its own number.
+   * The holder left, and this phone is the one in front of the person — a stand-down is a one-way
+   * door without this. Measured on a device: the laptop handed the mailbox back, the claim was
+   * gone, and minutes later the phone had not re-claimed while its panel still named the machine
+   * that left. A phone organizes WHILE OPEN, so a stood-down session keeps asking on the claim
+   * watch's cadence and takes the mailbox back when nothing holds it — it cannot displace anybody,
+   * since {@link BackgroundEngine.claimHere} is refused while a foreign claim is renewed (where the
+   * one-organizer invariant is enforced). Bounded three ways — only while the session is live, only
+   * where the engine says this install is STOOD DOWN, and on the claim watch's clock.
    */
   const reclaimCheck = async (): Promise<void> => {
     if (disposed) return;

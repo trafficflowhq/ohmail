@@ -82,21 +82,14 @@ export function holdStandaloneDoor(opened: StandaloneEngine): boolean {
 export const organizerDoor = (): StandaloneEngine | null => door;
 
 /**
- * ══ WHO IS WATCHING THIS MODULE'S STATE — the Settings panel, and nothing else yet ══════════
- *
- * The panel read {@link standaloneHere} at RENDER and nothing re-rendered it, so it was correct
- * only at mount: measured on a device showing `Stopping` for two and a half minutes over a
- * finished stop, and `Organizing` for two minutes over a mailbox another machine held. Both
- * settled the instant the screen was left and re-entered, which is the whole diagnosis.
- *
- * A version counter and `useSyncExternalStore` rather than a copy of the state: the state lives in
- * the engine's `runtimes()` and in this module's own `let`s, and a second copy kept in sync is two
- * answers to "does this phone organize this mailbox". So a notify means "ask again", and the panel
- * asks the same function it always did.
- *
- * Every writer below notifies, and so does the session's own claim watch — which is what carries
- * an engine-side change (a stand-down mid-poll, a holder going away) onto the screen without the
- * panel polling for it.
+ * Who is watching this module's state — the Settings panel, and nothing else yet. The panel read
+ * {@link standaloneHere} at RENDER and nothing re-rendered it, so it was correct only at mount:
+ * `Stopping` and `Organizing` stood for minutes over a finished stop or a mailbox another machine
+ * held, settling only when the screen was re-entered. A version counter and `useSyncExternalStore`
+ * rather than a copy of the state — the state lives in the engine's `runtimes()` and this module's
+ * own `let`s, and a second copy is two answers to one question — so a notify means "ask again".
+ * Every writer below notifies, and so does the claim watch, which carries an engine-side change (a
+ * stand-down mid-poll, a holder going away) onto the screen without the panel polling.
  */
 const watchers = new Set<() => void>();
 let stateVersion = 0;
@@ -126,18 +119,14 @@ export function notifyOrganizerState(): void {
 }
 
 /**
- * ══ A PERSON ASKED, IN THIS RUN OF THE APP — the one thing that licenses a consent press ═══════
- *
- * The consent press used to run from `runConnect`, which is every launch, every profile switch and
- * every door press. On a phone beside a laptop holding the mailbox that made a plain relaunch a
- * takeover: the engine stood down correctly and the app authorized a fresh claim 2.3 s later.
- *
- * So the press needs a licence, and the licence is a finger: the door screen's Connect, and the
- * panel's start verb. It is deliberately MODULE state and not persisted — "in this run of the app"
- * is exactly the bound, and a persisted one would license the next launch too, which is the defect.
- *
- * It is TAKEN rather than read: one arm, one press. Without that, a switch away and back inside one
- * run would spend the same finger twice.
+ * A person asked, in this run of the app — the one thing that licenses a consent press. The press
+ * used to run from `runConnect`, which is every launch, profile switch and door press; on a phone
+ * beside a laptop holding the mailbox that made a plain relaunch a takeover (the engine stood down
+ * and the app authorized a fresh claim seconds later). So the press needs a licence, and the
+ * licence is a finger: the door screen's Connect and the panel's start verb. It is MODULE state and
+ * deliberately not persisted — "in this run of the app" is the bound, and a persisted one would
+ * license the next launch too. It is TAKEN rather than read: one arm, one press, or a switch away
+ * and back would spend the same finger twice.
  */
 let consentArmed = false;
 
@@ -310,27 +299,13 @@ export function sayOrganizeRefused(reason: Refusal | null): void {
 export const organizeRefusal = (): Refusal | null => organizeRefused;
 
 /**
- * ══ THE PERSON'S HAND-BACK FROM SETTINGS, on this door — and it is REMEMBERED ═══════════════
- *
- * This was `held.handBack()`, the engine's claim removal, on the argument that a paired session
- * releases through a route needing a mailbox id and the door had none. The door has one now — it
- * is the key of the engine's own runtime map, which the consent press already reads — and the
- * argument had a hole the device measured: `handBack` deliberately leaves the ROW saying organizer
- * so that the next resume takes the mailbox back with no press, which is right for an app leaving
- * the foreground and exactly wrong for a person pressing stop. Swipe the notification away the way
- * the app tells you to, reopen it, and the foreground path's resume wrote a fresh claim into
- * `ohmail/_meta` that nothing serviced — no notification, no service, a message unfiled for 70 s,
- * and Settings saying `Organizing` throughout.
- *
- * So the person's stop goes through the RELEASE the row records, which is the same ceremony the
- * desktop's own "Stop organizing here" has always used: `release_requested_at`, honoured by the
- * gate before it reads the lease, writing the reader role and `organizer_released_at`. A reader
- * with no press never re-enters the gate — on this launch or any later one — so the stop survives
- * a kill, and the mailbox keeps its login, its poll timer and its mirror, which is what
- * `settingsStopHereWhat` promises and what a bare `handBack` did not deliver either.
- *
- * Never throws. A release that could not be recorded leaves the claim to lapse, and a notification
- * that must come down is the caller's next line.
+ * The person's hand-back from Settings, on this door — and it is REMEMBERED. This was
+ * `held.handBack()`, which leaves the ROW saying organizer so the next resume takes the mailbox
+ * back with no press — right for an app leaving the foreground, wrong for a person pressing stop (a
+ * swipe-away then reopen wrote a fresh claim nothing serviced). So the stop goes through the
+ * RELEASE the row records, the desktop's own ceremony: `release_requested_at`, honoured before the
+ * lease, writing the reader role and `organizer_released_at`, so it survives a kill while login,
+ * poll timer and mirror are kept. Never throws — an unrecorded release leaves the claim to lapse.
  */
 export async function stopOrganizingStandalone(): Promise<boolean> {
   const held = door;
@@ -585,17 +560,13 @@ export async function endStandaloneHere(): Promise<void> {
 }
 
 /**
- * ══ ASK AGAIN ONLY IF SOMETHING MOVED — the claim watch's cue, and the reason it is gated ══════
- *
- * The session's watch fires on a timer whether the mailbox changed or not, and that is what makes
- * an engine-side change (a stand-down mid-poll, a holder going away) reach a screen that is
- * already open. An unconditional bump would also re-render the panel once a minute for ever, so
- * this compares the panel's WHOLE input — the door's own answer plus the three module facts the
- * panel renders beside it — and notifies only on a difference.
- *
- * The comparison lives here because this module owns every one of those facts. A comparison in
- * `background.ts` would need a copy of the door's answer, which is the second source of truth this
- * whole lane is about.
+ * Ask again only if something moved — the claim watch's cue, and why it is gated. The watch fires
+ * on a timer whether the mailbox changed or not, which is what makes an engine-side change (a
+ * stand-down mid-poll, a holder going away) reach a screen already open. An unconditional bump
+ * would re-render the panel once a minute for ever, so this compares the panel's WHOLE input — the
+ * door's answer plus the three module facts rendered beside it — and notifies only on a difference.
+ * The comparison lives here because this module owns those facts; one in `background.ts` would need
+ * a copy of the door's answer, the second source of truth this is all about.
  */
 let lastSeen = "";
 

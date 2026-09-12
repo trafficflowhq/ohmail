@@ -191,20 +191,14 @@ export async function organizeHere(
     if (body.outcome === "already_organizing") return { kind: "already" };
     return { kind: "refused", reason: refuse("organizeHereDisconnected") };
   }
-  /* ══ 409 IS ANOTHER INSTALL'S LIVE CLAIM, AND THE CLAIM THIS COMMENT MADE IS NOW TRUE ══════
-   *
-   * This block said "the route answers 409 where another install holds the mailbox" and the route
-   * did not: `MailboxService.organizeHere` writes a stamp and leaves the decision to the gate,
-   * which is right for a desktop — there the press is a person's finger and the 0.14.1 election is
-   * meant to let them take a mailbox back from a machine they can no longer reach. Measured on a
-   * phone, the same 202 answered a LAUNCH and moved a live laptop's mailbox onto a phone that
-   * organizes only while it is open.
-   *
-   * The refusal is at the phone's own door now (`apps/sidecar/src/mobile.ts`), which is where it
-   * belongs: this build has no takeover verb, so a live foreign holder is a 409 with the holder
-   * named, whoever pressed. The holder rides the body because this door offers no other source
-   * for it, and a malformed body is still a `held` — the STATUS is the fact and the name is the
-   * detail. */
+  /* 409 is another install's live claim, and the claim this comment made is now true. This block
+   * said "the route answers 409 where another install holds the mailbox" and the route did not:
+   * `MailboxService.organizeHere` writes a stamp and leaves the decision to the gate, right for a
+   * desktop where the press is a finger. On a phone the same 202 answered a LAUNCH and moved a live
+   * laptop's mailbox onto a phone that organizes only while open. The refusal is at the phone's own
+   * door now (`apps/sidecar/src/mobile.ts`): this build has no takeover verb, so a live foreign
+   * holder is a 409 with the holder named, whoever pressed. The holder rides the body (no other
+   * source), and a malformed body is still a `held` — the STATUS is the fact, the name the detail. */
   if (res.status === 409) {
     const held = await res.json().then(
       (b) => (b as { holder?: { name?: unknown; kind?: unknown } }).holder,

@@ -530,15 +530,13 @@ export function WorldProvider({ children }: { children: ReactNode }) {
    */
   const [mailboxes, setMailboxes] = useState<readonly PhoneMailbox[] | null>(null);
   /**
-   * THE WAITING QUEUE AS THE SERVER HOLDS IT (`GET /screener`), or `null` until a read succeeds
+   * The waiting queue as the server holds it (`GET /screener`), or `null` until a read succeeds
    * this session — and `null` for the whole life of a STANDALONE session, where this phone is the
-   * engine and there is no second answer to ask for.
-   *
-   * `null` is "nobody answered", and `liveScreener` then shows the partition's own list and says
-   * so on the surface. Never an empty list on a failure, for `readMailboxes`' reason exactly: an
-   * empty queue is a real answer, and reading a refusal as one would empty the Screener on a
-   * flaky request. Reset on a session swap beside the mailboxes — account A's waiting senders
-   * must never be account B's queue.
+   * engine and there is no second answer to ask for. `null` is "nobody answered", and
+   * `liveScreener` then shows the partition's own list and says so. Never an empty list on failure,
+   * for `readMailboxes`' reason: an empty queue is a real answer, and reading a refusal as one
+   * would empty the Screener on a flaky request. Reset on a session swap beside the mailboxes —
+   * account A's waiting senders must never be account B's queue.
    */
   const [screenerServer, setScreenerServer] = useState<readonly ServerWaitingSender[] | null>(null);
   /**
@@ -1108,41 +1106,13 @@ export function WorldProvider({ children }: { children: ReactNode }) {
 
   /**
    * The freshness watcher — the clock's other half, after the memo because its sentinel IS the
-   * memo's own output. It compares what the engine would say now against what the world
-   * rendered (`boot.staleAsOf`), at arm time and then each minute, and bumps `freshBeat` only
-   * on a difference. Three defects shaped this exact form:
-   *
-   *  · round 2 — no formatted-label ambiguity is possible: both sides of the comparison come
-   *    from the same derivation, so "a different stamp that happens to format identically"
-   *    cannot make a real transition invisible. (The parenthetical here used to add "a stamp
-   *    change requires a drain, which re-derives through `version` anyway", and that is no longer
-   *    true: writing the completion stamp does not bump the mirror version —
-   *    `packages/client-engine/src/store.ts`. The argument never needed it. Both sides still come
-   *    from one derivation, and the minute tick below is what re-reads; the removed clause only
-   *    ever said the re-read would also happen sooner.)
-   *  · round 3 — a healthy drain's stamp churn re-arms and re-renders NOTHING: while current,
-   *    the rendered label is null across every drain, the dep does not move, and the check
-   *    compares null with null;
-   *  · round 4 — a transition can never be swallowed UNRENDERED: a ref seeded from the live
-   *    verdict could adopt a current→stale flip that happened between render and effect and
-   *    then never announce it; comparing against the RENDERED value makes that impossible by
-   *    construction — the check at arm time closes the same race.
-   *
-   * RN pauses timers in the background; on return, the next tick or the foreground drain
-   * re-derives, whichever lands first. A bump re-derives the memo, the dep follows, the
-   * re-armed check finds both sides equal, and the loop terminates in one step.
-   *
-   * ── AND THE CONNECTION VERDICT RIDES THE SAME WATCHER, DELIBERATELY ─────────────────────
-   *
-   * A lost link moves no store version, fails no app-level drain round (the mirror is served by
-   * the engine in this process and answers happily) and flips no connection state — so without
-   * this it would reach no screen at all, which is the whole of the measured defect. Same
-   * effect, same beat, same rendered-value sentinel: a SECOND beat would be a second writer of
-   * one derived world, and the two could disagree about which render is current.
-   *
-   * The interval is the ENGINE'S POLL CADENCE and no longer a minute. The stale label is
-   * unaffected — it bumps only on a difference, so the extra comparisons are no-ops — and the
-   * connection sentence must not wait a minute behind a detection that now fires in 45 s.
+   * memo's output. It compares what the engine would say now against what the world rendered
+   * (`boot.staleAsOf`), at arm time and each tick, bumping `freshBeat` only on a difference. Both
+   * sides come from one derivation, so no label-format ambiguity is possible and a healthy drain
+   * compares null with null; comparing against the RENDERED value means a current→stale flip
+   * between render and effect cannot be swallowed. The connection verdict rides the SAME watcher —
+   * a lost link moves no store version and flips no state, so a second beat would be a second writer
+   * of one world — and the interval is the ENGINE'S POLL CADENCE so the sentence isn't a minute late.
    */
   const renderedStale = world.boot.staleAsOf;
   /* The verdict's own SHAPE, not the object: `connectionSay` answers a fresh record per call, so
