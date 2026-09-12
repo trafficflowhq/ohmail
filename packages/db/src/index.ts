@@ -279,6 +279,19 @@ export {
 } from "./mailbox-errors.js";
 
 /**
+ * WHICH CLOSED SETS MAY BE A CHECK ON A DEVICE, and the write door for the ones that may not.
+ *
+ * SQLite has no `ALTER … DROP CONSTRAINT`, so a set the server widens that way cannot be widened
+ * on a device store at all once its baseline has shipped. Those sets carry no CHECK there and are
+ * refused at the write door instead; `closed-set-parity.test.ts` holds both halves to the pg
+ * journal's own history. Reaches `mailbox-errors.js` and `organizer-role.js` alone.
+ */
+export {
+  CLOSED_SETS, closedSet, closedSetValue, organizerKindColumn, ClosedSetViolation,
+  type ClosedSet, type ClosedSetClass,
+} from "./closed-sets.js";
+
+/**
  * ONE definition of the row a bought Screener suggestion is stored as — the provenance that marks
  * it, the status that keeps it inert, and the per-message transaction that writes it.
  *

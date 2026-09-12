@@ -5,8 +5,9 @@ import { randomUUID } from "node:crypto";
 import { and, eq, isNull, sql } from "drizzle-orm";
 import {
   accounts, mailboxes, sessions, users,
-  closeStoodDownAppointments, isMailboxDisabledReason, isOrganizerKind, standDownMemory,
-  type MailboxDisabledReason, type Tx, type OrganizerIntent,} from "@trafficflow/db";
+  closeStoodDownAppointments, isMailboxDisabledReason, organizerKindColumn, standDownMemory,
+  type MailboxDisabledReason, type Tx, type OrganizerIntent,
+} from "@trafficflow/db";
 import { generateToken, hashToken } from "@trafficflow/services/mail";
 import type { LocalDb } from "./db.js";
 
@@ -382,12 +383,13 @@ export async function endLegacyOrganizerPauses(
     if (!isMailboxDisabledReason(row.disabledReason)) continue;
     const address = row.address.trim().toLowerCase();
     if (live.has(address)) continue;
-    /* `isOrganizerKind` for `standDownMemory`'s reason at the same derivation: the reason's suffix
-       and the kind column carry the same closed three today, so this narrows by construction and
-       is the guard for the day they stop being equal — an unrankable kind reads `unknown`, which
-       the column's CHECK admits and which fails closed at every reader downstream. */
+    /* THE SHARED WRITE DOOR at the same derivation, and this store has no CHECK behind it:
+       `organized_by_kind` is widenable, so `organizerKindColumn` is the whole refusal. The suffix
+       and the kind column carry the same closed set today, so this narrows by construction and is
+       the guard for the day they stop — an unrankable kind reads `unknown`, which every reader
+       downstream fails closed on. */
     const suffix = row.disabledReason.slice("organized_elsewhere:".length);
-    const kind = isOrganizerKind(suffix) ? suffix : "unknown";
+    const kind = organizerKindColumn(suffix);
     await db
       .update(mailboxes)
       .set({

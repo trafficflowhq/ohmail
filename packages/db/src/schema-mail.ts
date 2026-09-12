@@ -786,7 +786,7 @@ export const rules = pgTable("rules", {
   bodyContains: text("body_contains"),
 
   /**
-   * WHEN THE OWNER PRESSED TO RELEASE MAIL THIS RULE NEVER REACHED (mail 0104).
+   * WHEN THE OWNER PRESSED TO RELEASE MAIL THIS RULE NEVER REACHED (mail 0107).
    *
    * Mail an install adopted at the screening gate is recorded as a placement no pass may revisit,
    * so it stays at the gate behind a rule its owner already wrote. This column is the press that

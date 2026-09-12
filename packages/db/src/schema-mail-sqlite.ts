@@ -405,38 +405,27 @@ export const mailboxes = sqliteTable("mailboxes", {
   uqActiveAddress: uniqueIndex("mailboxes_active_address_uq")
     .on(t.accountId, sql`lower(${t.address})`)
     .where(sql`${t.status} <> 'disabled'`),
-  // THE CLOSED SET, AT REST (mail 0027). The members are `MAILBOX_DISABLED_REASONS`
-  // (mailbox-errors.ts) and the two are reconciled by a test against real Postgres, which
-  // inserts every member and one foreign string and watches the constraint refuse the last one.
-  // Declared here to keep the TS schema honest; the constraint is created by the migration.
-  ckDisabledReason: check(
-    "mailboxes_disabled_reason_closed",
-    sql`${t.disabledReason} is null or ${t.disabledReason} in ('organized_elsewhere:cloud', 'organized_elsewhere:local', 'organized_elsewhere:mobile', 'organized_elsewhere:unknown')`,
-  ),
-  // THE SECOND CLOSED SET, AT REST (mail 0029). Members are `MAILBOX_SYNC_BLOCK_REASONS`, and a
-  // Postgres test reconciles the two the way the set above is reconciled: insert every member plus
-  // one foreign string, and watch the CHECK refuse the last. Declared here to keep the TS schema
-  // honest; the constraint is created by the migration.
-  ckSyncBlockedReason: check(
-    "mailboxes_sync_blocked_reason_closed",
-    sql`${t.syncBlockedReason} is null or ${t.syncBlockedReason} in ('lease_unreadable', 'awaiting_credentials', 'at_capacity', 'read_limited', 'clock_off')`,
-  ),
-  // THE THIRD AND FOURTH CLOSED SETS . `organizerRole` has no `is null` arm because
-  // the column is NOT NULL — the set really is two members, and spelling a third state that
-  // cannot exist would invite a reader to handle it. Members are `ORGANIZER_ROLES` and
-  // `ORGANIZER_KINDS` (organizer-role.ts); a real-Postgres test reconciles each against its
-  // constraint the way 0027's and 0029's are reconciled. Declared here to keep the TS schema
-  // honest; both constraints are created by the migration.
+  /**
+   * THREE CLOSED SETS THIS STORE DOES NOT CARRY, AND THAT IS THE DECISION.
+   *
+   * `disabled_reason`, `sync_blocked_reason` and `organized_by_kind` are WIDENABLE: the server has
+   * widened each of them by DROP CONSTRAINT then ADD (mail 0103, 0102, 0103). SQLite has neither
+   * statement — a CHECK is part of the table definition — so carrying them here would make every
+   * one-word widening a fifty-column table rebuild on a device from the day the baseline ships.
+   * They are refused at the write door instead (`closed-sets.ts`), which is the same refusal on
+   * both dialects. `closed-set-parity.test.ts` reddens if one reappears here.
+   *
+   * The three below are IMMUTABLE — added once, closed by an invariant rather than a taxonomy —
+   * so they stay, on both twins, with the reason in `CLOSED_SETS`.
+   */
+  // `organizerRole` has no `is null` arm because the column is NOT NULL — the set really is two
+  // members, and spelling a third state that cannot exist would invite a reader to handle it.
   ckOrganizerRole: check(
     "mailboxes_organizer_role_closed",
     sql`${t.organizerRole} in ('organizer', 'reader')`,
   ),
-  ckOrganizedByKind: check(
-    "mailboxes_organized_by_kind_closed",
-    sql`${t.organizedByKind} is null or ${t.organizedByKind} in ('cloud', 'local', 'mobile', 'unknown')`,
-  ),
-  // THE FIFTH . `organizerState` is the lease's occupancy as a reader cycle last saw
-  // it; NULL is "we have not looked", which is every row until its first cycle.
+  // `organizerState` is the lease's occupancy as a reader cycle last saw it; NULL is "we have not
+  // looked", which is every row until its first cycle.
   ckOrganizerState: check(
     "mailboxes_organizer_state_closed",
     sql`${t.organizerState} is null or ${t.organizerState} in ('held', 'stopped')`,
@@ -794,7 +783,7 @@ export const rules = sqliteTable("rules", {
   // 200-char ceiling.
   bodyContains: text("body_contains"),
 
-  // Mail 0104 — when you pressed to release mail this rule never reached. A narrow
+  // Mail 0107 — when you pressed to release mail this rule never reached. A narrow
   // licence rather than a flag: `rule-retro` reads it to admit `'external'` rows STILL AT THE
   // GATE, and nowhere else. NULL is the resting state and there is no backfill. LAST, because
   // both stores APPEND an added column and this file's order is read back off

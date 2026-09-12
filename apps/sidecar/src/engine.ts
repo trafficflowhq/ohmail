@@ -26,6 +26,9 @@ import {
   // Mail 0083 — the role vocabulary and the machine-name bound. One spelling for the sidecar's
   // gate, the worker's gate and the eleven service write doors; see `db/src/organizer-role.ts`.
   organizerDisplayName, isOrganizerRole, capabilitiesColumn,
+  // The write door for `organized_by_kind`, which this store carries no CHECK for: the set
+  // is widenable, so a device's refusal lives here and not in the table definition.
+  organizerKindColumn,
   // The entitlements composition this host declares. From the MAIL barrel — the port is pure
   // types and one literal, and the halves that answer it stay on `@trafficflow/db/cloud`.
   UNMETERED, UNMETERED_ACCESS,
@@ -4088,7 +4091,11 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
               // Mail 0088 — BEING BEATEN IS NOT RELEASING. A row carrying both would report the
               // quieter of the two events to a person whose mailbox somebody else has just taken.
               organizerReleasedAt: null,
-              organizedByKind: (outcome.by?.kind ?? outcome.reason.split(":")[1] ?? "unknown"),
+              /* THROUGH THE WRITE DOOR, because the middle term is a word cut out of a reason
+                 string and this store has no CHECK to catch it: `organized_by_kind` is widenable,
+                 so the device's refusal is `organizerKindColumn` and nothing else. An unrankable
+                 peer becomes `unknown`, which every reader downstream fails closed on. */
+              organizedByKind: organizerKindColumn(outcome.by?.kind ?? outcome.reason.split(":")[1]),
               /* Mail 0092 — AND DELIBERATELY NO INSTALL ID HERE. The kind above falls back to a word cut
                  out of a reason string; an identity manufactured that way, in a column a release decision
                  is made on, would satisfy the compare and never refresh — a fabrication that outranks the

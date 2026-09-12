@@ -1,6 +1,7 @@
 import { and, asc, desc, eq, inArray, isNotNull, isNull, ne, sql, type SQL } from "drizzle-orm";
 import {
   mailboxes, mailboxCredentials, isOrganizerRole, organizerDisplayName, capabilitiesColumn, type Tx,
+  organizerKindColumn, closedSetValue,
   type OrganizerRole, type OrganizerKind, type OrganizerState,
   rules,
 } from "@trafficflow/db";
@@ -1147,7 +1148,11 @@ export async function markMailboxStoodDown(
   // and the row is better for the disagreement (the banner names "ohmail Cloud (next)"). What is not
   // acceptable is a comment asserting an equality the code does not maintain, so it is stated as a
   // preference for the claim's own answer, which is what the expression encodes.
-  const kind = (opts.by?.kind ?? safe.split(":")[1] ?? "unknown") as OrganizerKind;
+  // THROUGH THE WRITE DOOR, not a cast: the middle term is a word cut out of a reason string,
+  // so the assertion was making a claim the expression cannot keep. `organized_by_kind` is a
+  // widenable set, which the device store carries no CHECK for at all — this is the refusal on
+  // both dialects, and an unrankable peer becomes `unknown` exactly as it did.
+  const kind = organizerKindColumn(opts.by?.kind ?? safe.split(":")[1]);
   return applyFenced(db, mailboxId, opts.fence, (w) => w.update(mailboxes).set({
     // Mail 0083: the role, not the status. This used to write `status: "disabled"` plus the reason,
     // and the mailbox left the roster. A loser is now a READER — connected, syncing, mirroring — so
@@ -1300,8 +1305,12 @@ export async function markMailboxSyncBlocked(
   opts: { fence?: LeaderFence; now?: Date } = {},
 ): Promise<boolean> {
   const now = opts.now ?? new Date();
+  // THE WRITE DOOR for a widenable set (mail 0029 opened it, mail 0102 widened it). The device
+  // store carries no CHECK for it, so the membership test is the refusal on both dialects — and
+  // the typed parameter is not one: this function is reachable from code the compiler never saw.
+  const member = closedSetValue("mailboxes_sync_blocked_reason_closed", reason);
   return applyFenced(db, mailboxId, opts.fence, (w) => w.update(mailboxes).set({
-    syncBlockedReason: reason,
+    syncBlockedReason: member,
     syncBlockedSince: sql`coalesce(${mailboxes.syncBlockedSince}, ${now.toISOString()}::timestamptz)`,
     // NOTHING ELSE. Not `status`, not `error_code`, not `error_detail`, not `failed_at`, not
     // `retry_count`. The absence is the design — see the block above this function.
