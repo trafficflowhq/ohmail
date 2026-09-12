@@ -17,7 +17,7 @@ import { phoneEngineStart } from "../src/engine/engine-artifact";
 import { consoleEngineLogSink } from "../src/engine/engine-log";
 import {
   armConsentPress, holdStandaloneDoor, releaseStandaloneLaunch, sayOrganizerRestricted,
-  takeStandaloneLaunch,
+  standaloneLaunchGeneration, takeStandaloneLaunch,
 } from "../src/engine/organizer-session";
 import { PHONE_CLAIM_NAME, openStandaloneMailbox } from "../src/engine/standalone-door";
 import { useConnection } from "../src/net/connection";
@@ -186,8 +186,17 @@ function Credentials() {
          * not loadable under vitest); `void` — an open mailbox must not wait.
          */
         const address = fields.address.trim();
+        /* ══ AND THE SESSION BELONGS TO THIS LAUNCH ═══════════════════════════════════════
+         *
+         * The import below is not awaited, and the adoption after it can be refused — which
+         * hands the claim back and STOPS this engine. A session raised by an import that
+         * settled after that ran over a dead engine, and the session is first-start-wins, so
+         * the next successful Connect could not attach its own: the mailbox organized behind
+         * no notification and no service for the run of the app. The generation is read here,
+         * inside the slot, and the discard bumps it. */
+        const launch = standaloneLaunchGeneration();
         void import("../src/engine/organizer-session-native")
-          .then((m) => { m.startOrganizerSessionNative(outcome.door, address); })
+          .then((m) => { m.startOrganizerSessionNative(outcome.door, address, launch); })
           /* A BUILD THAT CANNOT REACH ITS OWN BACKGROUND HALF SAYS SO. Swallowed, this would be an
              app that looks like it organizes in the background and does not. */
           .catch(() => { sayOrganizerRestricted(); });

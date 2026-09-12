@@ -8,6 +8,7 @@
  * {@link BackgroundDeps.platform} and whether `service` is present (`background-native.ts`
  * binds Android). The release is the engine's own `handBack()` — nothing writes `ohmail/_meta`.
  */
+import type { StopOrganizingOutcome } from "./standalone-door";
 
 /** Which set of arms this install runs. `Platform.OS` in the app; a literal in the suite. */
 export type OrganizerPlatform = "android" | "ios";
@@ -107,8 +108,10 @@ export interface BackgroundEngine {
    * back with no press, which is what an app leaving the foreground needs. A person's stop must
    * survive the app being killed, so it goes through the release the row records — and a reader
    * with no press never re-enters the gate again.
+   *
+   * Three answers, not a boolean — see {@link StopOrganizingOutcome}.
    */
-  stopOrganizing(): Promise<boolean>;
+  stopOrganizing(): Promise<StopOrganizingOutcome>;
   /**
    * ASK FOR THIS PHONE — the engine's `claimHere`. `held` is a live foreign claim, refused at the
    * door; it is the ordinary answer while another machine organizes the mailbox and owes nobody a
@@ -315,12 +318,15 @@ export function createBackgroundOrganizing(deps: BackgroundDeps): BackgroundOrga
    * the claim lapses on its own.
    */
   const stopByPerson = async (): Promise<void> => {
-    let stopped = false;
+    let stopped: StopOrganizingOutcome = "refused";
     try {
       stopped = await deps.engine.stopOrganizing();
     } catch (err) {
       log("organizer_stop_by_person_failed", { err, why: "stopped_from_notification" });
     }
+    /* The WORD the engine answered, so a refused release is readable in the log rather than
+       arriving as a `false` that also means "nothing to give up". The notification still comes
+       down: this is the notification's own Stop, and the paragraph above says why. */
     log("organizer_stopped_by_person", { why: "stopped_from_notification", stopped });
     /* NOT `handedBack`. That flag is the iOS transitional state — given back, and to be taken again
        on the way in — and a person's stop is the opposite of a state something resumes from. */

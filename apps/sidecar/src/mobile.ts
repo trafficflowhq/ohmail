@@ -240,6 +240,21 @@ export type ClaimHereOutcome =
   | "refused";
 
 /**
+ * WHAT THE PERSON'S STOP SETTLED — three answers, because a boolean collapsed two of them.
+ *
+ * `released` is the only one a caller may act on as "the mailbox has been let go": the claim is
+ * out of `ohmail/_meta` and the row records the stop. Everything else leaves the mailbox
+ * organized here, and a caller that tears down the notification over it is showing a false state.
+ */
+export type StopOrganizingOutcome =
+  /** The claim is gone and the release is recorded. The notification may come down. */
+  | "released"
+  /** There was nothing of ours to give up — not a failure, and not a release either. */
+  | "not_organizing"
+  /** The route said no, or the cycle could not confirm the claim left the mailbox. */
+  | "refused";
+
+/**
  * `POST /mailboxes/:id/organize` — the ONE route that records a consent, matched on the path.
  *
  * Anchored at both ends and with no slash inside the id, so `/mailboxes/x/organize/anything` is
@@ -377,10 +392,12 @@ export interface PhoneEngine {
    * writes the reader role and `organizer_released_at`. A reader with no press never re-enters the
    * gate, which is what makes the stop stick across every later launch.
    *
-   * `true` when the release was recorded. `false` is "nothing was recorded", which is a state and
-   * not always a failure: a mailbox this install was not organizing has nothing to give up.
+   * The answer is the CYCLE's own reading and not the route's acceptance — see
+   * {@link StopOrganizingOutcome}. A boolean could not separate "the claim is gone" from "the
+   * server would not let it go", and both leave `organizing` false, so the phone reported a
+   * refused stop as a success and took its notification down over a mailbox it still organized.
    */
-  stopOrganizing(): Promise<boolean>;
+  stopOrganizing(): Promise<StopOrganizingOutcome>;
   /**
    * DISCARD THE PASSWORD THIS LAUNCH SEALED — for the refusal the APP decides, not this one.
    *
@@ -1077,31 +1094,56 @@ async function composePhoneEngine(
     return "claimed";
   };
 
-  const stopOrganizing = async (): Promise<boolean> => {
+  const stopOrganizing = async (): Promise<StopOrganizingOutcome> => {
     const mailboxId = soleMailbox();
-    if (mailboxId === null) return false;
+    if (mailboxId === null) return "refused";
     let res: Response;
     try {
       res = await pressOwnRoute(RELEASE_PATH(mailboxId));
     } catch (err) {
       log("organizer_stop_here_failed", { err, mailboxId });
-      return false;
+      return "refused";
     }
     /* 202 IS THE ONLY ONE THAT RECORDED ANYTHING — the route's own contract: *"the ceasing has not
        happened yet"*, so 200 is `not_organizing`/`disconnected`, both of which mean there was
        nothing of ours to give up. Neither is a failure and neither is a release. */
-    if (res.status !== 202) return false;
+    if (res.status === 200) return "not_organizing";
+    if (res.status !== 202) return "refused";
     /* THE GATE HONOURS THE REQUEST BEFORE IT READS THE LEASE, so this forced cycle is what takes
        the claim out of the folder and writes the reader role — the person pressed a button and the
        mailbox is free for their other machine within a cycle rather than a poll interval. */
+    let cycled = true;
     await sidecar.resume().catch((err: unknown) => {
+      cycled = false;
       log("organizer_stop_here_cycle_failed", {
         err,
         reason: "the stop is recorded on the row and the forced cycle did not run, so the claim "
           + "leaves the mailbox on the next poll instead",
       });
     });
-    return true;
+    /* ══ AND THE ANSWER IS THE CYCLE'S OWN READING, NOT THE ROUTE'S ACCEPTANCE ═════════════════
+     *
+     * This returned `true` for every 202. But the cycle above has three endings and only one of
+     * them is a release: it can fail to confirm the claim is out of `ohmail/_meta` (the search
+     * refused, the folder over its ceiling), and it can lose the write to a press that landed
+     * while the server was being asked. In both the mailbox is still organized here — and both
+     * leave `organizing: false`, because a pass honouring a release arranges nothing either way.
+     * So the caller read `false` as "let go", took the notification and the background work down,
+     * and the phone went on organizing with nothing anywhere saying so.
+     *
+     * `released` therefore requires the gate to have SPENT the request, which is the same write
+     * that records the release on the row. A cycle that did not run is not a reading. */
+    const settled = cycled ? sidecar.organizerStates()[mailboxId] : undefined;
+    if (settled === undefined || settled.organizing || settled.releaseRequestedAt !== null) {
+      log("organizer_stop_here_unconfirmed", {
+        mailboxId,
+        reason: "this install asked to stop organizing this mailbox and its claim is not confirmed "
+          + "out of the mailbox, so the mailbox is still organized here and the next poll asks the "
+          + "server again",
+      });
+      return "refused";
+    }
+    return "released";
   };
 
   return { kind: "started", engine: {

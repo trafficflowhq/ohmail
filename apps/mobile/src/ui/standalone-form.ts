@@ -317,6 +317,16 @@ export function claimFrom(
 export function claimHere(
   here: {
     organizing: boolean | null;
+    /**
+     * THE PERSON'S STOP STILL STANDING ON THE ROW — the engine's second answer, and the only thing
+     * that separates a stop the mail server honoured from one it refused. Without it a refused
+     * stop rendered `free` with "Start organizing here" beside it, over a mailbox this phone was
+     * still holding: the false state, arriving by the other door.
+     *
+     * REQUIRED, so TypeScript is the census over every caller: optional, a caller that forgot it
+     * would render `free` over a standing stop and nothing would say so.
+     */
+    releaseRequestedAt: string | null;
     heldBy: { name: string; standDownReason: string } | null;
   },
   /**
@@ -332,6 +342,12 @@ export function claimHere(
   if (here.organizing === null) return { k: "unknown" };
   if (here.organizing) return { k: "ours", stopping: instruction === "stopping" };
   const held = here.heldBy;
+  /* A STOP THE MAIL SERVER HAS NOT HONOURED IS STILL OURS. The engine arranges nothing while it
+     carries out a release, so `organizing` is false on both endings — and nobody else holds a
+     mailbox whose claim is ours and standing, so this arm sits above `free` and below `theirs`. */
+  if (held === null && here.releaseRequestedAt !== null) {
+    return { k: "ours", stopping: true };
+  }
   if (held === null) return { k: "free", starting: instruction === "starting" };
   const kind = holderKind(held.standDownReason);
   return held.name.length > 0

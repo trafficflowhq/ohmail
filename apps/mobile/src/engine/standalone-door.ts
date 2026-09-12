@@ -26,6 +26,17 @@ import type { StandaloneFields } from "../ui/standalone-form";
 export type ClaimHereOutcome = "claimed" | "held" | "refused";
 
 /**
+ * WHAT THE PERSON'S STOP SETTLED — the engine's own three answers, mirrored here.
+ *
+ * `released` is the only one a caller may act on as "the mailbox has been let go": the claim is
+ * out of the mail server's records and the row has recorded the stop. `not_organizing` is a
+ * mailbox with nothing to give up, and `refused` covers both a route that said no and a cycle
+ * that could not confirm the claim left. A boolean collapsed the last two into the first, so the
+ * notification came down over a phone that was still organizing.
+ */
+export type StopOrganizingOutcome = "released" | "not_organizing" | "refused";
+
+/**
  * The running engine, as this app uses it. Structural, because the bundle is not typed — every
  * member here is a claim about the artifact, and `test/engine-bundle-loads.test.ts` reads them
  * off a real booted one rather than off this declaration. The first three are the client's
@@ -81,7 +92,7 @@ export interface StandaloneEngine {
    * person's stop is the opposite instruction, so it goes through the release the ROW records —
    * and a reader with no press never re-enters the gate, on this launch or any later one.
    */
-  stopOrganizing(): Promise<boolean>;
+  stopOrganizing(): Promise<StopOrganizingOutcome>;
   /**
    * What each mailbox reports — the row's answer, not the gate's optimism.
    *
@@ -97,6 +108,15 @@ export interface StandaloneEngine {
       organizing: boolean;
       heldBy: string | null;
       reason: string | null;
+      /**
+       * THE PERSON'S STOP STILL STANDING ON THE ROW — ISO 8601, or `null`.
+       *
+       * `organizing` answers what the engine's pass may ARRANGE, and a pass carrying out a release
+       * arranges nothing whether or not the claim actually left the mailbox. So this is the only
+       * field that separates a stop the mail server honoured from one it refused, and the panel
+       * and the press both read it rather than inferring a stop from `organizing: false`.
+       */
+      releaseRequestedAt: string | null;
     }>;
     /**
      * CAN THIS INSTALL REACH THE MAIL SERVER RIGHT NOW — the engine's own connection facts, which

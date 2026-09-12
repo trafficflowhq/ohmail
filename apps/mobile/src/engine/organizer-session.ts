@@ -9,7 +9,7 @@
  * is already released — a standing notification would say "Organizing" over a reader.
  */
 import type { Refusal } from "../refusal";
-import type { ClaimHereOutcome, StandaloneEngine } from "./standalone-door";
+import type { ClaimHereOutcome, StandaloneEngine, StopOrganizingOutcome } from "./standalone-door";
 import {
   createBackgroundOrganizing,
   type AppPhase,
@@ -93,10 +93,29 @@ export const organizerDoor = (): StandaloneEngine | null => door;
  */
 let launching = false;
 
+/**
+ * ══ WHICH LAUNCH A SETTLED IMPORT BELONGS TO ════════════════════════════════════════════════
+ *
+ * The background half is reached by a dynamic `import()` that the door screen neither awaits nor
+ * cancels, and the profile write that follows it can be refused — {@link discardStandaloneLaunch}
+ * then hands the claim back and stops the engine. An import settling after that started a live
+ * session over an engine that was already dead, and {@link startOrganizerSession} is
+ * first-start-wins: the next successful Connect could not attach its own, so the mailbox was
+ * organized behind no notification, no service and neither watch for the run of the app.
+ *
+ * So a launch carries a generation. It is bumped when a launch opens and again when one is
+ * discarded, and a session may only be raised for the generation in force.
+ */
+let launchGeneration = 0;
+
+/** The launch in force — read before the background import and handed to {@link startOrganizerSession}. */
+export const standaloneLaunchGeneration = (): number => launchGeneration;
+
 /** Take the launch slot, or `standing` — an engine is already alive, or one is being opened. */
 export function takeStandaloneLaunch(): "open" | "standing" {
   if (door !== null || launching) return "standing";
   launching = true;
+  launchGeneration += 1;
   return "open";
 }
 
@@ -223,6 +242,12 @@ export interface StandaloneHere {
   readonly id: string | null;
   readonly address: string;
   readonly organizing: boolean | null;
+  /**
+   * THE PERSON'S STOP STILL STANDING ON THE ROW — ISO 8601, or `null` where none is; `null` too
+   * before the engine has said. `organizing: false` with this set is a stop the mail server has
+   * not honoured, which is the one state the panel could not tell from a free mailbox.
+   */
+  readonly releaseRequestedAt: string | null;
   readonly heldBy: StandDownHolder | null;
   /** `null` until the engine has said — see the body. */
   readonly reachable: boolean | null;
@@ -257,6 +282,8 @@ export function standaloneHere(): StandaloneHere | null {
    * correctly told a person nothing was organizing their mail.
    */
   let heldBy: StandDownHolder | null = null;
+  /** See {@link StandaloneHere.releaseRequestedAt}. `null` is "none standing, or not said yet". */
+  let releaseRequestedAt: string | null = null;
   try {
     /* ONE read of the engine's answer, and both halves off it: `runtimes()` is a snapshot per
        call, so asking twice is asking two different moments. */
@@ -267,6 +294,11 @@ export function standaloneHere(): StandaloneHere | null {
        saying so is that. */
     if (entries.length > 0) {
       organizing = entries.some(([, state]) => state.organizing);
+      /* ONE MAILBOX ON THIS PHONE, so any entry carrying a standing stop is the answer — the same
+         reading `organizing` takes above. */
+      releaseRequestedAt = entries
+        .map(([, state]) => state.releaseRequestedAt)
+        .find((at) => at !== null) ?? null;
       /**
        * THE REASON IS THE DISCRIMINATOR AND THE NAME IS NOT. A name is absent in two different
        * states — a claim that named nothing, and EVERY RELAUNCH, where the engine reassembles the
@@ -310,7 +342,10 @@ export function standaloneHere(): StandaloneHere | null {
        takes the same reading, and for the same reason: a momentary failure must not end
        somebody's organizing on screen. */
   }
-  return { id, address: held.address, organizing, heldBy, reachable, unreachableSince, signInRefused };
+  return {
+    id, address: held.address, organizing, releaseRequestedAt, heldBy, reachable,
+    unreachableSince, signInRefused,
+  };
 }
 
 /**
@@ -353,13 +388,13 @@ export const organizeRefusal = (): Refusal | null => organizeRefused;
  * a kill, and the mailbox keeps its login, its poll timer and its mirror, which is what
  * `settingsStopHereWhat` promises and what a bare `handBack` did not deliver either.
  *
- * Never throws. A release that could not be recorded leaves the claim to lapse, and a notification
- * that must come down is the caller's next line.
+ * Never throws. A release that could not be recorded leaves the claim to lapse, and the caller
+ * decides what the notification does — see {@link StopOrganizingOutcome}.
  */
-export async function stopOrganizingStandalone(): Promise<boolean> {
+export async function stopOrganizingStandalone(): Promise<StopOrganizingOutcome> {
   const held = door;
-  if (held === null) return false;
-  const stopped = await held.stopOrganizing().catch(() => false);
+  if (held === null) return "refused";
+  const stopped = await held.stopOrganizing().catch((): StopOrganizingOutcome => "refused");
   notifyOrganizerState();
   return stopped;
 }
@@ -390,6 +425,24 @@ let instruction: OrganizeInstruction = "idle";
 let queued: "start" | "stop" | null = null;
 /** The act being carried out, so a press can wait for it rather than race it. */
 let inFlight: Promise<void> | null = null;
+/**
+ * WHICH act is in flight — the other half of the standing instruction while one is.
+ *
+ * Without it a press could only be compared against the WORD on screen, and the word says
+ * `stopping` both for a stop that is the last thing anybody asked for and for one the person has
+ * since pressed past. See {@link standingInstruction}.
+ */
+let acting: "start" | "stop" | null = null;
+
+/**
+ * ══ THE STANDING INSTRUCTION IS THE LAST PRESS, AND NOTHING ELSE ════════════════════════════
+ *
+ * While an act is in flight the last press is the QUEUED one where there is one, and the act
+ * itself where there is not. `null` means nothing is being carried out, and the engine's own
+ * answer is then the whole of the state.
+ */
+const standingInstruction = (): "start" | "stop" | null =>
+  inFlight === null || acting === null ? null : queued ?? acting;
 
 /**
  * THE ENGINE'S ANSWER ENDS THE TRANSITION, not the press and not a timer.
@@ -420,23 +473,34 @@ export function organizerInstruction(): OrganizeInstruction {
  * what stops a second Start from queueing a second instruction behind the first.
  */
 export async function pressOrganizeHere(want: "start" | "stop"): Promise<PressOutcome> {
+  /* ══ THE QUEUE IS READ BEFORE THE PRESS IS ANSWERED, AND THE PRESS REPLACES IT ══════════════
+   *
+   * The WORD on screen was read first, so a press matching the act in flight answered `standing`
+   * without ever looking at the queue: Stop, then Start, then Stop while the first stop was still
+   * being carried out settled on the queued START — the person's last press discarded as "already
+   * in force" by the very act their earlier press had queued away from, and the phone went on
+   * organizing. Start-Stop-Start is the same defect mirrored.
+   *
+   * So while an act is in flight the standing instruction is {@link standingInstruction}, a press
+   * REPLACES it rather than appending to it, and the answer is read from the machine after the
+   * replacement is recorded. A press for the act already in flight needs nothing behind it, so it
+   * CLEARS the queue rather than queueing a third instruction. */
+  const standing = standingInstruction();
+  if (standing !== null) {
+    if (standing === want) return "standing";
+    queued = want === acting ? null : want;
+    notifyOrganizerState();
+    return queued === null ? "standing" : "queued";
+  }
   const state = organizerInstruction();
   if (want === "start" && (state === "running" || state === "starting")) return "standing";
   if (want === "stop" && (state === "idle" || state === "stopping")) return "standing";
-  if (inFlight !== null) {
-    /* ONE SLOT, AND A PRESS FOR WHAT IS ALREADY WAITING IS NOT A SECOND INSTRUCTION. Two Starts
-       behind one stop would otherwise claim the mailbox twice — and the second claim would land on
-       a session the first had already raised. */
-    if (queued === want) return "standing";
-    queued = want;
-    notifyOrganizerState();
-    return "queued";
-  }
   return runInstruction(want);
 }
 
 async function runInstruction(want: "start" | "stop"): Promise<PressOutcome> {
   instruction = want === "start" ? "starting" : "stopping";
+  acting = want;
   notifyOrganizerState();
   const act = want === "start" ? startHere() : stopHere();
   /* The queue waits on a promise that cannot reject — a refused act still has to release the
@@ -444,6 +508,7 @@ async function runInstruction(want: "start" | "stop"): Promise<PressOutcome> {
   inFlight = act.then(() => undefined, () => undefined);
   const outcome = await act.catch((): PressOutcome => "refused");
   inFlight = null;
+  acting = null;
   /* THE TRANSITION IS OVER, whatever it achieved, so the engine's answer is the whole of the state
      again. Without this a REFUSED start reads `Starting` for ever — the defect this door exists to
      close, in the direction nobody measured on the device. */
@@ -463,26 +528,30 @@ async function startHere(): Promise<PressOutcome> {
      foreground service and both watches with it — so a start that only claimed would leave the
      engine organizing behind nothing a person can see, which is the state `organizerRestricted`
      describes and the half that made this two standing instructions rather than one. */
-  if (sessionDeps !== null) startOrganizerSession(sessionDeps);
+  /* THE LAUNCH IN FORCE, which is this door's own: a start raises the session again over the
+     engine that is running now, and the deps were kept by the launch that opened it. */
+  if (sessionDeps !== null) startOrganizerSession(launchGeneration, sessionDeps);
   return "started";
 }
 
 async function stopHere(): Promise<PressOutcome> {
-  const stopped = await stopOrganizingStandalone();
   /* ══ THE ENGINE'S ANSWER DECIDES WHAT HAPPENS TO THE SESSION, NOT THE PRESS ════════════════
    *
    * The teardown ran unconditionally, so a release the mail server refused took the notification,
-   * the foreground service and both watches down over a phone that was STILL ORGANIZING — the
-   * row says organizer, the claim stands, and the next launch resumes a mailbox nothing serviced.
-   * That is the defect the person's stop was built to end, arriving by the refusal arm. So the
-   * session comes down only where the engine says this install has let the mailbox go, which is
-   * the same reading the chip takes; `stopOrganizingStandalone`'s `false` cannot be that reading,
-   * because it is also what a mailbox with nothing to give up answers. */
-  const stillOrganizing = standaloneHere()?.organizing === true;
-  if (!stillOrganizing) await stopOrganizerSession();
-  /* AND THE PRESS SAYS SO. `standing` means "already in force" and would be a second false state;
-     `false` with the mailbox let go is the nothing-to-give-up case and is what was asked for. */
-  return stillOrganizing ? "refused" : stopped ? "stopped" : "standing";
+   * the foreground service and both watches down over a phone that was STILL ORGANIZING. The
+   * reading that replaced it was `organizing`, and that is the engine's answer to a DIFFERENT
+   * question: a pass carrying out a release arranges nothing whether or not the claim left the
+   * mailbox, so production answered `false` on the refusal arm too and the teardown ran again.
+   *
+   * The engine now answers the question that was actually asked. `released` is the only word that
+   * licenses taking the notification down; `not_organizing` is a mailbox with nothing to give up,
+   * where a standing notification would say "Organizing" over a reader; `refused` leaves
+   * everything up and Settings says the mailbox could not be handed back. */
+  const stopped = await stopOrganizingStandalone();
+  if (stopped === "refused") return "refused";
+  await stopOrganizerSession();
+  /* `standing` means "already in force", which is what nothing-to-give-up is. */
+  return stopped === "released" ? "stopped" : "standing";
 }
 
 /**
@@ -513,13 +582,25 @@ let live: {
 let restrictedSaid = false;
 
 /**
- * Start it. Answers whether THIS call is the live session, so a caller that cares can say so.
+ * Start it, FOR ONE LAUNCH. Answers whether THIS call is the live session, so a caller that cares
+ * can say so.
  *
  * The `AppState` subscription is taken before anything else, because the first transition can
  * arrive while this function is still on the stack — a person who opens the door and immediately
  * switches away produces `background` with no session to receive it.
+ *
+ * `generation` is the launch the session belongs to and it is REQUIRED, here rather than in the
+ * two callers: a stale import reaching this function sets {@link sessionDeps} over a stopped
+ * engine, and a later start reuses those deps. See {@link standaloneLaunchGeneration}.
  */
-export function startOrganizerSession(deps: OrganizerSessionDeps): boolean {
+export function startOrganizerSession(generation: number, deps: OrganizerSessionDeps): boolean {
+  if (generation !== launchGeneration) {
+    /* SAID, never swallowed: a session that was not raised is a phone with no background arm, and
+       this is the one place that knows why. A TOKEN, not a sentence — this module's own idiom, and
+       the copy census refuses English in `src` that no catalogue holds. */
+    deps.log?.("organizer_session_launch_discarded", { why: "launch_given_up" });
+    return false;
+  }
   if (live !== null) return false;
   sessionDeps = deps;
   const organizing = createBackgroundOrganizing({
@@ -613,6 +694,9 @@ export function sayOrganizerRestricted(): void {
 export async function endStandaloneHere(): Promise<boolean> {
   const held = door;
   door = null;
+  /* The launch is over too, and for the discard's reason: this stops the engine, so a background
+     import still in flight may not raise a session over it. */
+  launchGeneration += 1;
   /* The mailbox is going, so the instruction about it goes too — a queued start would otherwise
      claim a mailbox this install is in the middle of forgetting. */
   instruction = "idle";
@@ -649,6 +733,10 @@ export async function endStandaloneHere(): Promise<boolean> {
 export async function discardStandaloneLaunch(): Promise<void> {
   const held = door;
   door = null;
+  /* BEFORE ANYTHING IS AWAITED. The background import is in flight while this runs, and a
+     generation bumped after the engine had already been stopped would leave exactly the window
+     this exists to close — see {@link standaloneLaunchGeneration}. */
+  launchGeneration += 1;
   instruction = "idle";
   queued = null;
   sessionDeps = null;
@@ -684,8 +772,8 @@ export function pokeOrganizerState(): void {
   const now = JSON.stringify([
     here === null
       ? null
-      : [here.id, here.address, here.organizing, here.heldBy?.name ?? null,
-        here.heldBy?.standDownReason ?? null],
+      : [here.id, here.address, here.organizing, here.releaseRequestedAt,
+        here.heldBy?.name ?? null, here.heldBy?.standDownReason ?? null],
     instruction,
     live !== null,
     live?.organizing.backgrounded() ?? false,
@@ -705,6 +793,10 @@ export function forgetOrganizerSessionForTests(): void {
   instruction = "idle";
   queued = null;
   inFlight = null;
+  acting = null;
+  /* NOT reset to zero: a case that read a generation before the reset must not have it handed
+     back by the next case, which is the same staleness the counter exists to refuse. */
+  launchGeneration += 1;
   sessionDeps = null;
   restrictedSaid = false;
   organizeRefused = null;
