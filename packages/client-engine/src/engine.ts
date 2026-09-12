@@ -1551,6 +1551,25 @@ export const OUTBOX_UNKEYED_CREATE_TTL_MS = 24 * 60 * 60 * 1000;
  */
 export const BACKLOG_PUBLISH_PAGES = 8;
 
+/**
+ * HOW MANY OF THE NEWEST MESSAGES THE EAGER PASS HYDRATES — 1 000, and it is now a measured number.
+ *
+ * The rule is fixed (2026-08-21): recent mail opens instantly. The number was not. Measured over a
+ * large synthetic corpus with the windowed mirror this package ships, the first pass costs 975 ms
+ * and 100 version bumps — roughly three seconds on an 8 GB machine, about a third of the visible
+ * tab's eight-second sync cadence — and is paid once per mailbox per session. A pass over a mailbox
+ * nothing arrived in costs 2.4 ms, because a ready body is never re-fetched. So the RECURRING cost
+ * does not scale with this number: 100, 250 and 500 buy back that one cold pass and charge every
+ * open above their own rank a round trip for it.
+ *
+ * What makes it affordable is the WINDOW rather than the number. With {@link EngineOptions.storePolicy}
+ * absent — `full`, which evicts nothing — the same pass re-derives the whole mailbox a hundred times
+ * and costs 7.5 s here, about three sync cadences on an 8 GB machine.
+ *
+ * ONE KNOWN HOLE, measured and not yet closed: this pass writes newest-first and
+ * {@link BODY_CACHE_MAX}'s trim evicts the least recently WRITTEN, so an arrival drops the newest
+ * bodies the pass just fetched and the next pass fetches them again.
+ */
 export const EAGER_BODIES_MAX = 1000;
 
 /**
