@@ -1333,6 +1333,16 @@ export const STORE_POLICY_GENERATION_META = "storePolicyGeneration";
 export const STORE_POLICY_GENERATION = 1;
 
 /**
+ * HOW MUCH MAIL THIS READER HAS TAKEN IN, WRITTEN DOWN — the durable half of {@link
+ * OhmailEngine.receivedMessages}. The count is a fact about the mirror and the door that fills it
+ * is a process: a reloaded tab used to start it again, so the import's progress fell back to the
+ * mirror's row count, which on a windowed mirror is the window. Written in the same store the
+ * pages advance the cursor in, read back at boot — so a reload, and a second tab over one mirror,
+ * start where the import stands rather than at what they can see.
+ */
+export const RECEIVED_MESSAGES_META = "receivedMessages";
+
+/**
  * THE FRESHNESS CONTRACT'S THREE STATES, and the value a surface renders — re-exported from
  * `@trafficflow/core/drain-policy`, where the derivation that produces them lives beside them.
  *
@@ -1853,10 +1863,14 @@ export class OhmailEngine {
   private snapshotUnavailable = false;
   /**
    * HOW MANY MESSAGE ROWS THIS READER HAS TAKEN IN — see {@link OhmailEngine.receivedMessages}.
-   * Counted where the rows ARRIVE, so eviction cannot move it; in memory, so a reload restarts it
-   * and the consumer's floor is the mirror's own count.
+   * Counted where the rows ARRIVE, so eviction cannot move it, and written to {@link
+   * RECEIVED_MESSAGES_META} after every page that moves it.
    */
   private receivedMessageRows = 0;
+  /** What {@link RECEIVED_MESSAGES_META} already holds, so a page that moved nothing writes nothing. */
+  private persistedMessageRows = 0;
+  /** {@link OhmailEngine.restoreReceivedCount}'s latch: memory owns the count from then on. */
+  private receivedRestored = false;
   /** How much of the mailbox to keep. Resolved once; `full` when the host said nothing. */
   private readonly storePolicy: StorePolicy;
   /** Did the last COMPLETED drain settle inside one page? See {@link prefetchRecentBodies}. */
@@ -2519,8 +2533,9 @@ export class OhmailEngine {
           // already owned for the cross-tab case.
           await this.store.resetForBootstrap(); // cursor → "0"
           // The wipe took the mail with it, so nothing has been received any more: every row comes
-          // back over the wire and would otherwise be counted a second time.
-          this.receivedMessageRows = 0;
+          // back over the wire and would otherwise be counted a second time. The wipe emptied meta
+          // with it, so there is no written count left for the next boot to read back.
+          await this.resetReceived();
           // The wipe took the rules with it — the re-bootstrap owes the rules-first pass again.
           rulesFirstDone = false;
           this.notify();
@@ -2538,6 +2553,10 @@ export class OhmailEngine {
       pagesThisDrain += 1;
       this.countReceived(flattenResponse(resp));
       await this.store.applyResponse(resp);
+      // AFTER THE ROWS, NEVER BEFORE. A kill between the two leaves the written count BEHIND the
+      // mirror, which the consumer's floor absorbs; the other order leaves it AHEAD, and the rows
+      // that never landed come back over the wire and are counted a second time.
+      await this.persistReceived();
       if (resp.hasMore) {
         // A PRUNE PER BACKLOG PAGE, so the mirror never grows past the window on the way in. The
         // peak of a first import used to be the size of the MAILBOX — every row of it, and 254
@@ -2641,6 +2660,7 @@ export class OhmailEngine {
       });
       this.countReceived(flattenResponse(resp));
       await this.store.applyChanges(flattenResponse(resp));
+      await this.persistReceived();
       since = resp.cursor;
       if (!resp.hasMore) break;
     }
@@ -2800,6 +2820,7 @@ export class OhmailEngine {
     }
     this.countReceived(page.changes);
     await this.store.applyChanges(page.changes); // rows only — the cursor is the delta's
+    await this.persistReceived();
     this.notify();
   }
 
@@ -2959,14 +2980,18 @@ export class OhmailEngine {
       // this one — a snapshot says nothing about what it omits — so it goes before this attempt
       // writes a single row over it.
       if (await this.store.pruneBySeq(prior)) this.notify();
-      // Those rows are gone, so they are no longer received. A sweep only ever happens at cursor
-      // "0", where no delta rows stand above the prefix, so zero is the whole truth here.
-      this.receivedMessageRows = 0;
     }
     // DURABLE BEFORE THE FIRST ROW, for the reason the whole class exists: a kill between this
     // write and the page's must leave a marker that names an attempt with no rows (harmless — the
-    // sweep finds nothing), never rows with no marker (the defect above, unrecoverable).
+    // sweep finds nothing), never rows with no marker (the defect above, unrecoverable). It goes
+    // FIRST for that reason: every other write this method makes queues behind it.
     await this.store.setMeta(SNAPSHOT_PREFIX_SEQ_META, asOfSeq);
+    // A BOOTSTRAP THE OLD MARKER DID NOT NAME HOLDS NONE OF THE MAIL THE COUNT STANDS FOR. Three
+    // ways here: the prefix just swept above; a first-ever mirror, already zero; and a baseline
+    // another tab wiped under this one, where meta went too and a written count would be the last
+    // survivor of a mirror that is gone. A resumed attempt at the SAME seq keeps prefix and count.
+    // Reachable only at cursor "0", where no delta rows stand above the prefix.
+    if (prior !== asOfSeq) await this.resetReceived();
   }
 
   private async runSnapshot(): Promise<void> {
@@ -2996,9 +3021,11 @@ export class OhmailEngine {
           hasMore: false,
           serverTime: this.now().toISOString(),
         });
+        await this.persistReceived();
       } else {
         this.countReceived(page.changes);
         await this.store.applyChanges(page.changes); // rows only — the cursor stays "0"
+        await this.persistReceived();
       }
       applied = true;
       this.notify();
@@ -3017,6 +3044,7 @@ export class OhmailEngine {
    * as `applyToRecords` resolves it.
    */
   private countReceived(changes: SyncChange[]): void {
+    this.restoreReceivedCount();
     const last = new Map<string, SyncChange>();
     for (const ch of changes) {
       if (ch.type !== "message") continue;
@@ -3029,6 +3057,50 @@ export class OhmailEngine {
         if (live) this.receivedMessageRows -= 1;
       } else if (!live) this.receivedMessageRows += 1;
     }
+  }
+
+  /**
+   * READ THE COUNT BACK AT BOOT, ONCE. Every write comes through {@link countReceived} and every
+   * read through {@link receivedMessages}, and both come here first, so no construction order can
+   * miss it. Gated on the store being LOADED, {@link restoreOutbox}'s rule — a restore over an
+   * unread store latches a zero over the real answer. A mirror written before this key existed has
+   * nothing to read back: its live message rows are the honest start, and they are also what keeps
+   * the arithmetic sound, since `countReceived` subtracts for a row that was LIVE and from a fresh
+   * zero one backfill would walk the count below it.
+   */
+  private restoreReceivedCount(): void {
+    if (this.receivedRestored || !this.storeLoaded) return;
+    this.receivedRestored = true;
+    const written = this.store.getMeta<number>(RECEIVED_MESSAGES_META);
+    this.receivedMessageRows = typeof written === "number" && Number.isFinite(written)
+      ? Math.max(0, Math.trunc(written))
+      : this.store.list("message").length;
+    this.persistedMessageRows = this.receivedMessageRows;
+  }
+
+  /**
+   * Write the count down beside the page that moved it. A page that moved nothing writes nothing —
+   * the ordinary poll, the rules pass and every replayed page leave the value exactly where it is.
+   */
+  private async persistReceived(): Promise<void> {
+    if (this.receivedMessageRows === this.persistedMessageRows) return;
+    this.persistedMessageRows = this.receivedMessageRows;
+    await this.store.setMeta(RECEIVED_MESSAGES_META, this.receivedMessageRows);
+  }
+
+  /**
+   * Nothing has been received any more, and the DISK must not hold a count whose mirror is gone.
+   * The write is skipped exactly where there is no survivor to clear — a first-ever bootstrap, and
+   * the 410 wipe, which empties meta itself — so a reset costs a durable write only when it is
+   * undoing one.
+   */
+  private async resetReceived(): Promise<void> {
+    const written = this.store.getMeta<number>(RECEIVED_MESSAGES_META);
+    this.receivedMessageRows = 0;
+    this.persistedMessageRows = 0;
+    this.receivedRestored = true;
+    if (written === undefined || written === 0) return;
+    await this.store.setMeta(RECEIVED_MESSAGES_META, 0);
   }
 
   // ── the windowed store: keeping only part of the mailbox on disk ─────────
@@ -5991,10 +6063,11 @@ export class OhmailEngine {
    * under the browser's window). Counted at the reader's door instead, where eviction cannot reach
    * it — and EQUAL to the row count wherever nothing is evicted, which is what makes this narrow.
    *
-   * In memory, so a reload restarts it from what the mirror already holds — the consumer takes the
-   * larger of this and the row count, which is why a restart reads low rather than backwards.
+   * Written down beside the cursor ({@link RECEIVED_MESSAGES_META}) and read back at boot, so a
+   * reload starts where the import stands. The consumer still floors it at the row count.
    */
   receivedMessages(): number {
+    this.restoreReceivedCount();
     return this.receivedMessageRows;
   }
 

@@ -441,9 +441,9 @@ export abstract class BaseMirrorStore implements MirrorStore {
    * A meta write is not an entity change, so it does not bump {@link version}. `version()` is the stamp that says a
    * derived cache is stale, and every consumer derives over entities: the shell re-runs `consentPartition`, the
    * projection and all four pile selectors when it moves, and `messagesByDateDesc` drops its shared order. The
-   * namespace is two keys — `LAST_DRAIN_AT_META` for {@link OhmailEngine.freshness} and the stale-resume verdict,
-   * `SNAPSHOT_PREFIX_SEQ_META` for the bootstrap's bookkeeping — and `idb.ts`/`sql-store.ts` keep their internal keys
-   * out of it so a selector can never reach one.
+   * namespace is three keys — `LAST_DRAIN_AT_META` for {@link OhmailEngine.freshness} and the stale-resume verdict,
+   * `SNAPSHOT_PREFIX_SEQ_META` for the bootstrap's bookkeeping, `RECEIVED_MESSAGES_META` for how much mail this
+   * reader has taken in — and `idb.ts`/`sql-store.ts` keep their internal keys out of it so a selector cannot reach one.
    */
 
   /**
