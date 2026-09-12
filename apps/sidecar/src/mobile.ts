@@ -25,9 +25,15 @@ import { drizzle as drizzleSqliteProxy } from "drizzle-orm/sqlite-proxy";
 import { mailboxCredentials, mailboxes, organizerDisplayName } from "@trafficflow/db";
 import { brandDialect } from "@trafficflow/db/dialect";
 import { migrateSqlite } from "@trafficflow/db/sqlite-migrate";
-import type { OrganizerKind, StandDownReason } from "@trafficflow/core/adapters/organizer-lease";
+import type { LeasePeekAnswer, OrganizerKind, StandDownReason } from "@trafficflow/core/adapters/organizer-lease";
 /* THE WORKER'S SOCKET PROFILE, not a third one. See {@link startPhoneEngine}. */
 import { DEFAULT_NET_TIMEOUTS, WORKER_NET_TIMEOUTS } from "@trafficflow/core/adapters/imap";
+/* The ceiling the consent door's look runs under, from the bound class the lease read itself uses
+   — one ceiling per KIND of read, never a second number written here. `adapters/imap` re-exports
+   `imap-bounds.ts` whole, so this is the leaf the line above already imports. */
+import {
+  ImapDeadline, IMAP_META_DEADLINE_MS, isImapBoundExceeded,
+} from "@trafficflow/core/adapters/imap";
 import type { ImapConfig, MailboxAdapter } from "@trafficflow/core/adapters/imap";
 import {
   createSidecar,
@@ -943,7 +949,40 @@ async function composePhoneEngine(
        * So the door peeks through its OWN engine — the same APPEND-less bounded read the poll
        * makes — answering free / held / unreadable. Only on this path; a `held` row costs nothing.
        */
-      const looked = await sidecar.peekOrganizer(mailboxId);
+      /* ══ AND THE LOOK RUNS UNDER A CLOCK ══════════════════════════════════════════════════
+       *
+       * Nothing beneath this bounded a WHOLE look: the fetch out of `ohmail/_meta` is raced
+       * against `IMAP_META_DEADLINE_MS`, while the folder resolution, the mailbox lock and the
+       * STATUS probe ahead of it carry no clock at all — measured here against a look that never
+       * answers, the press was still outstanding at 120 s. A look that is merely SLOW is a look
+       * that did not land: the 503 a failed one takes, and the next press asks again. The ceiling
+       * is the peek read's own, never a second number minted at this door.
+       */
+      const lookedAt = Date.now();
+      let looked: LeasePeekAnswer;
+      let lookOutcome: "landed" | "timeout" | "failed";
+      try {
+        looked = await ImapDeadline.in(IMAP_META_DEADLINE_MS, "read_deadline")
+          .race(sidecar.peekOrganizer(mailboxId));
+        lookOutcome = looked.answer === "unreadable" ? "failed" : "landed";
+      } catch (err) {
+        /* A REJECTION IS A LOOK THAT DID NOT LAND, never a 500. The clock throws
+           `ImapBoundExceeded`; anything else arriving here came out of `listClaims`, the only read
+           a peek performs. Both become the answer the arms below already handle. */
+        lookOutcome = isImapBoundExceeded(err) ? "timeout" : "failed";
+        looked = { answer: "unreadable", op: "list_claims", cause: err };
+      }
+      /* ONE LINE PER LOOK THIS PRESS PAID FOR, and none for the fast path — what an operator
+         cannot otherwise tell apart is a door that answered slowly from a door that never asked.
+         `latencyMs` and not a new name: an unregistered field has its value dropped silently. */
+      log("organizer_consent_look", {
+        mailboxId,
+        outcome: lookOutcome,
+        latencyMs: Date.now() - lookedAt,
+        reason: "the row did not say who organizes this mailbox, so this press paid for a live "
+          + "read of the claim folder; past the ceiling the look did not land, and the door "
+          + "refuses instead of holding the press open",
+      });
       if (looked.answer === "free") {
         refusedHolders.delete(mailboxId);
         return null;
