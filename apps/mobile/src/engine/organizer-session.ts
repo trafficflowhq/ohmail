@@ -340,6 +340,127 @@ export async function stopOrganizingStandalone(): Promise<boolean> {
   return stopped;
 }
 
+/**
+ * ══ ONE STANDING INSTRUCTION, AND A PRESS REPLACES IT RATHER THAN RACING IT ═════════════════
+ *
+ * Stop and Start were two unawaited calls on one mailbox with nothing between them. Measured on a
+ * device: pressing both in one run left either a start refused for the life of the process or a
+ * panel reading `Stopping` for three minutes over a phone that was demonstrably filing mail.
+ *
+ * So the session holds ONE instruction and every press goes through {@link pressOrganizeHere}. A
+ * press asking for the instruction already in force is not a second instruction; a press made
+ * while the opposite act is in flight is QUEUED once and run when that act settles — Start after a
+ * stop, and Stop after a start, which releases what the start claimed. That is the cancel.
+ *
+ * The instruction is settled from the ENGINE's own answer and never outranks it
+ * ({@link settleInstruction}), so a press whose call never returns cannot leave a stale word on
+ * screen — the transition ends when the engine says it has.
+ */
+export type OrganizeInstruction = "idle" | "starting" | "running" | "stopping";
+
+/** What a press did. `standing` = the instruction it asked for was already in force. */
+export type PressOutcome = "started" | "stopped" | "queued" | "standing" | "refused";
+
+let instruction: OrganizeInstruction = "idle";
+/** At most one press waiting behind the act in flight, and only ever the opposite one. */
+let queued: "start" | "stop" | null = null;
+/** The act being carried out, so a press can wait for it rather than race it. */
+let inFlight: Promise<void> | null = null;
+
+/**
+ * THE ENGINE'S ANSWER ENDS THE TRANSITION, not the press and not a timer.
+ *
+ * `null` is "the engine has not said" and settles nothing. A `starting` over a mailbox the engine
+ * does not yet organize stays `starting`, and a `stopping` over one it still does stays
+ * `stopping` — those are the two transitions, and they end when the engine's word changes.
+ */
+function settleInstruction(organizing: boolean | null): void {
+  if (organizing === null) return;
+  if (organizing && (instruction === "starting" || instruction === "idle")) instruction = "running";
+  else if (!organizing && (instruction === "stopping" || instruction === "running")) instruction = "idle";
+}
+
+/**
+ * The instruction in force, settled against the engine before it is handed out — which is what
+ * makes "never a stale one" true without a second clock. The panel reads this at render.
+ */
+export function organizerInstruction(): OrganizeInstruction {
+  settleInstruction(standaloneHere()?.organizing ?? null);
+  return instruction;
+}
+
+/**
+ * THE ONE DOOR BOTH VERBS GO THROUGH. Every caller is a finger.
+ *
+ * A press for the instruction already in force answers `standing` and writes nothing — which is
+ * what stops a second Start from queueing a second instruction behind the first.
+ */
+export async function pressOrganizeHere(want: "start" | "stop"): Promise<PressOutcome> {
+  const state = organizerInstruction();
+  if (want === "start" && (state === "running" || state === "starting")) return "standing";
+  if (want === "stop" && (state === "idle" || state === "stopping")) return "standing";
+  if (inFlight !== null) {
+    /* ONE SLOT, AND A PRESS FOR WHAT IS ALREADY WAITING IS NOT A SECOND INSTRUCTION. Two Starts
+       behind one stop would otherwise claim the mailbox twice — and the second claim would land on
+       a session the first had already raised. */
+    if (queued === want) return "standing";
+    queued = want;
+    notifyOrganizerState();
+    return "queued";
+  }
+  return runInstruction(want);
+}
+
+async function runInstruction(want: "start" | "stop"): Promise<PressOutcome> {
+  instruction = want === "start" ? "starting" : "stopping";
+  notifyOrganizerState();
+  const act = want === "start" ? startHere() : stopHere();
+  /* The queue waits on a promise that cannot reject — a refused act still has to release the
+     press behind it, or "start after stop" would be lost by the stop having failed. */
+  inFlight = act.then(() => undefined, () => undefined);
+  const outcome = await act.catch((): PressOutcome => "refused");
+  inFlight = null;
+  /* THE TRANSITION IS OVER, whatever it achieved, so the engine's answer is the whole of the state
+     again. Without this a REFUSED start reads `Starting` for ever — the defect this door exists to
+     close, in the direction nobody measured on the device. */
+  instruction = "idle";
+  settleInstruction(standaloneHere()?.organizing ?? null);
+  notifyOrganizerState();
+  const next = queued;
+  queued = null;
+  return next === null ? outcome : runInstruction(next);
+}
+
+async function startHere(): Promise<PressOutcome> {
+  const outcome = await claimHereStandalone();
+  if (outcome === "held") return "standing";
+  if (outcome !== "claimed") return "refused";
+  /* AND THE SESSION COMES BACK WITH THE CLAIM. The stop disposed it, taking the notification, the
+     foreground service and both watches with it — so a start that only claimed would leave the
+     engine organizing behind nothing a person can see, which is the state `organizerRestricted`
+     describes and the half that made this two standing instructions rather than one. */
+  if (sessionDeps !== null) startOrganizerSession(sessionDeps);
+  return "started";
+}
+
+async function stopHere(): Promise<PressOutcome> {
+  const stopped = await stopOrganizingStandalone();
+  /* AND THE NOTIFICATION COMES DOWN WITH THE CLAIM — a service left standing would say
+     "Organizing" over a phone that reads. */
+  await stopOrganizerSession();
+  /* `false` is "nothing of ours was recorded as given up", which is the state the person asked
+     for rather than a failure — `PhoneEngine.stopOrganizing`'s own contract. */
+  return stopped ? "stopped" : "standing";
+}
+
+/**
+ * The platform half's deps, kept so a start after a stop can raise the session again.
+ *
+ * The native starter is reached by a dynamic import from two screens; the door has no way to run
+ * it, and `react-native` may not be imported here. So the deps it was handed are the way back.
+ */
+let sessionDeps: OrganizerSessionDeps | null = null;
+
 /** The live session, or `null`. Module scope for the reason in the header. */
 let live: {
   readonly organizing: BackgroundOrganizing;
@@ -368,6 +489,7 @@ let restrictedSaid = false;
  */
 export function startOrganizerSession(deps: OrganizerSessionDeps): boolean {
   if (live !== null) return false;
+  sessionDeps = deps;
   const organizing = createBackgroundOrganizing({
     platform: deps.platform,
     engine: deps.engine,
@@ -451,6 +573,11 @@ export function sayOrganizerRestricted(): void {
 export async function endStandaloneHere(): Promise<void> {
   const held = door;
   door = null;
+  /* The mailbox is going, so the instruction about it goes too — a queued start would otherwise
+     claim a mailbox this install is in the middle of forgetting. */
+  instruction = "idle";
+  queued = null;
+  sessionDeps = null;
   notifyOrganizerState();
   if (held !== null) await held.handBack().catch(() => undefined);
   await stopOrganizerSession();
@@ -474,11 +601,15 @@ let lastSeen = "";
 
 export function pokeOrganizerState(): void {
   const here = standaloneHere();
+  /* SETTLED FROM THIS SNAPSHOT, not from a second read: the claim watch's tick is what carries an
+     engine-side change onto an open panel, and the transition it ends is part of that change. */
+  settleInstruction(here?.organizing ?? null);
   const now = JSON.stringify([
     here === null
       ? null
       : [here.id, here.address, here.organizing, here.heldBy?.name ?? null,
         here.heldBy?.standDownReason ?? null],
+    instruction,
     live !== null,
     live?.organizing.backgrounded() ?? false,
     restrictedSaid,
@@ -493,6 +624,10 @@ export function pokeOrganizerState(): void {
 export function forgetOrganizerSessionForTests(): void {
   live = null;
   door = null;
+  instruction = "idle";
+  queued = null;
+  inFlight = null;
+  sessionDeps = null;
   restrictedSaid = false;
   organizeRefused = null;
   consentArmed = false;

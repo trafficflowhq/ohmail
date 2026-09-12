@@ -24,6 +24,7 @@ export function pgDialect(): Dialect {
 
     now: () => sql`now()`,
     ts: (at: Date) => sql`${at.toISOString()}::timestamptz`,
+    tsOrNull: (at: Date | null) => (at === null ? sql`null` : sql`${at.toISOString()}::timestamptz`),
 
     castInt: (v) => sql`(${v})::int`,
     castText: (v) => sql`(${v})::text`,

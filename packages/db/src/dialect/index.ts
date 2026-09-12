@@ -222,6 +222,17 @@ export interface Dialect {
   /** A JavaScript instant, as a literal the timestamp columns compare against. */
   ts(at: Date): SQL;
 
+  /**
+   * The SAME literal where the value may be absent — a compare-and-set on a nullable stamp.
+   *
+   * A member and not a caller's ternary, because the caller that wrote one wrote `${at}` instead:
+   * a bare `Date` interpolated into a raw fragment carries NO column encoder, so the server binds
+   * it as TEXT and the device store binds it as SQL NULL or refuses it outright. Measured on the
+   * phone's release guard — `IS NOT DISTINCT FROM` then matched no row on every poll and the
+   * person's stop was never recorded.
+   */
+  tsOrNull(at: Date | null): SQL;
+
   castInt(value: SQL | unknown): SQL;
   castText(value: SQL | unknown): SQL;
   castUuid(value: SQL | unknown): SQL;

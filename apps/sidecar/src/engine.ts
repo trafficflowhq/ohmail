@@ -3450,8 +3450,8 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
               })
               .where(and(
                 eq(mailboxes.id, mb.id),
-                sql`${mailboxes.takeoverAuthorizedAt} is not distinct from ${observedTakeoverAt}`,
-                sql`${mailboxes.releaseRequestedAt} is not distinct from ${releaseRequested}`,
+                sql`${mailboxes.takeoverAuthorizedAt} is not distinct from ${dialect(db).tsOrNull(observedTakeoverAt)}`,
+                sql`${mailboxes.releaseRequestedAt} is not distinct from ${dialect(db).tsOrNull(releaseRequested)}`,
               ))
               .returning({ id: mailboxes.id });
             if (recorded === undefined) {
@@ -3833,7 +3833,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                  NULLs is NULL, which would make this a no-op on every stand-down that had no stamp
                  and leave the column's own value untouched — harmless there, and the wrong shape to
                  rely on. */
-              takeoverAuthorizedAt: sql`case when ${mailboxes.takeoverAuthorizedAt} is not distinct from ${observedTakeoverAt}
+              takeoverAuthorizedAt: sql`case when ${mailboxes.takeoverAuthorizedAt} is not distinct from ${dialect(db).tsOrNull(observedTakeoverAt)}
                 then null else ${mailboxes.takeoverAuthorizedAt} end`,
               // Mail 0088 — the demotion half, and the fifth writer of the triple. Stamped in the
               // same statement as the role and the holder columns it is announcing.
