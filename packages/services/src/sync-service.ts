@@ -146,15 +146,10 @@ export interface GetSnapshotOptions {
    * evicted tagged mail under an older retention policy needs exactly those rows and nothing
    * else: the ordinary walk reaches them only after paging the whole window, and its page 1 is
    * the mail such a client already holds. Cost is bounded by how much mail carries a tag, which
-   * is what somebody tagged by hand.
-   *
-   * A STRING and not the literal type, because this is where the vocabulary is decided: the route
-   * forwards whatever the query carried, and anything that is not exactly `"tail"` — a
-   * misspelling, an empty value, a phase a later client invents — is the ordinary walk, byte for
-   * byte. Narrowing at the boundary instead would put the same test in two places, and only one
-   * of them could ever be watched fail.
+   * is what somebody tagged by hand. Absent — and any phase this build has never heard of, which
+   * the route drops at the read — is the ordinary walk, byte for byte.
    */
-  phase?: string;
+  phase?: "tail";
 }
 
 /**
@@ -616,10 +611,12 @@ export class SyncService {
     const { db, accountId } = ctx;
     const limit = clampPageLimit(opts.limit, DEFAULT_LIMIT, MAX_LIMIT);
     const cursor = opts.cursor && opts.cursor !== "" ? this.decodeSnapshotCursor(opts.cursor) : null;
-    // TAIL-ONLY: page 1 of a walk that starts IN the tail. Only ever true on page 1 — later pages
-    // carry `phase: "tail"` in the cursor itself, so the resumption is the tail's own and the
-    // caller's parameter is never read twice.
-    const tailOnly = cursor === null && opts.phase === "tail";
+    // TAIL-ONLY: page 1 of a walk that starts IN the tail. PRESENCE and not a second spelling
+    // test — the option's type admits the one phase there is, and the route decides the
+    // vocabulary at the read (where `input-bounds-census` asks for it). A later phase would widen
+    // the type and this line with it, which is the point: one comparison, in one place.
+    // Only ever true on page 1; later pages carry `phase: "tail"` in the cursor itself.
+    const tailOnly = cursor === null && opts.phase !== undefined;
 
     // THE GAP-FREE SEQ IS FIXED BEFORE ANY ENTITY READ. See `highWaterSeq` for what depends on
     // this line

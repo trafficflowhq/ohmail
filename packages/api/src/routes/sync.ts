@@ -124,9 +124,10 @@ export const syncRoutes: Route[] = [
       const limitRaw = url.searchParams.get("limit");
       const limit = limitRaw != null && limitRaw !== "" ? Number(limitRaw) : undefined;
       // `?phase=tail` — the labeled tail alone, for a client re-hydrating mail its own retention
-      // policy once evicted. FORWARDED RAW: the vocabulary is decided once, in `getSnapshot`,
-      // and a second spelling test here would be a condition with no reachable contrary state.
-      const phase = url.searchParams.get("phase") ?? undefined;
+      // policy once evicted. A CLOSED SET AT THE READ, which is where `input-bounds-census` asks
+      // for a caller-chosen value's bound: anything else is the ordinary walk, the safe direction
+      // for a parameter a future client might spell differently.
+      const phase = url.searchParams.get("phase") === "tail" ? "tail" as const : undefined;
 
       const result = await sync(deps).getSnapshot(serviceContext(deps, req), {
         ...(cursor ? { cursor } : {}),
