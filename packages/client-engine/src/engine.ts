@@ -2668,22 +2668,10 @@ export class OhmailEngine {
     // {@link EAGER_BODIES_SLICE} single requests, and without a check in there a teardown between
     // the batch response and its tail let a discarded engine issue every one of them.
     const stopped = (): boolean => gen !== this.eagerGen;
-    /**
-     * ONE PUBLISH FOR THE PASS, not one per slice. Each slice wrote its loading markers and then
-     * its answers, and every one of those bumped the mirror version and re-ran the shell's
-     * whole-mirror derivations — a thousand bodies in forty-id slices is around a hundred
-     * derivations over a ten-thousand-row window, measured at 236 MB of the renderer's resident
-     * peak on a large mailbox, for bodies nobody had opened. `quiet` defers the publish;
-     * `putBodies` still publishes immediately for any batch carrying a message on screen.
-     */
     for (let i = 0; i < ids.length; i += EAGER_BODIES_SLICE) {
       if (stopped()) return;
-      await this.hydrateMany(ids.slice(i, i + EAGER_BODIES_SLICE), { rendered: false, stopped, quiet: true });
+      await this.hydrateMany(ids.slice(i, i + EAGER_BODIES_SLICE), { rendered: false, stopped });
     }
-    // The pass's own publish. The store's version carries every quiet write, so one notify here
-    // is one derivation for the whole pass; a pass that wrote nothing moved no version and costs
-    // the shell nothing.
-    this.notify();
   }
 
   /**
@@ -3319,7 +3307,6 @@ export class OhmailEngine {
    */
   private async markLoadingBatch(
     chunk: ReadonlyArray<{ id: string; held: MessageBodyRecord | undefined }>,
-    opts: { quiet?: boolean } = {},
   ): Promise<void> {
     const markers = chunk
       .filter((c) => c.held?.state !== "ready")
@@ -3330,7 +3317,7 @@ export class OhmailEngine {
         },
       }));
     try {
-      await this.putBodies(markers, opts);
+      await this.putBodies(markers);
     } catch {
       /* the mirror refused the markers; ask anyway — see above, never rethrow */
     }
@@ -3382,7 +3369,7 @@ export class OhmailEngine {
    */
   private hydrateMany(
     messageIds: string[],
-    opts: { rendered: boolean; stopped?: () => boolean; quiet?: boolean },
+    opts: { rendered: boolean; stopped?: () => boolean },
   ): Promise<void> {
     const fetchBodies = this.fetchBodiesFn;
     const ids = [...new Set(messageIds)];
@@ -3426,9 +3413,8 @@ export class OhmailEngine {
     for (let i = 0; i < take.length; i += BODIES_IDS_MAX) {
       const chunk = take.slice(i, i + BODIES_IDS_MAX);
       const chunkIds = chunk.map((c) => c.id);
-      const quiet = { quiet: opts.quiet === true };
-      const run = this.markLoadingBatch(chunk, quiet)
-        .then(() => this.bodySlot(false, () => this.fetchBodiesInto(chunkIds, fetchBodies, opts.stopped, quiet), chunkIds))
+      const run = this.markLoadingBatch(chunk)
+        .then(() => this.bodySlot(false, () => this.fetchBodiesInto(chunkIds, fetchBodies, opts.stopped), chunkIds))
         .finally(() => {
           for (const id of chunkIds) this.bodyRequests.delete(id);
         });
@@ -3452,7 +3438,6 @@ export class OhmailEngine {
     ids: string[],
     fetchBodies: FetchBodiesFn,
     stopped?: () => boolean,
-    opts: { quiet?: boolean } = {},
   ): Promise<void> {
     let rows: MessageBodyBatchWire[] | null;
     try {
@@ -3499,7 +3484,7 @@ export class OhmailEngine {
       });
     }
     try {
-      await this.putBodies(answered, opts);
+      await this.putBodies(answered);
     } catch (err) {
       // The commit is all-or-nothing, so a refusal leaves NONE of them written — every id the
       // batch answered gets the `failed` record it would have got asking alone.
@@ -3695,7 +3680,6 @@ export class OhmailEngine {
    */
   private async putBodies(
     entries: ReadonlyArray<{ id: string; record: MessageBodyRecord | null }>,
-    opts: { quiet?: boolean } = {},
   ): Promise<void> {
     if (entries.length === 0) return;
     await this.store.commitLocal(
@@ -3703,16 +3687,7 @@ export class OhmailEngine {
       [],
     );
     for (const e of entries) if (e.record?.state === "ready") this.touchBody(e.id);
-    /**
-     * A QUIET WRITE IS ONE NOBODY IS WAITING FOR — see {@link OhmailEngine.runEagerBodies}, which
-     * publishes once for its whole pass instead of once per slice. The valve is not optional: a
-     * batch carrying a message the reader is actually looking at IS being waited for, and a body
-     * that lands without a publish leaves that message saying "loading…" until something else
-     * happens to notify. `renderedIds` is the engine's own answer to "what is on screen".
-     */
-    const awaited = opts.quiet === true
-      && entries.some((e) => this.renderedIds.has(e.id));
-    if (opts.quiet !== true || awaited) this.notify();
+    this.notify();
     await this.trimBodyCache();
   }
 
