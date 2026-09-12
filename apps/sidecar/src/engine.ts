@@ -115,7 +115,8 @@ import {
 // the mailbox (its empty-folder arm claims). One method, no way to write. See
 // `notePeekedHolder`.
 import {
-  readLeasePeek, deriveRequestKey, type LeasePeekIo, type OrganizerKind,
+  answerLeasePeek, deriveRequestKey, type LeasePeekIo,
+  type LeasePeekAnswer, type LeaseOp, type OrganizerKind,
   type OrganizerIntent,
 } from "@trafficflow/core/adapters/organizer-lease";
 import type { ImapAuth } from "@trafficflow/core/adapters/imap-types";
@@ -478,6 +479,16 @@ export interface Sidecar {
    * {@link organizerStates}, which is the fact the app renders.
    */
   resume(): Promise<void>;
+  /**
+   * WHO HOLDS ONE MAILBOX, ASKED NOW — the engine's own APPEND-less look, in three words.
+   *
+   * Exists so a door in this process can DECIDE from a look instead of from the holder columns.
+   * The columns are refreshed once per cycle and carry two facts in one NULL — "nobody has ever
+   * organized this" and "we have not looked" — and a door that reads that NULL as free admits a
+   * press over a mailbox whose claim folder it could not see. Per mailbox, because the question
+   * is per mailbox; a mailbox this install does not run answers `unreadable`, which is true.
+   */
+  peekOrganizer(mailboxId: string): Promise<LeasePeekAnswer>;
   /**
    * The desktop-host door — `Request → Response` over `desktopHostRoutes`, the surface a paired
    * phone reaches. Present IFF host mode is armed; a disarmed install has no second door at all,
@@ -3224,15 +3235,63 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
        * the enforcement). Never throws: "could not look" and "nobody holds it" must not be
        * reachable from one another. Writes only on change.
        */
-      const notePeekedHolder = async (reason: MailboxDisabledReason | null): Promise<void> => {
+      /**
+       * The engine's own APPEND-less look, in the three words a decision can be made from — and
+       * the reason it is not {@link readLeasePeek} directly is the missing accessor. `leasePeekIo`
+       * is probed structurally because `MailboxAdapter` does not declare it, and this call site
+       * answered a failed probe with a bare `return`: the holder columns then said exactly what a
+       * mailbox nobody has ever organized says, no line was logged, and `unreadableSince` — the
+       * field that exists to tell a person the difference — stayed null. Measured: with that arm
+       * taken, the phone's consent door admitted the press and wrote the consent.
+       */
+      const peekOrganizer = async (): Promise<LeasePeekAnswer> => {
         const peekIo = (adapter as Partial<{ leasePeekIo(): LeasePeekIo }>).leasePeekIo;
-        if (typeof peekIo !== "function") return;
+        /* ASKING FOR THE ACCESSOR CAN ITSELF REFUSE, and that is an ANSWER too. `ImapAdapter`
+           asserts the adapter is usable before handing the io out, so a RETIRED one throws here —
+           an ordinary runtime state, a mailbox detached while a press was in flight. Inside the
+           poll that throw was caught by the surrounding try; the DOOR awaits this directly, so
+           without this it would reject rather than refuse, and a rejection is not the 503 whose
+           sentence tells a person to press again. */
+        let io: LeasePeekIo | undefined;
         try {
-          const seen = await readLeasePeek({
-            io: peekIo.call(adapter),
-            now: now(),
-            ...(config.leaseStaleAfterMs !== undefined ? { staleAfterMs: config.leaseStaleAfterMs } : {}),
-          });
+          io = typeof peekIo === "function" ? peekIo.call(adapter) : undefined;
+        } catch (err) {
+          return { answer: "unreadable", op: "no_lease_peek_io", cause: err };
+        }
+        return answerLeasePeek({
+          io,
+          now: now(),
+          ...(config.leaseStaleAfterMs !== undefined ? { staleAfterMs: config.leaseStaleAfterMs } : {}),
+          log,
+        });
+      };
+
+      /** The one place this runtime writes "the lease could not be read" — kept from the FIRST
+       *  failure, so a surface can say how long; a look that answers clears it. */
+      const markLeaseUnreadable = (err: unknown, op: LeaseOp): void => {
+        organizer = {
+          ...organizer,
+          unreadableSince: organizer.unreadableSince ?? new Date().toISOString(),
+        };
+        log("organizer_peek_failed", {
+          err, op,
+          reason: "this install reads this mailbox and could not see who organizes it; the row "
+            + "keeps its previous answer, the pane says the lease is unreadable, and the next "
+            + "pass looks again",
+        });
+      };
+
+      const notePeekedHolder = async (reason: MailboxDisabledReason | null): Promise<void> => {
+        try {
+          const answered = await peekOrganizer();
+          /* THE THIRD ANSWER, AND IT IS NOT `free`. A look that did not happen leaves the four
+             holder columns alone — a failed look is not evidence about who holds the mailbox —
+             and says so where a person and the door can both read it. */
+          if (answered.answer === "unreadable") {
+            markLeaseUnreadable(answered.cause, answered.op);
+            return;
+          }
+          const seen = answered.peek;
           /* FRESHEST FIRST — `peekLease` sorts them, and the freshest is what a person means by
              "who organizes this". An empty list is "nobody named", never invented. */
           const top = seen.holders[0] ?? null;
@@ -3311,19 +3370,10 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
            * mailbox — but it left the STATE looking healthy: a reader whose lease reads keep
            * failing presented an ordinary connected pane with a stale holder, and the mark this
            * field exists for was set only on the startup path — the reliability-signal-as-
-           * healthy-state shape surviving at poll time, where a mailbox spends its life. Kept
-           * from the FIRST failure, as at startup, so the surface can say how long; the success
-           * path sets it back to `null`. */
-          organizer = {
-            ...organizer,
-            unreadableSince: organizer.unreadableSince ?? new Date().toISOString(),
-          };
-          log("organizer_peek_failed", {
-            err,
-            reason: "this install reads this mailbox and could not see who organizes it; the row "
-              + "keeps its previous answer, the pane says the lease is unreadable, and the next "
-              + "pass looks again",
-          });
+           * healthy-state shape surviving at poll time, where a mailbox spends its life.
+           * `answerLeasePeek` answers the folder's own faults rather than throwing them, so what
+           * reaches here is the WRITE below failing — which is still a pass that learned nothing. */
+          markLeaseUnreadable(err, "list_claims");
         }
       };
 
@@ -5394,6 +5444,14 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           handedBack = false;
           return syncUntilQuiet(undefined, { force: true });
         },
+        /* THE SAME LOOK THE POLL MAKES, THROUGH THE SAME ADAPTER — read at call time, because a
+           re-dial replaces the binding and a captured one would peek down a dead socket. A stopped
+           runtime answers `unreadable` rather than `free`: there is no connection to look with,
+           and "we have no way to check" is the one thing that must not read as "nobody is there". */
+        async peekOrganizer(): Promise<LeasePeekAnswer> {
+          if (stopped) return { answer: "unreadable", op: "no_lease_peek_io", cause: undefined };
+          return peekOrganizer();
+        },
       };
       runtimes.add(rt);
       return rt;
@@ -6533,6 +6591,14 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
          not stop the other mailboxes resuming. */
       resume: async (): Promise<void> => {
         await Promise.allSettled(runtimes.all().map((rt) => rt.resume()));
+      },
+      /* ONE MAILBOX, NAMED. A mailbox this install does not run answers `unreadable` rather than
+         throwing: the caller is a door with a press in its hand, and an id it does not recognise
+         is exactly the state in which it must not say "nothing holds this". */
+      peekOrganizer: async (mailboxId: string): Promise<LeasePeekAnswer> => {
+        const rt = runtimes.all().find((r) => r.mailboxId === mailboxId);
+        if (rt === undefined) return { answer: "unreadable", op: "no_lease_peek_io", cause: undefined };
+        return rt.peekOrganizer();
       },
       credentialState: async () => (await seedRuntime()?.credentialState()) ?? "absent",
       forgetStoredLogin: async () => (await seedRuntime()?.forgetStoredLogin()) ?? false,

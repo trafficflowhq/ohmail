@@ -259,6 +259,16 @@ const TABLE = {
   settingsStopHereFailed:
     "This phone could not hand that mailbox back, so it is still organizing it. Try again in a "
     + "moment.",
+  /**
+   * A LOOK THAT DID NOT LAND, and its own sentence rather than the one above.
+   *
+   * The door refuses a press it cannot check, and "could not start" would send somebody looking
+   * for what went wrong on this phone. Nothing went wrong here: the mailbox could not be asked
+   * whether another computer has it, and the answer is to press again. Says what could not be
+   * read, not how — the folder is not a thing a person has to know about.
+   */
+  settingsStartHereUnreadable:
+    "This phone could not read whether another computer organizes this mailbox. Nothing changed. Try again.",
 
   /* The standalone door's own refusals. Each one names what is missing; none of them ever
      carries the password, which is not an argument any of these takes. */

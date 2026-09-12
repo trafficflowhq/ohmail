@@ -15,15 +15,20 @@ import type { EngineLogSink } from "./engine-log";
 import type { StandaloneFields } from "../ui/standalone-form";
 
 /**
- * WHAT ASKING FOR THIS PHONE ANSWERED — three states, named, and no `null` among them.
+ * WHAT ASKING FOR THIS PHONE ANSWERED — four states, named, and no `null` among them.
  *
  * `held` and `refused` are separate because only one of them is worth a sentence. A live foreign
  * holder is the ordinary state of a phone whose mailbox a laptop organizes: nothing is wrong and
- * the panel already says which machine has it. `refused` is everything else the door said, and
- * that one a person reads. Collapsed, the claim watch would write "we could not start organizing"
- * under that chip once a minute for as long as the laptop kept the mailbox.
+ * the panel already says which machine has it. Collapsed, the claim watch would write "we could
+ * not start organizing" under that chip once a minute for as long as the laptop kept the mailbox.
+ *
+ * `unreadable` is the fourth and it is not `refused` either: the door says it exactly where it
+ * could not see whether anybody holds the mailbox, and the sentence a person needs there is "try
+ * again", not "something went wrong on this phone". It is also the one that must never arrive as
+ * `claimed` — a press over a claim folder the engine could not read used to be admitted and
+ * reported as a start. `refused` is what is left: everything else the door said.
  */
-export type ClaimHereOutcome = "claimed" | "held" | "refused";
+export type ClaimHereOutcome = "claimed" | "held" | "unreadable" | "refused";
 
 /**
  * WHAT THE PERSON'S STOP SETTLED — the engine's own three answers, mirrored here.

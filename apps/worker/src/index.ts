@@ -122,7 +122,7 @@ import {
 // lease every cycle to keep `organizer_state` and the holder columns honest, and looking must
 // never write a claim: `readLeasePeek` takes the read-only IO and creates nothing.
 import {
-  readLeasePeek, deriveRequestKey, type OrganizerIntent,
+  readLeasePeek, answerLeasePeek, deriveRequestKey, type OrganizerIntent,
 } from "@trafficflow/core/adapters/organizer-lease";
 
 /** How often the leader runs the global maintenance pass (expired-idempotency-key sweep). */
@@ -1152,7 +1152,6 @@ export async function startWorkerWithLock(
       },
     ): Promise<void> {
       const peek = (adapter as Partial<LeasePeekCapableAdapter>).leasePeekIo;
-      if (typeof peek !== "function") return;
       try {
         /* ── THE CONFIGURED WINDOW, and omitting it was a real divergence ─────────────────────
          *
@@ -1164,10 +1163,28 @@ export async function startWorkerWithLock(
          * omission and the same cause, with a WRITE at the end of it. One window per mailbox, read
          * from one place; the sidecar already forwards its own (`engine.ts:3267`, `:3657`), which
          * is what made the difference legible. */
-        const seen = await readLeasePeek({
-          io: peek.call(adapter), now: new Date(),
+        /* THREE ANSWERS, AND THE MISSING ACCESSOR IS ONE OF THEM. This probed `leasePeekIo` and
+           answered a failed probe with a bare `return` — no write, no line, and the four holder
+           columns left saying exactly what an unorganized mailbox's say. Every banner in the
+           product reads those columns, so an adapter without the read-only accessor renders
+           "nobody organizes this mailbox" about a mailbox nothing has looked at. `answerLeasePeek`
+           makes that an ANSWER; the row is still left alone, because a failed look is not evidence
+           about who holds the mailbox. */
+        const answered = await answerLeasePeek({
+          io: typeof peek === "function" ? peek.call(adapter) : undefined,
+          now: new Date(),
           ...(organizerStaleAfterMs !== undefined ? { staleAfterMs: organizerStaleAfterMs } : {}),
         });
+        if (answered.answer === "unreadable") {
+          log.warn("organizer_holder_refresh_failed", {
+            mailboxId: mb.mailboxId, accountId: mb.accountId, op: answered.op,
+            reason: "this reader could not look at the claim folder, so the holder columns keep "
+              + "their previous answer; a look that did not land is not evidence that nobody "
+              + "organizes this mailbox, and the next cycle looks again",
+          });
+          return;
+        }
+        const seen = answered.peek;
         // FRESHEST FIRST, and the freshest is the one a person means by "who organizes this".
         // `holders` is already sorted that way by `peekLease`; an empty list means the folder
         // holds no readable claim, which is reported as "nobody named" rather than invented.

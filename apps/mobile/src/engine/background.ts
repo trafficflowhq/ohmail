@@ -119,7 +119,7 @@ export interface BackgroundEngine {
    * door; it is the ordinary answer while another machine organizes the mailbox and owes nobody a
    * sentence.
    */
-  claimHere(): Promise<"claimed" | "held" | "refused">;
+  claimHere(): Promise<"claimed" | "held" | "unreadable" | "refused">;
   /**
    * What the engine says about each mailbox right now — THREE facts, and no two of them are the
    * negation of another.
@@ -773,7 +773,7 @@ export function createBackgroundOrganizing(deps: BackgroundDeps): BackgroundOrga
       reclaimSkip -= 1;
       return;
     }
-    let outcome: "claimed" | "held" | "refused";
+    let outcome: "claimed" | "held" | "unreadable" | "refused";
     try {
       outcome = await deps.engine.claimHere();
     } catch (err) {
@@ -783,6 +783,14 @@ export function createBackgroundOrganizing(deps: BackgroundDeps): BackgroundOrga
       reclaimRefusals += 1;
       reclaimSkip = Math.min(2 ** (reclaimRefusals - 1), RECLAIM_BACKOFF_MAX_TICKS);
       reclaimVerdict = "refused";
+      return;
+    }
+    /* `unreadable` MOVES NOTHING. The door refused a press it could not check, so the claim
+       stands exactly where it stood, and telling the screen something changed would redraw a
+       panel whose facts are unchanged. It IS logged — unlike `held`, this one is a look that did
+       not land, and the watch asks again rather than backing off. */
+    if (outcome === "unreadable") {
+      log("organizer_reclaim_unreadable", { why: "holder_left" });
       return;
     }
     reclaimSettled(outcome);

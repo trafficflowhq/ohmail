@@ -1612,6 +1612,101 @@ export async function readLeasePeek(input: ReadLeasePeekInput): Promise<LeasePee
   });
 }
 
+// ── THE PEEK'S THREE ANSWERS ────────────────────────────────────────────────────────────────
+
+/**
+ * WHAT A LOOK AT `ohmail/_meta` ANSWERED — three answers, and the third is the reason this type
+ * exists.
+ *
+ * `free` and `held` are facts about the folder. `unreadable` is a fact about the LOOK, and the one
+ * a caller keeps collapsing into `free` because both leave it with no holder to name. Measured on
+ * the phone's consent door: an install whose adapter could not read the folder — no read-only
+ * accessor at all, or a FETCH the server refused — left the holder columns exactly as a mailbox
+ * nobody has ever organized leaves them, so the door admitted the press, wrote the consent and the
+ * authorization, and answered the app "claimed". Nothing anywhere said a look had failed.
+ *
+ * So the answers are a VALUE rather than a return-or-throw: a caller that must decide from a peek
+ * takes this and the compiler names the third arm. Only `free` means "nothing holds this mailbox".
+ */
+export type LeasePeekAnswer =
+  /** The folder was read and nothing is renewing a claim in it. The only answer that admits one. */
+  | { readonly answer: "free"; readonly peek: LeasePeek }
+  /** The folder was read and somebody is renewing. `holder` is the freshest, as `peekLease` sorts. */
+  | { readonly answer: "held"; readonly peek: LeasePeek; readonly holder: LeaseHolder }
+  /**
+   * The folder was NOT read. Says nothing about who holds the mailbox — in particular not that
+   * nobody does.
+   *
+   * `op` is `no_lease_peek_io` for an adapter with no read-only accessor, and otherwise whatever
+   * {@link readLeasePeek} assigned. Measured while this was written: that is `list_claims` for
+   * every fault out of `listClaims`, a folder over the read ceiling INCLUDED — so the op separates
+   * "no accessor" from "the read failed" and nothing finer. A folder too full to read is told
+   * apart by the `lease_meta_truncated` line the read emits through {@link
+   * AnswerLeasePeekInput.log}, not by this field.
+   */
+  | { readonly answer: "unreadable"; readonly op: LeaseOp; readonly cause: unknown };
+
+export interface AnswerLeasePeekInput {
+  /**
+   * The read-only IO, or `undefined` where the adapter has none.
+   *
+   * `undefined` is admitted DELIBERATELY rather than pushed back to the caller as a guard: every
+   * call site reaches this through a structural probe (`typeof adapter.leasePeekIo === "function"`)
+   * because `MailboxAdapter` does not declare the accessor, and each of them answered a failed
+   * probe with a bare `return` — a silent skip that leaves the holder columns saying what an
+   * unorganized mailbox says. Taking `undefined` here makes the missing capability an ANSWER.
+   */
+  io: LeasePeekIo | undefined;
+  now: Date;
+  staleAfterMs?: number;
+  log?: (event: string, detail: Record<string, unknown>) => void;
+}
+
+/**
+ * READ `ohmail/_meta` AND ANSWER IN THREE WORDS. Never throws.
+ *
+ * {@link readLeasePeek} is still the layer that reads; this is the layer that DECIDES, and the
+ * difference is the throw. A `LeaseUnavailableError` is the truthful shape for a reader that will
+ * render an apology, and the wrong shape for a door with a press in its hand: a `try` around a
+ * decision is where "could not look" turns back into "nobody is there", once per call site.
+ */
+export async function answerLeasePeek(input: AnswerLeasePeekInput): Promise<LeasePeekAnswer> {
+  if (input.io === undefined) {
+    return { answer: "unreadable", op: "no_lease_peek_io", cause: undefined };
+  }
+  let peek: LeasePeek;
+  try {
+    peek = await readLeasePeek({
+      io: input.io,
+      now: input.now,
+      ...(input.staleAfterMs !== undefined ? { staleAfterMs: input.staleAfterMs } : {}),
+      ...(input.log !== undefined ? { log: input.log } : {}),
+    });
+  } catch (err) {
+    /* BY CLASS, as every other caller exempts it. Anything else is a fault this function has no
+       reading of, and swallowing it would answer `unreadable` for a programming error — safe in
+       direction and indistinguishable from a folder fault in a report, which is how one gets
+       diagnosed for a week as the other. */
+    if (err instanceof LeaseUnavailableError) {
+      return { answer: "unreadable", op: err.op, cause: err };
+    }
+    throw err;
+  }
+  /* `held` IS THE LIVENESS, not the presence of records. `peekLease` already decides it from the
+     same `isClaimLive` the gate uses, and `holders[0]` is the freshest believable one — so a
+     `stopped` folder answers `free`, which is what the gate's `available` verdict means and what
+     a person pressing "organize here" on a machine whose other install went quiet expects. */
+  if (peek.state === "held") {
+    const holder = peek.holders.find((h) => h.fresh) ?? peek.holders[0];
+    /* A `held` with no holder is unrepresentable through `peekLease` — `state` is `held` only
+       because some holder is fresh — but this narrowing is the compiler's, not a comment's, and
+       the safe reading of "held by nobody nameable" is still not `free`. */
+    if (holder !== undefined) return { answer: "held", peek, holder };
+    return { answer: "unreadable", op: "list_claims", cause: undefined };
+  }
+  return { answer: "free", peek };
+}
+
 // ── LAYER 3: IO ─────────────────────────────────────────────────────────────────────────────
 
 /**

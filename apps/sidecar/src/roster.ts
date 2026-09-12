@@ -10,6 +10,7 @@
  */
 
 import type { ImapConfig, MailboxAdapter } from "@trafficflow/core/adapters/imap";
+import type { LeasePeekAnswer } from "@trafficflow/core/adapters/organizer-lease";
 import type { SyncDeps } from "@trafficflow/worker/sync";
 import type { OrganizerProfileSync } from "@trafficflow/worker/profile";
 import type { MailboxDisabledReason } from "@trafficflow/db";
@@ -269,6 +270,21 @@ export interface LocalMailboxRuntime {
    * as taken back.
    */
   resume(): Promise<number>;
+  /**
+   * LOOK AT `ohmail/_meta` NOW, AND ANSWER IN THREE WORDS — free, held-by, or unreadable.
+   *
+   * The APPEND-less read this runtime's own poll makes, exposed so a DOOR can ask it rather than
+   * read the holder columns and guess. The columns cannot carry the third answer: `organizer_state`
+   * is `held`, `stopped` or NULL, and NULL means "we have not looked" — so a door that treats NULL
+   * as "nobody holds it" answers a press over a mailbox it could not see. It never throws and it
+   * never writes: {@link LeasePeekAnswer}'s `unreadable` is the refusal, in a value.
+   *
+   * NOT inside the serial queue. `handBack` takes it because it WRITES and must not land between a
+   * gate's claim and the drain that claim authorises; this is a SELECT and a FETCH, which imapflow
+   * already queues on the connection — and a press made to wait out a full drain is a door that
+   * hangs for a minute on the one surface a person is watching.
+   */
+  peekOrganizer(): Promise<LeasePeekAnswer>;
   /** Can this install open this mailbox right now? Read fresh from the store on every call. */
   credentialState(): Promise<CredentialState>;
   /** Forget this mailbox's sealed password. Answers whether there was one to forget. */

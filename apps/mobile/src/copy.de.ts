@@ -152,6 +152,10 @@ export const DE: Deck = {
   settingsStopHereFailed:
     "Dieses Telefon konnte dieses Postfach nicht zurückgeben und organisiert es weiter. Versuche "
     + "es in einem Moment noch einmal.",
+  /* Ein Blick, der nicht angekommen ist — eigener Satz, nicht der darüber: hier ist auf diesem
+     Telefon nichts schiefgegangen, das Postfach konnte nur nicht gefragt werden. */
+  settingsStartHereUnreadable:
+    "Dieses Telefon konnte nicht lesen, ob ein anderer Computer dieses Postfach organisiert. Nichts hat sich geändert. Versuche es noch einmal.",
 
   /* Die Absagen der eigenständigen Tür. Keine davon trägt je das Passwort. */
   standaloneNoEngine:

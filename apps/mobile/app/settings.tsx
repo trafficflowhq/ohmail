@@ -337,7 +337,10 @@ function ThisPhonePanel() {
   const [confirming, setConfirming] = useState<string | null>(null);
   /* WHAT A FAILED START SAID. Its own state and not `organizeRefusal`, which is the LAUNCH press's
      record: a person pressing Start is owed an answer about the press they just made. */
-  const [startFailed, setStartFailed] = useState(false);
+  /* THREE STATES, NOT TWO. A boolean here collapsed "this phone could not start" with "this phone
+     could not check whether another computer has the mailbox", and the second is the one the door
+     now refuses a press over — a person told the first would go looking for a fault on the phone. */
+  const [startRefusal, setStartRefusal] = useState<"refused" | "unreadable" | null>(null);
   /* AND A FAILED STOP, which is the other direction of the same debt: the chip goes back to
      `Organizing` on its own, and without a sentence beside it that reads as the press having
      done nothing rather than as the mailbox having refused to be given back. */
@@ -493,9 +496,11 @@ function ThisPhonePanel() {
                   </Txt>
                 )}
                 {/* AND WHAT A FAILED START SAID, beside the press that made it. */}
-                {startFailed && row.key === HERE_CARD ? (
+                {startRefusal !== null && row.key === HERE_CARD ? (
                   <Txt variant="note" tone="ink2" accessibilityRole="alert">
-                    {Copy.settingsStartHereFailed}
+                    {startRefusal === "unreadable"
+                      ? Copy.settingsStartHereUnreadable
+                      : Copy.settingsStartHereFailed}
                   </Txt>
                 ) : null}
                 {stopFailed && row.key === HERE_CARD ? (
@@ -522,14 +527,16 @@ function ThisPhonePanel() {
                     label={Copy.settingsStartHere}
                     variant="quiet"
                     onPress={() => {
-                      setStartFailed(false);
+                      setStartRefusal(null);
                       setStopFailed(false);
                       /* THROUGH THE ONE DOOR, which reads the instruction in force: pressed during
                          a stop this is queued once and run when the stop completes, rather than
                          racing it. The engine's own verb underneath refuses a live foreign claim,
                          so it can never produce a second organizer. */
                       void pressOrganizeHere("start").then(async (outcome) => {
-                        setStartFailed(outcome === "refused");
+                        setStartRefusal(
+                          outcome === "refused" || outcome === "unreadable" ? outcome : null,
+                        );
                         /* THE ASK, WHERE ORGANIZING ACTUALLY STARTED — the door's Connect runs the
                            same gate at the same moment. A refused start asks for nothing: a
                            permission spent on a press that achieved nothing is an ask this

@@ -22,7 +22,7 @@ import { and, asc, eq } from "drizzle-orm";
 import { drizzle as drizzleSqliteProxy } from "drizzle-orm/sqlite-proxy";
 /* The two tables a relaunch reads to find out where this mailbox lives. The barrel, like
    `engine.ts` — the device twin is substituted at the module the barrel itself reaches. */
-import { mailboxCredentials, mailboxes } from "@trafficflow/db";
+import { mailboxCredentials, mailboxes, organizerDisplayName } from "@trafficflow/db";
 import { brandDialect } from "@trafficflow/db/dialect";
 import { migrateSqlite } from "@trafficflow/db/sqlite-migrate";
 import type { OrganizerKind } from "@trafficflow/core/adapters/organizer-lease";
@@ -163,6 +163,16 @@ export type ClaimHereOutcome =
   | "claimed"
   /** A live foreign claim. The door refused, nothing was written, and no sentence is owed. */
   | "held"
+  /**
+   * THE DOOR COULD NOT SEE WHETHER ANYBODY HOLDS THE MAILBOX, so it wrote nothing.
+   *
+   * Its own word rather than `refused`, because the two want opposite sentences: `refused` is
+   * something being wrong, and this is a look that did not land — the phone says so and the next
+   * press asks again. It is also the answer that must never arrive as `claimed`: measured, a
+   * folder the engine could not read left the door admitting the press, writing the consent and
+   * the authorization, and reporting `claimed` for a mailbox nothing organized.
+   */
+  | "unreadable"
   /** The door said no for any other reason. The caller says so where a person can read it. */
   | "refused";
 
@@ -234,11 +244,23 @@ const SELF_ORIGIN = "http://engine.invalid";
  * id is not foreign (own-role resumption after a crash or restore); a NULL stored id is a live
  * claim from a build that records no id, so it stays refused as another install.
  */
+type RowHolderAnswer =
+  /** A live foreign claim, as the last look left it. The fast path, and the only `held`. */
+  | { readonly answer: "held"; readonly holder: { readonly name: string; readonly kind: string } }
+  /** A look ANSWERED and named nobody this press has to yield to. */
+  | { readonly answer: "free" }
+  /**
+   * THE COLUMNS CANNOT SAY. `organizer_state` NULL is two facts in one value — "nobody has ever
+   * organized this mailbox" and "we have not looked" — and the schema says so in its own comment.
+   * A door cannot tell them apart from the row, so it stops reading the row and looks.
+   */
+  | { readonly answer: "unknown" };
+
 async function liveForeignHolder(
   db: LocalDb,
   mailboxId: string,
   ourInstallId: string,
-): Promise<{ readonly name: string; readonly kind: string } | null> {
+): Promise<RowHolderAnswer> {
   const [row] = await db
     .select({
       role: mailboxes.organizerRole,
@@ -250,10 +272,19 @@ async function liveForeignHolder(
     .from(mailboxes)
     .where(eq(mailboxes.id, mailboxId))
     .limit(1);
-  if (row === undefined) return null;
-  if (row.role !== "reader" || row.state !== "held") return null;
-  if (row.holderInstallId !== null && row.holderInstallId === ourInstallId) return null;
-  return { name: row.name ?? "", kind: row.kind ?? "" };
+  /* NO ROW is not a free mailbox — it is a mailbox this door knows nothing about, and the route
+     behind it will answer for the id. `free` here would be a decision taken on an absence. */
+  if (row === undefined) return { answer: "unknown" };
+  /* AN ORGANIZER OF RECORD has already been through the gate for this mailbox; the press is a
+     second becoming and the route answers it idempotently. Nothing to yield to and nothing to
+     look up. */
+  if (row.role !== "reader") return { answer: "free" };
+  /* `stopped` IS AN ANSWER — somebody was organizing and nothing has renewed since, which is the
+     gate's own `available`. Only NULL is the unlooked-at state. */
+  if (row.state === null) return { answer: "unknown" };
+  if (row.state !== "held") return { answer: "free" };
+  if (row.holderInstallId !== null && row.holderInstallId === ourInstallId) return { answer: "free" };
+  return { answer: "held", holder: { name: row.name ?? "", kind: row.kind ?? "" } };
 }
 
 /** What a phone gets back. `handle` is the seam the in-app client talks to. */
@@ -786,41 +817,102 @@ async function composePhoneEngine(
   void launched.catch(() => undefined);
 
   /**
-   * The consent door refuses a mailbox another machine is organizing — THE FAST PATH, not the
-   * enforcement. On a phone the press is a LAUNCH, so a relaunch beside a laptop that held the
-   * mailbox took the claim; this answers that in one round trip, off the row the last poll left.
+   * ══ THE CONSENT DOOR, AND IT ANSWERS IN THREE WORDS ═══════════════════════════════════════
    *
-   * The row it reads is up to one poll old, so a press inside that window passes here and meets a
-   * live holder AT THE FENCE, which is where it is now refused — on the `join` intent
-   * {@link organizeWithJoinIntent} writes into every request this door forwards. An UNREADABLE row
-   * is 503, not 409, so a retry is offered only for the one it heals.
+   * Not the enforcement — that is the fence, where {@link organizeWithJoinIntent}'s `join` meets a
+   * live holder however recent the press. This is the door, and what it must never do is admit a
+   * press over a mailbox it could not see.
+   *
+   * `held` on the row is the FAST PATH: one indexed read, no round trip, and it is the state a
+   * phone beside a laptop that holds the mailbox meets on every relaunch. `stopped` is a look that
+   * ANSWERED and found nobody renewing — the gate's own `available`, and a mailbox a press may
+   * take. NULL is neither: the schema says so in its own comment, *"we have not looked"*, and this
+   * door used to read it as "nobody holds it". So on NULL the door stops reading the row and asks
+   * the ENGINE to look — the same APPEND-less bounded read the poll makes, on the connection this
+   * install already holds. Three answers come back and only `free` admits the press.
+   *
+   * An UNREADABLE anything — the row, or the folder — is 503 and never 409: a retry is offered for
+   * the one it heals, and nobody is told a machine has their mailbox on the strength of a look
+   * that did not land.
    */
+  /** 503 with the code the app renders as its own sentence. Never 409: the two are different
+   *  facts and a person told "another computer has it" about a look that did not land would go
+   *  looking for a machine that may not exist. */
+  const unreadableResponse = (): Response => new Response(
+    JSON.stringify({
+      error: {
+        code: "organizer_unreadable",
+        message: "whether another install organizes this mailbox could not be read",
+      },
+    }),
+    { status: 503, headers: { "content-type": "application/json" } },
+  );
+
   const refuseIfOrganizedElsewhere = async (req: Request): Promise<Response | null> => {
     if (req.method !== "POST") return null;
     const matched = ORGANIZE_ROUTE.exec(new URL(req.url).pathname);
     if (matched === null) return null;
     const mailboxId = decodeURIComponent(matched[1]!);
-    let holder: { readonly name: string; readonly kind: string } | null;
+    let fromRow: RowHolderAnswer;
     try {
-      holder = await liveForeignHolder(store.db, mailboxId, deps.installId);
+      fromRow = await liveForeignHolder(store.db, mailboxId, deps.installId);
     } catch (err) {
       log("organizer_consent_row_read_failed", {
         err,
         reason: "the row that says who holds this mailbox could not be read, so no consent was "
           + "recorded; an unreadable row is not permission and the next press asks again",
       });
-      return new Response(
-        JSON.stringify({ error: { code: "organizer_unreadable", message: "the row that says who organizes this mailbox could not be read" } }),
-        { status: 503, headers: { "content-type": "application/json" } },
-      );
+      return unreadableResponse();
     }
-    if (holder === null) return null;
-    log("organizer_consent_refused_elsewhere", {
-      mailboxId,
-      verdict: "held",
-      reason: "another install is renewing its claim on this mailbox, so no consent was recorded "
-        + "here; this phone has no takeover verb and reads the mailbox instead",
-    });
+    if (fromRow.answer === "free") return null;
+    let holder: { readonly name: string; readonly kind: string };
+    if (fromRow.answer === "held") {
+      holder = fromRow.holder;
+    } else {
+      /* ══ THE ROW CANNOT SAY, SO THE ENGINE LOOKS ═══════════════════════════════════════════
+       *
+       * `organizer_state` NULL is "we have not looked", and this door used to read it as "nobody
+       * holds it". Measured on the phone's own composition: with the engine's adapter unable to
+       * read `ohmail/_meta` — no read-only accessor, or a FETCH the server refused — the columns
+       * were byte-identical to an unorganized mailbox's, the press was admitted 202, the consent
+       * and the authorization were written, and `claimHere` answered `claimed`. Three arms, one
+       * door, one answer, and the one it must never give.
+       *
+       * So the door peeks through its OWN engine: the same APPEND-less, bounded read the poll
+       * makes, on the connection this install already holds, answering free / held / unreadable.
+       * Only on this path — a row that says `held` is still the fast path and costs no round trip.
+       */
+      const looked = await sidecar.peekOrganizer(mailboxId);
+      if (looked.answer === "free") return null;
+      if (looked.answer === "unreadable") {
+        log("organizer_consent_lease_read_failed", {
+          mailboxId,
+          op: looked.op,
+          reason: "the row does not say who organizes this mailbox and the claim folder could not "
+            + "be read either, so no consent was recorded; a look that did not land is not "
+            + "permission, and the next press looks again",
+        });
+        return unreadableResponse();
+      }
+      /* A HOLDER THE ROW HAD NOT CAUGHT UP WITH. The claim's own display name, through the same
+         normaliser the row's column is written with, so the app is handed one spelling. */
+      holder = {
+        name: organizerDisplayName(looked.holder.displayName) ?? "",
+        kind: looked.holder.kind,
+      };
+    }
+    /* TWO EVENTS FOR TWO FACTS, each spelled out. The row's answer is the fast path and the
+       lease's is a look this press paid for, and an operator reading a refusal nobody expected
+       wants to know which one saw the claim. Not one event with a `source` field — that would be a
+       new name on the logger's own census, which is a decision about every line in the product —
+       and not a ternary, which is an event name no grep can find. */
+    const refusedBecause = "another install is renewing its claim on this mailbox, so no consent "
+      + "was recorded here; this phone has no takeover verb and reads the mailbox instead";
+    if (fromRow.answer === "held") {
+      log("organizer_consent_refused_elsewhere", { mailboxId, verdict: "held", reason: refusedBecause });
+    } else {
+      log("organizer_consent_refused_by_lease", { mailboxId, verdict: "held", reason: refusedBecause });
+    }
     return new Response(
       JSON.stringify({
         error: {
@@ -1005,6 +1097,17 @@ async function composePhoneEngine(
       return "refused";
     }
     if (res.status === 409) return "held";
+    /* THE THIRD ANSWER, AND IT IS NOT `refused`. The door says 503 exactly where it could not see
+       whether anybody holds the mailbox; folding it into `refused` would put "we could not start
+       organizing" in front of a person whose real answer is "try again". */
+    if (res.status === 503) {
+      const body = await res.json().then(
+        (b) => b as { error?: { code?: unknown } },
+        () => ({ error: undefined }),
+      );
+      if (body.error?.code === "organizer_unreadable") return "unreadable";
+      return "refused";
+    }
     /* ── THE LOCAL DOOR ANSWERS 200 FOR EVERY OUTCOME, so the OUTCOME is what is read ────────
      *
      * The shared route split its answer across the status (202 authorized, 200 otherwise); this

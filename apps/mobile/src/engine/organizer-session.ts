@@ -411,7 +411,18 @@ export async function stopOrganizingStandalone(): Promise<StopOrganizingOutcome>
 export type OrganizeInstruction = "idle" | "starting" | "running" | "stopping";
 
 /** What a press did. `standing` = the instruction it asked for was already in force. */
-export type PressOutcome = "started" | "stopped" | "queued" | "standing" | "refused";
+export type PressOutcome =
+  | "started" | "stopped" | "queued" | "standing"
+  /**
+   * THE DOOR COULD NOT SEE WHETHER ANYBODY HOLDS THE MAILBOX, so it wrote nothing.
+   *
+   * Beside `refused` rather than inside it, because the panel says a different sentence for each:
+   * `refused` is something wrong on this phone, and this is a look that did not land. They are
+   * also the pair that must never merge with `started` — a press over an unreadable claim folder
+   * used to be admitted and reported as a start.
+   */
+  | "unreadable"
+  | "refused";
 
 let instruction: OrganizeInstruction = "idle";
 /** At most one press waiting behind the act in flight, and only ever the opposite one. */
@@ -512,6 +523,9 @@ async function runInstruction(want: "start" | "stop"): Promise<PressOutcome> {
 async function startHere(): Promise<PressOutcome> {
   const outcome = await claimHereStandalone();
   if (outcome === "held") return "standing";
+  /* CARRIED, not folded. The door says `unreadable` exactly where it could not check, and the
+     panel owes that its own sentence — see {@link PressOutcome}. */
+  if (outcome === "unreadable") return "unreadable";
   if (outcome !== "claimed") return "refused";
   /* AND THE SESSION COMES BACK WITH THE CLAIM. The stop disposed it, taking the notification, the
      foreground service and both watches with it — so a start that only claimed would leave the
