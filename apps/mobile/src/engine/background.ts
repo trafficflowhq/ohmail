@@ -4,9 +4,11 @@
  * nothing; the fourth door's sentences say each platform's answer. Android: a foreground
  * service keeps the process alive — no notification, nothing organizing. iPhone: iOS suspends
  * the process, and a claim held by a suspended app is the double-organizer hazard, so the claim
- * is given back on the way out and taken again on the way in. One module: what forks is
- * {@link BackgroundDeps.platform} and whether `service` is present (`background-native.ts`
- * binds Android). The release is the engine's own `handBack()` — nothing writes `ohmail/_meta`.
+ * is given back on the way out and taken again on the way in. One module and ONE predicate:
+ * {@link createBackgroundOrganizing}'s `organizerRuns` — is the organizer running? — read from
+ * the service's own state and never from {@link BackgroundDeps.platform}, which only names which
+ * code the log carries. The release is the engine's own `handBack()`; nothing here writes
+ * `ohmail/_meta`.
  */
 import type { StopOrganizingOutcome } from "./standalone-door";
 
@@ -189,7 +191,7 @@ export interface BackgroundDeps {
 export const CLAIM_WATCH_MS = 60_000;
 
 /**
- * WHY THE MAILBOX WAS GIVEN BACK, OR THE NOTIFICATION TAKEN DOWN — a closed set of CODES.
+ * WHY THE MAILBOX WAS GIVEN BACK, KEPT, OR THE NOTIFICATION TAKEN DOWN — a closed set of CODES.
  *
  * Codes and not sentences, for two reasons that point the same way. Nobody reads these but a
  * developer holding a log, so an English sentence here is prose in a file the copy census scans —
@@ -214,7 +216,18 @@ export type BackgroundReason =
    *  not be read, or the mailbox was removed. The claim is NOT ours to hand back here. */
   | "claim_lost"
   /** The mailbox this install had stood down from is free again, and this install took it back. */
-  | "holder_left";
+  | "holder_left"
+  /** The organizer is running behind its notification and goes on running, so leaving the screen
+   *  gives nothing back — the only code here that is not about something ending. */
+  | "organizer_still_running";
+
+/**
+ * Whether the SYSTEM declined — battery saver, or a notification it will not show — rather than
+ * this build having no background service at all. From the person's side those two are one fact,
+ * which is why the line carries this beside the code that tells them apart.
+ */
+const systemDeclined = (why: BackgroundReason): boolean =>
+  why === "system_restricted" || why === "notification_not_showing";
 
 /** What the app holds. One per standalone engine; disposed with it. */
 export interface BackgroundOrganizing {
@@ -466,6 +479,37 @@ export function createBackgroundOrganizing(deps: BackgroundDeps): BackgroundOrga
   }) ?? ((): void => undefined);
 
   /**
+   * ══ IS THE ORGANIZER RUNNING — the ONE predicate the claim follows ══════════════════════════
+   *
+   * The claim stands exactly while the thing that renews it can run, and this is where that is
+   * decided. On Android the answer is the notification's own lifecycle, read from the platform at
+   * the moment of asking: a foreground service holds the process and its headless task holds the
+   * timers, so a phone whose service is up goes on organizing and renewing with the app off the
+   * screen, and a background transition has nothing to give back. With no service — iOS, and a
+   * build without the module — nothing runs once the app leaves, so the mailbox goes back.
+   *
+   * NEVER THE PLATFORM NAME. `deps.platform` decides nothing; it only picks which CODE names the
+   * same absence ({@link absentReason}). And the answer is asked, never remembered: the system can
+   * take the service at any moment, and a cached `true` is the false state this design exists to
+   * prevent.
+   */
+  const organizerRuns = (): boolean => {
+    if (deps.service === null) return false;
+    try {
+      return deps.service.running();
+    } catch (err) {
+      /* A platform that cannot say is not evidence that it is organizing — the same direction as
+         every other unreadable state here. */
+      log("organizer_service_state_unreadable", { err });
+      return false;
+    }
+  };
+
+  /** Which absence it is, for the LOG's sake only — see {@link organizerRuns}. */
+  const absentReason = (): BackgroundReason =>
+    deps.platform === "ios" ? "left_the_foreground" : "no_background_service";
+
+  /**
    * Android's way out. Every arm that declines to organize in the background lands here.
    *
    * THE LINE COMES FIRST, before the hand-back's IMAP round trip: a line written after the
@@ -473,11 +517,11 @@ export function createBackgroundOrganizing(deps: BackgroundDeps): BackgroundOrga
    *
    * THE REASON DECIDES WHICH SENTENCE, and the caller carries no flag saying "this counts as
    * restricted". That flag was `true` on both declines and collapsed them onto the battery-saver
-   * sentence, so the announcement AND the line's `restricted` field are derived from the reason
-   * rather than passed beside it and able to disagree with it.
+   * sentence; the code already tells them apart, so the announcement AND the line's
+   * `restricted` field are derived from it rather than passed beside it and able to disagree.
    */
   const declineBackground = async (why: BackgroundReason): Promise<void> => {
-    log("organizer_background_declined", { why, restricted: why === "system_restricted" });
+    log("organizer_background_declined", { why, restricted: systemDeclined(why) });
     if (why === "system_restricted" && !announcedRestricted) {
       announcedRestricted = true;
       deps.announceRestricted();
@@ -489,13 +533,13 @@ export function createBackgroundOrganizing(deps: BackgroundDeps): BackgroundOrga
   };
 
   const toBackground = async (): Promise<void> => {
-    if (deps.platform === "ios" || deps.service === null) {
-      /* NO SERVICE, NO BACKGROUND ORGANIZING — and on iOS that is the platform, not a gap. The
-         claim goes back so somebody's desktop can have the mailbox while this phone is asleep.
-         `restricted: false` and it is the load-bearing half: nothing on this phone said no, the
-         build has no service to start, and announcing battery saver here would be a false
-         sentence. Not through {@link declineBackground} — there is no service to drop. */
-      const why = deps.platform === "ios" ? "left_the_foreground" : "no_background_service";
+    if (deps.service === null) {
+      /* NOTHING CAN RUN ONCE THE APP LEAVES, so the mailbox goes back and somebody's desktop can
+         have it while this phone is asleep. On iOS that is the platform and not a gap; the code
+         says which absence it is and decides nothing — see {@link organizerRuns}. `restricted:
+         false` is load-bearing: nothing on this phone said no, so announcing battery saver here
+         would be a false sentence. Not through {@link declineBackground} — no service to drop. */
+      const why = absentReason();
       log("organizer_background_declined", { why, restricted: false });
       await handBack(why);
       return;
@@ -517,18 +561,26 @@ export function createBackgroundOrganizing(deps: BackgroundDeps): BackgroundOrga
       moved();
       return;
     }
-    if (deps.service.restricted()) {
+    /* ALREADY UP? Then the restriction is not this transition's question. It is asked BEFORE a
+       start, because a service the system may kill at any moment should not be started — but a
+       service that is STANDING is organizing whatever the battery-saver flag says, and tearing
+       down a live organizer because somebody turned battery saver on between two backgrounds was
+       the mailbox locked for the staleness window with nothing running. If the system does take
+       it, the beat and the watchdog say so within two intervals and the claim goes back then. */
+    const alreadyUp = organizerRuns();
+    if (!alreadyUp && deps.service.restricted()) {
       await declineBackground("system_restricted");
       return;
     }
-    let showing = false;
     try {
-      showing = await deps.service.start(deps.notice());
+      /* RE-READ PER START — a language change between backgrounds re-posts the notice. On a
+         service that is already standing this refreshes the words and nothing else; what it
+         ANSWERS is not read, because the next line asks the service itself. */
+      await deps.service.start(deps.notice());
     } catch (err) {
       log("organizer_service_start_failed", { err });
-      showing = false;
     }
-    if (!showing) {
+    if (!organizerRuns()) {
       /* THE SENTENCE THE DOOR MADE — "it organizes while its notification is shown". A service
          whose notification is not showing (a denied permission, a refused background start) may
          not go on organizing, so this hands the mailbox back like every other decline. It counts
@@ -536,11 +588,15 @@ export function createBackgroundOrganizing(deps: BackgroundDeps): BackgroundOrga
       await declineBackground("notification_not_showing");
       return;
     }
+    /* THE CLAIM STANDS, and this line is the only place that says so. A device run reads the
+       background machine's decision off the log and nowhere else; without it the difference
+       between "kept the mailbox" and "did nothing" is invisible until the mail server is asked. */
+    log("organizer_background_holds", { why: "organizer_still_running" });
     armWatch();
   };
 
   const toForeground = async (): Promise<void> => {
-    if (deps.platform === "android" && deps.service !== null && deps.service.running()) {
+    if (organizerRuns()) {
       /* THE SERVICE STAYS UP. It holds a claim that is live and a notification that is true, and
          tearing it down here would release a mailbox this app is now in the foreground of only to
          claim it again — two IMAP writes and a window, for nothing. Settings reads
@@ -696,7 +752,7 @@ export function createBackgroundOrganizing(deps: BackgroundDeps): BackgroundOrga
   };
 
   const claimLostCheck = async (): Promise<void> => {
-    if (deps.service === null || !deps.service.running()) return;
+    if (!organizerRuns()) return;
     /* THREE ANSWERS. `null` — the engine could not say — leaves the notification standing and asks
        again next tick: a teardown over a momentary failure would end a person's organizing and
        leave the claim to lapse from a mailbox nothing had decided to give up. */
@@ -731,7 +787,7 @@ export function createBackgroundOrganizing(deps: BackgroundDeps): BackgroundOrga
       await toForeground();
     }),
     handedBack: () => handedBack,
-    backgrounded: () => deps.service !== null && deps.service.running(),
+    backgrounded: () => organizerRuns(),
     dispose() {
       disposed = true;
       disarmWatch();
