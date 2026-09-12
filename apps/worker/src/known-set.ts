@@ -59,7 +59,7 @@ export function estimateWireBytes(rows: ReadonlyArray<KnownLocator>): number {
  * Each entry writes a different table or an unprojected column: pure reads; `mailbox_folders`,
  * `message_failures`, `audit_log`, `change_log`, `threads`, `routing_decisions`, `approvals`, `contacts`,
  * `message_bodies`, `attachments`, `learning_signals`/`graduations`/`rules` — different tables;
- * `upsertFolderState`/`completeFolderState`/`setFolderConflict`/`deferFolderReconcile` — `folder_state`,
+ * `upsertFolderState`/`completeFolderState`/`adoptFolderState`/`setFolderConflict`/`deferFolderReconcile` — `folder_state`,
  * not joined (`completeFolderState` is on the reconciler's hot path, so it MUST be named or every filing
  * drops the memo); `deferFlagReconcile` — `flag_state` but only `attempts`/`next_attempt_at`, never
  * `observed_seen`; `setMessageThread`/`upgradeDedupKey` — `messages` but `thread_id`/`dedup_key`, not
@@ -84,8 +84,8 @@ export const KNOWN_SET_NEUTRAL: ReadonlySet<string> = new Set([
   // writes to tables this projection does not read
   "markKickstarted", "upsertContacts", "upsertMailboxFolder", "recordMessageFailure",
   "claimMessageFailures", "resolveMessageFailure", "upgradeDedupKey", "insertMessageBody",
-  "insertAttachments", "upsertFolderState", "completeFolderState", "setFolderConflict",
-  "deferFolderReconcile",
+  "insertAttachments", "upsertFolderState", "completeFolderState", "adoptFolderState",
+  "setFolderConflict", "deferFolderReconcile",
   "deferFlagReconcile", "recordAudit", "recordAuditMany", "recordChange",
   /* `recordChanges` is `recordChange` for a list — the same two tables (`change_log` and the
      account's seq counter), neither of them in the projection. Named separately because the list

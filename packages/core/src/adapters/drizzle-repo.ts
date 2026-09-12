@@ -247,6 +247,17 @@ export interface WorkerRepo extends RepoPort, RoutingPort {
    * still matched, false when a newer intent owns the row.
    */
   completeFolderState(messageId: string, c: FolderCompletion): Promise<boolean>;
+  /**
+   * The ADOPTION write — the person's own placement becomes both the fact and the desire, and
+   * only while `expectDesiredFolder` still describes the row. One statement, because a completion
+   * followed by a blind upsert leaves a window for the decision it was meant to preserve. Not
+   * {@link completeFolderState}: that method may never write `desired_folder`, and its verdict is
+   * the desire it reads back — which an adoption would already have replaced. Returns whether the
+   * witness still matched; `false` means a newer intent owns the row and nothing was written.
+   */
+  adoptFolderState(
+    messageId: string, s: FolderStateRow, expectDesiredFolder: string,
+  ): Promise<boolean>;
   getMailbox(mailboxId: string): Promise<
     { id: string; accountId: string; address: string; kickstartAt: Date | null } | null
   >;
@@ -1367,6 +1378,32 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
     // `desired_folder` itself (a string this module owns) rather than a computed boolean removes
     // the other variable.
     return String(result[0]?.[0] ?? "") === c.expectDesiredFolder;
+  }
+
+  /**
+   * {@link WorkerRepo.adoptFolderState} — {@link upsertFolderState}'s conditional twin, the same
+   * SET list under `desired_folder = <the witness>`. `.returning()` is what makes the skip
+   * observable: no row back means a newer decision owns this message and the adoption is dropped
+   * rather than written over it. The same statement `hey-migration.ts` and `screener-apply.ts`
+   * already re-route with.
+   */
+  async adoptFolderState(
+    messageId: string, s: FolderStateRow, expectDesiredFolder: string,
+  ): Promise<boolean> {
+    const reconcileStatus = reconcileStatusFor(s);
+    const [row] = await this.db.insert(folderState).values({
+      messageId, desiredFolder: s.desiredFolder, observedFolder: s.observedFolder,
+      lastSetBy: s.lastSetBy, reconcileStatus, conflict: false,
+    }).onConflictDoUpdate({
+      target: folderState.messageId,
+      set: {
+        desiredFolder: s.desiredFolder, observedFolder: s.observedFolder, lastSetBy: s.lastSetBy,
+        reconcileStatus, conflict: false, updatedAt: new Date(),
+        attempts: 0, nextAttemptAt: null,
+      },
+      setWhere: eq(folderState.desiredFolder, expectDesiredFolder),
+    }).returning({ messageId: folderState.messageId });
+    return row !== undefined;
   }
 
   /** {@link upsertFolderState}'s read-state twin, backoff reset included and for its reasons. */

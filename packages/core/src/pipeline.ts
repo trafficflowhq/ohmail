@@ -59,10 +59,12 @@ export interface ApplyContext {
  * Required, never optional-chained: an absent method would collapse "this repo predates the
  * primitive" into "the blind write is fine", and the blind write is the defect this exists for.
  * Every production caller passes a `DrizzleRepo`, so the requirement is checked where those three
- * call sites compile rather than at run time.
+ * call sites compile rather than at run time. All THREE writing arms are conditional — the status
+ * repair and the landed move through `completeFolderState`, the adoption through
+ * `adoptFolderState` — so no arm keeps the unconditional write.
  */
 export interface ReconcileApplyDeps extends Omit<PipelineDeps, "repo"> {
-  repo: RepoPort & Pick<WorkerRepo, "completeFolderState">;
+  repo: RepoPort & Pick<WorkerRepo, "completeFolderState" | "adoptFolderState">;
 }
 
 /**
@@ -90,8 +92,24 @@ export async function applyReconcileAction(
         observedFolder: state.desiredFolder,
         lastSetBy: state.lastSetBy,
       };
-      await repo.upsertFolderState(messageId, next);
-      return { locator, state: next };
+      // A status repair, not an intent — the worker's own repair (`reconcileFolders`) verbatim.
+      // `state` was read before this pass's network work, so writing the pair back through
+      // `upsertFolderState` put that stale desire over a decision committed since. No
+      // `physicalObservation`: this is a stale echo, so a miss writes nothing at all.
+      const matched = await repo.completeFolderState(messageId, {
+        expectDesiredFolder: state.desiredFolder,
+        observedFolder: state.desiredFolder,
+        lastSetBy: state.lastSetBy,
+      });
+      if (matched) return { locator, state: next };
+      // `false` answers both "a newer intent owns the row" and "there is no row"; only a read
+      // tells them apart. No row means no intent to preserve.
+      const live = await repo.getFolderState(messageId);
+      if (!live) {
+        await repo.upsertFolderState(messageId, next);
+        return { locator, state: next };
+      }
+      return { locator, state: live };
     }
     case "move": {
       let newLocator: NativeLocator;
@@ -191,10 +209,40 @@ export async function applyReconcileAction(
         observedFolder: action.newDesired,
         lastSetBy: "external",
       };
-      await repo.upsertFolderState(messageId, next);
+      // Conditional, like the landed move above: the adoption was decided against a desire read
+      // before this pass's network work, so it may move that desire only while the witness still
+      // describes the row. ONE statement — a completion followed by a blind upsert would leave a
+      // window for the very decision this exists to preserve.
+      const matched = await repo.adoptFolderState(messageId, next, state.desiredFolder);
       // A tombstoned message that re-appears is being RESTORED by its user (mail 0065) — the
       // adopt evidence is the same evidence, so the un-delete rides the same arm.
       await repo.clearDeletedOnAdopt?.(messageId);
+      if (!matched) {
+        // A newer decision owns the row, and the PLACEMENT is still a fact the row is owed — the
+        // person moved this message and the server holds it there. The witness is stale by
+        // construction here, so this second statement can only write the physical columns:
+        // `desired_folder`, `last_set_by` and the backoff belong to whichever intent won.
+        await repo.completeFolderState(messageId, {
+          expectDesiredFolder: state.desiredFolder,
+          observedFolder: action.newDesired,
+          lastSetBy: "external",
+          physicalObservation: true,
+        });
+        // No inverse: the desire never moved, so there is nothing for an operator to undo.
+        const live = await repo.getFolderState(messageId);
+        await repo.recordAudit(
+          accountId,
+          "adopt_superseded",
+          {
+            messageId, adopted: action.newDesired, previousDesired: state.desiredFolder,
+            reason: "a newer decision for this message committed while this placement was being "
+              + "read. The folder the person put it in is recorded and the newer desire stands; "
+              + "the organizer applies it on its next cycle.",
+          },
+          null,
+        );
+        return { locator, state: live ?? next };
+      }
       await repo.recordAudit(
         accountId,
         "adopt_external",
