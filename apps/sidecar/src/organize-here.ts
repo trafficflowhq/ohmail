@@ -164,27 +164,27 @@ export async function authorizeOrganizerTakeover(
   await db.transaction(async (tx) => {
     await writeConsentScreening(tx, dialect(db), { accountId: row.accountId, now: input.now });
     await tx
-    .update(mailboxes)
-    .set({
-      disabledReason: null,
-      // The instant goes through the seam, which answers the ORIGINAL reason and a second one.
-      // The original: a bare `Date` inside a raw `sql` fragment has no column type to coerce
-      // against, so postgres-js binds it as TEXT and throws. The second: the two stores keep an
-      // instant as different literals — an ISO string here, a count of milliseconds on a device —
-      // and a `coalesce` handed the wrong one does not fail, it stores a value the column's own
-      // reader cannot turn back into a date.
-      organizeConsentedAt: sql`coalesce(${mailboxes.organizeConsentedAt}, ${dialect(db).ts(input.now)})`,
-      takeoverAuthorizedAt: input.now,
-      // …AND THE VERB, in the same write as the stamp: the gate reads the row once, so a row that
-      // says a press happened and cannot say what it asked for must never exist.
-      takeoverIntent: input.intent,
-      /* AND THE REQUEST IS CANCELLED IN THE SAME WRITE, which is the half that makes the press a
-         countermand rather than a second instruction beside the first. Left standing, the poll's
-         release arm reaches it again on the very next pass and spends the stamp this write just
-         made — the press destroyed one poll later instead of immediately. The hosted door cancels
-         it in its own claim-back transaction for exactly this reason. */
-      releaseRequestedAt: null,
-    })
+      .update(mailboxes)
+      .set({
+        disabledReason: null,
+        // The instant goes through the seam, which answers the ORIGINAL reason and a second one.
+        // The original: a bare `Date` inside a raw `sql` fragment has no column type to coerce
+        // against, so postgres-js binds it as TEXT and throws. The second: the two stores keep an
+        // instant as different literals — an ISO string here, a count of milliseconds on a device —
+        // and a `coalesce` handed the wrong one does not fail, it stores a value the column's own
+        // reader cannot turn back into a date.
+        organizeConsentedAt: sql`coalesce(${mailboxes.organizeConsentedAt}, ${dialect(db).ts(input.now)})`,
+        takeoverAuthorizedAt: input.now,
+        // …AND THE VERB, in the same write as the stamp: the gate reads the row once, so a row that
+        // says a press happened and cannot say what it asked for must never exist.
+        takeoverIntent: input.intent,
+        /* AND THE REQUEST IS CANCELLED IN THE SAME WRITE, which is the half that makes the press a
+           countermand rather than a second instruction beside the first. Left standing, the poll's
+           release arm reaches it again on the very next pass and spends the stamp this write just
+           made — the press destroyed one poll later instead of immediately. The hosted door cancels
+           it in its own claim-back transaction for exactly this reason. */
+        releaseRequestedAt: null,
+      })
       .where(and(eq(mailboxes.id, row.id), ne(mailboxes.status, "disabled")));
   });
 
