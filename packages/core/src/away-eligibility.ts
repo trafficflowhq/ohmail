@@ -46,7 +46,8 @@ export const AWAY_NEVER_ANSWERED_FOLDERS: Readonly<Record<string, AwaySuppressio
  */
 export {
   AWAY_ANSWERABLE_PILES, AWAY_PILES_DEFAULT, AWAY_PILE_VIEW, AWAY_SCREENER_FOLDER,
-  awayEffectivePiles, awayScopeFitsAudience, isAwayPile, type AwayPile,
+  awayEffectivePiles, awayScopeFitsAudience, isAwayPile, readAwayPiles,
+  type AwayPile, type AwayPilesDoor, type AwayPilesReading,
 } from "./away-scope.js";
 
 /**

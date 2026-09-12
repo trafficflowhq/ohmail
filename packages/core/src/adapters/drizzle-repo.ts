@@ -1,6 +1,6 @@
 import { and, asc, desc, eq, inArray, isNull, lte, or, sql, type SQL, type SQLWrapper } from "drizzle-orm";
 import type { AnyPgColumn } from "drizzle-orm/pg-core";
-import { accountStorage, changeLog, messages, messageInstances, messageFailures, folderOps, folderState, flagState, mailboxes, mailboxCredentials, mailboxFolders, threads, rules as rulesTbl, contacts as contactsTbl, auditLog, messageBodies, attachments as attachmentsTbl, routingDecisions, approvals, graduations, recordRouteOverride, routeOverrideActionId, awayReplies, recordChange as recordChangeTx, recordChanges as recordChangesTx, bodyBytesOf, reserveBodyBytes, reserveBodyBytesEvicting, releaseBodyBytes, type ChangeInput, type LedgerTx, type Tx, type EntityType, ACCOUNT_THREAD_STRUCTURE_LOCK_CLASS, dueNow as sharedDueNow, type FilingRefusalClass } from "@trafficflow/db";
+import { accountStorage, changeLog, messages, messageInstances, messageFailures, folderOps, folderState, flagState, mailboxes, mailboxCredentials, mailboxFolders, threads, rules as rulesTbl, contacts as contactsTbl, auditLog, messageBodies, attachments as attachmentsTbl, routingDecisions, approvals, graduations, recordRouteOverride, routeOverrideActionId, awayReplies, awaySenderState, recordChange as recordChangeTx, recordChanges as recordChangesTx, bodyBytesOf, reserveBodyBytes, reserveBodyBytesEvicting, releaseBodyBytes, type ChangeInput, type LedgerTx, type Tx, type EntityType, ACCOUNT_THREAD_STRUCTURE_LOCK_CLASS, dueNow as sharedDueNow, type FilingRefusalClass } from "@trafficflow/db";
 import type {
   RepoPort, RoutingPort, ExternalOverrideInput, ExternalOverrideOutcome,
   StoredMessage, InsertedMessage, InsertMessageInput, FolderStateRow, FlagStateRow,
@@ -17,6 +17,14 @@ import {
   unhuskJunkFiledBody as unhuskJunkFiledBodyTx,
   type JunkHuskIdentity, type JunkUnhuskOutcome,
 } from "../husk-restore.js";
+import { foldMessageIdDomain } from "../identity.js";
+
+/**
+ * How many ledger rows one delivery report may name. A report quotes at most
+ * `MAX_DSN_MESSAGE_IDS` original ids and each names one reply, so the real ceiling is ten; this
+ * is the bound on a stranger's bytes reaching an `IN (…)`, stated rather than left to that.
+ */
+const AWAY_BOUNCE_SENDERS_PER_REPORT = 25;
 import { dialect, pgOnly, type Dialect } from "@trafficflow/db/dialect";
 import { effectForDestination } from "../rules.js";
 // The Sent shape's single source — the stale-residue cleanup must never take a Sent row (its
@@ -1547,13 +1555,14 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
   }
 
   /**
-   * One indexed-by-account probe over the away ledger, `LIMIT 1`, run only for a message already
-   * DSN-shaped, so ordinary mail pays nothing. `lower()` on both sides: the ledger stores what
-   * `mintMessageId` produced, whose domain comes from `mailboxes.address` unnormalised, while the
-   * candidates were lower-cased by `parseMessageIds` — an exact match misses in silence for a
-   * mixed-case mailbox and reads as no responder ever wrote to them. `lower()` is in both
-   * dialects. `mintedMessageId` is NULL for a row that never dialled, so those cannot match and
-   * no outcome filter is needed.
+   * One indexed-by-account probe over the away ledger, `LIMIT 1`, run only for a DSN-shaped
+   * message, so ordinary mail pays nothing. `mintedMessageId` is NULL for a row that never
+   * dialled, so no outcome filter is needed. BOTH SIDES ARE FOLDED, the candidate side through
+   * the helper `mintMessageId` calls: this said the candidates arrive lower-cased from
+   * `parseMessageIds`, which keeps an id's case, so `lower()` on the column alone missed every
+   * away reply from a mailbox with a capital in its domain. `lower()` stays for rows minted
+   * before the fold and agrees with the helper on every row it can match — a minted `id-left` is
+   * a `randomUUID()`, already lower-case.
    */
   async isOwnAwayReply(accountId: string, candidates: readonly string[]): Promise<boolean> {
     if (candidates.length === 0) return false;
@@ -1561,10 +1570,50 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
       .from(awayReplies)
       .where(and(
         eq(awayReplies.accountId, accountId),
-        inArray(sql`lower(${awayReplies.mintedMessageId})`, candidates.map((c) => `<${c}>`)),
+        inArray(
+          sql`lower(${awayReplies.mintedMessageId})`,
+          candidates.map((c) => foldMessageIdDomain(`<${c}>`).toLowerCase()),
+        ),
       ))
       .limit(1);
     return rows.length > 0;
+  }
+
+  /**
+   * THE STAMP, AT THE MOMENT THE REPORT IS CLASSIFIED — see {@link RepoPort.markAwayReplyUndeliverable}.
+   *
+   * TWO STATEMENTS AND NOT ONE JOINED UPDATE: the ledger read names the correspondents, the
+   * guarded update writes them. A correlated `UPDATE … WHERE sender IN (SELECT …)` would say the
+   * same thing in one round trip and would not survive the device store, where the same method
+   * runs against sqlite. `IS NULL` in the WHERE is the whole idempotence — two ingest workers can
+   * reach this with the same report in hand, and the count returned is what THIS call changed, so
+   * a caller can never report a stamp it did not make.
+   */
+  async markAwayReplyUndeliverable(
+    accountId: string, candidates: readonly string[], at: Date,
+  ): Promise<number> {
+    if (candidates.length === 0) return 0;
+    const rows = await this.db.select({ sender: awayReplies.sender })
+      .from(awayReplies)
+      .where(and(
+        eq(awayReplies.accountId, accountId),
+        inArray(
+          sql`lower(${awayReplies.mintedMessageId})`,
+          candidates.map((c) => foldMessageIdDomain(`<${c}>`).toLowerCase()),
+        ),
+      ))
+      .limit(AWAY_BOUNCE_SENDERS_PER_REPORT);
+    const dead = [...new Set(rows.map((r) => r.sender))];
+    if (dead.length === 0) return 0;
+    const marked = await this.db.update(awaySenderState)
+      .set({ undeliverableAt: at })
+      .where(and(
+        eq(awaySenderState.accountId, accountId),
+        inArray(awaySenderState.sender, dead),
+        isNull(awaySenderState.undeliverableAt),
+      ))
+      .returning({ sender: awaySenderState.sender });
+    return marked.length;
   }
 
   /**

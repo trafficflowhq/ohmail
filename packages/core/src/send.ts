@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { OutboundMessage } from "./adapters/imap-types.js";
 import type { NativeLocator } from "./ports.js";
+import { foldMessageIdDomain } from "./identity.js";
 
 // Surface `OutboundMessage` on the core entrypoint so the send seam is usable
 // without importing the adapter subpath (it otherwise lives only on the
@@ -30,7 +31,12 @@ export type OutboundSendStatus = "pending" | "sent" | "failed" | "unverified";
  */
 export function mintMessageId(sentDomain = "trafficflow.ch"): string {
   const domain = sentDomain.trim() || "trafficflow.ch";
-  return `<${randomUUID()}@${domain}>`;
+  /* THE DOMAIN IS FOLDED HERE, at the one place ids are minted, through the helper the away
+     ledger's reader calls on its candidates — see {@link foldMessageIdDomain}. The caller hands
+     `mailboxes.address`'s own domain, which is whatever a person typed, and an id minted
+     `<uuid@Example.COM>` is a join key nothing that lower-cases can find. `id-left` is the uuid
+     and untouched. */
+  return foldMessageIdDomain(`<${randomUUID()}@${domain}>`);
 }
 
 /**

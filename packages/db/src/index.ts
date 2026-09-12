@@ -150,6 +150,12 @@ export {
      pending local moves to the install that holds the mailbox now. */
   STAND_DOWN_EXPORT_MAX, exportPendingMovesOnStandDown, type StandDownExport,
   PROFILE_SIGNATURE_MAX, TRAVELLING_SIGNATURE_HTML_MAX_BYTES,
+  /* The away responder's member set as THIS package spells it — a second literal, tolerated only
+     because db may not import core. Surfaced so the guards that hold the two spellings equal can
+     read it from outside this package: `away-piles-one-validator.test.ts` generates its cases
+     from this one, because a suite that enumerates the list under test cannot see that list
+     shrink. Not for narrowing anything — `validateProfileUpdatePayload` is the door. */
+  AWAY_PILES,
   validateProfileUpdatePayload, applyProfileUpdate,
   RULE_TERM_MAX, RULE_MATCH_MAX, validateRulePayload, applyRuleRequest,
   type ValidatedMovePayload, type MoveRefusal,

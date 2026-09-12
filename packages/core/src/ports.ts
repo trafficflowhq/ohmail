@@ -441,15 +441,28 @@ export interface RepoPort {
   findThreadParent(accountId: string, candidates: readonly string[]): Promise<ThreadParent | null>;
   /**
    * Is one of `candidates` the Message-ID this account's AWAY RESPONDER minted for a reply it
-   * sent? Account-scoped, for {@link findThreadParent}'s reason. The question exists so the
-   * pipeline can tell a bounce the reader must see from a bounce the product already handles
-   * itself, and the answer must be a fact a stranger cannot manufacture: a delivery report quotes
-   * the failed message's headers, so `Auto-Submitted: auto-replied` is readable straight out of a
-   * report anybody can write — the minted `<uuid@domain>` is a value THIS account generated and
-   * stored before it dialled. `candidates` arrive bracket-free and lower-cased while the ledger
-   * stores the id verbatim; the implementation normalises — a caller must not.
+   * sent? Account-scoped, for {@link findThreadParent}'s reason. The answer must be a fact a
+   * stranger cannot manufacture: a report quotes the failed message's headers, so
+   * `Auto-Submitted: auto-replied` is readable out of anything anybody writes — the minted
+   * `<uuid@domain>` is a value THIS account generated. `candidates` arrive bracket-free and IN
+   * THEIR OWN CASE: this said "lower-cased" and the reader believed it, which is how a mixed-case
+   * mailbox domain made every away-reply bounce read as a stranger's mail. The implementation
+   * folds the domain (`foldMessageIdDomain`); a caller must not.
    */
   isOwnAwayReply(accountId: string, candidates: readonly string[]): Promise<boolean>;
+  /**
+   * THE CORRESPONDENTS A DELIVERY REPORT JUST PROVED UNREACHABLE — stamp
+   * `away_sender_state.undeliverable_at` for the replies `candidates` names; answer how many rows
+   * this call moved. The ONE writer on the ingest path, and why that column held nothing: its
+   * only producer was the away pass's scan of `In-Reply-To`/`References`, while RFC 3462 puts the
+   * failed message's headers in a `message/rfc822-headers` PART reaching neither — the scan
+   * looked where the evidence is not. IDEMPOTENT BY THE COLUMN: only a row still `NULL` is
+   * written, so a re-observed report never moves the instant. Same candidate normalisation as
+   * {@link isOwnAwayReply}.
+   */
+  markAwayReplyUndeliverable(
+    accountId: string, candidates: readonly string[], at: Date,
+  ): Promise<number>;
   /**
    * Find-or-create the conversation anchored at `rootMessageIdHeader`.
    *

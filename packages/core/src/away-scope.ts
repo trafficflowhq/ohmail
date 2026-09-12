@@ -56,6 +56,50 @@ export const AWAY_PILE_VIEW: Readonly<Record<AwayPile, "ohbox" | "reads" | "rece
 };
 
 /**
+ * WHICH DOOR A PILE SCOPE ARRIVED THROUGH — the published profile DOCUMENT, or a
+ * `profile.update` REQUEST one of this account's installs sent. They admit different sets ON
+ * PURPOSE. A request is this build talking to itself, so an unknown member is a refusal somebody
+ * can act on; a document is read by installs of every version, so an unknown member is a NEWER
+ * ohmail's and travels on for the importer — dropping it at the parse would make a round trip
+ * through an older install narrow somebody's scope. The relation is stated, not merely true
+ * today: the request's set is a SUBSET of the document's, driven by
+ * `away-piles-one-validator.test.ts`.
+ */
+export type AwayPilesDoor = "request" | "document";
+
+/** What one door made of the value it was handed. */
+export type AwayPilesReading =
+  /** The key was absent or null — "this says nothing about scope", never "answer nobody". */
+  | { state: "unstated" }
+  /** A real answer, deduped and in the order given. An EMPTY list is "answer nobody". */
+  | { state: "stated"; piles: string[] }
+  /** Unreadable. `member` names the offending value when there is one, for the door's sentence. */
+  | { state: "unreadable"; reason: "not_an_array" | "not_a_member"; member?: string };
+
+/**
+ * THE ONE NARROWING for the away responder's pile scope, whichever door it came through.
+ *
+ * It was two — `pilesOf` in the document's parser, `validPiles` on the settings endpoint —
+ * written three weeks apart with nothing asserting they agreed about which members exist: the day
+ * one list moved, a scope would leave one door and be refused at the other while the person was
+ * told it saved. DEDUPED at both, because the value is a SET everywhere else. A non-string member
+ * is `not_an_array` and not `not_a_member` — the sentence is about the shape it was handed.
+ */
+export function readAwayPiles(v: unknown, door: AwayPilesDoor): AwayPilesReading {
+  if (v === undefined || v === null) return { state: "unstated" };
+  if (!Array.isArray(v)) return { state: "unreadable", reason: "not_an_array" };
+  const piles: string[] = [];
+  for (const member of v) {
+    if (typeof member !== "string") return { state: "unreadable", reason: "not_an_array" };
+    if (door === "request" && !isAwayPile(member)) {
+      return { state: "unreadable", reason: "not_a_member", member };
+    }
+    if (!piles.includes(member)) piles.push(member);
+  }
+  return { state: "stated", piles };
+}
+
+/**
  * MAY THIS SCOPE BE STORED BESIDE THIS AUDIENCE? — the one coupling between the two settings.
  *
  * `ohmail/Screener` holds strangers nobody has decided about, and `audience: 'screened_in'`

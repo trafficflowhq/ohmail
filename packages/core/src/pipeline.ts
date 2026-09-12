@@ -272,6 +272,17 @@ export interface NewPlan {
    * `??`.
    */
   adoption?: "peer";
+  /**
+   * THIS MESSAGE IS A DELIVERY REPORT FOR ONE OF THIS ACCOUNT'S OWN AWAY REPLIES — the original
+   * ids the report quoted, carried from the plan to the commit so the stamp is written by the
+   * one phase allowed to write.
+   *
+   * Present exactly when `desired` is `ohmail/Receipts` for the away-bounce reason: the same
+   * predicate decides where the report is filed and that a correspondent is unreachable, because
+   * they are one fact. Carried rather than recomputed at commit for {@link NewPlan.authVerdict}'s
+   * reason — the value that decided the routing is the value that acts.
+   */
+  awayBounceOf?: readonly string[];
   ai?: AiPlan;
 }
 
@@ -915,6 +926,11 @@ export async function planChange(change: Change, deps: PlanDeps): Promise<Change
         // DSN arriving in the INBOX was still THIS organizer's decision, and an `external` stamp
         // would hide it from the retro passes entitled to revisit our decisions.
         ...(heldForImport && !admitBounce && desired === change.locator.folder ? { passive: true } : {}),
+        /* `fileBounceAsReceipt` AGAIN, READ ONCE: it decides where the report goes AND that the
+           address it was sent to is dead, because those are one fact. ABSENT unless the report is
+           ours — an empty array would be a third state meaning the same as absent, and it cannot
+           arise: the predicate requires `isOwnAwayReply`, which requires at least one id. */
+        ...(fileBounceAsReceipt ? { awayBounceOf: dsn!.originalMessageIds } : {}),
         ai,
       },
     };
@@ -1222,6 +1238,18 @@ export async function commitChange(plan: ChangePlan, deps: CommitDeps): Promise<
       lastSetBy: p.passive ? (p.adoption ?? "external") : "us",
     };
     await repo.upsertFolderState(stored.id, initial);
+
+    /* THE CORRESPONDENT THIS REPORT PROVED UNREACHABLE — the stamp, written once, here.
+     *
+     * AFTER the row and its folder state, so a fault while learning a dead address cannot cost
+     * the ingest the message itself; and swallowed for the same reason the away pass's own scan
+     * is — not learning is a worse next cycle, losing the mail is not recoverable. The count is
+     * not consulted: 0 is the ordinary answer for a correspondent already stamped.
+     */
+    if (p.awayBounceOf) {
+      await repo.markAwayReplyUndeliverable(accountId, p.awayBounceOf, new Date())
+        .catch(() => 0);
+    }
 
     // Optimistic, user-wins move change at local commit. The physical
     // move follows outside the tx; a later change corrects any IMAP divergence.

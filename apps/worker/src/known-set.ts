@@ -70,6 +70,10 @@ export const KNOWN_SET_NEUTRAL: ReadonlySet<string> = new Set([
   "getFolderState", "listRules", "knownSenders", "findThreadParent", "listThreadBacklog",
   // `away_replies`, one column, `LIMIT 1` — a table this projection does not join at all.
   "isOwnAwayReply",
+  /* `away_sender_state.undeliverable_at` — a write, and a table this projection does not join
+     either. It is the away responder's own state about a PERSON; no locator, no flag, no
+     `messages` column the memo reads. */
+  "markAwayReplyUndeliverable",
   "isGraduated", "getMailbox", "listScreenerBacklog", "getMailboxFolders", "listKnownLocators",
   "listPendingFolderStates", "listPendingFlagStates",
   // the mail-0065 junk/delete wave's reads — special-folder discovery, the AI-authored

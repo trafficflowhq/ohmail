@@ -508,14 +508,14 @@ async function answerForAccount(
 }
 
 /**
- * Which correspondents' addresses are DEAD — read the bounces from this account's own away
- * replies and stamp `away_sender_state.undeliverable_at`. Without it, a reply to a dead address
- * bounced, nothing recorded what it meant, and the next message produced another reply and
- * bounce, per throttle interval. The tie is the MINTED Message-ID on the ledger row; a delivery
- * report quotes it in `In-Reply-To`/`References`, and the address marked is the LEDGER row's
- * `sender`, never the mailer-daemon. The report test is not optional: a HUMAN reply also carries
- * the minted id, so the message must also BE a report (`isDeliveryReport`). It never blocks a
- * reply: a fault means this run does not learn — 0 on a throw.
+ * THE BACKSTOP, not the producer — which is what this claimed, and what 24 rows with zero stamps
+ * in managed production measured. The tie is the MINTED Message-ID, and this scan looks for it in
+ * `In-Reply-To`/`References`; RFC 3462 puts the failed headers in a `message/rfc822-headers` PART
+ * reaching neither, so most mailers were invisible here. The producer is now the ingest path
+ * (`pipeline.ts` → `RepoPort.markAwayReplyUndeliverable`); this stays for reports that DO set the
+ * threading headers, and both writers pass the same `IS NULL`. The address marked is the LEDGER
+ * row's `sender`, never the mailer-daemon, and the message must also BE a report — a human reply
+ * carries the minted id too. A fault means this run does not learn: 0 on a throw.
  */
 async function markUndeliverableFromBounces(
   db: Db, accountId: string, at: Date, log: Logger,

@@ -3,7 +3,7 @@ import { awayResponders } from "@trafficflow/db";
 import { createLogger } from "@trafficflow/core/mail";
 import {
   AWAY_ANSWERABLE_PILES, AWAY_PILES_DEFAULT, AWAY_SCREENER_FOLDER, awayScopeFitsAudience,
-  type AwayPile,
+  readAwayPiles, type AwayPile,
 } from "@trafficflow/core/mail";
 import { AWAY_THROTTLES, type AwayThrottle } from "./away-responder-pass.js";
 import { withAccountTx, type ServiceContext } from "./context.js";
@@ -120,6 +120,31 @@ const DEFAULT_SHAPE: AwayResponderDTO = {
 export function nextEnabledAt(prev: Date | null, enabled: boolean, now: Date): Date | null {
   if (!enabled) return null;
   return prev ?? now;
+}
+
+/**
+ * THE REQUEST DOOR'S PILE SCOPE — what one `profile.update` or settings PUT asked for, narrowed.
+ *
+ * The narrowing is `readAwayPiles` in the core leaf, shared with the profile DOCUMENT's parser;
+ * this is the door's SENTENCES over that one reading and nothing else. Exported so the parity
+ * test drives THE DOOR rather than a copy of it. ABSENT takes the narrow default — an omitted
+ * field is "this request did not ask", and the Ohbox alone is the column's default. AN EXPLICIT
+ * EMPTY LIST IS KEPT: "answer nobody" is what unticking every box means, and reading it as the
+ * Ohbox would be the endpoint declining to save what it was sent.
+ */
+export function awayPilesFromRequest(v: unknown): AwayPile[] {
+  const read = readAwayPiles(v, "request");
+  if (read.state === "unstated") return [...AWAY_PILES_DEFAULT];
+  if (read.state === "unreadable") {
+    throw new ServiceError(
+      "validation_failed", 400,
+      read.reason === "not_an_array"
+        ? "piles must be an array of pile names"
+        : `piles must each be one of ${AWAY_ANSWERABLE_PILES.join(", ")}`,
+    );
+  }
+  // Members, by the leaf's own test — the cast restates what `readAwayPiles` at this door proved.
+  return read.piles as AwayPile[];
 }
 
 /**
@@ -261,35 +286,16 @@ export class AwayResponderService {
    * it is the same value the column's own DEFAULT writes.
    */
   /**
-   * The piles, or `['INBOX']` for an omitted list — the NARROW value. `put` is a FULL REPLACE, so
-   * an omitted field is "this request did not ask for it": defaulting to the stored value lets an
-   * old client silently PRESERVE a wider scope; defaulting to every pile is a widening nobody
-   * requested. The Ohbox alone is the column's DEFAULT and the only safe inference — wrong in the
-   * wide direction is what sent the eight replies this field exists to stop. An old client
-   * therefore narrows the scope on any save — the acceptable direction: unsent mail can be sent
-   * later, a reply to the wrong person cannot be recalled. Duplicates collapse: the value is a
-   * SET.
+   * The piles, or `['INBOX']` for an omitted list — {@link awayPilesFromRequest}, which is this
+   * door's one narrowing and the profile document's. `put` is a FULL REPLACE, so an omitted field
+   * is "this request did not ask": defaulting to the stored value lets an old client silently
+   * PRESERVE a wider scope, and defaulting to every pile is a widening nobody requested. Wrong in
+   * the wide direction is what sent the eight replies this field exists to stop, so an old client
+   * narrows on any save — unsent mail can be sent later, a reply to the wrong person cannot be
+   * recalled.
    */
   private validPiles(v: unknown): AwayPile[] {
-    if (v === undefined || v === null) return [...AWAY_PILES_DEFAULT];
-    if (!Array.isArray(v)) {
-      throw new ServiceError("validation_failed", 400, "piles must be an array of pile names");
-    }
-    const out: AwayPile[] = [];
-    for (const member of v) {
-      if (typeof member !== "string"
-        || !(AWAY_ANSWERABLE_PILES as readonly string[]).includes(member)) {
-        throw new ServiceError(
-          "validation_failed", 400, `piles must each be one of ${AWAY_ANSWERABLE_PILES.join(", ")}`,
-        );
-      }
-      if (!out.includes(member as AwayPile)) out.push(member as AwayPile);
-    }
-    /* AN EXPLICIT EMPTY LIST IS KEPT, not replaced by the default. "Answer nobody" is a coherent
-       thing to ask for — it is what unticking every box means — and turning it into "answer the
-       Ohbox" would be the endpoint quietly declining to save what it was sent. The rule handles
-       it by name; the responder is simply quiet. */
-    return out;
+    return awayPilesFromRequest(v);
   }
 
   private validAudience(v: unknown): AwayAudience {

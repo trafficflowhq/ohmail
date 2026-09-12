@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { META_FOLDER, makeMetaFolderRef, lastSequence, type MetaFolderClient } from "./organizer-lease.js";
 import { ImapDeadline, IMAP_META_DEADLINE_MS } from "./imap-bounds.js";
+import { readAwayPiles } from "../away-scope.js";
 import {
   assertMetaIdentity, readMemo, writeMemo, forgetMemo,
   type MetaIdentity, type Generation,
@@ -396,11 +397,14 @@ function readPayload(raw: Record<string, unknown>): OrganizerProfilePayload {
   /**
    * The scope a document states, deduped — or `undefined` for both "not stated" and "stated with
    * the wrong type". The caller tells those two apart by whether the key is present at all.
+   *
+   * THROUGH `readAwayPiles`, the leaf's one narrowing, at the `"document"` door: an unknown
+   * member is a NEWER ohmail's and travels on, which is the whole difference from the request
+   * contract's door and the reason both now name the same function — see {@link AwayPilesDoor}.
    */
   const pilesOf = (v: unknown): string[] | undefined => {
-    if (v === undefined || v === null) return undefined;
-    if (!Array.isArray(v) || !v.every((m) => typeof m === "string")) return undefined;
-    return [...new Set(v as string[])];
+    const read = readAwayPiles(v, "document");
+    return read.state === "stated" ? read.piles : undefined;
   };
   let awayResponder: ProfileAwayResponder | null = null;
   if (typeof raw.awayResponder === "object" && raw.awayResponder !== null) {

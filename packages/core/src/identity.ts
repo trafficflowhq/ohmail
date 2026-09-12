@@ -17,6 +17,20 @@ export function normalizeMessageId(raw: string | null | undefined): string | nul
   return id.length > 0 ? id : null;
 }
 
+/**
+ * THE DOMAIN HALF OF A MESSAGE-ID, CASE-FOLDED — the join key for an id THIS install minted.
+ *
+ * A domain is case-insensitive (DNS), an RFC 5322 `id-left` is not, so the fold is the domain
+ * ALONE. Shared by the two halves that must agree — `mintMessageId` writes it, the away ledger's
+ * `isOwnAwayReply` reads it. They were two spellings and the mint folded nothing: a mailbox
+ * stored `you@Example.COM` minted `<uuid@Example.COM>`, the report quoted it back verbatim, the
+ * lookup compared it against a lower-cased column and MISSED — silently, as a stranger's mail.
+ */
+export function foldMessageIdDomain(id: string): string {
+  const at = id.lastIndexOf("@");
+  return at < 0 ? id : id.slice(0, at + 1) + id.slice(at + 1).toLowerCase();
+}
+
 export function bodyHash(body: string): string {
   const normalized = body.replace(/\r\n/g, "\n").trim();
   return createHash("sha256").update(normalized, "utf8").digest("hex");
