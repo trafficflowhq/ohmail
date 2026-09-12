@@ -1789,8 +1789,11 @@ export class AuthService extends SessionLifecycle {
     const meta = readAuthorizeMeta(row.oauthMeta);
     // THE SESSION BINDING, checked after the burn on purpose: a handle presented by the wrong
     // session is spent rather than left for a further attempt, and the caller learns only that
-    // this request is over.
-    if (!meta || (meta.sessionId !== null && meta.sessionId !== (ctx.sessionId ?? null))) {
+    // this request is over. A request that recorded NO session is refused rather than admitted
+    // — "nobody in particular opened this" and "this session opened it" are different states,
+    // and only the second is a binding. The route makes the first unreachable (`stepUp` reads a
+    // session row), so this is the arm that keeps it that way if a caller ever appears.
+    if (!meta || meta.sessionId === null || meta.sessionId !== (ctx.sessionId ?? null)) {
       throw invalidAuthorizeRequest();
     }
 
@@ -1826,7 +1829,8 @@ export class AuthService extends SessionLifecycle {
     if (!row) return null;
     const meta = readAuthorizeMeta(row.oauthMeta);
     if (!meta) return null;
-    if (meta.sessionId !== null && meta.sessionId !== (ctx.sessionId ?? null)) return null;
+    // Both bindings, and an unbound request is not one — see `approveAuthorize`.
+    if (meta.sessionId === null || meta.sessionId !== (ctx.sessionId ?? null)) return null;
     return { meta, expiresAt: row.expiresAt };
   }
 
