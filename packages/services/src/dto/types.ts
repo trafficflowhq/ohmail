@@ -996,17 +996,18 @@ export interface SyncResponse {
 }
 
 /**
- * How far back the snapshot reaches, SERVED rather than agreed. The client needs the numbers to
- * say "this is everything since March" and to decide when to fall back to the delta replay, and a
- * constant compiled into the client disagrees with the server the first time either moves — so
- * the server states its own window in every response. `days` is the recency floor; `minRows` the
- * volume floor. A snapshot serves whichever is LARGER: every message of the last `days`, and
- * never fewer than `minRows` when the mailbox has that many — a quiet mailbox still bootstraps
- * into something usable, and a busy one is not truncated at ninety days minus one message.
+ * How far back the snapshot reaches, SERVED rather than agreed: a constant compiled into the
+ * client disagrees with the server the first time either moves. `days` is the recency floor,
+ * `minRows` the volume floor, and a snapshot serves whichever is LARGER — a quiet mailbox still
+ * bootstraps into something usable, a busy one is not cut at ninety days minus one message.
+ * `maxRows` is the CEILING over both, which makes the window a function of the POLICY rather than
+ * of the mailbox: `days` alone keeps everything recent. Optional on the wire because a server
+ * older than the field states no ceiling, which is what that server does.
  */
 export interface SnapshotWindow {
   days: number;
   minRows: number;
+  maxRows?: number;
 }
 
 /**

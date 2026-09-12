@@ -128,8 +128,12 @@ export interface SyncSnapshotPage {
   changes: SyncChange[];
   /** The server's opaque paging token; `null` ⇒ this was the last page. */
   nextCursor: string | null;
-  /** What the server paged with. Informational — see the note above. */
-  window: { days: number; minRows: number };
+  /**
+   * What the server paged with. Informational — see the note above. `maxRows` is the server's ROW
+   * ceiling beside `days` and `minRows`; optional because a server older than the field states no
+   * ceiling, which is what that server does.
+   */
+  window: { days: number; minRows: number; maxRows?: number };
 }
 
 // ── entity DTO mirrors ─────────────────────────────────────────────────────

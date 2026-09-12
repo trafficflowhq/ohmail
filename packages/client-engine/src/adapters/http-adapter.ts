@@ -499,6 +499,9 @@ export class HttpAdapter implements EngineAdapter {
       window: {
         days: typeof wire.window?.days === "number" ? wire.window.days : 0,
         minRows: typeof wire.window?.minRows === "number" ? wire.window.minRows : 0,
+        // ABSENT STAYS ABSENT. A server that states no ceiling is not a server with a ceiling of
+        // zero, and the two floors default to 0 only because a number is all their readers can use.
+        ...(typeof wire.window?.maxRows === "number" ? { maxRows: wire.window.maxRows } : {}),
       },
     };
   }
