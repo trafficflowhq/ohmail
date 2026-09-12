@@ -82,6 +82,30 @@ export function holdStandaloneDoor(opened: StandaloneEngine): boolean {
 export const organizerDoor = (): StandaloneEngine | null => door;
 
 /**
+ * ══ ONE ENGINE IN THIS PROCESS, AND A SECOND PRESS DOES NOT MAKE ANOTHER ════════════════════
+ *
+ * {@link holdStandaloneDoor} is first-start-wins, which keeps the DOOR right and leaves the
+ * second engine running with nothing holding it: two engines polling one device store is two
+ * organizers of one mailbox, which is the invariant this app lives under. A door is held only
+ * after a launch returns, so the door alone cannot refuse a press made while one is in flight —
+ * this slot is that half. Both openers take it: the fourth door's Connect, and the relaunch the
+ * connection layer runs over a stored row.
+ */
+let launching = false;
+
+/** Take the launch slot, or `standing` — an engine is already alive, or one is being opened. */
+export function takeStandaloneLaunch(): "open" | "standing" {
+  if (door !== null || launching) return "standing";
+  launching = true;
+  return "open";
+}
+
+/** Give it back — on EVERY exit of a launch, or the next press is refused for the run of the app. */
+export function releaseStandaloneLaunch(): void {
+  launching = false;
+}
+
+/**
  * Who is watching this module's state — the Settings panel, and nothing else yet. The panel read
  * {@link standaloneHere} at RENDER and nothing re-rendered it, so it was correct only at mount:
  * `Stopping` and `Organizing` stood for minutes over a finished stop or a mailbox another machine
@@ -414,12 +438,20 @@ async function startHere(): Promise<PressOutcome> {
 
 async function stopHere(): Promise<PressOutcome> {
   const stopped = await stopOrganizingStandalone();
-  /* AND THE NOTIFICATION COMES DOWN WITH THE CLAIM — a service left standing would say
-     "Organizing" over a phone that reads. */
-  await stopOrganizerSession();
-  /* `false` is "nothing of ours was recorded as given up", which is the state the person asked
-     for rather than a failure — `PhoneEngine.stopOrganizing`'s own contract. */
-  return stopped ? "stopped" : "standing";
+  /* ══ THE ENGINE'S ANSWER DECIDES WHAT HAPPENS TO THE SESSION, NOT THE PRESS ════════════════
+   *
+   * The teardown ran unconditionally, so a release the mail server refused took the notification,
+   * the foreground service and both watches down over a phone that was STILL ORGANIZING — the
+   * row says organizer, the claim stands, and the next launch resumes a mailbox nothing serviced.
+   * That is the defect the person's stop was built to end, arriving by the refusal arm. So the
+   * session comes down only where the engine says this install has let the mailbox go, which is
+   * the same reading the chip takes; `stopOrganizingStandalone`'s `false` cannot be that reading,
+   * because it is also what a mailbox with nothing to give up answers. */
+  const stillOrganizing = standaloneHere()?.organizing === true;
+  if (!stillOrganizing) await stopOrganizerSession();
+  /* AND THE PRESS SAYS SO. `standing` means "already in force" and would be a second false state;
+     `false` with the mailbox let go is the nothing-to-give-up case and is what was asked for. */
+  return stillOrganizing ? "refused" : stopped ? "stopped" : "standing";
 }
 
 /**
@@ -536,10 +568,18 @@ export function sayOrganizerRestricted(): void {
  * the session stops, taking the notification down; the engine stops, because the profile row
  * that named it is about to go. In that order — the hand-back needs a running engine, and a
  * notification over a stopped one would say this phone organizes mail it no longer holds.
- * Never throws: the row removal must not be blocked by an unreachable mailbox; a claim that
- * did not go back is the recoverable half — it ages out.
+ * Never throws: the row removal must not be blocked by an unreachable mailbox.
+ *
+ * ── AND IT ANSWERS WHETHER THE CLAIM ACTUALLY WENT ──────────────────────────────────────────
+ *
+ * This returned `void` over a swallowed `handBack`, so the forget reported a mailbox this phone
+ * had let go while its record in `ohmail/_meta` stood to expiry — the person's other machine
+ * refused for the staleness window by an install that no longer lists the mailbox and has no
+ * verb left to release it. `handBack` already answers per mailbox, and `released: null` is its
+ * own word for *"the caller may not say the mailbox was handed back"*; this is that answer
+ * carried out. `false` never blocks the row removal — the caller says so instead.
  */
-export async function endStandaloneHere(): Promise<void> {
+export async function endStandaloneHere(): Promise<boolean> {
   const held = door;
   door = null;
   /* The mailbox is going, so the instruction about it goes too — a queued start would otherwise
@@ -548,9 +588,46 @@ export async function endStandaloneHere(): Promise<void> {
   queued = null;
   sessionDeps = null;
   notifyOrganizerState();
-  if (held !== null) await held.handBack().catch(() => undefined);
+  /* A throw and a `null` entry are the same fact — nothing proves the claim left the folder — and
+     an install holding no door has none to give back, which is not a failed release. */
+  const released = held === null
+    ? true
+    : await held.handBack().then(
+      (entries) => entries.every((e) => e.released !== null),
+      () => false,
+    );
   await stopOrganizerSession();
   if (held !== null) await held.stop().catch(() => undefined);
+  return released;
+}
+
+/**
+ * ══ A REFUSED CONNECT LEAVES NO ENGINE AND NO SEAL ══════════════════════════════════════════
+ *
+ * The launch succeeded and the app could not record the mailbox it had opened, and the screen
+ * said so over an engine, a door and a session that were all still alive: the next Connect
+ * started a SECOND engine over the same device store, which `holdStandaloneDoor` and
+ * {@link startOrganizerSession} both silently declined to adopt — an orphan polling one mailbox
+ * beside the one the app talks to. So the refusal is the one exit and it undoes the launch.
+ *
+ * The seal goes with it, which is the device-divergence lane's rule one arm over: the credential
+ * is written at ATTACH, before anything dials, and `resolveLogin` lets the STORE win — so a
+ * second press with a corrected server would dial the first press's coordinates and hand back an
+ * opened mailbox with nothing on the wire. Only here: the forget above deletes the whole store.
+ */
+export async function discardStandaloneLaunch(): Promise<void> {
+  const held = door;
+  door = null;
+  instruction = "idle";
+  queued = null;
+  sessionDeps = null;
+  notifyOrganizerState();
+  if (held !== null) await held.handBack().catch(() => undefined);
+  await stopOrganizerSession();
+  if (held !== null) {
+    await held.forgetStoredLogin().catch(() => undefined);
+    await held.stop().catch(() => undefined);
+  }
 }
 
 /**
@@ -589,6 +666,7 @@ export function pokeOrganizerState(): void {
 export function forgetOrganizerSessionForTests(): void {
   live = null;
   door = null;
+  launching = false;
   instruction = "idle";
   queued = null;
   inFlight = null;

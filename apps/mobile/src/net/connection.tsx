@@ -15,13 +15,13 @@ import { faultDetail, refuse, type Refusal, type RefusalArg } from "../refusal";
 import { LOCAL_ENGINE_ORIGIN, mirrorExists, mirrorOwnerKey } from "../engine/boot";
 import { nativeEngineDeps } from "../engine/native";
 import {
-  endStandaloneHere, holdStandaloneDoor, organizerDoor, sayOrganizeRefused, takeConsentPress,
-  sayOrganizerRestricted, standaloneHere,
+  discardStandaloneLaunch, endStandaloneHere, holdStandaloneDoor, organizerDoor, sayOrganizeRefused,
+  takeConsentPress, sayOrganizerRestricted, standaloneHere,
 } from "../engine/organizer-session";
 import { consoleEngineLogSink } from "../engine/engine-log";
 import { decidedState, type DecidedState } from "./decided";
 import {
-  PHONE_CLAIM_NAME, organizesHere, reopenStandaloneMailbox,
+  CLAIM_LAPSES_AFTER_MINUTES, PHONE_CLAIM_NAME, organizesHere, reopenStandaloneMailbox,
   type ReopenOutcome, type StandaloneEngine,
 } from "../engine/standalone-door";
 import { phoneEngineReopen } from "../engine/engine-artifact";
@@ -578,9 +578,15 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
               accountId: door.accountId,
             });
           } catch (err) {
-            /* The keystore refused to record the mailbox. The engine is running and nothing names
-               it, which is exactly the state a relaunch could not recover from, so it is said here
-               rather than navigated past. */
+            /* ══ THE KEYSTORE REFUSED TO RECORD THE MAILBOX, AND THIS IS THE ONE EXIT ═════════
+               The engine was left RUNNING here, with the door and the session it had just been
+               given, and only the sentence changed: the next Connect opened a second engine over
+               the same device store — two organizers of one mailbox, the invariant this app lives
+               under — because `holdStandaloneDoor` and `startOrganizerSession` are both
+               first-start-wins and decline the newcomer silently. So the refusal undoes the
+               launch: the claim goes back, the session and the engine stop, and the credential
+               this launch sealed is discarded so the next press dials what is on the form. */
+            await discardStandaloneLaunch();
             const reason = refuse("standaloneNotStored", faultDetail(err));
             if (stillCurrent()) enter({ k: "refused", reason });
             return { ok: false, reason };
@@ -613,7 +619,12 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
              that the row names. Removing the row alone would leave a phone organizing a mailbox
              nothing on the chooser mentions, with a notification standing over it. */
           const row = (await env.profiles.list()).find((p) => p.id === profileId);
-          if (row?.origin === LOCAL_ENGINE_ORIGIN) await endStandaloneHere();
+          /* ── AND WHETHER THE CLAIM ACTUALLY WENT IS THE THING THE ANSWER IS ABOUT ───────────
+             `endStandaloneHere`'s hand-back was swallowed and this reported a forget over it, so
+             a release the mail server never confirmed left the mailbox blocked to the person's
+             other machine for the staleness window — by an install that no longer lists it and
+             has no verb left to release it. The row still goes: what changes is the sentence. */
+          const claimWentBack = row?.origin === LOCAL_ENGINE_ORIGIN ? await endStandaloneHere() : true;
           const atForget = live.now();
           if (atForget.k === "live" && atForget.session.profile.id === profileId) {
             const bearer = atForget.session.bearer;
@@ -635,7 +646,12 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
           }
           const outcome = await forgetProfile(env, profileId, { closed, revoke: revokeLive });
           await refreshProfiles();
-          return outcome.kind === "forgotten" ? { ok: true } : { ok: false, reason: outcome.reason };
+          if (outcome.kind !== "forgotten") return { ok: false, reason: outcome.reason };
+          /* EVERYTHING LOCAL IS GONE AND SOMETHING IS NOT — `ForgetOutcome.partial`'s own shape,
+             which the mail-remains and server-not-told arms already use. The claim is the third. */
+          return claimWentBack
+            ? { ok: true }
+            : { ok: false, reason: refuse("forgetClaimStands", CLAIM_LAPSES_AFTER_MINUTES) };
         }),
       disconnect: () =>
         gate.run(async () => {

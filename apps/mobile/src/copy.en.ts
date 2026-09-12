@@ -248,6 +248,9 @@ const TABLE = {
   settingsStartHere: "Start organizing here",
   settingsStartHereFailed:
     "This phone could not start organizing that mailbox. Nothing changed. Try again in a moment.",
+  settingsStopHereFailed:
+    "This phone could not hand that mailbox back, so it is still organizing it. Try again in a "
+    + "moment.",
 
   /* The standalone door's own refusals. Each one names what is missing; none of them ever
      carries the password, which is not an argument any of these takes. */
@@ -270,7 +273,10 @@ const TABLE = {
   standaloneOtherMailbox:
     "The mailbox on this phone is not the one this entry names. Forget this entry and open the mailbox again.",
   standaloneNotStored: (detail: string) =>
-    `This phone could not record the mailbox it just opened: ${detail}`,
+    `This phone could not record the mailbox it just opened: ${detail}. It was closed again and `
+    + "nothing was kept — try Connect once more.",
+  standaloneAlreadyOpen:
+    "This phone already has a mailbox open. Forget it in Servers before opening another one.",
   /* The consent press (`net/mailboxes.ts#organizeHere`). Each one names what the mailbox answered;
      none of them claims the phone is organizing, because on these arms it is not. */
   organizeHereUnreachable: (detail: string) =>
@@ -583,6 +589,9 @@ const TABLE = {
     "The pairing and the mail this phone had copied are gone. The server could not be reached to "
     + "end the session, so it may still count this phone as connected — revoke this device from its "
     + "Devices list to finish.",
+  forgetClaimStands: (minutes: number) =>
+    "The mailbox and its mail are gone from this phone. Its claim on the mailbox could not be "
+    + `given back, so another machine can take the mailbox in about ${minutes} minutes.`,
   forgetStillPending:
     "This server is still being forgotten on this phone — ohmail could not remove its "
     + "sign-in yet. Restart the app to let it finish, or revoke this device from the server's "

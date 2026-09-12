@@ -12,11 +12,12 @@ import { useCallback, useRef, useState } from "react";
 import { Platform, TextInput, View } from "react-native";
 import { router } from "expo-router";
 import { Copy } from "../src/copy";
-import { sayRefusal, type Refusal } from "../src/refusal";
+import { refuse, sayRefusal, type Refusal } from "../src/refusal";
 import { phoneEngineStart } from "../src/engine/engine-artifact";
 import { consoleEngineLogSink } from "../src/engine/engine-log";
 import {
-  armConsentPress, holdStandaloneDoor, sayOrganizerRestricted,
+  armConsentPress, holdStandaloneDoor, releaseStandaloneLaunch, sayOrganizerRestricted,
+  takeStandaloneLaunch,
 } from "../src/engine/organizer-session";
 import { PHONE_CLAIM_NAME, openStandaloneMailbox } from "../src/engine/standalone-door";
 import { useConnection } from "../src/net/connection";
@@ -115,80 +116,97 @@ function Credentials() {
   const ready = mayConnect(fields) && phase.k !== "opening";
 
   const connect = useCallback(async () => {
-    setPhase({ k: "opening" });
-    /* ══ THE FINGER THAT LICENSES THE CONSENT PRESS ═════════════════════════════════════════
+    /* ══ ONE ENGINE IN THIS PROCESS, AND THIS PRESS IS WHERE THE SECOND ONE CAME FROM ═══════
      *
-     * The connection layer records the consent for a standalone mailbox, and it used to do so on
-     * every arrival — which made a plain relaunch beside a laptop holding the claim a takeover
-     * (measured: stood down at +2 s, claimed at +19 s). It now spends an arm, and this press is
-     * one: a person typed a mailbox's password and pressed Connect. Armed BEFORE the engine is
-     * opened, because `openStandalone` below adopts the session and that is what spends it. */
-    armConsentPress();
-    const outcome = await openStandaloneMailbox(fields, {
-      startEngine: start,
-      platform: async () => {
-        /* THE NATIVE HALF IS REQUIRED BEHIND A PLATFORM GATE, never imported at module scope: the
-           expo packages are Flow-typed JavaScript and a static import makes this whole route
-           unloadable by the node-side suite — the rule `servers-native.ts` established. */
-        const native = (await import("../src/engine/local-engine-native")) as {
-          nativeEnginePlatform: () => Promise<{ exec: unknown; keks: Record<number, string> }>;
-        };
-        return native.nativeEnginePlatform();
-      },
-      machineName: () => PHONE_CLAIM_NAME,
-      /* THE SAME ID THE GATE STAMPED, never a fresh one: a claim written against a second id is
-         how an install reads its own claim as somebody else's. `null` — the marker has not been
-         settled — is handed on as the empty string, and the engine refuses a nameless claimant
-         rather than this screen inventing one. */
-      installId: async () => {
-        const native = await import("../src/engine/native");
-        const marker = await import("../src/state/install-marker");
-        return (await marker.installGeneration(native.nativeEngineDeps())) ?? "";
-      },
-      /* THE ENGINE'S OWN LOG, to the platform's log — `engine-log.ts` for what this is and is
-         not. Without it a dial that authenticated and then filed nothing wrote no line anywhere,
-         which is how three device-only defects had to be diagnosed off a mail server's wire. */
-      logSink: consoleEngineLogSink(),
-    });
-    if (outcome.ok) {
-      /* The app goes live through the path a paired connect takes:
-       * `holdStandaloneDoor` first, because the connection layer's standalone
-       * arm reads the door from there — the engine has no network address, so
-       * a session cannot be built from a stored row alone. Then
-       * `openStandalone`, which writes the profile row and adopts the session;
-       * the navigation below is what `welcome.tsx` redirects through and only
-       * means anything once `conn.state.k === "live"`. The engine was left
-       * running by the arm that returned it, so a failed adoption is said on
-       * this screen rather than navigated past.
-       */
-      holdStandaloneDoor(outcome.door);
-      /* The engine is wired to the app's lifecycle here — the call site
-       * `background.ts` was written for; without it nothing subscribes to
-       * `AppState`, so Android posts no notification and keeps no service and
-       * a suspended iPhone leaves its claim in `ohmail/_meta` for the whole
-       * staleness window — the double-organizer state the fourth door promises
-       * to avoid. The session is module scope: the navigation on the next line
-       * unmounts this screen, so a session owned here would be disposed by its
-       * own success. Native for `local-engine-native.ts`'s reason (`AppState`
-       * not loadable under vitest); `void` — an open mailbox must not wait.
-       */
-      const address = fields.address.trim();
-      void import("../src/engine/organizer-session-native")
-        .then((m) => { m.startOrganizerSessionNative(outcome.door, address); })
-        /* A BUILD THAT CANNOT REACH ITS OWN BACKGROUND HALF SAYS SO. Swallowed, this would be an
-           app that looks like it organizes in the background and does not. */
-        .catch(() => { sayOrganizerRestricted(); });
-      const adopted = await conn.openStandalone(outcome.door);
-      if (!adopted.ok) {
-        setPhase({ k: "failed", reason: adopted.reason });
-        return;
-      }
-      /* The Ohbox in its first-sync state. Nothing between — the engine's own progress carries the
-         wait, and a screen in the middle would be a screen with nothing true to say. */
-      router.replace("/");
+     * `holdStandaloneDoor` declines a second door and `startOrganizerSession` a second session,
+     * both silently — so a press made over a live engine opened another one and orphaned it
+     * beside the first, two organizers polling one device store. The reachable way in was a
+     * refused profile write: the screen said so and the engine stayed up, and the chooser still
+     * offers this door. The slot refuses the press instead, and the refusal names the state. */
+    if (takeStandaloneLaunch() === "standing") {
+      setPhase({ k: "failed", reason: refuse("standaloneAlreadyOpen") });
       return;
     }
-    setPhase({ k: "failed", reason: outcome.reason });
+    try {
+      setPhase({ k: "opening" });
+      /* ══ THE FINGER THAT LICENSES THE CONSENT PRESS ═════════════════════════════════════════
+       *
+       * The connection layer records the consent for a standalone mailbox, and it used to do so on
+       * every arrival — which made a plain relaunch beside a laptop holding the claim a takeover
+       * (measured: stood down at +2 s, claimed at +19 s). It now spends an arm, and this press is
+       * one: a person typed a mailbox's password and pressed Connect. Armed BEFORE the engine is
+       * opened, because `openStandalone` below adopts the session and that is what spends it. */
+      armConsentPress();
+      const outcome = await openStandaloneMailbox(fields, {
+        startEngine: start,
+        platform: async () => {
+          /* THE NATIVE HALF IS REQUIRED BEHIND A PLATFORM GATE, never imported at module scope: the
+             expo packages are Flow-typed JavaScript and a static import makes this whole route
+             unloadable by the node-side suite — the rule `servers-native.ts` established. */
+          const native = (await import("../src/engine/local-engine-native")) as {
+            nativeEnginePlatform: () => Promise<{ exec: unknown; keks: Record<number, string> }>;
+          };
+          return native.nativeEnginePlatform();
+        },
+        machineName: () => PHONE_CLAIM_NAME,
+        /* THE SAME ID THE GATE STAMPED, never a fresh one: a claim written against a second id is
+           how an install reads its own claim as somebody else's. `null` — the marker has not been
+           settled — is handed on as the empty string, and the engine refuses a nameless claimant
+           rather than this screen inventing one. */
+        installId: async () => {
+          const native = await import("../src/engine/native");
+          const marker = await import("../src/state/install-marker");
+          return (await marker.installGeneration(native.nativeEngineDeps())) ?? "";
+        },
+        /* THE ENGINE'S OWN LOG, to the platform's log — `engine-log.ts` for what this is and is
+           not. Without it a dial that authenticated and then filed nothing wrote no line anywhere,
+           which is how three device-only defects had to be diagnosed off a mail server's wire. */
+        logSink: consoleEngineLogSink(),
+      });
+      if (outcome.ok) {
+        /* The app goes live through the path a paired connect takes:
+         * `holdStandaloneDoor` first, because the connection layer's standalone
+         * arm reads the door from there — the engine has no network address, so
+         * a session cannot be built from a stored row alone. Then
+         * `openStandalone`, which writes the profile row and adopts the session;
+         * the navigation below is what `welcome.tsx` redirects through and only
+         * means anything once `conn.state.k === "live"`. The engine was left
+         * running by the arm that returned it, so a failed adoption is said on
+         * this screen rather than navigated past.
+         */
+        holdStandaloneDoor(outcome.door);
+        /* The engine is wired to the app's lifecycle here — the call site
+         * `background.ts` was written for; without it nothing subscribes to
+         * `AppState`, so Android posts no notification and keeps no service and
+         * a suspended iPhone leaves its claim in `ohmail/_meta` for the whole
+         * staleness window — the double-organizer state the fourth door promises
+         * to avoid. The session is module scope: the navigation on the next line
+         * unmounts this screen, so a session owned here would be disposed by its
+         * own success. Native for `local-engine-native.ts`'s reason (`AppState`
+         * not loadable under vitest); `void` — an open mailbox must not wait.
+         */
+        const address = fields.address.trim();
+        void import("../src/engine/organizer-session-native")
+          .then((m) => { m.startOrganizerSessionNative(outcome.door, address); })
+          /* A BUILD THAT CANNOT REACH ITS OWN BACKGROUND HALF SAYS SO. Swallowed, this would be an
+             app that looks like it organizes in the background and does not. */
+          .catch(() => { sayOrganizerRestricted(); });
+        const adopted = await conn.openStandalone(outcome.door);
+        if (!adopted.ok) {
+          setPhase({ k: "failed", reason: adopted.reason });
+          return;
+        }
+        /* The Ohbox in its first-sync state. Nothing between — the engine's own progress carries the
+           wait, and a screen in the middle would be a screen with nothing true to say. */
+        router.replace("/");
+        return;
+      }
+      setPhase({ k: "failed", reason: outcome.reason });
+    } finally {
+      /* ON EVERY EXIT, including a throw: a slot never given back refuses every later press for
+         the run of the app, which is the fourth door gone until the app is killed. */
+      releaseStandaloneLaunch();
+    }
   }, [conn, fields, start]);
 
   return (

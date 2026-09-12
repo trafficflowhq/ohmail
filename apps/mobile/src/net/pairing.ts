@@ -19,7 +19,9 @@ import {
   type IdentityVerdict,
   type MobileEngineDeps,
 } from "../engine/boot";
-import { holdStandaloneDoor } from "../engine/organizer-session";
+import {
+  holdStandaloneDoor, releaseStandaloneLaunch, takeStandaloneLaunch,
+} from "../engine/organizer-session";
 import type { ReopenOutcome, StandaloneEngine } from "../engine/standalone-door";
 import { ServerProfileStore, type ServerProfile } from "../state/servers";
 import { BearerManagerRN, type FetchLike, type RefreshVault } from "./bearer";
@@ -1167,20 +1169,36 @@ async function buildLocalSession(env: PairingEnv, profile: ServerProfile): Promi
   let door = port.door();
   if (door === null) {
     /* A COLD LAUNCH. Nothing is running, the form that took the password is long gone, and what
-       opens the mailbox is what the engine sealed for itself — see `reopenStandaloneMailbox`. */
-    const opened = await port.reopen();
+       opens the mailbox is what the engine sealed for itself — see `reopenStandaloneMailbox`.
+
+       THE SLOT, BECAUSE THE OTHER OPENER IS NOT IN THIS GATE. Every arm of the connection layer is
+       serialized, and the fourth door's Connect opens its engine BEFORE it enters one — so a
+       relaunch reading `door()` as null while that press is mid-launch is the second engine over
+       one device store, by the one road the door check cannot see. */
+    if (takeStandaloneLaunch() === "standing") {
+      return { kind: "refused", reason: refuse("standaloneAlreadyOpen") };
+    }
+    let opened;
+    try {
+      opened = await port.reopen();
+      /**
+       * Held here, not by the port: this is the one place a door becomes the
+       * session's. A port implementation that forgot would leave
+       * `organizerDoor()` null with an engine running, so a second connect in
+       * the same launch opens a second engine — two organizers of one mailbox —
+       * the forget finds nothing to hand back, and the engine keeps polling a
+       * mailbox the person removed. First-start-wins, so a port that holds it
+       * itself is not a conflict.
+       *
+       * INSIDE THE SLOT, so the two are never both open: releasing first would leave a gap in
+       * which the door is still null and the slot is free again.
+       */
+      if (opened.ok) holdStandaloneDoor(opened.door);
+    } finally {
+      releaseStandaloneLaunch();
+    }
     if (!opened.ok) return { kind: "refused", reason: opened.reason };
     door = opened.door;
-    /**
-     * Held here, not by the port: this is the one place a door becomes the
-     * session's. A port implementation that forgot would leave
-     * `organizerDoor()` null with an engine running, so a second connect in
-     * the same launch opens a second engine — two organizers of one mailbox —
-     * the forget finds nothing to hand back, and the engine keeps polling a
-     * mailbox the person removed. First-start-wins, so a port that holds it
-     * itself is not a conflict.
-     */
-    holdStandaloneDoor(door);
   }
   const says = door.accountId.trim();
   if (says !== profile.accountId.trim()) {

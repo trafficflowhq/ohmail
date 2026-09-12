@@ -30,8 +30,9 @@
 
 use super::{
     classify, error_class, install_kind, log_check, log_offer, log_verdict, menu_text,
-    path_is_system, refusal_is_unverifiable, report, should_install, should_offer, signed_release,
-    Check, CheckResult, Facts, Flow, InstallKind, Os, Press, Signal, Stage, Verdict, WROTE,
+    path_is_system, refusal_is_unverifiable, report, running_image, should_install, should_offer,
+    signed_release, AppImage, Check, CheckResult, Facts, Flow, ImageEnv, InstallKind, Os, Press,
+    Signal, Stage, Verdict, WROTE,
 };
 use base64::Engine as _;
 use std::fs;
@@ -963,7 +964,13 @@ fn the_last_check_is_reported_at_the_instant_it_happened() {
 
 /// The facts of a packaged install, as the shipped binaries actually read.
 fn facts(os: Os) -> Facts {
-    Facts { bundled_as: None, appimage_env: false, flatpak_info: false, system_path: false, os }
+    Facts {
+        bundled_as: None,
+        appimage: AppImage::None,
+        flatpak_info: false,
+        system_path: false,
+        os,
+    }
 }
 
 #[test]
@@ -972,7 +979,7 @@ fn every_install_this_app_ships_is_named_from_what_the_machine_says() {
     assert_eq!(
         classify(Facts {
             bundled_as: Some(InstallKind::AppImage),
-            appimage_env: true,
+            appimage: AppImage::Running,
             ..facts(Os::Linux)
         }),
         InstallKind::AppImage,
@@ -1011,7 +1018,7 @@ fn every_install_this_app_ships_is_named_from_what_the_machine_says() {
     assert_eq!(
         classify(Facts {
             bundled_as: Some(InstallKind::Deb),
-            appimage_env: true,
+            appimage: AppImage::Inherited,
             system_path: true,
             ..facts(Os::Linux)
         }),
@@ -1040,15 +1047,29 @@ fn every_install_this_app_ships_is_named_from_what_the_machine_says() {
         InstallKind::LinuxPackage,
     );
 
-    // AN EXTRACTED APPIMAGE. It carries the AppImage mark and has no `$APPIMAGE`, so there is no
-    // file for the plugin to rewrite — it would write the new release over the running binary
-    // inside the extracted tree. Named for what it is instead.
+    // AN EXTRACTED APPIMAGE. It carries the AppImage mark and is not the image it came from, so
+    // there is no file for the plugin to rewrite — it would write the new release over the
+    // running binary inside the extracted tree. Named for what it is instead, and named the same
+    // way whether the copy inherited `$APPIMAGE` from the parent that extracted it or not:
+    // the inherited variable is the finding this pair closes.
     assert_eq!(
         classify(Facts { bundled_as: Some(InstallKind::AppImage), ..facts(Os::Linux) }),
         InstallKind::Unpackaged,
     );
+    assert_eq!(
+        classify(Facts {
+            bundled_as: Some(InstallKind::AppImage),
+            appimage: AppImage::Inherited,
+            ..facts(Os::Linux)
+        }),
+        InstallKind::Unpackaged,
+    );
     // …and a build from source, which is the same fact from the other direction.
     assert_eq!(classify(facts(Os::Linux)), InstallKind::Unpackaged);
+    assert_eq!(
+        classify(Facts { appimage: AppImage::Inherited, ..facts(Os::Linux) }),
+        InstallKind::Unpackaged,
+    );
 
     // Windows and macOS with no mark at all — a build nobody packaged. Their behaviour is
     // unchanged by this gate, which is deliberate: the only Linux install that replaces itself is
@@ -1108,6 +1129,127 @@ fn a_mounted_appimage_is_not_read_as_a_system_install() {
         "/app/bin/ohmail",
     ] {
         assert!(!path_is_system(Path::new(elsewhere)), "{elsewhere} is not a system prefix");
+    }
+}
+
+// ── $APPIMAGE IS AN ENVIRONMENT, NOT A FACT ─────────────────────────────────────────────────
+//
+// The runtime exports `$APPIMAGE` to the process it launches and every child inherits it, so an
+// extracted copy — and anything else started from an AppImage's environment — used to read as an
+// installable AppImage, download a release and offer "Restart to Install" against a file it does
+// not own. `running_image` answers the question the variable only looks like it answers: is the
+// RUNNING executable the image that variable names?
+
+/// The environment of a real, mounted AppImage, as the runtime actually sets it.
+fn mounted<'a>() -> ImageEnv<'a> {
+    use std::path::Path;
+    ImageEnv {
+        appimage: Some(Path::new("/home/someone/Applications/ohmail.AppImage")),
+        extract_and_run: false,
+        appdir: Some(Path::new("/tmp/.mount_ohmail42")),
+        exe: Some(Path::new("/tmp/.mount_ohmail42/usr/bin/ohmail")),
+        image_is_a_file: true,
+    }
+}
+
+#[test]
+fn only_the_running_image_is_an_appimage() {
+    use std::path::Path;
+
+    // A REAL APPIMAGE: the variable names a file, and the executable is inside the mount.
+    assert_eq!(running_image(mounted()), AppImage::Running);
+    assert_eq!(
+        classify(Facts { appimage: running_image(mounted()), ..facts(Os::Linux) }),
+        InstallKind::AppImage,
+    );
+
+    // THE FINDING. The variable is set and the executable is somewhere else entirely — a copy
+    // extracted from the image, or any binary started from an AppImage's environment. No offer.
+    let elsewhere = ImageEnv {
+        exe: Some(Path::new("/home/someone/squashfs-root/usr/bin/ohmail")),
+        appdir: None,
+        ..mounted()
+    };
+    assert_eq!(running_image(elsewhere), AppImage::Inherited);
+    assert_eq!(
+        classify(Facts { appimage: running_image(elsewhere), ..facts(Os::Linux) }),
+        InstallKind::Unpackaged,
+    );
+
+    // …and the same copy with `$APPDIR` set to the extraction directory, which is what an
+    // extracted `AppRun` does: the exe IS under `$APPDIR`, so that variable can only confirm the
+    // runtime's own mount and can never establish one.
+    let extracted_apprun = ImageEnv {
+        appdir: Some(Path::new("/home/someone/squashfs-root")),
+        exe: Some(Path::new("/home/someone/squashfs-root/usr/bin/ohmail")),
+        ..mounted()
+    };
+    assert_eq!(running_image(extracted_apprun), AppImage::Inherited);
+
+    // `APPIMAGE_EXTRACT_AND_RUN`: the runtime unpacked the image and ran the copy. Driven over an
+    // environment that is otherwise a perfect mount, so this refusal is watched on its own.
+    assert_eq!(
+        running_image(ImageEnv { extract_and_run: true, ..mounted() }),
+        AppImage::Inherited,
+    );
+
+    // A variable pointing at nothing, or at a directory: there is no file to replace. Same
+    // shape — the mount is perfect and only this half is false.
+    assert_eq!(
+        running_image(ImageEnv { image_is_a_file: false, ..mounted() }),
+        AppImage::Inherited,
+    );
+
+    // `$APPDIR` disagreeing with the exe — two runtimes' variables mixed in one environment.
+    assert_eq!(
+        running_image(ImageEnv { appdir: Some(Path::new("/tmp/.mount_other9")), ..mounted() }),
+        AppImage::Inherited,
+    );
+
+    // An executable that could not be read at all is not proof of an image.
+    assert_eq!(running_image(ImageEnv { exe: None, ..mounted() }), AppImage::Inherited);
+
+    // NO VARIABLE: not an AppImage question at all, and the other kinds decide — a build from
+    // source is `Unpackaged`, a distribution's own build under a system prefix is its package.
+    let absent = ImageEnv { appimage: None, ..mounted() };
+    assert_eq!(running_image(absent), AppImage::None);
+    assert_eq!(
+        classify(Facts { appimage: running_image(absent), ..facts(Os::Linux) }),
+        InstallKind::Unpackaged,
+    );
+    assert_eq!(
+        classify(Facts { appimage: running_image(absent), system_path: true, ..facts(Os::Linux) }),
+        InstallKind::LinuxPackage,
+    );
+}
+
+/// THE MOUNT IS THE RUNTIME'S OWN DIRECTORY, at every depth, and an extraction directory is not
+/// one however it is spelled. This is the half of the decision `$APPDIR` cannot make.
+#[test]
+fn the_runtime_mount_is_told_from_an_extraction_directory() {
+    use std::path::Path;
+    for inside in [
+        "/tmp/.mount_ohmail42/usr/bin/ohmail",
+        "/tmp/.mount_ohmailXXXXXX/AppRun",
+        "/run/user/1000/.mount_abc123/usr/lib/ohmail/ohmail",
+    ] {
+        assert_eq!(
+            running_image(ImageEnv { appdir: None, exe: Some(Path::new(inside)), ..mounted() }),
+            AppImage::Running,
+            "{inside} is inside a runtime mount",
+        );
+    }
+    for outside in [
+        "/home/someone/squashfs-root/usr/bin/ohmail",
+        "/tmp/appimage_extracted_9f3/usr/bin/ohmail",
+        "/opt/ohmail/ohmail",
+        "/home/someone/mount_ohmail/usr/bin/ohmail",
+    ] {
+        assert_eq!(
+            running_image(ImageEnv { appdir: None, exe: Some(Path::new(outside)), ..mounted() }),
+            AppImage::Inherited,
+            "{outside} is not inside a runtime mount",
+        );
     }
 }
 

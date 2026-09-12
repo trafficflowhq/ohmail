@@ -888,6 +888,7 @@
   "history": {
     "title": "History",
     "metaCount": "{count, plural, one {1 message} other {# messages}}",
+    "windowNote": "This device keeps your recent mail. Older mail stays on your server — find it in Search.",
     "explainer": "Mail from people you never screened, who haven't written in a while.",
     "explainerMore": "It's all read, so nothing here is waiting on you. It hasn't moved — each message is still where your mail server keeps it.",
     "explainerMoreLabel": "What History holds, and where it lives",

@@ -146,6 +146,9 @@ export const DE: Deck = {
   settingsStartHere: "Hier organisieren",
   settingsStartHereFailed:
     "Dieses Telefon konnte dieses Postfach nicht zu organisieren beginnen. Nichts hat sich geändert. Versuche es in einem Moment noch einmal.",
+  settingsStopHereFailed:
+    "Dieses Telefon konnte dieses Postfach nicht zurückgeben und organisiert es weiter. Versuche "
+    + "es in einem Moment noch einmal.",
 
   /* Die Absagen der eigenständigen Tür. Keine davon trägt je das Passwort. */
   standaloneNoEngine:
@@ -166,7 +169,11 @@ export const DE: Deck = {
   standaloneOtherMailbox:
     "Das Postfach auf diesem Telefon ist nicht das, welches dieser Eintrag nennt. Entferne den Eintrag und öffne das Postfach erneut.",
   standaloneNotStored: (detail: string) =>
-    `Dieses Telefon konnte das gerade geöffnete Postfach nicht speichern: ${detail}`,
+    `Dieses Telefon konnte das gerade geöffnete Postfach nicht speichern: ${detail}. Es wurde `
+    + "wieder geschlossen und nichts behalten — versuch Verbinden noch einmal.",
+  standaloneAlreadyOpen:
+    "Dieses Telefon hat schon ein Postfach geöffnet. Entferne es unter Server, bevor du ein "
+    + "anderes öffnest.",
   /* Der Einwilligungs-Aufruf. Keine dieser Zeilen behauptet, das Telefon organisiere gerade. */
   organizeHereUnreachable: (detail: string) =>
     `ohmail konnte nicht darum bitten, dieses Postfach zu organisieren: ${detail}`,
@@ -359,6 +366,10 @@ export const DE: Deck = {
     "Die Kopplung und die Post, die dieses Telefon kopiert hatte, sind weg. Der Server war nicht "
     + "erreichbar, um die Sitzung zu beenden, und zählt dieses Telefon womöglich noch als "
     + "verbunden — widerrufe dieses Gerät in seiner Geräteliste, um das abzuschließen.",
+  forgetClaimStands: (minutes: number) =>
+    "Das Postfach und seine Post sind von diesem Telefon weg. Sein Anspruch auf das Postfach ließ "
+    + `sich nicht zurückgeben, deshalb kann eine andere Maschine das Postfach in etwa ${minutes} `
+    + "Minuten übernehmen.",
   forgetStillPending:
     "Dieser Server wird auf diesem Telefon noch vergessen — ohmail konnte seine Anmeldung noch "
     + "nicht entfernen. Starte die App neu, damit sie das abschließen kann, oder widerrufe dieses "
