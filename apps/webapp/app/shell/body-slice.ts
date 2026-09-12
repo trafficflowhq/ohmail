@@ -27,15 +27,10 @@
  */
 
 import { useCallback, useSyncExternalStore } from "react";
-import type { OhmailEngine } from "@ohmail/client-engine";
 import { useEngineOrNull } from "./engine";
 
-/** No engine in this tree (a bare harness mount): nothing to subscribe to, and nothing arrives. */
-const NEVER = (): (() => void) => () => {};
-
-function subscriptionOf(engine: OhmailEngine | null): (cb: () => void) => () => void {
-  return engine === null ? NEVER : (cb: () => void) => engine.subscribe(cb);
-}
+/** Unsubscribing from nothing — a bare harness mount has no engine, and nothing will arrive. */
+const NOTHING_TO_STOP = (): void => {};
 
 /**
  * Re-render this surface when the body of `messageId` lands — and not when anybody else's does.
@@ -47,7 +42,10 @@ function subscriptionOf(engine: OhmailEngine | null): (cb: () => void) => () => 
  */
 export function useBodyArrival(messageId: string | null): void {
   const engine = useEngineOrNull();
-  const subscribe = useCallback(subscriptionOf(engine), [engine]);
+  const subscribe = useCallback(
+    (cb: () => void) => (engine === null ? NOTHING_TO_STOP : engine.subscribe(cb)),
+    [engine],
+  );
   useSyncExternalStore(
     subscribe,
     () => (engine === null || messageId === null
@@ -66,7 +64,10 @@ export function useBodyArrival(messageId: string | null): void {
  */
 export function useBodyStamp(): number {
   const engine = useEngineOrNull();
-  const subscribe = useCallback(subscriptionOf(engine), [engine]);
+  const subscribe = useCallback(
+    (cb: () => void) => (engine === null ? NOTHING_TO_STOP : engine.subscribe(cb)),
+    [engine],
+  );
   return useSyncExternalStore(
     subscribe,
     () => (engine === null ? 0 : engine.read().stampOf("message_body")),
