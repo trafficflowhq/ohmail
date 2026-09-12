@@ -6,9 +6,8 @@
  *     node scripts/appstream-releases.mjs --write    # rewrite the block from the changelog
  *
  * AppStream wants release notes and the changelog already is them, so this derives one from the
- * other rather than letting a second copy exist. The check is what makes a tag that moves
- * `## [Unreleased]` to a version and forgets the metainfo go red instead of shipping a release
- * whose software centre entry stops at the previous one.
+ * other rather than keeping a second copy. The check makes a tag that moves `## [Unreleased]` to a
+ * version and forgets the metainfo go red instead of shipping a stale software-centre entry.
  */
 import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";

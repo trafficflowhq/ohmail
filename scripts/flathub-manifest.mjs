@@ -4,11 +4,10 @@
  *
  *     node scripts/flathub-manifest.mjs --tag v0.19.0 --commit <40-hex> [-o <file>]
  *
- * Flathub builds a TAG; this repository's manifest builds the checkout it sits in, which is what
- * CI and a contributor want. The two differ in exactly one place — the app module's first source —
- * so the pinned copy is derived rather than kept by hand, and `--check` asserts that the only
- * difference is that source block. A second hand-maintained manifest is how a permission added
- * here fails to reach the one people actually install.
+ * Flathub builds a TAG; this repository's manifest builds the checkout it sits in. The two differ
+ * in exactly one place — the app module's first source — so the pinned copy is derived and
+ * `--check` asserts that is the only difference. A second hand-maintained manifest is how a
+ * permission added here fails to reach the one people actually install.
  */
 import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
