@@ -100,7 +100,7 @@ export function stripBuildPaths(text, repo = REPO) {
 export const ESBUILD_VERSION = "0.24.0";
 
 /**
- * THE PINNED BUNDLER — the environment first, the shared acquirer second, a refusal third.
+ * THE PINNED BUNDLER — the environment, the shared acquirer, this checkout, then a refusal.
  *
  * This file is now part of what a phone build RUNS rather than only what a census reads, and it is
  * published, so it may not depend on the workspace's private toolchain to do its job. The three
@@ -113,7 +113,14 @@ export const ESBUILD_VERSION = "0.24.0";
  *     workspace — an install inside the tree rewrites the module graph and leaves the repository's
  *     own dependencies unusable. Sharing it rather than copying its directory convention is the
  *     point: two spellings would be two caches, and the atomicity is the half a copy forgets.
- *  3. a refusal naming the command. This was env-var-only first, and the cost is the shape worth
+ *  3. THIS CHECKOUT'S OWN `node_modules`, at the pinned version. The published repository
+ *     declares the bundler in its root manifest and ships a lockfile, so an ordinary install puts
+ *     it there — and until this step existed the published build had no door at all: the mirror's
+ *     phone build refused here on the first release that shipped a bundled engine, because step 2
+ *     reaches for a module the mirror does not publish and step 1 was not set. The version is
+ *     CHECKED rather than trusted: a different bundler would produce a different artifact, and the
+ *     reproducibility check exists because that difference is not visible in the output.
+ *  4. a refusal naming the command. This was env-var-only first, and the cost is the shape worth
  *     naming: the census over this bundle refused on every run that had not exported the variable,
  *     i.e. every ordinary one. A gate that fires on innocent runs discards other people's work
  *     exactly as surely as a gate that cannot fire lets it through. So step 2 keeps the ordinary
@@ -140,6 +147,16 @@ async function sharedEsbuildDir() {
     const { ensureEsbuild } = await import(local);
     return ensureEsbuild();
   } catch {
+    const here = dirname(fileURLToPath(import.meta.url));
+    const root = resolve(here, "..", "..", "..");
+    try {
+      const req = createRequire(join(root, "noop.js"));
+      const v = req("esbuild/package.json").version;
+      if (v === ESBUILD_VERSION) return root;
+      throw new Error(`this checkout has esbuild ${v}, and the phone engine is reproducible for ${ESBUILD_VERSION}`);
+    } catch (e) {
+      if (e instanceof Error && e.message.startsWith("this checkout has esbuild ")) throw e;
+    }
     throw new Error(
       `the phone engine needs esbuild ${ESBUILD_VERSION}, and this checkout has no way to fetch it.\n` +
       `  Install it outside the workspace and name the directory:\n\n` +
