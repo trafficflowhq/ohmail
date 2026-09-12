@@ -7,6 +7,11 @@
 # app writes come from it. Point the terminator at port 80 on OHMAIL_BIND. Port 443 has nothing
 # behind it here.
 #
+# NO Strict-Transport-Security here, deliberately. This door holds no certificate, so it cannot
+# know whether the one your terminator presents is publicly trusted — and a browser that has
+# stored HSTS for a host will not let anyone click past a certificate warning on it. Set the
+# header at the terminator, which is the half that knows: max-age=31536000; includeSubDomains.
+#
 # X-Forwarded-For and X-Forwarded-Proto are honoured from OHMAIL_TLS_TERMINATOR and nowhere else;
 # in front of a terminator they are whatever the caller typed. The default is loopback.
 {

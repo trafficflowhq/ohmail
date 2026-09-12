@@ -266,6 +266,12 @@ if [[ -n "${ORIGIN}" ]]; then
 # double-strip /api/api/… shapes. See deploy/selfhost/Caddyfile for the full argument.
 
 ${ORIGIN} {
+	# HTTPS from here on. Unconditional, unlike the sibling stack's switch: this origin is
+	# validated above to https://<hostname> and the certificate comes from a public authority
+	# over the TLS-ALPN challenge, so there is no local-CA arm to lock anybody out of. One
+	# year, no preload. NOT on the :8099 launcher below, which is plain HTTP.
+	header Strict-Transport-Security "max-age=31536000; includeSubDomains"
+
 	@api path /api /api/* /auth /auth/* /events /health /hello /pair /pair/* /internal /internal/*
 	handle @api {
 		reverse_proxy ohmail_api_1:8080

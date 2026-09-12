@@ -1,5 +1,7 @@
 # The route table: which container answers which path. Imported by both front doors — Caddyfile
 # (owns TLS) and Caddyfile.external-tls (behind a terminator that does) — so the paths exist once.
+# Routes only: a response header set here would be sent by the plain-HTTP door too, which is
+# why Strict-Transport-Security lives in Caddyfile's TLS site block and not in this file.
 
 # NO path stripping: the API canonicalizes one leading `/api` off itself, so `/api/sync` here and
 # `/sync` from a native client hash identically for idempotency. A strip would double-strip

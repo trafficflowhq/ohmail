@@ -61,6 +61,13 @@ services:
       # cannot express any other Caddy directive. See the Caddyfile for what the default costs
       # on a name ACME can never issue for.
       OHMAIL_TLS_DIRECTIVE: ${OHMAIL_TLS_INTERNAL:+tls internal}
+      # AND THE SAME SWITCH DECIDES HSTS. The TLS site sends Strict-Transport-Security; this
+      # line is the only thing that can take it back off, and it does so on exactly the arm
+      # where the certificate is this install's OWN. A browser that has stored HSTS for a host
+      # will not let anyone click past a certificate warning, so arming it on a name served by
+      # the local CA would lock out every machine that has not installed that CA's root — the
+      # step .env.example asks for, and one people do late. Same `:+` containment as above.
+      OHMAIL_HSTS_DIRECTIVE: ${OHMAIL_TLS_INTERNAL:+header -Strict-Transport-Security}
       # Read only by the external-TLS door: the address whose `X-Forwarded-*` Caddy honours.
       # Those headers are whatever a caller typed unless something trustworthy set them, so the
       # default is loopback — a terminator on this same box. No application code here reads
