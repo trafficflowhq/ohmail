@@ -381,7 +381,8 @@ export function consentPartition(reader: EntityReader, opts: ConsentOptions = {}
     // never History, which is a queue of people who have not been screened.
     if (own.has(key)) { placeOf.set(m.id, m.folder); continue; }
     const decided = decidedDestination(index, m.from.address);
-    if (decided !== null && CONSENTING_DESTINATIONS.has(decided)) consentedSenders.add(key);
+    const consented = decided !== null && CONSENTING_DESTINATIONS.has(decided);
+    if (consented) consentedSenders.add(key);
 
     /**
      * A RESURFACED ROW IS THE USER'S OWN ACT, AND THE CUTLINE KEEPS ITS HANDS OFF: Rule 1 above says consent comes
@@ -413,12 +414,14 @@ export function consentPartition(reader: EntityReader, opts: ConsentOptions = {}
      * never predicts a destination for held mail, and `GET /screener` — which consults no rules
      * at all — is the authority wherever there is a server. The projection is for mail the gate
      * is NOT holding. Measured on a real mailbox: nine senders held, five of them ruled to a
-     * consenting destination weeks before their mail arrived, four shown. The cutline still
-     * decides on both ends, which is what keeps the backfill this projection was built for: an
-     * already-filed backlog is old and read, so a consented sender's retired gate mail still
-     * presents in the Ohbox with nothing moved.
+     * consenting destination weeks before their mail arrived, four shown. Two things keep their
+     * projection. The CUTLINE: a retired sender is not asked about on either end, so a backfilled
+     * backlog — old and read by construction — still presents in the Ohbox with nothing moved,
+     * which is the case this projection was built for. And a DENY rule: Screened and Quarantine
+     * are the person's own answer, and their mail presents there, on the Screener's screened-out
+     * shelf. Only an admission nobody has carried out is a question still open.
      */
-    const heldAtGate = active && m.folder === "ohmail/Screener";
+    const heldAtGate = consented && active && m.folder === "ohmail/Screener";
     if (decided !== null && !heldAtGate) {
       placeOf.set(m.id, decided);
     } else if (active) {
