@@ -33,7 +33,7 @@
  * fail. A builder that both decides and reports gives a lane two places to look when it is wrong.
  */
 import { createRequire } from "node:module";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -166,6 +166,44 @@ async function sharedEsbuildDir() {
 }
 
 /**
+ * THE WORKSPACE PACKAGES AS THE PUBLISHED TREE RESOLVES THEM — their own `exports`, retargeted
+ * from `./dist/*.js` to `./src/*.ts`.
+ *
+ * A clone of this repository carries no build output, so its manifests point every subpath at
+ * source. A workspace that has build output on hand resolves the same names to `dist/` instead —
+ * same table, same entry point, two module graphs. This derives the first resolution from the
+ * manifests rather than writing it down, so a build can produce both and compare them. Read in a
+ * clone it is a no-op: the targets are already source.
+ *
+ * @param {string} repo the workspace root
+ * @returns {Record<string, string>} bare specifier → absolute source file
+ */
+export function workspaceSourceAliases(repo = REPO) {
+  const out = {};
+  for (const group of ["packages", "apps"]) {
+    const groupDir = join(repo, group);
+    if (!existsSync(groupDir)) continue;
+    for (const name of readdirSync(groupDir).sort()) {
+      const manifest = join(groupDir, name, "package.json");
+      if (!existsSync(manifest)) continue;
+      const pkg = JSON.parse(readFileSync(manifest, "utf8"));
+      if (!pkg.name || !pkg.exports) continue;
+      for (const [sub, target] of Object.entries(pkg.exports)) {
+        /* Conditional exports are objects; `default` is the one a bundler follows. The same
+           choice, and the same dist→src rewrite, the publish manifests are generated with. */
+        const chosen = typeof target === "string" ? target : target?.default;
+        if (typeof chosen !== "string") continue;
+        const asSource = chosen.replace(/^\.\/dist\//, "./src/").replace(/\.js$/, ".ts");
+        const abs = join(groupDir, name, asSource.replace(/^\.\//, ""));
+        if (!existsSync(abs)) continue;
+        out[sub === "." ? pkg.name : `${pkg.name}${sub.slice(1)}`] = abs;
+      }
+    }
+  }
+  return out;
+}
+
+/**
  * THE SUBSTITUTION PLUGIN — one `onResolve`, so the ORDER of the rules is visible in one place.
  *
  * Order matters and is asserted by the rules' own shape rather than by luck:
@@ -180,8 +218,13 @@ async function sharedEsbuildDir() {
  *     being inside `apps/sidecar/src` — a bare specifier check would rewrite `./db.js` written
  *     anywhere in the graph, and several packages have a file of that name.
  */
-function substitutions() {
+function substitutions(extraBare = {}) {
   const bare = aliases.bareSpecifiers();
+  /* The table wins every collision: `@trafficflow/api/desktop-host` is a SUBSTITUTE, and a
+     workspace-source entry for the same name would put the desktop's door back in the bundle. */
+  for (const [name, target] of Object.entries(extraBare)) {
+    if (!Object.hasOwn(bare, name)) bare[name] = target;
+  }
   const external = new Set(aliases.EXTERNAL);
   const sidecarSrc = join(REPO, "apps", "sidecar", "src");
   /** Every substitution the build actually performed, for the report and for the census. */
@@ -329,9 +372,9 @@ function declarationFor() {
   ].join("\n");
 }
 
-export async function buildPhoneEngine({ write = true } = {}) {
+export async function buildPhoneEngine({ write = true, workspaceSources = false } = {}) {
   const esbuild = await loadEsbuild();
-  const { plugin, applied } = substitutions();
+  const { plugin, applied } = substitutions(workspaceSources ? workspaceSourceAliases(REPO) : {});
   mkdirSync(OUT_DIR, { recursive: true });
   mkdirSync(PACKAGED_DIR, { recursive: true });
 
