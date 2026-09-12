@@ -768,16 +768,13 @@ const heldCache = new WeakMap<EngineMessage, HeldEntry>();
 
 /**
  * THE PER-SENDER AGGREGATE, KEPT ACROSS BUMPS — a bump re-derives the senders whose mail it
- * touched and nobody else. The grouping pass in {@link screenerSegments} stays O(mailbox) and
- * has to: the consent
- * cutline re-homes rows whose own record never moved, so the store's dirty set does not
- * describe the PROJECTION. What this removes is everything after the grouping — the per-sender sort, the
- * array copies, the rep search and the DTO — for every sender the bump left alone.
+ * touched and nobody else. The grouping pass in {@link screenerSegments} stays O(mailbox) and has
+ * to: the consent cutline re-homes rows whose own record never moved, so the store's dirty set
+ * does not describe the PROJECTION. What this removes is everything after the grouping — the
+ * sort, the copies, the rep search and the DTO — for every sender the bump left alone.
  *
- * KEYED ON THE FIRST MESSAGE IN THE BAG, by identity: an object belongs to exactly one mirror, so
- * two engines in one process cannot collide the way a module-level `Map` keyed by address would.
- * The bag is then verified element by element — same length, same objects in order, same body
- * RECORD behind each. Anything else misses and derives in full, which is the safe direction.
+ * KEYED ON THE FIRST MESSAGE IN THE BAG by identity, then verified element by element: same
+ * length, same objects in order, same body RECORD behind each. Anything else derives in full.
  */
 interface SenderEntry {
   segment: ScreenerSegment;
