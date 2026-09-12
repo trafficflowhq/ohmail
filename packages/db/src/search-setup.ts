@@ -26,18 +26,11 @@ export async function ensureSearchExtensions(db: SqlExecutor): Promise<void> {
 /**
  * The pre-migration build of mail 0071's partial index, CONCURRENTLY.
  *
- * A plain `CREATE INDEX` over the schema's largest table must never run as a journal statement —
- * it holds a write-conflicting lock inside the migrator's transaction, where CONCURRENTLY cannot
- * run. Mail 0071 carries the same statement with `IF NOT EXISTS`, so THIS step, run BEFORE the
- * migrator on an autocommit connection, builds without blocking writes and the journal statement
- * no-ops; the two must stay byte-equivalent.
- *
- * THE PREREQUISITE IS THE COLUMN, NOT THE TABLE: `withheld_reason` arrives with mail 0062, so an
- * existing database anywhere in 0002–0061 has the table and not the column, and a prebuild that
- * threw there would abort the setup BEFORE the migrator could reach 0062 — bricking exactly the
- * upgrade it runs ahead of. Absent ⇒ deferred to the journal, where the blocking build is bounded
- * by arithmetic rather than hope: no database can carry a LARGE `message_bodies` at 0071's replay
- * position without having crossed 0062 while small.
+ * Mail 0071 carries the same statement with `IF NOT EXISTS`, so this step — before the migrator,
+ * on an autocommit connection — builds without blocking writes and the journal statement no-ops;
+ * the two must stay byte-equivalent. THE PREREQUISITE IS THE COLUMN, NOT THE TABLE: `withheld_reason` arrives with mail 0062, so a
+ * database in 0002–0061 has the table and not the column, and throwing there would abort the setup
+ * before the migrator could reach 0062 — bricking the upgrade it runs ahead of.
  */
 const WITHHELD_PROVENANCE_SPEC: ConcurrentIndexSpec = {
   name: "message_bodies_withheld_idx",

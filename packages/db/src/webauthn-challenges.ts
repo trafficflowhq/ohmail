@@ -13,33 +13,25 @@ import type { Tx } from "./change-log.js";
 export const WEBAUTHN_CHALLENGE_RETENTION_MS = 60 * 60_000;
 
 /**
- * How many expired rows ONE prune may delete.
+ * How many expired rows ONE prune may delete — the reason this is safe on a request path.
  *
- * The bound is the whole reason this is safe to run on a request path. The other ceremony table
- * has been pruned since its first row, so its sweep is always empty-ish; this table has never
- * been pruned, so the FIRST prune after the upgrade faces every ceremony the deployment has ever
- * opened. An unbounded `DELETE … WHERE expires_at < cutoff` would put that whole backlog on one
- * person's sign-in.
+ * This table has never been pruned, so the FIRST prune after the upgrade faces every ceremony the
+ * deployment has opened; unbounded, that whole backlog lands on one person's sign-in.
  *
- * Why 200 and not 1: the prune must out-run the growth it is bounding. Each ceremony start adds
- * exactly ONE row and removes up to 200, so a backlog of N drains in at most N/199 ceremonies and
- * the steady state is the last hour of traffic — the table is bounded by the retention window
- * rather than by all of history, which is the invariant this constant exists to make true.
+ * Why 200 and not 1: the prune must out-run the growth it bounds. A ceremony start adds exactly
+ * one row and removes up to 200, so a backlog of N drains in at most N/199 starts and the steady
+ * state is the retention window rather than all of history.
  */
 export const WEBAUTHN_CHALLENGE_PRUNE_LIMIT = 200;
 
 /**
- * Delete expired challenges, at most {@link WEBAUTHN_CHALLENGE_PRUNE_LIMIT} per call, and answer
- * how many went.
+ * Delete expired challenges, at most {@link WEBAUTHN_CHALLENGE_PRUNE_LIMIT} per call.
  *
- * OPPORTUNISTIC, called by the ceremony START doors rather than by a scheduled pass, for
- * `pruneOAuthCeremonies`' reason verbatim: the table's whole content is the last hour of passkey
- * ceremonies, the only thing that grows it is a ceremony start, and a pass on a timer would be a
- * new scheduled surface for a table that nobody is writing to when nobody is signing in. Keyed by
- * `webauthn_challenges_expires_idx`, so a deployment with nothing due pays an empty range scan.
- *
- * TWO STATEMENTS, not a `DELETE … WHERE id IN (SELECT … LIMIT n)`: the id read is what makes the
- * bound exact on both dialects, and an empty read returns here rather than building an `IN ()`.
+ * OPPORTUNISTIC, on the ceremony START doors rather than a scheduled pass, for
+ * `pruneOAuthCeremonies`' reason: the only thing that grows this table is a ceremony start, so a
+ * timer would be a new scheduled surface for a table nobody is writing to. Keyed by
+ * `webauthn_challenges_expires_idx`, so nothing due is an empty range scan. Two statements, not `DELETE … WHERE id IN (SELECT … LIMIT n)`: the id read makes the
+ * bound exact on both dialects, and an empty read returns rather than building an `IN ()`.
  */
 export async function pruneWebauthnChallenges(
   tx: Tx,

@@ -589,14 +589,13 @@ export class SyncService {
 
   /**
    * `GET /sync/snapshot` — THE BOOTSTRAP READER. A first-run client used to replay `change_log`
-   * from seq 0 — history rather than state; this reads the LIVE TABLES. Page 1 carries the live
-   * small state — every rule and tag, unpaged, and `folder` while the flag is on — plus the newest
-   * page of messages. EVERY page carries the THREADS its own messages name, their child rows, and
-   * the next {@link SNAPSHOT_DRAFT_PAGE} drafts. Three phases: the message window
-   * (`SNAPSHOT_WINDOW` — two floors and a ceiling), then a TAIL restricted to messages owning a
-   * `message_tags` row, a pending approval or a pending routing decision — below the window those
-   * are otherwise unreachable — then drafts outliving both. Every row is `op:"create"` at
-   * `seq = asOfSeq`.
+   * from seq 0 — history rather than state; this reads the LIVE TABLES, so the cost is the size of
+   * the mailbox. Page 1 carries the live small state — every rule and tag, unpaged, and `folder`
+   * while the flag is on — plus the newest page of messages. EVERY page carries the THREADS its own
+   * messages name, their child rows, and the next {@link SNAPSHOT_DRAFT_PAGE} drafts. Three phases:
+   * the message window (`SNAPSHOT_WINDOW` — two floors and a ceiling), then a TAIL carrying the
+   * messages below it that own a tag, a pending approval or a pending routing decision — otherwise
+   * unreachable — then drafts outliving both. Every row is `op:"create"` at `seq = asOfSeq`.
    */
   async getSnapshot(ctx: ServiceContext, opts: GetSnapshotOptions = {}): Promise<SnapshotResponse> {
     const { db, accountId } = ctx;
@@ -729,25 +728,16 @@ export class SyncService {
           isNull(messages.date),
         );
 
-    // ── THE TAIL PREDICATE: WHAT A MESSAGE BELOW THE WINDOW MUST OWN TO BE CARRIED ───────────
+    // ── WHAT A MESSAGE BELOW THE WINDOW MUST OWN TO BE CARRIED ───────────────────────────────
     //
-    // Once the window is satisfied the walk switches to the tail: the SAME keyset walk, resumed
-    // where the window stopped, restricted to messages that own something the client cannot do
-    // without. Its cost — pages and rows — is bounded by how much mail owns one of these, never by
-    // the size of the mailbox: a message owning none fails every EXISTS and is never read.
-    //
-    // A TAG, because a tag rail over mail the client does not hold shows an empty rail.
-    //
-    // A PENDING APPROVAL or a PENDING ROUTING DECISION, because those are ACTIONS somebody is
-    // being asked to take. Keying children to their parent's page closed a real hole — the client
-    // used to be handed actionable state for messages it never received — but it opened this one:
-    // a pending row whose message the window excludes was then delivered to nobody at all, and the
-    // cursor moved past its change for ever. Settled rows are not carried: an approved or rejected
-    // approval below the window is history, and history is what the window is for.
-    //
-    // Every arm filters `account_id` as well as the message id, belt-and-braces with the outer
-    // `messages.account_id`: a bug that ever let the two disagree must fail closed rather than
-    // leak one account's mail into another's bootstrap.
+    // The tail is the SAME keyset walk resumed past the window, restricted to messages owning
+    // something the client cannot do without, so its cost is bounded by how much mail owns one of
+    // these rather than by the mailbox. A TAG, because a rail over mail the client lacks reads as
+    // empty. A PENDING approval or routing decision, because those are actions somebody is waiting
+    // to take: keying children to their parent's page left a pending row whose message the window
+    // excluded delivered to nobody, with the cursor past its change for ever. Settled rows are
+    // history, which is what the window is for. Every arm filters `account_id` too, so a bug that
+    // let the two disagree fails closed rather than leaking into another account's bootstrap.
     const inTail = cursor?.phase === "tail";
     const reachableTail = inTail
       ? or(
@@ -839,14 +829,13 @@ export class SyncService {
     // ── WHERE THE NEXT PAGE COMES FROM: window → tail → drafts → done ────────────────────────
     //
     // The window is the recency floor or the volume floor, whichever is not yet met, under the row
-    // CEILING. When it stops the walk opens the TAIL rather than ending: a message below the window
-    // owning a tag, a pending approval or a pending routing decision is dropped from every windowed
-    // mirror and no delta re-delivers it, its own change sitting below the client's post-bootstrap
-    // cursor. The tail resumes the same keyset under `reachableTail` and ends on a short page; a
-    // walk that ran off the end of the mailbox has no tail at all.
+    // CEILING. When it stops the walk opens the TAIL rather than ending: below the window a message
+    // owning a tag, a pending approval or a pending routing decision is otherwise lost, its own
+    // change sitting below the client's post-bootstrap cursor. The tail resumes the same keyset
+    // under `reachableTail` and ends on a short page; a walk that ran off the end has no tail.
     // THE CEILING STOPS THE WINDOW, NEVER THE TAIL — counted newest-first like the floor, so it
-    // ends the walk above it and everything the tail reaches below leaves by the same tail. Read at
-    // a PAGE boundary, so a snapshot serves at most `maxRows` plus the page in flight.
+    // ends the walk above it and the tail still reaches below. Read at a PAGE boundary, so a
+    // snapshot serves at most `maxRows` plus the page in flight.
     let nextCursor: string | null;
     if (inTail) {
       nextCursor = fullPage ? keysetOf("tail") : null;

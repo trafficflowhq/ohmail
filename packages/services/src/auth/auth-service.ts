@@ -2112,20 +2112,14 @@ export class AuthService extends SessionLifecycle {
   }
 
   /**
-   * OPEN a ceremony — the one door all three `…Options` methods write their challenge through,
-   * and the only place the table is pruned.
+   * OPEN a ceremony — the one door all three `…Options` methods write through, and the only place
+   * the table is pruned. One helper rather than three inserts because the prune has to sit on
+   * EVERY start: the table grows by one row per ceremony and by nothing else, so pruning here
+   * makes the removal rate the growth rate.
    *
-   * One helper rather than three inserts because the prune has to sit on EVERY start: the table
-   * grows by exactly one row per ceremony opened and by nothing else, so pruning here makes the
-   * removal rate proportional to the growth rate, which is what bounds the table (see
-   * {@link pruneWebauthnChallenges} for the per-call bound that lets the first upgraded
-   * deployment drain a backlog instead of paying for it on one sign-in).
-   *
-   * The prune's failure is SWALLOWED, and this is the one place that is right: the row it
-   * would have removed is already unusable, the ceremony row this call just wrote is committed,
-   * and a table that kept one expired row is not a reason to refuse somebody's passkey. It is
-   * not a silent fallback for a missing capability — the insert on the line above proves the
-   * table is there — and the next ceremony start prunes again with the same bound.
+   * The prune's failure is SWALLOWED, and here that is right: these doors are AUTOCOMMIT, so the
+   * insert above is already committed, the row the prune would have removed is unusable anyway,
+   * and one kept row is no reason to refuse somebody's passkey.
    */
   private async openChallenge(
     db: Tx, ctx: ServiceContext,

@@ -4,16 +4,12 @@ import { MIGRATION_LOCK_KEY, MIGRATION_LOCK_TIMEOUT_MS } from "./migrate.js";
 /**
  * BUILDING AN INDEX `CONCURRENTLY` OUTSIDE THE MIGRATOR — the one implementation.
  *
- * `CREATE INDEX CONCURRENTLY` cannot run inside a transaction block (25001), and the shared
- * migrator wraps its journal pass in one, so an index over a large table is built here instead, on
- * the setup command's autocommit session. Three prebuilds grew their own copy of this shape;
- * everything the shape has to get right — the bounded lock acquisition, the reset before any DDL,
- * the invalid-leftover repair, the unlock in `finally` — now lives once.
- *
- * SERIALIZED UNDER THE MIGRATION'S ADVISORY LOCK. `CREATE INDEX CONCURRENTLY` publishes an
- * `indisvalid = false` row WHILE BUILDING, which from a second caller's seat is indistinguishable
- * from a failed leftover — and "cleaning that up" would race the first caller's live build. The
- * same key `runMigrations` takes, so a prebuild and the migration serialize as one ceremony.
+ * `CREATE INDEX CONCURRENTLY` cannot run inside a transaction block (25001) and the migrator wraps
+ * its journal pass in one, so these build on the setup command's autocommit session — two
+ * prebuilds had grown their own copy of the shape. Serialized under the migration's
+ * advisory lock, because a concurrent build publishes an
+ * `indisvalid = false` row WHILE BUILDING, indistinguishable from a failed leftover to a second
+ * caller, whose "cleanup" would race the first caller's live build.
  */
 export interface SqlExecutor {
   execute(query: SQL): Promise<unknown>;

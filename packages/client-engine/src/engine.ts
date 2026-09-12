@@ -772,8 +772,7 @@ export const BODIES_IDS_MAX = 20;
  * the producer and refuses a disagreement, so the definition cannot drift again without a red.
  *
  * `approval` is in the set and is NOT page-1-only: an approval whose message the window excludes has no page to ride
- * with, so it rides here, while every other approval rides its parent's page. `draft` is NOT in the set: drafts are
- * paged newest-first like messages, so page 1 carries the first page of them rather than all of them.
+ * with, so it rides here. `draft` is NOT in the set: drafts are paged newest-first like messages.
  */
 export const SNAPSHOT_PAGE_1_STATE_KINDS = [
   "rule", "approval", "tag", "folder", "settings",
