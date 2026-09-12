@@ -148,6 +148,34 @@ export function pgTestUrlFrom(env: NodeJS.ProcessEnv, lane: string | null): stri
 /** The real-Postgres URL every `*.pg.test.ts` uses: this worktree's lane database, or the box. */
 export const PG_TEST_URL = pgTestUrlFrom(process.env, laneDbUrl());
 
+/** The shared box's database. The freeze runs on it; a checkout with its own lane database does not. */
+const SHARED_BOX_DB = "trafficflow_test";
+/** Set to `1` by the freeze and by any runner that deliberately drives the shared box under the lock. */
+export const FREEZE_ENV = "OHMAIL_FREEZE";
+
+/**
+ * THE SHARED BOX IS FOR THE FREEZE ONLY — as a check rather than as a sentence in a document.
+ *
+ * On 2026-09-12, 67 of 101 worktrees carried no `.lane-db.env`, so their `*.pg.test.ts` files all
+ * ran against `trafficflow_test` and, with it, against its ADVISORY KEYS: a leader-lock case in one
+ * checkout read `worker-live` because another checkout's run held the key. That is not flakiness,
+ * it is two runs sharing one namespace, and the green it produces is meaningless in both.
+ *
+ * So a run that resolves to the shared box refuses BY NAME unless it says it is the freeze. The
+ * remedy is one line and it is in the message. Returns the refusal sentence, or null when this run
+ * may proceed.
+ */
+export function sharedBoxRefusal(url: string, env: NodeJS.ProcessEnv): string | null {
+  if (databaseOf(url) !== SHARED_BOX_DB) return null;
+  if (env[FREEZE_ENV] === "1") return null;
+  return (
+    `this run resolved to the SHARED box database (${SHARED_BOX_DB}) and no ${FREEZE_ENV}=1 was set. ` +
+    "Co-tenants on that database share its advisory keys, so a leader-lock or lease case here reads " +
+    "another checkout's state and the green means nothing. Give this checkout its own database — " +
+    "bash scripts/lane-db.sh \"$PWD\" — or set OHMAIL_FREEZE=1 if this really is the freeze run."
+  );
+}
+
 /** Set this to `1` in CI so a missing Postgres FAILS the suite instead of skipping it. */
 export const REQUIRE_PG_ENV = "TF_REQUIRE_PG";
 
@@ -241,6 +269,10 @@ export async function journalDrift(url: string): Promise<string | null> {
  * this answers false. The repair is resetting the database to this tree's journals.
  */
 export async function realPgAvailable(url: string = PG_TEST_URL): Promise<boolean> {
+  /* Asked BEFORE anything dials: a refusal that arrived after the connection would already have
+   * taken the shared box's advisory namespace for the length of the probe. */
+  const refusal = sharedBoxRefusal(url, process.env);
+  if (refusal !== null) throw new Error(`[pg] ${refusal}`);
   const c = postgres(url, { max: 1, connect_timeout: 3, onnotice: () => {} });
   let up = false;
   try {
