@@ -56,6 +56,14 @@ or not the Screener was the view you had open. It is worked out once per change 
 everything that asks for it, and a change re-derives only the senders whose mail it touched. On a
 large mailbox that is the difference between dropping frames while mail arrives and not.
 
+### A Screener decision that waited too long says so
+
+A decision you take in the Screener is written down the moment you press, so closing the app or a
+crash inside the undo window does not lose it. If the app does not open again for a day, that
+decision is too old to carry out — and it used to be dropped without a word, leaving the sender
+back in your queue with nothing to explain it. ohmail now tells you the decision waited too long to
+be sent, says how many if there were several, and asks you to decide again.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
