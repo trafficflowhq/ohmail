@@ -804,10 +804,10 @@ function gateReader(pres: EntityReader, waiting: ReadonlySet<string>): EntityRea
         ? rows.map((r) => atGate(r as unknown as EngineMessage) as unknown as T)
         : rows;
     },
-    entries<T = unknown>(type: string): Array<{ id: string; entity: T }> {
+    entries<T = unknown>(type: string): Array<{ id: string; entity: T; seq: number }> {
       const rows = pres.entries<T>(type);
       return type === "message"
-        ? rows.map((r) => ({ id: r.id, entity: atGate(r.entity as unknown as EngineMessage) as unknown as T }))
+        ? rows.map((r) => ({ id: r.id, seq: r.seq, entity: atGate(r.entity as unknown as EngineMessage) as unknown as T }))
         : rows;
     },
   };
