@@ -1,8 +1,7 @@
 import { and, asc, eq, gt, sql } from "drizzle-orm";
 import {
   accountSettings, approvals, auditLog, drafts, folderState, mailboxes,
-  messageBodies, messageStates, messages, rules as rulesTbl, recordChange, type Tx,
-} from "@trafficflow/db";
+  messageBodies, messageStates, messages, rules as rulesTbl, recordChange, type Tx, auditAction,} from "@trafficflow/db";
 import {
   migrationBulkPlacement, silentLogger,
   type Destination, type Logger, type NormalizedMessage,
@@ -205,7 +204,7 @@ export async function screenerAutoApplyPass(
         // "put it back" has to be expressible. No `rules` row and no learning-path read — the move
         // teaches no consent and grants no admission, so the sender still screens next time.
         await tx.insert(auditLog).values({
-          accountId, action: "screener_auto_apply_move",
+          accountId, action: auditAction("screener_auto_apply_move"),
           payload: { mailboxId: c.mailboxId, messageId: c.messageId, from: SCREENER, to },
           inverse: { messageId: c.messageId, from: to, to: SCREENER },
         });

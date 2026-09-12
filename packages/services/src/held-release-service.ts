@@ -1,5 +1,8 @@
 import { and, eq, inArray, isNotNull, isNull, or, sql } from "drizzle-orm";
-import { auditLog, folderState, mailboxes, messages, rules as rulesTbl, type Tx } from "@trafficflow/db";
+import {
+  auditAction, auditLog, folderState, mailboxes, messages, recordRuleDelta,
+  rules as rulesTbl, type LedgerTx, type Tx,
+} from "@trafficflow/db";
 import { dialect } from "@trafficflow/db/dialect";
 import { SCREENER_FOLDER } from "./screener-service.js";
 import { ServiceError } from "./errors.js";
@@ -20,7 +23,7 @@ import type { ServiceContext } from "./context.js";
  * moves is reported by the pass's own `rules.retro_moved`. Both are true and they answer different
  * questions — what was released, and what the rules then did with it.
  */
-export const HELD_RELEASE_AUDIT_ACTION = "screener.held_release";
+export const HELD_RELEASE_AUDIT_ACTION = auditAction("screener.held_release");
 
 /**
  * How many groups one read returns and one press may act on.
@@ -260,10 +263,14 @@ export async function releaseHeld(
         // Account-scoped, so a rule id belonging to somebody else names no row. The ownership
         // question is the same question as "is this one of my groups" and is asked once.
         .where(and(eq(rulesTbl.id, g.ruleId), eq(rulesTbl.accountId, ctx.accountId)));
+      /* THE DELTA, in the same block as the write. The press moves `release_held_at` and re-arms
+         the retro cursor, both of which a client renders, so a mirror that never heard of it
+         would show the rule as it stood before the press until something else touched it. */
+      await recordRuleDelta(t as unknown as LedgerTx, ctx.accountId, [g.ruleId], "update");
 
       await t.insert(auditLog).values({
         accountId: ctx.accountId,
-        action: HELD_RELEASE_AUDIT_ACTION,
+        action: auditAction("screener.held_release"),
         payload: {
           ruleId: g.ruleId, kind: g.kind, match: g.match,
           destination: g.destination, count: g.count,

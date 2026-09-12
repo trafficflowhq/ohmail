@@ -1,5 +1,6 @@
 import { and, desc, eq, gte, sql } from "drizzle-orm";
 import { auditLog } from "./schema-mail.js";
+import { auditAction } from "./staff-channels.js";
 import type { Tx } from "./change-log.js";
 
 /**
@@ -211,7 +212,7 @@ export async function recordProfileImportResolution(
   if (dupes.length > 0) return;
   await db.insert(auditLog).values({
     accountId: o.accountId,
-    action: PROFILE_IMPORT_RESOLVED_AUDIT_ACTION,
+    action: auditAction(PROFILE_IMPORT_RESOLVED_AUDIT_ACTION),
     payload: {
       mailboxId: o.mailboxId,
       decision: o.decision,

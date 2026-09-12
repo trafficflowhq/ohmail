@@ -292,6 +292,24 @@ export {
 } from "./closed-sets.js";
 
 /**
+ * The closed set `mailboxes.error_detail` may hold, and the evidence sets it is built from. Here
+ * rather than in the worker because BOTH ends need it: the worker's write door and the admin
+ * projection's read-side membership test, which lives two packages away.
+ */
+export {
+  MAILBOX_ERROR_DETAIL_MAX, MAILBOX_ERROR_DETAIL_TOKENS, isSafeMailboxErrorDetail,
+  CONNECT_ERRNOS, SERVER_UNAVAILABLE_CODES, SERVER_UNAVAILABLE_RESPONSE_CODES,
+  OAUTH_ERROR_DETAIL_CODES, TIMEOUT_ERRNOS, STORAGE_SQLSTATES, CERT_CODES, SQLSTATE_DETAILS,
+} from "./mailbox-error-detail.js";
+
+/** The staff-visible free-text channels: one closed set each, a write door and a read-side word. */
+export {
+  STAFF_CHANNELS, STAFF_CHANNEL_OTHER, AUDIT_LOG_ACTIONS, API_HEALTH_ERROR_CODES,
+  DB_ACQUIRE_TIMEOUT_CODE, isAuditLogAction, isApiHealthErrorCode, auditAction,
+  staffChannel, staffChannelValue, staffChannelWord, StaffChannelViolation, type StaffChannel,
+} from "./staff-channels.js";
+
+/**
  * ONE definition of the row a bought Screener suggestion is stored as — the provenance that marks
  * it, the status that keeps it inert, and the per-message transaction that writes it.
  *

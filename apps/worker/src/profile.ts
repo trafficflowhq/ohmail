@@ -2,8 +2,7 @@ import { and, desc, eq } from "drizzle-orm";
 import {
   PROFILE_FOUND_AUDIT_ACTION, auditLog, latestProfileFoundMarker, profileImportResolutionExists,
   mailboxProfileMirror,
-  type Tx,
-} from "@trafficflow/db";
+  type Tx, auditAction,} from "@trafficflow/db";
 /* NAMED AT A LEAF, NEVER AT THE PACKAGE ROOT — this module is bundled into the desktop engine.
    `@trafficflow/core`'s index carries `export *` lines that convey the whole AI runtime
    (classification, the model client, drafting, the three workflow modules) and the hosted
@@ -1127,7 +1126,7 @@ export class OrganizerProfileSync {
       }
       await deps.db.insert(auditLog).values({
         accountId: deps.accountId,
-        action: PROFILE_FOUND_AUDIT_ACTION,
+        action: auditAction(PROFILE_FOUND_AUDIT_ACTION),
         payload: fact.state === "found"
           ? {
             mailboxId: deps.mailboxId, state: fact.state, fingerprint, heldForImport,

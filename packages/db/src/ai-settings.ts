@@ -1,5 +1,6 @@
 import { eq } from "drizzle-orm";
 import { accounts, auditLog } from "./schema.js";
+import { auditAction } from "./staff-channels.js";
 import type { Tx } from "./change-log.js";
 
 /**
@@ -99,7 +100,7 @@ export async function setAiEnabled(
   await tx.update(accounts).set({ aiEnabled: enabled, aiAnsweredAt: now }).where(eq(accounts.id, accountId));
   await tx.insert(auditLog).values({
     accountId,
-    action: "account.ai_enabled",
+    action: auditAction("account.ai_enabled"),
     payload: { aiEnabled: enabled, userId: actor.userId, requestId: actor.requestId ?? null },
     // The inverse is the whole undo: this row is enough to put the setting back.
     inverse: { aiEnabled: previous },

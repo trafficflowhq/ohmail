@@ -1,5 +1,5 @@
 import { and, asc, eq, gt, sql } from "drizzle-orm";
-import { messages, attachments, auditLog, recordChange, type Tx } from "@trafficflow/db";
+import { messages, attachments, auditLog, recordChange, type Tx, auditAction} from "@trafficflow/db";
 import type { SQL } from "drizzle-orm";
 import { silentLogger, type Logger } from "@trafficflow/core";
 import type { Db } from "./context.js";
@@ -149,7 +149,7 @@ export async function runAttachmentFlagBackfill(
         // value — not an undo, a third state.
         await t.insert(auditLog).values({
           accountId: row.accountId,
-          action: "attachment_flag_backfill_row",
+          action: auditAction("attachment_flag_backfill_row"),
           payload: {
             messageId: row.messageId,
             hasAttachments: nextHas,
@@ -196,7 +196,7 @@ export async function runAttachmentFlagBackfill(
       for (const accountId of touchedAccounts) {
         await t.insert(auditLog).values({
           accountId,
-          action: "attachment_flag_backfill",
+          action: auditAction("attachment_flag_backfill"),
           payload: { mailboxId: deps.mailboxId ?? null, examined, cleared, recounted },
           inverse: null,
         });

@@ -1,8 +1,7 @@
 import { and, asc, eq, gt, isNull, sql } from "drizzle-orm";
 import {
   applyBodyBytesDelta, auditLog, bodyBytesOf, mailboxes, messageBodies, messages, recordChange,
-  type Tx,
-} from "@trafficflow/db";
+  type Tx, auditAction,} from "@trafficflow/db";
 import { dialect } from "@trafficflow/db/dialect";
 import {
   classifySensitivity, fingerprintDedupKey, messageFingerprint, normalizeMessageId, normalizeMime,
@@ -514,7 +513,7 @@ export async function sensitiveBackfillPass(
   // correction, and its `inverse` is NULL deliberately — re-redacting a message the classifier
   // has now read in full and cleared is not an operation anybody would want performed.
   await db.insert(auditLog).values({
-    accountId, action: "sensitive_fp_backfill",
+    accountId, action: auditAction("sensitive_fp_backfill"),
     payload: {
       mailboxId, examined: result.examined, candidates: result.candidates,
       fetched: result.fetched, skipped: result.skipped, cleared: result.cleared,

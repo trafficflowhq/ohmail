@@ -1,8 +1,7 @@
 import { and, asc, eq, gt, inArray, sql } from "drizzle-orm";
 import {
   mailboxes, messages, messageBodies, folderState, messageStates, drafts, approvals,
-  rules as rulesTbl, auditLog, changeLog, recordChange, type Tx,
-} from "@trafficflow/db";
+  rules as rulesTbl, auditLog, changeLog, recordChange, type Tx, auditAction,} from "@trafficflow/db";
 import {
   DEFAULT_OHBOX_POLICY, authVerdictFromHeaders, evaluateRules,
   silentLogger, type Destination, type Logger, type NormalizedMessage, type Rule,
@@ -344,7 +343,7 @@ export async function runSensitiveRescreen(
         // hundreds of messages they did not ask it to touch, and "put it back" has to be
         // expressible.
         await t.insert(auditLog).values({
-          accountId, action: "sensitive_rescreen_move",
+          accountId, action: auditAction("sensitive_rescreen_move"),
           payload: {
             mailboxId: mailbox.id, messageId: row.messageId,
             from: OHBOX, to: SCREENER, source: decision.source,
@@ -485,7 +484,7 @@ export async function runSensitiveRescreen(
     if (deps.dryRun) return null;
 
     await t.insert(auditLog).values({
-      accountId, action: "sensitive_rescreen",
+      accountId, action: auditAction("sensitive_rescreen"),
       payload: { mailboxId: mailbox.id, examined, rescreened, kept },
       inverse: null,
     });

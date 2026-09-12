@@ -1,5 +1,5 @@
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
-import { accounts, auditLog, mailboxCredentials, mailboxes, users, isMailboxSyncBlockReason } from "@trafficflow/db";
+import { accounts, auditLog, mailboxCredentials, mailboxes, users, isMailboxSyncBlockReason, staffChannelWord } from "@trafficflow/db";
 import {
   authEvents,
   invites,
@@ -265,6 +265,17 @@ export async function adminAccounts(db: AdminDb, now: Date, query: AccountQuery 
  * `pending_moves` column on `worker_heartbeats`, deferred. Until then the panel reads zero.
  */
 
+/**
+ * `lastError`, with each half read as its own closed set. The code carries the taxonomy and the
+ * detail the protocol constant, so `unknown: other` is a readable sentence: we classified the
+ * failure and came up empty, and the column then held a detail nothing in this tree wrote.
+ */
+function lastErrorWord(code: string | null, detail: string | null): string {
+  const word = staffChannelWord("mailboxes.error_code", code) ?? "unknown";
+  const suffix = staffChannelWord("mailboxes.error_detail", detail);
+  return suffix === null ? word : `${word}: ${suffix}`;
+}
+
 async function loadMailboxes(db: AdminDb, now: Date, accountIds: string[] | null): Promise<MailboxHealth[]> {
   const base = db
     .select({
@@ -313,15 +324,18 @@ async function loadMailboxes(db: AdminDb, now: Date, accountIds: string[] | null
       syncLagSeconds:
         row.status === "disabled" ? null : secondsSince(now, row.lastSyncAt ?? row.createdAt),
       // Mail 0023 closed this gap: `mailboxes` records WHY. `lastError` is the taxonomy plus an
-      // ALLOWLISTED token — an IMAP response code, a Node errno, a TLS constant, an SQLSTATE —
+      // allowlisted token — an IMAP response code, a Node errno, a TLS constant, an SQLSTATE —
       // never the error's message: a raw sync error can embed RFC822 header bytes, and staff
-      // never see an account's mail. The redaction is at the WRITE (`markMailboxFailed`), so this
-      // projection does not have to remember to be narrow. `retryBackoffSeconds` stays null,
-      // honestly: the backoff lives in the worker's in-memory quarantine map and is not persisted
-      // — `retryCount` is the durable half.
-      lastError: row.status === "error"
-        ? (row.errorDetail ? `${row.errorCode ?? "unknown"}: ${row.errorDetail}` : row.errorCode ?? "unknown")
-        : null,
+      // never see an account's mail.
+      //
+      // BOTH HALVES GO THROUGH `staffChannelWord`, and the sentence that used to stand here —
+      // "the redaction is at the WRITE, so this projection does not have to remember to be
+      // narrow" — is why. A write-site allowlist is a claim about every writer; this is a
+      // question about the value in hand, so a row planted by anything at all renders `other`.
+      // `syncBlockedReason` below has read it this way since mail 0029.
+      // `retryBackoffSeconds` stays null, honestly: the backoff lives in the worker's in-memory
+      // quarantine map and is not persisted — `retryCount` is the durable half.
+      lastError: row.status === "error" ? lastErrorWord(row.errorCode, row.errorDetail) : null,
       lastErrorAt: row.status === "error" ? iso(row.failedAt) : null,
       // Mail 0029, and its OWN bucket — NOT folded into `lastError`, and NOT gated on `status`.
       //
@@ -396,7 +410,9 @@ async function loadAudit(db: AdminDb, accountId: string | null): Promise<AuditEn
     id: row.id,
     accountId: row.accountId,
     accountName: names.get(row.accountId) ?? "",
-    action: row.action,
+    // The view's `LIKE 'admin.%'` is a FILTER, not a constraint — it decides which rows arrive,
+    // never what they say. A member, or `other`.
+    action: staffChannelWord("audit_log.action", row.action) ?? "",
     // Both bags are un-granted and unread. The DTO keeps the fields so the console's table
     // needs no change on the day a staff write path promotes an actor to a named column.
     payload: {},

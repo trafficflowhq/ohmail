@@ -4,6 +4,7 @@ import { sql } from "drizzle-orm";
    every other reader of the two stores follows, and the only one a caller cannot get wrong by
    forgetting to set something. */
 import { dialect, dialectOf, pgOnly } from "@trafficflow/db/dialect";
+import { staffChannelWord } from "@trafficflow/db";
 import { kekEnvIdentity } from "@trafficflow/core/mail";
 import { fullSchemaCensus } from "./health-census.js";
 import { API_VERSION } from "../version.js";
@@ -976,6 +977,19 @@ export type HealthProbe =
   | { kind: "live"; dbLatencyMs: number }
   | { kind: "probed"; dbLatencyMs: number; pgTrgm: boolean; schemaOk: boolean; markersFound: number };
 
+/**
+ * WHAT A FAILED PROBE MAY SAY IT WAS. The staff console prints this string under the red banner
+ * on `/reliability`, and until now it was `err.code` verbatim — the driver's word, or, one hop
+ * further out, the host's. `api_health.error_code` is the closed set of driver codes this
+ * codebase already names for these failures plus our own acquire timeout; anything else reads
+ * `other`, which is what "the database threw something we cannot name" honestly looks like.
+ *
+ * The one runtime-composed member of the staff-channel registry, which is why it is in it.
+ */
+function probeErrorCode(err: unknown): string | null {
+  return staffChannelWord("api_health.error_code", (err as { code?: unknown } | null)?.code);
+}
+
 export async function probeDatabase(
   db: ApiDeps["db"],
   /**
@@ -1054,11 +1068,10 @@ export async function probeDatabase(
       if (Number(one) !== 1) return { kind: "empty", dbLatencyMs };
       return { kind: "live", dbLatencyMs };
     } catch (err) {
-      const code = (err as { code?: unknown } | null)?.code;
       return {
         kind: "unreachable",
         dbLatencyMs: Date.now() - started,
-        errorCode: typeof code === "string" ? code : null,
+        errorCode: probeErrorCode(err),
       };
     }
   }
@@ -1161,11 +1174,10 @@ export async function probeDatabase(
       markersFound,
     };
   } catch (err) {
-    const code = (err as { code?: unknown } | null)?.code;
     return {
       kind: "unreachable",
       dbLatencyMs: Date.now() - started,
-      errorCode: typeof code === "string" ? code : null,
+      errorCode: probeErrorCode(err),
     };
   }
 }

@@ -1,5 +1,5 @@
 import { and, asc, eq, gt, sql } from "drizzle-orm";
-import { applyBodyBytesDelta, auditLog, bodyBytesOf, messageBodies, messages, recordChange, type Tx } from "@trafficflow/db";
+import { applyBodyBytesDelta, auditLog, bodyBytesOf, messageBodies, messages, recordChange, type Tx, auditAction} from "@trafficflow/db";
 import { dialect } from "@trafficflow/db/dialect";
 import {
   fingerprintDedupKey, messageFingerprint, normalizeMessageId, normalizeMime,
@@ -191,7 +191,7 @@ export async function redactedRestorePass(
 
   if (result.restored > 0 || result.fetched > 0) {
     await db.insert(auditLog).values({
-      accountId, action: "redacted_body_restore",
+      accountId, action: auditAction("redacted_body_restore"),
       payload: {
         mailboxId, examined: result.examined, fetched: result.fetched, skipped: result.skipped,
         restored: result.restored, unreadable: result.unreadable, mismatched: result.mismatched,

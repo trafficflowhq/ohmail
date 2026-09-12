@@ -1,6 +1,6 @@
 import { and, eq } from "drizzle-orm";
 import {
-  rules as rulesTbl, messages, folderState, auditLog, recordRuleDelta, type Tx,
+  rules as rulesTbl, messages, folderState, auditLog, recordRuleDelta, auditAction, type Tx,
 } from "@trafficflow/db";
 import type {
   AdapterPort, Destination, MigrationObservation, FolderScanner, NativeLocator, ScanOptions,
@@ -148,7 +148,7 @@ export class HeyMigrationService {
         // Append-only audit with the inverse (undo) action (spec §13.3 / §16 reversibility).
         await tx.insert(auditLog).values({
           accountId: ctx.accountId,
-          action: "hey_migrate",
+          action: auditAction("hey_migrate"),
           payload: { createdRuleIds: createdIds, observations: deduped.length },
           inverse: { action: "undo_hey_migration", ruleIds: createdIds },
         });
@@ -176,7 +176,7 @@ export class HeyMigrationService {
       if (removedRows.length > 0) {
         await tx.insert(auditLog).values({
           accountId: ctx.accountId,
-          action: "undo_hey_migration",
+          action: auditAction("undo_hey_migration"),
           payload: { removedRuleIds: removedRows.map((r) => r.id) },
           inverse: { action: "hey_migrate" },
         });

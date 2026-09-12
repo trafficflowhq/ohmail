@@ -1,8 +1,7 @@
 import { and, asc, eq, gt, inArray, isNotNull, isNull, or, sql } from "drizzle-orm";
 import {
   accountSettings, approvals, auditLog, autoReplyByUsWhere, drafts, folderState, mailboxes,
-  messageBodies, messageStates, messages, recordChange, type Tx,
-} from "@trafficflow/db";
+  messageBodies, messageStates, messages, recordChange, type Tx, auditAction,} from "@trafficflow/db";
 import {
   authVerdictFromHeaders, evaluateRules,
   migrationBulkPlacement, resolveOhboxPolicy, silentLogger,
@@ -431,7 +430,7 @@ export async function ohboxTidyPass(
           // `matchedRuleId: null` on every basis, so the move teaches no consent and the next message
           // from this sender still screens.
           await tx.insert(auditLog).values({
-            accountId, action: "ohbox_tidy_move",
+            accountId, action: auditAction("ohbox_tidy_move"),
             payload: {
               mailboxId: c.mailboxId, messageId: c.messageId,
               from: c.desiredFolder, to, basis: placement.basis, overriddenRuleId: placement.overriddenRuleId,

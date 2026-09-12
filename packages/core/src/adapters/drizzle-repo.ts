@@ -1,6 +1,6 @@
 import { and, asc, desc, eq, inArray, isNull, lte, or, sql, type SQL, type SQLWrapper } from "drizzle-orm";
 import type { AnyPgColumn } from "drizzle-orm/pg-core";
-import { accountStorage, changeLog, messages, messageInstances, messageFailures, folderOps, folderState, flagState, mailboxes, mailboxCredentials, mailboxFolders, threads, rules as rulesTbl, contacts as contactsTbl, auditLog, messageBodies, attachments as attachmentsTbl, routingDecisions, approvals, graduations, recordRouteOverride, routeOverrideActionId, awayReplies, awaySenderState, recordChange as recordChangeTx, recordChanges as recordChangesTx, bodyBytesOf, reserveBodyBytes, reserveBodyBytesEvicting, releaseBodyBytes, type ChangeInput, type LedgerTx, type Tx, type EntityType, ACCOUNT_THREAD_STRUCTURE_LOCK_CLASS, dueNow as sharedDueNow, type FilingRefusalClass } from "@trafficflow/db";
+import { accountStorage, changeLog, messages, messageInstances, messageFailures, folderOps, folderState, flagState, mailboxes, mailboxCredentials, mailboxFolders, threads, rules as rulesTbl, contacts as contactsTbl, auditLog, messageBodies, attachments as attachmentsTbl, routingDecisions, approvals, graduations, recordRouteOverride, routeOverrideActionId, awayReplies, awaySenderState, recordChange as recordChangeTx, recordChanges as recordChangesTx, bodyBytesOf, reserveBodyBytes, reserveBodyBytesEvicting, releaseBodyBytes, type ChangeInput, type LedgerTx, type Tx, type EntityType, auditAction, ACCOUNT_THREAD_STRUCTURE_LOCK_CLASS, dueNow as sharedDueNow, type FilingRefusalClass } from "@trafficflow/db";
 import type {
   RepoPort, RoutingPort, ExternalOverrideInput, ExternalOverrideOutcome,
   StoredMessage, InsertedMessage, InsertMessageInput, FolderStateRow, FlagStateRow,
@@ -1484,9 +1484,15 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
     return new Set(rows.map((r) => r.address.toLowerCase()));
   }
 
+  /**
+   * `action` is a bare `string` on the port and always will be — the callers are passes, not a
+   * union. `auditAction` is what makes it closed: a word outside `AUDIT_LOG_ACTIONS`
+   * throws here rather than landing in a column the admin console renders.
+   */
   async recordAudit(accountId: string, action: string, payload: unknown, inverse: unknown): Promise<void> {
     await this.db.insert(auditLog).values({
-      accountId, action, payload: payload ?? null, inverse: inverse ?? null,
+      accountId, action: auditAction(action),
+      payload: payload ?? null, inverse: inverse ?? null,
     });
   }
 
@@ -1496,7 +1502,8 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
   ): Promise<void> {
     if (rows.length === 0) return;
     await this.db.insert(auditLog).values(rows.map((r) => ({
-      accountId, action: r.action, payload: r.payload ?? null, inverse: r.inverse ?? null,
+      accountId, action: auditAction(r.action),
+      payload: r.payload ?? null, inverse: r.inverse ?? null,
     })));
   }
 

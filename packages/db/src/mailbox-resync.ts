@@ -1,5 +1,6 @@
 import { and, eq, isNotNull } from "drizzle-orm";
 import { auditLog, mailboxes } from "./schema.js";
+import { auditAction } from "./staff-channels.js";
 import type { Tx } from "./change-log.js";
 
 /**
@@ -67,7 +68,7 @@ export async function resyncMailbox(db: Tx, input: MailboxResyncWrite): Promise<
 
     await tx.insert(auditLog).values({
       accountId: row.accountId,
-      action: "admin.mailbox.resync",
+      action: auditAction("admin.mailbox.resync"),
       payload: { mailbox_id: mailboxId, account_id: row.accountId, note, actor: staffId },
       // No inverse. Re-parking a mailbox is not an operator action — the backoff is the worker's
       // to set, from an observed failure, and a console that could impose one would be inventing
