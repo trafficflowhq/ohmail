@@ -11,7 +11,9 @@ import type { EngineMessage, Folder, RuleDTO } from "./types.js";
    INBOX is not consent, a decision's record is a rule; (2) decisions rule
    the future — the past moves only on explicit request, so placement stays
    as the server has it and the product filters what it shows. For mail in
-   the two undecided residences (INBOX, Screener folder): a ruled sender
+   the two undecided residences (INBOX, Screener folder): active mail held
+   at the GATE presents at the gate, rule or no rule — a rule that has not
+   moved the mail changes nothing a person sees; a ruled sender's other mail
    presents in the rule's destination (zero server moves); unruled + active
    → Screener; unruled + dormant → History. Explicit placements elsewhere
    are never second-guessed. History has no badge — under a baseline it can
@@ -404,10 +406,26 @@ export function consentPartition(reader: EntityReader, opts: ConsentOptions = {}
     // An explicit placement is already an answer. Never second-guessed.
     if (!UNDECIDED_RESIDENCES.has(m.folder)) { placeOf.set(m.id, m.folder); continue; }
 
-    if (decided !== null) {
+    const active = activity.get(key) === "active";
+    /**
+     * A RULE THAT HAS NOT MOVED THE MAIL CHANGES NOTHING A PERSON SEES. Mail PHYSICALLY at the
+     * gate presents at the gate whatever destination a rule names for its sender: the client
+     * never predicts a destination for held mail, and `GET /screener` — which consults no rules
+     * at all — is the authority wherever there is a server. The projection is for mail the gate
+     * is NOT holding. Measured on a real mailbox: nine senders held, five of them ruled to a
+     * consenting destination weeks before their mail arrived, four shown. The cutline still
+     * decides on both ends, which is what keeps the backfill this projection was built for: an
+     * already-filed backlog is old and read, so a consented sender's retired gate mail still
+     * presents in the Ohbox with nothing moved.
+     */
+    const heldAtGate = active && m.folder === "ohmail/Screener";
+    if (decided !== null && !heldAtGate) {
       placeOf.set(m.id, decided);
-    } else if (activity.get(key) === "active") {
-      activeUndecided.add(key);
+    } else if (active) {
+      // The COUNTS keep the cutline's own question — senders with no rule still owed a decision —
+      // because that is the one `cutlineCounts` answers in SQL and the parity test pins. Only the
+      // PLACE moves here; a ruled sender is `decided` on both sides of that pin.
+      if (decided === null) activeUndecided.add(key);
       placeOf.set(m.id, "ohmail/Screener");
     } else {
       dormantUndecided.add(key);
