@@ -1469,6 +1469,22 @@ export const OUTBOX_UNKEYED_CREATE_TTL_MS = 24 * 60 * 60 * 1000;
  * `ready` record is never re-fetched ({@link OhmailEngine.bodyPlan}). A whole mailbox would be
  * hundreds of megabytes, which is why the tail deliberately never enters the pass.
  */
+/**
+ * HOW MANY BACKLOG PAGES SHARE ONE PUBLISH, while a drain is catching up.
+ *
+ * A publish is what makes the shell re-derive the whole mirror and re-render, and during a first
+ * import that is the renderer's whole cost. Measured in a real browser renderer over a large
+ * mailbox: the same shell over the same settled window costs 660 MB mounted AFTER the import and
+ * 950 MB when it renders its way through it a page at a time — about 1.8 MB of resident peak per
+ * re-render. Nothing else moved that number: not the window's row ceiling (five and ten thousand
+ * read the same), not the eager body pass, not the page cadence, not how much mail there was.
+ *
+ * Eight because it is the largest step that still reads as mail arriving rather than as a screen
+ * that jumps: at the deployed backlog page size it is one visible update per few thousand messages,
+ * several times a minute on a real import. A catch-up that ends mid-group publishes at the settle.
+ */
+export const BACKLOG_PUBLISH_PAGES = 8;
+
 export const EAGER_BODIES_MAX = 1000;
 
 /**
@@ -2468,7 +2484,9 @@ export class OhmailEngine {
         // see {@link pruneToPolicy}. One notify for the apply and the prune together: they are one
         // change to the mirror as far as any reader is concerned, and two is two derivations.
         await this.pruneToPolicy(highBefore);
-        this.notify();
+        // AND ONE PUBLISH PER {@link BACKLOG_PUBLISH_PAGES} OF THEM — see the constant. The settle
+        // below always publishes, so the last rows never wait on this.
+        if (pagesThisDrain % BACKLOG_PUBLISH_PAGES === 0) this.notify();
         continue;
       }
       this.notify();
@@ -2650,10 +2668,22 @@ export class OhmailEngine {
     // {@link EAGER_BODIES_SLICE} single requests, and without a check in there a teardown between
     // the batch response and its tail let a discarded engine issue every one of them.
     const stopped = (): boolean => gen !== this.eagerGen;
+    /**
+     * ONE PUBLISH FOR THE PASS, not one per slice. Each slice wrote its loading markers and then
+     * its answers, and every one of those bumped the mirror version and re-ran the shell's
+     * whole-mirror derivations — a thousand bodies in forty-id slices is around a hundred
+     * derivations over a ten-thousand-row window, measured at 236 MB of the renderer's resident
+     * peak on a large mailbox, for bodies nobody had opened. `quiet` defers the publish;
+     * `putBodies` still publishes immediately for any batch carrying a message on screen.
+     */
     for (let i = 0; i < ids.length; i += EAGER_BODIES_SLICE) {
       if (stopped()) return;
-      await this.hydrateMany(ids.slice(i, i + EAGER_BODIES_SLICE), { rendered: false, stopped });
+      await this.hydrateMany(ids.slice(i, i + EAGER_BODIES_SLICE), { rendered: false, stopped, quiet: true });
     }
+    // The pass's own publish. The store's version carries every quiet write, so one notify here
+    // is one derivation for the whole pass; a pass that wrote nothing moved no version and costs
+    // the shell nothing.
+    this.notify();
   }
 
   /**
@@ -3289,6 +3319,7 @@ export class OhmailEngine {
    */
   private async markLoadingBatch(
     chunk: ReadonlyArray<{ id: string; held: MessageBodyRecord | undefined }>,
+    opts: { quiet?: boolean } = {},
   ): Promise<void> {
     const markers = chunk
       .filter((c) => c.held?.state !== "ready")
@@ -3299,7 +3330,7 @@ export class OhmailEngine {
         },
       }));
     try {
-      await this.putBodies(markers);
+      await this.putBodies(markers, opts);
     } catch {
       /* the mirror refused the markers; ask anyway — see above, never rethrow */
     }
@@ -3351,7 +3382,7 @@ export class OhmailEngine {
    */
   private hydrateMany(
     messageIds: string[],
-    opts: { rendered: boolean; stopped?: () => boolean },
+    opts: { rendered: boolean; stopped?: () => boolean; quiet?: boolean },
   ): Promise<void> {
     const fetchBodies = this.fetchBodiesFn;
     const ids = [...new Set(messageIds)];
@@ -3395,8 +3426,9 @@ export class OhmailEngine {
     for (let i = 0; i < take.length; i += BODIES_IDS_MAX) {
       const chunk = take.slice(i, i + BODIES_IDS_MAX);
       const chunkIds = chunk.map((c) => c.id);
-      const run = this.markLoadingBatch(chunk)
-        .then(() => this.bodySlot(false, () => this.fetchBodiesInto(chunkIds, fetchBodies, opts.stopped), chunkIds))
+      const quiet = { quiet: opts.quiet === true };
+      const run = this.markLoadingBatch(chunk, quiet)
+        .then(() => this.bodySlot(false, () => this.fetchBodiesInto(chunkIds, fetchBodies, opts.stopped, quiet), chunkIds))
         .finally(() => {
           for (const id of chunkIds) this.bodyRequests.delete(id);
         });
@@ -3420,6 +3452,7 @@ export class OhmailEngine {
     ids: string[],
     fetchBodies: FetchBodiesFn,
     stopped?: () => boolean,
+    opts: { quiet?: boolean } = {},
   ): Promise<void> {
     let rows: MessageBodyBatchWire[] | null;
     try {
@@ -3466,7 +3499,7 @@ export class OhmailEngine {
       });
     }
     try {
-      await this.putBodies(answered);
+      await this.putBodies(answered, opts);
     } catch (err) {
       // The commit is all-or-nothing, so a refusal leaves NONE of them written — every id the
       // batch answered gets the `failed` record it would have got asking alone.
@@ -3662,6 +3695,7 @@ export class OhmailEngine {
    */
   private async putBodies(
     entries: ReadonlyArray<{ id: string; record: MessageBodyRecord | null }>,
+    opts: { quiet?: boolean } = {},
   ): Promise<void> {
     if (entries.length === 0) return;
     await this.store.commitLocal(
@@ -3669,7 +3703,16 @@ export class OhmailEngine {
       [],
     );
     for (const e of entries) if (e.record?.state === "ready") this.touchBody(e.id);
-    this.notify();
+    /**
+     * A QUIET WRITE IS ONE NOBODY IS WAITING FOR — see {@link OhmailEngine.runEagerBodies}, which
+     * publishes once for its whole pass instead of once per slice. The valve is not optional: a
+     * batch carrying a message the reader is actually looking at IS being waited for, and a body
+     * that lands without a publish leaves that message saying "loading…" until something else
+     * happens to notify. `renderedIds` is the engine's own answer to "what is on screen".
+     */
+    const awaited = opts.quiet === true
+      && entries.some((e) => this.renderedIds.has(e.id));
+    if (opts.quiet !== true || awaited) this.notify();
     await this.trimBodyCache();
   }
 
