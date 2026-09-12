@@ -206,6 +206,7 @@ export interface MailboxDTO {
     inboundQuietSince?: string | null;
     inboundQuietDismissedAt?: string | null;
     smtpMaxSizeBytes?: number | null;
+    junkFolder?: string | null;
     messageCount?: number;
     serverMessageCount?: number;
 }

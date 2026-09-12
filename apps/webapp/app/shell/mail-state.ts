@@ -652,6 +652,15 @@ export interface MailboxFacts {
    */
   smtpMaxSizeBytes?: number | null;
   /**
+   * The provider's own Junk folder, canonical path, as discovery resolved it at the last attach.
+   * `deriveMailState` never reads it: a folder name says nothing about whether mail is arriving.
+   * It is here because the two surfaces where somebody hunts for missing mail — the rail's
+   * folders group and search's empty state — can only NAME the place the provider put it if they
+   * are told what this server calls it. Optional AND nullable on {@link
+   * MailboxFacts.smtpMaxSizeBytes}'s rule; both absences render the note silent.
+   */
+  junkFolder?: string | null;
+  /**
    * Why sending is not set up for this mailbox — the probe's own reason, or
    * `null`/absent when it is. An outgoing server is not a reason to stop
    * receiving: the local door stores the incoming credential when only the

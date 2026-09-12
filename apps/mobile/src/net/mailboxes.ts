@@ -32,6 +32,19 @@ export interface PhoneMailbox {
    * own row and every reader's row before its first cycle.
    */
   organizerState: "held" | "stopped" | null;
+  /**
+   * The mailbox's lifecycle status, raw. Read by {@link junkFolderSaid} and nothing else on this
+   * phone: `"disabled"` is another install's mailbox, and this app must not speak for it. `null`
+   * where the wire named none, which every caller treats as "not disabled".
+   */
+  status: string | null;
+  /**
+   * The provider's OWN Junk folder, canonical path — `MailboxDTO.junkFolder`, discovered at the
+   * organizer's last attach. ohmail never mirrors that folder, so junked mail is in no list on
+   * this phone; the More screen's folders group names it so the person hunting for a message
+   * knows where it went. `null` is "no Junk folder, or nothing has attached yet" — both silent.
+   */
+  junkFolder: string | null;
 }
 
 /** A `{kind,name}` holder, kept only when the wire really names one. */
@@ -94,6 +107,10 @@ export async function readMailboxes(session: ConnectedSession): Promise<PhoneMai
         address: r.address,
         organizedBy: holderOf(r.organizedBy),
         organizerState: stateOf(r.organizerState),
+        status: typeof r.status === "string" && r.status !== "" ? r.status : null,
+        /* An empty string is not a folder name. A server that predates the field sends nothing
+           here, which lands as `null` — the same instruction as "no Junk folder": say nothing. */
+        junkFolder: typeof r.junkFolder === "string" && r.junkFolder !== "" ? r.junkFolder : null,
       });
     }
     return out;

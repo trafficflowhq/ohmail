@@ -37,6 +37,8 @@ interface MailboxWire {
   lastSyncAt: string | null;
   initialImportCompletedAt?: string | null;
   smtpMaxSizeBytes?: number | null;
+  /** The provider's own Junk folder, canonical path — absent/null when there is none. See `MailboxFacts`. */
+  junkFolder?: string | null;
   /** Why sending is not set up, or absent/null when it is. See `MailboxFacts`. */
   sendingUnsettledReason?: string | null;
   /**
@@ -178,6 +180,11 @@ export async function readMailboxFactsVia(
     // standalone door's attach cap can follow the user's own server instead of the hosted
     // constant; the engine has served it all along, and this narrowing used to drop it.
     ...("smtpMaxSizeBytes" in m ? { smtpMaxSizeBytes: m.smtpMaxSizeBytes } : {}),
+    // The provider's own Junk folder (mail 0065), spread on this file's rule: absent is an
+    // engine that predates the field, `null` is a mailbox with no Junk folder, and the note
+    // both surfaces render is silent for either — but the distinction is not this seam's to
+    // collapse. Without it the standalone door's rail and search never name the folder at all.
+    ...("junkFolder" in m ? { junkFolder: m.junkFolder } : {}),
     /* SPREAD, on the rule this file follows for every optional field: absent means an engine that
        predates the field and has nothing to say, which is a different answer from `null`
        ("sending is settled") even though both render the same. */

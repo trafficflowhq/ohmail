@@ -31,6 +31,7 @@ import {
   type FoldersConsent,
 } from "../net/consent";
 import { readMailboxes, type PhoneMailbox } from "../net/mailboxes";
+import { junkFolderSaid } from "./folders";
 import { readScreenerWaiting, type ServerWaitingSender } from "../net/screener";
 import { PHONE_CLAIM_NAME, organizesHere } from "../engine/standalone-door";
 /* THE DOOR ANSWERING FOR ITSELF, with no request — `organizer-session.ts` holds the one engine
@@ -282,6 +283,13 @@ export interface World {
      * several, or when folders already exist (the sections carry the affordance then).
      */
     soleCreateMailboxId: string | null;
+    /**
+     * WHAT THE GROUP'S FOOT SAYS ABOUT THE PROVIDER'S JUNK FOLDER — ohmail never mirrors
+     * `\Junk`, so junked mail is in no list here and the person hunting for it is owed the
+     * name of the place it went ({@link junkFolderSaid}). `null` is "say nothing": no Junk
+     * folder, nothing attached yet, or a server that predates the field.
+     */
+    junkSaid: { named: string } | "unnamed" | null;
   };
   /**
    * THE ACCOUNT'S STORED SIGNATURES — `{ mailboxId: text }`, from the consent read (`GET
@@ -445,6 +453,8 @@ function emptyWorld(actions: WorldActions): World {
       // Could-not-count, honestly: nothing is connected, so nothing can be counted.
       summary: () => Promise.resolve(null),
       soleCreateMailboxId: null,
+      // Nothing is connected, so no mailbox has been read and there is no folder to name.
+      junkSaid: null,
     },
     signatures: null,
     // No account, so no account face, nothing that could have been read, and nothing to write one
@@ -1144,6 +1154,10 @@ export function WorldProvider({ children }: { children: ReactNode }) {
           // pass, paid exactly in the zero-folders state it serves.
           soleCreateMailboxId:
             foldersOn && list.length === 0 ? soleMessageMailbox(engine.read()) : null,
+          // Off the MAILBOX facts, not the entities: `\Junk` is excluded from the inventory
+          // whole, so no `folder` entity can ever carry it. `null` while the roster has not
+          // been read — an unasked question is not the answer "there is no Junk folder".
+          junkSaid: junkFolderSaid(mailboxes ?? []),
         };
       })(),
       signatures,

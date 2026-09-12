@@ -168,6 +168,8 @@ export function SearchView({
   placeOf,
   onServerSearch,
   onExit,
+  junkSaid = null,
+  junkReadable = false,
 }: {
   engine: OhmailEngine;
   version: number;
@@ -202,8 +204,19 @@ export function SearchView({
    * desktop's fixture mount is unchanged; with no exit the key stops at clearing the box.
    */
   onExit?: () => void;
+  /**
+   * WHAT THE EMPTY STATE SAYS ABOUT THE PROVIDER'S JUNK FOLDER ({@link junkFolderSaid}) — the
+   * scope line's own rule, one folder further: `\Junk` is never mirrored, so no pass this view
+   * runs can reach it and "Nothing here" is a claim about a corpus that excludes the one place
+   * the provider puts the mail a person is most often hunting for. `null` renders nothing.
+   */
+  junkSaid?: { named: string } | "unnamed" | null;
+  /** Can this build open that folder — drops the pointer sentence, keeps the statement. */
+  junkReadable?: boolean;
 }) {
   const t = useTranslations("search");
+  /* The pointer lives in `screener`, beside the segment it names — one sentence, one translation. */
+  const ts = useTranslations("screener");
   const [filter, setFilter] = useState<Filter | null>(null);
 
   /**
@@ -725,6 +738,14 @@ export function SearchView({
               <span className="glyph">🌫</span>
               <b>{current?.state === "ready" ? t("emptyTitleAll") : t("emptyTitle")}</b>
               {scope}
+              {/* …and the pass that does not exist. No arm of `scope` can name the provider's
+                  Junk folder, because nothing here ever searched it (JUNK-INVISIBLE). */}
+              {junkSaid !== null ? (
+                <span data-testid="search-junk-scope">
+                  {junkSaid === "unnamed" ? t("junkScopeUnnamed") : t("junkScope", { folder: junkSaid.named })}
+                  {junkReadable ? <> {ts("junkElsewhere")}</> : null}
+                </span>
+              ) : null}
             </div>
           ) : (
             <>

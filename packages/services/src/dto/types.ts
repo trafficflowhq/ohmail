@@ -680,6 +680,18 @@ export interface MailboxDTO {
    */
   smtpMaxSizeBytes?: number | null;
   /**
+   * The provider's OWN Junk folder, canonical path, as discovery resolved it at the last attach
+   * (mail 0065 — SPECIAL-USE `\Junk` first, then the well-known leaf names). It is on the wire
+   * for one reason: ohmail never mirrors that folder, so mail the provider junked is in no list
+   * and no search here, and the surfaces where somebody hunts for missing mail can only NAME the
+   * place it went if they are told its name — "Junk" on iCloud, "Spam" on Gmail, "Spamverdacht"
+   * on GMX. `null` is two states the client does not need apart, because both mean "say nothing":
+   * the mailbox has no Junk folder, or nothing has attached to it yet. ABSENT is an API older
+   * than this field. The path is the account's own folder name and goes to the account's own
+   * clients; it is not on the admin projection.
+   */
+  junkFolder?: string | null;
+  /**
    * Why sending is not set up for this mailbox — a reason code, or `null` when it is. An outgoing
    * server is not a reason to stop receiving: a refused submission dial used to abort the whole
    * connect, so a mailbox whose incoming server worked could not be connected at all. The connect

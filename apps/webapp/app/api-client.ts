@@ -935,6 +935,14 @@ export interface MailboxDTO {
    */
   smtpMaxSizeBytes?: number | null;
   /**
+   * The provider's own Junk folder, canonical path, as discovery resolved it at the last attach
+   * (mail 0065). ohmail never mirrors that folder, so the surfaces that explain where mail went
+   * read this to NAME it — "Junk", "Spam", "Spamverdacht", whatever this server calls it.
+   * Optional (an older API omits it) and nullable (no Junk folder, or nothing has attached yet);
+   * every absence is the same instruction to the renderer: say nothing.
+   */
+  junkFolder?: string | null;
+  /**
    * How much mail is in this mailbox — present only on a response to
    * `?counts=1`. Optional for a DIFFERENT reason from every other field on
    * this type: not server age, but that THIS client decides per request

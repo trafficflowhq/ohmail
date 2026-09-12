@@ -70,6 +70,7 @@ export function FoldersGroup({
   onOpen,
   verbs,
   soleMailboxId,
+  junkSaid = null,
 }: {
   /** The mirror's `folder` entities — already flag-gated by the world layer. */
   folders: FolderEntity[];
@@ -84,6 +85,13 @@ export function FoldersGroup({
    * several (see the header's stated degradation).
    */
   soleMailboxId?: string | null;
+  /**
+   * WHAT THE FOOT SAYS ABOUT THE PROVIDER'S JUNK FOLDER (`state/folders.ts#junkFolderSaid`) —
+   * `\Junk` is excluded from the inventory whole, so mail the mail server junked can never
+   * appear above and nothing else on this phone would ever say where it went. No pointer here:
+   * this app has no Junk window, so the sentence states and stops. `null` renders nothing.
+   */
+  junkSaid?: { named: string } | "unnamed" | null;
 }) {
   const t = useTheme();
   /** The opened branches, per visit — the spec's opened-set, see the header on persistence. */
@@ -480,6 +488,18 @@ export function FoldersGroup({
           </View>
         );
       })}
+      {/* THE FOOT — what this list does NOT contain, and where that mail is (JUNK-INVISIBLE).
+          The webapp rail's own line, in this screen's note idiom. */}
+      {junkSaid !== null ? (
+        <Txt
+          variant="note"
+          tone="ink3"
+          style={{ paddingHorizontal: 20, paddingVertical: 10 }}
+          accessibilityLabel={junkSaid === "unnamed" ? Copy.junkNoteUnnamed : Copy.junkNote(junkSaid.named)}
+        >
+          {junkSaid === "unnamed" ? Copy.junkNoteUnnamed : Copy.junkNote(junkSaid.named)}
+        </Txt>
+      ) : null}
 
       {/* ── the verb sheet: Rename / New subfolder / Delete… — one folder's commands ──────── */}
       {open !== null && open.kind === "menu" ? (

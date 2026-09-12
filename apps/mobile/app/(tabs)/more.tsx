@@ -92,6 +92,8 @@ export default function MoreScreen() {
                 summary: w.folders.summary,
               }}
               soleMailboxId={w.folders.soleCreateMailboxId}
+              /* What this list does NOT hold, and where that mail is (JUNK-INVISIBLE). */
+              junkSaid={w.folders.junkSaid}
             />
           ) : null}
 

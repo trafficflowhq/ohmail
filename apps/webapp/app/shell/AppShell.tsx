@@ -118,7 +118,7 @@ import { FoldersRow } from "./FoldersRow";
 import { SignaturesRow } from "./SignaturesRow";
 import { FoldersRailGroup } from "./FoldersRailGroup";
 import { useFolderVerbs } from "./folder-verbs";
-import { folderTailVerdict, folderUnreadCounts } from "./folders";
+import { folderTailVerdict, folderUnreadCounts, junkFolderSaid } from "./folders";
 import { AwayResponderRow, type AwayTransport } from "./AwayResponderRow";
 import { AwayNotice, useAwayNotice } from "./AwayNotice";
 import { OhmarchyOffer, useOhmarchyOffer } from "./OhmarchyOffer";
@@ -2171,6 +2171,16 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
     toast,
     junkWire,
   );
+  /**
+   * WHAT TO SAY ABOUT THE PROVIDER'S JUNK FOLDER, and whether to offer the way in — the honest
+   * half of JUNK-INVISIBLE, read by the rail's folders group and by search's empty state. The
+   * subject is the account's own mailbox facts, because `\Junk` is excluded from the folder
+   * inventory whole and no `folder` entity can ever carry it. The pointer rides the SAME gate
+   * that decides whether the Screener's Junk segment exists, so neither surface can send
+   * somebody to a segment this build withholds.
+   */
+  const junkSaid = useMemo(() => junkFolderSaid(facts ?? []), [facts]);
+  const junkReadable = !demo && consent.foldersEnabled && junkWindow.supported;
   /**
    * Is there anywhere for the away responder to be stored — the one gate
    * the control, its Ohbox notice and its Settings entry all read, so the
@@ -6060,6 +6070,9 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
                 unread={folderUnread}
                 verbs={demo ? undefined : folderVerbs}
                 accountMailboxes={demo ? undefined : folderMailboxes}
+                /* What this list does NOT hold, and where that mail is (JUNK-INVISIBLE). */
+                junkSaid={junkSaid}
+                junkReadable={junkReadable}
                 /* The third render (the folder-delivery review): with the flag ON and ZERO
                    entities, "no folders on your server" and "the first drain has not finished"
                    are different sentences — `bootstrapping` is exactly that window, and
@@ -6156,6 +6169,9 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
       tagGroups, tags, createTagAlone, consent.foldersEnabled, consent.known, folders,
       folderUnread, folderVerbs, folderMailboxes, demo, syncStatus.bootstrapping, route.view,
       route.folderId, facts,
+      /* The junk note at the folders group's foot — `facts` above is its SOURCE, not its value:
+         the derivation collapses many rows to one answer, so the memo must watch the answer. */
+      junkSaid, junkReadable,
       /* The count the transient entry renders. `route.view` is already here (the spread's own
          condition), so this is the only new dependency the entry needs. */
       trashPage.items.length,
@@ -7200,6 +7216,10 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
                    deliberately not projected — mail in History must stay searchable. */
                 placeOf={consentView?.placeOf}
                 onServerSearch={() => toast(t("search.toastServer"))}
+                /* The pass that does not exist — the provider's Junk folder is never mirrored,
+                   so "Nothing here" is a claim about a corpus that excludes it. */
+                junkSaid={junkSaid}
+                junkReadable={junkReadable}
                 /* Esc's second press (the first clears the box) — back to the view `/` was
                    pressed in, falling to the Ohbox when this tab's session began in Search. */
                 onExit={() => {

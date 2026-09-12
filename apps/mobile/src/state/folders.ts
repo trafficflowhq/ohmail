@@ -149,3 +149,38 @@ export function folderUnreadDeep(
 export function folderMatches(path: string, query: string): boolean {
   return path.toLowerCase().includes(query.toLowerCase());
 }
+
+/**
+ * One mailbox, reduced to what {@link junkFolderSaid} reads — structural, this module's rule.
+ * NOT `…Mailbox`: this app's sources are scanned for real mail-vendor names and that spelling
+ * hides one across the word boundary (`privacy.test.ts` caught it).
+ */
+export interface JunkBearingRow {
+  /** `"disabled"` is another install's mailbox; `null`/absent is "the wire named none". */
+  status?: string | null;
+  /** `MailboxDTO.junkFolder` — the provider's own Junk path, or null/absent when there is none to name. */
+  junkFolder?: string | null;
+}
+
+/**
+ * WHAT TO SAY ABOUT THE PROVIDER'S JUNK FOLDER, or `null` for "say nothing" — mirrored from
+ * `apps/webapp/app/shell/folders.ts#junkFolderSaid`, which carries the reasoning. ohmail never
+ * mirrors the provider's `\Junk`, so junked mail is in no list and no search on this phone
+ * either; the sentence names the folder when every naming mailbox agrees, says it without a name
+ * when they disagree (one server's `Spam` beside another's `Junk`, where one name would be wrong
+ * for somebody), and stays silent when there is nothing to assert.
+ */
+export function junkFolderSaid(
+  mailboxes: readonly JunkBearingRow[],
+): { named: string } | "unnamed" | null {
+  const leaves = new Set<string>();
+  for (const m of mailboxes) {
+    if (m.status === "disabled") continue;
+    const path = m.junkFolder;
+    if (typeof path !== "string" || path.trim() === "") continue;
+    leaves.add(folderLeafOf(path));
+  }
+  if (leaves.size === 0) return null;
+  if (leaves.size === 1) return { named: [...leaves][0]! };
+  return "unnamed";
+}

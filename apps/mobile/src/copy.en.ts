@@ -885,6 +885,14 @@ const TABLE = {
    */
   folders: "Folders",
   folderEmpty: "No folders on your mail server yet.",
+  /* THE GROUP'S FOOT (JUNK-INVISIBLE) — ohmail never mirrors the provider's \Junk, so mail
+     the mail server filed as junk is in no list on this phone. Named where the roster knows
+     the name; the unnamed twin is for an account whose mailboxes call it different things.
+     Both equal the webapp's `rail.junkNote*` word for word (`folders-parity.test.ts`). */
+  junkNote: (folder: string) =>
+    `Your mail server's own ${folder} folder is not listed here — ohmail does not mirror it.`,
+  junkNoteUnnamed:
+    "Your mail server's own junk folder is not listed here — ohmail does not mirror it.",
   folderFilter: "Filter folders",
   folderNoMatch: "No folder matches.",
   folderShowAll: (n: number) => `Show all ${n}…`,

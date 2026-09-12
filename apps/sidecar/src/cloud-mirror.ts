@@ -714,6 +714,11 @@ function mailboxRow(world: LocalWorld, m: MailboxDTO, now: Date) {
     organizedByCapabilities: m.organizerAcceptsRequests === true ? CAPABILITY_REQUESTS : null,
     organizeConsentedAt: asDate(m.organizeConsentedAt),
     smtpMaxSizeBytes: m.smtpMaxSizeBytes ?? null,
+    // The provider's own Junk folder (mail 0065). Mirrored rather than discovered: on a Cloud
+    // account this install never attaches IMAP, so its own column would stay NULL for ever and
+    // the rail and search would never name the folder junked mail went to. `?? null` on this
+    // upsert's rule — a path cleared on Cloud must clear here too.
+    junkFolder: m.junkFolder ?? null,
     // NOT decoration: `compose-from.ts` orders the From options by `createdAt` ascending and calls
     // the first sendable one the default sender. A mirror that stamped its own clock here would
     // pick a different default from the browser tab looking at the same account.

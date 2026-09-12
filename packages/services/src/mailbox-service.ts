@@ -2668,6 +2668,12 @@ export class MailboxService {
       // announcement, or never probed — and the client resolves that to the product constant, the
       // same strict fallback `effectiveAttachmentCap` applies on the send itself.
       smtpMaxSizeBytes: m.smtpMaxSizeBytes ?? null,
+      // THE PROVIDER'S OWN JUNK FOLDER, projected raw — the column the attach-time discovery
+      // writes (mail 0065). UNCONDITIONAL on the two lines above's rule: it is meaningful in
+      // every lifecycle state, and it is read by the surfaces that explain where mail went
+      // rather than by any error copy. `null` is "no Junk folder, or nothing has attached yet";
+      // both mean the client says nothing, so the two are deliberately not separated here.
+      junkFolder: m.junkFolder ?? null,
       /* WHETHER SENDING IS SET UP — read off the incoming credential's own meta, because that is
          where the unsettled marker lives (an unproven submission credential is never stored, so
          there is no `smtp` row to carry it). `null` is "sending is settled", which is what every

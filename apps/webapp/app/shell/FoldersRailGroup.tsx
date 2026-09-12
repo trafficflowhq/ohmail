@@ -76,6 +76,8 @@ export function FoldersRailGroup({
   onNavigate,
   verbs,
   settled = true,
+  junkSaid = null,
+  junkReadable = false,
 }: {
   /** The mirror's `folder` entities — already post-exclusion, already flag-gated. */
   folders: FolderEntity[];
@@ -111,8 +113,25 @@ export function FoldersRailGroup({
   onNavigate: (folderId: string) => void;
   /** Absent ⇒ the read-only foundation group, byte-for-byte (no menus, no create). */
   verbs?: FolderVerbs;
+  /**
+   * WHAT THE FOOT SAYS ABOUT THE PROVIDER'S JUNK FOLDER ({@link junkFolderSaid}) — the honest
+   * half of JUNK-INVISIBLE. `\Junk` is excluded from the inventory whole, so a person reading
+   * this list has no way to learn that the mail they are missing is on the server in a folder
+   * this list does not show. `null` (no Junk folder, nothing attached yet, an API that cannot
+   * say) renders NOTHING: a sentence about a folder that may not exist is worse than silence.
+   */
+  junkSaid?: { named: string } | "unnamed" | null;
+  /**
+   * Can this build actually open that folder — the same `foldersEnabled && supported` the shell
+   * gates the Screener's Junk segment on. False keeps the statement and drops the pointer: a
+   * door that cannot serve `/screener/junk` must not send anybody to a segment it withholds.
+   */
+  junkReadable?: boolean;
 }) {
   const t = useTranslations("rail");
+  /* The pointer sentence lives in `screener`, beside the segment it names — one sentence, one
+     translation, read by both surfaces that carry the note (`join.mailboxConnected`'s rule). */
+  const ts = useTranslations("screener");
   const [open, setOpen] = usePersistedFlag(UI_KEYS.foldersOpen, true);
   const opened = usePersistedIdSet(UI_KEYS.foldersOpened);
   /** Transient chrome: the per-mailbox filter text and the per-mailbox "Show all" expansion. */
@@ -705,6 +724,20 @@ export function FoldersRailGroup({
             </div>
           );
         })}
+        {/* THE FOOT — what this list does NOT contain, and where that mail actually is
+            (JUNK-INVISIBLE). The provider's own \Junk is excluded from the inventory whole, so
+            it can never appear above; without this line the only evidence a person has is that
+            their message is missing. Rendered ONLY when a Junk folder was resolved, and the
+            pointer only where this build can open it. `.rsub-empty` is the rail's existing
+            small-muted-indented treatment (`packages/ui/composites/rail.css`), reused rather
+            than a new class: a second visual language for one sentence is how a design system
+            stops being one, and the zero layout already hides it with the collapsed rail. */}
+        {junkSaid !== null ? (
+          <p className="rsub-empty" data-testid="rail-junk-note">
+            {junkSaid === "unnamed" ? t("junkNoteUnnamed") : t("junkNote", { folder: junkSaid.named })}
+            {junkReadable ? <> {ts("junkElsewhere")}</> : null}
+          </p>
+        ) : null}
       </div>
     </div>
   );

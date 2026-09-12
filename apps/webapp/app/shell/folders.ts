@@ -167,3 +167,46 @@ export function folderTailVerdict(
   if (!folderId || !entity) return "hold";
   return m.mailboxId === entity.mailboxId && m.folder === entity.name ? "hide" : "ban";
 }
+
+/**
+ * One mailbox, reduced to what {@link junkFolderSaid} reads — structural, so the mobile twin and
+ * every test can pass their own row shape.
+ */
+export interface JunkBearingRow {
+  /**
+   * The lifecycle status; `"disabled"` is another organizer's mailbox and is not this account's
+   * to speak for. `null`/absent is "the wire named none", which is not disabled — the phone's
+   * roster reader spells it that way and the browser's facts always carry a string.
+   */
+  status?: string | null;
+  /** `MailboxDTO.junkFolder` — the provider's own Junk path, or null/absent when there is none to name. */
+  junkFolder?: string | null;
+}
+
+/**
+ * WHAT TO SAY ABOUT THE PROVIDER'S JUNK FOLDER, or `null` for "say nothing".
+ *
+ * ohmail never mirrors the provider's `\Junk` (`PASSIVE_EXCLUDED_SPECIAL_USE`), so mail the mail
+ * server filed as junk is in no list and no search here — and the person hunting for it can only
+ * be pointed at the right place if the sentence NAMES it, since every provider calls it something
+ * else. `{ named }` is the leaf every naming mailbox agrees on; `"unnamed"` is an account whose
+ * mailboxes disagree (Gmail's `Spam` beside iCloud's `Junk`), where one name would be wrong for
+ * somebody and a list is not a sentence. `null` covers every absence alike — no Junk folder, no
+ * attach yet, an API older than the field — because all three mean there is nothing to assert.
+ */
+export function junkFolderSaid(
+  mailboxes: readonly JunkBearingRow[],
+): { named: string } | "unnamed" | null {
+  const leaves = new Set<string>();
+  for (const m of mailboxes) {
+    // A stood-down mailbox is another install's; the Junk window does not read it either
+    // (`junkMailboxesOf` scopes on the same status), so the note and the pane share a subject.
+    if (m.status === "disabled") continue;
+    const path = m.junkFolder;
+    if (typeof path !== "string" || path.trim() === "") continue;
+    leaves.add(folderLeafOf(path));
+  }
+  if (leaves.size === 0) return null;
+  if (leaves.size === 1) return { named: [...leaves][0]! };
+  return "unnamed";
+}

@@ -576,6 +576,10 @@ export const DE: Deck = {
 
   folders: "Ordner",
   folderEmpty: "Noch keine Ordner auf deinem Mailserver.",
+  junkNote: (folder: string) =>
+    `Der eigene ${folder}-Ordner deines Mailservers steht nicht in dieser Liste — ohmail spiegelt ihn nicht.`,
+  junkNoteUnnamed:
+    "Der eigene Junk-Ordner deines Mailservers steht nicht in dieser Liste — ohmail spiegelt ihn nicht.",
   folderFilter: "Ordner filtern",
   folderNoMatch: "Kein Ordner passt.",
   folderShowAll: (n: number) => `Alle ${n} anzeigen…`,
