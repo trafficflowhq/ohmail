@@ -346,18 +346,15 @@ export class SessionLifecycle {
    * Claim every session matching `preds` and sweep their refresh families, in ONE transaction.
    * The shared core behind both mass revocations — "sign out all other web sessions" and the
    * credential-change rule below — because two hand-written claim-and-sweep pairs agree until
-   * one of them is edited.
-   *
-   * Set-based AND atomic, one measured defect each. Set-based: the per-family loop (two awaited
-   * UPDATEs each, serially) was 400+ round trips on exactly the accounts this verb exists for,
-   * inside a request with a 60-second ceiling — a "Sign out all" that times out having revoked
-   * only a PREFIX. One guarded claim takes the whole scope; the refresh families die in bounded
-   * IN-chunks off the claim's own RETURNING. Atomic: with the claim committing separately, a
-   * failed chunk left every session revoked, some refresh rows live, and the RETRY claimed zero
-   * rows (`revoked_at IS NULL`) — it could never revisit those families. One transaction holds
-   * claim, sweeps and audit: a mid-sweep death rolls the claim back and the retry does the
-   * whole job. Families are 1:1 with sessions by construction, so sweeping tokens by the
-   * claimed familyIds is `revokeFamily`'s exact reach.
+   * one is edited.
+   */
+  /*
+   * Set-based AND atomic, one measured defect each. Set-based: a per-family loop was 400+ round
+   * trips inside a 60-second request — a "Sign out all" that timed out having revoked a PREFIX.
+   * Atomic: with the claim committing separately, a failed chunk left sessions revoked and some
+   * refresh rows live, and the retry claimed zero rows (`revoked_at IS NULL`) — it could never
+   * revisit those families. Families are 1:1 with sessions, so sweeping by the claimed familyIds
+   * is `revokeFamily`'s exact reach.
    */
   protected async revokeClaimedSessions(
     ctx: ServiceContext, userId: string, preds: SQL[], now: Date,

@@ -83,9 +83,11 @@ import { rowsAffected } from "./rows-affected.js";
  * customer's own IMAP server is untouched. `account-deletion.pg.test.ts` walks
  * `information_schema` for every table FK-reachable from `accounts` or carrying `account_id`:
  * each must be NAMED in {@link DeleteAccountResult.deleted} or exempted. `attachment_staging` is
- * EXPIRED, not deleted — its row is the delete key for bucket bytes. The signup funnel
- * (`invites`, `waitlist`) is keyed by ADDRESS and sits outside that graph entirely, so it has its
- * own scope and its own guard — see {@link DeleteAccountResult.redacted}.
+ * EXPIRED, not deleted — its row is the delete key for bucket bytes.
+ */
+/*
+ * The signup funnel (`invites`, `waitlist`) is keyed by ADDRESS and sits outside that graph
+ * entirely, so it has its own scope and its own guard — {@link DeleteAccountResult.redacted}.
  */
 export interface DeleteAccountResult {
   accountId: string;
@@ -397,21 +399,16 @@ export async function deleteAccount(ctx: ServiceContext): Promise<DeleteAccountR
       inArray(authThrottle.key, throttleEmailKeys),
     )));
     // ── 7b. THE SIGNUP FUNNEL — pseudonymised, not deleted ─────────────────────
-    // `invites.email` and `waitlist.email` are how this person got in, and they are the only
-    // thing in either row that names them. Neither table carries an `account_id` and neither has
-    // a foreign key into the account's graph — deliberately (their headers say so: an erasure
-    // must not have to choose between Art. 17 and the invite record) — which is exactly why the
-    // structural guard could not see them and the sweep did not reach them.
-    //
-    // REDACTED rather than dropped: the operator's funnel is a record about the SERVICE (how many
-    // waiting, how many invited, how many registered), and deleting the row would rewrite that
-    // count; the address is a record about a PERSON. The pseudonym carries the row's own id, so
-    // `waitlist_email_unique` still holds when two of an account's users were both on the list.
-    // Built in Postgres for `auth_throttle`'s reason: no address is materialized in this process.
-    //
-    // BEFORE the `users` delete below, which is where the addresses are read from. An invite is
-    // matched by its BINDING and also by whom it was consumed by, so an address changed after
-    // redemption does not leave the row behind.
+    // `invites.email` and `waitlist.email` are the only thing in either row that names a person,
+    // and neither table is in the account's foreign-key graph — deliberately, so an erasure never
+    // has to choose between Art. 17 and the invite record. That is why the structural guard could
+    // not see them and the sweep did not reach them.
+
+    // REDACTED, not dropped: the funnel COUNT is a record about the service, the address is a
+    // record about a person. The pseudonym carries the row's own id, so `waitlist_email_unique`
+    // holds when two of an account's users were both listed. Built in Postgres, like
+    // `auth_throttle` above. BEFORE the `users` delete, which the addresses are read from; an
+    // invite matches by binding AND by consumer, so a changed address leaves no row behind.
     const ownEmails = tx.select({ e: users.email }).from(users).where(eq(users.accountId, accountId));
     await redact("invites", tx.update(invites)
       .set({ email: sql`'erased-' || ${invites.id}::text || '@invalid'` })

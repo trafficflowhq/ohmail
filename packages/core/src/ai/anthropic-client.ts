@@ -382,15 +382,13 @@ export function makeAnthropicClient(opts: AnthropicClientOptions): AnthropicLike
  */
 /**
  * The base URL gate. This is the one outbound path carrying BOTH the reader's mail and a live
- * credential, so the string an operator sets takes the same address rules every other outbound
- * URL in this repository takes: https only, no userinfo, no loopback/private/link-local address
- * and none of the reserved name spaces. It runs at CONSTRUCTION — boot — so a wrong value fails
- * the deployment rather than the first customer's mail. A gateway on an explicit port is
- * admitted: that is an ordinary shape and not an address rule.
+ * credential, so an operator's string takes the address rules every other outbound URL here
+ * takes: https only, no userinfo, no loopback/private/link-local address, none of the reserved
+ * name spaces. At CONSTRUCTION — boot — so a wrong value fails the deployment and not the first
+ * customer's mail. An explicit port is admitted: an ordinary shape, not an address rule.
  *
- * `assertPublicHttpUrlShape` is the shared gate's synchronous half, not a second copy of it. It
- * resolves nothing, so a NAME's addresses are unchecked here; the value is operator-set at boot
- * and the socket is an ordinary `fetch`, which has no pin to honour anyway.
+ * `assertPublicHttpUrlShape` is the shared gate's synchronous half, not a second copy. It
+ * resolves nothing, so a NAME's addresses are unchecked here and it returns no pin.
  */
 export function assertModelBaseUrl(baseUrl: string, allowPrivate: boolean): string {
   try {
