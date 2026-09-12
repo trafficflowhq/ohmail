@@ -99,6 +99,10 @@ both work now, and a refusal that stands backs off instead of retrying every few
 phone asking for a mailbox another phone is actively organizing does not take it and keeps reading
 the mailbox.
 
+### The object store images come from Quay
+
+The object store images are pulled from Quay; Docker Hub no longer serves them.
+
 ### A self-hosted install's front door reports its version
 
 Dialled by its IP address instead of the name in `OHMAIL_ORIGIN`, the front door answered every
