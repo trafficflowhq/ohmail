@@ -70,8 +70,10 @@ export interface HeldReleaseSummary {
  *   · the placement was recorded by an install rather than by ohmail's own filing — `last_set_by`
  *     `'external'` (a pre-0.14.1 reader, and a hand file, which the press is the consent for) or
  *     `'peer'` (another install of the same account);
- *   · it is STILL AT THE GATE and settled there — desired and observed both `ohmail/Screener`, so
- *     nothing is already in flight for it;
+ *   · it is STILL AT THE GATE and settled there — desired and observed BOTH `ohmail/Screener`, so
+ *     nothing is already in flight for it. Two equalities against the gate rather than
+ *     `desired = observed`: identical over this set, and it keeps the pass's twin of this clause
+ *     readable as a folder constraint by `mover-candidate-allowlist.census.ts`;
  *   · this install organizes the mailbox it lives in, and the mailbox is not disabled;
  *   · an ENABLED sender or domain rule of this account matches the sender and sends it somewhere
  *     other than the gate;
@@ -92,7 +94,7 @@ function heldAtGate(accountId: string) {
     isNull(messages.deletedAt),
     sql`${folderState.lastSetBy} in ('external', 'peer')`,
     eq(folderState.desiredFolder, SCREENER_FOLDER),
-    sql`${folderState.desiredFolder} = ${folderState.observedFolder}`,
+    eq(folderState.observedFolder, SCREENER_FOLDER),
     sql`exists (
       select 1 from ${mailboxes} mb
        where mb.id = ${messages.mailboxId}

@@ -760,17 +760,6 @@ export const rules = pgTable("rules", {
   retroCursor: uuid("retro_cursor"),
   retroMoved: integer("retro_moved").notNull().default(0),
 
-  /**
-   * WHEN THE OWNER PRESSED TO RELEASE MAIL THIS RULE NEVER REACHED (mail 0104).
-   *
-   * Mail an install adopted at the screening gate is recorded as a placement no pass may revisit,
-   * so it stays at the gate behind a rule its owner already wrote. This column is the press that
-   * says otherwise, and it is a NARROW licence rather than a flag: `rule-retro` reads it to admit
-   * `'external'` rows STILL AT THE GATE, and nowhere else — outside the gate, and for every rule
-   * without it, a hand placement still wins. NULL is the resting state and there is no backfill,
-   * because a press nobody made is not a press.
-   */
-  releaseHeldAt: timestamp("release_held_at", { withTimezone: true }),
 
   /**
    * Mail 0050 — a second term on a sender rule: the SUBJECT. One sender sends two kinds of mail
@@ -795,6 +784,22 @@ export const rules = pgTable("rules", {
    * fail-closed. Rank: both terms, subject-only, body-only, bare. Same 200-char ceiling.
    */
   bodyContains: text("body_contains"),
+
+  /**
+   * WHEN THE OWNER PRESSED TO RELEASE MAIL THIS RULE NEVER REACHED (mail 0104).
+   *
+   * Mail an install adopted at the screening gate is recorded as a placement no pass may revisit,
+   * so it stays at the gate behind a rule its owner already wrote. This column is the press that
+   * says otherwise, and it is a NARROW licence rather than a flag: `rule-retro` reads it to admit
+   * `'external'` rows STILL AT THE GATE, and nowhere else — outside the gate, and for every rule
+   * without it, a hand placement still wins. NULL is the resting state and there is no backfill,
+   * because a press nobody made is not a press.
+   *
+   * LAST, and that is physical rather than editorial: both stores APPEND an added column, so a
+   * declaration anywhere else describes an order no migrated database has (`schema-twin-parity`
+   * compares order, and `sqlite-baseline` reads it back off `PRAGMA table_info`).
+   */
+  releaseHeldAt: timestamp("release_held_at", { withTimezone: true }),
 }, (t) => ({
   /**
    * The owed-work probe, run once per account per worker cycle. Without it that is a full scan

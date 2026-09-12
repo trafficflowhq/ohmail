@@ -771,12 +771,6 @@ export const rules = sqliteTable("rules", {
   retroCursor: text("retro_cursor"),
   retroMoved: integer("retro_moved").notNull().default(0),
 
-  // Mail 0104 — when you pressed to release mail this rule never reached. A narrow licence
-  // rather than a flag: `rule-retro` reads it to admit `'external'` rows STILL AT THE GATE, and
-  // nowhere else. NULL is the resting state and there is no backfill. Ships to the device where
-  // nothing writes it yet, the way the retro columns above did.
-  releaseHeldAt: integer("release_held_at", { mode: "timestamp_ms" }),
-
   // Mail 0050 — a second term on a sender rule: the SUBJECT. One sender sends two kinds of mail
   // (`info@` is the invoice AND the nightly alert), and a sender rule could only file all of it
   // together. NULL is the resting state, "no subject term"; there is no backfill and can never be
@@ -799,6 +793,13 @@ export const rules = sqliteTable("rules", {
   // narrowing conjunct. Rank: both terms, then subject-only, then body-only, then bare. Same
   // 200-char ceiling.
   bodyContains: text("body_contains"),
+
+  // Mail 0104 — when you pressed to release mail this rule never reached. A narrow
+  // licence rather than a flag: `rule-retro` reads it to admit `'external'` rows STILL AT THE
+  // GATE, and nowhere else. NULL is the resting state and there is no backfill. LAST, because
+  // both stores APPEND an added column and this file's order is read back off
+  // `PRAGMA table_info`.
+  releaseHeldAt: integer("release_held_at", { mode: "timestamp_ms" }),
 }, (t) => ({
   /**
    * The owed-work probe, run once per account per worker cycle. Without it that is a full scan

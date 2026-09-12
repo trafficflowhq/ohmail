@@ -574,13 +574,16 @@ async function selectCandidates(
      * decided"), and the press is the consent that a placement recorded as theirs may be
      * reconsidered. THREE terms keep the widening narrow, and each excludes a shape that must not
      * move: the folder is the gate, so a hand file anywhere else — an INBOX drag, a customer's own
-     * folder — is untouched; desired equals observed, so nothing already in flight is re-decided;
+     * folder — is untouched; OBSERVED is the gate too, so the row is settled there and nothing
+     * already in flight is re-decided (spelled as a second equality against the gate rather than
+     * `desired = observed`, which says the same thing about these rows and reads to
+     * `mover-candidate-allowlist.census.ts` as a folder constraint naming a COLUMN);
      * and the licence is per RULE, so it reaches only the senders that rule claims. The five
      * user-intent exclusions below still apply to every one of them. */
     isReleaseRun(opts.rule)
       ? sql`(${folderState.lastSetBy} in ('us', 'peer', 'external')
              and ${folderState.desiredFolder} = ${SCREENER_GATE}
-             and ${folderState.desiredFolder} = ${folderState.observedFolder})`
+             and ${folderState.observedFolder} = ${SCREENER_GATE})`
       : inArray(folderState.lastSetBy, ["us", "peer"]),
     /* THE MAILBOX IS ONE THIS INSTALL STILL ORGANIZES — BOTH HALVES (mail 0083).
      * `status = 'disabled'` alone stopped being sufficient once the loser of an organizer lease
