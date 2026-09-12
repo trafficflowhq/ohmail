@@ -36,9 +36,7 @@ import {
 import { openNotificationSettings } from "../src/engine/notification-permission-native";
 import { NotifyPermission } from "../src/ui/NotifyPermission";
 import { useNotifyPermission } from "../src/ui/useNotifyPermission";
-import { PHONE_CLAIM_NAME, standaloneAvailable } from "../src/engine/standalone-door";
-import { releaseMailbox } from "../src/net/mailboxes";
-import { useConnection } from "../src/net/connection";
+import { standaloneAvailable } from "../src/engine/standalone-door";
 import {
   claimChipLabel,
   claimFrom,
@@ -340,21 +338,14 @@ function SettingsBody() {
 /**
  * THE STANDALONE CARD'S ROW KEY — a constant, and deliberately NOT a mailbox id.
  *
- * The door answers for the one mailbox it serves and the app holds no id for it. This names the
- * `asked` entry and React's row; the stop it selects takes the engine's own `handBack`, which
- * needs no id. It must never reach a route, which is why it is not id-shaped.
+ * The door answers for the one mailbox it serves and the app holds no id for it. This names
+ * React's row; the stop it selects takes the engine's own release, which needs no id. It must
+ * never reach a route, which is why it is not id-shaped.
  */
 const HERE_CARD = "this-phone";
 
 function ThisPhonePanel() {
   const w = useWorld();
-  const conn = useConnection();
-  const session = conn.state.k === "live" ? conn.state.session : null;
-  /* WHICH PAIRED MAILBOXES THIS PHONE HAS ASKED TO HAND BACK — by id, held for this screen's
-     life. The press is the newest word until the row carries the release; the desktop's
-     `stopQueued` rule. The STANDALONE row is not in here any more: its press is the session's one
-     standing instruction, which the engine's own answer settles. */
-  const [asked, setAsked] = useState<readonly string[]>([]);
   const [confirming, setConfirming] = useState<string | null>(null);
   /* WHAT A FAILED START SAID. Its own state and not `organizeRefusal`, which is the LAUNCH press's
      record: a person pressing Start is owed an answer about the press they just made. */
@@ -393,8 +384,8 @@ function ThisPhonePanel() {
    * its own mailbox rendered nothing with an engine running behind it.
    * `standaloneHere()` is the engine in this process answering for itself, no
    * request; a paired session has no such door and keeps the roster as before.
-   * The standalone card's key is a constant, not a mailbox id: it names the
-   * `asked` entry and React's row; the engine's `handBack` releases every mailbox.
+   * The standalone card's key is a constant, not a mailbox id: it names React's
+   * row; the engine's own release needs no id.
    */
   const here = standaloneHere();
   /* Only where there is a door to have asked — a paired session's panel says nothing of it. */
@@ -429,15 +420,9 @@ function ThisPhonePanel() {
     : w.mailboxes.rows.map((row) => ({
         key: row.id,
         address: row.address,
-        claim: claimFrom(
-          { known: w.mailboxes.known, organizer: holderFor(row) },
-          /* THE SAME CONSTANT THE CLAIM WAS WRITTEN WITH — never `Copy.phoneThisPhone`, which
-             changes with the language and would make this phone read its own claim as a
-             stranger's the first time somebody switches. The deck string is the section LABEL
-             above, which is the half a reader sees. */
-          PHONE_CLAIM_NAME,
-          asked.includes(row.id),
-        ),
+        /* NO NAME, AND NO HAND-BACK ON A PAIRED ROW. See {@link claimFrom}: every holder a paired
+           roster can name is another install, so this card names it and offers no verb. */
+        claim: claimFrom({ known: w.mailboxes.known, organizer: holderFor(row) }),
       }));
   if (cards.length === 0) return null;
 
@@ -585,7 +570,6 @@ function ThisPhonePanel() {
             icon="pause"
             label={Copy.settingsStopHereConfirm}
             onPress={() => {
-              const id = confirming;
               setConfirming(null);
               /* ══ THE STOP IS ONE INSTRUCTION, AND IT TAKES THE NOTIFICATION WITH IT ═══════
                  `pressOrganizeHere` records the release the ROW keeps — the ceremony a relaunch
@@ -593,18 +577,13 @@ function ThisPhonePanel() {
                  while a start is in flight it cancels that start rather than running beside it.
                  A release the mail server refused leaves this phone organizing, and the door says
                  `refused` rather than reporting the instruction as already in force — the chip
-                 goes back to `Organizing` on its own and this is the sentence beside it. */
-              if (id === HERE_CARD) {
-                setStopFailed(false);
-                void pressOrganizeHere("stop").then((outcome) => {
-                  setStopFailed(outcome === "refused");
-                });
-              } else {
-                /* THE PAIRED ARM HAS NO ENGINE HERE AND KEEPS ITS ROUTE, and its press is recorded
-                   before the request leaves so the chip stops saying "Organizing" at once. */
-                setAsked((cur) => (cur.includes(id) ? cur : [...cur, id]));
-                if (session !== null) void releaseMailbox(session, id);
-              }
+                 goes back to `Organizing` on its own and this is the sentence beside it.
+                 There is one card this sheet can open over: `mayStopHere` answers true only for
+                 `ours`, which only the door in this process produces. */
+              setStopFailed(false);
+              void pressOrganizeHere("stop").then((outcome) => {
+                setStopFailed(outcome === "refused");
+              });
             }}
           />
           <SheetRow icon="x" label={Copy.settingsStopHereCancel} onPress={() => setConfirming(null)} />

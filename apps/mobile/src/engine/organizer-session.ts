@@ -280,6 +280,14 @@ export function standaloneHere(): StandaloneHere | null {
    * `null` is "nobody, or not read yet". Without it the panel could only say `Nothing organizes
    * this mailbox`, which is also what it says when the mailbox is free — so a phone standing down
    * correctly told a person nothing was organizing their mail.
+   *
+   * TWO PRODUCERS AND ONE READER. The gate writes it at a stand-down; the door writes it when it
+   * REFUSES a press over a live foreign claim, which is the state a mailbox this phone handed back
+   * and another install then took — nothing runs the gate there, so without the second producer a
+   * refused press left "Nothing organizes this mailbox" and a live Start verb standing over a
+   * mailbox the door had just said was held. Both write the same field on the same state, so this
+   * app still has one answer to "who holds this mailbox"; the engine's own word wins where it has
+   * one.
    */
   let heldBy: StandDownHolder | null = null;
   /** See {@link StandaloneHere.releaseRequestedAt}. `null` is "none standing, or not said yet". */
@@ -422,6 +430,16 @@ export type PressOutcome =
    * used to be admitted and reported as a start.
    */
   | "unreadable"
+  /**
+   * ANOTHER INSTALL HOLDS THE MAILBOX, and the door said so to this press.
+   *
+   * It answered `standing` — "the instruction you asked for is already in force" — which is false
+   * twice over: nothing of this install's is organizing the mailbox, and nothing about the press
+   * was already happening. The word exists so the press has a true answer of its own; the SENTENCE
+   * a person reads comes from the holder the door now records on the engine's own state, which is
+   * where every other holder in this app is read from.
+   */
+  | "held"
   | "refused";
 
 let instruction: OrganizeInstruction = "idle";
@@ -522,7 +540,11 @@ async function runInstruction(want: "start" | "stop"): Promise<PressOutcome> {
 
 async function startHere(): Promise<PressOutcome> {
   const outcome = await claimHereStandalone();
-  if (outcome === "held") return "standing";
+  /* CARRIED AS ITSELF. A refused press over a live foreign claim is not `standing` — see
+     {@link PressOutcome}. The door records the holder on the engine's own organizer state as it
+     refuses, so `standaloneHere().heldBy` names it on this very render and the panel's claim is
+     `theirs`: the holder sentence, and no Start verb over a mailbox the door just said is held. */
+  if (outcome === "held") return "held";
   /* CARRIED, not folded. The door says `unreadable` exactly where it could not check, and the
      panel owes that its own sentence — see {@link PressOutcome}. */
   if (outcome === "unreadable") return "unreadable";

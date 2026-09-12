@@ -199,7 +199,10 @@ export function holderKind(said: string | null | undefined): HolderKind {
 export type PhoneClaim =
   /** Nothing has been read yet. */
   | { k: "unknown" }
-  /** This install holds the claim. `stopping` = a hand-back is asked for and not yet confirmed. */
+  /**
+   * The DOOR IN THIS PROCESS holds the claim — {@link claimHere} and no other producer.
+   * `stopping` = a hand-back is asked for and not yet confirmed.
+   */
   | { k: "ours"; stopping: boolean }
   /** Read, and no install holds it. `starting` = a start is asked for and not yet confirmed. */
   | { k: "free"; starting: boolean }
@@ -277,33 +280,33 @@ export function sendLaterOffered(o: { standalone: boolean; forward: boolean }): 
 }
 
 /**
- * The chip's state, derived from the mailboxes read and nothing else. The standalone engine
- * answers the same `/mailboxes` contract every other door answers, so the app already holds
- * this fact: `world.mailboxes` gives `known` and `phoneOrganizer(...)`'s holder. This adds one
- * question only a standalone install can ask — is the holder us — answered by name, the one
- * this install wrote (`PhoneEngineDeps.machineName`). No column name appears in this app and
- * no second store is consulted; both are the phone's census rules, and both are one rule: one
- * source of truth for who organizes a mailbox.
+ * THE CHIP'S STATE ON A PAIRED ROSTER, AND IT DECIDES NO IDENTITY BY NAME.
+ *
+ * This took the name this install writes into its claim (`PHONE_CLAIM_NAME`) and answered `ours`
+ * where the roster's holder matched it. Every ohmail phone writes that same string, so a second
+ * phone organizing the mailbox read as this one: the chip said `Organizing`, the hand-back was
+ * offered over a claim this app does not hold, and the press — which asks the PAIRED SERVER to give
+ * up ITS claim — answered "not organizing" and left the chip reading `Stopping` for the life of the
+ * screen while the other phone organized on.
+ *
+ * The comparison is gone rather than re-sourced, because its answer is a constant: a paired phone
+ * runs no IMAP client and writes no claim (`live.ts#phoneOrganizer` says so), so no holder a paired
+ * roster can name is ever this install's. Every holder here is another install — including the
+ * server this phone is paired to — and the card names it and offers no verb. The door in this
+ * process is the one card that can say `ours`, and it says it from the engine's own verdict on its
+ * own claim ({@link claimHere}), never from a name.
  */
 export function claimFrom(
   read: {
     known: boolean;
     organizer: { name: string; stopped: boolean; kind?: string | null } | null;
   },
-  ourName: string,
-  stopAsked: boolean = false,
 ): PhoneClaim {
   if (!read.known) return { k: "unknown" };
   const holder = read.organizer;
   /* NEVER `starting` ON A PAIRED ROW: this app holds no engine to ask, so there is no start verb
      here and no transition to be in. */
   if (holder === null) return { k: "free", starting: false };
-  if (holder.name === ourName) {
-    /* A stop this app asked for is the newest word until the row carries it; once the row says
-       `stopped`, the row is. Either way the chip must not read "Organizing" — the desktop's
-       `stopQueued` rule, and it exists because that press showed no trace anywhere. */
-    return { k: "ours", stopping: stopAsked || holder.stopped };
-  }
   /* THE KIND TRAVELS WITH THE HOLDER, because the sentence under the chip reads it: a mailbox
      another PHONE organizes is organized only while ohmail is open on that phone, which is the one
      thing about a holder that changes what a person should expect of their mail. */
