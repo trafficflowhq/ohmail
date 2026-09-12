@@ -562,22 +562,14 @@ export function sayOrganizerRestricted(): void {
 }
 
 /**
- * End it here — the forget's verb, and the only one that stops the engine. Three effects in
- * one call, because any two without the third is a state nothing describes: the claim goes
- * back (the engine's own `handBack`, so another machine can take the mailbox immediately);
- * the session stops, taking the notification down; the engine stops, because the profile row
- * that named it is about to go. In that order — the hand-back needs a running engine, and a
- * notification over a stopped one would say this phone organizes mail it no longer holds.
- * Never throws: the row removal must not be blocked by an unreachable mailbox.
- *
- * ── AND IT ANSWERS WHETHER THE CLAIM ACTUALLY WENT ──────────────────────────────────────────
- *
- * This returned `void` over a swallowed `handBack`, so the forget reported a mailbox this phone
- * had let go while its record in `ohmail/_meta` stood to expiry — the person's other machine
- * refused for the staleness window by an install that no longer lists the mailbox and has no
- * verb left to release it. `handBack` already answers per mailbox, and `released: null` is its
- * own word for *"the caller may not say the mailbox was handed back"*; this is that answer
- * carried out. `false` never blocks the row removal — the caller says so instead.
+ * End it here — the forget's verb, and the only one that stops the engine. Three effects in one
+ * call, in this order: the claim goes back (`handBack`, so another machine can take the mailbox at
+ * once), the session stops with its notification, the engine stops because the profile row naming
+ * it is about to go. Any two without the third is a state nothing describes. It also ANSWERS
+ * whether the claim went: this returned `void` over a swallowed `handBack`, so a forget reported a
+ * mailbox let go while its record in `ohmail/_meta` stood to expiry. `released: null` is the
+ * engine's own word for "the caller may not say the mailbox was handed back", and that is what
+ * comes back. Never throws, and `false` never blocks the row removal — the caller says so.
  */
 export async function endStandaloneHere(): Promise<boolean> {
   const held = door;
@@ -602,18 +594,14 @@ export async function endStandaloneHere(): Promise<boolean> {
 }
 
 /**
- * ══ A REFUSED CONNECT LEAVES NO ENGINE AND NO SEAL ══════════════════════════════════════════
- *
- * The launch succeeded and the app could not record the mailbox it had opened, and the screen
- * said so over an engine, a door and a session that were all still alive: the next Connect
- * started a SECOND engine over the same device store, which `holdStandaloneDoor` and
- * {@link startOrganizerSession} both silently declined to adopt — an orphan polling one mailbox
- * beside the one the app talks to. So the refusal is the one exit and it undoes the launch.
- *
- * The seal goes with it, which is the device-divergence lane's rule one arm over: the credential
- * is written at ATTACH, before anything dials, and `resolveLogin` lets the STORE win — so a
- * second press with a corrected server would dial the first press's coordinates and hand back an
- * opened mailbox with nothing on the wire. Only here: the forget above deletes the whole store.
+ * A REFUSED CONNECT LEAVES NO ENGINE AND NO SEAL. The launch succeeded, the app could not record
+ * the mailbox it had opened, and the screen said so over an engine, a door and a session still
+ * alive: the next Connect started a SECOND engine over the same device store, which
+ * `holdStandaloneDoor` and {@link startOrganizerSession} both silently declined to adopt. So the
+ * refusal is the one exit and it undoes the launch. The seal goes with it: the credential is
+ * written at ATTACH, before anything dials, and `resolveLogin` lets the STORE win, so a second
+ * press with a corrected server would dial the first press's coordinates and hand back an opened
+ * mailbox with nothing on the wire. Only here — the forget above deletes the whole store.
  */
 export async function discardStandaloneLaunch(): Promise<void> {
   const held = door;
