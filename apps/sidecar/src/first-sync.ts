@@ -18,10 +18,9 @@ export interface FirstSyncReporter {
    * `countMessages` is a thunk because it is a `count(*)` over the mirror: it runs only on the
    * passes that emit, never on a settled mailbox's, which is almost every pass.
    *
-   * `passStartedAt` is when THIS pass began, on the same monotonic clock — not when it reported.
-   * A pass is up to a hundred cycles, and the one that finds a first import open is the one that
-   * ingests the first fifth of a large mailbox: anchoring on the report would leave it outside
-   * the elapsed time this reporter goes on to announce.
+   * `passStartedAt` is when THIS pass began, not when it reported — same monotonic clock. A pass
+   * is up to a hundred cycles, and the one that finds a first import open lands a large mailbox's
+   * first pages: anchoring on the report leaves that outside the elapsed time announced.
    */
   report(
     mailboxId: string,
@@ -68,7 +67,7 @@ export function createFirstSyncReporter(
         /* THE PASS'S START, never the moment it reported. A pass is up to a hundred cycles, so the
            one that finds a first import open runs for a quarter of an hour on a large mailbox and
            lands its first pages before it can say anything: anchoring here on `monotonicMs()` left
-           that whole pass outside the duration the finish line then announced — 27 % of a first
+           that whole pass outside the duration the finish line then announced — 29 % of a first
            import measured end to end on the reference rig. */
         openSince.set(mailboxId, passStartedAt);
         log("first_sync_started", {
