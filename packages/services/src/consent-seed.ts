@@ -1,7 +1,7 @@
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { dialect } from "@trafficflow/db/dialect";
 import {
-  accountSettings, contacts, mailboxes, messageBodies, messages, recordChanges, rules,
+  accountSettings, contacts, mailboxes, messageBodies, messages, recordChanges, recordRuleDelta, rules,
   type LedgerTx, type OrganizedBy, type Tx,
 } from "@trafficflow/db";
 import { listMailboxUserFolders, listUserFolders } from "./folders.js";
@@ -589,9 +589,7 @@ export async function confirmSeed(
         // NULL, always. See the note above: consent granted in bulk must not move the past.
         retroRequestedAt: null,
       }))).returning({ id: rules.id });
-      const seqs = await recordChanges(tx, rows.map((r) => ({
-        accountId: ctx.accountId, entityType: "rule" as const, entityId: r.id, op: "create" as const, meta: null,
-      })));
+      const seqs = await recordRuleDelta(tx, ctx.accountId, rows.map((r) => r.id), "create");
       lastSeq = seqs[seqs.length - 1] ?? lastSeq;
     }
 

@@ -232,6 +232,38 @@ export async function recordChanges(tx: LedgerTx, changes: readonly ChangeInput[
   return seqs;
 }
 
+/**
+ * THE ONE DOOR FOR A RULE WHOSE STATE MOVED.
+ *
+ * `rule` is a synced entity, so a client shows the rule it was last told about. A writer that
+ * moves a rule's state without appending here leaves that client showing the old state for ever
+ * — nothing looks wrong at the write, and nothing later corrects it. There were four such
+ * writers (promotion, the re-enable, the lifetime-net demotion, the migration retarget) and one
+ * arm that did file, which is why this is a door and not a convention: `rule-state-delta-census`
+ * refuses a new rule-state write site that does not call it.
+ *
+ * `ruleIds` are the rows whose state ACTUALLY changed — a `.returning()` from the write, never
+ * the rows it was asked about; an empty list writes nothing and takes no lock. {@link LedgerTx}
+ * is the requirement, not a preference: the delta and the row commit together or neither does.
+ */
+/**
+ * The same delta as a ROW, for the one writer that cannot append on the spot: the profile import
+ * builds ONE ordered batch across every entity kind it restores, and splitting the rule rows out
+ * of it would give the client the rules at seqs interleaved with nothing else — a half-applied
+ * import between two polls. Same door, same shape; only the append is the caller's.
+ */
+export function ruleDelta(accountId: string, ruleId: string, op: ChangeOp): ChangeInput {
+  return { accountId, entityType: "rule", entityId: ruleId, op, meta: null };
+}
+
+export async function recordRuleDelta(
+  tx: LedgerTx, accountId: string, ruleIds: readonly string[], op: ChangeOp,
+): Promise<bigint[]> {
+  return recordChanges(tx, ruleIds.map((entityId) => ({
+    accountId, entityType: "rule" as const, entityId, op, meta: null,
+  })));
+}
+
 /** Both ends of an account's retained change log. Both `null` ⇔ the log is empty. */
 export interface SeqBounds {
   /** The lowest retained seq — the floor a resuming cursor must not have fallen below. */

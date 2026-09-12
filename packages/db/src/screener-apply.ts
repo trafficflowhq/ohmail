@@ -1,6 +1,6 @@
 import { and, desc, eq, isNull, sql, type SQL } from "drizzle-orm";
 import { accountSettings, contacts, folderState, messages, rules as rulesTbl } from "./schema-mail.js";
-import { recordChange, type LedgerTx, type Tx } from "./change-log.js";
+import { recordChange, recordRuleDelta, type LedgerTx, type Tx } from "./change-log.js";
 import { dialect } from "./dialect/index.js";
 import { readAccountErasedAt } from "./erasure-fence.js";
 import { recordLearningSignal } from "./learning-signal.js";
@@ -334,9 +334,7 @@ export async function applyScreenerDecision(
   // Tracked and returned so an HTTP caller can re-emit it as `X-Sync-Seq` on an idempotent
   // replay — `claimIdempotencyKey`'s own `seq` field. The drain has no such replay contract and
   // simply discards it.
-  let lastSeq = await recordChange(
-    ledger(tx), { accountId, entityType: "rule", entityId: rule!.id, op: "create", meta: null },
-  );
+  let lastSeq = (await recordRuleDelta(ledger(tx), accountId, [rule!.id], "create"))[0]!;
 
   const heldMail = scope === "domain"
     ? await heldRowsForDomain(tx, accountId, domain, mailboxId)

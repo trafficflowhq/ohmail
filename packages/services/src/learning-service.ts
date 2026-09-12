@@ -1,7 +1,7 @@
 import { and, eq } from "drizzle-orm";
 import {
-  graduations, rules as rulesTbl, type Tx,
-  recordLearningSignal, patternKeyFor, parsePatternKey, demoteGraduatedRoute,
+  graduations, rules as rulesTbl, type LedgerTx, type Tx,
+  recordLearningSignal, patternKeyFor, parsePatternKey, demoteGraduatedRoute, recordRuleDelta,
   GRADUATION_THRESHOLD, DEMOTION_THRESHOLD,
   type LearningSignalInput, type LearningKind, type LearningLabel, type ParsedPattern,
 } from "@trafficflow/db";
@@ -65,12 +65,8 @@ export class LearningService {
    * disable the promoted rule (`demotions++`) and clear `graduated` — all in SQL.
    */
   async promoteOrDemote(ctx: ServiceContext, patternKey: string): Promise<void> {
-    const tx = asTx(ctx);
-    // Read from the handle and threaded down rather than resolved again in each helper: the two
-    // writes below belong to one decision, and a store that answered them differently would be a
-    // program running against two databases.
-    const d = dialect(ctx.db);
-    const [g] = await tx
+    const outer = asTx(ctx);
+    const [g] = await outer
       .select()
       .from(graduations)
       .where(and(
@@ -85,17 +81,42 @@ export class LearningService {
     if (!parsed) return;
 
     const net = g.positives - g.negatives;
-    if (g.graduated && net >= GRADUATION_THRESHOLD) {
-      await this.ensurePromotedRule(tx, d, ctx.accountId, parsed);
-    } else if (net <= -DEMOTION_THRESHOLD) {
-      // The SHARED effect, not a second spelling of it. This arm is the LIFETIME-net trigger;
-      // `recordRouteOverride` is the recent-override one, and both have to disable the same rule
-      // and clear the same flag or a route can be demoted by one reading and not the other.
-      await demoteGraduatedRoute(tx, ctx.accountId, patternKey);
-    }
+    const promote = g.graduated && net >= GRADUATION_THRESHOLD;
+    // The SHARED effect, not a second spelling of it. This arm is the LIFETIME-net trigger;
+    // `recordRouteOverride` is the recent-override one, and both have to disable the same rule
+    // and clear the same flag or a route can be demoted by one reading and not the other.
+    const demote = !promote && net <= -DEMOTION_THRESHOLD;
+    if (!promote && !demote) return;
+
+    /**
+     * THE ROW AND ITS DELTA COMMIT TOGETHER, which is why the transaction is opened here and was
+     * not before. `rule` is a synced entity: a promotion that moved the row and no change row
+     * leaves every client showing the rule the way it was, with nothing wrong at the write and
+     * nothing later to correct it. `recordRuleDelta` refuses an autocommit handle for that
+     * reason, and this method is called from OUTSIDE `ApprovalService`'s own transaction.
+     *
+     * Dialect is resolved from `tx`, not from the outer handle: the brand is inherited by
+     * transactions, and the two writes below belong to one decision.
+     */
+    await outer.transaction(async (tx) => {
+      const d = dialect(tx);
+      if (promote) {
+        await this.ensurePromotedRule(tx, d, ctx.accountId, parsed);
+        return;
+      }
+      const { ruleIds } = await demoteGraduatedRoute(tx, ctx.accountId, patternKey);
+      await recordRuleDelta(tx, ctx.accountId, ruleIds, "update");
+    });
   }
 
-  private async ensurePromotedRule(tx: Tx, d: Dialect, accountId: string, p: ParsedPattern): Promise<void> {
+  /**
+   * The promotion write, and its delta beside it: whichever arm moves the row files for that row,
+   * in this transaction. Nothing is announced when the rule was already standing exactly like
+   * this — a delta a client cannot tell from a real move is noise.
+   */
+  private async ensurePromotedRule(
+    tx: LedgerTx, d: Dialect, accountId: string, p: ParsedPattern,
+  ): Promise<void> {
     const existing = await tx
       .select({ id: rulesTbl.id })
       .from(rulesTbl)
@@ -107,13 +128,21 @@ export class LearningService {
       ))
       .limit(1);
     if (existing.length > 0) {
-      await tx.update(rulesTbl).set({ enabled: true, updatedAt: d.now() }).where(eq(rulesTbl.id, existing[0]!.id));
+      // `enabled = false` in the WHERE, so the returned row is the one whose state CHANGED —
+      // the same construction the demotion uses, for the same reason: a delta announcing a rule
+      // that already read this way is noise a client cannot tell from a real move.
+      const flipped = await tx.update(rulesTbl)
+        .set({ enabled: true, updatedAt: d.now() })
+        .where(and(eq(rulesTbl.id, existing[0]!.id), eq(rulesTbl.enabled, false)))
+        .returning({ id: rulesTbl.id });
+      await recordRuleDelta(tx, accountId, flipped.map((r) => r.id), "update");
       return;
     }
-    await tx.insert(rulesTbl).values({
+    const [row] = await tx.insert(rulesTbl).values({
       accountId, kind: p.kind, match: p.match, destination: p.destination,
       provenance: "promoted", enabled: true,
-    });
+    }).returning({ id: rulesTbl.id });
+    await recordRuleDelta(tx, accountId, [row!.id], "create");
   }
 
 }

@@ -1,6 +1,6 @@
 import { and, eq } from "drizzle-orm";
 import {
-  rules as rulesTbl, messages, folderState, auditLog, recordChange, type Tx,
+  rules as rulesTbl, messages, folderState, auditLog, recordRuleDelta, type Tx,
 } from "@trafficflow/db";
 import type {
   AdapterPort, Destination, MigrationObservation, FolderScanner, NativeLocator, ScanOptions,
@@ -119,6 +119,11 @@ export class HeyMigrationService {
             await tx.update(rulesTbl)
               .set({ destination: o.destination, updatedAt: ctx.now() })
               .where(eq(rulesTbl.id, existing.id));
+            // WHERE THE RULE GOES IS ON THE WIRE. Re-running the migration after the observed
+            // destination moved rewrites a rule every client is already showing; without the
+            // delta they keep showing the old folder for ever. Counted `unchanged` all the same
+            // — that word is about rules CREATED, and the row did move.
+            await recordRuleDelta(tx, ctx.accountId, [existing.id], "update");
           }
           ruleIds.push(existing.id);
           unchanged++;
@@ -133,9 +138,7 @@ export class HeyMigrationService {
           provenance: "migrated",
           enabled: true,
         }).returning({ id: rulesTbl.id });
-        await recordChange(tx, {
-          accountId: ctx.accountId, entityType: "rule", entityId: row!.id, op: "create", meta: null,
-        });
+        await recordRuleDelta(tx, ctx.accountId, [row!.id], "create");
         ruleIds.push(row!.id);
         createdIds.push(row!.id);
         created++;
@@ -169,11 +172,7 @@ export class HeyMigrationService {
       const removedRows = await tx.delete(rulesTbl)
         .where(and(eq(rulesTbl.accountId, ctx.accountId), eq(rulesTbl.provenance, "migrated")))
         .returning({ id: rulesTbl.id });
-      for (const r of removedRows) {
-        await recordChange(tx, {
-          accountId: ctx.accountId, entityType: "rule", entityId: r.id, op: "delete", meta: null,
-        });
-      }
+      await recordRuleDelta(tx, ctx.accountId, removedRows.map((r) => r.id), "delete");
       if (removedRows.length > 0) {
         await tx.insert(auditLog).values({
           accountId: ctx.accountId,

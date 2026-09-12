@@ -2,7 +2,7 @@ import { and, eq, inArray, isNull, ne, sql, type SQL } from "drizzle-orm";
 import { dialect } from "@trafficflow/db/dialect";
 import {
   assertOrganizerRole,
-  contacts, folderState, junkSweepCandidateWhere, mailboxes, messageBodies, messages, recordChange,
+  contacts, folderState, junkSweepCandidateWhere, mailboxes, messageBodies, messages, recordRuleDelta,
   rules as rulesTbl, type Tx,
 } from "@trafficflow/db";
 import {
@@ -537,9 +537,7 @@ export async function allowSender(
         eq(rulesTbl.enabled, true),
       ))
       .returning({ id: rulesTbl.id });
-    for (const r of disabled) {
-      await recordChange(tx, { accountId, entityType: "rule", entityId: r.id, op: "update", meta: null });
-    }
+    await recordRuleDelta(tx, accountId, disabled.map((r) => r.id), "update");
 
     // 2. The admission — the yes-decision's `contacts` row, idempotent.
     await tx.insert(contacts).values({ accountId, address: addr })
@@ -570,7 +568,7 @@ export async function allowSender(
       provenance: "promoted",
       enabled: true,
     }).returning({ id: rulesTbl.id });
-    await recordChange(tx, { accountId, entityType: "rule", entityId: rule!.id, op: "create", meta: null });
+    await recordRuleDelta(tx, accountId, [rule!.id], "create");
     return { disabledRuleIds: disabled.map((r) => r.id), createdRuleId: rule!.id };
   }, { db: deps.db });
 }

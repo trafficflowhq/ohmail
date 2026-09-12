@@ -1,5 +1,5 @@
 import { and, asc, eq } from "drizzle-orm";
-import { rules, recordChange, claimIdempotencyKey, type OrganizedBy, type Tx } from "@trafficflow/db";
+import { rules, recordRuleDelta, claimIdempotencyKey, type OrganizedBy, type Tx } from "@trafficflow/db";
 import type { Destination } from "@trafficflow/core/mail";
 import type { RequestKind } from "@trafficflow/core/adapters/organizer-lease";
 import { withAccountTx, type Db, type ServiceContext } from "./context.js";
@@ -353,9 +353,7 @@ export class RulesService {
         // and for every rule that existed before this column did.
         retroRequestedAt: applyRetro ? ctx.now() : null,
       }).returning({ id: rules.id });
-      const seq = await recordChange(tx, {
-        accountId: ctx.accountId, entityType: "rule", entityId: row!.id, op: "create", meta: null,
-      });
+      const seq = (await recordRuleDelta(tx, ctx.accountId, [row!.id], "create"))[0]!;
 
       // Materialize INSIDE the tx (reads the uncommitted insert) so the DTO stored below is
       // byte-for-byte the one the route returns. Nothing after this tx touches the row.
@@ -570,9 +568,7 @@ export class RulesService {
         .where(and(eq(rules.id, id), eq(rules.accountId, ctx.accountId)))
         .returning({ id: rules.id });
       if (updated.length === 0) throw new ServiceError("not_found", 404, "rule not found");
-      const seq = await recordChange(tx, {
-        accountId: ctx.accountId, entityType: "rule", entityId: id, op: "update", meta: null,
-      });
+      const seq = (await recordRuleDelta(tx, ctx.accountId, [id], "update"))[0]!;
 
       // Materialize INSIDE the tx (reads the uncommitted update), so the DTO stored below is
       // byte-for-byte the one the route returns. This used to run AFTER the commit, which was
@@ -668,9 +664,7 @@ export class RulesService {
         .where(and(eq(rules.id, id), eq(rules.accountId, ctx.accountId)))
         .returning({ id: rules.id });
       if (deleted.length === 0) throw new ServiceError("not_found", 404, "rule not found");
-      const emitted = await recordChange(tx, {
-        accountId: ctx.accountId, entityType: "rule", entityId: id, op: "delete", meta: null,
-      });
+      const emitted = (await recordRuleDelta(tx, ctx.accountId, [id], "delete"))[0]!;
 
       // Status 204 with `{}` for a body that is never read: `routes/rules.ts` replays this
       // ITSELF rather than through `withIdempotency`, because the shared replay path is

@@ -4,7 +4,7 @@ import {
   assertOrganizerRole,
   awayResponders, contacts, mailboxes, notifyRules, rules, tags,
   latestProfileFoundMarker, profileImportResolutionExists, recordProfileImportResolution,
-  recordChanges,
+  recordChanges, ruleDelta,
   type ChangeInput, type Tx,
 } from "@trafficflow/db";
 import { DESTINATIONS, isAwayPile, awayScopeFitsAudience, type AwayPile } from "@trafficflow/core/mail";
@@ -443,7 +443,7 @@ export class ProfileImportService {
               // configuration; the travelling mailbox's mail was filed by its previous
               // organizer, and a confirm click must not become a bulk re-filing.
             }).where(and(eq(rules.id, have.id), eq(rules.accountId, ctx.accountId)));
-            changes.push({ accountId: ctx.accountId, entityType: "rule", entityId: have.id, op: "update", meta: null });
+            changes.push(ruleDelta(ctx.accountId, have.id, "update"));
           } else if (want) {
             const [row] = await tx.insert(rules).values({
               accountId: ctx.accountId,
@@ -452,11 +452,11 @@ export class ProfileImportService {
               subjectContains: want.subjectContains, bodyContains: want.bodyContains,
               retroRequestedAt: null,
             }).returning({ id: rules.id });
-            changes.push({ accountId: ctx.accountId, entityType: "rule", entityId: row!.id, op: "create", meta: null });
+            changes.push(ruleDelta(ctx.accountId, row!.id, "create"));
           } else if (have) {
             // A surplus local duplicate of a key the document names — see the merge rule.
             await tx.delete(rules).where(and(eq(rules.id, have.id), eq(rules.accountId, ctx.accountId)));
-            changes.push({ accountId: ctx.accountId, entityType: "rule", entityId: have.id, op: "delete", meta: null });
+            changes.push(ruleDelta(ctx.accountId, have.id, "delete"));
           }
         }
       }

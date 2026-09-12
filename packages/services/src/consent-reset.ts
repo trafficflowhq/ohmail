@@ -2,7 +2,7 @@ import { and, eq, sql, type SQL } from "drizzle-orm";
 import { dialect } from "@trafficflow/db/dialect";
 import {
   assertAccountOrganizes,
-  accountSettings, contacts, folderState, learningSignals, messages, recordChange,
+  accountSettings, contacts, folderState, learningSignals, messages, recordRuleDelta,
   routingDecisions, rules, type Tx,
 } from "@trafficflow/db";
 import type { ServiceContext } from "./context.js";
@@ -116,15 +116,11 @@ export async function resetScreeningState(ctx: ServiceContext): Promise<ResetRes
       });
     const doomed = await tx.select({ id: rules.id }).from(rules).where(eq(rules.accountId, ctx.accountId));
 
-    let lastSeq: bigint | null = null;
-    for (const r of doomed) {
-      // The change-log row is written BEFORE the delete so a crash between them leaves a
-      // client believing a rule is gone that still exists — recoverable by the next sync —
-      // rather than a rule gone from the database that no client will ever stop showing.
-      lastSeq = await recordChange(tx, {
-        accountId: ctx.accountId, entityType: "rule", entityId: r.id, op: "delete", meta: null,
-      });
-    }
+    // The change-log rows are written BEFORE the delete so a crash between them leaves a
+    // client believing a rule is gone that still exists — recoverable by the next sync —
+    // rather than a rule gone from the database that no client will ever stop showing.
+    const seqs = await recordRuleDelta(tx, ctx.accountId, doomed.map((r) => r.id), "delete");
+    const lastSeq: bigint | null = seqs[seqs.length - 1] ?? null;
     if (doomed.length > 0) await tx.delete(rules).where(eq(rules.accountId, ctx.accountId));
 
     const contactRows = await tx.delete(contacts)

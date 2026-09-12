@@ -3,7 +3,7 @@ import {
   accountSettings, awayResponders, folderState, mailboxes, messages, organizerRequests,
   rules as rulesTbl,
 } from "./schema-mail.js";
-import { recordChange, type LedgerTx, type Tx } from "./change-log.js";
+import { recordChange, recordRuleDelta, type LedgerTx, type Tx } from "./change-log.js";
 import { dialect } from "./dialect/index.js";
 import { insertOrganizerRequest, TERMINAL_REQUEST_STATES } from "./organizer-requests.js";
 
@@ -734,9 +734,10 @@ export async function applyRuleRequest(
        row would be the schema's missing unique index doing damage rather than the request. */
     const existing = await findRuleByKey(tx, accountId, key);
     if (existing) {
-      return { applied: true, op: "create", ruleId: existing.id, lastSeq: await recordChange(ledger(tx), {
-        accountId, entityType: "rule", entityId: existing.id, op: "update", meta: null,
-      }) };
+      return {
+        applied: true, op: "create", ruleId: existing.id,
+        lastSeq: (await recordRuleDelta(ledger(tx), accountId, [existing.id], "update"))[0]!,
+      };
     }
     const [row] = await tx.insert(rulesTbl).values({
       accountId,
@@ -750,9 +751,7 @@ export async function applyRuleRequest(
       bodyContains: key.bodyContains,
       retroRequestedAt: payload.applyRetro ? now : null,
     }).returning({ id: rulesTbl.id });
-    const lastSeq = await recordChange(ledger(tx), {
-      accountId, entityType: "rule", entityId: row!.id, op: "create", meta: null,
-    });
+    const lastSeq = (await recordRuleDelta(ledger(tx), accountId, [row!.id], "create"))[0]!;
     return { applied: true, op: "create", ruleId: row!.id, lastSeq };
   }
 
@@ -765,9 +764,7 @@ export async function applyRuleRequest(
 
   if (payload.op === "delete") {
     await tx.delete(rulesTbl).where(and(eq(rulesTbl.id, found.id), eq(rulesTbl.accountId, accountId)));
-    const lastSeq = await recordChange(ledger(tx), {
-      accountId, entityType: "rule", entityId: found.id, op: "delete", meta: null,
-    });
+    const lastSeq = (await recordRuleDelta(ledger(tx), accountId, [found.id], "delete"))[0]!;
     return { applied: true, op: "delete", ruleId: found.id, lastSeq };
   }
 
@@ -790,9 +787,7 @@ export async function applyRuleRequest(
 
   await tx.update(rulesTbl).set(set)
     .where(and(eq(rulesTbl.id, found.id), eq(rulesTbl.accountId, accountId)));
-  const lastSeq = await recordChange(ledger(tx), {
-    accountId, entityType: "rule", entityId: found.id, op: "update", meta: null,
-  });
+  const lastSeq = (await recordRuleDelta(ledger(tx), accountId, [found.id], "update"))[0]!;
   return { applied: true, op: "update", ruleId: found.id, lastSeq };
 }
 
