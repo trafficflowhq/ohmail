@@ -1281,21 +1281,25 @@ export class AuthService extends SessionLifecycle {
     return this.establish(ctx, user, { method: "totp", kind, twofaAt: ctx.now() });
   }
 
+  // ONE TRANSACTION: factor removal is a compromise ceremony, so it takes the credential-change
+  // rule — every other session of this user goes with the factor, the caller's own stays. Without
+  // it a removed authenticator left every session it had minted live AND renewable; with it split
+  // across two transactions, a failed revoke would leave the secret gone and those sessions alive,
+  // which is the half the person actually asked for.
   async totpRemove(ctx: ServiceContext): Promise<void> {
     const userId = this.requireUser(ctx);
     await this.requireStepUp(ctx);
-    const db = asTx(ctx);
-    // "Cannot remove the last factor": TOTP may only go if a WebAuthn factor
-    // remains (recovery codes are a break-glass fallback, not a standalone factor).
-    const remainingWebauthn = (await this.webauthnCreds(db, userId)).length;
-    if (remainingWebauthn < 1) {
-      throw new ServiceError("unprocessable", 422, "cannot remove the last 2FA method");
-    }
-    await db.delete(totpSecrets).where(eq(totpSecrets.userId, userId));
-    // Factor removal is a compromise ceremony, so it takes the credential-change rule: every
-    // other session of this user goes with the factor, the caller's own stays. Without it a
-    // removed authenticator left every session it had minted live AND renewable.
-    await this.revokeOtherSessions(ctx, userId);
+    await this.inTransaction(ctx, async (txCtx) => {
+      const db = asTx(txCtx);
+      // "Cannot remove the last factor": TOTP may only go if a WebAuthn factor
+      // remains (recovery codes are a break-glass fallback, not a standalone factor).
+      const remainingWebauthn = (await this.webauthnCreds(db, userId)).length;
+      if (remainingWebauthn < 1) {
+        throw new ServiceError("unprocessable", 422, "cannot remove the last 2FA method");
+      }
+      await db.delete(totpSecrets).where(eq(totpSecrets.userId, userId));
+      await this.revokeOtherSessions(txCtx, userId);
+    });
   }
 
   // Step-up re-verification — the inline ceremony behind a stale 5-minute window. `withStepUp`
