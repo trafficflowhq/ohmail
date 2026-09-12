@@ -376,6 +376,37 @@ export interface HostDoorConfig {
  */
 export type EngineConfig = LocalDoorConfig | CloudDoorConfig | HostDoorConfig;
 
+/**
+ * ONE DOOR GESTURE AT A TIME — the window's half of the sign-out fence.
+ *
+ * `Shell::logout` reads the door configuration ONCE and acts on that snapshot: it asks the engine
+ * to clear the credential the door it read holds, then removes `config.json`. A door switch
+ * landing inside that window replaces the engine underneath it, so the clear is sent to the new
+ * door and the OLD door's sealed mailbox password stays on disk — under a sign-out the person was
+ * told had happened. Both gestures are invoked from this module and nowhere else, which is what
+ * makes a latch here a fence rather than a narrowing: while one is out the other is refused,
+ * with a sentence rather than a silent queue.
+ */
+let doorGesture: "none" | "signing out" | "changing the door" = "none";
+
+/** Run a door gesture alone, or refuse and name the one already out. */
+async function alone<T>(
+  gesture: "signing out" | "changing the door", run: () => Promise<T>,
+): Promise<T> {
+  if (doorGesture !== "none") {
+    throw new Error(
+      `ohmail Desktop: ${doorGesture} is not finished yet, so ${gesture} was not started. ` +
+      "Wait for it to finish and try again.",
+    );
+  }
+  doorGesture = gesture;
+  try {
+    return await run();
+  } finally {
+    doorGesture = "none";
+  }
+}
+
 /** Ask the shell what the engine is doing. Carries no credential — see the Rust `status_json`. */
 export async function engineStatus(): Promise<EngineStatus> {
   return (await shell().invoke(STATUS_COMMAND)) as EngineStatus;
@@ -392,7 +423,10 @@ export async function engineStatus(): Promise<EngineStatus> {
  * master is the user's own server or the hosted account, never this machine.
  */
 export async function engineConfigure(config: EngineConfig): Promise<EngineStatus> {
-  return (await shell().invoke(CONFIGURE_COMMAND, { config })) as EngineStatus;
+  return alone(
+    "changing the door",
+    async () => (await shell().invoke(CONFIGURE_COMMAND, { config })) as EngineStatus,
+  );
 }
 
 /**
@@ -403,7 +437,10 @@ export async function engineConfigure(config: EngineConfig): Promise<EngineStatu
  * account's credential will be sealed under.
  */
 export async function engineLogout(): Promise<EngineStatus> {
-  return (await shell().invoke(LOGOUT_COMMAND)) as EngineStatus;
+  return alone(
+    "signing out",
+    async () => (await shell().invoke(LOGOUT_COMMAND)) as EngineStatus,
+  );
 }
 
 /**

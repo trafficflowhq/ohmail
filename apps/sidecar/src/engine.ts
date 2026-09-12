@@ -65,6 +65,7 @@ import { desktopHostRoutes } from "@trafficflow/api/desktop-host";
 // install model has to apply the identical rule and `apps/desktop` declares no `@trafficflow/*`
 // dependency — see the header of `credential-host.ts` for why one definition rather than two.
 import { credentialIsForeign, credentialIsForeignSmtp, sealedHost, sealedSmtpHost } from "./credential-host.js";
+import { createSignOutFence, SIGN_OUT_FENCE_WAIT_MS, type SignOutFence } from "./signout-fence.js";
 // The exit from a stand-down, as a ceremony rather than a flag — the SAME function the
 // `organize-here` CLI runs. See its header for why status, reason and the one-shot stamp move
 // together, and this file's `handle` for why the desktop door needs a route onto it.
@@ -599,9 +600,15 @@ export interface Sidecar {
    * configuration and stop this process, but the sealed credential lives inside the mirror's
    * database — and the mirror is frozen on a door switch rather than deleted, because the mail
    * is on the user's own server and re-pulling it is expensive and pointless. So the one thing
-   * that has to go is removed here, leaving everything else where it is. It does not disconnect:
-   * tearing down the live socket mid-request is the shell's job; the next launch has no password
-   * and serves the mirror — the documented no-password state.
+   * that has to go is removed here, leaving everything else where it is.
+   *
+   * IT DOES END THE LOGIN that password bought, and it used to leave it open on the reasoning
+   * that tearing down the socket was the shell's job. The socket is the credential in use: the
+   * desktop stops this process a moment later, but nothing guarantees that on every door, and a
+   * poll timer left running re-dialled from the copy the attachment still holds in memory. So the
+   * sign-out epoch moves with the row (`signout-fence.ts`), the live connection is closed, and
+   * every later dial reads that epoch and refuses. The next launch has no password and serves the
+   * mirror — the documented no-password state.
    */
   forgetStoredLogin(): Promise<boolean>;
   /**
@@ -942,6 +949,22 @@ export const DEFAULT_POLL_INTERVAL_MS = 15_000;
  * claim — "there is nothing to heal here" — stated once with the reason attached.
  */
 const ONE_SHOT_DIAL: AdapterDialContext = { onConnectionError: () => { /* see above */ } };
+
+/**
+ * A DIAL REFUSED BECAUSE THIS INSTALL HAS SIGNED OUT. The mailbox password is gone from the store
+ * and the copy this attachment holds in memory may not be used to open a login: every dial reads
+ * the sign-out epoch (`signout-fence.ts`) and this is what it throws when the epoch has moved.
+ */
+export class SignedOutError extends Error {
+  readonly code = "ESIGNEDOUT";
+  constructor() {
+    super(
+      "this install signed out, so the password this mailbox resolved is not dialled with; " +
+      "the mirror is served and signing in again opens a connection",
+    );
+    this.name = "SignedOutError";
+  }
+}
 
 /**
  * The drain was gated on a connection that no longer exists — a coded refusal, not a fault. The
@@ -1852,6 +1875,25 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
     /** Every mailbox this install runs, oldest first. See `roster.ts`. */
     const runtimes = new LocalRoster();
     /**
+     * The sign-out epoch every credential this install holds belongs to. One per engine — see
+     * `signout-fence.ts` for why it is not a module-level counter and what each side of it owes.
+     */
+    const fence: SignOutFence = createSignOutFence();
+    /**
+     * Undo a credential this install wrote for a sign-out that has already happened. Every
+     * transport of the one mailbox, because a seal writes the incoming and the submission rows
+     * together and leaving either is leaving a password behind.
+     */
+    const discardCredentialsFor = async (mailboxId: string): Promise<void> => {
+      await db.delete(mailboxCredentials).where(eq(mailboxCredentials.mailboxId, mailboxId));
+    };
+    /** The refusal a credential writer answers when a sign-out overtook it. */
+    const signedOutMidWrite = (): ServiceError => new ServiceError(
+      "signed_out", 409,
+      "you signed out while this password was being checked, so it was not kept. " +
+        "Sign in again to store it.",
+    );
+    /**
      * The runtime the shell's SINGLE-MAILBOX surfaces answer for — `organizerState()`,
      * `credentialState()`, `forgetStoredLogin()` and the `adapter` this object exposes.
      *
@@ -2268,6 +2310,15 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
            This path does NOT detach the runtime, which is why the flag needs clearing here rather
            than by construction — see `signInRefused`. */
         clearSignInRefusal("the stored password was forgotten");
+        /**
+         * AND THE EPOCH MOVES, so nothing in flight writes this password back and no dial opens a
+         * login on the copy in memory. Here rather than only in the sign-out route because the
+         * refused-launch path (`mobile.ts`) discards a seal without signing out and leaves the
+         * same fact. After the row is proven gone: bumping over a clear that THREW would leave an
+         * install refusing to dial a credential it still holds.
+         */
+        fence.bump();
+        await closeDialAfterSignOut();
         log("stored_login_cleared", {
           mailboxId: mb.id,
           state: had ? "removed" : "absent",
@@ -2366,36 +2417,54 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
        */
       // See the note in `resolveLogin`: the environment's password belongs to the seed.
       const envPass = isSeed ? config.imap.auth.pass : undefined;
+      /* THE SIGN-OUT FENCE, over the launch's own seal. This is a credential write like the door's
+         — it just runs at boot rather than at a press — and the encrypt above it is an await a
+         sign-out can land inside, which would seal a password the person had just asked to be
+         gone. Discarded rather than merely refused: the insert may already have committed. */
       if (durableKey && envPass && !(await storedLogin())) {
-        const sealed = await keyProvider.encrypt(envPass);
-        await db.insert(mailboxCredentials).values({
-          mailboxId: mb.id,
-          transport: "imap",
-          secretEnc: sealed.ciphertext,
-          keyVersion: sealed.keyVersion,
-          // The same non-secret shape the hosted worker writes, so one row shape serves both.
-          meta: {
-            host: mbImap.host, port: mbImap.port,
-            secure: mbImap.secure, user: mbImap.auth.user,
-            /**
-             * And the submission host this password is being sealed for — the outgoing half of the same record. One
-             * password covers both transports, and this is the only place that fact is written down. OMITTED, not
-             * empty, when this launch has no submission server configured — the one place that differs from the door,
-             * deliberately: an empty value states "no outgoing server is authorized", which the door can say because
-             * a door submit is a complete statement the person can make again. This seal is a bootstrap from an
-             * environment (the self-hosted path), where an operator may add the outgoing variable later with no door
-             * to re-save through — "none authorized" would refuse every later send with no recovery surface. Absent
-             * means "this row says nothing", the tolerance every older credential relies on.
-             */
-            ...(isSeed && config.imap.smtp?.host ? { smtpHost: config.imap.smtp.host } : {}),
-          },
-          updatedAt: now(),
-        });
-        log("stored_login_sealed", {
-          mailboxId: mb.id,
-          reason: "the mailbox password was encrypted into the local store under this install's " +
-            "key; later launches read it back and need no password in the environment",
-        });
+        const bootSeal = fence.begin();
+        try {
+          const sealed = await keyProvider.encrypt(envPass);
+          await db.insert(mailboxCredentials).values({
+            mailboxId: mb.id,
+            transport: "imap",
+            secretEnc: sealed.ciphertext,
+            keyVersion: sealed.keyVersion,
+            // The same non-secret shape the hosted worker writes, so one row shape serves both.
+            meta: {
+              host: mbImap.host, port: mbImap.port,
+              secure: mbImap.secure, user: mbImap.auth.user,
+              /**
+               * And the submission host this password is being sealed for — the outgoing half of the same record. One
+               * password covers both transports, and this is the only place that fact is written down. OMITTED, not
+               * empty, when this launch has no submission server configured — the one place that differs from the door,
+               * deliberately: an empty value states "no outgoing server is authorized", which the door can say because
+               * a door submit is a complete statement the person can make again. This seal is a bootstrap from an
+               * environment (the self-hosted path), where an operator may add the outgoing variable later with no door
+               * to re-save through — "none authorized" would refuse every later send with no recovery surface. Absent
+               * means "this row says nothing", the tolerance every older credential relies on.
+               */
+              ...(isSeed && config.imap.smtp?.host ? { smtpHost: config.imap.smtp.host } : {}),
+            },
+            updatedAt: now(),
+          });
+          if (bootSeal.stale()) {
+            await discardCredentialsFor(mb.id);
+            log("stored_login_seal_discarded", {
+              mailboxId: mb.id,
+              reason: "this install signed out while the launch was sealing its password, so the "
+                + "row it had just written was removed again and nothing dials on it",
+            });
+          } else {
+            log("stored_login_sealed", {
+              mailboxId: mb.id,
+              reason: "the mailbox password was encrypted into the local store under this install's " +
+                "key; later launches read it back and need no password in the environment",
+            });
+          }
+        } finally {
+          bootSeal.settle();
+        }
       }
 
       // TWO LITERAL CALL SITES AND NOT ONE COMPUTED NAME. A guard over this package walks every
@@ -2403,6 +2472,15 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
       // a call site whose event is an expression is a call site whose FIELDS cannot be checked
       // either, and unchecked fields are how a secret reaches a log line. The guard caught this one
       // as a ternary while it was being written.
+      /**
+       * THE SIGN-OUT EPOCH THIS MAILBOX'S PASSWORD BELONGS TO, read before it is resolved. The
+       * plaintext then lives in this closure and in `imapConfig.auth` for the life of the
+       * attachment, so "the row is gone" is not the same fact as "nothing can dial with it" —
+       * every dial re-reads the epoch and refuses when a sign-out has moved it.
+       */
+      const dialUnder = fence.generation();
+      /** Whether a sign-out has happened since this mailbox resolved its password. */
+      const signedOutSinceDial = (): boolean => fence.generation() !== dialUnder;
       const login = await resolveLogin();
       if (login.state === "absent") {
         log("stored_login_absent", {
@@ -2914,6 +2992,16 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
       };
 
       let adapter: MailboxAdapter = dialAdapter();
+      /**
+       * END THE LOGIN THE FORGOTTEN PASSWORD BOUGHT. Removing the row leaves an authenticated
+       * socket open on a credential the person asked to be gone, and this engine outlives the
+       * clear on every door that does not stop it. The poll timer is left alone deliberately: it
+       * fires, finds the epoch moved and does not dial — one refusal, in `dialAndGate`, rather
+       * than a second teardown path racing `detach()`.
+       */
+      const closeDialAfterSignOut = async (): Promise<void> => {
+        await adapter.close().catch(() => { /* already going away */ });
+      };
       const syncDeps = {
         repo,
         /**
@@ -4792,6 +4880,12 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
        * ends in one — two would give the mailbox two overlapping drains.
        */
       const dialAndGate = async (): Promise<{ leaseRead: boolean }> => {
+        /* THE SIGN-OUT FENCE, BEFORE `connect()` and before anything else. A launch and a re-dial
+           both come through here, and both hold the plaintext in memory — so a sign-out that
+           landed after this mailbox resolved its password must stop the login being opened, not
+           merely the row being read. Refusing is the whole act: the poll timer lands here again
+           and refuses again until the process ends or somebody signs back in. */
+        if (signedOutSinceDial()) throw new SignedOutError();
         await adapter.connect();
         /* AFTER `connect()`, because that is the call that establishes the connection this pass
            is about. Captured once and carried, exactly as `drainPass` does. */
@@ -5252,6 +5346,19 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           // away. Deliberately BEFORE `connect()`: an empty password is a login attempt the
           // server will refuse, and a refused login on some providers counts toward a lockout.
           if (login.state !== "ready" || !login.pass) return;
+          /* …AND NOT AFTER A SIGN-OUT. Same shape and same place as the line above, for the same
+             reason: this is not a failed launch, it is an install with no password to use. The
+             throwing check in `dialAndGate` is what the re-dial meets; a launch answers quietly
+             so a sign-out during boot does not surface as a broken app. */
+          if (signedOutSinceDial()) {
+            log("stored_login_absent", {
+              mailboxId: mb.id,
+              state: "absent",
+              reason: "this install signed out while it was starting, so no login was opened on "
+                + "the password this launch had already read",
+            });
+            return;
+          }
           /* THE LAUNCH DIAL JOINS THE SAME WAIT `detach()` HONOURS.
            *
            * `detach()` awaited `tail` and the re-dial handle, but not this — so a removal landing
@@ -6022,6 +6129,9 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                * storing a secret nothing has tried. The mailbox count is not gated here: the tier is
                * `UNMETERED` (the limit is the user's own disk), declared in `localServices`. The
                * account is the LAUNCH SESSION's, never a value from the body. */
+            /* THE SIGN-OUT FENCE, read before anything is awaited — see the seal route above. The
+               create dials too, so it holds the same window open. */
+            const addWrite = fence.begin();
             try {
               const body = (await req.json()) as Record<string, unknown>;
               const deps = depsFor();
@@ -6054,6 +6164,29 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                 b as never,
                 { probe: makeImapProbe(deps, probeOpts), smtpProbe: makeSmtpProbe(deps, smtpProbeOpts) },
               ));
+
+              if (addWrite.stale()) {
+                /* THE SIGN-OUT FENCE, and here the undo is the whole mailbox rather than the
+                   credential: this row did not exist when the person signed out, so leaving it
+                   would add a mailbox to an install that had just been emptied. Through the same
+                   shared service as the duplicate refusal below, for its reason — tombstone,
+                   credential and appointments are one path. */
+                try {
+                  await deps.services!.mailbox.delete(ctx, dto.id);
+                } catch (undoErr) {
+                  log("local_mailbox_add_undo_failed", {
+                    err: undoErr,
+                    reason: "a mailbox added while this install was signing out could not be "
+                      + "removed again; removing it from the pane clears it",
+                  });
+                }
+                log("local_mailbox_seal_discarded", {
+                  mailboxId: dto.id,
+                  reason: "this install signed out while the password was being checked, so the "
+                    + "mailbox the check added was removed again and nothing dials on it",
+                });
+                throw signedOutMidWrite();
+              }
 
               const [proven] = await db
                 .select({ meta: mailboxCredentials.meta })
@@ -6181,6 +6314,8 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                 }),
                 { status, headers: { "content-type": "application/json" } },
               );
+            } finally {
+              addWrite.settle();
             }
           }
           if (localSealMatch) {
@@ -6192,6 +6327,12 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                * nothing has tried. The account comes from the resolved launch session, never the
                * body. */
             const mailboxId = localSealMatch[1]!;
+            /* THE SIGN-OUT FENCE. The probe below dials the server and commits afterwards, so a
+               sign-out can run to completion inside this call — proving the row gone and
+               answering — and this write then seals the password again. The epoch is read here,
+               before anything is awaited; the verdict is taken after the write, because by then
+               the row may already be committed and discarding it is the only honest undo. */
+            const sealWrite = fence.begin();
             try {
               const deps = depsFor();
               const body = (await req.json()) as Record<string, unknown>;
@@ -6204,6 +6345,18 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                 b as never,
                 { probe: makeImapProbe(deps, probeOpts), smtpProbe: makeSmtpProbe(deps, smtpProbeOpts) },
               ));
+              if (sealWrite.stale()) {
+                /* BEFORE THE RE-POINT, so a mailbox is never attached on a credential that is
+                   about to be removed. Every transport of this mailbox, because the update writes
+                   the incoming and submission rows together. */
+                await discardCredentialsFor(mailboxId);
+                log("local_mailbox_seal_discarded", {
+                  mailboxId,
+                  reason: "this install signed out while the password was being checked, so the "
+                    + "credential the check stored was removed again and nothing dials on it",
+                });
+                throw signedOutMidWrite();
+              }
                 /* And the running mailbox is re-pointed, not left for the next launch. "Takes effect
                  * on next launch" was tolerable for the SEED only because the shell replaces the
                  * engine (the next launch seconds away); there is no such gesture for mailbox two,
@@ -6275,6 +6428,11 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                 }),
                 { status, headers: { "content-type": "application/json" } },
               );
+            } finally {
+              /* ON EVERY EXIT — a sign-out waiting on this write is bounded by the wait, and an
+                 exit that never settled would spend the whole of it and then be reported as a
+                 store that could not be promised clean. */
+              sealWrite.settle();
             }
           }
           if (localRemoveMatch) {
@@ -6413,8 +6571,59 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                * delete a DIFFERENT mailbox's credential and report success. So every runtime forgets
                * its own; it answers true if ANY password was there, and a failure on one is not
                * swallowed — a half-happened sign-out must not report success. */
+            /**
+             * THE FENCE, BEFORE ANY STORE IS TOUCHED. Bumping first is what makes a writer that
+             * starts from here on refuse; waiting is what makes the ones already out settle — and
+             * discard what they wrote — before the read-backs below run, so the ordinary case
+             * leaves nothing at all. `runtimes.all()` is read AFTER the wait for the same reason:
+             * a mailbox the add route was in the middle of creating is on it by then.
+             */
+            /* WHAT THIS INSTALL HELD WHEN THE PRESS ARRIVED. `cleared` used to be read off the
+               forgets alone, which the fence makes wrong: a write it overtakes discards its own
+               row first, so every runtime then finds nothing and a real sign-out reported having
+               removed nothing. The question the field answers is about the moment of the press. */
+            const held = await db.select({ mailboxId: mailboxCredentials.mailboxId })
+              .from(mailboxCredentials).limit(1);
+            /* THE FENCE GOES UP ON THE CALL, not on the await: `signOut` bumps the epoch before
+               it yields, so every write that begins from here on reads the new one. The receipt
+               is written between the two because the count it names is the set being waited for,
+               and after the await that set is by definition the ones that did NOT settle. */
+            const fencing = fence.signOut(SIGN_OUT_FENCE_WAIT_MS);
+            log("stored_login_fence_raised", {
+              route: localActionRoute,
+              count: fence.outstanding(),
+              reason: "signing out: no password can be stored on this install from this moment, "
+                + "and the passwords already being stored are waited for before the stores are "
+                + "discarded",
+            });
+            const fenced = await fencing;
             const forgotten = await Promise.all(runtimes.all().map((r) => r.forgetStoredLogin()));
-            const cleared = forgotten.some(Boolean);
+            const cleared = held.length > 0 || forgotten.some(Boolean);
+            if (fenced.unsettled > 0) {
+              /* SAID, NOT SWALLOWED. Every store here was discarded, but a credential write that
+                 was still out when the wait ran out can still commit, and this door cannot
+                 promise what it has not seen settle. A non-2xx is what the shell already treats
+                 as "you have NOT been signed out" on the local door, which is the true sentence:
+                 pressing it again a moment later finds the writer settled and succeeds. */
+              log("local_action_refused", {
+                method: req.method,
+                route: localActionRoute,
+                status: 503,
+                reason: "a password was being stored while this install signed out and had not "
+                  + "finished; every stored password was removed, and this answers a refusal "
+                  + "rather than promise a store it could not watch settle",
+              });
+              return new Response(
+                JSON.stringify({
+                  error: {
+                    code: "stored_login_not_fenced",
+                    message: "a password was still being saved when you signed out, so this "
+                      + "install cannot promise it is gone. Try signing out again.",
+                  },
+                }),
+                { status: 503, headers: { "content-type": "application/json" } },
+              );
+            }
             return new Response(JSON.stringify({ cleared }), {
               status: 200,
               headers: { "content-type": "application/json" },
