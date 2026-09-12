@@ -255,13 +255,36 @@ export type StopOrganizingOutcome =
   | "refused";
 
 /**
- * `POST /mailboxes/:id/organize` — the ONE route that records a consent, matched on the path.
+ * THE CONSENT PATH IN BOTH SPELLINGS — the phone's 409 keys on this, and it must key on the door
+ * the presses actually use.
  *
- * Anchored at both ends and with no slash inside the id, so `/mailboxes/x/organize/anything` is
- * not this route and `/local/mailboxes/:id/organize` (the desktop shell's door, which this build
- * does not serve) could not be mistaken for it.
+ * `/local/` is optional and the id carries no slash, so `/mailboxes/x/organize/anything` is still
+ * not this route. It used to match the shared spelling alone, with a note that this build "does
+ * not serve" the local one — false twice over: the composition is `createSidecar`, so the local
+ * door has always been on this handle, and since {@link LOCAL_ORGANIZE_PATH} it is the only door
+ * a claim goes through. A regex that named one spelling would leave the other a way past the
+ * one-organizer rule, which is the whole thing this refusal exists for.
  */
-const ORGANIZE_ROUTE = /^\/mailboxes\/([^/]+)\/organize$/;
+const ORGANIZE_ROUTE = /^(?:\/local)?\/mailboxes\/([^/]+)\/organize$/;
+
+/**
+ * ══ THE DOOR A CLAIM PRESSES, AND WHY IT IS NOT THE SHARED ONE ═════════════════════════════
+ *
+ * The shared `POST /mailboxes/:id/organize` is `stepUp: true`, which on a standalone install is
+ * not a guard but a permanent refusal: `mintLaunchSession` stamps `lastTwofaAt` ONCE at boot
+ * ("there is no second factor on a local install"), so `withStepUp` answers 403 from five minutes
+ * after launch for the life of the process. Measured on a device: a press at +44 s and one at
+ * +2 m 35 s were 202, one at +6 m 06 s and one at +14 m 30 s were 403, and the claim watch's 29
+ * re-claims over 4 m 24 s were all 403 while `ohmail/_meta` stayed empty and the panel named a
+ * holder that had gone.
+ *
+ * `engine.ts` met this first and answered it the same way, for the six routes in its ahead-of-the-
+ * table family: *"`stepUpWindowMs` is NOT widened. The window is right for the door it was written
+ * for; what is wrong is applying a second factor to a tier that has none."* A phone is that tier —
+ * the same composition, the same launch session, the same per-launch bearer as the authority.
+ */
+const LOCAL_ORGANIZE_PATH = (id: string): string =>
+  `/local/mailboxes/${encodeURIComponent(id)}/organize`;
 
 /** `POST /mailboxes/:id/release` — the person's stop, as the row records it. */
 const RELEASE_PATH = (id: string): string => `/mailboxes/${encodeURIComponent(id)}/release`;
@@ -1035,8 +1058,40 @@ async function composePhoneEngine(
    * here: with `claimHere` pressing `sidecar.handle` directly, the claim watch reached the service
    * over a live foreign claim and the 409 never ran.
    */
-  const phoneHandle = async (req: Request): Promise<Response> =>
-    await refuseIfOrganizedElsewhere(req) ?? sidecar.handle(req);
+  /**
+   * ══ THE STEP-UP'D SPELLING IS NOT ON THIS DOOR AT ALL ══════════════════════════════════════
+   *
+   * A 404, not a forward and not a rewrite. See {@link LOCAL_ORGANIZE_PATH} for the measurement:
+   * on a standalone install the shared consent route is a permanent 403 from five minutes after
+   * launch, so every caller that reaches it is a press that cannot work — and the way to stop a
+   * caller being added back is for the path to be absent rather than discouraged. `/local/` is
+   * the door this build serves for the verb, `apps/mobile/src/net/mailboxes.ts` presses it, and
+   * `claimHere` below presses it; nothing else may.
+   *
+   * Scoped to the PHONE's composition. The shared route stays where it belongs on the hosted and
+   * self-hosted tables, which have a real second factor for it to mean something.
+   */
+  const SHARED_ORGANIZE_ROUTE = /^\/mailboxes\/([^/]+)\/organize$/;
+
+  const phoneHandle = async (req: Request): Promise<Response> => {
+    /* THE ONE-ORGANIZER RULE FIRST, on both spellings. A live foreign claim is the answer a
+       person's screen needs — the holder named — and it outranks "this door is not served": a
+       press aimed at the wrong spelling over somebody else's mailbox is still that mailbox's
+       answer, and answering 404 there would lose the holder the panel renders. */
+    const held = await refuseIfOrganizedElsewhere(req);
+    if (held !== null) return held;
+    if (req.method === "POST" && SHARED_ORGANIZE_ROUTE.test(new URL(req.url).pathname)) {
+      log("organizer_consent_route_absent", {
+        reason: "the shared consent route carries a second factor a standalone install can never "
+          + "produce, so it is not served here; the local door records the consent",
+      });
+      return new Response(
+        JSON.stringify({ error: { code: "not_found", message: "not found" } }),
+        { status: 404, headers: { "content-type": "application/json" } },
+      );
+    }
+    return sidecar.handle(req);
+  };
 
   /** The engine pressing its OWN door, with this launch's bearer. See {@link SELF_ORIGIN}. */
   const pressOwnRoute = async (path: string): Promise<Response> => phoneHandle(new Request(
@@ -1073,33 +1128,37 @@ async function composePhoneEngine(
     }
     let res: Response;
     try {
-      res = await pressOwnRoute(`/mailboxes/${encodeURIComponent(mailboxId)}/organize`);
+      res = await pressOwnRoute(LOCAL_ORGANIZE_PATH(mailboxId));
     } catch (err) {
       log("organizer_claim_here_failed", { err, mailboxId });
       return "refused";
     }
     if (res.status === 409) return "held";
-    /* 202 is the authorization and 200 is the route's idempotent answer — `already_organizing`
-       means the row already says so, which is the same end state and not a second becoming. Any
-       other 200 outcome (`disconnected`: the person removed the mailbox) is not a claim. */
-    if (res.status === 200) {
-      const body = await res.json().then(
-        (b) => b as { outcome?: unknown },
-        () => ({ outcome: undefined }),
-      );
-      if (body.outcome !== "already_organizing") {
-        log("organizer_claim_here_refused", {
-          mailboxId,
-          status: res.status,
-          reason: "the door answered about this mailbox without making this install its organizer",
-        });
-        return "refused";
-      }
-    } else if (res.status !== 202) {
+    /* ── THE LOCAL DOOR ANSWERS 200 FOR EVERY OUTCOME, so the OUTCOME is what is read ────────
+     *
+     * The shared route split its answer across the status (202 authorized, 200 otherwise); this
+     * one says so in the body, because on this door every one of the four is an answer about the
+     * row rather than a refusal of the request. `authorized` is the becoming and
+     * `already_organizing` is the row already saying so — the same end state, not a second
+     * becoming. `no_mailbox` and `removed` are not claims: the person took the mailbox off this
+     * phone while the press was in flight. */
+    if (res.status !== 200) {
       log("organizer_claim_here_refused", {
         mailboxId,
         status: res.status,
         reason: "the door refused this install the mailbox and the press is recorded nowhere",
+      });
+      return "refused";
+    }
+    const body = await res.json().then(
+      (b) => b as { outcome?: unknown },
+      () => ({ outcome: undefined }),
+    );
+    if (body.outcome !== "authorized" && body.outcome !== "already_organizing") {
+      log("organizer_claim_here_refused", {
+        mailboxId,
+        status: res.status,
+        reason: "the door answered about this mailbox without making this install its organizer",
       });
       return "refused";
     }
@@ -1112,6 +1171,10 @@ async function composePhoneEngine(
     log("organizer_reclaimed", {
       mailboxId,
       status: res.status,
+      /* WHICH OF THE TWO, because the status no longer says: the local door answers 200 for both
+         the becoming and the row already saying so, and a log that cannot tell them apart cannot
+         tell a re-claim that worked from a press over a mailbox this install already held. */
+      verdict: String(body.outcome),
       reason: "this install was asked to organize this mailbox and no other install is renewing a "
         + "claim on it, so the consent is recorded and the gate is asked now",
     });

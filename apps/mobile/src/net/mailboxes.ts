@@ -129,7 +129,7 @@ export async function releaseMailbox(
 }
 
 /**
- * The consent — `POST /mailboxes/:id/organize`, and on this phone the door already took it. A
+ * The consent — `POST /local/mailboxes/:id/organize`, and on this phone the door already took it. A
  * mailbox nobody consented to organizing is read and nothing else — no claim, no `ohmail/*`
  * tree — and on the standalone door that left the phone reading its own mailbox for ever. The
  * fourth door's limitations screen states what this phone will do, and Continue on it is the
@@ -163,7 +163,7 @@ export async function organizeHere(
   let res: Response;
   try {
     res = await session.fetch(
-      `${session.profile.origin}/mailboxes/${encodeURIComponent(mailboxId)}/organize`,
+      `${session.profile.origin}/local/mailboxes/${encodeURIComponent(mailboxId)}/organize`,
       { method: "POST", headers: { "content-type": "application/json" }, body: "{}" },
     );
   } catch (err) {
@@ -171,16 +171,26 @@ export async function organizeHere(
        engine's own and belongs in the sentence verbatim. */
     return { kind: "refused", reason: refuse("organizeHereUnreachable", faultDetail(err)) };
   }
-  /* 202 IS THE ONLY AUTHORIZATION and 200 is the route's idempotent answer — see
-     `MailboxTakeoverResult`. They are told apart because the second must never be reported as a
-     fresh consent: a relaunch presses this every time, and "you are now organizing" on every
-     launch is a sentence about an event that did not happen. */
-  if (res.status === 202) return { kind: "authorized" };
+  /* ══ WHY THE `/local/` SPELLING, AND WHY THE STATUS NO LONGER DECIDES ══════════════════════
+   *
+   * The shared `POST /mailboxes/:id/organize` is `stepUp: true`, and a standalone install stamps
+   * its second factor ONCE at boot — so that route answers 403 from five minutes after launch for
+   * the life of the process. Measured on a device: 202 at +44 s and +2 m 35 s, 403 at +6 m 06 s
+   * and +14 m 30 s, and a claim watch whose 29 re-claims over 4 m 24 s were every one of them a
+   * 403. The phone's door does not serve it at all now; `/local/` is the one the desktop shell
+   * has always used, for this reason, and the engine's own `claimHere` presses it too.
+   *
+   * That door answers 200 for EVERY outcome and names it in the body, because on it each one is
+   * an answer about the row rather than a refusal of the request. So the OUTCOME is read and the
+   * status is only a floor. `authorized` is the becoming and `already_organizing` is the row
+   * already saying so — told apart because the second must never be reported as a fresh consent:
+   * a relaunch presses this every time, and "you are now organizing" on every launch is a
+   * sentence about an event that did not happen. */
   if (res.status === 200) {
     /**
-     * TWO OUTCOMES SHARE THIS STATUS and only one of them is "already yours". `disconnected` means
-     * the mailbox was turned off by the person, and reporting it as organizing would leave an
-     * Ohbox that never fills behind a state the app called healthy.
+     * FOUR OUTCOMES SHARE THIS STATUS and two of them are a claim. `no_mailbox` and `removed` mean
+     * the mailbox is off this phone, and reporting either as organizing would leave an Ohbox that
+     * never fills behind a state the app called healthy.
      */
     let body: { outcome?: unknown };
     try {
@@ -188,6 +198,7 @@ export async function organizeHere(
     } catch {
       return { kind: "refused", reason: refuse("organizeHereUnreadable") };
     }
+    if (body.outcome === "authorized") return { kind: "authorized" };
     if (body.outcome === "already_organizing") return { kind: "already" };
     return { kind: "refused", reason: refuse("organizeHereDisconnected") };
   }
@@ -216,8 +227,9 @@ export async function organizeHere(
       holderKind: typeof held?.kind === "string" ? held.kind : "",
     };
   }
-  /* EVERY OTHER STATUS IS A REFUSAL WITH ITS NUMBER IN IT. 422 is an account that cannot take the
-     mailbox and 503 is a row this install could not read; neither is a state this app can mend,
-     and both are sentences a person can act on — which an Ohbox that never fills is not. */
+  /* EVERY OTHER STATUS IS A REFUSAL WITH ITS NUMBER IN IT. 503 is a row this install could not
+     read, 400 a screening answer the door would not store, 404 an engine older than the local
+     spelling; none is a state this app can mend, and all are sentences a person can act on —
+     which an Ohbox that never fills is not. */
   return { kind: "refused", reason: refuse("organizeHereRefused", res.status) };
 }
