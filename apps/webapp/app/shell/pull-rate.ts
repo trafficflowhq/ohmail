@@ -74,15 +74,15 @@ export function pullRate(samples: PullSample[]): number | null {
  *
  * Clamped at zero and `null` AT zero, which are two different refusals wearing one guard:
  * `serverMessageCount` is a sum over the folders a cycle has opened, so it grows as the tree is
- * walked and may sit below the mirror's own count for a while. A negative "still to read" is
- * absurd; a "0 still to read" printed over a pull that is visibly still running is worse,
- * because it is a confident wrong answer rather than an obviously broken one.
+ * walked and may sit below what has been pulled for a while. A negative "still to read" is
+ * absurd; a "0 still to read" printed over a pull that is visibly still running is worse.
+ * `pulled` is `firstRunProgress`, never a windowed mirror's row count.
  */
 export function pullRemaining(
-  serverMessageCount: number | undefined, mirrorCount: number,
+  serverMessageCount: number | undefined, pulled: number,
 ): number | null {
   if (typeof serverMessageCount !== "number") return null;
-  const remaining = serverMessageCount - mirrorCount;
+  const remaining = serverMessageCount - pulled;
   return remaining > 0 ? remaining : null;
 }
 

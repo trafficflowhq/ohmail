@@ -26,6 +26,7 @@ import { useDemoMode, useEngine, useFreshness, useSyncStatus } from "./engine";
 import { SYNC_FAILURE_STREAK, syncMayRead } from "./sync-scheduler";
 import {
   deriveMailState,
+  firstRunProgress,
   growthStep,
   pulledCount,
   seedGrowth,
@@ -154,10 +155,10 @@ interface MailStateBinding {
    */
   mirrored: number;
   /**
-   * HOW MUCH THE IMPORT HAS PULLED — {@link pulledCount} over the same facts the ladder judged.
-   * The first-run pull stage's numerator, and the strip's; `mirrored` above answers a different
-   * question ("how much is on this device") and the two diverge by the whole of a large mailbox
-   * once the renderer's mirror is windowed.
+   * HOW MUCH THE IMPORT HAS PULLED — {@link firstRunProgress} over the reader's own count. The
+   * first-run pull stage's numerator, and the strip's; `mirrored` above answers a different
+   * question ("how much is on this device") and on a windowed mirror the two diverge by the whole
+   * of a large mailbox.
    */
   pulled: number;
   /**
@@ -180,13 +181,20 @@ export function MailStateProvider({
   probe,
   freshnessProbe,
   mirrored,
+  received,
   children,
 }: {
   probe?: MailboxProbe;
   /** See {@link FreshnessProbe} — the desktop's sidecar-truth override; absent everywhere else. */
   freshnessProbe?: FreshnessProbe;
-  /** Messages in the MIRROR — every folder. THE progress signal, once it moves. */
+  /** Messages in the MIRROR — every folder. What this device HOLDS, not what it has taken in. */
   mirrored: number;
+  /**
+   * Message rows the sync reader has taken in — `OhmailEngine.receivedMessages()`, the import's
+   * producer on this door. `null` where no reader counts, which leaves the numerator on
+   * {@link mirrored} exactly as it stands today. See {@link firstRunProgress}.
+   */
+  received?: number | null;
   children: ReactNode;
 }) {
   const sync = useSyncStatus();
@@ -200,7 +208,21 @@ export function MailStateProvider({
   const [facts, setFacts] = useState<MailboxFacts[] | null>(null);
   const [probedFreshness, setProbedFreshness] = useState<FreshnessFacts | null>(null);
   const [beat, setBeat] = useState(() => Date.now());
-  const [growth, setGrowth] = useState<MirrorGrowth>(() => seedGrowth(mirrored));
+  /**
+   * THE IMPORT'S NUMERATOR. One derivation, so the strip's sentence, the growth episode and the
+   * first-run pull rate are the same number — `pull-rate.ts`'s rule.
+   *
+   * THREE READINGS, and the largest wins: the mirror's own rows, the server's per-mailbox counts
+   * ({@link pulledCount}, every-or-nothing over the facts) and the reader's own tally
+   * ({@link firstRunProgress} over `OhmailEngine.receivedMessages()`). Each is at least `mirrored`
+   * at the instant it is taken, so no reading here is below what is already on screen — but none
+   * of them promises monotonicity over TIME, because a door that stops answering falls back to the
+   * row count. That half is {@link wantsImportCounts}'s, at poll time, as its own docblock says.
+   */
+  const pulled = firstRunProgress({
+    mirrored: pulledCount(mirrored, facts), received: received ?? null,
+  });
+  const [growth, setGrowth] = useState<MirrorGrowth>(() => seedGrowth(pulled));
 
   /**
    * WHICH FRESHNESS THE LADDER JUDGES. With a probe (the desktop): the probe's LAST answer, and
@@ -211,13 +233,6 @@ export function MailStateProvider({
   const freshness: FreshnessFacts = freshnessProbe
     ? (probedFreshness ?? { state: "unknown", asOf: null })
     : engineFreshness;
-
-  /**
-   * THE IMPORT'S NUMERATOR. One derivation, so the strip's sentence, the growth episode and the
-   * first-run pull rate are the same number — `pull-rate.ts`'s rule. Falls back to `mirrored`
-   * wherever no door answered a count, so it can never read below what is already on screen.
-   */
-  const pulled = pulledCount(mirrored, facts);
 
   /**
    * Fold every observation of the mirror's size in. In an effect, not during render: `growthStep` records a TIME, and

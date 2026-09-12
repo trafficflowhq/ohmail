@@ -744,10 +744,20 @@ export function hostedTotal(mailboxes: readonly MailboxFacts[]): number | null {
 }
 
 /**
- * HOW MUCH MAIL THIS IMPORT HAS PULLED — the number the progress sentence states.
+ * THE FIRST IMPORT'S NUMERATOR — one derivation, so the strip, the growth episode and the pull
+ * screen's rate and estimate are one number, and each door contributes ONE producer here.
+ *
+ * Never the mirror's row count: the engine evicts as the pages land, so on a windowed client that
+ * number pins at the window's floor while the import runs on (measured: 5,000 held of 15,000
+ * received under `BROWSER_WINDOW`). The hosted producer is `OhmailEngine.receivedMessages()`,
+ * which equals the row count wherever nothing is evicted. `mirrored` is the FLOOR and never the
+ * answer: a reader that has not counted leaves the number where it stands today.
+ */
+/**
+ * HOW MUCH MAIL THE SERVER SAYS THIS IMPORT HAS PULLED — the FACTS half of the numerator.
  *
  * Not the renderer's row count: `pruneToPolicy` pins that at the window's `minRows` over a mailbox
- * whose mail predates the window, so it stops while the import runs on. The numerator is
+ * whose mail predates the window, so it stops while the import runs on. This reads
  * {@link MailboxFacts.messageCount} — the store the import writes into — under
  * {@link hostedTotal}'s every-or-nothing rule. Never `hostedMessageCount`: that is the DENOMINATOR
  * this pair is quoted against. `max` guards the SUMMED path only — the two early returns hand back
@@ -763,6 +773,12 @@ export function pulledCount(mirrored: number, mailboxes: readonly MailboxFacts[]
     sum += m.messageCount;
   }
   return Math.max(mirrored, sum);
+}
+
+export function firstRunProgress(input: { mirrored: number; received: number | null }): number {
+  const { mirrored, received } = input;
+  if (typeof received !== "number") return mirrored;
+  return Math.max(mirrored, received);
 }
 
 /**
@@ -1507,9 +1523,9 @@ export interface MailStateInputs {
   /** Messages in the MIRROR — every folder, not the Ohbox's rows. */
   mirrored: number;
   /**
-   * How much the import has PULLED — {@link pulledCount}. The `importing` arms quote this and
+   * How much the import has PULLED — {@link firstRunProgress}. The `importing` arms quote this and
    * nothing else does: every other reading below is a statement about the mirror ON THIS DEVICE
-   * and stays on {@link MailStateInputs.mirrored}. Equal to it wherever no door answered a count.
+   * and stays on {@link MailStateInputs.mirrored}. Equal to it wherever no producer answered.
    */
   pulled: number;
   /** The growth sampler's memory. THE progress signal. */
@@ -1754,9 +1770,9 @@ function climb(input: MailStateInputs): MailState {
   // the shell's clock, beaten by `MailStateProvider` while `state.clock` is
   // true — the reducer only runs when the mirror moves, so a stopped import
   // would otherwise never be told it had. The denominator is
-  // {@link deviceHoldings} measured against `pulled` — the same number this arm
-  // quotes — so the pair can never render a fraction already passed; `null`
-  // means no sentence may name a total.
+  // {@link deviceHoldings} measured against `pulled` — the same number this
+  // arm quotes — so the pair can never render a fraction already passed;
+  // `null` means no sentence may name a total.
   const totalIfAhead = deviceHoldings(mailboxes, pulled)?.total ?? null;
 
   if (isImporting(growth, sync.bootstrapping, now)) {

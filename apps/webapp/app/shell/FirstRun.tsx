@@ -99,14 +99,14 @@ export interface FirstRunProps {
   onRefresh: () => void;
   /** Leave the stage — the caller returns the route to the app. */
   onLeave: () => void;
-   /**
+  /**
    * THE PULL SCREEN'S NUMBERS.
    *
    * `screened`/`history` are what the two counters say, and both are projections over the mirror
    * ON SCREEN. `pulled` is the numerator the rate sampler folds, and it is NOT that mirror's row
-   * count: on a windowed client the projection stops at the policy floor while the import runs
-   * on, so a rate folded from it reads zero and the ETA never appears. The DENOMINATOR is on the
-   * facts (`serverMessageCount`), because only the server can say how much is out there.
+   * count: on a windowed client the projection stops at the window's floor while the import runs
+   * on, so a rate folded from it reads zero and no estimate ever appears. The DENOMINATOR is on
+   * the facts (`serverMessageCount`), because only the server can say how much is out there.
    */
   pull: { screened: number; history: number; pulled: number };
   /** How much mail the server says is in the mailbox — see `MailboxDTO.serverMessageCount`. */

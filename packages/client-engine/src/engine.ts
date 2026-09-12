@@ -49,6 +49,7 @@ import {
   type MessageBodyBatchWire,
   type MessageBodyRecord,
   type OhmailView,
+  type SyncChange,
   type SyncSnapshotPage,
   type UnsubscribeResult,
   type WithheldMarker,
@@ -1850,6 +1851,12 @@ export class OhmailEngine {
    * server to exactly one wasted request per engine, rather than one per drain forever.
    */
   private snapshotUnavailable = false;
+  /**
+   * HOW MANY MESSAGE ROWS THIS READER HAS TAKEN IN — see {@link OhmailEngine.receivedMessages}.
+   * Counted where the rows ARRIVE, so eviction cannot move it; in memory, so a reload restarts it
+   * and the consumer's floor is the mirror's own count.
+   */
+  private receivedMessageRows = 0;
   /** How much of the mailbox to keep. Resolved once; `full` when the host said nothing. */
   private readonly storePolicy: StorePolicy;
   /** Did the last COMPLETED drain settle inside one page? See {@link prefetchRecentBodies}. */
@@ -2511,6 +2518,9 @@ export class OhmailEngine {
           // verb and every abandoned record. It was also a second writer of a rule the store
           // already owned for the cross-tab case.
           await this.store.resetForBootstrap(); // cursor → "0"
+          // The wipe took the mail with it, so nothing has been received any more: every row comes
+          // back over the wire and would otherwise be counted a second time.
+          this.receivedMessageRows = 0;
           // The wipe took the rules with it — the re-bootstrap owes the rules-first pass again.
           rulesFirstDone = false;
           this.notify();
@@ -2526,6 +2536,7 @@ export class OhmailEngine {
       // later it is gone.
       const highBefore = this.store.maxSeq();
       pagesThisDrain += 1;
+      this.countReceived(flattenResponse(resp));
       await this.store.applyResponse(resp);
       if (resp.hasMore) {
         // A PRUNE PER BACKLOG PAGE, so the mirror never grows past the window on the way in. The
@@ -2628,6 +2639,7 @@ export class OhmailEngine {
         types: ["rule"],
         ...(this.syncLimit !== undefined ? { limit: this.syncLimit } : {}),
       });
+      this.countReceived(flattenResponse(resp));
       await this.store.applyChanges(flattenResponse(resp));
       since = resp.cursor;
       if (!resp.hasMore) break;
@@ -2786,6 +2798,7 @@ export class OhmailEngine {
     } catch {
       return; // the delta drain that follows is the source of truth, and of error reporting
     }
+    this.countReceived(page.changes);
     await this.store.applyChanges(page.changes); // rows only — the cursor is the delta's
     this.notify();
   }
@@ -2946,6 +2959,9 @@ export class OhmailEngine {
       // this one — a snapshot says nothing about what it omits — so it goes before this attempt
       // writes a single row over it.
       if (await this.store.pruneBySeq(prior)) this.notify();
+      // Those rows are gone, so they are no longer received. A sweep only ever happens at cursor
+      // "0", where no delta rows stand above the prefix, so zero is the whole truth here.
+      this.receivedMessageRows = 0;
     }
     // DURABLE BEFORE THE FIRST ROW, for the reason the whole class exists: a kill between this
     // write and the page's must leave a marker that names an attempt with no rows (harmless — the
@@ -2973,6 +2989,7 @@ export class OhmailEngine {
         // Rows + cursor in ONE flush. The buckets are a formality: `flattenResponse` concatenates
         // all four and `applyToRecords` dispatches on each change's own `op`, so which bucket a
         // change sits in cannot affect the result. Snapshot changes are all `op:"create"`.
+        this.countReceived(page.changes);
         await this.store.applyResponse({
           changes: { creates: page.changes, updates: [], moves: [], deletes: [] },
           cursor: encodeSeqCursor(page.asOfSeq),
@@ -2980,12 +2997,37 @@ export class OhmailEngine {
           serverTime: this.now().toISOString(),
         });
       } else {
+        this.countReceived(page.changes);
         await this.store.applyChanges(page.changes); // rows only — the cursor stays "0"
       }
       applied = true;
       this.notify();
       if (last) return;
       cursor = page.nextCursor as string;
+    }
+  }
+
+  /**
+   * COUNT THE LIVE MESSAGE ROWS THIS PAGE BRINGS OR TAKES AWAY. Read against the mirror BEFORE the
+   * apply, so a row it already holds adds nothing and a replayed page and a message's later updates
+   * are free. A DELETE subtracts, and only for a row that was live: mail the server no longer holds
+   * was not delivered, and without this the number would drift above the account's own count.
+   * Together that makes it the mirror's row count wherever nothing is evicted — see
+   * {@link receivedMessages} — and one change per id per page, resolved at the highest seq exactly
+   * as `applyToRecords` resolves it.
+   */
+  private countReceived(changes: SyncChange[]): void {
+    const last = new Map<string, SyncChange>();
+    for (const ch of changes) {
+      if (ch.type !== "message") continue;
+      const prev = last.get(ch.id);
+      if (prev === undefined || ch.seq >= prev.seq) last.set(ch.id, ch);
+    }
+    for (const [id, ch] of last) {
+      const live = this.store.get("message", id) !== undefined;
+      if (ch.op === "delete") {
+        if (live) this.receivedMessageRows -= 1;
+      } else if (!live) this.receivedMessageRows += 1;
     }
   }
 
@@ -5126,6 +5168,7 @@ export class OhmailEngine {
         // Read-your-writes echo (§3.4): idempotent apply — converges with the
         // delta that will arrive at the same seq.
         try {
+          this.countReceived(outcome.changes);
           await this.store.applyChanges(outcome.changes);
         } catch {
           // The SERVER took the write; only the LOCAL apply failed (a torn sqlite flush, a
@@ -5939,6 +5982,20 @@ export class OhmailEngine {
   storeWindow(): { days: number; minRows: number } | null {
     const policy = this.storePolicy;
     return policy.mode === "windowed" ? { days: policy.days, minRows: policy.minRows } : null;
+  }
+
+  /**
+   * HOW MUCH MAIL THIS CLIENT HAS TAKEN IN — the import's numerator on a windowed mirror, where
+   * `list("message").length` is not: `pruneToPolicy` evicts as the pages land, so the row count
+   * pins at the window's floor while the import runs on (measured: 5,000 held of 15,000 received
+   * under the browser's window). Counted at the reader's door instead, where eviction cannot reach
+   * it — and EQUAL to the row count wherever nothing is evicted, which is what makes this narrow.
+   *
+   * In memory, so a reload restarts it from what the mirror already holds — the consumer takes the
+   * larger of this and the row count, which is why a restart reads low rather than backwards.
+   */
+  receivedMessages(): number {
+    return this.receivedMessageRows;
   }
 
   listOlderAvailable(): boolean {

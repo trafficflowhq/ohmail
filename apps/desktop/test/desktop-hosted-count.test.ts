@@ -67,8 +67,8 @@ const inputs = (mailboxes: MailStateInputs["mailboxes"], mirrored: number): Mail
   failureStreak: 3,
   mailboxes,
   mirrored,
-  /* No door has answered an import count here — this file is about the HOSTED total, which is the
-     denominator, and a settled mirror quotes it against its own row count. */
+  // No producer answered a count, so the import's numerator is the mirror's own — the identity
+  // arm of `firstRunProgress`, which is what this settled window is about.
   pulled: mirrored,
   growth: seedGrowth(mirrored),
   // The resting freshness: current, stamped moments ago. The stale arm's own tests perturb it.

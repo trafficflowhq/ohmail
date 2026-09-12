@@ -1090,15 +1090,21 @@ function MailStateHost({ probe, freshnessProbe, children }: { probe?: MailboxPro
   /**
    * EVERY message in the MIRROR — Screener, Reads and Receipts included, not the Ohbox's rows.
    *
-   * What this DEVICE holds, and no longer the progress signal: on a windowed mirror it stops at
-   * the policy floor while an import runs on, so `MailStateProvider` derives `pulled` from it and
-   * the facts and folds THAT into the growth reducer. Sampled exactly once — here — because two
-   * surfaces sampling their own could disagree about whether the mirror is growing. The engine
-   * calls `notify()` once per drained page, so this is live with no extra plumbing.
+   * What this DEVICE holds, and no longer the progress signal: the engine evicts past the window
+   * as the pages land, so this pins at the window's floor while an import runs on. Sampled exactly
+   * once — here — because two surfaces sampling their own could disagree about whether the mirror
+   * is growing. The engine calls `notify()` once per drained page, so this is live with no extra
+   * plumbing.
    */
   const mirrored = useMemo(() => engine.read().list("message").length, [engine, version]);
+  /**
+   * AND HOW MUCH IT HAS TAKEN IN — the import's producer on this door. Counted at the sync
+   * reader's own door, so eviction cannot move it; sampled on the same version as `mirrored`, so
+   * the pair the provider derives from is read at one instant.
+   */
+  const received = useMemo(() => engine.receivedMessages(), [engine, version]);
   return (
-    <MailStateProvider probe={probe} freshnessProbe={freshnessProbe} mirrored={mirrored}>
+    <MailStateProvider probe={probe} freshnessProbe={freshnessProbe} mirrored={mirrored} received={received}>
       {children}
     </MailStateProvider>
   );
@@ -1825,9 +1831,9 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
     [consentView, deleting.held],
   );
   /**
-   * EVERY MESSAGE IN THE MIRROR — what this device holds, NOT the first pull's numerator; that is
-   * `pulled`, off `useMailState()`, because a windowed mirror pins this number at the policy floor
-   * mid-import. Its remaining readers are the ones asking about the mirror itself.
+   * EVERY MESSAGE IN THE MIRROR — what this device HOLDS, and NOT the first pull's numerator;
+   * that is `pulled`, off `useMailState()`, because a windowed mirror pins this number at the
+   * window's floor mid-import. Its remaining readers ask about the mirror itself.
    *
    * Read again here rather than lifted out of `useMailState`, because that context publishes the
    * count it was CONSTRUCTED with and this component is inside it; the two are the same
@@ -7875,10 +7881,10 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
           pull={{
             screened: Math.max(0, mirroredCount - history.length),
             history: history.length,
-            /* NOT `mirroredCount`: on a windowed mirror that number stops at the policy floor
-               while the import runs on, so the bar froze, the rate read zero and no ETA ever
-               appeared. `screened` above keeps it — both of its operands are projections over
-               the same reader, and a difference between two populations is not a count. */
+            /* NOT `mirroredCount`: on a windowed mirror that number stops at the window's floor
+               while the import runs on, so the bar froze, the rate read zero and no estimate ever
+               appeared. `screened` above keeps it — both of its operands are projections over the
+               same reader, and a difference between two populations is not a count. */
             pulled,
           }}
           decide={firstRunDecide}
