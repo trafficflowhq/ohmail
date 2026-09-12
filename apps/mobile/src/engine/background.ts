@@ -593,25 +593,6 @@ export function createBackgroundOrganizing(deps: BackgroundDeps): BackgroundOrga
   };
 
   /**
-   * ══ THE HOLDER LEFT, AND THIS PHONE IS THE ONE IN FRONT OF THE PERSON ══════════════════════
-   *
-   * A stand-down is a one-way door without this. Measured on a device: the laptop handed the
-   * mailbox back through the ordinary path, the claim record was gone, and 5 min 43 s later the
-   * phone had not re-claimed and its panel still named a machine that had left. Only a relaunch
-   * recovered, and it recovered for the wrong reason — the launch-time consent press, which is the
-   * takeover this lane removes.
-   *
-   * A phone organizes the mailbox WHILE IT IS OPEN, so a stood-down session
-   * keeps asking on the claim watch's own cadence and takes the mailbox back when nothing holds it.
-   * It cannot displace anybody: {@link BackgroundEngine.claimHere} is refused at the engine's door
-   * while a foreign claim is still being renewed, which is where the one-organizer invariant is
-   * enforced rather than here. `held` is therefore the ordinary answer and says nothing to anyone.
-   *
-   * Bounded three ways: it runs only while this session is live (so it stops when the app is
-   * closed and when the person stops), only where the engine says this install is STOOD DOWN, and
-   * on the same clock the claim watch uses — never its own number.
-   */
-  /**
    * ══ A REFUSAL COSTS TICKS, AND IT IS ONE LINE PER CLASS ════════════════════════════════════
    *
    * Measured on a device: a holder released its claim, and this watch pressed every ten seconds
@@ -653,6 +634,25 @@ export function createBackgroundOrganizing(deps: BackgroundDeps): BackgroundOrga
     moved();
   };
 
+  /**
+   * ══ THE HOLDER LEFT, AND THIS PHONE IS THE ONE IN FRONT OF THE PERSON ══════════════════════
+   *
+   * A stand-down is a one-way door without this. Measured on a device: the laptop handed the
+   * mailbox back through the ordinary path, the claim record was gone, and 5 min 43 s later the
+   * phone had not re-claimed and its panel still named a machine that had left. Only a relaunch
+   * recovered, and it recovered for the wrong reason — the launch-time consent press, which is the
+   * takeover this lane removes.
+   *
+   * A phone organizes the mailbox WHILE IT IS OPEN, so a stood-down session
+   * keeps asking on the claim watch's own cadence and takes the mailbox back when nothing holds it.
+   * It cannot displace anybody: {@link BackgroundEngine.claimHere} is refused at the engine's door
+   * while a foreign claim is still being renewed, which is where the one-organizer invariant is
+   * enforced rather than here. `held` is therefore the ordinary answer and says nothing to anyone.
+   *
+   * Bounded three ways: it runs only while this session is live (so it stops when the app is
+   * closed and when the person stops), only where the engine says this install is STOOD DOWN, and
+   * on the same clock the claim watch uses — never its own number.
+   */
   const reclaimCheck = async (): Promise<void> => {
     if (disposed) return;
     /* `=== true` and not `!== false`: a read that could not answer is not a licence to ask for

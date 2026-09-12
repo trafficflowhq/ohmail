@@ -1050,15 +1050,6 @@ async function composePhoneEngine(
   };
 
   /**
-   * ══ THE PHONE'S ONE DOOR — and `claimHere` goes through it, which is the whole point ════════
-   *
-   * Composed once and used by BOTH the app-facing `handle` and the engine's own two verbs. A
-   * second path to the route would make the refusal above a check one caller can be added past,
-   * and the caller that would be added past it is exactly the one this lane exists for — measured
-   * here: with `claimHere` pressing `sidecar.handle` directly, the claim watch reached the service
-   * over a live foreign claim and the 409 never ran.
-   */
-  /**
    * ══ THE STEP-UP'D SPELLING IS NOT ON THIS DOOR AT ALL ══════════════════════════════════════
    *
    * A 404, not a forward and not a rewrite. See {@link LOCAL_ORGANIZE_PATH} for the measurement:
@@ -1073,6 +1064,15 @@ async function composePhoneEngine(
    */
   const SHARED_ORGANIZE_ROUTE = /^\/mailboxes\/([^/]+)\/organize$/;
 
+  /**
+   * ══ THE PHONE'S ONE DOOR — and `claimHere` goes through it, which is the whole point ════════
+   *
+   * Composed once and used by BOTH the app-facing `handle` and the engine's own two verbs. A
+   * second path to the route would make the refusal above a check one caller can be added past,
+   * and the caller that would be added past it is exactly the one this lane exists for — measured
+   * here: with `claimHere` pressing `sidecar.handle` directly, the claim watch reached the service
+   * over a live foreign claim and the 409 never ran.
+   */
   const phoneHandle = async (req: Request): Promise<Response> => {
     /* THE ONE-ORGANIZER RULE FIRST, on both spellings. A live foreign claim is the answer a
        person's screen needs — the holder named — and it outranks "this door is not served": a
