@@ -22,6 +22,7 @@ import {
 } from "./search.js";
 import { sendingMailboxId } from "./selectors.js";
 import { flattenResponse } from "./apply.js";
+import { countNotify } from "./client-vitals.js";
 import { MemoryMirrorStore, type EntityReader, type MirrorStore } from "./store.js";
 // THE SHARED DRAIN POLICY — the staleness threshold, the dense-page limit and the two
 // derivations over the drain stamp, held in one module with the desktop sidecar's mirror
@@ -2944,6 +2945,10 @@ export class OhmailEngine {
   }
 
   private notify(): void {
+    /* COUNTED. Every one of these makes the shell re-derive over the whole mirror, and the
+       incident's eager pass produced two thousand in one session — the `ui_vitals` line reports
+       how many arrived in the last five minutes beside what the derivation cost. */
+    countNotify();
     for (const l of this.listeners) l();
   }
 

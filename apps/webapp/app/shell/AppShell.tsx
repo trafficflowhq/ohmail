@@ -213,6 +213,7 @@ import {
   useHashRoute,
   type Route, type ScreenerSegmentId, type TriagePileId,
 } from "./routing";
+import { beginSearch, markStartup, useUiVitals } from "./ui-vitals";
 import { HistoryView } from "../views/HistoryView";
 import { SeedReviewView } from "../views/SeedReviewView";
 import { OhboxView, type OhboxReplyDone } from "../views/OhboxView";
@@ -1358,6 +1359,10 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
   );
 
   const theme = useTheme();
+  /* THE SHELL TIMES ITSELF — startup marks, the three interaction percentiles and the frame
+     sampler, reported every five minutes. Always on, no flag: an instrument that has to be turned
+     on is one that was off during the incident. `ui-vitals.ts` carries the reasoning. */
+  useUiVitals();
   const route = useHashRoute();
   // The registry owns ⌘K (see `keymap.tsx`). Leaving the hook's own binding on as well
   // would toggle twice per keypress, which cancels out and never opens the palette.
@@ -1402,6 +1407,18 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
    * entities means "cannot judge yet" rather than "the account has none".
    */
   const syncStatus = useSyncStatus();
+  /**
+   * "COLD START TO A USABLE LIST" — the budget's own measure, marked once.
+   *
+   * `bootstrapping === false` is "a drain has completed for this engine", which is the honest
+   * moment: the rows on screen are the mailbox's rather than nothing, and it is true of an EMPTY
+   * mailbox too — a definition keyed on a non-empty list would never mark for a new account and
+   * would report no cold-start figure at all. `markStartup` takes the first answer and ignores
+   * every later one, so a re-mount cannot overwrite the cold figure with a warm one.
+   */
+  useEffect(() => {
+    if (!syncStatus.bootstrapping) markStartup("listUsable");
+  }, [syncStatus.bootstrapping]);
   /**
    * The account's language wins over this device's — riding the `GET /consent` this shell
    * already makes. Both preferences are needed: localStorage is what a standalone install and
@@ -7080,7 +7097,12 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
                 version={version}
                 now={now}
                 query={searchQuery}
-                onQuery={setSearchQuery}
+                /* The search mark starts at the question and ends when SearchView paints its
+                   first results for it — the budget's "first results < 500 ms". */
+                onQuery={(q: string) => {
+                  beginSearch();
+                  setSearchQuery(q);
+                }}
                 onOpen={(hit: SearchHit) => openMessage(hit.message)}
                 /* The chip on a hit answers "where do I go to find this again?", and for a
                    History message the folder and the place are different answers. The INDEX is

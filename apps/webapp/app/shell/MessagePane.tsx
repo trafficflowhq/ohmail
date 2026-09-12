@@ -25,6 +25,7 @@ import { inlineForwardKey } from "./mail-send";
 import { chordKeys, useBinding, useKeyPress, useModGlyph } from "./keymap";
 import { useBodyStalled, useMessageChrome, type MessageBarPanel } from "./message-chrome";
 import { subscribeSessionRevival, useSessionDead } from "./session-truth";
+import { endOpen } from "./ui-vitals";
 import { MoreMenu, type MoreMenuItem } from "./MoreMenu";
 import "./action-bar.css";
 
@@ -1464,6 +1465,19 @@ export function MessagePane({
    * so beneath the text instead of passing as the mail.
    */
   const body = chrome.bodyOf(message);
+
+  /**
+   * THE OPEN MARK ENDS HERE — `list → body painted`, the number the 0.19.1 budget names.
+   *
+   * A LAYOUT effect, so it runs in the commit that put the text on screen rather than a frame
+   * later, and gated on a TERMINAL state: `snippet` and `loading` are both "the body has not
+   * arrived", and ending on either would report the spinner's latency as the mail's. `endOpen` is
+   * keyed by message id and is silent when nothing was pending, so a body that was already in the
+   * mirror — a re-render, a prefetch — records nothing rather than a zero.
+   */
+  useLayoutEffect(() => {
+    if (body.state !== "snippet" && body.state !== "loading") endOpen(message.id);
+  }, [message.id, body.state]);
 
   /**
    * A PROTECTED MESSAGE RENDERS NO TEXT, AND IT IS THIS BRANCH THAT MAKES IT TRUE. `isProtected` is checked FIRST and
