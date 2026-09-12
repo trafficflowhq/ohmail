@@ -82,6 +82,12 @@ export const DEFAULT_AUTH_CONFIG: Omit<AuthConfig, "rpID" | "rpName" | "origin">
   loginTokenTtlMs: 5 * MIN,
   webauthnChallengeTtlMs: 5 * MIN,
   oauthCodeTtlMs: 60_000,           // short-TTL single-use code
+  // FIVE MINUTES for the confirmation itself, longer than the code it leads to on purpose: the
+  // code's minute is a machine-to-machine hop, this is a person reading a screen and deciding.
+  // It is not a credential window — an unconfirmed request is spendable by nobody, including
+  // whoever holds it — so the only thing a longer value would cost is a page that still offers
+  // to authorize an app the visitor has since forgotten about.
+  oauthAuthorizeRequestTtlMs: 5 * MIN,
   // TWO MINUTES, and it is short because the code is READ OFF A SCREEN. It exists only for the
   // seconds between a browser printing it and a person typing it into the app beside them, so
   // its window is that walk and not a session. Shorter than the OAuth code's sibling ceremony

@@ -1130,7 +1130,32 @@ export const auth = {
 
   stepUpWebauthnVerify: (b: { credential: unknown }) =>
     api<{ ok: true }>("/auth/step-up/webauthn/verify", { method: "POST", body: b }),
+
+  /**
+   * The native authorize ceremony, both halves. The read describes what is about to be
+   * authorized and spends nothing; the confirm is the press that mints the code and hands back
+   * where to send the browser next. `ceremony: true` for the same reason the desktop link sets
+   * it — this is a credential ceremony, not an ordinary read of somebody's mail.
+   */
+  authorizeRequest: (handle: string, opts: { signal?: AbortSignal } = {}) =>
+    api<AuthorizeRequestDTO>(`/oauth/authorize/request?request=${encodeURIComponent(handle)}`, {
+      ...opts, ceremony: true,
+    }),
+
+  confirmAuthorize: (handle: string) =>
+    api<{ redirect: string }>("/oauth/authorize", {
+      method: "POST", body: { request: handle }, ceremony: true,
+    }),
 };
+
+/** What the confirmation page shows. The address arrives MASKED — the server does the masking. */
+export interface AuthorizeRequestDTO {
+  clientId: string;
+  redirectUri: string;
+  scope: string;
+  address: string;
+  expiresIn: number;
+}
 
 // ── Pairing tokens (wherever `/hello` announces `features.pairing` — the self-host server
 //    mints BOTH grants; the managed service mints device-pair only, its invite arms refused

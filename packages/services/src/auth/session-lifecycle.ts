@@ -933,11 +933,23 @@ export class SessionLifecycle {
     }
   }
 
-  protected async revokeFamily(db: Tx, familyId: string, now: Date): Promise<void> {
-    await db.update(refreshTokens).set({ revokedAt: now })
-      .where(and(eq(refreshTokens.familyId, familyId), isNull(refreshTokens.revokedAt)));
-    await db.update(sessions).set({ revokedAt: now })
-      .where(and(eq(sessions.familyId, familyId), isNull(sessions.revokedAt)));
+  /**
+   * Revoke a family, and SAY HOW MUCH. The counts are `RETURNING` rows rather than a second read,
+   * so they are what this statement actually withdrew and not what a later SELECT happens to see;
+   * only the LIVE rows are touched, so a family revoked twice reports zero the second time. Every
+   * caller but one ignores the value — the exception is the authorization-code replay, which owes
+   * its log line a count it did not make up.
+   */
+  protected async revokeFamily(
+    db: Tx, familyId: string, now: Date,
+  ): Promise<{ sessions: number; refreshTokens: number }> {
+    const tokens = await db.update(refreshTokens).set({ revokedAt: now })
+      .where(and(eq(refreshTokens.familyId, familyId), isNull(refreshTokens.revokedAt)))
+      .returning({ id: refreshTokens.id });
+    const live = await db.update(sessions).set({ revokedAt: now })
+      .where(and(eq(sessions.familyId, familyId), isNull(sessions.revokedAt)))
+      .returning({ id: sessions.id });
+    return { sessions: live.length, refreshTokens: tokens.length };
   }
 
   // ── Internal: user helpers ──────────────────────────────────────────────────

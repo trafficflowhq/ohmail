@@ -2005,6 +2005,28 @@
     "unavailableBody": "An dieses Exemplar von ohmail ist kein Server angeschlossen, es gibt also nichts, wogegen bestätigt werden könnte.",
     "footer": "Passkeys, zwei Faktoren, und kein Passwort, das verloren gehen kann."
   },
+  "authorizeDesktop": {
+    "title": "Die App anmelden?",
+    "lead": "{app} m\u00f6chte sich bei diesem Konto anmelden. Zugriff bekommt die App nur, wenn du hier zustimmst.",
+    "confirm": "Ja, anmelden",
+    "working": "L\u00e4uft \u2026",
+    "grantsMail": "Sie kann deine Post lesen und senden, genau wie dieser Browser.",
+    "grantsLong": "Sie bleibt angemeldet, bis du sie abmeldest.",
+    "grantsRevoke": "Du kannst sie jederzeit unter Einstellungen \u2192 Ger\u00e4te abmelden.",
+    "expiresIn": "Diese Anfrage l\u00e4uft in {seconds} Sekunden ab.",
+    "safety": "Wenn du das nicht erwartet hast, schlie\u00df diese Seite. Es wird nichts angemeldet, bevor du den Knopf dr\u00fcckst.",
+    "expiredTitle": "Diese Anfrage ist vorbei",
+    "expired": "Diese Anfrage ist nicht mehr offen. Sie ist abgelaufen, wurde schon benutzt oder in einem anderen Fenster gestartet.",
+    "expiredHint": "Fang in der App auf deinem Rechner noch einmal an.",
+    "doneTitle": "Fertig",
+    "doneBody": "Geh zur\u00fcck zur App auf deinem Rechner \u2014 sie ist angemeldet.",
+    "unavailableTitle": "Hier nicht verf\u00fcgbar",
+    "unavailableBody": "Diese ohmail-Installation hat keinen Server, also gibt es kein Konto zum Anmelden.",
+    "footer": "Es wird nichts angemeldet, bevor du den Knopf dr\u00fcckst.",
+    "client": {
+      "tf-macos": "ohmail f\u00fcr Mac"
+    }
+  },
   "linkDesktop": {
     "title": "Die Desktop-App verbinden",
     "lead": "Die App auf deinem Rechner braucht einen Code von hier. Drück den Knopf und tipp den Code dann in das App-Fenster, das dich hergeschickt hat.",

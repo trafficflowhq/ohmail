@@ -1,6 +1,6 @@
 export const SERVICES_VERSION = "0.0.0";
 
-export { ServiceError, IdempotencyRaceLost, SettleFailed, TransientDialRefusal } from "./errors.js";
+export { ServiceError, IdempotencyRaceLost, OAuthCodeReplayed, SettleFailed, TransientDialRefusal } from "./errors.js";
 export type { ServiceContext, Db } from "./context.js";
 // The fenced transaction door — every request-scoped write against a table Art. 17 erasure
 // empties opens here, so the fence cannot be forgotten. See `context.ts`.

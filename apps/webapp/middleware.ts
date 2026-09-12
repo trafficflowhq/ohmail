@@ -223,6 +223,13 @@ export async function middleware(request: NextRequest): Promise<NextResponse> {
       // strict nonce policy is what stops an injected inline script from reading the code out
       // of the DOM the moment it appears.
       pathname === "/link-desktop" ||
+      // `/authorize-desktop` carries a REQUEST HANDLE in its query string and its press hands out
+      // a long-lived native credential. `no-referrer` is the one that matters: under the
+      // single-origin merge the default policy would put the full URL, handle and all, in the
+      // `Referer` of the page's own API calls. `no-store` and the nonce policy come with it for
+      // `/link-desktop`'s reasons — no cache may hold this document and no injected inline script
+      // may read the handle out of the URL.
+      pathname === "/authorize-desktop" ||
       // `/setup` takes the self-host first-run token in a FORM — a credential page exactly as
       // `/login` is, so it gets the strict nonce policy plus no-referrer/no-store.
       pathname === "/setup" ||
@@ -400,6 +407,6 @@ function withPathname(request: NextRequest, pathname: string): URL {
 export const config = {
   matcher: [
     "/", "/mailbox", "/resume", "/login", "/join", "/join/invite", "/setup", "/verify-email",
-    "/link-desktop", "/de", "/privacy", "/imprint", "/subprocessors",
+    "/link-desktop", "/authorize-desktop", "/de", "/privacy", "/imprint", "/subprocessors",
   ],
 };

@@ -63,6 +63,9 @@ export const REFRESH_PATH = "/auth/refresh";
  *                            it into the app. It is the one page here whose ADDRESS is a product
  *                            surface in another program — the Rust shell's link table names it —
  *                            so it may never move without that table moving too.
+ *     /authorize-desktop     the confirmation the native sign-in goes through: the API redirects
+ *                            here with a request handle, the page says which app is asking and for
+ *                            which account, and the press is what authorizes it.
  *     /demo                  the REAL mail client in demo mode, framed by the landing.
  *
  *   SHARED, outside both groups
@@ -119,6 +122,11 @@ export const OWN_ROUTES = Object.freeze(/** @type {OwnRoute[]} */ ([
   { path: "/join", edge: true },
   { path: "/verify-email", edge: true },
   { path: "/link-desktop", edge: true },
+  // `/authorize-desktop` is the CONFIRMATION in front of the native sign-in. `GET /oauth/authorize`
+  // used to mint a credential from an ambient cookie and redirect straight back to the app; it now
+  // bounces here with a request handle, and the press on this page is what mints. The API builds
+  // this address from its own config, so the path is a contract with `routes/oauth.ts`.
+  { path: "/authorize-desktop", edge: true },
   // `/setup` is the self-host FIRST-RUN ceremony (`app/(product)/setup`). Mounted on every
   // deployment — one route tree, one bundle — and gated by the SERVER: the form renders only
   // while `GET /hello` answers `needsSetup: true`, which the managed API never does. It takes

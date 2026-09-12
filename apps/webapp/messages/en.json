@@ -2005,6 +2005,28 @@
     "unavailableBody": "This copy of ohmail has no server attached, so there is nothing to confirm against.",
     "footer": "Passkeys, two-factor, and no password to leak."
   },
+  "authorizeDesktop": {
+    "title": "Sign the app in?",
+    "lead": "{app} is asking to sign in to this account. It only gets access if you say so here.",
+    "confirm": "Yes, sign it in",
+    "working": "Working\u2026",
+    "grantsMail": "It can read and send your mail, the same as this browser can.",
+    "grantsLong": "It stays signed in until you sign it out.",
+    "grantsRevoke": "You can sign it out any time under Settings \u2192 Devices.",
+    "expiresIn": "This request stops working in {seconds} seconds.",
+    "safety": "If you were not expecting this, close this page. Nothing is signed in until you press the button.",
+    "expiredTitle": "That request is over",
+    "expired": "That request is no longer open. It may have expired, been used already, or been started in another window.",
+    "expiredHint": "Start again from the app on your computer.",
+    "doneTitle": "Done",
+    "doneBody": "Go back to the app on your computer \u2014 it is signed in.",
+    "unavailableTitle": "Not available here",
+    "unavailableBody": "This copy of ohmail has no server attached, so there is no account to sign in.",
+    "footer": "Nothing is signed in until you press the button.",
+    "client": {
+      "tf-macos": "ohmail for Mac"
+    }
+  },
   "linkDesktop": {
     "title": "Link the desktop app",
     "lead": "The app on your computer needs a code from here. Press the button, then type the code into the app window that sent you.",

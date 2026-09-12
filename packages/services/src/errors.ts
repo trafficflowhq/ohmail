@@ -17,6 +17,24 @@ export class ServiceError extends Error {
 }
 
 /**
+ * An authorization code was presented a second time — and what the first presentation minted has
+ * just been revoked (RFC 6749 §4.1.2 asks for both; only the refusal used to happen).
+ *
+ * A {@link ServiceError} subclass rather than a new taxonomy, so it reaches the client as the
+ * ordinary `invalid_grant` every other bad code gets: a caller must not be able to tell a replay
+ * from a typo, or the refusal becomes an oracle for which codes were once real. What the subclass
+ * carries is for the SERVER's side of the seam — the route reads the counts to write one log line
+ * and answers from the envelope. The code itself is deliberately not a field: it must not be
+ * reachable from anything that logs.
+ */
+export class OAuthCodeReplayed extends ServiceError {
+  constructor(readonly clientId: string, readonly revokedSessions: number, readonly revokedTokens: number) {
+    super("invalid_grant", 400, "invalid or expired authorization code");
+    this.name = "OAuthCodeReplayed";
+  }
+}
+
+/**
  * Thrown by a mutation whose `claimIdempotencyKey` came back FALSE: a concurrent transaction
  * carrying the same `Idempotency-Key` committed first. Throwing is the mechanism, not a
  * diagnostic — it rolls this transaction back, and because the effect and the idempotency row are
