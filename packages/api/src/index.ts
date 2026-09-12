@@ -117,3 +117,12 @@ export {
 
 // App factory.
 export { createApp, ACCOUNT_HEADER, REQUEST_ID_HEADER, type App } from "./app.js";
+
+/* THE CANONICAL PATHNAME, once. Both hosts rewrite an incoming URL before anything reads the
+ * path, and `withIdempotency` hashes the result — two spellings of one path that canonicalize
+ * differently turn a safe retry into 409 `idempotency_replay`. The leaf has no imports of its
+ * own, so it is on the barrel rather than behind a subpath: the two hosts already import from
+ * here, and the sidecar reaches the same routine through `./relay-allowlist`. */
+export {
+  API_PREFIX, MalformedPathError, normalizeEscapes, normalizePathname,
+} from "./canonical-path.js";

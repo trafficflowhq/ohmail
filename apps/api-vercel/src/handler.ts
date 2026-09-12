@@ -1,8 +1,9 @@
 import { randomUUID } from "node:crypto";
-import { createApp, apiRoutes, BodyOverCeilingError, isDbBusy, dbBusyResponse } from "@trafficflow/api";
+import {
+  createApp, apiRoutes, BodyOverCeilingError, isDbBusy, dbBusyResponse, MalformedPathError,
+} from "@trafficflow/api";
 import { hostState } from "./config.js";
 import { buildDeps } from "./deps.js";
-import { MalformedPathError } from "./prefix.js";
 import { normalizeRequest } from "./normalize.js";
 
 /**

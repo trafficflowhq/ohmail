@@ -1,5 +1,8 @@
 import { randomUUID } from "node:crypto";
-import { createApp, bodyCeilingFor, readBodyWithin, BodyOverCeilingError } from "@trafficflow/api";
+import {
+  createApp, bodyCeilingFor, readBodyWithin, BodyOverCeilingError,
+  API_PREFIX, MalformedPathError, normalizeEscapes, normalizePathname,
+} from "@trafficflow/api";
 import { selfHostRoutes } from "@trafficflow/api/self-host";
 import { buildDeps, type ServerRuntime } from "./deps.js";
 import { BODY_MAX_BYTES } from "./config.js";
@@ -22,78 +25,22 @@ import { BODY_MAX_BYTES } from "./config.js";
  * config (`config.ts`), so by the time a request exists the config is good (the KEK exception
  * reports through `/health`, which needs no branch here).
  *
- * The path canonicalization below is a hand-written twin of the managed host's `prefix.ts`, not
- * an import of it and not an extraction: the wake hub is deliberately the ONLY plumbing the two
- * hosts share, because extracting the rest would churn the managed deployment every time the
- * self-host one moves. The SEMANTICS are the managed host's exactly, for the managed host's
- * reason: `withIdempotency` hashes `method \n pathname \n body`, so two spellings of one path
+ * The path canonicalization is IMPORTED, not written here: both hosts call one routine
+ * (`@trafficflow/api`'s `normalizePathname`), for the managed host's reason —
+ * `withIdempotency` hashes `method \n pathname \n body`, so two spellings of one path
  * (`/api/sync` through the webapp split, `/sync` direct) must canonicalize identically or a
  * safe retry from the other surface answers 409 `idempotency_replay`. The deployment's proxy
  * therefore needs NO strip_prefix — this host strips one `/api` itself, byte-parallel with the
  * managed one.
  */
 
-/** The prefix the webapp's same-origin split may leave on the path. */
-export const API_PREFIX = "/api";
-
-/** Thrown for a pathname whose percent-encoding is not decodable — answered as 400. */
-export class MalformedPathError extends Error {
-  constructor(readonly pathname: string) {
-    super("pathname contains malformed percent-encoding");
-    this.name = "MalformedPathError";
-  }
-}
-
-/** RFC 3986 §2.3 unreserved: these NEVER need escaping, so an escaped one is not canonical. */
-const UNRESERVED = /^[A-Za-z0-9\-._~]$/;
-
-/**
- * Canonicalize percent-escapes — RFC 3986 §6.2.2: DECODE the unreserved ones, UPPERCASE the
- * rest (a reserved character must STAY escaped: decoding `%2F` would split a segment and change
- * the route), REJECT anything malformed (previously a `URIError` from above the envelope — a
- * logged 500 for what is plainly a 400).
- */
-export function normalizeEscapes(pathname: string): string {
-  let out = "";
-  for (let i = 0; i < pathname.length; i++) {
-    const ch = pathname[i]!;
-    if (ch !== "%") { out += ch; continue; }
-    const hex = pathname.slice(i + 1, i + 3);
-    if (!/^[0-9A-Fa-f]{2}$/.test(hex)) throw new MalformedPathError(pathname);
-    const byte = Number.parseInt(hex, 16);
-    const decoded = String.fromCharCode(byte);
-    // Only ASCII unreserved bytes are decoded; a multi-byte UTF-8 sequence stays escaped
-    // (uppercased) — decoding it here would be lossy across the string/byte boundary.
-    out += byte < 0x80 && UNRESERVED.test(decoded) ? decoded : `%${hex.toUpperCase()}`;
-    i += 2;
-  }
-  // The whole path must be decodable as a unit too — a lone surrogate escape passes the
-  // per-byte check and still fails here, exactly where matchRoute would have thrown.
-  try {
-    decodeURIComponent(out);
-  } catch {
-    throw new MalformedPathError(pathname);
-  }
-  return out;
-}
-
-/**
- * The canonical pathname: escapes canonicalized, slash runs collapsed, exactly ONE leading
- * `/api` dropped (never more — `/api/api/x` must 404, not invent `/x`), one trailing slash
- * dropped except on the root.
- */
-export function normalizePathname(pathname: string): string {
-  let p = normalizeEscapes(pathname);
-  p = p.replace(/\/{2,}/g, "/");
-  if (p === "") p = "/";
-  if (p === API_PREFIX) {
-    p = "/";
-  } else if (p.startsWith(`${API_PREFIX}/`)) {
-    p = p.slice(API_PREFIX.length);
-  }
-  if (p.length > 1 && p.endsWith("/")) p = p.replace(/\/+$/, "");
-  return p === "" ? "/" : p;
-}
+/* The canonicalizer is `@trafficflow/api`'s, re-exported so this host's own tests and the
+ * pipeline below keep one name for it. It used to be a hand-written twin of the managed
+ * host's, byte-parallel by review: two copies of the rule that decides a request hash can be
+ * corrected in one and stay wrong in the other, which is the defect the relay's allowlist was
+ * the third symptom of. One definition now, and the census in `packages/api/test` refuses a
+ * second. */
+export { API_PREFIX, MalformedPathError, normalizeEscapes, normalizePathname };
 
 /**
  * Rebuild `req` on its canonical path. The body is BUFFERED here, for the managed host's two

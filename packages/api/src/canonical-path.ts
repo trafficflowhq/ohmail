@@ -3,7 +3,12 @@
  * leading `/api` dropped, one trailing slash dropped except at the root. No case folding — static
  * route segments are compared byte-for-byte, so folding would match routes the server would 404.
  *
- * `apps/server` and `apps/api-vercel` hold code-identical copies; the census pins all three.
+ * THE ONLY DEFINITION. Both hosts and the relay call this one — `apps/server/src/handler.ts`
+ * and `apps/api-vercel/src/normalize.ts` through the `@trafficflow/api` barrel,
+ * `relay-allowlist.ts` directly. They used to hold code-identical copies pinned by a text
+ * compare, which says the three agree today and not that a correction reaches all three;
+ * `relay-allowlist-census.test.ts` now refuses a second definition anywhere under
+ * `apps/` or `packages/`.
  */
 
 /** The prefix the webapp's same-origin split may leave on the path. */
