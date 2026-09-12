@@ -1,31 +1,13 @@
 "use client";
 
 /**
- * ═══ WHAT THE WINDOW FEELS LIKE, MEASURED BY THE WINDOW ═══════════════════════════════════
- *
- * `engine_vitals` says what the sidecar costs and `renderer_vitals` says what the webview costs.
- * Neither says whether opening a message took 90 ms or 900, and that is the number a person
- * actually experiences: the 0.16.2 incident was reported as "it got slow and then it crashed",
- * and the only evidence for the first half was the reporter's sentence.
- *
- * So the shell times itself. Three startup marks, three interactions, two frame counters, and the
- * client engine's own derivation cost — a ring of the last hundred readings per interaction, p50
- * and p95 out of it every five minutes, on the same clock as the other two lines so one grep over
- * `engine.log` puts all three side by side.
- *
- * ── PII-FREE BY CONSTRUCTION, NOT BY CARE ─────────────────────────────────────────────────
- *
- * Every value here is a count or a duration. No id, no address, no subject, no folder name, no
- * query — not "we are careful not to log them" but "there is nowhere to put one": the report is a
- * record of numbers, and the desktop's shell recomposes even that from a fixed list of names it
- * holds itself (`vitals.rs`). The web app hands the same object to `console.debug` and sends it
- * nowhere at all.
- *
- * ── AND WHY THERE IS NO FLAG ──────────────────────────────────────────────────────────────
- *
- * An instrument that has to be turned on is an instrument that is off during the incident. This
- * costs one `requestAnimationFrame` handler that allocates nothing per frame, one long-task
- * observer where the browser has one, and one five-minute timer.
+ * WHAT THE WINDOW FEELS LIKE, MEASURED BY THE WINDOW. `engine_vitals` and `renderer_vitals` say
+ * what the two processes cost; neither says whether opening a message took 90 ms or 900. The shell
+ * times itself: three startup marks, three interactions, two frame counters and the client engine's
+ * derivation cost — a ring of the last hundred readings each, p50 and p95 every five minutes, on
+ * the same clock as the other two lines. Every value is a count or a duration, so there is nowhere
+ * to put an id, an address, a subject, a folder name or a query. There is no flag: an instrument
+ * that has to be turned on is off during the incident.
  */
 import { useEffect } from "react";
 import { takeClientEngineVitals } from "@ohmail/client-engine";

@@ -2,38 +2,28 @@
 /**
  * perf-smoke-check.mjs — does this build start fast enough, and does it stay inside its memory?
  *
- * The build workflow can prove that the packaged app opens a window. It could not, until now,
- * prove anything about what the app COSTS: a release that starts in eight seconds, or holds a
- * gigabyte of a laptop's memory for a mailbox of ten thousand messages, is green all the way
- * through a build matrix and slow on every machine it installs onto. A released build did exactly
- * that — an 8 GB machine, a large mailbox, 4.1 GB resident and one core held at 93.7 % for
- * 29 minutes, with nothing in the product watching.
- *
- * So this reads two instruments over one run of the packaged app and answers in one line.
- *
- *   sampler   the process group's own resident memory, from /proc, every few seconds
- *   log       the app's own `boot_phases`, `engine_vitals`, `first_sync_finished` and `ui_vitals`
- *
- * THREE RULES CARRIED OVER FROM THE MEASUREMENTS THESE BUDGETS COME FROM.
- *
- *  1. A missing input REFUSES. It is never a pass. A sixty-second window once read a renderer that
- *     was quadrupling as falling, and an absent sample is a shorter window still.
- *  2. A process is classified by its ARGUMENTS, never by the kernel's `comm`, which Linux truncates
- *     at fifteen characters — so a name list of the full spellings matches neither
- *     `WebKitWebProces` nor `WebKitNetworkPr` and reads a busy renderer as no renderer at all.
- *  3. Memory is the kernel's own kB (`VmRSS`). `statm` counts PAGES, and a figure derived by
- *     multiplying them by a 4096 literal is four times too low on a 16 kB-page machine.
- *
+ * The workflow could prove the packaged app opens a window and nothing about what it COSTS: a
+ * release that starts in eight seconds, or holds a gigabyte for a ten-thousand-message mailbox, is
+ * green through the matrix and slow on every machine it installs onto. This reads two instruments
+ * over one run of the packaged app — the process group's resident memory from /proc every few
+ * seconds, and the app's own `boot_phases`, `engine_vitals`, `first_sync_finished` and `ui_vitals`
+ * lines — and answers in one line.
+ */
+/**
+ * Three rules carried over from the measurements these budgets come from. A missing input REFUSES
+ * and is never a pass. A process is classified by its ARGUMENTS, never the kernel's `comm`, which
+ * Linux truncates at fifteen characters, so `WebKitWebProces` matches no full spelling and a busy
+ * renderer reads as no renderer. Memory is the kernel's own kB (`VmRSS`): `statm` counts PAGES,
+ * and multiplying those by a 4096 literal is four times too low on a 16 kB-page machine.
+ */
+/**
  * usage:
  *   perf-smoke-check.mjs --samples <tsv> --engine-log <log> [--bundle <file>]
  *                        [--expect-messages <n>] [--fixture-messages <n>]
  *   perf-smoke-check.mjs --sample --pid <pid> --out <tsv> --seconds <n> [--interval <s>]
- *   perf-smoke-check.mjs --perf-smoke-only        the selftest: every arm watched failing and admitting
+ *   perf-smoke-check.mjs --perf-smoke-only   the selftest: every arm watched failing and admitting
  *
- * verdict:
- *   PERF_SMOKE: GREEN -- <reading>      rc 0
- *   PERF_SMOKE: RED   -- <arms>         rc 1
- *   PERF_SMOKE: REFUSED -- <reason>     rc 3
+ * verdict: PERF_SMOKE: GREEN rc 0 - RED rc 1 - REFUSED rc 3.
  */
 import { readFileSync, readdirSync, writeFileSync, appendFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
@@ -179,20 +169,14 @@ export function percentile(values, p) {
   return sorted[k - 1];
 }
 
-/* ── WHETHER THE FRAME AND LATENCY HALF IS EVEN IN THIS BUILD ─────────────────────────────────
+/* ── WHETHER THE FRAME AND LATENCY HALF IS EVEN IN THIS BUILD ─────────────────────────
  *
- * Two conditions, measured independently, and the arm turns itself on when the second half of
- * the instrumentation lands rather than when somebody flips a switch:
- *
- *   the artifact carries the `ui_vitals` emitter · the run's log carries `ui_vitals` lines
- *
- * present + lines   → the arms DECIDE
- * present + none    → RED: the instrument shipped and wrote nothing, which is a regression in it
- * absent  + none    → UNREAD, printed, reddens nothing — this build has no frame instrument
- * absent  + lines   → RED: the log carries a line the artifact cannot have written
- *
- * A flag would make the third state indistinguishable from somebody forgetting, which is how an
- * instrument goes missing for two releases behind a green check.
+ * Two conditions measured independently, so the arm turns itself on when the second half of the
+ * instrumentation lands rather than when somebody flips a switch: the artifact carries the
+ * `ui_vitals` emitter, and the run's log carries `ui_vitals` lines. Present with lines, the arms
+ * DECIDE; present with none is RED (the instrument shipped and wrote nothing); absent with none is
+ * UNREAD, printed and reddens nothing; absent with lines is RED. A flag would make the third state
+ * indistinguishable from somebody forgetting.
  */
 export const UI_VITALS_EVENT = "ui_vitals";
 

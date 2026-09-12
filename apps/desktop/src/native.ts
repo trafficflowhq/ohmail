@@ -382,19 +382,14 @@ export async function requestDefaultMail(): Promise<{
 }
 
 /**
- * The window's own performance numbers, into the log this app already writes.
- *
- * ── WHY THE SHELL IS TOLD AND NOT A SERVER ──────────────────────────────────────────────────
- *
- * `engine.log` is the artifact somebody sends when a desktop install is slow, and it already
- * carries the sidecar's memory and the webview's. Without this the one thing it could not say is
- * how the WINDOW behaved — whether opening a message took 90 ms or 900 — which is the half a
- * person actually reports. Nothing leaves the machine: the report goes into a local file.
+ * The window's own performance numbers, into the log this app already writes. `engine.log` is the
+ * artifact somebody sends when an install is slow, and it already carries the sidecar's memory and
+ * the webview's; without this it could not say how the WINDOW behaved. Nothing leaves the machine.
  *
  * The argument is a bag of NUMBERS and the shell does not forward it: `vitals.rs` reads the names
- * it knows, takes a number or nothing from each, and composes the line itself — so this command
- * cannot carry a subject, an address or a folder name out of the page even if a future caller
- * put one in. Fire-and-forget: a refused report must never surface anywhere near somebody's mail.
+ * it knows, takes a number or nothing from each, and composes the line itself, so this command
+ * cannot carry a subject, an address or a folder name out of the page. Fire-and-forget: a refused
+ * report must never surface anywhere near somebody's mail.
  */
 export function reportUiVitals(report: Record<string, number | null>): void {
   const shell = internals();

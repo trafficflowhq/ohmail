@@ -1,16 +1,12 @@
 /**
- * WHAT THE CLIENT ENGINE COSTS THE WINDOW — two counters, kept where the work happens.
+ * WHAT THE CLIENT ENGINE COSTS THE WINDOW — two counters, kept where the work happens: the store's
+ * whole-mirror derivation and the engine's subscriber notify. A large mailbox's derivation runs
+ * hundreds of milliseconds and the eager body pass notifies twice per body; nothing measured
+ * either, so the cost showed up only as a pinned core.
  *
- * The incident that produced them: on a large mailbox every whole-mirror derivation ran
- * 180–236 ms, and a body is written twice — each write bumping the version and notifying — so the
- * eager pass's thousand bodies handed the shell two thousand of them. Nothing measured either
- * quantity, so the cost showed up only as a pinned core.
- *
- * A MODULE AND NOT A FIELD, because the two call sites are in different objects (the store's
- * bucket rebuild and the engine's subscriber notify) and the reader is in neither — the shell's
- * five-minute report. A per-engine field would have to be threaded through both and then out
- * again; one window runs one engine, and the numbers are counters rather than state anything
- * behaves on.
+ * A MODULE AND NOT A FIELD: the two call sites are in different objects and the reader — the
+ * shell's five-minute report — is in neither. One window runs one engine, and these are counters
+ * rather than state anything behaves on.
  */
 
 /** A monotonic millisecond clock, or `null` where the runtime has none. */

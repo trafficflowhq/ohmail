@@ -316,20 +316,14 @@ export async function stopOrganizingStandalone(): Promise<boolean> {
 }
 
 /**
- * ══ ONE STANDING INSTRUCTION, AND A PRESS REPLACES IT RATHER THAN RACING IT ═════════════════
- *
- * Stop and Start were two unawaited calls on one mailbox with nothing between them. Measured on a
- * device: pressing both in one run left either a start refused for the life of the process or a
- * panel reading `Stopping` for three minutes over a phone that was demonstrably filing mail.
- *
- * So the session holds ONE instruction and every press goes through {@link pressOrganizeHere}. A
- * press asking for the instruction already in force is not a second instruction; a press made
- * while the opposite act is in flight is QUEUED once and run when that act settles — Start after a
- * stop, and Stop after a start, which releases what the start claimed. That is the cancel.
- *
- * The instruction is settled from the ENGINE's own answer and never outranks it
- * ({@link settleInstruction}), so a press whose call never returns cannot leave a stale word on
- * screen — the transition ends when the engine says it has.
+ * ONE STANDING INSTRUCTION, AND A PRESS REPLACES IT RATHER THAN RACING IT. Stop and Start were two
+ * unawaited calls on one mailbox with nothing between them: pressing both in one run left either a
+ * start refused for the life of the process or a panel reading `Stopping` over a phone that was
+ * filing mail. The session holds ONE instruction and every press goes through
+ * {@link pressOrganizeHere}: a press asking for the instruction already in force is not a second
+ * one, and a press made while the opposite act is in flight is QUEUED once and run when that act
+ * settles — that is the cancel. The instruction is settled from the ENGINE's own answer and never
+ * outranks it ({@link settleInstruction}), so a press whose call never returns leaves no stale word.
  */
 export type OrganizeInstruction = "idle" | "starting" | "running" | "stopping";
 
