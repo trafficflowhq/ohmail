@@ -1,7 +1,7 @@
 import { and, eq, inArray, ne, sql } from "drizzle-orm";
 import { folderState, mailboxes, messages } from "@trafficflow/db";
 import {
-  FOLDER_PAGE_MAX,
+  FOLDER_PAGE_MAX, epochOf, sameEpoch,
   type FolderPage, type FolderPageItem, type FolderSearchPage,
 } from "@trafficflow/core/adapters/imap";
 /* `core/mail`, never the default barrel: the barrel re-exports `ai/workflows/*`, whose workflow
@@ -284,7 +284,7 @@ export async function listServerTrash(
       }
       states.push({
         id: box.id, address: box.address, window: "ok",
-        ...(held !== undefined && held.v !== page.uidValidity ? { reset: true } : {}),
+        ...(held !== undefined && !sameEpoch(epochOf(held.v), epochOf(page.uidValidity)) ? { reset: true } : {}),
       });
       return { boxId: box.id, page };
     } catch (err) {
@@ -331,7 +331,7 @@ export async function listServerTrash(
       }
     } else if (lane.rows.length > 0) {
       const held = before[lane.boxId];
-      nextBefore[lane.boxId] = held !== undefined && held.v === lane.uidValidity
+      nextBefore[lane.boxId] = held !== undefined && sameEpoch(epochOf(held.v), epochOf(lane.uidValidity))
         ? held
         : { v: lane.uidValidity, s: lane.rows[0]!.seq + 1 };
     } else if (lane.adapterNext !== null) {
@@ -349,7 +349,7 @@ export async function listServerTrash(
       const held = before[lane.boxId];
       const s = lane.tookAny
         ? lane.lowestTakenSeq
-        : held !== undefined && held.v === lane.uidValidity
+        : held !== undefined && sameEpoch(epochOf(held.v), epochOf(lane.uidValidity))
           ? held.s
           : (lane.rows[0]?.seq ?? 0) + 1;
       nextBefore[lane.boxId] = { v: lane.uidValidity, s: Math.max(1, s) };
@@ -450,7 +450,7 @@ export async function serverTrashBody(
     const fetched = await adapter.fetchByUid(box.trashFolder!, [args.uid], {
       maxBytes: TRASH_BODY_MAX_BYTES,
     });
-    if (fetched.uidValidity !== args.uidValidity) {
+    if (!sameEpoch(epochOf(fetched.uidValidity), epochOf(args.uidValidity))) {
       throw new ServiceError(
         "trash_message_gone", 410, "the Trash folder changed under this row — reload the list",
       );

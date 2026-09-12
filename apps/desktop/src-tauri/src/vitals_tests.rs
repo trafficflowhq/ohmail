@@ -145,6 +145,191 @@ fn raising_the_oom_score_writes_the_number_and_a_refusal_is_not_fatal() {
     let _ = fs::remove_dir_all(&root);
 }
 
+/* ── THE OTHER TWO PLATFORMS, against fixture process tables ────────────────────────────────────
+ *
+ * Neither macOS nor Windows can be read from this host, and the readers that call the operating
+ * system are three functions each. Everything that DECIDES — which process belongs to this app,
+ * which name is one of the webview's, what unit the figure is in — is above them and is driven
+ * here with tables written by hand, so the rule is watched on every platform's CI rather than only
+ * on the one it runs on.
+ */
+
+fn row(pid: u32, name: &str, ppid: u32, rss_kb: Option<u64>) -> ProcRow {
+    ProcRow { pid, name: name.to_string(), ppid, rss_kb }
+}
+
+#[test]
+fn a_macos_helper_is_named_by_its_bundle_namespace() {
+    assert!(is_macos_webkit_helper("com.apple.WebKit.WebContent"));
+    assert!(is_macos_webkit_helper("com.apple.WebKit.Networking"));
+    assert!(is_macos_webkit_helper("com.apple.WebKit.GPU"));
+    // The sandboxed variants carry suffixes, which is why the rule is a prefix.
+    assert!(is_macos_webkit_helper("com.apple.WebKit.WebContent.Development"));
+    // Not the engine, not the app, not somebody else's framework.
+    assert!(!is_macos_webkit_helper("node"));
+    assert!(!is_macos_webkit_helper("ohmail"));
+    assert!(!is_macos_webkit_helper("com.apple.CoreLocationAgent"));
+}
+
+#[test]
+fn macos_takes_this_apps_helpers_and_leaves_every_other_process() {
+    let table = vec![
+        row(10, "com.apple.WebKit.WebContent", 99, Some(944_128)),
+        row(11, "com.apple.WebKit.Networking", 99, Some(21_504)),
+        row(12, "node", 99, Some(325_000)),               // our engine sidecar, not the webview
+        row(13, "com.apple.WebKit.WebContent", 500, Some(700_000)), // another app's renderer
+    ];
+
+    let found = helpers_of(&table, 99, is_macos_webkit_helper, false);
+
+    assert_eq!(found.len(), 2, "only our own WebKit helpers: {found:?}");
+    assert_eq!(found[0], Child { pid: 10, name: "com.apple.WebKit.WebContent".into(), rss_kb: Some(944_128) });
+    assert_eq!(found[1], Child { pid: 11, name: "com.apple.WebKit.Networking".into(), rss_kb: Some(21_504) });
+    assert!(measured_of(&found));
+}
+
+#[test]
+fn a_macos_app_whose_helpers_are_not_its_children_reports_unmeasured() {
+    // WebKit starts its content processes as XPC services on this platform, and a service launchd
+    // started has launchd as its parent. The reading is then ABSENT, never zero.
+    let table = vec![row(10, "com.apple.WebKit.WebContent", 1, Some(944_128))];
+
+    let found = helpers_of(&table, 99, is_macos_webkit_helper, false);
+
+    assert!(found.is_empty(), "{found:?}");
+    assert!(!measured_of(&found));
+    let line = vitals_line(&found, measured_of(&found), 5);
+    assert!(line.contains("\"measured\":false"), "{line}");
+    assert!(line.contains("\"totalRssKb\":null"), "{line}");
+}
+
+#[test]
+fn windows_walks_the_whole_family_because_the_memory_is_a_grandchild() {
+    // WebView2 starts ONE browser process as the app's child; that process starts the renderer,
+    // the GPU process and the utilities — which is where the memory is.
+    let table = vec![
+        row(200, "msedgewebview2.exe", 99, Some(40_000)),   // the browser process
+        row(201, "msedgewebview2.exe", 200, Some(910_000)), // the renderer
+        row(202, "MSEdgeWebView2.exe", 200, Some(120_000)), // the GPU process, as the OS spells it
+        row(203, "ohmail.exe", 99, Some(80_000)),           // this app's own second process
+        row(204, "msedgewebview2.exe", 900, Some(700_000)), // another app's WebView2
+    ];
+
+    let found = helpers_of(&table, 99, is_webview2_helper, true);
+
+    assert_eq!(found.len(), 3, "the browser process and both of its children: {found:?}");
+    assert_eq!(found.iter().map(|c| c.pid).collect::<Vec<_>>(), vec![200, 201, 202]);
+    assert_eq!(found.iter().filter_map(|c| c.rss_kb).sum::<u64>(), 1_070_000);
+
+    // THE CONTROL FOR THE WALK ITSELF: with direct children only, the 910 MB renderer is missed
+    // and the line would report 40 MB for a webview costing a gigabyte.
+    let children_only = helpers_of(&table, 99, is_webview2_helper, false);
+    assert_eq!(children_only.len(), 1, "{children_only:?}");
+    assert_eq!(children_only[0].pid, 200);
+}
+
+#[test]
+fn a_process_table_that_points_at_itself_does_not_hang_the_walk() {
+    // A snapshot is not a tree: a reused pid can make a row its own ancestor, and a reporting
+    // thread that trusts the table terminates is a hang nobody sees.
+    let table = vec![
+        row(10, "msedgewebview2.exe", 11, Some(1)),
+        row(11, "msedgewebview2.exe", 10, Some(2)),
+        row(12, "msedgewebview2.exe", 99, Some(3)),
+    ];
+
+    let found = helpers_of(&table, 99, is_webview2_helper, true);
+
+    assert_eq!(found.iter().map(|c| c.pid).collect::<Vec<_>>(), vec![12]);
+}
+
+#[test]
+fn the_two_platforms_that_answer_in_bytes_are_converted_once() {
+    // macOS's `ri_phys_footprint` and Windows's `WorkingSetSize` are bytes; Linux's `VmRSS` is
+    // already kB. No page size enters either conversion, which is the whole point of both.
+    assert_eq!(kb_of_bytes(0), 0);
+    assert_eq!(kb_of_bytes(1_073_741_824), 1_048_576);
+    assert_eq!(kb_of_bytes(1_023), 0, "a sub-kilobyte figure floors, and never rounds up to one");
+}
+
+#[test]
+fn a_pass_that_read_no_figure_is_not_a_measurement() {
+    assert!(!measured_of(&[]));
+    assert!(!measured_of(&[Child { pid: 1, name: "com.apple.WebKit.GPU".into(), rss_kb: None }]));
+    assert!(measured_of(&[
+        Child { pid: 1, name: "com.apple.WebKit.GPU".into(), rss_kb: None },
+        Child { pid: 2, name: "com.apple.WebKit.WebContent".into(), rss_kb: Some(10) },
+    ]));
+}
+
+/* ── `ui_vitals` — the window's own line, composed here and never forwarded ───────────────────── */
+
+#[test]
+fn the_ui_line_carries_the_service_event_and_the_whole_vocabulary() {
+    let reported = serde_json::json!({
+        "shellPaintedMs": 412,
+        "listUsableMs": 1_180,
+        "engineReadyMs": 1_640,
+        "openP50Ms": 88,
+        "openP95Ms": 143,
+        "openCount": 61,
+        "switchP50Ms": 54,
+        "switchP95Ms": 120,
+        "switchCount": 30,
+        "searchP50Ms": 210,
+        "searchP95Ms": 470,
+        "searchCount": 20,
+        "longFrames": 7,
+        "longTasks": 1,
+        "deriveMs": 196,
+        "notifiesPer5min": 2_000,
+        "uptimeMin": 35,
+    });
+
+    let line = ui_vitals_line(&reported);
+
+    assert!(line.contains("\"service\":\"ui\""), "{line}");
+    assert!(line.contains("\"event\":\"ui_vitals\""), "{line}");
+    assert!(line.contains("\"deriveMs\":196"), "{line}");
+    assert!(line.contains("\"notifiesPer5min\":2000"), "{line}");
+    assert!(line.contains("\"longFrames\":7"), "{line}");
+    let parsed: serde_json::Value = serde_json::from_str(&line).expect("valid JSON");
+    for name in UI_VITALS_FIELDS {
+        assert!(parsed.get(name).is_some(), "{name} is missing from {line}");
+    }
+}
+
+#[test]
+fn nothing_the_window_wrote_can_reach_the_log_as_text() {
+    // THE PROPERTY THIS PATH EXISTS FOR. A subject, an address or a folder name is not something
+    // the shell can forward wrongly, because it forwards nothing: the keys are the constant's and
+    // every value is a number or null.
+    let reported = serde_json::json!({
+        "openP95Ms": "re: your invoice",
+        "subject": "re: your invoice",
+        "folder": "Accounts",
+        "deriveMs": 196,
+    });
+
+    let line = ui_vitals_line(&reported);
+
+    assert!(!line.contains("invoice"), "{line}");
+    assert!(!line.contains("Accounts"), "{line}");
+    assert!(!line.contains("subject"), "{line}");
+    assert!(line.contains("\"openP95Ms\":null"), "a field that is not a number is absent: {line}");
+    assert!(line.contains("\"deriveMs\":196"), "{line}");
+    let _: serde_json::Value = serde_json::from_str(&line).expect("valid JSON");
+}
+
+#[test]
+fn an_unreported_or_impossible_number_is_null_and_never_zero() {
+    let line = ui_vitals_line(&serde_json::json!({ "openP50Ms": -1, "openCount": 0 }));
+
+    assert!(line.contains("\"shellPaintedMs\":null"), "not reported yet: {line}");
+    assert!(line.contains("\"openP50Ms\":null"), "a negative duration is not a measurement: {line}");
+    assert!(line.contains("\"openCount\":0"), "zero opens IS a measurement: {line}");
+}
+
 /// NO MEMORY FIGURE IS DERIVED FROM A PAGE-SIZE LITERAL.
 ///
 /// The incident host uses 16 KB pages, so `pages * 4096` reads four times low. This module avoids

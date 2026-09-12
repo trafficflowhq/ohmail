@@ -1,67 +1,14 @@
 #!/usr/bin/env node
 /**
- * engine-bundle.mjs — the desktop mail engine as ONE file, plus the two things it reads off disk.
- *
- * The app's shell hands this file to a Node runtime by name — `<node> <bundle>` — and it does that
- * on all three platforms. This produces the file, and the layout around it, from the workspace. Run
- * it directly, or import {@link buildEngine} to build the same artifact and get its inputs back for
- * inspection.
- *
- *     node scripts/engine-bundle.mjs                        # esbuild from the workspace, if it has it
- *     D=$(mktemp -d) && (cd $D && npm install --no-save esbuild@0.24.0)   # or from anywhere
- *     OHMAIL_ESBUILD_FROM=$D node scripts/engine-bundle.mjs
- *
- * ── WHY A BUNDLE AND NOT A `dist/` TREE ───────────────────────────────────────────────────
- *
- * A shipped app has no package manager and no workspace. Running the engine's compiled entry
- * point out of its build directory does not work even on a development machine — it reaches
- * modules that exist only as TypeScript — and an application bundle cannot carry a symlinked
- * dependency tree. One file resolves both, and it makes the artifact's contents enumerable, which
- * is what lets anyone check the published source against the binary they downloaded.
- *
- * ── THE TWO THINGS THAT CANNOT BE BUNDLED, AND THEIR PATHS ────────────────────────────────
- *
- *  1. **The mail migration journal.** The database package composes it as
- *     `join(dirname(fileURLToPath(import.meta.url)), "..", "drizzle")`, and the bundler rewrites
- *     `import.meta.url` to the OUTPUT file's own URL. So the journal must sit at
- *     `<dirname(bundle)>/../drizzle` — one level ABOVE the bundle. That is the whole reason the
- *     output has a `bin/` directory at all: the journal sits beside `bin/`, not inside it, and the
- *     packager copies the pair as a unit. This relationship is invisible to every test in the
- *     repository: nothing else runs the engine from anywhere but the workspace root, where the same
- *     expression happens to resolve. `scripts/verify-engine-boot.mjs` is what watches it fail.
- *
- *     Only the MAIL journal is copied, and there is deliberately no second branch here. The engine
- *     builds one database, from one journal, whose own closure rule guarantees it is runnable
- *     first and alone — which is exactly what a local install does on first launch.
- *
- *  2. **The database engine's WebAssembly.** It loads `.wasm` and `.data` relative to its own
- *     module, so the package is vendored beside the bundle rather than inlined. Inlining it would
- *     produce a bundle that cannot find its own storage layer.
- *
- * ── THE BANNER ────────────────────────────────────────────────────────────────────────────
- *
- * The MIME parser calls `require()` at runtime to look up optional character encodings. ESM output
- * has no `require`, so without a shim the bundle dies on the first message carrying a charset it
- * wants to resolve — after a successful launch, a successful mailbox connection and a successful
- * fetch, which is the worst possible place for a module error to surface. The banner defines one.
- *
- * ── `.mjs`, AND WHY THE EXTENSION IS NOT COSMETIC ─────────────────────────────────────────
- *
- * The output is ESM, and it used to have no extension at all — which worked because the shell
- * executed it through its own `#!` line, and because Node 22.7+ turns on module-syntax DETECTION by
- * default. Handed to a runtime BY NAME, an extensionless file's module type is a heuristic over its
- * contents and over whatever `package.json` happens to sit above it. `.mjs` makes it a fact.
- *
- * ── THE SHEBANG AND THE EXECUTE BIT ARE NOW A CONVENIENCE, NOT THE MECHANISM ──────────────
- *
- * They are still set, because running the engine straight off a checkout is a real thing people do.
- * Nothing SHIPPED depends on them any more: the shell resolves a Node runtime explicitly and spawns
- * `<node> <bundle>`, which is the only launch shape that works on Windows — there is no shebang
- * mechanism there, so a text file is not executable by any means the loader has. The previous
- * arrangement also meant a machine with no `node` on PATH could not start the engine at all, and a
- * Finder or launchd launch has neither Homebrew nor nvm on its PATH. The runtime is vendored into
- * the app beside this bundle; see `scripts/vendor-node.mjs`.
- */
+ * engine-bundle.mjs — the desktop mail engine as ONE file, plus the two things it reads off disk. The
+ * shell hands this file to a Node runtime by name on all three platforms; run it directly or import
+ * {@link buildEngine}. (`node scripts/engine-bundle.mjs`, or `OHMAIL_ESBUILD_FROM=<dir> node …` to build
+ * from anywhere.) A bundle not a `dist/` tree: a shipped app has no package manager or workspace, the
+ * compiled entry reaches TypeScript-only modules, and one file makes the artifact enumerable so a stranger
+ * can check the published source against the download. TWO things cannot be bundled: the mail migration
+ * journal (the db package composes it from `import.meta.url`, which the bundler rewrites to the OUTPUT URL,
+ * so it sits at `<dirname(bundle)>/../drizzle` — the reason the output has a `bin/`; only the MAIL journal
+ * is copied) and the database engine's WebAssembly (loaded relative to its module, vendored beside the bundle). A banner defines `require` for the MIME parser's runtime charset lookups. `.mjs` makes the ESM module type a fact when handed to a runtime by name; the shebang/execute bit are now a convenience, since the shell spawns `<node> <bundle>` (the only shape that works on Windows). */
 import { chmodSync, cpSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -70,32 +17,23 @@ import { createRequire } from "node:module";
 export const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
 /**
- * THE ONE esbuild THIS ENGINE IS BUILT WITH, asserted rather than assumed.
- *
- * esbuild's output is deterministic for a GIVEN version, but it is NOT stable across versions — a
- * later esbuild can lay the same module graph out differently. The engine bundle is meant to be
- * reproducible from the published source: a public runner and a local build must produce byte-equal
- * output, which they can only do if both run the same esbuild. Bump it deliberately, in ONE place,
- * when the engine is meant to move; a silent drift is the "absent config picks a version" hazard the
- * whole lockfile-and-pin story exists to close.
- *
- * EXACT, not a major/minor range: esbuild's layout can move within a minor, and "byte-equal" is the
- * whole claim. The root manifest pins the same string, so the two cannot disagree without this
- * refusing.
+ * THE ONE esbuild THIS ENGINE IS BUILT WITH, asserted rather than assumed. esbuild's output is
+ * deterministic for a GIVEN version but NOT stable across versions — a later esbuild lays the same graph out
+ * differently. The engine bundle is meant to be reproducible from the published source (a public runner and
+ * a local build must produce byte-equal output, which needs the same esbuild), so bump it deliberately in
+ * ONE place; a silent drift is the "absent config picks a version" hazard the whole lockfile-and-pin story
+ * closes. EXACT, not a range: layout can move within a minor and "byte-equal" is the whole claim. The root
+ * manifest pins the same string, so the two cannot disagree without this refusing.
  */
 export const EXPECTED_ESBUILD = "0.24.0";
 
 /**
- * esbuild, from two places in one order.
- *
- * `OHMAIL_ESBUILD_FROM` names a directory that has one installed and is tried FIRST — it is what
- * lets a checkout build the engine without esbuild in its own module tree. The workspace is tried
- * second, for a tree that declares it: a build that resolves the bundler from its own installed
- * dependencies needs no network at the moment it runs, which is the only way a sandboxed packaging
- * build can produce this artifact at all.
- *
- * `NODE_PATH` is deliberately not the mechanism: node ignores it for ESM `import`, which is a
- * pleasant half-hour to discover from `ERR_MODULE_NOT_FOUND` alone.
+ * esbuild, from two places in one order. `OHMAIL_ESBUILD_FROM` names a directory that has one installed and
+ * is tried FIRST — it lets a checkout build the engine without esbuild in its own module tree. The
+ * workspace is tried second, for a tree that declares it: resolving the bundler from installed dependencies
+ * needs no network at run time, the only way a sandboxed packaging build can produce this artifact.
+ * `NODE_PATH` is deliberately not the mechanism: node ignores it for ESM `import`, a pleasant half-hour to
+ * discover from `ERR_MODULE_NOT_FOUND` alone.
  */
 export async function loadEsbuild(root = ROOT) {
   const from = process.env.OHMAIL_ESBUILD_FROM;
@@ -140,22 +78,14 @@ export function buildOptionsFor(root = ROOT) {
     platform: "node",
     format: "esm",
     target: "node20",
-    /* PINNED TO THE WORKSPACE ROOT, so the artifact does not depend on where the build was
-     * STARTED from — and this was measured, not assumed.
-     *
-     * The bundle is not minified, so esbuild writes each module's path as a comment above it:
-     * 831 of them in the current artifact. Those paths are relative to esbuild's working
-     * directory, which defaults to `process.cwd()`. Building the same commit from the workspace
-     * root and from anywhere else therefore produces two DIFFERENT files — and the second one
-     * embeds the checkout's absolute location in every one of those comments, which is both a
-     * reproducibility break and a detail of the builder's machine that has no business in a
-     * published download.
-     *
-     * Setting it makes the paths a function of the tree alone. Verified byte-for-byte: with this
-     * option the bundle built from the workspace root, from a scratch directory and from `/` are
-     * the same file, and that file is identical to what the previous behaviour produced from the
-     * root — so nothing about the shipped artifact changes, one way it could vary just stops
-     * existing. `scripts/verify-engine-repro.mjs` is what watches this hold. */
+    /* PINNED TO THE WORKSPACE ROOT, so the artifact does not depend on where the build was STARTED —
+     * measured. The bundle is not minified, so esbuild writes each module's path as a comment above it (831
+     * in the current artifact), relative to its working directory (defaults to `process.cwd()`). Building
+     * the same commit from the workspace root and from anywhere else produces two DIFFERENT files, the
+     * second embedding the checkout's absolute location in every comment — a reproducibility break and a
+     * detail of the builder's machine that has no business in a published download. Setting it makes the
+     * paths a function of the tree alone (verified byte-for-byte: root, a scratch dir and `/` produce the
+     * same file, identical to what the previous root build produced). `scripts/verify-engine-repro.mjs` watches it hold. */
     absWorkingDir: root,
     // Vendored rather than inlined: the storage layer reads its own `.wasm`/`.data` off disk
     // relative to the module, so inlining it would produce a bundle that cannot find its database.

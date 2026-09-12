@@ -9,9 +9,9 @@ import type { EngineMessage, Folder, RuleDTO } from "./types.js";
 /* Consent, the cutline, and History. Two rules decide where a message is
    PRESENTED: (1) consent comes from the user's own actions — sitting in the
    INBOX is not consent, a decision's record is a rule; (2) decisions rule
-   the future — the past moves only on explicit request, so placement stays
-   as the server has it and the product filters what it shows. For mail in
-   the two undecided residences (INBOX, Screener folder): a ruled sender
+   the future — the past moves only on explicit request. For mail in the two
+   undecided residences (INBOX, Screener folder): active mail AT THE GATE
+   presents at the gate, admitting rule or none; a ruled sender's other mail
    presents in the rule's destination (zero server moves); unruled + active
    → Screener; unruled + dormant → History. Explicit placements elsewhere
    are never second-guessed. History has no badge — under a baseline it can
@@ -182,33 +182,39 @@ export function decidedDestination(index: ConsentIndex, address: string): Folder
 }
 
 /**
- * The instant a message is inside the window ⇒ `null` when it is not a legal time at all.
+ * THE INSTANT THE CUTLINE DATES A MESSAGE BY — the `Date:` header, else the arrival.
  *
- * A message with no `Date:` is `null` here and is never "recent"; it cannot make its sender
- * active on recency, which is the same answer this function gave before the baseline existed.
+ * `Date:` is sender-written and nullable, so any stranger can send mail this answered `null` for,
+ * and the sender then retired: mail filed at the gate a minute earlier presented under History —
+ * "hasn't written in a while" about mail that had just arrived. {@link EngineMessage.arrivedAt}
+ * is the moment the mailbox recorded it, the same fact the server's `cutlineInstant` coalesces to.
+ * `null` only when the row carries neither, which no server this engine talks to can produce.
  */
 function messageMs(m: EngineMessage): number | null {
-  if (m.date === null) return null;
-  const t = new Date(m.date).getTime();
-  return Number.isFinite(t) ? t : null;
+  const header = m.date === null ? Number.NaN : new Date(m.date).getTime();
+  if (Number.isFinite(header)) return header;
+  const arrived = m.arrivedAt == null ? Number.NaN : new Date(m.arrivedAt).getTime();
+  return Number.isFinite(arrived) ? arrived : null;
 }
 
 /** The cutoff both halves of the cutline measure from. See {@link ConsentOptions.baselineAt}. */
-export function cutlineFor(opts: ConsentOptions): { cutoff: number; baselined: boolean } {
+export function cutlineFor(
+  opts: ConsentOptions,
+): { cutoff: number; baselined: boolean; allTime: boolean } {
   const now = opts.now ?? new Date();
   const raw = opts.baselineAt == null ? null : new Date(opts.baselineAt).getTime();
   /* "All time" is no cutoff, and it is the FIRST test, before the baseline
    * read — mirroring the server (`resolveScreeningCutoff`); the other order
-   * would make the mode silently inert for every account that ever screened
-   * anything. `resolveScreeningCutoff` answers `undefined`; this side
-   * compares numbers, so the same meaning is `-Infinity` — every parseable
-   * date is at or after it, every undecided sender is ACTIVE, nothing falls
-   * into History, no mail moves until a decision. `baselined` still answers
-   * whether a baseline EXISTS: it gates whether unread outranks age.
+   * would make the mode inert for every account that ever screened anything.
+   * `allTime` is a MODE and not only `-Infinity`, because a cutoff is read
+   * through a COMPARISON: a row with no instant answered "not recent"
+   * against every number, so the mode retired mail the server's own
+   * `activeSenderExpr` returns `true` for. `-Infinity` stays for the date
+   * arms that do compare; `baselined` still says whether one EXISTS.
    */
   if (opts.screeningScope === "all_time") {
     const baseRaw = raw !== null && Number.isFinite(raw) ? raw : null;
-    return { cutoff: -Infinity, baselined: baseRaw !== null };
+    return { cutoff: -Infinity, baselined: baseRaw !== null, allTime: true };
   }
   const days = opts.dormancyDays ?? DEFAULT_DORMANCY_DAYS;
   // An unparseable stored value is treated as ABSENT, not as epoch 0: a baseline of 1970 would
@@ -216,7 +222,7 @@ export function cutlineFor(opts: ConsentOptions): { cutoff: number; baselined: b
   // the loudest possible failure for a value nobody can see. Absent is today's behaviour.
   const baseline = raw !== null && Number.isFinite(raw) ? raw : null;
   const from = baseline ?? now.getTime();
-  return { cutoff: from - days * 24 * 60 * 60 * 1000, baselined: baseline !== null };
+  return { cutoff: from - days * 24 * 60 * 60 * 1000, baselined: baseline !== null, allTime: false };
 }
 
 /**
@@ -225,16 +231,16 @@ export function cutlineFor(opts: ConsentOptions): { cutoff: number; baselined: b
  * where a decision is overdue), or any mail inside `now - dormancyDays`.
  * With one: the unread term narrows to `unread && inside the window`, fixed
  * at `baselineAt - dormancyDays` — pre-cutoff mail cannot resurrect a
- * sender. The narrowed unread term is subsumed by the recency term and
- * written out anyway as the statement of the rule; never drop `&& within`,
- * which restores the resurrection. Sent mail is the user writing.
+ * sender. That term is subsumed by the recency term and written out anyway
+ * as the rule's statement; never drop `&& within`, which restores the
+ * resurrection. Sent mail is the user writing; `all_time` reads no date.
  */
 export function senderActivity(
   messages: readonly EngineMessage[],
   opts: ConsentOptions = {},
   own: ReadonlySet<string> = new Set(),
 ): Map<string, SenderActivity> {
-  const { cutoff, baselined } = cutlineFor(opts);
+  const { cutoff, baselined, allTime } = cutlineFor(opts);
 
   const out = new Map<string, SenderActivity>();
   for (const m of messages) {
@@ -242,6 +248,11 @@ export function senderActivity(
     const key = senderKey(m.from.address);
     if (own.has(key)) continue;
     if (out.get(key) === "active") continue;
+    // ALL TIME IS A MODE, NOT A CUTOFF — the server's `activeSenderExpr` returns `true` here and
+    // reads no date at all. Answering it through `cutoff = -Infinity` made it a comparison, so a
+    // row with no instant read "not recent" and its sender retired under the one setting that
+    // means "retire nobody". Every dated row reaches the same answer either way.
+    if (allTime) { out.set(key, "active"); continue; }
     const ms = messageMs(m);
     const recent = ms !== null && ms >= cutoff;
     // Baselined ⇒ unread only counts inside the window. Absent ⇒ unread outranks age, exactly as
@@ -316,12 +327,12 @@ export function consentPartition(reader: EntityReader, opts: ConsentOptions = {}
     /*
      * Two deliberate exceptions, and the handoff. A RESURFACED row keeps its place — its only
      * home is the Ohbox's pinned group, and filing it in History would orphan a message the
-     * user just asked to see. An UNDATED row is never assumed historical: {@link messageMs}
-     * answers `null`, and a row nobody can place in time has not been shown to be finished
-     * with. The thread rule below then applies unchanged, which is why outbound mail routes
-     * through `historyIds` rather than being filed directly: a pre-cutline reply on a thread
-     * holding consented mail follows its thread, so the user's own half of a conversation is
-     * never in History while the other half is in the Ohbox.
+     * user just asked to see. A row with NO instant is never assumed historical: {@link
+     * messageMs} answers `null` only when neither the header nor the arrival is readable, and a
+     * row nobody can place in time has not been shown to be finished with. The thread rule then
+     * applies unchanged, which is why outbound mail routes through `historyIds` rather than
+     * being filed directly: a pre-cutline reply on a thread holding consented mail follows its
+     * thread, so the user's own half of a conversation is never in History alone.
      */
     if (!KNOWN_FOLDERS.has(m.folder)) {
       /**
@@ -368,7 +379,8 @@ export function consentPartition(reader: EntityReader, opts: ConsentOptions = {}
     // never History, which is a queue of people who have not been screened.
     if (own.has(key)) { placeOf.set(m.id, m.folder); continue; }
     const decided = decidedDestination(index, m.from.address);
-    if (decided !== null && CONSENTING_DESTINATIONS.has(decided)) consentedSenders.add(key);
+    const consented = decided !== null && CONSENTING_DESTINATIONS.has(decided);
+    if (consented) consentedSenders.add(key);
 
     /**
      * A RESURFACED ROW IS THE USER'S OWN ACT, AND THE CUTLINE KEEPS ITS HANDS OFF: Rule 1 above says consent comes
@@ -393,10 +405,24 @@ export function consentPartition(reader: EntityReader, opts: ConsentOptions = {}
     // An explicit placement is already an answer. Never second-guessed.
     if (!UNDECIDED_RESIDENCES.has(m.folder)) { placeOf.set(m.id, m.folder); continue; }
 
-    if (decided !== null) {
+    const active = activity.get(key) === "active";
+    /**
+     * A RULE THAT HAS NOT MOVED THE MAIL CHANGES NOTHING A PERSON SEES. Mail PHYSICALLY at the
+     * gate presents at the gate whatever admitting destination a rule names: the client never
+     * predicts a destination for held mail, and `GET /screener` — which consults no rules — is
+     * the authority wherever there is a server. Two things keep their projection: the CUTLINE,
+     * so a retired sender (a backfilled backlog is old and read) still presents in the Ohbox
+     * with nothing moved; and a DENY rule, the person's own answer, whose mail presents on the
+     * screened-out shelf. Only an admission nobody has carried out is a question still open.
+     */
+    const heldAtGate = consented && active && m.folder === "ohmail/Screener";
+    if (decided !== null && !heldAtGate) {
       placeOf.set(m.id, decided);
-    } else if (activity.get(key) === "active") {
-      activeUndecided.add(key);
+    } else if (active) {
+      // The COUNTS keep the cutline's own question — senders with no rule still owed a decision —
+      // because that is the one `cutlineCounts` answers in SQL and the parity test pins. Only the
+      // PLACE moves here; a ruled sender is `decided` on both sides of that pin.
+      if (decided === null) activeUndecided.add(key);
       placeOf.set(m.id, "ohmail/Screener");
     } else {
       dormantUndecided.add(key);

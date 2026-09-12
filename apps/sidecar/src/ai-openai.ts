@@ -13,40 +13,14 @@ import {
 } from "./ai-transport.js";
 
 /**
- * AN OPENAI API KEY YOU OWN — the second hosted way a standalone install gets AI.
- *
- * Requests go to OpenAI, billed to the account the key belongs to. This app's publisher is not in
- * the path: it operates no proxy for this, sees none of these requests, and receives neither the
- * key nor the message content. Identical in kind to the Anthropic provider next door, and
- * deliberately identical in SHAPE — the differences below are all at the wire, and none of them
- * reach the question being asked.
- *
- * ── THE ENDPOINT IS NOT CONFIGURABLE, AND THAT IS THE SAME SECURITY DECISION ────────────────
- *
- * {@link OPENAI_BASE} is a literal, for the reason `ai-anthropic.ts` states at length: a settings
- * pane that let you name both a key AND the host it is sent to would be a supported way to
- * configure key exfiltration. The rule this package holds to is that **the provider carrying a
- * stored secret has a fixed destination, and the provider with a configurable destination (a
- * model on your own machine) carries no secret. Neither one is ever both.** Adding a third
- * provider is exactly the moment that rule is most likely to be broken for convenience — an
- * OpenAI-compatible base URL is the single most requested setting in this class of app — so it is
- * written down here rather than assumed.
- *
- * That request is not unreasonable, and it is not refused for being unreasonable: it is refused
- * because THIS provider holds a key. Somebody who wants to point this install at an
- * OpenAI-compatible server they run can already do it through the machine-local provider, whose
- * address IS configurable precisely because no credential travels with it.
- *
- * `redirect: "error"` one level down, for the same reason: a 302 is a destination somebody else
- * chose, and this request carries an `Authorization` header.
- *
- * ── WHAT TRAVELS ───────────────────────────────────────────────────────────────────────────
- *
- * The sender, the subject and a short redacted snippet for a routing suggestion; the same plus the
- * thread's other snippets and knowledge-base entries you wrote, for a draft. Never a raw message
- * body — the shared allow-list in `@trafficflow/core/mail` refuses one before a request is built.
- * Mail carrying authentication material is refused outright by the same shared sink and is never
- * sent to any model, under any provider. Nothing on this path is a second copy of that rule.
+ * An OpenAI API key you own — the second hosted way a standalone install gets AI. Requests go to
+ * OpenAI, billed to the key's account; this app's publisher is not in the path and receives neither
+ * key nor content. Identical in kind and shape to the Anthropic provider. {@link OPENAI_BASE} is a
+ * LITERAL, the same security decision: a pane naming both a key AND its host would configure key
+ * exfiltration, so the provider carrying a stored secret has a fixed destination and the one with a
+ * configurable one carries none (an OpenAI-compatible base URL, the most-requested setting here, is
+ * served instead by the machine-local provider, whose address IS configurable because no credential
+ * travels). `redirect: "error"`. What travels is the shared allow-list's, never a raw body.
  */
 
 /** NOT configurable. See the header. */
@@ -83,36 +57,14 @@ function statusFailure(status: number): ProbeFailure {
 }
 
 /**
- * MODELS THIS ACCOUNT CAN REACH THAT CANNOT ANSWER A CHAT REQUEST.
- *
- * `GET /v1/models` on this vendor lists the WHOLE catalogue the key can see — embeddings,
- * speech, transcription, images, moderation — not just the ones `/v1/chat/completions` accepts.
- * Anthropic's list happens to be all chat models, so the provider next door never had to know
- * this, and copying its probe verbatim produced a verification that answered "working" for
- * `text-embedding-3-small`: both GET requests succeed, the pane says available, the model picker
- * offers it, and then every classify and every draft fails with a 400. A green that is wrong in
- * the one direction a verification exists to prevent.
- *
- * ── A NAME TEST, AND WHY IT IS NOT A CAPABILITY TEST ────────────────────────────────────────
- *
- * The API exposes no capability field: `GET /v1/models/{id}` answers `{id, object, created,
- * owned_by}` and says nothing about which endpoints accept it. The only free check available is
- * the name, so that is what this is — deliberately narrow, matching the families that are
- * unambiguously not chat models, and never a list of the ones that ARE. An allow-list would go
- * stale the day the vendor ships a new model and would refuse a name that works, which is the
- * worse failure: this app must not be the reason a valid model is rejected.
- *
- * So it catches the realistic mistake — somebody picking an embedding model out of the picker —
- * and lets an unrecognised name through to be judged by the endpoint itself.
- *
- * ── TWO SHAPES, BECAUSE A PREFIX ALONE IS NOT ENOUGH ────────────────────────────────────────
- *
- * Some of these families announce themselves at the START of the id (`text-embedding-3-small`,
- * `dall-e-3`). Others are `gpt-`-prefixed and only reveal themselves at the END — `gpt-4o-transcribe`,
- * `gpt-4o-mini-tts`, `gpt-4o-realtime-preview` — so a prefix-only rule let exactly the ids most
- * likely to be confused with a chat model straight through. `computer-use-preview` is neither.
- *
- * `gpt-4o-audio-preview` is deliberately NOT here: it does serve chat completions.
+ * Models this account can reach that cannot answer a chat request. `GET /v1/models` lists the WHOLE
+ * catalogue — embeddings, speech, images, moderation — not just what `/v1/chat/completions` accepts;
+ * Anthropic's list is all chat, so copying its probe answered "working" for `text-embedding-3-small`
+ * and then every classify failed 400 — a green wrong in the one direction a verification exists to
+ * prevent. The API exposes no capability field, so this is a NAME test: narrow, matching families
+ * unambiguously not chat models, never a list of the ones that ARE (an allow-list would refuse a
+ * valid new model). Two shapes, because some families announce at the START (`text-embedding-3`) and
+ * others only at the END (`gpt-4o-transcribe`); `gpt-4o-audio-preview` is NOT here (it serves chat).
  */
 export const NOT_CHAT_MODELS = new RegExp([
   // Families named at the front of the id.
@@ -166,26 +118,14 @@ export function openaiTransport(opts: OpenAiTransportOptions): AiTransport {
   });
 
   /**
-   * One request to the chat-completions endpoint, and the one place a failure becomes an Error.
-   *
-   * ── TWO FIELDS ARE SENT, THEN DROPPED IF THE MODEL REFUSES THEM ───────────────────────────
-   *
-   * The same shape as the Anthropic transport's `thinking` retry, and here it covers a real and
-   * growing split in this vendor's own catalogue. The reasoning models reject two things the rest
-   * of the range requires:
-   *
-   *  · **`max_tokens`** is refused in favour of `max_completion_tokens`.
-   *  · **`temperature`** is refused at any value other than the default.
-   *
-   * The model is the USER'S choice here, not ours — the hosted deployment can simply pick one and
-   * pin the fields to it — so a person who types a reasoning model into the settings must not be
-   * told their key is broken. That is a fact about the chosen model, not a fault.
-   *
-   * The retry is bounded to exactly ONE and is conditional on the endpoint naming the offending
-   * field in its own refusal, so an unrelated 400 stays a 400 and is not retried into a second
-   * charge. Both fields are dropped together on that one retry rather than probed separately: two
-   * conditional retries would be up to three billable requests for one answer, and the models that
-   * refuse one of these fields are the models that refuse the other.
+   * One request to the chat-completions endpoint, and the one place a failure becomes an Error. Two
+   * fields are sent, then DROPPED if the model refuses them — the same shape as Anthropic's
+   * `thinking` retry, covering a growing split in this vendor's catalogue: reasoning models reject
+   * `max_tokens` (in favour of `max_completion_tokens`) and `temperature` at any non-default value.
+   * The model is the USER'S choice, so a person typing a reasoning model must not be told their key
+   * is broken. The retry is bounded to ONE and conditional on the endpoint naming the field, so an
+   * unrelated 400 stays a 400; both fields drop together because the models that refuse one refuse
+   * the other, and two conditional retries would be three billable requests for one answer.
    */
   const call = async (body: Record<string, unknown>, what: string): Promise<unknown> => {
     const send = async (payload: Record<string, unknown>): Promise<Response> =>
@@ -251,17 +191,13 @@ export function openaiTransport(opts: OpenAiTransportOptions): AiTransport {
     },
 
     /**
-     * THE SCREENING QUESTION — the same transport, the same sink, a different question.
-     *
-     * Everything that differs from {@link classify} is a constant imported from
-     * `@trafficflow/core/mail`: the instruction and the answer set. Nothing about the question is
-     * written here, and that is the point rather than a convenience — three ways to reach a model
-     * is three chances for a second copy of a question to give one sender two different answers,
-     * and each copy would pass its own test.
-     *
-     * The CLASSIFY model answers it, matching both other providers: the two questions are one call
-     * per first-contact sender each, of the same size and difficulty, so a person who chose a model
-     * for routing has chosen it for this.
+     * The screening question — the same transport, the same sink, a different question. Everything
+     * that differs from {@link classify} is a constant imported from `@trafficflow/core/mail` (the
+     * instruction and the answer set); nothing about the question is written here, because three ways
+     * to reach a model is three chances for a second copy to give one sender two different answers,
+     * each passing its own test. The CLASSIFY model answers it, matching both other providers — one
+     * call per first-contact sender, same size and difficulty, so a model chosen for routing is
+     * chosen for this.
      */
     async screen(input: ClassifierInput): Promise<ClassifierResult> {
       const userPayload = classifyUserPayload(input);
@@ -290,15 +226,12 @@ export function openaiTransport(opts: OpenAiTransportOptions): AiTransport {
     },
 
     /**
-     * Verify the key and the two models WITHOUT running inference.
-     *
-     * Listing models authenticates — a wrong, revoked or empty key is a 401 here — and asking for
-     * each configured model by name is exact, which a list is not: a key with limited model access
-     * lists what it can see, and the name a person typed either resolves for that key or does not.
-     *
-     * Deliberately free, like both other providers'. A verification that ran a real completion
-     * would spend the account holder's money every time they pressed Save, which is a settings pane
-     * charging for being opened.
+     * Verify the key and the two models WITHOUT running inference. Listing models authenticates (a
+     * wrong, revoked or empty key is a 401 here) and asking for each configured model by name is
+     * exact, which a list is not — a key with limited model access lists what it can see, and the
+     * typed name either resolves for that key or does not. Deliberately free, like both other
+     * providers': a verification that ran a real completion would spend the account holder's money
+     * every time they pressed Save.
      */
     async probe(): Promise<ProbeOutcome> {
       let models: string[] = [];

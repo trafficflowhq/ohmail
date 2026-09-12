@@ -5,7 +5,7 @@ import type { EntityReader } from "./store.js";
    re-spelled here. A LEAF and not `consent-cutline.ts`: the partition imports this module, so
    taking the predicate from it would close an import cycle. */
 import { ownAddressKeys, senderKey } from "./own-address.js";
-import { zonedFields } from "./zone.js";
+import { zonedDayNumber, zonedFields } from "./zone.js";
 import { daysAgo, messageStamp, named } from "./stamp.js";
 import {
   FOLDER_OF_VIEW,
@@ -747,6 +747,61 @@ const SEGMENT_OF_VIEW: Partial<Record<OhmailView, ScreenerSegment>> = {
 export { senderKey };
 
 /**
+ * ONE HELD ROW PER MESSAGE ENTITY, not per derivation. A row is a pure function of the message,
+ * the body record it reads, the zone and locale, and the CALENDAR DAY the stamp is banded against
+ * — {@link messageStamp} reads `now` through nothing else. The mirror replaces records and never
+ * mutates one (the invariant {@link tsOf}'s cache already rests on) and the consent projection
+ * hands a row through unchanged wherever its place equals its folder, so object identity is
+ * exactly the lifetime this row is valid for. A bump that touched k messages re-derives k rows
+ * and not the whole queue, which is what stops the Screener costing a frame on every bump — the
+ * per-row stamp is most of that cost, and the shell asks for this whether or not it is on screen.
+ */
+interface HeldEntry {
+  day: number;
+  zone: string;
+  locale: string;
+  /** The body RECORD, by identity — an arriving body must re-derive the row it fills in. */
+  body: MessageBodyRecord | undefined;
+  row: ScreenerHeldMail;
+}
+const heldCache = new WeakMap<EngineMessage, HeldEntry>();
+
+/**
+ * THE PER-SENDER AGGREGATE, KEPT ACROSS BUMPS — a bump re-derives the senders whose mail it
+ * touched and nobody else. The grouping pass in {@link screenerSegments} stays O(mailbox) and has
+ * to: the consent cutline re-homes rows whose own record never moved, so the store's dirty set
+ * does not describe the PROJECTION. What this removes is everything after the grouping — the
+ * sort, the copies, the rep search and the DTO — for every sender the bump left alone.
+ *
+ * KEYED ON THE FIRST MESSAGE IN THE BAG by identity, then verified element by element: same
+ * length, same objects in order, same body RECORD behind each. Anything else derives in full.
+ */
+interface SenderEntry {
+  segment: ScreenerSegment;
+  day: number;
+  zone: string;
+  locale: string;
+  bag: readonly EngineMessage[];
+  bodies: ReadonlyArray<MessageBodyRecord | undefined>;
+  rep: EngineMessage;
+  dto: ScreenerSenderDTO;
+}
+const senderCache = new WeakMap<EngineMessage, SenderEntry>();
+
+/** The bag as the last derivation saw it — messages by identity, and the body each one read. */
+function sameBag(
+  reader: EntityReader, entry: SenderEntry, bucket: readonly EngineMessage[],
+): boolean {
+  if (entry.bag.length !== bucket.length) return false;
+  for (let i = 0; i < bucket.length; i++) {
+    const m = bucket[i]!;
+    if (entry.bag[i] !== m) return false;
+    if (entry.bodies[i] !== reader.get<MessageBodyRecord>("message_body", m.id)) return false;
+  }
+  return true;
+}
+
+/**
  * One held message, with its body RESOLVED rather than degraded.
  *
  * This used to be `body: m.body ?? m.snippet` with a comment calling the snippet a stated
@@ -758,9 +813,17 @@ export { senderKey };
  */
 function heldOf(
   reader: EntityReader, m: EngineMessage, now: Date, locale: string, zone: string,
+  /** The stamp's day number, or `NaN` — see {@link screenerSegments}. `NaN` never matches, so a
+   *  zone `Intl` refuses simply goes uncached and throws where it throws today. */
+  day: number,
 ): ScreenerHeldMail {
+  const rec = reader.get<MessageBodyRecord>("message_body", m.id);
+  const hit = heldCache.get(m);
+  if (hit && hit.day === day && hit.zone === zone && hit.locale === locale && hit.body === rec) {
+    return hit.row;
+  }
   const body = bodyOf(reader, m);
-  return {
+  const row: ScreenerHeldMail = {
     id: m.id,
     subject: m.subject,
     time: messageDisplayTime(m, now, zone, locale),
@@ -778,7 +841,20 @@ function heldOf(
     unsubscribeUrl: body.unsubscribeUrl,
     ...(m.trackerNote ? { trackerNote: m.trackerNote } : {}),
   };
+  heldCache.set(m, { day, zone, locale, body: rec, row });
+  return row;
 }
+
+/**
+ * ONE QUEUE DERIVATION PER (READER, VERSION, DAY, LOCALE, ZONE, OWN SET) — the shape and the
+ * reason {@link messagesByDateDesc}'s order cache one screen up already has. The phone's world
+ * memo re-derives on twenty-two dependencies of which the mirror version is one, and the shell
+ * keeps one projection across renders that move no version, so a single bump can ask for this
+ * several times over. Keyed on the reader WEAKLY and invalidated by the engine's own `version()`
+ * stamp, never a deep compare. It does NOT join {@link unreadCounts} to the shell: that caller
+ * takes the default locale and zone, a different question and therefore a different key.
+ */
+const segmentsCache = new WeakMap<EntityReader, { v: number; key: string; out: ScreenerSegments }>();
 
 /**
  * The Screener, derived from the message mirror. `screener_sender` is a client-local entity: `/sync`'s vocabulary
@@ -844,6 +920,29 @@ export function screenerSegments(
   ownAddresses?: Iterable<string>,
 ): ScreenerSegments {
   const own = ownAddressKeys(reader, ownAddresses === undefined ? {} : { ownAddresses });
+  /**
+   * THE CLOCK ENTERS AS A DAY NUMBER, WHICH IS ALL OF IT A STAMP READS. Every band in
+   * {@link messageStamp} is a difference of {@link zonedDayNumber}, and the dated band's year
+   * follows from it — so two callers milliseconds apart are asking one question, and a caller on
+   * the next day is not. `NaN` for a zone `Intl` refuses: the memo is then off in both halves and
+   * the refusal surfaces where it surfaces today, at the first stamp, rather than being moved
+   * earlier by a line that exists to make this faster.
+   */
+  let day: number;
+  try {
+    day = zonedDayNumber(now, zone);
+  } catch {
+    day = Number.NaN;
+  }
+  /* A hand-rolled partial reader (several harnesses build one) may not implement `version()`;
+     with no invalidation key there is nothing safe to cache on, so such a reader derives
+     uncached — correct, merely unmemoised. `messagesByDateDesc` takes the same out. */
+  const memoable = Number.isFinite(day) && typeof reader.version === "function";
+  const key = memoable ? JSON.stringify([day, zone, locale, [...own].sort()]) : "";
+  if (memoable) {
+    const hit = segmentsCache.get(reader);
+    if (hit && hit.v === reader.version() && hit.key === key) return hit.out;
+  }
   const grouped: Record<ScreenerSegment, Map<string, EngineMessage[]>> = {
     waiting: new Map(),
     screened_out: new Map(),
@@ -873,6 +972,16 @@ export function screenerSegments(
   for (const segment of ["waiting", "screened_out", "spam"] as const) {
     const rows: Array<{ key: string; rep: EngineMessage; dto: ScreenerSenderDTO }> = [];
     for (const [key, bucket] of grouped[segment]) {
+      /* THE BUMP'S OWN DELTA, read off the entities — see `senderCache`. A sender whose bag and
+         bodies are the objects the last derivation saw has the same row, so nothing below runs
+         for them. */
+      const anchor = bucket[0];
+      const kept = anchor === undefined ? undefined : senderCache.get(anchor);
+      if (kept !== undefined && kept.segment === segment && kept.day === day
+          && kept.zone === zone && kept.locale === locale && sameBag(reader, kept, bucket)) {
+        rows.push({ key, rep: kept.rep, dto: kept.dto });
+        continue;
+      }
       const newestFirst = [...bucket].sort(byDateDesc);
       // See the header. A WAITING row's id should be a message the gate can resolve, so the rep
       // is the sender's newest GATE-PHYSICAL mail when they have any. When they have none — an
@@ -886,34 +995,40 @@ export function screenerSegments(
       const gatePhysical = (rep.physicalFolder ?? rep.folder) === FOLDER_OF_VIEW.screener;
       const name = rep.from.name || rep.from.address;
       const repDate = rep.date ? new Date(rep.date) : null;
-      rows.push({
-        key,
-        rep,
-        dto: {
-          id: rep.id,
-          segment,
-          from: rep.from,
-          initial: (name.trim()[0] ?? "?").toUpperCase(),
-          time: messageDisplayTime(rep, now, zone, locale),
-          scope: "sender",
-          // DEGRADATION: no classifier runs client-side and `/sync` carries no
-          // suggestion, so a derived row has none. `GET /screener` still returns
-          // `aiSuggestion` for desktop/native and for enrichment later.
-          ai: null,
-          // Oldest first — the order every preview renders, and ALL of them.
-          held: [...newestFirst].reverse().map((m) => heldOf(reader, m, now, locale, zone)),
-          ...(segment === "screened_out" && repDate
-            ? {
-                screenedOn:
-                  `${zonedFields(repDate, zone).day} ` +
-                  `${named(locale, { month: "short" }, repDate, zone)}`,
-              }
-            : {}),
-          derived: true,
-          gatePhysical,
-          updatedAt: rep.updatedAt,
-        },
-      });
+      const dto: ScreenerSenderDTO = {
+        id: rep.id,
+        segment,
+        from: rep.from,
+        initial: (name.trim()[0] ?? "?").toUpperCase(),
+        time: messageDisplayTime(rep, now, zone, locale),
+        scope: "sender",
+        // DEGRADATION: no classifier runs client-side and `/sync` carries no
+        // suggestion, so a derived row has none. `GET /screener` still returns
+        // `aiSuggestion` for desktop/native and for enrichment later.
+        ai: null,
+        // Oldest first — the order every preview renders, and ALL of them.
+        held: [...newestFirst].reverse().map((m) => heldOf(reader, m, now, locale, zone, day)),
+        ...(segment === "screened_out" && repDate
+          ? {
+              screenedOn:
+                `${zonedFields(repDate, zone).day} ` +
+                `${named(locale, { month: "short" }, repDate, zone)}`,
+            }
+          : {}),
+        derived: true,
+        gatePhysical,
+        updatedAt: rep.updatedAt,
+      };
+      if (anchor !== undefined) {
+        senderCache.set(anchor, {
+          segment, day, zone, locale, rep, dto,
+          // The bucket is built in this call and never mutated afterwards, so it is kept rather
+          // than copied — one array per sender, the same one the row was derived from.
+          bag: bucket,
+          bodies: bucket.map((m) => reader.get<MessageBodyRecord>("message_body", m.id)),
+        });
+      }
+      rows.push({ key, rep, dto });
     }
     // Newest sender first — the same order `messagesIn` gives every other list.
     rows.sort((a, b) => byDateDesc(a.rep, b.rep));
@@ -928,11 +1043,13 @@ export function screenerSegments(
     bucket.set(senderKey(s.from.address), s);
   }
 
-  return {
+  const segments: ScreenerSegments = {
     waiting: [...out.waiting.values()],
     screenedOut: [...out.screened_out.values()],
     spam: [...out.spam.values()],
   };
+  if (memoable) segmentsCache.set(reader, { v: reader.version(), key, out: segments });
+  return segments;
 }
 
 // ── Triage piles ───────────────────────────────────────────────────────────

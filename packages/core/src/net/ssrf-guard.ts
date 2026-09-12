@@ -211,6 +211,22 @@ export interface PublicUrlOptions {
 }
 
 /**
+ * {@link assertPublicHttpUrlShape}'s options. Extends the async gate's, and adds the ONE
+ * relaxation the async gate has no business offering: skipping the address rules. Declared
+ * HERE rather than on {@link PublicUrlOptions} so it is unrepresentable at
+ * {@link assertPublicHttpUrl} — that caller already has its named exception
+ * ({@link resolvePinUnchecked}) and must not grow a second way to say the same thing.
+ */
+export interface UrlShapeOptions extends PublicUrlOptions {
+  /**
+   * Permit a loopback/private/link-local address. OFF by default. For ONE deployment shape,
+   * named rather than obtained by omission: a self-host operator whose model gateway runs on
+   * their own box. Everything else still applies — scheme, userinfo and the name spaces below.
+   */
+  allowPrivateAddress?: boolean;
+}
+
+/**
  * The SSRF gate for every caller-supplied URL this service is willing to fetch. Refuses, before
  * any socket: a non-`http(s)` scheme, userinfo, a non-default port, an absent host, the
  * `.onion`/`.local`/`.internal` name spaces; an IP literal in a refused range, with no DNS; a
@@ -223,6 +239,23 @@ export interface PublicUrlOptions {
 export async function assertPublicHttpUrl(
   raw: string, resolver: HostResolver, opts: PublicUrlOptions = {},
 ): Promise<string[]> {
+  const { host, literal } = assertPublicHttpUrlShape(raw, opts);
+  return literal !== null ? [literal] : resolveAndClear(host, resolver);
+}
+
+/**
+ * The part of {@link assertPublicHttpUrl} that needs no I/O — scheme, userinfo, port, the name
+ * spaces, and an IP literal's range. For a gate that runs where there is nothing to await: the
+ * model client validates its base URL at CONSTRUCTION, which is boot.
+ *
+ * FACTORED OUT of the async gate rather than copied, on this file's founding rule — two
+ * hand-kept gates agree until one is edited. It returns no pin, because it resolved nothing: a
+ * NAME's addresses are not checked here and this function says nothing about them. A caller that
+ * can await must use {@link assertPublicHttpUrl}, whose return value is the pin.
+ */
+export function assertPublicHttpUrlShape(
+  raw: string, opts: UrlShapeOptions = {},
+): { host: string; literal: string | null } {
   let u: URL;
   try {
     u = new URL(raw);
@@ -240,7 +273,7 @@ export async function assertPublicHttpUrl(
   }
 
   // `URL.hostname` brackets an IPv6 literal and keeps a FQDN's trailing dot.
-  return assertPublicHost(u!.hostname, resolver);
+  return assertPublicHostShape(u!.hostname, opts);
 }
 
 /**
@@ -252,28 +285,18 @@ export async function assertPublicHttpUrl(
  * {@link isBlockedAddress} does.
  */
 export async function assertPublicHost(hostname: string, resolver: HostResolver): Promise<string[]> {
-  const host = hostname.toLowerCase().replace(/\.$/, "");
-  if (host === "") refuse("host is empty");
-  if (host === "localhost" || BLOCKED_SUFFIXES.some((s) => host.endsWith(s))) refuse("host is not public");
+  const { host, literal } = assertPublicHostShape(hostname);
+  return literal !== null ? [literal] : resolveAndClear(host, resolver);
+}
 
-  const bracketed = host.startsWith("[") && host.endsWith("]");
-  const bare = bracketed ? host.slice(1, -1) : host;
-  const isLiteral = bracketed || bare.includes(":") || /^[\d.]+$/.test(bare);
-  if (isLiteral) {
-    if (isBlockedAddress(bare)) refuse("host resolves to a non-public address");
-    return [bare];                               // a permitted literal needs no DNS; it IS the pin
-  }
-
-  // Anything that is not a literal must look like a DNS name, and its last label
-  // must not be all digits — that is what stops `2130706433` and `127.1` from
-  // sliding past the literal check and being handed to a resolver that would
-  // helpfully read them as `127.0.0.1`.
-  const labels = bare.split(".");
-  if (!DNS_NAME.test(bare) || /^\d+$/.test(labels[labels.length - 1]!)) refuse("host is not a valid dns name");
-
+/**
+ * The DNS half, alone: resolve `host` and refuse if ANY record is a blocked address — any, not
+ * the first. One copy, shared by both async gates.
+ */
+async function resolveAndClear(host: string, resolver: HostResolver): Promise<string[]> {
   let addrs: string[];
   try {
-    addrs = await resolver.resolve(bare);
+    addrs = await resolver.resolve(host);
   } catch {
     refuse("host did not resolve");
   }
@@ -282,6 +305,37 @@ export async function assertPublicHost(hostname: string, resolver: HostResolver)
     if (isBlockedAddress(a)) refuse("host resolves to a non-public address");
   }
   return addrs!;                                 // every record cleared → the whole set is the pin
+}
+
+/**
+ * The part of {@link assertPublicHost} that needs no I/O. Returns the canonical host and, when
+ * that host is an IP LITERAL that cleared the address rules, the address itself — a permitted
+ * literal needs no DNS, and it IS the pin.
+ */
+export function assertPublicHostShape(
+  hostname: string, opts: UrlShapeOptions = {},
+): { host: string; literal: string | null } {
+  const host = hostname.toLowerCase().replace(/\.$/, "");
+  if (host === "") refuse("host is empty");
+  if (host === "localhost" || BLOCKED_SUFFIXES.some((s) => host.endsWith(s))) refuse("host is not public");
+
+  const bracketed = host.startsWith("[") && host.endsWith("]");
+  const bare = bracketed ? host.slice(1, -1) : host;
+  const isLiteral = bracketed || bare.includes(":") || /^[\d.]+$/.test(bare);
+  if (isLiteral) {
+    if (opts.allowPrivateAddress !== true && isBlockedAddress(bare)) {
+      refuse("host resolves to a non-public address");
+    }
+    return { host: bare, literal: bare };
+  }
+
+  // Anything that is not a literal must look like a DNS name, and its last label
+  // must not be all digits — that is what stops `2130706433` and `127.1` from
+  // sliding past the literal check and being handed to a resolver that would
+  // helpfully read them as `127.0.0.1`.
+  const labels = bare.split(".");
+  if (!DNS_NAME.test(bare) || /^\d+$/.test(labels[labels.length - 1]!)) refuse("host is not a valid dns name");
+  return { host: bare, literal: null };
 }
 
 /**

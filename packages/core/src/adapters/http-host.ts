@@ -1,17 +1,17 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { createServer as createTlsServer } from "node:https";
+import type { Socket } from "node:net";
 import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 
 /**
  * The hand-rolled node:http adapter — IncomingMessage/ServerResponse to fetch Request/Response;
- * the route table is the framework. A node-only subpath (`@trafficflow/core/adapters/http-host`)
- * with two consumers that must not diverge: the self-host server (via its `src/http.ts` shim) and
- * the sidecar's host door (`host-listener.ts`). Four points, held by real-socket tests in both:
- * `Readable.toWeb(req)` with `duplex: "half"`, no body forwarded for a body-less request;
- * multi-value `Set-Cookie` via `getSetCookie()`; streaming responses via
- * `Readable.fromWeb(...).pipe(res)` so `/events` SSE frames move as enqueued; a body byte cap
- * plus `headersTimeout`/`requestTimeout` against slow and lying clients.
+ * the route table is the framework. A node-only subpath with two consumers that must not diverge:
+ * the self-host server and the sidecar's host door. Five points, held by real-socket tests in
+ * both: `Readable.toWeb(req)` with `duplex: "half"` and no body for a body-less request;
+ * multi-value `Set-Cookie` via `getSetCookie()`; streaming via `Readable.fromWeb(...).pipe(res)`
+ * so SSE frames move as enqueued; a body byte cap plus `headersTimeout`/`requestTimeout`; and an
+ * optional CONNECTION bound, because every one of those counts a REQUEST.
  */
 
 export interface AdapterOptions {
@@ -34,6 +34,40 @@ export interface AdapterOptions {
    * same one — a choice of constructor, not a second adapter.
    */
   tls?: { key: string; cert: string };
+  /**
+   * The CONNECTION bound — the request bound's missing half. Every cap above counts a REQUEST,
+   * and a socket that never finishes its headers is not one, so without this a client could hold
+   * as many sockets as the kernel would hand it, each for the whole of {@link headersTimeoutMs}.
+   * Node turns the next connection away at the accept and reports it on `drop`; on the TLS door
+   * it also bounds the handshake, which is where a socket with no header at all now dies.
+   * Absent, node's default (unbounded) stands and neither hook is attached.
+   */
+  maxConnections?: number;
+  /**
+   * Called once per socket this server turned away or cut off. The caller decides what to SAY:
+   * a flood is exactly the moment a line per socket would be a second denial of service.
+   */
+  onSocketRefused?: (why: SocketRefusal) => void;
+}
+
+/** Why a socket was turned away: the connection bound, or no complete request in time. */
+export type SocketRefusal = "bound" | "header_timeout";
+
+/**
+ * Node's own answer to a client error, reproduced — ATTACHING a `clientError` listener suppresses
+ * the default handler, so a counter that did not answer would turn every 408 into a bare close.
+ * `null` means DESTROY, which is node's other branch and the only safe one for a TLS socket: a
+ * handshake error arrives here too, and a plaintext line written into a socket that never
+ * negotiated is queued forever rather than sent — measured, as a door that stopped closing them.
+ */
+function clientErrorWire(code: string): string | null {
+  if (code === "ERR_HTTP_REQUEST_TIMEOUT") {
+    return "HTTP/1.1 408 Request Timeout\r\nConnection: close\r\n\r\n";
+  }
+  if (code === "HPE_HEADER_OVERFLOW") {
+    return "HTTP/1.1 431 Request Header Fields Too Large\r\nConnection: close\r\n\r\n";
+  }
+  return code.startsWith("HPE_") ? "HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n" : null;
 }
 
 /** Thrown into the body stream when a chunked body crosses the cap mid-flight. */
@@ -209,13 +243,40 @@ export function makeHttpServer(
   // `https.createServer` passes its options to BOTH `tls.createServer` and node's http server
   // option store, so `connectionsCheckingInterval` keeps working on the TLS door — the two
   // constructors take the same bag, which is why the branch is this narrow.
+  // The TLS door's handshake gets the SAME ceiling as a header, because on that door it IS the
+  // header's first half: node's default is 120 s, and `headersTimeout` cannot reach a socket
+  // that has not finished negotiating — so without this the bounded door had a 120 s hole in it.
+  const handshake = opts.tls && opts.maxConnections !== undefined
+    ? { handshakeTimeout: opts.headersTimeoutMs }
+    : {};
   const server: Server = opts.tls
-    ? createTlsServer({ ...base, key: opts.tls.key, cert: opts.tls.cert }, onRequest)
+    ? createTlsServer({ ...base, ...handshake, key: opts.tls.key, cert: opts.tls.cert }, onRequest)
     : createServer(base, onRequest);
   // Point 4: slow-header and slow-body ceilings. requestTimeout bounds RECEIVING the request,
   // so a long-lived SSE RESPONSE is unaffected.
   server.headersTimeout = opts.headersTimeoutMs;
   server.requestTimeout = opts.requestTimeoutMs;
+  // Point 5: the CONNECTION bound and its two counted classes — see {@link AdapterOptions}.
+  if (opts.maxConnections !== undefined) server.maxConnections = opts.maxConnections;
+  const refused = opts.onSocketRefused;
+  if (refused !== undefined) {
+    server.on("drop", () => refused("bound"));
+    // Both classes of "no complete request in time" land on `clientError`: the http one from the
+    // header ceiling, and — on the TLS door — the handshake one, which `tls.Server` forwards here
+    // rather than destroying once a listener exists.
+    server.on("clientError", (err: NodeJS.ErrnoException, socket: Socket) => {
+      const code = err.code ?? "";
+      if (code === "ERR_HTTP_REQUEST_TIMEOUT" || code === "ERR_TLS_HANDSHAKE_TIMEOUT") {
+        refused("header_timeout");
+      }
+      const wire = clientErrorWire(code);
+      if (wire !== null && !socket.destroyed && socket.writable && socket.bytesWritten === 0) {
+        socket.end(wire);
+        return;
+      }
+      socket.destroy();
+    });
+  }
   return server;
 }
 

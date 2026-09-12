@@ -10,7 +10,7 @@ import {
   type OpenSendAdapter, type RepoPort, type RoutingPort, type SendAdapter, type StorageCap,
 } from "@trafficflow/core/mail";
 import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
-import type { ServiceContext } from "./context.js";
+import { withAccountTx, type ServiceContext } from "./context.js";
 import type { AttachmentAdapter, OpenAdapter } from "./attachments-service.js";
 import { ServiceError, SettleFailed, TransientDialRefusal } from "./errors.js";
 import { sanitizeOutboundHtml } from "./outbound-html.js";
@@ -1078,7 +1078,7 @@ export class SendService {
       }
     }
     const attachTotal = inlineTotal + stagedTotal;
-    return asTx(ctx).transaction(async (tx): Promise<Reservation> => {
+    return withAccountTx(ctx, async (tx): Promise<Reservation> => {
       // `FOR UPDATE`, because this read decides the SENDING IDENTITY. The draft's `mailboxId` is
       // PATCHable while the row is a draft, and a plain read-committed SELECT does not wait for a
       // concurrent move's row lock — it reads the pre-move snapshot, so the envelope, the minted

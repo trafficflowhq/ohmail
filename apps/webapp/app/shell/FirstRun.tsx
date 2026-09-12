@@ -1070,9 +1070,15 @@ export function FirstRun({
                       ? tm("readerSinceUnknown", { since: organizedSince ?? "" })
                       : facts.mailbox?.organizedBy?.kind === "cloud"
                         ? tm("readerSinceCloud", { since: organizedSince ?? "" })
-                        : tm("readerSinceLocal", {
-                          since: organizedSince ?? "", name: holderName(facts)!,
-                        })}
+                        /* A PHONE ON ITS OWN ARM, ahead of the local one it used to fall into —
+                           which says "This computer", about a phone, and promises a schedule a
+                           phone does not keep: it organizes only while its app is open. The
+                           stopped arm above still wins for a lapsed claim. */
+                        : facts.mailbox?.organizedBy?.kind === "mobile"
+                          ? tm("readerHolderPhone")
+                          : tm("readerSinceLocal", {
+                            since: organizedSince ?? "", name: holderName(facts)!,
+                          })}
               />
               <SettingsChoice
                 name={`${ids}-elsewhere`} ariaLabel={t("elsewhereTitle")} value={elsewhereChoice}
@@ -1397,9 +1403,13 @@ export function FirstRun({
                           ? tm("readerSinceUnknown", { since: organizedSince ?? "" })
                           : facts.mailbox?.organizedBy?.kind === "cloud"
                             ? tm("readerSinceCloud", { since: organizedSince ?? "" })
-                            : tm("readerSinceLocal", {
-                              since: organizedSince ?? "", name: holderName(facts)!,
-                            })}
+                            /* THE SAME PHONE ARM AS THE BANNER, in the same position and from
+                               the same key: the two rows may not describe one holder differently. */
+                            : facts.mailbox?.organizedBy?.kind === "mobile"
+                              ? tm("readerHolderPhone")
+                              : tm("readerSinceLocal", {
+                                since: organizedSince ?? "", name: holderName(facts)!,
+                              })}
                   />
                   <SettingsRow label={t("doneReaderClaim")} description={t("doneReaderClaimWhy")} />
                 </>

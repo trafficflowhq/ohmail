@@ -29,6 +29,7 @@ import { cloudWakeStream, createEngine, EngineUnarmedError, syncsWhileHidden } f
 import { useLoadingGrace } from "./loading-grace";
 import { useModalGate } from "./modal-gate";
 import { readOwner } from "./owner-cookie";
+import { markStartup } from "./ui-vitals";
 import {
   markSessionAlive, probeSessionNow, sessionIsDead, subscribeSessionRevival,
   subscribeSessionTruth, useSessionDead,
@@ -526,6 +527,19 @@ export function EngineProvider({
   const warmMirror = warmOf(binding);
   const engine = binding.status === "ready" ? binding.engine : warmMirror?.engine ?? null;
   const live = warmMirror !== null || (binding.status === "ready" && binding.demo === false);
+
+  /**
+   * THE ENGINE-READY STARTUP MARK — there is an engine to read mail through.
+   *
+   * The earliest of the three marks a person waits on and the one that separates "the app is
+   * slow to start" from "the mailbox is slow to open": `listUsableMs` in `AppShell` is this plus
+   * the first drain. Taken on the WARM mirror as well as on `ready`, because a warm binding is
+   * already a rendering, syncing engine — waiting for the confirmation would charge the mark
+   * with a session round trip the reader never sees.
+   */
+  useEffect(() => {
+    if (engine !== null) markStartup("engineReady");
+  }, [engine]);
 
   /**
    * A death confirmed DURING THIS MOUNT — a different fact from the latch itself. Gating

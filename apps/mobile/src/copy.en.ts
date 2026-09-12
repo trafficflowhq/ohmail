@@ -215,28 +215,25 @@ const TABLE = {
      about, and the chip has to say which of the two is happening. */
   phoneStateStarting: "Starting",
   phoneStateNotOrganized: "Nothing organizes this mailbox",
+  /**
+   * THE SEVENTH, AND IT IS TRANSITIONAL: this phone gave the mailbox back and has not taken it
+   * again. Read as "nothing organizes it" a person is told their mail is unfiled and offered a
+   * verb for something the next foreground does by itself; the fact they need is that the mailbox
+   * is free RIGHT NOW, which is the whole reason the release happens on the way out.
+   */
+  phoneStateHandedBack: "Handed back",
+  phoneStateHandedBackWhy: "Another computer can take this mailbox now.",
   phoneStateReader: (name: string) => `Organized by ${name}`,
   phoneStateReaderLegacy: "Organized by another install",
   /**
-   * ═══ AND WHAT THIS PHONE DOES INSTEAD, WHICH THE PANEL USED TO GET WRONG ═════════════════
-   *
-   * The note under the chip was the platform rule — "It organizes while its notification is
-   * shown" — in every state, including the one where another machine holds the mailbox. False
-   * there, and the only sentence a standing-down phone got.
-   *
-   * The second clause is `mailboxes.readerReadsOnly` from the web catalogue with "this phone"
-   * for "this computer": the same promise in the same words, because it is the same promise.
-   *
-   * A PHONE HOLDER GETS ITS OWN SENTENCE and does not fall through to the plain one. It is the
-   * one kind that changes what somebody should expect of their mail — a phone organizes only
-   * while ohmail is open on it, so mail waits while that phone is closed — and the web
-   * catalogue makes the same split for the same reason (`blocked_organized_elsewhere_mobile`).
-   * `local` and `cloud` do not: the NAME already says which machine, and neither changes what
-   * this phone does.
-   *
-   * The UNNAMED pair is not an edge. A relaunch reads the stand-down off this install's own
-   * row, which remembers the kind and not the holder, so every restart under another machine's
-   * claim lands here.
+   * AND WHAT THIS PHONE DOES INSTEAD, which the panel used to get wrong: the note under the chip was
+   * the platform rule ("It organizes while its notification is shown") in EVERY state, false where
+   * another machine holds the mailbox. The second clause is `mailboxes.readerReadsOnly` from the web
+   * catalogue with "this phone" for "this computer" — the same promise in the same words. A phone
+   * holder gets its OWN sentence and does not fall through: it changes what to expect of the mail (a
+   * phone organizes only while ohmail is open), and the web makes the same split
+   * (`blocked_organized_elsewhere_mobile`); `local`/`cloud` do not (the NAME already says which
+   * machine). The UNNAMED pair is not an edge — a relaunch reads the stand-down off this install's own row, which remembers the kind not the holder.
    */
   phoneStateReaderWhy: (name: string) =>
     `${name} organizes this mailbox. This phone reads it; it moves nothing and screens nothing.`,
@@ -262,6 +259,16 @@ const TABLE = {
   settingsStopHereFailed:
     "This phone could not hand that mailbox back, so it is still organizing it. Try again in a "
     + "moment.",
+  /**
+   * A LOOK THAT DID NOT LAND, and its own sentence rather than the one above.
+   *
+   * The door refuses a press it cannot check, and "could not start" would send somebody looking
+   * for what went wrong on this phone. Nothing went wrong here: the mailbox could not be asked
+   * whether another computer has it, and the answer is to press again. Says what could not be
+   * read, not how — the folder is not a thing a person has to know about.
+   */
+  settingsStartHereUnreadable:
+    "This phone could not read whether another computer organizes this mailbox. Nothing changed. Try again.",
 
   /* The standalone door's own refusals. Each one names what is missing; none of them ever
      carries the password, which is not an argument any of these takes. */
@@ -452,6 +459,14 @@ const TABLE = {
      `time` arrives sentence-ready from the world layer, like the stale label's. */
   connectionLost: "Connection lost. Reconnecting…",
   connectionGoneSince: (time: string) => `Couldn't reconnect since ${time}`,
+
+  /* NOTHING HAS BEEN READ FROM THIS MAILBOX, and that is a different fact from the two above —
+     both are true at once and both are shown. It deliberately makes NO claim about the link: a
+     server that signs you in and then refuses to hand over the mail leaves the connection dead by
+     the engine's reckoning and the mailbox reachable in fact, and a sentence that picked one of
+     those would be false in the other direction. `yet` is the whole of the promise: the engine
+     keeps asking, and a mailbox that later reads stops saying this. */
+  firstSyncNothingReadable: "Nothing could be read from this mailbox yet.",
 
   pairingBusy: "Pairing…",
   pairedOk: "Paired. Syncing your mail.",
@@ -657,6 +672,13 @@ const TABLE = {
   metaNew: (n: number) => `${n} new`,
   metaWaiting: (n: number) =>
     `${n} first-time sender${n === 1 ? "" : "s"} waiting`,
+  /**
+   * The same count, WORKED OUT HERE. On a paired mailbox the queue is the server's answer; this
+   * is what the phone says when it could not ask — the standalone door, or a refused read — so a
+   * number this phone derived is never shown as the mailbox's own.
+   */
+  metaWaitingOnDevice: (n: number) =>
+    `${n} first-time sender${n === 1 ? "" : "s"} waiting, counted on this phone`,
   metaItems: (n: number) => `${n} item${n === 1 ? "" : "s"}`,
   /** A mail row, spoken. The trailing state is a clause rather than a word glued to a stop. */
   mailRowAria: (from: string, subject: string, time: string, unread: boolean) =>
@@ -675,6 +697,12 @@ const TABLE = {
   ohboxTail: (shown: number) => `All ${shown} accepted message${shown === 1 ? "" : "s"} shown.`,
   ohboxEmptyTitle: "Nothing here yet.",
   ohboxEmptyHint: "Mail from senders you said Yes to lands here as it syncs.",
+  /* THE SAME EMPTY SCREEN OVER A MAILBOX THAT IS NOT EMPTY — the hint above says mail "lands here
+     as it syncs", which for a mailbox whose first sync has produced nothing is a promise nothing
+     is keeping. One key each, chosen by the engine's own first-sync answer, so the two states are
+     told apart on the screen a person is actually looking at. */
+  ohboxEmptyNothingReadable:
+    "Nothing could be read from this mailbox yet. Your mail is still on your server.",
   doorbell: (n: number) => `${n} new sender${n === 1 ? "" : "s"}`,
   doorbellRest: "waiting",
   doorbellGo: "Screener",
@@ -1088,6 +1116,28 @@ const TABLE = {
   organizerRestricted:
     "Battery saver does not let ohmail organize in the background on this phone. It organizes "
     + "while the app is open, and hands the mailbox back when you leave.",
+
+  /**
+   * THE ASK, AT THE PRESS THAT STARTS ORGANIZING HERE — never at launch. Android's own dialog
+   * carries no explanation of its own, so this sentence is shown in front of it, and it states
+   * what this build actually does: without the permission the service refuses to start, so the
+   * phone organizes only while the app is open. Asked once per install.
+   */
+  organizerNotifyTitle: "Organizing in the background",
+  organizerNotifyWhy:
+    "ohmail shows a notification while it organizes your mailbox in the background. Without it, "
+    + "organizing stops when you leave the app.",
+  organizerNotifyGo: "Continue",
+  organizerNotifyNotNow: "Not now",
+  /**
+   * THE STATE, once this phone may not show that notification — read off the system, not off a
+   * remembered refusal. Distinct from `organizerRestricted`, which names battery saver: that
+   * sentence was shown for this cause too, and on an Android 13+ first install it was false.
+   */
+  organizerNotificationsOff:
+    "Notifications are off — organizing runs only while the app is open.",
+  /** The only remaining act: Android never shows the prompt again after a refusal. */
+  organizerNotificationsSettings: "Open notification settings",
 
   /* ------------------------------------------------------------- new mail */
 

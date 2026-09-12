@@ -55,7 +55,7 @@ const MAX_BIGSERIAL = 9_223_372_036_854_775_807n;
  */
 const MAX_EMITTED = 10_000_000;
 import {
-  approvalRowToDTO, draftRowToDTO, folderRowToDTO, materialize, materializeApprovals,
+  approvalRowToDTO, draftRowToSnapshotDTO, folderRowToDTO, materialize, materializeApprovals,
   materializeDrafts, materializeMessageChildren, materializeMessages,
   materializeMessagesInOrder, materializeMessageStates, materializeRoutingDecisions,
   materializeRules, materializeSettings,
@@ -95,9 +95,37 @@ export const COALESCE_SCAN_WINDOW = 10_000;
 
 /**
  * The bootstrap window, SERVED in every snapshot response so no client hardcodes it.
- * See {@link SnapshotWindow} for what the two numbers mean together.
+ * See {@link SnapshotWindow} for what the three numbers mean together.
+ *
+ * WHY 10 000. It is the ceiling every windowed client keeps (the browser, the desktop and the
+ * phone all evict past it), and a server that served FEWER than the largest client window would
+ * starve a mirror of rows it is willing to hold and never get them back — the delta only carries
+ * what changes. So the rule is one-directional: at least the largest client ceiling, never less.
  */
-export const SNAPSHOT_WINDOW: SnapshotWindow = { days: 90, minRows: 5000 };
+export const SNAPSHOT_WINDOW: SnapshotWindow & { maxRows: number } =
+  { days: 90, minRows: 5000, maxRows: 10_000 };
+
+/**
+ * A ceiling under the floor is a misconfiguration, not a narrower window: the walk keeps paging
+ * until the floor is met, so it would read as "the floor won" and the window it names would never
+ * be the window it serves. Refused at module load rather than clamped — a silent reorder is the
+ * shape that makes a wrong constant survive a release.
+ */
+export function assertSnapshotWindow(w: SnapshotWindow): void {
+  if (w.maxRows !== undefined && w.maxRows < w.minRows) {
+    throw new Error(`SNAPSHOT_WINDOW.maxRows (${w.maxRows}) is below minRows (${w.minRows})`);
+  }
+}
+assertSnapshotWindow(SNAPSHOT_WINDOW);
+
+/**
+ * How many drafts one snapshot page carries, newest first. Page 1 used to emit EVERY draft row
+ * the account holds with no limit applied — the one live-state read left unpaged after the child
+ * rows moved onto their message's page. A draft is a whole composed message, so the count is also
+ * a byte budget; this is the order of a default message page, which puts an ordinary account's
+ * entire draft set on page 1 and pages anything larger. See the draft keyset in `getSnapshot`.
+ */
+export const SNAPSHOT_DRAFT_PAGE = 100;
 
 const DAY_MS = 86_400_000;
 
@@ -123,7 +151,13 @@ export interface GetSnapshotOptions {
  * insert at the front (where new mail lands) is simply not in the window — and the delta from
  * `asOfSeq` delivers it, which is exactly right.
  */
-interface SnapshotCursor {
+interface DraftKeyset {
+  /** The previous page's last `drafts.updated_at` as epoch ms. */
+  updatedAt: number;
+  id: string;
+}
+
+interface MessageSnapshotCursor {
   asOfSeq: bigint;
   /** The previous page's last `messages.date` as epoch ms; `null` ⇒ the undated tail. */
   date: number | null;
@@ -138,7 +172,28 @@ interface SnapshotCursor {
    * in {@link SyncService.getSnapshot} for what the tail is and why it exists.
    */
   phase?: "tail";
+  /**
+   * Where the DRAFT walk resumes. ABSENT MEANS THE DRAFTS ARE FINISHED, and that reading is true
+   * of a cursor issued before this field existed too: page 1 emitted every draft back then, so an
+   * in-flight bootstrap across a deploy is already complete on drafts and must not restart them.
+   */
+  draft?: DraftKeyset;
 }
+
+/**
+ * Drafts outlived the message walk: every message phase is done and drafts remain, so this page
+ * carries drafts and nothing else. It holds NO message keyset — there is not always one to hold
+ * (an account with more drafts than messages runs off the end of `messages` first) and a sentinel
+ * would be a position the next page could act on.
+ */
+interface DraftsSnapshotCursor {
+  asOfSeq: bigint;
+  emitted: number;
+  phase: "drafts";
+  draft: DraftKeyset;
+}
+
+type SnapshotCursor = MessageSnapshotCursor | DraftsSnapshotCursor;
 
 /**
  * The delta `/sync` reader. Reads `change_log` ascending by seq, re-materializes the CURRENT DTO
@@ -183,8 +238,11 @@ export class SyncService {
   /** Opaque base64url of the snapshot's consistent point plus this page's keyset position. */
   encodeSnapshotCursor(c: SnapshotCursor): string {
     const payload = {
-      v: 1, s: c.asOfSeq.toString(10), d: c.date, i: c.id, n: c.emitted,
+      v: 1, s: c.asOfSeq.toString(10), n: c.emitted,
+      // A drafts-phase cursor carries no message keyset; every other phase carries one.
+      ...(c.phase === "drafts" ? {} : { d: c.date, i: c.id }),
       ...(c.phase ? { p: c.phase } : {}),
+      ...(c.draft ? { da: c.draft.updatedAt, di: c.draft.id } : {}),
     };
     return Buffer.from(JSON.stringify(payload), "utf8").toString("base64url");
   }
@@ -199,12 +257,12 @@ export class SyncService {
     try {
       // The same ceiling, for the same reason and BEFORE the decode: this one is a base64 JSON
       // object, so an unbounded cursor is an unbounded `JSON.parse` as well as an unbounded
-      // decode. Its six fields are a version, a seq, a date, a uuid, a count and a phase —
-      // comfortably inside {@link SNAPSHOT_CURSOR_MAX_CHARS}.
+      // decode. Its eight fields are a version, a seq, a date, a uuid, a count, a phase and the
+      // draft keyset's own date and uuid — comfortably inside {@link SNAPSHOT_CURSOR_MAX_CHARS}.
       if (cursor.length > SNAPSHOT_CURSOR_MAX_CHARS) throw new Error("cursor too long");
       const raw: unknown = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8"));
       if (typeof raw !== "object" || raw === null) throw new Error("not an object");
-      const { v, s, d, i, n, p } = raw as Record<string, unknown>;
+      const { v, s, d, i, n, p, da, di } = raw as Record<string, unknown>;
       if (v !== 1) throw new Error("unknown cursor version");
       // The digit count bounds the PARSE (`BigInt` accepts a three-hundred-digit string happily,
       // which then reaches `Number(asOfSeq)` as `Infinity`) and the RANGE bounds the value — a
@@ -214,23 +272,43 @@ export class SyncService {
       if (typeof s !== "string" || !/^\d{1,19}$/.test(s) || BigInt(s) > MAX_BIGSERIAL) {
         throw new Error("bad asOfSeq");
       }
+      if (typeof n !== "number" || !Number.isInteger(n) || n < 0 || n > MAX_EMITTED) {
+        throw new Error("bad emitted count");
+      }
+      if (p !== undefined && p !== "tail" && p !== "drafts") throw new Error("bad phase");
+      // THE DRAFT KEYSET, both halves or neither: one half alone is a position nothing can
+      // resume from, and reading it as absent would silently declare the drafts finished.
+      // Same range rules as the message keyset below, for the same reason.
+      if ((da === undefined) !== (di === undefined)) throw new Error("half a draft keyset");
+      if (di !== undefined && !isUuid(di)) throw new Error("bad draft keyset id");
+      if (da !== undefined
+          && (typeof da !== "number" || !Number.isFinite(da) || da > MAX_EPOCH_MS || da < MIN_EPOCH_MS)) {
+        throw new Error("bad draft keyset date");
+      }
+      const draft = da === undefined
+        ? undefined
+        : { draft: { updatedAt: da as number, id: di as string } };
+      if (p === "drafts") {
+        // A drafts-phase cursor has no message keyset to carry and cannot be resumed without a
+        // draft position — either shape is a cursor this service never issued.
+        if (d !== undefined || i !== undefined) throw new Error("a drafts cursor with a message keyset");
+        if (draft === undefined) throw new Error("a drafts cursor with no draft keyset");
+        return { asOfSeq: BigInt(s), emitted: n, phase: "drafts", ...draft };
+      }
       // A UUID, not merely a non-empty string: `i` is bound against `messages.id` (and its
       // siblings) further down, so `{"i":"x"}` in a hand-built cursor reached Postgres as 22P02 —
       // a 500 for a value this function had already claimed to validate. Every other field here
       // is shape-checked; this one said "not empty" and meant it.
       if (!isUuid(i)) throw new Error("bad keyset id");
-      if (typeof n !== "number" || !Number.isInteger(n) || n < 0 || n > MAX_EMITTED) {
-        throw new Error("bad emitted count");
-      }
       // `Date`'s own range, not merely "finite": `1e308` is a finite number and not a date, and
       // it reaches a `timestamptz` comparison as one.
       if (d !== null && (typeof d !== "number" || !Number.isFinite(d) || d > MAX_EPOCH_MS || d < MIN_EPOCH_MS)) {
         throw new Error("bad keyset date");
       }
-      if (p !== undefined && p !== "tail") throw new Error("bad phase");
       return {
         asOfSeq: BigInt(s), date: d as number | null, id: i, emitted: n,
         ...(p === "tail" ? { phase: "tail" as const } : {}),
+        ...draft,
       };
     } catch {
       throw new ServiceError(
@@ -511,13 +589,12 @@ export class SyncService {
 
   /**
    * `GET /sync/snapshot` — THE BOOTSTRAP READER. A first-run client used to replay `change_log`
-   * from seq 0 — history rather than state; this reads the LIVE TABLES, so the cost is the size
-   * of the mailbox. Page 1 carries the live small state — every rule, draft and tag, unpaged —
-   * plus the newest page of messages. EVERY page carries the THREADS its own messages name and
-   * their child rows, keyed to the message window. `folder` rides page 1 only while the flag is
-   * on (byte parity off). Messages are bounded by `SNAPSHOT_WINDOW`; then a TAIL restricted to
-   * messages owning a `message_tags` row — tagged mail below the window is otherwise unreachable.
-   * Every row is `op:"create"` at `seq = asOfSeq`.
+   * from seq 0 — history rather than state; this reads the LIVE TABLES. Page 1 carries the live
+   * small state — every rule and tag, unpaged, and `folder` while the flag is on — plus the newest
+   * page of messages. EVERY page carries the THREADS its own messages name, their child rows, and
+   * the next {@link SNAPSHOT_DRAFT_PAGE} drafts. Three phases: the message window
+   * (`SNAPSHOT_WINDOW` — two floors and a ceiling), then a TAIL restricted to messages owning a
+   * `message_tags` row, then drafts outliving both. Every row is `op:"create"` at `seq = asOfSeq`.
    */
   async getSnapshot(ctx: ServiceContext, opts: GetSnapshotOptions = {}): Promise<SnapshotResponse> {
     const { db, accountId } = ctx;
@@ -555,9 +632,6 @@ export class SyncService {
         emit("approval", a.id, approvalRowToDTO(a), a.updatedAt.toISOString());
       }
 
-      const draftRows = await db.select().from(drafts).where(eq(drafts.accountId, accountId));
-      for (const d of draftRows) emit("draft", d.id, draftRowToDTO(d), d.updatedAt.toISOString());
-
       // TAGS ARE LIVE STATE, IN FULL, AND ON PAGE 1. A tag is identity — a name and a hue — and
       // the client renders its rail by filtering the tag list against each message's `labels`.
       // Ship a tag late and the rail boots EMPTY while messages already carry ids pointing into
@@ -585,6 +659,54 @@ export class SyncService {
       // client's re-ask covers the gap.
       const settings = await materializeSettings(db, accountId, accountId);
       if (settings !== null) emit("settings", accountId, settings, settings.updatedAt);
+    }
+
+    // ── DRAFTS RIDE THE PAGES, newest first, keyset-paged on (updated_at desc, id desc) ───────
+    //
+    // Page 1 used to emit every draft row unpaged — the last such read, and the one carrying whole
+    // composed messages. A keyset for the message window's reason: an OFFSET makes every page a
+    // different consistent point, and a draft saved mid-bootstrap would shift the rest and skip one
+    // for ever. `drafts_account_updated_idx` is that ordering.
+    // ABSENT `cursor.draft` MEANS FINISHED — true of a cursor issued after exhausting them and of
+    // one issued before the field existed, when page 1 emitted them all, so a bootstrap in flight
+    // across a deploy neither restarts the set nor loses it. No cursor at all starts at the newest.
+    const draftResume = cursor === null ? undefined : cursor.draft;
+    const draftsDone = cursor !== null && cursor.draft === undefined;
+    let draftNext: DraftKeyset | undefined;
+    if (!draftsDone) {
+      const draftKeyset = draftResume === undefined
+        ? undefined
+        : or(
+          lt(drafts.updatedAt, new Date(draftResume.updatedAt)),
+          and(eq(drafts.updatedAt, new Date(draftResume.updatedAt)), lt(drafts.id, draftResume.id)),
+        );
+      const draftRows = await db.select().from(drafts)
+        .where(and(eq(drafts.accountId, accountId), ...(draftKeyset ? [draftKeyset] : [])))
+        .orderBy(desc(drafts.updatedAt), desc(drafts.id))
+        .limit(SNAPSHOT_DRAFT_PAGE);
+      // AND NOT EVERY DRAFT'S BYTES: a stored body past `DRAFT_BODY_MAX_BYTES` arrives as `null`
+      // with its reason and the client asks for it by id. The page bounds the COUNT; this bounds
+      // what one row weighs, and the two ceilings are independent.
+      for (const d of draftRows) emit("draft", d.id, draftRowToSnapshotDTO(d), d.updatedAt.toISOString());
+      const lastDraft = draftRows[draftRows.length - 1];
+      // A SHORT PAGE IS THE END. A full one may or may not be, and asking again for an empty page
+      // is the price of not paying for a count on every page of every bootstrap.
+      if (draftRows.length === SNAPSHOT_DRAFT_PAGE && lastDraft !== undefined) {
+        draftNext = { updatedAt: lastDraft.updatedAt.getTime(), id: lastDraft.id };
+      }
+    }
+
+    if (cursor !== null && cursor.phase === "drafts") {
+      // THE THIRD PHASE: the message walk and its tail are both finished and drafts are not. This
+      // page carries drafts and nothing else — there is no message keyset left to walk.
+      return {
+        asOfSeq: seq,
+        changes,
+        nextCursor: draftNext === undefined ? null : this.encodeSnapshotCursor({
+          asOfSeq, emitted: cursor.emitted, phase: "drafts", draft: draftNext,
+        }),
+        window: SNAPSHOT_WINDOW,
+      };
     }
 
     // ── The message window: newest first, keyset-paged on (date desc nulls last, id desc).
@@ -683,18 +805,19 @@ export class SyncService {
       id: last!.id,
       emitted,
       ...(phase ? { phase } : {}),
+      ...(draftNext ? { draft: draftNext } : {}),
     });
 
-    // ── WHERE THE NEXT PAGE COMES FROM: window → tail → done ─────────────────────────────────
+    // ── WHERE THE NEXT PAGE COMES FROM: window → tail → drafts → done ────────────────────────
     //
-    // The window is the recency floor OR the volume floor, whichever is not yet met. When BOTH
-    // are met the windowed walk stops — and that is exactly the point older tagged mail was lost at, because any
-    // tagged mail below the window was then dropped from every windowed mirror and no delta could
-    // ever re-deliver it (its `message_tags` change sits below the client's post-bootstrap
-    // cursor). So the walk does not end there: it opens the labeled tail, resuming the same keyset
-    // and carrying every message below the window that owns a tag. The tail ends when a page comes
-    // back short. A windowed walk that ran off the end of the mailbox (a short page) has no tail —
-    // every tagged message is already above it.
+    // The window is the recency floor or the volume floor, whichever is not yet met, under the row
+    // CEILING. When it stops the walk opens the LABELED TAIL rather than ending: tagged mail below
+    // the window is dropped from every windowed mirror and no delta re-delivers it, its
+    // `message_tags` change sitting below the client's post-bootstrap cursor. The tail ends on a
+    // short page; a walk that ran off the end of the mailbox has no tail at all.
+    // THE CEILING STOPS THE WINDOW, NEVER THE TAIL — counted newest-first like the floor, so it
+    // ends the walk above it and tagged mail below leaves by the same tail. Read at a PAGE
+    // boundary, so a snapshot serves at most `maxRows` plus the page in flight.
     let nextCursor: string | null;
     if (inTail) {
       nextCursor = fullPage ? keysetOf("tail") : null;
@@ -704,13 +827,23 @@ export class SyncService {
       // met. An undated row is past the floor by construction (it sorts into the tail), so it can
       // only be carried by the volume arm.
       const withinWindow = last?.date != null && last.date.getTime() >= cutoff;
-      if (fullPage && (withinWindow || emitted < SNAPSHOT_WINDOW.minRows)) {
+      const underCeiling = emitted < SNAPSHOT_WINDOW.maxRows;
+      if (fullPage && underCeiling && (withinWindow || emitted < SNAPSHOT_WINDOW.minRows)) {
         nextCursor = keysetOf();            // still inside the window
       } else if (fullPage) {
         nextCursor = keysetOf("tail");      // window satisfied, mail below it ⇒ open the tail
       } else {
         nextCursor = null;                  // ran off the end of the mailbox ⇒ no tail
       }
+    }
+
+    // Drafts outliving both message phases get their own pages rather than being dropped: a draft
+    // the bootstrap never delivers is unreachable, because its `change_log` row sits below the
+    // cursor the client adopts when the snapshot ends.
+    if (nextCursor === null && draftNext !== undefined) {
+      nextCursor = this.encodeSnapshotCursor({
+        asOfSeq, emitted, phase: "drafts", draft: draftNext,
+      });
     }
 
     return { asOfSeq: seq, changes, nextCursor, window: SNAPSHOT_WINDOW };

@@ -14,73 +14,14 @@ import type { AiTransport, ProbeFailure, ProbeOutcome } from "./ai-transport.js"
 import type { Diagnostic } from "./log.js";
 
 /**
- * WHERE THIS INSTALL'S AI COMES FROM, AND WHAT HAPPENS WHEN IT COMES FROM NOWHERE.
- *
- * A standalone install has no account, no subscription and no metered allowance, so the two AI
- * features it has — a routing suggestion for a first-contact sender, and a reply draft — run
- * against a model the person using it supplies. Three ways to supply one:
- *
- *  · **An Anthropic API key you own.** Requests go to Anthropic, billed to your account.
- *  · **An OpenAI API key you own.** Requests go to OpenAI, billed to your account.
- *  · **A model running on this machine.** Message content stays on the machine.
- *
- * And one honest fourth state: **nothing configured**, which is not an error. Rules-only routing
- * is the product's floor and it is complete without a model — mail is still filed, first contact
- * is still held at the Screener, search still works. What changes is that the two features above
- * are plainly unavailable rather than quietly broken.
- *
- * ── THE KEY IS SEALED, NEVER STORED IN THE CLEAR, AND GOES NOWHERE BUT ITS OWN VENDOR ───────
- *
- * The shell holds one key for this install in the operating system's keystore (Keychain on
- * macOS, Credential Manager on Windows, the Secret Service on Linux) and hands it to this
- * process at launch. Every secret this install writes down is encrypted under that key before it
- * touches the disk — the mailbox password already is, and each provider's API key is stored the
- * same way, by the same code. There is one credential-at-rest design here and this does not add
- * a second.
- *
- * The two hosted providers hold SEPARATE keys under separate envelopes. They are credentials for
- * different accounts at different companies, and a single shared field would mean switching
- * provider silently sent one vendor's key to the other — a live credential delivered to a third
- * party by a dropdown.
- *
- * Consequences worth stating plainly, because they are what a person is entitled to know before
- * typing a key into an app:
- *
- *  · **No durable install key ⇒ the key is not stored at all.** Storage is refused rather than
- *    performed under a key that dies with the process, which would write down something the next
- *    launch could not read. {@link AiStatus.canStoreKey} reports this so an interface can say so
- *    before it offers the field.
- *  · **A key never leaves this machine except to the vendor it belongs to.** The Anthropic key is
- *    the `x-api-key` header on requests to `https://api.anthropic.com`; the OpenAI key is the
- *    `Authorization` header on requests to `https://api.openai.com`. Both hosts are literals in
- *    their own module that no setting can change, and neither key is sent anywhere else at any
- *    time — including to the other vendor.
- *  · **It is never read back.** Nothing returns the key to a caller — the status surface reports
- *    only that one is stored.
- *  · **It is never logged.** No call site here passes key material to the diagnostic channel,
- *    and the logger's field allow-list would drop it if one tried.
- *  · **It is never taken from the environment.** There is deliberately no fall-back to a process
- *    variable: an install that finds a key it was not given is an install that spends somebody
- *    else's money without being asked.
- *  · **Deleting the data directory removes it**, with everything else this install stored. The
- *    mailbox on your own server is untouched by that.
- *
- * ── WHY THE CONFIGURATION IS A FILE AND NOT A DATABASE ROW ────────────────────────────────────
- *
- * It is a property of the INSTALL, not of the mailbox: which machine can reach a model on
- * localhost, and which key this machine holds. It does not sync, it is not mail, and it has no
- * meaning on another device. The local database carries the mail-domain schema this app shares
- * with its hosted sibling, and a table only a laptop would ever write does not belong in it. So
- * it lives beside the database, in the same directory, sealed by the same key, and is removed by
- * the same deletion.
- *
- * ── A CAPABILITY IS NOT CLAIMED UNTIL IT HAS BEEN PROBED ─────────────────────────────────────
- *
- * "Available" means a request actually reached the endpoint and the configured models were
- * there — not that somebody filled in a form. Saving settings therefore CLEARS the verification,
- * and the features stay unavailable until one succeeds. That ordering is the point: an
- * unreachable model is a mistake to correct while somebody is looking at the settings, not a
- * failure to discover the next time they try to answer an email.
+ * Where this install's AI comes from, and what happens when it comes from nowhere. A standalone
+ * install has no metered allowance, so its two AI features (a routing suggestion and a reply draft)
+ * run against a model the person supplies — an Anthropic key, an OpenAI key, or a model on this
+ * machine — plus one honest fourth state, NOTHING CONFIGURED, which is not an error (rules-only is
+ * the floor). Each key is sealed under the OS keystore key the shell hands over, never in the clear,
+ * in separate envelopes per vendor, sent nowhere but its own vendor: no durable key ⇒ not stored
+ * ({@link AiStatus.canStoreKey}), never read back, logged, from the environment, and removed with the
+ * data directory. The config is an install-scoped FILE, and a capability is not claimed until PROBED.
  */
 
 export type AiProviderKind = "anthropic" | "openai" | "ollama";
@@ -193,18 +134,13 @@ interface StoredHosted {
 }
 
 /**
- * The file.
- *
- * ── `version` STAYS 1 THOUGH THE SHAPE GREW, AND THAT IS THE HONEST READING ──────────────────
- *
- * The `openai` block is purely ADDITIVE and the reader below already substitutes defaults for
- * every member it does not find, so a file written before this provider existed loads correctly
- * with no migration to run. The reverse is safe too: an older build reading a newer file ignores
- * the block it does not know, and `provider: "openai"` falls through its own guard to `null` —
- * which lands on "nothing configured", the state that is explicitly not an error.
- *
- * Bumping the number would claim there is a migration. There is not, and a version that moves
- * without one teaches the next reader to distrust the ones that do.
+ * The file. `version` STAYS 1 though the shape grew, the honest reading: the `openai` block is
+ * purely ADDITIVE and the reader substitutes defaults for members it does not find, so a file
+ * written before this provider existed loads with no migration. The reverse is safe too — an older
+ * build ignores the block it does not know, and `provider: "openai"` falls through its guard to
+ * `null`, landing on "nothing configured", the state that is explicitly not an error. Bumping the
+ * number would claim a migration; there is none, and a version that moves without one teaches the
+ * next reader to distrust the ones that do.
  */
 interface StoredAi {
   version: 1;
@@ -581,30 +517,15 @@ export async function createLocalAi(opts: LocalAiOptions): Promise<LocalAi> {
     canStoreKey: opts.canStoreKey,
   });
 
-  /* ── the background fault gate ────────────────────────────────────────────────────────────
-   *
-   * A model that has stopped answering is a steady state on a personal machine, not an incident:
-   * a key gets revoked, a laptop sleeps, somebody quits the local model server. The routing
+  /* The background fault gate. A model that stopped answering is a steady state on a personal
+   * machine (a revoked key, a sleeping laptop, a quit local server), not an incident. The routing
    * pipeline RETHROWS a classifier fault on purpose — it holds the sync cursor so the message is
-   * re-planned rather than mis-filed — which is exactly right for a blip and catastrophic for a
-   * steady state: mail would stop arriving until the model came back.
-   *
-   * So after a few consecutive faults the port is WITHHELD for a cooldown, `planChange` sees no
-   * classifier at all, and mail files on rules — the product's floor, arriving normally, with a
-   * suggestion missing. The cooldown doubles up to a ceiling so a long outage is not a retry
-   * storm, and any success resets it.
-   *
-   * A REFUSAL IS NOT A FAULT. The outbound sensitivity sink throwing means the product worked:
-   * mail carrying authentication material was kept off the wire. Counting that as a model
-   * failure would let the arrival of such mail withhold routing for everything else, so it is
-   * neutral here — it neither trips the gate nor clears an outage already accumulating.
-   *
-   * This is deliberately NOT the hosted worker's breaker, which is a different problem wearing a
-   * similar name: that one exists to refund a credit ledger this install does not have, and it
-   * lives in a module that is neither published with this engine nor free of the private model
-   * half. What is shared is the SHAPE that matters — withhold the port, never wrap it in
-   * something that throws — because that is the shape `planChange` is written against.
-   */
+   * re-planned — which is right for a blip and catastrophic for a steady state (mail would stop
+   * arriving). So after a few consecutive faults the port is WITHHELD for a cooldown, `planChange`
+   * sees no classifier, and mail files on rules; the cooldown doubles to a ceiling and any success
+   * resets it. A REFUSAL is not a fault — the outbound sensitivity sink throwing means the product
+   * worked, so it is neutral. This is NOT the hosted worker's breaker (that refunds a credit ledger
+   * this install lacks); what is shared is the SHAPE — withhold the port, never wrap it in a throw. */
   let consecutiveFaults = 0;
   let withheldUntilMs = 0;
   let cooldownMs = baseCooldownMs;
@@ -658,28 +579,14 @@ export async function createLocalAi(opts: LocalAiOptions): Promise<LocalAi> {
   };
 
   /**
-   * The request-path ports. A failure here reaches the person who asked for it.
-   *
-   * ── `screen` IS PRESENT HERE AND DELIBERATELY ABSENT FROM THE CYCLE PORT BELOW ──────────────
-   *
-   * The Screener's suggestion path prefers `screen` and falls back to `classify` when a port does
-   * not carry it. The fallback is safe — the routing question's answer for a first-contact sender
-   * is the gate, which reads as "hold" — which is exactly why a standalone install could go on
-   * taking it for a whole release without anything failing: the person was told, at high
-   * confidence, that the mail was where it already was. Carrying the method is what ends that.
-   *
-   * ── `satisfies Required<ClassifierPort>` IS THE GUARD, AND THIS IS THE LINE THAT NEEDS ONE ──
-   *
-   * Teaching both transports the second question is not enough on its own: `screen` is OPTIONAL on
-   * `ClassifierPort`, so this object goes on compiling with the method dropped, the Screener goes
-   * on falling back, and every transport-level test stays green while the tautology is back. That
-   * is a capability built, tested and unreachable — the exact failure this change removes,
-   * reintroduced in the one place nothing would look.
-   *
-   * `Required<>` removes the optionality for THIS assignment only, so dropping the method here is a
-   * compile error rather than a silent downgrade. It is worth writing because it actually runs:
-   * almost no test file in this repository is typechecked, but `tsconfig.json` includes `src`, so a
-   * type-level assertion in this file is one of the few that is genuinely checked.
+   * The request-path ports. A failure here reaches the person who asked for it. `screen` is present
+   * here and deliberately ABSENT from the cycle port below: the Screener prefers `screen` and falls
+   * back to `classify`, and that fallback is safe (the routing answer for a first-contact sender is
+   * the gate, read as "hold") — which is exactly why a standalone install could take it for a whole
+   * release without anything failing. `satisfies Required<ClassifierPort>` is the guard, because
+   * `screen` is OPTIONAL on `ClassifierPort` and this object compiles with the method dropped while
+   * the Screener falls back — a capability built, tested and unreachable. `Required<>` makes dropping
+   * it a compile error, and `src` is one of the few things `tsconfig.json` actually typechecks.
    */
   const requestClassifier = {
     classify: classifyThrough,
@@ -688,25 +595,14 @@ export async function createLocalAi(opts: LocalAiOptions): Promise<LocalAi> {
   const requestDrafter: DraftPort = { draft: draftThrough };
 
   /**
-   * The background port: the same call, counted, and its faults tagged.
-   *
-   * `ClassifierFaultError` is what the sync loop matches BY CLASS to tell a model problem apart
-   * from a mailbox problem. Without the tag a failing model counts toward the mailbox's own
-   * failure budget and can get the mailbox marked broken — three unanswered model calls and a
-   * perfectly healthy mailbox is quarantined. With it, "a model outage can never mark a mailbox
-   * broken" holds whatever either threshold is tuned to.
-   *
-   * ── IT CARRIES NO `screen`, AND THAT IS THE GUARANTEE RATHER THAN AN OMISSION ───────────────
-   *
-   * The screening question exists for senders already waiting at the gate, asked because a person
-   * pressed something. This port files LIVE MAIL, automatically, on a timer, and its answer set
-   * must keep the gate in it: `ohmail/Screener` is removed from the screening answer set precisely
-   * because it is the question being asked there, and a background pass that could not answer
-   * "hold" would have to file every stranger somewhere.
-   *
-   * Absence is a stronger statement than a comment or a flag. `planChange` takes a `ClassifierPort`
-   * and could call either method; there is no argument, no setting and no mistaken boolean that
-   * reaches the screening question from here, because the method is not on the object.
+   * The background port: the same call, counted, and its faults tagged. `ClassifierFaultError` is
+   * what the sync loop matches BY CLASS to tell a model problem from a mailbox problem — without the
+   * tag a failing model counts toward the mailbox's failure budget and can get a healthy mailbox
+   * quarantined. It carries NO `screen`, and that is the guarantee rather than an omission: the
+   * screening question is for senders at the gate, asked because a person pressed something, while
+   * this port files LIVE MAIL automatically and its answer set must keep the gate in it. Absence is
+   * stronger than a comment — `planChange` takes a `ClassifierPort` and could call either method, so
+   * there is no argument or boolean that reaches the screening question from here.
    */
   const cycleClassifier: ClassifierPort = {
     async classify(input: ClassifierInput): Promise<ClassifierResult> {

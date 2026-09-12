@@ -729,6 +729,20 @@
       "when": 1791601800011,
       "tag": "0103_organizer_kind_mobile",
       "breakpoints": true
+    },
+    {
+      "idx": 104,
+      "version": "7",
+      "when": 1791602000011,
+      "tag": "0104_mailbox_takeover_intent",
+      "breakpoints": true
+    },
+    {
+      "idx": 105,
+      "version": "7",
+      "when": 1791602200011,
+      "tag": "0105_sync_blocked_reason_clock_off",
+      "breakpoints": true
     }
   ]
 }

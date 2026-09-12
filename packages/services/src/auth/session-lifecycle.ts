@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { carryDialect } from "@trafficflow/db/dialect";
 import { dialect } from "@trafficflow/db/dialect";
-import { and, desc, eq, gt, gte, inArray, isNotNull, isNull, lt, ne, or } from "drizzle-orm";
+import { and, desc, eq, gt, gte, inArray, isNotNull, isNull, lt, ne, or, type SQL } from "drizzle-orm";
 import { devices, refreshTokens, sessions, users, type Tx } from "@trafficflow/db";
 import { runInTransaction, type ServiceContext } from "../context.js";
 import { ServiceError } from "../errors.js";
@@ -30,6 +30,22 @@ export function refuseCrossAccountCredential(ctx: ServiceContext, credentialAcco
       "this browser holds a session for a different account — sign out before using this credential",
     );
   }
+}
+
+/**
+ * WHAT KIND OF FAILURE WAS THAT — one classification, read by this module's recovery arm and by
+ * the route that answers a browser. `session_refused`: the server judged THIS session (an unknown,
+ * expired or replayed token, a revoked or capped session), so the jar holds nothing worth keeping.
+ * `request_refused`: a 4xx about the REQUEST (a credential for another account) — this browser's
+ * own session was never judged. `fault`: a 5xx `ServiceError`, or anything that is not one at all;
+ * NOTHING was decided, and a token the server still honours must survive for the next attempt.
+ * Both defects it replaces mapped a fault onto a verdict — a jar destroyed, and a reuse sweep.
+ */
+export type RefreshFailure = "session_refused" | "request_refused" | "fault";
+
+export function classifyRefreshFailure(err: unknown): RefreshFailure {
+  if (!(err instanceof ServiceError) || err.httpStatus >= 500) return "fault";
+  return err.httpStatus === 401 ? "session_refused" : "request_refused";
 }
 
 /**
@@ -339,16 +355,26 @@ export class SessionLifecycle {
     if (opts.olderThanDays !== undefined) {
       preds.push(lt(sessions.lastSeenAt, new Date(now.getTime() - opts.olderThanDays * DAY_MS)));
     }
-    // Set-based AND atomic, one measured defect each. Set-based: the per-family loop (two awaited
-    // UPDATEs each, serially) was 400+ round trips on exactly the accounts this verb exists for,
-    // inside a request with a 60-second ceiling — a "Sign out all" that times out having revoked
-    // only a PREFIX. One guarded claim takes the whole scope; the refresh families die in bounded
-    // IN-chunks off the claim's own RETURNING. Atomic: with the claim committing separately, a
-    // failed chunk left every session revoked, some refresh rows live, and the RETRY claimed zero
-    // rows (`revoked_at IS NULL`) — it could never revisit those families. One transaction holds
-    // claim, sweeps and audit: a mid-sweep death rolls the claim back and the retry does the
-    // whole job. Families are 1:1 with sessions by construction, so sweeping tokens by the
-    // claimed familyIds is `revokeFamily`'s exact reach.
+    return this.revokeClaimedSessions(ctx, userId, preds, now);
+  }
+
+  /**
+   * Claim every session matching `preds` and sweep their refresh families, in ONE transaction.
+   * The shared core behind both mass revocations — "sign out all other web sessions" and the
+   * credential-change rule below — because two hand-written claim-and-sweep pairs agree until
+   * one is edited.
+   */
+  /*
+   * Set-based AND atomic, one measured defect each. Set-based: a per-family loop was 400+ round
+   * trips inside a 60-second request — a "Sign out all" that timed out having revoked a PREFIX.
+   * Atomic: with the claim committing separately, a failed chunk left sessions revoked and some
+   * refresh rows live, and the retry claimed zero rows (`revoked_at IS NULL`) — it could never
+   * revisit those families. Families are 1:1 with sessions, so sweeping by the claimed familyIds
+   * is `revokeFamily`'s exact reach.
+   */
+  protected async revokeClaimedSessions(
+    ctx: ServiceContext, userId: string, preds: SQL[], now: Date,
+  ): Promise<{ revoked: number }> {
     return this.inTransaction(ctx, async (txCtx) => {
       const tx = asTx(txCtx);
       const claimed = await tx.update(sessions)
@@ -370,6 +396,31 @@ export class SessionLifecycle {
       }
       return { revoked: claimed.length };
     });
+  }
+
+  /**
+   * THE CREDENTIAL-CHANGE RULE: changing or removing an authentication factor signs out every
+   * OTHER session of that user, and leaves the caller signed in where it is — its session id AND
+   * its family are both excluded, the same way `revokeWebSessions` spares its caller.
+   *
+   * Removing a second factor is precisely the gesture somebody makes when they believe that
+   * factor is compromised, and a ceremony that revoked nothing left every session the factor had
+   * minted live and renewable. NOT device-less-scoped like `revokeWebSessions`: a compromised
+   * factor signed in wherever it could, so the sweep reaches paired devices too.
+   */
+  protected async revokeOtherSessions(
+    ctx: ServiceContext, userId: string,
+  ): Promise<{ revoked: number }> {
+    const db = asTx(ctx);
+    const now = ctx.now();
+    const current = ctx.sessionId
+      ? (await db.select({ familyId: sessions.familyId }).from(sessions)
+        .where(eq(sessions.id, ctx.sessionId)).limit(1))[0]
+      : undefined;
+    const preds = [eq(sessions.userId, userId), isNull(sessions.revokedAt)];
+    if (ctx.sessionId) preds.push(ne(sessions.id, ctx.sessionId));
+    if (current) preds.push(ne(sessions.familyId, current.familyId));
+    return this.revokeClaimedSessions(ctx, userId, preds, now);
   }
 
   /** Throws `step_up_required` unless the current session had a 2FA assertion
@@ -778,7 +829,7 @@ export class SessionLifecycle {
    * traffic forces rotation at expiry. The residual is the ambiguity itself: a thief replaying
    * during that exact sleep is re-admitted — audited (`refresh_recovered`), consuming the dormant
    * tail. Bounded six ways: family-, time-, idle-, use-bound (in the session lock), single-winner
-   * (`FOR UPDATE`), cookie-only. A fault answers `null`: fail closed.
+   * (`FOR UPDATE`), cookie-only. A FAULT is neither answer — rethrown; see the catch.
    */
   private async recoverLostRotation(
     ctx: ServiceContext,
@@ -885,24 +936,47 @@ export class SessionLifecycle {
             : null;
         }
         // Audited IN the claim's transaction: no recovery without its row while the
-        // bookkeeping works, and a bookkeeping fault rolls the claim back (the catch below
-        // answers null — the sweep, never a silent re-admission).
+        // bookkeeping works, and a bookkeeping fault rolls the claim back — never a silent
+        // re-admission, and never the sweep either: the catch below rethrows it, so the caller
+        // hears about the fault and the family survives it.
         const [user] = await tx.select().from(users)
           .where(eq(users.id, existing.userId)).limit(1);
         await this.audit(tx, user ?? null, "refresh_recovered", undefined, txCtx,
           `family=${existing.familyId} session=${existing.sessionId}`);
         return this.mintRotation(txCtx, tx, existing, now, ttls);
       });
-    } catch {
-      return null;
+    } catch (err) {
+      /*
+       * A FAULT IS NOT A REPLAY. This answered `null` for every thrown value, and `null` here
+       * falls into the reuse sweep below the call — so a driver error or a lock timeout inside
+       * the recovery revoked the family and told the person their token had been stolen.
+       * Only a REFUSAL may answer `null`; nothing in here refuses today, and the arm is kept so
+       * a future one lands on the sweep rather than on a 500. Everything else is rethrown: the
+       * transaction has rolled back, so the presented token, the dormant tail and the family are
+       * exactly as they were and the next attempt re-runs this classification unchanged.
+       */
+      if (classifyRefreshFailure(err) !== "fault") return null;
+      throw err;
     }
   }
 
-  protected async revokeFamily(db: Tx, familyId: string, now: Date): Promise<void> {
-    await db.update(refreshTokens).set({ revokedAt: now })
-      .where(and(eq(refreshTokens.familyId, familyId), isNull(refreshTokens.revokedAt)));
-    await db.update(sessions).set({ revokedAt: now })
-      .where(and(eq(sessions.familyId, familyId), isNull(sessions.revokedAt)));
+  /**
+   * Revoke a family, and SAY HOW MUCH. The counts are `RETURNING` rows rather than a second read,
+   * so they are what this statement actually withdrew and not what a later SELECT happens to see;
+   * only the LIVE rows are touched, so a family revoked twice reports zero the second time. Every
+   * caller but one ignores the value — the exception is the authorization-code replay, which owes
+   * its log line a count it did not make up.
+   */
+  protected async revokeFamily(
+    db: Tx, familyId: string, now: Date,
+  ): Promise<{ sessions: number; refreshTokens: number }> {
+    const tokens = await db.update(refreshTokens).set({ revokedAt: now })
+      .where(and(eq(refreshTokens.familyId, familyId), isNull(refreshTokens.revokedAt)))
+      .returning({ id: refreshTokens.id });
+    const live = await db.update(sessions).set({ revokedAt: now })
+      .where(and(eq(sessions.familyId, familyId), isNull(sessions.revokedAt)))
+      .returning({ id: sessions.id });
+    return { sessions: live.length, refreshTokens: tokens.length };
   }
 
   // ── Internal: user helpers ──────────────────────────────────────────────────

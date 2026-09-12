@@ -32,6 +32,7 @@ import {
   type ScreeningAnswer,
 } from "../net/consent";
 import { readMailboxes, type PhoneMailbox } from "../net/mailboxes";
+import { readScreenerWaiting, type ServerWaitingSender } from "../net/screener";
 import { PHONE_CLAIM_NAME, organizesHere } from "../engine/standalone-door";
 /* THE DOOR ANSWERING FOR ITSELF, with no request — `organizer-session.ts` holds the one engine
    this process runs and `standaloneHere` is its read. The state module reaches into `engine/`
@@ -45,7 +46,7 @@ import { faceScope } from "./face-scope";
 import { foldersFlag, freshestRead } from "./folders-flag";
 import { usePrefs } from "./store";
 import {
-  connectionSay,
+  connectionSay, firstSyncSay,
   flushQueued,
   liveActions,
   liveFolder,
@@ -78,15 +79,17 @@ import {
   type WorldMail,
   type WorldPile,
   type WorldScheduled,
+  type WorldScreener,
   type WorldTag,
   type WorldView,
   type ConnectionSay,
+  type FirstSyncSay,
 } from "./live";
 import type { Scope } from "./model";
 
 export type {
   FolderEntity, MoveTarget, PhoneOrganizer, ScreenerRow, WorldActions, WorldHistory, WorldMail,
-  WorldPile, WorldScheduled, WorldTag,
+  WorldPile, WorldScheduled, WorldScreener, WorldTag,
 } from "./live";
 
 export interface World {
@@ -120,6 +123,15 @@ export interface World {
      * and the reader could not learn from it that nothing was dialling.
      */
     connection: ConnectionSay | null;
+    /**
+     * AND WHAT THE FIRST SYNC OF THIS MAILBOX PRODUCED — `live.ts#firstSyncSay`, ranked the same
+     * way and carried BESIDE the link's verdict rather than inside it. `null` is "nothing has
+     * said". Two surfaces read it and they must not disagree: the This-phone panel renders its
+     * sentence, and the Ohbox's empty state chooses between "no mail" and "nothing readable yet"
+     * — the line that told a person their mail "lands here as it syncs" over a mailbox where
+     * nothing ever had.
+     */
+    firstSync: FirstSyncSay | null;
   };
   /**
    * Changes the server would not take — the phone's half of the web's "could not be saved"
@@ -205,7 +217,7 @@ export interface World {
     newCount: number;
     meta: string;
   };
-  screener: { waiting: ScreenerRow[]; screened: ScreenerRow[]; spam: ScreenerRow[]; meta: string };
+  screener: WorldScreener & { meta: string };
   /**
    * History — mail from senders nobody ever decided about, who then went quiet. The other arm
    * of the partition that fills `screener.waiting`, derived from the same `presentedWorld`
@@ -388,7 +400,7 @@ const LIVE_VERDICT_BEAT_MS = 15_000;
 function emptyWorld(actions: WorldActions): World {
   return {
     live: false,
-    boot: { settled: false, syncFailure: null, staleAsOf: null, connection: null },
+    boot: { settled: false, syncFailure: null, staleAsOf: null, connection: null, firstSync: null },
     // Nothing is queued on the empty world, so nothing was given up on. `EMPTY_ABANDONED` rather
     // than a fresh `[]`: this object is compared by identity in places, and a new array per call
     // is the same re-render trap `useAbandoned` avoids on the web.
@@ -403,7 +415,7 @@ function emptyWorld(actions: WorldActions): World {
     doorbell: { initials: [], count: 0 },
     reads: { items: [], waterlineAboveId: null, waterLabel: Copy.waterline, newCount: 0, meta: "" },
     receipts: { groups: [], waterlineAboveId: null, waterLabel: Copy.waterline, total: 0, newCount: 0, meta: "" },
-    screener: { waiting: [], screened: [], spam: [], meta: "" },
+    screener: { waiting: [], screened: [], spam: [], meta: "", source: "device" },
     history: { items: [], total: 0, meta: "" },
     piles: [],
     pilesMeta: "",
@@ -528,6 +540,16 @@ export function WorldProvider({ children }: { children: ReactNode }) {
    */
   const [mailboxes, setMailboxes] = useState<readonly PhoneMailbox[] | null>(null);
   /**
+   * The waiting queue as the server holds it (`GET /screener`), or `null` until a read succeeds
+   * this session — and `null` for the whole life of a STANDALONE session, where this phone is the
+   * engine and there is no second answer to ask for. `null` is "nobody answered", and
+   * `liveScreener` then shows the partition's own list and says so. Never an empty list on failure,
+   * for `readMailboxes`' reason: an empty queue is a real answer, and reading a refusal as one
+   * would empty the Screener on a flaky request. Reset on a session swap beside the mailboxes —
+   * account A's waiting senders must never be account B's queue.
+   */
+  const [screenerServer, setScreenerServer] = useState<readonly ServerWaitingSender[] | null>(null);
+  /**
    * THE ACCOUNT'S FACE, and a write in flight. `null` is "the account has no preference", which
    * is also where a fresh session starts — account A's face must never skin account B, the same
    * rule the signatures keep one field up.
@@ -632,6 +654,13 @@ export function WorldProvider({ children }: { children: ReactNode }) {
     const boxRead = freshestRead<readonly PhoneMailbox[]>((ans) => {
       if (current.current === m) setMailboxes(ans);
     });
+    /* THE QUEUE READ, beside the mailbox read and on the same identity and cadence: the two go
+       stale together, because the drain this fires after is the one that landed the moves the
+       queue is derived from. Its own route, its own epoch — a refused queue read must not hold
+       up the folders answer or the roster, and each keeps the last thing it knew. */
+    const queueRead = freshestRead<readonly ServerWaitingSender[]>((ans) => {
+      if (current.current === m) setScreenerServer(ans);
+    });
     const m = foldersFlag({
       read: () => {
         /* Fired from the flag's read so there is ONE cadence to reason about and one place that
@@ -639,6 +668,10 @@ export function WorldProvider({ children }: { children: ReactNode }) {
            read that is slow or refused must not hold up the folders answer, which has its own
            epoch and its own correctness. */
         void boxRead(() => readMailboxes(session));
+        /* ONLY A PAIRED DOOR HAS A SERVER TO ASK. On the standalone door this app IS the engine:
+           the partition is the only authority that exists there, and a request for a route this
+           session does not dial would refuse on every cadence for ever. */
+        if (!session.standalone) void queueRead(() => readScreenerWaiting(session));
         /* Stamped BEFORE the request leaves — the whole point of the two-phase read. */
         const applyFace = faces.beginRead();
         return sigRead(async () => {
@@ -674,6 +707,9 @@ export function WorldProvider({ children }: { children: ReactNode }) {
     // account A's addresses must not make account B's reader recognisable, and its holder must
     // not name a banner over B's mail.
     setMailboxes(null);
+    // And the queue, for the mailboxes' reason exactly: account A's waiting senders are not
+    // account B's, and a stale set would name senders whose mail this mirror does not hold.
+    setScreenerServer(null);
     /* And the FACE, for the same reason and one more: an account's appearance choice is that
        account's state, so the next session starts with none and the device's own pin (which
        outranks it either way) is deliberately left alone — it belongs to the phone, not to
@@ -931,7 +967,10 @@ export function WorldProvider({ children }: { children: ReactNode }) {
     const ohbox = liveOhbox(pres, v);
     const reads = liveReads(pres, v);
     const receipts = liveReceipts(pres, v);
-    const screener = liveScreener(pres, v, scopes);
+    /* THE PAIRED DOOR'S QUEUE IS THE SERVER'S SET — see `liveScreener`. `null` here is the
+       standalone door and a paired door that has not been answered yet; the derived list then
+       stands and the meta below says the count was worked out on this phone. */
+    const screener = liveScreener(pres, v, scopes, screenerServer);
     /* The RAW mirror, not `pres`: the projection deletes History's rows, which is what makes
        History a presentation rather than a folder. See `liveHistory`. */
     const history = liveHistory(engine.read(), world.history, v);
@@ -960,6 +999,10 @@ export function WorldProvider({ children }: { children: ReactNode }) {
            state, so there is nothing here to depend on. The watcher below is what re-derives
            when it moves — the same one the stale label uses, the same beat, one writer. */
         connection: connectionSay(standaloneHere(), v.now, zone),
+        /* ONE read of the door for both verdicts would be one call; this is a second call to the
+           same module state in the same synchronous derivation, which is one moment. See the
+           field: they are two facts and both are rendered. */
+        firstSync: firstSyncSay(standaloneHere()),
       },
       abandoned: engine.abandoned(),
       worldKey: session.ownerKey,
@@ -1008,7 +1051,10 @@ export function WorldProvider({ children }: { children: ReactNode }) {
       },
       screener: {
         ...screener,
-        meta: Copy.metaWaiting(screener.waiting.length),
+        // A number this phone derived is never shown as the mailbox's own.
+        meta: screener.source === "server"
+          ? Copy.metaWaiting(screener.waiting.length)
+          : Copy.metaWaitingOnDevice(screener.waiting.length),
       },
       history: { ...history, meta: Copy.historyMeta(history.total) },
       piles,
@@ -1069,58 +1115,31 @@ export function WorldProvider({ children }: { children: ReactNode }) {
     // failure sentence is part of what an unsettled screen renders.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [engine, session, scopes, zone, locale, actions, version, outcomeSeq, outcomeOf, freshBeat,
-    foldersOn, foldersPending, setFoldersEnabled, signatures, screening, conn.syncing,
+    foldersOn, foldersPending, setFoldersEnabled, signatures, screening, screenerServer, conn.syncing,
     conn.syncError, accountFace, accountFaceKnown, facePending, applyFaceAllDevices]);
 
   /**
    * The freshness watcher — the clock's other half, after the memo because its sentinel IS the
-   * memo's own output. It compares what the engine would say now against what the world
-   * rendered (`boot.staleAsOf`), at arm time and then each minute, and bumps `freshBeat` only
-   * on a difference. Three defects shaped this exact form:
-   *
-   *  · round 2 — no formatted-label ambiguity is possible: both sides of the comparison come
-   *    from the same derivation, so "a different stamp that happens to format identically"
-   *    cannot make a real transition invisible. (The parenthetical here used to add "a stamp
-   *    change requires a drain, which re-derives through `version` anyway", and that is no longer
-   *    true: writing the completion stamp does not bump the mirror version —
-   *    `packages/client-engine/src/store.ts`. The argument never needed it. Both sides still come
-   *    from one derivation, and the minute tick below is what re-reads; the removed clause only
-   *    ever said the re-read would also happen sooner.)
-   *  · round 3 — a healthy drain's stamp churn re-arms and re-renders NOTHING: while current,
-   *    the rendered label is null across every drain, the dep does not move, and the check
-   *    compares null with null;
-   *  · round 4 — a transition can never be swallowed UNRENDERED: a ref seeded from the live
-   *    verdict could adopt a current→stale flip that happened between render and effect and
-   *    then never announce it; comparing against the RENDERED value makes that impossible by
-   *    construction — the check at arm time closes the same race.
-   *
-   * RN pauses timers in the background; on return, the next tick or the foreground drain
-   * re-derives, whichever lands first. A bump re-derives the memo, the dep follows, the
-   * re-armed check finds both sides equal, and the loop terminates in one step.
-   *
-   * ── AND THE CONNECTION VERDICT RIDES THE SAME WATCHER, DELIBERATELY ─────────────────────
-   *
-   * A lost link moves no store version, fails no app-level drain round (the mirror is served by
-   * the engine in this process and answers happily) and flips no connection state — so without
-   * this it would reach no screen at all, which is the whole of the measured defect. Same
-   * effect, same beat, same rendered-value sentinel: a SECOND beat would be a second writer of
-   * one derived world, and the two could disagree about which render is current.
-   *
-   * The interval is the ENGINE'S POLL CADENCE and no longer a minute. The stale label is
-   * unaffected — it bumps only on a difference, so the extra comparisons are no-ops — and the
-   * connection sentence must not wait a minute behind a detection that now fires in 45 s.
+   * memo's output. It compares what the engine would say now against what the world rendered
+   * (`boot.staleAsOf`), at arm time and each tick, bumping `freshBeat` only on a difference. Both
+   * sides come from one derivation, so no label-format ambiguity is possible and a healthy drain
+   * compares null with null; comparing against the RENDERED value means a current→stale flip
+   * between render and effect cannot be swallowed. The connection verdict rides the SAME watcher —
+   * a lost link moves no store version and flips no state, so a second beat would be a second writer
+   * of one world — and the interval is the ENGINE'S POLL CADENCE so the sentence isn't a minute late.
    */
   const renderedStale = world.boot.staleAsOf;
   /* The verdict's own SHAPE, not the object: `connectionSay` answers a fresh record per call, so
      comparing references would bump the beat on every tick and re-derive the whole world four
      times a minute over a healthy link. */
-  const renderedConnection = JSON.stringify(world.boot.connection);
+  const renderedConnection = JSON.stringify([world.boot.connection, world.boot.firstSync]);
   useEffect(() => {
     if (engine === null) return;
     const check = (): void => {
       const staleMoved = staleAsOf(engine, zone) !== renderedStale;
-      const connMoved =
-        JSON.stringify(connectionSay(standaloneHere(), new Date(), zone)) !== renderedConnection;
+      const connMoved = JSON.stringify(
+        [connectionSay(standaloneHere(), new Date(), zone), firstSyncSay(standaloneHere())],
+      ) !== renderedConnection;
       /* ONE bump for either, so the loop still terminates in one step: the re-derive re-reads
          BOTH verdicts, and the re-armed check finds both sides equal. */
       if (staleMoved || connMoved) setFreshBeat((n) => n + 1);

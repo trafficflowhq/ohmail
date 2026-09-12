@@ -8,50 +8,16 @@ import {
 } from "@trafficflow/core";
 import type { MailboxAdapter } from "@trafficflow/core/adapters/imap";
 
-/* ══════════════════════════════════════════════════════════════════════════════════════════
-   RESTORING THE FULL BODY OF HISTORICALLY-REDACTED SENSITIVE MAIL — one-off, scoped
-   ══════════════════════════════════════════════════════════════════════════════════════════
-
-   ── WHAT THIS IS, AND WHY IT IS NOT `sensitive-backfill.ts` ─────────────────────────────────
-
-   Body redaction is removed: ingest now stores the FULL text and html of a message the classifier
-   judges sensitive, and keeps the withholding to the FLAGS (`no_ai`, `no_kb`, …). But rows ingested
-   BEFORE that change still hold the literal string `[REDACTED]` where their body used to be, so a
-   genuinely-sensitive message its owner wants to read renders as `[REDACTED]` for ever — the
-   original bytes are only on the mail server.
-
-   `sensitive-backfill.ts` looks adjacent and is the WRONG tool, which is why this is a separate
-   pass rather than a widened predicate on that one:
-
-    · that pass RE-CLASSIFIES and, where the fixed classifier now says `ordinary`, CLEARS the
-      sensitivity flags. This pass must do the OPPOSITE — the rows here are genuinely sensitive, so
-      it KEEPS every flag and only puts the body back.
-    · that pass is gated by `mailboxes.sensitive_fp_backfill_at`, a shared marker whose
-      concurrency hazard its own header documents. Widening it — or reusing its marker — is exactly
-      the "do not blindly widen the shared cron" trap. This pass touches neither.
-
-   ── ITS OWN IDEMPOTENCY, AND NO NEW COLUMN ─────────────────────────────────────────────────
-
-   The candidate predicate IS the idempotency: `message_bodies.text LIKE '%[REDACTED]%'`. A row this
-   pass restores no longer contains the placeholder and drops out, so re-running restores only what
-   is still redacted and a finished mailbox writes nothing. That is why there is no `done_at`
-   column — the shrinking set is the bookmark. A row it FETCHES AND REFUSES (gone, over the ceiling,
-   identity mismatch) keeps the placeholder, so a per-run in-memory {@link refused} set stops it
-   being re-read within one invocation; a fresh invocation retries it, which for a one-off scoped
-   run is exactly right.
-
-   ── IT READS WITH BODY.PEEK. IT NEVER MOVES, FLAGS, DELETES OR MARKS READ. ──────────────────
-
-   `fetchRaw` is `BODY.PEEK[]`, the FETCH form that does not set `\Seen` (`imap.ts`). Nothing else
-   on the adapter is called: no move, no delete, no flag write. The only database writes are the
-   body, the snippet and one `change_log` `update` delta.
-
-   ── SCOPE ──────────────────────────────────────────────────────────────────────────────────
-
-   Per mailbox, and the runner passes the affected mailbox ids explicitly — test accounts are
-   scoped out by never being passed. There is no fleet-wide loop and this is not wired into the
-   worker cycle.
-   ══════════════════════════════════════════════════════════════════════════════════════════ */
+/* RESTORING THE FULL BODY OF HISTORICALLY-REDACTED SENSITIVE MAIL — one-off, scoped. Ingest now stores the
+ * full text/html of sensitive mail and withholds only the FLAGS, but rows ingested before that still hold
+ * the literal `[REDACTED]`, so a genuinely-sensitive message renders as `[REDACTED]` for ever (the original
+ * is only on the server). NOT `sensitive-backfill.ts`: that pass re-classifies and CLEARS flags where the
+ * fixed classifier says `ordinary`; this does the OPPOSITE (the rows here are genuinely sensitive — it KEEPS
+ * every flag and only puts the body back), and it touches neither `sensitive_fp_backfill_at` nor its
+ * concurrency hazard. Idempotency is the predicate `message_bodies.text LIKE '%[REDACTED]%'` (a restored row
+ * drops out; no `done_at` — the shrinking set is the bookmark); a fetched-and-refused row keeps the
+ * placeholder, shelved in a per-run in-memory {@link refused}. Reads with `fetchRaw` = `BODY.PEEK[]` (no
+ * `\Seen`, `imap.ts`), moves/flags/deletes nothing. Per mailbox, ids passed explicitly; not wired into the cycle. */
 
 /** Categorised rows examined per SQL page. Held in memory across the per-row network reads. */
 export const REDACTED_RESTORE_BATCH = 100;
@@ -67,26 +33,15 @@ export const REDACTED_RESTORE_MAX_PAGES = 500;
 export const REDACTED_RESTORE_MAX_BYTES = 8 * 1024 * 1024;
 
 /**
- * Messages this PROCESS re-read and declined, per mailbox — and why per-process is CORRECT here
- * where it was not correct in `sensitive-backfill.ts`.
- *
- * The rule, and it is the same one `junk-restore.ts` now states over its three shelves: a
- * process-scoped shelf is safe exactly while it cannot be LAUNDERED INTO A DURABLE CLAIM. Losing
- * it must cost work, never correctness.
- *
- * This pass has NO completion marker — it is an operator CLI (`run-redacted-restore.ts`) that runs
- * until the operator stops running it, and nothing on disk ever says "this mailbox is done". So a
- * restart re-attempts every refusal, which is the safe direction: the cost is a re-read, and the
- * message it re-reads is one that is still sitting redacted.
- *
- * The sibling that broke the rule is the reason this paragraph exists rather than nothing:
- * `sensitive-backfill` kept the identical shelf and WAS gated by a durable marker, so a single
- * transient fetch failure refused a message for the life of the process, the walk completed, the
- * marker landed, and that message stayed redacted permanently
- * — fixed 2026-09-01 by splitting decided refusals from undecided ones and refusing to certify
- * over the second kind. Giving THIS pass a durable "done" marker
- * without moving this set to disk would re-create that defect one file over.
- */
+ * Messages this PROCESS re-read and declined, per mailbox — and why per-process is CORRECT here where it
+ * was not in `sensitive-backfill.ts`. The rule (the same `junk-restore.ts` states): a process-scoped shelf
+ * is safe exactly while it cannot be LAUNDERED INTO A DURABLE CLAIM — losing it must cost work, never
+ * correctness. This pass has NO completion marker (it is an operator CLI, `run-redacted-restore.ts`, and
+ * nothing on disk ever says "done"), so a restart re-attempts every refusal, the safe direction (a re-read
+ * of a message still sitting redacted). The sibling that broke the rule: `sensitive-backfill` kept the
+ * identical shelf gated by a durable marker, so one transient fetch failure refused a message permanently
+ * (fixed 2026-09-01 by splitting decided from undecided refusals). A durable "done" marker here without
+ * moving this set to disk would re-create that defect one file over. */
 const refusedByMailbox = new Map<string, Set<string>>();
 function refusedFor(mailboxId: string): Set<string> {
   const hit = refusedByMailbox.get(mailboxId);
@@ -284,18 +239,13 @@ async function selectCandidates(
 }
 
 /**
- * Store the full body for ONE message, and answer whether this call is the one that did it.
- *
- * ── THE LOCK-AND-RECHECK IS THE IDEMPOTENCY ────────────────────────────────────────────────
- *
- * The FOR UPDATE re-read requires the stored text to STILL hold the placeholder. A second driver,
- * or a re-run, finds it already restored and writes nothing — one restore, one `change_log` delta.
- * A transaction PER MESSAGE, opened AFTER the network read, so a mail server's response time is
- * never held inside `recordChange`'s account row lock.
- *
- * FLAGS ARE UNTOUCHED. `sensitivity_category`, `no_ai`, `no_kb`, `no_forward`, `priority` are not
- * in the `set` — this row is genuinely sensitive and stays so. Only the body, the snippet and
- * `updated_at` move. That is the whole difference from `sensitive-backfill.ts#repairOne`.
+ * Store the full body for ONE message, and answer whether this call did it. THE LOCK-AND-RECHECK IS THE
+ * IDEMPOTENCY: the `FOR UPDATE` re-read requires the stored text to STILL hold the placeholder, so a second
+ * driver or a re-run finds it already restored and writes nothing (one restore, one `change_log` delta). A
+ * transaction PER MESSAGE, opened AFTER the network read, so a mail server's response time is never held
+ * inside `recordChange`'s account row lock. FLAGS ARE UNTOUCHED — `sensitivity_category`, `no_ai`, `no_kb`,
+ * `no_forward`, `priority` are not in the `set` (this row is genuinely sensitive); only the body, snippet
+ * and `updated_at` move. That is the whole difference from `sensitive-backfill.ts#repairOne`.
  */
 async function restoreOne(
   db: Tx, accountId: string, messageId: string, fresh: NormalizedMessage, now: Date,

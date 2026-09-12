@@ -15,7 +15,8 @@ import { useTranslations } from "next-intl";
 import { addressBook } from "@ohmail/client-engine";
 import type { EngineDraft, OhmailEngine } from "@ohmail/client-engine";
 import type { Editor } from "@tiptap/react";
-import { Button, Chip, Icon, Kbd, TextField, useToast } from "@ohmail/ui";
+import { Button, Chip, Icon, Kbd, TextField, formatFileSize, useToast } from "@ohmail/ui";
+import { DRAFT_BODY_MAX_BYTES } from "@trafficflow/core/outbound-text";
 import { chordKeys, useBinding, useKeyBindings, useModGlyph, useWritingSurface } from "../shell/keymap";
 import { go } from "../shell/routing";
 import { displayAddress } from "../shell/idn";
@@ -35,9 +36,9 @@ import { ComposeAttach, composeAttachCap } from "../components/ComposeAttach";
 import {
   instantOfLocalInput, localInputValue, nextWeekNine, scheduleLabel, todayEvening, tomorrowNine,
 } from "../shell/format";
-import { activeFormatZone } from "../shell/locale";
+import { activeFormatLocale, activeFormatZone } from "../shell/locale";
 import type { ComposeFields, ComposePlan } from "../shell/compose";
-import { worthSaving } from "../shell/compose-autosave";
+import { draftNoteKey, worthSaving } from "../shell/compose-autosave";
 import { formatRecipientChips, type ResolvedFrom } from "../shell/compose-from";
 import { SignatureBlock } from "../shell/SignatureBlock";
 import { SIG_FOLLOWING } from "../shell/signature";
@@ -1005,8 +1006,24 @@ export function ComposeView({
                 <span className="send-note" role="status">{held.sentence}</span>
               ) : null}
               {/* The scratch buffer, stated exactly as strongly as it is true: this browser, not
-                  the mailbox. Drafts kept on the server are not built yet. */}
-              <span className="send-note">{t("draftNote")}</span>
+                  the mailbox. Drafts kept on the server are not built yet — AND NOT AT ALL past
+                  `DRAFT_BODY_MAX_BYTES`, which is why the two sentences are one choice rather than
+                  two notes: "saved to your drafts after a moment" is a promise the autosave stops
+                  keeping the moment the body crosses the ceiling, and a false promise beside a
+                  true refusal is worse than either alone. Read from the SAME predicate the save
+                  door reads, so the sentence and the behaviour cannot disagree. */}
+              {draftNoteKey(fields) === "bodyTooLong" ? (
+                <span className="send-note" role="status">
+                  {/* The sentence names the ceiling now that one formatter can say it — the
+                      number is the same one both halves are measured against, read from the
+                      constant rather than typed, so the copy cannot outlive it. */}
+                  {t("bodyTooLong", {
+                    size: formatFileSize(DRAFT_BODY_MAX_BYTES, activeFormatLocale()),
+                  })}
+                </span>
+              ) : (
+                <span className="send-note">{t("draftNote")}</span>
+              )}
             </div>
 
             <SendStatus send={shown} scope="compose" />

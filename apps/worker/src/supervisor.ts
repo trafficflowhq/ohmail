@@ -20,26 +20,15 @@ export interface SupervisedWorker {
 }
 
 /**
- * The DEPLOYABLE entry point. The old CLI threw and `process.exit(1)`ed when
- * another instance held the leader lock — which is exactly what an overlapping
- * rolling deploy produces, so every deploy crash-looped the new instance and could be
- * marked failed. Instead:
- *
- *  • the health server comes up FIRST and answers 200 in standby — a hot spare
- *    that the platform kills can never take over. That patience has a bound:
- *    past `servingNothingMaxMs` an instance that still cannot take the lock is reporting a
- *    wedge, not a deploy. The bound is 24× a measured handover and above the platform's own
- *    health-check timeout, so it cannot be what fails a deployment;
- *  • a lock-held start logs `standby` and retries with a fixed backoff;
- *  • the standby that later wins the lock starts serving, in-process, with no restart;
- *  • a leader that LOSES its lock (session dropped, failover, `pg_terminate_backend`)
- *    quiesces and goes 503 rather than continuing to sync accounts another instance has
- *    legitimately taken over.
- *
- * `startWorker()` keeps its programmatic throw for callers (and the leader-lock test
- * semantics); the supervisor deliberately does NOT go through it — it owns the lock
- * acquisition so it can wait on it.
- */
+ * The DEPLOYABLE entry point. The old CLI threw and `process.exit(1)`ed when another instance held the
+ * leader lock — exactly what an overlapping rolling deploy produces — so every deploy crash-looped the new
+ * instance. Instead: the health server comes up FIRST and answers 200 in standby (a hot spare the platform
+ * kills can never take over), bounded — past `servingNothingMaxMs` an instance that still cannot take the
+ * lock is reporting a wedge, not a deploy (24× a measured handover, above the platform's health-check
+ * timeout, so it cannot fail a deployment); a lock-held start logs `standby` and retries with a fixed
+ * backoff; the standby that wins starts serving in-process, no restart; a leader that LOSES its lock
+ * (session dropped, failover, `pg_terminate_backend`) quiesces and goes 503. `startWorker()` keeps its
+ * programmatic throw; the supervisor does NOT go through it — it owns the lock acquisition so it can wait. */
 export async function runWorkerSupervised(
   config: WorkerConfig,
   hooks: {
@@ -254,24 +243,16 @@ export async function runWorkerSupervised(
     }, retryMs);
   }
 
-  // ── THE SCHEMA DEPLOY GATE, BEFORE THE LOCK AND THEREFORE BEFORE LEADERSHIP ──────────────
-  //
-  // The API refuses a deployment whose database lacks `credit_rollup_runs.duration_ms`; this is
-  // the same refusal on the worker, which is the process that actually writes that row. It could
-  // not come from `/health`: that endpoint is memory-only by design, so the platform's check on
-  // this process never reaches a database and a worker ahead of cloud 0031 activated, took the
-  // lock, and then swallowed the insert's 42703 on every pass — a stationary run ledger behind an
-  // instance reporting 200.
-  //
-  // BEFORE `runAttempt()` and not inside it, so no lock is taken and `announceLeader()` is
-  // unreachable: a refused worker never becomes the leader even for the instant it would take to
-  // discover the fault. The health server is already up, so the refusal is READABLE — the
-  // snapshot carries `error` and answers 503, which is what a deploy gate reads. Throwing here
-  // instead would close the endpoint and leave the platform with a dead port and no reason.
-  //
-  // A gate that THROWS (the database is unreachable) is deliberately NOT caught: that is the
-  // "genuinely broken config" case the first attempt already fails loudly for, and collapsing it
-  // into a migration verdict would name the wrong fault.
+  // THE SCHEMA DEPLOY GATE, BEFORE THE LOCK AND THEREFORE BEFORE LEADERSHIP. The API refuses a deployment
+  // whose database lacks `credit_rollup_runs.duration_ms`; this is the same refusal on the worker, the
+  // process that writes that row. It could not come from `/health` (memory-only by design), so a worker
+  // ahead of cloud 0031 activated, took the lock, and swallowed the insert's 42703 every pass — a stationary
+  // run ledger behind an instance reporting 200. BEFORE `runAttempt()`, not inside it, so no lock is taken
+  // and `announceLeader()` is unreachable: a refused worker never becomes leader. The health server is
+  // already up, so the refusal is READABLE (the snapshot carries `error` and answers 503, what a deploy gate
+  // reads); throwing would close the endpoint and leave a dead port. A gate that THROWS (database
+  // unreachable) is deliberately NOT caught — that is the "genuinely broken config" case the first attempt
+  // already fails loudly for.
   {
     // The FIRST attempt is awaited so a genuinely broken config (bad KEK, dead DB) still
     // fails the boot loudly instead of hiding behind a healthy-looking standby.

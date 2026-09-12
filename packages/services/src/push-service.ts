@@ -2,7 +2,7 @@ import { and, eq } from "drizzle-orm";
 import { claimIdempotencyKey, sessions, type Tx } from "@trafficflow/db";
 import { pushSubscriptions } from "@trafficflow/db/cloud";
 import { SsrfRefusal, type PushEndpointGuard } from "@trafficflow/core/net";
-import type { ServiceContext } from "./context.js";
+import { withAccountTx, type ServiceContext } from "./context.js";
 import { ServiceError, IdempotencyRaceLost } from "./errors.js";
 
 const asTx = (ctx: ServiceContext): Tx => ctx.db as unknown as Tx;
@@ -82,7 +82,7 @@ export class PushService implements PushServicePort {
       }
     }
 
-    const id = await asTx(ctx).transaction(async (tx) => {
+    const id = await withAccountTx(ctx, async (tx) => {
       // The DEVICE the registration belongs to, resolved from the CALLER'S OWN session rather
       // than trusted from the body: a paired phone's bearer session carries its `device_id`, and
       // stamping it here is what lets `DELETE /devices/:id` (the webapp's revoke) take the wake

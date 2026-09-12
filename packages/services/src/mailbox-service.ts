@@ -10,9 +10,9 @@ import {
   closeRemovedMailboxAppointments,
   filingDue, filingDeferred, ourOutstandingFiling, isFilingRefusalClass,
   ACCOUNT_THREAD_STRUCTURE_LOCK_CLASS,
-  type AccessVerdict, type LedgerTx, type MailboxErrorCode, type Tx,
+  type AccessVerdict, type LedgerTx, type MailboxErrorCode, type Tx, type OrganizerIntent,
 } from "@trafficflow/db";
-import type { ServiceContext } from "./context.js";
+import { withAccountTx, type ServiceContext } from "./context.js";
 import { ServiceError } from "./errors.js";
 import { fenceErasedAccount } from "./erasure-fence.js";
 import { sweepMailboxData, type MailboxSweepResult } from "./mailbox-erasure.js";
@@ -21,6 +21,10 @@ import { sweepMailboxData, type MailboxSweepResult } from "./mailbox-erasure.js"
  * full `@trafficflow/services` barrel, which only a hosted process imports, registers the gate
  * on load; `@trafficflow/services/mail` does not, and a local host passes its own policy. */
 import { defaultMailboxAllowance } from "./mailbox-allowance-registry.js";
+/* The head of the mailbox lock order, imported as a STATEMENT rather than reached through the
+ * gate: which policy a host installed decides whether the gate runs, and the lock order may not
+ * depend on that. */
+import { lockAccountRow } from "./account-lock.js";
 import type { KeyProvider } from "./auth/crypto.js";
 import type { MailboxDTO, MailboxFolderSummary } from "./dto/types.js";
 // The window's vocabulary, from the one place it is defined (core), so the ceremony that writes
@@ -124,6 +128,16 @@ export type MailboxReleaseResult =
  */
 export interface OrganizeHereInput {
   imap?: { pass: string };
+  /**
+   * WHICH VERB THE PERSON PRESSED — required, and the stamp below is meaningless without it.
+   *
+   * This door serves Cloud, the desktop's local API and the phone's, and only the phone has no
+   * takeover verb: its press is a launch, so it may open a mailbox nobody is organizing and must
+   * never take one another machine holds. The stamp alone cannot say that, so the verb is carried
+   * to the fence on the row and `decideLease` rule 6 consults it there. Required rather than
+   * defaulted, because a default here is a door that quietly asks for more than the button said.
+   */
+  intent: OrganizerIntent;
   /**
    * The screening window, chosen in the same breath as consent — it must ride the same
    * transaction. The defect is not the window: `screening_baseline_at` is written by THE FIRST
@@ -1109,8 +1123,11 @@ export class MailboxService {
     // remote call under the account's row lock is the deadlock the send pass already records.
     const access = await this.access(ctx.accountId);
 
-    const mb = await asTx(ctx).transaction(async (tx) => {
-      // The gate FIRST: it takes the lock every later statement is serialized behind.
+    // `lock: "update"` because `allowance` below takes `accounts FOR UPDATE`: the fence takes that
+    // row first, so taking it SHARED here and upgrading there is how two concurrent creates
+    // deadlock. Strong at the head, once.
+    const mb = await withAccountTx(ctx, async (tx) => {
+      // The gate SECOND, behind the fence, which now holds the row it wanted.
       await this.allowance(tx as LedgerTx, ctx.accountId, ctx.now(), { access });
 
       const [row] = await tx.insert(mailboxes).values({
@@ -1182,7 +1199,7 @@ export class MailboxService {
       // any later statement grants nothing, and a grant that fails aborts the create — the two
       // are one fact or neither is.
       return row!;
-    }).catch((err: unknown) => {
+    }, { lock: "update" }).catch((err: unknown) => {
       if (isActiveAddressConflict(err)) throw addressTaken();
       throw err;
     });
@@ -1265,7 +1282,11 @@ export class MailboxService {
     // remote call under the account's row lock is the deadlock the send pass already records.
     const access = await this.access(ctx.accountId);
 
-    const out = await asTx(ctx).transaction(async (tx) => {
+    // `lock: "update"` for `create`'s reason one method up: the create branch below reaches the
+    // allowance gate, which takes `accounts FOR UPDATE`. That strength IS the account row at the
+    // head of the mailbox lock order — the order `delete` takes with its erasure fence — so this
+    // door takes it once, here, and no second `lockAccountRow` inside.
+    const out = await withAccountTx(ctx, async (tx) => {
       const [existing] = await dialect(ctx.db).forUpdate(tx.select().from(mailboxes)
         .where(and(
           eq(mailboxes.accountId, ctx.accountId),
@@ -1332,7 +1353,7 @@ export class MailboxService {
       // Same hook, same transaction, as `create` — an OAuth connect of a NEW address is a
       // create in every sense that matters here (a reconnect returned above and grants nothing).
       return { created: true, row: created as MailboxRow };
-    }).catch((err: unknown) => {
+    }, { lock: "update" }).catch((err: unknown) => {
       if (isActiveAddressConflict(err)) throw addressTaken();
       throw err;
     });
@@ -1389,6 +1410,10 @@ export class MailboxService {
     const access = await this.access(ctx.accountId);
 
     return asTx(ctx).transaction(async (tx) => {
+      // The account row FIRST, before any `mailboxes` row — the order `delete` takes with its
+      // erasure fence, and the whole argument is in {@link lockAccountRow}. Unconditional: whether
+      // the allowance gate is reached is decided by rows this transaction has not read yet.
+      await lockAccountRow(tx as LedgerTx, dialect(ctx.db), ctx.accountId);
       // `FOR UPDATE`, and it is the fix for a race between two concurrent PATCHes.
       // Without it a credentials-only PATCH took NO lock at all — it writes `mailbox_credentials`
       // and never touches the `mailboxes` row — so it could read a row as 'connected', have the
@@ -1890,8 +1915,12 @@ export class MailboxService {
    * alone CORRUPTS — a stand-down and a disconnect share `status='disabled'`, told apart only by
    * the reason. A disconnected mailbox is refused, never revived.
    */
+  /* NO `= {}` DEFAULT ANY MORE. It was harmless while every field was optional and is not now:
+     a caller that supplies nothing would ask for the verb it never named, and the verb decides
+     whether this press may take a mailbox off a machine that is organizing it. The argument is
+     required so the compiler names every door. */
   async organizeHere(
-    ctx: ServiceContext, id: string, input: OrganizeHereInput = {},
+    ctx: ServiceContext, id: string, input: OrganizeHereInput,
     opts?: UpdateMailboxOptions,
   ): Promise<MailboxTakeoverResult> {
     /**
@@ -1926,7 +1955,11 @@ export class MailboxService {
     // remote call under the account's row lock is the deadlock the send pass already records.
     const access = await this.access(ctx.accountId);
 
-    return asTx(ctx).transaction(async (tx) => {
+    // The consent write, through the fenced door: this upserts `account_settings` — the very
+    // table and the very race `erasure-fence.ts` was written about — and reaches the allowance
+    // gate below, so it takes the account row at UPDATE strength once, at the head. That is the
+    // head of the mailbox lock order too, so no second `lockAccountRow` is taken inside.
+    return withAccountTx(ctx, async (tx) => {
       // `FOR UPDATE`, in the same order and on the same row as `update` and `delete` take it, so
       // the three serialize instead of interleaving. Without it, an organize and a `delete` can
       // both read the row and commit in either order, and the losing order leaves a mailbox that
@@ -2047,6 +2080,10 @@ export class MailboxService {
         // Flipping the role here would make a button in a browser the thing that decides who
         // organizes a mailbox, with no reference to what the mailbox itself says.
         takeoverAuthorizedAt: ctx.now(),
+        // …AND THE VERB THAT WROTE IT, in the same statement, because the two are one fact. Split
+        // across two writes there is an instant in which the row says a press happened and cannot
+        // say what it asked for, and the gate reads the row once.
+        takeoverIntent: input.intent,
         // Consent, written once and never moved. `COALESCE` because consent is the FIRST time
         // somebody agreed: re-running onboarding, or claiming back after a handover, must not
         // rewrite the record of when the person originally said yes — it also makes this
@@ -2108,7 +2145,7 @@ export class MailboxService {
        * install cannot drift into two answers.
        */
       return { outcome: "authorized" as const, previousReason: standDownMemory(current) };
-    }).catch((err: unknown) => {
+    }, { lock: "update" }).catch((err: unknown) => {
       // Kept from the `disabled → connected` era: this statement no longer moves `status`, so it
       // no longer inserts into the active-address index and 23505 is unreachable from here. It
       // stays because the honest answer to an address conflict on this door is still

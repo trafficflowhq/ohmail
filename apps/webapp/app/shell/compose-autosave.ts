@@ -12,6 +12,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { draftOverCeiling } from "@trafficflow/core/outbound-text";
 import type { OhmailEngine } from "@ohmail/client-engine";
 import type { ComposeFields } from "./compose";
 import { COMPOSE_SEND_KEY, writeReplyMeta } from "./mail-send";
@@ -35,6 +36,19 @@ export function worthSaving(f: ComposeFields): boolean {
     f.subject.trim() !== "" ||
     f.body.trim() !== ""
   );
+}
+
+/**
+ * WHICH SENTENCE THE COMPOSE SURFACE OWES THE READER ABOUT SAVING — the promise, or the refusal.
+ *
+ * A named unit rather than a ternary in the view, because the two halves are a CLAIM and its
+ * enforcement and they may not be able to disagree: "Saved to your drafts after a moment" stops
+ * being true at exactly the byte the save door below stops writing, and a false promise beside a
+ * silent refusal is the shape where a person loses what they wrote believing it was kept.
+ * `compose-autosave.test.tsx` drives this and the door from one input and asserts they agree.
+ */
+export function draftNoteKey(fields: ComposeFields): "draftNote" | "bodyTooLong" {
+  return draftOverCeiling(fields.body, fields.html) ? "bodyTooLong" : "draftNote";
 }
 
 /**
@@ -404,6 +418,14 @@ export function useComposeAutosave(opts: {
       draftId !== null && mailboxId !== null &&
       savedMailbox.current !== null && mailboxId !== savedMailbox.current;
     if (signature === saved.current && !mailboxMoved) return;
+    /* ── THE CEILING IS STATED BEFORE THE PUT, NOT DISCOVERED AS A 413 ────────────────────────
+       The server refuses EITHER half past `DRAFT_BODY_MAX_BYTES`, and this hook's error path is a
+       deliberate silence, so an oversized body would be retried every pause for ever with nothing
+       on screen. Both halves through one predicate over the effective body: a ceiling a surface
+       states for one half of a message and not the other is a rule a person cannot learn.
+       Nothing is taken away from the author — the text stays in the form and in the scratch
+       buffer, `saved` is not advanced, and the first edit back under the ceiling saves it all. */
+    if (draftOverCeiling(fields.body, fields.html)) return;
     // A create with no mailbox would be a 400 the user cannot act on, and the From line is
     // already saying there is nowhere to send from. Nothing is written until there is.
     if (draftId === null && !mailboxId) return;

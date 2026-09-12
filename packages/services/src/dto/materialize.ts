@@ -1,6 +1,6 @@
 import { and, asc, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
 import { foldersEnabled, userFolderById, type UserFolderRow } from "../folders.js";
-import type { EmailAddress } from "@trafficflow/core/mail";
+import { draftBodyOverCeiling, type EmailAddress } from "@trafficflow/core/mail";
 import {
   accountSettings, autoReplyByUsWhere, awayReplies, mailboxes,
   messages, folderState, messageStates, threads, routingDecisions, approvals, rules, drafts,
@@ -109,6 +109,22 @@ export function draftRowToDTO(d: typeof drafts.$inferSelect): DraftDTO {
   };
 }
 
+/**
+ * The draft as a BOUNDED PAGE may carry it — `draftRowToDTO` with one thing taken away.
+ *
+ * Page 1 emits every draft the account holds and nothing there bounds their bytes. A body past
+ * `DRAFT_BODY_MAX_BYTES` goes as `null` plus its reason, never shortened: a client cannot tell a
+ * truncation from the text and its autosave would write the shortening back (`draftBodyKnown` is
+ * the client rule that makes `null` safe). A tripwire — the write door refuses an oversized body,
+ * so only a pre-ceiling row takes this arm. It WRAPS the single-row projection, which stays whole:
+ * `GET /drafts/:id` is how such a draft is opened and cut down.
+ */
+export function draftRowToSnapshotDTO(d: typeof drafts.$inferSelect): DraftDTO {
+  const dto = draftRowToDTO(d);
+  if (dto.body === null || !draftBodyOverCeiling(dto.body)) return dto;
+  return { ...dto, body: null, bodyOmitted: "over_ceiling" };
+}
+
 export function tagRowToDTO(t: typeof tags.$inferSelect): TagDTO {
   return {
     id: t.id,
@@ -189,6 +205,11 @@ export function messageRowToDTO(
     to: (m.toAddresses as EmailAddress[]) ?? [],
     cc: (m.ccAddresses as EmailAddress[]) ?? [],
     date: iso(m.date),
+    // The arrival, projected on EVERY message the API emits for `lastReadAt`'s reason — the
+    // cutline reads it wherever a mirror was built, and a page that omitted it would retire a
+    // sender the count keeps. `created_at` is NOT NULL on both stores, so this never manufactures
+    // an instant: it is the moment the mailbox recorded the message.
+    arrivedAt: m.createdAt.toISOString(),
     folder,
     snippet: m.snippet,
     unread: m.unread,

@@ -28,100 +28,27 @@ import { isCliEntry } from "./entry.js";
 import { cronEvent, runCronCli } from "./cron-log.js";
 
 /**
- * WHO THE BACKSTOP IS, IN `worker_heartbeats` — and it is deliberately NOT the always-on
- * worker's identity.
- *
- * The heartbeat row is keyed on `shard_index` alone (it is the PRIMARY KEY), so there is exactly
- * one row per shard and "this row names me" is the same statement as "nobody has taken this shard
- * from me". That is what {@link makeSyncWriteFence} keys on, and it is why claiming the row is
- * what makes the fence below REAL rather than decorative.
- *
- * The prefix keeps two processes that could otherwise share an id apart. `instanceIdFrom()` reads
- * `RAILWAY_REPLICA_ID` first, and a deployment that ran the backstop inside the worker's own
- * service would hand both the same string — at which point a successor worker's claiming write
- * would leave the backstop's fence still matching, and the fence would pass in exactly the
- * handover it exists to refuse. A literal prefix makes that collision unrepresentable instead of
- * unlikely.
- *
- * It also answers the question `CRON_SERVICE = "worker-cron"` exists to answer — *is the loop
- * running, or is only the backstop running?* — on the row an operator reads first: `worker_down`'s
- * detail line quotes `instance_id`, so a shard being carried by the backstop says so by name.
+ * WHO THE BACKSTOP IS, IN `worker_heartbeats` — deliberately NOT the always-on worker's identity. The
+ * row is keyed on `shard_index` alone (the PRIMARY KEY), so "this row names me" equals "nobody has
+ * taken this shard from me", which is what {@link makeSyncWriteFence} keys on and what makes claiming
+ * the row make the fence REAL. The prefix keeps two processes that could share an id apart:
+ * `instanceIdFrom()` reads `RAILWAY_REPLICA_ID` first, so a backstop inside the worker's own service
+ * would collide, and a literal prefix makes that unrepresentable. It also answers what
+ * `CRON_SERVICE = "worker-cron"` answers — is the loop running or only the backstop — since
+ * `worker_down`'s detail line quotes `instance_id`.
  */
 const RECONCILE_INSTANCE_PREFIX = "reconcile-cron";
 
 /**
- * Correctness backstop. Acquires the shard's leader lock: if the always-on worker holds it,
- * the live worker is already reconciling each cycle, so this run exits ({ ran: false }).
- * Otherwise it performs one full sweep (two cycles → convergence) and releases. Never runs
- * concurrently with the worker.
- *
- * It remains the single-mailbox env backstop (the always-on startWorker moved to
- * DB creds, multi-mailbox and multi-ACCOUNT; this did not), so it requires the explicit env
- * mailbox + its account. Two things are now VERIFIED rather than trusted:
- *
- *  • the configured `TF_ACCOUNT_ID` really owns `TF_MAILBOX_ID` (otherwise the sweep would
- *    write another account's rows under the configured account id);
- *  • that account belongs to THIS process's shard. The lock is shard-specific, so a shard-1
- *    cron pointed at a shard-0 mailbox would sweep it while shard 0's worker holds a
- *    different lock and believes it is the only writer.
- *
- * ── THE TWO DISCIPLINES THIS PASS USED TO SKIP, AND WHY THE SHARD LOCK IS NOT EITHER OF THEM ──
- *
- * The lock this pass takes coordinates CLOUD WORKERS WITH EACH OTHER. It says nothing about the
- * two things that decide whether this process may write to a customer's mailbox at all, and until
- * this file ran them it went from `acquireLeaderLock` straight to `ensureFolders()` and two
- * `runSyncCycle` calls:
- *
- *  1. **THE ORGANIZER LEASE.** Exactly one active organizer per mailbox, enforced by a lease in
- *     `ohmail/_meta` — the mailbox is the only medium a LOCAL install and Cloud
- *     share. The shard lock is invisible to a desktop install, so a backstop
- *     that consulted only the lock would organize a mailbox its owner had moved to their own
- *     machine: both sides ingesting, both adopting state, and a message the user files on the
- *     desktop inside this pass's plan→write window reverted by this pass's stale desired state.
- *     **No infrastructure failure is required** — it is the ordinary dual-mode configuration.
- *     So the gate runs here at the seam `index.ts` runs it at on `attach`: after `connect()` and
- *     BEFORE `ensureFolders()`, because `ensureFolders` already writes (it creates the `ohmail/*`
- *     tree in somebody else's mailbox).
- *
- *     RE-ASKED AT EVERY WRITE BOUNDARY THIS PASS OWNS, through a {@link LeasePermit}. It read the
- *     lease ONCE per run until 2026-09-01, under a note here arguing that was "not a weakening"
- *     because "this process holds the shard lock for one bounded sweep and then exits". **The bound
- *     was the problem, and the shard lock is not the relevant one.** One sweep is `ensureFolders()`
- *     plus two full cycles over a whole mailbox, and the shard lock coordinates Cloud workers with
- *     each other — it is invisible to a desktop install, which is precisely the organizer this pass
- *     would be writing beside. See the block at `ensureFolders()` for the boundaries and for the
- *     residual (the writes inside one `runSyncCycle`, which the permit does not reach).
- *
- *  2. **THE LEADER FENCE.** `SyncDeps.fence` is a no-op when absent, and this pass built
- *     its `SyncDeps` without one while `LeaderLock.lost` — which exists precisely to expose the
- *     loss — had no consumer at all. The advisory lock is SESSION-scoped, so a failover, a network
- *     break or a `pg_terminate_backend` frees it the instant the connection drops; a standby then
- *     takes the shard and attaches the same mailbox while this pass is still inside `runSyncCycle`
- *     on its own pooled handle, writing and mutating with nothing to stop it. That is the exact
- *     split-brain sequence the fence exists to stop, surviving on the one path the fence fix did
- *     not thread it through.
- *
- *     The fix reuses the worker's mechanism rather than restating it: this pass CLAIMS the shard's
- *     heartbeat row while it holds the shard's lock (which is the documented precondition for
- *     `writeHeartbeat` — the row *is* "the leader of shard N"), hands
- *     {@link makeSyncWriteFence} that identity, and wires `() => lockLost` to `lock.lost` as the
- *     synchronous tripwire. A successor worker's own claiming write overwrites `instance_id`, and
- *     every later write of this sweep is then refused with nothing written. The claim is
- *     surrendered in the `finally` with `clearHeartbeat`, which is guarded on the instance id and
- *     therefore cannot clobber a successor's.
- *
- * ── WHAT THE LEASE GATE MUST NOT DO ──────────────────────────────────────────────────────────
- *
- * Neuter the pass. This is the recovery path for pending mutations when the always-on worker is
- * not running, so **a mailbox nobody organizes is exactly its ground** — and the decision table
- * already says so without help: an empty `ohmail/_meta` is arm 4 (`organize`), and this pass's own
- * older claim, however stale, is arm 3 (`organize` — *"continuing is not becoming"*). What changes
- * is only the case the invariant names: a mailbox a DESKTOP is renewing is arm 7, and this pass
- * now stands down on it instead of writing beside it.
- *
- * `log` defaults to `silentLogger` — see `cron-log.ts` for why the process that deploys is
- * the only one that turns it on.
- */
+ * Correctness backstop. Acquires the shard's leader lock: if the always-on worker holds it this exits
+ * (`ran: false`); otherwise one full sweep (two cycles → convergence) and release, never concurrent with
+ * the worker. Still the single-mailbox env backstop, so it requires `TF_MAILBOX_ID` + `TF_ACCOUNT_ID` and
+ * now VERIFIES the account owns the mailbox and that it is in THIS shard. The shard lock coordinates Cloud
+ * workers only, so two disciplines run here too: the ORGANIZER LEASE in `ohmail/_meta`, re-asked at every
+ * write boundary via a {@link LeasePermit} (2026-09-01) after `connect()` and before `ensureFolders()`;
+ * and the LEADER FENCE — this claims the shard's heartbeat row, hands {@link makeSyncWriteFence} that
+ * identity and wires `() => lockLost` to `lock.lost` (surrendered in `finally` via `clearHeartbeat`). It
+ * does not neuter the pass (arm 4/3 for an unorganized mailbox, arm 7 for a desktop-renewed one); `log` defaults to `silentLogger` (`cron-log.ts`). */
 export async function runReconcileCron(
   config: WorkerConfig, log: Logger = silentLogger,
 ): Promise<{ ran: boolean; reason?: string }> {
@@ -192,22 +119,14 @@ export async function runReconcileCron(
       });
       return { ran: false, reason: "mailbox-disabled" };
     }
-    // ── AND A **READER** ROW IS REFUSED HERE, BEFORE THE DIAL  ──────────────────
-    //
-    // This whole pass is an ORGANIZER backstop: it dials, takes the lease permit, ensures the
-    // `ohmail/*` tree, and runs two full cycles with `role: "organizer"` — every one of those a
-    // reader may not do. Before 0083 the check above covered it for free, because a stood-down
-    // mailbox was `disabled`; a reader is `connected`, so the predicate that used to exclude it
-    // admits it, and the pass would have organized a mailbox another install holds.
-    //
-    // The permit WOULD have refused it a moment later, and refusing here anyway is the difference
-    // between "a live foreign claim stopped us" and "the row already said this is not ours": the
-    // second costs no connection, no IMAP round trip and no `ensureFolders` against somebody
-    // else's mailbox, and it is right even in the window where the other organizer's heartbeat
-    // has gone stale (which is exactly when the permit would let this pass through).
-    //
-    // A takeover a human authorized is NOT refused: that stamp is the explicit action §4 requires
-    // for a becoming, the permit consumes it, and this pass is one of the paths that executes it.
+    // A READER ROW IS REFUSED HERE, BEFORE THE DIAL. This whole pass is an ORGANIZER backstop (it dials,
+    // takes the lease permit, ensures `ohmail/*`, runs two cycles with `role: "organizer"`) — none of
+    // which a reader may do. Before 0083 the disabled-check covered it; a reader is `connected`, so that
+    // predicate admits it and the pass would organize a mailbox another install holds. The permit WOULD
+    // refuse it a moment later, but refusing here costs no connection, no IMAP round trip and no
+    // `ensureFolders` against somebody else's mailbox, and is right even when the other organizer's
+    // heartbeat has gone stale (exactly when the permit would let this through). A takeover a human
+    // authorized is NOT refused: that stamp is §4's explicit action, the permit consumes it.
     if (row.organizerRole === "reader" && row.takeoverAuthorizedAt === null) {
       log.info(cronEvent("reconcile", "mailbox_reader"), {
         mailboxId, accountId: row.accountId,
@@ -217,26 +136,15 @@ export async function runReconcileCron(
       return { ran: false, reason: "mailbox-reader" };
     }
 
-    /* ── AND A MAILBOX SOMEBODY HAS ASKED THIS INSTALL TO STOP ORGANIZING (0.14.1) ─────────
-     *
-     * The arm above reads the ROLE, and a pending release deliberately does not move it: the row
-     * stays `organizer` until the always-on gate honours the request, because the claim lives in
-     * the customer's IMAP folder and expunging it belongs to the process holding that connection.
-     * So this backstop sailed straight past the guard above and did exactly what the person had
-     * just asked it to stop doing — dial, take the permit (renewing the very claim they asked to
-     * have removed), `ensureFolders`, and file mail — inside the window before the gate ran.
-     *
-     * Refusing rather than HONOURING it, and the distinction is the seam this file is on the wrong
-     * side of: releasing means expunging a claim, writing the row and closing the appointments
-     * this install can no longer keep, and there is exactly one place that sequence lives. A second
-     * copy here would be a second answer to "what does stopping mean", which is how the two doors
-     * came to disagree about the reader gate in the first place.
-     *
-     * THE RESIDUAL, STATED RATHER THAN LEFT TO BE FOUND: a mailbox served ONLY by this backstop —
-     * no always-on worker on its shard — keeps the request until a worker cycle runs, so the
-     * release is deferred rather than lost. That is the same shape as every other decision this
-     * file defers to the gate, and it is strictly better than the alternative it replaces, which
-     * was organizing past the request for ever.
+    /* A MAILBOX SOMEBODY HAS ASKED THIS INSTALL TO STOP ORGANIZING (0.14.1).
+     * The arm above reads the ROLE, and a pending release does not move it — the row stays `organizer`
+     * until the always-on gate honours the request, because the claim lives in the customer's IMAP folder
+     * and expunging it belongs to the process holding that connection. So this backstop sailed past the
+     * guard and did exactly what the person asked it to stop: dial, take the permit (renewing the claim
+     * they asked removed), `ensureFolders`, file mail. Refusing rather than HONOURING it, because
+     * releasing (expunge, write the row, close appointments) lives in exactly one place; a second copy is
+     * how two doors disagree. Residual: a mailbox served ONLY by this backstop defers the release to a
+     * worker cycle rather than losing it — strictly better than organizing past the request for ever.
      */
     if (row.releaseRequestedAt !== null) {
       log.info(cronEvent("reconcile", "mailbox_release_requested"), {
@@ -279,17 +187,14 @@ export async function runReconcileCron(
     // another (`ORGANIZER-LEASE-RESUME.md` §3.4). A lease we cannot read means we do not organize
     // and the mailbox is NOT recorded as stood down — there is nothing to record.
     /**
-     * THE STAND-DOWN, AS A FUNCTION — because it is reached from FOUR places, not one.
-     *
-     * It began as the body of the acquisition's `catch`, which was correct while the lease was read
-     * exactly once. It is not correct now: `permit.check()` re-runs the gate at three later write
-     * boundaries and throws {@link OrganizerStandDownError} from any of them, and the only catch
-     * downstream accepts `LeaderFencedError` and rethrows everything else. **A routine handover — a
-     * user moving their mailbox to their own machine mid-sweep — would have exited this cron with a
-     * thrown error instead of a recorded stand-down: no `markMailboxStoodDown`, no `"stood-down"`
-     * result, an operator paged for the mechanism working, and the takeover stamp possibly already
-     * cleared.** Found by the review round over the commit that introduced the later checks; the
-     * regression was created by the fix, which is the argument for reviewing a fix.
+     * THE STAND-DOWN, AS A FUNCTION — reached from FOUR places, not one. It began as the acquisition
+     * `catch`'s body, correct while the lease was read once; it is not now, because `permit.check()`
+     * re-runs the gate at three later write boundaries and throws {@link OrganizerStandDownError} from any,
+     * and the only downstream catch accepts `LeaderFencedError` and rethrows the rest. A routine handover
+     * (a user moving their mailbox to their own machine mid-sweep) would have exited this cron with a
+     * thrown error instead of a recorded stand-down — no `markMailboxStoodDown`, no `"stood-down"` result,
+     * an operator paged for the mechanism working. Found by the review round over the commit that added the
+     * later checks: the regression was created by the fix.
      */
     const standDown = async (
       err: OrganizerStandDownError,
@@ -333,21 +238,15 @@ export async function runReconcileCron(
           reason: "this sweep organizes nothing further regardless; the row could not record why",
         });
       }
-      // ── AND THE APPOINTMENTS THIS SWEEP CAN NO LONGER KEEP ARE CLOSED WITH A SENTENCE ──────
-      //
-      // The same call the always-on worker's gate makes, for the same reason: a pending scheduled
-      // send does not travel (the portable profile carries configuration and deliberately no
-      // drafts), and the mailbox leaves the roster from here. Reached from all FOUR of this
-      // function's callers because it is inside `standDown` — which is the whole argument for
-      // this function existing; see its header.
-      //
-      // Best-effort, like the write above it: standing down is already decided and may not be
-      // made contingent on a second write, and the hosted scheduled-send pass refuses a
-      // `disabled` mailbox at due time and closes the row itself. Unfenced for the reason the
-      // worker's twin gives in full: the fence arbitrates Cloud against Cloud, while this write
-      // is justified by the LEASE — a fact about `ohmail/_meta` every instance reads the same way
-      // — and a close gated on the fenced write would never run for a mailbox that is already
-      // `disabled`, which is the population that needs it most.
+      // AND THE APPOINTMENTS THIS SWEEP CAN NO LONGER KEEP ARE CLOSED WITH A SENTENCE — the same call the
+      // always-on worker's gate makes: a pending scheduled send does not travel (the portable profile
+      // carries configuration and no drafts), and the mailbox leaves the roster. Reached from all FOUR
+      // callers because it is inside `standDown` (its whole reason for existing). Best-effort, like the
+      // write above: standing down is already decided and may not be made contingent on a second write,
+      // and the hosted scheduled-send pass refuses a `disabled` mailbox and closes the row itself.
+      // Unfenced because the fence arbitrates Cloud against Cloud while this write is justified by the
+      // LEASE (a fact about `ohmail/_meta`), and a close gated on the fenced write would never run for a
+      // `disabled` mailbox — the population that needs it most.
       try {
         const closed = await closeStoodDownAppointments(db as unknown as Tx, {
           accountId: row.accountId, mailboxId, reason: err.reason, now: new Date(),
@@ -397,7 +296,11 @@ export async function runReconcileCron(
         now: () => new Date(),
         // The instant, not a flag (0.14.1) — the election ranks one press against another, so the
         // row's own stamp travels unchanged. See `mayOrganize` in `index.ts`.
-        takeover: row.takeoverAuthorizedAt ? { authorizedAt: row.takeoverAuthorizedAt } : null,
+        // AND THE VERB — see `index.ts`'s gate. The backstop runs the same fence, so it has to
+        // hand it the same two facts about the press or it would decide a case the poll refuses.
+        takeover: row.takeoverAuthorizedAt
+          ? { authorizedAt: row.takeoverAuthorizedAt, intent: row.takeoverIntent }
+          : null,
         ...(config.organizer?.staleAfterMs !== undefined ? { staleAfterMs: config.organizer.staleAfterMs } : {}),
         log: (event, detail) => { log.info(event, { ...detail, mailboxId, accountId: row.accountId }); },
       });
@@ -427,32 +330,16 @@ export async function runReconcileCron(
       }
     }
 
-    // ── EVERY WRITE BOUNDARY THIS PASS OWNS, RE-ASKED ─────────────────────────────────────────
-    //
-    // This pass used to read the lease ONCE and then write for a whole sweep, and the comment at the
-    // top of this file defended it: *"ONCE per run, not once per cycle, and that is not a weakening:
-    // … This process holds the shard lock for one bounded sweep and then exits."* **The bound was the
-    // problem.** "One bounded sweep" is `ensureFolders()` plus TWO full `runSyncCycle` calls over a
-    // whole mailbox — minutes on a large one — and a takeover landing anywhere inside it was
-    // unobserved until the process exited. The shard lock does not help: it coordinates Cloud workers
-    // with each other and is invisible to a desktop install, which is the organizer this pass would
-    // be writing beside.
-    //
-    // So the lease read carries a deadline (`LeasePermit`) and is asked at each boundary this pass
-    // controls: here, before `ensureFolders()` CREATEs anything, and before each cycle. Inside the
-    // TTL the ask is a comparison; past it, one `runLeaseGate` — which also RENEWS, so a long sweep
-    // keeps its own claim fresh instead of ageing into staleness while it works. A stand-down throws
-    // and the `catch` below reports it as the handover it is.
-    //
-    // WHAT THIS DOES NOT BOUND, because the honest bound is worth more than a tidy claim: the writes
-    // INSIDE a `runSyncCycle` are gated by that cycle's own leader fence and not by this permit, so
-    // the residual window is one cycle rather than one sweep. Closing it means threading the
-    // organizer lease through `SyncDeps` alongside the leader fence — the same seam the always-on
-    // worker needs and does not have either. Ledgered as one row for both callers rather than fixed
-    // halfway here.
-    // This one needs its own arm: the two cycle checks below sit inside the `runSyncCycle` try,
-    // which now routes a stand-down to `standDown`, but this call is above it and would otherwise
-    // propagate — the same regression, one boundary earlier and just as invisible.
+    // EVERY WRITE BOUNDARY THIS PASS OWNS, RE-ASKED. It used to read the lease ONCE and write for a whole
+    // sweep, defended as "not a weakening… holds the shard lock for one bounded sweep". The bound was the
+    // problem: "one sweep" is `ensureFolders()` plus TWO full `runSyncCycle` calls, and a takeover inside
+    // it was unobserved until exit; the shard lock is invisible to the desktop install this pass would be
+    // writing beside. So the lease read carries a deadline (`LeasePermit`) asked at each boundary — here,
+    // before `ensureFolders()`, and before each cycle — inside the TTL a comparison, past it one
+    // `runLeaseGate` (which RENEWS). What it does NOT bound: writes INSIDE a `runSyncCycle`, gated by that
+    // cycle's leader fence, so the residual is one cycle not one sweep (closing it means threading the
+    // lease through `SyncDeps`). This call needs its own arm — it sits above the `runSyncCycle` try that
+    // routes a stand-down to `standDown`, and would otherwise propagate.
     try {
       await permit.check();
     } catch (err) {
@@ -538,47 +425,16 @@ export async function runReconcileCron(
     }
 
     {
-      // ── THE REQUEST DRAIN, ONCE PER SWEEP, AFTER THE CYCLES (0.14.1) ─────────────────────
-      //
-      // This pass IS an organizer path (typed `role: "organizer"` above, reached only past the
-      // reader refusal and the lease permit), so it owes the same drain the always-on worker's
-      // `visitMailbox` owes — and it owes it in the same ORDER. `ohmail/_meta` is a folder anyone
-      // with append rights on the mailbox can write to, so a drain that ran first would let a
-      // flood of records delay the sweep that reads somebody's mail. The `folder_state` rows the
-      // drain writes are picked up by the next sweep's own `reconcileFolders`, exactly as its
-      // twin's are; nothing here performs a physical IMAP move of its own.
-      //
-      // ONE drain per sweep rather than one per cycle: this pass runs its two cycles back to back,
-      // so nothing new can reach the folder in the gap between them.
-      //
-      // ── AND IT RUNS WHEN A CYCLE FAILED, WHICH IS WHY THE FAILURE IS HELD ABOVE ──────────
-      //
-      // A cycle that THREW used to escape straight to the arms below, skipping this drain, so a
-      // mailbox with a persistent sync fault drained nothing for as long as the fault lasted and a
-      // reader's decisions on it expired reporting that nobody took them.
-      //
-      // TWO failures are excluded, and they are the two that mean this pass no longer has standing
-      // to write to this mailbox at all: `OrganizerStandDownError` (somebody else organizes it now)
-      // and `LeaderFencedError` (this instance no longer leads its shard). Draining on either would
-      // be a write into a mailbox that has just been taken away — the very thing the permit and the
-      // fence exist to stop. Both are handed on unchanged to the arms below.
-      // ── AND AN UNREADABLE LEASE IS A THIRD, BECAUSE IT IS AN UNANSWERED QUESTION ─────────
-      //
-      // `LeaseUnavailableError` is not "somebody else organizes this mailbox" — it is "this pass
-      // could not find out". The drain below APPENDS acknowledgements and EXPUNGES records, and
-      // the standing to do that comes from the lease and nothing else. A stand-down is a NO and a
-      // fence is a NO; an unreadable lease is a question with no answer, and a write is exactly
-      // the thing that must not proceed on one. Treating it as an ordinary fault is how this pass
-      // would keep writing into a mailbox another organizer had already taken.
-      //
-      // This does NOT contradict the gate's rule one layer down, where a partial read is acted on
-      // rather than refused. That is a READ deciding what it knows; this is a WRITE claiming a
-      // standing it failed to establish. The cost of being wrong runs opposite ways: refusing to
-      // read strands a mailbox nobody organizes, while writing unproven breaks the one-organizer
-      // invariant this whole channel exists to hold.
-      //
-      // Skipping costs a delay and nothing else — the records are still there, and the next sweep
-      // or the always-on worker drains them once the lease can be read again.
+      // THE REQUEST DRAIN, ONCE PER SWEEP, AFTER THE CYCLES (0.14.1). This is an organizer path
+      // (`role: "organizer"`, past the reader refusal and the permit), so it owes the same drain
+      // `visitMailbox` owes, in the same ORDER: `ohmail/_meta` is writable by anyone with append rights,
+      // so a drain that ran first would let a flood delay the sweep; the `folder_state` rows it writes are
+      // picked up by the next sweep's `reconcileFolders`. ONE drain per sweep (the two cycles run back to
+      // back). It runs even when a cycle THREW (else a persistent-fault mailbox drained nothing and a
+      // reader's decisions expired unacknowledged), EXCEPT for three NOs that mean this pass no longer has
+      // standing to write: `OrganizerStandDownError`, `LeaderFencedError`, and `LeaseUnavailableError` (an
+      // unreadable lease is an unanswered question, and a WRITE must not proceed on one) — all handed on
+      // to the arms below. Skipping costs only a delay; the records wait for the next drain.
       const mayStillWrite = !(cycleError instanceof OrganizerStandDownError)
         && !(cycleError instanceof LeaderFencedError)
         && !(cycleError instanceof LeaseUnavailableError)

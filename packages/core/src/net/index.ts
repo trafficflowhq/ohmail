@@ -10,7 +10,8 @@
 export {
   SsrfRefusal, isBlockedAddress, nodeHostResolver,
   assertPublicHttpUrl, assertPublicHost, resolvePinUnchecked,
-  type HostResolver, type PublicUrlOptions,
+  assertPublicHttpUrlShape, assertPublicHostShape,
+  type HostResolver, type PublicUrlOptions, type UrlShapeOptions,
 } from "./ssrf-guard.js";
 export {
   pinnedLookup, pinnedHttpRequest,

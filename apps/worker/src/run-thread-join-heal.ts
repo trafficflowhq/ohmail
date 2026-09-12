@@ -1,15 +1,10 @@
 /**
- * ONE-OFF RUNNER for the thread-join heal (`thread-join-heal.ts`).
- *
- * DB-ONLY and dry-run by default. It merges threads that are provably one conversation under
- * `conversationJoinVerdict` — the split a forward's fresh header chain leaves behind — moving
- * the later thread's messages onto the older one and appending the message updates, the
- * surviving thread's update and the absorbed thread's delete to the change log, so client
- * mirrors re-render the united conversation on their next sync. It never opens IMAP and needs
- * no credentials. Idempotent: a merged group holds one thread and is never selected again.
- *
- *   TF_DB_URL=… tsx apps/worker/src/run-thread-join-heal.ts            # dry run: verdicts + counts
- *   TF_DB_URL=… tsx apps/worker/src/run-thread-join-heal.ts --apply    # write
+ * ONE-OFF RUNNER for the thread-join heal (`thread-join-heal.ts`). DB-ONLY, dry-run by default: it merges
+ * threads that are provably one conversation under `conversationJoinVerdict` (the split a forward's fresh
+ * header chain leaves behind), moving the later thread's messages onto the older and appending the message
+ * updates, the survivor's update and the absorbed thread's delete to the change log, so mirrors re-render
+ * the united conversation on their next sync. It never opens IMAP. Idempotent: a merged group holds one
+ * thread and is never selected again. Run: `tsx apps/worker/src/run-thread-join-heal.ts [--apply]`.
  */
 import { makeOwnedDb } from "@trafficflow/db/cloud";
 import { type Tx } from "@trafficflow/db";

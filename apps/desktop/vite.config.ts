@@ -788,6 +788,7 @@ export default defineConfig({
          five above — no node builtin, no DOM, no store, no clock. */
       { find: "@trafficflow/core/pair-link", replacement: r("../../packages/core/src/pair-link.ts") },
       { find: "@trafficflow/core/sender-headers", replacement: r("../../packages/core/src/sender-headers.ts") },
+      { find: "@trafficflow/core/outbound-text", replacement: r("../../packages/core/src/outbound-text.ts") },
     ],
   },
 

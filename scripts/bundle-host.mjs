@@ -1,54 +1,14 @@
 #!/usr/bin/env node
 /**
- * bundle-host.mjs — one server host as ONE file, plus the journals it reads off disk.
- *
- *     node scripts/bundle-host.mjs server     → build/host-server/
- *     node scripts/bundle-host.mjs worker     → build/host-worker/
- *
- * This is the engine bundle's arrangement (see scripts/engine-bundle.mjs) applied to the two
- * long-running host processes the self-host images ship: the standalone API server
- * (apps/server) and the sync organizer (apps/worker). The same reasons hold, one for one:
- *
- *   · This repository's manifests are generated for npm and their `exports` point at SOURCE,
- *     so a compiled `dist/` tree cannot resolve its own workspace imports at runtime. One
- *     bundled file has no imports left to resolve.
- *   · A container is better off without a package manager or a module tree in it: the bundle
- *     makes the artifact's contents enumerable, which is what lets anyone check a published
- *     image against the source it claims to be built from.
- *
- * ── WHAT CANNOT BE BUNDLED: THE MIGRATION JOURNALS ────────────────────────────────────────
- *
- * The database packages compose their journal folders with
- * `join(dirname(fileURLToPath(import.meta.url)), "..", <folder>)`, and the bundler rewrites
- * `import.meta.url` to the OUTPUT file's own URL. So the journals must sit one level ABOVE
- * the bundle — the same reason the engine's layout has a `bin/` directory:
- *
- *   build/host-<app>/bin/ohmail-<app>.mjs      the process
- *   build/host-<app>/drizzle/                  the mail journal (packages/db-mail/drizzle —
- *                                              `MAIL_MIGRATIONS_DIR` resolves here)
- *   build/host-<app>/drizzle-cloud/            the cloud journal (packages/db/drizzle-cloud)
- *
- * Both hosts get both journals: the server runs them at boot, and a uniform layout means one
- * set of assertions in the image recipes. `packages/db/drizzle` (the pre-split journal) is
- * deliberately NOT copied — no code migrates from it; it is the adoption oracle its own
- * header describes, read by tests and by nothing else.
- *
- * ── THE BOUNDARY THE BUILD CONTEXT ENFORCES ───────────────────────────────────────────────
- *
- * Each image's build context is an allow-list (`/.dockerignore`,
- * `apps/server/Dockerfile.dockerignore`) admitting exactly that host's compile closure. An
- * import that reaches outside it — the organizer importing `@trafficflow/services`, say —
- * resolves to a workspace symlink whose target directory holds only a manifest, and the
- * bundle FAILS to build. That is the same fail-at-build-time property the old filtered
- * `pnpm install` bought, enforced by what the context contains rather than by what the
- * package manager installed.
- *
- * esbuild is loaded exactly as the engine build loads it: pinned version, `OHMAIL_ESBUILD_FROM`
- * first and the installed workspace second, where the root manifest declares it. `@electric-sql/pglite` stays external
- * for the engine's reason (it reads its own `.wasm` off disk); neither host imports it today,
- * so nothing is vendored — if either ever grows the import, the missing module fails the
- * container LOUDLY at boot rather than silently shipping a broken storage layer.
- */
+ * bundle-host.mjs — one server host as ONE file, plus the journals it reads off disk
+ * (`node scripts/bundle-host.mjs server|worker` → `build/host-server|host-worker/`). The engine bundle's
+ * arrangement (`scripts/engine-bundle.mjs`) applied to the two long-running hosts (`apps/server`,
+ * `apps/worker`): the generated manifests' `exports` point at SOURCE, so a compiled `dist/` cannot resolve
+ * its workspace imports at runtime, and one bundled file has none left to resolve; a container is better
+ * off with no package manager or module tree. WHAT CANNOT BE BUNDLED: the migration journals — the db
+ * packages compose them from `import.meta.url`, which the bundler rewrites to the OUTPUT file's URL, so they
+ * must sit one level ABOVE (`build/host-<app>/drizzle` for mail, `.../drizzle-cloud` for cloud). Both hosts
+ * get both; `packages/db/drizzle` (the pre-split journal) is NOT copied. Each image's build context is an allow-list, so an import reaching outside it fails the bundle at build time. esbuild loads as the engine build loads it (pinned, `OHMAIL_ESBUILD_FROM` first); `@electric-sql/pglite` stays external, unused today, and a future import would fail LOUDLY at boot. */
 import { chmodSync, cpSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -56,26 +16,16 @@ import { loadEsbuild } from "./engine-bundle.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
-/* ── THE WORKER'S ENTRY STUB, and why the two hosts differ ─────────────────────────────────
- *
- * `apps/server/src/index.ts` calls its `main()` unconditionally, so bundling it directly is
- * the whole story. The worker's package is different: it holds FIVE
- * `isCliEntry(import.meta.url)` main guards — the supervisor and four cron CLIs — and a
- * bundle folds every module's `import.meta.url` into ONE value. Invoke that file directly
- * and all five guards are true at once: the crons run their single pass and exit(0)
- * CLEANLY, killing the supervisor mid-boot. Measured on the bundled organizer's first
- * compose boot as a restart loop with exit code 0 and nothing wrong in the logs.
- *
- * So the worker bundles THIS stub as its entry. Its first statement blanks `argv[1]`
- * — `isCliEntry` answers false to a process with no script path, so no in-bundle guard can
- * ever match, HOWEVER the bundle is invoked — and then it starts the supervisor explicitly
- * through the named export the guard would have called. The dynamic import is what keeps
- * the ordering true: a static import would evaluate every module (guards included) before
- * the first statement of this stub runs.
- *
- * Written to a FIXED path under build/ (never a mkdtemp): the bundle records each module's
- * path relative to the workspace root, so a per-run temp path would make the same source
- * produce a different artifact — the reproducibility the engine bundle already defends. */
+/* THE WORKER'S ENTRY STUB, and why the two hosts differ. `apps/server/src/index.ts` calls its `main()`
+ * unconditionally, so bundling it directly is the whole story. The worker's package holds FIVE
+ * `isCliEntry(import.meta.url)` main guards (the supervisor and four cron CLIs), and a bundle folds every
+ * module's `import.meta.url` into ONE value — invoke that file directly and all five are true at once, the
+ * crons run their single pass and `exit(0)` cleanly, killing the supervisor mid-boot (measured as a restart
+ * loop with exit code 0 and nothing wrong in the logs). So the worker bundles THIS stub as its entry: its
+ * first statement blanks `argv[1]` (so `isCliEntry` answers false however the bundle is invoked), then
+ * starts the supervisor through the named export the guard would have called, via a dynamic import that
+ * keeps the ordering (a static import would evaluate every module's guard first). Written to a FIXED path
+ * under build/ (never a mkdtemp), because the bundle records module paths relative to the workspace root and a per-run temp path would break reproducibility. */
 const WORKER_STUB = `/* the organizer's bundle entry — see scripts/bundle-host.mjs for why this exists */
 process.argv[1] = "";
 const { runWorkerCli } = await import("../apps/worker/src/index.ts");

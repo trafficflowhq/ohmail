@@ -4,118 +4,15 @@ import { dialect } from "@trafficflow/db/dialect";
 import { silentLogger, type Logger } from "@trafficflow/core/mail";
 
 /**
- * ═══ THE ONE-TIME RE-DELIVERY OF `MessageDTO.autoReplyByUs` ══════════════════════════════════
- *
- * `autoReplyByUs` is computed at MATERIALIZE time, and a client only re-materializes a message
- * when a `change_log` row for it arrives (`SyncService.getChanges` re-materializes the CURRENT DTO
- * per change row). So the flag reaches every message written AFTER it shipped, and reaches NO
- * message written before it — and the replies that need it are all in the second group by
- * definition, because they are the ones already sitting in somebody's Ohbox.
- *
- * Without this pass the fix is invisible on a warm mirror: the client half filters on a field its
- * stored rows do not carry, `undefined` is read as "the person's" (correctly — see
- * `EngineMessage.autoReplyByUs`), and the replies stay in "Earlier" for ever. Nothing errors, the
- * suites are green, and the reported bug survives its own fix. That was found by review as a HIGH,
- * and it is the shape this repo keeps meeting: a reliability feature rendering as its own healthy
- * state.
- *
- * ── WHY A SERVER-SIDE RE-DELIVERY AND NOT A CLIENT ONE-SHOT ─────────────────────────────────
- *
- * The alternative considered was a client-side repair: on first sight of the flag, re-fetch every
- * own-sent row once and record that it happened in the mirror's own meta. It was rejected on three
- * counts, in order of weight:
- *
- *   1. WHEN IT ARRIVES. The deploy order is API → worker → web, and the WORKER IS SECOND: it starts
- *      against an API that already knows the flag, so the first sweep's change rows are
- *      re-materialized with it set. The web is LAST, which is what settles this — a client repair
- *      cannot begin until the new engine reaches the device, so it waits for the deploy that comes
- *      after this one, and on the desktop for a whole release. The order is the script's, read
- *      from it rather than assumed — see the sweep's own docblock below, which names the script
- *      and the health checks that stand between the two halves.
- *   2. WHO IT REPAIRS. This is server-only code, so every client — the web now, the desktop and
- *      the phone whenever they next sync — is repaired by the same rows with no client change and
- *      no capability negotiation. A client one-shot has to be written, shipped and gated once per
- *      surface.
- *   3. WHAT IT COSTS TO GET WRONG. A client repair needs new durable client state ("I have done
- *      this"), and a mirror that loses it repeats the re-fetch; a mirror that records it too early
- *      never repairs at all. This pass carries no new state of its own — see below.
- *
- * It is also the smaller change: no protocol, no new route, no migration. The only thing it writes
- * is one `change_log` row per affected message, on a path the product already uses for "this
- * entity changed, fetch it again".
- *
- * ── IT RUNS TO EXHAUSTION, AND THE GATE CLOSES ONLY WHEN IT HAS ────────────────────────────
- *
- * The first version of this pass had a PAGE BUDGET — five pages of two hundred — and that is a
- * defect, not a safeguard, because re-delivery does not change the candidate predicate and the
- * cursor started at `null` on every run: an account with more than a thousand matching replies had
- * its first thousand re-sent on every worker start and the remainder re-sent NEVER. Permanently
- * stale rows, on the largest mailboxes, with the pass reporting a full day's work each time. Found
- * by review as a HIGH.
- *
- * So the walk continues until a page comes back short or empty, and {@link
- * AWAY_REPLY_REDELIVER_MAX_PAGES} is a SAFETY BOUND rather than a budget: reaching it means a bug,
- * so the result says `exhausted: false` and carries a `cursor`, and the caller resumes there
- * instead of starting over. {@link makeAwayReplySweep} closes its gate only on a sweep in which
- * every account reported `exhausted`.
- *
- * ── ONE SCOPE CONSEQUENCE, NAMED ───────────────────────────────────────────────────────────
- *
- * The candidate set is account-global, and `update` is an upsert on a mirror — so a client whose
- * window never reached back to one of these replies will now hold it. That is a real message of
- * the account, described correctly, filtered out of the Ohbox by the flag itself and visible only
- * in the Sent folder view; it is a widening of a mirror's window, not a false state. It is also
- * not avoidable server-side: `change_log` is per ACCOUNT by design, so a per-client scope is not
- * expressible here. Recorded as a gap row rather than worked around.
- *
- * ── WHY IT RUNS ONCE PER WORKER PROCESS AND CARRIES NO DURABLE MARKER ───────────────────────
- *
- * Two shapes were tried before this one and both are worth recording, because the second LOOKED
- * right and was not.
- *
- * A marker column is a migration, and a marker inside `change_log.meta` means widening a shared
- * type whose one shape (`{from, to}`) two passes read as a folder move. Neither is a price a
- * hosted repair should pay.
- *
- * So the second attempt made the condition "has this row been re-delivered since it was last
- * written" — no `change_log` row with `created_at > messages.updated_at`. That is WRONG, and the
- * warm-mirror control is what caught it: a change row proves the client was sent the DTO AS IT WAS
- * AT THE TIME, and every row this pass exists for was last sent BEFORE the flag existed. The
- * condition would have skipped exactly the population it was written to repair — and it would have
- * skipped it silently, with the pass reporting a tidy zero.
- *
- * A correct durable condition therefore has to reference the DEPLOY rather than the row's own
- * history, and the only such value available without a migration is a timestamp hardcoded in the
- * source. Erring early leaves mailboxes unrepaired; erring late makes the pass re-emit on every
- * cycle until the clock passes it. Both are worse than the honest alternative:
- *
- *   THE SWEEP RUNS ONCE PER WORKER PROCESS. The cycle's gate (`index.ts`) closes after one
- *   successful sweep, so a deploy repairs every account once and then never looks again until the
- *   next restart.
- *
- * What that costs is one repeat per restart, and the size of the repeat is the whole point: the
- * candidate set is `autoReplyByUsWhere` — replies the away responder actually sent — which is tens
- * of rows per mailbox at the very most. A client absorbs them as an ordinary re-fetch of rows it
- * already holds. That is a bounded, visible cost, where a mis-set cutoff is an unbounded and
- * INVISIBLE one.
- *
- * It follows that this pass is a REPAIR and not a feature: once a release carrying the flag has
- * rolled out to every client, it can be deleted outright. Nothing else depends on it.
- *
- * The candidate set is `autoReplyByUsWhere` — the same fragment the tidy, the retro and the DTO
- * batch apply, so this pass can never disagree with the flag it exists to deliver.
- *
- * ── WHAT IT DOES NOT DO ─────────────────────────────────────────────────────────────────────
- *
- * It writes NOTHING to `messages` and nothing to `folder_state`. It does not move a message, it
- * does not touch the reply, and it does not touch the message that was answered. A `change_log`
- * row is a re-read instruction, not a change of state — which is why the control for this pass
- * asserts the mirror row leaves "Earlier" with NO message change and no manual action.
- *
- * Deleted rows are excluded: `materializeMessages` omits them and `/sync` turns that absence into
- * a tombstone, so emitting an update for a tombstoned message would ask every mirror to
- * re-tombstone mail it has already discarded.
- */
+ * THE ONE-TIME RE-DELIVERY OF `MessageDTO.autoReplyByUs`. The flag is computed at MATERIALIZE time and a
+ * client only re-materializes a message when a `change_log` row for it arrives, so it reaches mail written
+ * AFTER it shipped and none before — and the replies that need it are all in the second group. Without
+ * this pass the fix is invisible on a warm mirror (the client reads `undefined` as "the person's" and the
+ * replies stay in "Earlier"), a reliability feature rendering as its own healthy state. Server-side, not
+ * a client one-shot, because of deploy order (API → worker → web, the worker second), reach (every client
+ * repaired by the same rows) and cost (no new durable client state). It RUNS TO EXHAUSTION (an earlier
+ * page budget re-sent the first thousand every start and the rest never); {@link AWAY_REPLY_REDELIVER_MAX_PAGES}
+ * is a SAFETY BOUND, not a budget, and {@link makeAwayReplySweep} closes its gate only when every account is `exhausted`. Once per worker process, no durable marker (candidate set `autoReplyByUsWhere`); a REPAIR, deletable once rolled out. Writes only `change_log`; deleted rows excluded. */
 
 /** One page. Small on purpose: the whole candidate set is one account's responder replies. */
 export const AWAY_REPLY_REDELIVER_BATCH = 200;

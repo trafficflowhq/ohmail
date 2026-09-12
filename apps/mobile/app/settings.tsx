@@ -24,14 +24,18 @@ import {
 } from "../src/theme";
 import { usePrefs } from "../src/state/store";
 import { useWorld } from "../src/state/world";
-import { connectionSaid } from "../src/state/live";
+import { connectionSaid, firstSyncSaid } from "../src/state/live";
 import { Button, Chip, Panel, Rule, Screen, Scroller, Section, TapRow, Txt } from "../src/ui/base";
 import { Sheet, SheetRow } from "../src/ui/Sheet";
 import { phoneEngineStart } from "../src/engine/engine-artifact";
 import {
-  onOrganizerState, organizeRefusal, organizerInstruction, organizerRestrictedSaid,
-  organizerStateVersion, pressOrganizeHere, standaloneHere,
+  onOrganizerState, organizeRefusal, organizerHandedBack, organizerInstruction,
+  organizerNotificationsOffSaid, organizerRestrictedSaid, organizerStateVersion,
+  pressOrganizeHere, standaloneHere,
 } from "../src/engine/organizer-session";
+import { openNotificationSettings } from "../src/engine/notification-permission-native";
+import { NotifyPermission } from "../src/ui/NotifyPermission";
+import { useNotifyPermission } from "../src/ui/useNotifyPermission";
 import { PHONE_CLAIM_NAME, standaloneAvailable } from "../src/engine/standalone-door";
 import { releaseMailbox } from "../src/net/mailboxes";
 import { useConnection } from "../src/net/connection";
@@ -333,30 +337,31 @@ function ThisPhonePanel() {
   const [confirming, setConfirming] = useState<string | null>(null);
   /* WHAT A FAILED START SAID. Its own state and not `organizeRefusal`, which is the LAUNCH press's
      record: a person pressing Start is owed an answer about the press they just made. */
-  const [startFailed, setStartFailed] = useState(false);
+  /* THREE STATES, NOT TWO. A boolean here collapsed "this phone could not start" with "this phone
+     could not check whether another computer has the mailbox", and the second is the one the door
+     now refuses a press over — a person told the first would go looking for a fault on the phone. */
+  const [startRefusal, setStartRefusal] = useState<"refused" | "unreadable" | null>(null);
   /* AND A FAILED STOP, which is the other direction of the same debt: the chip goes back to
      `Organizing` on its own, and without a sentence beside it that reads as the press having
      done nothing rather than as the mailbox having refused to be given back. */
   const [stopFailed, setStopFailed] = useState(false);
   /**
-   * ══ THE DOOR'S STATE, LIVE — this panel was correct only at MOUNT ═══════════════════════════
-   *
-   * Measured on a device: `Stopping` stood for two and a half minutes over a stop that had
-   * finished (claim gone, zero bytes on the wire), and `Organizing` for two minutes over a mailbox
-   * another machine held and the engine had already logged a stand-down for. Both settled the
-   * instant Settings was left and re-entered, which is the diagnosis: `standaloneHere()` is read in
-   * the render and nothing re-rendered.
-   *
-   * `useSyncExternalStore` over the organizer session's own version counter — the same mechanism
-   * `world.tsx` subscribes to the mirror engine with. No state is copied: a notify means "ask
-   * again", and the read below is the same `standaloneHere()` it always was, so there is still one
-   * answer to "does this phone organize this mailbox".
+   * The door's state, live — this panel was correct only at MOUNT. `standaloneHere()` was read in
+   * the render and nothing re-rendered, so `Stopping` and `Organizing` stood for minutes over a
+   * finished stop or a mailbox another machine held, settling only when Settings was re-entered.
+   * `useSyncExternalStore` over the organizer session's own version counter — the mechanism
+   * `world.tsx` uses for the mirror engine — fixes it. No state is copied: a notify means "ask
+   * again", and the read below is the same `standaloneHere()`, so there is one answer to whether
+   * this phone organizes this mailbox.
    */
   useSyncExternalStore(
     useCallback((cb: () => void) => onOrganizerState(cb), []),
     organizerStateVersion,
     organizerStateVersion,
   );
+  /* The ask and the system's own answer, both owned by the hook — this screen consumes them and
+     holds no lifecycle of its own, the rule `useWake` is here under. */
+  const notify = useNotifyPermission();
 
   if (!standaloneAvailable({ startEngine: phoneEngineStart() })) return null;
 
@@ -377,6 +382,12 @@ function ThisPhonePanel() {
      re-derived here: one ranking, so the top bar and this panel cannot disagree about whether
      the link is gone. */
   const outage = connectionSaid(w.boot.connection);
+  /* AND WHAT THE FIRST SYNC PRODUCED — beside the link's sentence, never instead of it. The two
+     are true at once and have different remedies: measured against a server that signs you in and
+     refuses to hand over the mail, the link reads dead AND nothing has ever been read, and
+     "Reconnecting…" on its own sends somebody to look at their network. Silent in every other
+     state (`live.ts#firstSyncSaid`). */
+  const unreadable = firstSyncSaid(w.boot.firstSync);
   const cards: readonly { key: string; address: string; claim: PhoneClaim }[] = here !== null
     ? [{
         key: HERE_CARD,
@@ -388,7 +399,11 @@ function ThisPhonePanel() {
          * `claimHere` is the door's own state instead and compares no names; the engine's
          * `organizing` is this install's verdict on its own claim, which is the question the name
          * test was standing in for. See the function. */
-        claim: claimHere(here, organizerInstruction()),
+        /* AND THE HAND-BACK, which no read of the engine can produce: a mailbox this install
+           released and one nobody ever claimed answer the same three fields. Read live from the
+           session on the same subscription as everything else above — `pokeOrganizerState`
+           carries it, so the chip re-derives under an open panel rather than at re-entry. */
+        claim: claimHere(here, organizerInstruction(), organizerHandedBack()),
       }]
     : w.mailboxes.rows.map((row) => ({
         key: row.id,
@@ -443,6 +458,10 @@ function ThisPhonePanel() {
                 {outage === null ? null : (
                   <Txt variant="note" tone="ink2" accessibilityRole="alert">{outage}</Txt>
                 )}
+                {/* THE MAIL, NOT THE LINK — see `unreadable` above. */}
+                {unreadable === null ? null : (
+                  <Txt variant="note" tone="ink2" accessibilityRole="alert">{unreadable}</Txt>
+                )}
                 {/* BATTERY SAVER, SAID WHERE THE PLATFORM RULE IS — and only once the background
                     half has actually met it. `organizerRestrictedSaid` is the record
                     `announceRestricted` writes; the deck's own note says this app organizes while
@@ -450,6 +469,22 @@ function ThisPhonePanel() {
                     directly under it rather than somewhere else on the screen. */}
                 {organizerRestrictedSaid() ? (
                   <Txt variant="note" tone="ink2">{Copy.organizerRestricted}</Txt>
+                ) : null}
+                {/* AND THE OTHER CAUSE, WHICH IS NOT BATTERY SAVER. Both declines used to reach
+                    the sentence above, which names battery saver — false on every Android 13+
+                    first install, where `POST_NOTIFICATIONS` starts denied and the service
+                    refuses to start behind a notification nobody can see. This one names what is
+                    off and carries the only act left: Android never re-asks after a refusal. */}
+                {organizerNotificationsOffSaid() ? (
+                  <View style={{ gap: 2 }}>
+                    <Txt variant="note" tone="ink2">{Copy.organizerNotificationsOff}</Txt>
+                    <Button
+                      label={Copy.organizerNotificationsSettings}
+                      variant="quiet"
+                      onPress={() => { void openNotificationSettings(); }}
+                      style={{ alignSelf: "flex-start" }}
+                    />
+                  </View>
                 ) : null}
                 {/* WHAT THE CONSENT PRESS ANSWERED, where somebody asking "is my mail being
                     filed?" is already looking. It was written into `syncError` first, which the
@@ -461,9 +496,11 @@ function ThisPhonePanel() {
                   </Txt>
                 )}
                 {/* AND WHAT A FAILED START SAID, beside the press that made it. */}
-                {startFailed && row.key === HERE_CARD ? (
+                {startRefusal !== null && row.key === HERE_CARD ? (
                   <Txt variant="note" tone="ink2" accessibilityRole="alert">
-                    {Copy.settingsStartHereFailed}
+                    {startRefusal === "unreadable"
+                      ? Copy.settingsStartHereUnreadable
+                      : Copy.settingsStartHereFailed}
                   </Txt>
                 ) : null}
                 {stopFailed && row.key === HERE_CARD ? (
@@ -490,14 +527,21 @@ function ThisPhonePanel() {
                     label={Copy.settingsStartHere}
                     variant="quiet"
                     onPress={() => {
-                      setStartFailed(false);
+                      setStartRefusal(null);
                       setStopFailed(false);
                       /* THROUGH THE ONE DOOR, which reads the instruction in force: pressed during
                          a stop this is queued once and run when the stop completes, rather than
                          racing it. The engine's own verb underneath refuses a live foreign claim,
                          so it can never produce a second organizer. */
-                      void pressOrganizeHere("start").then((outcome) => {
-                        setStartFailed(outcome === "refused");
+                      void pressOrganizeHere("start").then(async (outcome) => {
+                        setStartRefusal(
+                          outcome === "refused" || outcome === "unreadable" ? outcome : null,
+                        );
+                        /* THE ASK, WHERE ORGANIZING ACTUALLY STARTED — the door's Connect runs the
+                           same gate at the same moment. A refused start asks for nothing: a
+                           permission spent on a press that achieved nothing is an ask this
+                           install never gets back. */
+                        if (outcome === "started") await notify.gate();
                       });
                     }}
                     style={{ alignSelf: "flex-start", marginTop: 4 }}
@@ -545,6 +589,8 @@ function ThisPhonePanel() {
           <SheetRow icon="x" label={Copy.settingsStopHereCancel} onPress={() => setConfirming(null)} />
         </Sheet>
       ) : null}
+
+      <NotifyPermission open={notify.open} onAnswer={notify.answer} />
     </>
   );
 }

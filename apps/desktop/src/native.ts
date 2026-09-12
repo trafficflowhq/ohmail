@@ -70,6 +70,7 @@ const OPEN_COMMAND = "open_link";
 const MAILTO_CLAIM_COMMAND = "mailto_claim";
 const DEFAULT_MAIL_STATUS_COMMAND = "default_mail_status";
 const DEFAULT_MAIL_REQUEST_COMMAND = "default_mail_request";
+const UI_VITALS_COMMAND = "ui_vitals";
 
 /**
  * The places on the web this app can open, named as PLACES and never as addresses. A hosted
@@ -378,4 +379,23 @@ export async function requestDefaultMail(): Promise<{
       ? (rawHow as DefaultMailHow)
       : null;
   return { how, state: defaultMailStateOf(answer) };
+}
+
+/**
+ * The window's own performance numbers, into the log this app already writes. `engine.log` is the
+ * artifact somebody sends when an install is slow, and it already carries the sidecar's memory and
+ * the webview's; without this it could not say how the WINDOW behaved. Nothing leaves the machine.
+ *
+ * The argument is a bag of NUMBERS and the shell does not forward it: `vitals.rs` reads the names
+ * it knows, takes a number or nothing from each, and composes the line itself, so this command
+ * cannot carry a subject, an address or a folder name out of the page. Fire-and-forget: a refused
+ * report must never surface anywhere near somebody's mail.
+ */
+export function reportUiVitals(report: Record<string, number | null>): void {
+  const shell = internals();
+  if (!shell) return;
+  void shell.invoke(UI_VITALS_COMMAND, { reported: report }).catch(() => {
+    /* No shell grant, an older shell, a poisoned log lock — none of them is a thing to say to
+       somebody reading their mail, and the next report is five minutes away. */
+  });
 }

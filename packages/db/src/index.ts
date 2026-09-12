@@ -128,13 +128,15 @@ export {
   standDownMemory,
   ORGANIZER_ROLES, ORGANIZER_KINDS, ORGANIZER_STATES, ORGANIZED_BY_NAME_MAX,
   isOrganizerRole, isOrganizerKind, isOrganizerState,
+  // Mail 0104 — the VERB a press asked for, the third closed set on `mailboxes`.
+  ORGANIZER_INTENTS, isOrganizerIntent,
   // Mail 0088/0089, 0.14.1 — the fifth holder column and whether a reader's decision may become a
   // request at all. Mail 0094 adds the three capabilities beside `requests`: an organizer names
   // each family of request it has an applier for, so a reader is refused at its own door rather
   // than queueing a record the holder will never take.
   CAPABILITY_REQUESTS, CAPABILITY_MOVES, CAPABILITY_RULES, CAPABILITY_PROFILE,
   capabilitiesColumn, hasCapability, readRequestEligibility,
-  type OrganizerRole, type OrganizerKind, type OrganizerState,
+  type OrganizerRole, type OrganizerKind, type OrganizerState, type OrganizerIntent,
   type OrganizedBy, type OrganizerRoleRow, type RequestEligibility, type RequestRefusalReason,
 } from "./organizer-role.js";
 
@@ -298,7 +300,7 @@ export {
  * it is store-neutral — the phone runs the same engine on the device store.
  */
 export {
-  resolveCutline, senderIsActiveSql, activeSenderExpr, anyOf,
+  resolveCutline, senderIsActiveSql, activeSenderExpr, anyOf, cutlineInstant,
   CUTLINE_PRESENTED_FOLDERS, CUTLINE_DEFAULT_DORMANCY_DAYS,
   type CutlineFacts, type ResolvedCutline,
 } from "./screener-cutline.js";

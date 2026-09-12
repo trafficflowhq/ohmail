@@ -1,84 +1,15 @@
 import type { KnownLocator, WorkerRepo } from "@trafficflow/core/adapters/drizzle-repo";
 
 /**
- * ══════════════════════════════════════════════════════════════════════════════════════════════
- *  THE KNOWN-SET, HELD IN MEMORY FOR AS LONG AS NOTHING COULD HAVE CHANGED IT
- * ══════════════════════════════════════════════════════════════════════════════════════════════
- *
- * `buildCursor` reads `listKnownLocators(mailboxId)` at the top of every cycle: the whole mailbox,
- * every folder, no filter. It is the read that decides which UIDs the adapter does not have to
- * fetch again, so it cannot simply be dropped — but it is also state THIS PROCESS WROTE and that
- * nobody else may change while it serves the mailbox, re-read once every poll interval for the
- * life of the attachment. On a mailbox of any real size that is thousands of rows re-read to be
- * told the same thing, indefinitely: for a hosted install they cross a network and are paid for by
- * the row, and for a local one they are a scan and a two-way join against a database sharing the
- * machine with the window the user is looking at.
- *
- * ── WHY AN IN-PROCESS COPY IS SOUND AT ALL ────────────────────────────────────────────────────
- *
- * Three legs, each read in the code rather than assumed:
- *
- *  1. **Exactly one process organizes a mailbox.** The organizer lease in `ohmail/_meta`
- *     (`index.ts#mayOrganize`, re-verified before EVERY cycle, not only at attach), the shard
- *     leader fence over every mail-bearing write (`sync.ts#SyncWriteFence`,
- *     `mailboxes.ts#makeSyncWriteFence`), and the reconcile backstop's own lease + fence together
- *     mean no other process writes this mailbox's rows while this one serves it.
- *  2. **Every writer of the projection is in this process and reachable through one object.**
- *     `listKnownLocators` projects `message_instances` (folder, uid, uidvalidity) joined to
- *     `messages.message_id_header` and the read-state baseline `flag_state.observed_seen ??
- *     !messages.unread`. `message_instances` is written by `insertMessage` (via
- *     `setPrimaryInstance`), `recordInstance`, `updateLocator` (via `setPrimaryInstance`) and
- *     `forgetInstanceAt`, and by NOTHING else — `0028_message_instances.sql` says so in as many
- *     words: *"the WORKER … is the only process that writes `message_instances`"*.
- *     `message_id_header` is written once, by `insertMessage`, and never updated. The read-state
- *     baseline moves through `upsertFlagState` and `applyExternalFlag`.
- *
- *     **The API tier writes `messages.unread` and it CANNOT move this projection**, which is the
- *     one leg that had to be checked rather than argued. Every service that changes `unread` —
- *     `MessageService.patch`, `MessageService.markSeen`, `TriageService` resurface,
- *     `ScreenerService.decide`, and the worker's own `bubbleUpPass` / `readRetroPass` — pairs the
- *     write with a `flag_state` upsert that supplies `observed_seen` **only on the INSERT** and
- *     seeds it from the PRE-CHANGE `unread`, deliberately omitting it from the `ON CONFLICT` set
- *     because *"the worker owns it"*. So: a row that already had a flag row keeps its
- *     `observed_seen`; a row that had none gains one holding exactly the value `!unread` this
- *     projection was already reporting. `observed_seen ?? !unread` is invariant under all six.
- *     The suite drives the real service against a real database rather than leaving that as a
- *     reading of five files, with a bare `UPDATE messages SET unread` beside it as the negative
- *     control — which DOES move the projection, and without which the assertion would be vacuous.
- *  3. **Leadership changes are explicit events.** Detach, stand-down, `LeaderFencedError`, the
- *     lock-loss tripwire and `DatabaseFaultError` all reach code that can drop this object.
- *
- * ── AND WHY IT INVALIDATES INSTEAD OF MIRRORING THE WRITES ────────────────────────────────────
- *
- * A cache that applied each write to its own copy would be a second implementation of
- * `setPrimaryInstance`'s three-statement vacate/move/insert, of `forgetInstanceAt`'s
- * delete-and-promote-the-oldest-survivor, and of the `observed_seen ?? !unread` coalesce — kept in
- * step with SQL it cannot see. The failure it would drift into is the worst one this pipeline has:
- * an entry that says a live UID is already known, whose body is therefore never fetched and whose
- * folder cursor then advances past it. Silent, permanent, and invisible to a type checker, because
- * a mirror that has drifted is still a coherent program.
- *
- * So the copy is a MEMO and nothing more: a write drops it, and the next cycle re-reads. That
- * makes the whole contract one sentence — **the memo is served only for a cycle in which nothing
- * this process wrote could have changed it** — and it costs almost nothing, because the egress
- * being paid for is the IDLE poll. A cycle that ingested a message, moved one, or mirrored a flag
- * has already paid for a body fetch, an IMAP round trip and an ingest transaction; one more SELECT
- * on the next cycle is noise beside them. A mailbox at rest re-reads the set once per attachment.
- *
- * **The drop is EAGER — before the write is attempted, never after it.** That is what makes the
- * rollback question disappear: a transaction that writes and then aborts leaves the memo dropped,
- * which is the safe direction (one wasted read), and there is no window in which a write has
- * landed while the memo still says it is valid. A wrongly-dropped memo costs a query; a wrongly
- * kept one loses mail.
- *
- * ── AND THE CLASSIFICATION IS DIRTY-BY-DEFAULT ────────────────────────────────────────────────
- *
- * {@link KNOWN_SET_NEUTRAL} names the repo methods that CANNOT move the projection; everything
- * else drops the memo. An allowlist of WRITERS would be a list that silently stops covering the
- * method somebody adds next, and here that silence is mail loss. Dirty-by-default fails the other
- * way: a new writer nobody classified makes the memo useless, and the census in the log says so out
- * loud.
- */
+ * THE KNOWN-SET, HELD IN MEMORY FOR AS LONG AS NOTHING COULD HAVE CHANGED IT. `buildCursor` reads
+ * `listKnownLocators(mailboxId)` (the whole mailbox) every cycle to decide which UIDs the adapter need not
+ * re-fetch — thousands of rows re-read, paid for by the row on a hosted install. An in-process copy is
+ * sound on three legs read in code: exactly one process organizes a mailbox (the `ohmail/_meta` lease
+ * `index.ts#mayOrganize`, the fence `sync.ts#SyncWriteFence`/`mailboxes.ts#makeSyncWriteFence`); every
+ * writer of the projection (`message_instances`, mail 0028 — `insertMessage`/`setPrimaryInstance`,
+ * `recordInstance`, `updateLocator`, `forgetInstanceAt`; the `observed_seen ?? !messages.unread` baseline)
+ * is in-process, and the API's `messages.unread` writes cannot move it; leadership changes are explicit.
+ * It is a MEMO — a write DROPS it (eagerly, before the write) and the next cycle re-reads. Dirty-by-default: {@link KNOWN_SET_NEUTRAL} names what cannot move it, everything else drops. */
 
 /** The per-cycle census this cache contributes to the worker's log. */
 export interface KnownSetCensus {
@@ -97,16 +28,12 @@ export interface KnownSetCensus {
 }
 
 /**
- * The `DataRow` width of one projected row, as postgres.js receives it in TEXT mode.
- *
- * Six columns — `folder`, `uid`, `uidvalidity`, `message_id_header`, `observed_seen`, `unread` —
- * each preceded by a four-byte length, plus the row's own field-count and message-length overhead.
- * A NULL column is a bare `-1` length and carries no data, which is why `message_id_header`
- * contributes only its overhead when absent.
- *
- * An ESTIMATE, named as one: it is the payload the server puts on the wire for this projection and
- * it ignores TLS framing and protocol messages that are not `DataRow`. It exists to make the
- * before/after comparable, not to be an invoice.
+ * The `DataRow` width of one projected row, as postgres.js receives it in TEXT mode. Six columns —
+ * `folder`, `uid`, `uidvalidity`, `message_id_header`, `observed_seen`, `unread` — each preceded by a
+ * four-byte length, plus the row's field-count and message-length overhead. A NULL column is a bare `-1`
+ * length with no data, which is why `message_id_header` contributes only overhead when absent. An
+ * ESTIMATE: the payload the server puts on the wire for this projection, ignoring TLS framing and
+ * non-`DataRow` protocol messages — it makes the before/after comparable, not an invoice.
  */
 const ROW_OVERHEAD_BYTES = 6;
 const FIELD_OVERHEAD_BYTES = 4;
@@ -128,33 +55,15 @@ export function estimateWireBytes(rows: ReadonlyArray<KnownLocator>): number {
 }
 
 /**
- * The repo methods that CANNOT move what `listKnownLocators` projects.
- *
- * Everything absent from this set drops the memo — see the header. Each entry is here because it
- * writes a different table, or a column this projection does not read:
- *
- *  · pure reads — they write nothing at all;
- *  · `mailbox_folders` (`upsertMailboxFolder`), `message_failures` (`recordMessageFailure`,
- *    `claimMessageFailures`, `resolveMessageFailure`), `audit_log`, `change_log`, `threads`,
- *    `routing_decisions`, `approvals`, `contacts`, `message_bodies`, `attachments`,
- *    `learning_signals` / `graduations` / `rules` (`recordExternalOverride`) — different
- *    tables entirely;
- *  · `upsertFolderState` / `completeFolderState` / `setFolderConflict` / `deferFolderReconcile` —
- *    `folder_state`, which this projection does not join. `completeFolderState` is the conditional
- *    completion write (the compare-and-set that cannot overwrite a desire committed during an IMAP
- *    move); it names the same table and the same columns as `upsertFolderState` and touches no
- *    instance row, so it is neutral for the same reason. It is on the reconciler's hot path, which
- *    is exactly why it must be named: unclassified it would drop the memo on EVERY completed
- *    filing and re-read `listKnownLocators` for the whole mailbox each time;
- *  · `deferFlagReconcile` — `flag_state`, but only `attempts` and `next_attempt_at`; it is the one
- *    statement in the file that deliberately does NOT touch `observed_seen`;
- *  · `setMessageThread` / `upgradeDedupKey` — `messages`, but `thread_id` and `dedup_key`, neither
- *    of which is projected. `unread` and `message_id_header` are the only projected columns of that
- *    table and neither is written here.
- *
- * `transaction` is neutral and special: it is a pass-through whose callback repo is wrapped in
- * turn, so writes inside a transaction are classified exactly as writes outside one.
- */
+ * The repo methods that CANNOT move what `listKnownLocators` projects. Everything absent drops the memo.
+ * Each entry writes a different table or an unprojected column: pure reads; `mailbox_folders`,
+ * `message_failures`, `audit_log`, `change_log`, `threads`, `routing_decisions`, `approvals`, `contacts`,
+ * `message_bodies`, `attachments`, `learning_signals`/`graduations`/`rules` — different tables;
+ * `upsertFolderState`/`completeFolderState`/`setFolderConflict`/`deferFolderReconcile` — `folder_state`,
+ * not joined (`completeFolderState` is on the reconciler's hot path, so it MUST be named or every filing
+ * drops the memo); `deferFlagReconcile` — `flag_state` but only `attempts`/`next_attempt_at`, never
+ * `observed_seen`; `setMessageThread`/`upgradeDedupKey` — `messages` but `thread_id`/`dedup_key`, not
+ * projected. `transaction` is neutral and special: a pass-through whose callback repo is wrapped in turn. */
 export const KNOWN_SET_NEUTRAL: ReadonlySet<string> = new Set([
   // reads
   "findByDedupKey", "findByMessageIdHeader", "listMessageFailures", "primaryInstanceVanished",
@@ -257,23 +166,15 @@ export class KnownSetCache {
   private tupleIndex: Set<string> | null = null;
 
   /**
-   * Whether the warm memo already projects the physical tuple a `recordInstance(messageId,
-   * locator)` call names — the value question behind that method's value-dependent neutrality.
-   *
-   * `recordInstance` is an upsert whose conflict arm updates ONLY `last_seen_at`, and only when
-   * the existing row belongs to the same message (`setWhere` — the anti-re-attribution guard;
-   * a different owner means it updates NOTHING). None of the projected columns — folder, uid,
-   * uidvalidity, `message_id_header`, the seen baseline — can move on the conflict arm. So when
-   * the tuple is already IN the projection the write is a timestamp touch whatever `messageId`
-   * says, and the memo may survive it; when it is not, the insert arm adds a projected row and
-   * the memo must drop. The memo IS the projection while warm (the contract in this file's
-   * header), so membership here answers the question exactly. A cold memo answers `false`, which
-   * takes the drop path — the direction an unknown must fail in.
-   *
-   * This is what stops a `duplicate` re-assertion of an already-known locator from costing a
-   * full `listKnownLocators` re-read every cycle — the `droppedBy="updateLocator"`/`recordInstance`
-   * storm measured on a production mailbox whose Sent folder held byte-twin copies.
-   */
+   * Whether the warm memo already projects the tuple a `recordInstance(messageId, locator)` names — the
+   * value question behind that method's value-dependent neutrality. `recordInstance` is an upsert whose
+   * conflict arm updates ONLY `last_seen_at`, and only for the same message (`setWhere`, the
+   * anti-re-attribution guard), so no projected column moves on conflict. When the tuple is already IN the
+   * projection the write is a timestamp touch and the memo may survive; when it is not, the insert arm
+   * adds a projected row and the memo must drop. The memo IS the projection while warm, so membership
+   * answers exactly; a cold memo answers `false` (the drop path). This stops a `duplicate` re-assertion
+   * from costing a full re-read every cycle — the `droppedBy="updateLocator"`/`recordInstance` storm
+   * measured on a Sent folder of byte-twin copies. */
   coversInstance(locator: { folder: string; ref: string } | null | undefined): boolean {
     if (this.entries === null) return false;
     // A shape this cannot read is an UNKNOWN, and an unknown takes the drop path — never the
@@ -354,18 +255,13 @@ export class KnownSetCache {
 }
 
 /**
- * Return `repo` with the known-set memo wired into it: `listKnownLocators` served from the memo,
- * every method that could move the projection dropping it first.
- *
- * A `Proxy` and not a hand-written façade, because `WorkerRepo` is ~45 methods and a façade is a
- * list that stops covering the one somebody adds next. The proxy also carries the classification,
- * so the method somebody adds next is DIRTY until it is named neutral — and the suite's
- * classification guard, which names the dirty methods exactly, fails until somebody decides which
- * it is.
- *
- * `transaction` is wrapped rather than passed through: the repo it hands its callback is a fresh
- * `DrizzleRepo` over the transaction's connection, so without this the ingest and reconcile groups
- * — which is where nearly every write in `sync.ts` happens — would write straight past the memo.
+ * Return `repo` with the known-set memo wired in: `listKnownLocators` served from the memo, every method
+ * that could move the projection dropping it first. A `Proxy`, not a hand-written façade, because
+ * `WorkerRepo` is ~45 methods and a façade stops covering the one somebody adds next; the proxy carries
+ * the classification, so a new method is DIRTY until named neutral, and the suite's classification guard
+ * fails until somebody decides which it is. `transaction` is wrapped rather than passed through: the repo
+ * it hands its callback is a fresh `DrizzleRepo` over the transaction's connection, so without this the
+ * ingest and reconcile groups — nearly every write in `sync.ts` — would write straight past the memo.
  */
 export function watchKnownSet<T extends object>(repo: T, cache: KnownSetCache): T {
   return new Proxy(repo, {
@@ -414,17 +310,13 @@ export function watchKnownSet<T extends object>(repo: T, cache: KnownSetCache): 
 }
 
 /**
- * The repo methods that are NOT neutral — the classification, exported so a guard can assert it.
- *
- * READ THROUGH THE DESCRIPTOR, never by indexing the prototype. `typeof proto[n]` INVOKES an
- * accessor, with `this` bound to the prototype rather than to an instance — and the repository
- * has one (`d`, which resolves the dialect from the handle it was constructed with). Reading it
- * off the prototype therefore ran that resolution against a `db` that does not exist and threw,
- * so this classification could not be computed at all and the guard over it failed with a message
- * about dialect brands in a test about the known-set memo.
- *
- * A descriptor also gives the right ANSWER, not merely a safe one: an accessor is not a method,
- * so it has no business in a list of methods that might move the projection.
+ * The repo methods that are NOT neutral — the classification, exported so a guard can assert it. READ
+ * THROUGH THE DESCRIPTOR, never by indexing the prototype: `typeof proto[n]` INVOKES an accessor with
+ * `this` bound to the prototype, and the repository has one (`d`, resolving the dialect from its handle),
+ * so reading off the prototype ran that resolution against a non-existent `db` and threw — the
+ * classification could not be computed and the guard failed with a message about dialect brands in a test
+ * about the known-set memo. A descriptor also gives the right ANSWER: an accessor is not a method, so it
+ * has no business in a list of methods that might move the projection.
  */
 export function dirtyMethodsOf(proto: object): string[] {
   return Object.getOwnPropertyNames(proto)

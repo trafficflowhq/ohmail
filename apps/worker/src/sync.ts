@@ -5,6 +5,7 @@ import {
 } from "@trafficflow/core/mail";
 import {
   WATCHED_FOLDERS, MessageGoneError, parseRef, FILING_BATCH_MAX,
+  epochOf, epochVerdict, sameEpoch, UNKNOWN_EPOCH, type Epoch,
   type ImapCursor, type MailboxAdapter, type PersistedFolderCursor,
 } from "@trafficflow/core/adapters/imap";
 import { LeaseUnavailableError } from "@trafficflow/core/adapters/organizer-lease";
@@ -37,51 +38,14 @@ import {
 } from "./lease.js";
 
 /**
- * ══════════════════════════════════════════════════════════════════════════════════════════════
- *  THE LEADER FENCE OVER MAIL-BEARING WRITES
- * ══════════════════════════════════════════════════════════════════════════════════════════════
- *
- * One process at a time organizes a mailbox, and the hosted worker holds that role per shard
- * under an advisory-lock lease. A lease can end mid-cycle — the lock's session drops, a standby
- * takes the shard over — and the loser does not learn about it synchronously. Until this seam
- * existed only the mailbox LIFECYCLE columns were fenced against that: a worker that had already
- * lost its shard kept committing messages, advancing folder cursors, appending `change_log` rows
- * and issuing IMAP moves for the rest of its cycle, beside a new leader doing the same work. Two
- * organizers writing one mailbox is exactly what every lease in this product exists to prevent —
- * and the existence of a fence for the lifecycle writes made it easy to believe these were
- * covered. They were not.
- *
- * `SyncDeps.fence` is the seam. ABSENT ⇒ unfenced, byte-identically the behaviour before the
- * seam existed: the standalone desktop engine imports this loop and its single process has no
- * shard to lose (its organizer boundary is the mailbox-side lease), and the reconcile cron runs
- * only while no worker leads. The hosted worker passes a fence built over its durable
- * leadership record — the same one its mailbox lifecycle writes are already fenced on.
- *
- * Three rules, each load-bearing:
- *
- *  · EVERY database write in this module rides `fencedWrite`/`fencedIngest`, which refuse —
- *    writing NOTHING — once the heartbeat row stops naming this instance as the leader. The
- *    refusal must be answered from a FRESH snapshot even when the write had to wait on a row
- *    lock (under READ COMMITTED, a statement that blocks is otherwise answered with the
- *    leadership it began with — the fence would fail open in exactly the handover it exists
- *    for). The fence implementation owns that: it claims the mailbox row first, absorbing the
- *    wait, and only then verifies leadership. That is why the fence is transaction-shaped
- *    rather than a boolean checked before the write.
- *  · EVERY IMAP mutation is preceded by `fenceImapMutation`. An IMAP command cannot ride a
- *    database transaction, so this is a fresh check rather than a guarantee — a mutation the
- *    check admits can still land after a takeover that commits in the same instant. That
- *    residual CONVERGES: a move that landed on the server whose database write was then fenced
- *    out is byte-identical to a crash between the move and the write, which `changesSince`
- *    already adopts on the next leader's cycle.
- *  · `lost()` is the SYNCHRONOUS tripwire. The worker flips it the moment it observes losing
- *    the lock, so an in-flight cycle stops at its next write site instead of running out its
- *    batch — without it, the teardown queued behind this cycle would wait on work the process
- *    has no authority to finish.
- *
- * A refused write surfaces as {@link LeaderFencedError} and deliberately aborts the WHOLE
- * cycle: the fence keys on the shard, not the mailbox, so one refusal means every later write
- * would be refused too — and the caller treats it as what it is, proof of lost leadership,
- * never as evidence against the mailbox or the message.
+ * The leader fence over mail-bearing writes. One process at a time organizes a mailbox, under an
+ * advisory-lock lease per shard; a lease can end mid-cycle and the loser does not learn synchronously.
+ * Until this seam, only the mailbox LIFECYCLE columns were fenced — a worker that had lost its shard
+ * kept committing messages, advancing cursors, appending `change_log` and issuing IMAP moves beside a
+ * new leader. `SyncDeps.fence` is the seam; ABSENT ⇒ unfenced (the standalone desktop engine has no
+ * shard to lose, the reconcile cron runs only while no worker leads). Three rules: every database write
+ * rides `fencedWrite`/`fencedIngest`, refusing from a FRESH snapshot even after a lock wait (hence
+ * transaction-shaped); every IMAP mutation is preceded by `fenceImapMutation` (a fresh check whose residual converges like a crash); and `lost()` is the SYNCHRONOUS tripwire. A refusal aborts the WHOLE cycle.
  */
 export class LeaderFencedError extends Error {
   constructor(message: string) {
@@ -109,38 +73,14 @@ export interface SyncDeps {
   accountId: string;
   mailboxId: string;
   /**
-   * WHAT THIS INSTALL IS TO THIS MAILBOX — its ORGANIZER, or a READER of it (mail 0083).
-   *
-   * Reader sync is a MODE of this one pipeline and never a second loop: same cursor, same batch,
-   * same dedup, same commit, same `change_log`. What the mode changes is what the cycle is
-   * ENTITLED to do, and the list is short because the reader's whole definition is short —
-   * another mail client on somebody's mailbox.
-   *
-   * A reader cycle SKIPS: `reconcileFolders` (its moves are the organizer's job), the
-   * user-commanded folder-ops pass and the one-time junk sweep (both are IMAP writes an
-   * organizer executes on a person's behalf), and — at the composition roots above this file —
-   * `ensureFolders`, `sendScheduled`, the kickstart, every retro pass and the organizer profile
-   * publish.
-   *
-   * It KEEPS: the ingest (that is the mirror, and a reader's mirror must GROW), the inbound
-   * read-state adopt, the tombstone reaper, the dead-letter ledger, every cursor write, and
-   * `reconcileFlags` — the outbound `\Seen` push, which is the reader's ONE IMAP write verb and
-   * is already a separate pass from `reconcileFolders` rather than a branch inside it.
-   *
-   * ── REQUIRED, AND FOR THIS FIELD THE ABSENT DEFAULT IS THE DANGEROUS BRANCH ──────────────
-   *
-   * `trustedAuthservIds`' argument below, with the stakes raised: an omitted `role` reads as
-   * ORGANIZER, and an organizer that is not the organizer is two installs moving one person's
-   * mail. So it is required in the type; and because almost no test file here is typechecked,
-   * the guard that actually holds is a census over product source asserting the EXACT SET of
-   * compositions that pass it — which is also the enumeration a person needs before adding the
-   * next one.
-   *
-   * ── THIS IS THE ONLY PLACE `readerMode` IS DECIDED ──────────────────────────────────────
-   *
-   * `PlanDeps.readerMode` is derived from this field inside `syncCycleWithin` (and inside
-   * `retryFailedMessages`, which runs the same two-phase ingest) and nowhere else, so the
-   * cycle's idea of the role and the router's cannot disagree about the same message.
+   * What this install is to this mailbox — its ORGANIZER, or a READER of it (mail 0083). Reader sync
+   * is a MODE of this one pipeline, never a second loop: same cursor, batch, dedup, commit,
+   * `change_log`. What the mode changes is what the cycle is ENTITLED to do. A reader cycle SKIPS
+   * `reconcileFolders`, the user-commanded folder-ops pass and the one-time junk sweep (IMAP writes an
+   * organizer executes) and — at the composition roots — `ensureFolders`, `sendScheduled`, the
+   * kickstart, every retro pass and the profile publish. It KEEPS the ingest (a reader's mirror must
+   * GROW), the inbound read-state adopt, the reaper, the dead-letter ledger, every cursor write, and
+   * `reconcileFlags` (the reader's ONE IMAP write verb). REQUIRED: an omitted `role` reads as ORGANIZER, and an organizer that is not the organizer is two installs moving one person's mail.
    */
   role: OrganizerRole;
   /** Optional AI classifier (design §5.3). Absent ⇒ Phase-0 routing (no AI branch). */
@@ -155,17 +95,13 @@ export interface SyncDeps {
   credits?: CreditGate;
   /**
    * The authserv-ids this MAILBOX's own provider signs `Authentication-Results` with —
-   * `providerAuthservIds(<the IMAP host this connection dials>)`, resolved where the adapter is
-   * built and threaded into `planChange`.
-   *
-   * REQUIRED, deliberately, unlike every optional field around it — because for this one the
-   * absent-config default IS the dangerous branch. An empty set makes `authVerdictFromHeaders`
+   * `providerAuthservIds(<the IMAP host this connection dials>)`, resolved where the adapter is built
+   * and threaded into `planChange`. REQUIRED, unlike every optional field around it, because for this
+   * one the absent-config default IS the dangerous branch: an empty set makes `authVerdictFromHeaders`
    * answer `"unavailable"` for every message, the demote-only branch never fires, and a forged
-   * known-contact `From` inherits that contact's Ohbox admission. Optional-with-a-default is how
-   * all five production sites shipped inert; a required field makes the composition root that
-   * forgets it a compile error instead. A caller that has genuinely decided to trust nothing
-   * (a test, an unknown provider) types `NO_TRUSTED_AUTHSERV_IDS` — the same "somebody has to
-   * type the empty set" rule `UnsubscribeDeps` established.
+   * known-contact `From` inherits that contact's Ohbox admission. Optional-with-a-default is how all
+   * five production sites shipped inert; a caller that has genuinely decided to trust nothing types
+   * `NO_TRUSTED_AUTHSERV_IDS` — the "somebody has to type the empty set" rule.
    */
   trustedAuthservIds: ReadonlySet<string>;
   /**
@@ -210,36 +146,24 @@ export interface SyncDeps {
    */
   importDecisionOpen?: boolean;
   /**
-   * The per-message terminal-failure ledger, one per attached mailbox.
-   *
-   * ABSENT ⇒ ONE PER CALL, not "no boundary". `apps/sidecar` imports this loop — the desktop
-   * engine and the hosted worker run one pipeline, never two implementations — and several tests
-   * call `runSyncCycle` directly; a boundary that only existed when a caller remembered to inject
-   * a ledger would leave the wedge in place for every one of them. What a caller-supplied ledger
-   * adds is MEMORY ACROSS CYCLES: attempt
-   * counts that accumulate, and skipped UIDs that stay out of the known-set so their bodies are
-   * not re-fetched every pass. See {@link DeadLetterLedger}.
+   * The per-message terminal-failure ledger, one per attached mailbox. ABSENT ⇒ ONE PER CALL, not "no
+   * boundary": `apps/sidecar` imports this loop (the desktop engine and the hosted worker run one
+   * pipeline) and several tests call `runSyncCycle` directly, so a boundary that only existed when a
+   * caller remembered to inject a ledger would leave the wedge in place for every one of them. What a
+   * caller-supplied ledger adds is MEMORY ACROSS CYCLES: attempt counts that accumulate, and skipped
+   * UIDs that stay out of the known-set so their bodies are not re-fetched every pass (see {@link
+   * DeadLetterLedger}).
    */
   deadLetters?: DeadLetterLedger;
   /**
-   * The in-memory memo of this mailbox's known-set — one per attached mailbox, beside
-   * {@link deadLetters} and for the same reason: it is per-attachment state whose lifetime is the
-   * design.
-   *
-   * ABSENT ⇒ EVERY CYCLE RE-READS `listKnownLocators`, byte-identically to before this field
-   * existed. That is the direction an omission has to fail in, and it is what the reconcile
-   * backstop and every test rely on: a caller that has not reasoned about who leads this mailbox
-   * pays the query and gets the database's answer.
-   *
-   * Present ⇒ the read is served from memory for as long as nothing this process wrote could have
-   * changed it, and it is DROPPED on every leadership-relevant event — a fence refusal, the
-   * lock-loss tripwire, a database fault, any throw out of the cycle, detach and stand-down. See
-   * `known-set.ts` for the three legs that make an in-process copy sound and for why it memoizes
-   * rather than mirroring the writes.
-   *
-   * The memo is never served across an organizer handover. That is not a property of this object
-   * alone: `index.ts` re-verifies the lease BEFORE every cycle and builds a fresh cache per attach,
-   * so a mailbox that changed hands is served by a new runtime with a cold memo.
+   * The in-memory memo of this mailbox's known-set — one per attached mailbox, beside {@link
+   * deadLetters} and for the same reason: per-attachment state whose lifetime is the design. ABSENT ⇒
+   * EVERY CYCLE RE-READS `listKnownLocators`, byte-identically to before this field — the direction an
+   * omission must fail in, and what the reconcile backstop and every test rely on. Present ⇒ the read
+   * is served from memory for as long as nothing this process wrote could have changed it, and it is
+   * DROPPED on every leadership-relevant event (a fence refusal, the lock-loss tripwire, a database
+   * fault, any throw, detach and stand-down; see `known-set.ts`). Never served across an organizer
+   * handover: `index.ts` re-verifies the lease before every cycle and builds a fresh cache per attach.
    */
   knownSet?: KnownSetCache;
   /**
@@ -303,15 +227,13 @@ export interface JunkSweepCommandPort {
     writeAuthority: MailboxWriteAuthority;
     write: <T>(fn: (repo: WorkerRepo) => Promise<T>) => Promise<T>;
     /**
-     * THE OBSERVED PRESS TOKEN — the same text `requested()` answered.
-     *
-     * Passed in because the scan state that crosses cycles (cursor, moved-since-top, and the
-     * deferral allowance) belongs to ONE press and the implementation had no way to tell one press
-     * from the next. Review found the consequence: a command that exhausted its deferral allowance
-     * and retired left the counter at its ceiling on a still-live mailbox attachment, so the
-     * person's NEXT press inherited a spent allowance and its very first barren scan retired it
-     * immediately — a fresh command that never got the retries it was entitled to. A re-stamp
-     * mid-scan inherited the old cursor for the same reason.
+     * The observed press token — the same text `requested()` answered. Passed in because the scan
+     * state that crosses cycles (cursor, moved-since-top, the deferral allowance) belongs to ONE press
+     * and the implementation had no way to tell one press from the next. Review found the consequence:
+     * a command that exhausted its deferral allowance and retired left the counter at its ceiling on a
+     * still-live attachment, so the person's NEXT press inherited a spent allowance and its first barren
+     * scan retired it immediately — a fresh command that never got the retries it was entitled to. A
+     * re-stamp mid-scan inherited the old cursor for the same reason.
      */
     command: string;
   }): Promise<{
@@ -326,20 +248,14 @@ export interface JunkSweepCommandPort {
      */
     deferred: number;
     /**
-     * Whether a deferral should still hold the user's press open.
-     *
-     * A SEPARATE FIELD FROM THE COUNT, and the split is the point. Two different things were being
-     * asked of one number and it could not answer both honestly:
-     *
-     *  · the count is per WINDOW, and the retirement decision needs the whole SCAN — the cursor
-     *    moves past a deferred row, so a final window truthfully reports zero while the row it
-     *    deferred is still in the pile (`SweepScanState.deferredSinceTop`);
-     *  · the exemption is BOUNDED (`SWEEP_MAX_DEFERRED_SCANS`), so after three consecutive barren
-     *    scans a deferral must stop holding the press even though the count is still non-zero.
-     *
-     * Folding both into the count meant the number an operator reads and the number the decision
-     * reads had to be the same number, and then one of them was a lie — the log would have said
-     * `deferred: 1` for a window that deferred forty.
+     * Whether a deferral should still hold the user's press open. A SEPARATE FIELD FROM THE COUNT,
+     * and the split is the point — two different things were being asked of one number and it could
+     * not answer both honestly: the count is per WINDOW, and the retirement decision needs the whole
+     * SCAN (the cursor moves past a deferred row, so a final window truthfully reports zero while the
+     * row it deferred is still in the pile — `SweepScanState.deferredSinceTop`); and the exemption is
+     * BOUNDED (`SWEEP_MAX_DEFERRED_SCANS`), so after three barren scans a deferral must stop holding
+     * the press even though the count is non-zero. Folding both into the count made the number an
+     * operator reads and the number the decision reads the same, and then one of them was a lie.
      */
     deferralsHold: boolean;
     /**
@@ -356,41 +272,14 @@ export interface JunkSweepCommandPort {
 }
 
 /**
- * Reconstruct the adapter cursor from the DB each cycle (never reuse an in-memory UID across a
- * move).
- *
- * ── THE FOLDER LIST IS THE UNION, NOT `WATCHED_FOLDERS` ────────────────────────────────────
- *
- * The adapter also reads the mailbox's own Sent folder, whose path is server-specific and
- * therefore cannot be a compile-time constant. `changesSince` persists a cursor row for it like
- * any other folder — and if this function only ever rebuilt the six frozen names, that row would
- * be written every cycle and read by none of them. The consequence is not cosmetic: with no
- * `prev`, the Sent branch falls back to its FIRST-SCAN path every single cycle, re-enumerating
- * (and, for anything the `own_copy` rule declines to store, re-FETCHING the body of) the whole
- * history window for the life of the process.
- *
- * Unioning with the persisted rows also means a folder the product stops watching keeps its
- * cursor rather than silently resetting if it is ever watched again.
- *
- * ── THE KNOWN-SET IS EPOCH-PURE, AND THE CURSOR NAMES AN EPOCH ─────────────────────────────
- *
- * A UID number means nothing outside the server epoch that issued it, and this function used to
- * reduce every locator to `{uid, messageId}` — discarding the epoch each one carries. Two
- * independent failures came out of that, and neither needs a race or a Postgres quirk:
- *
- *  1. A locator committed under an epoch V, presented inside a known-set the adapter reads as a
- *     later epoch V′, makes a V′ message whose server REUSED that UID number look already-known.
- *     Its body is never fetched, and once the enumeration drains, the V′ cursor is persisted past
- *     it. Permanent, silent, and likely — a new epoch commonly allocates again from low numbers.
- *  2. The sentinel `uidValidity: "0"` that a cold or truncated drain deliberately persists cannot
- *     express an epoch mismatch AT ALL, so the adapter's `uidValidityChanged` test is blind for
- *     the whole of that drain. When the row is the sentinel the epoch is therefore taken from the
- *     LOCATORS, which do carry one.
- *
- * So: the cursor's `uidValidity` is the epoch this folder's remembered UIDs actually belong to,
- * and only the entries of that epoch are handed over. Entries of any other epoch are dropped —
- * the safe direction, because a dropped entry is re-enumerated and re-fetched, while a wrongly
- * kept one silences real mail.
+ * Reconstruct the adapter cursor from the DB each cycle (never reuse an in-memory UID across a move).
+ * The folder list is the UNION, not `WATCHED_FOLDERS`: the adapter also reads the mailbox's own Sent
+ * folder, whose server-specific path cannot be a constant, and `changesSince` persists a cursor row
+ * for it — so if this only rebuilt the six frozen names, that row would be written every cycle and
+ * read by none, and the Sent branch would fall back to its FIRST-SCAN path every cycle, re-enumerating
+ * (and re-FETCHING) the whole history window. The known-set is EPOCH-PURE: a UID means nothing outside
+ * the server epoch that issued it, and reducing locators to `{uid, messageId}` discarded that — a
+ * reused UID under a new epoch looked already-known and its body was never fetched. So the cursor's `uidValidity` is the epoch its remembered UIDs belong to, and only those entries are handed over.
  */
 export async function buildCursor(
   repo: WorkerRepo, mailboxId: string, deadLetters?: DeadLetterLedger,
@@ -409,20 +298,21 @@ export async function buildCursor(
   for (const f of names) {
     const row = folderRows.find((r) => r.folder === f);
     const entries = knownByFolder.get(f) ?? [];
-    const rowEpoch = row?.uidValidity ?? "0";
-    const epoch = rowEpoch !== "0" ? rowEpoch : soleEpochOf(entries);
+    const rowEpoch = epochOf(row?.uidValidity);
+    const epoch = rowEpoch.known ? rowEpoch.value : soleEpochOf(entries);
     folders[f] = {
       uidValidity: epoch,
       uidNext: row?.uidNext ?? 0,
       highestModseq: row?.highestModseq ?? "0",
-      // `epoch === "0"` means no epoch can be named for this folder, so NOTHING remembered may be
-      // presented as known — the adapter would read a bare number as belonging to whatever epoch
-      // it is looking at.
-      known: epoch === "0" ? [] : [
+      // An UNNAMED epoch means nothing remembered may be presented as known — the adapter would
+      // read a bare number as belonging to whatever epoch it is looking at. `!== "0"` missed the
+      // `String(undefined)` a silent server persists, so those UIDs were handed over as facts.
+      known: !epochOf(epoch).known ? [] : [
         // `seen` rides along as the flag baseline the no-CONDSTORE fallback diffs against
         // (`KnownEntry.seen`). Dead-letter entries below carry none, which is correct: nothing
         // was ever ingested for them, so no baseline can be stated and none may be diffed.
-        ...entries.filter((e) => e.uidValidity === epoch).map((e) => ({ uid: e.uid, messageId: e.messageId, seen: e.seen })),
+        ...entries.filter((e) => sameEpoch(epochOf(e.uidValidity), epochOf(epoch)))
+          .map((e) => ({ uid: e.uid, messageId: e.messageId, seen: e.seen })),
         // The UIDs this process has written off. They are "known" in the only sense the adapter
         // uses the word — do not fetch this again — and leaving them out is what made one poison
         // message cost a full body fetch on every cycle for ever. Epoch-matched for the same
@@ -445,13 +335,14 @@ export async function buildCursor(
  * it observed and the next pass can name it.
  */
 function soleEpochOf(entries: ReadonlyArray<{ uidValidity: string }>): string {
-  let sole = "";
+  let sole: Epoch = UNKNOWN_EPOCH;
   for (const e of entries) {
-    if (e.uidValidity === "0") return "0";
-    if (sole === "") sole = e.uidValidity;
-    else if (sole !== e.uidValidity) return "0";
+    const cur = epochOf(e.uidValidity);
+    if (!cur.known) return "0";
+    if (!sole.known) sole = cur;
+    else if (!sameEpoch(sole, cur)) return "0";
   }
-  return sole === "" ? "0" : sole;
+  return sole.known ? sole.value : "0";
 }
 
 /** The folder + epoch a change was observed at. */
@@ -481,62 +372,14 @@ async function fencedIngest<T>(deps: FenceScope, fn: (repo: DrizzleRepo) => Prom
 }
 
 /**
- * ══════════════════════════════════════════════════════════════════════════════════════════════
- *  A GROUP OF WRITES THAT MUST NOT TEAR — TRANSACTIONAL WHETHER OR NOT THERE IS A FENCE
- * ══════════════════════════════════════════════════════════════════════════════════════════════
- *
- * {@link fencedWrite} routes ONE statement. It is deliberately not transactional when there is no
- * fence, and for a single statement that is exactly right — a `BEGIN`/`COMMIT` round trip around
- * an UPDATE buys nothing.
- *
- * The bookkeeping that follows an IMAP mutation is not one statement. Filing a message writes the
- * new locator (itself two statements: `messages.native_locator` and the primary
- * `message_instances` row), then the converged `folder_state`, then the audit row. Under a fence
- * those already committed together, because `SyncWriteFence.transaction` is a transaction. WITHOUT
- * one — the reconcile cron, and the desktop engine, which is every LOCAL install of this product —
- * they were three top-level awaits, and a crash or a failed statement between any two of them left
- * a state that is neither before nor after:
- *
- *   · locator written, `folder_state` not ⇒ the row still says `observed = <source>`, `pending`,
- *     while `native_locator` already names the DESTINATION. The next pass reads that row and asks
- *     the server to move a message from the folder it is already in. A host that refuses a
- *     same-folder MOVE turns this into a permanently stuck row — exactly the shape the deferral
- *     below exists to contain — and a host that accepts it churns the UID for nothing.
- *   · `folder_state` written, audit row not ⇒ the mail moved and the account's history does not
- *     say so. The inverse the admin surface offers to undo the move is the audit row's `inverse`;
- *     no row, no undo, and nothing anywhere records that the message ever left.
- *
- * Neither is visible afterwards. Both halves are individually valid rows, so nothing fails, no
- * constraint fires and the mailbox reports healthy — which is why this is proven by killing the
- * process between the statements against real Postgres (`reconcile-atomicity.pg.test.ts`) and not
- * by reading the code.
- *
- * So a group commits or it does not exist. Unfenced callers get `repo.transaction`; fenced callers
- * get the fence's transaction, which is the same guarantee with the leadership verdict inside it.
- * That makes this byte-identical to {@link fencedIngest} — deliberately, because it is the same
- * requirement — and it is a separate name because the two are separate contracts: one is "the
- * ingest transaction", this one is "these reconcile writes are one fact". A future change to the
- * ingest transaction must not silently retype the reconciler's.
- *
- * **The IMAP mutation is NEVER inside the callback.** A network call in a transaction holds a row
- * lock for the length of somebody else's server, and — the reason that actually matters here — the
- * move cannot be rolled back by the database anyway. Which is the next paragraph.
- *
- * ── WHICH SIDE LEADS, AND WHY THE RE-RUN CONVERGES ──────────────────────────────────────────
- *
- * IMAP leads; the database records what was observed. That is not a preference — the mailbox on
- * the user's own mail server is the master copy of their mail, and everything stored here is a
- * record of what was seen there, which is what makes leaving this product at any time cost the
- * user nothing. It decides the shape of the one seam a transaction cannot
- * cover: between the server's `MOVE` and the group below. A crash there leaves the mail moved on
- * the server and NOTHING written here, which is the direction that converges, because the source
- * copy is gone and the destination copy is enumerated by the next `changesSince`: the pending row
- * survives, the per-message retry raises {@link MessageGoneError}, and adoption rewrites
- * `folder_state` from what the server actually shows. The mailbox teaches us; we never teach it.
- *
- * The opposite order — write the database, then move — would produce the failure this product
- * cannot have: a message the client shows in a folder it is not in, with no event coming to
- * correct it, for ever.
+ * A group of writes that must not tear — transactional whether or not there is a fence. {@link
+ * fencedWrite} routes ONE statement, deliberately not transactional when unfenced. The bookkeeping
+ * after an IMAP mutation is not one statement (the new locator's two writes, then `folder_state`, then
+ * the audit row); unfenced (the reconcile cron, and every LOCAL install) they were three top-level
+ * awaits, and a crash between any two left a state that is neither before nor after — a `folder_state`
+ * that still says pending while `native_locator` names the destination (the next pass asks the server
+ * to move a message from the folder it is in), or a move with no audit row (no undo, no record it left).
+ * So a group commits or it does not exist. IMAP leads, the database records what was observed: the mailbox on the user's server is master, so a crash between the MOVE and the group converges (the next `changesSince` adopts). The opposite order shows the user a message in a folder it is not in, for ever.
  */
 async function fencedGroup<T>(deps: FenceScope, fn: (repo: WorkerRepo) => Promise<T>): Promise<T> {
   if (!deps.fence) return deps.repo.transaction(fn);
@@ -544,18 +387,14 @@ async function fencedGroup<T>(deps: FenceScope, fn: (repo: WorkerRepo) => Promis
 }
 
 /**
- * ── AND THIS IS WHERE THE KNOWN-SET MEMO MEETS THE FENCE ────────────────────────────────────
- *
- * Two things happen here that `deps.repo` alone cannot do. The repo the FENCE hands its callback
- * is built inside `makeSyncWriteFence` over the transaction's own connection, so it is not the
- * object `runSyncCycle` wrapped — it is wrapped HERE instead, which is what puts the ingest and
- * reconcile groups (nearly every write in this file) under the memo's classification.
- *
- * And a refusal DROPS the memo. Both refusal arms are proof that this process may no longer be the
- * organizer, and an in-memory copy of a mailbox's known-set is exactly the thing that must not
- * survive a handover: the successor is free to write those rows, so anything remembered from
- * before the refusal is a claim about somebody else's mailbox. Dropping costs one query on the
- * next cycle this process is allowed to run — and if it never runs one, it costs nothing at all.
+ * And this is where the known-set memo meets the fence. Two things happen here `deps.repo` alone
+ * cannot: the repo the FENCE hands its callback is built over the transaction's own connection, so it
+ * is not the object `runSyncCycle` wrapped — it is wrapped HERE instead, which puts the ingest and
+ * reconcile groups (nearly every write) under the memo's classification. And a refusal DROPS the memo:
+ * both refusal arms prove this process may no longer be the organizer, and an in-memory copy of a
+ * mailbox's known-set is exactly what must not survive a handover (the successor is free to write those
+ * rows). Dropping costs one query on the next cycle this process is allowed to run — and if it never
+ * runs one, nothing at all.
  */
 async function underFence<T>(deps: FenceScope, fn: (repo: DrizzleRepo) => Promise<T>): Promise<T> {
   const fence = deps.fence as SyncWriteFence;
@@ -608,25 +447,14 @@ function rethrowFenced(err: unknown): void {
 }
 
 /**
- * One sync pass. Returns whether the adapter still owes a backlog: a first sync of a real
- * mailbox is now drained in bounded batches (see `DEFAULT_SYNC_BATCH_MAX_MESSAGES`), and the
- * caller re-kicks instead of waiting out `pollIntervalMs` — which for a mailbox of any size is
- * the difference between one opaque multi-hour cycle and a series of short, observable ones.
- *
- * ── TWO BACKLOGS, AND THEY ARE DELIBERATELY NOT ONE FLAG ────────────────────────────────────
- *
- * `hasBacklog` is about INBOUND mail the adapter has not handed over. `owesFiling` is about
- * OUTBOUND intent this mailbox has not put on its server — filing that hit
- * {@link RECONCILE_MOVES_PER_CYCLE}. The caller re-kicks on either, which is what turns the
- * filing budget into a rotation rather than a delay: the mailbox goes to the back of the serial
- * queue and comes round again after every other one has had its turn, instead of holding the
- * queue until its whole backlog drains (a 583-second monopoly, measured) or waiting a full poll
- * interval per 500 messages.
- *
- * They are separate because ONE of them also means "the first import is finished".
- * `stampInitialImportComplete` fires on `!hasBacklog`, and a mailbox whose owner is mid-triage
- * would never have earned that stamp if a filing queue could hold the flag high — the import
- * would read as permanently partial for a reason that has nothing to do with importing.
+ * One sync pass. Returns whether the adapter still owes a backlog: a first sync is drained in bounded
+ * batches (`DEFAULT_SYNC_BATCH_MAX_MESSAGES`) and the caller re-kicks instead of waiting out
+ * `pollIntervalMs` — the difference between one opaque multi-hour cycle and a series of short
+ * observable ones. TWO backlogs, deliberately not one flag: `hasBacklog` is INBOUND mail the adapter
+ * has not handed over; `owesFiling` is OUTBOUND intent not yet on the server (filing that hit {@link
+ * RECONCILE_MOVES_PER_CYCLE}). The caller re-kicks on either, turning the filing budget into a rotation
+ * rather than a delay. They are separate because ONE also means "the first import is finished":
+ * `stampInitialImportComplete` fires on `!hasBacklog`, and a filing queue holding the flag high would read a mid-triage mailbox as permanently partial for a reason that has nothing to do with importing.
  */
 export async function runSyncCycle(input: SyncDeps): Promise<{ hasBacklog: boolean; owesFiling: boolean }> {
   const cache = input.knownSet;
@@ -698,25 +526,15 @@ async function syncCycleWithin(deps: SyncDeps): Promise<{ hasBacklog: boolean; o
   // for any other reason is deferred or failed ON ITS OWN ROW (`folder_ops.status`), never by
   // wedging the mailbox's mail flow behind it.
   let folderOpsOweMore = false;
-  /* -- BOTH USER-COMMANDED PASSES ARE THE ORGANIZER'S, AND THIS GATE WAS MISSING ------------
-   *
-   * `SyncDeps.role`'s own doc says a reader skips the folder-ops pass and the one-time junk
-   * sweep. It said so before this line existed, which made it a FALSE CLAIM in a file where a
-   * comment is the claim under test — and the gap it described was the more exploitable half of
-   * the reader mode, not a documentation slip.
-   *
-   * Both passes execute COMMANDS that were RECORDED EARLIER, by an install that was the organizer
-   * when the person pressed the button: a `folder_ops` row (create/rename/delete a real IMAP
-   * folder) and `mailboxes.junk_sweep_requested_at` (move the whole Quarantine pile into the
-   * provider's Junk). Neither is refused at the API any more once recorded — the API's job was to
-   * record it — so a demotion between the press and the cycle turned a queued command into a real
-   * IMAP mutation on a mailbox another install now organizes. Worse than a live decision, because
-   * nobody is at the screen to notice.
-   *
-   * They are SKIPPED, not deferred: the rows stand, and the organizer's own cycle serves them.
-   * `folder_ops` is a durable table and the sweep stamp is a durable column, so nothing is lost —
-   * which is the same reason `reconcileFolders` is skipped rather than drained.
-   */
+  /* Both user-commanded passes are the organizer's, and this gate was missing. `SyncDeps.role`'s own
+   * doc says a reader skips the folder-ops pass and the one-time junk sweep — it said so before this
+   * line existed, a FALSE CLAIM in a file where a comment is the claim under test, and the gap it
+   * described was the more exploitable half of the reader mode. Both passes execute COMMANDS RECORDED
+   * EARLIER by an install that was the organizer when the person pressed (a `folder_ops` row, or
+   * `mailboxes.junk_sweep_requested_at`), and neither is refused at the API once recorded — so a
+   * demotion between the press and the cycle turned a queued command into a real IMAP mutation on a
+   * mailbox another install now organizes, with nobody at the screen. They are SKIPPED, not deferred:
+   * the rows stand and the organizer's own cycle serves them, like `reconcileFolders`. */
   if (!readerMode) {
   try {
     const opsOut = await folderOpsPass({
@@ -739,31 +557,16 @@ async function syncCycleWithin(deps: SyncDeps): Promise<{ hasBacklog: boolean; o
   }
   }
 
-  // ── THE ONE-TIME SWEEP, WHEN ITS PRESS IS RECORDED (FOLDERS-SPEC.md §16.1) ──────────────
-  //
-  // Same slot as the folder verbs and for the same reason: a USER-COMMANDED act, executed by the
-  // organizer inside its serial cycle before the cursor is built, so this cycle's `changesSince`
-  // already observes the moves. The pass is `junkSweepPass` — the operator CLI's exact function,
-  // never a second implementation — with every IMAP mutation behind the same fresh leadership
-  // read (`guard`) and every completion write inside the fenced group (`write`).
-  //
-  // ONE BOUNDED SLICE PER CYCLE, RETIRED ONLY WHEN THE PILE IS DRAINED. The pass takes a
-  // per-cycle limit (the port's), so a large pile rotates through the serial queue the way the
-  // filing budget does instead of monopolizing it; after the slice the port re-counts what is
-  // still movable, and the stamp is retired ONLY when nothing is — or when a run that EXAMINED
-  // EVERY remaining candidate (`examinedAll`: a scan from the top that ran off the end; the port
-  // carries a keyset cursor across cycles, one bounded window per cycle — index.ts) moved
-  // NOTHING: a pile the server refuses outright, which would otherwise be retried every cycle
-  // for ever. A retired-while-nonempty stamp is honest on
-  // screen: the preview reads `pending: false` with candidates left, so the offer returns with
-  // the remaining number and the person can press again. While the pile drains, `owesFiling`
-  // is raised so the caller re-kicks this mailbox rather than waiting out a poll interval.
-  //
-  // The clear compares the OBSERVED token, so a press that lands mid-sweep is served by the
-  // next cycle rather than lost; a pass that throws leaves the stamp standing and the next
-  // cycle tries again (the sweep is idempotent — a moved member is no longer a candidate). Only
-  // fence refusals leave this block: anything else is logged and the mailbox's mail flow
-  // continues, exactly as the folder-ops pass above.
+  // The one-time sweep, when its press is recorded (FOLDERS-SPEC.md §16.1). Same slot as the folder
+  // verbs and for the same reason: a USER-COMMANDED act executed by the organizer inside its serial
+  // cycle before the cursor is built, so this cycle's `changesSince` already observes the moves. The
+  // pass is `junkSweepPass` — the operator CLI's exact function — with every IMAP mutation behind the
+  // same fresh leadership read (`guard`) and every completion write inside the fenced group (`write`).
+  // ONE BOUNDED SLICE PER CYCLE, retired only when the pile is drained: the pass takes a per-cycle
+  // limit so a large pile rotates through the queue instead of monopolizing it, and the stamp is
+  // retired ONLY when nothing is movable — or when a run that EXAMINED EVERY remaining candidate moved
+  // NOTHING (a pile the server refuses). The clear compares the OBSERVED token; a pass that throws
+  // leaves the stamp standing (the sweep is idempotent). While the pile drains, `owesFiling` re-kicks.
   let sweepOwesMore = false;
   // `!readerMode &&` — see the block above the folder-ops pass; the same argument, the same
   // recorded-earlier command, and the same answer (skip, the stamp stands, the organizer serves it).
@@ -781,19 +584,15 @@ async function syncCycleWithin(deps: SyncDeps): Promise<{ hasBacklog: boolean; o
         });
         const left = await deps.junkSweep.remaining();
         const drained = left === 0;
-        // `!res.deferralsHold` IS PART OF "STUCK", and it is the difference between retiring a
-        // command and consuming it. The other three conjuncts together say "a full scan of a
-        // non-empty pile moved nothing", which is read as a server that refuses every member —
-        // the one reading that licenses throwing the user's press away. A member skipped because
-        // its SOURCE LOCATOR WAS STALE is not evidence for that reading and is close to evidence
-        // against it: the message is still there under a different UID, the next `changesSince`
-        // re-finds it by Message-ID, and the sweep then moves it. A folder recycled between the
-        // mirror's last scan and the sweep makes EVERY member skip at once, which is exactly the
-        // shape of a fully-refused pile and is not one — so without this clause the press was
-        // retired by a condition that would have cleared on its own, and the offer came back
-        // asking the person to press again for mail nothing was wrong with. A cycle with any
-        // deferral keeps the stamp and re-kicks instead, which terminates for the same reason
-        // every other convergence here does: the deferrals shrink as adoption repoints them.
+        // `!res.deferralsHold` IS PART OF "STUCK", the difference between retiring a command and
+        // consuming it. The other three conjuncts say "a full scan of a non-empty pile moved
+        // nothing", read as a server that refuses every member — the one reading that licenses
+        // throwing the press away. A member skipped because its SOURCE LOCATOR WAS STALE is not
+        // evidence for that and is close to evidence against it: the message is still there under a
+        // different UID, the next `changesSince` re-finds it by Message-ID, and the sweep then moves
+        // it. A recycled folder makes EVERY member skip at once — the shape of a fully-refused pile
+        // and not one — so without this clause the press was retired by a condition that clears on its
+        // own. A cycle with any deferral keeps the stamp and re-kicks, terminating as adoption repoints them.
         const stuck = !drained && res.moved.length === 0 && !res.deferralsHold && res.examinedAll;
         if (drained || stuck) {
           await deps.junkSweep.clear(observed);
@@ -805,18 +604,15 @@ async function syncCycleWithin(deps: SyncDeps): Promise<{ hasBacklog: boolean; o
           deferred: res.deferred,
           junkFolder: res.junkFolder, remaining: left,
           retired: drained || stuck,
-          // ── THE RETIRED-WHILE-NONEMPTY LINE MUST NOT NAME A CAUSE IT DID NOT OBSERVE ────────
-          //
-          // There are TWO ways to reach `stuck` and they have opposite diagnoses, so one sentence
-          // for both is a sentence that is wrong half the time. A pile the server refuses is a
-          // provider problem; a pile whose members are simply not at the locators the mirror holds
-          // is our bookkeeping, and the exemption for it has just run out. This line said "the
-          // server refused every member" for both — review found it, and an operator reading it on
-          // the second case would go and interrogate a mail server that had refused nothing.
-          //
-          // `res.deferred > 0` is the discriminator and it is the honest one: the per-window count
-          // is still reported truthfully even on the scan where the exemption stops holding the
-          // press open, which is exactly why the count and the gate were split into two fields.
+          // The retired-while-nonempty line must not name a cause it did not observe. There are TWO
+          // ways to reach `stuck` with opposite diagnoses, so one sentence for both is wrong half the
+          // time: a pile the server refuses is a provider problem; a pile whose members are not at the
+          // locators the mirror holds is our bookkeeping, and the exemption for it has just run out.
+          // This line said "the server refused every member" for both — an operator reading it on the
+          // second case would go interrogate a mail server that refused nothing. `res.deferred > 0` is
+          // the discriminator and the honest one: the per-window count is still reported truthfully
+          // even on the scan where the exemption stops holding the press, which is why the count and
+          // the gate were split into two fields.
           reason: drained
             ? "the account's user pressed the one-time Quarantine→Junk offer; the pile is drained and the command retired"
             : stuck
@@ -856,17 +652,13 @@ async function syncCycleWithin(deps: SyncDeps): Promise<{ hasBacklog: boolean; o
   let firstDeferredError: unknown = null;
 
   /**
-   * Per-change failure boundary.
-   *
-   * The three outcomes are the whole fix. `applied` continues. `skip` records the item durably as
-   * evidence, declares it consumed, and continues — the batch reaches B. `retry` holds the
-   * folder's cursor and remembers the error to rethrow after the batch, which leaves the mailbox's
-   * existing failure counting and quarantine cadence exactly as it was.
-   *
-   * `ClassifierFaultError` and `LeaseUnavailableError` are rethrown IMMEDIATELY and by class, as
-   * they are at the caller's own catch arms: a model outage or an unreadable lease is not evidence
-   * about the message, and counting attempts against it would eventually write off good mail
-   * because somebody else had an incident.
+   * Per-change failure boundary. The three outcomes are the whole fix. `applied` continues. `skip`
+   * records the item durably as evidence, declares it consumed, and continues — the batch reaches B.
+   * `retry` holds the folder's cursor and remembers the error to rethrow after the batch, leaving the
+   * mailbox's existing failure counting and quarantine cadence exactly as it was.
+   * `ClassifierFaultError` and `LeaseUnavailableError` are rethrown IMMEDIATELY and by class, as at the
+   * caller's own catch arms: a model outage or an unreadable lease is not evidence about the message,
+   * and counting attempts against it would eventually write off good mail because somebody else had an incident.
    */
   async function attempt(ch: Change, run: () => Promise<void>): Promise<void> {
     const site = siteOf(ch);
@@ -888,17 +680,14 @@ async function syncCycleWithin(deps: SyncDeps): Promise<{ hasBacklog: boolean; o
       rethrowFenced(err);
       const fault = classifyIngestFault(err);
       if (fault.domain === "infrastructure") {
-        // Ours, not the message's. Fail the cycle the way a bare throw did before this boundary
-        // existed: no attempt counted, no cursor written for this folder, nothing written off.
-        //
-        // There was a `deferred.add(site.folder)` here and it was DEAD, which matters
-        // because it read as load-bearing. The throw is what holds every cursor: the `await
-        // attempt(...)` call sites (the `for` loops below) have no `catch` between them and the
-        // `deferred.has(folder)` read in the cursor loop, so this throw leaves the function and
-        // that read is never reached in this cycle. Deferring one folder was therefore
-        // unobservable — and narrower than the truth, since an infrastructure fault must hold
-        // ALL folders' cursors, not just this one's. Do not re-add it: it would suggest the
-        // cycle continues past this point, and it does not.
+        // Ours, not the message's. Fail the cycle the way a bare throw did before this boundary: no
+        // attempt counted, no cursor written for this folder, nothing written off. There was a
+        // `deferred.add(site.folder)` here and it was DEAD, which matters because it read as
+        // load-bearing: the throw is what holds every cursor (the `await attempt(...)` call sites have
+        // no `catch` between them and the `deferred.has(folder)` read in the cursor loop), so this
+        // throw leaves the function and that read is never reached this cycle. Deferring one folder was
+        // unobservable — and narrower than the truth, since an infrastructure fault must hold ALL
+        // folders' cursors. Do not re-add it: it would suggest the cycle continues past this point.
         throw err;
       }
       const verdict = deadLetters.record(ch.locator, fault);
@@ -973,39 +762,22 @@ async function syncCycleWithin(deps: SyncDeps): Promise<{ hasBacklog: boolean; o
     }
   }
 
-  // ── DISAPPEARANCES FIRST, AND THAT ORDER IS THE POINT ───────────────────────────────────────
-  //
-  // `batch.deletes` was consumed by NOTHING. It was described as a cursor-only signal, and that
-  // description is what left `classifyDedup` unable to tell a user's move from a stranger's
-  // delivery: a sender can make a locator APPEAR, only the user can make a stored locator
-  // DISAPPEAR, and the disappearance was being thrown away.
-  //
-  // Recorded BEFORE the ingest loop, so this cycle's deletes are evidence for this cycle's
-  // creates. That covers the two shapes `correlateMoves` cannot pair — a message carrying no
-  // Message-ID at all (`imap.ts` pairs on it), and a delete and a create landing in different
-  // batches — which is exactly the case where requiring a correlated move alone would refuse a
-  // REAL user move and `reconcileFolders` would drag it back.
-  //
-  // ── THE EPOCH GUARD IS "ALL EVIDENCE IS VOID ON A UIDVALIDITY CHANGE" ───────────────────────
-  //
-  // The adapter emits every prior UID as a delete when a folder's epoch changes, carrying the
-  // PRIOR epoch in the ref. Those UIDs did not vanish — they were renumbered, and the adapter
-  // re-enumerates every one of them in the same batch. Recording them as disappearances would
-  // hand a whole folder's worth of adoption evidence to whatever create is processed first, so a
-  // delete is only believed when its epoch is the one the server is reporting NOW.
-  //
-  // `epochsObserved` is the server's live answer, read off the locators the adapter minted this
-  // pass. It has no entry for a folder that produced no create, move or flag — the ordinary case
-  // for the SOURCE folder of an external move — so the cursor the adapter just computed is the
-  // fallback. Neither available ⇒ no epoch can be named ⇒ skip, which loses evidence rather than
-  // inventing it.
+  // Disappearances first, and that order is the point. `batch.deletes` was consumed by NOTHING —
+  // described as a cursor-only signal, which left `classifyDedup` unable to tell a user's move from a
+  // stranger's delivery: a sender can make a locator APPEAR, only the user can make a stored locator
+  // DISAPPEAR, and the disappearance was thrown away. Recorded BEFORE the ingest loop, so this cycle's
+  // deletes are evidence for this cycle's creates (covering the two shapes `correlateMoves` cannot
+  // pair — a message with no Message-ID, and a delete and create in different batches). THE EPOCH
+  // GUARD: the adapter emits every prior UID as a delete when a folder's epoch changes, but those UIDs
+  // were renumbered, not lost, so a delete is only believed when its epoch is the one the server
+  // reports NOW (`epochsObserved`, read off the locators minted this pass; neither available ⇒ skip).
   const observedEpochs = epochsObserved(batch);
   let deletesCapped = false;
   let deletesRecorded = 0;
   for (const ch of batch.deletes) {
     const site = siteOf(ch);
     const live = observedEpochs.get(site.folder) ?? batch.newCursor.folders[site.folder]?.uidValidity;
-    if (live === undefined || live === "0" || live !== site.uidValidity) continue;
+    if (live === undefined || !sameEpoch(epochOf(live), epochOf(site.uidValidity))) continue;
     // BOUNDED — see {@link DELETE_EVIDENCE_PER_CYCLE}. The cap is counted over the deletes this
     // cycle BELIEVES, not over everything the adapter reported: a UIDVALIDITY reset's prior-epoch
     // refs are skipped above and must not spend a budget meant for real disappearances.
@@ -1022,19 +794,15 @@ async function syncCycleWithin(deps: SyncDeps): Promise<{ hasBacklog: boolean; o
     });
   }
 
-  // ── THE REAPER (mail 0065): A MESSAGE WHOSE EVERY WATCHED INSTANCE IS GONE LEAVES THE MIRROR ─
-  //
-  // `forgetInstanceAt` above removes instances and promotes survivors, and until this pass that
-  // was the END of the story: the `messages` row stayed live in every view and every client, for
-  // ever, describing mail the server no longer holds — `forgetInstanceAt`'s own doc left "the
-  // last known locator on the row FOR THE REAPER TO FIND", and no reaper existed. This is it:
-  // bounded per cycle, it stamps `deleted_at`, husks the body (the account stops paying for
-  // bytes of a message that is gone), and emits the `change_log` `delete` every client
-  // tombstones on. A cross-batch external move — delete this cycle, create the next — is
-  // tombstoned here and RESURRECTED by the adopt path (`clearDeletedOnAdopt` + the `move`
-  // change carrying the live entity), which is the client contract's "a LATER create
-  // resurrects" running end to end. Junk-parked rows are excluded in the query itself — see
-  // `tombstoneInstanceless`. Optional-guarded so every fake repo keeps working.
+  // The reaper (mail 0065): a message whose every watched instance is gone leaves the mirror.
+  // `forgetInstanceAt` above removes instances and promotes survivors, and until this pass that was
+  // the END of the story — the `messages` row stayed live in every view for ever, describing mail the
+  // server no longer holds (`forgetInstanceAt` left "the last known locator on the row FOR THE REAPER
+  // TO FIND", and no reaper existed). This is it: bounded per cycle, it stamps `deleted_at`, husks the
+  // body (the account stops paying for bytes of a gone message), and emits the `change_log` `delete`
+  // clients tombstone on. A cross-batch external move is tombstoned here and RESURRECTED by the adopt
+  // path (`clearDeletedOnAdopt` + the move change) — the client contract's "a LATER create resurrects"
+  // end to end. Junk-parked rows are excluded in the query; optional-guarded so every fake repo works.
   if (typeof repo.tombstoneInstanceless === "function") {
     const reaped = await fencedGroup(deps, (r) =>
       typeof r.tombstoneInstanceless === "function"
@@ -1064,19 +832,15 @@ async function syncCycleWithin(deps: SyncDeps): Promise<{ hasBacklog: boolean; o
     });
   }
 
-  // INBOUND READ-STATE — the inbound half of read-state mirroring. `flagChanges` was produced by
-  // the adapter and consumed by nothing, so a message read in another mail client stayed bold in
-  // ohmail forever. Each one is its own short transaction — the entity write and its `change_log`
-  // row commit together, and one unresolvable locator cannot roll back the whole batch.
-  //
-  // `applyExternalFlag` owns the user-wins decision: it declines while OUR write is still
-  // pending, so the value the server is about to be told is never overwritten by the value it
-  // is still reporting. A locator with no message behind it (a create this batch truncated) is
-  // simply skipped — the next cycle sees the flag again.
-  //
-  // Behind the SAME boundary as ingest, for the same reason ingest has one: one throwing flag
-  // exited this loop too, so every later flag in the slice went unapplied and the mailbox
-  // retried the same one for ever.
+  // Inbound read-state — the inbound half of read-state mirroring. `flagChanges` was produced by the
+  // adapter and consumed by nothing, so a message read in another client stayed bold in ohmail for
+  // ever. Each is its own short transaction — the entity write and its `change_log` row commit
+  // together, and one unresolvable locator cannot roll back the whole batch. `applyExternalFlag` owns
+  // the user-wins decision: it declines while OUR write is still pending, so the value the server is
+  // about to be told is never overwritten by the value it is still reporting. A locator with no message
+  // behind it (a create this batch truncated) is skipped — the next cycle sees the flag again. Behind
+  // the SAME boundary as ingest, for the same reason: one throwing flag exited this loop too, so every
+  // later flag in the slice went unapplied and the mailbox retried the same one for ever.
   for (const ch of batch.flagChanges) {
     await attempt(ch, async () => {
       await fencedIngest(deps, async (txRepo) => {
@@ -1089,24 +853,15 @@ async function syncCycleWithin(deps: SyncDeps): Promise<{ hasBacklog: boolean; o
     });
   }
 
-  // ── UIDS THE SERVER WITHHELD — RECORDED HERE, BEFORE ANY CURSOR MOVES ───────────────────────
-  //
-  // `batch.unanswered` is the set the adapter asked for and did not receive (see its doc on
-  // `ChangeBatch`). No `Change` was ever produced for these, so the `attempt` boundary above never
-  // saw them and the dead-letter path they would otherwise take was unreachable — they were
-  // crossed in SILENCE, which is the one thing the cursor rule forbids. A folder's cursor may
-  // advance over a UID only once a durable row for it is committed, so that row is written here.
-  //
-  // `unclassified` is the honest code: the closed set names failures we can attribute to the
-  // MESSAGE (`mime_too_large`, `mime_unparseable`, …) and this is not one of them — the bytes were
-  // never seen. It is also the right RETRY behaviour, which matters more: `nextAttemptAfter` gives
-  // the non-deterministic codes a doubling clock capped at a day, and `claimMessageFailures`'
-  // version arm re-reads every owed UID once per deploy. So a server that starts answering, or a
-  // build that stops asking for the field it chokes on, recovers the message on its own.
-  //
-  // Same failure semantics as the ingest path, deliberately: a row that cannot be written DEFERS
-  // the folder, which holds its cursor and fails the cycle. Losing this write while advancing the
-  // watermark is precisely the mail-loss shape the ledger exists to prevent.
+  // UIDs the server withheld — recorded here, before any cursor moves. `batch.unanswered` is the set
+  // the adapter asked for and did not receive; no `Change` was ever produced for them, so the
+  // `attempt` boundary never saw them and their dead-letter path was unreachable — they were crossed in
+  // SILENCE, the one thing the cursor rule forbids (a folder's cursor may advance over a UID only once
+  // a durable row for it is committed, so that row is written here). `unclassified` is the honest code:
+  // the closed set names failures we can attribute to the MESSAGE, and this is not one — the bytes were
+  // never seen — and it is also the right RETRY behaviour (a doubling clock capped at a day, re-read
+  // once per deploy), so a server that starts answering recovers on its own. Same failure semantics as
+  // ingest: a row that cannot be written DEFERS the folder, or losing the write while advancing the watermark is mail loss.
   for (const site of batch.unanswered ?? []) {
     try {
       const attempts = await fencedWrite(deps, (r) => r.recordMessageFailure(mailboxId, {
@@ -1217,38 +972,14 @@ async function syncCycleWithin(deps: SyncDeps): Promise<{ hasBacklog: boolean; o
 }
 
 /**
- * ══════════════════════════════════════════════════════════════════════════════════════════════
- *  THE TARGETED RETRY — re-read written-off UIDs BY UID, and never by rescanning a folder
- * ══════════════════════════════════════════════════════════════════════════════════════════════
- *
- * This is the half of mail 0041 that turns a durable record into recovered mail. A written-off UID
- * is, by the time it is written off, behind the Sent folder's watermark and inside every other
- * folder's known-set, so nothing in the ordinary batch will ever offer it again. This asks for it by
- * name.
- *
- * ── WHERE IT RUNS, AND WHY EVERY PART OF THAT IS LOAD-BEARING ─────────────────────────────────
- *
- *  · **Inside the cycle, not on a cron.** A cron would need its own IMAP connection, which collides
- *    with the exactly-one-organizer lease; and `reconcile-cron.ts` runs only when no worker holds the
- *    leader lock, so a retry cron beside it would never execute in production at all. Riding the
- *    cycle means it runs under the lease `cycle()` re-verified moments earlier.
- *  · **After the cursor writes.** A retry must never be able to hold a watermark: the mailbox has to
- *    keep draining whether or not history can be recovered. Running before the writes would let a
- *    throw here strand the cursor of a folder that drained perfectly.
- *  · **Skipped when anything is deferred.** A deferred folder means live mail failed and was not
- *    consumed; the cycle is about to fail. Spending IMAP round trips on history in that state
- *    competes with the mailbox's own recovery.
- *  · **It never throws.** Every failure is recorded and swallowed. This work is about mail the
- *    product has ALREADY declared consumed, so failing the cycle over it would re-wedge the mailbox —
- *    which is the exact defect the dead-letter ledger was written to end.
- *
- * ── AND WHY THE CLAIM IS A CONDITIONAL UPDATE ─────────────────────────────────────────────────
- *
- * Two workers mid-leader-handover both reach this. `claimMessageFailures` stamps the rows it selects
- * in one statement, so the loser blocks on the row lock, re-reads a committed `attempted_version`
- * equal to its own, and claims nothing. Even if both did claim, the retry is idempotent — the second
- * ingest's `planChange` finds the row the first committed and answers `duplicate` — but a lost race
- * here would double the IMAP traffic of every handover, and the claim is one statement either way.
+ * The targeted retry — re-read written-off UIDs BY UID, never by rescanning a folder. The half of mail
+ * 0041 that turns a durable record into recovered mail: a written-off UID is behind the Sent
+ * watermark and inside every folder's known-set, so nothing in the ordinary batch offers it again, so
+ * this asks by name. Inside the cycle, not on a cron (a cron needs its own IMAP connection, colliding
+ * with the one-organizer lease, and `reconcile-cron.ts` runs only when no worker leads). After the
+ * cursor writes (a retry must never hold a watermark). Skipped when anything is deferred (live mail
+ * failed; the cycle is about to fail). It never throws — every failure is recorded and swallowed,
+ * because this is mail already declared consumed. The claim is a conditional UPDATE (`claimMessageFailures`), so two workers mid-handover do not double the IMAP traffic, and it is idempotent either way.
  */
 async function retryFailedMessages(
   deps: SyncDeps, deadLetters: DeadLetterLedger, version: string,
@@ -1318,13 +1049,22 @@ async function retryFailedMessages(
     for (const row of rows) {
       // ── THE EPOCH GUARD. A UID NUMBER MEANS NOTHING OUTSIDE THE EPOCH THAT ISSUED IT ──────
       //
-      // The record was written under epoch V; the server is reporting V′. Re-ingesting `uid` now
-      // would ingest whatever message the server has RENUMBERED onto that number — a different
-      // message entirely — and would then resolve the record as though the original had arrived. So
-      // the record is void, and closing it loses nothing: a UIDVALIDITY change makes the adapter
-      // emit every prior UID as a delete and re-enumerate the whole folder, so the original message
-      // is offered again as an ordinary unknown UID.
-      if (found.uidValidity !== "0" && found.uidValidity !== row.uidValidity) {
+      // Three answers, not two. A CONTRADICTION voids the record: re-ingesting `uid` would take
+      // whatever the server RENUMBERED onto that number and then resolve the record as though the
+      // original had arrived. Closing loses nothing — a reset re-enumerates the folder and offers
+      // the message again as an unknown UID. An epoch NOBODY NAMED proves neither, so the record
+      // is held and re-read. Read as strings, `"0"` skipped the guard and re-ingested under an
+      // unnamed epoch, and `"undefined"` contradicted every epoch and closed a record whose
+      // message is still on the server.
+      const verdict = epochVerdict(epochOf(row.uidValidity), epochOf(found.uidValidity));
+      if (verdict === "unknown") {
+        log?.warn("message_retry_epoch_unknown", {
+          mailboxId, folder, uid: row.uid,
+          reason: "the server named no UIDVALIDITY for this folder, so the record is held and re-read",
+        });
+        continue;
+      }
+      if (verdict === "stale") {
         try { await close(row, "uidvalidity_changed"); }
         catch (err) { rethrowFenced(err); log?.warn("message_retry_close_failed", { mailboxId, folder, uid: row.uid, err }); }
         continue;
@@ -1426,67 +1166,28 @@ function epochsObserved(batch: { creates: Change[]; moves: Change[]; flagChanges
   const out = new Map<string, string>();
   for (const ch of [...batch.creates, ...batch.moves, ...batch.flagChanges]) {
     const { folder, uidValidity } = siteOf(ch);
-    if (uidValidity !== "0") out.set(folder, uidValidity);
+    // Only a NAMED epoch is an observation. `!== "0"` let a silent server's `String(undefined)`
+    // through and it was persisted as the folder's epoch, which then matched nothing for ever.
+    if (epochOf(uidValidity).known) out.set(folder, uidValidity);
   }
   return out;
 }
 
 /**
- * RECORD THE OBSERVED EPOCH EVEN WHILE THE WATERMARKS ARE HELD.
- *
- * A truncated batch holds its folder's cursor at the PREVIOUS value. That is right for
- * `uidNext`/`highestModseq` — advancing them past mail this pass did not return loses it — and
- * wrong for `uidValidity`, which is not a watermark but an identity. Write `V` for the epoch that
- * has just ended and `V′` for the one the server is reporting now. With the old epoch persisted,
- * the next pass hands the adapter a stale `V` cursor, the adapter must again treat every `V` UID
- * as meaningless, and it again returns the same newest `V′` slice. For ever. New mail arrives
- * newest-first and keeps displacing the tail the drain never reaches.
- *
- * So the epoch advances and the watermarks do not. `uidNext: 0` / `highestModseq: "0"` loses
- * nothing: both remembered values were `V` values, meaningless under `V′`, and this is exactly the
- * cursor the adapter itself computes for a folder it has never seen. The next pass then finds
- * `prev.uidValidity === current`, treats the `V′` locators already committed as known, and returns
- * a DISJOINT slice — which is what makes the drain finite instead of a loop.
- *
- * When the cursor the adapter returned already names the epoch it observed — every non-truncated
- * pass, i.e. the ordinary bounded backfill — this is the identity function.
- *
- * ── A `"0" → V` PROMOTION IS NOT A RESET, AND CONFLATING THEM WAS STICKY ────────────────────
- *
- * `observed !== fc.uidValidity` is true for a `V → V′` RESET and equally true for a `"0" → V`
- * PROMOTION — the cursor of a folder that could not yet NAME an epoch. Both used to take the
- * zeroing arm, and the argument above does not cover the second: on `"0" → V` the watermarks are
- * not stale values from a dead epoch, they are values computed under `V` itself this very pass.
- * Zeroing them discards work that was never wrong.
- *
- * Which was not cosmetic. `"0"` is the epoch of the normal COLD START of every mailbox large
- * enough to truncate (the adapter's `prev`-less truncated branch), and `highestModseq: "0"` is the
- * one value at which `canFastPath` is false. Zeroing the baseline the adapter had just published
- * therefore pinned a permanently-truncating folder at `"0"` for ever: no flag pass, no inbound
- * read-state mirror — the inbound read-state defect above, back per folder. So the promotion arm
- * records the epoch and keeps what the adapter handed it; only a genuine `V → V′` reset zeroes.
- *
- * The kept values are the ADAPTER's, not the database's, and neither shape can raise a Sent
- * watermark past mail nobody fetched. Where the adapter published `mb.uidNext` it had left nothing
- * unknown; and where it held `prev.uidNext`, a `fc.uidValidity` of `"0"` means the row named no
- * epoch and no locator could name one either, which in this tree means `uidNext: 0` — the only code
- * that writes these columns is `upsertMailboxFolder` (which persists exactly what this function
- * returns, so a sentinel epoch always arrives beside zeros) and `MailboxService.requestResync`
- * (which nulls `highestmodseq` and touches neither other column); account deletion drops the rows
- * outright. The columns are nullable, so a row written by hand could break that; no code path can.
- *
- * ── AND THE RESET ARM IS NO LONGER THE ORDINARY ROUTE ───────────────────────────────────────
- *
- * The IMAP adapter used to hold a truncated reset's cursor at the PREVIOUS epoch, so the
- * disagreement below was how such a reset got zeroed at all. It publishes the new epoch itself
- * now, with `uidNext` and `highestModseq` cold beside it, so a `V → V′` disagreement no longer
- * arrives from that path: this arm defends the PERSISTENCE boundary against a writer whose cursor
- * and whose locators disagree, which is where it belongs.
+ * Record the observed epoch even while the watermarks are held. A truncated batch holds its folder's
+ * cursor at the PREVIOUS value — right for `uidNext`/`highestModseq`, wrong for `uidValidity`, which is
+ * an identity, not a watermark. With the old epoch persisted, the next pass hands the adapter a stale
+ * cursor, the adapter treats every old-epoch UID as meaningless, and returns the same newest slice —
+ * for ever. So the epoch advances and the watermarks do not (`uidNext: 0`/`highestModseq: "0"` loses
+ * nothing under the new epoch, and is the cursor the adapter itself computes for an unseen folder). A
+ * `"0" → V` PROMOTION is NOT a reset: on it the watermarks were computed under `V` this pass, so
+ * zeroing them discards work that was never wrong (and pinned a permanently-truncating folder at `"0"`, killing flags and inbound read-state per folder). Only a genuine `V → V′` reset zeroes; the kept values are the ADAPTER's, and no shape can raise a Sent watermark past mail nobody fetched.
  */
 function epochAware(fc: PersistedFolderCursor, observed: string | undefined): PersistedFolderCursor {
-  if (observed === undefined || observed === fc.uidValidity) return fc;
-  // A PROMOTION, not a reset — see above. Record the epoch, keep the watermarks.
-  if (fc.uidValidity === "0") return { ...fc, uidValidity: observed };
+  if (observed === undefined || sameEpoch(epochOf(observed), epochOf(fc.uidValidity))) return fc;
+  // A PROMOTION, not a reset — see above. Record the epoch, keep the watermarks. An UNNAMED
+  // stored epoch is promoted, never reset: there was no epoch to contradict.
+  if (!epochOf(fc.uidValidity).known) return { ...fc, uidValidity: observed };
   return { uidValidity: observed, uidNext: 0, highestModseq: "0" };
 }
 
@@ -1497,26 +1198,16 @@ function epochAware(fc: PersistedFolderCursor, observed: string | undefined): Pe
  * defer to the next changesSince, which adopts the completed move.
  */
 export async function reconcileMailbox(deps: SyncDeps): Promise<{ owesMore: boolean }> {
-  /* ── A READER RECONCILES FLAGS AND NOTHING ELSE ─────────────────────────────────────────────
-   *
-   * See {@link SyncDeps.role}. The two halves of this function are already the two halves of the
-   * reader's entitlement, which is why the mode needed no new pass: `reconcileFolders` carries
-   * OUR intended MOVES to the server, and a reader has none to carry — `planChange`'s reader arm
-   * writes every row `last_set_by: 'external'`, so the pending-moves query would return nothing
-   * even if this ran. It is skipped anyway rather than left to return empty, for the reason the
-   * mode exists at all: a demoted organizer's rows SURVIVE demotion (the mirror is kept), so
-   * `desired ≠ observed` with `last_set_by: 'us'` IS reachable on a reader — those are the moves
-   * it decided while it was still the organizer. Running the pass would execute them, on somebody
-   * else's mailbox, after the handover. That is the seize-back the lease forbids, reached through
-   * a pass nobody thought of as a claim.
-   *
-   * Those rows are not lost and nothing needs to clear them: the ORGANIZER's own cycle observes
-   * the mail where it is and adopts, which is the mailbox-is-master rule doing its ordinary work.
-   *
-   * `reconcileFlags` DOES run. `\Seen` is per-message state the IMAP server itself arbitrates,
-   * every mail client writes it, and it is the one verb that keeps a reader's mirror honest in
-   * both directions.
-   */
+  /* A reader reconciles flags and nothing else. See {@link SyncDeps.role}. The two halves of this
+   * function are the two halves of the reader's entitlement: `reconcileFolders` carries OUR intended
+   * MOVES to the server, and a reader has none — `planChange`'s reader arm writes every row
+   * `last_set_by: 'external'`, so the pending-moves query returns nothing even if this ran. It is
+   * skipped anyway rather than left to return empty, because a demoted organizer's rows SURVIVE
+   * demotion (the mirror is kept), so `desired ≠ observed` with `last_set_by: 'us'` IS reachable on a
+   * reader — moves it decided while still the organizer — and running the pass would execute them on
+   * somebody else's mailbox after the handover, the seize-back the lease forbids. Those rows are not
+   * lost: the ORGANIZER's own cycle adopts. `reconcileFlags` DOES run — `\Seen` is the one verb that
+   * keeps a reader's mirror honest in both directions. */
   const owesMore = deps.role === "reader" ? false : await reconcileFolders(deps);
   await reconcileFlags(deps);
   return { owesMore };
@@ -1524,38 +1215,24 @@ export async function reconcileMailbox(deps: SyncDeps): Promise<{ owesMore: bool
 
 /**
  * Pending moves ONE CYCLE MAY FILE, and the reason this queue finally has a bound.
- *
- * `listPendingFolderStates` had no limit for its whole life, which three separate comments in
- * this tree already called a defect in a shared path. Measured on a production mailbox: one
- * screening session left 1 137 rows pending, and draining them took 583 seconds inside the
- * worker's SERIAL cycle — during which twelve other mailboxes received no mail at all. The
- * per-message IMAP cost is what made that expensive and batching is what fixes it; the bound is
- * what stops it being a monopoly again the day somebody triages ten thousand messages.
- *
- * ── WHY A BUDGET AND NOT MORE CONCURRENCY ────────────────────────────────────────────────────
- *
- * One organizer per mailbox is the product's central invariant and the serial cycle is how this
- * process honours it. A budget rotates the queue without touching that: the cycle files what it
- * can, reports that it still owes work, and the caller re-kicks — so the SAME mailbox comes round
- * again after every other mailbox has had its turn, instead of before any of them has.
- *
- * 500 is the batched path's ten chunks, which at the measured cost is a few seconds of IMAP —
- * short enough that no other mailbox waits on it, large enough that an ordinary day's filing
- * finishes in one pass and never touches the re-kick at all.
+ * `listPendingFolderStates` had no limit for its whole life. Measured on a production mailbox: one
+ * screening session left 1 137 rows pending, and draining them took 583 seconds inside the worker's
+ * SERIAL cycle, during which twelve other mailboxes received no mail. The per-message IMAP cost is
+ * what made it expensive and batching fixes it; the bound is what stops it being a monopoly again the
+ * day somebody triages ten thousand messages. A budget rotates the queue without touching the
+ * one-organizer-per-mailbox invariant: the cycle files what it can, reports it still owes work, and the
+ * caller re-kicks. 500 is the batched path's ten chunks — a few seconds of IMAP, short enough that no other mailbox waits, large enough that an ordinary day's filing finishes in one pass.
  */
 export const RECONCILE_MOVES_PER_CYCLE = 500;
 
 /**
- * How many DISAPPEARANCES one cycle may record.
- *
- * Each one is its own fenced write, and a bulk expunge in the live epoch produces one per
- * previously known UID — thousands of sequential writes ahead of the ingest loop, so a mailbox
- * stops receiving new mail until the backlog drains. Nothing is lost by capping it: an instance
- * this cycle did not forget is still in the next cursor's known-set and is reported again, and
- * the cap raises `hasBacklog` so the caller re-kicks instead of waiting out the poll.
- *
- * 500, the filing budget's number for the filing budget's reason: a few seconds of database work,
- * short enough that no other mailbox waits on it.
+ * How many DISAPPEARANCES one cycle may record. Each is its own fenced write, and a bulk expunge in
+ * the live epoch produces one per previously known UID — thousands of sequential writes ahead of the
+ * ingest loop, so a mailbox stops receiving new mail until the backlog drains. Nothing is lost by
+ * capping: an instance this cycle did not forget is still in the next cursor's known-set and is
+ * reported again, and the cap raises `hasBacklog` so the caller re-kicks instead of waiting out the
+ * poll. 500, the filing budget's number for the filing budget's reason: a few seconds of database
+ * work, short enough that no other mailbox waits on it.
  */
 export const DELETE_EVIDENCE_PER_CYCLE = 500;
 
@@ -1570,44 +1247,14 @@ export const DELETE_EVIDENCE_PER_CYCLE = 500;
 const folderLabel = (folder: string): string => (isOrganizedFolder(folder) ? folder : "other");
 
 /**
- * ══════════════════════════════════════════════════════════════════════════════════════════════
- *  THE BOUNDED RETRY FOR A MUTATION THE SERVER REFUSES — minutes, then hours, then for ever
- * ══════════════════════════════════════════════════════════════════════════════════════════════
- *
- * Per-item isolation stops one refused mutation abandoning the pass. It does NOT stop that item
- * being attempted again on the very next cycle, and again on the one after that, which is what the
- * reconciler did for every stuck row for its whole life. Two costs, and the second is the one that
- * hurts users who have nothing to do with the stuck message:
- *
- *  · one IMAP round trip per stuck row per cycle, for ever;
- *  · `listPendingFolderStates` is ordered OLDEST FIRST under {@link RECONCILE_MOVES_PER_CYCLE}, so
- *    a permanently refused row is by construction one of the oldest and sits at the head of that
- *    fixed allowance every single cycle. Accumulate 500 of them and the reconciler's entire budget
- *    goes on re-refusing rows from last month while mail the user filed a minute ago never reaches
- *    their server. Head-of-line blocking by BUDGET rather than by exception — invisible in the
- *    control flow, and unreachable from any `try`/`catch`.
- *
- * So a refusal buys silence, and the silence grows: one minute, five, fifteen, an hour, then a
- * six-hour floor it never passes. The steps are minutes-scale at the start because the common
- * "refusal" is not permanent at all — a folder briefly read-only during the provider's own
- * maintenance, a transient `NO` — and those must not be punished with hours of delay. They widen
- * because a mutation that has been refused five times is not going to be accepted on the sixth,
- * and asking every cycle is how the budget above gets eaten.
- *
- * ── WHAT THIS IS NOT ────────────────────────────────────────────────────────────────────────
- *
- * There is no give-up, no terminal code, no write-off, and the schedule has a FLOOR rather than an
- * end. `message_failures` has a `resolved_at` and this deliberately has no equivalent, because the
- * two are about opposite things: that ledger records mail WE could not read, where the failure is
- * ours and the message is still on the server either way. This records an instruction the USER
- * gave — move my mail, mark it read — and their instruction is not ours to discard because a
- * server was difficult. The row stays `pending`, keeps counting toward the "Filing N messages on
- * your mail server…" number the client shows, and converges the day the host relents.
- *
- * `attempts` is what makes it visible rather than merely persistent: it rides the
- * `reconcile.move.failed` / `reconcile.flags.failed` audit row, so "this one has failed 40 times"
- * is a value somebody can select rather than a pattern somebody has to notice across 40 identical
- * log lines.
+ * The bounded retry for a mutation the server refuses — minutes, then hours, then for ever. Per-item
+ * isolation stops one refused mutation abandoning the pass; it does NOT stop that item being attempted
+ * again every cycle, which is what the reconciler did for every stuck row for its whole life. Two
+ * costs, the second the one that hurts uninvolved users: one IMAP round trip per stuck row per cycle,
+ * and — because `listPendingFolderStates` is ordered OLDEST FIRST under a fixed allowance — a
+ * permanently refused row sits at the head of the budget every cycle, so 500 of them eat the whole
+ * budget while fresh mail never reaches the server (head-of-line blocking by BUDGET, unreachable from
+ * any `try`/`catch`). So a refusal buys widening silence with a six-hour FLOOR, never an end: there is no give-up, because this records the USER's instruction, not our failure to read mail. `attempts` rides the audit row, so "failed 40 times" is a value somebody can select.
  */
 const RECONCILE_BACKOFF_MINUTES: readonly number[] = [1, 5, 15, 60, 360];
 
@@ -1624,66 +1271,28 @@ export function nextReconcileAttemptAfter(attempts: number, now: Date): Date {
 }
 
 /**
- * Is this throw evidence about THIS MUTATION, or about the pipes?
- *
- * The distinction decides whether a failure earns a deferral, and getting it backwards is
- * expensive in both directions — the same trade `classifyIngestFault` documents, which is why this
- * reuses it rather than growing a second opinion:
- *
- *  · Call a HOST OUTAGE per-message and a mailbox that was merely unreachable for ten minutes
- *    comes back with its entire filing queue deferred for an hour, then six. The user's mail sits
- *    unfiled while the server that would accept it is up and answering. Every pending row would
- *    take the deferral, because during an outage every row fails.
- *  · Call a PER-MESSAGE refusal infrastructure and nothing is ever deferred: back to one IMAP
- *    round trip per stuck row per cycle and the budget starvation above.
- *
- * The infrastructure domain covers both sockets in play here — the customer's IMAP host and our
- * own database — which is right, because neither is the message's fault. An infrastructure failure
- * therefore leaves the row EXACTLY as it was: due now, attempts unchanged, no audit row. The pass
- * still continues through the rest of the queue (see the call sites for why an outage is not
- * converted into a mailbox-wide abort here), and the backlog drains the moment the host is back —
- * which is precisely what `reconcile-resume.pg.test.ts` holds this to.
+ * Is this throw evidence about THIS MUTATION, or about the pipes? The distinction decides whether a
+ * failure earns a deferral, and getting it backwards is expensive both ways (it reuses
+ * `classifyIngestFault` rather than growing a second opinion): call a HOST OUTAGE per-message and a
+ * mailbox unreachable for ten minutes comes back with its whole filing queue deferred for an hour;
+ * call a PER-MESSAGE refusal infrastructure and nothing is ever deferred, back to one round trip per
+ * stuck row per cycle and the budget starvation. The infrastructure domain covers both sockets in play
+ * (the customer's IMAP host and our own database), because neither is the message's fault, and leaves
+ * the row EXACTLY as it was (due now, attempts unchanged, no audit row) — the pass continues, and the backlog drains the moment the host is back (`reconcile-resume.pg.test.ts`).
  */
 function isTransportFailure(err: unknown): boolean {
   return classifyIngestFault(err).domain === "infrastructure";
 }
 
 /**
- * ══════════════════════════════════════════════════════════════════════════════════════════════
- *  WHAT THE SERVER REFUSED, AS A CLASS SOMEBODY CAN ACT ON (mail 0097)
- * ══════════════════════════════════════════════════════════════════════════════════════════════
- *
- * The deferral above already records the SCHEDULE. What it could not record is WHY, so the client
- * had a number and a retry time and nothing else — and the honest sentence cannot be written from
- * those: "1 message waits · retrying at 14:20" is true and tells a person nothing they can do,
- * where "the folder is not there" names the one screen that fixes it.
- *
- * ── THE OUTPUT IS FOUR WORDS, AND THAT IS THE WHOLE SAFETY ARGUMENT ─────────────────────────
- *
- * `folder_state`'s schema comment forbids an error column on the grounds that "what went wrong is
- * free text from someone else's mail server". That rule is kept, not relaxed: this function MAY
- * read the error and may never store it, exactly as `classifyMailboxError` is a seven-value enum
- * and `classifyIngestFault` a five-value one. The server's own wording still goes to the
- * `reconcile.move.failed` audit row, which is the only place it belongs.
- *
- * ── STRUCTURED EVIDENCE ONLY, AND NO MESSAGE PROBE ─────────────────────────────────────────
- *
- * `serverResponseCode` is imapflow's parse of the bracketed IMAP response code, which is the
- * server's own machine-readable statement about the refusal. There is deliberately NO
- * message-text probe here: `classifyMailboxError` keeps one for authentication because a rejected
- * password is common and several servers report it with no structured marker, and none of the
- * conditions below has that excuse — a server that refuses a move without a code has refused it,
- * which `refused` says.
- *
- * `refused` is a real member and not a fallback. A bare `NO` to a `UID MOVE` is a refusal, and
- * telling somebody their server refused the move is both true and more than they had.
- *
- * ── WHAT IS NOT HERE ───────────────────────────────────────────────────────────────────────
- *
- * Nothing for a transport failure, because a transport failure never reaches this function:
- * {@link isTransportFailure} returns first and leaves the row exactly as it was — due now,
- * attempts unchanged, no audit row, no class. An unreachable mail host is not this message's
- * refusal, and stamping one would blame the message for the socket.
+ * What the server refused, as a class somebody can act on (mail 0097). The deferral above records the
+ * SCHEDULE; what it could not record is WHY, so the client had a number and a retry time and nothing
+ * else — and the honest sentence cannot be written from those ("1 message waits · retrying at 14:20"
+ * tells a person nothing to do, where "the folder is not there" names the one screen that fixes it).
+ * The output is FOUR WORDS, the whole safety argument: `folder_state`'s schema forbids an error column
+ * ("what went wrong is free text from someone else's mail server"), and this MAY read the error and may
+ * never store it — the server's wording goes only to the `reconcile.move.failed` audit row. STRUCTURED
+ * evidence only (`serverResponseCode`), no message probe; `refused` is a real member (a bare `NO` to a `UID MOVE` is a refusal). Nothing for a transport failure — `isTransportFailure` returns first.
  */
 function classifyMoveRefusal(err: unknown): FilingRefusalClass {
   const code = typeof (err as { serverResponseCode?: unknown } | null)?.serverResponseCode === "string"
@@ -1702,20 +1311,14 @@ function classifyMoveRefusal(err: unknown): FilingRefusalClass {
 }
 
 /**
- * Execute our intended moves, grouped by (source folder → destination) and filed in batches.
- *
- * Returns whether the budget was reached with rows still pending, which the caller turns into a
- * re-kick. See {@link RECONCILE_MOVES_PER_CYCLE} for the bound and
- * {@link MailboxAdapter.moveMany} for what a batch is allowed to assume.
- *
- * ── THE FALLBACK IS THE DESIGN, NOT A SAFETY NET ────────────────────────────────────────────
- *
- * `moveMany` answers `batched: false` for every group it cannot prove equivalent to moving each
- * member on its own, and it answers it BEFORE writing anything. Everything below therefore has
- * exactly two shapes — a batch that fully succeeded, or a group that goes through the untouched
- * per-message path — and never a half-filed group whose remainder someone has to track. A throw
- * takes the same fallback for the same reason: per-message is where a single message earns its
- * own verdict and its own `reconcile.move.failed` row.
+ * Execute our intended moves, grouped by (source folder → destination) and filed in batches. Returns
+ * whether the budget was reached with rows still pending, which the caller turns into a re-kick (see
+ * {@link RECONCILE_MOVES_PER_CYCLE} and {@link MailboxAdapter.moveMany}). THE FALLBACK IS THE DESIGN,
+ * not a safety net: `moveMany` answers `batched: false` for every group it cannot prove equivalent to
+ * moving each member on its own, and it answers BEFORE writing anything — so everything below has
+ * exactly two shapes (a batch that fully succeeded, or a group that goes through the untouched
+ * per-message path) and never a half-filed group. A throw takes the same fallback: per-message is
+ * where a single message earns its own verdict and its own `reconcile.move.failed` row.
  */
 async function reconcileFolders(deps: SyncDeps): Promise<boolean> {
   const { repo, accountId, mailboxId } = deps;
@@ -1829,15 +1432,13 @@ async function sentFolderOf(deps: SyncDeps): Promise<{ sentFolder?: string | nul
 }
 
 /**
- * File one chunk in a batch, or report that it was not filed at all.
- *
- * `null` means NOTHING WAS WRITTEN TO THE DATABASE for this chunk and the caller owes every
- * member to {@link fileOne}. That is true even when the adapter threw after moving some of them:
- * the per-message retry finds those gone from the source, raises {@link MessageGoneError}, and
- * leaves the row pending for `changesSince` to adopt — which is the same convergence the
- * per-message path has always relied on for a crash between the IMAP move and the DB write.
- * A non-null answer carries `reopened` — whether any member's completion re-opened its row
- * (the delete-survivor branch), which the caller owes to the scheduler.
+ * File one chunk in a batch, or report that it was not filed at all. `null` means NOTHING WAS WRITTEN
+ * TO THE DATABASE for this chunk and the caller owes every member to {@link fileOne} — true even when
+ * the adapter threw after moving some of them: the per-message retry finds those gone from the source,
+ * raises {@link MessageGoneError}, and leaves the row pending for `changesSince` to adopt, the same
+ * convergence the per-message path relies on for a crash between the move and the write. A non-null
+ * answer carries `reopened` — whether any member's completion re-opened its row (the delete-survivor
+ * branch), which the caller owes to the scheduler.
  */
 async function fileChunk(
   deps: SyncDeps, chunk: PendingPhysical[], special: SpecialFolderMap,
@@ -1870,17 +1471,14 @@ async function fileChunk(
   }
   if (!result.batched) return null;
 
-  // ONE WRITE GROUP for the whole chunk's bookkeeping — a transaction whether or not there is a
-  // fence (see {@link fencedGroup}). It has to be: a chunk's worth of locator/state/audit writes
-  // that half-commits leaves some of its members claiming a destination their `folder_state` still
-  // disagrees with, and the batched path has no per-member retry to notice.
-  //
-  // A failure of the group is contained rather than rethrown, and the chunk still answers
-  // HANDLED (non-null).
-  // The moves LANDED — `moveMany` reported `batched`, which it only does for a group it performed
-  // whole — so sending the members to `fileOne` would spend one round trip each rediscovering that
-  // the source is gone. Nothing was written, every row is still pending and due, and the next
-  // `changesSince` adopts what the server shows: the same convergence a crash here takes.
+  // ONE WRITE GROUP for the whole chunk's bookkeeping — a transaction whether or not there is a fence
+  // (see {@link fencedGroup}). It has to be: a chunk's locator/state/audit writes that half-commit
+  // leave some members claiming a destination their `folder_state` disagrees with, and the batched
+  // path has no per-member retry to notice. A failure of the group is contained rather than rethrown,
+  // and the chunk still answers HANDLED (non-null): the moves LANDED (`moveMany` reports `batched`
+  // only for a group it performed whole), so sending the members to `fileOne` would spend one round
+  // trip each rediscovering the source is gone. Nothing was written, every row is still pending and
+  // due, and the next `changesSince` adopts what the server shows — the same convergence a crash takes.
   let reopened = false;
   let landed = 0;
   try {
@@ -1952,39 +1550,14 @@ async function recordAudits(
 }
 
 /**
- * The terminal check for a GONE member: void the filing if the message no longer exists
- * anywhere this mailbox's record knows of.
- *
- * "Gone from the source" has two readings, and they need opposite treatment. A message MID-MOVE
- * — a prior run's IMAP move that crashed before the DB write, or an external move whose create
- * is a batch behind its delete — must stay pending: `changesSince` adopts the completed move,
- * and writing anything here would race it. A message EXPUNGED OUTRIGHT has no adoption event
- * coming, ever. Before this branch existed such a row stayed `pending` for good — filed, then
- * deleted from the server before the move could apply, it held `MailboxDTO.pendingMoves` (the
- * "Filing N messages on your mail server…" count) up indefinitely, survived sign-out and a full
- * client-mirror wipe because the state is server-side, and left no `reconcile.move.failed` row
- * anywhere, because this skip writes nothing at all. The retry also cost one IMAP round trip
- * per cycle, for ever.
- *
- * `primaryInstanceVanished` is what tells the readings apart, and it is the SAME predicate
- * ingest treats as adoption evidence (`pipeline.ts`): true only once the server's DELETE has
- * been durably observed under a matching epoch (`forgetInstanceAt`) and no re-appearance has
- * been adopted since. Mid-move it is false — the stale primary instance still exists until the
- * source delete is enumerated — so the ordinary crash-convergence path is untouched. The one
- * window where it is true for a message that is NOT expunged is a move whose delete and create
- * land in different batches; voiding inside that window still converges, because adoption keys
- * on the message's dedup identity and rewrites `folder_state` itself — it does not read the row
- * this writes.
- *
- * The write is the COMPLETION write (`observed := desired`) rather than a new status member,
- * because `reconcile_status` is derived from the pair and a row must never claim a convergence
- * shape its columns do not show; what actually happened is in the audit row. `native_locator`
- * is left alone deliberately: clearing it would flip `primaryInstanceVanished` to false and
- * erase the adoption evidence for a copy that does surface later.
- *
- * Takes the repo it must write through rather than `deps`, because one caller (`fileChunk`) is
- * already inside a fenced write group and a second fence opened within the first would wait on
- * the mailbox row its own transaction holds. The other caller wraps this in its own group.
+ * The terminal check for a GONE member: void the filing if the message no longer exists anywhere this
+ * mailbox's record knows of. "Gone from the source" has two readings needing opposite treatment. A
+ * message MID-MOVE (a prior run's crash before the DB write, or an external move whose create is a
+ * batch behind its delete) must stay pending — `changesSince` adopts, and writing here would race it. A
+ * message EXPUNGED OUTRIGHT has no adoption event coming, and before this branch such a row stayed
+ * `pending` for good, holding the "Filing N messages…" count up indefinitely with no audit row.
+ * `primaryInstanceVanished` tells them apart — the SAME predicate ingest treats as adoption evidence,
+ * true only once the DELETE is durably observed under a matching epoch. The write is the COMPLETION write (`observed := desired`), and `native_locator` is left alone deliberately (clearing it would erase the adoption evidence). Takes the repo it must write through, because one caller is already fenced.
  */
 async function voidGoneFiling(repo: WorkerRepo, accountId: string, p: PendingFolderState): Promise<void> {
   if (!(await repo.primaryInstanceVanished(p.messageId))) return;
@@ -2016,26 +1589,14 @@ async function voidGoneFiling(repo: WorkerRepo, accountId: string, p: PendingFol
 }
 
 /**
- * The per-message path: one move, its own verdict, its own audit row, its own deferral.
- *
- * ── THE TWO SEAMS ARE HANDLED SEPARATELY, AND THAT SPLIT IS THE POINT ───────────────────────
- *
- * A refused MUTATION and a failed COMPLETION look the same from a single `try` and mean opposite
- * things, so they get one `try` each:
- *
- *  · `adapter.move` threw ⇒ the server did not perform the move. Nothing has changed anywhere, we
- *    still owe it, and asking again immediately is what makes a permanently refused mutation eat
- *    the filing budget. This is what earns a DEFERRAL.
- *  · the write group threw ⇒ the server ALREADY MOVED THE MAIL and only our record of it failed.
- *    The database and the mailbox now disagree, and deferring would hold that disagreement open
- *    for the length of the backoff — an hour in which the client shows the message in a folder it
- *    is not in. So this is never deferred and never recorded as the message's failure: the row is
- *    left pending and DUE, and the next cycle converges it the documented way (the source copy is
- *    gone, the retry raises {@link MessageGoneError}, `changesSince` adopts what the server shows).
- *
- * Folding them together — which is what one `try` around both did — produced a
- * `reconcile.move.failed` audit row asserting that a move which HAD succeeded was refused, and put
- * the correction to sleep behind it.
+ * The per-message path: one move, its own verdict, its own audit row, its own deferral. THE TWO SEAMS
+ * ARE HANDLED SEPARATELY: a refused MUTATION and a failed COMPLETION look the same from one `try` and
+ * mean opposite things. `adapter.move` threw ⇒ the server did not move it, nothing changed, we still
+ * owe it, and asking again immediately eats the filing budget — this earns a DEFERRAL. The write group
+ * threw ⇒ the server ALREADY MOVED THE MAIL and only our record failed, so the database and mailbox
+ * disagree, and deferring would hold that open for the backoff (the client showing a message in a
+ * folder it is not in) — so this is never deferred, the row is left pending and DUE, and the next cycle
+ * converges the documented way. Folding them together produced a `reconcile.move.failed` row asserting a move that HAD succeeded was refused, and put the correction to sleep behind it.
  */
 async function fileOne(deps: SyncDeps, p: PendingPhysical, special: SpecialFolderMap): Promise<boolean> {
   const { adapter, accountId, mailboxId, log } = deps;
@@ -2061,43 +1622,29 @@ async function fileOne(deps: SyncDeps, p: PendingPhysical, special: SpecialFolde
       return false;
     }
     if (isTransportFailure(err)) {
-      // NOT EVIDENCE ABOUT THIS MESSAGE — the host is unreachable, or our own database is. The row
-      // is left exactly as it was: due now, attempts unchanged, no audit row. So a mailbox whose
-      // provider was down for ten minutes files its whole backlog the moment it is back, instead
-      // of coming up with every pending move deferred by a failure none of them caused.
-      //
-      // The pass CONTINUES rather than aborting the cycle, which is a deliberate choice and not an
-      // oversight: an abort here would convert one provider outage into the path that detaches and
-      // quarantines a mailbox, and blaming a mailbox for a fault that is not its own is a failure
-      // this loop already has to be careful about elsewhere. The cost of continuing is one refused
-      // round trip per pending row for the length of the outage — bounded by the cycle's own
+      // Not evidence about this message — the host is unreachable, or our own database is. The row is
+      // left exactly as it was: due now, attempts unchanged, no audit row. So a mailbox whose provider
+      // was down for ten minutes files its whole backlog the moment it is back, instead of coming up
+      // with every pending move deferred by a failure none of them caused. The pass CONTINUES rather
+      // than aborting the cycle, deliberately: an abort here would convert one provider outage into the
+      // path that detaches and quarantines a mailbox, blaming it for a fault not its own. The cost of
+      // continuing is one refused round trip per pending row for the outage — bounded by the cycle's
       // budget, and self-clearing the moment the host answers.
       log?.warn("reconcile_move_transport_failure", {
         mailboxId, accountId, messageId: p.messageId, to: physical, err,
       });
       return false;
     }
-    // ── ONE MESSAGE'S REFUSAL MUST NOT ABANDON THE PASS, AND MUST NOT REPEAT FOR EVER ────
-    //
-    // This used to rethrow, which took the whole reconcile pass with it: every OTHER pending
-    // move, and — because `reconcileFlags` runs after this function — every pending `\Seen`
-    // push too. One message the server will not let us move meant nothing else moved either,
-    // every cycle, for as long as that message stayed pending.
-    //
-    // That was survivable only while a stuck move erased itself: the ingest path used to
-    // declare such a move complete on seeing its destination copy, so the row stopped being
-    // pending. It no longer does — a move is complete when the source is GONE — so a row whose
-    // expunge keeps failing now stays in this queue, and rethrowing would make one unhappy
-    // message a mailbox-wide outage.
-    //
-    // Isolation alone left it unbounded in TIME, which is the half this deferral closes: the
-    // failure is recorded AND the row is put to sleep on a widening schedule, so a message the
-    // server will never accept stops eating the per-cycle filing budget that everyone else's mail
-    // is queued behind. See {@link RECONCILE_BACKOFF_MINUTES} — the schedule has a floor, never an
-    // end, and the intent is never discarded.
-    //
-    // Both writes are ONE GROUP. A deferral without its audit row is a message that went quiet
-    // with nothing saying why; an audit row without its deferral is the unbounded retry, restored.
+    // One message's refusal must not abandon the pass, and must not repeat for ever. This used to
+    // rethrow, taking the whole reconcile pass with it: every OTHER pending move, and (because
+    // `reconcileFlags` runs after) every pending `\Seen` push too — one message the server will not
+    // move meant nothing else moved either, every cycle, for as long as it stayed pending. That was
+    // survivable only while a stuck move erased itself (ingest declared it complete on seeing its
+    // destination copy); it no longer does — a move is complete when the source is GONE — so a row
+    // whose expunge keeps failing stays in this queue, and rethrowing would make one unhappy message a
+    // mailbox-wide outage. Isolation alone left it unbounded in TIME, which this deferral closes: the
+    // failure is recorded AND the row is put to sleep on a widening schedule with a floor. Both writes
+    // are ONE GROUP — a deferral without its audit row goes quiet with nothing saying why, the reverse is the unbounded retry.
     const attempts = (p.attempts ?? 0) + 1;
     const nextAttemptAt = nextReconcileAttemptAfter(attempts, new Date());
     // The CLASS rides in the same group as the schedule and the audit row — see
@@ -2169,53 +1716,14 @@ async function fileOne(deps: SyncDeps, p: PendingPhysical, special: SpecialFolde
 }
 
 /**
- * ── A PENDING `\Seen` WITH NO LOCATOR: WHAT IT IS, AND WHAT IS OWED TO IT ────────────────────
- *
- * This arm was `if (!p.nativeLocator) continue;` — the one branch of {@link reconcileFlags} that
- * left the queue without a bound, without an audit row and without a log line, while every
- * sibling arm (gone, transport, refused, committed) writes at least one of the three. A user's
- * "mark as read" that landed here therefore disappeared in exactly the shape a person reports as
- * *"I marked it read on the desktop and the mailbox never saw it"*: the local row says read, the
- * server was never asked, and nothing anywhere records that a request was dropped.
- *
- * ── THE INVARIANT ───────────────────────────────────────────────────────────────────────────
- *
- * **A pending flag intent whose message has no locator cannot be sent and will not become
- * sendable on its own; it is deferred on the shared backoff for as long as a locator could still
- * arrive, and then retired with an audit row that names why.**
- *
- * The first half is a fact about the writes, not a guess. `messages.native_locator` is REQUIRED
- * at insert (`InsertMessageInput.nativeLocator`, non-optional), so no message is born without
- * one, and it is set to NULL at exactly two sites — both in `DrizzleRepo`'s folder-delete sweep,
- * and both of which tombstone the row (`deleted_at`) and husk its body in the same statement
- * group. The message's only watched copy went to Trash with the folder its user deleted; a
- * `STORE` has no UID to name.
- *
- * The second half is why this is a DEFERRAL first and a retirement second rather than an
- * immediate void. The tombstoned header row survives deliberately — for identity, attribution
- * and the resurrect-on-return path — so a copy CAN come back, and while it might, throwing the
- * user's intent away is the worse error of the two. What may not continue is reading the row
- * every cycle for ever with nothing to show for it.
- *
- * ── WHY NOT THE `MessageGoneError` ARM'S IMMEDIATE VOID ─────────────────────────────────────
- *
- * That arm converges `observed_seen` to `desired_seen` and it is allowed to, because
- * `primaryInstanceVanished` has just proved the copy is gone. That predicate deliberately answers
- * FALSE here — it reads `native_locator IS NOT NULL AND NOT EXISTS(...)`, so an absent locator is
- * "an incomplete record", never "a disappearance", precisely so that a row with no locator cannot
- * manufacture adoption evidence. Reusing its write without its proof would fabricate an
- * observation of a server that was never asked, which is the same lie the bare `continue` told,
- * with a row to make it durable.
- *
- * ── THE BOUND ───────────────────────────────────────────────────────────────────────────────
- *
- * {@link RECONCILE_BACKOFF_MINUTES}, the same schedule every other unconvergeable mutation in
- * this file takes, so a locator-less row costs 5 reads over ~7 hours instead of one per cycle for
- * the life of the mailbox. At the end of the schedule the row is retired: `reconcile_status`
- * leaves `pending` the only way this port allows — `upsertFlagState` with `observed = desired` —
- * and that write is honest ONLY because it is paired with the terminal audit row, which records
- * that the convergence was a retirement and not an observation. Auditors read
- * `reconcile.flags.retired`, never a bare `reconcile.flags`.
+ * A pending `\Seen` with no locator: what it is, and what is owed to it. This arm was
+ * `if (!p.nativeLocator) continue;` — the one branch of {@link reconcileFlags} that left the queue
+ * without a bound, an audit row or a log line, while every sibling writes at least one. A user's "mark
+ * as read" that landed here disappeared in the exact shape "I marked it read on the desktop and the
+ * mailbox never saw it". The invariant: a flag intent whose message has no locator cannot be sent and
+ * will not become sendable on its own; it is deferred on the shared backoff while a locator could still
+ * arrive, then retired with an audit row that names why. The DEFERRAL-first (not immediate void) is
+ * because the tombstoned header row survives (identity, resurrect-on-return), so a copy CAN come back. `primaryInstanceVanished` answers FALSE for an absent locator, so this cannot reuse the `MessageGoneError` arm's void — that would fabricate an observation of a server never asked. `RECONCILE_BACKOFF_MINUTES`; the terminal write is paired with `reconcile.flags.retired`.
  */
 async function retireLocatorlessFlag(deps: SyncDeps, p: PendingFlagState): Promise<void> {
   const { accountId, mailboxId, log } = deps;
@@ -2258,17 +1766,14 @@ async function retireLocatorlessFlag(deps: SyncDeps, p: PendingFlagState): Promi
 }
 
 /**
- * Push OUR intended read-state to IMAP — the `\Seen` mirror of `reconcileFolders`, and the
- * reason `PATCH /messages` can write intent and stop.
- *
- * The `lastSetBy !== "us"` guard is the SAME user-wins rule, and it is not a formality here: an
- * external row is written by `applyExternalFlag` precisely when the server disagreed with us,
- * so pushing one would mean marking read again a message the user deliberately marked unread
- * in another client. Drop this line and the product argues with its user in a loop.
- *
- * Deliberately AFTER the folder pass: a message that is moving has a locator that is about to
- * change, and `reconcileFolders` has just written the new one, so this reads the fresh value
- * instead of a UID the STORE would miss.
+ * Push OUR intended read-state to IMAP — the `\Seen` mirror of `reconcileFolders`, and the reason
+ * `PATCH /messages` can write intent and stop. The `lastSetBy !== "us"` guard is the SAME user-wins
+ * rule, and not a formality here: an external row is written by `applyExternalFlag` precisely when the
+ * server disagreed with us, so pushing one would mark read again a message the user deliberately marked
+ * unread in another client — drop this line and the product argues with its user in a loop.
+ * Deliberately AFTER the folder pass: a moving message has a locator about to change, and
+ * `reconcileFolders` has just written the new one, so this reads the fresh value instead of a UID the
+ * STORE would miss.
  */
 async function reconcileFlags(deps: SyncDeps): Promise<void> {
   const { repo, adapter, accountId, mailboxId, log } = deps;
@@ -2315,21 +1820,15 @@ async function reconcileFlags(deps: SyncDeps): Promise<void> {
         });
         continue;
       }
-      // ── THE RETHROW THAT USED TO BE HERE WAS A MAILBOX-WIDE OUTAGE PER MESSAGE ──────────
-      //
-      // Anything that was not a `MessageGoneError` left this loop, so it left `reconcileMailbox`,
-      // so it failed the whole cycle. One message whose `\Seen` the server refuses therefore
-      // meant: no other pending read-state reached the server, the folder pass's `owesMore`
-      // re-kick was discarded on the way out (it is returned by the call BEFORE this one), and
-      // `index.ts` counted a mailbox failure — every cycle, until the mailbox was detached and
-      // quarantined. Restart reconciliation reached the same row and did it again. The mailbox
-      // never got back to a steady state, and the reason was one flag on one message.
-      //
-      // The folder pass was given per-item isolation for exactly this and this loop was not, which
-      // is the asymmetry that made a refused STORE strictly more destructive than a refused MOVE.
-      // Same treatment now, deferral included: record it, sleep it on the widening schedule, keep
-      // going. The user's intent survives — `desired_seen` is untouched and the row stays pending
-      // — so a host that starts accepting the STORE converges then.
+      // The rethrow that used to be here was a mailbox-wide outage per message. Anything that was not
+      // a `MessageGoneError` left this loop, so it left `reconcileMailbox`, so it failed the whole
+      // cycle: one message whose `\Seen` the server refuses meant no other pending read-state reached
+      // the server, the folder pass's `owesMore` re-kick was discarded on the way out, and `index.ts`
+      // counted a mailbox failure every cycle until detach and quarantine — and restart reconciliation
+      // did it again. The folder pass had per-item isolation for exactly this and this loop did not,
+      // the asymmetry that made a refused STORE more destructive than a refused MOVE. Same treatment
+      // now, deferral included: record it, sleep it on the widening schedule, keep going. The user's
+      // intent survives (`desired_seen` untouched), so a host that starts accepting the STORE converges then.
       const attempts = (p.attempts ?? 0) + 1;
       const nextAttemptAt = nextReconcileAttemptAfter(attempts, new Date());
       await fencedGroup(deps, async (r) => {

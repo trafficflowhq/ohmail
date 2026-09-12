@@ -4,39 +4,14 @@ import type { CloudMirror } from "./cloud-mirror.js";
 import type { Diagnostic } from "./log.js";
 
 /**
- * THE WRITE-THROUGH PROXY — a Cloud-mode install owns no mailbox, so every WRITE it is asked to
- * make is a write against the HOSTED account, forwarded here with the bearer.
- *
- * The local surface serves reads out of the mirror (`cloud-read.ts`) and `/sync` out of the local
- * `change_log`. Everything else — a move, a mark-read, a rule edit, a tag toggle, AND the byte
- * reads the mirror never holds (`/attachments/:id`, `/img`) — reaches this proxy, which relays it
- * to `api.ohmail.app` over the same `CloudAuth.authedFetch` the mirror pulls with (single-flight
- * 401 refresh included) and returns the hosted answer verbatim.
- *
- * ── THE ECHO-AWAIT, AND WHY ANSWERING TOO EARLY BREAKS EVERY WRITE ────────────────────────────
- *
- * `apps/macos`'s `EngineSource` re-drains the local `/sync` immediately after each write
- * (`EngineSource.swift:361`). In Cloud mode that local `/sync` is fed by the mirror's pull, which
- * is asynchronous — so if the proxy answered a mutation the instant Cloud accepted it, the client's
- * re-drain would run BEFORE the mirror had pulled the change, find nothing, and render the write as
- * refused-then-later-applied: a flicker on every single mutation.
- *
- * So on a 2xx that echoes `X-Sync-Seq` (the hosted `change_log` seq of the change the mutation
- * emitted — contract §3.4), the proxy WAITS: it drives the mirror to pull until its cloud cursor
- * covers that seq (bounded, ~5s), and only then returns. The comparison is cloud-seq to
- * cloud-cursor; the local `change_log` is a DIFFERENT sequence and is not what is being waited on.
- * If the bound elapses first the answer still goes back — the write succeeded on Cloud regardless,
- * and the next poll will reconcile the mirror.
- *
- * ── OFFLINE IS A MODE, NOT A FAULT ────────────────────────────────────────────────────────────
- *
- * The mirror flips `online` false when a pull fails. While offline this proxy forwards NOTHING and
- * answers `503 offline_read_only`: the read surface keeps serving what the mirror holds, but a
- * write must not be silently dropped, and — the invariant — an offline write touches NO local row.
- * That is structural here: the proxy never writes to the local database at all (a write only lands
- * locally by being pulled back through the mirror), so a request refused before the forward leaves
- * the mirror byte-for-byte unchanged. A forward that itself fails to reach Cloud marks the mirror
- * offline and answers the same 503.
+ * The write-through proxy — a Cloud-mode install owns no mailbox, so every WRITE is against the
+ * HOSTED account, forwarded here with the bearer. Reads come from the mirror (`cloud-read.ts`);
+ * everything else — a move, a mark-read, a rule edit, and the byte reads the mirror never holds
+ * (`/attachments/:id`, `/img`) — relays to `api.ohmail.app` over the mirror's `authedFetch` and
+ * returns the answer verbatim. The echo-await matters because the client re-drains local `/sync`
+ * after each write: on a 2xx echoing `X-Sync-Seq` the proxy WAITS until the mirror's cloud cursor
+ * covers that seq (bounded ~5 s), or every mutation flickers as refused-then-applied. Offline is a
+ * MODE not a fault: it forwards nothing and answers `503 offline_read_only`, touching NO local row.
  */
 
 /** The relay carries this many routes. Read at construction so an empty projection cannot pass. */

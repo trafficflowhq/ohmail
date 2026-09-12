@@ -6,45 +6,14 @@ import type { LocalAi } from "./ai-provider.js";
 import type { LocalDb } from "./db.js";
 
 /**
- * THE TWO ROUTES A STANDALONE INSTALL SERVES FOR "SUGGEST FOR NEW SENDERS AS THEY ARRIVE".
- *
- *   GET /local/auto-suggest   is it on, since when, and is there a model to run it with
- *   PUT /local/auto-suggest   turn it on or off
- *
- * ── WHY THIS IS NOT `PATCH /consent/settings`, WHICH ALREADY WRITES THIS EXACT COLUMN ───────
- *
- * The column IS the same one — `account_settings.auto_suggest_at`, a timestamp rather than a
- * boolean because it is also the watermark the pass measures from. The write below is the same
- * function the hosted route calls (`setAutoSuggest`), so there is one implementation of what arming
- * this means and one place the timestamp is composed.
- *
- * What is NOT shared is the route, and that is the whole point. The hosted consent routes are an
- * onboarding surface — the seed review, the dormancy dial, the reset — and they are deliberately
- * absent from `localRoutes` because a standalone install has no account behind any of it. Mounting
- * them here to reach one column would drag the rest; adding an `autoSuggest` axis to
- * `PATCH /account/screening`, which IS mounted on both doors, would instead hand the HOSTED API a
- * second way to arm a metered spender. That route's cost class was chosen for what the flag CAUSES
- * rather than for what the handler costs, and a second door onto it is not a thing to open in
- * passing.
- *
- * So the routes live HERE, in the local engine, beside `localAiRoutes` and for the same stated
- * reason: a hosted host cannot mount them because it has no name for them. It is the argument
- * `UNMETERED_MAILBOX_ALLOWANCE` in `engine.ts` makes about the mailbox limit — a bypass the Cloud
- * host cannot import is a bypass it cannot take by accident.
- *
- * ── AND WHY THE MODEL'S STATE TRAVELS ON THE READ ───────────────────────────────────────────
- *
- * `modelReady` is not something the window may derive. The pass is a no-op without a verified
- * provider, so a switch offered with nothing behind it would store a flag that nothing acts on —
- * which is the failure the desktop's own settings work already refuses ("a control that does
- * nothing, which is worse than an absent one"). The ENGINE is the thing that would make the call,
- * so the engine is what answers whether it can, exactly as `/local/ai` does. A window that
- * inferred it from a provider name would go on saying yes after the key was revoked.
- *
- * Turning the switch on with no model is still ACCEPTED rather than refused, and the copy says so.
- * The flag is a standing consent and the model is a configuration; refusing to record the first
- * because the second is missing would mean somebody who sets their key afterwards silently gets
- * nothing. What the surface must not do is imply work is happening. See `DesktopAutoSuggest.tsx`.
+ * The two routes a standalone install serves for "suggest for new senders as they arrive". Not
+ * `PATCH /consent/settings`, which writes this exact column: the column IS the same
+ * (`account_settings.auto_suggest_at`, also the pass's watermark) and the write is the same
+ * `setAutoSuggest` the hosted route calls — what is NOT shared is the route, since the hosted consent
+ * routes are absent from `localRoutes` and an axis on a shared one would hand the hosted API a second
+ * door onto a metered spender. So they live here beside `localAiRoutes` (a bypass the Cloud host
+ * cannot import is one it cannot take by accident). `modelReady` travels on the read because the
+ * ENGINE makes the call; turning the switch on with no model is ACCEPTED, but the surface must not imply work.
  */
 
 /** What `GET /local/auto-suggest` answers, and what `PUT` echoes back. */

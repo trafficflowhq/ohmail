@@ -1,33 +1,14 @@
 #!/usr/bin/env node
 /**
  * verify-feeds.mjs — check both update feeds against the public keys committed in this tree.
- *
- *     node scripts/verify-feeds.mjs <repo-root> <assets-dir> <latest.json> <appcast-macos.xml>
- *
- * ── WHY THIS EXISTS ───────────────────────────────────────────────────────────────────────
- *
- * The apps are unsigned by any operating system's code-signing scheme, so the ONLY thing
- * standing between an updater and running whatever it was handed is the detached signature on
- * the payload. Two independent keypairs do that job — minisign for the clients that read
- * `latest.json`, Ed25519 for the ones that read the Sparkle appcast — and the matching PUBLIC
- * halves are committed here, in `apps/desktop/src-tauri/tauri.conf.json` and in
- * `Resources/Info.plist`.
- *
- * Nothing had ever checked that the two halves still agree. If a private signing key is rotated
- * without its committed public half, every installed client rejects the update — silently, and
- * for ever, because "signature did not verify" is not a thing a user is shown. This is that
- * check, and it deliberately trusts nothing the feed says about itself: the keys come out of the
- * tree, the payloads are the files on disk, and the signatures are the ones the feed carries.
- *
- * It is entirely offline and needs nothing installed. Both schemes are Ed25519 underneath, so
- * `node:crypto` is the whole dependency list — the point of a verifier is that a stranger can
- * run it against a download, and one that first wants a package tree is one nobody runs.
- *
- * ── EXIT ──────────────────────────────────────────────────────────────────────────────────
- *
- * Non-zero on any failure, and also on a feed that gives it nothing to check: a run that
- * verified no signatures at all must never be reported as a run that found nothing wrong.
- */
+ * (`node scripts/verify-feeds.mjs <repo-root> <assets-dir> <latest.json> <appcast-macos.xml>`.) The apps
+ * are unsigned by any OS code-signing scheme, so the ONLY thing between an updater and running whatever it
+ * was handed is the detached signature on the payload. Two keypairs do that job — minisign for clients
+ * reading `latest.json`, Ed25519 for those reading the Sparkle appcast — with the PUBLIC halves committed in
+ * `apps/desktop/src-tauri/tauri.conf.json` and `Resources/Info.plist`. Nothing had checked the halves still
+ * agree: rotating a private key without its committed public half makes every client reject updates
+ * silently and for ever. This trusts nothing the feed says about itself (keys from the tree, payloads the
+ * files on disk, signatures the ones the feed carries), is entirely offline (`node:crypto` only, both schemes Ed25519 underneath), and exits non-zero on any failure AND on a feed that gives it nothing to check (a run that verified no signatures must never read as one that found nothing wrong). */
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -54,24 +35,15 @@ function ed25519Key(raw) {
 }
 
 /**
- * minisign, as the updater's own verifier implements it.
- *
- * A minisign public key is base64 of: 2-byte algorithm, 8-byte key id, 32-byte key. A signature
- * is base64 of a small TEXT DOCUMENT whose second line is base64 of: 2-byte algorithm, 8-byte
- * key id, 64-byte signature. Algorithm `ED` means the signed message is BLAKE2b-512 of the file;
- * `Ed` means the file itself. The signer used here writes `ED`.
- *
- * ── THE DECODE ORDER, WHICH IS THE ONE THING TO GET RIGHT ─────────────────────────────────
- *
- * The config stores the public key as base64 of the WHOLE minisign key FILE — comment line and
- * all. So it must be decoded to TEXT FIRST and only then split into comment line plus key line.
- * Filtering comment lines off the base64 STRING instead is a silent no-op, because that string
- * has no newlines in it; decoding the lot then reads the file's own text as if it were key
- * bytes, so the first two characters become the "algorithm" and the next eight, `trusted `,
- * become the "key id" — 7472757374656420 — and every signature fails with a key-id mismatch
- * that looks exactly like a key rotation. The signature path below is the same two steps in the
- * same order, which is what makes the shape easy to get right once it is written down.
- */
+ * minisign, as the updater's own verifier implements it. A minisign public key is base64 of: 2-byte
+ * algorithm, 8-byte key id, 32-byte key; a signature is base64 of a small TEXT DOCUMENT whose second line is
+ * base64 of 2-byte algorithm, 8-byte key id, 64-byte signature. Algorithm `ED` means the signed message is
+ * BLAKE2b-512 of the file, `Ed` the file itself; the signer here writes `ED`. THE DECODE ORDER is the one
+ * thing to get right: the config stores the public key as base64 of the WHOLE minisign key FILE (comment
+ * line and all), so it must be decoded to TEXT FIRST and only then split into comment plus key line.
+ * Filtering comment lines off the base64 STRING is a silent no-op (it has no newlines), so decoding the lot
+ * reads the file's text as key bytes — the first two chars the "algorithm", the next eight (`trusted `,
+ * 7472757374656420) the "key id" — and every signature fails a key-id mismatch that looks like a rotation. The signature path below is the same two steps in the same order. */
 function minisignVerify(pubB64, sigB64, payload) {
   const comment = (l) => l.startsWith("untrusted comment:") || l.startsWith("trusted comment:");
   const firstKeyLine = (text) => text.split("\n").filter((l) => l && !comment(l))[0];
@@ -105,25 +77,16 @@ function minisignVerify(pubB64, sigB64, payload) {
     return { ok: false, why: `signature does not verify (alg ${sigAlg}, public key alg ${pkAlg})` };
   }
 
-  /* ── AND THE GLOBAL SIGNATURE, WHICH THIS SCRIPT WAS NOT CHECKING ──────────────────────────
-   *
-   * minisign signs TWO things and the check above covers one of them. The global signature on
-   * the last line covers `payload signature || trusted comment`, and `minisign-verify` — what
-   * the shipped client actually uses — verifies it unconditionally on the same call
-   * (0.2.5 `PublicKey::verify_ed25519`). Without it this verifier accepted a signature whose
-   * trusted comment had been edited after signing: the payload signature still matched, so both
-   * this check and the signed-name check below reported ok and the feed could be published,
-   * while every real client would decode the same file, fail the global signature and refuse the
-   * download — a platform stranded with nothing red anywhere in the release.
-   *
-   * That mattered specifically because the signed-name check below reads the trusted comment. A
-   * gate that reads a field it has not authenticated certifies the field's spelling and nothing
-   * about its provenance, and the comment there claiming it keeps the signed-name arrangement
-   * honest was untrue until this existed.
-   *
-   * Positional, like the client: line 2 is the trusted comment, line 3 the global signature. The
-   * signed message is the comment WITHOUT its `trusted comment: ` prefix, concatenated after the
-   * 64 raw signature bytes. */
+  /* AND THE GLOBAL SIGNATURE, WHICH THIS SCRIPT WAS NOT CHECKING. minisign signs TWO things and the check
+   * above covers one: the global signature on the last line covers `payload signature || trusted comment`,
+   * and `minisign-verify` (what the shipped client uses) verifies it unconditionally on the same call
+   * (0.2.5 `PublicKey::verify_ed25519`). Without it this accepted a signature whose trusted comment was
+   * edited after signing — the payload signature still matched, so this check and the signed-name check
+   * below reported ok and the feed could be published, while every real client fails the global signature
+   * and refuses the download (a platform stranded with nothing red). It matters because the signed-name
+   * check reads the trusted comment: a gate that reads a field it has not authenticated certifies its
+   * spelling and nothing about its provenance. Positional like the client: line 2 the trusted comment, line
+   * 3 the global signature, the signed message being the comment without its `trusted comment: ` prefix concatenated after the 64 raw signature bytes. */
   const sigLines = Buffer.from(sigB64.trim(), "base64").toString("utf8").split(/\r?\n/);
   if (sigLines.length < 4) {
     return { ok: false, why: "the signature file has fewer than four lines — no global signature to check" };
@@ -147,32 +110,16 @@ function minisignVerify(pubB64, sigB64, payload) {
   };
 }
 
-/* ── WHAT THE SIGNATURE SAYS THE PAYLOAD IS ───────────────────────────────────────────────────
- *
- * `minisignVerify` proves a signature over some bytes. It says nothing about WHICH RELEASE those
- * bytes are, and the manifest's own `version` field cannot answer that either, because the
- * manifest is not signed. That gap is a downgrade of every install available to anyone who can
- * write `latest.json` without holding the key: advertise a high version over an old release's
- * genuine artifact and every signature here still verifies.
- *
- * The release closes it by signing each artifact under the name `<version>@<asset>`, which puts
- * the version in the minisign TRUSTED COMMENT — covered by the global signature, so it is signed
- * metadata. `updater.rs::signed_release` reads it and refuses any payload it cannot read a
- * version out of.
- *
- * This is the check that keeps that arrangement honest, and it exists because the failure is
- * SILENT IN THE WRONG DIRECTION: if the signing step ever stops naming the version, clients do
- * not error, they refuse every update for ever and report "up to date". Nobody files that. So the
- * publish fails here instead.
- *
- * IT ONLY MEANS ANYTHING BECAUSE `minisignVerify` NOW CHECKS THE GLOBAL SIGNATURE. This reads the
- * trusted comment, and for a while nothing in this file authenticated it — so the check certified
- * a spelling and implied a provenance it had not established. See the global-signature block
- * above; the two belong together and neither is worth much alone.
- *
- * The name is compared as a whole string, restated rather than derived from the same expression
- * the workflow uses — a check that rebuilds the value the same way the producer did agrees with
- * the producer by construction. */
+/* WHAT THE SIGNATURE SAYS THE PAYLOAD IS. `minisignVerify` proves a signature over some bytes; it says
+ * nothing about WHICH RELEASE, and the manifest's `version` cannot answer either (the manifest is not
+ * signed) — a downgrade available to anyone who can write `latest.json` without the key (advertise a high
+ * version over an old release's genuine artifact and every signature still verifies). The release closes it
+ * by signing each artifact under `<version>@<asset>`, putting the version in the minisign TRUSTED COMMENT
+ * (covered by the global signature, so signed metadata); `updater.rs::signed_release` reads it and refuses a
+ * payload it cannot read a version from. This keeps that honest, and it exists because the failure is SILENT
+ * IN THE WRONG DIRECTION: if the signing step stops naming the version, clients refuse every update for ever
+ * and report "up to date". IT ONLY MEANS ANYTHING BECAUSE `minisignVerify` NOW CHECKS THE GLOBAL SIGNATURE
+ * (this reads the trusted comment, unauthenticated for a while). The name is compared as a whole string, restated rather than derived from the workflow's expression (a check that rebuilds the value the producer's way agrees by construction). */
 function signedName(sigB64) {
   const text = Buffer.from(sigB64, "base64").toString("utf8");
   /* BY POSITION, LINE 2 — the same line `minisign_verify::Signature::decode` reads and the same
@@ -206,51 +153,16 @@ if (!tauriPub) { console.error(`no plugins.updater.pubkey in ${confPath}`); proc
 const latest = JSON.parse(fs.readFileSync(latestPath, "utf8"));
 
 console.log(`\nlatest.json — version ${latest.version}`);
-/* EVERY PLATFORM, INDIVIDUALLY. The two darwin entries point at ONE archive and carry ONE
- * signature, so a loop that deduplicated by (url, signature) would verify four files, report
- * everything verified, and say nothing at all about a manifest that had lost a platform key. A
- * client whose key is missing does not error — it stops updating.
- *
- * ── THE LIST IS EXHAUSTIVE IN BOTH DIRECTIONS, AND THAT IS THE POINT ─────────────────────────
- *
- * A key missing from the manifest is a failure (the loop below), and a key in the manifest that is
- * not on this list is ALSO a failure (the loop after it). The second half is the unusual one and it
- * is deliberate: `latest.json` is remote code delivery, so every entry in it has to be an entry
- * somebody decided to publish. Extending this list is how that decision is recorded; loosening the
- * refusal would delete the record.
- *
- * ── WHY `linux-aarch64` IS HERE ──────────────────────────────────────────────────────────────
- *
- * Linux ships two artifacts, one per architecture, and unlike macOS neither runs on the other's
- * machine. `tauri-plugin-updater` composes its key as `{os}-{arch}` from the RUNNING binary —
- * `updater.rs::updater_arch` in 2.10.1 maps `cfg!(target_arch = "aarch64")` to the string
- * "aarch64" — and looks it up exactly, with no fallback to another architecture. So an arm64
- * install asks for this key and only this key; without it, every arm64 install would check for
- * updates, find nothing addressed to it, and stay where it is for ever.
- *
- * ── AND WHY THERE IS NO `-deb` KEY FOR EITHER ARCHITECTURE ──────────────────────────────────
- *
- * The same updater asks for `{os}-{arch}-{installer}` FIRST when the binary carries a bundle-type
- * marker, so a deb-installed build looks for `linux-x86_64-deb` / `linux-aarch64-deb` before the
- * plain key. Those are not published, on purpose: the fallback hands such a build an AppImage it
- * refuses to install (watched, at 0.12.1, on an Arch install), and the alternative — publishing a
- * `-deb` key so the updater shells out to dpkg — is an install path this project has no way to
- * exercise on any machine it builds from. A `.deb` install updates through the package manager it
- * came from, which is what the README, the CHANGELOG and the AUR package all say. Adding a key
- * here to make a red go green would publish an untested install path; the refusal below is the
- * thing that stops that happening quietly.
- *
- * ── AND WHY THE LIST DEPENDS ON THE VERSION ──────────────────────────────────────────────────
- *
- * This verifier is meant to be run by anyone against any download, including an OLD one, and the
- * release workflow can be dispatched by hand against an old tag to rebuild a feed that went
- * missing — the recovery path that exists so a stranded client is not stranded for ever. Releases
- * before 0.13.3 published no arm64 artifact at all, so demanding `linux-aarch64` of them would
- * report every one of those feeds as broken and refuse to regenerate any of them.
- *
- * The floor is therefore a version comparison rather than a fixed list, and it is asserted in BOTH
- * directions: at or above the floor the key is required, below it the key must be ABSENT. A
- * one-directional rule would let an old release quietly carry a key nothing built for it. */
+/* EVERY PLATFORM, INDIVIDUALLY. The two darwin entries point at ONE archive with ONE signature, so a loop
+ * deduplicating by (url, signature) would verify four files and say nothing about a manifest that had lost a
+ * platform key (a client whose key is missing does not error — it stops updating). The list is EXHAUSTIVE
+ * IN BOTH DIRECTIONS: a key missing from the manifest is a failure, and a key in the manifest not on this
+ * list is ALSO a failure (`latest.json` is remote code delivery, so every entry must be one somebody decided
+ * to publish; extending the list records the decision). `linux-aarch64` is here because Linux ships two
+ * artifacts and `tauri-plugin-updater` composes its key as `{os}-{arch}` from the RUNNING binary and looks
+ * it up exactly with no fallback (2.10.1 `updater.rs::updater_arch`), so an arm64 install without it stays
+ * put for ever. No `-deb` key: the updater asks `{os}-{arch}-{installer}` first, the AppImage fallback hands
+ * a deb build an AppImage it refuses (watched at 0.12.1), and a `.deb` updates through its package manager (README/CHANGELOG/AUR say so). The list depends on the VERSION (the workflow can rebuild an old tag's feed): required at/above a floor, ABSENT below it, both directions asserted (releases before 0.13.3 shipped no arm64). */
 const ARM_LINUX_FROM = [0, 13, 3];
 
 /** `1.2.3` → `[1, 2, 3]`, and anything that is not three numbers is not a version. */
@@ -269,21 +181,14 @@ const armLinux = atLeast(feedVersion, ARM_LINUX_FROM);
 console.log(`  (arm64 Linux ${armLinux ? "expected" : "not expected"} at ${latest.version} — the floor is ${ARM_LINUX_FROM.join(".")})`);
 
 /**
- * ── THE TWO RPMs, WHICH ARE ASSETS AND NOT FEED ENTRIES ──────────────────────────────────────
- *
- * From 0.16.0 the release attaches an `.rpm` per architecture for Fedora, RHEL and openSUSE. They
- * get NO platform key, for the reason the `-deb` paragraph above gives at length and word for
- * word: a package-manager install carries a bundle-type marker, asks for `linux-x86_64-rpm`
- * first, and publishing that key would make the updater hand an rpm to `dnf` on a machine whose
- * packages are owned by whatever installed them — an install path nothing here can exercise. An
- * `.rpm` install updates by installing the next `.rpm`, which is what the README says.
- *
- * They are still checked, and the section below the checksums is where. A file with no feed entry
- * is a file nothing in this verifier would otherwise read, which is exactly how the SHA256SUMS
- * this page promises could go a platform narrower than the release it describes — the failure
- * that would show up as a reader's `shasum --check` passing over eight files while nine were
- * published. Same version floor in both directions as the arm64 key, and for the same recovery
- * reason.
+ * THE TWO RPMs, WHICH ARE ASSETS AND NOT FEED ENTRIES. From 0.16.0 the release attaches an `.rpm` per
+ * architecture (Fedora, RHEL, openSUSE). They get NO platform key, for the `-deb` paragraph's reason word
+ * for word: a package-manager install carries a bundle-type marker, asks for `linux-x86_64-rpm` first, and
+ * publishing that key would make the updater hand an rpm to `dnf` on a machine whose packages are owned by
+ * whatever installed them. They are still checked, in the SHA256SUMS section below: a file with no feed entry
+ * is one nothing here would otherwise read, exactly how the SHA256SUMS could go a platform narrower than the
+ * release (a reader's `shasum --check` passing eight files while nine were published). Same version floor in
+ * both directions as the arm64 key, and for the same recovery reason.
  */
 const RPM_LINUX_FROM = [0, 16, 0];
 const rpmLinux = atLeast(feedVersion, RPM_LINUX_FROM);
@@ -350,34 +255,16 @@ for (const k of Object.keys(latest.platforms ?? {})) {
   if (!WANT.includes(k)) bad(`platforms.${k} is a key no shipped client asks for`);
 }
 
-/* ── THE ARCHITECTURE IN THE KEY AND THE ARCHITECTURE IN THE PAYLOAD ARE THE SAME ONE ────────
- *
- * Everything above proves a signature over some bytes. Nothing above proves those bytes RUN on the
- * machine that asked for them — a signature says who produced a file, never what it is for. The two
- * Linux entries name two different artifacts, and if they were swapped, or if both named one file,
- * every signature here would verify and every arm64 install would be handed an x86_64 binary. That
- * is not a hypothetical shape: the release workflow selected its Linux payload with a
- * `*.AppImage` glob ending in `head -1` for as long as there was only one, and a second AppImage
- * turns that into an arbitrary pick between the two.
- *
- * TWO CHECKS, BECAUSE THE FILENAME IS NOT EVIDENCE OF WHAT IS INSIDE IT.
- *
- *   1. The URL names the artifact this key's architecture is built as, by exact name. Restated
- *      here rather than derived from the manifest on purpose — a check that reads the value it is
- *      checking proves the value equals itself. These are the names `build.yml`'s header calls a
- *      contract, and this is the other party to it. It catches a manifest pointed at the wrong
- *      file, which is the mistake a glob makes.
- *
- *   2. The BYTES say the same thing. An AppImage is an ELF executable with a filesystem appended,
- *      and that outer ELF is the AppImage runtime — compiled for the architecture the payload is
- *      for. So the file itself carries the answer, in `e_machine` at offset 0x12 of its header,
- *      and it can be read with no tools at all. This catches what (1) cannot: two correctly-named
- *      files whose CONTENTS were swapped during a hand-assembled release, where every signature
- *      still verifies because the signatures are made after the swap.
- *
- * (1) alone was what this check did when it was first written, and the comment claimed it
- * established that an arm64 install gets bytes that run. It established that a NAME was right.
- * Nothing here may claim more than the thing it reads. */
+/* THE ARCHITECTURE IN THE KEY AND THE ARCHITECTURE IN THE PAYLOAD ARE THE SAME ONE. Everything above proves
+ * a signature over some bytes; nothing proves those bytes RUN on the machine that asked (a signature says
+ * who produced a file, never what it is for). The two Linux entries name two artifacts, and if swapped — or
+ * both naming one file — every signature verifies and every arm64 install is handed an x86_64 binary (not
+ * hypothetical: the release workflow selected its Linux payload with a `*.AppImage` glob ending in `head -1`).
+ * TWO CHECKS, because the filename is not evidence of what is inside: (1) the URL names the artifact this
+ * key's architecture is built as, by exact name (restated here, not derived from the manifest — a check that
+ * reads the value it checks proves it equals itself; these are `build.yml`'s contract names); (2) the BYTES
+ * say the same thing — an AppImage's outer ELF is compiled for the payload's architecture, in `e_machine` at
+ * offset 0x12, catching two correctly-named files whose CONTENTS were swapped. (1) alone was the first version and its comment claimed it established a running binary; it established a NAME was right. */
 const LINUX_PAYLOAD = {
   "linux-x86_64": { asset: "ohmail-linux-x86_64.AppImage", machine: 0x3e, arch: "x86-64" },
   "linux-aarch64": { asset: "ohmail-linux-aarch64.AppImage", machine: 0xb7, arch: "AArch64" },
@@ -426,21 +313,14 @@ for (const [k, want] of Object.entries(LINUX_PAYLOAD)) {
   }
 }
 
-/* ── THE INSTALLER SET, BY NAME ───────────────────────────────────────────────────────────────
- *
- * Everything above this line is reached THROUGH `latest.json`: a payload is checked because a
- * platform key points at it. That leaves every published installer with no feed entry unreadable
- * by this verifier — the four Linux packages — and "unreadable" is how a release ends up a whole
- * platform narrower than the changelog says while every signature verifies.
- *
- * So the set is written down. Each name is required at its own version floor and REFUSED below
- * it, the same two-directional shape as the arm64 key: a file nothing ever built for a release is
- * a file whose provenance nobody can state, and a release that silently dropped one is a download
- * page with a dead button.
- *
- * `ohmail.app.zip` is deliberately not here — it is retired (see the macOS archive's note in the
- * feed workflow) — and neither is the Windows `.msi`, which stays a deployment-tooling artifact
- * and is not attached.
+/* THE INSTALLER SET, BY NAME. Everything above is reached THROUGH `latest.json`: a payload is checked
+ * because a platform key points at it, which leaves every published installer with no feed entry (the four
+ * Linux packages) unreadable by this verifier — and "unreadable" is how a release ends up a whole platform
+ * narrower than the changelog while every signature verifies. So the set is written down: each name required
+ * at its own version floor and REFUSED below it (the arm64 key's two-directional shape), because a file
+ * nothing ever built for a release is one whose provenance nobody can state, and a silently dropped one is a
+ * download page with a dead button. `ohmail.app.zip` is deliberately not here (retired) and neither is the
+ * Windows `.msi` (a deployment-tooling artifact, not attached).
  */
 const REQUIRED_INSTALLERS = [
   ["ohmail.dmg", [0, 0, 0]],
@@ -474,32 +354,16 @@ for (const [name, from] of REQUIRED_INSTALLERS) {
   }
 }
 
-/* ── SHA256SUMS: THE CHECKSUMS THE DOWNLOAD PAGE PROMISES, CHECKED ───────────────────────────
- *
- * The releases publish a `SHA256SUMS` covering every binary asset, because the page that links
- * the downloads offers "notes and checksums" beside the sentence saying the builds are unsigned —
- * and for a long time the checksums did not exist. A file nobody verifies is decoration, and a
- * decorative checksum file beside an unsigned binary is worse than none: it invites a reader to
- * believe a check happened.
- *
- * So it is checked here, in the same run that checks the signatures, and against the same bytes.
- * The two claims are different and both are wanted: a signature says the project produced these
- * bytes, a checksum lets a reader confirm the bytes they hold are the ones the release names,
- * without any key material at all.
- *
- * REQUIRED at or above the version that started publishing it, optional below — the same shape as
- * the arm64 key, and for the same reason. A verifier that shrugs at a missing checksum file
- * certifies an incomplete current release: the file can be missing because an upload failed or a
- * download was truncated, and both of those are exactly what a reader runs this to find out.
- * What is NOT optional either way is the coverage: when the file is there, every payload a
- * signature was verified over must appear in it, or the checksum file is quietly narrower than
- * the release it claims to describe.
- *
- * CHECKSUM MATCHES ARE COUNTED SEPARATELY FROM SIGNATURES, and that is not bookkeeping. The
- * closing line reports how many SIGNATURES were verified, and the last guard in this file refuses
- * a run that verified none — a run that checked nothing must never read as a run that found
- * nothing wrong. Folding hashes into that counter would let a release with no valid signature at
- * all satisfy the guard on checksums alone, and would print a number that is not true. */
+/* SHA256SUMS: THE CHECKSUMS THE DOWNLOAD PAGE PROMISES, CHECKED. The releases publish a `SHA256SUMS`
+ * covering every binary asset, because the page offers "notes and checksums" beside the "builds are
+ * unsigned" sentence — and for a long time the checksums did not exist. A file nobody verifies is
+ * decoration, and a decorative checksum file beside an unsigned binary is worse than none (it invites a
+ * reader to believe a check happened). So it is checked here, in the same run and against the same bytes: a
+ * signature says the project produced these bytes, a checksum lets a reader confirm theirs without any key.
+ * REQUIRED at or above the version that started publishing it, optional below (the arm64 shape), but the
+ * COVERAGE is not optional — when present, every payload a signature was verified over must appear in it, or
+ * the file is quietly narrower than the release. Checksum matches are counted SEPARATELY from signatures: the
+ * closing line reports signatures verified and the last guard refuses a run that verified none, so folding hashes into that counter would let a release with no valid signature satisfy it on checksums alone. */
 const SUMS_FROM = [0, 13, 3];
 const sumsExpected = atLeast(feedVersion, SUMS_FROM);
 const sumsPath = path.join(assetsDir, "SHA256SUMS");

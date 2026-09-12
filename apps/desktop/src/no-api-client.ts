@@ -909,6 +909,18 @@ export const assertPasskey: (options: PublicKeyCredentialRequestOptionsJSON) => 
 export const ACCESS_REFUSED_STATUS = 402;
 export const ACCESS_REFUSED_CODE = "subscription_required";
 
+/**
+ * The confirmation page's shape, mirrored so shared `shell/` code resolves the name. The desktop
+ * serves no Cloud authorization ceremony at all — there is nothing here to fill this in.
+ */
+export interface AuthorizeRequestDTO {
+    clientId: string;
+    redirectUri: string;
+    scope: string;
+    address: string;
+    expiresIn: number;
+}
+
 export interface AccessRefusedFacts {
     reason: "payment_required" | "suspended";
     manageUrl?: string;

@@ -156,6 +156,16 @@ jobs:
           # It is gitignored and generated, so its presence is asserted rather than assumed: a
           # generator that wrote nothing and exited 0 would otherwise be found by Gradle.
           test -s apps/mobile/generated/phone-engine.js
+          # ── AND THE ENGINE THAT SHIPS IS THE ENGINE THAT WAS MEASURED ──────────────────────
+          # Everything known about this file — its size, which of this repository's sources are
+          # inside it, that it names no build machine, that it asks its host for exactly two
+          # native modules and for no construct only a server's database understands — is
+          # measured where it is built, and THIS is the tree that builds the one an APK carries.
+          # So the readings run here rather than being inherited: the engine is built twice more,
+          # compared byte for byte with itself and with the file this step just wrote, and the
+          # censuses run over the result. A difference stops the build instead of shipping an
+          # artifact nobody measured.
+          node apps/mobile/scripts/verify-phone-engine-repro.mjs
 
       - name: Generate the native Android project
         working-directory: apps/mobile
@@ -378,6 +388,11 @@ jobs:
           # It is gitignored and generated, so its presence is asserted rather than assumed: a
           # generator that wrote nothing and exited 0 would otherwise be found by Gradle.
           test -s apps/mobile/generated/phone-engine.js
+          # The engine that ships is the engine that was measured — two more builds compared byte
+          # for byte with each other and with the file above, then the size, dialect and sentinel
+          # censuses over the result. The APK this job hands to the sign job carries it, so the
+          # check belongs here as much as in the build check above.
+          node apps/mobile/scripts/verify-phone-engine-repro.mjs
 
       - name: Generate the native Android project
         working-directory: apps/mobile

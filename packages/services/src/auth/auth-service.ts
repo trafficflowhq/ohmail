@@ -18,7 +18,7 @@ import {
   pushSubscriptions,
 } from "@trafficflow/db/cloud";
 import type { ServiceContext } from "../context.js";
-import { ServiceError } from "../errors.js";
+import { OAuthCodeReplayed, ServiceError } from "../errors.js";
 import { consumeInvite, inviteError, normalizeInviteCode } from "../invites.js";
 import { reserveIpSlot } from "../ip-throttle.js";
 import { clampPageLimit } from "../pagination.js";
@@ -140,6 +140,79 @@ export const PASSWORD_MAX_LENGTH = 256;
  * what is plainly a bad request.
  */
 export const OAUTH_STATE_MAX_CHARS = 2048;
+
+/**
+ * The FOURTH `login_tokens` purpose — an open, unconfirmed native authorization.
+ *
+ * Mutually invisible by query, exactly as `desktop_link` and `email_verify` are: every reader of
+ * that table names its purpose, so a row written here can never be presented as a first factor, a
+ * mailed verification or a handoff code. The column it fills, `oauth_meta`, was created for this
+ * flow and had never been written by anything.
+ */
+export const OAUTH_AUTHORIZE_PURPOSE = "oauth_authorize";
+
+/**
+ * ONE sentence for every way an authorization request can fail to be one: unknown, expired,
+ * already confirmed, or belonging to another session. They are the same answer on purpose — told
+ * apart, the refusal says whether a given handle was ever real.
+ */
+const invalidAuthorizeRequest = (): ServiceError =>
+  new ServiceError("invalid_grant", 400, "that authorization request is no longer open");
+
+/** The authorization request as it is stored — the whole of what a confirmation may mint from. */
+interface AuthorizeRequestMeta {
+  clientId: string;
+  redirectUri: string;
+  codeChallenge: string;
+  scope: string;
+  state: string;
+  sessionId: string | null;
+  /** ISO, because `jsonb` has no `Date`; re-hydrated at the one point it is written to a row. */
+  twofaAt: string | null;
+}
+
+/**
+ * Read the stored request back, or answer `null`. Every field is checked for its TYPE rather than
+ * cast: this is a `jsonb` column, so what comes back is whatever was written — and a shape that
+ * drifted must fail the ceremony rather than reach `insert` as `undefined` and mint a code bound
+ * to nothing.
+ */
+function readAuthorizeMeta(raw: unknown): AuthorizeRequestMeta | null {
+  if (typeof raw !== "object" || raw === null) return null;
+  const m = raw as Record<string, unknown>;
+  const str = (v: unknown): string | null => (typeof v === "string" ? v : null);
+  const clientId = str(m.clientId);
+  const redirectUri = str(m.redirectUri);
+  const codeChallenge = str(m.codeChallenge);
+  const scope = str(m.scope);
+  const state = str(m.state);
+  if (clientId === null || redirectUri === null || codeChallenge === null || scope === null || state === null) {
+    return null;
+  }
+  return {
+    clientId, redirectUri, codeChallenge, scope, state,
+    sessionId: str(m.sessionId),
+    twofaAt: str(m.twofaAt),
+  };
+}
+
+/**
+ * An address, said enough to be recognised and not enough to be read out.
+ *
+ * The confirmation page's job is to answer "which account is this?" for somebody who is looking
+ * at their own screen — and that screen can be shared, projected or photographed, so the local
+ * part is reduced to its first character. The domain survives: an account is told apart from
+ * another by its domain far more often than by its first letter. An address with no local part
+ * to shorten is returned as it is rather than as a mask of nothing.
+ */
+export function maskAddress(address: string): string {
+  const at = address.lastIndexOf("@");
+  if (at <= 0) return address;
+  const local = address.slice(0, at);
+  const domain = address.slice(at);
+  if (local.length <= 1) return `${local}${"•".repeat(2)}${domain}`;
+  return `${local[0]}${"•".repeat(Math.min(local.length - 1, 3))}${domain}`;
+}
 
 function requirePassword(v: unknown): string {
   const password = requireField(v, "password");
@@ -1281,17 +1354,25 @@ export class AuthService extends SessionLifecycle {
     return this.establish(ctx, user, { method: "totp", kind, twofaAt: ctx.now() });
   }
 
+  // ONE TRANSACTION: factor removal is a compromise ceremony, so it takes the credential-change
+  // rule — every other session of this user goes with the factor, the caller's own stays. Without
+  // it a removed authenticator left every session it had minted live AND renewable; with it split
+  // across two transactions, a failed revoke would leave the secret gone and those sessions alive,
+  // which is the half the person actually asked for.
   async totpRemove(ctx: ServiceContext): Promise<void> {
     const userId = this.requireUser(ctx);
     await this.requireStepUp(ctx);
-    const db = asTx(ctx);
-    // "Cannot remove the last factor": TOTP may only go if a WebAuthn factor
-    // remains (recovery codes are a break-glass fallback, not a standalone factor).
-    const remainingWebauthn = (await this.webauthnCreds(db, userId)).length;
-    if (remainingWebauthn < 1) {
-      throw new ServiceError("unprocessable", 422, "cannot remove the last 2FA method");
-    }
-    await db.delete(totpSecrets).where(eq(totpSecrets.userId, userId));
+    await this.inTransaction(ctx, async (txCtx) => {
+      const db = asTx(txCtx);
+      // "Cannot remove the last factor": TOTP may only go if a WebAuthn factor
+      // remains (recovery codes are a break-glass fallback, not a standalone factor).
+      const remainingWebauthn = (await this.webauthnCreds(db, userId)).length;
+      if (remainingWebauthn < 1) {
+        throw new ServiceError("unprocessable", 422, "cannot remove the last 2FA method");
+      }
+      await db.delete(totpSecrets).where(eq(totpSecrets.userId, userId));
+      await this.revokeOtherSessions(txCtx, userId);
+    });
   }
 
   // Step-up re-verification — the inline ceremony behind a stale 5-minute window. `withStepUp`
@@ -1586,17 +1667,167 @@ export class AuthService extends SessionLifecycle {
   // ── Native OAuth2 (Authorization-Code + PKCE) ───────────────────────────────
 
   /**
-   * Mint the native authorization code. The gate is on the ROUTE (`GET /oauth/authorize` carries
-   * `stepUp: true`) and this method deliberately does not repeat it — `withStepUp` is where every
-   * step-up decision is made, and a second implementation is how the two drift; the flag is
-   * enforced on `raw` routes (`app.ts#RAW_PIPELINE`). What the session row IS read for is not the
-   * gate: `POST /oauth/token` asserts no factor of its own, so the session it establishes has no
-   * honest `last_twofa_at` to write — the authorizing session has the real one, and this is the
-   * only point where both are in scope. Reading a value to RECORD it is not re-implementing a
-   * gate: nothing below branches on it.
+   * OPEN the native authorization — and mint nothing anybody can spend.
+   *
+   * This used to BE the ceremony: a GET carrying whatever session cookie the browser sent came in,
+   * a code went out to the client's `redirect_uri`, and a link somebody else composed therefore
+   * authorized as the person who clicked it. So the arms are split: this one validates and writes
+   * the request down, {@link approveAuthorize} behind the session's CSRF token is the only thing
+   * that mints, and the browser gets a REQUEST HANDLE only its own session can confirm. The gate
+   * stays on the ROUTE (`stepUp: true`); the session row is read to carry `last_twofa_at` forward.
    */
-  async authorize(ctx: ServiceContext, q: AuthorizeQuery): Promise<{ redirect: string }> {
+  async authorize(ctx: ServiceContext, q: AuthorizeQuery): Promise<{ request: string; expiresIn: number }> {
     const userId = this.requireUser(ctx);
+    this.validateAuthorizeQuery(q);
+    const now = ctx.now();
+    const handle = generateToken();
+
+    // A mint SUPERSEDES, exactly as {@link issueDesktopLink} does and for its reasons: at most one
+    // open authorization request per user, so a second link clicked cannot leave a first one
+    // confirmable behind it, and `login_tokens` — which has no reaper — stays bounded by users
+    // rather than by clicks. `FOR UPDATE` on the OWNER row because delete-then-insert is not a
+    // supersede under READ COMMITTED, and the `users` row is what is certain to exist.
+    await this.inTransaction(ctx, async (txCtx) => {
+      const db = asTx(txCtx);
+      await db.select({ id: users.id }).from(users).where(eq(users.id, userId)).limit(1).for("update");
+      // The authorizing session's REAL factor time, read here because this is the only point where
+      // the browser session and the native one are both in scope. NULL resolves to a session that
+      // cannot clear step-up, which is the closed side.
+      const authorizing = ctx.sessionId
+        ? (await db.select({ lastTwofaAt: sessions.lastTwofaAt }).from(sessions)
+            .where(eq(sessions.id, ctx.sessionId)).limit(1))[0]
+        : undefined;
+      await db.delete(loginTokens).where(and(
+        eq(loginTokens.userId, userId),
+        eq(loginTokens.purpose, OAUTH_AUTHORIZE_PURPOSE),
+      ));
+      await db.insert(loginTokens).values({
+        userId,
+        tokenHash: hashToken(handle),
+        methods: [],
+        purpose: OAUTH_AUTHORIZE_PURPOSE,
+        // THE WHOLE REQUEST, server-side, so the confirmation mints what the page showed rather
+        // than what a body says. Nothing here is a secret: `code_challenge` is the public half of
+        // a PKCE pair and the rest is the client's own query. `sessionId` is the binding — the
+        // session that opened this is the only one that may close it.
+        oauthMeta: {
+          clientId: q.client_id,
+          redirectUri: q.redirect_uri,
+          codeChallenge: q.code_challenge,
+          scope: q.scope ?? "full",
+          state: q.state,
+          sessionId: ctx.sessionId ?? null,
+          twofaAt: authorizing?.lastTwofaAt ? authorizing.lastTwofaAt.toISOString() : null,
+        },
+        expiresAt: new Date(now.getTime() + this.cfg.oauthAuthorizeRequestTtlMs),
+      });
+    });
+    return { request: handle, expiresIn: Math.floor(this.cfg.oauthAuthorizeRequestTtlMs / 1000) };
+  }
+
+  /**
+   * What the confirmation page is about to authorize — a READ, and the absence of a write is the
+   * property: the page renders on load, and a consuming read would spend the request before
+   * anybody pressed anything. Bound twice over, to the user and to the opening session, so a
+   * handle that reached another tab shows nothing; the address comes back MASKED, because a page
+   * whose job is to say which account this is does not need to reprint the whole of it.
+   */
+  async readAuthorizeRequest(
+    ctx: ServiceContext, handle: unknown,
+  ): Promise<{ clientId: string; redirectUri: string; scope: string; address: string; expiresIn: number }> {
+    const userId = this.requireUser(ctx);
+    const db = asTx(ctx);
+    const row = await this.peekAuthorizeRequest(db, ctx, userId, handle);
+    if (!row) throw invalidAuthorizeRequest();
+    const user = await this.loadUser(db, userId);
+    return {
+      clientId: row.meta.clientId,
+      redirectUri: row.meta.redirectUri,
+      scope: row.meta.scope,
+      address: maskAddress(user.email),
+      expiresIn: Math.max(0, Math.floor((row.expiresAt.getTime() - ctx.now().getTime()) / 1000)),
+    };
+  }
+
+  /**
+   * CONFIRM, and mint. The single-use is the DATABASE's — one `UPDATE … consumed_at IS NULL …
+   * RETURNING`, the same statement shape every other ceremony here burns its credential with, so
+   * two presses of one button produce one code and not two. Every parameter comes off the STORED
+   * row and none off the body: the caller names which request it is confirming and nothing else,
+   * which is what makes "the page showed this and that is what was authorized" true rather than
+   * hoped for. The route carries the session, the CSRF token and `stepUp` — this is the gesture
+   * that used to be a GET.
+   */
+  async approveAuthorize(ctx: ServiceContext, b: { request?: unknown }): Promise<{ redirect: string }> {
+    const userId = this.requireUser(ctx);
+    const db = asTx(ctx);
+    const now = ctx.now();
+    const handle = typeof b?.request === "string" ? b.request.trim() : "";
+    // Bounded before `hashToken` runs over it, for `claimDesktopLink`'s reason: an unbounded body
+    // is free work, and a real handle is nowhere near 512.
+    if (handle.length === 0 || handle.length > 512) throw invalidAuthorizeRequest();
+
+    const [row] = await db.update(loginTokens)
+      .set({ consumedAt: now })
+      .where(and(
+        eq(loginTokens.tokenHash, hashToken(handle)),
+        eq(loginTokens.purpose, OAUTH_AUTHORIZE_PURPOSE),
+        eq(loginTokens.userId, userId),
+        isNull(loginTokens.consumedAt),
+        gt(loginTokens.expiresAt, now),
+      ))
+      .returning({ oauthMeta: loginTokens.oauthMeta });
+    if (!row) throw invalidAuthorizeRequest();
+    const meta = readAuthorizeMeta(row.oauthMeta);
+    // THE SESSION BINDING, checked after the burn on purpose: a handle presented by the wrong
+    // session is spent rather than left for a further attempt, and the caller learns only that
+    // this request is over. A request that recorded NO session is refused rather than admitted
+    // — "nobody in particular opened this" and "this session opened it" are different states,
+    // and only the second is a binding. The route makes the first unreachable (`stepUp` reads a
+    // session row), so this is the arm that keeps it that way if a caller ever appears.
+    if (!meta || meta.sessionId === null || meta.sessionId !== (ctx.sessionId ?? null)) {
+      throw invalidAuthorizeRequest();
+    }
+
+    const rawCode = generateToken();
+    await db.insert(oauthAuthCodes).values({
+      userId, clientId: meta.clientId, codeHash: hashToken(rawCode),
+      codeChallenge: meta.codeChallenge, codeChallengeMethod: "S256",
+      redirectUri: meta.redirectUri, scope: meta.scope,
+      twofaAt: meta.twofaAt === null ? null : new Date(meta.twofaAt),
+      expiresAt: new Date(now.getTime() + this.cfg.oauthCodeTtlMs),
+    });
+    const sep = meta.redirectUri.includes("?") ? "&" : "?";
+    return {
+      redirect: `${meta.redirectUri}${sep}code=${encodeURIComponent(rawCode)}&state=${encodeURIComponent(meta.state)}`,
+    };
+  }
+
+  /** An open request, read without spending it. Both bindings, so one caller states them once. */
+  private async peekAuthorizeRequest(
+    db: Tx, ctx: ServiceContext, userId: string, handle: unknown,
+  ): Promise<{ meta: AuthorizeRequestMeta; expiresAt: Date } | null> {
+    const raw = typeof handle === "string" ? handle.trim() : "";
+    if (raw.length === 0 || raw.length > 512) return null;
+    const [row] = await db.select({ oauthMeta: loginTokens.oauthMeta, expiresAt: loginTokens.expiresAt })
+      .from(loginTokens)
+      .where(and(
+        eq(loginTokens.tokenHash, hashToken(raw)),
+        eq(loginTokens.purpose, OAUTH_AUTHORIZE_PURPOSE),
+        eq(loginTokens.userId, userId),
+        isNull(loginTokens.consumedAt),
+        gt(loginTokens.expiresAt, ctx.now()),
+      )).limit(1);
+    if (!row) return null;
+    const meta = readAuthorizeMeta(row.oauthMeta);
+    if (!meta) return null;
+    // Both bindings, and an unbound request is not one — see `approveAuthorize`.
+    if (meta.sessionId === null || meta.sessionId !== (ctx.sessionId ?? null)) return null;
+    return { meta, expiresAt: row.expiresAt };
+  }
+
+  /** Everything the two arms agree a request must look like, said once. */
+  private validateAuthorizeQuery(q: AuthorizeQuery): void {
     const client = this.cfg.oauthClients[q.client_id];
     if (!client || !client.redirectUris.includes(q.redirect_uri)) {
       throw new ServiceError("invalid_grant", 400, "unknown client or redirect_uri");
@@ -1625,24 +1856,6 @@ export class AuthService extends SessionLifecycle {
         `state is ${q.state.length} characters; the limit is ${OAUTH_STATE_MAX_CHARS}`,
       );
     }
-    const db = asTx(ctx);
-    // The authorizing session's REAL factor time, carried to the session this code will
-    // establish. NULL when there is no session row to read — which the route's gate makes
-    // unreachable, and which resolves to a session that cannot clear step-up if it ever is.
-    const authorizing = ctx.sessionId
-      ? (await db.select({ lastTwofaAt: sessions.lastTwofaAt }).from(sessions)
-          .where(eq(sessions.id, ctx.sessionId)).limit(1))[0]
-      : undefined;
-    const rawCode = generateToken();
-    await db.insert(oauthAuthCodes).values({
-      userId, clientId: q.client_id, codeHash: hashToken(rawCode),
-      codeChallenge: q.code_challenge, codeChallengeMethod: "S256",
-      redirectUri: q.redirect_uri, scope: q.scope ?? "full",
-      twofaAt: authorizing?.lastTwofaAt ?? null,
-      expiresAt: new Date(ctx.now().getTime() + this.cfg.oauthCodeTtlMs),
-    });
-    const sep = q.redirect_uri.includes("?") ? "&" : "?";
-    return { redirect: `${q.redirect_uri}${sep}code=${encodeURIComponent(rawCode)}&state=${encodeURIComponent(q.state)}` };
   }
 
   async token(ctx: ServiceContext, b: TokenBodyAuthCode | TokenBodyRefresh): Promise<OAuthTokens> {
@@ -1667,7 +1880,23 @@ export class AuthService extends SessionLifecycle {
     const db = asTx(ctx);
     const row = (await db.select().from(oauthAuthCodes)
       .where(eq(oauthAuthCodes.codeHash, hashToken(b.code))).limit(1))[0];
-    if (!row || row.consumedAt || row.expiresAt.getTime() <= ctx.now().getTime()) {
+    // A SECOND PRESENTATION OF A REAL CODE, which is what RFC 6749 §4.1.2 asks two answers to and
+    // only got one of. Refusing is not enough: these codes travel through a redirect URI, so a code
+    // arriving twice is the signal somebody other than the client read it — and what the first
+    // presentation bought is held by a party we cannot name. It is withdrawn. The family IS the
+    // code row's id, so the revocation reaches exactly what this code minted.
+    //
+    // Judged BEFORE PKCE on purpose: a replay that cannot produce the verifier is still a replay,
+    // and waiting for a correct one would mean the case this defends against never triggers it.
+    if (row?.consumedAt) {
+      const revoked = await this.revokeFamily(db, row.id, ctx.now());
+      // The counts leave by the ERROR, which is the only seam this layer has to a logger: what the
+      // client is told is the ordinary `invalid_grant`, and the route writes the one line. The
+      // code is not a field on it and must not be — a log is read by more people than a database
+      // is, and a code in one is a code in a ticket.
+      throw new OAuthCodeReplayed(row.clientId, revoked.sessions, revoked.refreshTokens);
+    }
+    if (!row || row.expiresAt.getTime() <= ctx.now().getTime()) {
       throw new ServiceError("invalid_grant", 400, "invalid or expired authorization code");
     }
     // Bound to client_id + redirect_uri.
@@ -1702,12 +1931,14 @@ export class AuthService extends SessionLifecycle {
     const user = await this.loadUser(db, row.userId);
     // NO `method`, so no `2fa_verified` row: no factor was asserted HERE, and a code plus a PKCE
     // verifier is not one. `twofaAt` therefore INHERITS the authorizing session's real
-    // `last_twofa_at` off the code row instead of stamping `now` — the session this
-    // mints ages out of step-up on the schedule of the factor it actually descends from, rather
-    // than arriving with a full fresh window it never earned. NULL if the code carried none,
-    // which fails step-up closed.
+    // `last_twofa_at` off the code row instead of stamping `now`, so the session this mints ages
+    // out of step-up on the schedule of the factor it descends from. NULL fails step-up closed.
+    //
+    // `familyId` IS THE CODE ROW'S ID, and that is the whole linkage a replay needs: without it
+    // "revoke what this code issued" had nothing to name. A family id is an internal grouping key,
+    // never presented as a credential, so it costs nothing and makes the revocation exact.
     const est = await this.establish(ctx, user, {
-      method: undefined, kind: "macos", ip: ctx.ip, twofaAt: row.twofaAt,
+      method: undefined, kind: "macos", ip: ctx.ip, twofaAt: row.twofaAt, familyId: row.id,
     });
     return est.tokens!;
   }

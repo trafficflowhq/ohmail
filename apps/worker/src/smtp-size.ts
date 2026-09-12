@@ -6,34 +6,15 @@ import {
 } from "@trafficflow/core/adapters/imap";
 
 /**
- * THE SYNC HOST'S HALF of the `SIZE` back-fill. The rule itself is `learnSmtpMaxSize` in
- * `@trafficflow/core/adapters/imap`, beside the dial it decides about; what is host-specific is the
- * timeouts and the write, and that is all this file holds.
- *
- * ── AND IT DOES NOT WORK ON THE MANAGED DEPLOYMENT, WHICH IS MEASURED, NOT ASSUMED ──────────
- *
- * Railway blocks outbound SMTP submission. Measured 2026-08-22 on the production worker: twelve
- * distinct submission hosts every one of which answered `Connection timeout`, while the IMAP dial
- * to THE SAME HOST on 993 completed in about 300 ms in the very next log line. That is a port-level
- * block, not a provider problem, and no amount of timeout tuning here changes it.
- *
- * So the managed deployment learns these numbers from the API host instead, on a schedule
- * (`packages/api/src/smtp-size.ts`), where the send path's own SMTP dial already proves the egress
- * works. This path is KEPT rather than deleted because it is correct wherever egress is open — a
- * self-hosted worker in Docker on somebody's own network is exactly that case, and it is bounded to
- * one login per mailbox per process, so on a blocked host it costs one refused connection each and
- * logs it at `info`.
- *
- * ── AND IT DELIBERATELY DOES NOT WRITE MAIL 0063'S ATTEMPT STAMP ────────────────────────────
- *
- * The scheduled pass on the API host records `smtp_size_probed_at` / `smtp_size_probe_code` so a
- * permanently silent server is re-asked on a backoff instead of every day. This arm must NOT: on the
- * managed deployment every dial from here fails on a blocked port, so stamping would write
- * `unreachable` across the whole fleet and suppress the one host whose egress works — the back-fill
- * would converge on "nothing is probeable" while the path that functions sat idle. This arm's bound
- * stays the in-memory one-dial-per-mailbox-per-process guard, which is the right shape for a
- * long-lived process anyway.
- */
+ * THE SYNC HOST'S HALF of the `SIZE` back-fill. The rule is `learnSmtpMaxSize` in
+ * `@trafficflow/core/adapters/imap`; what is host-specific is the timeouts and the write. It does NOT work
+ * on the managed deployment (measured, not assumed): Railway blocks outbound SMTP submission — 2026-08-22,
+ * twelve submission hosts each answered `Connection timeout` while IMAP to the SAME host on 993 completed
+ * in ~300 ms. So the managed deployment learns from the API host instead (`packages/api/src/smtp-size.ts`),
+ * where the send path proves egress works. This path is KEPT because it is correct wherever egress is open
+ * (a self-hosted worker), bounded to one login per mailbox per process. It deliberately does NOT write mail
+ * 0063's `smtp_size_probed_at`/`smtp_size_probe_code`: here every dial fails on a blocked port, so stamping
+ * would write `unreachable` fleet-wide and suppress the one host whose egress works; its bound stays the in-memory one-dial-per-mailbox-per-process guard. */
 
 /** The production dial from this host: a real SMTP login on the TLS floor, on the worker's timeouts. */
 export const smtpSizeDial: SmtpSizeDial = (smtp) => verifySmtpLogin(smtp, WORKER_NET_TIMEOUTS);

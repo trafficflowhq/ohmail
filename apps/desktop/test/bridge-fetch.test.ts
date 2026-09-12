@@ -1,7 +1,9 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { HttpAdapter } from "@ohmail/client-engine";
 
-import { bridgeFetch, createEngineAdapter, engineStatus } from "../src/bridge-fetch.js";
+import {
+  bridgeFetch, createEngineAdapter, engineConfigure, engineLogout, engineStatus,
+} from "../src/bridge-fetch.js";
 import { installOfflineGuard, isShellCommandChannel } from "../src/offline-guard.js";
 
 /**
@@ -263,5 +265,91 @@ describe("the offline guard", () => {
     } finally {
       globalThis.fetch = original;
     }
+  });
+});
+
+/**
+ * ══════════════════════════════════════════════════════════════════════════════════════════
+ *  ONE DOOR GESTURE AT A TIME — a sign-out and a door switch may not overlap
+ * ══════════════════════════════════════════════════════════════════════════════════════════
+ *
+ * `Shell::logout` reads the door configuration once and acts on that snapshot: it asks the engine
+ * to clear the credential of the door it read, and only then removes `config.json`. A door switch
+ * landing inside that window REPLACES the engine, so the clear goes to the new door and the old
+ * door's sealed mailbox password is still on disk under a sign-out reported as done. It is two
+ * deliberate gestures in the same second — a Settings panel with both on it — and the strongest
+ * credential this product holds locally.
+ *
+ * Both commands are invoked from `bridge-fetch.ts` and from nowhere else (no other module names
+ * either string), so the window's latch is the whole of the reachable path. The Rust shell's own
+ * re-read is a second line of defence and is owed on the cargo-host lane.
+ */
+describe("a sign-out and a door switch are one gesture at a time", () => {
+  /**
+   * A shell that holds the FIRST command until the test says so and answers every later one at
+   * once. Only the first is held deliberately: a shell that held them all would make a latch's
+   * absence read as a hung test rather than as the second command reaching the shell, and a
+   * timeout is not a measurement of this property.
+   */
+  function heldShell(): { asked: Asked[]; release: () => void } {
+    let release = (): void => {};
+    const gate = new Promise<void>((r) => { release = r; });
+    let first = true;
+    const asked = shellAnswering(async () => {
+      if (first) { first = false; await gate; }
+      return {};
+    });
+    return { asked, release: () => release() };
+  }
+
+  it("REFUSES a door switch while a sign-out is still out, and names the one in flight", async () => {
+    const held = heldShell();
+    const out = engineLogout();
+
+    await expect(engineConfigure({ mode: "cloud" } as never)).rejects.toThrow(/signing out/);
+    expect(
+      held.asked.map((a) => a.command),
+      "the switch reached the shell, which is the snapshot this latch exists to protect",
+    ).toEqual(["engine_logout"]);
+
+    held.release();
+    await out;
+  });
+
+  it("REFUSES a sign-out while a door switch is still out", async () => {
+    // The other order, because the snapshot is taken on whichever arrives first and a latch that
+    // only held one way would leave the same window open from the other side.
+    const held = heldShell();
+    const out = engineConfigure({ mode: "cloud" } as never);
+
+    await expect(engineLogout()).rejects.toThrow(/changing the door/);
+    expect(held.asked.map((a) => a.command)).toEqual(["engine_configure"]);
+
+    held.release();
+    await out;
+  });
+
+  it("POSITIVE CONTROL — one after the other is ordinary, and a refusal does not latch it shut", async () => {
+    /* Without this the latch is satisfied by one that never opens again — a Settings panel whose
+       Sign out works once per launch. The refusal above happens first deliberately: the `finally`
+       that clears the latch is what makes the gesture after it possible at all. */
+    const asked = shellAnswering(() => ({}));
+
+    await engineLogout();
+    await engineConfigure({ mode: "cloud" } as never);
+    await engineLogout();
+
+    expect(asked.map((a) => a.command))
+      .toEqual(["engine_logout", "engine_configure", "engine_logout"]);
+  });
+
+  it("a gesture that THREW releases the latch too", async () => {
+    // The shell refuses a sign-out it could not complete (`LOGOUT_UNCHANGED`), and that refusal is
+    // the state a person retries from. A latch left shut by it would turn one refused sign-out
+    // into a door nobody can leave for the rest of the launch.
+    shellAnswering(() => { throw new Error("the engine refused to clear the stored login"); });
+
+    await expect(engineLogout()).rejects.toThrow(/refused to clear/);
+    await expect(engineLogout()).rejects.toThrow(/refused to clear/);
   });
 });

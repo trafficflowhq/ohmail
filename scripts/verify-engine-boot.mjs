@@ -1,40 +1,13 @@
 /**
- * verify-engine-boot.mjs — the engine BOOTS from the bundle layout, and DIES when the journal is
- * not where the layout puts it.
- *
- * ── THE INVARIANT NOTHING ELSE CHECKS ─────────────────────────────────────────────────────
- *
- * `@ohmail/db-mail` composes the migration journal as `dirname(import.meta.url)/../drizzle`, and
- * esbuild rewrites `import.meta.url` to the OUTPUT file's own URL. So a bundle at
- * `<root>/bin/ohmail-engine.mjs` looks for its `.sql` at `<root>/drizzle` — one level ABOVE it.
- * Inside a packaged app that is `<resources>/engine/drizzle`, beside `<resources>/engine/bin/`.
- *
- * This relationship is invisible to every test in the repository: the vitest suites run the engine
- * from `apps/sidecar/src` in the workspace, where the same expression happens to resolve to the
- * source journal. The ONLY place it is exercised as it ships is here — boot the bundle from the
- * layout the packager produces, and watch it both ways.
- *
- * ── WATCHED FAILING, NOT ASSUMED ──────────────────────────────────────────────────────────
- *
- * A boot test that only ever asserts success proves the happy path and nothing about the guard: a
- * bundle that resolved its journal from an absolute build path baked in at compile time would pass
- * it while shipping broken. So the second half MOVES the journal aside and requires the boot to
- * fail in migrate() — `start_failed` with `ENOENT`, and no `serving`. If that half does not go
- * red, the first half is worthless, and this script exits non-zero saying so.
- *
- * ── HOW A HEALTHY BOOT IS RECOGNISED ──────────────────────────────────────────────────────
- *
- * A live pid is not a running engine. The engine announces `serving` on stderr once PGlite has
- * migrated and the mirror is open — reached by reading that line, never by observing the process
- * stayed alive. It is fed a dead IMAP port and no stored password, so it opens the local mirror,
- * logs `stored_login_absent` → `serving`, and waits: it never has to reach the network to prove
- * the thing under test, which is that the SCHEMA came up from the journal at the right path.
- *
- *   node scripts/verify-engine-boot.mjs [engineRoot]
- *
- * `engineRoot` holds `bin/ohmail-engine.mjs` and `drizzle/` — `build/engine` by default, or the
- * `engine/` directory inside a packaged app's resources, which is the same two-directory shape.
- */
+ * verify-engine-boot.mjs — the engine BOOTS from the bundle layout, and DIES when the journal is not where
+ * the layout puts it. `@ohmail/db-mail` composes the migration journal as
+ * `dirname(import.meta.url)/../drizzle`, and esbuild rewrites `import.meta.url` to the OUTPUT file's URL, so
+ * a bundle at `<root>/bin/ohmail-engine.mjs` looks for its `.sql` at `<root>/drizzle` — one level ABOVE (in
+ * a packaged app, `<resources>/engine/drizzle`). This is invisible to every vitest suite (they run the
+ * engine from `apps/sidecar/src` where the same expression resolves to the source journal); the ONLY place
+ * it is exercised as it ships is here. WATCHED FAILING, not assumed: a success-only boot test would pass a
+ * bundle that baked an absolute build path, so the second half MOVES the journal aside and requires the boot
+ * to fail in `migrate()` (`start_failed`/`ENOENT`, no `serving`), or the first half is worthless. A healthy boot is recognised by reading `serving` on stderr (a live pid is not a running engine), fed a dead IMAP port and no password so it never reaches the network. `node scripts/verify-engine-boot.mjs [engineRoot]` (holds `bin/ohmail-engine.mjs` and `drizzle/`, `build/engine` by default). */
 import { spawn } from "node:child_process";
 import { mkdtempSync, readdirSync, renameSync, rmSync } from "node:fs";
 import { existsSync } from "node:fs";

@@ -12,105 +12,16 @@ import {
 import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import { carryDialect, dialect, type Dialect } from "@trafficflow/db/dialect";
 
-/* ══════════════════════════════════════════════════════════════════════════════════════════
-   RE-ROUTING THE OHBOX BACKLOG — the automated mail `people_only` was turned on too late to catch
-   ══════════════════════════════════════════════════════════════════════════════════════════
-
-   ── WHAT IS WRONG, AND WHY THE LIVE ENGINE CANNOT FIX IT ────────────────────────────────────
-
-   Migration 0042 gave the account a posture and the engine (`rules.ts#evaluateRules`) demotes NEW mail under
-   it: a `seeded-from-sent`/`promoted` allow rule that placed automated-shaped mail in the Ohbox now
-   answers `source: "policy"` → Reads/Receipts. But a rule is consulted at ARRIVAL and never again,
-   so the mail already filed into the Ohbox under the old lenient default stays there — measured at
-   roughly three quarters of a real Ohbox, most of it one seeded sender's newsletters and receipts. This pass is
-   the durable, one-time-per-opt-in correction, and it is the whole reason the first user's #1 complaint
-   ("everything outside an actual human is in my Ohbox") is not answered by the posture alone.
-
-   ── IT RE-EVALUATES THROUGH THE REAL ENGINE, THEN ACTS PER CLASS. IT DOES NOT INVERT. ───────
-
-   The tempting shortcut — "seeded rule + automated headers ⇒ Reads" — is a SECOND router, and a
-   second router drifts from the first. It is also wrong on the day it ships: a human writing
-   personally from a seeded sender, a genuine security alert, a `manual` "keep this in my Ohbox"
-   rule, a deny — all must stay put, and every one of those distinctions already lives in
-   `evaluateRules`. So each candidate goes back through the SAME `evaluateRules` the live path uses,
-   with the account's resolved posture, and the pass acts on its answer keyed on `source` — because
-   the measured Ohbox holds THREE misfiled populations, not one, and a single-class pass moved just
-   ONE message on the real account:
-
-     · `source: "policy"` — the inferred-admission demotion (`seeded-from-sent`/`promoted` allow rule
-       whose Ohbox placement WE chose). Move to the engine's Reads/Receipts. `basis: "policy"`.
-     · `source: "header"` — a CONTACT with no rule, whom the live router now header-routes bulk→Reads /
-       money→Receipts. Replaying that placement over mail the legacy router filed BEFORE that branch
-       existed is not a new consent judgment. Move to the engine's destination. `basis: "header"`.
-     · `source: "screener"` — the ~400-row mass: no rule, NOT a contact, admitted only by the legacy
-       migration's blanket default. This answer is NOT re-run through the header heuristic (that is the
-       pre-gate consent bypass `rules.ts#headerHeuristic` forbids). Instead the STRONGER
-       `migrationBulkPlacement` floor decides (`List-Unsubscribe` REQUIRED plus a corroborating
-       marker), and a SENSITIVITY-flagged row is NEVER a candidate — that is `sensitive-rescreen.ts`'s
-       jurisdiction and this pass does not compete with it. `basis: "migration_bulk"`.
-     · `source: "rule"` and `source: "unclear"` — the user's own decision, or the ambiguous middle.
-       Kept, unconditionally.
-
-   The demotable ALLOWLIST (`seeded-from-sent`/`promoted`, never `manual`/`migrated`) is the engine's,
-   reused, never re-encoded here; the `migration_bulk` floor is the ONE new marker rule and it lives in
-   core beside `isBulkSend`, not here. The move GRANTS NO ADMISSION under any basis: no `rules` row, no
-   `matchedRuleId`, nothing the learning path reads — the next message from that sender still screens.
-
-   ── AND ACROSS ALL FOUR CLASSES: SENSITIVITY KEEPS, IT NEVER DEMOTES ────────────────────────
-
-   A SENSITIVITY-flagged row (`sensitivity_category` set OR `no_ai`) is KEPT in the Ohbox and never
-   demoted to Reads/Receipts, whatever its class. That is exactly what the LIVE router does —
-   `pipeline.ts:563-567` forces INBOX for `sensitivity.sensitive && !deniedByConsent` so a login code,
-   password reset or security alert reaches the user and is never buried — and this pass must match it
-   or it re-buries the very mail sensitivity exists to protect. It is therefore ONE guard over every
-   class (`policy`/`header`/`screener`/`migration_bulk`), in {@link ohboxTidyPass}, not one bolted onto
-   each: the first version of this pass honored it in the `screener` branch alone and silently demoted
-   flagged `policy`/`header` mail. Re-screening the flagged STRANGERS is `sensitive-rescreen.ts`'s job;
-   this pass only leaves them where they are.
-
-   ── USER ALWAYS WINS — AND THE SIGNAL FOR IT IS THE CHANGE LOG, NOT `last_set_by` ───────────
-
-   The user-always-wins rule: a message the user has placed is not ours to move. Two writers set
-   `folder_state.desired_folder = 'INBOX'`: this pipeline (at ingest) and the USER (an in-app drag,
-   `message-service.ts#move`). BOTH stamp `last_set_by = 'us'`, so that column cannot tell them
-   apart — it only catches a move the user made in their OWN mail client (`'external'`). What DOES
-   record an in-app drag back to the Ohbox is a `change_log` row `op='move', meta->>'to'='INBOX'`,
-   and the change log is never pruned. So the candidate query excludes any message that carries one
-   (`change_log_move_to_inbox_idx`, mail 0043). The confound — the pipeline ALSO writes such a row at
-   ingest for mail it pulled into the Ohbox from a NON-Ohbox arrival folder — is deliberately left
-   in: it can only make the pass SKIP a message (over-exclusion fails LENIENT), never demote one the
-   user placed, and the measured backlog arrived in the Ohbox with no such row. Mail moved into the
-   Ohbox by a rule-retro pass is likewise left behind, for the same safe reason.
-
-   The concurrent race (a user drag committing WHILE the pass pages) takes BOTH the lock and a second
-   ask, and WHICH of them carries it depends on the ordering. A drag that commits BEFORE the SELECT is
-   visible to the `NOT EXISTS`. One that commits while the USER waits behind us re-writes
-   `desired = 'INBOX'` on top, so their placement is still the last word. But when the PASS is the one
-   waiting — `FOR UPDATE OF folder_state` parked on the row the user's move holds — the woken SELECT
-   admits the row anyway: its sub-selects are re-checked under the statement's ORIGINAL snapshot and
-   cannot see the `change_log` row that commit just wrote. This pass demoted mail the user had put
-   back for exactly that reason, so the exclusions are re-asked in a statement of their own
-   ({@link stillCandidates}). All three orderings live in `ohbox-tidy.pg.test.ts`; the third is held
-   until the pass is provably parked, because otherwise the timing picks which one runs.
-
-   ── IT WRITES AN INTENT. IT NEVER OPENS IMAP. ──────────────────────────────────────────────
-
-   Organize-in-place: organization lands in real folders, but only the worker's reconcile pass opens a
-   connection to apply it, through the one code path that moves mail crash-safely and holds the
-   mailbox's lease. This pass writes `folder_state.desired_folder` plus a `move` change and stops;
-   an `audit_log` row with an inverse records the demotion so the mailbox's owner has an undo. Every input the
-   decision needs is already on disk. `ohbox-tidy.no-imap.test.ts` fails if a client is constructed.
-
-   ── THE PACING IS THE RECONCILER'S, NOT THIS PASS'S ────────────────────────────────────────
-
-   `OHBOX_TIDY_WRITES_PER_CYCLE` bounds how much desired state this pass may CREATE per account per
-   cycle, and the reason is downstream and identical to `rule-retro.ts`: `reconcileFolders` walks an
-   unbounded `listPendingFolderStates` serially, one IMAP move per row, inside the sync cycle, and
-   `beat()` is the last statement of that cycle. Queue a few hundred moves in one cycle and the cycle
-   misses its heartbeat and pages an operator — for a real couple-hundred-row backlog, a real risk. So the
-   backlog drains across cycles; the budget + the cursor + the marker-written-last make a capped run
-   resume exactly where it stopped.
-   ══════════════════════════════════════════════════════════════════════════════════════════ */
+/* RE-ROUTING THE OHBOX BACKLOG — mail `people_only` (migration 0042) was turned on too late to catch.
+ * The engine (`rules.ts#evaluateRules`) demotes NEW mail under the posture, but a rule is consulted at
+ * ARRIVAL only, so mail already filed stays. Each candidate goes back through the SAME `evaluateRules`,
+ * acted on by `source`: `policy` (seeded-from-sent/promoted allow rule) and `header` (a contact) move to
+ * Reads/Receipts; `screener` strangers are decided by the stronger `migrationBulkPlacement` floor
+ * (`List-Unsubscribe` required), never the header heuristic; `rule`/`unclear` are kept. SENSITIVITY
+ * (`sensitivity_category`/`no_ai`) is KEPT across every class, one guard, matching `pipeline.ts:563-567`.
+ * User always wins via a `change_log` `op='move', meta->>'to'='INBOX'` row (`change_log_move_to_inbox_idx`,
+ * mail 0043), re-asked under `FOR UPDATE OF folder_state` (`stillCandidates`). It writes an intent +
+ * `audit_log` undo, never IMAP (`ohbox-tidy.no-imap.test.ts`); `OHBOX_TIDY_WRITES_PER_CYCLE` paces `reconcileFolders`. */
 
 /**
  * Rows examined per transaction — the same 100 as the sibling passes, and for the same reason:
@@ -156,15 +67,12 @@ export interface OhboxTidyDeps {
    */
   force?: boolean;
   /**
-   * The authserv-ids a MAILBOX's own provider signs `Authentication-Results` with — per mailbox,
-   * for parity with the live path, though this pass acts only on demote-shaped answers:
-   * a `"fail"` verdict makes the engine answer `screener`, which this pass leaves alone, so a
-   * populated set can only KEEP a row in the Ohbox, never move one out. Production passes
-   * `adapters/drizzle-repo.ts#mailboxProviderAuthservIds`; the pass caches per mailbox per run.
-   *
-   * REQUIRED, not optional-with-an-empty-default, for the reason `rule-retro.ts` gives: for this
-   * input the absent-config default is the dangerous branch. A caller that has decided to trust
-   * nothing types `async () => NO_TRUSTED_AUTHSERV_IDS`.
+   * The authserv-ids a MAILBOX's provider signs `Authentication-Results` with — per mailbox, for parity
+   * with the live path, though this pass acts only on demote-shaped answers (a `"fail"` verdict makes the
+   * engine answer `screener`, which is left alone, so a populated set can only KEEP a row, never move one
+   * out). Production passes `adapters/drizzle-repo.ts#mailboxProviderAuthservIds`; cached per mailbox per
+   * run. REQUIRED, not optional-with-empty-default, for `rule-retro.ts`'s reason: the absent-config
+   * default is the dangerous branch. A caller trusting nothing types `async () => NO_TRUSTED_AUTHSERV_IDS`.
    */
   trustedAuthservIdsFor: (db: Tx, mailboxId: string) => Promise<ReadonlySet<string>>;
   /**
@@ -262,17 +170,13 @@ function isSensitivityFlagged(row: TidyRow): boolean {
 }
 
 /**
- * WHAT THIS PASS DOES WITH ONE ENGINE ANSWER — the per-class engine→pile mapping, in ONE place.
- *
- * Keyed on `decision.source`. Every branch either returns a demotion to a VISIBLE, REVERSIBLE pile
- * (Reads/Receipts) or `null` to keep the message where it is. It never returns the Screener or
- * Quarantine — a backfill demotes within the allow side, it does not re-screen (that is
- * `sensitive-rescreen.ts`). See the file header for why the Ohbox holds three misfiled populations.
- *
- * This mapping is SENSITIVITY-AGNOSTIC on purpose. The sensitivity carve-out is a SINGLE guard in the
- * caller ({@link ohboxTidyPass}) applied across every class, so it cannot drift branch by branch — the
- * shape the review found broken, where only the `screener` branch honored it and flagged
- * `policy`/`header` mail was demoted out from under a login code the live router keeps in the Ohbox.
+ * WHAT THIS PASS DOES WITH ONE ENGINE ANSWER — the per-class engine→pile mapping, in ONE place. Keyed on
+ * `decision.source`. Every branch either returns a demotion to a VISIBLE, REVERSIBLE pile (Reads/Receipts)
+ * or `null` to keep the message; it never returns the Screener or Quarantine (a backfill demotes within
+ * the allow side, it does not re-screen — that is `sensitive-rescreen.ts`). SENSITIVITY-AGNOSTIC on
+ * purpose: the carve-out is a SINGLE guard in {@link ohboxTidyPass} across every class, so it cannot
+ * drift branch by branch — the shape the review found broken, where only `screener` honored it and
+ * flagged `policy`/`header` mail was demoted out from under a login code the live router keeps.
  */
 function tidyPlacement(msg: NormalizedMessage, decision: RuleDecision): TidyMove | null {
   switch (decision.source) {
@@ -440,27 +344,16 @@ export async function ohboxTidyPass(
           };
         }
 
-        // ── THE KNOWLEDGE THE DECISION RESTS ON, RE-ASKED PER PAGE ───────────────────────────
-        //
-        // These used to be read ONCE per run, above the loop, behind a comment claiming *"this pass
-        // is the only writer of the state it decides against, so a per-page re-read would cost
-        // queries to observe a change that cannot happen"*. **It can happen and there are six
-        // writers.** `rules` is written by the API's rule editor (`routes/rules.ts`), and the
-        // `contacts` set behind `knownSenders` by the Screener's decide path
-        // (`screener-service.ts`), the Junk window (`junk-window.ts`), the profile import, the
-        // consent seed and the ingest pipeline's own contact learning. So a run that started before
-        // a user deleted a rule went on tidying mail out of the Ohbox under it, page after page,
-        // and the comment was the reason nobody looked.
-        //
-        // Read INSIDE the page transaction and bound to `tx`, after the settings row is locked, so
-        // the knowledge is exactly as fresh as the posture check above it and the candidate set
-        // below it. The old comment's counter-argument — that two pages of one run would then decide
-        // under different knowledge — is not a cost, it is the REQUIREMENT: the settings row is
-        // already re-read per page for precisely that reason, and cached rules made the decision
-        // half-fresh in a way no reader could see. Two indexed reads per hundred rows.
-        // `carryDialect`, not the bare handle: a driver's transaction object is a fresh object and
-        // does not inherit the connection's dialect brand, so a repository built straight from `tx`
-        // refuses on its first locking statement.
+        // THE KNOWLEDGE THE DECISION RESTS ON, RE-ASKED PER PAGE. `rules`/`knownSenders` used to be read
+        // ONCE per run behind a claim that "this pass is the only writer of the state it decides against".
+        // It is not: `rules` is written by the API rule editor (`routes/rules.ts`) and `contacts` (behind
+        // `knownSenders`) by the Screener decide path (`screener-service.ts`), the Junk window
+        // (`junk-window.ts`), the profile import, the consent seed and the ingest pipeline's contact
+        // learning — so a run that started before a user deleted a rule went on tidying under it. Read
+        // INSIDE the page transaction, bound to `tx`, after the settings row is locked, so the knowledge is
+        // as fresh as the posture check above and the candidates below. `carryDialect`, not the bare handle:
+        // a `tx` object lacks the connection's dialect brand, so a repo built from `tx` refuses its first
+        // locking statement.
         const pageRepo = makeDrizzleRepo(
           carryDialect(db, tx) as unknown as Parameters<typeof makeDrizzleRepo>[0],
         );
@@ -508,22 +401,14 @@ export async function ohboxTidyPass(
             continue;
           }
 
-          // ── SENSITIVITY KEEP — ONE GUARD, EVERY CLASS. This is `pipeline.ts:563-567`. ────────────
-          //
-          // The live router force-keeps a sensitivity-flagged message in the Ohbox
-          // (`sensitivity.sensitive && !deniedByConsent ? "INBOX"`), so a login code / password reset
-          // / security alert reaches the user and is never buried. This pass must do the same for
-          // EVERY class it can move — `policy`, `header`, `screener` and `migration_bulk` — not the
-          // `screener` branch alone, which was the whole of the divergence the review found.
-          //
-          // The `!deniedByConsent` half of the live predicate is satisfied by construction here: a
-          // denied row (`source: "rule"` → Quarantine/Screened) maps to a `null` placement and was
-          // already kept above, so by this point `placement` is always an ALLOW-side demotion
-          // (Reads/Receipts) — never a deny pile. So keeping every flagged row that would otherwise
-          // move is exactly `sensitive && !deniedByConsent ⇒ keep`, and it never frees a sender the
-          // user denied. Re-screening the flagged strangers is `sensitive-rescreen.ts`'s job; this
-          // pass only leaves them in place. `sensitivityExcluded` is the safety margin: rows this
-          // guard held back that would otherwise have been filed to Reads/Receipts.
+          // SENSITIVITY KEEP — ONE GUARD, EVERY CLASS. This is `pipeline.ts:563-567`. The live router
+          // force-keeps a flagged message in the Ohbox (`sensitivity.sensitive && !deniedByConsent ?
+          // "INBOX"`) so a login code / password reset / security alert is never buried, and this pass
+          // must match it for EVERY movable class (`policy`, `header`, `screener`, `migration_bulk`), not
+          // the `screener` branch alone (the whole divergence the review found). The `!deniedByConsent`
+          // half holds by construction: a denied row (`source: "rule"`) maps to `null` and was kept above,
+          // so by here `placement` is always an ALLOW-side demotion — keeping every flagged row that would
+          // move is exactly `sensitive && !deniedByConsent ⇒ keep`. `sensitivityExcluded` is the margin.
           if (isSensitivityFlagged(c)) {
             sensitivityExcluded++;
             kept++;
@@ -653,64 +538,15 @@ function isOwed(
 }
 
 /**
- * ONE page of the Ohbox this pass may reconsider — LOCKED FOR UPDATE, oldest id first.
- *
- * ── THE CANDIDATE SET ──────────────────────────────────────────────────────────────────────
- *
- *  · `folder_state.desired_folder = 'INBOX'` — it is in the Ohbox. Also the whole of the idempotency:
- *    a row this pass has already demoted is desired into Reads/Receipts and drops out, so a second
- *    run writes nothing whether or not the marker is set.
- *  · `folder_state.last_set_by = 'us'` — a row set `'external'` is a placement the USER made in their
- *    own mail client, which the reconciler already refuses to revert. **`'peer'` is excluded here
- *    too, and that is a decision rather than an omission:** it is another install of this account's
- *    placement, seen by a reader, and this pass runs unbidden — admitting it would make a promotion
- *    re-file the other install's mail in bulk, which is the shape the import hold refuses.
- *    `rule-retro` is the only pass that admits `'peer'`, because a person has to press for it.
- *  · the mailbox is not `disabled` — a disabled mailbox is one Cloud no longer organizes (the lease
- *    was lost, or the user left), and nothing will ever reconcile a `pending` row written for it.
- *  · NO move-to-Ohbox change row — the "user always wins" guard (see the file header). An in-app drag
- *    back into the Ohbox is the one intent `folder_state` cannot express and the change log can.
- *
- * ── THE FOUR USER-INTENT EXCLUSIONS ────────────────────────────────────────────────────────
- *
- * The sibling passes' rule, one direction over: a message the user has TRIAGED, replied to, or ruled
- * on is not ours to move. Copied from `sensitive-rescreen.ts` because they are the same predicates:
- *  1. no `message_states` row other than `none` (reply-later / set-aside / bubbled-up / muted);
- *  2. no `drafts` row replying to it;
- *  3. no DECIDED `approvals` row (`status <> 'pending'` — a pending one is OURS, unanswered);
- *  4. no message in the same thread from the account's own address (they replied from their client).
- *
- * ── AND THE ONE THAT IS DELIBERATELY ABSENT ────────────────────────────────────────────────
- *
- * `sensitive-rescreen.ts` also excludes any sender carrying an enabled `rules` row. This pass does
- * NOT, and the reason is the whole point of the widened per-class handling: the candidate set is the
- * WHOLE Ohbox, because the misfiled backlog is three populations, not one — inferred-admission allow
- * rules (`policy`), rule-less CONTACTS (`header`), and senders with no rule who are not contacts at
- * all, admitted only by the legacy migration's blanket default (`migration_bulk`). Excluding
- * rule-carrying senders would drop the `policy` population — the largest — entirely. The
- * `manual`/`migrated`/deny exemption is therefore NOT a candidate predicate; it is `evaluateRules`
- * answering `source: "rule"`, which {@link tidyPlacement} keeps. READ is likewise not excluded, on the
- * siblings' reasoning: reading is not consent, and the Ohbox is full of read automated mail that is
- * exactly what this exists to move.
- *
- * SENSITIVITY is not a candidate predicate either — it is read onto {@link TidyRow} and applied by a
- * SINGLE KEEP guard in {@link ohboxTidyPass} that spans EVERY class. A flagged row (`sensitivity_category`
- * set OR `no_ai`) is held in the Ohbox rather than demoted, whether its class is `policy`, `header`,
- * `screener` or `migration_bulk` — because the live router keeps sensitive mail in the Ohbox too
- * (`pipeline.ts:563-567` forces INBOX for `sensitivity.sensitive && !deniedByConsent`), so an OTP,
- * password reset or security alert reaches the user and is never buried in Reads/Receipts. Matching
- * that behavior is the point; re-screening the flagged STRANGERS is `sensitive-rescreen.ts`'s job. (An
- * earlier note here claimed `policy`/`header` "stay byte-identical to the live router" while the guard
- * excluded only `migration_bulk` — that WAS the defect: the tidy demoted flagged `policy`/`header` mail
- * the live router keeps.)
- *
- * ── THE LOCK ───────────────────────────────────────────────────────────────────────────────
- *
- * `FOR UPDATE OF folder_state` — `of` the one table, because `message_bodies` is on the NULLABLE side
- * of a LEFT JOIN (Postgres refuses to lock it) and locking `messages` would serialize against
- * ordinary ingest for no benefit. This lock is what makes the concurrent user-drag race safe: see the
- * file header.
- */
+ * ONE page of the Ohbox this pass may reconsider — LOCKED FOR UPDATE, oldest id first. Candidates:
+ * `folder_state.desired_folder = 'INBOX'` (in the Ohbox, and the idempotency — a demoted row is desired
+ * into Reads/Receipts and drops out); `last_set_by = 'us'` (`'external'` is the user's own client; `'peer'`
+ * is another install's placement, excluded here — only `rule-retro`, gated on a press, admits it); mailbox
+ * not `disabled`; NO move-to-Ohbox `change_log` row (the "user always wins" guard). Four user-intent
+ * exclusions (from `sensitive-rescreen.ts`): no non-`none` `message_states`, no `drafts` reply, no DECIDED
+ * `approvals` (`status <> 'pending'`), no same-thread own-address reply. An enabled `rules` row is NOT
+ * excluded (that would drop the `policy` population), nor is READ. SENSITIVITY is read onto {@link TidyRow}
+ * and applied by the single KEEP guard in {@link ohboxTidyPass}. `FOR UPDATE OF folder_state` (not `message_bodies`). */
 async function selectCandidates(
   t: Tx,
   opts: { accountId: string; ownAddresses: readonly string[]; limit: number; afterId: string | null },
@@ -800,20 +636,14 @@ function candidateFilters(d: Dialect, opts: { accountId: string; ownAddresses: r
        where a.message_id = ${messages.id} and a.status <> 'pending'
     )`,
   ];
-  /* -- 4 — THE USER replied from their own mail client. A MACHINE'S REPLY IS NOT THAT ---------
-   *
-   * Guarded on a non-empty list (`in ()` is a syntax error) and a non-NULL thread.
-   *
-   * The `and not autoReplyByUsWhere(...)` is the whole of the fix: this clause asks "did they
-   * already deal with this", and the away responder answering on their behalf is not them
-   * dealing with it. Without it, every message the responder replied to became permanently
-   * untouchable by this pass — bulk mail pinned in the Ohbox by the fact that we ourselves had
-   * answered it, which is the shape this was reported as: Reads mail arriving in the Ohbox.
-   *
-   * It NARROWS the exclusion, so it can only ever admit more candidates, never move a message
-   * this pass would previously have left alone. A thread carrying the person's OWN reply still
-   * excludes the message, byte for byte as before — `auto-reply-not-engagement.pg.test.ts` pins both
-   * halves, and the positive half is the one that matters: a real reply must still win.
+  /* 4 — THE USER replied from their own mail client. A MACHINE'S REPLY IS NOT THAT.
+   * Guarded on a non-empty list (`in ()` is a syntax error) and a non-NULL thread. The
+   * `and not autoReplyByUsWhere(...)` is the whole fix: this clause asks "did they already deal with
+   * this", and the away responder answering on their behalf is not them dealing with it. Without it every
+   * message the responder replied to became permanently untouchable — bulk mail pinned in the Ohbox
+   * because we answered it (the reported shape: Reads mail arriving in the Ohbox). It NARROWS the
+   * exclusion, so it can only admit more candidates; a thread carrying the person's OWN reply still
+   * excludes the message, and `auto-reply-not-engagement.pg.test.ts` pins both halves.
    */
   if (opts.ownAddresses.length > 0) {
     filters.push(sql`not exists (
@@ -834,20 +664,14 @@ function candidateFilters(d: Dialect, opts: { accountId: string; ownAddresses: r
 }
 
 /**
- * WHICH OF THE ROWS WE NOW HOLD LOCKED ARE STILL OURS TO MOVE — RE-ASKED IN A NEW STATEMENT.
- *
- * `FOR UPDATE OF folder_state` serializes the user's in-app drag against this pass, but it does NOT
- * make the drag VISIBLE to the SELECT that waited on it: the row lock is released by the user's
- * COMMIT, and the re-check that admits the woken row evaluates the sub-selects under the statement's
- * original snapshot — so the `change_log` move-to-INBOX row the user just wrote is not seen, the row
- * stays a candidate, and this pass demotes mail the user had put back. Measured on real Postgres: the
- * pass parked on the lock for six seconds (`wait_event_type = 'Lock'`) and then moved the message.
- *
- * A SEPARATE statement takes a NEW snapshot under READ COMMITTED, which does see the commit that
- * freed the lock. It needs no lock of its own — we already hold these rows, so nobody else can change
- * them before this transaction ends, and its answer therefore holds for the rest of the page. Rows it
- * no longer admits are counted KEPT rather than dropped, so the walk, the cursor and `examined` are
- * exactly what they were.
+ * WHICH OF THE LOCKED ROWS ARE STILL OURS TO MOVE — RE-ASKED IN A NEW STATEMENT. `FOR UPDATE OF
+ * folder_state` serializes the user's in-app drag against this pass but does NOT make the drag VISIBLE to
+ * the SELECT that waited on it: the lock releases on the user's COMMIT, and the re-check admitting the
+ * woken row evaluates its sub-selects under the statement's original snapshot — so the `change_log`
+ * move-to-INBOX row the user just wrote is unseen, the row stays a candidate, and this pass demotes mail
+ * the user put back (measured: parked six seconds on the lock, then moved it). A SEPARATE statement takes
+ * a NEW snapshot under READ COMMITTED, which sees the freeing commit; it needs no lock (we already hold
+ * these rows). Rows it no longer admits are counted KEPT, so walk, cursor and `examined` are unchanged.
  */
 async function stillCandidates(
   t: Tx,

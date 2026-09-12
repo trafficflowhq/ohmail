@@ -175,8 +175,10 @@ export async function readMailboxAllowance(
   }
   const opts = input;
 
-  // (1) The lock. Everything after this statement is serialized per account. `accounts` always has
-  // this row — the session was resolved through it — so the lock is never silently absent.
+  // (1) The lock — the SAME row and the same mode {@link lockAccountRow} takes, and it must stay
+  // that way: the doors take it at the head so this gate never acquires it second. Raw rather than
+  // through the dialect seam because this gate is Postgres-only by construction — a device install
+  // runs `UNMETERED_MAILBOX_ALLOWANCE`, which reads no count and takes no lock.
   await tx.select({ id: accounts.id }).from(accounts).where(eq(accounts.id, accountId)).for("update");
 
   // (2) The count, read under that lock.

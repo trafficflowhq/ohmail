@@ -1,62 +1,14 @@
 #!/usr/bin/env node
 /**
- * verify-engine-repro.mjs — build the engine twice and refuse if the two results differ.
- *
- *     D=$(mktemp -d) && (cd $D && npm install --no-save esbuild@0.24.0)
- *     OHMAIL_ESBUILD_FROM=$D node scripts/verify-engine-repro.mjs
- *
- * ── WHAT THIS IS FOR ──────────────────────────────────────────────────────────────────────
- *
- * The download offers a claim anyone is invited to check: the engine inside it was built from
- * the source in this repository. That check is only worth making if building the same source
- * twice gives the same bytes — otherwise a rebuild that does not match tells you nothing,
- * because it never would have. So this is the gate under that claim: same commit, same
- * dependency tree, same bundler, two builds, byte-identical output, or the build fails.
- *
- * It compares the WHOLE shipped layout and not only the bundle. What the app carries is the
- * directory as a unit — the one-file engine in `bin/`, the migration journal beside it, and the
- * vendored storage package under `bin/node_modules/` — so that is the thing whose bytes have to
- * be a function of the commit. The two copied trees are where a dependency-tree drift or a lost
- * file mode would show up, and hashing ten megabytes twice costs less than a second.
- *
- * ── WHAT IT DOES NOT CLAIM, STATED PLAINLY ───────────────────────────────────────────────
- *
- * **Reproducible for a fixed environment, not across every possible one.** The bundle is not
- * minified — a stack trace out of a shipped engine is worth more than the bytes — so it carries
- * a path comment above each of the 800-odd modules it contains, and those paths are the paths
- * the module resolver actually found. Two package managers lay a dependency tree out
- * differently (`node_modules/<pkg>/…` against a store with the version in the directory name),
- * so a build against one layout and a build against the other differ by construction, in
- * comments, for the same source.
- *
- * That is not a defect to normalise away. The two ways to erase those comments are to minify —
- * refused, deliberately — or to post-process the bundle after esbuild wrote it, which would
- * mean the shipped file is no longer the bundler's own output and would cost exactly the
- * property this gate exists to establish. So the honest statement is the environment-qualified
- * one: **rebuild from this repository the way its CI does — `npm ci`, then the pinned bundler —
- * and you get the published bytes.** That is the environment a stranger checking a download
- * rebuilds in, and it is the environment this gate runs in.
- *
- * Two other things are outside the comparison, both by construction rather than by an
- * exclusion rule:
- *
- *   · **The bundler's metafile.** It is written BESIDE the layout, not inside it, so a walk
- *     rooted at the layout never sees it. It also could not be compared as-is: it records where
- *     the output was written, and the two builds here write to two different scratch
- *     directories.
- *   · **Modification times.** The comparison is over content and file mode. A build that
- *     stamped a timestamp INTO a file is exactly what this catches; the timestamps the
- *     filesystem keeps about the files are not part of what ships.
- *
- * ── WHY IT REFUSES ON AN EMPTY LAYOUT ────────────────────────────────────────────────────
- *
- * Two empty directories compare equal. A gate that passes because it found nothing is worse
- * than no gate, so the comparison is preceded by a floor: the three things the layout must
- * contain, and a file count. `buildEngine` also falls back to an environment variable when it
- * is given no output directory, which would put both builds in ONE place and have this compare
- * a tree against itself — permanently green. Both output roots are therefore passed
- * explicitly, and asserted to be different directories, before anything is built.
- */
+ * verify-engine-repro.mjs — build the engine twice and refuse if the two results differ
+ * (`OHMAIL_ESBUILD_FROM=<dir> node scripts/verify-engine-repro.mjs`). The download offers a claim anyone can
+ * check: the engine inside it was built from the source here — worth making only if building the same source
+ * twice gives the same bytes, so this is the gate under that claim (same commit, tree, bundler, two builds,
+ * byte-identical, or fail). It compares the WHOLE shipped layout (the one-file engine in `bin/`, the journal
+ * beside it, the vendored storage under `bin/node_modules/`), where a dependency-tree drift or lost file
+ * mode shows up. What it does NOT claim: reproducible for a FIXED environment, not every one — the bundle is
+ * not minified (a stack trace is worth more), so it carries a path comment per module and two package
+ * managers lay a tree out differently, so the honest statement is environment-qualified (`npm ci` then the pinned bundler, the way its CI does). The metafile (written beside the layout) and modification times are outside the comparison by construction. It refuses on an EMPTY layout (two empty dirs compare equal): a three-item floor and a file count, and both output roots passed explicitly and asserted different. */
 import { createHash } from "node:crypto";
 import { lstatSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";

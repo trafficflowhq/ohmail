@@ -282,3 +282,123 @@ export async function realPgAvailable(url: string = PG_TEST_URL): Promise<boolea
   if (process.env[REQUIRE_PG_ENV] === "1") throw new Error(`${REQUIRE_PG_ENV}=1 and ${sentence}`);
   return false;
 }
+
+/**
+ * THE MIGRATION SETUP BUDGET — why a hook that builds a database names its own timeout.
+ *
+ * Building one means replaying both journals, and that grows with every migration added:
+ * measured from empty at load 8, 3.1 s, of which the 104 mail entries are 2.2 s and the trigram
+ * indexes 18 ms — the JOURNAL is the cost. vitest's default `hookTimeout` is 10 s, and a hook
+ * that crosses it fails as `Hook timed out in 10000ms` with no test name attached, which reads
+ * as a defect in the code under test and is not one. The margin must beat a BUSY machine.
+ */
+export const MIGRATED_DB_SETUP_BUDGET_MS = 180_000;
+
+/**
+ * The same for the teardown. `DROP DATABASE` waits for the connections the run is still letting
+ * go of, and an interrupted drop is worse than a slow one: it leaves the database INVALID, and
+ * every later run on that server fails with "cannot connect to invalid database".
+ */
+export const MIGRATED_DB_TEARDOWN_BUDGET_MS = 120_000;
+
+/** A database this run built and this run removes. */
+export interface ThrowawayDb {
+  /** The database name — printable; the URL is not. */
+  readonly name: string;
+  /** Its URL on the same server {@link PG_TEST_URL} names. */
+  readonly url: string;
+  /**
+   * CREATE it, then run `migrate` against it. A throw from either drops the database before it
+   * rethrows, so a refused setup leaves nothing on the cluster. Whatever `migrate` resolves to is
+   * the caller's business — `setupProdDatabase` answers with a report, `runMigrations` with
+   * nothing — so the handle waits for it and reads none of it.
+   */
+  create(migrate: (url: string) => Promise<unknown>): Promise<void>;
+  /**
+   * Remove it. Idempotent and unconditional, so a teardown may call it when {@link create} never
+   * ran, threw, or was ABANDONED by a hook timeout — the case a `finally` inside `create` cannot
+   * reach, because the hook's promise is rejected while the work behind it is still in flight.
+   */
+  drop(): Promise<void>;
+}
+
+/** A database name is an identifier, never caller text: the value is interpolated into DDL. */
+const LOGICAL_NAME = /^[a-z][a-z0-9_]{0,40}$/;
+
+/** An admin session on the maintenance database, with the role's own deadlines cleared. */
+async function adminSession(): Promise<ReturnType<typeof postgres>> {
+  const u = new URL(PG_TEST_URL);
+  u.pathname = "/postgres";
+  const admin = postgres(u.toString(), { max: 1, onnotice: () => { /* quiet */ } });
+  // `ROLE_DEFAULT_TIMEOUTS` reaches this session, and a `statement_timeout` that interrupts the
+  // DROP below is what leaves `pg_database.datconnlimit = -2` for every later run on this server.
+  await admin`set statement_timeout = 0`;
+  await admin`set lock_timeout = 0`;
+  return admin;
+}
+
+/** `datconnlimit = -2` marks a database whose `DROP` was cut short. */
+async function stateOf(admin: ReturnType<typeof postgres>, name: string): Promise<"absent" | "present" | "invalid"> {
+  const rows = await admin`SELECT datconnlimit FROM pg_database WHERE datname = ${name}`;
+  if (rows.length === 0) return "absent";
+  return Number((rows[0] as { datconnlimit: number }).datconnlimit) === -2 ? "invalid" : "present";
+}
+
+/**
+ * A THROWAWAY DATABASE for one test file, allocated without touching the server.
+ *
+ * The handle is made at collection time and the I/O happens in the hooks, which is what lets the
+ * teardown drop a database whose setup hook timed out: the name exists before the create does.
+ * Pair it with {@link MIGRATED_DB_SETUP_BUDGET_MS} on the setup hook and
+ * {@link MIGRATED_DB_TEARDOWN_BUDGET_MS} on the teardown.
+ */
+export function throwawayDb(logical: string): ThrowawayDb {
+  if (!LOGICAL_NAME.test(logical)) {
+    throw new Error(`[pg] "${logical}" is not usable as a database name — lower-case, digits and _`);
+  }
+  const name = `${logical}_${createHash("sha256")
+    .update(`${process.pid}:${Date.now()}:${Math.random()}`).digest("hex").slice(0, 12)}`;
+  const u = new URL(PG_TEST_URL);
+  u.pathname = `/${name}`;
+  const url = u.toString();
+
+  const removeWith = async (admin: ReturnType<typeof postgres>): Promise<void> => {
+    let last: unknown;
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      // FORCE terminates whatever is still attached, so the drop cannot become a hung fixture.
+      try { await admin.unsafe(`DROP DATABASE IF EXISTS "${name}" WITH (FORCE)`); } catch (e) { last = e; }
+      if (await stateOf(admin, name) === "absent") return;
+    }
+    throw new Error(`[pg] ${name} survived three DROP attempts${last instanceof Error ? `: ${last.message}` : ""}`);
+  };
+
+  return {
+    name,
+    url,
+    async create(migrate) {
+      const admin = await adminSession();
+      try {
+        if (await stateOf(admin, name) !== "absent") await removeWith(admin);
+        await admin.unsafe(`CREATE DATABASE "${name}"`);
+      } finally {
+        await admin.end({ timeout: 5 });
+      }
+      try {
+        await migrate(url);
+      } catch (e) {
+        // A refused setup leaves nothing behind: the next run is not looking at this one's half-
+        // built schema, and a cluster does not accumulate one database per red.
+        await this.drop().catch(() => { /* the original failure is the one worth reporting */ });
+        throw e;
+      }
+    },
+    async drop() {
+      const admin = await adminSession();
+      try {
+        await removeWith(admin);
+      } finally {
+        await admin.end({ timeout: 5 });
+      }
+    },
+  };
+}

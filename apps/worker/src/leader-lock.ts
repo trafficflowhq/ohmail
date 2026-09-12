@@ -30,15 +30,12 @@ export class LockLostError extends Error {
 export interface LeaderLock {
   release(): Promise<void>;
   /**
-   * Resolves (never rejects) the moment the lock is KNOWN to be lost — the dedicated
-   * session closed, or a heartbeat proved another backend now owns it. It never settles
-   * on the happy path, and it does NOT settle for a deliberate `release()`.
-   *
-   * Why this exists (split brain): the advisory lock is SESSION-scoped, so Postgres frees
-   * it the instant the connection drops — a network blip, a `pg_terminate_backend`, a
-   * failover. postgres.js then silently RECONNECTS on the next query, so without this the
-   * process keeps reporting `leader: true` and keeps syncing while a standby legitimately
-   * acquires the lock and syncs the SAME accounts.
+   * Resolves (never rejects) the moment the lock is KNOWN to be lost — the dedicated session closed, or a
+   * heartbeat proved another backend now owns it. It never settles on the happy path, and NOT for a
+   * deliberate `release()`. Why (split brain): the advisory lock is SESSION-scoped, so Postgres frees it
+   * the instant the connection drops (a network blip, a `pg_terminate_backend`, a failover), and
+   * postgres.js then silently RECONNECTS on the next query — so without this the process keeps reporting
+   * `leader: true` and syncing while a standby legitimately acquires the lock and syncs the SAME accounts.
    */
   readonly lost: Promise<LockLostError>;
   /** Heartbeat: is the lock still held by the exact backend that acquired it? */

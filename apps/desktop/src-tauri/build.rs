@@ -30,6 +30,11 @@ const WINDOW_COMMANDS: &[&str] = &[
     // mail, so the client decides and the shell performs.
     "notify",
     "set_badge",
+    // The window's own performance numbers — startup marks, open/switch/search percentiles, long
+    // frames — written into the engine's log beside `renderer_vitals`. The window reports an
+    // object of NUMBERS and `vitals.rs` composes the line from a fixed vocabulary, so no text the
+    // page holds can leave through it.
+    "ui_vitals",
     // The one place this window may reach the WEB, and it may not name it: the command
     // takes a key and `engine.rs`'s table decides which of a handful of ohmail.app pages
     // that means.

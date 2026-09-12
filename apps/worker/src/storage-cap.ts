@@ -2,25 +2,15 @@ import { UNMETERED_STORAGE_CAP, type Logger, type StorageCap } from "@trafficflo
 import { accessOf, type EntitlementsComposition } from "@trafficflow/db";
 
 /**
- * THE ORGANIZER'S STORAGE-CAP RESOLVER — the one composition that turns the entitlements port's
- * answer into the `storageCap` every `runSyncCycle` must be handed.
- *
- * Resolved once per account per TTL, on `screeningFor`'s exact caching discipline (30 s: a plan
- * change takes effect within a cycle or two, without a billing read per mailbox per cycle), and
- * threaded in as a value — the engine never reads billing.
- *
- * ── THE TWO FAIL-OPEN ARMS ARE DIFFERENT DECISIONS, both deliberate ─────────────────────────
- *
- *  · a `null` limit is UNBOUNDED — an unmetered install, or an account whose operator sets no
- *    cap. Mapped to the typed unmetered value and CACHED like any other answer.
- *  · a READ FAULT resolves to unmetered FOR THIS RESOLUTION ONLY and is NOT cached: a transient
- *    blip must never start withholding a paying customer's mail bodies, and must not stick.
- *    The exposure is bounded by the fault's own duration — at worst a few cycles of storage the
- *    cap would have declined, on an account already at its ceiling.
- *
- * What is NOT here is any absent-config arm: `SyncDeps.storageCap` is required, so a
- * composition that forgets this resolver is a compile error, not an unmetered cap.
- */
+ * THE ORGANIZER'S STORAGE-CAP RESOLVER — the one composition that turns the entitlements port's answer into
+ * the `storageCap` every `runSyncCycle` is handed. Resolved once per account per TTL on `screeningFor`'s
+ * caching discipline (30 s: a plan change takes effect within a cycle or two without a billing read per
+ * mailbox per cycle), threaded in as a value (the engine never reads billing). Two fail-open arms, both
+ * deliberate: a `null` limit is UNBOUNDED (unmetered, or no cap set) and CACHED like any answer; a READ
+ * FAULT resolves to unmetered FOR THIS RESOLUTION ONLY and is NOT cached (a transient blip must never start
+ * withholding a paying customer's bodies, and must not stick — bounded by the fault's duration). No
+ * absent-config arm: `SyncDeps.storageCap` is required, so a composition that forgets this resolver is a
+ * compile error, not an unmetered cap. */
 export interface StorageCapResolver {
   (accountId: string): Promise<StorageCap>;
 }

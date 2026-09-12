@@ -1,4 +1,5 @@
 import { applyToRecords, flattenResponse, maxSeqOf, recordKey, type MirrorRecord } from "./apply.js";
+import { beginDerive } from "./client-vitals.js";
 import { isCarriedLocalType, isProtectedMessage } from "./types.js";
 import type { Cursor, EngineMessage, SyncChange, SyncResponse } from "./types.js";
 
@@ -406,6 +407,11 @@ export abstract class BaseMirrorStore implements MirrorStore {
 
   private bucketsOf(type: string): MirrorRecord[] {
     if (this.typeBuckets === null || this.typeBuckets.v !== this.ver) {
+      /* TIMED, because this is the O(mailbox) pass and nothing measured it. On the large mailbox
+         the incident came from it ran 180–236 ms, and it runs once per version bump — the
+         shell's five-minute `ui_vitals` line reports the worst one and how many bumps asked for
+         it. The clock is read twice per REBUILD, never per call. */
+      const done = beginDerive();
       const byType = new Map<string, MirrorRecord[]>();
       for (const rec of this.records.values()) {
         if (rec.entity === null) continue;
@@ -414,6 +420,7 @@ export abstract class BaseMirrorStore implements MirrorStore {
         else byType.set(rec.type, [rec]);
       }
       this.typeBuckets = { v: this.ver, byType };
+      done?.();
     }
     return this.typeBuckets.byType.get(type) ?? [];
   }

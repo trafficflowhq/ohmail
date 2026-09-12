@@ -11,110 +11,16 @@ import {
 } from "@trafficflow/core";
 import type { MailboxAdapter } from "@trafficflow/core/adapters/imap";
 
-/* ══════════════════════════════════════════════════════════════════════════════════════════
-   PUTTING BACK THE HTML A CLASSIFIER FALSE POSITIVE THREW AWAY
-   ══════════════════════════════════════════════════════════════════════════════════════════
-
-   ── THIS PASS NO LONGER GATES ANY SUGGESTION, AND THAT CHANGES WHY YOU WOULD RUN IT ────────
-
-   Read this before scheduling another walk to "unblock the Screener": it will not unblock
-   anything, because there is nothing left to unblock. Under the ruling that opened AI to outbound-consented mail
-   `ScreenerService.suggest` no longer reads `messages.no_ai` at all — it screens
-   the LIVE BYTES with `redactForModel` and asks about every held sender either way. A stale
-   `no_ai = true` on a row is therefore invisible to the suggestion path.
-
-   Measured on the reporting account the day the ruling landed: of 294 held representatives
-   carrying a stale flag, the CURRENT detector fires on 81. The other 213 were already free
-   without a single IMAP read.
-
-   What this pass is still for is the thing its name says and the thing only it can do: the HTML
-   it deleted is gone from the database and only exists on the mail server, so a mailbox whose
-   bodies were mangled by the `2Fa` false positive still needs the walk to be readable. That is a
-   DISPLAY repair, and it is worth ~4,100 IMAP reads only when someone is actually looking at
-   unreadable mail — never as a prerequisite for AI.
-
-   ── WHAT WENT WRONG, AND WHY FIXING THE CLASSIFIER WAS NOT THE END OF IT ───────────────────
-
-   Bulk senders percent-escape the target inside a click tracker, so `/` becomes `-2F`. `-` is
-   not a word character, which put a word boundary on each side of the three characters `2Fa`,
-   and the sensitivity vocabulary read that as the standalone acronym `2fa`. Ordinary mail was
-   therefore judged to contain an authentication code — and mail judged sensitive is stored with
-   its text REDACTED and NO HTML AT ALL. Newsletters, invoices, delivery notices and monitoring
-   alerts were filed unreadable, and the verdict was decided by a random token: three copies of
-   one usage notice from one sender came out differently, because one copy's tracker happened to
-   contain no escape.
-
-   The classifier is fixed. That fix is forward-looking and cannot be anything else: nothing in
-   this product re-reads a stored body, the single writer of `message_bodies.html` writes NULL
-   for anything judged sensitive, and there is no rehydrate path. So the only remaining copy of
-   the discarded HTML is the message sitting on the mail server, and getting it back means going
-   to ask for it.
-
-   ── IT RUNS HERE BECAUSE THIS IS WHERE THE CONNECTION IS ───────────────────────────────────
-
-   Every other correction pass in this repo re-decides rows that are already on disk, which is
-   why they can live anywhere. This one cannot decide ANYTHING from disk: the stored text has had
-   its digits removed and its HTML deleted, so the evidence needed to overturn the verdict is
-   precisely what the verdict destroyed. The original bytes are on the mail server, the worker is
-   the only process that opens a connection to it (the API never does), and the pass needs
-   nothing from the API host's service layer — the mail-domain and database packages are the whole
-   of its imports, which is what makes this the right host rather than a dodge.
-
-   ── IT READS. IT DOES NOT MOVE, FLAG, WRITE OR APPEND ──────────────────────────────────────
-
-   `fetchRaw` is a `BODY.PEEK[]` fetch, which is the form of FETCH that does not set `\Seen`, so
-   this cannot mark somebody's mail read by re-reading it. Nothing else on the adapter is called.
-
-   And clearing a sensitivity category MOVES NO MAIL. The router reads the verdict computed in
-   memory at ingest and never `messages.sensitivity_category`; the folder reconciler reads
-   `folder_state` and nothing else. So this pass writes no `folder_state` row, no `move` change
-   and no routing decision — and `sensitive-backfill.no-routing.test.ts` asserts each of those
-   absences rather than leaving them to be inferred from what this file happens not to import
-   today.
-
-   ── THE PRE-FILTER IS WHAT MAKES THE COST HONEST, AND IT HAS A KNOWN EDGE ──────────────────
-
-   Most of the flagged mail on the deployment this was measured on does NOT clear the fixed
-   classifier on its STORED text — only about a quarter of it does. Re-reading all of it off
-   somebody's mail server to sort it
-   would be hundreds of network round trips for nothing, so the stored text is re-classified
-   FIRST and only a message that clears on it is fetched.
-
-   (The clear-on-stored count, not the smaller number this was first costed against. The two
-   numbers answer different questions
-   and both are right: 52 is the OLD-versus-NEW classifier delta — the messages the fix itself
-   changed its mind about — while 219 is what the fixed classifier clears on text that has ALSO
-   had its digit runs removed, which additionally admits every message whose only match was those
-   digits. `your code is 482913`, stored as `your code is [REDACTED]`, no longer matches the
-   digit-anchored arm. Each of those costs one read and is then correctly refused on the
-   original.)
-
-   The bias runs the safe way for the case this exists for: redaction removes digit runs, and the
-   escaped tracker tokens that caused the false positive carry at most one digit each, so they
-   survive redaction unchanged and the stored text answers the same as the original would. Where
-   it can differ is that the stored text has no HTML, so a message can clear the pre-filter and
-   still flag on the original — which costs one fetch and is then decided correctly, because the
-   ORIGINAL is what the verdict is finally taken from.
-
-   THE EDGE THAT USED TO BE WORTH WRITING DOWN, now CLOSED and kept here because the reasoning
-   is what makes the pre-filter's cost decision legible: redaction can in principle take the
-   digits OUT of a machine token, and a token with no digits left is one the classifier's masking
-   no longer blanks. Such a message used to flag on the redacted text, fail the pre-filter, and
-   never be fetched — a repair not attempted.
-
-   It stopped being reachable when the four SCHEME NAMES (`otp`, `2fa`, `two-factor`,
-   `multi-factor`) lost their standalone positive and came to need a code-shaped run beside them
-   (`packages/core/src/sensitive.ts#schemeNameNearCode`). Whether the mask blanks a mangled
-   tracker token no longer decides anything: the acronym it exposes is not a positive on its own,
-   and an over-redacted token has had precisely the digits removed that a proximity test would
-   need. `sensitive-backfill.test.ts` asserts the closure on the same fixture that used to pin
-   the gap, including that the fixture still exposes a bounded `2fa` — so this is a watched
-   behaviour and not a paragraph.
-
-   The pre-filter remains a cost decision rather than a claim that the two classifications are
-   equivalent: a message can still clear on stored text and flag on the ORIGINAL, which costs one
-   fetch and is then decided correctly, because the original is what the verdict is taken from.
-   ══════════════════════════════════════════════════════════════════════════════════════════ */
+/* ══ PUTTING BACK THE HTML A CLASSIFIER FALSE POSITIVE THREW AWAY ══
+ * This pass no longer gates any suggestion: `ScreenerService.suggest` screens the LIVE bytes with
+ * `redactForModel` and no longer reads `messages.no_ai`. What it is still for: a bulk sender's click
+ * tracker escaped `/` to `-2F`, whose `-` put word boundaries around `2Fa` and matched `2fa`, so
+ * ordinary mail was judged sensitive and stored with `message_bodies.html` DELETED. The classifier is
+ * fixed but nothing re-reads a stored body, so the only remaining copy is on the mail server. It READS
+ * only — `fetchRaw` is `BODY.PEEK[]` (no `\Seen`) — moving/flagging/writing nothing
+ * (`sensitive-backfill.no-routing.test.ts`); a pre-filter re-classifies STORED text first so only a
+ * message that clears is fetched. The over-redaction edge is closed since the four scheme names need a
+ * code-shaped run (`packages/core/src/sensitive.ts#schemeNameNearCode`); `sensitive-backfill.test.ts` watches it. */
 
 /**
  * Categorised rows examined per SQL page.
@@ -127,24 +33,14 @@ import type { MailboxAdapter } from "@trafficflow/core/adapters/imap";
 export const SENSITIVE_FP_BATCH = 100;
 
 /**
- * Messages this pass may RE-READ FROM THE MAIL SERVER for one mailbox in one worker cycle.
- *
- * The bound is about the cycle, not about this pass. `beat()` is the last statement of a cycle
- * and the leader is considered stale after two minutes, so a pass that sat on a slow connection
- * for a hundred fetches would miss the heartbeat and page an operator with "no mailbox is
- * syncing" — which would be true, and caused by a repair nobody was waiting on.
- *
- * 25 is deliberately small, and the measurement says it is close to right rather than
- * comfortable: with this budget the worker's cycle ran ~50 s against a 30 s roster interval and
- * logged `roster_pass_delayed`, which is a warning and not an outage (the leader is stale at
- * 120 s) but is real margin spent on a repair nobody is waiting for. It self-terminates — once
- * the mailbox is marked the pass costs one indexed read per cycle — so the cost is transient by
- * construction. A mailbox with a much larger damaged set is the case to re-measure before
- * raising it.
- *
- * Nothing is SKIPPED by being budgeted: the marker is not written until the walk completes, and
- * {@link refusedByMailbox} is what makes each cycle spend its budget on messages the last one did
- * not already decide about.
+ * Messages this pass may RE-READ from the mail server for one mailbox in one worker cycle. The bound
+ * is about the CYCLE: `beat()` is the last statement and the leader is stale after two minutes, so a
+ * pass sitting on a slow connection for a hundred fetches would miss the heartbeat and page an
+ * operator. 25 is deliberately small and close to right — at this budget the cycle ran ~50 s against a
+ * 30 s roster interval and logged `roster_pass_delayed` (a warning, not the 120 s outage). It self-
+ * terminates (once the mailbox is marked, one indexed read per cycle), so the cost is transient. Re-
+ * measure before raising for a much larger damaged set. Nothing is SKIPPED by being budgeted:
+ * {@link refusedByMailbox} spends each cycle's budget on messages the last did not decide.
  */
 export const SENSITIVE_FP_FETCHES_PER_CYCLE = 25;
 
@@ -168,72 +64,15 @@ export const SENSITIVE_FP_MAX_PAGES = 200;
 export const SENSITIVE_FP_MAX_BYTES = 4 * 1024 * 1024;
 
 /**
- * Messages this PROCESS has re-read and then declined to repair, per mailbox.
- *
- * ── THIS IS THE TERMINATION ARGUMENT, AND IT IS HERE BECAUSE PRODUCTION SHOWED IT MISSING ──
- *
- * The first version had none, and the reasoning it rested on was half right. A message the pass
- * CLEARS stops carrying a category and drops out of the candidate query, so the walk advances —
- * true. A message it FETCHES AND REFUSES does not: it is still categorised, still without html,
- * still passes the pre-filter, and there is no persisted cursor, so the next cycle restarts the
- * walk and spends its whole budget re-reading the same messages off somebody's mail server to
- * reach the same answer. Progress is then whatever fraction of one budget happens to be
- * repairable, and once the earliest 25 candidates are all refusals it is ZERO — the walk never
- * reaches the rest and the marker is never written.
- *
- * Measured in production, not reasoned about: the first mailbox repaired dozens of messages and then
- * slowed to a handful per cycle while logging a full page examined every cycle, which is the shape of a pass
- * spending its budget on messages it had already decided about.
- *
- * With this set, every fetch either clears a message (gone from the query) or refuses it (gone
- * from the walk), so the untried candidate set shrinks by the full budget every cycle and the
- * pass finishes in `ceil(candidates / budget)` cycles. That is a guarantee rather than a hope.
- *
- * ── IN MEMORY, AND DELIBERATELY NOT A COLUMN ───────────────────────────────────────────────
- *
- * Losing it costs re-reads, never correctness — so a restart re-tries what it had refused, and
- * the marker (which IS durable) is what stops that being unbounded. A per-message column would
- * make a one-shot repair's bookkeeping permanent in everybody's schema for ever, which is a much
- * larger thing to carry than a `Set` that lives as long as the mailbox is attached.
- *
- * ── THE PARAGRAPH THAT USED TO STAND HERE WAS A TRADE NOBODY WOULD HAVE ACCEPTED IF ASKED ──
- *
- * It read: *"A TRANSIENT fetch failure therefore costs a repair: it is refused for the rest of
- * this process's life and the walk may complete and mark before it is retried."* Every clause is
- * true and the conclusion is not survivable, because of the word MARK. The marker
- * (`mailboxes.sensitive_fp_backfill_at`) is DURABLE and it is what stops the pass ever looking at
- * this mailbox again — so a single dropped connection during one fetch left one message redacted
- * FOR EVER, with nothing anywhere recording that a decision had not been reached about it. An
- * in-memory shelf is a cost; an in-memory shelf laundered through a durable certificate is a
- * permanent loss of somebody's mail, and the second is what this was.
- *
- * So the refusals are split by WHAT WE KNOW, and only one half may be certified:
- *
- *  · {@link decidedRefusals} — the classifier READ the original and declined to clear it
- *    (`stillSensitive`, `stillWithheld`). The message is correctly where it is, the pass has done
- *    its job on it, and losing this set to a restart costs a re-read and nothing else. The marker
- *    may certify over these, because they are answers.
- *  · {@link undecidedRefusals} — the original could not be read AT ALL (gone, unparseable, no
- *    locator) or resolved to a different message. These are not answers, they are absences of
- *    one, and a completed walk that holds any of them DOES NOT STAMP: see the marker block at the
- *    end of {@link sensitiveBackfillPass}.
- *
- * ── AND THE BOUND, BECAUSE "NEVER STAMP" IS ALSO NOT SURVIVABLE ─────────────────────────────
- *
- * A message that is permanently unreadable — expunged from the server, its row not yet reaped —
- * would keep this pass walking for ever, spending up to {@link SENSITIVE_FP_FETCHES_PER_CYCLE}
- * fetches per cycle against somebody's mail host in perpetuity for a repair that can never
- * happen. So a blocked walk is COUNTED, the undecided set is cleared at the end of each completed
- * walk (the next one genuinely re-tries them rather than skipping them), and after
- * {@link SENSITIVE_FP_MAX_BLOCKED_WALKS} full walks the pass stamps and says exactly what it is
- * stamping over — a warn per message and the count on the pass's own audit row, so "these N were
- * never decided" is a fact an operator can select rather than a silence.
- *
- * That counter is process-scoped ON PURPOSE, and the direction is what makes it safe: losing it
- * to a restart resets it to zero, which means MORE looking, never a premature certificate. It is
- * the same distinction the split above draws — in-memory state is fine exactly while it cannot be
- * laundered into a durable claim.
- */
+ * Messages this PROCESS has re-read and declined to repair, per mailbox — the TERMINATION ARGUMENT. A
+ * cleared message leaves the candidate query; a fetched-and-REFUSED one does not, and with no persisted
+ * cursor the next cycle re-reads it for ever, so this set is what makes the walk finish in
+ * `ceil(candidates / budget)` cycles. In memory, not a column (losing it costs re-reads, not
+ * correctness). Refusals SPLIT: {@link decidedRefusals} (classifier read the original and declined —
+ * answers the marker may certify over) vs {@link undecidedRefusals} (original unreadable — a completed
+ * walk holding any does NOT stamp). "Never stamp" being unsurvivable too, a blocked walk is counted and
+ * after {@link SENSITIVE_FP_MAX_BLOCKED_WALKS} the marker (`mailboxes.sensitive_fp_backfill_at`) stamps
+ * and says what over — process-scoped, so a restart means MORE looking, not a premature certificate. */
 const decidedRefusals = new Map<string, Set<string>>();
 
 /** Candidates this walk could not decide about — cleared at the end of every completed walk. */
@@ -243,19 +82,14 @@ const undecidedRefusals = new Map<string, Set<string>>();
 const blockedWalks = new Map<string, number>();
 
 /**
- * The undecided ids the LAST blocked walk carried — what makes the bound per MESSAGE.
- *
- * Found by review of the bound itself. A count kept per mailbox says "this mailbox has been
- * re-walked three times", which is not the claim that licenses the stamp: the claim is that EVERY
- * undecided message has been re-attempted three times. Those come apart the moment the undecided
- * set changes mid-bound — two walks blocked by an old row, then a restored husk becomes eligible,
- * fails one fetch, and falls straight through to the marker on walk three having been tried ONCE.
- * The marker is durable, so that message stays redacted for ever on the strength of a bound it
- * never had.
- *
- * So a walk whose undecided set contains anything the previous blocked walk did not RESTARTS the
- * count. Termination still holds: the set is finite, every restart is caused by a message that has
- * not yet had its attempts, and a set that stops growing runs the bound out.
+ * The undecided ids the LAST blocked walk carried — what makes the bound per MESSAGE. A per-mailbox
+ * count says "re-walked three times", which is not the claim that licenses the stamp: the claim is that
+ * EVERY undecided message has been re-attempted three times. They come apart when the undecided set
+ * changes mid-bound (a restored husk becomes eligible, fails one fetch, and falls through on walk three
+ * having been tried ONCE), and the marker is durable, so it stays redacted for ever on a bound it never
+ * had. So a walk whose undecided set contains anything the previous blocked walk did not RESTARTS the
+ * count. Termination holds: the set is finite, every restart is a message that has not had its
+ * attempts, and a set that stops growing runs the bound out.
  */
 const lastUndecided = new Map<string, ReadonlySet<string>>();
 
@@ -482,20 +316,13 @@ export async function sensitiveBackfillPass(
       // They part company at the MARKER, not here.
       if (decided.has(row.messageId) || undecided.has(row.messageId)) { result.skipped++; continue; }
 
-      // ── THE PRE-FILTER. NO NETWORK BELOW THIS LINE UNLESS IT PASSES ────────────────────
-      //
-      // `verdict !== "ordinary"` and not `.sensitive`, because the repair below now happens on
-      // exactly one verdict and a cost filter has to ask the question the repair will ask. The
-      // old spelling was right when the only damage was a CATEGORY: `.sensitive` is the negation
-      // of "this row would come clean". It is definitionally FALSE for every widened row — an
-      // indeterminate verdict is not `sensitive` — so under the widened predicate it stopped
-      // filtering entirely, and all 416 damaged representatives on the account this exists for
-      // would have been re-read off the mail server to be refused on arrival.
-      //
-      // The verdict is KEPT rather than recomputed: the over-ceiling arm of the fetch `catch` below
-      // reuses it as the oracle when the original is out of reach, so a row whose STORED text is not
-      // ordinary is withheld HERE and never reaches that arm — which is where "a genuinely-sensitive
-      // oversized row stays withheld" is enforced.
+      // THE PRE-FILTER. NO NETWORK BELOW THIS LINE UNLESS IT PASSES. `verdict !== "ordinary"` and not
+      // `.sensitive`, because the repair now happens on exactly one verdict and a cost filter must ask
+      // the question the repair will ask. The old `.sensitive` spelling was right only for a CATEGORY;
+      // it is definitionally FALSE for a widened (indeterminate) row, so it stopped filtering and all
+      // 416 damaged representatives on the account this exists for would have been re-read to be refused
+      // on arrival. The verdict is KEPT, not recomputed: the over-ceiling arm of the fetch `catch`
+      // reuses it as the oracle, so a non-ordinary STORED row is withheld here and never reaches it.
       const storedMsg = fromStoredRow(row);
       const storedVerdict = classifySensitivity(storedMsg);
       if (storedVerdict.verdict !== "ordinary") continue;
@@ -513,21 +340,14 @@ export async function sensitiveBackfillPass(
       } catch (err) {
         result.fetched++;
 
-        // ── OVER THE CEILING IS NOT UNREADABLE ──────────────────────────────────────────
-        //
-        // A `fetchRaw` that refused because the message exceeds `maxBytes` did so from
-        // `RFC822.SIZE` before transferring anything (`RawMessageTooLargeError`, code
-        // `ERAWTOOLARGE`), so the connection is fine and the ONLY thing we lack is the original's
-        // bytes. Counting that `unreadable` — as this arm used to for every failure — left the row
-        // categorised and redacted for ever, mis-withheld by a size limit rather than by a verdict.
-        //
-        // The ruling: a too-large original must not strand a row. Fall back to the STORED text as
-        // the oracle. We already hold `storedVerdict`, and reaching this line means it was
-        // `ordinary` — the pre-filter withholds anything else — so this is a repair FROM STORED:
-        // the five sensitivity fields are cleared and the row becomes readable, but the deleted
-        // html is NOT restored, because the bytes that held it are precisely what we could not read.
-        // The one verdict that repairs is still `ordinary`; the difference from the main path is
-        // only WHERE that verdict came from.
+        // OVER THE CEILING IS NOT UNREADABLE. A `fetchRaw` that refused because the message exceeds
+        // `maxBytes` did so from `RFC822.SIZE` before transferring (`RawMessageTooLargeError`, code
+        // `ERAWTOOLARGE`), so the connection is fine and only the original's bytes are missing.
+        // Counting that `unreadable` left the row redacted for ever, mis-withheld by a size limit. The
+        // ruling: fall back to the STORED text as the oracle — we hold `storedVerdict` and reaching
+        // here means it was `ordinary` (the pre-filter withholds anything else), so the five
+        // sensitivity fields clear and the row becomes readable, but the deleted html is NOT restored
+        // (its bytes are exactly what we could not read). The repairing verdict is still `ordinary`.
         if (isOverCeiling(err)) {
           if (await repairOne(db, accountId, row.messageId, storedMsg, storedVerdict, now())) {
             result.clearedFromStored++;
@@ -569,23 +389,14 @@ export async function sensitiveBackfillPass(
         continue;
       }
 
-      // ── THE VERDICT COMES FROM THE ORIGINAL, WHICH IS THE ENTIRE POINT ────────────────
-      //
-      // ONE verdict repairs: `ordinary`. Anything else — positively sensitive, or indeterminate
-      // for any reason — is left exactly as it is.
-      //
-      // This used to be `if (verdict.sensitive) refuse`, which admitted an INDETERMINATE original
-      // to the repair. Under the old predicate that was safe by accident: the repair cleared
-      // `sensitivity_category`, which WAS the whole candidate query, so the row left the walk and
-      // was never rewritten. Under the widened {@link DAMAGED} it does not leave, because it keeps
-      // `no_ai` — so the row would be re-fetched and REWRITTEN on every run, each time emitting
-      // another `change_log` delta telling every client that a message they already have changed
-      // again. {@link refusedFor} cannot close that: it is in memory, so a restart forgets it and
-      // the rewriting resumes.
-      //
-      // It is also what the repair is FOR, stated positively. "Only clear where the fixed
-      // classifier says the message is clean" is the whole safety rule of this pass; an
-      // indeterminate verdict is the classifier declining to say that.
+      // THE VERDICT COMES FROM THE ORIGINAL, WHICH IS THE ENTIRE POINT. ONE verdict repairs:
+      // `ordinary`; anything else (sensitive, or indeterminate) is left as it is. This used to be
+      // `if (verdict.sensitive) refuse`, which admitted an INDETERMINATE original — safe by accident
+      // under the old predicate (clearing `sensitivity_category` WAS the candidate query, so the row
+      // left the walk). Under the widened {@link DAMAGED} it does not leave (it keeps `no_ai`), so the
+      // row would be re-fetched and REWRITTEN every run, each emitting a `change_log` delta;
+      // {@link refusedFor} cannot close that (in memory, forgotten on restart). It is also what the
+      // repair is FOR: only clear where the fixed classifier says the message is clean.
       const verdict = classifySensitivity(fresh);
       // DECIDED — the classifier read the original and declined to clear it. This is an answer,
       // and the marker may certify over it.
@@ -626,21 +437,14 @@ export async function sensitiveBackfillPass(
   // mutation testing said so.
   if (!exhausted) return result;
 
-  // ══════════════════════════════════════════════════════════════════════════════════════════
-  //  THE WALK REACHED THE END. THAT IS NOT THE SAME THING AS HAVING DECIDED EVERYTHING.
-  // ══════════════════════════════════════════════════════════════════════════════════════════
-  //
-  // Reaching the end of the walk means every candidate was VISITED. A candidate whose original
-  // could not be read was visited and not decided, and the marker below is durable and final —
-  // it is the only thing that stops this pass ever looking at the mailbox again. Stamping over an
-  // undecided message therefore converts a dropped TCP connection into a message that stays
-  // redacted for the rest of its life, with no record anywhere that a decision was owed. That is
-  // the defect this block exists to close; see the split above {@link decidedRefusals}.
-  //
-  // So a completed walk holding undecided refusals does NOT stamp. It clears them — the next
-  // walk must genuinely re-try them rather than skip them off the shelf — counts itself, and
-  // returns. The DECIDED shelf is deliberately kept across walks: those are answers, and losing
-  // them would only buy a re-read of mail the classifier has already ruled on.
+  // THE WALK REACHED THE END. THAT IS NOT THE SAME AS HAVING DECIDED EVERYTHING. Reaching the end
+  // means every candidate was VISITED; one whose original could not be read was visited and not
+  // decided, and the marker below is durable and final — stamping over an undecided message converts a
+  // dropped TCP connection into a message redacted for the rest of its life, with no record a decision
+  // was owed (see the split above {@link decidedRefusals}). So a completed walk holding undecided
+  // refusals does NOT stamp: it clears them (the next walk genuinely re-tries them), counts itself, and
+  // returns. The DECIDED shelf is kept across walks — those are answers, and losing them buys only a
+  // re-read of mail already ruled on.
   result.undecided = undecided.size;
   // Captured before the shelves are cleared below, so the audit row can name what the certificate
   // does not cover. The IDS go on the durable audit row and NOT on a log line: `messageId`
@@ -742,57 +546,27 @@ export async function sensitiveBackfillPass(
 }
 
 /**
- * WHAT "DAMAGED" MEANS — the one predicate, written once and used by both the walk and the write.
- *
- * ── IT WAS `sensitivity_category IS NOT NULL`, AND THAT MISSED MOST OF THE DAMAGE ───────────
- *
- * A classifier false positive has TWO outcomes in the database, not one, because the classifier
- * has two ways of withholding a message:
- *
- *  · POSITIVELY SENSITIVE — a vocabulary match. `sensitivity_category` is set, the text is
- *    redacted and the html is DELETED. This is what the pass was written for.
- *  · INDETERMINATE — no vocabulary match, but a reason we could not call it ordinary
- *    (`credential_shape`, `auth_url_token`, `unsupported_script`, …). `sensitivity_category`
- *    stays NULL, `no_ai` and `no_kb` are set, and for the credential-shaped reasons the stored
- *    body is REDACTED too (`storeRedactedBody`). The html is kept, but redacted.
- *
- * The second outcome is invisible to `sensitivity_category IS NOT NULL`, so a row withheld this
- * way was never a candidate and the pass reported a clean, complete run without ever having
- * looked at it. Measured on the deployment this exists for: of the AI-ineligible senders in one
- * account's Screener, 416 were withheld this way against 119 with a category — so the predicate
- * that shipped could not see 78% of them. They are the ones the account owner noticed, because
- * the visible symptom is the one this outcome produces: a sender the Screener will never suggest
- * for, whose preview reads `[REDACTED]`.
- *
- * `no_ai` and not `no_kb`, though the classifier sets both together: `no_ai` is the flag the
- * Screener's `aiEligible` actually reads, so it is the flag whose wrongness is the defect being
- * repaired. Selecting on the pair would be a wider predicate that admits exactly the same rows
- * today and would silently change meaning if the two ever diverged.
+ * WHAT "DAMAGED" MEANS — the one predicate, used by both the walk and the write. It was
+ * `sensitivity_category IS NOT NULL`, which missed most of the damage: a false positive has TWO
+ * outcomes — POSITIVELY SENSITIVE (a vocabulary match: `sensitivity_category` set, text redacted, html
+ * DELETED) and INDETERMINATE (`credential_shape`, `auth_url_token`, `unsupported_script`, …: category
+ * NULL, `no_ai`/`no_kb` set, body redacted via `storeRedactedBody`, html kept). The second is invisible
+ * to `IS NOT NULL` (measured 416 this way vs 119 with a category, 78% unseen). Selects on `no_ai` and
+ * not `no_kb` because `no_ai` is the flag the Screener's `aiEligible` reads, so its wrongness is the
+ * defect; the pair admits the same rows today and would change meaning if they diverged.
  */
 const DAMAGED = sql`(${messages.sensitivityCategory} is not null or ${messages.noAi} = true)`;
 
 /**
- * One page of the mail a false positive may have damaged, oldest id first.
- *
- * THE CANDIDATE SET IS DELIBERATELY WIDE AND THE FILTERING IS DELIBERATELY NOT HERE. Every
- * categorised message in the mailbox is selected; whether it can be repaired is decided by the
- * classifier, in TypeScript, twice — once on the stored text as a cost filter and once on the
- * original as the verdict. Trying to express "would the fixed classifier clear this" in SQL
- * would be a second implementation of the classifier, in a language that cannot run it, deciding
- * what may be un-redacted. That is the one thing this pass must never have.
- *
- * NOT LOCKED, and that is a difference from every other pass in this directory. A page here is
- * held across the network reads that follow it, so `FOR UPDATE` would hold row locks for minutes
- * of I/O. The serialization point is `repairOne`, which re-reads its own row under a lock at the
- * moment it writes — see there for why that is enough.
- *
- * `folder_state`, `message_states`, `drafts` and `approvals` are NOT consulted, and their absence
- * is the point rather than an omission. `rule-retro` and the kickstart re-route exclude mail the
- * user has triaged because those passes MOVE mail, and moving mail somebody has filed is undoing
- * their work. This pass moves nothing: it restores the text and html of a message that is already
- * exactly where the user left it. There is no user decision that "leave this one unreadable"
- * could respect.
- */
+ * One page of the mail a false positive may have damaged, oldest id first. The candidate set is
+ * deliberately WIDE and the filtering is NOT here: every categorised message is selected, and whether
+ * it can be repaired is decided by the classifier in TypeScript twice (stored text as a cost filter,
+ * original as the verdict) — expressing that in SQL would be a second classifier. NOT LOCKED, unlike
+ * every other pass here, because a page is held across network reads and `FOR UPDATE` would hold row
+ * locks for minutes; the serialization point is `repairOne`, which re-reads its row under a lock as it
+ * writes. `folder_state`, `message_states`, `drafts`, `approvals` are NOT consulted: `rule-retro` and
+ * kickstart exclude triaged mail because they MOVE it, but this pass moves nothing — it restores
+ * text/html where the user left the message. */
 async function selectCandidates(
   db: Tx, opts: { mailboxId: string; limit: number; afterId: string | null },
 ): Promise<CandidateRow[]> {
@@ -832,27 +606,14 @@ async function selectCandidates(
 }
 
 /**
- * Write the repair for ONE message, and answer whether this call is the one that made it.
- *
- * ── THE TRANSACTION OPENS AFTER THE NETWORK READ, NEVER AROUND IT ───────────────────────────
- *
- * `recordChange` takes the account's `account_sync_state` row lock for the length of its
- * transaction, so a transaction spanning a `fetchRaw` would hold every API write for that account
- * behind a mail server's response time. Hence one short transaction per message rather than one
- * per page, which is the opposite of what the other passes here do and is entirely because this
- * one has I/O between its rows.
- *
- * ── THE LOCK-AND-RECHECK IS THE IDEMPOTENCY ────────────────────────────────────────────────
- *
- * Two drivers — the cycle, and a second worker mid-failover — can both fetch the same message and
- * both arrive here. The `FOR UPDATE` re-read makes the loser block, wake with the winner's
- * committed row, find `sensitivity_category` already NULL and write nothing. So one repair
- * produces ONE `change_log` delta, not two, and a client is never told twice that the same
- * message changed. It is also what makes re-running the whole pass safe: a message already
- * repaired fails this predicate.
- *
- * {@link DAMAGED} and not "did the value change": those are the fields that say a message was
- * withheld, so they are the fields that decide whether there is anything here to repair.
+ * Write the repair for ONE message, and answer whether this call made it. THE TRANSACTION OPENS AFTER
+ * THE NETWORK READ, never around it: `recordChange` takes the account's `account_sync_state` row lock
+ * for its transaction, so spanning a `fetchRaw` would hold every API write for that account behind a
+ * mail server's response time — hence one short transaction per message. THE LOCK-AND-RECHECK IS THE
+ * IDEMPOTENCY: two drivers (cycle, and a failover worker) can both fetch and arrive; the `FOR UPDATE`
+ * re-read makes the loser wake with the committed row, find `sensitivity_category` NULL, and write
+ * nothing — one `change_log` delta, and re-running the whole pass safe. {@link DAMAGED}, not "did the
+ * value change": those are the fields that say a message was withheld.
  */
 async function repairOne(
   db: Tx,
@@ -928,26 +689,14 @@ async function repairOne(
 }
 
 /**
- * Is the message we just read the message this row is about?
- *
- * A locator is a folder plus `uidvalidity:uid`, and a UID is only unique while `uidvalidity`
- * holds. A server that has reset it — or a row whose locator is stale because the message moved
- * between the read and now — points at some OTHER message, and storing those bytes would write
- * one person's mail into another message's row. That is the worst thing this pass could do, so it
- * is checked rather than assumed, and a failure skips the message instead of failing the pass.
- *
- * TWO forms of evidence, and EITHER is enough:
- *
- *  · the fingerprint. `messages.dedup_key` is `fp1:` + a digest over the sender, recipients,
- *    subject, date, body hashes and attachment metadata, computed at ingest from these same
- *    bytes. An exact match is proof.
- *  · the `Message-ID`. Rows ingested before the fingerprint key carry a legacy dedup key, and the
- *    fingerprint would not match for them however identical the message is. The header is stable
- *    across every parser change, which the digest is not.
- *
- * Accepting either is deliberate: a change to the MIME parser would silently move every
- * fingerprint, and a repair pass that quietly stopped matching anything would report a clean run
- * having done nothing. Two independent witnesses make that a thing that has to happen twice.
+ * Is the message we just read the message this row is about? A locator is a folder plus
+ * `uidvalidity:uid`, and a UID is unique only while `uidvalidity` holds; a reset (or stale locator)
+ * points at another message, and storing those bytes would write one person's mail into another's row
+ * — so it is checked and a failure SKIPS the message. TWO forms of evidence, EITHER enough: the
+ * fingerprint (`messages.dedup_key` is `fp1:` + a digest over sender/recipients/subject/date/body
+ * hashes/attachment metadata, computed at ingest from these bytes) and the `Message-ID` (for legacy
+ * dedup keys the digest cannot match; the header is stable across parser changes). Accepting either is
+ * deliberate: a MIME parser change moves every fingerprint, so two witnesses make a silent stop happen twice.
  */
 function isSameMessage(row: CandidateRow, fresh: NormalizedMessage): boolean {
   if (fingerprintDedupKey(messageFingerprint(fresh)) === row.dedupKey) return true;
@@ -957,31 +706,15 @@ function isSameMessage(row: CandidateRow, fresh: NormalizedMessage): boolean {
 }
 
 /**
- * The stored row in the shape the classifier reads, and NOTHING else is invented.
- *
- * `attachments` is empty because attachment BYTES are not on disk at all. That omission makes the
- * pre-filter more permissive (no filenames to match), so it costs fetches and can never cost a
- * repair, which is the direction a cost filter has to err in. The verdict is never taken from this
- * object; only the decision to spend a network read is.
- *
- * ── `html` IS READ NOW, AND HARDCODING IT NULL HAD STOPPED THE FILTER FILTERING ─────────────
- *
- * It was `htmlBody: null`, described as "the truth of what is on disk for a redacted message".
- * That was true of every row the pass could then see — a positively-sensitive row has its html
- * DELETED — and it is false for the rows {@link DAMAGED} now admits, which keep their html and
- * merely have it redacted. Passing null for those threw away the evidence the filter exists to
- * read: measured against the account this repair is for, ALL 416 damaged representatives cleared
- * a text-only pre-filter, so every one of them would have been re-read off the mail server, and
- * roughly 4,100 rows in total — against about 600 that clear once the stored html is included.
- * A cost filter that admits everything is not a cost filter; it is six thousand network round
- * trips wearing one.
- *
- * This can only ever REMOVE fetches for a row whose html is stored, and it cannot change any
- * verdict, because the verdict is still taken from the original off the server. The bias it adds
- * is the documented one, in the same direction as the header note: the stored html has been
- * through `prepareHtmlForStorage` and the redactor, so it is a SUBSET of the original — a row
- * that flags on it would have flagged on the original too.
- */
+ * The stored row in the shape the classifier reads, and NOTHING else is invented. `attachments` is
+ * empty because attachment BYTES are not on disk, making the pre-filter more permissive (costs fetches,
+ * never a repair — the direction a cost filter must err in); the verdict is never taken from this
+ * object. `html` IS READ NOW: it was `htmlBody: null`, true of a positively-sensitive row (html DELETED)
+ * but false for the rows {@link DAMAGED} now admits (html kept, redacted). Passing null threw away the
+ * filter's evidence — all 416 damaged representatives cleared a text-only pre-filter (~4,100 rows) vs
+ * ~600 once stored html is included. It can only REMOVE fetches and cannot change a verdict (taken from
+ * the original); the stored html is a `prepareHtmlForStorage`/redactor SUBSET, so a row flagging on it
+ * would have flagged on the original too. */
 function fromStoredRow(row: CandidateRow): NormalizedMessage {
   return {
     canonical: { messageIdHeader: null, bodyHash: "" },

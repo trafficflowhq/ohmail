@@ -27,7 +27,8 @@
 import { useMemo, type ReactNode } from "react";
 import { isCalendarMime, parseIcsEvent } from "@trafficflow/core/ics";
 import "./attachment-strip.css";
-import { liveCopy } from "../shell/locale";
+import { formatFileSize } from "@ohmail/ui";
+import { activeFormatLocale, liveCopy } from "../shell/locale";
 import { IcsEventCard } from "./IcsEventCard";
 
 export interface AttachmentItem {
@@ -201,20 +202,9 @@ export function isAuthListFailure(code: string | null): boolean {
   return code === "unauthorized" || code === "csrf_failed";
 }
 
-/** 1000-based, like the Finder the file is about to land in. One decimal below 100,
-    never a trailing ".0" — "2.3 MB", "18.2 MB", "748 KB". */
+/** The shared formatter, in the reader's own language — see `@ohmail/ui`'s `formatFileSize`. */
 function formatSize(bytes: number): string {
-  if (bytes < 1000) return `${bytes} B`;
-  let value = bytes / 1000;
-  for (const unit of ["KB", "MB", "GB"]) {
-    if (value < 1000 || unit === "GB") {
-      const text = value < 100 ? value.toFixed(1).replace(/\.0$/, "") : String(Math.round(value));
-      return `${text} ${unit}`;
-    }
-    value /= 1000;
-  }
-  /* unreachable — the GB arm above always returns */
-  return `${bytes} B`;
+  return formatFileSize(bytes, activeFormatLocale());
 }
 
 /**

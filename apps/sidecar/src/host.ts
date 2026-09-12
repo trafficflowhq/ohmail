@@ -4,18 +4,14 @@ import { describeMethod, describeRoute, type Diagnostic } from "./log.js";
 import { decodeRequest, encodeResponse, type ErrorHeader, type ReadyHeader, type ReadyInfo, type RequestHeader } from "./protocol.js";
 
 /**
- * THE SIDECAR SIDE OF THE BRIDGE — frames on stdin, `app.handle` behind them, frames back out.
- *
- * The one rule this file exists to hold: **the read loop never awaits a handler.** Every request
- * frame starts its work and the loop immediately goes back to the stream. That is property 2 of
- * `frame.ts`'s deadlock argument, and it is the difference between a bridge and a hang — a host
- * that awaited its own response before reading the next chunk would deadlock the moment the client
- * sent a request larger than one pipe buffer while a large response was on its way back.
- *
- * The handler is injected as a bare `(req) => Promise<Response>` rather than an `App` + `ApiDeps`,
- * for two reasons: `ApiDeps` is MUTABLE (the middleware chain writes `requestId`, `session` and
- * `idempotency` into it), so the caller has to mint a fresh one per request anyway — and it lets
- * the transport be tested against a trivial handler instead of the whole Cloud service.
+ * The sidecar side of the bridge — frames on stdin, `app.handle` behind them, frames back out. The
+ * one rule this file exists to hold: the read loop never awaits a handler. Every request frame
+ * starts its work and the loop immediately returns to the stream — property 2 of `frame.ts`'s
+ * deadlock argument, and the difference between a bridge and a hang: a host that awaited its own
+ * response before reading would deadlock the moment the client sent a request larger than one pipe
+ * buffer while a large response was on its way back. The handler is injected as a bare `(req) =>
+ * Promise<Response>` rather than an `App` + `ApiDeps`, because `ApiDeps` is MUTABLE (the caller mints
+ * a fresh one per request anyway) and it lets the transport be tested against a trivial handler.
  */
 
 export interface StdioHostOptions {

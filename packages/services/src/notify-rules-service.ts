@@ -1,6 +1,6 @@
 import { and, asc, eq, gt } from "drizzle-orm";
 import { notifyRules } from "@trafficflow/db";
-import type { ServiceContext } from "./context.js";
+import { withAccountTx, type ServiceContext } from "./context.js";
 import { ServiceError } from "./errors.js";
 import { clampLimit, decodeListCursor, encodeListCursor } from "./pagination.js";
 import type { NotifyRuleDTO, Page } from "./dto/types.js";
@@ -45,9 +45,13 @@ export class NotifyRulesService {
     if (typeof kind !== "string" || kind.trim().length === 0) {
       throw new ServiceError("validation_failed", 400, "kind must be a non-empty string");
     }
-    const [row] = await ctx.db.insert(notifyRules).values({
-      accountId: ctx.accountId, target: body.target, kind, createdAt: ctx.now(),
-    }).returning();
+    // Through the fenced door — `notify_rules` hangs off the account alone. See `withAccountTx`.
+    const row = await withAccountTx(ctx, async (tx) => {
+      const [created] = await tx.insert(notifyRules).values({
+        accountId: ctx.accountId, target: body.target, kind, createdAt: ctx.now(),
+      }).returning();
+      return created;
+    });
     return toDTO(row!);
   }
 

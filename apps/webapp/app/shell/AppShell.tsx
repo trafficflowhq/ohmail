@@ -127,7 +127,7 @@ import {
   sendPendingInOutbox, useMailSend, readReplyDraft, writeReplyDraft,
   readReplyMeta, writeReplyMeta, type SendState,
 } from "./mail-send";
-import { attachSendLockDraft, holdOf } from "./send-lock";
+import { attachSendLockDraft, holdOf, releaseSendLockForRow } from "./send-lock";
 import {
   clearComposeDraft,
   composePlan,
@@ -151,6 +151,9 @@ import { useDraftReply, type DraftedReply } from "./draft-reply";
 import { RichEditor } from "./RichEditor";
 import { TagPicker, placePicker, type TagPickerState } from "./TagPicker";
 import { KeymapProvider, useCursorPlacer, useKeyBindings, useModGlyph, type KeyBinding } from "./keymap";
+/* THE ONE CURSOR PLACER — the mechanism every list view shares; this shell is the `global`
+   claimant, answering for the three views whose cursor it holds. See `cursor-placer.ts`. */
+import { CURSOR_HINT_MS, placeFirstRow, useCursorHint, type CursorHost } from "./cursor-placer";
 import { createSeenBatcher } from "./seen-batch";
 import { readColumnHidden, readColumnHiddenFor, watchZeroPushTier, zeroPushTier } from "./narrow";
 import { ZoneCursor, currentZone, setRailSummon } from "./zone-nav";
@@ -213,6 +216,7 @@ import {
   useHashRoute,
   type Route, type ScreenerSegmentId, type TriagePileId,
 } from "./routing";
+import { beginSearch, markStartup, useUiVitals } from "./ui-vitals";
 import { HistoryView } from "../views/HistoryView";
 import { SeedReviewView } from "../views/SeedReviewView";
 import { OhboxView, type OhboxReplyDone } from "../views/OhboxView";
@@ -579,14 +583,11 @@ export function showDesktopCta(opts: { demo: boolean; desktop: boolean }): boole
 export const DESKTOP_CTA_DISMISSED = "ohmail.desktopCtaDismissed";
 
 /**
- * HOW LONG THE CURSOR HINT STANDS — the one line the first press of a message verb on a
- * cursorless list shows (`placeCursor`). Shorter than the toast's 2600 ms default, because this
- * one carries no action to reach for and the second press is meant to follow it immediately.
- *
- * Exported so a guard reads the number rather than restating it: a hint that outlives the press
- * it explains, or vanishes before it can be read, is a difference a test should be able to see.
+ * HOW LONG THE CURSOR HINT STANDS — re-exported from the module that owns the placement
+ * (`cursor-placer.ts`), so the constant sits with the one line it times and every caller and
+ * guard still reads it from here.
  */
-export const CURSOR_HINT_MS = 2400;
+export { CURSOR_HINT_MS };
 
 /**
  * A subtle, dismissible line at the foot of the rail: "Get ohmail for
@@ -1359,6 +1360,10 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
   );
 
   const theme = useTheme();
+  /* THE SHELL TIMES ITSELF — startup marks, the three interaction percentiles and the frame
+     sampler, reported every five minutes. Always on, no flag: an instrument that has to be turned
+     on is one that was off during the incident. `ui-vitals.ts` carries the reasoning. */
+  useUiVitals();
   const route = useHashRoute();
   // The registry owns ⌘K (see `keymap.tsx`). Leaving the hook's own binding on as well
   // would toggle twice per keypress, which cancels out and never opens the palette.
@@ -1403,6 +1408,18 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
    * entities means "cannot judge yet" rather than "the account has none".
    */
   const syncStatus = useSyncStatus();
+  /**
+   * "COLD START TO A USABLE LIST" — the budget's own measure, marked once.
+   *
+   * `bootstrapping === false` is "a drain has completed for this engine", which is the honest
+   * moment: the rows on screen are the mailbox's rather than nothing, and it is true of an EMPTY
+   * mailbox too — a definition keyed on a non-empty list would never mark for a new account and
+   * would report no cold-start figure at all. `markStartup` takes the first answer and ignores
+   * every later one, so a re-mount cannot overwrite the cold figure with a warm one.
+   */
+  useEffect(() => {
+    if (!syncStatus.bootstrapping) markStartup("listUsable");
+  }, [syncStatus.bootstrapping]);
   /**
    * The account's language wins over this device's — riding the `GET /consent` this shell
    * already makes. Both preferences are needed: localStorage is what a standalone install and
@@ -3658,13 +3675,38 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
    * well would be narrating what the reader can see. A refusal is reported, because that is the case where the screen
    * does NOT change.
    */
+  /** Rows this session has already released the durable record for — see the latch below. */
+  const resolvedRows = useRef<Set<string>>(new Set<string>());
   const resolveHeldSend = useStableCallback(
     (draftId: string, outcome: "arrived" | "not_arrived") => {
       void engine.mutate({ kind: "draft_resolve", draftId, outcome }).then((res) => {
-        if (res.status === "confirmed") return;
-        // A resolve that did not land leaves the row held; the overlay has already rolled back,
-        // so the note above it still reads "not confirmed" and the verbs are still there.
-        toast(t("drafts.resolveFailed"));
+        if (res.status !== "confirmed") {
+          /* A resolve that did not land leaves the row held; the overlay has already rolled back,
+             so the note above it still reads "not confirmed" and the verbs are still there. The
+             server refuses a send that may STILL BE RUNNING by name, and that refusal gets its own
+             sentence: "it failed" and "not yet" are different things to be told. */
+          toast(t(res.error?.code === "send_still_running"
+            ? "drafts.resolveStillRunning"
+            : "drafts.resolveFailed"));
+          return;
+        }
+        /* THE DURABLE RECORD IS SPENT, AND IT LEAVES BY THE ONE DOOR. The server has answered for
+           this row, so the jar entry that was holding the message must go — through the same
+           `releaseSendLockForRow` the settled compose uses, never a second release path. Without
+           it `holdOf` went on answering `parked` from the record and the row a person had just
+           resolved was still undiscardable on this browser. The SESSION is passed only for the row
+           this compose is holding — `discardDraft`'s rule, for its reason. */
+        if (resolvedRows.current.has(draftId)) return;
+        /* THE LATCH, and it is load-bearing: a second confirm for this row arriving late (a
+           double-tap, a replayed verb) would release whatever record names the row AT THAT MOMENT
+           — and by then a fresh send of the recovered text may have minted one. Freeing a key a
+           request is still carrying is how the next press mints a second one. Released once. */
+        resolvedRows.current.add(draftId);
+        const heldRow = readComposeRow();
+        releaseSendLockForRow(
+          COMPOSE_SEND_KEY, draftId,
+          heldRow !== null && heldRow === draftId ? composeSessionId() : null,
+        );
       });
     },
   );
@@ -5158,38 +5200,28 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
    */
 
   /**
-   * The DOM row is read because the scroll needs the element, and the null-check earns its keep twice: it is what a
-   * click would have hit, and it is `null` for a surface holding a list in state without rendering it. A `false`
-   * consumes nothing — the keypress stays exactly as inert as an empty list should feel.
+   * The ROWS AND THE SELECTOR, per route, and nothing else: the placement itself — first row, the
+   * DOM check, the scroll nudge, the one line — is `placeFirstRow`'s, the same call every other
+   * list view makes. An unnamed route hands over an empty list, which declines; `route.view`, not
+   * `effectiveView`, because that is what `focused` reads. Focus does not move: the person is
+   * already on the keyboard, and `.row.sel` is the ring the list already draws.
    */
+  const sayCursorPlaced = useCursorHint();
   const placeCursor = useStableCallback((label: string): boolean => {
-    if (focused != null) return false;
-    const first =
+    const current = focused?.id ?? null;
+    const host: CursorHost =
       route.view === "ohbox"
-        ? (allOhbox[0] ?? null)
+        ? { rows: allOhbox, current, scope: ".view", select: setOhboxSel }
         : route.view === "reads"
-          ? (partition.fresh[0] ?? partition.seen[0] ?? null)
+          ? { rows: [...partition.fresh, ...partition.seen], current, scope: ".view", select: setReadsCur }
           : route.view === "receipts"
-            ? (receipts[0] ?? null)
-            : null;
-    if (first == null) return false;
-    const row = document.querySelector<HTMLElement>(`.view .row[data-id="${CSS.escape(first.id)}"]`);
-    if (row == null) return false;
-    if (route.view === "ohbox") setOhboxSel(first.id);
-    else if (route.view === "reads") setReadsCur(first.id);
-    else setReceiptsCur(first.id);
-    /* The same nudge a click's selection gets — `block: "nearest"`, the whole list's convention
-       (`ReadsView`, `ReceiptsView`, `TriageView`). Optional-chained on the METHOD, not the node:
-       jsdom mounts these views without implementing it (`RulesView`'s precedent). */
-    row.scrollIntoView?.({ block: "nearest" });
-    /* ONE LINE, THE VERB THE NEXT PRESS RUNS, and the toast primitive's own live region announces
-       it (`role="status" aria-live="polite"`). No action button: there is nothing to undo about a
-       cursor, and an Undo beside it would read as "put the mail back". Focus does not move — the
-       person is already on the keyboard, and `.row.sel` is the ring the list already draws. */
-    toast(t("cursor.placed", { label }), { duration: CURSOR_HINT_MS });
-    return true;
+            ? { rows: receipts, current, scope: ".view", select: setReceiptsCur }
+            : { rows: [], current, scope: ".view", select: () => {} };
+    return placeFirstRow(host, label, sayCursorPlaced);
   });
-  useCursorPlacer(placeCursor);
+  /* `global`: the claim a VIEW holding its own cursor beats, so a split view places its own row
+     rather than this shell declining for a route it holds no cursor for. */
+  useCursorPlacer(placeCursor, "global");
 
 
   /**
@@ -7092,7 +7124,12 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
                 version={version}
                 now={now}
                 query={searchQuery}
-                onQuery={setSearchQuery}
+                /* The search mark starts at the question and ends when SearchView paints its
+                   first results for it — the budget's "first results < 500 ms". */
+                onQuery={(q: string) => {
+                  beginSearch();
+                  setSearchQuery(q);
+                }}
                 onOpen={(hit: SearchHit) => openMessage(hit.message)}
                 /* The chip on a hit answers "where do I go to find this again?", and for a
                    History message the folder and the place are different answers. The INDEX is

@@ -97,6 +97,16 @@ export const MAILBOX_SYNC_BLOCK_REASONS = [
    * hit is not a broken mailbox — the distinction `markMailboxFailed` could not make.
    */
   "read_limited",
+  /**
+   * This install's own clock disagrees with the mail server's by more than the organizer lease can
+   * tolerate, so it wrote no claim (`LeaseClockSkewError`). The lease is arbitrated through
+   * instants, and no reader-side rule can repair a wrong writer clock — believe an old-looking
+   * heartbeat and a dead machine holds a mailbox for ever, disbelieve it and a live one is
+   * displaced. It arrived here as `lease_unreadable`, which is a false sentence and names nothing
+   * a person can act on; the one thing anybody can do about this is set the clock, so the state
+   * says that. Self-hosted is where it fires — a deployment's own machine keeps its own time.
+   */
+  "clock_off",
 ] as const;
 
 export type MailboxSyncBlockReason = (typeof MAILBOX_SYNC_BLOCK_REASONS)[number];

@@ -2,47 +2,16 @@ import { and, asc, eq, inArray } from "drizzle-orm";
 import { folderState, messages, recordChange, upsertDesiredSeen, type Tx } from "@trafficflow/db";
 import { silentLogger, type Logger } from "@trafficflow/core";
 
-/* ══════════════════════════════════════════════════════════════════════════════════════════
-   MARKING THE SCREENED-OUT + SPAM BACKLOG READ
-   ══════════════════════════════════════════════════════════════════════════════════════════
-
-   ── WHAT IT DOES, AND THE ONE THING IT MUST NOT ────────────────────────────────────────────
-
-   `decide` now marks a screen-out or spam press read in the same transaction that files it
-   (`screener-service.ts#MARK_READ_ON_DECIDE`). That is FORWARD-looking. This pass is the RETRO
-   half: the mail that was screened out or quarantined BEFORE the forward write shipped is still
-   unread on the server, and marking it read is what was asked for.
-
-   The candidate set is EXACTLY the two demoting folders — `ohmail/Screened` (screened out) and
-   `ohmail/Quarantine` (spam) — and nothing else. `INBOX`, `ohmail/Reads` and `ohmail/Receipts`
-   are admitted mail and are never touched; `ohmail/Screener` is mail still WAITING for the user's
-   decision, and marking it read would hide that it needs attention. That scoping is the safety
-   boundary and it lives in the SQL below, not in a caller.
-
-   ── IT WRITES AN INTENT. IT NEVER OPENS IMAP. ──────────────────────────────────────────────
-
-   Same doctrine as `rule-retro.ts`: this writes `flag_state.desired_seen = true` (+ the
-   `messages.unread` mirror and a `change_log` `update` delta) and stops. The worker's
-   `reconcileFlags` (`sync.ts`) is the one code path that adds `\Seen` on the real server, under
-   the mailbox lease; a second flag-writer racing it would be two organizers for one mailbox. The
-   write is ADDITIVE and REVERSIBLE — `last_set_by = 'us'`, so `scripts/undo-runaway-reads.mjs`
-   can undo it — and no move, delete or flag removal is ever performed.
-
-   ── IDEMPOTENT WITHOUT A MARKER OR A CURSOR ────────────────────────────────────────────────
-
-   A message this pass marks read has `messages.unread = false`, which is the candidate predicate
-   negated, so it drops out. Re-running walks only what is still unread; a finished account writes
-   nothing. That is why there is no `done_at` column and no `retro_cursor`: the shrinking set IS
-   the bookmark. (Contrast `sensitive-backfill.ts`, which needs both because a row it REFUSES
-   stays a candidate.)
-
-   ── THE PER-CYCLE BUDGET IS ABOUT THE RECONCILER, NOT THIS PASS ─────────────────────────────
-
-   Every row this pass writes becomes a `pending` flag_state that `reconcileFlags` walks serially,
-   one IMAP STORE per row, inside the sync cycle — the same downstream cost `rule-retro.ts`
-   documents for `reconcileFolders`. So a budget caps how much read-state one invocation may
-   CREATE, and a one-off runner loops until `capped` is false.
-   ══════════════════════════════════════════════════════════════════════════════════════════ */
+/* MARKING THE SCREENED-OUT + SPAM BACKLOG READ. `decide` now marks a screen-out or spam press read in the
+ * same transaction that files it (`screener-service.ts#MARK_READ_ON_DECIDE`, forward-looking); this is the
+ * RETRO half for mail screened out or quarantined before that shipped. The candidate set is EXACTLY the two
+ * demoting folders — `ohmail/Screened` and `ohmail/Quarantine` — and nothing else (INBOX/Reads/Receipts are
+ * admitted; `ohmail/Screener` is still waiting for the user); that scoping lives in the SQL. It writes an
+ * intent, never IMAP: `flag_state.desired_seen = true` (+ the `messages.unread` mirror and a `change_log`
+ * update) and stops; the worker's `reconcileFlags` (`sync.ts`) adds `\Seen` under the lease. ADDITIVE and
+ * REVERSIBLE (`last_set_by = 'us'`, undone by `scripts/undo-runaway-reads.mjs`). Idempotent with no marker
+ * or cursor — a marked row negates the predicate and drops out, the shrinking set IS the bookmark. The
+ * per-cycle budget caps how much read-state one invocation CREATEs (the `reconcileFlags` cost, as `rule-retro.ts`). */
 
 /** The two demoting folders whose unread backlog is marked read. The safety scope — see header. */
 export const READ_RETRO_FOLDERS: readonly string[] = ["ohmail/Screened", "ohmail/Quarantine"];

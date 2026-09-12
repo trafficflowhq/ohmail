@@ -7,32 +7,15 @@ import { UNMETERED_STORAGE_CAP, type Logger, type StorageCap } from "@trafficflo
 import { dialect } from "@trafficflow/db/dialect";
 
 /**
- * THE ROLLING-WINDOW TRIM — the background half of the at-cap behaviour ratified 2026-08-21.
- *
- * When an account's counted stored-body bytes reach {@link EVICT_HIGH_WATER_RATIO} of its cap,
- * this pass husks its OLDEST stored bodies (headers kept, content emptied,
- * `withheld_reason = 'storage_cap'`) until the counter is back at {@link EVICT_LOW_WATER_RATIO}
- * — so ingest almost always finds headroom and the ordinary at-cap experience is "old mail's
- * stored copy quietly gives way to new", never "new mail stops being stored". The IMAP
- * originals are untouched, always: eviction rewrites the hosted copy only.
- *
- * The band between the two marks is the hysteresis: trimming exactly to the cap would re-arm
- * the trigger on the next message and turn every cycle into a one-message trim. The inline
- * fallback (`reserveBodyBytesEvicting`, in the ingest adapter) covers the burst that outruns
- * this pass between cycles, bounded per body; this pass is what makes that fallback cold.
- *
- * ## Bounds and ordering
- *
- *  · {@link EVICT_ROUNDS_PER_CYCLE} transactions of {@link EVICT_BATCH_BODIES} bodies each per
- *    account per cycle — a lagging account converges across cycles rather than monopolizing one.
- *  · Each round is ONE transaction that locks the `account_storage` row FIRST, then husks —
- *    the module lock order (`packages/db/src/storage.ts`). Registered in the worker's serial
- *    per-account section, like the repair passes, so the two never interleave on one account.
- *  · The probe is two indexed reads (cap, counter); for every account under the high-water mark
- *    the pass is those reads and nothing else.
- *
- * An UNBOUNDED cap (an unmetered install) is never trimmed: there is no ceiling to keep under.
- */
+ * THE ROLLING-WINDOW TRIM — the background half of the at-cap behaviour ratified 2026-08-21. When an
+ * account's counted stored-body bytes reach {@link EVICT_HIGH_WATER_RATIO} of its cap, this husks its
+ * OLDEST stored bodies (headers kept, content emptied, `withheld_reason = 'storage_cap'`) down to
+ * {@link EVICT_LOW_WATER_RATIO}, so ingest almost always finds headroom ("old mail's copy quietly gives
+ * way", never "new mail stops being stored"); IMAP originals are untouched. The band is hysteresis
+ * (trimming to the cap would re-arm on the next message); `reserveBodyBytesEvicting` covers the burst
+ * between cycles. {@link EVICT_ROUNDS_PER_CYCLE} transactions of {@link EVICT_BATCH_BODIES} bodies per
+ * account per cycle, each locking the `account_storage` row FIRST (`packages/db/src/storage.ts` order), in
+ * the serial per-account section. An UNBOUNDED cap is never trimmed (no ceiling to keep under). */
 export const EVICT_ROUNDS_PER_CYCLE = 4;
 
 export interface StorageEvictResult {
