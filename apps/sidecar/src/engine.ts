@@ -3605,9 +3605,9 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
             }
           }
           if (released === null && !releasedByLapse) {
-            /* The pipeline is told, or a reader's gate gets an organizer's cycle. `drain`
-               spreads `role: organizer.organizing ? "organizer" : "reader"` and gates
-               `armHoldFromFolder` and `sendScheduled` on the same field. `reason` is NULL:
+            /* The pipeline is told, or a reader's gate gets an organizer's cycle. This record is
+               what the PANE renders and what the next pass's gate starts from; the drain of the
+               pass this gate is running takes the answer as a value instead. `reason` is NULL:
                nobody else holds this mailbox, and naming a holder would put "another install
                has claimed this mailbox" in front of somebody whose own release has not
                finished. `unreadableSince` is CARRIED, not cleared — this pass did not read the
@@ -4195,7 +4195,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
          *
          * `composition-passes.ts` decides; a phone is the composition it excludes. The refusal is
          * HERE rather than at the drain's call site because `reader-drain.test.ts` reads that line
-         * literally (`if (organizer.organizing) await sendScheduled(...)`) to prove the pass stays
+         * literally (`if (organizing) await sendScheduled(...)`) to prove the pass stays
          * organizer-only, and a second conjunct there would retire that guard silently.
          *
          * Once per runtime, not once per drain: a line on every poll would bury the one that says
@@ -4338,8 +4338,8 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
 
       /**
        * The drain itself. Never called from outside this closure, and — since the mailbox-removal design — reached
-       * by a READER as well as by an organizer; `organizer.organizing` is what separates them, both
-       * for the passes below and for the `role` every cycle runs under.
+       * by a READER as well as by an organizer; the `organizing` the GATE handed this pass is what
+       * separates them, both for the passes below and for the `role` every cycle runs under.
        */
       /**
        * @param gen  the connection generation the caller read the organizer lease under. Every
@@ -4348,8 +4348,16 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
        * @param conn the adapter instance that generation belongs to. Passed as a VALUE and spread
        *   over `syncDeps` for each cycle, so that even inside one cycle a re-dial cannot move the
        *   mail: the pipeline writes to the connection whose lease this pass read, or it fails.
+       * @param organizing THE ROLE THE GATE READ FOR THIS PASS, passed as a value for the reason
+       *   `gen` and `conn` are. It used to read `organizer.organizing` — a field that outlives the
+       *   gate and that a stop, a hand-back or a failed poll rewrites mid-pass, so two readers
+       *   inside one pass could disagree, and a pass that could not establish its role at all
+       *   depended on the gate's unreadable arm having written the cache before the drain read it.
+       *   One reading per pass; the cache is re-established at the NEXT pass's gate.
        */
-      const drain = async (maxCycles: number, gen: number, conn: MailboxAdapter): Promise<number> => {
+      const drain = async (
+        maxCycles: number, gen: number, conn: MailboxAdapter, organizing: boolean,
+      ): Promise<number> => {
         // The marker-surfacing preflight, at the top of the drain both doors share. Routing no
         // longer depends on it (`importDecisionOpenNow` re-evaluates each cycle) but the confirm
         // surface does: the hold it offers is readable only through the durable marker this
@@ -4360,11 +4368,11 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
            facts matter. Above, because a pass whose connection has been replaced is stale
            whatever role it holds — a reader cycling over a dead socket is the wedge too. On its
            own line, because `reader-drain.test.ts` reads THIS FILE and requires the role gate to
-           be literally `if (organizer.organizing) await …`: a source census cannot see through a
+           be literally `if (organizing) await …`: a source census cannot see through a
            brace, and folding the two together would silently retire a guard that exists to keep
            an organizer-only mailbox write off a reader's drain. */
         assertSameConnection(gen, conn);
-        if (organizer.organizing) await profileSync.armHoldFromFolder();
+        if (organizing) await profileSync.armHoldFromFolder();
         // BEFORE the cycles, not after: a resurface is a local database fact and does not depend on
         // the mailbox being reachable, so it must survive a cycle that throws on a dead connection.
         /* THE INSTALL'S OWN WORK, ONCE. See {@link onceForTheAccount}: another mailbox's drain that
@@ -4377,7 +4385,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         // can survive into a reader launch, and an ungated pass would claim and SEND it from an
         // install the mailbox's organizer knows nothing about, at a time nobody re-chose.
         assertSameConnection(gen, conn);
-        if (organizer.organizing) await sendScheduled(gen, conn);
+        if (organizing) await sendScheduled(gen, conn);
         // The away responder, directly after the appointment clock and gated the same way. AFTER
         // the cycles would be wrong for the reason the placement note above gives about
         // `sendScheduled`: an away reply has a clock on it too — it is a promise about mail that
@@ -4388,7 +4396,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
            the time this line is reached the connection may have been replaced twice over. A guard
            six lines up is a guard about a different moment. */
         assertSameConnection(gen, conn);
-        if (organizer.organizing) await answerAway(gen, conn);
+        if (organizing) await answerAway(gen, conn);
         /* AND THE RECONCILER — UNGATED, unlike the two lines above it. See its own note: those two
            SEND on the mailbox's behalf and a reader must not; this one settles a reservation THIS
            install wrote, by reading. Gating it would leave a demoted install saying "Sending…" for
@@ -4468,13 +4476,13 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
             // Mail 0083. THE ROLE THE GATE ANSWERED FOR THIS DRAIN, spread after `syncDeps` so it
             // wins: a demoted install keeps draining, and every cycle it runs from here is a READER
             // cycle — the mirror grows, `\Seen` is pushed, and nothing is moved, filed or created.
-            // `organizer.organizing` is the gate's own answer, held on the engine and refreshed by
-            // every gate run, so a demotion or a promotion applies to the very next cycle.
-            role: organizer.organizing ? "organizer" : "reader",
+            // `organizing` is the gate's own answer for THIS pass, handed down rather than read
+            // back off the engine, so a demotion or a promotion applies to the very next PASS.
+            role: organizing ? "organizer" : "reader",
             // A demoted install keeps draining as a READER, and a reader holds no lease — its
             // `\Seen` push is the one verb it may write. Naming that here rather than passing the
             // spent permit is what keeps "no lease" and "not asked" apart at the write boundary.
-            writeAuthority: organizer.organizing ? leasePermit : { noLease: "reader" },
+            writeAuthority: organizing ? leasePermit : { noLease: "reader" },
             // The routing half of the organizer-profile hold (TAKEOVER-RESCREEN), EVALUATED from
             // the current facts at every cycle edge — never cached; see the worker's cycle for
             // the argument (many arm/release orderings were tried, each with a
@@ -4712,7 +4720,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           let cycleError: unknown = null;
           let cycles = 0;
           try {
-            cycles = await drain(maxCycles, gen, conn);
+            cycles = await drain(maxCycles, gen, conn, organizing);
           } catch (err) {
             cycleError = err;
           }
@@ -5075,7 +5083,9 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
            * said "Connection lost. Reconnecting…". So the login is KEPT, the caller arms the poll,
            * and the next drain asks again over the same connection. Narrow BY CLASS. */
           try {
-            await serialize(() => drain(100, gen, conn));
+            // `permitted`, the answer THIS launch's gate gave — the launch is a pass like any
+            // other and its drain runs under the role that pass read.
+            await serialize(() => drain(100, gen, conn, permitted));
           } catch (err) {
             if (!fetchRefused(err)) throw err;
             noteFetchRefused(err);
