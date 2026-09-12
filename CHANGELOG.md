@@ -86,6 +86,11 @@ found dead is now ended outright, the next attempt happens, and each attempt is 
 phone, a command written to a connection that had just closed could also take the app down; those
 bytes are refused at the socket and the write is told why.
 
+### The phone names the computer organizing your mailbox
+
+When a computer is organizing your mailbox, the phone says so, names it, and reads along instead
+of asking to organize.
+
 ### A phone keeps re-claiming its mailbox after the first minutes
 
 "Start organizing here" was refused for the rest of the session once the app had been open more
