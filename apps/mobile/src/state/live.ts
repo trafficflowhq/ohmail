@@ -15,7 +15,6 @@ import {
   bodyOf,
   consentPartition,
   forwardSubject,
-  isResurfaced,
   dateClock,
   messageDisplayTime,
   weekdayClock,
@@ -247,21 +246,22 @@ function placeOfFolder(folder: Folder): Place {
 }
 
 /**
- * THE MESSAGE'S CURRENT TRIAGE CLAIM — the winning `message_state` row, falling back to the
- * DTO's own `triage`. Reading `m.triage` alone was measured to miss a just-dispatched
- * `triage_set` entirely (the optimistic effect and the live server both write `message_state`
- * records, not the message row), which turned every toggle into a re-file: press Later twice
- * and the wire carried `reply_later` twice, never `none`. `winningStates` is the same
- * dedup-by-newest-claim the pile lister and the Ohbox hold-out derive from, so the bar's
- * pressed face, the toggles and the piles cannot disagree about where a message stands.
+ * THE MESSAGE'S CURRENT TRIAGE CLAIM. Reading `m.triage` alone was measured to miss a
+ * just-dispatched `triage_set` entirely (the optimistic effect and the live server both write
+ * `message_state` records, not the message row), which turned every toggle into a re-file: press
+ * Later twice and the wire carried `reply_later` twice, never `none`. `winningStates` folds BOTH
+ * wire homes into one claim — the same derivation the pile lister and the Ohbox hold-out read —
+ * so the bar's pressed face, the toggles and the piles cannot disagree about where a message
+ * stands. No second read of `m.triage` beside it: the fold already carries it, and a fallback
+ * that cannot fire would quietly outrank a newer record.
  */
 function triageStateOf(reader: EntityReader, m: EngineMessage): string | null {
-  return winningStates(reader).get(m.id)?.state ?? m.triage?.state ?? null;
+  return winningStates(reader).get(m.id)?.state ?? null;
 }
 
 function pileOf(reader: EntityReader, m: EngineMessage): WorldPileState {
   const s = triageStateOf(reader, m);
-  if (s === "resurfaced" || isResurfaced(m)) return "resurfaced";
+  if (s === "resurfaced") return "resurfaced";
   return s === "reply_later" || s === "set_aside" || s === "bubbled_up" ? s : null;
 }
 

@@ -392,23 +392,89 @@ export function pileOfState(
 }
 
 /**
- * The winning `message_state` claim per message. The mirror can briefly
- * hold TWO records for one message under different record ids: the server
- * keys by the `message_states` row uuid while an optimistic effect keys by
- * the message id — a drain landing the settled row beside the overlay made
- * a pile count one message twice (6-vs-1 measured live). The message is the
- * unit a pile is about, so it is the dedup key; the newest `updatedAt`
- * wins, ties keep the later-listed record (user-always-wins). Extracted so
- * {@link triagePiles} and {@link parkedMessageIds} cannot disagree.
+ * THE ONE CLAIM PER MESSAGE — both wire homes of "comes back later", folded.
+ * The fact crosses the wire twice — embedded on the message, and as its own `message_state` — and
+ * a windowed bootstrap can deliver either without the other, which is how one client stood a
+ * parked message in the main list wearing its chip while another had it under Triage. This is the
+ * only place either is read: the message's own row is the CARRIER, the record is offered LAST so a
+ * tie goes to it, and an absent `triage` offers nothing (a release crosses as a `none` row with a
+ * fresh stamp). Dedup is by MESSAGE id, newest `updatedAt` winning, ties keeping the later claim —
+ * two record-id spellings of one fact counted a pile 6-vs-1 live, and the user always wins.
  */
+const claimCache = new WeakMap<EntityReader, { v: number; claims: Map<string, MessageStateDTO> }>();
+
 export function winningStates(reader: EntityReader): Map<string, MessageStateDTO> {
+  const v = reader.version();
+  const hit = claimCache.get(reader);
+  if (hit && hit.v === v) return hit.claims;
+
   const claimOf = new Map<string, MessageStateDTO>();
-  for (const st of reader.list<MessageStateDTO>("message_state")) {
+  const offer = (st: MessageStateDTO): void => {
     const held = claimOf.get(st.messageId);
-    if (held && Date.parse(held.updatedAt) > Date.parse(st.updatedAt)) continue;
+    if (held && Date.parse(held.updatedAt) > Date.parse(st.updatedAt)) return;
     claimOf.set(st.messageId, st);
+  };
+  for (const st of reader.list<MessageStateDTO>("message_state")) offer(st);
+  // `messageId` is re-stated from the row: the carrier IS this message, whatever the copy says.
+  for (const m of reader.list<EngineMessage>("message")) {
+    if (m.triage) offer({ ...m.triage, messageId: m.id });
   }
+  claimCache.set(reader, { v, claims: claimOf });
   return claimOf;
+}
+
+/** Two claims a surface cannot tell apart — used to keep a row's identity when nothing moved. */
+function sameClaim(a: MessageStateDTO | null, b: MessageStateDTO | null): boolean {
+  if (a === b) return true;
+  if (a === null || b === null) return false;
+  return a.state === b.state && a.bubbleUpAt === b.bubbleUpAt
+    && a.setAt === b.setAt && a.updatedAt === b.updatedAt;
+}
+
+/**
+ * THE CARRIER, STAMPED — the reader every surface reads the mirror through.
+ *
+ * {@link OhmailEngine.read} returns this, so no client can forget it: every message already
+ * carries {@link winningStates}' one claim on its own `triage`, and the chip, the Ohbox hold-out,
+ * the piles and the reading pane are one derivation. A PROJECTION rather than a heal written into
+ * the mirror — no second stored copy to go stale, and a record arriving before its message still
+ * lands on the row the moment it does. Rows whose homes agree come back by identity.
+ */
+export function oneSourceReader(inner: EntityReader): EntityReader {
+  const projector = (): ((m: EngineMessage) => EngineMessage) => {
+    const claims = winningStates(inner);
+    return (m) => {
+      const claim = claims.get(m.id) ?? null;
+      return sameClaim(claim, m.triage) ? m : { ...m, triage: claim };
+    };
+  };
+
+  return {
+    version: () => inner.version(),
+    // Inline rather than through `projector()`: this is the per-row read every reading surface
+    // makes, and the claim map is already cached — no closure need be built to answer one row.
+    get<T = unknown>(type: string, id: string): T | undefined {
+      const v = inner.get<T>(type, id);
+      if (type !== "message" || v === undefined) return v;
+      const m = v as unknown as EngineMessage;
+      const claim = winningStates(inner).get(m.id) ?? null;
+      return (sameClaim(claim, m.triage) ? m : { ...m, triage: claim }) as unknown as T;
+    },
+    list<T = unknown>(type: string): T[] {
+      if (type !== "message") return inner.list<T>(type);
+      return inner.list<EngineMessage>("message").map(projector()) as unknown as T[];
+    },
+    entries<T = unknown>(type: string): Array<{ id: string; entity: T; seq: number }> {
+      const rows = inner.entries<T>(type);
+      if (type !== "message") return rows;
+      const project = projector();
+      return rows.map((r) => ({
+        id: r.id,
+        entity: project(r.entity as unknown as EngineMessage) as unknown as T,
+        seq: r.seq,
+      }));
+    },
+  };
 }
 
 /**

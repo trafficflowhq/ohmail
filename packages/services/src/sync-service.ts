@@ -1,6 +1,6 @@
-import { and, asc, desc, eq, exists, gt, inArray, isNull, lt, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, exists, gt, inArray, isNull, lt, ne, or, sql } from "drizzle-orm";
 import {
-  approvals, changeLog, drafts, messages, messageTags, routingDecisions, seqBounds,
+  approvals, changeLog, drafts, messages, messageStates, messageTags, routingDecisions, seqBounds,
   rules, tags, type EntityType,
 } from "@trafficflow/db";
 import type { Db, ServiceContext } from "./context.js";
@@ -604,8 +604,9 @@ export class SyncService {
    * while the flag is on — plus the newest page of messages. EVERY page carries the THREADS its own
    * messages name, their child rows, and the next {@link SNAPSHOT_DRAFT_PAGE} drafts. Three phases:
    * the message window (`SNAPSHOT_WINDOW` — two floors and a ceiling), then a TAIL carrying the
-   * messages below it that own a tag, a pending approval or a pending routing decision — otherwise
-   * unreachable — then drafts outliving both. Every row is `op:"create"` at `seq = asOfSeq`.
+   * messages below it that own a tag, a PARK, a pending approval or a pending routing decision —
+   * otherwise unreachable — then drafts outliving both. Every row is `op:"create"` at
+   * `seq = asOfSeq`.
    */
   async getSnapshot(ctx: ServiceContext, opts: GetSnapshotOptions = {}): Promise<SnapshotResponse> {
     const { db, accountId } = ctx;
@@ -749,11 +750,12 @@ export class SyncService {
     // The tail is the SAME keyset walk resumed past the window, restricted to messages owning
     // something the client cannot do without, so its cost is bounded by how much mail owns one of
     // these rather than by the mailbox. A TAG, because a rail over mail the client lacks reads as
-    // empty. A PENDING approval or routing decision, because those are actions somebody is waiting
-    // to take: keying children to their parent's page left a pending row whose message the window
-    // excluded delivered to nobody, with the cursor past its change for ever. Settled rows are
-    // history, which is what the window is for. Every arm filters `account_id` too, so a bug that
-    // let the two disagree fails closed rather than leaking into another account's bootstrap.
+    // empty. A PARK, because the window is days over the ARRIVAL stamp and a message parked until
+    // next month is one whose arrival says nothing about whether it is wanted. A PENDING approval
+    // or routing decision, because those are actions somebody is waiting to take. Settled rows and
+    // `none` parks are history, which is what the window is for. Every arm filters `account_id`
+    // too, so a bug that let the two disagree fails closed rather than leaking into another
+    // account's bootstrap.
     const inTail = cursor?.phase === "tail" || tailOnly;
     const reachableTail = inTail
       ? or(
@@ -768,6 +770,18 @@ export class SyncService {
             eq(approvals.messageId, messages.id),
             eq(approvals.accountId, accountId),
             eq(approvals.status, "pending"),
+          )),
+        ),
+        /**
+         * A PARK. `SNAPSHOT_WINDOW` is untouched and a horizon beyond it is admitted for as long
+         * as the message is parked. `none` is the resting state every released message keeps, so
+         * it must not admit, or the tail would re-deliver everything ever parked.
+         */
+        exists(
+          db.select({ x: sql`1` }).from(messageStates).where(and(
+            eq(messageStates.messageId, messages.id),
+            eq(messageStates.accountId, accountId),
+            ne(messageStates.state, "none"),
           )),
         ),
         exists(
@@ -846,8 +860,9 @@ export class SyncService {
     //
     // The window is the recency floor or the volume floor, whichever is not yet met, under the row
     // CEILING. When it stops the walk opens the TAIL rather than ending: below the window a message
-    // owning a tag, a pending approval or a pending routing decision is otherwise lost, its own
-    // change sitting below the client's post-bootstrap cursor. The tail resumes the same keyset
+    // owning a tag, a park, a pending approval or a pending routing decision is otherwise lost —
+    // the change that made it interesting (`message_tags`, `message_states`) sits below the
+    // client's post-bootstrap cursor and no delta re-delivers it. The tail resumes the same keyset
     // under `reachableTail` and ends on a short page; a walk that ran off the end has no tail.
     // THE CEILING STOPS THE WINDOW, NEVER THE TAIL — counted newest-first like the floor, so it
     // ends the walk above it and the tail still reaches below. Read at a PAGE boundary, so a

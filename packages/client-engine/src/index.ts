@@ -245,6 +245,10 @@ export {
   parkedMessageIds,
   pileOfState,
   winningStates,
+  // The park fact's one carrier, stamped onto every message the mirror hands out. `read()`
+  // applies it; exported so a guard can drive the projection directly and so an embedder
+  // wrapping its own reader can keep it.
+  oneSourceReader,
   feedPartition,
   readsPartition,
   receiptsByDay,

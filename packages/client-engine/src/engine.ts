@@ -20,7 +20,7 @@ import {
   type AddressResult,
   type LocalSearchResult,
 } from "./search.js";
-import { sendingMailboxId } from "./selectors.js";
+import { oneSourceReader, sendingMailboxId, winningStates } from "./selectors.js";
 import { flattenResponse } from "./apply.js";
 import { countNotify } from "./client-vitals.js";
 import { MemoryMirrorStore, type EntityReader, type MirrorStore } from "./store.js";
@@ -48,7 +48,6 @@ import {
   type EngineMutation,
   type MessageBodyBatchWire,
   type MessageBodyRecord,
-  type MessageStateDTO,
   type OhmailView,
   type SyncSnapshotPage,
   type UnsubscribeResult,
@@ -1772,6 +1771,8 @@ export class OhmailEngine {
   private outboxSeq = 0;
   private readonly listeners = new Set<() => void>();
   private readonly readerView: OverlayReader;
+  /** {@link oneSourceReader} over the overlay — what {@link OhmailEngine.read} hands out. */
+  private readonly resolvedView: EntityReader;
   private searchCache: { version: number; index: SearchIndex } | null = null;
   private syncing: Promise<void> | null = null;
   /** The in-flight mirror read, so concurrent callers coalesce. See {@link OhmailEngine.hydrate}. */
@@ -1999,6 +2000,7 @@ export class OhmailEngine {
     this.bootedAt = this.now().getTime();
     this.uuid = opts.uuid ?? (() => crypto.randomUUID());
     this.readerView = new OverlayReader(this.store, this.overlays, () => this.overlayRev);
+    this.resolvedView = oneSourceReader(this.readerView);
   }
 
   // ── lifecycle ────────────────────────────────────────────────────────────
@@ -3090,11 +3092,16 @@ export class OhmailEngine {
     for (const d of this.store.list<EngineDraft>("draft")) {
       if (d.inReplyToMessageId) pinned.add(d.inReplyToMessageId);
     }
-    // The record id IS the message id for `message_state` (see `mutations.ts`), but the DTO
-    // carries it too — read the field first so a server that ever keys these differently does not
-    // silently empty this half of the set.
-    for (const { id, entity } of this.store.entries<MessageStateDTO>("message_state")) {
-      if (entity.state && entity.state !== "none") pinned.add(entity.messageId || id);
+    /**
+     * EVERY PARK, THROUGH THE ONE FOLD. `winningStates` reads both wire homes — the standalone
+     * `message_state` record AND the copy the message's own row carries — because a windowed
+     * bootstrap can deliver either without the other, and reading the records alone evicted the
+     * parked mail of a mirror that only ever received the message: the reminder deleted by the
+     * cache it was kept in. Over the STORE, not the overlay, because the prune is about what the
+     * mirror holds.
+     */
+    for (const [messageId, claim] of winningStates(this.store)) {
+      if (claim.state && claim.state !== "none") pinned.add(messageId);
     }
     for (const r of this.store.list<PendingRoutingDecision>("routing_decision")) {
       if (r.status === "pending_approval" && r.messageId) pinned.add(r.messageId);
@@ -3177,9 +3184,13 @@ export class OhmailEngine {
 
   // ── reads ────────────────────────────────────────────────────────────────
 
-  /** The overlay-merged reader — what selectors and the UI consume. */
+  /**
+   * The overlay-merged reader — what selectors and the UI consume — with the park fact resolved
+   * onto its one carrier ({@link oneSourceReader}). Applied HERE and not at each surface: a seam
+   * a client can forget is how the chip and the list came to read different copies of one fact.
+   */
   read(): EntityReader {
-    return this.readerView;
+    return this.resolvedView;
   }
 
   subscribe(listener: () => void): () => void {
