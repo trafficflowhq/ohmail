@@ -155,12 +155,10 @@ export async function authorizeOrganizerTakeover(
   //
   // `coalesce` on the consent so a re-run does not move the record of when the person first
   // agreed; the stamp is unconditional because it authorizes THIS becoming.
-  //
-  // ONE TRANSACTION, SETTINGS FIRST. This arm asks no window, and for that reason alone it used
-  // to write no `account_settings` row at all — leaving a consented mailbox with a NULL screening
-  // baseline, which is "no cutoff" and moves the whole backlog. The baseline is stamped by every
-  // door now; `writeConsentScreening` is the one writer, and the settings/mailbox order is the one
-  // every other writer of that table takes so the lock chain runs one direction.
+
+  // ONE TRANSACTION, SETTINGS FIRST. This arm asks no window and for that reason alone wrote no
+  // `account_settings` row at all, leaving a consented mailbox with no cutoff. Settings before the
+  // mailbox row is the order every other writer of that table takes, so the lock chain runs one way.
   await db.transaction(async (tx) => {
     await writeConsentScreening(tx, dialect(db), { accountId: row.accountId, now: input.now });
     await tx
@@ -241,14 +239,11 @@ type LocalTx = Parameters<Parameters<LocalDb["transaction"]>[0]>[0];
  * THE ONE WRITER OF `screening_baseline_at` ON THIS DOOR — and it always writes it.
  *
  * The baseline is a property of "this mailbox is organized from now", not of a request field. It
- * was stamped only when a window rode along, so the two doors that ask no window (the CLI, and
- * Settings’ "Organize from this machine") left it NULL — and NULL is "no cutoff", so the gate
- * holds every unruled sender’s mail whatever its age, which on a long-established mailbox is its
- * whole history. The dials are OPTIONAL because they are the answer a person gave to a second
- * question; the stamp is not optional, because consent is the answer to the first.
- *
- * `coalesce` in SQL rather than read-then-write: two racing consents produce ONE baseline without
- * reading the row first, and a re-run cannot slide a live install’s cutline forward.
+ * was stamped only when a window rode along, so the doors that ask none left it NULL — "no cutoff",
+ * which holds a sender’s mail whatever its age. The dials are OPTIONAL, being the answer to a
+ * second question; the stamp is not, being the answer to the first. `coalesce` in SQL rather than
+ * read-then-write, so two racing consents produce ONE baseline and a re-run cannot slide a live
+ * install’s cutline forward.
  */
 async function writeConsentScreening(
   tx: LocalTx,

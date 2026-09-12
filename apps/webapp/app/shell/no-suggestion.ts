@@ -1,15 +1,11 @@
 /**
  * WHY A WAITING ROW HAS NO SUGGESTION — the three answers, named.
  *
- * Every sender with no advice on record rendered one sentence: "No suggestion yet for this
- * sender." On a measured queue that was 3 609 of 3 979 rows, and "yet" is a promise — it says one
- * is coming. It is not coming on an account whose spend is refused, which is a STANDING condition
- * rather than a moment, and it did not come by itself for mail the sensitivity pass keeps out of
- * the automatic classification. The word is true for exactly one of the three states, so the state
- * is named and the sentence follows from it.
- *
- * Pure and dependency-free so both the reason and its catalogue key can be asserted without a
- * render; `ScreenerView` is the only caller.
+ * Every sender with no advice rendered "No suggestion yet for this sender", and "yet" is a promise.
+ * It is not kept on an account whose spend is refused — a STANDING condition rather than a moment —
+ * and nothing came by itself for mail the sensitivity pass keeps out of the automatic
+ * classification. The word is true for one of the three states, so the state is named and the
+ * sentence follows from it. Pure, so the reason and its key are assertable without a render.
  */
 
 /** The reason this row shows no advice. */
