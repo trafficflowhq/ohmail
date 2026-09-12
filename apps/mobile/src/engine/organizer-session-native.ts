@@ -58,6 +58,9 @@ export function startOrganizerSessionNative(
           mailboxId,
           organizing: state.organizing,
           standDown: state.reason !== null,
+          /* THE ENGINE'S OWN, straight through. The background half decides on this and not on
+             `organizing`, which is still false for a round trip after the claim has landed. */
+          claimed: state.claimed,
         })),
     },
     /* `null` on iOS, and that is the platform rather than a gap — see `background-native.ts`. */

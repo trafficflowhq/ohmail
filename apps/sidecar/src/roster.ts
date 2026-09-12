@@ -117,6 +117,20 @@ export interface OrganizerState {
    * row ({@link unreadableSince}'s rule). The name is the ROW's and the DTO's.
    */
   releaseRequestedAt: string | null;
+  /**
+   * IS THIS MAILBOX CLAIMED BY THIS INSTALL — the instruction, not the pass's progress.
+   *
+   * {@link organizing} answers what THIS PASS may arrange, and it flips only once the gate has
+   * read the lease AND taken its permit — one IMAP round trip after this install's claim is
+   * already standing in `ohmail/_meta`. In that window a reader of `organizing` cannot tell a
+   * mailbox this install has just claimed from one nobody has consented to, and the phone's
+   * background arm read the second: press "Organize here", leave the screen inside the window,
+   * and the claim stood over a phone organizing nothing until it lapsed. This is the third
+   * state — consent recorded and the row saying organizer — set where the gate becomes entitled
+   * to the lease and cleared the moment the claim leaves (a release, a hand-back, a stand-down)
+   * or was never ours (pre-consent, a reader, an unreadable row).
+   */
+  claimed: boolean;
 }
 
 /**

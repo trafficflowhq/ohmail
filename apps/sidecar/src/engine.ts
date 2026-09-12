@@ -3049,11 +3049,13 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
        */
       let organizer: OrganizerState = mb.standDownReason
         ? { organizing: false, reason: mb.standDownReason as MailboxDisabledReason, heldBy: null,
-          unreadableSince: null, releaseRequestedAt: null }
+          unreadableSince: null, releaseRequestedAt: null, claimed: false }
         /* THE STOP IS NOT KNOWN AT ATTACH — it is the ROW's, and the first pass's own read is what
-           puts it here. `null` is "nothing has said", which is what an unasked question answers. */
+           puts it here. `null` is "nothing has said", which is what an unasked question answers.
+           `claimed` follows `organizing` here and for the same reason: the row said organizer and
+           nothing has said otherwise yet. The gate's first pass replaces both. */
         : { organizing: true, reason: null, heldBy: null, unreadableSince: null,
-          releaseRequestedAt: null };
+          releaseRequestedAt: null, claimed: true };
       /**
        * The exit from a stand-down — a human asked for this machine, once. Written by the
        * "organize from this machine" command (`organize-here.ts`), which also clears the row's
@@ -3262,7 +3264,10 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
              stand-down it remembers, so the pane keeps saying why it is not organizing. */
           organizer = { organizing: false, reason, heldBy: name, unreadableSince: null,
             /* CARRIED: a peek reads the holder, never the row's own stop. */
-            releaseRequestedAt: organizer.releaseRequestedAt };
+            releaseRequestedAt: organizer.releaseRequestedAt,
+            /* The two arms that peek are the two that hold nothing — a reader, and an install
+               nobody has consented to. */
+            claimed: false };
           /* Zero writes in the steady state, and the check is new (0.14.1). This block claimed
            * "only when something changed" and then wrote unconditionally — one UPDATE per
            * mailbox per poll for four values already there. The hosted twin
@@ -3477,6 +3482,9 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
             organizer = {
               organizing: false, reason: null, heldBy: null,
               unreadableSince: organizer.unreadableSince,
+              /* NOT OURS ANY MORE, whatever the folder still holds: the person pressed stop, so
+                 nothing may start behind a notification on the strength of this claim. */
+              claimed: false,
               /* AND THE STOP IS STILL STANDING, which is the whole of what a caller may not read
                  off `organizing` here: nothing was recorded, the claim is in the folder as far as
                  anybody knows, and the next poll asks the server again. */
@@ -3560,6 +3568,9 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
               organizer = {
                 organizing: false, reason: null, heldBy: null,
                 unreadableSince: organizer.unreadableSince,
+                /* The claim did come out of the folder a moment ago; the next poll's gate appends
+                   a fresh one under the surviving press and sets this again. */
+                claimed: false,
                 /* NOTHING IS RECORDED AND NOTHING IS SPENT, so the stamp stands exactly as this
                    pass read it — the row moved under the write, and the next poll re-reads it. */
                 releaseRequestedAt: releaseStamp,
@@ -3598,6 +3609,8 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
             organizing: false, reason: null, heldBy: null,
             unreadableSince: releasedByLapse ? organizer.unreadableSince : null,
             releaseRequestedAt: releaseStamp,
+            /* THE CLAIM IS GONE — confirmed out of the folder, or lapsed past believability. */
+            claimed: false,
           };
           /* NOT `priorStandDown`. That memory answers "somebody else holds this", and it is what
              `standDownMemory` derives from the row — which now reports a released mailbox as no
@@ -3662,7 +3675,10 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
            * pass that could not establish its role ran as the organizer. The pass is not
            * organizing, so the field says so; `unreadableSince` is what tells a person the
            * difference between "nothing organizes this" and "we could not look". */
-          organizer = { ...organizer, organizing: false };
+          /* AND NOT OURS. A row that says reader is an instruction, and a row that could not be
+             read is not permission — neither may leave a stale `claimed` standing for the phone's
+             background arm to start a notification on. */
+          organizer = { ...organizer, organizing: false, claimed: false };
           /* And cache the organizer's settings document, once per reader cycle (mail 0094). A
            * reader's own responder/rule/window/signature rows are inert: the ones in force are
            * in the published document of the install that HOLDS this mailbox — the panes used
@@ -3705,7 +3721,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
          * work on it); `reason` is NULL — no holder to name; `priorStandDown` is NOT set. */
         if (!consented && !takeoverAuthorized) {
           organizer = { organizing: false, reason: null, heldBy: null, unreadableSince: null,
-            releaseRequestedAt: releaseStamp };
+            releaseRequestedAt: releaseStamp, claimed: false };
           await notePeekedHolder(null);
           return false;
         }
@@ -3718,6 +3734,16 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
          * OAuth mailbox: each install holds its own token, so there is no shared secret — the
          * claim advertises nothing and a reader is refused honestly at its own door.
          */
+        /* ══ THE CLAIM IS OURS FROM HERE ═══════════════════════════════════════════════════
+         *
+         * Reaching this line means the row says organizer and somebody consented — the instruction
+         * the claim below carries out. It is set HERE and not with `organizing` two awaits down
+         * because the lease read APPENDS the claim to `ohmail/_meta` and the permit is a second
+         * round trip: between them a caller reading `organizing` sees exactly what it sees for a
+         * mailbox nobody has consented to, and the phone's background arm gave that reading back.
+         * A pass that goes on to stand down or to yield clears it below.
+         */
+        organizer = { ...organizer, claimed: true };
         /* Captured once so the renewal memory records the SAME instant the gate writes into the
            claim's heartbeat — the lapse bound below compares against what a reader of the folder
            can actually see, not against a second clock reading taken after the round trip. */
@@ -3760,7 +3786,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           lastLeaseRenewalAt = gateAskedAt;
           // Reading the lease is what proves it: a resolved gate clears the unreadable mark.
           organizer = { organizing: true, reason: null, heldBy: null, unreadableSince: null,
-            releaseRequestedAt: releaseStamp };
+            releaseRequestedAt: releaseStamp, claimed: true };
           // THE MEMORY IS SPENT WITH THE STAMP. Reaching here past a remembered stand-down means a
           // human pressed the button and the lease agreed; leaving the memory set would make the
           // very next poll return false for an install that IS the organizer — it would drain as a
@@ -3837,7 +3863,9 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                     "claim it appended ages out of the mailbox on its own",
                 });
                 organizer = { organizing: false, reason: null, heldBy: null, unreadableSince: null,
-                  releaseRequestedAt: releaseStamp };
+                  /* The mailbox is gone; the claim this pass appended ages out of a folder nothing
+                     will serve, so nothing may be started on the strength of it. */
+                  releaseRequestedAt: releaseStamp, claimed: false };
                 stopped = true;
                 if (timer) clearTimeout(timer);
                 if (heartbeatTimer) clearTimeout(heartbeatTimer);
@@ -3865,6 +3893,9 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           organizing: false,
           reason: outcome.reason,
           heldBy: outcome.by?.displayName ?? null,
+          /* DISPLACED. Another install holds the mailbox, so the claim is not ours to defend and
+             not ours to give back. */
+          claimed: false,
           // The lease WAS read to reach a stand-down, so whatever was unreadable no longer is.
           unreadableSince: null,
           releaseRequestedAt: releaseStamp,
@@ -4775,8 +4806,11 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
               reason: organizer.reason,
               heldBy: organizer.heldBy,
               unreadableSince: organizer.unreadableSince ?? new Date().toISOString(),
-              /* CARRIED with the rest: an unreadable lease says nothing about the row. */
+              /* CARRIED with the rest: an unreadable lease says nothing about the row — and that
+                 is the whole of it for `claimed`. An outage is not a machine taking the mailbox,
+                 so the notification stands and the next poll asks again. */
               releaseRequestedAt: organizer.releaseRequestedAt,
+              claimed: organizer.claimed,
             };
             // NO `schedule()` HERE — the CALLER arms the timer. That is what lets a re-dial
             // run this identical sequence without arming a second one for the same mailbox.
@@ -5333,7 +5367,11 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
             /* CARRIED: a hand-back removes the CLAIM and deliberately leaves the row saying
                organizer, so it neither makes nor spends a person's stop. */
             organizer = { organizing: false, reason: null, heldBy: null, unreadableSince: null,
-              releaseRequestedAt: organizer.releaseRequestedAt };
+              releaseRequestedAt: organizer.releaseRequestedAt,
+              /* THE CLAIM WENT BACK, and this is the field that says so. The ROW is deliberately
+                 untouched — the next resume takes the mailbox again with no press — so it is the
+                 only fact separating a phone that gave the mailbox back from one that holds it. */
+              claimed: false };
             /* THE TIMER GOES WITH THE CLAIM, and the flag closes the doors the timer is not.
                Releasing alone left the poll armed: it fired, the gate read a row that still says
                organizer, and the mailbox was claimed again — by an install that was about to be
@@ -6470,7 +6508,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
        */
       organizerState: () => seedRuntime()?.organizer
         ?? { organizing: false, reason: null, heldBy: null, unreadableSince: null,
-          releaseRequestedAt: null },
+          releaseRequestedAt: null, claimed: false },
       /* Every mailbox, not the seed alone: a wake is an install-wide event and an install with
          four mailboxes has four dead sockets. Settled rather than raced — `allSettled` so one
          refusal cannot cut the others short, and the results are dropped because each dial path

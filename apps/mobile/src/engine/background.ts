@@ -4,11 +4,13 @@
  * nothing; the fourth door's sentences say each platform's answer. Android: a foreground
  * service keeps the process alive — no notification, nothing organizing. iPhone: iOS suspends
  * the process, and a claim held by a suspended app is the double-organizer hazard, so the claim
- * is given back on the way out and taken again on the way in. One module and ONE predicate:
- * {@link createBackgroundOrganizing}'s `organizerRuns` — is the organizer running? — read from
- * the service's own state and never from {@link BackgroundDeps.platform}, which only names which
- * code the log carries. The release is the engine's own `handBack()`; nothing here writes
- * `ohmail/_meta`.
+ * is given back on the way out and taken again on the way in. One module and TWO questions, each
+ * asked once: {@link createBackgroundOrganizing}'s `organizerRuns` — can the organizer run? —
+ * read from the service's own state and never from {@link BackgroundDeps.platform}, which only
+ * names which code the log carries; and `stateNow().claimed` — is the mailbox ours? — read from the
+ * engine's own record of the claim and never from whether a pass has reported itself organizing,
+ * which is still false for a round trip after the claim has landed. The release is the engine's
+ * own `handBack()`; nothing here writes `ohmail/_meta`.
  */
 import type { StopOrganizingOutcome } from "./standalone-door";
 
@@ -119,16 +121,22 @@ export interface BackgroundEngine {
    */
   claimHere(): Promise<"claimed" | "held" | "refused">;
   /**
-   * What the engine says about each mailbox right now.
+   * What the engine says about each mailbox right now — THREE facts, and no two of them are the
+   * negation of another.
    *
-   * `standDown` is the second fact and it is not the negation of the first: this install organizes
-   * nothing both before anybody has consented and after another machine took the mailbox, and only
-   * the second of those is a stand-down the claim watch may try to come back from.
+   * `claimed` is the one this module decides on: is this mailbox's claim ours? `organizing`
+   * answers what the engine's pass may arrange, and it flips a round trip LATER — the claim is
+   * appended to `ohmail/_meta` and the gate's permit is a second write — so between them a
+   * mailbox this phone has just been given reads exactly like one nobody has consented to.
+   * `standDown` is the third: this install organizes nothing both before anybody has consented
+   * and after another machine took the mailbox, and only the second is a state the claim watch
+   * may try to come back from.
    */
   organizing(): readonly {
     readonly mailboxId: string;
     readonly organizing: boolean;
     readonly standDown: boolean;
+    readonly claimed: boolean;
   }[];
 }
 
@@ -212,9 +220,12 @@ export type BackgroundReason =
   | "notification_not_showing"
   /** The person's stop: the notification's action, or a swipe-dismiss. */
   | "stopped_from_notification"
-  /** This install organizes nothing any more — another machine took the mailbox, the lease could
-   *  not be read, or the mailbox was removed. The claim is NOT ours to hand back here. */
+  /** This install HAD the mailbox and no longer does — another machine took it. The claim is NOT
+   *  ours to hand back here. */
   | "claim_lost"
+  /** Nothing of ours: no claim this install wrote — before anybody has consented to this phone,
+   *  and after it has given the mailbox back. Not a loss; there was never anything to lose. */
+  | "no_claim_here"
   /** The mailbox this install had stood down from is free again, and this install took it back. */
   | "holder_left"
   /** The organizer is running behind its notification and goes on running, so leaving the screen
@@ -544,19 +555,27 @@ export function createBackgroundOrganizing(deps: BackgroundDeps): BackgroundOrga
       await handBack(why);
       return;
     }
-    /* A reader does not post "Organizing". Another install took the mailbox and this
-     * install's gate stood down; the notification names this phone as the organizer, so
-     * starting one states something false on a surface a person cannot argue with — and it
-     * would stand until the claim watch ran, a minute away at best. The watch is the belt for
-     * a claim lost later; this is the state at the moment of backgrounding. `!== false` and
-     * not `=== true`: an engine that cannot say is not evidence that it organizes nothing,
-     * and taking that as a decline would hand the mailbox back over a momentary failure.
+    /* ══ IS THE CLAIM OURS — the second predicate, and it is about OWNERSHIP ═════════════════
+     *
+     * A reader does not post "Organizing": another install took the mailbox and this install's
+     * gate stood down, so a notification naming this phone as the organizer states something
+     * false on a surface a person cannot argue with, and it would stand until the claim watch
+     * ran. But "does this install organize anything" was the wrong question. The claim reaches
+     * `ohmail/_meta` a round trip BEFORE the runtime reports itself organizing, and inside that
+     * window this arm read a phone that had just been GIVEN the mailbox as a reader: press
+     * "Organize here", leave the screen, and a claim stood over a phone organizing nothing until
+     * it lapsed. So the fact is `claimed` — ours from the moment the gate is entitled to the
+     * lease. `!== false` and not `=== true`: an engine that cannot say is not evidence that the
+     * mailbox is not ours, and declining over a momentary failure is the same defect reversed.
      */
-    if (organizingNow() === false) {
-      log("organizer_background_declined_reader", { why: "claim_lost" });
-      /* NO HAND-BACK. The claim is not ours — the gate has already stood down — and asking the
-         server to expunge records by our own id would be a write about a mailbox this install has
-         been told it does not hold. */
+    /* ONE READ for the whole transition — see {@link stateNow}: the decision, the code it logs
+       and the word the hold carries all name the same instant. */
+    const state = stateNow();
+    if (state?.claimed === false) {
+      log("organizer_background_declined_reader", { why: nothingOfOurs(state) });
+      /* NO HAND-BACK, in both states. Either another install holds the mailbox or nobody ever
+         asked this phone for it, and asking the server to expunge records by our own id is a
+         write about a mailbox this install has just been told is not its own. */
       disarmWatch();
       moved();
       return;
@@ -591,7 +610,7 @@ export function createBackgroundOrganizing(deps: BackgroundDeps): BackgroundOrga
     /* THE CLAIM STANDS, and this line is the only place that says so. A device run reads the
        background machine's decision off the log and nowhere else; without it the difference
        between "kept the mailbox" and "did nothing" is invisible until the mail server is asked. */
-    log("organizer_background_holds", { why: "organizer_still_running" });
+    log("organizer_background_holds", { why: "organizer_still_running", state: organizingWord(state) });
     armWatch();
   };
 
@@ -635,17 +654,31 @@ export function createBackgroundOrganizing(deps: BackgroundDeps): BackgroundOrga
    * surface a person cannot argue with. So the service goes when the claim does.
    */
   /**
-   * DOES THIS INSTALL ORGANIZE ANYTHING RIGHT NOW — `true`, `false`, or `null` for "cannot say".
+   * WHAT THE ENGINE SAYS ABOUT THIS INSTALL'S MAILBOXES — one read, three answers, or `null` for
+   * "could not say".
    *
-   * Three answers and not two, because the two arms that read this must treat a failed read
-   * differently from a negative one: an engine that cannot answer is not evidence that it organizes
-   * nothing, and both a decline and a notification teardown over that would be a decision taken on
-   * a momentary failure.
+   * ONE read per act, and that is not thrift. The claim can move between two reads, so a decision
+   * taken on one and a log line written from another can contradict each other about the same
+   * instant — and the line a device run reads would be the wrong half. `null` is the third answer
+   * every caller must treat apart from a negative one: an engine that cannot answer is not
+   * evidence that the mailbox is not ours, and a decline or a teardown over a momentary failure
+   * is a decision taken on nothing.
    */
-  const organizingNow = (): boolean | null => {
+  const stateNow = (): { claimed: boolean; standDown: boolean; organizing: boolean } | null => {
     try {
       const states = deps.engine.organizing();
-      return states.some((m) => m.organizing);
+      return {
+        /* THE FACT THE DECISIONS TURN ON. Not the negation of the others and not a slower copy of
+           `organizing`: the engine calls the mailbox ours from the moment its gate is entitled to
+           the lease, which is before the claim is in the folder and a round trip before the pass
+           reports itself organizing — see {@link BackgroundEngine.organizing}. */
+        claimed: states.some((m) => m.claimed),
+        /* A SEPARATE QUESTION, because both of the others are false before anybody has consented
+           and only a stand-down is a state the claim watch may come back from. */
+        standDown: states.some((m) => m.standDown),
+        /* READ FOR THE LOG'S WORD AND NOTHING ELSE — see {@link organizingWord}. */
+        organizing: states.some((m) => m.organizing),
+      };
     } catch (err) {
       log("organizer_state_unreadable", { err });
       return null;
@@ -653,20 +686,23 @@ export function createBackgroundOrganizing(deps: BackgroundDeps): BackgroundOrga
   };
 
   /**
-   * IS THIS INSTALL STOOD DOWN FROM A MAILBOX ANOTHER MACHINE TOOK — `true`, `false`, or `null`.
+   * WHICH of the two ways a mailbox is not ours, for the LOG's sake only.
    *
-   * The third answer is `organizingNow`'s and for its reason: a read that failed is not evidence.
-   * It is a SEPARATE question from "does this install organize anything", because both answers are
-   * false before anybody has consented, and only a stand-down is a state to come back from.
+   * Decides nothing — {@link absentReason}'s shape, for its reason: "another machine took it" and
+   * "there was never a claim here" want different remedies from a person reading a device log,
+   * and neither is a different act.
    */
-  const standDownNow = (): boolean | null => {
-    try {
-      return deps.engine.organizing().some((m) => m.standDown);
-    } catch (err) {
-      log("organizer_state_unreadable", { err });
-      return null;
-    }
-  };
+  const nothingOfOurs = (state: { standDown: boolean }): BackgroundReason =>
+    state.standDown ? "claim_lost" : "no_claim_here";
+
+  /**
+   * THE RUNTIME'S OWN WORD for a claim this phone holds, for the hold line — the only thing
+   * `organizing` decides. A claim taken a moment ago reads `starting` until the gate's permit
+   * lands, so a device log shows the hold AND the state it was held in; the sentence a person
+   * sees is the engine's rather than the copy's.
+   */
+  const organizingWord = (state: { organizing: boolean } | null): string =>
+    state === null ? "unknown" : state.organizing ? "organizing" : "starting";
 
     /**
      * ══ A REFUSAL COSTS TICKS, AND IT IS ONE LINE PER CLASS ════════════════════════════════════
@@ -731,7 +767,8 @@ export function createBackgroundOrganizing(deps: BackgroundDeps): BackgroundOrga
     moved();
     /* `=== true` and not `!== false`: a read that could not answer is not a licence to ask for
        somebody else's mailbox, which is the opposite direction from the notification teardown's. */
-    if (standDownNow() !== true) return;
+    /* ONE READ for the whole tick — see {@link stateNow}. */
+    if (stateNow()?.standDown !== true) return;
     if (reclaimSkip > 0) {
       reclaimSkip -= 1;
       return;
@@ -753,11 +790,13 @@ export function createBackgroundOrganizing(deps: BackgroundDeps): BackgroundOrga
 
   const claimLostCheck = async (): Promise<void> => {
     if (!organizerRuns()) return;
-    /* THREE ANSWERS. `null` — the engine could not say — leaves the notification standing and asks
-       again next tick: a teardown over a momentary failure would end a person's organizing and
-       leave the claim to lapse from a mailbox nothing had decided to give up. */
-    const organizing = organizingNow();
-    if (organizing !== false) return;
+    /* THE SAME OWNERSHIP FACT the background arm reads, and for its reason. "Organizes nothing"
+       takes the notification down over an unreadable lease — an outage, where the claim is still
+       ours and the next poll asks again — and over the window between a fresh claim and the
+       gate's permit. THREE ANSWERS: `null` — the engine could not say — leaves the notification
+       standing and asks again next tick, because a teardown over a momentary failure would end a
+       person's organizing and leave the claim to lapse from a mailbox nobody gave up. */
+    if (stateNow()?.claimed !== false) return;
     log("organizer_service_stopped_claim_lost", { why: "claim_lost" });
     moved();
     /* NO HAND-BACK HERE. The claim is not ours to give back: either another install holds it, or

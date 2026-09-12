@@ -127,6 +127,15 @@ export interface StandaloneEngine {
        * and the press both read it rather than inferring a stop from `organizing: false`.
        */
       releaseRequestedAt: string | null;
+      /**
+       * IS THIS MAILBOX CLAIMED BY THIS INSTALL — the instruction, not the pass's progress.
+       *
+       * `organizing` flips one IMAP round trip after the claim is already standing in
+       * `ohmail/_meta`, so in that window it reads exactly as a mailbox nobody has consented to.
+       * This is the fact the background arm decides on: true from the moment the gate is entitled
+       * to the lease, false once the claim leaves or where it was never ours.
+       */
+      claimed: boolean;
     }>;
     /**
      * CAN THIS INSTALL REACH THE MAIL SERVER RIGHT NOW — the engine's own connection facts, which
