@@ -1217,10 +1217,17 @@ impl Shell {
     /// needs on a stream a packaged app discards.
     ///
     /// The path comes from the platform rather than from this file — `~/Library/Logs/<id>` on
-    /// macOS, `~/.local/share/<id>/logs` on Linux, `%APPDATA%\<id>\logs` on Windows — so the file
-    /// is where that platform's users and its crash reporters already look. A failure to open one
-    /// is reported and is not fatal: an app that will not start because it could not open its log
-    /// has turned a diagnostic into an outage.
+    /// macOS, `~/.local/share/<id>/logs` on Linux, `%LOCALAPPDATA%\<id>\logs` on Windows — so the
+    /// file is where that platform's users and its crash reporters already look. A failure to open
+    /// one is reported and is not fatal: an app that will not start because it could not open its
+    /// log has turned a diagnostic into an outage.
+    ///
+    /// WINDOWS PUTS THE LOG AND THE SETTINGS UNDER DIFFERENT ROOTS, and this comment said
+    /// otherwise for three releases. `app_log_dir` resolves to the LOCAL app-data folder
+    /// (`%LOCALAPPDATA%`, which does not follow a roaming profile between machines) while
+    /// `app_data_dir` — where `config.json` lives — resolves to the ROAMING one (`%APPDATA%`). A
+    /// probe that read one root for both reported "no mailbox configured" for an install that had
+    /// been configured the day before. Read each file at its own root.
     pub fn open_log(app: &tauri::App) {
         use tauri::Manager;
         // Idempotent, because the host-mode boot probe wants the log open BEFORE `start` runs
@@ -3419,6 +3426,46 @@ fn notify<R: tauri::Runtime>(
         .map_err(|err| format!("the notification could not be shown ({err})"))
 }
 
+/// THE WINDOW'S OWN VITALS, into the log the sidecar already writes to.
+///
+/// `renderer_vitals` says what the webview COSTS; this says how it BEHAVES — the startup marks,
+/// the p50/p95 of opening a message, switching a view and searching, and how many frames ran long
+/// — so one grep over `engine.log` answers "was it slow, and was it the engine or the window".
+///
+/// THE SHELL COMPOSES THE LINE AND THE WINDOW DOES NOT. What arrives is a JSON object;
+/// [`crate::vitals::ui_vitals_line`] reads the names it knows out of it, takes a NUMBER or nothing
+/// from each, and writes the line itself. So a subject, an address or a folder name is not
+/// something this path can carry wrongly — it is not representable. The five-minute cadence is the
+/// shell's too: a window that reported every frame would fill somebody's log with its own
+/// instrument, so a report inside [`UI_VITALS_MIN_GAP`] of the last one is dropped, silently,
+/// because a refusal the window could act on is not one it should.
+#[cfg(feature = "local-engine")]
+#[tauri::command]
+fn ui_vitals(reported: serde_json::Value) {
+    static LAST: Mutex<Option<std::time::Instant>> = Mutex::new(None);
+    let now = std::time::Instant::now();
+    let accept = match LAST.lock() {
+        Ok(mut slot) => {
+            let soon = slot.map_or(false, |last| now.duration_since(last) < UI_VITALS_MIN_GAP);
+            if !soon {
+                *slot = Some(now);
+            }
+            !soon
+        }
+        // A poisoned lock is a thread that panicked while holding it; the line is worth more than
+        // the throttle, and nothing here can be left half-written.
+        Err(_) => true,
+    };
+    if accept {
+        log_json_line(&crate::vitals::ui_vitals_line(&reported));
+    }
+}
+
+/// The floor under `ui_vitals`, well below the window's own five-minute cadence so an ordinary
+/// report is never the one that is dropped.
+#[cfg(feature = "local-engine")]
+const UI_VITALS_MIN_GAP: std::time::Duration = std::time::Duration::from_secs(60);
+
 /// How many pieces of mail the dock or taskbar icon says are waiting. Zero removes the badge.
 ///
 /// The COUNT is the window's, deliberately: what is unread is a fact about mail, and this process
@@ -4350,9 +4397,9 @@ fn announce_link<R: tauri::Runtime>(app: &tauri::AppHandle<R>, raw: &str) {
 #[cfg(feature = "local-engine")]
 const LOCAL_ENGINE_CAPABILITY: &str = r#"{
   "identifier": "local-engine",
-  "description": "The window may ask the shell about the local engine, send it one request at a time, choose which mailbox this install is for, sign out of it, post one notification, set the icon's badge, open one of a fixed list of ohmail.app pages in the user's own browser (naming the page and, for the sign-in page alone, a 43-character commitment the shell validates and appends itself), hand the shell ONE http/https address a person clicked in a message for that same browser to open, hand it the BYTES of one attachment and a display name so the shell can write that file under its own directory and open it in this computer's usual viewer, and listen for the shell's own events — including the handoff code an ohmail:// activation carried. It may also drive HOST MODE, entirely through this shell's own commands: read its state, probe the user's own tailnet (tailscale status), arm or disarm publishing the engine's loopback door to that tailnet (tailscale serve — never funnel, pinned by test), read and set this install's start-at-login registration, and open Tailscale's download page — one more constant address the shell owns, the window still naming no URL. It may also CLAIM a mailto: activation the shell is holding (take-once, so a link seeds one compose form and never two), and ask about the OS's DEFAULT MAIL APP through two commands that name nothing: a read of the current handler's state, and a request that takes each platform's own sanctioned path — macOS's consent dialog, the Windows Settings page (one more constant address), xdg-settings on Linux — never a registry write. It may read the app's UPDATE state, press the same button the menu item is, and ask for the check the app makes at launch — a read of the installed version and of what the last check found, a press that checks or restarts into an already-verified payload, and a scheduled check that is silent unless it finds something (a press is a person asking and is answered out loud, which is right for a button and wrong once a day for ever); it may not name a feed, see a payload or install anything, and the request, the signature check and the version guard stay in the shell. It may ask for the DESKTOP'S OWN THEME through one read-only command: on an Omarchy system the shell answers the active theme's raw material (the theme's colors.toml, the system's font and gap facts — paths the SHELL names, never the window), and everywhere else it answers nothing. Nothing else: no filesystem path the window may name, no arbitrary shell command, no network, and no other Tauri core API.",
+  "description": "The window may ask the shell about the local engine, send it one request at a time, choose which mailbox this install is for, sign out of it, post one notification, set the icon's badge, report its own startup and interaction timings as numbers the shell turns into a log line, open one of a fixed list of ohmail.app pages in the user's own browser (naming the page and, for the sign-in page alone, a 43-character commitment the shell validates and appends itself), hand the shell ONE http/https address a person clicked in a message for that same browser to open, hand it the BYTES of one attachment and a display name so the shell can write that file under its own directory and open it in this computer's usual viewer, and listen for the shell's own events — including the handoff code an ohmail:// activation carried. It may also drive HOST MODE, entirely through this shell's own commands: read its state, probe the user's own tailnet (tailscale status), arm or disarm publishing the engine's loopback door to that tailnet (tailscale serve — never funnel, pinned by test), read and set this install's start-at-login registration, and open Tailscale's download page — one more constant address the shell owns, the window still naming no URL. It may also CLAIM a mailto: activation the shell is holding (take-once, so a link seeds one compose form and never two), and ask about the OS's DEFAULT MAIL APP through two commands that name nothing: a read of the current handler's state, and a request that takes each platform's own sanctioned path — macOS's consent dialog, the Windows Settings page (one more constant address), xdg-settings on Linux — never a registry write. It may read the app's UPDATE state, press the same button the menu item is, and ask for the check the app makes at launch — a read of the installed version and of what the last check found, a press that checks or restarts into an already-verified payload, and a scheduled check that is silent unless it finds something (a press is a person asking and is answered out loud, which is right for a button and wrong once a day for ever); it may not name a feed, see a payload or install anything, and the request, the signature check and the version guard stay in the shell. It may ask for the DESKTOP'S OWN THEME through one read-only command: on an Omarchy system the shell answers the active theme's raw material (the theme's colors.toml, the system's font and gap facts — paths the SHELL names, never the window), and everywhere else it answers nothing. Nothing else: no filesystem path the window may name, no arbitrary shell command, no network, and no other Tauri core API.",
   "windows": ["main"],
-  "permissions": ["allow-engine-status", "allow-engine-request", "allow-engine-configure", "allow-engine-logout", "allow-notify", "allow-set-badge", "allow-open-link", "allow-open-external", "allow-open-attachment", "allow-host-state", "allow-tailscale-status", "allow-tailscale-serve-arm", "allow-tailscale-serve-disarm", "allow-autostart-get", "allow-autostart-set", "allow-open-tailscale-download", "allow-mailto-claim", "allow-default-mail-status", "allow-default-mail-request", "allow-omarchy-theme", "allow-update-state", "allow-update-press", "allow-update-poll", "core:event:allow-listen"]
+  "permissions": ["allow-engine-status", "allow-engine-request", "allow-engine-configure", "allow-engine-logout", "allow-notify", "allow-set-badge", "allow-ui-vitals", "allow-open-link", "allow-open-external", "allow-open-attachment", "allow-host-state", "allow-tailscale-status", "allow-tailscale-serve-arm", "allow-tailscale-serve-disarm", "allow-autostart-get", "allow-autostart-set", "allow-open-tailscale-download", "allow-mailto-claim", "allow-default-mail-status", "allow-default-mail-request", "allow-omarchy-theme", "allow-update-state", "allow-update-press", "allow-update-poll", "core:event:allow-listen"]
 }"#;
 
 /// The commands `build.rs` declared to the ACL manifest, baked in at compile time.
@@ -4476,6 +4523,9 @@ pub fn attach<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R
             engine_logout,
             notify,
             set_badge,
+            // The window's own performance numbers, into the engine's log. The shell composes the
+            // line from a fixed list of NUMBERS, so this command cannot carry text out of the page.
+            ui_vitals,
             open_link,
             open_external,
             open_attachment,
