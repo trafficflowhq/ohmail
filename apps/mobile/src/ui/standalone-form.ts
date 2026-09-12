@@ -177,15 +177,12 @@ export function focusTargetFor(step: StandaloneStep): "title" | "address" {
 export type HolderKind = "local" | "cloud" | "mobile" | "unknown";
 
 /**
- * THE ONE READER OF THE KIND, AND IT TAKES BOTH SPELLINGS ON PURPOSE.
- *
- * The two doors say it differently and neither is wrong: the STANDALONE door hands the engine's own
- * stand-down reason (`organized_elsewhere:mobile`), the PAIRED door hands the roster's bare kind
- * word (`mobile`). One reader is the point — two would let the two arms of one panel put different
- * sentences on the same fact, which is the defect this whole row is about.
- *
- * Anything outside the four is `unknown`, which is a real answer and not a fallback: it is what a
- * claim written by a build this one cannot rank looks like, and it has its own sentence.
+ * THE ONE READER OF THE KIND, AND IT TAKES BOTH SPELLINGS ON PURPOSE. The two doors say it
+ * differently and neither is wrong: the STANDALONE door hands the engine's stand-down reason
+ * (`organized_elsewhere:mobile`), the PAIRED door the roster's bare kind word (`mobile`). One reader
+ * is the point — two would let the two arms of one panel put different sentences on the same fact.
+ * Anything outside the four is `unknown`, a real answer not a fallback: what a claim written by a
+ * build this one cannot rank looks like, and it has its own sentence.
  */
 export function holderKind(said: string | null | undefined): HolderKind {
   const word = (said ?? "").toLowerCase().split(":").pop() ?? "";
@@ -304,15 +301,12 @@ export function claimFrom(
 }
 
 /**
- * ═══ THE SAME CLAIM FOR THE DOOR IN THIS PROCESS, AND IT ASKS NOBODY'S NAME ════════════════════
- *
- * {@link claimFrom} recognises our own claim BY NAME, which is all a roster read offers. Every
- * ohmail phone writes the SAME display name (`PHONE_CLAIM_NAME`), so on the ordinary two-phone case
- * the name test answers `ours` for the OTHER phone's claim: the panel would wear "Organizing" and
- * offer a hand-back over a mailbox this phone organizes nothing of. The engine already answers what
- * the name test stood in for — `organizing` is this install's verdict on its own claim — so this
- * reads that and compares nothing. `null` stays `unknown`: no chip, no verb, no sentence about a
- * mailbox opened a second ago.
+ * THE SAME CLAIM FOR THE DOOR IN THIS PROCESS, AND IT ASKS NOBODY'S NAME. {@link claimFrom}
+ * recognises our own claim BY NAME, all a roster read offers, but every ohmail phone writes the SAME
+ * `PHONE_CLAIM_NAME`, so on the two-phone case the name test answers `ours` for the OTHER phone's
+ * claim (the panel would offer a hand-back over a mailbox this phone organizes nothing of). The engine
+ * already answers what the name test stood in for — `organizing` is this install's verdict on its own
+ * claim — so this reads that and compares nothing. `null` stays `unknown`: no chip, no verb.
  */
 export function claimHere(
   here: {
@@ -340,15 +334,13 @@ export function claimHere(
 }
 
 /**
- * ═══ THE SENTENCE UNDER THE CHIP — what this phone does about THIS mailbox ═════════════════════
- *
- * The panel rendered {@link platformRuleLine} in every state, and that sentence describes what
- * organizing on a phone means ("It organizes while its notification is shown"). Over a mailbox
- * another machine holds it is false, and it was the only sentence a standing-down phone got beside
- * a chip naming nobody. So the note follows the claim: `ours`, `free` and `unknown` keep the
- * platform rule, and the two foreign arms name the holder and say what this phone does instead, in
- * the desktop's words (`mailboxes.readerReadsOnly`). No arm offers a takeover — there is no such
- * press in this panel, and promising one would be a claim the screen makes false.
+ * THE SENTENCE UNDER THE CHIP — what this phone does about THIS mailbox. The panel rendered
+ * {@link platformRuleLine} in every state (it describes what organizing on a phone means, "It
+ * organizes while its notification is shown"), which over a mailbox another machine holds is false
+ * and was the only sentence a standing-down phone got. So the note follows the claim: `ours`, `free`
+ * and `unknown` keep the platform rule, and the two foreign arms name the holder and say what this
+ * phone does instead, in the desktop's words (`mailboxes.readerReadsOnly`). No arm offers a takeover —
+ * there is no such press in this panel.
  */
 export function claimNoteLine(claim: PhoneClaim, os: string): string | null {
   switch (claim.k) {
