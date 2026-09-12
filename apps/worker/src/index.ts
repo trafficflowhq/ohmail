@@ -115,7 +115,7 @@ import { OrganizerProfileSync, syncProfileMirror } from "./profile.js";
 import type { ProfileIo } from "@trafficflow/core/adapters/organizer-profile";
 import {
   readMailboxLease, acquireLeasePermit, releaseMailboxClaim, cloudInstallId, CLOUD_DISPLAY_NAME,
-  LeaseUnavailableError, DEFAULT_STALE_AFTER_MS, type OrganizerWriteAuthority,
+  LeaseUnavailableError, leaseBlockReason, DEFAULT_STALE_AFTER_MS, type OrganizerWriteAuthority,
   type LeaseSelf, type LeasePeekCapableAdapter,
 } from "./lease.js";
 // The APPEND-less read of `ohmail/_meta` — see `LeasePeekCapableAdapter`. A reader LOOKS at the
@@ -2536,7 +2536,7 @@ export async function startWorkerWithLock(
         // that split existed this arm's `log.warn` was the only trace of a mailbox nothing was syncing,
         // and it once stayed the only trace for half an hour.
         if (err instanceof LeaseUnavailableError) {
-          noteBlock(leaseBlocked, mb.mailboxId, "lease_unreadable");
+          noteBlock(leaseBlocked, mb.mailboxId, leaseBlockReason(err));
           log.warn("attach_lease_unavailable", {
             mailboxId: mb.mailboxId, accountId: mb.accountId, err,
             // The OPERATION, from the error rather than from this call site: `runLeaseGate` names
@@ -3591,7 +3591,7 @@ export async function startWorkerWithLock(
           // again" was an outage as policy (over a hundred cycles, most of an hour). Now it RECORDS,
           // CLOCKS, and past `leaseUnavailableDetachMs` DETACHES; `releaseOrganizerClaim` is never called here.
           if (err instanceof LeaseUnavailableError) {
-            noteBlock(leaseBlocked, rt.mailboxId, "lease_unreadable");
+            noteBlock(leaseBlocked, rt.mailboxId, leaseBlockReason(err));
             rt.leaseUnavailableSince ??= Date.now();
             const unavailableMs = Date.now() - rt.leaseUnavailableSince;
             const due = unavailableMs >= leaseUnavailableDetachMs;

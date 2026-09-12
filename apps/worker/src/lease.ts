@@ -1,6 +1,6 @@
 import {
   CAPABILITY_REQUESTS, CAPABILITY_MOVES, CAPABILITY_PROFILE, CAPABILITY_RULES, deriveRequestKey,
-  DEFAULT_STALE_AFTER_MS, LeaseUnavailableError, META_FOLDER,
+  DEFAULT_STALE_AFTER_MS, LeaseUnavailableError, LeaseClockSkewError, META_FOLDER,
   ClaimReleaseError,
   isMalformed, parseClaim, runLeaseGate,
   type LeaseIo, type LeaseOp, type LeaseSelf, type LeaseVerdict, type OrganizerClaim,
@@ -9,7 +9,7 @@ import {
 } from "@trafficflow/core/adapters/organizer-lease";
 import type { MailboxAdapter } from "@trafficflow/core/adapters/imap";
 import type { ImapAuth } from "@trafficflow/core/adapters/imap-types";
-import type { MailboxDisabledReason } from "@trafficflow/db";
+import type { MailboxDisabledReason, MailboxSyncBlockReason } from "@trafficflow/db";
 
 /**
  * The worker's half of the organizer lease — composition, and nothing else.
@@ -272,6 +272,21 @@ function standDownReason(verdict: Exclude<LeaseVerdict, { verdict: "organize" }>
     : kind === "local" ? "organized_elsewhere:local"
       : kind === "mobile" ? "organized_elsewhere:mobile"
         : "organized_elsewhere:unknown";
+}
+
+/**
+ * What an unreadable lease is CALLED on the mailbox row.
+ *
+ * ONE derivation for both arms of the sync loop — the attach and the cycle — because the two used
+ * to spell `"lease_unreadable"` as a literal each, and a refusal that means something else at one
+ * of them would have been renamed at one and not the other. A wrong clock is not a folder that
+ * could not be read: the sentence behind `lease_unreadable` says ohmail cannot read its own folder
+ * on that server, which is false here and names nothing anybody can act on, while the one thing a
+ * person can do about a wrong clock is set it. Every other `LeaseUnavailableError` keeps the
+ * answer it had.
+ */
+export function leaseBlockReason(err: LeaseUnavailableError): MailboxSyncBlockReason {
+  return err instanceof LeaseClockSkewError ? "clock_off" : "lease_unreadable";
 }
 
 function byOf(verdict: Exclude<LeaseVerdict, { verdict: "organize" }>): OrganizerClaim | null {

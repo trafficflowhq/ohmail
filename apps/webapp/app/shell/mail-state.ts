@@ -33,6 +33,7 @@ export const SYNC_BLOCK_REASONS = [
   "awaiting_credentials",
   "at_capacity",
   "read_limited",
+  "clock_off",
 ] as const;
 export type SyncBlockReason = (typeof SYNC_BLOCK_REASONS)[number];
 
