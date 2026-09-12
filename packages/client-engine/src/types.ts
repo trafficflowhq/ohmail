@@ -1358,12 +1358,21 @@ export class MutationRejectedError extends Error {
    * `retryAfterMs`: that is modelled and branched on; this is carried.
    */
   readonly details: unknown;
+  /**
+   * TRUE when this refusal follows a CREATE that went out and whose answer could not be read.
+   *
+   * `POST /drafts` ignores the idempotency key, so a second attempt writes a second row. The
+   * adapter remembers the key and refuses the repeat — but that memory dies with the adapter, and
+   * the outbox entry outlives it, so the flag rides the refusal and is persisted WITH the intent.
+   */
+  readonly createAttempted: boolean;
   constructor(
     message: string,
     opts: {
       status?: number | null; code?: string | null; retryable?: boolean; retryAfterMs?: number | null;
       entityId?: string | null;
       details?: unknown;
+      createAttempted?: boolean;
     } = {},
   ) {
     super(message);
@@ -1374,6 +1383,7 @@ export class MutationRejectedError extends Error {
     this.retryAfterMs = opts.retryAfterMs ?? null;
     this.entityId = opts.entityId ?? null;
     this.details = opts.details;
+    this.createAttempted = opts.createAttempted === true;
   }
 }
 

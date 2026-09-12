@@ -141,7 +141,15 @@ export interface EngineAdapter {
    * logical intent (contract §1.6) — a replay must not double-apply.
    * Throws MutationRejectedError (retryable or not) on failure.
    */
-  mutate(m: EngineMutation, opts: { idempotencyKey: string }): Promise<MutationOutcome>;
+  /**
+   * `createAttempted` is the engine handing BACK what a previous attempt under this key told it:
+   * a non-idempotent create went out and its answer was unreadable. The adapter's own memory of
+   * that dies with the adapter; the outbox entry carrying it does not.
+   */
+  mutate(
+    m: EngineMutation,
+    opts: { idempotencyKey: string; createAttempted?: boolean },
+  ): Promise<MutationOutcome>;
   /**
    * Fetch one message's body text, or `null` when this adapter serves no
    * bodies at all. `null` is the FixturesAdapter's answer and not a stub:

@@ -933,7 +933,10 @@ export class HttpAdapter implements EngineAdapter {
     };
   }
 
-  async mutate(m: EngineMutation, opts: { idempotencyKey: string }): Promise<MutationOutcome> {
+  async mutate(
+    m: EngineMutation,
+    opts: { idempotencyKey: string; createAttempted?: boolean },
+  ): Promise<MutationOutcome> {
     switch (m.kind) {
       case "move": {
         const res = await this.request("POST", `/messages/${m.messageId}/move`, {
@@ -1060,7 +1063,7 @@ export class HttpAdapter implements EngineAdapter {
       }
 
       case "mail_send":
-        return this.mailSend(m, opts.idempotencyKey);
+        return this.mailSend(m, opts.idempotencyKey, opts.createAttempted === true);
 
       /**
        * THIS CASE IS WHERE TAGS REACH THE WIRE. It threw `UnsupportedMutationError` until it existed, which made a
@@ -1369,7 +1372,8 @@ export class HttpAdapter implements EngineAdapter {
           cc: m.cc,
           bcc: m.bcc,
         };
-        if (m.draftId === null && this.createAttempted.has(opts.idempotencyKey)) {
+        if (m.draftId === null
+          && (opts.createAttempted === true || this.createAttempted.has(opts.idempotencyKey))) {
           // A create under this key already went out and its answer was unreadable — see
           // `createAttempted`. `POST /drafts` ignores the key, so trying again writes a SECOND
           // draft rather than returning the first, and an autosave loop turns that into one new
@@ -1404,7 +1408,12 @@ export class HttpAdapter implements EngineAdapter {
             throw new MutationRejectedError(
               "We could not read the server's answer to this draft save, so ohmail cannot tell "
                 + "whether it was created. It will not create a second one.",
-              { code: "unreadable_response", status: res.status, retryable: true, retryAfterMs: retryAfterMsOf(res) },
+              {
+                code: "unreadable_response", status: res.status, retryable: true,
+                retryAfterMs: retryAfterMsOf(res),
+                // PERSISTED WITH THE INTENT: this set dies with the adapter, the outbox row does not.
+                createAttempted: true,
+              },
             );
           }
           return {
@@ -1552,6 +1561,7 @@ export class HttpAdapter implements EngineAdapter {
   private async mailSend(
     m: Extract<EngineMutation, { kind: "mail_send" }>,
     idempotencyKey: string,
+    createAttemptedBefore = false,
   ): Promise<MutationOutcome> {
     /**
      * THE MESSAGE MAY ALREADY BE A ROW: A compose autosaves through `draft_save`, so by the time Send is pressed the
@@ -1628,7 +1638,7 @@ export class HttpAdapter implements EngineAdapter {
         );
       }
     }
-    if (!draftId && this.createAttempted.has(idempotencyKey)) {
+    if (!draftId && (createAttemptedBefore || this.createAttempted.has(idempotencyKey))) {
       /**
        * A CREATE UNDER THIS KEY ALREADY WENT OUT AND ITS ANSWER WAS UNREADABLE.
        *
@@ -1690,7 +1700,12 @@ export class HttpAdapter implements EngineAdapter {
         throw new MutationRejectedError(
           "We could not read the server's answer to this draft, so ohmail cannot tell whether it "
             + "was created. It will not create a second one.",
-          { code: "unreadable_response", status: created.status, retryable: true, retryAfterMs: retryAfterMsOf(created) },
+          {
+            code: "unreadable_response", status: created.status, retryable: true,
+            retryAfterMs: retryAfterMsOf(created),
+            // PERSISTED WITH THE INTENT: this set dies with the adapter, the outbox row does not.
+            createAttempted: true,
+          },
         );
       }
       // VERSION-SKEW GUARD: a dropped Bcc must NEVER become a silent send: `bcc` is the newest field on `POST

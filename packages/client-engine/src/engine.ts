@@ -113,10 +113,18 @@ export interface MutationResult {
 }
 
 /** What one supersession changed, and everything needed to put it back. */
-/** What one pass of abandoned-record marking actually managed to do. */
-interface MarkerOutcome {
-  marked: Array<{ id: string; before: PersistedOutboxEntry }>;
-  failed: number;
+/**
+ * One abandoned record a newer verb would mark — PLANNED, never written here.
+ *
+ * `durable` says which half of {@link OhmailEngine.abandonedRows} it came from: a disk row rides
+ * the replacement's own transaction, a session-local fallback is a memory write made only once
+ * that transaction has landed. Either way nothing is marked on behalf of a replacement that was
+ * refused, which is the property the old write-then-roll-back shape could not hold.
+ */
+interface AbandonedMark {
+  id: string;
+  entry: PersistedOutboxEntry;
+  durable: boolean;
 }
 
 interface SupersedeEffect {
@@ -133,8 +141,6 @@ interface SupersedeEffect {
   narrowed: PendingMutation[];
   /** Everything this call changed, kept so a refused replacement can put it all back. */
   undo: Array<{ entry: PendingMutation; index: number; mutation: EngineMutation }>;
-  /** The abandoned-record markers, awaited before this verb may dispatch. */
-  marked: Promise<MarkerOutcome>;
   /**
    * Requests on the wire this call marked superseded — see
    * {@link PendingMutation.supersededInFlight}. The mark is made BEFORE
@@ -184,6 +190,14 @@ interface PendingMutation {
    * state, and re-running this one would put the older value back over it.
    */
   supersededInFlight?: boolean;
+  /**
+   * TRUE once a non-idempotent CREATE went out under this key and its answer could not be read.
+   *
+   * The adapter remembers it too, and that memory dies with the adapter — a reload replays the
+   * entry through a fresh one and `POST /drafts`, which ignores the key, writes a SECOND row. So
+   * it is carried on the verb and persisted with it, and handed back on every later attempt.
+   */
+  createAttempted?: boolean;
   /** Server-answered failures so far. See {@link OUTBOX_MAX_SERVER_FAILURES} for what counts. */
   attempts?: number;
   /** Epoch ms before which no drive may dispatch this verb. */
@@ -291,8 +305,16 @@ interface PersistedOutboxEntry {
   /** The last server sentence, kept so an abandoned verb can say WHY without inventing a reason. */
   lastError?: { message: string; code: string | null; status: number | null };
   /**
+   * TRUE once a non-idempotent CREATE went out under this key and its answer could not be read —
+   * see {@link PendingMutation.createAttempted}. Persisted because the adapter's own memory of it
+   * does not survive a reload, and the replay that follows one is exactly the repeat it forbids.
+   * Added to `v: 3` in place: absent on an older record, read as `false`, which is the same
+   * information those builds had already lost at the reload — so no version bump.
+   */
+  createAttempted?: boolean;
+  /**
    * TRUE once a newer verb for the same target has been expressed — see
-   * {@link OhmailEngine.supersedeAbandoned}. Retrying such a record would overwrite the newer
+   * {@link OhmailEngine.planAbandonedSupersession}. Retrying such a record would overwrite the newer
    * intent with an older one the person cannot see is stale, so the retry is refused and only
    * Discard remains.
    */
@@ -321,7 +343,7 @@ export function targetOf(m: EngineMutation): string | null {
     case "move":
     case "message_delete":
       return `message:${m.messageId}`;
-    // The read verbs name a LIST, so they have no single target; `supersedeAbandoned` subtracts
+    // The read verbs name a LIST, so they have no single target; the abandoned plan subtracts
     // their ids the way `supersedeQueued` does and marks a record narrowed to nothing.
     case "mark_seen":
     case "feed_mark_seen":
@@ -381,6 +403,7 @@ function outboxEntryOf(p: PendingMutation): PersistedOutboxEntry {
     ...(p.nextAt !== undefined ? { nextAt: p.nextAt } : {}),
     ...(p.waitIsServerNamed !== undefined ? { waitIsServerNamed: p.waitIsServerNamed } : {}),
     ...(p.lastError !== undefined ? { lastError: p.lastError } : {}),
+    ...(p.createAttempted === true ? { createAttempted: true } : {}),
   };
 }
 
@@ -1770,9 +1793,33 @@ export class OhmailEngine {
    * believes something happened.
    */
   private abandonedRecordOf(id: string): PersistedOutboxEntry | null {
-    const row = this.store.entries<unknown>(OUTBOX_ABANDONED_TYPE).find((r) => r.id === id);
-    if (row !== undefined && isPersistedOutboxEntry(row.entity)) return row.entity;
-    return this.abandonedLocally.get(id) ?? null;
+    return this.abandonedRows().find((r) => r.id === id)?.entry ?? null;
+  }
+
+  /**
+   * THE ONE SOURCE OF ABANDONED RECORDS — the disk rows, plus the session-local fallbacks.
+   *
+   * Three readers used to build this list three ways: `abandoned()` merged the fallbacks,
+   * `abandonedRecordOf` preferred disk, and the supersession scanned DISK ALONE. So a record whose
+   * terminal write was refused was listed, retryable, and invisible to the rule that protects it:
+   * a newer verb for the same target left it standing, and Try again then replayed the older
+   * intent over the state the newer verb had just established, with both requests reporting
+   * success. One reader, so a row cannot be visible to a surface and invisible to supersession.
+   */
+  private abandonedRows(): Array<{ id: string; entry: PersistedOutboxEntry; durable: boolean }> {
+    const out: Array<{ id: string; entry: PersistedOutboxEntry; durable: boolean }> = [];
+    const onDisk = new Set<string>();
+    for (const row of this.store.entries<unknown>(OUTBOX_ABANDONED_TYPE)) {
+      if (!isPersistedOutboxEntry(row.entity)) continue;
+      onDisk.add(row.id);
+      out.push({ id: row.id, entry: row.entity, durable: true });
+    }
+    // A row that later reached disk wins over the memory copy.
+    for (const [id, entry] of this.abandonedLocally) {
+      if (onDisk.has(id)) continue;
+      out.push({ id, entry, durable: false });
+    }
+    return out;
   }
   /** Bumped whenever {@link refusedLocally} changes, so the snapshot below cannot serve a stale row. */
   private localRefusalRev = 0;
@@ -2402,6 +2449,9 @@ export class OhmailEngine {
         // and gives it the full ceiling rather than retiring it on arrival.
         attempts: e.attempts ?? 0,
         ...(e.nextAt !== undefined ? { nextAt: e.nextAt } : {}),
+        // THE WHOLE POINT OF PERSISTING IT: this replay runs through a FRESH adapter, whose own
+        // memory of the unreadable create is gone. Without this the replay re-POSTs the create.
+        ...(e.createAttempted === true ? { createAttempted: true } : {}),
         /**
          * A `v: 2` RECORD WITH A WAIT AND NO FLAG IS READ AS SERVER-NAMED. `waitIsServerNamed` was added to the `v:
          * 2` shape in place, so records written before it can carry a `nextAt` that came from a `Retry-After` and no
@@ -4212,33 +4262,23 @@ export class OhmailEngine {
       id, key, mutation: enriched, at: this.now().getTime(), n: this.outboxSeq++,
       ...(superseded.retired.length > 0 ? { retire: superseded.retired } : {}),
     };
-    // ONE TRANSACTION: the newer row in, the rows it supersedes out. See `supersedeQueued` for
-    // why the removal may not be a separate best-effort delete.
-    // Before the wire: a stale record must not be retryable while this verb is in flight.
-    const markers = await superseded.marked;
+    // ONE TRANSACTION: the newer row in, the rows it supersedes out, and every abandoned record it
+    // marks stale. See `supersedeQueued` for why the removal may not be a separate best-effort
+    // delete, and `commitReplacement` for why the marks may not be separate writes either.
+    const commit = await this.commitReplacement(pending, superseded);
+    const persisted = commit.persisted;
     /**
-     * A MARKER THAT DID NOT LAND IS A WRITE THIS DEVICE COULD NOT RECORD, so the same rule
-     * applies as to any other: no write, no wire. The record it failed to mark is still retryable
-     * and can later overwrite the state this verb is about to establish — the newer intent losing
-     * to the older one, with both requests reporting success. Whatever DID land goes back, so the
-     * refusal leaves nothing marked stale on behalf of a verb that never happened.
+     * NO WRITE, NO WIRE — and the rule counts EVERY row this verb replaces, not only whole ones.
+     *
+     * It read `retired.length > 0` alone, so a verb that only NARROWED a queued read record — a
+     * newer `mark_seen` subtracting ids from an older one — had zero retired rows and escaped: the
+     * combined transaction was refused, memory was restored, and the replacement still went to the
+     * wire while disk kept the full older intent, which the next boot then replays over it. The
+     * marks belong to the same count for the same reason: a record this verb failed to mark stale
+     * is still retryable and can overwrite the state this verb is about to establish.
      */
-    if (markers.failed > 0) {
-      await this.undoMarkers(markers.marked);
-      this.undoSupersede(superseded);
-      this.overlays.delete(id);
-      this.overlayRev++;
-      this.notify();
-      return {
-        id, key, status: "rolled_back", seq: null,
-        error: new MutationRejectedError(
-          "this device could not record the change, and it replaces others that are still queued",
-          { status: null, code: "storage_refused", retryable: true },
-        ),
-      };
-    }
-    const persisted = await this.putOutbox(pending, superseded.narrowed);
-    if (!persisted && superseded.retired.length > 0) {
+    if (!persisted
+      && (superseded.retired.length > 0 || superseded.narrowed.length > 0 || commit.marks > 0)) {
       /**
        * NO WRITE, NO WIRE — the supersession half of the rule stated in this module's header. This verb replaces
        * queued verbs. Its durable write was refused, so the store still holds the ones it would have retired, and
@@ -4247,10 +4287,7 @@ export class OhmailEngine {
        * nothing is dispatched, everything the supersession changed goes back, and the person is told the action was
        * refused rather than being shown it succeed and silently lose.
        */
-      // The markers this verb wrote go back too: they were marked stale on behalf of a
-      // replacement that is not happening, and leaving them would take away a Retry for a reason
-      // that turned out not to exist.
-      await this.undoMarkers(markers.marked);
+      // No marker goes back, because none was made: they ride the transaction that was refused.
       this.undoSupersede(superseded);
       this.overlays.delete(id);
       this.overlayRev++;
@@ -4494,20 +4531,18 @@ export class OhmailEngine {
   }
 
   /**
-   * Persist one outbox entry. ANSWERS WHETHER IT LANDED — see the call in {@link OhmailEngine.mutate}.
+   * RE-ASSERT one outbox entry after a retryable failure — {@link OhmailEngine.mutate}'s own first
+   * write is {@link OhmailEngine.commitReplacement}, which carries the supersession with it.
    *
    * It used to answer `void` and swallow every failure, with the reasoning that "a verb that
    * cannot be persisted must still be SENT". That is right for almost every verb and wrong for
    * exactly one, so the caller now gets to decide instead of this method deciding for all of them.
    */
-  private async putOutbox(p: PendingMutation, alsoPut: readonly PendingMutation[] = []): Promise<boolean> {
+  private async putOutbox(p: PendingMutation): Promise<boolean> {
     const entry = outboxEntryOf(p);
     try {
       await this.store.commitLocal(
-        [
-          { type: OUTBOX_TYPE, id: p.id, entity: entry },
-          ...alsoPut.map((q) => ({ type: OUTBOX_TYPE, id: q.id, entity: outboxEntryOf(q) })),
-        ],
+        [{ type: OUTBOX_TYPE, id: p.id, entity: entry }],
         (p.retire ?? []).map((id) => ({ type: OUTBOX_TYPE, id })),
       );
       // Only now: a commit that did not happen has retired nothing, and the next write of this
@@ -4618,6 +4653,9 @@ export class OhmailEngine {
       v: 3, id: p.id, key: p.key, n: p.n, at: p.at, mutation: p.mutation,
       attempts,
       lastError: { message: reported.message, code: reported.code, status: reported.status },
+      // A record whose create already went out unread keeps saying so: Try again on it, in this
+      // session or the next, must not repeat a create the route cannot deduplicate.
+      ...(p.createAttempted === true ? { createAttempted: true } : {}),
     };
     /**
      * TWO WRITES, TWO FAILURE MODES, AND NEITHER MAY BE SWALLOWED: This used to be one `try` around both calls with
@@ -4698,19 +4736,10 @@ export class OhmailEngine {
     const v = this.store.version() * 1_000_003 + this.localRefusalRev;
     if (this.abandonedCache !== null && this.abandonedCache.v === v) return this.abandonedCache.out;
     const out: AbandonedMutation[] = [];
-    // The store's rows, plus any terminal outcome this session could not write — see
-    // {@link abandonedLocally}. A row that later reached disk wins over the memory copy.
-    const stored = this.store.entries<unknown>(OUTBOX_ABANDONED_TYPE);
-    const storedIds = new Set(stored.map((r) => r.id));
-    const rowsToRead = [
-      ...stored,
-      ...[...this.abandonedLocally.entries()]
-        .filter(([id]) => !storedIds.has(id))
-        .map(([id, entity]) => ({ id, entity: entity as unknown })),
-    ];
-    for (const row of rowsToRead) {
-      const e = row.entity;
-      if (!isPersistedOutboxEntry(e)) continue;
+    // The store's rows, plus any terminal outcome this session could not write — ONE reader, see
+    // {@link abandonedRows}.
+    for (const row of this.abandonedRows()) {
+      const e = row.entry;
       out.push({
         id: e.id, key: e.key, mutation: e.mutation, at: e.at,
         attempts: e.attempts ?? OUTBOX_MAX_SERVER_FAILURES,
@@ -4753,7 +4782,23 @@ export class OhmailEngine {
    * stops lying); rebuild the overlay (intent visible while the request is open); `putOutbox`, which THROWS here (the
    * abandoned row is about to be deleted, and losing both has no recovery); only then prune, then dispatch.
    */
+  /**
+   * ONE DOOR PER ID. Two presses — a double tap, two surfaces listing the same record, a retry
+   * armed while one is open — both read the record before either had moved it, and both
+   * dispatched: for a draft create, whose route ignores the idempotency key, that is a second row
+   * on the server. The second press JOINS the first and gets its answer.
+   */
+  private readonly retrying = new Map<string, Promise<MutationResult>>();
+
   async retryAbandoned(id: string): Promise<MutationResult> {
+    const live = this.retrying.get(id);
+    if (live !== undefined) return live;
+    const run = this.retryAbandonedOnce(id);
+    this.retrying.set(id, run);
+    return run.finally(() => { this.retrying.delete(id); });
+  }
+
+  private async retryAbandonedOnce(id: string): Promise<MutationResult> {
     const refuse = async (
       e: PersistedOutboxEntry | null, code: string, message: string,
     ): Promise<MutationResult> => {
@@ -4803,6 +4848,8 @@ export class OhmailEngine {
     const p: PendingMutation = {
       id: e.id, key: e.key, mutation: e.mutation, at: e.at, n: e.n,
       restored: true, attempts: 0,
+      // Try again on a record whose create went out unread is still not a second create.
+      ...(e.createAttempted === true ? { createAttempted: true } : {}),
     };
 
     /**
@@ -4869,6 +4916,13 @@ export class OhmailEngine {
         ),
       };
     }
+    /**
+     * THE SESSION-LOCAL FALLBACK GOES WITH THE ROW — see {@link abandonedRows}. Retry left it
+     * behind, so a record that HAD been retried successfully was listed as abandoned again the
+     * moment anything re-rendered, offering a second Try again for a verb already back in the
+     * queue. Only after the transaction: a refused retry leaves the record exactly where it was.
+     */
+    if (this.abandonedLocally.delete(p.id)) this.localRefusalRev++;
 
     const out = await this.outboxGate(() => this.dispatchOnLane(p));
     if (out.held) {
@@ -4892,20 +4946,27 @@ export class OhmailEngine {
     return out.result;
   }
 
-  /** Throw an abandoned verb away for good. The overlay is long gone; this only clears the record. */
+  /**
+   * Throw an abandoned verb away for good. The overlay is long gone; this clears the record — and
+   * the LIVE ROW IT CAME FROM, in the same transaction.
+   *
+   * Discard used to delete the abandoned row alone. For a record whose terminal transition could
+   * not be written, the live `OUTBOX_TYPE` row is still on disk and is what the next boot REPLAYS
+   * — so the person pressed Discard, watched the row go, and the verb they had thrown away went
+   * out anyway on the next launch. A refused transaction leaves the record listed rather than
+   * removing it from a surface while the verb it names is still queued on disk.
+   */
   async discardAbandoned(id: string): Promise<void> {
     try {
-      await this.store.commitLocal([], [{ type: OUTBOX_ABANDONED_TYPE, id }]);
-    } catch { /* best-effort, exactly like every other outbox write */ }
-    /**
-     * AND THE SESSION-LOCAL COPY, or Discard is a control that visibly does nothing.
-     *
-     * A record whose terminal transition could not be written lives only in `abandonedLocally`.
-     * Deleting from the durable collection alone left it listed exactly as before — the person
-     * presses Discard, the row stays, and there is no reason on screen why. The live row on disk
-     * is a separate matter and is deliberately left: it is what a reboot replays, and discarding
-     * a record this session could not even record is not a statement about that.
-     */
+      await this.store.commitLocal([], [
+        { type: OUTBOX_ABANDONED_TYPE, id },
+        { type: OUTBOX_TYPE, id },
+      ]);
+    } catch {
+      return; // nothing removed, nothing claimed — the row stands and says so.
+    }
+    // AND THE SESSION-LOCAL COPY, or Discard is a control that visibly does nothing: a record
+    // whose terminal transition could not be written lives only in `abandonedLocally`.
     if (this.abandonedLocally.delete(id)) this.localRefusalRev++;
     this.notify();
   }
@@ -4942,20 +5003,18 @@ export class OhmailEngine {
    * means. `null` keys — creates, sends, the read-flag list verbs — never participate, exactly as they do not in the
    * queue.
    */
-  private async supersedeAbandoned(m: EngineMutation): Promise<MarkerOutcome> {
+  private planAbandonedSupersession(m: EngineMutation): AbandonedMark[] {
     const key = targetOf(m);
     const readIds = m.kind === "mark_seen" || m.kind === "feed_mark_seen"
       ? new Set(m.messageIds ?? [])
       : null;
-    /** Records this call actually changed on disk, so a refused replacement can put them back. */
-    const marked: Array<{ id: string; before: PersistedOutboxEntry }> = [];
-    if (key === null && readIds === null) return { marked, failed: 0 };
+    /** The rows this verb would mark — WRITTEN BY THE CALLER, in the replacement's own transaction. */
+    const marks: AbandonedMark[] = [];
+    if (key === null && readIds === null) return marks;
 
-    let changed = false;
-    const writes: Array<Promise<unknown>> = [];
-    for (const row of this.store.entries<unknown>(OUTBOX_ABANDONED_TYPE)) {
-      const e = row.entity;
-      if (!isPersistedOutboxEntry(e) || e.superseded === true) continue;
+    for (const row of this.abandonedRows()) {
+      const e = row.entry;
+      if (e.superseded === true) continue;
 
       let next: PersistedOutboxEntry | null = null;
       if (readIds !== null) {
@@ -5001,44 +5060,75 @@ export class OhmailEngine {
       }
       if (next === null) continue;
 
-      changed = true;
-      const before = e;
-      writes.push(this.store.commitLocal(
-        [{ type: OUTBOX_ABANDONED_TYPE, id: e.id, entity: next }], [])
-        .then(() => { marked.push({ id: e.id, before }); }));
+      marks.push({ id: row.id, entry: next, durable: row.durable });
     }
-    /**
-     * AWAITED, and a FAILURE IS A FAILURE. Every rejection used to be swallowed into success. `mutate` then awaited a
-     * promise that could not reject, and went on to persist and dispatch — while the record it believed it had marked
-     * was still retryable, and could later overwrite the very state the newer verb was establishing. Rethrowing turns
-     * that into the no-write-no-wire case, which is what it always was: a change this device could not fully record
-     * does not go out. `allSettled`, not `all`: with several markers, some can land while others do not, and the ones
-     * that landed have to be known so they can be rolled back.
-     */
-    const results = await Promise.allSettled(writes);
-    const failed = results.filter((r) => r.status === "rejected").length;
-    if (changed) {
-      this.notify();
-    }
-    return { marked, failed };
+    return marks;
   }
 
   /**
-   * PUT BACK THE ABANDONED RECORDS A REFUSED REPLACEMENT HAD MARKED STALE.
+   * THE REPLACEMENT AND EVERY MARK IT MAKES, IN ONE TRANSACTION AND ON ONE LANE.
    *
-   * `undoSupersede` restored the queue and the overlays and never touched these, so a replacement
-   * refused under no-write-no-wire left records marked superseded on behalf of a verb that never
-   * happened — their Retry gone for good, for a reason that turned out not to exist.
+   * Two defects, one shape. **Atomicity**: each abandoned marker used to be its own `commitLocal`,
+   * written before the replacement's, and rolled back by hand when the replacement was refused —
+   * so a marker that committed while a sibling (or the replacement, or the rollback) failed left
+   * an older record marked superseded for a verb that never happened, its Retry gone for good; a
+   * process killed between the two writes had the same outcome and no rollback to attempt. One
+   * transaction makes the partial state unrepresentable, which is why `undoMarkers` is gone rather
+   * than hardened. **Lost updates**: `commitLocal` publishes to memory only when its transaction
+   * RESOLVES, so two verbs narrowing the same abandoned read record both read `{A,B}` and wrote
+   * `{B}` and `{A}` — one stale fragment survived, and Try again re-applied an id the newer verb
+   * had already delivered. The lane is the serialization: the second verb PLANS its marks after
+   * the first verb's transaction has landed, so it re-derives from `{B}` and narrows to nothing.
    */
-  private async undoMarkers(marked: ReadonlyArray<{ id: string; before: PersistedOutboxEntry }>): Promise<void> {
-    if (marked.length === 0) return;
-    for (const { id, before } of marked) {
+  private commitReplacement(
+    p: PendingMutation,
+    superseded: SupersedeEffect,
+  ): Promise<{ persisted: boolean; marks: number }> {
+    return this.onOutboxWriteLane(async () => {
+      const marks = this.planAbandonedSupersession(p.mutation);
       try {
-        await this.store.commitLocal([{ type: OUTBOX_ABANDONED_TYPE, id, entity: before }], []);
-      } catch { /* the store is refusing everything; the record is rebuilt from disk on the next boot */ }
-    }
-    this.localRefusalRev++;
-    this.notify();
+        await this.store.commitLocal(
+          [
+            { type: OUTBOX_TYPE, id: p.id, entity: outboxEntryOf(p) },
+            ...superseded.narrowed.map((q) => ({ type: OUTBOX_TYPE, id: q.id, entity: outboxEntryOf(q) })),
+            ...marks.filter((mk) => mk.durable)
+              .map((mk) => ({ type: OUTBOX_ABANDONED_TYPE, id: mk.id, entity: mk.entry })),
+          ],
+          (p.retire ?? []).map((id) => ({ type: OUTBOX_TYPE, id })),
+        );
+      } catch {
+        // Storage refused — what that costs depends on the verb; see `mutate`. Nothing was
+        // written, so nothing is marked and there is nothing to put back.
+        return { persisted: false, marks: marks.length };
+      }
+      // Only now: a commit that did not happen has retired nothing, and the next write of this
+      // verb must carry them again.
+      delete p.retire;
+      /**
+       * A FALLBACK RECORD'S MARK IS A MEMORY WRITE, and it is made HERE rather than in the plan:
+       * the record lives only in memory because its own terminal write was refused, so there is no
+       * durable half to be atomic with — but it must still not be marked on behalf of a
+       * replacement that was refused, which is exactly what planning-then-writing gives it.
+       */
+      const local = marks.filter((mk) => !mk.durable);
+      for (const mk of local) this.abandonedLocally.set(mk.id, mk.entry);
+      if (local.length > 0) this.localRefusalRev++;
+      if (marks.length > 0) this.notify();
+      return { persisted: true, marks: marks.length };
+    });
+  }
+
+  /**
+   * The engine's own durable-write lane for the outbox replacement transaction — see
+   * {@link commitReplacement}. NOT the store's (`serializeWrite`), which orders the transactions
+   * but not the READS that decide what goes in them, which is where the lost update lived.
+   */
+  private outboxWriteLane: Promise<unknown> = Promise.resolve();
+
+  private onOutboxWriteLane<T>(fn: () => Promise<T>): Promise<T> {
+    const run = this.outboxWriteLane.then(fn, fn);
+    this.outboxWriteLane = run.then(() => undefined, () => undefined);
+    return run;
   }
 
   /**
@@ -5063,15 +5153,15 @@ export class OhmailEngine {
     /** Everything this call changed, kept so a refused replacement can put it all back. */
     const undo: Array<{ entry: PendingMutation; index: number; mutation: EngineMutation }> = [];
     /**
-     * THE MARKER'S PROMISE IS HANDED BACK, NOT DISCARDED.
+     * THE ABANDONED HALF IS NOT DECIDED HERE ANY MORE — see {@link OhmailEngine.commitReplacement}.
      *
-     * This was `void this.supersedeAbandoned(m)`. The method awaits its own writes internally —
-     * deliberately, so a marker still in flight cannot be raced — and then the caller threw that
-     * away, which put the window straight back: between this line and the verb reaching the wire,
-     * another tab or a fast second press could retry a record that is already stale. `mutate`
-     * awaits it before it dispatches.
+     * It was `void this.supersedeAbandoned(m)`, then a promise handed back and awaited before the
+     * dispatch. Both shapes wrote the markers in their own transactions, ahead of the replacement,
+     * and needed a hand-written rollback that could itself fail. The marks are PLANNED and written
+     * with the replacement now, so a refused replacement has marked nothing and there is nothing
+     * to put back; and the plan is made on the write lane, so two verbs cannot both narrow one
+     * record from the same stale read.
      */
-    const marked = this.supersedeAbandoned(m);
     const key = supersedeKey(m);
     const readIds = m.kind === "mark_seen" || m.kind === "feed_mark_seen"
       ? new Set(m.messageIds ?? [])
@@ -5097,7 +5187,7 @@ export class OhmailEngine {
         markedInFlight.push(q);
       }
     }
-    if (this.queue.length === 0) return { retired, narrowed, undo, marked, markedInFlight };
+    if (this.queue.length === 0) return { retired, narrowed, undo, markedInFlight };
     let changed = false;
     for (let i = this.queue.length - 1; i >= 0; i--) {
       const q = this.queue[i]!;
@@ -5163,7 +5253,7 @@ export class OhmailEngine {
       this.overlayRev++;
       this.notify();
     }
-    return { retired, narrowed, undo, marked, markedInFlight };
+    return { retired, narrowed, undo, markedInFlight };
   }
 
   /**
@@ -5211,7 +5301,10 @@ export class OhmailEngine {
     opts: { deferReconcile?: boolean; onReconcileDeferred?: (mode: "await" | "background") => void } = {},
   ): Promise<MutationResult> {
     try {
-      const outcome = await this.adapter.mutate(p.mutation, { idempotencyKey: p.key });
+      const outcome = await this.adapter.mutate(p.mutation, {
+        idempotencyKey: p.key,
+        ...(p.createAttempted === true ? { createAttempted: true } : {}),
+      });
       /**
        * The happens-before token for {@link awaitingEcho}: any drain whose page loop begins
        * AFTER this line reads a change log that already holds this mutation's rows (the seq
@@ -5407,6 +5500,8 @@ export class OhmailEngine {
           p.waitIsServerNamed = rejection.retryAfterMs !== null;
         }
         p.lastError = { message: rejection.message, code: rejection.code, status: rejection.status };
+        // BEFORE the re-persist below, so the flag reaches disk with the entry it belongs to.
+        if (rejection.createAttempted) p.createAttempted = true;
         if (p.supersededInFlight === true) {
           // A newer verb for the same target was expressed while this was on the wire. Re-queuing
           // it would replay the older value over the newer state — see `supersededInFlight`.
@@ -5459,6 +5554,7 @@ export class OhmailEngine {
           v: OUTBOX_ENTRY_VERSION, id: p.id, key: p.key, n: p.n, at: p.at, mutation: p.mutation,
           attempts: p.attempts ?? 0,
           lastError: { message: rejection.message, code, status: rejection.status },
+          ...(p.createAttempted === true ? { createAttempted: true } : {}),
           ...(code === "send_unverified" ? {} : { retryRefused: code ?? "refused" }),
         };
         try {
@@ -5737,32 +5833,71 @@ export class OhmailEngine {
      * happened to flush, and a create's server id sat in a map nobody read.
      */
     /**
-     * TAKEN BY ID AND REMOVED INDIVIDUALLY, never cleared wholesale.
+     * CLAIMED ON THE WAY IN, HANDED OVER BY ID ON THE WAY OUT, never cleared wholesale.
      *
-     * `clear()` threw away every late answer, including ones that arrived while this flush was
-     * being prepared and ones no surface here was going to read — so a settlement could be
-     * removed by an unrelated consumer and then dropped on the floor. Only the entries actually
-     * handed back are deleted; anything that lands afterwards is still there for the next flush.
+     * `clear()` emptied the map before this flush knew what it would hand back, so an answer that
+     * landed while the flush was open was thrown away by it — the settlement a composer is waiting
+     * on, removed by an unrelated consumer and dropped on the floor. The claim is what keeps a
+     * concurrent flush from handing the same answer over twice; the per-id removal is what keeps
+     * this one from taking answers it is not handing over.
      */
-    const lateIds = [...this.lateResults.keys()];
-    const late = lateIds.map((k) => this.lateResults.get(k)!);
-    for (const k of lateIds) this.lateResults.delete(k);
+    const claimed = this.claimLate();
     if (this.outboxHold) {
       return [
-        ...late,
+        ...this.handOverLate(claimed),
         ...this.queue.map((p) => ({ id: p.id, key: p.key, status: "queued" as const, seq: null })),
       ];
     }
-    // THE SAME SINGLE-FLIGHT every other outbox road takes — see {@link outboxGate}. Without it
-    // two surfaces could flush concurrently and, for the null-key read verbs, land newer-then-older.
-    const results = await this.outboxGate(() => this.flushPendingInner());
-    if (late.length > 0) results.unshift(...late);
-    // OFF THE LANE. One drain covers the whole batch: they all finished before this line, so a
-    // single drive that starts now began after every one of their POSTs returned and carries
-    // every echo — the same happens-before the boot replay relies on.
-    const owed = this.owedReconciles.splice(0);
-    if (owed.length > 0) await this.settleReconcile(owed.includes("await") ? "await" : "background");
-    return results;
+    try {
+      // THE SAME SINGLE-FLIGHT every other outbox road takes — see {@link outboxGate}. Without it
+      // two surfaces could flush concurrently and, for the null-key read verbs, land newer-then-older.
+      const results = await this.outboxGate(() => this.flushPendingInner());
+      // OFF THE LANE. One drain covers the whole batch: they all finished before this line, so a
+      // single drive that starts now began after every one of their POSTs returned and carries
+      // every echo — the same happens-before the boot replay relies on.
+      const owed = this.owedReconciles.splice(0);
+      if (owed.length > 0) await this.settleReconcile(owed.includes("await") ? "await" : "background");
+      /**
+       * AND ANYTHING THAT LANDED WHILE THIS FLUSH WAS OPEN — claimed LAST, so the window covers
+       * the reconcile drain too. A verb whose request outran its deadline settles at an arbitrary
+       * moment, and that moment is very often inside the flush that is waiting for it: claimed
+       * only on the way in, its answer sat in the map until some LATER flush happened to run, so a
+       * send's settlement never reached the composer that was locked waiting for it.
+       */
+      claimed.push(...this.claimLate());
+      results.unshift(...this.handOverLate(claimed));
+      return results;
+    } catch (err) {
+      // A flush that never hands its claims over must not hold them: the next one takes them.
+      for (const id of claimed) this.lateClaimed.delete(id);
+      throw err;
+    }
+  }
+
+  /** Late answers a flush has claimed and not yet handed over — see {@link flushPending}. */
+  private readonly lateClaimed = new Set<string>();
+
+  /** Every unclaimed late answer, marked as this flush's to hand over. */
+  private claimLate(): string[] {
+    const ids: string[] = [];
+    for (const id of this.lateResults.keys()) {
+      if (this.lateClaimed.has(id)) continue;
+      this.lateClaimed.add(id);
+      ids.push(id);
+    }
+    return ids;
+  }
+
+  /** Hand the claimed answers to their one consumer, removing EXACTLY those — never `clear()`. */
+  private handOverLate(ids: readonly string[]): MutationResult[] {
+    const out: MutationResult[] = [];
+    for (const id of ids) {
+      const r = this.lateResults.get(id);
+      if (r !== undefined) out.push(r);
+      this.lateResults.delete(id);
+      this.lateClaimed.delete(id);
+    }
+    return out;
   }
 
   /**
