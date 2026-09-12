@@ -216,7 +216,7 @@ describe("the wire modules the host client imports spell no door", () => {
       ["src/local-junk.ts", "junkVia(bridgeFetch)"],
       ["src/local-trash.ts", "trashVia(bridgeFetch)"],
       ["src/local-profile-import.ts", "profileImportVia(bridgeFetch)"],
-      ["src/local-mailbox-facts.ts", "readMailboxFactsVia(retryingBridgeFetch)"],
+      ["src/local-mailbox-facts.ts", "readMailboxFactsVia(retryingBridgeFetch, opts)"],
       ["src/local-older-body.ts", "olderBodyVia(bridgeFetch)"],
     ] as const) {
       expect(fs.readFileSync(path.join(APP, rel_), "utf8"), rel_).toContain(binding);

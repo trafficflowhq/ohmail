@@ -12,7 +12,11 @@ import type { MailboxFacts } from "../../webapp/app/shell/mail-state";
 import { retryingBridgeFetch } from "./bridge-fetch.js";
 import { readMailboxFactsVia } from "./mailbox-facts-wire.js";
 
-/** The mailboxes this install opens, for the shared shell's sync line. */
-export async function readMailboxFacts(): Promise<MailboxFacts[]> {
-  return readMailboxFactsVia(retryingBridgeFetch);
+/**
+ * The mailboxes this install opens, for the shared shell's sync line. `counts` rides through to
+ * `?counts=1`: the shell asks for it only while a mailbox's first import is unstamped, because
+ * that is the only sentence whose numerator the renderer's windowed mirror cannot supply.
+ */
+export async function readMailboxFacts(opts: { counts?: boolean } = {}): Promise<MailboxFacts[]> {
+  return readMailboxFactsVia(retryingBridgeFetch, opts);
 }

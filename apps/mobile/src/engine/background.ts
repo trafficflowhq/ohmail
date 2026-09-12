@@ -598,6 +598,43 @@ export function createBackgroundOrganizing(deps: BackgroundDeps): BackgroundOrga
     }
   };
 
+    /**
+     * ══ A REFUSAL COSTS TICKS, AND IT IS ONE LINE PER CLASS ════════════════════════════════════
+     *
+     * Measured on a device: twenty-nine re-claims over 4 min 24 s, every one refused for the same
+     * permanent reason, every one a log line and a re-render. A watch that answers a standing
+     * refusal by asking again immediately is the shape, not that one cause.
+     *
+     * So a refusal doubles the ticks skipped before the next press, to a ceiling; any other answer
+     * clears it, `held` included. The line is written only where the VERDICT CHANGES CLASS.
+     */
+  const RECLAIM_BACKOFF_MAX_TICKS = 8;
+  /** Ticks still to skip before the next press. */
+  let reclaimSkip = 0;
+  /** Consecutive refusals, which is what the doubling is measured on. */
+  let reclaimRefusals = 0;
+  /** The last verdict this watch reached, so a repeat writes no second line. */
+  let reclaimVerdict: "claimed" | "held" | "refused" | null = null;
+
+  const reclaimSettled = (outcome: "claimed" | "held" | "refused"): void => {
+    if (outcome === "refused") {
+      reclaimRefusals += 1;
+      reclaimSkip = Math.min(2 ** (reclaimRefusals - 1), RECLAIM_BACKOFF_MAX_TICKS);
+    } else {
+      reclaimRefusals = 0;
+      reclaimSkip = 0;
+    }
+    const repeated = outcome === "refused" && reclaimVerdict === "refused";
+    reclaimVerdict = outcome;
+    /* HELD IS NOT A FAILURE and is not logged: it is the state of every stood-down phone whose
+       mailbox is still being organized, for as long as that lasts.
+       A `claimed` ALWAYS writes its line — it is a becoming, and two of them in one session are
+       two events. Only the standing refusal is collapsed, because it is one state. */
+    if (outcome === "held" || repeated) return;
+    log("organizer_reclaim", { why: "holder_left", verdict: outcome });
+    moved();
+  };
+
   /**
    * The holder left, and this phone is the one in front of the person — a stand-down is a one-way
    * door without this. Measured on a device: the laptop handed the mailbox back, the claim was
@@ -613,18 +650,23 @@ export function createBackgroundOrganizing(deps: BackgroundDeps): BackgroundOrga
     /* `=== true` and not `!== false`: a read that could not answer is not a licence to ask for
        somebody else's mailbox, which is the opposite direction from the notification teardown's. */
     if (standDownNow() !== true) return;
+    if (reclaimSkip > 0) {
+      reclaimSkip -= 1;
+      return;
+    }
     let outcome: "claimed" | "held" | "refused";
     try {
       outcome = await deps.engine.claimHere();
     } catch (err) {
       log("organizer_reclaim_failed", { err, why: "holder_left" });
+      /* A THROW IS A REFUSAL FOR THE BACKOFF'S PURPOSE. It has its own line — the one above, which
+         carries the error — so it is settled without a second one. */
+      reclaimRefusals += 1;
+      reclaimSkip = Math.min(2 ** (reclaimRefusals - 1), RECLAIM_BACKOFF_MAX_TICKS);
+      reclaimVerdict = "refused";
       return;
     }
-    /* HELD IS NOT A FAILURE and is not logged: it is the state of every stood-down phone whose
-       mailbox is still being organized, once per tick, for as long as that lasts. */
-    if (outcome === "held") return;
-    log("organizer_reclaim", { why: "holder_left", verdict: outcome });
-    moved();
+    reclaimSettled(outcome);
   };
 
   const claimLostCheck = async (): Promise<void> => {

@@ -26,8 +26,10 @@ import { trashVia } from "../trash-wire.js";
 import type { BearerManager } from "./bearer.js";
 
 /** The sync strip's mailbox facts — `GET /mailboxes` over the bearer, window rules verbatim. */
-export function mailboxFactsOverBearer(bearer: BearerManager): () => Promise<MailboxFacts[]> {
-  return () => readMailboxFactsVia(bearer.fetch);
+export function mailboxFactsOverBearer(
+  bearer: BearerManager,
+): (opts?: { counts?: boolean }) => Promise<MailboxFacts[]> {
+  return (opts = {}) => readMailboxFactsVia(bearer.fetch, opts);
 }
 
 /**

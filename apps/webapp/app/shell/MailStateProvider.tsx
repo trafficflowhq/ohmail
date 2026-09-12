@@ -27,6 +27,7 @@ import { SYNC_FAILURE_STREAK, syncMayRead } from "./sync-scheduler";
 import {
   deriveMailState,
   growthStep,
+  pulledCount,
   seedGrowth,
   type MailboxFacts,
   type MailState,
@@ -40,7 +41,7 @@ import {
  * MUST REJECT on failure. Returning `[]` from a catch would be indistinguishable from an
  * account with no mailboxes — see the file header.
  */
-export type MailboxProbe = () => Promise<MailboxFacts[]>;
+export type MailboxProbe = (opts?: { counts?: boolean }) => Promise<MailboxFacts[]>;
 
 /** The ladder's freshness input — the Freshness Contract's verdict. See `MailStateInputs`. */
 export type FreshnessFacts = MailStateInputs["freshness"];
@@ -146,11 +147,18 @@ interface MailStateBinding {
    * `state.count`, and the difference is load-bearing: `MailState.count` is carried by the states
    * that use it and left at `0` by the rest, so a surface reading the mirror's size from the
    * derived state would report an empty device for the whole of an outage. This is the input the
-   * provider was handed, unconditioned by which sentence the ladder chose. Its one consumer is the
-   * Mailboxes pane's holdings line, through {@link deviceHoldings} — also the strip's denominator,
-   * so the two cannot disagree.
+   * provider was handed, unconditioned by which sentence the ladder chose. Its consumer is the
+   * Mailboxes pane's holdings line, through {@link deviceHoldings}. NOT the import's numerator —
+   * see `pulled` below, which is what the strip and the pull stage quote.
    */
   mirrored: number;
+  /**
+   * HOW MUCH THE IMPORT HAS PULLED — {@link pulledCount} over the same facts the ladder judged.
+   * The first-run pull stage's numerator, and the strip's; `mirrored` above answers a different
+   * question ("how much is on this device") and the two diverge by the whole of a large mailbox
+   * once the renderer's mirror is windowed.
+   */
+  pulled: number;
   /**
    * THE FRESHNESS VERDICT the ladder judged — the probed one on the desktop (the sidecar's stamp
    * against the hosted account), the engine's own everywhere else.
@@ -204,6 +212,13 @@ export function MailStateProvider({
     : engineFreshness;
 
   /**
+   * THE IMPORT'S NUMERATOR. One derivation, so the strip's sentence, the growth episode and the
+   * first-run pull rate are the same number — `pull-rate.ts`'s rule. Falls back to `mirrored`
+   * wherever no door answered a count, so it can never read below what is already on screen.
+   */
+  const pulled = pulledCount(mirrored, facts);
+
+  /**
    * Fold every observation of the mirror's size in. In an effect, not during render: `growthStep` records a TIME, and
    * a StrictMode double-invoked render recording two rises for one arrival would let a single message satisfy the
    * two-rise rule. While the first drain is still landing, the mirror is being READ, not growing: the live engine
@@ -215,12 +230,12 @@ export function MailStateProvider({
    */
   useEffect(() => {
     setGrowth((prev) =>
-      sync.bootstrapping ? seedGrowth(mirrored) : growthStep(prev, mirrored, Date.now()),
+      sync.bootstrapping ? seedGrowth(pulled) : growthStep(prev, pulled, Date.now()),
     );
     // The clock is re-read whenever the mirror moves, not only on the interval — otherwise a
     // rise arriving during a quiet spell would be judged against a `beat` minutes old.
     setBeat(Date.now());
-  }, [mirrored, sync.bootstrapping]);
+  }, [pulled, sync.bootstrapping]);
 
   const state = useMemo(
     () =>
@@ -232,11 +247,12 @@ export function MailStateProvider({
         engineFreshness,
         mailboxes: facts,
         mirrored,
+        pulled,
         growth,
         now: beat,
         demo,
       }),
-    [sync, freshness, engineFreshness, facts, mirrored, growth, beat, demo],
+    [sync, freshness, engineFreshness, facts, mirrored, pulled, growth, beat, demo],
   );
 
   // The clock, armed only while something on screen depends on elapsed time.
@@ -308,6 +324,20 @@ export function MailStateProvider({
   const answering = useRef(now);
   useCommitEffect(() => { answering.current = adopted; }, [adopted]);
 
+  /**
+   * DOES ANY MAILBOX STILL HAVE AN IMPORT OPEN? — the one thing that turns `?counts=1` on.
+   *
+   * The count costs a grouped `count(*)` over the store, so it is asked only while it is the
+   * only way to say how far an import has got, and stops at the stamp the door writes.
+   * `=== null`, never `== null`: an engine older than the column omits the field, and `== null`
+   * would arm the aggregate for ever on every poll. Settled in an effect rather than during
+   * render, so the value the poll reads is the one the last commit established.
+   */
+  const wantsCounts = useRef(false);
+  useEffect(() => {
+    wantsCounts.current = (facts ?? []).some((m) => m.initialImportCompletedAt === null);
+  }, [facts]);
+
   const read = useCallback(async (): Promise<void> => {
     if (!now.probe) return;
     /**
@@ -322,7 +352,7 @@ export function MailStateProvider({
      */
     if (!syncMayRead(probeEngine)) return;
     try {
-      const got = await now.probe();
+      const got = await now.probe({ counts: wantsCounts.current });
       if (!syncMayRead(probeEngine)) return;
       /* THE OWNERSHIP TEST. `now` is this callback's OWN identity, frozen when the callback was
          made; `answering.current` is what is on screen when the answer lands. A request issued for
@@ -421,10 +451,10 @@ export function MailStateProvider({
 
   const binding = useMemo<MailStateBinding>(
     () => ({
-      state, mailboxes: facts, rosterProbed: probe !== undefined, mirrored, freshness,
+      state, mailboxes: facts, rosterProbed: probe !== undefined, mirrored, pulled, freshness,
       refresh,
     }),
-    [state, facts, probe, mirrored, freshness, refresh],
+    [state, facts, probe, mirrored, pulled, freshness, refresh],
   );
 
   return <MailStateContext.Provider value={binding}>{children}</MailStateContext.Provider>;

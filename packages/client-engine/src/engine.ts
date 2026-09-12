@@ -1470,6 +1470,18 @@ export const OUTBOX_UNKEYED_CREATE_TTL_MS = 24 * 60 * 60 * 1000;
  * `ready` record is never re-fetched ({@link OhmailEngine.bodyPlan}). A whole mailbox would be
  * hundreds of megabytes, which is why the tail deliberately never enters the pass.
  */
+/**
+ * HOW MANY BACKLOG PAGES SHARE ONE PUBLISH while a drain is catching up.
+ *
+ * A publish re-derives the whole mirror and re-renders, and during a first import that is the
+ * renderer's whole cost: the same shell costs 660 MB mounted after the import and 950 MB
+ * rendering through it a page at a time. Not the row ceiling, not the eager pass, not cadence.
+ *
+ * Eight is the largest step that still reads as mail arriving rather than a screen that jumps;
+ * a catch-up ending mid-group publishes at the settle, so no row waits.
+ */
+export const BACKLOG_PUBLISH_PAGES = 8;
+
 export const EAGER_BODIES_MAX = 1000;
 
 /**
@@ -2469,7 +2481,9 @@ export class OhmailEngine {
         // see {@link pruneToPolicy}. One notify for the apply and the prune together: they are one
         // change to the mirror as far as any reader is concerned, and two is two derivations.
         await this.pruneToPolicy(highBefore);
-        this.notify();
+        // AND ONE PUBLISH PER {@link BACKLOG_PUBLISH_PAGES} OF THEM — see the constant. The settle
+        // below always publishes, so the last rows never wait on this.
+        if (pagesThisDrain % BACKLOG_PUBLISH_PAGES === 0) this.notify();
         continue;
       }
       this.notify();
