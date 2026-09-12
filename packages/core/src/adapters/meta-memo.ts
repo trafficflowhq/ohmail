@@ -9,6 +9,8 @@
  * the lot costs one re-walk and can never lose a record.
  */
 
+import { epochOf, sameEpoch } from "../epoch.js";
+
 /** Whose memory this is. Both required, both explicit — never inferred from a connection. */
 export interface MetaIdentity {
   readonly installId: string;
@@ -98,13 +100,15 @@ function keyOf(id: MetaIdentity): string {
 
 /**
  * Generations compare by VALUE across `number` and `bigint`, because a server may report either
- * and the same folder must not look replaced merely because the type changed on the wire. An
- * unknown generation on either side is a mismatch: a position that cannot be shown to still mean
- * what it meant must not be used.
+ * and the same folder must not look replaced merely because the type changed on the wire. Through
+ * `epoch.ts`, so this module holds ONE notion of sameness rather than a second `BigInt` compare
+ * beside the door. Both arguments are always KNOWN by the time they arrive — the two guards below
+ * turn an unnamed generation away first, and that is deliberately where the decision is: a reader
+ * that cannot check a position must be told `unusable` and keep the entry, not told "mismatch"
+ * and clear three other readers' positions with its own.
  */
 function sameGeneration(a: Generation, b: Generation): boolean {
-  if (a === null || b === null) return false;
-  return BigInt(a) === BigInt(b);
+  return sameEpoch(epochOf(a), epochOf(b));
 }
 
 /** Read this install's memory of this mailbox, valid only for `generation`. */
@@ -115,7 +119,7 @@ export function readMemo(id: MetaIdentity, generation: Generation): MemoRead {
   /* Asked without a generation: the caller cannot check anything, which is a fact about the
    * CALLER and not about this entry. Deleting here would let one blind reader wipe three other
    * readers' positions. */
-  if (generation === null) return { kind: "unusable" };
+  if (!epochOf(generation).known) return { kind: "unusable" };
   if (!sameGeneration(entry.generation, generation)) {
     store.delete(keyOf(id));
     return { kind: "invalidated", was: entry.generation, now: generation };
@@ -132,7 +136,7 @@ export function writeMemo(id: MetaIdentity, generation: Generation, patch: MetaM
   assertMetaIdentity("the meta memory", id);
   // A position under an unknown generation cannot be checked for staleness later, so it is not
   // kept at all: an unverifiable memory is worse than none, because none falls back to a walk.
-  if (generation === null) { store.delete(keyOf(id)); return; }
+  if (!epochOf(generation).known) { store.delete(keyOf(id)); return; }
   const existing = store.get(keyOf(id));
   const base = existing !== undefined && sameGeneration(existing.generation, generation)
     ? existing.memo

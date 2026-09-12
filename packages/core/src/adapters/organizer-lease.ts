@@ -7,6 +7,7 @@ import { WATCHED_FOLDERS, type ImapAuth } from "./imap-types.js";
 import {
   boundListResponse, boundedFetch, ImapDeadline, IMAP_META_BYTES_MAX, IMAP_META_DEADLINE_MS,
 } from "./imap-bounds.js";
+import { epochOf, epochVerdict } from "../epoch.js";
 import {
   assertMetaIdentity, readMemo, writeMemo, forgetMemo,
   type MetaIdentity, type Generation,
@@ -3057,10 +3058,12 @@ export function makeLeaseIo(
          * whatever sits at them — another install's live claim, or the settings document.
          * Expunging by them would be deleting strangers on a stale map. Only a PROVEN mismatch
          * refuses — both generations known and different; an unknowable one proceeds, with the
-         * confirm-by-re-read as backstop. `String(…)` because one side may be a bigint.
+         * confirm-by-re-read as backstop. Through the door, so that the spellings a server uses
+         * for "no epoch" — absent, `0`, out of RFC 3501's range — are ONE unknown here rather
+         * than a contradiction, which would refuse every cleanup this mailbox ever needs.
          */
         const gen = currentGeneration();
-        if (generationAtLastRead !== null && gen !== null && String(gen) !== String(generationAtLastRead)) {
+        if (epochVerdict(epochOf(generationAtLastRead), epochOf(gen)) === "stale") {
           throw new ClaimReleaseError(
             "renumbered",
             `${META_FOLDER} was renumbered between the read that named these ${uids.length} `
@@ -3679,23 +3682,38 @@ export async function runLeaseGate(input: LeaseGateInput): Promise<LeaseGateResu
        * because "still there" and "I could not look" have the same correct answer here.
        */
       /**
-       * And a UIDVALIDITY change makes the comparison meaningless altogether: refs are UIDs, and
-       * after a renumbering `stillRefs.has(r)` compares two numbering schemes — it can answer
-       * "gone" for a claim sitting there under a new uid, the same false confirmation by another
-       * route. Treated exactly as a truncated read, because it is the same fact: this read cannot
-       * speak about those refs. `null` on either side means the connection does not report the
-       * generation, which resolves to "no change detected" and leaves the gate as it was.
+       * And the UID GENERATION decides whether the two reads' refs are comparable at all: refs are
+       * UIDs, so after a renumbering `stillRefs.has(r)` compares two numbering schemes and can
+       * answer "gone" for a claim sitting right there under a new uid. Three answers, not two, and
+       * the door (`epoch.ts`) is what knows them: the epochs agree; they contradict; or NOBODY
+       * NAMED ONE — which this used to read as "no change detected" and let through. A server that
+       * will not vouch for its folder ids has not said the handover landed, so both non-`usable`
+       * answers are one fact — this read cannot speak about those refs — and take the truncated
+       * read's arm. The refusal is could-not-look, never a stand-down: the mailbox keeps the
+       * organizer it has, the press is not spent, and the next pass looks again.
        */
-      const renumbered = read.uidValidity !== null
-        && electionUidValidity !== null
-        && read.uidValidity !== electionUidValidity;
+      const electionEpoch = epochOf(electionUidValidity);
+      const confirmEpoch = epochOf(read.uidValidity);
+      const epochs = epochVerdict(electionEpoch, confirmEpoch);
+      if (epochs === "unknown") {
+        log("lease_epoch_unknown", {
+          op: "remove_claims" satisfies LeaseOp,
+          state: electionEpoch.known ? "confirm_read" : confirmEpoch.known ? "election_read" : "neither_read",
+          reason: "the mail server did not name this folder's uid generation, so the claims this "
+            + "handover displaced cannot be proved gone; the takeover is not confirmed, this "
+            + "install's own claim is withdrawn, and the mailbox keeps the organizer it has",
+        });
+      } else if (epochs === "stale") {
+        log("lease_folder_renumbered", { op: "remove_claims" satisfies LeaseOp });
+      }
+      const incomparable = epochs !== "usable";
       /* An absence is only evidence for a ref the window COVERED — and the check is gated on
        * `truncated` so the floor is a real observation rather than a sentinel doing the work. On a
        * complete read there is nothing to prove: every ref that exists is in `after`. */
-      const unprovable = read.truncated || renumbered
+      const unprovable = read.truncated || incomparable
         ? verdict.displace.find((r) => {
           if (stillRefs.has(r)) return false;
-          if (renumbered) return true;
+          if (incomparable) return true;
           const floor = after.reduce<number>(
             (lo, m) => (typeof m.ref === "number" && m.ref < lo ? m.ref : lo), Infinity,
           );
