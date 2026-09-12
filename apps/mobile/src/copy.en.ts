@@ -239,6 +239,12 @@ const TABLE = {
     `${name} organizes this mailbox. This phone reads it; it moves nothing and screens nothing.`,
   phoneStateReaderWhyPhone: (name: string) =>
     `${name} organizes this mailbox, and a phone organizes only while ohmail is open on it. This phone reads it; it moves nothing and screens nothing.`,
+  /**
+   * THE TRANSITIONAL STATE, iOS ONLY. The label is the chip, the sentence the note under it. It
+   * says
+   * what happened, what ends it and the one thing that can end it differently; a phone that hands
+   * its claim back on suspend is not a mailbox nothing organizes, and it is not organizing either.
+   */
   phoneStateReaderWhyUnnamed:
     "Another install organizes this mailbox. This phone reads it; it moves nothing and screens nothing.",
   phoneStateReaderWhyUnnamedPhone:
