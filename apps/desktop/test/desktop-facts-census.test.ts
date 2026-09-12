@@ -101,6 +101,10 @@ describe("the desktop mailbox-facts seam", () => {
          probe taxonomy, so the value here is one a real engine answers with. */
       sendingUnsettledReason: "auth",
       hostedMessageCount: 4200,
+      /* The import's numerator — `?counts=1` only. Distinct from the two above and from the
+         renderer's own row count, which on a windowed mirror is the policy floor, not the
+         mailbox. */
+      messageCount: 4210,
       inboundQuietSince: "2026-08-20T00:00:00.000Z",
       inboundQuietDismissedAt: null,
       /* The organizer notice's pair, the release stamp and the holder's answer. The pair is a
@@ -138,6 +142,7 @@ describe("the desktop mailbox-facts seam", () => {
     // account, which is the failure `hostedMessageCount`'s comment names.
     expect(got!.serverMessageCount).toBe(4242);
     expect(got!.hostedMessageCount).toBe(4200);
+    expect(got!.messageCount).toBe(4210);
     expect(got!.pendingMoves).toBe(4);
     expect(got!.displayName).toBe("Someone");
     expect(got!.organizeConsentedAt).toBe("2026-09-02T09:00:00.000Z");
@@ -172,6 +177,7 @@ describe("the desktop mailbox-facts seam", () => {
 
     expect("serverMessageCount" in (got as object)).toBe(false);
     expect("hostedMessageCount" in (got as object)).toBe(false);
+    expect("messageCount" in (got as object)).toBe(false);
     expect("initialImportCompletedAt" in (got as object)).toBe(false);
     expect("pendingMoves" in (got as object)).toBe(false);
     expect("displayName" in (got as object)).toBe(false);

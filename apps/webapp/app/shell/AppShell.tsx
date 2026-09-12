@@ -1089,10 +1089,11 @@ function MailStateHost({ probe, freshnessProbe, children }: { probe?: MailboxPro
   /**
    * EVERY message in the MIRROR — Screener, Reads and Receipts included, not the Ohbox's rows.
    *
-   * The progress signal. `MailStateProvider` folds it into a stateful growth reducer, and two
-   * surfaces each sampling their own could disagree about whether the mirror is growing, so it
-   * is sampled exactly once — here. The engine calls `notify()` once per drained page, so this
-   * is live with no extra plumbing.
+   * What this DEVICE holds, and no longer the progress signal: on a windowed mirror it stops at
+   * the policy floor while an import runs on, so `MailStateProvider` derives `pulled` from it and
+   * the facts and folds THAT into the growth reducer. Sampled exactly once — here — because two
+   * surfaces sampling their own could disagree about whether the mirror is growing. The engine
+   * calls `notify()` once per drained page, so this is live with no extra plumbing.
    */
   const mirrored = useMemo(() => engine.read().list("message").length, [engine, version]);
   return (
@@ -1184,7 +1185,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
    * reaches a component that must be mountable alone.
    */
   const {
-    mailboxes: facts, rosterProbed, state: mailState, refresh: refreshFacts,
+    mailboxes: facts, rosterProbed, state: mailState, refresh: refreshFacts, pulled,
   } = useMailState();
   /**
    * Every filing dispatch goes through here. A filing decision writes `folder_state`; the strip
@@ -1791,8 +1792,9 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
     [consentView, deleting.held],
   );
   /**
-   * EVERY MESSAGE IN THE MIRROR — the first pull's numerator, and the same number
-   * `MailStateHost` folds into the growth reducer one level up.
+   * EVERY MESSAGE IN THE MIRROR — what this device holds, NOT the first pull's numerator; that is
+   * `pulled`, off `useMailState()`, because a windowed mirror pins this number at the policy floor
+   * mid-import. Its remaining readers are the ones asking about the mirror itself.
    *
    * Read again here rather than lifted out of `useMailState`, because that context publishes the
    * count it was CONSTRUCTED with and this component is inside it; the two are the same
@@ -7816,7 +7818,11 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
           pull={{
             screened: Math.max(0, mirroredCount - history.length),
             history: history.length,
-            mirrorCount: mirroredCount,
+            /* NOT `mirroredCount`: on a windowed mirror that number stops at the policy floor
+               while the import runs on, so the bar froze, the rate read zero and no ETA ever
+               appeared. `screened` above keeps it — both of its operands are projections over
+               the same reader, and a difference between two populations is not a count. */
+            pulled,
           }}
           decide={firstRunDecide}
           /* THE RE-RUN INTENT, off the route. See `Route.firstRunRerun`: it cannot be derived,

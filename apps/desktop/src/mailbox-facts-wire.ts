@@ -48,6 +48,14 @@ interface MailboxWire {
    */
   hostedMessageCount?: number;
   /**
+   * MESSAGES IN THE STORE THIS IMPORT WRITES INTO — `GET /mailboxes?counts=1` only, which is why
+   * the read below takes an argument. It is the first sync's true numerator: the renderer's own
+   * row count is a 90-day, 5 000-row projection and pins at that floor over a large mailbox, so
+   * the progress sentence read from it stalls while the import runs on. Absent must arrive
+   * ABSENT — "not asked" is not "none".
+   */
+  messageCount?: number;
+  /**
    * HOW MUCH MAIL THE SERVER SAYS IS IN THIS MAILBOX — the local door's own Σ of
    * `mailbox_folders.server_exists` over the folders a cycle has opened (mail 0083).
    * It is the first pull's denominator: the mirror's own count is the numerator, and without
@@ -114,8 +122,11 @@ interface MailboxWire {
  */
 export async function readMailboxFactsVia(
   fetchImpl: (url: string, init?: unknown) => Promise<Response>,
+  opts: { counts?: boolean } = {},
 ): Promise<MailboxFacts[]> {
-  const res = await fetchImpl("/mailboxes");
+  // `?counts=1` costs a grouped `count(*)` over the store, so it is asked only while an import is
+  // open — the caller decides from `initialImportCompletedAt`, and the aggregate stops at the stamp.
+  const res = await fetchImpl(opts.counts === true ? "/mailboxes?counts=1" : "/mailboxes");
   if (!res.ok) throw new Error(`the mail engine answered ${res.status} for the mailbox list`);
   const body = (await res.json()) as { items?: MailboxWire[] };
   return (body.items ?? []).map((m) => ({
@@ -179,6 +190,9 @@ export async function readMailboxFactsVia(
     // strip's comparison upside down. Absent must arrive absent. This seam has dropped a field
     // exactly once before — `smtpMaxSizeBytes`, on the line above — and it did so silently.
     ...("hostedMessageCount" in m ? { hostedMessageCount: m.hostedMessageCount } : {}),
+    // THE IMPORT'S NUMERATOR, by the same `in` spread and for the same reason: absent means the
+    // read did not ask for counts, and a `?? 0` would say the store is empty while it fills.
+    ...("messageCount" in m ? { messageCount: m.messageCount } : {}),
     // ── THE FIELD THAT SAYS WHERE THE PULL ENDS ───────────────────────────────────────────
     // `serverMessageCount` is the local door's Σ of `server_exists`; unforwarded, `pullRemaining`
     // has no denominator and no surface can tell "the walk reached the end" from "still going".

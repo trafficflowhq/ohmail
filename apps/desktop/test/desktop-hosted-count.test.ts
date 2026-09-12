@@ -67,6 +67,9 @@ const inputs = (mailboxes: MailStateInputs["mailboxes"], mirrored: number): Mail
   failureStreak: 3,
   mailboxes,
   mirrored,
+  /* No door has answered an import count here — this file is about the HOSTED total, which is the
+     denominator, and a settled mirror quotes it against its own row count. */
+  pulled: mirrored,
   growth: seedGrowth(mirrored),
   // The resting freshness: current, stamped moments ago. The stale arm's own tests perturb it.
   freshness: { state: "current" as const, asOf: new Date(NOW - 30_000).toISOString() },

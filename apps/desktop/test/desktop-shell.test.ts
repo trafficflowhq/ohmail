@@ -2560,10 +2560,14 @@ describe("the UI bundle's build config", () => {
     // imports the first and must not reach the second: anything that imports `bridge-fetch.ts`
     // puts the shell command's name into the bundle a phone is handed.
     const factsWire = read("src/mailbox-facts-wire.ts");
-    expect(read("src/local-mailbox-facts.ts")).toMatch(/readMailboxFactsVia\(retryingBridgeFetch\)/);
+    expect(read("src/local-mailbox-facts.ts")).toMatch(/readMailboxFactsVia\(retryingBridgeFetch, opts\)/);
     expect(read("src/DesktopMailboxes.tsx"), "the pane's reach poll rides the same retrying transport")
       .toMatch(/readMailboxReachVia\(retryingBridgeFetch\)/);
-    expect(factsWire).toMatch(/fetchImpl\("\/mailboxes"\)/);
+    // The read goes over the INJECTED transport and asks one of two spellings: the bare list,
+    // and `?counts=1` while a first import is still open (the count is the import's numerator,
+    // which the renderer's windowed mirror cannot supply). Both are asserted, so neither the
+    // door-free rule nor the counted read can go quiet.
+    expect(factsWire).toMatch(/fetchImpl\(\s*opts\.counts === true\s*\?\s*"\/mailboxes\?counts=1"\s*:\s*"\/mailboxes"\s*\)/);
     // A FAILED read is not an empty account. The ladder renders "No mailbox connected" for the
     // second, so collapsing the first into it would say that to somebody whose mailbox works.
     expect(factsWire).toMatch(/throw new Error/);
