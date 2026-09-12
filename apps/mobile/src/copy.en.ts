@@ -520,6 +520,18 @@ const TABLE = {
    * no language of its own.
    */
   pinChanged: PIN_CHANGED,
+  /**
+   * THE OTHER HALF OF A FAILED HANDSHAKE, and a different event from {@link pinChanged}: this
+   * phone had agreed to no key for that address, so nothing CHANGED — the code named one
+   * identity and the machine answering presented another. The two were one sentence, and it
+   * told the victim of a substituted address that their own computer had been re-keyed and to
+   * pair again with a fresh code, which is how somebody walks into it a second time.
+   */
+  pairKeyMismatch:
+    "The pairing code names one computer, and something else answered at that address \u2014 so "
+    + "ohmail stopped before sending anything. Nothing on this phone changed. Open Settings \u2192 "
+    + "Devices on the computer you meant to pair with and scan the code it shows; if that is where "
+    + "this code came from, something on your network is answering in its place.",
   connectSyncFailed: (detail: string, pinned: boolean) =>
     isPinFailure(detail)
       ? pinned

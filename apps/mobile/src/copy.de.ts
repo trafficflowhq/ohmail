@@ -301,6 +301,13 @@ export const DE: Deck = {
   connectMirrored: (n: number, cursor: string) =>
     `${n === 1 ? "1 Nachricht" : `${n} Nachrichten`} auf diesem Gerät · Cursor ${cursor}`,
   pinChanged: PIN_CHANGED,
+  /* Die andere Hälfte eines fehlgeschlagenen Handshakes — siehe `copy.en.ts`. */
+  pairKeyMismatch:
+    "Der Kopplungscode nennt einen Computer, und unter dieser Adresse hat etwas anderes "
+    + "geantwortet \u2014 deshalb hat ohmail angehalten, bevor irgendetwas gesendet wurde. Auf "
+    + "diesem Telefon hat sich nichts geändert. Öffne auf dem Computer, mit dem du koppeln "
+    + "wolltest, Einstellungen \u2192 Geräte und scanne den Code, der dort steht. Stammt dieser "
+    + "Code von dort, antwortet etwas in deinem Netz an seiner Stelle.",
   connectSyncFailed: (detail: string, pinned: boolean) =>
     isPinFailure(detail)
       ? pinned

@@ -8,7 +8,7 @@
  * rendered or put in a route param. A ref disarms per-frame double probes (the
  * token is single-use); a denied camera offers ask-again and the by-hand path.
  */
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { type Refusal } from "../src/refusal";
 import { sayRefusal } from "../src/refusal";
 import { View } from "react-native";
@@ -16,7 +16,7 @@ import { CameraView, useCameraPermissions } from "expo-camera";
 import { router } from "expo-router";
 import { Copy } from "../src/copy";
 import { useConnection } from "../src/net/connection";
-import { parsePairLink, type PairAdmission } from "../src/net/pairing";
+import { discardAdmission, parsePairLink, type PairAdmission } from "../src/net/pairing";
 import { Button, Panel, Screen, Scroller, Txt } from "../src/ui/base";
 import { PairConfirm } from "../src/ui/PairConfirm";
 import { DetailBar } from "../src/ui/chrome";
@@ -45,6 +45,20 @@ export default function ScanScreen() {
   const [phase, setPhase] = useState<Phase>({ k: "scanning", badCode: false });
   /** Armed = the next decoded frame may act. Disarmed while parsing/redeeming/failed. */
   const armed = useRef(true);
+  /**
+   * A CONFIRMATION LEFT UNPRESSED GIVES THE CODE'S MATERIAL BACK — declined, or navigated away
+   * from. The probe had to install the code's key to dial at all, so that key is a lease and
+   * this is where it ends (`net/pairing.ts#discardAdmission`). Keyed on the admission OBJECT,
+   * which the `busy` flip keeps, so the press is not mistaken for a dismiss.
+   */
+  const pressed = useRef(false);
+  const pending = phase.k === "confirming" ? phase.admission : null;
+  useEffect(() => {
+    if (pending === null) return;
+    return () => {
+      if (!pressed.current) discardAdmission(pending);
+    };
+  }, [pending]);
 
   const onScanned = useCallback(
     ({ data }: { data: string }) => {
@@ -61,6 +75,7 @@ export default function ScanScreen() {
         return;
       }
       armed.current = false;
+      pressed.current = false;
       setPhase({ k: "probing" });
       // The pin rides straight from the scanned code into the probe — never re-derived, never
       // fetched. A fingerprint asked for over the network is a fingerprint an attacker on that
@@ -87,6 +102,7 @@ export default function ScanScreen() {
   const confirm = useCallback(() => {
     setPhase((current) => {
       if (current.k !== "confirming" || current.busy) return current;
+      pressed.current = true;
       void conn.pairConfirmed(current.admission, current.token).then((outcome) => {
         if (outcome.ok) {
           router.replace("/servers");
@@ -98,8 +114,9 @@ export default function ScanScreen() {
     });
   }, [conn]);
 
-  /* Declining re-arms the camera and forgets the token. Nothing was spent and nothing stored, so
-     this is genuinely a return to where they were — not a cancellation of anything. */
+  /* Declining re-arms the camera and forgets the token; the effect above gives the code's key
+     back with it. Nothing was spent and nothing is left installed, so this is genuinely a return
+     to where they were — not a cancellation of anything. */
   const decline = useCallback(() => {
     armed.current = true;
     setPhase({ k: "scanning", badCode: false });

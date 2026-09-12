@@ -541,9 +541,10 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
       activeId,
       ask: (origin) => negotiate(globalThis.fetch.bind(globalThis) as FetchLike, origin),
       probeBase: (origin) => resolveApiBase(globalThis.fetch.bind(globalThis) as FetchLike, origin),
-      /* The probe takes no gate turn and tears nothing down: it spends nothing and stores
-         nothing, so a person who looks at the confirmation and presses Back is left exactly
-         where they were — still paired with whatever they were paired with. */
+      /* The probe takes no gate turn and tears nothing down: it spends nothing, and the one
+         thing it must install to dial — the code's key — is a lease the screens hand back
+         (`discardAdmission`). A person who looks at the confirmation and presses Back is left
+         exactly where they were, still paired with whatever they were paired with. */
       probePair: (origin, pin) => probePairing(env, { origin, pin: pin ?? null }),
       pairConfirmed: (admission, token) =>
         gate.run(async (stillCurrent) => {

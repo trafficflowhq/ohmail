@@ -8,14 +8,16 @@
  * wins over the fields, so every path here renders {@link PairConfirm} before
  * the code is spent. The token renders as a secret, never echoed into errors.
  */
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { type Refusal } from "../src/refusal";
 import { sayRefusal } from "../src/refusal";
 import { TextInput, View } from "react-native";
 import { router } from "expo-router";
 import { Copy } from "../src/copy";
 import { useConnection } from "../src/net/connection";
-import { parsePairLink, pendingPairOrigin, type PairAdmission } from "../src/net/pairing";
+import {
+  discardAdmission, parsePairLink, pendingPairOrigin, type PairAdmission,
+} from "../src/net/pairing";
 import { useTheme } from "../src/theme";
 import { Button, Panel, Screen, Scroller, Section, Txt } from "../src/ui/base";
 import { PairConfirm } from "../src/ui/PairConfirm";
@@ -43,6 +45,19 @@ export default function ConnectScreen() {
   const [origin, setOrigin] = useState(() => pendingPairOrigin());
   const [token, setToken] = useState("");
   const [phase, setPhase] = useState<Phase>({ k: "idle" });
+  /**
+   * A CONFIRMATION LEFT UNPRESSED GIVES THE CODE'S MATERIAL BACK — the scanner's rule, and the
+   * pasted link reaching this screen carries the same key. Keyed on the admission OBJECT, which
+   * the `busy` flip keeps, so the press is not mistaken for a dismiss.
+   */
+  const pressed = useRef(false);
+  const pending = phase.k === "confirming" ? phase.admission : null;
+  useEffect(() => {
+    if (pending === null) return;
+    return () => {
+      if (!pressed.current) discardAdmission(pending);
+    };
+  }, [pending]);
 
   const probe = useCallback(async () => {
     // A whole pairing link pasted into the token field wins over the address field — it names
@@ -54,6 +69,7 @@ export default function ConnectScreen() {
     // same-network address typed by hand and says to use the code the desktop shows. A pasted
     // LINK carries its own pin, which is why the paste path still wins over the fields.
     const target = pasted ?? { origin, token, pin: null };
+    pressed.current = false;
     setPhase({ k: "probing" });
     // NO TOKEN ON THIS CALL. The probe measures; the code is spent in `confirm` below and
     // nowhere else, which is what makes the confirmation unskippable from this screen too.
@@ -68,6 +84,7 @@ export default function ConnectScreen() {
   const confirm = useCallback(() => {
     setPhase((current) => {
       if (current.k !== "confirming" || current.busy) return current;
+      pressed.current = true;
       void conn.pairConfirmed(current.admission, current.token).then((outcome) => {
         if (outcome.ok) {
           router.replace("/servers");

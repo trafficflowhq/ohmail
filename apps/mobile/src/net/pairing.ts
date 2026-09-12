@@ -445,11 +445,32 @@ export interface PairAdmission {
   /** Where the `/sync` family answers, measured (`server-base.ts`). */
   apiBase: string;
   /**
+   * THE KEY THIS PROBE INSTALLED AND NOBODY HAS AGREED TO YET — true when the transport gate
+   * wrote this origin's entry into the TLS registry during THIS probe and no stored profile
+   * owns one. The install cannot wait for the press (`/hello` is already a request, and a
+   * self-signed door fails the trust store), so it is a LEASE: {@link discardAdmission} takes
+   * it back on a dismiss or a refusal, which is what makes looking at a code leave no trust
+   * behind. False where a stored pairing's own key was re-installed — that one is not this
+   * probe's to drop.
+   */
+  readonly provisionalPin: boolean;
+  /**
    * The brand. Not security — a phone cannot keep a secret from its own code — but a value with
    * this field can only have come from {@link probePairing}, so a call site cannot assemble one
    * out of a scanned link and skip the person.
    */
   readonly probed: true;
+}
+
+/**
+ * GIVE BACK WHAT THE PROBE INSTALLED — the dismiss, and every refusal after the gate. A person
+ * who reads the confirmation and declines must leave the phone exactly as they found it, and
+ * the one thing a probe changes is the TLS registry's entry for that (host, port). Narrow on
+ * purpose: an admission whose key a stored profile owns is left alone, because dropping it
+ * would un-pin a live pairing on the strength of somebody having looked at a second code.
+ */
+export function discardAdmission(admission: PairAdmission): void {
+  if (admission.provisionalPin) unpin(admission.origin);
 }
 
 export type ProbeOutcome =
@@ -489,6 +510,23 @@ export async function probePairing(
   const admitted = admitOrigin(origin, pin, stored?.pin ?? null);
   if (!admitted.ok) return { kind: "refused", reason: admitted.reason };
 
+  /**
+   * THE LEASE, AND THE TWO SENTENCES A FAILED HANDSHAKE CAN BE.
+   *
+   * `provisional` = the gate just wrote a key nobody has agreed to; every refusal below gives it
+   * back, so a probe that ends in a sentence leaves no trust behind. `keyRefusal` splits what was
+   * one sentence: with a key this phone AGREED to, the computer's identity changed; with none,
+   * the CODE claimed a key and the machine at that address presented another — first contact, so
+   * "pair again with a fresh code" would walk somebody into it a second time.
+   */
+  const provisional = admitted.enforcedPin !== null && (stored?.pin ?? null) === null;
+  const refusedProbe = (reason: Refusal): ProbeOutcome => {
+    if (provisional) unpin(origin);
+    return { kind: "refused", reason };
+  };
+  const keyRefusal = (): Refusal =>
+    (stored?.pin ?? null) !== null ? refuse("pinChanged") : refuse("pairKeyMismatch");
+
   // 1 — what is this server, and does it pair? The gate is the same rule the picker renders
   // by, so a flow that reached this line cannot die on a route the descriptor said is absent.
   const negotiated = await negotiate(fetchImpl, origin);
@@ -498,26 +536,25 @@ export async function probePairing(
     // unreadable and, worse, indistinguishable from a dead network — so the shape is recognised
     // and the sentence says what happened and what to do (`host-pinning.ts`).
     if (pin !== null && isPinFailure(negotiated.detail)) {
-      return { kind: "refused", reason: refuse("pinChanged") };
+      return refusedProbe(keyRefusal());
     }
     // AND THE SAME DIAL FAILS THE OTHER WAY: a peer whose first bytes are not a TLS record at
     // all — plain http on the port that was typed or scanned. `isNotTls` recognises that shape,
     // which `HANDSHAKE` deliberately does not, so it gets a sentence instead of the platform's
     // exception nested inside "could not reach that server".
     if (isNotTls(negotiated.detail)) {
-      return { kind: "refused", reason: refuse("notEncrypted") };
+      return refusedProbe(refuse("notEncrypted"));
     }
-    return { kind: "refused", reason: refuse("pairUnreachable", negotiated.detail) };
+    return refusedProbe(refuse("pairUnreachable", negotiated.detail));
   }
   if (negotiated.kind === "not-ohmail") {
-    return { kind: "refused", reason: refuse("pairNotOhmail") };
+    return refusedProbe(refuse("pairNotOhmail"));
   }
   const step = nextStep(negotiated.hello);
   if (step.kind !== "pair") {
-    return {
-      kind: "refused",
-      reason: refuse(step.kind === "managed-signin-later" ? "pairManagedDeferred" : "pairNoPairing"),
-    };
+    return refusedProbe(
+      refuse(step.kind === "managed-signin-later" ? "pairManagedDeferred" : "pairNoPairing"),
+    );
   }
 
   // 1b — where is this server's mail API? Measured before the burn: a
@@ -534,9 +571,9 @@ export async function probePairing(
     // socket the negotiation used, so a key that changed between them is the same event and gets
     // the same sentence rather than a second, vaguer one about a missing API.
     if (pin !== null && isPinFailure(resolved.reason)) {
-      return { kind: "refused", reason: refuse("pinChanged") };
+      return refusedProbe(keyRefusal());
     }
-    return { kind: "refused", reason: resolved.reason };
+    return refusedProbe(resolved.reason);
   }
 
   return {
@@ -547,6 +584,7 @@ export async function probePairing(
       pin: admitted.enforcedPin,
       flavor: negotiated.hello.flavor,
       apiBase: resolved.base,
+      provisionalPin: provisional,
       probed: true,
     },
   };
@@ -568,7 +606,17 @@ export async function pairWithServer(
   const { origin, pin, apiBase } = input.admission;
   const negotiatedFlavor = input.admission.flavor;
   const token = input.token.trim();
-  if (token === "") return { kind: "refused", reason: refuse("pairEmptyToken") };
+  /**
+   * A REFUSED PAIRING GIVES THE LEASE BACK — the probe installed this key only so it could dial,
+   * and a redeem that ends in a sentence stored no profile, so nothing owns it. Past
+   * `profiles.add` the row owns the key and this stops being used: a boot that fails must not
+   * un-pin a pairing the keystore now holds.
+   */
+  const refusedRedeem = (reason: Refusal): PairOutcome => {
+    discardAdmission(input.admission);
+    return { kind: "refused", reason };
+  };
+  if (token === "") return refusedRedeem(refuse("pairEmptyToken"));
 
   /**
    * THE ADMISSION'S PIN IS RE-INSTALLED HERE, and it is not belt-and-braces.
@@ -580,7 +628,7 @@ export async function pairWithServer(
    * is the trust store's case.
    */
   if (pin !== null && !installPin(origin, pin)) {
-    return { kind: "refused", reason: refuse("admitPinNotStored") };
+    return refusedRedeem(refuse("admitPinNotStored"));
   }
 
   // 2 — spend the token: its one appearance, in the redeem body. `kind` is this phone's own
@@ -630,7 +678,7 @@ export async function pairWithServer(
       answer = await parse(redeemed);
     }
   } catch {
-    return { kind: "refused", reason: refuse("pairRedeemUnreachable") };
+    return refusedRedeem(refuse("pairRedeemUnreachable"));
   }
   const tokens = answer.tokens;
   if (!redeemed.ok || typeof tokens?.accessToken !== "string" || typeof tokens.refreshToken !== "string") {
@@ -640,7 +688,7 @@ export async function pairWithServer(
       answer.error?.code === "pairing_invalid" || typeof answer.error?.message !== "string"
         ? refuse("pairCodeRejected")
         : refuse("verbatimDetail", answer.error.message);
-    return { kind: "refused", reason: message };
+    return refusedRedeem(message);
   }
 
   // 3 — whose mailbox did this open? The server's word, or no mirror at all.
@@ -652,10 +700,7 @@ export async function pairWithServer(
     // server's word — a placeholder owner here would be a wrong default standing in for a
     // missing fact. The token above is single-use and is now spent, so the sentence says so.
     // (An identity read on the desktop-host door would let this name the account; not today.)
-    return {
-      kind: "refused",
-      reason: refuse("pairNoAccountName"),
-    };
+    return refusedRedeem(refuse("pairNoAccountName"));
   }
 
   // 3b — an owed forget for this mirror is settled before the pairing is
@@ -676,10 +721,7 @@ export async function pairWithServer(
       // re-authorized. Refusing the pairing is the only safe answer to that.
       await env.profiles.clearPendingWipe(ownerKey);
     } catch (err) {
-      return {
-        kind: "refused",
-        reason: refuse("pairOwedDeletion", faultDetail(err)),
-      };
+      return refusedRedeem(refuse("pairOwedDeletion", faultDetail(err)));
     }
   }
 
@@ -721,10 +763,9 @@ export async function pairWithServer(
     } catch {
       /* unreachable — the abandoned session ages out server-side */
     }
-    return {
-      kind: "refused",
-      reason: refuse(closed ? "pairNotStoredClosed" : "pairNotStoredOpen", faultDetail(err)),
-    };
+    return refusedRedeem(
+      refuse(closed ? "pairNotStoredClosed" : "pairNotStoredOpen", faultDetail(err)),
+    );
   }
   const connected = await buildSession(env, profile, tokens.accessToken);
   if (connected.kind === "refused") return { kind: "refused", reason: connected.reason };
