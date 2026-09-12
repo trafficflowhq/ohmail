@@ -78,10 +78,12 @@
       <description>
         <ul>
           <li>A large mailbox no longer costs the desktop window the whole mailbox</li>
+          <li>A first import reports what it has actually pulled</li>
           <li>A phone asks for a mailbox only when you ask it to</li>
           <li>A phone that loses its network says so</li>
           <li>A connection that dies without saying so is replaced</li>
           <li>The phone names the machine organizing your mailbox</li>
+          <li>A phone can start organizing again after the first few minutes</li>
           <li>A self-hosted install's front door reports its version</li>
           <li>Your own address is never a row in your Screener</li>
           <li>Settings rows tell screen readers their state</li>
