@@ -13,7 +13,9 @@
  * There is NO ADDRESS FIELD: the endpoint selects where message content is sent, so it is a
  * literal the engine holds; the form NAMES the address actually held
  * (`settings.ollama.baseUrl`), the "nothing leaves this computer" half renders only when that
- * origin is loopback, and "Forget the provider and keys" restores the default. THE KEY IS
+ * origin is loopback — in the summary row because the ENGINE said so in `contentGoesTo`, and in
+ * the option's line because this window read the address — and "Forget the provider and keys"
+ * restores the default. THE KEY IS
  * NEVER ON SCREEN: nothing reads a stored key back — the field is write-only, empty every
  * time the form opens, and leaving it empty keeps whatever is stored.
  */
@@ -84,12 +86,14 @@ export function ollamaHost(baseUrl: string): string {
 }
 
 /**
- * Whether the stored Ollama origin is on this computer.
+ * Whether the stored Ollama origin is on this computer — the HYPOTHETICAL question and only that
+ * one: what choosing Ollama at the address the engine holds would mean. Where content goes NOW is
+ * `contentGoesTo`, which the engine states and `liveConsequence` reads.
  *
- * The engine reports `contentGoesTo: "this_machine"` for Ollama whatever the address is, so the
- * "nothing leaves this computer" claim cannot be taken from it. This is the check that makes that
- * sentence true, and it is narrow on purpose: anything that is not plainly loopback gets the other
- * sentence, which names the host and says it is elsewhere.
+ * Kept because an option's line must describe an option that is not in force, when the member is
+ * about another provider. It is the engine's own rule (`originIsThisMachine` in
+ * `apps/sidecar/src/ai-provider.ts`) over the same origin table, held equal by hand because this
+ * renderer takes no workspace dependency. `URL.hostname` spells IPv6 with its brackets.
  */
 export function ollamaIsLocal(baseUrl: string): boolean {
   let host: string;
@@ -98,7 +102,7 @@ export function ollamaIsLocal(baseUrl: string): boolean {
   } catch {
     return false;
   }
-  if (host === "localhost" || host === "::1" || host === "[::1]") return true;
+  if (host === "localhost" || host === "[::1]") return true;
   return /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(host);
 }
 
@@ -248,23 +252,43 @@ export function summaryWord(status: LocalAiStatus, t: Copy): string {
   return t("summaryDown");
 }
 
-/** What choosing this option means, in one line — and it names the host content would go to. */
-function consequence(kind: AiChoice, status: LocalAiStatus, t: Copy): string {
-  switch (kind) {
+/**
+ * WHERE CONTENT GOES NOW, in the engine's own answer — or nothing at all when it did not give one.
+ *
+ * Reads `contentGoesTo` and nothing else, so the summary row states a destination only where the
+ * engine states one. An absent member is the answer for a model server that is not this machine:
+ * there is no sentence to put here on the engine's authority, and this returns `null` so the row
+ * renders none rather than falling through to a default that would say "nothing is sent anywhere".
+ * The option's own line below still names the host, which is this window's claim about an address
+ * it holds — a different claim from the engine's, and it does not pretend otherwise.
+ */
+export function liveConsequence(status: LocalAiStatus, t: Copy): string | null {
+  switch (status.contentGoesTo) {
     case "anthropic":
       return t("choiceAnthropicWhy");
     case "openai":
       return t("choiceOpenaiWhy");
-    case "ollama": {
-      const base = status.settings.ollama.baseUrl;
-      const host = ollamaHost(base);
-      return ollamaIsLocal(base)
-        ? t("choiceOllamaWhy", { host })
-        : t("choiceOllamaWhyElsewhere", { host });
-    }
-    default:
+    case "this_machine":
+      return t("choiceOllamaWhy", { host: ollamaHost(status.settings.ollama.baseUrl) });
+    case null:
       return t("choiceNoneWhy");
+    default:
+      return null;
   }
+}
+
+/**
+ * What choosing OLLAMA would mean, in one line, naming the address the engine is holding.
+ *
+ * The only option whose line is derived rather than a fixed sentence, because it is the only one
+ * whose destination is a stored value; the other three say the same thing whatever the state is.
+ * It answers about the option and not about what is in force, so it reads the origin and never
+ * `contentGoesTo` — which is about whichever provider is chosen, quite possibly another one.
+ */
+function ollamaConsequence(status: LocalAiStatus, t: Copy): string {
+  const base = status.settings.ollama.baseUrl;
+  const host = ollamaHost(base);
+  return ollamaIsLocal(base) ? t("choiceOllamaWhy", { host }) : t("choiceOllamaWhyElsewhere", { host });
 }
 
 /**
@@ -413,12 +437,18 @@ export function AiProviderForm({ onStatus }: AiProviderFormProps) {
   };
 
   const verdict = verdictOf(status, t, Date.now(), pending);
+  /* `null` where the engine stated no destination. The row then carries no sentence at all. */
+  const destination = status.provider ? liveConsequence(status, t) : t("offDescription");
 
   return (
     <>
+      {/* THE SUMMARY ROW SAYS WHERE CONTENT GOES ONLY WHERE THE ENGINE SAYS IT. With no provider
+          it is the resting sentence; with one it is the engine's answer, and where the engine
+          gave none there is NO description — `SettingsRow` then emits no sentence node and no
+          `aria-describedby`, so a screen reader is not promised a description either. */}
       <SettingsRow
         label={t("summaryLabel")}
-        description={status.provider ? consequence(choice, status, t) : t("offDescription")}
+        {...(destination === null ? {} : { description: destination })}
         value={summaryWord(status, t)}
       />
 
@@ -446,7 +476,7 @@ export function AiProviderForm({ onStatus }: AiProviderFormProps) {
           { id: "none", label: t("choiceNone"), description: t("choiceNoneWhy") },
           { id: "anthropic", label: t("choiceAnthropic"), description: t("choiceAnthropicWhy") },
           { id: "openai", label: t("choiceOpenai"), description: t("choiceOpenaiWhy") },
-          { id: "ollama", label: t("choiceOllama"), description: consequence("ollama", status, t) },
+          { id: "ollama", label: t("choiceOllama"), description: ollamaConsequence(status, t) },
         ]}
       />
 

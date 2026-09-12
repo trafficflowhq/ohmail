@@ -64,8 +64,16 @@ export interface LocalAiStatus {
   /** True only when the chosen provider was verified against the settings now in force. */
   available: boolean;
   unavailableReason: AiUnavailableReason | null;
-  /** WHERE MESSAGE CONTENT GOES, as the engine states it rather than as the window infers it. */
-  contentGoesTo: "anthropic" | "openai" | "this_machine" | null;
+  /**
+   * WHERE MESSAGE CONTENT GOES, as the engine states it rather than as the window infers it.
+   *
+   * OPTIONAL, and the absent case is not the `null` case. `null` says nothing is sent anywhere,
+   * which is a claim; an absent member says the engine did not state a destination — what it
+   * answers for a model server that is not this machine — and this window must not put a sentence
+   * on the engine's authority where there is none. Absent is NOT "unknown until it loads": a
+   * status that has not arrived is `null` at the call site, never a status with a missing member.
+   */
+  contentGoesTo?: "anthropic" | "openai" | "this_machine" | null;
   settings: LocalAiSettings;
   probe: AiProbeReport | null;
   /**
@@ -161,25 +169,6 @@ export async function clearAiProvider(): Promise<LocalAiStatus> {
  */
 export async function verifyAiProvider(): Promise<LocalAiStatus> {
   return readStatus(await bridgeFetch(`${AI_PATH}/verify`, { method: "POST" }));
-}
-
-/**
- * WHERE MESSAGE CONTENT WOULD GO under the current choice, in a sentence.
- *
- * Derived from `contentGoesTo`, which the engine states, rather than from the provider name — the
- * two are the same today and the second one is the one that can quietly stop being true.
- */
-export function contentDestination(status: LocalAiStatus): string {
-  switch (status.contentGoesTo) {
-    case "anthropic":
-      return "Sender, subject and a short extract go to Anthropic, billed to your own account.";
-    case "openai":
-      return "Sender, subject and a short extract go to OpenAI, billed to your own account.";
-    case "this_machine":
-      return "Sender, subject and a short extract go to the model server you named. Nothing leaves this machine if that server is on it.";
-    default:
-      return "Nothing is sent anywhere. Mail is filed by rules alone, which is the whole product without a model.";
-  }
 }
 
 /**

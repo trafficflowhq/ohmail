@@ -68,20 +68,23 @@ function statusOf(o: {
   ollamaBaseUrl?: string;
 }): LocalAiStatus {
   const provider = o.provider === undefined ? "anthropic" : o.provider;
+  const baseUrl = o.ollamaBaseUrl ?? "http://127.0.0.1:11434";
+  /* The engine's own rule, so no case here describes a body the engine cannot send: `ollama`
+     states `this_machine` for a loopback origin and states NOTHING for any other one. Its half
+     is proved against the real engine in that package's own `ai-provider.test.ts`. */
+  const destination: Pick<LocalAiStatus, "contentGoesTo"> =
+    provider !== "ollama" ? { contentGoesTo: provider }
+      : ollamaIsLocal(baseUrl) ? { contentGoesTo: "this_machine" } : {};
   return {
     provider,
     available: o.available ?? false,
     unavailableReason: o.reason ?? null,
-    contentGoesTo: provider === "ollama" ? "this_machine" : provider,
+    ...destination,
     settings: {
       provider,
       anthropic: { classifyModel: "claude-haiku-4-5", draftModel: "claude-sonnet-5", hasKey: true },
       openai: { classifyModel: "gpt-4.1-mini", draftModel: "gpt-4.1", hasKey: true },
-      ollama: {
-        baseUrl: o.ollamaBaseUrl ?? "http://127.0.0.1:11434",
-        classifyModel: "llama3.2",
-        draftModel: "llama3.2",
-      },
+      ollama: { baseUrl, classifyModel: "llama3.2", draftModel: "llama3.2" },
     },
     probe: o.probe === undefined ? null : o.probe,
     canStoreKey: true,
@@ -329,12 +332,22 @@ describe("verdictOf — one sentence per outcome, and they are the endpoint's ow
 });
 
 describe("the Ollama origin decides which sentence may be said about it", () => {
+  /**
+   * THE SAME TABLE THE ENGINE ANSWERS. `originIsThisMachine` in `apps/sidecar/src/ai-provider.ts`
+   * decides `contentGoesTo` from these origins and its own copy of this list is in that package's
+   * `ai-provider.test.ts`; the renderer takes no workspace dependency the engine could hand it, so
+   * the two are held equal by hand and a row added to one belongs in the other. The last row is
+   * this side's alone — the engine refuses an unparseable address at the door.
+   */
   it.each([
     ["http://127.0.0.1:11434", true],
     ["http://127.1.2.3:11434", true],
     ["http://localhost:11434", true],
+    ["http://[::1]:11434", true],
     ["http://box.lan:11434", false],
     ["https://ollama.example.test", false],
+    ["http://192.168.1.20:11434", false],
+    ["http://LOCALHOST.evil.test:11434", false],
     ["not a url", false],
   ])("%s is local: %s", (base, local) => {
     expect(ollamaIsLocal(base)).toBe(local);
@@ -458,6 +471,88 @@ describe("the model form's test action reports to the person who pressed it", ()
   it("shows no verdict at all when nothing is chosen — there is no answer to report", async () => {
     const el = await mount(statusOf({ provider: null }));
     expect(el.querySelector(".set-verdict")).toBeNull();
+  });
+});
+
+/**
+ * ═══ THE SUMMARY ROW SAYS WHERE CONTENT GOES ONLY WHERE THE ENGINE SAYS IT ══════════════════
+ *
+ * `contentGoesTo` has three states and the third one is a member that is not there: the engine
+ * states a destination, or states `null` (nothing is configured, so nothing is sent), or states
+ * nothing at all — its answer for a model server that is not this machine, where it has no value
+ * for "a machine you named". This window may not turn the third into a sentence.
+ *
+ * Rendered rather than derived, because the derivation returning `null` proves nothing about what
+ * reaches the screen: `SettingsRow` renders a description only when it is given one, and drops the
+ * `aria-describedby` with it, so the absence has to be read off the row itself and out of the
+ * accessibility tree. The row is still there, still labelled, still carrying its one word.
+ *
+ * HOW TO WATCH IT FAIL: in `AiProviderForm.tsx`, give `liveConsequence` a `default:` that returns
+ * `t("choiceOllamaWhy", …)` or `t("choiceNoneWhy")` — the third arm goes red on the sentence AND
+ * on the description reference. Restore it and all three go green.
+ */
+describe("the destination sentence is the engine's, and absent when the engine stated none", () => {
+  const summaryRow = (el: HTMLElement): HTMLElement => {
+    const row = [...el.querySelectorAll<HTMLElement>(".set-row")].find(
+      (r) => r.querySelector("b")?.textContent === en.aiProvider.summaryLabel,
+    );
+    expect(row, "the AI summary row is not on this form").toBeTruthy();
+    return row!;
+  };
+
+  /** The sentence a screen reader is given for the row, or null when it is promised none. */
+  const described = (row: HTMLElement): string | null => {
+    const id = row.getAttribute("aria-describedby");
+    if (id === null) return null;
+    const node = row.ownerDocument.getElementById(id);
+    expect(node, "the row references a description node that is not in the document").toBeTruthy();
+    return node!.textContent;
+  };
+
+  it("a model on THIS machine: the local sentence, and it is the row's description", async () => {
+    const here = statusOf({ provider: "ollama", available: true, probe: probe({ ok: true }) });
+    expect(here.contentGoesTo, "the fixture stopped being the local case").toBe("this_machine");
+
+    const row = summaryRow(await mount(here));
+    expect(described(row)).toBe(
+      "Sender, subject and a short extract go to Ollama at 127.0.0.1:11434. Nothing leaves this computer.",
+    );
+  });
+
+  it("a hosted vendor: the vendor's sentence, which is where content really does go", async () => {
+    const row = summaryRow(await mount(statusOf({ provider: "anthropic", available: true })));
+    expect(described(row)).toBe(en.aiProvider.choiceAnthropicWhy);
+  });
+
+  it("the member ABSENT: no destination sentence, and no description promised either", async () => {
+    const elsewhere = statusOf({
+      provider: "ollama",
+      available: true,
+      probe: probe({ ok: true }),
+      ollamaBaseUrl: "https://ollama.example.test",
+    });
+    // The fixture's own control: if this ever carries the member again the arm below is vacuous.
+    expect("contentGoesTo" in elsewhere, "the fixture is no longer the unstated case").toBe(false);
+
+    const el = await mount(elsewhere);
+    const row = summaryRow(el);
+    expect(row.getAttribute("aria-describedby"), "a description was promised for a row that has none")
+      .toBeNull();
+    expect(described(row)).toBeNull();
+    // Not by the row being gone — it still names the pane and still carries its one word.
+    expect(row.querySelector("b")?.textContent).toBe(en.aiProvider.summaryLabel);
+    // And nothing anywhere on the form says content stays here, which is the whole defect.
+    expect(el.textContent ?? "").not.toContain("Nothing leaves this computer");
+    // The option's own line still names the address, as this window's claim about a value it
+    // holds rather than as the engine's claim about where content goes.
+    expect(el.textContent ?? "").toContain("go to Ollama at ollama.example.test, which is not this computer");
+  });
+
+  it("nothing configured is a CLAIM, not an absence: the resting sentence is rendered", async () => {
+    const off = statusOf({ provider: null });
+    expect(off.contentGoesTo, "null is the stated 'nothing is sent anywhere'").toBeNull();
+    const row = summaryRow(await mount(off));
+    expect(described(row)).toBe(en.aiProvider.offDescription);
   });
 });
 

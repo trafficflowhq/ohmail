@@ -106,14 +106,16 @@ export interface AiStatus {
   available: boolean;
   unavailableReason: AiUnavailableReason | null;
   /**
-   * WHERE MESSAGE CONTENT GOES under the current choice, as a value rather than as prose.
+   * WHERE MESSAGE CONTENT GOES, as a value rather than as prose: the engine states it because the
+   * engine is the thing that does it, and a window deriving it from a provider name would go on
+   * saying "stays on this machine" after the engine had started sending it elsewhere.
    *
-   * The settings surface has to tell somebody what they are agreeing to, and deriving that from
-   * a provider name in the interface would put the claim in a second place — where it can go on
-   * saying "stays on this machine" after the engine has started sending it elsewhere. The engine
-   * states it, because the engine is the thing that does it.
+   * OPTIONAL, three states. A value states the destination. `null` states that nothing is
+   * configured, so nothing is sent anywhere. ABSENT states nothing, and no consumer may make a
+   * sentence of it — the answer for a model server that is not this machine, where there is no
+   * value for "a machine you named" and `this_machine` would be false.
    */
-  contentGoesTo: "anthropic" | "openai" | "this_machine" | null;
+  contentGoesTo?: "anthropic" | "openai" | "this_machine" | null;
   settings: LocalAiSettings;
   probe: AiProbeReport | null;
   /**
@@ -205,6 +207,25 @@ export function readBaseUrl(value: unknown, fallback: string): string {
   }
   if (url.protocol !== "http:" && url.protocol !== "https:") return bad();
   return url.origin;
+}
+
+/**
+ * Whether an origin is on the computer the engine is running on.
+ *
+ * NARROW ON PURPOSE, because it decides a privacy claim rather than a route: anything not plainly
+ * loopback is somewhere else, so a name that merely looks local (`box.lan`, `localhost.evil.test`)
+ * does not earn "nothing leaves this machine", and a private LAN address is another machine too.
+ * `URL.hostname` spells IPv6 with its brackets, so bare `::1` never arrives and is not tested for.
+ */
+export function originIsThisMachine(baseUrl: string): boolean {
+  let host: string;
+  try {
+    host = new URL(baseUrl).hostname.toLowerCase();
+  } catch {
+    return false;
+  }
+  if (host === "localhost" || host === "[::1]") return true;
+  return /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(host);
 }
 
 const PROVIDER_KINDS: readonly AiProviderKind[] = ["anthropic", "openai", "ollama"];
@@ -479,18 +500,20 @@ export async function createLocalAi(opts: LocalAiOptions): Promise<LocalAi> {
     unavailable(reason, isKeyedProvider(s.provider) ? s.provider : undefined);
 
   /**
-   * WHERE MESSAGE CONTENT GOES, as a total function of the provider.
+   * WHERE MESSAGE CONTENT GOES, as a total function of the STORED CONFIGURATION.
    *
-   * A `switch` with no default rather than a chain of ternaries: adding a fourth provider must be
-   * a compile error here, not a silent `null` that renders as "nothing is sent anywhere" while
-   * the engine sends it somewhere.
+   * Of the provider NAME it would be a lie in one case of four: the address beside `ollama` takes
+   * any http(s) origin, so the name says "a model of your own" while the origin can be a server
+   * on the internet. A `switch` with no default, so a fourth provider is a compile error here
+   * rather than a silent `null` rendering as "nothing is sent anywhere". It returns the MEMBER
+   * and not a value, because leaving the key off is one of the four answers.
    */
-  const destinationOf = (p: AiProviderKind | null): AiStatus["contentGoesTo"] => {
-    switch (p) {
-      case "anthropic": return "anthropic";
-      case "openai": return "openai";
-      case "ollama": return "this_machine";
-      case null: return null;
+  const destinationOf = (s: StoredAi): Pick<AiStatus, "contentGoesTo"> => {
+    switch (s.provider) {
+      case "anthropic": return { contentGoesTo: "anthropic" };
+      case "openai": return { contentGoesTo: "openai" };
+      case "ollama": return originIsThisMachine(s.ollama.baseUrl) ? { contentGoesTo: "this_machine" } : {};
+      case null: return { contentGoesTo: null };
     }
   };
 
@@ -498,7 +521,7 @@ export async function createLocalAi(opts: LocalAiOptions): Promise<LocalAi> {
     provider: s.provider,
     available: blockedBy(s) === null,
     unavailableReason: blockedBy(s),
-    contentGoesTo: destinationOf(s.provider),
+    ...destinationOf(s),
     settings: {
       provider: s.provider,
       anthropic: {
