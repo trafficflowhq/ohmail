@@ -25,7 +25,7 @@ import { drizzle as drizzleSqliteProxy } from "drizzle-orm/sqlite-proxy";
 import { mailboxCredentials, mailboxes, organizerDisplayName } from "@trafficflow/db";
 import { brandDialect } from "@trafficflow/db/dialect";
 import { migrateSqlite } from "@trafficflow/db/sqlite-migrate";
-import type { OrganizerKind } from "@trafficflow/core/adapters/organizer-lease";
+import type { OrganizerKind, StandDownReason } from "@trafficflow/core/adapters/organizer-lease";
 /* THE WORKER'S SOCKET PROFILE, not a third one. See {@link startPhoneEngine}. */
 import { DEFAULT_NET_TIMEOUTS, WORKER_NET_TIMEOUTS } from "@trafficflow/core/adapters/imap";
 import type { ImapConfig, MailboxAdapter } from "@trafficflow/core/adapters/imap";
@@ -846,6 +846,67 @@ async function composePhoneEngine(
     { status: 503, headers: { "content-type": "application/json" } },
   );
 
+  /**
+   * ══ WHO THE DOOR LAST REFUSED A PRESS TO, PER MAILBOX ═════════════════════════════════════
+   *
+   * The refusal already names the holder in its body, and that was the only place it existed: the
+   * app got back one word, `held`, so over a mailbox another install was organizing the panel went
+   * on saying "Nothing organizes this mailbox" beside a live Start verb — measured, five reads over
+   * 35 s, and again after leaving and returning.
+   *
+   * So the fact is kept where every OTHER holder lives, the organizer state {@link
+   * PhoneEngine.runtimes} reports, rather than added as a second channel the app would have to
+   * merge: one answer to "who holds this mailbox", and the claim watch — which arms on a stand-down
+   * reason — comes back on its own cadence and refreshes or clears this through the presses it
+   * already makes.
+   *
+   * `logged` is the other half: the refusal is logged at the TRANSITION and not per press. A
+   * stood-down phone presses once a tick for as long as the holder keeps the mailbox (61 lines in
+   * one device run, 37 of them 10.016 s apart for one standing cause), and one line per standing
+   * cause is what an operator can read.
+   */
+  const refusedHolders = new Map<string, {
+    readonly heldBy: string | null;
+    readonly reason: StandDownReason;
+    readonly logged: string;
+  }>();
+
+  /**
+   * The holder's KIND as the stand-down spells it — the closed set, and every member on its own
+   * arm. `unknown` is the honest answer for a claim written by a build this one cannot rank, which
+   * is a state and not a fallback; the type is what refuses a fifth spelling.
+   */
+  const standDownReasonForKind = (kind: string): StandDownReason =>
+    (kind === "cloud" ? "organized_elsewhere:cloud"
+      : kind === "local" ? "organized_elsewhere:local"
+        : kind === "mobile" ? "organized_elsewhere:mobile"
+          : "organized_elsewhere:unknown");
+
+  /**
+   * The organizer state, with the door's own refusal answering for a mailbox the gate has nothing
+   * to say about — the ONE place the app asks who holds a mailbox.
+   *
+   * A STAND-DOWN THE GATE WROTE WINS: it has READ the claim folder, and this memo is one press old.
+   * Where the gate has no reason of its own the refusal answers, which is exactly the state it
+   * exists for — a mailbox this phone handed back and another install then took, where nothing
+   * runs the gate at all and the row goes on saying what it said before the press.
+   *
+   * AND IT ANSWERS `organizing: false` WITH IT. The refusal happened because
+   * {@link liveForeignHolder} read this mailbox's row as a READER with another install renewing a
+   * claim; a runtime still saying this install organizes it is that read's own poll behind, and
+   * leaving it standing would put "Organizing" and a hand-back on screen over a mailbox the door
+   * had just refused this install a claim on. The door's read is the newer of the two.
+   */
+  const organizerStatesWithRefusals = (): Record<string, OrganizerState> => {
+    const states = sidecar.organizerStates();
+    for (const [mailboxId, refused] of refusedHolders) {
+      const state = states[mailboxId];
+      if (state === undefined || state.reason !== null) continue;
+      states[mailboxId] = { ...state, organizing: false, heldBy: refused.heldBy, reason: refused.reason };
+    }
+    return states;
+  };
+
   const refuseIfOrganizedElsewhere = async (req: Request): Promise<Response | null> => {
     if (req.method !== "POST") return null;
     const matched = ORGANIZE_ROUTE.exec(new URL(req.url).pathname);
@@ -862,7 +923,13 @@ async function composePhoneEngine(
       });
       return unreadableResponse();
     }
-    if (fromRow.answer === "free") return null;
+    /* A LOOK THAT ANSWERED "NOBODY" ENDS THE MEMO, here and at the lease's own arm below. The
+       holder this door last named is a statement about now, and leaving it standing would keep
+       "Organized by …" on screen over a mailbox this very press is about to be admitted to. */
+    if (fromRow.answer === "free") {
+      refusedHolders.delete(mailboxId);
+      return null;
+    }
     let holder: { readonly name: string; readonly kind: string };
     if (fromRow.answer === "held") {
       holder = fromRow.holder;
@@ -877,7 +944,10 @@ async function composePhoneEngine(
        * makes — answering free / held / unreadable. Only on this path; a `held` row costs nothing.
        */
       const looked = await sidecar.peekOrganizer(mailboxId);
-      if (looked.answer === "free") return null;
+      if (looked.answer === "free") {
+        refusedHolders.delete(mailboxId);
+        return null;
+      }
       if (looked.answer === "unreadable") {
         log("organizer_consent_lease_read_failed", {
           mailboxId,
@@ -909,11 +979,28 @@ async function composePhoneEngine(
        and not a ternary, which is an event name no grep can find. */
     const refusedBecause = "another install is renewing its claim on this mailbox, so no consent "
       + "was recorded here; this phone has no takeover verb and reads the mailbox instead";
-    if (fromRow.answer === "held") {
+    /* ══ ONE LINE PER STANDING CAUSE ═══════════════════════════════════════════════════════════
+       The claim watch presses once a tick for as long as another install keeps the mailbox, and
+       this logged every press: 37 identical lines 10.016 s apart in one device run, for one cause
+       that had not changed. The signature is the whole of what an operator would read — which door
+       saw the claim, and who holds it — so a holder going away, a DIFFERENT holder arriving, or the
+       other door answering all write a fresh line, and a repetition writes none. The backoff that
+       paces the presses is the claim watch's; this decides only what is worth saying.
+
+       BOTH EVENT NAMES STAY LITERAL, on the rule the paragraph above them states: a ternary is an
+       event name no grep can find, and the log census reads these call sites as text. */
+    const signature = JSON.stringify([fromRow.answer, holder.name, holder.kind]);
+    const worthSaying = refusedHolders.get(mailboxId)?.logged !== signature;
+    if (worthSaying && fromRow.answer === "held") {
       log("organizer_consent_refused_elsewhere", { mailboxId, verdict: "held", reason: refusedBecause });
-    } else {
+    } else if (worthSaying) {
       log("organizer_consent_refused_by_lease", { mailboxId, verdict: "held", reason: refusedBecause });
     }
+    refusedHolders.set(mailboxId, {
+      heldBy: holder.name === "" ? null : holder.name,
+      reason: standDownReasonForKind(holder.kind),
+      logged: signature,
+    });
     return new Response(
       JSON.stringify({
         error: {
@@ -1245,7 +1332,7 @@ async function composePhoneEngine(
     claimHere,
     stopOrganizing,
     forgetStoredLogin: () => sidecar.forgetStoredLogin(),
-    runtimes: () => ({ organizer: sidecar.organizerStates(), connection: sidecar.connectionStates() }),
+    runtimes: () => ({ organizer: organizerStatesWithRefusals(), connection: sidecar.connectionStates() }),
     /* THE SAME `log` EVERY LINE ABOVE GOES THROUGH — not a second one built for the app. */
     log,
     stop: () => sidecar.stop(),
