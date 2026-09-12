@@ -232,6 +232,17 @@ export function imapConfigFor(fields: StandaloneFields): {
  */
 export const PHONE_CLAIM_NAME = "ohmail on a phone";
 
+/**
+ * HOW LONG A CLAIM THIS PHONE COULD NOT GIVE BACK GOES ON BLOCKING THE MAILBOX.
+ *
+ * Every install honours one staleness window and the desktop's is the fleet's
+ * (`DEFAULT_STALE_AFTER_MS`, and the invariant is that no tier configures its own). The app may
+ * not import the lease — the privacy census holds the engine behind the connection layer — so the
+ * number is spelled here and PINNED against the lease's own constant by
+ * `test/phone-claim-lapse-minutes.test.ts`, which is what keeps it from becoming a second answer
+ * to "when can my laptop have the mailbox".
+ */
+export const CLAIM_LAPSES_AFTER_MINUTES = 10;
 
 /**
  * IS THIS PROFILE ROW THE MAILBOX THIS PHONE OPENED ITSELF? The ORIGIN decides, and nothing else.

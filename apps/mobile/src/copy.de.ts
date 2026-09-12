@@ -366,6 +366,10 @@ export const DE: Deck = {
     "Die Kopplung und die Post, die dieses Telefon kopiert hatte, sind weg. Der Server war nicht "
     + "erreichbar, um die Sitzung zu beenden, und zählt dieses Telefon womöglich noch als "
     + "verbunden — widerrufe dieses Gerät in seiner Geräteliste, um das abzuschließen.",
+  forgetClaimStands: (minutes: number) =>
+    "Das Postfach und seine Post sind von diesem Telefon weg. Sein Anspruch auf das Postfach ließ "
+    + `sich nicht zurückgeben, deshalb kann eine andere Maschine das Postfach in etwa ${minutes} `
+    + "Minuten übernehmen.",
   forgetStillPending:
     "Dieser Server wird auf diesem Telefon noch vergessen — ohmail konnte seine Anmeldung noch "
     + "nicht entfernen. Starte die App neu, damit sie das abschließen kann, oder widerrufe dieses "

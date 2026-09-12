@@ -599,10 +599,18 @@ export function sayOrganizerRestricted(): void {
  * the session stops, taking the notification down; the engine stops, because the profile row
  * that named it is about to go. In that order — the hand-back needs a running engine, and a
  * notification over a stopped one would say this phone organizes mail it no longer holds.
- * Never throws: the row removal must not be blocked by an unreachable mailbox; a claim that
- * did not go back is the recoverable half — it ages out.
+ * Never throws: the row removal must not be blocked by an unreachable mailbox.
+ *
+ * ── AND IT ANSWERS WHETHER THE CLAIM ACTUALLY WENT ──────────────────────────────────────────
+ *
+ * This returned `void` over a swallowed `handBack`, so the forget reported a mailbox this phone
+ * had let go while its record in `ohmail/_meta` stood to expiry — the person's other machine
+ * refused for the staleness window by an install that no longer lists the mailbox and has no
+ * verb left to release it. `handBack` already answers per mailbox, and `released: null` is its
+ * own word for *"the caller may not say the mailbox was handed back"*; this is that answer
+ * carried out. `false` never blocks the row removal — the caller says so instead.
  */
-export async function endStandaloneHere(): Promise<void> {
+export async function endStandaloneHere(): Promise<boolean> {
   const held = door;
   door = null;
   /* The mailbox is going, so the instruction about it goes too — a queued start would otherwise
@@ -611,9 +619,17 @@ export async function endStandaloneHere(): Promise<void> {
   queued = null;
   sessionDeps = null;
   notifyOrganizerState();
-  if (held !== null) await held.handBack().catch(() => undefined);
+  /* A throw and a `null` entry are the same fact — nothing proves the claim left the folder — and
+     an install holding no door has none to give back, which is not a failed release. */
+  const released = held === null
+    ? true
+    : await held.handBack().then(
+      (entries) => entries.every((e) => e.released !== null),
+      () => false,
+    );
   await stopOrganizerSession();
   if (held !== null) await held.stop().catch(() => undefined);
+  return released;
 }
 
 /**

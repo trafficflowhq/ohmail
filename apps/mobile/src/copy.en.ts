@@ -600,6 +600,9 @@ const TABLE = {
     "The pairing and the mail this phone had copied are gone. The server could not be reached to "
     + "end the session, so it may still count this phone as connected — revoke this device from its "
     + "Devices list to finish.",
+  forgetClaimStands: (minutes: number) =>
+    "The mailbox and its mail are gone from this phone. Its claim on the mailbox could not be "
+    + `given back, so another machine can take the mailbox in about ${minutes} minutes.`,
   forgetStillPending:
     "This server is still being forgotten on this phone — ohmail could not remove its "
     + "sign-in yet. Restart the app to let it finish, or revoke this device from the server's "

@@ -21,7 +21,7 @@ import {
 import { consoleEngineLogSink } from "../engine/engine-log";
 import { decidedState, type DecidedState } from "./decided";
 import {
-  PHONE_CLAIM_NAME, organizesHere, reopenStandaloneMailbox,
+  CLAIM_LAPSES_AFTER_MINUTES, PHONE_CLAIM_NAME, organizesHere, reopenStandaloneMailbox,
   type ReopenOutcome, type StandaloneEngine,
 } from "../engine/standalone-door";
 import { phoneEngineReopen } from "../engine/engine-artifact";
@@ -634,7 +634,12 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
              that the row names. Removing the row alone would leave a phone organizing a mailbox
              nothing on the chooser mentions, with a notification standing over it. */
           const row = (await env.profiles.list()).find((p) => p.id === profileId);
-          if (row?.origin === LOCAL_ENGINE_ORIGIN) await endStandaloneHere();
+          /* ── AND WHETHER THE CLAIM ACTUALLY WENT IS THE THING THE ANSWER IS ABOUT ───────────
+             `endStandaloneHere`'s hand-back was swallowed and this reported a forget over it, so
+             a release the mail server never confirmed left the mailbox blocked to the person's
+             other machine for the staleness window — by an install that no longer lists it and
+             has no verb left to release it. The row still goes: what changes is the sentence. */
+          const claimWentBack = row?.origin === LOCAL_ENGINE_ORIGIN ? await endStandaloneHere() : true;
           const atForget = live.now();
           if (atForget.k === "live" && atForget.session.profile.id === profileId) {
             const bearer = atForget.session.bearer;
@@ -656,7 +661,12 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
           }
           const outcome = await forgetProfile(env, profileId, { closed, revoke: revokeLive });
           await refreshProfiles();
-          return outcome.kind === "forgotten" ? { ok: true } : { ok: false, reason: outcome.reason };
+          if (outcome.kind !== "forgotten") return { ok: false, reason: outcome.reason };
+          /* EVERYTHING LOCAL IS GONE AND SOMETHING IS NOT — `ForgetOutcome.partial`'s own shape,
+             which the mail-remains and server-not-told arms already use. The claim is the third. */
+          return claimWentBack
+            ? { ok: true }
+            : { ok: false, reason: refuse("forgetClaimStands", CLAIM_LAPSES_AFTER_MINUTES) };
         }),
       disconnect: () =>
         gate.run(async () => {
