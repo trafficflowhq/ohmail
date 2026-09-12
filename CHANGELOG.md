@@ -27,7 +27,10 @@ the first sync — on an 8 GB machine the system ran out of memory and began kil
 applications. The window now keeps a window of your mail — the last ninety days, at least five
 thousand messages and at most ten thousand — and reaches past it on demand. It keeps that window
 while the mail is still arriving, so importing a large mailbox for the first time costs the window
-the same as living with it afterwards, rather than the whole mailbox until the import finishes.
+the same as living with it afterwards, rather than the whole mailbox until the import finishes. A
+first import no longer redraws everything the window derives from your mailbox for every page of
+mail that arrives: mail now lands in groups, pages still arrive as fast as your server sends them,
+and the import itself uses substantially less memory.
 Nothing about what you can read changes: the whole mailbox is still on the machine, in the engine's
 own store, and older mail and search are answered from there. A message's full text is now written
 once per batch instead of twice per message, so loading the recent mail after a first sync no longer
@@ -37,6 +40,15 @@ the kernel ahead of your other applications. Tagged mail is kept whatever its ag
 shows all of it; History, which has no list of its own on the server, now says it is showing what
 this device kept and points at Search for the rest, instead of printing a count that stops at the
 window.
+
+### A first import reports what it has actually pulled
+
+The window holds a recent slice of a mailbox and leaves the rest in the engine's store on your
+machine. The "messages so far" line was counting the slice, so on a large mailbox it climbed to
+about the slice's size and stopped there while the import carried on underneath — and the
+first-run pull screen's remaining count, rate and estimate followed it. Both now count the mail the
+engine has actually taken in. The import itself is unchanged; what it reports is now what it has
+done.
 
 ### A phone asks for a mailbox only when you ask it to
 
@@ -81,6 +93,16 @@ computer, a server or another phone held it — under a line describing what thi
 it organizes. It now names the holder and says what this phone does instead: it reads the
 mailbox, moves nothing and screens nothing. Where another phone holds it, the line adds that a
 phone organizes only while ohmail is open on it.
+
+### A phone can start organizing again after the first few minutes
+
+"Start organizing here" was refused for the rest of the session once the app had been open more
+than five minutes, and so was the phone's own watch for a mailbox another machine had released;
+closing the app and opening it was the only way back. The press was asking the mailbox for a recent
+second sign-in, which a phone organizing its own mailbox has no way to give — it now goes through
+the door meant for a machine somebody is holding. A refusal that is going to stand backs off
+instead of asking again every few seconds, and a second phone asking for a mailbox another phone is
+actively organizing is told which phone has it, which is what the screen already said would happen.
 
 ### A self-hosted install's front door reports its version
 
