@@ -94,6 +94,16 @@ export interface StandaloneEngine {
    */
   stopOrganizing(): Promise<StopOrganizingOutcome>;
   /**
+   * THE ENGINE'S OWN HARDENED LOGGER, FOR THE APP'S BACKGROUND HALF — the sink's return trip.
+   *
+   * The app hands a DESTINATION at launch ({@link StandaloneDeps.logSink}) and may never build a
+   * logger; this is the other end of that seam. `background.ts` decides what happens to the
+   * mailbox at every app-state edge and had no channel at all, so every decline was invisible in
+   * `adb logcat` and was read off the mail server's wire instead. The caller names the event and
+   * the fields; the ENGINE decides what may be in the line. Never an address.
+   */
+  readonly log: (event: string, detail: Record<string, unknown>) => void;
+  /**
    * What each mailbox reports — the row's answer, not the gate's optimism.
    *
    * `heldBy` is the OTHER install's name when this one has stood down, and `reason` is WHY it stood

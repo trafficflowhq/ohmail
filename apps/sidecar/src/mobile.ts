@@ -43,7 +43,7 @@ import type { LocalDb, OpenLocalDb } from "./db.js";
 /* A VALUE import now: {@link PhoneEngineDeps.logSink} builds the hardened logger HERE, in the
    artifact, rather than letting the app assemble log lines of its own. `log.ts` is this package's
    own funnel — the allowlist, the redaction and the value grammars come with it. */
-import { createSidecarLog, type Diagnostic } from "./log.js";
+import { createSidecarLog, describeMethod, describeRoute, type Diagnostic } from "./log.js";
 /* `@trafficflow/core/mail` and NOT the default barrel, for the reason `engine.ts:6` and
    `log.ts:1` both give: the barrel is `export *` over twenty-odd modules and reaches the private
    half. Type-only here, so it erases — but a specifier a later edit turns into a value import
@@ -334,6 +334,17 @@ export interface PhoneEngine {
   forgetStoredLogin(): Promise<boolean>;
   /** What each mailbox reports — the row's answer, not the gate's optimism. */
   runtimes(): { organizer: Record<string, OrganizerState>; connection: Record<string, MailboxConnectionState> };
+  /**
+   * THE ENGINE'S OWN HARDENED LOGGER, HANDED BACK OUT — the sink's return trip.
+   *
+   * The app supplies a SINK and may never build a logger ({@link PhoneEngineDeps.logSink}); this
+   * is the half that was missing. `apps/mobile/src/engine/background.ts` decides what happens to
+   * the mailbox at every app-state edge and its `log` seam was never wired, so every decline was
+   * invisible in `adb logcat`. The caller names the event and the fields; THIS logger decides what
+   * may be in the line. A no-op where the launch was given neither a `log` nor a sink. A PROPERTY
+   * and not a method, so this package's log census does not read the declaration as a call site.
+   */
+  readonly log: Diagnostic;
   /**
    * Flush, give every claim back, and release. A phone whose engine is going down organizes
    * nothing, and a claim left to age out is `DEFAULT_STALE_AFTER_MS` in which the person's other
@@ -888,8 +899,10 @@ async function composePhoneEngine(
    *
    * THREE ACTS, in order: the takeover verb is refused outright, a live foreign holder is refused
    * off the row, and whatever is left through a consent path is forwarded carrying `join`.
+   *
+   * The ANSWER; the door that logs it is `phoneHandle` below.
    */
-  const phoneHandle = async (req: Request): Promise<Response> => {
+  const answer = async (req: Request): Promise<Response> => {
       /* THE ONE-ORGANIZER RULE FIRST, on every organize and takeover spelling. A live foreign
          claim is the answer a person's screen needs — the holder NAMED — and it outranks "this
          door is not served": answering 404 there would lose the holder the panel renders.
@@ -922,6 +935,33 @@ async function composePhoneEngine(
       /* AND THE VERB IS STAMPED AT THE DOOR, never taken from the caller. */
       const isConsent = req.method === "POST" && ORGANIZE_ROUTE.test(new URL(req.url).pathname);
       return sidecar.handle(isConsent ? await organizeWithJoinIntent(req) : req);
+  };
+
+  /**
+   * ══ AND EVERY REFUSAL THIS DOOR ANSWERS NAMES ITSELF ═══════════════════════════════════
+   *
+   * `GET /mailboxes` over this door answers a row under Node and was refused on a device,
+   * twice, unreadable both times: the app's roster read folds a non-200 and a throw into one
+   * `null` ("could not ask"), so the status that decided it existed nowhere. The line is
+   * written HERE, where the answer is decided, through the engine's own hardened logger — an
+   * app composing it would be a second logger outside the field allowlist. A refusal is `info`
+   * (the ordinary answer for a phone whose mailbox another machine organizes); a throw is the
+   * failure. `route` and `method` go through `log.ts`'s describers, which drop the query first.
+   */
+  const phoneHandle = async (req: Request): Promise<Response> => {
+    /* LITERAL FIELDS AT BOTH CALL SITES, never a spread of a shared object: the census that
+       reads this package can only see a field set written out, and an opaque one is refused. */
+    const route = describeRoute(req.url);
+    const method = describeMethod(req.method);
+    let res: Response;
+    try {
+      res = await answer(req);
+    } catch (err) {
+      log("phone_door_failed", { route, method, err });
+      throw err;
+    }
+    if (res.status >= 400) log("phone_door_refused", { route, method, status: res.status });
+    return res;
   };
 
   /** The engine pressing its OWN door, with this launch's bearer. See {@link SELF_ORIGIN}. */
@@ -1107,6 +1147,8 @@ async function composePhoneEngine(
     stopOrganizing,
     forgetStoredLogin: () => sidecar.forgetStoredLogin(),
     runtimes: () => ({ organizer: sidecar.organizerStates(), connection: sidecar.connectionStates() }),
+    /* THE SAME `log` EVERY LINE ABOVE GOES THROUGH — not a second one built for the app. */
+    log,
     stop: () => sidecar.stop(),
   } };
 }

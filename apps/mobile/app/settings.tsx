@@ -29,8 +29,9 @@ import { Button, Chip, Panel, Rule, Screen, Scroller, Section, TapRow, Txt } fro
 import { Sheet, SheetRow } from "../src/ui/Sheet";
 import { phoneEngineStart } from "../src/engine/engine-artifact";
 import {
-  onOrganizerState, organizeRefusal, organizerInstruction, organizerNotificationsOffSaid,
-  organizerRestrictedSaid, organizerStateVersion, pressOrganizeHere, standaloneHere,
+  onOrganizerState, organizeRefusal, organizerHandedBack, organizerInstruction,
+  organizerNotificationsOffSaid, organizerRestrictedSaid, organizerStateVersion,
+  pressOrganizeHere, standaloneHere,
 } from "../src/engine/organizer-session";
 import { openNotificationSettings } from "../src/engine/notification-permission-native";
 import { NotifyPermission } from "../src/ui/NotifyPermission";
@@ -395,7 +396,11 @@ function ThisPhonePanel() {
          * `claimHere` is the door's own state instead and compares no names; the engine's
          * `organizing` is this install's verdict on its own claim, which is the question the name
          * test was standing in for. See the function. */
-        claim: claimHere(here, organizerInstruction()),
+        /* AND THE HAND-BACK, which no read of the engine can produce: a mailbox this install
+           released and one nobody ever claimed answer the same three fields. Read live from the
+           session on the same subscription as everything else above — `pokeOrganizerState`
+           carries it, so the chip re-derives under an open panel rather than at re-entry. */
+        claim: claimHere(here, organizerInstruction(), organizerHandedBack()),
       }]
     : w.mailboxes.rows.map((row) => ({
         key: row.id,

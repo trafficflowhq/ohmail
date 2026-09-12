@@ -126,6 +126,9 @@ export const DE: Deck = {
   /* Ohne Desktop-Zwilling: nur auf dem Telefon kann ein Start hinter einem Stopp warten. */
   phoneStateStarting: "Wird gestartet",
   phoneStateNotOrganized: "Dieses Postfach wird von nichts organisiert",
+  /* Der Übergangszustand: zurückgegeben und noch nicht wieder übernommen. */
+  phoneStateHandedBack: "Zurückgegeben",
+  phoneStateHandedBackWhy: "Ein anderer Computer kann dieses Postfach jetzt übernehmen.",
   phoneStateReader: (name: string) => `Organisiert von ${name}`,
   phoneStateReaderLegacy: "Organisiert von einer anderen Installation",
   /* Der zweite Satz ist `mailboxes.readerReadsOnly` aus dem Web-Katalog, mit "dieses Telefon"

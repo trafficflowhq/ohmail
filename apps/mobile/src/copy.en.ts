@@ -215,6 +215,14 @@ const TABLE = {
      about, and the chip has to say which of the two is happening. */
   phoneStateStarting: "Starting",
   phoneStateNotOrganized: "Nothing organizes this mailbox",
+  /**
+   * THE SEVENTH, AND IT IS TRANSITIONAL: this phone gave the mailbox back and has not taken it
+   * again. Read as "nothing organizes it" a person is told their mail is unfiled and offered a
+   * verb for something the next foreground does by itself; the fact they need is that the mailbox
+   * is free RIGHT NOW, which is the whole reason the release happens on the way out.
+   */
+  phoneStateHandedBack: "Handed back",
+  phoneStateHandedBackWhy: "Another computer can take this mailbox now.",
   phoneStateReader: (name: string) => `Organized by ${name}`,
   phoneStateReaderLegacy: "Organized by another install",
   /**

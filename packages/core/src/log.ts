@@ -98,6 +98,19 @@ export const ALLOWED_FIELDS: readonly string[] = [
   // stays unstamped and due.
   "considered", "learned", "silent", "skipped", "failed", "announcedBytes", "stamped",
   "disabledReason", "stoppedBy", "heldBy",
+  // ── THE PHONE'S BACKGROUND MACHINE, added WITH the call sites that emit them ──────────────
+  //
+  // `apps/mobile/src/engine/background.ts` decides what happens to the mailbox at every app-state
+  // edge, and until its lines had a logger every decline was invisible: two lanes read a refused
+  // notification off the service table and off the mail server's wire because nothing on the phone
+  // said it. Four names, each a boolean or an integer this module counted itself, none read off a
+  // mailbox: `handedBack` is whether the release completed on every mailbox, `unresolved` how many
+  // answered "could not look", `stopped` whether the person's stop was recorded on the row, and
+  // `restricted` whether the system (battery saver, a per-app restriction, a refused notification)
+  // is what declined. `why` is the `BackgroundReason` CODE — a closed set of five literals that
+  // module holds, deliberately not `reason`: a `reason` string in that file is a sentence to the
+  // phone's own copy census, which reads the name as a rendering position.
+  "handedBack", "unresolved", "stopped", "restricted", "why",
   // ── `ownClaimTerm`: HOW A MAILBOX'S HOLDER RELATES TO THE INSTALL THAT STOOD DOWN ─────────
   //
   // A closed five-member literal the call site holds, `op`'s reason one shelf down: install id,

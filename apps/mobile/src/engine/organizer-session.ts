@@ -35,8 +35,8 @@ export interface OrganizerSessionDeps {
    * done in the untestable half is a mapping nothing measures.
    */
   readonly appPhases: (listener: (status: string) => void) => () => void;
-  /** Diagnostics. NEVER the address — the notification's body is not logged. */
-  readonly log?: (event: string, detail?: Record<string, unknown>) => void;
+  /** Diagnostics — the engine's own logger. NEVER the address; the notice's body is not logged. */
+  readonly log?: (event: string, detail: Record<string, unknown>) => void;
 }
 
 /**
@@ -782,6 +782,10 @@ export function pokeOrganizerState(): void {
     instruction,
     live !== null,
     live?.organizing.backgrounded() ?? false,
+    /* THE HANDED-BACK STATE IS THE PANEL'S INPUT TOO, since it has a chip of its own. A fact the
+       panel renders and this fingerprint does not carry is a chip nothing re-derives: the claim
+       watch would compare an unchanged string and notify nobody. */
+    live?.organizing.handedBack() ?? false,
     restrictedSaid,
     notificationsOff,
     organizeRefused?.say ?? null,

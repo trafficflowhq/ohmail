@@ -203,6 +203,17 @@ export type PhoneClaim =
   | { k: "ours"; stopping: boolean }
   /** Read, and no install holds it. `starting` = a start is asked for and not yet confirmed. */
   | { k: "free"; starting: boolean }
+  /**
+   * THIS INSTALL GAVE THE MAILBOX BACK AND HAS NOT TAKEN IT AGAIN — the transitional state.
+   *
+   * A refinement of `free` and not a sixth unrelated arm: the engine says this install organizes
+   * nothing and nobody else holds it, which is what `free` means, plus the one fact only this
+   * install knows — that the release was ours and was completed on every mailbox. Read as `free`
+   * the panel said `Nothing organizes this mailbox` about a mailbox this phone had just released
+   * and is about to take back, which invites a person to press a verb for something already
+   * happening.
+   */
+  | { k: "handedBack" }
   /** Somebody else holds it, and named itself. */
   | { k: "theirs"; name: string; kind: HolderKind }
   /** Somebody else holds it and named nothing — an install from before the holder columns. */
@@ -217,6 +228,8 @@ export function claimChipLabel(claim: PhoneClaim): string | null {
       return claim.stopping ? Copy.phoneStateStopping : Copy.phoneStateOrganizing;
     case "free":
       return claim.starting ? Copy.phoneStateStarting : Copy.phoneStateNotOrganized;
+    case "handedBack":
+      return Copy.phoneStateHandedBack;
     case "theirs":
       return Copy.phoneStateReader(claim.name);
     case "theirsUnnamed":
@@ -332,6 +345,16 @@ export function claimHere(
    * (`organizerInstruction`), so a transition ends when the engine says it has.
    */
   instruction: OrganizeInstruction = "idle",
+  /**
+   * THE ONE FACT ONLY THIS INSTALL HOLDS — did WE give the mailbox back, and not take it again?
+   *
+   * `organizerHandedBack()`. Nothing in the engine's answer can say it: a mailbox this install
+   * released and a mailbox nobody ever claimed are the same three fields, so without this the
+   * transitional state renders as `Nothing organizes this mailbox` and offers a start for
+   * something the next foreground already does. It may only ever refine the FREE arm — a holder
+   * is the truer sentence, and our own claim outranks a stale flag.
+   */
+  handedBack: boolean = false,
 ): PhoneClaim {
   if (here.organizing === null) return { k: "unknown" };
   if (here.organizing) return { k: "ours", stopping: instruction === "stopping" };
@@ -347,7 +370,12 @@ export function claimHere(
   if (held === null && here.releaseRequestedAt !== null) {
     return { k: "ours", stopping: instruction === "stopping" };
   }
-  if (held === null) return { k: "free", starting: instruction === "starting" };
+  if (held === null) {
+    /* NOT WHILE A PRESS IS IN FLIGHT: `starting` is a transition a person asked for and is the
+       sentence they are waiting on, and a hand-back flag from before it would replace it. */
+    if (handedBack && instruction !== "starting") return { k: "handedBack" };
+    return { k: "free", starting: instruction === "starting" };
+  }
   const kind = holderKind(held.standDownReason);
   return held.name.length > 0
     ? { k: "theirs", name: held.name, kind }
@@ -373,6 +401,12 @@ export function claimNoteLine(claim: PhoneClaim, os: string): string | null {
       return null;
     case "unknown":
       return null;
+    case "handedBack":
+      /* AND THIS ONE DOES GET A SENTENCE, where `free` gets none: the chip names a state a person
+         has never seen a word for, and what it means for them is that their laptop may take the
+         mailbox right now. The platform rule is not said here — it describes a notification that
+         is deliberately not showing. */
+      return Copy.phoneStateHandedBackWhy;
     case "theirs":
       return claim.kind === "mobile"
         ? Copy.phoneStateReaderWhyPhone(claim.name)

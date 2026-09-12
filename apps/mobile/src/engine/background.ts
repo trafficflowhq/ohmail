@@ -176,8 +176,13 @@ export interface BackgroundDeps {
    * changed, and a payload here would be a second copy of the answer the engine already gives.
    */
   readonly stateChanged?: () => void;
-  /** Diagnostics. NEVER the address — see {@link ServiceNotice}; the body is not logged. */
-  readonly log?: (event: string, detail?: Record<string, unknown>) => void;
+  /**
+   * Diagnostics — the ENGINE's own hardened logger, handed back out to the app. NEVER the address:
+   * see {@link ServiceNotice}, the notice's body is not logged. `detail` is required rather than
+   * optional so the artifact's `Diagnostic` fits here without an adapter — an app wrapping this
+   * seam is an app one edit away from composing its own line.
+   */
+  readonly log?: (event: string, detail: Record<string, unknown>) => void;
 }
 
 /** The claim watch's cadence. A minute: the engine's own poll is slower, so this never leads it. */
@@ -288,7 +293,7 @@ export function createBackgroundOrganizing(deps: BackgroundDeps): BackgroundOrga
     }
     const unknown = all.filter((m) => m.released === null).length;
     handedBack = all.length > 0 && unknown === 0;
-    log("organizer_hand_back", { why, mailboxes: all.length, unknown, handedBack });
+    log("organizer_hand_back", { why, mailboxes: all.length, unresolved: unknown, handedBack });
     moved();
     return handedBack;
   };
@@ -463,12 +468,16 @@ export function createBackgroundOrganizing(deps: BackgroundDeps): BackgroundOrga
   /**
    * Android's way out. Every arm that declines to organize in the background lands here.
    *
-   * THE REASON DECIDES WHICH SENTENCE, and the caller no longer carries a flag saying "this counts
-   * as restricted". That flag was `true` on both declines and collapsed them onto the battery-saver
-   * sentence; the code is already the thing that distinguishes them, so the announcement is derived
-   * from it rather than passed beside it and able to disagree with it.
+   * THE LINE COMES FIRST, before the hand-back's IMAP round trip: a line written after the
+   * release says nothing about a release that hangs.
+   *
+   * THE REASON DECIDES WHICH SENTENCE, and the caller carries no flag saying "this counts as
+   * restricted". That flag was `true` on both declines and collapsed them onto the battery-saver
+   * sentence, so the announcement AND the line's `restricted` field are derived from the reason
+   * rather than passed beside it and able to disagree with it.
    */
   const declineBackground = async (why: BackgroundReason): Promise<void> => {
+    log("organizer_background_declined", { why, restricted: why === "system_restricted" });
     if (why === "system_restricted" && !announcedRestricted) {
       announcedRestricted = true;
       deps.announceRestricted();
@@ -482,8 +491,13 @@ export function createBackgroundOrganizing(deps: BackgroundDeps): BackgroundOrga
   const toBackground = async (): Promise<void> => {
     if (deps.platform === "ios" || deps.service === null) {
       /* NO SERVICE, NO BACKGROUND ORGANIZING — and on iOS that is the platform, not a gap. The
-         claim goes back so somebody's desktop can have the mailbox while this phone is asleep. */
-      await handBack(deps.platform === "ios" ? "left_the_foreground" : "no_background_service");
+         claim goes back so somebody's desktop can have the mailbox while this phone is asleep.
+         `restricted: false` and it is the load-bearing half: nothing on this phone said no, the
+         build has no service to start, and announcing battery saver here would be a false
+         sentence. Not through {@link declineBackground} — there is no service to drop. */
+      const why = deps.platform === "ios" ? "left_the_foreground" : "no_background_service";
+      log("organizer_background_declined", { why, restricted: false });
+      await handBack(why);
       return;
     }
     /* A reader does not post "Organizing". Another install took the mailbox and this
@@ -647,6 +661,18 @@ export function createBackgroundOrganizing(deps: BackgroundDeps): BackgroundOrga
    */
   const reclaimCheck = async (): Promise<void> => {
     if (disposed) return;
+    /* ══ AND THE PANEL RE-DERIVES ON EVERY TICK, NOT ONLY WHERE SOMETHING WAS RECLAIMED ═══════
+     *
+     * Measured on a device: the engine stood the phone down under an open Settings panel and it
+     * read `Organizing` with `Stop organizing here` for 2 min 2 s over a mailbox another phone
+     * held, correcting only on leaving the screen and coming back. Every arm below already told
+     * the screen — the re-claim, the stop, the hand-back — and the STAND-DOWN direction told it
+     * nothing: this tick read the state, found a foreign holder, and returned. `moved()` costs a
+     * fingerprint comparison ({@link BackgroundDeps.stateChanged} notifies only on a difference),
+     * which is why it can be unconditional and why the cue lives on this timer rather than on the
+     * claim watch — that one is armed with the NOTIFICATION, and a phone is in front of a person
+     * exactly when no notification is showing. */
+    moved();
     /* `=== true` and not `!== false`: a read that could not answer is not a licence to ask for
        somebody else's mailbox, which is the opposite direction from the notification teardown's. */
     if (standDownNow() !== true) return;
