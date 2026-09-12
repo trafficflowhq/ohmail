@@ -138,14 +138,25 @@ export interface BackgroundDeps {
   /** The notice, re-read per start so a language change between backgrounds is picked up. */
   readonly notice: () => ServiceNotice;
   /**
-   * SAY IT IN THE APP, ONCE — the battery-saver announcement.
+   * SAY IT IN THE APP, ONCE — the battery-saver announcement, and ONLY that one.
    *
-   * Called at most once per {@link BackgroundOrganizing} for the whole class of "the system will
-   * not let this organize in the background": a person who has battery saver on has it on all day,
-   * and a sentence repeated at every background is a sentence nobody reads. The app renders it the
-   * next time it is open; this machine does not decide where.
+   * Called at most once per {@link BackgroundOrganizing} for battery saver or a per-app background
+   * restriction: a person who has battery saver on has it on all day, and a sentence repeated at
+   * every background is a sentence nobody reads. The app renders it the next time it is open; this
+   * machine does not decide where.
    */
   readonly announceRestricted: () => void;
+  /**
+   * AND THE OTHER CAUSE, WHICH IS NOT THAT ONE — the notification permission.
+   *
+   * Both declines used to arrive as `announceRestricted`, and the sentence it reaches names battery
+   * saver: *"Battery saver does not let ohmail organize in the background on this phone."* On an
+   * Android 13+ first install, where `POST_NOTIFICATIONS` starts denied and the service refuses to
+   * start behind a notification nobody can see, that sentence is FALSE and it is the only thing the
+   * panel said. Two causes, two records, two sentences — and the person can act on this one, which
+   * is the whole reason it is worth telling them apart. Once per session, for the same reason.
+   */
+  readonly announceNotificationsOff: () => void;
   /**
    * How often the service asks the engine whether it still organizes anything — armed with
    * the service and cleared with it, never otherwise. The claim can be lost while the app is
@@ -230,8 +241,14 @@ export function createBackgroundOrganizing(deps: BackgroundDeps): BackgroundOrga
       /* See above: a subscriber's failure is its own. */
     }
   };
-  /** Announced at most once — see {@link BackgroundDeps.announceRestricted}. */
-  let announced = false;
+  /**
+   * Announced at most once EACH — see {@link BackgroundDeps.announceRestricted}. Two latches and
+   * not one: a phone can meet battery saver and a denied notification in one session, and a shared
+   * latch would spend the first sentence's turn on the second cause and leave one of the two facts
+   * unsaid for the rest of the session.
+   */
+  let announcedRestricted = false;
+  let announcedNotificationsOff = false;
   /** True from a completed hand-back until a resume has been asked for. */
   let handedBack = false;
   let disposed = false;
@@ -443,11 +460,21 @@ export function createBackgroundOrganizing(deps: BackgroundDeps): BackgroundOrga
     void serial(() => stopByPerson());
   }) ?? ((): void => undefined);
 
-  /** Android's way out. Every arm that declines to organize in the background lands here. */
-  const declineBackground = async (why: BackgroundReason, restricted: boolean): Promise<void> => {
-    if (restricted && !announced) {
-      announced = true;
+  /**
+   * Android's way out. Every arm that declines to organize in the background lands here.
+   *
+   * THE REASON DECIDES WHICH SENTENCE, and the caller no longer carries a flag saying "this counts
+   * as restricted". That flag was `true` on both declines and collapsed them onto the battery-saver
+   * sentence; the code is already the thing that distinguishes them, so the announcement is derived
+   * from it rather than passed beside it and able to disagree with it.
+   */
+  const declineBackground = async (why: BackgroundReason): Promise<void> => {
+    if (why === "system_restricted" && !announcedRestricted) {
+      announcedRestricted = true;
       deps.announceRestricted();
+    } else if (why === "notification_not_showing" && !announcedNotificationsOff) {
+      announcedNotificationsOff = true;
+      deps.announceNotificationsOff();
     }
     await stopBackground(why);
   };
@@ -477,7 +504,7 @@ export function createBackgroundOrganizing(deps: BackgroundDeps): BackgroundOrga
       return;
     }
     if (deps.service.restricted()) {
-      await declineBackground("system_restricted", true);
+      await declineBackground("system_restricted");
       return;
     }
     let showing = false;
@@ -492,7 +519,7 @@ export function createBackgroundOrganizing(deps: BackgroundDeps): BackgroundOrga
          whose notification is not showing (a denied permission, a refused background start) may
          not go on organizing, so this hands the mailbox back like every other decline. It counts
          as restricted for the announcement: from the person's side it is the same fact. */
-      await declineBackground("notification_not_showing", true);
+      await declineBackground("notification_not_showing");
       return;
     }
     armWatch();

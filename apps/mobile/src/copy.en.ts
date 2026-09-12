@@ -1085,6 +1085,28 @@ const TABLE = {
     "Battery saver does not let ohmail organize in the background on this phone. It organizes "
     + "while the app is open, and hands the mailbox back when you leave.",
 
+  /**
+   * THE ASK, AT THE PRESS THAT STARTS ORGANIZING HERE — never at launch. Android's own dialog
+   * carries no explanation of its own, so this sentence is shown in front of it, and it states
+   * what this build actually does: without the permission the service refuses to start, so the
+   * phone organizes only while the app is open. Asked once per install.
+   */
+  organizerNotifyTitle: "Organizing in the background",
+  organizerNotifyWhy:
+    "ohmail shows a notification while it organizes your mailbox in the background. Without it, "
+    + "organizing stops when you leave the app.",
+  organizerNotifyGo: "Continue",
+  organizerNotifyNotNow: "Not now",
+  /**
+   * THE STATE, once this phone may not show that notification — read off the system, not off a
+   * remembered refusal. Distinct from `organizerRestricted`, which names battery saver: that
+   * sentence was shown for this cause too, and on an Android 13+ first install it was false.
+   */
+  organizerNotificationsOff:
+    "Notifications are off — organizing runs only while the app is open.",
+  /** The only remaining act: Android never shows the prompt again after a refusal. */
+  organizerNotificationsSettings: "Open notification settings",
+
   /* ------------------------------------------------------------- new mail */
 
   wake: "New mail",

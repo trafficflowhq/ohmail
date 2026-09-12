@@ -29,9 +29,12 @@ import { Button, Chip, Panel, Rule, Screen, Scroller, Section, TapRow, Txt } fro
 import { Sheet, SheetRow } from "../src/ui/Sheet";
 import { phoneEngineStart } from "../src/engine/engine-artifact";
 import {
-  onOrganizerState, organizeRefusal, organizerInstruction, organizerRestrictedSaid,
-  organizerStateVersion, pressOrganizeHere, standaloneHere,
+  onOrganizerState, organizeRefusal, organizerInstruction, organizerNotificationsOffSaid,
+  organizerRestrictedSaid, organizerStateVersion, pressOrganizeHere, standaloneHere,
 } from "../src/engine/organizer-session";
+import { openNotificationSettings } from "../src/engine/notification-permission-native";
+import { NotifyPermission } from "../src/ui/NotifyPermission";
+import { useNotifyPermission } from "../src/ui/useNotifyPermission";
 import { PHONE_CLAIM_NAME, standaloneAvailable } from "../src/engine/standalone-door";
 import { releaseMailbox } from "../src/net/mailboxes";
 import { useConnection } from "../src/net/connection";
@@ -352,6 +355,9 @@ function ThisPhonePanel() {
     organizerStateVersion,
     organizerStateVersion,
   );
+  /* The ask and the system's own answer, both owned by the hook — this screen consumes them and
+     holds no lifecycle of its own, the rule `useWake` is here under. */
+  const notify = useNotifyPermission();
 
   if (!standaloneAvailable({ startEngine: phoneEngineStart() })) return null;
 
@@ -446,6 +452,22 @@ function ThisPhonePanel() {
                 {organizerRestrictedSaid() ? (
                   <Txt variant="note" tone="ink2">{Copy.organizerRestricted}</Txt>
                 ) : null}
+                {/* AND THE OTHER CAUSE, WHICH IS NOT BATTERY SAVER. Both declines used to reach
+                    the sentence above, which names battery saver — false on every Android 13+
+                    first install, where `POST_NOTIFICATIONS` starts denied and the service
+                    refuses to start behind a notification nobody can see. This one names what is
+                    off and carries the only act left: Android never re-asks after a refusal. */}
+                {organizerNotificationsOffSaid() ? (
+                  <View style={{ gap: 2 }}>
+                    <Txt variant="note" tone="ink2">{Copy.organizerNotificationsOff}</Txt>
+                    <Button
+                      label={Copy.organizerNotificationsSettings}
+                      variant="quiet"
+                      onPress={() => { void openNotificationSettings(); }}
+                      style={{ alignSelf: "flex-start" }}
+                    />
+                  </View>
+                ) : null}
                 {/* WHAT THE CONSENT PRESS ANSWERED, where somebody asking "is my mail being
                     filed?" is already looking. It was written into `syncError` first, which the
                     Servers screen renders inside "Sync failed" — read on a device announcing a
@@ -491,8 +513,13 @@ function ThisPhonePanel() {
                          a stop this is queued once and run when the stop completes, rather than
                          racing it. The engine's own verb underneath refuses a live foreign claim,
                          so it can never produce a second organizer. */
-                      void pressOrganizeHere("start").then((outcome) => {
+                      void pressOrganizeHere("start").then(async (outcome) => {
                         setStartFailed(outcome === "refused");
+                        /* THE ASK, WHERE ORGANIZING ACTUALLY STARTED — the door's Connect runs the
+                           same gate at the same moment. A refused start asks for nothing: a
+                           permission spent on a press that achieved nothing is an ask this
+                           install never gets back. */
+                        if (outcome === "started") await notify.gate();
                       });
                     }}
                     style={{ alignSelf: "flex-start", marginTop: 4 }}
@@ -540,6 +567,8 @@ function ThisPhonePanel() {
           <SheetRow icon="x" label={Copy.settingsStopHereCancel} onPress={() => setConfirming(null)} />
         </Sheet>
       ) : null}
+
+      <NotifyPermission open={notify.open} onAnswer={notify.answer} />
     </>
   );
 }

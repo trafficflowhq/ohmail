@@ -701,6 +701,15 @@ export const DE: Deck = {
     "Der Energiesparmodus lässt ohmail auf diesem Telefon nicht im Hintergrund organisieren. "
     + "Es organisiert, solange die App offen ist, und gibt das Postfach zurück, wenn du sie "
     + "verlässt.",
+  organizerNotifyTitle: "Im Hintergrund organisieren",
+  organizerNotifyWhy:
+    "ohmail zeigt eine Benachrichtigung, während es dein Postfach im Hintergrund ordnet. Ohne sie "
+    + "endet das Ordnen, wenn du die App verlässt.",
+  organizerNotifyGo: "Weiter",
+  organizerNotifyNotNow: "Jetzt nicht",
+  organizerNotificationsOff:
+    "Benachrichtigungen sind aus — organisiert wird nur, solange die App offen ist.",
+  organizerNotificationsSettings: "Benachrichtigungen einstellen",
 
   /* ------------------------------------------------------------- new mail */
 

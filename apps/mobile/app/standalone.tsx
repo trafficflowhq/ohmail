@@ -26,6 +26,8 @@ import { Button, Panel, Rule, Screen, Scroller, Tap, Txt } from "../src/ui/base"
 import { DetailBar } from "../src/ui/chrome";
 import { Field } from "../src/ui/Field";
 import { Segmented } from "../src/ui/Segmented";
+import { NotifyPermission } from "../src/ui/NotifyPermission";
+import { useNotifyPermission } from "../src/ui/useNotifyPermission";
 import {
   EMPTY_STANDALONE,
   focusTargetFor,
@@ -114,6 +116,9 @@ function Credentials() {
 
   const start = phoneEngineStart();
   const ready = mayConnect(fields) && phase.k !== "opening";
+  /* THE NOTIFICATION ASK, held here so the sheet renders over this screen — see the call below
+     for the moment it runs, which is after the mailbox is open and not before the dial. */
+  const notify = useNotifyPermission();
 
   const connect = useCallback(async () => {
     /* ══ ONE ENGINE IN THIS PROCESS, AND THIS PRESS IS WHERE THE SECOND ONE CAME FROM ═══════
@@ -205,6 +210,13 @@ function Credentials() {
           setPhase({ k: "failed", reason: adopted.reason });
           return;
         }
+        /* ══ AND THIS IS WHERE THE NOTIFICATION IS ASKED FOR ════════════════════════════════
+         * Organizing has begun on this phone: the door is open, the session is wired and the
+         * claim is this install's. Before the dial it would be a permission spent on a press
+         * that may still be refused by the mail server; at launch it would be a dialog in front
+         * of somebody who only opened their mail. Nothing to ask on iOS, where there is no
+         * notification, or where the permission is already held — `gate` resolves at once. */
+        await notify.gate();
         /* The Ohbox in its first-sync state. Nothing between — the engine's own progress carries the
            wait, and a screen in the middle would be a screen with nothing true to say. */
         router.replace("/");
@@ -216,7 +228,7 @@ function Credentials() {
          the run of the app, which is the fourth door gone until the app is killed. */
       releaseStandaloneLaunch();
     }
-  }, [conn, fields, start]);
+  }, [conn, fields, notify, start]);
 
   return (
     <Scroller>
@@ -350,6 +362,7 @@ function Credentials() {
           />
         </View>
       </Panel>
+      <NotifyPermission open={notify.open} onAnswer={notify.answer} />
       <View style={{ height: 32 }} />
     </Scroller>
   );

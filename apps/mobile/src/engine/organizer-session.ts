@@ -541,6 +541,20 @@ let live: {
 let restrictedSaid = false;
 
 /**
+ * AND THE OTHER ONE — this phone may not show the notification its organizing stands behind.
+ *
+ * A SEPARATE record from {@link restrictedSaid} because it is a separate fact with a separate
+ * sentence and a separate remedy: battery saver is a mode a person turns on, a denied
+ * `POST_NOTIFICATIONS` is a permission they can give back in system settings. Collapsed into one
+ * record, an Android 13+ first install was told its battery saver was the reason.
+ *
+ * Unlike the restriction, this one is CLEARABLE — see {@link sayNotificationsOn}. The permission
+ * can be granted from outside the app at any moment, and a record that could only be set would
+ * keep "Notifications are off" on screen over a phone that had just been given them.
+ */
+let notificationsOff = false;
+
+/**
  * Start it, FOR ONE LAUNCH. Answers whether THIS call is the live session, so a caller that cares
  * can say so. The `AppState` subscription is taken first, because the first transition can arrive
  * while this function is still on the stack — a person who opens the door and immediately switches
@@ -565,6 +579,9 @@ export function startOrganizerSession(generation: number, deps: OrganizerSession
     service: deps.service,
     notice: deps.notice,
     announceRestricted: () => { restrictedSaid = true; notifyOrganizerState(); },
+    /* THE OTHER CAUSE, ITS OWN RECORD — see {@link notificationsOff}. The background half meets
+       this on every Android 13+ install whose notification permission was never granted. */
+    announceNotificationsOff: sayNotificationsOff,
     /* THE SESSION'S CUE TO THE SCREEN. `pokeOrganizerState` and not `notifyOrganizerState`: the
        claim watch fires on a timer whether anything moved or not, and an unconditional bump would
        re-render an open Settings panel once a minute for ever. */
@@ -613,6 +630,30 @@ export const organizerHandedBack = (): boolean => live?.organizing.handedBack() 
 
 /** See {@link restrictedSaid}. The sentence itself is `Copy.organizerRestricted`. */
 export const organizerRestrictedSaid = (): boolean => restrictedSaid;
+
+/** See {@link notificationsOff}. The sentence is `Copy.organizerNotificationsOff`. */
+export const organizerNotificationsOffSaid = (): boolean => notificationsOff;
+
+/**
+ * This phone may not show the organizer's notification. Written by the background half's decline,
+ * and by a press whose permission request was refused — one state, however it was learnt.
+ */
+export function sayNotificationsOff(): void {
+  if (notificationsOff) return;
+  notificationsOff = true;
+  notifyOrganizerState();
+}
+
+/**
+ * And it may again — the OS's live answer, read when the panel opens. The permission can be given
+ * back in system settings at any moment, and nothing inside this app is told; without this the
+ * state would outlive the refusal it describes.
+ */
+export function sayNotificationsOn(): void {
+  if (!notificationsOff) return;
+  notificationsOff = false;
+  notifyOrganizerState();
+}
 
 /**
  * RECORD THE SAME FACT FROM OUTSIDE THE STATE MACHINE — the one caller is the door, when the
@@ -718,6 +759,7 @@ export function pokeOrganizerState(): void {
     live !== null,
     live?.organizing.backgrounded() ?? false,
     restrictedSaid,
+    notificationsOff,
     organizeRefused?.say ?? null,
   ]);
   if (now === lastSeen) return;
@@ -739,6 +781,7 @@ export function forgetOrganizerSessionForTests(): void {
   launchGeneration += 1;
   sessionDeps = null;
   restrictedSaid = false;
+  notificationsOff = false;
   organizeRefused = null;
   consentArmed = false;
   lastSeen = "";
