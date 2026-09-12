@@ -1,6 +1,6 @@
 import { and, asc, eq, gt, sql } from "drizzle-orm";
 import { kbEntries } from "@trafficflow/db";
-import type { ServiceContext, Db } from "./context.js";
+import { withAccountTx, type ServiceContext, type Db } from "./context.js";
 import { dialect, pgOnly } from "@trafficflow/db/dialect";
 import { ServiceError } from "./errors.js";
 import { clampLimit, decodeListCursor, encodeListCursor } from "./pagination.js";
@@ -116,9 +116,13 @@ export class KbService {
     const content = this.validText(body.content, "content");
     const tags = this.validTags(body.tags);
     const now = ctx.now();
-    const [row] = await ctx.db.insert(kbEntries).values({
-      accountId: ctx.accountId, title, content, tags, createdAt: now, updatedAt: now,
-    }).returning();
+    // Through the fenced door — `kb_entries` hangs off the account alone. See `withAccountTx`.
+    const row = await withAccountTx(ctx, async (tx) => {
+      const [created] = await tx.insert(kbEntries).values({
+        accountId: ctx.accountId, title, content, tags, createdAt: now, updatedAt: now,
+      }).returning();
+      return created;
+    });
     return toDTO(row!);
   }
 

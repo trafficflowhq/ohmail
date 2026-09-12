@@ -13,6 +13,9 @@ export const SERVICES_VERSION = "0.0.0";
 
 export { ServiceError, IdempotencyRaceLost } from "./errors.js";
 export type { ServiceContext, Db } from "./context.js";
+// The fenced transaction door — see `context.ts`. On the mail leaf because the API's own
+// account-owned writers (the Junk window's rescue) reach it without the AI half.
+export { withAccountTx } from "./context.js";
 export {
   SyncService, syncService, SNAPSHOT_WINDOW, SNAPSHOT_DRAFT_PAGE, assertSnapshotWindow,
   STALE_COALESCE_SPAN, COALESCE_SCAN_WINDOW,

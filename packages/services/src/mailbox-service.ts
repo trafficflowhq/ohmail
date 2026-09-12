@@ -10,8 +10,9 @@ import {
   closeRemovedMailboxAppointments,
   filingDue, filingDeferred, ourOutstandingFiling, isFilingRefusalClass,
   ACCOUNT_THREAD_STRUCTURE_LOCK_CLASS,
-  type AccessVerdict, type LedgerTx, type MailboxErrorCode, type Tx, type OrganizerIntent,} from "@trafficflow/db";
-import type { ServiceContext } from "./context.js";
+  type AccessVerdict, type LedgerTx, type MailboxErrorCode, type Tx, type OrganizerIntent,
+} from "@trafficflow/db";
+import { withAccountTx, type ServiceContext } from "./context.js";
 import { ServiceError } from "./errors.js";
 import { fenceErasedAccount } from "./erasure-fence.js";
 import { sweepMailboxData, type MailboxSweepResult } from "./mailbox-erasure.js";
@@ -1122,8 +1123,11 @@ export class MailboxService {
     // remote call under the account's row lock is the deadlock the send pass already records.
     const access = await this.access(ctx.accountId);
 
-    const mb = await asTx(ctx).transaction(async (tx) => {
-      // The gate FIRST: it takes the lock every later statement is serialized behind.
+    // `lock: "update"` because `allowance` below takes `accounts FOR UPDATE`: the fence takes that
+    // row first, so taking it SHARED here and upgrading there is how two concurrent creates
+    // deadlock. Strong at the head, once.
+    const mb = await withAccountTx(ctx, async (tx) => {
+      // The gate SECOND, behind the fence, which now holds the row it wanted.
       await this.allowance(tx as LedgerTx, ctx.accountId, ctx.now(), { access });
 
       const [row] = await tx.insert(mailboxes).values({
@@ -1195,7 +1199,7 @@ export class MailboxService {
       // any later statement grants nothing, and a grant that fails aborts the create — the two
       // are one fact or neither is.
       return row!;
-    }).catch((err: unknown) => {
+    }, { lock: "update" }).catch((err: unknown) => {
       if (isActiveAddressConflict(err)) throw addressTaken();
       throw err;
     });
@@ -1278,11 +1282,11 @@ export class MailboxService {
     // remote call under the account's row lock is the deadlock the send pass already records.
     const access = await this.access(ctx.accountId);
 
-    const out = await asTx(ctx).transaction(async (tx) => {
-      // The account row FIRST, before any `mailboxes` row — the order `delete` takes with its
-      // erasure fence, and the whole argument is in {@link lockAccountRow}. Unconditional: whether
-      // the allowance gate is reached is decided by rows this transaction has not read yet.
-      await lockAccountRow(tx as LedgerTx, dialect(ctx.db), ctx.accountId);
+    // `lock: "update"` for `create`'s reason one method up: the create branch below reaches the
+    // allowance gate, which takes `accounts FOR UPDATE`. That strength IS the account row at the
+    // head of the mailbox lock order — the order `delete` takes with its erasure fence — so this
+    // door takes it once, here, and no second `lockAccountRow` inside.
+    const out = await withAccountTx(ctx, async (tx) => {
       const [existing] = await dialect(ctx.db).forUpdate(tx.select().from(mailboxes)
         .where(and(
           eq(mailboxes.accountId, ctx.accountId),
@@ -1349,7 +1353,7 @@ export class MailboxService {
       // Same hook, same transaction, as `create` — an OAuth connect of a NEW address is a
       // create in every sense that matters here (a reconnect returned above and grants nothing).
       return { created: true, row: created as MailboxRow };
-    }).catch((err: unknown) => {
+    }, { lock: "update" }).catch((err: unknown) => {
       if (isActiveAddressConflict(err)) throw addressTaken();
       throw err;
     });
@@ -1951,11 +1955,11 @@ export class MailboxService {
     // remote call under the account's row lock is the deadlock the send pass already records.
     const access = await this.access(ctx.accountId);
 
-    return asTx(ctx).transaction(async (tx) => {
-      // The account row FIRST, before any `mailboxes` row — the order `delete` takes with its
-      // erasure fence, and the whole argument is in {@link lockAccountRow}. Unconditional: whether
-      // the allowance gate is reached is decided by rows this transaction has not read yet.
-      await lockAccountRow(tx as LedgerTx, dialect(ctx.db), ctx.accountId);
+    // The consent write, through the fenced door: this upserts `account_settings` — the very
+    // table and the very race `erasure-fence.ts` was written about — and reaches the allowance
+    // gate below, so it takes the account row at UPDATE strength once, at the head. That is the
+    // head of the mailbox lock order too, so no second `lockAccountRow` is taken inside.
+    return withAccountTx(ctx, async (tx) => {
       // `FOR UPDATE`, in the same order and on the same row as `update` and `delete` take it, so
       // the three serialize instead of interleaving. Without it, an organize and a `delete` can
       // both read the row and commit in either order, and the losing order leaves a mailbox that
@@ -2141,7 +2145,7 @@ export class MailboxService {
        * install cannot drift into two answers.
        */
       return { outcome: "authorized" as const, previousReason: standDownMemory(current) };
-    }).catch((err: unknown) => {
+    }, { lock: "update" }).catch((err: unknown) => {
       // Kept from the `disabled → connected` era: this statement no longer moves `status`, so it
       // no longer inserts into the active-address index and 23505 is unreachable from here. It
       // stays because the honest answer to an address conflict on this door is still

@@ -2,7 +2,7 @@ import { and, asc, eq } from "drizzle-orm";
 import { rules, recordChange, claimIdempotencyKey, type OrganizedBy, type Tx } from "@trafficflow/db";
 import type { Destination } from "@trafficflow/core/mail";
 import type { RequestKind } from "@trafficflow/core/adapters/organizer-lease";
-import type { Db, ServiceContext } from "./context.js";
+import { withAccountTx, type Db, type ServiceContext } from "./context.js";
 import { ServiceError, IdempotencyRaceLost } from "./errors.js";
 import { materializeRule } from "./dto/materialize.js";
 import {
@@ -305,7 +305,7 @@ export class RulesService {
     const subjectContains = this.validSubjectContains(body.subjectContains, kind);
     const bodyContains = this.validBodyContains(body.bodyContains, kind);
 
-    return asTx(ctx).transaction(async (tx) => {
+    return withAccountTx(ctx, async (tx) => {
       /**
        * A RULE GOES WHEREVER THE ACCOUNT'S MAILBOXES ARE ORGANIZED (mail 0083, then 0094). A rule
        * is not a note: `evaluateRules` routes and `rule-retro.ts` re-files, both on the

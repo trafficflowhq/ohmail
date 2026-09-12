@@ -2,6 +2,9 @@ export const SERVICES_VERSION = "0.0.0";
 
 export { ServiceError, IdempotencyRaceLost, SettleFailed, TransientDialRefusal } from "./errors.js";
 export type { ServiceContext, Db } from "./context.js";
+// The fenced transaction door — every request-scoped write against a table Art. 17 erasure
+// empties opens here, so the fence cannot be forgotten. See `context.ts`.
+export { withAccountTx } from "./context.js";
 /* THE HOSTED DATABASE HANDLES. `context.ts` declares the registry with the one member a local
  * install can offer; this adds the two a hosted deployment has, by augmenting that interface.
  * Re-exporting a name from it is what carries the augmentation into every program built from this
