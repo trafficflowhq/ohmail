@@ -2377,6 +2377,44 @@ export function connectionSay(
     : { kind: "gone", since: whenLabel(stamp, zone) };
 }
 
+/**
+ * WHAT THE FIRST SYNC OF THIS MAILBOX PRODUCED, as one verdict — the engine answers, this ranks.
+ *
+ * BESIDE {@link connectionSay} and deliberately not folded into it. They are different facts with
+ * different remedies and two surfaces need both at once: a link that has just come back and a
+ * mailbox nothing has ever been read from are true together, and a single ranking would have to
+ * drop one of them. Measured, driving the engine against a server that signs you in and refuses to
+ * hand over the mail: the link reads dead AND the first sync has produced nothing, and the
+ * person's screen owes both sentences — "Reconnecting…" alone sends them to look at their network,
+ * and it is not their network.
+ *
+ * `null` is "nothing has said" — a paired session, a build with no engine, or a door whose first
+ * drain has not come back — and is its own state for `connectionSay`'s reason: reading it as
+ * "nothing could be read" would put that sentence on screen a second after the door opened.
+ */
+export type FirstSyncSay = "pending" | "finished" | "nothingReadable";
+
+export function firstSyncSay(here: { firstSync: string | null } | null): FirstSyncSay | null {
+  if (here === null || here.firstSync === null) return null;
+  if (here.firstSync === "produced_nothing_readable") return "nothingReadable";
+  if (here.firstSync === "finished") return "finished";
+  if (here.firstSync === "pending") return "pending";
+  /* A SPELLING THIS BUILD HAS NEVER HEARD OF is "nothing has said", never a guess. The engine is
+     a pre-bundled artifact and may be newer than this app; inventing a verdict for an unknown
+     value is how a surface ends up asserting something no engine ever claimed. */
+  return null;
+}
+
+/**
+ * THE SENTENCE FOR A VERDICT, or `null` where a surface says nothing — ONE ranking, two surfaces,
+ * on {@link connectionSaid}'s rule. `pending` and `finished` are silent: a first sync still
+ * working is what the skeleton and the freshness label already say, and a finished one is the
+ * ordinary state.
+ */
+export function firstSyncSaid(verdict: FirstSyncSay | null): string | null {
+  return verdict === "nothingReadable" ? Copy.firstSyncNothingReadable : null;
+}
+
 
 /* Re-exported so the world layer and the suite spell the vocabulary identically. `FolderEntity`
  * rides through here because `live.ts` is the one state module on the engine's import

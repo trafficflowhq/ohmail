@@ -172,9 +172,9 @@ import {
 } from "./roster.js";
 // Removing a mailbox takes this install's copy of its mail with it. See `local-mirror.ts` for why
 // this is the sidecar's job and not `MailboxService.delete`'s.
-import { mirroredMessageCount, wipeLocalMirror } from "./local-mirror.js";
+import { mirroredFirstSyncFacts, mirroredMessageCount, wipeLocalMirror } from "./local-mirror.js";
 import { stampSynced } from "./sync-stamp.js";
-import { createFirstSyncReporter } from "./first-sync.js";
+import { createFirstSyncReporter, createFirstSyncTracker } from "./first-sync.js";
 import type { Diagnostic } from "./log.js";
 import { startEngineVitals } from "./vitals.js";
 
@@ -205,7 +205,7 @@ export type SidecarImapConfig = Omit<ImapConfig, "auth"> & { auth: { user: strin
  * process was the same statement as the mailbox's while there was one mailbox; with several it
  * would be an answer about whichever one the shell happened to ask about last.
  */
-export type { CredentialState, MailboxConnectionState, OrganizerState } from "./roster.js";
+export type { CredentialState, FirstSyncState, MailboxConnectionState, OrganizerState } from "./roster.js";
 
 /**
  * WHAT THE ENGINE HANDS A DIAL — currently the one thing an adapter cannot report by throwing.
@@ -2465,6 +2465,12 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
        */
       let signInRefused = false;
       /**
+       * WHAT THIS MAILBOX'S FIRST SYNC HAS PRODUCED — the third answer the connection record
+       * carries, derived from the drain's own stamps and the mirror's own rows. See
+       * {@link createFirstSyncTracker}: nothing here can set it, which is the point.
+       */
+      const firstSync = createFirstSyncTracker(log, mb.id);
+      /**
        * A CREDENTIAL CHANGED, so the refusal is no longer evidence about anything.
        *
        * The next poll dials again on its own; nothing here needs to force one. Also resets the
@@ -4348,7 +4354,10 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           /* HOW LONG THE FIRST IMPORT TOOK, from the stamps that just decided it — the number
              nobody could read off a log before. The count is a thunk so a settled mailbox's pass
              pays nothing for it; see `first-sync.ts`. */
-          await firstSync.report(mb.id, stamps, () => mirroredMessageCount(db, mb.id));
+          await firstSyncLog.report(mb.id, stamps, () => mirroredMessageCount(db, mb.id));
+          /* AND WHETHER THE IMPORT IS STILL OPEN, from the SAME stamps — the state a surface
+             renders must not be able to disagree with the line a log carries about one pass. */
+          firstSync.noteStamps(stamps);
         }
         /* Checkpoint behind every drain that wrote, so the WAL never holds more than one drain.
            The periodic checkpointer (`db.ts`) bounds the log to five minutes of churn, and five
@@ -4577,6 +4586,15 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         } catch (err) {
           noteCycleFailed(err);
           throw err;
+        } finally {
+          /* A DRAIN CAME BACK — HOWEVER IT CAME BACK. In a `finally` because the arm that
+             matters most is the throwing one: a first sync that cannot read the mail leaves by
+             the catch, and reading the state only off the returning arm would report the failure
+             as a first sync still working, for ever. `stopped` is excluded for
+             `noteCycleServed`'s reason — a runtime told to stop is evidence about nothing. It
+             never throws (the tracker contains its own probe's faults), so it cannot replace the
+             error this block is carrying out. */
+          if (!stopped) await firstSync.noteDrainEnded(() => mirroredFirstSyncFacts(db, mb.id));
         }
       };
 
@@ -5046,6 +5064,9 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                answered and said no is the wrong sentence: it sends somebody to look at their
                network when the answer is their password. */
             signInRefused,
+            /* AND WHAT THE FIRST SYNC PRODUCED, read in the same pass for the reason the record's
+               own header gives: two reads would be two clocks. */
+            firstSync: firstSync.state(),
           };
         },
         serialize,
@@ -5509,7 +5530,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
     });
     /* ONE PER PROCESS, because the "have I already said this import is running" half is per
        launch — see `first-sync.ts`. Built here rather than inside the drain, which runs per pass. */
-    const firstSync = createFirstSyncReporter(log);
+    const firstSyncLog = createFirstSyncReporter(log);
 
     return {
       app,

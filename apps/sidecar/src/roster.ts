@@ -13,6 +13,10 @@ import type { ImapConfig, MailboxAdapter } from "@trafficflow/core/adapters/imap
 import type { SyncDeps } from "@trafficflow/worker/sync";
 import type { OrganizerProfileSync } from "@trafficflow/worker/profile";
 import type { MailboxDisabledReason } from "@trafficflow/db";
+/* The name only — see {@link FirstSyncState}'s own header for why it is declared over there. */
+import type { FirstSyncState } from "./first-sync.js";
+
+export type { FirstSyncState };
 
 /**
  * Whether this install can open ONE mailbox right now, and if not, why not. The shell renders it
@@ -42,13 +46,19 @@ export type CredentialState =
   | "foreign-host";
 
   /**
-   * Whether this install can reach one mailbox's server right now. Not on {@link OrganizerState} and
-   * must not be folded in, because the two answer different questions the pane needs both: "who
-   * organizes this mailbox" is a fact about the LEASE and survives an outage untouched (saying
-   * otherwise would invite taking back a mailbox never taken away), while "can I reach it" is a fact
-   * about a SOCKET and decides whether "On this machine" is presently true in any useful sense. In
-   * memory only: a dead connection does not survive a restart (a relaunch dials fresh), so a column
-   * recording it would be a durable statement about a transient fact.
+   * Whether this install can reach one mailbox's server right now, and what its first sync
+   * produced. Not on {@link OrganizerState} and must not be folded in, because the two answer
+   * different questions the pane needs both: "who organizes this mailbox" is a fact about the
+   * LEASE and survives an outage untouched (saying otherwise would invite taking back a mailbox
+   * never taken away), while "can I reach it" is a fact about a SOCKET and decides whether "On
+   * this machine" is presently true in any useful sense. In memory only: a dead connection does
+   * not survive a restart (a relaunch dials fresh), so a column recording it would be a durable
+   * statement about a transient fact.
+   *
+   * {@link firstSync} rides here rather than beside it because both are answers to "what is this
+   * link doing for my mail", both are read in ONE pass by every surface that renders them, and a
+   * second record would be a second clock — the pair could then disagree with itself about a
+   * mailbox that is reachable and has never been read.
    */
 export interface MailboxConnectionState {
   /** False from the first observation of death until a re-dial completes. */
@@ -70,6 +80,13 @@ export interface MailboxConnectionState {
    * and said no sends them to look in the wrong place.
    */
   signInRefused: boolean;
+  /**
+   * What this mailbox's first sync produced — see {@link FirstSyncState}. Derived from the
+   * engine's own facts (the import stamp its drain writes, and whether the mirror holds anything
+   * for this mailbox), never from a clock: "it has been a while" is not evidence that a mailbox
+   * cannot be read, and a mailbox that later reads becomes `finished`.
+   */
+  firstSync: FirstSyncState;
 }
 
 /** Why this install is not organizing a mailbox, when it is not. One answer per mailbox. */

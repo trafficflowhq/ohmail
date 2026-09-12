@@ -24,7 +24,7 @@ import {
 } from "../src/theme";
 import { usePrefs } from "../src/state/store";
 import { useWorld } from "../src/state/world";
-import { connectionSaid } from "../src/state/live";
+import { connectionSaid, firstSyncSaid } from "../src/state/live";
 import { Button, Chip, Panel, Rule, Screen, Scroller, Section, TapRow, Txt } from "../src/ui/base";
 import { Sheet, SheetRow } from "../src/ui/Sheet";
 import { phoneEngineStart } from "../src/engine/engine-artifact";
@@ -378,6 +378,12 @@ function ThisPhonePanel() {
      re-derived here: one ranking, so the top bar and this panel cannot disagree about whether
      the link is gone. */
   const outage = connectionSaid(w.boot.connection);
+  /* AND WHAT THE FIRST SYNC PRODUCED — beside the link's sentence, never instead of it. The two
+     are true at once and have different remedies: measured against a server that signs you in and
+     refuses to hand over the mail, the link reads dead AND nothing has ever been read, and
+     "Reconnecting…" on its own sends somebody to look at their network. Silent in every other
+     state (`live.ts#firstSyncSaid`). */
+  const unreadable = firstSyncSaid(w.boot.firstSync);
   const cards: readonly { key: string; address: string; claim: PhoneClaim }[] = here !== null
     ? [{
         key: HERE_CARD,
@@ -443,6 +449,10 @@ function ThisPhonePanel() {
                     that showed only the first read `Organizing` through a measured outage. */}
                 {outage === null ? null : (
                   <Txt variant="note" tone="ink2" accessibilityRole="alert">{outage}</Txt>
+                )}
+                {/* THE MAIL, NOT THE LINK — see `unreadable` above. */}
+                {unreadable === null ? null : (
+                  <Txt variant="note" tone="ink2" accessibilityRole="alert">{unreadable}</Txt>
                 )}
                 {/* BATTERY SAVER, SAID WHERE THE PLATFORM RULE IS — and only once the background
                     half has actually met it. `organizerRestrictedSaid` is the record

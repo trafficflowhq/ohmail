@@ -46,7 +46,7 @@ import { faceScope } from "./face-scope";
 import { foldersFlag, freshestRead } from "./folders-flag";
 import { usePrefs } from "./store";
 import {
-  connectionSay,
+  connectionSay, firstSyncSay,
   flushQueued,
   liveActions,
   liveFolder,
@@ -83,6 +83,7 @@ import {
   type WorldTag,
   type WorldView,
   type ConnectionSay,
+  type FirstSyncSay,
 } from "./live";
 import type { Scope } from "./model";
 
@@ -122,6 +123,15 @@ export interface World {
      * and the reader could not learn from it that nothing was dialling.
      */
     connection: ConnectionSay | null;
+    /**
+     * AND WHAT THE FIRST SYNC OF THIS MAILBOX PRODUCED — `live.ts#firstSyncSay`, ranked the same
+     * way and carried BESIDE the link's verdict rather than inside it. `null` is "nothing has
+     * said". Two surfaces read it and they must not disagree: the This-phone panel renders its
+     * sentence, and the Ohbox's empty state chooses between "no mail" and "nothing readable yet"
+     * — the line that told a person their mail "lands here as it syncs" over a mailbox where
+     * nothing ever had.
+     */
+    firstSync: FirstSyncSay | null;
   };
   /**
    * Changes the server would not take — the phone's half of the web's "could not be saved"
@@ -390,7 +400,7 @@ const LIVE_VERDICT_BEAT_MS = 15_000;
 function emptyWorld(actions: WorldActions): World {
   return {
     live: false,
-    boot: { settled: false, syncFailure: null, staleAsOf: null, connection: null },
+    boot: { settled: false, syncFailure: null, staleAsOf: null, connection: null, firstSync: null },
     // Nothing is queued on the empty world, so nothing was given up on. `EMPTY_ABANDONED` rather
     // than a fresh `[]`: this object is compared by identity in places, and a new array per call
     // is the same re-render trap `useAbandoned` avoids on the web.
@@ -989,6 +999,10 @@ export function WorldProvider({ children }: { children: ReactNode }) {
            state, so there is nothing here to depend on. The watcher below is what re-derives
            when it moves — the same one the stale label uses, the same beat, one writer. */
         connection: connectionSay(standaloneHere(), v.now, zone),
+        /* ONE read of the door for both verdicts would be one call; this is a second call to the
+           same module state in the same synchronous derivation, which is one moment. See the
+           field: they are two facts and both are rendered. */
+        firstSync: firstSyncSay(standaloneHere()),
       },
       abandoned: engine.abandoned(),
       worldKey: session.ownerKey,
@@ -1118,13 +1132,14 @@ export function WorldProvider({ children }: { children: ReactNode }) {
   /* The verdict's own SHAPE, not the object: `connectionSay` answers a fresh record per call, so
      comparing references would bump the beat on every tick and re-derive the whole world four
      times a minute over a healthy link. */
-  const renderedConnection = JSON.stringify(world.boot.connection);
+  const renderedConnection = JSON.stringify([world.boot.connection, world.boot.firstSync]);
   useEffect(() => {
     if (engine === null) return;
     const check = (): void => {
       const staleMoved = staleAsOf(engine, zone) !== renderedStale;
-      const connMoved =
-        JSON.stringify(connectionSay(standaloneHere(), new Date(), zone)) !== renderedConnection;
+      const connMoved = JSON.stringify(
+        [connectionSay(standaloneHere(), new Date(), zone), firstSyncSay(standaloneHere())],
+      ) !== renderedConnection;
       /* ONE bump for either, so the loop still terminates in one step: the re-derive re-reads
          BOTH verdicts, and the re-armed check finds both sides equal. */
       if (staleMoved || connMoved) setFreshBeat((n) => n + 1);

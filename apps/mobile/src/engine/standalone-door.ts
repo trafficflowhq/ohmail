@@ -132,6 +132,15 @@ export interface StandaloneEngine {
       reachable: boolean;
       unreachableSince: Date | null;
       signInRefused: boolean;
+      /**
+       * AND WHAT THE FIRST SYNC OF THIS MAILBOX PRODUCED — `pending`, `finished`, or
+       * `produced_nothing_readable`. The third is the one no surface could report: a drain came
+       * back, not one message reached the mirror, and every other field here says the install is
+       * fine. Typed as a string rather than the engine's union because this declaration is a
+       * claim about an UNTYPED artifact — `test/engine-bundle-loads.test.ts` reads the members off
+       * a booted one — and a union here would be this app asserting the engine's closed set.
+       */
+      firstSync: string;
     }>;
   };
 }

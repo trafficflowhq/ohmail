@@ -442,6 +442,14 @@ const TABLE = {
   connectionLost: "Connection lost. Reconnecting…",
   connectionGoneSince: (time: string) => `Couldn't reconnect since ${time}`,
 
+  /* NOTHING HAS BEEN READ FROM THIS MAILBOX, and that is a different fact from the two above —
+     both are true at once and both are shown. It deliberately makes NO claim about the link: a
+     server that signs you in and then refuses to hand over the mail leaves the connection dead by
+     the engine's reckoning and the mailbox reachable in fact, and a sentence that picked one of
+     those would be false in the other direction. `yet` is the whole of the promise: the engine
+     keeps asking, and a mailbox that later reads stops saying this. */
+  firstSyncNothingReadable: "Nothing could be read from this mailbox yet.",
+
   pairingBusy: "Pairing…",
   pairedOk: "Paired. Syncing your mail.",
 
@@ -671,6 +679,12 @@ const TABLE = {
   ohboxTail: (shown: number) => `All ${shown} accepted message${shown === 1 ? "" : "s"} shown.`,
   ohboxEmptyTitle: "Nothing here yet.",
   ohboxEmptyHint: "Mail from senders you said Yes to lands here as it syncs.",
+  /* THE SAME EMPTY SCREEN OVER A MAILBOX THAT IS NOT EMPTY — the hint above says mail "lands here
+     as it syncs", which for a mailbox whose first sync has produced nothing is a promise nothing
+     is keeping. One key each, chosen by the engine's own first-sync answer, so the two states are
+     told apart on the screen a person is actually looking at. */
+  ohboxEmptyNothingReadable:
+    "Nothing could be read from this mailbox yet. Your mail is still on your server.",
   doorbell: (n: number) => `${n} new sender${n === 1 ? "" : "s"}`,
   doorbellRest: "waiting",
   doorbellGo: "Screener",

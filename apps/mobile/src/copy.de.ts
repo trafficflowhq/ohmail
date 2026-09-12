@@ -272,6 +272,8 @@ export const DE: Deck = {
   connectionLost: "Verbindung verloren. Verbinde neu …",
   connectionGoneSince: (time: string) => `Seit ${time} keine Verbindung`,
 
+  firstSyncNothingReadable: "Aus diesem Postfach konnte noch nichts gelesen werden.",
+
   pairingBusy: "Wird gekoppelt…",
   pairedOk: "Gekoppelt. Deine Post wird synchronisiert.",
 
@@ -439,6 +441,8 @@ export const DE: Deck = {
       : `Alle ${shown} angenommenen Nachrichten werden gezeigt.`,
   ohboxEmptyTitle: "Hier ist noch nichts.",
   ohboxEmptyHint: "Post von Absendern, zu denen du Ja gesagt hast, landet hier, sobald sie synchronisiert wird.",
+  ohboxEmptyNothingReadable:
+    "Aus diesem Postfach konnte noch nichts gelesen werden. Deine Post liegt weiter auf deinem Server.",
   /*
    * The verb lives on this side in German, and it has to. The doorbell is drawn as two pieces —
    * the count, then a quieter tail — and `chrome.tsx` renders them from two separate keys, so

@@ -241,7 +241,19 @@ export interface StandaloneHere {
   readonly unreachableSince: string | null;
   /** The server answered and rejected the sign-in — not an outage, and not retried. */
   readonly signInRefused: boolean;
+  /**
+   * WHAT THE FIRST SYNC OF THIS MAILBOX PRODUCED — `pending`, `finished`,
+   * `produced_nothing_readable`, or `null` while the engine has not said, exactly as the two
+   * fields above are. The engine's own word, unmodified: this app re-spells no engine value.
+   */
+  readonly firstSync: string | null;
 }
+
+/** The engine's answers in the order a person needs them — the worst news about the FIRST SYNC
+ *  first. One mailbox on this phone, so any entry is the answer; where a build ever holds more
+ *  than one, a mailbox that could not be read outranks one that could, for the reason the
+ *  unreachable reading takes the same way round: the sentence is about mail that is not here. */
+const FIRST_SYNC_RANK = ["produced_nothing_readable", "pending", "finished"];
 
 export function standaloneHere(): StandaloneHere | null {
   const held = door;
@@ -260,6 +272,8 @@ export function standaloneHere(): StandaloneHere | null {
   let reachable: boolean | null = null;
   let unreachableSince: string | null = null;
   let signInRefused = false;
+  /** `null` until the engine has said — see the field. */
+  let firstSync: string | null = null;
   /**
    * WHO HOLDS THE MAILBOX WHEN THIS INSTALL DOES NOT — the engine's own peek at the claim.
    *
@@ -322,6 +336,18 @@ export function standaloneHere(): StandaloneHere | null {
         .filter((d): d is Date => d instanceof Date)
         .sort((a, b) => a.getTime() - b.getTime())[0];
       unreachableSince = since === undefined ? null : since.toISOString();
+      /* THE SAME PASS AND THE SAME `conn`, for the reason the block above states. An unknown
+         spelling ranks last rather than being dropped: a build whose engine answers a value this
+         app has never heard of must not read as "the engine has not said". */
+      firstSync = conn
+        .map((c) => c.firstSync)
+        .sort((a, b) => {
+          const rank = (v: string): number => {
+            const at = FIRST_SYNC_RANK.indexOf(v);
+            return at === -1 ? FIRST_SYNC_RANK.length : at;
+          };
+          return rank(a) - rank(b);
+        })[0] ?? null;
     }
   } catch {
     /* An unreadable runtime is "has not said", never "does not organize" — the background half
@@ -330,7 +356,7 @@ export function standaloneHere(): StandaloneHere | null {
   }
   return {
     id, address: held.address, organizing, releaseRequestedAt, heldBy, reachable,
-    unreachableSince, signInRefused,
+    unreachableSince, signInRefused, firstSync,
   };
 }
 
