@@ -64,6 +64,76 @@ decision is too old to carry out — and it used to be dropped without a word, l
 back in your queue with nothing to explain it. ohmail now tells you the decision waited too long to
 be sent, says how many if there were several, and asks you to decide again.
 
+### A phone never takes a mailbox your computer is organizing
+
+There is no "take over" button on a phone: it opens a mailbox nobody is organizing and reads one
+that somebody is. That was true of the button and not of what the mail server recorded, so a phone
+could win a mailbox a computer was actively organizing. The answer is now decided where the claim
+is written, by the verb you pressed. A phone asking for a busy mailbox is told which machine has
+it and reads the mailbox instead. "Organize here" on a computer still takes the mailbox.
+
+### A rule applies to the mail that arrives after it
+
+A rule that names a subject or body phrase is a decision about the sender too: their mail no
+longer waits in the Screener for a decision you had already made, while the phrase still decides
+where the mail it names is filed. A rule sending a sender to Screened or Quarantine is carried out
+on all of their mail. Mail already waiting when you wrote the rule is unchanged.
+
+### Quitting hands the mailbox back
+
+The organizer claim ohmail keeps in your mailbox is returned when the app closes, whichever way
+you quit and on a phone as well, so your other machine can take over at once instead of waiting up
+to ten minutes for the claim to go stale. The machine is still the organizer of record: opening it
+again takes the mailbox back unless somebody else has taken it first.
+
+### Organizing a mailbox no longer fails while another one is being disconnected
+
+Two such presses on one account at the same moment took the same two locks in opposite orders and
+could wait on each other, and the database ended one of them: the press that lost came back as a
+server error with nothing wrong with the request. Both take the locks in one order now.
+
+### A draft has a size limit
+
+A draft's text now has the same limit its formatted half already had. Past it the composer stops
+saving to your account and says so instead of promising a save; the text stays in the form, and
+shortening the message saves all of it. Nothing is ever cut for you.
+
+### A large mailbox's first sync is bounded on the server as well
+
+The first sync's message window now has a ceiling as well as a floor — the last ninety days, at
+least five thousand messages and at most ten thousand, the same window the apps keep — so a
+mailbox whose mail is dense inside ninety days is no longer sent almost in full. Drafts arrive a
+page at a time, newest first, instead of all at once on the first page. Mail you have tagged still
+arrives from below the window, and every draft still arrives.
+
+### The desktop is stricter about the server address it stores
+
+A plain http:// address is accepted only for a server on this computer and refused anywhere else,
+with a sentence saying why — stored otherwise, it would have sent your password and your
+authenticator code over the network unprotected. The app also tells the hosted service from your
+own server by the server's name rather than by comparing the address as text, so a certificate
+authority you install for your own server is never offered to the hosted door.
+
+### The reading screen's actions fit every phone width, in both languages
+
+Reply, Later, Park and Resurface used to sit on a sideways-scrolling strip: on a 1080 by 2400
+phone the fourth action was cut at the row's edge — in German it showed a single letter. The row
+now wraps to a second line when the words do not fit, and no action is shortened, cut or hidden.
+
+### The phone asks for the notification it organizes behind
+
+Android does not let an app show notifications until it has asked, and ohmail never did. It asks
+now, where you start organizing on this phone, and says what the notification is for: your mailbox
+being organized in the background, which stops when you leave the app without it. Say no and the
+phone says so, with a link to the setting, and it does not ask again.
+
+### When a phone is organizing a mailbox, the app says so
+
+Four rows named a computer or ohmail Cloud and had no sentence for a phone, so a phone fell into
+whichever arm was last. They now say what a phone is: it organizes this mailbox, and only while
+the ohmail app is open on it. A phone that has stopped renewing its claim is no longer reported as
+still filing.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
