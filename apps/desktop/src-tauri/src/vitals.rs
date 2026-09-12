@@ -38,7 +38,10 @@ pub const WEBKIT_OOM_SCORE_ADJ: i32 = 300;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Child {
     pub pid: u32,
-    /// The kernel's own `comm`, e.g. `WebKitWebProcess`.
+    /// WHICH OF THE WEBVIEW'S PROCESSES THIS IS — on Linux a string from
+    /// [`WEBKIT_PROCESS_NAMES`] and never one the process wrote, so `comm` being a truncated
+    /// copy of the name cannot reach the log as the name. The other two platforms report the
+    /// name their process table gave.
     pub name: String,
     /// `None` when this platform gave no figure — reported as `null`, never as zero.
     pub rss_kb: Option<u64>,
@@ -85,11 +88,82 @@ pub fn parse_stat_parent(stat: &str) -> Option<(String, u32)> {
     Some((comm, ppid))
 }
 
-/// Whether a `comm` is one of the webview's own processes.
-pub fn is_webkit_child(comm: &str) -> bool {
-    comm.starts_with("WebKitWebProcess")
-        || comm.starts_with("WebKitNetworkProcess")
-        || comm.starts_with("WebKitGPUProcess")
+/// The webview's processes, as WebKit names its executables. The only list.
+pub const WEBKIT_PROCESS_NAMES: &[&str] =
+    &["WebKitWebProcess", "WebKitNetworkProcess", "WebKitGPUProcess"];
+
+/// `TASK_COMM_LEN` from the kernel's `include/linux/sched.h` — 15 characters and a NUL.
+pub const TASK_COMM_LEN: usize = 16;
+
+/// THE RULE: which webview process an argument vector belongs to, by its `argv[0]` basename.
+///
+/// ARGV, NEVER `comm`. `comm` is the kernel's copy of the executable name capped at
+/// [`TASK_COMM_LEN`], and two of the three names above are longer than the cap, so on Linux the
+/// real processes read `WebKitWebProces` and `WebKitNetworkPr` and a full-name comparison matched
+/// nothing on any install. `argv[0]` carries the whole name, so the question is asked where the
+/// answer exists. The name that comes back is this file's, not the process's.
+pub fn webkit_name_of_argv(argv0: &str) -> Option<&'static str> {
+    WEBKIT_PROCESS_NAMES.iter().copied().find(|name| argv0.starts_with(name))
+}
+
+/// THE FALLBACK, for a process whose `cmdline` is empty — a zombie, or one already gone.
+///
+/// The comparison runs the OTHER WAY ROUND to the one that shipped: the NAME starts with the
+/// comm, and the comm is the whole name or exactly the cap. `comm.starts_with(name)` cannot match
+/// at all once the name is longer than 15 characters, which is the defect this replaces; the
+/// length floor is what keeps a bare `WebKit` from passing as all three.
+pub fn webkit_name_of_comm(comm: &str) -> Option<&'static str> {
+    WEBKIT_PROCESS_NAMES
+        .iter()
+        .copied()
+        .find(|name| name.starts_with(comm) && comm.len() >= name.len().min(TASK_COMM_LEN - 1))
+}
+
+/// The first token of a `/proc/<pid>/cmdline` body, reduced to its basename.
+///
+/// The body is NUL-separated. An empty one is a kernel thread or a process that has already gone,
+/// and answers `None` so the caller falls back to `comm` rather than classifying an empty string.
+pub fn argv0_basename(cmdline: &str) -> Option<String> {
+    let first = cmdline.split('\0').next()?.trim();
+    if first.is_empty() {
+        return None;
+    }
+    let base = first.rsplit('/').next()?;
+    if base.is_empty() {
+        None
+    } else {
+        Some(base.to_string())
+    }
+}
+
+/// The cgroup scope a process was launched in, out of a `/proc/<pid>/cgroup` body.
+///
+/// The unified line is `0::<path>` and it is the only one read: a v1 body lists one controller per
+/// line and no single one of them is "the scope".
+pub fn parse_cgroup_scope(body: &str) -> Option<String> {
+    for line in body.lines() {
+        if let Some(path) = line.strip_prefix("0::") {
+            let path = path.trim();
+            if !path.is_empty() {
+                return Some(path.to_string());
+            }
+        }
+    }
+    None
+}
+
+/// Is this row in the app's OWN scope? The second, independent reading of "is it ours".
+///
+/// The first is descent, and a `/proc` snapshot's `ppid` can name a pid the kernel has since
+/// reused; the scope is read from the same directory in the same pass and refuses a row the pid
+/// relation admits. NO SCOPE IS NOT A FILTER: a kernel or a container this cannot read must
+/// narrow nothing, because turning an unreadable file into "no children" is how this module
+/// reported a renderer holding a gigabyte as absent in the first place.
+pub fn same_scope(mine: Option<&str>, theirs: Option<&str>) -> bool {
+    match (mine, theirs) {
+        (Some(a), Some(b)) => a == b,
+        _ => true,
+    }
 }
 
 /// One row of a platform's process table — the shape all three arms reduce to before anything is
@@ -135,15 +209,53 @@ pub fn kb_of_bytes(bytes: u64) -> u64 {
     bytes / 1024
 }
 
-/// Did this pass read a figure at all?
+/// WHAT THIS PASS ACTUALLY READ — three states, and no fourth.
 ///
-/// `measured` means "a number in this line came from the operating system", so a pass that
-/// enumerated and found nothing says `false` and reports `null` rather than a total of zero — a
-/// renderer costing nothing is the one reading that must never be inventable. It is also the state
-/// a launch is in before the webview's processes exist, and the state macOS is in if its helpers
-/// are ever launched outside this app's process tree.
+/// `measured:true` over an empty child list is the one reading that must never be inventable, and
+/// it is exactly the reading the shipped Linux build produced for a webview holding a gigabyte. It
+/// is now UNREPRESENTABLE rather than watched for: [`vitals_line`] derives this from the children
+/// it was handed and takes no flag, so there is nothing to pass wrongly. A pass that classified
+/// nothing also NAMES that, instead of reading like a platform that does not measure.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Reading {
+    /// At least one of the webview's processes answered with a figure.
+    Measured,
+    /// None were found. On Linux that is a window not yet open or a rule that stopped matching;
+    /// on macOS it is the XPC case named further down.
+    NoChildrenClassified,
+    /// They were found and not one of them gave a figure.
+    NoFigures,
+}
+
+impl Reading {
+    /// The word the log carries. From this enum, never from a caller.
+    pub fn reason(self) -> Option<&'static str> {
+        match self {
+            Reading::Measured => None,
+            Reading::NoChildrenClassified => Some("no_children_classified"),
+            Reading::NoFigures => Some("no_figures"),
+        }
+    }
+
+    pub fn measured(self) -> bool {
+        matches!(self, Reading::Measured)
+    }
+}
+
+/// The one decider. Everything that reports reads it.
+pub fn reading_of(children: &[Child]) -> Reading {
+    if children.is_empty() {
+        Reading::NoChildrenClassified
+    } else if children.iter().any(|c| c.rss_kb.is_some()) {
+        Reading::Measured
+    } else {
+        Reading::NoFigures
+    }
+}
+
+/// Did this pass read a figure at all? [`reading_of`] answers it; this is the short spelling.
 pub fn measured_of(children: &[Child]) -> bool {
-    children.iter().any(|c| c.rss_kb.is_some())
+    reading_of(children).measured()
 }
 
 /// The webview's processes in a process table, by descent from `root`.
@@ -204,8 +316,10 @@ pub fn crossed_budget(previous_kb: Option<u64>, now_kb: u64, budget_kb: u64) -> 
 ///
 /// A child that gave no figure is `null` and is NAMED as unmeasured, and a pass that read no
 /// figure at all reports `measured:false` with a `null` total — a zero here would say the renderer
-/// costs nothing, which is the one reading that must never be inventable.
-pub fn vitals_line(children: &[Child], measured: bool, uptime_min: u64) -> String {
+/// costs nothing, which is the one reading that must never be inventable. THE CALLER CANNOT SAY
+/// `measured`: it is derived from the children, so `measured:true, children:[]` is not a line this
+/// function can produce. `reason` names which of the two absent states this is.
+pub fn vitals_line(children: &[Child], uptime_min: u64) -> String {
     let mut parts = String::new();
     for (i, c) in children.iter().enumerate() {
         if i > 0 {
@@ -219,15 +333,18 @@ pub fn vitals_line(children: &[Child], measured: bool, uptime_min: u64) -> Strin
         let name = serde_json::to_string(&c.name).unwrap_or_else(|_| "\"?\"".to_string());
         parts.push_str(&format!("{{\"pid\":{},\"name\":{},\"rssKb\":{}}}", c.pid, name, rss));
     }
-    let total: Option<u64> = if measured {
+    let reading = reading_of(children);
+    let total: Option<u64> = if reading.measured() {
         Some(children.iter().filter_map(|c| c.rss_kb).sum())
     } else {
         None
     };
     let total_s = total.map_or("null".to_string(), |t| t.to_string());
+    // The word is the enum's, so nothing a caller holds can become text in this line.
+    let reason = reading.reason().map_or("null".to_string(), |r| format!("\"{r}\""));
     format!(
-        "{{\"service\":\"shell\",\"event\":\"renderer_vitals\",\"measured\":{},\"totalRssKb\":{},\"budgetKb\":{},\"uptimeMin\":{},\"children\":[{}]}}",
-        measured, total_s, RENDERER_BUDGET_KB, uptime_min, parts
+        "{{\"service\":\"shell\",\"event\":\"renderer_vitals\",\"measured\":{},\"reason\":{},\"totalRssKb\":{},\"budgetKb\":{},\"uptimeMin\":{},\"children\":[{}]}}",
+        reading.measured(), reason, total_s, RENDERER_BUDGET_KB, uptime_min, parts
     )
 }
 
@@ -294,12 +411,26 @@ pub fn ui_vitals_line(reported: &serde_json::Value) -> String {
     format!("{{\"service\":\"ui\",\"event\":\"ui_vitals\",{parts}}}")
 }
 
+/// The scope of one pid under a `/proc`-shaped root, or `None` when it cannot be read.
+fn scope_in(proc_root: &Path, pid: u32) -> Option<String> {
+    fs::read_to_string(proc_root.join(pid.to_string()).join("cgroup"))
+        .ok()
+        .as_deref()
+        .and_then(parse_cgroup_scope)
+}
+
 /// Every WebKit child of `parent`, read from a `/proc`-shaped directory.
 ///
 /// Takes the root so the tests can hand it a fixture tree: a census that can only run against the
 /// real `/proc` is a census that never runs in CI.
+///
+/// THREE INDEPENDENT QUESTIONS, all of which must answer yes. Is it ours by descent (`ppid`); is
+/// it ours by scope (the cgroup the app was launched in, and no scope narrows nothing); and is it
+/// one of the webview's, by `argv[0]` — with `comm` only where there is no argv, and read as the
+/// capped string the kernel actually gives.
 pub fn webkit_children_in(proc_root: &Path, parent: u32) -> Vec<Child> {
     let mut out = Vec::new();
+    let mine = scope_in(proc_root, parent);
     let entries = match fs::read_dir(proc_root) {
         Ok(entries) => entries,
         Err(_) => return out,
@@ -319,14 +450,29 @@ pub fn webkit_children_in(proc_root: &Path, parent: u32) -> Vec<Child> {
             Some(pair) => pair,
             None => continue,
         };
-        if ppid != parent || !is_webkit_child(&comm) {
+        if ppid != parent {
             continue;
         }
+        if !same_scope(mine.as_deref(), scope_in(proc_root, pid).as_deref()) {
+            continue;
+        }
+        let argv0 = fs::read_to_string(dir.join("cmdline"))
+            .ok()
+            .as_deref()
+            .and_then(argv0_basename);
+        let role = match argv0.as_deref() {
+            Some(argv0) => webkit_name_of_argv(argv0),
+            None => webkit_name_of_comm(&comm),
+        };
+        let role = match role {
+            Some(role) => role,
+            None => continue,
+        };
         let rss_kb = fs::read_to_string(dir.join("status"))
             .ok()
             .as_deref()
             .and_then(parse_vm_rss_kb);
-        out.push(Child { pid, name: comm, rss_kb });
+        out.push(Child { pid, name: role.to_string(), rss_kb });
     }
     out.sort_by_key(|c| c.pid);
     out
@@ -675,12 +821,11 @@ pub fn start() {
             }
 
             let uptime_min = started.elapsed().as_secs() / 60;
-            let measured = measured_of(&children);
-            crate::engine::log_json_line(&vitals_line(&children, measured, uptime_min));
+            crate::engine::log_json_line(&vitals_line(&children, uptime_min));
 
             // Only a measured pass moves the comparison: a pass that found no renderer would
             // otherwise read as "back under budget" and re-arm the crossing.
-            if measured {
+            if reading_of(&children).measured() {
                 let total: u64 = children.iter().filter_map(|c| c.rss_kb).sum();
                 if crossed_budget(previous_total, total, RENDERER_BUDGET_KB) {
                     crate::engine::log_json_line(&budget_line(total));

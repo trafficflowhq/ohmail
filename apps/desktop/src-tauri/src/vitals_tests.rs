@@ -17,17 +17,50 @@ fn proc_tree(tag: &str) -> PathBuf {
     root
 }
 
-fn write_proc(root: &PathBuf, pid: u32, comm: &str, ppid: u32, rss_kb: Option<u64>) {
+/// The scope every fixture process is launched in unless a test says otherwise.
+const SCOPE: &str = "/user.slice/user-1000.slice/session-2.scope";
+
+/// A `/proc` entry written THE WAY THE KERNEL WRITES ONE.
+///
+/// `comm` is CAPPED AT 15 CHARACTERS here, because that is what `TASK_COMM_LEN` does to it on the
+/// running machine. Every fixture in this file used to write the untruncated name, so the double
+/// did not fail the way production fails and a rule that could never match on Linux passed for a
+/// year. `cmdline` carries the whole path, NUL-separated, which is where the full name survives.
+fn write_proc(root: &PathBuf, pid: u32, exe: &str, ppid: u32, rss_kb: Option<u64>) {
+    write_proc_as(root, pid, exe, ppid, rss_kb, Some(SCOPE), true);
+}
+
+fn write_proc_as(
+    root: &PathBuf,
+    pid: u32,
+    exe: &str,
+    ppid: u32,
+    rss_kb: Option<u64>,
+    scope: Option<&str>,
+    with_cmdline: bool,
+) {
     let dir = root.join(pid.to_string());
     fs::create_dir_all(&dir).expect("pid dir");
+    let name = exe.rsplit('/').next().unwrap_or(exe);
+    let comm: String = name.chars().take(TASK_COMM_LEN - 1).collect();
     // The real field order: pid, (comm), state, ppid, then the rest.
     fs::write(&dir.join("stat"), format!("{pid} ({comm}) S {ppid} 1 1 0 -1 0 0 0\n")).expect("stat");
+    if with_cmdline {
+        // NUL-separated, and the body ends with one — as the kernel writes it.
+        fs::write(&dir.join("cmdline"), format!("{exe}\0-scanForwards\0")).expect("cmdline");
+    }
+    if let Some(scope) = scope {
+        fs::write(&dir.join("cgroup"), format!("0::{scope}\n")).expect("cgroup");
+    }
     let status = match rss_kb {
         Some(kb) => format!("Name:\t{comm}\nVmPeak:\t 999999 kB\nVmRSS:\t {kb} kB\nThreads:\t58\n"),
         None => format!("Name:\t{comm}\nThreads:\t58\n"),
     };
     fs::write(&dir.join("status"), status).expect("status");
 }
+
+/// Where the app's own binaries live on a Linux install, so the fixtures carry real argv paths.
+const WEBKIT_LIBEXEC: &str = "/usr/lib/webkit2gtk-4.1";
 
 #[test]
 fn reads_vm_rss_in_the_kernels_own_kilobytes() {
@@ -53,10 +86,20 @@ fn a_comm_with_spaces_and_parens_does_not_shift_the_parent() {
 #[test]
 fn finds_only_this_shells_webkit_children() {
     let root = proc_tree("children");
-    write_proc(&root, 10, "WebKitWebProcess", 99, Some(944_128));
-    write_proc(&root, 11, "WebKitNetworkProcess", 99, Some(21_504));
-    write_proc(&root, 12, "WebKitWebProcess", 500, Some(700_000)); // another app's renderer
-    write_proc(&root, 13, "node", 99, Some(325_000)); // our engine sidecar, not the webview
+    write_proc(&root, 99, "/usr/bin/ohmail", 1, Some(180_000)); // the shell itself
+    write_proc(&root, 10, &format!("{WEBKIT_LIBEXEC}/WebKitWebProcess"), 99, Some(944_128));
+    write_proc(&root, 11, &format!("{WEBKIT_LIBEXEC}/WebKitNetworkProcess"), 99, Some(21_504));
+    // Another app's renderer: ours by neither descent nor scope.
+    write_proc_as(
+        &root,
+        12,
+        &format!("{WEBKIT_LIBEXEC}/WebKitWebProcess"),
+        500,
+        Some(700_000),
+        Some("/user.slice/user-1000.slice/session-9.scope"),
+        true,
+    );
+    write_proc(&root, 13, "/usr/bin/node", 99, Some(325_000)); // the engine sidecar, not a webview
     fs::write(&root.join("cpuinfo"), "not a pid\n").expect("noise");
 
     let found = webkit_children_in(&root, 99);
@@ -64,6 +107,116 @@ fn finds_only_this_shells_webkit_children() {
     assert_eq!(found.len(), 2, "only our own WebKit children: {found:?}");
     assert_eq!(found[0], Child { pid: 10, name: "WebKitWebProcess".into(), rss_kb: Some(944_128) });
     assert_eq!(found[1], Child { pid: 11, name: "WebKitNetworkProcess".into(), rss_kb: Some(21_504) });
+    // The name in the line is this module's word and not the kernel's truncated copy, which is
+    // what the `stat` file of pid 10 actually holds.
+    let stat = fs::read_to_string(root.join("10").join("stat")).expect("stat");
+    assert!(stat.contains("(WebKitWebProces)"), "the fixture must carry the kernel's cap: {stat}");
+    let _ = fs::remove_dir_all(&root);
+}
+
+/// THE READING THE RUNNING BUILD GAVE, replayed against the rule.
+///
+/// Read off an Omarchy guest on 2026-09-12 while an external sampler held the same two processes
+/// at 1 057 332 kB: pid 2752936 and pid 2753026, both children of the shell at 2752819, `comm`
+/// `WebKitNetworkPr` and `WebKitWebProces`. Fifteen characters each, because that is all `comm`
+/// has. The shipped rule asked whether those strings START WITH a sixteen- and a twenty-character
+/// name, found nothing, and the shell reported an empty child list for a webview holding a
+/// gigabyte.
+#[test]
+fn the_kernels_truncated_comm_is_what_the_rule_must_read() {
+    assert_eq!(webkit_name_of_comm("WebKitWebProces"), Some("WebKitWebProcess"));
+    assert_eq!(webkit_name_of_comm("WebKitNetworkPr"), Some("WebKitNetworkProcess"));
+    assert_eq!(webkit_name_of_comm("WebKitGPUProces"), Some("WebKitGPUProcess"));
+
+    // THE POSITIVE CONTROL. The untruncated names — which no Linux kernel writes into `comm` and
+    // which every fixture here used to — still classify, so the rule is not merely inverted.
+    for name in WEBKIT_PROCESS_NAMES {
+        assert_eq!(webkit_name_of_comm(name), Some(*name), "{name}");
+    }
+
+    // And it is not "anything that begins with WebKit": the length floor refuses a short prefix.
+    assert_eq!(webkit_name_of_comm("WebKit"), None);
+    assert_eq!(webkit_name_of_comm("WebKitWeb"), None);
+    assert_eq!(webkit_name_of_comm("node"), None);
+    assert_eq!(webkit_name_of_comm(""), None);
+
+    // The defect itself, on the record: the comparison the shipped build made cannot succeed.
+    assert!(!"WebKitWebProces".starts_with("WebKitWebProcess"));
+    assert!(!"WebKitNetworkPr".starts_with("WebKitNetworkProcess"));
+}
+
+/// The rule is the ARGUMENT VECTOR, and `comm` is only the fallback.
+#[test]
+fn a_webkit_process_is_classified_by_its_arguments() {
+    let argv = "/usr/lib/webkit2gtk-4.1/WebKitWebProcess\0 7\0";
+    assert_eq!(argv0_basename(argv), Some("WebKitWebProcess".to_string()));
+    assert_eq!(argv0_basename("ohmail\0"), Some("ohmail".to_string()));
+    // A kernel thread and a process already gone both have an empty body: no classification from
+    // an empty string — the caller falls back to `comm`.
+    assert_eq!(argv0_basename(""), None);
+    assert_eq!(argv0_basename("\0\0"), None);
+    assert_eq!(argv0_basename("/usr/lib/"), None);
+
+    assert_eq!(webkit_name_of_argv("WebKitWebProcess"), Some("WebKitWebProcess"));
+    assert_eq!(webkit_name_of_argv("WebKitNetworkProcess"), Some("WebKitNetworkProcess"));
+    assert_eq!(webkit_name_of_argv("WebKitGPUProcess"), Some("WebKitGPUProcess"));
+    assert_eq!(webkit_name_of_argv("node"), None);
+    assert_eq!(webkit_name_of_argv("ohmail"), None);
+    // The fifteen-character spelling is what `comm` gives and is NOT what argv gives: the argv
+    // rule reads whole names, and a truncated one there would be a different bug.
+    assert_eq!(webkit_name_of_argv("WebKitWebProces"), None);
+}
+
+/// A process with no `cmdline` falls back to `comm`, and is still found.
+#[test]
+fn a_process_with_no_arguments_falls_back_to_the_capped_name() {
+    let root = proc_tree("noargv");
+    write_proc(&root, 99, "/usr/bin/ohmail", 1, Some(180_000));
+    write_proc_as(&root, 20, "WebKitGPUProcess", 99, Some(60_000), Some(SCOPE), false);
+
+    let found = webkit_children_in(&root, 99);
+
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert_eq!(found[0], Child { pid: 20, name: "WebKitGPUProcess".into(), rss_kb: Some(60_000) });
+    assert!(!root.join("20").join("cmdline").exists(), "the fixture must have no cmdline");
+    let _ = fs::remove_dir_all(&root);
+}
+
+/// THE GROUP HALF, on its own.
+///
+/// Descent and scope are two independent readings of "is it ours", and a `/proc` snapshot's
+/// `ppid` can name a pid the kernel has since reused. A row that passes the pid relation and sits
+/// in another session's scope is refused; a row whose scope cannot be read narrows nothing, because
+/// an unreadable file must never turn into a renderer costing zero.
+#[test]
+fn a_process_in_another_scope_is_not_ours_even_as_a_child() {
+    let root = proc_tree("scope");
+    write_proc(&root, 99, "/usr/bin/ohmail", 1, Some(180_000));
+    write_proc(&root, 30, &format!("{WEBKIT_LIBEXEC}/WebKitWebProcess"), 99, Some(900_000));
+    write_proc_as(
+        &root,
+        31,
+        &format!("{WEBKIT_LIBEXEC}/WebKitWebProcess"),
+        99,
+        Some(700_000),
+        Some("/user.slice/user-1000.slice/session-9.scope"),
+        true,
+    );
+
+    let found = webkit_children_in(&root, 99);
+
+    assert_eq!(found.iter().map(|c| c.pid).collect::<Vec<_>>(), vec![30], "{found:?}");
+
+    // NO SCOPE IS NOT A FILTER, both ways round.
+    assert!(same_scope(Some(SCOPE), Some(SCOPE)));
+    assert!(!same_scope(Some(SCOPE), Some("/user.slice/other.scope")));
+    assert!(same_scope(None, Some(SCOPE)));
+    assert!(same_scope(Some(SCOPE), None));
+    assert_eq!(parse_cgroup_scope(&format!("0::{SCOPE}\n")), Some(SCOPE.to_string()));
+    // A v1 body names controllers, not a scope, and answers nothing rather than a guess.
+    assert_eq!(parse_cgroup_scope("12:pids:/user.slice\n11:memory:/user.slice\n"), None);
+    assert_eq!(parse_cgroup_scope("0::\n"), None);
+    assert_eq!(parse_cgroup_scope(""), None);
     let _ = fs::remove_dir_all(&root);
 }
 
@@ -75,8 +228,10 @@ fn a_child_with_no_figure_is_unmeasured_and_not_zero() {
     assert_eq!(found.len(), 1);
     assert_eq!(found[0].rss_kb, None);
 
-    let line = vitals_line(&found, true, 5);
+    let line = vitals_line(&found, 5);
     assert!(line.contains("\"rssKb\":null"), "{line}");
+    // A child with no figure is a DIFFERENT absent state from no children at all, and says so.
+    assert!(line.contains("\"reason\":\"no_figures\""), "{line}");
     let _ = fs::remove_dir_all(&root);
 }
 
@@ -86,9 +241,11 @@ fn the_line_carries_the_service_event_and_a_total() {
         Child { pid: 10, name: "WebKitWebProcess".into(), rss_kb: Some(900_000) },
         Child { pid: 11, name: "WebKitNetworkProcess".into(), rss_kb: Some(20_000) },
     ];
-    let line = vitals_line(&children, true, 10);
+    let line = vitals_line(&children, 10);
 
     assert!(line.contains("\"service\":\"shell\""), "{line}");
+    assert!(line.contains("\"measured\":true"), "{line}");
+    assert!(line.contains("\"reason\":null"), "a measured pass carries no reason: {line}");
     assert!(line.contains("\"event\":\"renderer_vitals\""), "{line}");
     assert!(line.contains("\"totalRssKb\":920000"), "{line}");
     assert!(line.contains("\"uptimeMin\":10"), "{line}");
@@ -101,9 +258,72 @@ fn the_line_carries_the_service_event_and_a_total() {
 #[test]
 fn an_unmeasured_platform_says_so_rather_than_reporting_nothing() {
     // macOS and Windows have no `/proc`: the total is null, not 0.
-    let line = vitals_line(&[], false, 5);
+    let line = vitals_line(&[], 5);
     assert!(line.contains("\"measured\":false"), "{line}");
     assert!(line.contains("\"totalRssKb\":null"), "{line}");
+}
+
+/// A PASS THAT FOUND NOTHING CANNOT LOOK HEALTHY, AND CANNOT LOOK LIKE THE OTHER ABSENCE.
+///
+/// The shipped Linux build wrote `"measured":true,"totalRssKb":0,"children":[]` beside a webview
+/// holding 1 057 332 kB — the exact reading this module's own comment calls the one that must never
+/// be inventable. `vitals_line` now takes no `measured` flag at all, so there is no argument a
+/// caller can get wrong: the state is derived, and the three readings are told apart by name.
+#[test]
+fn a_pass_that_classified_no_children_names_that_and_is_never_measured() {
+    let line = vitals_line(&[], 5);
+    assert!(line.contains("\"measured\":false"), "{line}");
+    assert!(line.contains("\"reason\":\"no_children_classified\""), "{line}");
+    assert!(line.contains("\"totalRssKb\":null"), "{line}");
+    assert!(line.contains("\"children\":[]"), "{line}");
+    // And never the reading that shipped.
+    assert!(!line.contains("\"totalRssKb\":0"), "{line}");
+
+    assert_eq!(reading_of(&[]), Reading::NoChildrenClassified);
+    assert_eq!(Reading::NoChildrenClassified.reason(), Some("no_children_classified"));
+    assert_eq!(Reading::NoFigures.reason(), Some("no_figures"));
+    assert_eq!(Reading::Measured.reason(), None);
+    assert!(!Reading::NoChildrenClassified.measured());
+    assert!(!Reading::NoFigures.measured());
+    assert!(Reading::Measured.measured());
+
+    let no_figures = vec![Child { pid: 1, name: "WebKitWebProcess".into(), rss_kb: None }];
+    assert_eq!(reading_of(&no_figures), Reading::NoFigures);
+    let measured = vec![Child { pid: 1, name: "WebKitWebProcess".into(), rss_kb: Some(10) }];
+    assert_eq!(reading_of(&measured), Reading::Measured);
+
+    // Every line this function can produce parses, whichever reading it carries.
+    for children in [&[][..], &no_figures[..], &measured[..]] {
+        let _: serde_json::Value =
+            serde_json::from_str(&vitals_line(children, 5)).expect("valid JSON");
+    }
+}
+
+/// THE BUDGET LINE IS REACHABLE ON LINUX AGAIN — the consequence the defect had.
+///
+/// `renderer_memory_high` fires off the sum over the classified children, so a rule that matched
+/// nothing made the sum 0 and the crossing unreachable on every Linux install. The end-to-end
+/// path is driven here: a fixture `/proc` holding the guest's own two processes, over budget.
+#[test]
+fn the_budget_crossing_is_reachable_from_a_linux_process_table() {
+    let root = proc_tree("budget");
+    write_proc(&root, 2_752_819, "/usr/bin/ohmail", 1, Some(180_000));
+    let net = format!("{WEBKIT_LIBEXEC}/WebKitNetworkProcess");
+    let web = format!("{WEBKIT_LIBEXEC}/WebKitWebProcess");
+    write_proc(&root, 2_752_936, &net, 2_752_819, Some(21_504));
+    write_proc(&root, 2_753_026, &web, 2_752_819, Some(1_600_000));
+
+    let found = webkit_children_in(&root, 2_752_819);
+
+    assert_eq!(found.len(), 2, "{found:?}");
+    let total: u64 = found.iter().filter_map(|c| c.rss_kb).sum();
+    assert_eq!(total, 1_621_504);
+    assert!(reading_of(&found).measured());
+    assert!(
+        crossed_budget(None, total, RENDERER_BUDGET_KB),
+        "the crossing this defect made unreachable on Linux"
+    );
+    let _ = fs::remove_dir_all(&root);
 }
 
 #[test]
@@ -198,7 +418,7 @@ fn a_macos_app_whose_helpers_are_not_its_children_reports_unmeasured() {
 
     assert!(found.is_empty(), "{found:?}");
     assert!(!measured_of(&found));
-    let line = vitals_line(&found, measured_of(&found), 5);
+    let line = vitals_line(&found, 5);
     assert!(line.contains("\"measured\":false"), "{line}");
     assert!(line.contains("\"totalRssKb\":null"), "{line}");
 }
@@ -351,4 +571,39 @@ fn no_page_size_literal_and_no_statm_read() {
     assert!(!code.contains("16384"), "a page-size literal is back in vitals.rs");
     assert!(!code.contains("statm"), "vitals.rs reads statm, which needs a page size");
     assert!(code.contains("VmRSS:"), "the reader must still read VmRSS");
+}
+
+/// NO NAME LONGER THAN `comm` IS EVER COMPARED AGAINST A `comm` THE SHIPPED WAY ROUND.
+///
+/// The defect was one character of direction: `comm.starts_with("WebKitWebProcess")` against a
+/// string the kernel caps at fifteen. This refuses that shape coming back — for any of the names,
+/// in any file — and `apps/desktop/test/renderer-vitals-linux-comm.test.ts` replays it over a
+/// recorded Linux process table, so the rule is read from outside the crate too.
+#[test]
+fn no_rule_compares_a_comm_against_a_name_longer_than_a_comm() {
+    let src = include_str!("vitals.rs");
+    let code: String = src
+        .lines()
+        .filter(|l| {
+            let t = l.trim_start();
+            !(t.starts_with("//") || t.starts_with("//!") || t.starts_with("///"))
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    for name in WEBKIT_PROCESS_NAMES {
+        if name.len() <= TASK_COMM_LEN - 1 {
+            continue;
+        }
+        let shipped = format!("comm.starts_with(\"{name}\")");
+        assert!(!code.contains(&shipped), "the truncation defect is back: {shipped}");
+    }
+    // The rule reads argv, and the fallback reads the cap.
+    assert!(code.contains("fn webkit_name_of_argv"), "the argv rule is gone");
+    assert!(code.contains("TASK_COMM_LEN - 1"), "the fallback no longer reads the kernel's cap");
+    // And the line derives `measured` rather than taking it.
+    assert!(
+        code.contains("fn vitals_line(children: &[Child], uptime_min: u64)"),
+        "vitals_line takes a measured flag again, which is the state that must not be passable"
+    );
 }
