@@ -102,14 +102,12 @@ export interface BackgroundEngine {
   resume(): Promise<void>;
   /**
    * THE PERSON'S STOP, RECORDED WHERE A RELAUNCH READS IT — the engine's `stopOrganizing`.
-   *
    * Separate from {@link handBack} because the two are opposite instructions with opposite
-   * durability. `handBack` leaves the ROW saying organizer so the next resume takes the mailbox
-   * back with no press, which is what an app leaving the foreground needs. A person's stop must
-   * survive the app being killed, so it goes through the release the row records — and a reader
-   * with no press never re-enters the gate again.
-   *
-   * Three answers, not a boolean — see {@link StopOrganizingOutcome}.
+   * durability: `handBack` leaves the ROW saying organizer so the next resume takes the mailbox
+   * back with no press, which is what an app leaving the foreground needs, while a person's stop
+   * must survive the app being killed, so it goes through the release the row records — and a
+   * reader with no press never re-enters the gate again. Three answers, not a boolean; see
+   * {@link StopOrganizingOutcome}.
    */
   stopOrganizing(): Promise<StopOrganizingOutcome>;
   /**

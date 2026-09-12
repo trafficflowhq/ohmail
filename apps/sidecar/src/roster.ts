@@ -90,23 +90,14 @@ export interface OrganizerState {
    */
   unreadableSince: string | null;
   /**
-   * THE PERSON'S STOP, STILL STANDING ON THE ROW — ISO 8601, or `null` where none is.
-   *
-   * The gate already re-reads `release_requested_at` every pass, and this is that read projected
-   * so a caller can have it without a second one. It is the only thing that separates a stop the
-   * mailbox honoured from one it did not: {@link organizing} answers what THIS PASS may arrange,
-   * and a pass asked to release arranges nothing and renews nothing whether or not the claim
-   * actually left `ohmail/_meta` — so `organizing: false` was read by the phone's own adapter as
-   * "the mailbox was let go", and a stop the server refused took the notification down over an
-   * install whose claim still stood.
-   *
-   * `null` once a pass's compare-and-set has spent the request, which is the same moment the row
-   * records the release. Carried, never cleared, by a pass that did not read the row — the rule
-   * {@link unreadableSince} holds to, and for its reason.
-   *
-   * The name is the ROW's and the DTO's (`releaseRequestedAt`): the desktop already renders
-   * "Stopping" from exactly this fact, and a second spelling of it here is how two surfaces come
-   * to disagree about whether a mailbox is being let go.
+   * THE PERSON'S STOP, STILL STANDING ON THE ROW — ISO 8601, or `null` where none is. The gate
+   * already re-reads `release_requested_at` every pass; this is that read projected so a caller
+   * needs no second one. It is the only thing separating a stop the mailbox honoured from one it
+   * did not: {@link organizing} answers what THIS PASS may arrange, and a pass asked to release
+   * arranges nothing either way — so `organizing: false` was read as "the mailbox was let go" and
+   * a refused stop took the notification down over a standing claim. `null` once a pass's
+   * compare-and-set has spent the request; carried, never cleared, by a pass that did not read the
+   * row ({@link unreadableSince}'s rule). The name is the ROW's and the DTO's.
    */
   releaseRequestedAt: string | null;
 }

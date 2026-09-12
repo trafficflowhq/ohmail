@@ -94,17 +94,14 @@ export const organizerDoor = (): StandaloneEngine | null => door;
 let launching = false;
 
 /**
- * ══ WHICH LAUNCH A SETTLED IMPORT BELONGS TO ════════════════════════════════════════════════
- *
- * The background half is reached by a dynamic `import()` that the door screen neither awaits nor
- * cancels, and the profile write that follows it can be refused — {@link discardStandaloneLaunch}
- * then hands the claim back and stops the engine. An import settling after that started a live
- * session over an engine that was already dead, and {@link startOrganizerSession} is
- * first-start-wins: the next successful Connect could not attach its own, so the mailbox was
- * organized behind no notification, no service and neither watch for the run of the app.
- *
- * So a launch carries a generation. It is bumped when a launch opens and again when one is
- * discarded, and a session may only be raised for the generation in force.
+ * WHICH LAUNCH A SETTLED IMPORT BELONGS TO. The background half is reached by a dynamic `import()`
+ * the door screen neither awaits nor cancels, and the profile write after it can be refused —
+ * {@link discardStandaloneLaunch} then hands the claim back and stops the engine. An import
+ * settling after that started a live session over a dead engine, and {@link startOrganizerSession}
+ * is first-start-wins, so the next successful Connect could not attach its own and the mailbox was
+ * organized behind no notification, no service and neither watch. A launch therefore carries a
+ * generation, bumped when one opens and again when one is discarded; a session may only be raised
+ * for the generation in force.
  */
 let launchGeneration = 0;
 
@@ -443,18 +440,14 @@ export function organizerInstruction(): OrganizeInstruction {
  * what stops a second Start from queueing a second instruction behind the first.
  */
 export async function pressOrganizeHere(want: "start" | "stop"): Promise<PressOutcome> {
-  /* ══ THE QUEUE IS READ BEFORE THE PRESS IS ANSWERED, AND THE PRESS REPLACES IT ══════════════
-   *
-   * The WORD on screen was read first, so a press matching the act in flight answered `standing`
-   * without ever looking at the queue: Stop, then Start, then Stop while the first stop was still
-   * being carried out settled on the queued START — the person's last press discarded as "already
-   * in force" by the very act their earlier press had queued away from, and the phone went on
-   * organizing. Start-Stop-Start is the same defect mirrored.
-   *
-   * So while an act is in flight the standing instruction is {@link standingInstruction}, a press
-   * REPLACES it rather than appending to it, and the answer is read from the machine after the
-   * replacement is recorded. A press for the act already in flight needs nothing behind it, so it
-   * CLEARS the queue rather than queueing a third instruction. */
+  /* THE QUEUE IS READ BEFORE THE PRESS IS ANSWERED, AND THE PRESS REPLACES IT. The WORD on screen
+   * was read first, so a press matching the act in flight answered `standing` without looking at
+   * the queue: Stop, Start, then Stop while the first stop ran settled on the queued START — the
+   * person's last press discarded as "already in force" by the act their earlier press had queued
+   * away from, and the phone went on organizing. Start-Stop-Start mirrors it. So while an act is
+   * in flight the standing instruction is {@link standingInstruction}, a press REPLACES it rather
+   * than appending, and the answer is read from the machine after the replacement is recorded. A
+   * press for the act already in flight needs nothing behind it and CLEARS the queue. */
   const standing = standingInstruction();
   if (standing !== null) {
     if (standing === want) return "standing";
@@ -505,18 +498,14 @@ async function startHere(): Promise<PressOutcome> {
 }
 
 async function stopHere(): Promise<PressOutcome> {
-  /* ══ THE ENGINE'S ANSWER DECIDES WHAT HAPPENS TO THE SESSION, NOT THE PRESS ════════════════
-   *
-   * The teardown ran unconditionally, so a release the mail server refused took the notification,
-   * the foreground service and both watches down over a phone that was STILL ORGANIZING. The
-   * reading that replaced it was `organizing`, and that is the engine's answer to a DIFFERENT
-   * question: a pass carrying out a release arranges nothing whether or not the claim left the
-   * mailbox, so production answered `false` on the refusal arm too and the teardown ran again.
-   *
-   * The engine now answers the question that was actually asked. `released` is the only word that
-   * licenses taking the notification down; `not_organizing` is a mailbox with nothing to give up,
-   * where a standing notification would say "Organizing" over a reader; `refused` leaves
-   * everything up and Settings says the mailbox could not be handed back. */
+  /* THE ENGINE'S ANSWER DECIDES WHAT HAPPENS TO THE SESSION, NOT THE PRESS. The teardown ran
+   * unconditionally, so a release the mail server refused took the notification, the foreground
+   * service and both watches down over a phone that was STILL ORGANIZING. The reading that
+   * replaced it was `organizing`, which answers a DIFFERENT question — a pass carrying out a
+   * release arranges nothing either way — so production answered `false` on the refusal arm too.
+   * The engine now answers what was asked: `released` is the only word that licenses taking the
+   * notification down, `not_organizing` is a mailbox with nothing to give up, and `refused` leaves
+   * everything up while Settings says the mailbox could not be handed back. */
   const stopped = await stopOrganizingStandalone();
   if (stopped === "refused") return "refused";
   await stopOrganizerSession();
@@ -553,15 +542,12 @@ let restrictedSaid = false;
 
 /**
  * Start it, FOR ONE LAUNCH. Answers whether THIS call is the live session, so a caller that cares
- * can say so.
- *
- * The `AppState` subscription is taken before anything else, because the first transition can
- * arrive while this function is still on the stack — a person who opens the door and immediately
- * switches away produces `background` with no session to receive it.
- *
- * `generation` is the launch the session belongs to and it is REQUIRED, here rather than in the
- * two callers: a stale import reaching this function sets {@link sessionDeps} over a stopped
- * engine, and a later start reuses those deps. See {@link standaloneLaunchGeneration}.
+ * can say so. The `AppState` subscription is taken first, because the first transition can arrive
+ * while this function is still on the stack — a person who opens the door and immediately switches
+ * away produces `background` with no session to receive it. `generation` is the launch the session
+ * belongs to and it is REQUIRED, here rather than in the two callers: a stale import reaching this
+ * function sets {@link sessionDeps} over a stopped engine and a later start reuses those deps. See
+ * {@link standaloneLaunchGeneration}.
  */
 export function startOrganizerSession(generation: number, deps: OrganizerSessionDeps): boolean {
   if (generation !== launchGeneration) {

@@ -960,18 +960,15 @@ async function composePhoneEngine(
           + "leaves the mailbox on the next poll instead",
       });
     });
-    /* ══ AND THE ANSWER IS THE CYCLE'S OWN READING, NOT THE ROUTE'S ACCEPTANCE ═════════════════
-     *
-     * This returned `true` for every 202. But the cycle above has three endings and only one of
-     * them is a release: it can fail to confirm the claim is out of `ohmail/_meta` (the search
-     * refused, the folder over its ceiling), and it can lose the write to a press that landed
-     * while the server was being asked. In both the mailbox is still organized here — and both
-     * leave `organizing: false`, because a pass honouring a release arranges nothing either way.
-     * So the caller read `false` as "let go", took the notification and the background work down,
-     * and the phone went on organizing with nothing anywhere saying so.
-     *
-     * `released` therefore requires the gate to have SPENT the request, which is the same write
-     * that records the release on the row. A cycle that did not run is not a reading. */
+    /* AND THE ANSWER IS THE CYCLE'S OWN READING, NOT THE ROUTE'S ACCEPTANCE. This returned `true`
+     * for every 202, but the cycle above has three endings and only one is a release: it can fail
+     * to confirm the claim is out of `ohmail/_meta` (the search refused, the folder over its
+     * ceiling), and it can lose the write to a press that landed while the server was being asked.
+     * In both the mailbox is still organized here, and both leave `organizing: false`, so the
+     * caller read `false` as "let go", took the notification and the background work down, and the
+     * phone went on organizing with nothing saying so. `released` therefore requires the gate to
+     * have SPENT the request — the same write that records the release. A cycle that did not run
+     * is not a reading. */
     const settled = cycled ? sidecar.organizerStates()[mailboxId] : undefined;
     if (settled === undefined || settled.organizing || settled.releaseRequestedAt !== null) {
       log("organizer_stop_here_unconfirmed", {

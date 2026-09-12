@@ -3317,20 +3317,15 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           });
         }
 
-        /* ── THE STOP STANDING ON THE ROW, PROJECTED ONCE FOR EVERY LITERAL BELOW ─────────────
-         *
-         * `organizing` answers what THIS PASS may arrange, and a pass honouring a release arranges
-         * nothing whether or not the claim actually left `ohmail/_meta`. So the phone's adapter
-         * read `organizing: false` as "the mailbox was let go" and reported a refused stop as a
-         * success: the notification and the background work came down over an install whose claim
-         * still stood. The two questions need two fields, and this is the second one — the row's
-         * own `release_requested_at`, which the read above already has.
-         *
-         * DERIVED IN ONE PLACE and spent below, where the compare-and-set records the release —
-         * the same moment the row's own column is cleared. A pass that could NOT read the row
-         * never reaches a literal that writes this: the `!rowRead` arm returns by spreading the
-         * previous answer, which is what carries a standing stop through a pass that learned
-         * nothing. A carry term here would be a second mechanism over that one. */
+        /* THE STOP STANDING ON THE ROW, PROJECTED ONCE FOR EVERY LITERAL BELOW. `organizing`
+         * answers what THIS PASS may arrange, and a pass honouring a release arranges nothing
+         * whether or not the claim left `ohmail/_meta` — so the phone's adapter read
+         * `organizing: false` as "the mailbox was let go" and reported a refused stop as a success.
+         * Two questions need two fields; this is the second, the row's own `release_requested_at`.
+         * DERIVED IN ONE PLACE and spent below, where the compare-and-set records the release. A
+         * pass that could NOT read the row never reaches a literal that writes this: the `!rowRead`
+         * arm returns by spreading the previous answer, and a carry term here would be a second
+         * mechanism over that one. */
         let releaseStamp: string | null = releaseRequested?.toISOString() ?? null;
 
         /* The release is honoured first, before the lease is read at all (0.14.1). The hosted
