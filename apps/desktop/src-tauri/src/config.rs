@@ -198,6 +198,12 @@ pub const MANAGED_CLOUD_BASE: &str = "https://api.ohmail.app";
 /// canonicalization to the engine, which has a real parser and re-composes the base from its parts:
 ///
 ///  · a scheme other than `http://` or `https://`, so nothing but the two dialable schemes lands;
+///  · a host this process cannot read as written. The URL standard MAPS and DECODES a host, so
+///    `api%2Eohmail.app` and the fullwidth spelling are both the hosted service to the engine and
+///    a different server to any fold available here — see [`door_host`];
+///  · `http://` for anything but LOOPBACK. The refusal below has always promised that and this
+///    function did not enforce it, so a stored door could put the mailbox password and the
+///    authenticator code on the wire in the clear;
 ///  · `#`, which is the sharp one. Every URL the engine composes is `base + path`, so a fragment in
 ///    the base makes the path part of a fragment that is never sent — `http://h:p#/` + `/hello`
 ///    goes out as `GET /` at that address, and so does every other route;
@@ -227,18 +233,143 @@ fn checked_cloud_url(value: &str) -> Result<String, String> {
     if trimmed.chars().any(|c| c.is_whitespace() || c.is_control()) {
         return Err("the cloud door's address may not contain spaces or control characters".to_string());
     }
+    // A HOST THIS PROCESS CANNOT READ IS REFUSED, NOT MERELY DISTRUSTED. Withholding the operator
+    // CA from it silently would be the worse half of the same bug: the handshake then fails with
+    // an issuer error and the refusal tells the operator to install the file they already have.
+    let host = match door_host(trimmed) {
+        Some(h) => h,
+        None => {
+            return Err(
+                "the cloud door's address must name a plain host — letters, digits, dots, dashes \
+                 or an address in brackets — and an international name in its punycode form"
+                    .to_string(),
+            )
+        }
+    };
+    // CLEARTEXT REACHES THIS COMPUTER AND NOWHERE ELSE. The window refuses it twice already
+    // (`cloud-origin.ts`'s `normalizeOrigin`, `doors.ts`'s `hostLinkProblem`); this is the same
+    // floor where the value is WRITTEN, which is the boundary the engine is downstream of. Not
+    // every value arriving here is typed: a paired computer's base comes back through the probe.
+    if trimmed.starts_with("http://") && !is_loopback(&host) {
+        return Err(
+            "the cloud door's address may only use http:// for a server on this machine; \
+             anywhere else it would send the password in the clear"
+                .to_string(),
+        );
+    }
     Ok(trimmed.to_string())
+}
+
+/// The HOST a cloud door's address names, lower-cased — or `None` when it names none this process
+/// can read as written.
+///
+/// The engine's `normalizeOrigin` is this rule with a real URL parser behind it. This process links
+/// none, so the reduction is by hand and the host alphabet is stated POSITIVELY, because the URL
+/// standard both MAPS and DECODES a host: `api%2Eohmail.app` percent-decodes and the fullwidth
+/// spelling IDNA-maps, each onto the hosted service — while any fold available here reads somebody
+/// else's server and hands it the operator CA. A backslash is a third: the standard reads it as a
+/// SEPARATOR, so `api.ohmail.app\evil` is the hosted service to the engine — refused here rather
+/// than reinterpreted, the same conservatism `#` and `?` get. ADMITTED: letters, digits, `.`, `-`,
+/// `_`, or a bracketed address. Everything else is `None` — userinfo included, so a credential
+/// cannot ride inside an authority — which [`checked_cloud_url`] refuses and every other caller
+/// reads as "cannot be established", never as a default.
+fn door_host(cloud_url: &str) -> Option<String> {
+    let trimmed = cloud_url.trim();
+    let rest = if let Some(r) = trimmed.strip_prefix("https://") {
+        r
+    } else if let Some(r) = trimmed.strip_prefix("http://") {
+        r
+    } else {
+        return None;
+    };
+
+    // The authority runs to the first delimiter.
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
+    if authority.is_empty() {
+        return None;
+    }
+
+    // A bracketed address carries its port after the bracket; anywhere else a second colon means
+    // this is not an authority this function can read.
+    let (host, port_text) = if authority.starts_with('[') {
+        let close = authority.find(']')?;
+        let (h, tail) = authority.split_at(close + 1);
+        match tail {
+            "" => (h, None),
+            t => (h, Some(t.strip_prefix(':')?)),
+        }
+    } else {
+        match authority.split_once(':') {
+            None => (authority, None),
+            Some((h, p)) if !p.contains(':') => (h, Some(p)),
+            Some(_) => return None,
+        }
+    };
+
+    // The port is VALIDATED and then DISCARDED: an unreadable one means this address cannot be
+    // established, and a readable one tells nobody anything — a forged certificate names the host,
+    // so no port can make one safe. An absent or empty port is the scheme's default, which is what
+    // the standard makes of `https://h:`.
+    match port_text {
+        None | Some("") => {}
+        Some(p) if p.bytes().all(|b| b.is_ascii_digit()) => match p.parse::<u32>() {
+            Ok(n) if n <= 65535 => {}
+            _ => return None,
+        },
+        Some(_) => return None,
+    }
+
+    let host = host.to_ascii_lowercase();
+    let readable = if let Some(inner) = host.strip_prefix('[').and_then(|h| h.strip_suffix(']')) {
+        !inner.is_empty() && inner.bytes().all(|b| b.is_ascii_hexdigit() || b == b':' || b == b'.')
+    } else {
+        !host.is_empty()
+            && host
+                .bytes()
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b".-_".contains(&b))
+    };
+    if readable {
+        Some(host)
+    } else {
+        None
+    }
+}
+
+/// Is this host this computer, so a cleartext connection never leaves it?
+///
+/// The engine's set exactly (`cloud-origin.ts`'s `isLoopbackHost`): `localhost` and any name under
+/// it, all of `127.0.0.0/8`, and `::1` as an authority spells it. DELIBERATELY NOT "private" or
+/// "link-local" — `10.x`, `192.168.x` and `169.254.x` are reachable from every other machine on
+/// that network, which is where an on-path peer would be. The DNS root dot is NOT folded here and
+/// an uncompressed `[0:0:0:0:0:0:0:1]` is not admitted: nothing here canonicalizes either, and no
+/// is the safe answer to a spelling this function cannot reduce.
+fn is_loopback(host: &str) -> bool {
+    if host == "localhost" || host.ends_with(".localhost") || host == "[::1]" {
+        return true;
+    }
+    let octets: Vec<&str> = host.split('.').collect();
+    octets.len() == 4
+        && octets[0] == "127"
+        && octets
+            .iter()
+            .all(|o| o.bytes().all(|b| b.is_ascii_digit()) && o.parse::<u8>().is_ok())
 }
 
 /// Whether a cloud door points at somebody's OWN server rather than at the hosted service.
 ///
-/// Compared with the trailing slash and the case of the scheme+host folded, because
-/// `https://api.ohmail.app/` and `https://API.ohmail.app` are the same address and must not be
-/// mistaken for a self-hosted one — that mistake would hand the operator CA to the managed door,
-/// which is the whole thing [`env_for`]'s scoping exists to prevent.
+/// Compared on the HOST, with the DNS root dot folded at the comparison and nowhere else. Not on
+/// the whole string: a trailing slash, a folded case, `:443`, a composed `/api` and the root dot
+/// are all the same server, and reading any of them as self-hosted hands the operator CA to the
+/// door holding the hosted session — the whole thing [`env_for`]'s scoping exists to prevent. Not
+/// on the port either: a forged certificate names the host, so a port cannot make one safe. A host
+/// that cannot be ESTABLISHED on either side is NOT self-hosted, the fail-closed rule the engine's
+/// `mirrorIsForeign` applies to a mirror's owner.
 fn is_self_hosted_cloud(cloud_url: &str) -> bool {
-    let fold = |s: &str| s.trim().trim_end_matches('/').to_lowercase();
-    fold(cloud_url) != fold(MANAGED_CLOUD_BASE)
+    let root = |h: &str| h.trim_end_matches('.').to_string();
+    match (door_host(cloud_url), door_host(MANAGED_CLOUD_BASE)) {
+        (Some(door), Some(managed)) => root(&door) != root(&managed),
+        _ => false,
+    }
 }
 
 /// The file an operator drops their own certificate authority's root into.
@@ -510,7 +641,7 @@ pub fn env_for(config: &Config, root: &Path) -> Vec<(OsString, OsString)> {
     // is structural rather than careful: a cloud-door engine composes NO IMAP or SMTP settings at
     // all (see the branch below, and `unset_for`, and the engine's own refusal to start in cloud
     // mode with any `OHMAIL_IMAP_*` present), so the only host it can dial is its configured base.
-    // The managed base is excluded by name, so the door that holds the hosted session never runs
+    // The managed base is excluded by its HOST, so the door that holds the hosted session never runs
     // with a widened trust pool.
     //
     // A per-origin trust store would be tighter still — the CA attached to one HTTP client for one

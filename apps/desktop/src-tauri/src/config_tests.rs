@@ -637,9 +637,11 @@ fn an_operator_ca_reaches_only_the_self_hosted_door() {
 
 #[test]
 fn the_managed_base_is_recognised_through_its_harmless_spellings() {
-    // A trailing slash and a folded case are the SAME address. Reading either as self-hosted would
-    // hand the operator CA to the door that holds the hosted session — the exact thing the scoping
-    // exists to prevent — so the comparison must not be a bare string equality.
+    // A trailing slash, a folded case, the DEFAULT PORT SPELLED OUT and the DNS root dot are all
+    // the same address. Reading any of them as self-hosted would hand the operator CA to the door
+    // that holds the hosted session — the exact thing the scoping exists to prevent — so the
+    // comparison is between ORIGINS and not between strings. `:443` is the one that was live:
+    // review 6 found it accepted as somebody's own server.
     let dir = std::env::temp_dir().join(format!("ohmail-config-ca-sp-{}", std::process::id()));
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).expect("mkdir");
@@ -650,6 +652,17 @@ fn the_managed_base_is_recognised_through_its_harmless_spellings() {
         "https://api.ohmail.app/",
         "https://API.ohmail.app",
         "  https://api.ohmail.app  ",
+        "https://api.ohmail.app:443",
+        "https://api.ohmail.app:443/",
+        "https://API.ohmail.app:0443",
+        "https://api.ohmail.app.",
+        "https://api.ohmail.app.:443/",
+        // WHAT THE SELF-HOST DOOR COMPOSES. Typing the hosted service's own host into it gives
+        // `<origin>/api` (`self-host.ts`'s `selfHostBase`) and nothing there refuses that host —
+        // so this spelling is one a person can produce through the window, not by hand.
+        "https://api.ohmail.app/api",
+        // A PORT CANNOT MAKE A FORGED CERTIFICATE SAFE: it names the host and nothing else.
+        "https://api.ohmail.app:8443",
     ] {
         let door = Config::Cloud(CloudDoor {
             cloud_url: spelling.to_string(),
@@ -719,6 +732,167 @@ fn it_never_relaxes_verification_to_reach_a_private_server() {
         // Nor smuggled in through the options variable, which would be invisible in a key scan.
         let options = env.get("NODE_OPTIONS").cloned().unwrap_or_default();
         assert!(!options.contains("insecure"), "NODE_OPTIONS carried {options:?}");
+    }
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn cleartext_is_admitted_for_this_computer_and_refused_everywhere_else() {
+    // THE DOOR'S OWN REFUSAL ALREADY SAYS "or http:// for a server on this machine" — and this
+    // file accepted cleartext for ANY host, so a stored door could post the mailbox password and
+    // the authenticator code to an on-path peer while the app promised TLS. The window refuses it
+    // twice already (`cloud-origin.ts`'s `normalizeOrigin`, `doors.ts`'s `hostLinkProblem`); this
+    // is the same floor at the boundary the engine is downstream of, and it is not only typed
+    // values that arrive here — a paired computer answers its own base (`proveHostLink`).
+    for remote in [
+        r#"{ "mode": "cloud", "cloudUrl": "http://example.com", "address": "a@b.example" }"#,
+        r#"{ "mode": "cloud", "cloudUrl": "http://10.0.2.2:1234/api", "address": "a@b.example" }"#,
+        r#"{ "mode": "cloud", "cloudUrl": "http://192.168.1.9", "address": "a@b.example" }"#,
+        r#"{ "mode": "cloud", "cloudUrl": "http://169.254.1.1:8080", "address": "a@b.example" }"#,
+        // A LOOPBACK SPELLING THAT IS NOT LOOPBACK: a name that merely contains one.
+        r#"{ "mode": "cloud", "cloudUrl": "http://localhost.example.com", "address": "a@b.example" }"#,
+        r#"{ "mode": "cloud", "cloudUrl": "http://127.0.0.1.example.com", "address": "a@b.example" }"#,
+        r#"{ "mode": "cloud", "cloudUrl": "http://[2001:db8::1]:8080", "address": "a@b.example" }"#,
+        r#"{ "mode": "cloud", "cloudUrl": "http://127.0.0.256", "address": "a@b.example" }"#,
+        // THE ROOT DOT IS NOT FOLDED HERE and an uncompressed literal is not recognised — the
+        // engine's `isLoopbackHost` does neither either, and no is the safe answer to a spelling
+        // neither of them reduces. (The comparison in `is_self_hosted_cloud` folds the dot; this
+        // one must not, or `http://localhost.` would become admitted cleartext.)
+        r#"{ "mode": "cloud", "cloudUrl": "http://localhost.", "address": "a@b.example" }"#,
+        r#"{ "mode": "cloud", "cloudUrl": "http://127.0.0.1.", "address": "a@b.example" }"#,
+        r#"{ "mode": "cloud", "cloudUrl": "http://[0:0:0:0:0:0:0:1]", "address": "a@b.example" }"#,
+    ] {
+        let value: serde_json::Value = serde_json::from_str(remote).expect("fixture json");
+        let err = parse(&value).expect_err("cleartext was stored for a remote host");
+        assert!(err.contains("this machine"), "the refusal does not name the rule: {err} ({remote})");
+    }
+
+    // …AND THIS COMPUTER IS STILL REACHABLE, which is the door the shipped compose stack opens.
+    for here in [
+        r#"{ "mode": "cloud", "cloudUrl": "http://localhost:8080/api", "address": "a@b.example" }"#,
+        r#"{ "mode": "cloud", "cloudUrl": "http://127.0.0.1:9000/api", "address": "a@b.example" }"#,
+        r#"{ "mode": "cloud", "cloudUrl": "http://127.1.2.3/api", "address": "a@b.example" }"#,
+        r#"{ "mode": "cloud", "cloudUrl": "http://[::1]:9000/api", "address": "a@b.example" }"#,
+        r#"{ "mode": "cloud", "cloudUrl": "http://ohmail.localhost:3000", "address": "a@b.example" }"#,
+        r#"{ "mode": "cloud", "cloudUrl": "https://ohmail.example.com/api", "address": "a@b.example" }"#,
+    ] {
+        let value: serde_json::Value = serde_json::from_str(here).expect("fixture json");
+        parse(&value).unwrap_or_else(|e| panic!("the shell refused {here}: {e}"));
+    }
+}
+
+#[test]
+fn a_host_this_process_cannot_read_as_written_is_refused_rather_than_distrusted() {
+    // THE URL STANDARD MAPS AND DECODES A HOST, and this process has no parser that does either:
+    // `api%2Eohmail.app` percent-decodes and the fullwidth spelling IDNA-maps, each onto the hosted
+    // service, while any fold available here reads somebody else's server and hands it the operator
+    // CA. Refused rather than merely distrusted, because withholding the CA in silence is the worse
+    // half of the same bug — the handshake then fails with an issuer error and the refusal tells the
+    // operator to install the file they already installed.
+    for unreadable in [
+        r#"{ "mode": "cloud", "cloudUrl": "https://ａｐｉ.ohmail.app", "address": "a@b.example" }"#,
+        r#"{ "mode": "cloud", "cloudUrl": "https://api%2Eohmail.app", "address": "a@b.example" }"#,
+        // The standard reads a backslash as a SEPARATOR, so this names the hosted service too.
+        r#"{ "mode": "cloud", "cloudUrl": "https://api.ohmail.app\\evil", "address": "a@b.example" }"#,
+        r#"{ "mode": "cloud", "cloudUrl": "https://", "address": "a@b.example" }"#,
+        r#"{ "mode": "cloud", "cloudUrl": "http://", "address": "a@b.example" }"#,
+        r#"{ "mode": "cloud", "cloudUrl": "https://[::1", "address": "a@b.example" }"#,
+        r#"{ "mode": "cloud", "cloudUrl": "http://[::1:8080", "address": "a@b.example" }"#,
+        r#"{ "mode": "cloud", "cloudUrl": "https://h.example:99999", "address": "a@b.example" }"#,
+        r#"{ "mode": "cloud", "cloudUrl": "https://h.example:8o80", "address": "a@b.example" }"#,
+    ] {
+        let value: serde_json::Value = serde_json::from_str(unreadable).expect("fixture json");
+        let err = parse(&value).expect_err("an unreadable host was stored");
+        assert!(err.contains("punycode"), "the refusal does not name the rule: {err} ({unreadable})");
+    }
+
+    // …AND EVERY HOST A REAL OPERATOR HAS. An underscore, a bracketed address and a punycoded
+    // international name are all admitted by the engine's own parse, so refusing them here would
+    // take the door away from somebody rather than close anything.
+    for real in [
+        r#"{ "mode": "cloud", "cloudUrl": "https://my_server.local/api", "address": "a@b.example" }"#,
+        r#"{ "mode": "cloud", "cloudUrl": "https://[2001:db8::1]/api", "address": "a@b.example" }"#,
+        r#"{ "mode": "cloud", "cloudUrl": "https://xn--ida.example/api", "address": "a@b.example" }"#,
+        r#"{ "mode": "cloud", "cloudUrl": "https://ohmail.example.com:8443/api", "address": "a@b.example" }"#,
+    ] {
+        let value: serde_json::Value = serde_json::from_str(real).expect("fixture json");
+        parse(&value).unwrap_or_else(|e| panic!("the shell refused {real}: {e}"));
+    }
+}
+
+#[test]
+fn an_address_whose_origin_cannot_be_established_is_never_read_as_self_hosted() {
+    // FAIL CLOSED, and the reason is live rather than theoretical: UTS-46 maps the FULLWIDTH
+    // spelling of `api.ohmail.app` onto the managed host, so the engine's URL parser dials the
+    // hosted service while a fold done without an IDNA table reads somebody else's server — and
+    // the operator CA lands on the door holding the hosted session. So an address this module
+    // cannot reduce to an origin is NOT self-hosted: it costs a mistyped door its private CA,
+    // and it costs a misread managed door nothing.
+    let dir = std::env::temp_dir().join(format!("ohmail-config-ca-fc-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).expect("mkdir");
+    fs::write(dir.join(OPERATOR_CA_FILE), "-----BEGIN CERTIFICATE-----\n").expect("write");
+
+    for unreducible in [
+        "https://\u{ff41}\u{ff50}\u{ff49}.ohmail.app",
+        "https://api.ohmail.app\u{3002}",
+        "https://api%2Eohmail.app",
+        "https://user@api.ohmail.app",
+        "https://",
+        "https://[::1",
+        "https://h.example:99999",
+        "https://h.example:8o80",
+    ] {
+        let door = Config::Cloud(CloudDoor {
+            cloud_url: unreducible.to_string(),
+            address: Some("someone@ohmail.app".to_string()),
+            flavor: None,
+            host_pin: None,
+        });
+        assert!(
+            !env_map(&env_for(&door, &dir)).contains_key("NODE_EXTRA_CA_CERTS"),
+            "{unreducible:?} was read as a self-hosted server"
+        );
+    }
+
+    // The positive control, in this test, so a refusal that swallowed every door would not pass.
+    assert!(env_map(&env_for(&self_hosted_door(), &dir)).contains_key("NODE_EXTRA_CA_CERTS"));
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_self_hosted_server_still_gets_the_certificate_authority_it_installed() {
+    // The other arm of the same comparison. Teaching it the managed base's harmless spellings must
+    // not make every port-carrying, upper-cased or similarly-named address equal to it as well —
+    // that would silently take the private CA away from the only door it belongs to.
+    let dir = std::env::temp_dir().join(format!("ohmail-config-ca-sh-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).expect("mkdir");
+    fs::write(dir.join(OPERATOR_CA_FILE), "-----BEGIN CERTIFICATE-----\n").expect("write");
+
+    for spelling in [
+        "https://ohmail.example.com/api",
+        "https://OHMAIL.example.com:8443/api",
+        "https://ohmail.example.com:443/api",
+        "http://localhost:8080/api",
+        // Neither a prefix nor a suffix of the managed host is the managed host.
+        "https://api.ohmail.app.example.com",
+        "https://api.ohmail.appx",
+        // And the three host shapes the positive alphabet had to keep admitting.
+        "https://my_server.local/api",
+        "https://[2001:db8::1]/api",
+        "https://xn--ida.example/api",
+    ] {
+        let door = Config::Cloud(CloudDoor {
+            cloud_url: spelling.to_string(),
+            address: Some("someone@example.com".to_string()),
+            flavor: None,
+            host_pin: None,
+        });
+        assert!(
+            env_map(&env_for(&door, &dir)).contains_key("NODE_EXTRA_CA_CERTS"),
+            "{spelling:?} lost the certificate authority its operator installed"
+        );
     }
     let _ = fs::remove_dir_all(&dir);
 }
