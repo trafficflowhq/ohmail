@@ -1,0 +1,46 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+  <!--
+    THE TWO PERMISSIONS A FOREGROUND SERVICE NEEDS, and no more.
+
+    `FOREGROUND_SERVICE` is the base grant; `FOREGROUND_SERVICE_DATA_SYNC` is the typed one
+    Android 14 requires for the `dataSync` type declared below, and refusing the pair is a
+    `SecurityException` at `startForeground` rather than a silent no-op. `POST_NOTIFICATIONS` is
+    deliberately NOT declared here: the app already asks for it for wake notices, and a service
+    whose notification a person has refused must not organize behind a notification nobody can
+    see — `OrganizerService` answers `false` and the mailbox is handed back.
+
+    This manifest is MERGED into the app's. Declaring the service in the module that implements it
+    keeps the two from drifting: a build that carries the Kotlin and not the declaration fails at
+    `startService` with a message about a component, which is the same class of defect as a pin
+    nothing honours.
+  -->
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+
+  <application>
+    <!--
+      `exported="false"` — nothing outside this app may start or stop the organizer. The stop
+      action's PendingIntent is this app's own and needs no export.
+
+      `stopWithTask="false"` so a person who swipes the app off the recents list does not silently
+      kill an organizer whose notification is still showing; the notification is the surface that
+      ends it, which is what the door's sentence promises.
+    -->
+    <service
+      android:name="app.ohmail.organizer.OrganizerService"
+      android:exported="false"
+      android:stopWithTask="false"
+      android:foregroundServiceType="dataSync" />
+
+    <!--
+      THE HEADLESS TASK HOST. A foreground service keeps the process unfrozen; this is what keeps
+      React Native's TIMERS running, which is a different thing and the one the engine's poll
+      depends on. `exported="false"` for the same reason as above: nothing outside this app starts
+      the organizer.
+    -->
+    <service
+      android:name="app.ohmail.organizer.OrganizerHeadlessService"
+      android:exported="false"
+      android:stopWithTask="false" />
+  </application>
+</manifest>

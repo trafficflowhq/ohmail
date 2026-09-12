@@ -29,10 +29,10 @@
 //! what they are NOT shown twice — is something these drive directly.
 
 use super::{
-    classify, error_class, install_kind, log_check, log_offer, log_verdict, menu_text,
-    path_is_system, refusal_is_unverifiable, report, running_image, should_install, should_offer,
-    signed_release, AppImage, Check, CheckResult, Facts, Flow, ImageEnv, InstallKind, Os, Press,
-    Signal, Stage, Verdict, WROTE,
+    classify, device_pair, error_class, install_kind, log_check, log_offer, log_verdict, menu_text,
+    mount_entry_at, parse_mount_line, path_is_system, refusal_is_unverifiable, report,
+    running_image, should_install, should_offer, signed_release, AppImage, Check, CheckResult,
+    Facts, Flow, ImageEnv, InstallKind, MountEntry, Os, Press, Signal, Stage, Verdict, WROTE,
 };
 use base64::Engine as _;
 use std::fs;
@@ -1140,15 +1140,40 @@ fn a_mounted_appimage_is_not_read_as_a_system_install() {
 // not own. `running_image` answers the question the variable only looks like it answers: is the
 // RUNNING executable the image that variable names?
 
-/// The environment of a real, mounted AppImage, as the runtime actually sets it.
+/// A REAL `/proc/self/mountinfo`, read from an ohmail AppImage while it was running (Linux,
+/// 2026-09-12). Four of its lines are kept: the disk the image file itself sits on, an entry with
+/// no optional field before the `-`, another vendor's AppImage mounted at the same time, and this
+/// process's own image.
+const MOUNTINFO: &str = "\
+34 2 252:0 / / rw,relatime shared:1 - ext4 /dev/mapper/cryptroot rw,errors=remount-ro,stripe=256
+801 32 0:28 /snapd/ns /run/snapd/ns rw,nosuid,nodev,noexec,relatime - tmpfs tmpfs rw,size=12942680k,mode=755,inode64
+101 34 0:57 / /tmp/.mount_orca.A8r41zQ ro,nosuid,nodev,relatime shared:144 - fuse.orca.AppImage orca.AppImage ro,user_id=1000,group_id=1000
+1742 34 0:187 / /tmp/.mount_ohmailDmIlmP ro,nosuid,nodev,relatime shared:1315 - fuse.ohmail-linux-x86_64.AppImage ohmail-linux-x86_64.AppImage ro,user_id=1000,group_id=1000
+";
+
+/// The device numbers measured beside that capture: a file inside the AppImage's mount stats as
+/// 187, which is the `0:187` the line above carries; a file on the disk stats as 64512 = `252:0`.
+const MOUNT_DEVICE: u64 = 187;
+const DISK_DEVICE: u64 = 64512;
+
+/// The captured table with the mount moved, so a case at another path still reads the SHAPE the
+/// kernel writes rather than one invented here.
+fn mounted_at(point: &str) -> String {
+    MOUNTINFO.replace("/tmp/.mount_ohmailDmIlmP", point)
+}
+
+/// The environment of a real, mounted AppImage, as the runtime actually sets it — the values that
+/// go with `MOUNTINFO`, with the image file given a readable home.
 fn mounted<'a>() -> ImageEnv<'a> {
     use std::path::Path;
     ImageEnv {
-        appimage: Some(Path::new("/home/someone/Applications/ohmail.AppImage")),
+        appimage: Some(Path::new("/home/someone/Applications/ohmail-linux-x86_64.AppImage")),
         extract_and_run: false,
-        appdir: Some(Path::new("/tmp/.mount_ohmail42")),
-        exe: Some(Path::new("/tmp/.mount_ohmail42/usr/bin/ohmail")),
+        appdir: Some(Path::new("/tmp/.mount_ohmailDmIlmP")),
+        exe: Some(Path::new("/tmp/.mount_ohmailDmIlmP/usr/bin/ohmail")),
         image_is_a_file: true,
+        mountinfo: Some(MOUNTINFO),
+        exe_device: Some(MOUNT_DEVICE),
     }
 }
 
@@ -1156,17 +1181,19 @@ fn mounted<'a>() -> ImageEnv<'a> {
 fn only_the_running_image_is_an_appimage() {
     use std::path::Path;
 
-    // A REAL APPIMAGE: the variable names a file, and the executable is inside the mount.
+    // A REAL APPIMAGE: the variable names a file, and the executable is served by the runtime's
+    // own mount of it. This is the positive control every refusal below is measured against.
     assert_eq!(running_image(mounted()), AppImage::Running);
     assert_eq!(
         classify(Facts { appimage: running_image(mounted()), ..facts(Os::Linux) }),
         InstallKind::AppImage,
     );
 
-    // THE FINDING. The variable is set and the executable is somewhere else entirely — a copy
-    // extracted from the image, or any binary started from an AppImage's environment. No offer.
+    // THE FIRST FINDING. The variable is set and the executable is somewhere else entirely — a
+    // copy extracted from the image, or any binary started from an AppImage's environment.
     let elsewhere = ImageEnv {
         exe: Some(Path::new("/home/someone/squashfs-root/usr/bin/ohmail")),
+        exe_device: Some(DISK_DEVICE),
         appdir: None,
         ..mounted()
     };
@@ -1182,6 +1209,7 @@ fn only_the_running_image_is_an_appimage() {
     let extracted_apprun = ImageEnv {
         appdir: Some(Path::new("/home/someone/squashfs-root")),
         exe: Some(Path::new("/home/someone/squashfs-root/usr/bin/ohmail")),
+        exe_device: Some(DISK_DEVICE),
         ..mounted()
     };
     assert_eq!(running_image(extracted_apprun), AppImage::Inherited);
@@ -1223,20 +1251,210 @@ fn only_the_running_image_is_an_appimage() {
     );
 }
 
-/// THE MOUNT IS THE RUNTIME'S OWN DIRECTORY, at every depth, and an extraction directory is not
-/// one however it is spelled. This is the half of the decision `$APPDIR` cannot make.
+/// THE SECOND FINDING: A DIRECTORY IS NOT A MOUNT.
+///
+/// The name `.mount_…` is something anybody can create, so an extracted tree parked under one —
+/// with `$APPIMAGE` naming any regular file and no `$APPDIR` to disagree — was read as the running
+/// image and offered an update it cannot apply. The mount table is what tells them apart.
+#[test]
+fn a_directory_somebody_named_after_the_mount_is_not_the_mount() {
+    use std::path::Path;
+    let forged = ImageEnv {
+        appdir: None,
+        exe: Some(Path::new("/home/someone/.mount_ohmail/usr/bin/ohmail")),
+        exe_device: Some(DISK_DEVICE),
+        ..mounted()
+    };
+    assert_eq!(running_image(forged), AppImage::Inherited);
+    assert_eq!(
+        classify(Facts { appimage: running_image(forged), ..facts(Os::Linux) }),
+        InstallKind::Unpackaged,
+    );
+
+    // The positive control for the same shape: put a real mount at that directory and it is the
+    // running image again — the name was never the thing being refused.
+    let table = mounted_at("/home/someone/.mount_ohmail");
+    assert_eq!(
+        running_image(ImageEnv {
+            appdir: None,
+            exe: Some(Path::new("/home/someone/.mount_ohmail/usr/bin/ohmail")),
+            mountinfo: Some(table.as_str()),
+            ..mounted()
+        }),
+        AppImage::Running,
+    );
+}
+
+/// A MOUNT THAT IS NOT THIS IMAGE'S IS NOT THIS IMAGE. Each row changes ONE field of the captured
+/// line, so every refusal is watched on its own with everything else still real.
+#[test]
+fn a_mount_that_does_not_name_this_image_is_not_this_image() {
+    let real = "- fuse.ohmail-linux-x86_64.AppImage ohmail-linux-x86_64.AppImage ro";
+    for (swapped, why) in [
+        ("- fuse.orca.AppImage orca.AppImage ro", "another vendor's AppImage"),
+        ("- ext4 /dev/sdb1 ro", "an ordinary filesystem mounted there"),
+        ("- fuse.squashfuse ohmail-linux-x86_64.AppImage ro", "squashfuse run by hand"),
+        ("- fuse.ohmail-linux-x86_64.AppImage orca.AppImage ro", "a subtype and a source that disagree"),
+    ] {
+        let table = MOUNTINFO.replace(real, swapped);
+        assert_ne!(table, MOUNTINFO, "{why}: the substitution did not land");
+        assert_eq!(
+            running_image(ImageEnv { mountinfo: Some(table.as_str()), ..mounted() }),
+            AppImage::Inherited,
+            "{why} is not this image's mount",
+        );
+    }
+
+    // The source is admitted in either spelling, because libfuse picks it: the runtime writes the
+    // bare name, and a full path names the same file.
+    let absolute = MOUNTINFO.replace(
+        " ohmail-linux-x86_64.AppImage ro,user_id",
+        " /home/someone/Applications/ohmail-linux-x86_64.AppImage ro,user_id",
+    );
+    assert_eq!(
+        running_image(ImageEnv { mountinfo: Some(absolute.as_str()), ..mounted() }),
+        AppImage::Running,
+    );
+}
+
+/// THE EXECUTABLE MUST BE SERVED BY THAT MOUNT, which is the kernel's answer and not a path's.
+/// A copy sitting on the disk under a mount point reads the disk's device, not the mount's.
+#[test]
+fn an_executable_the_mount_does_not_serve_is_not_the_image() {
+    assert_eq!(
+        running_image(ImageEnv { exe_device: Some(DISK_DEVICE), ..mounted() }),
+        AppImage::Inherited,
+    );
+    assert_eq!(running_image(ImageEnv { exe_device: None, ..mounted() }), AppImage::Inherited);
+}
+
+/// FAIL CLOSED. Without the mount table there is nothing to tell a mount from a directory, so the
+/// answer is the one this file already gives a distribution's build: no update offered.
+#[test]
+fn a_mount_table_that_could_not_be_read_is_not_a_running_image() {
+    assert_eq!(running_image(ImageEnv { mountinfo: None, ..mounted() }), AppImage::Inherited);
+    assert_eq!(running_image(ImageEnv { mountinfo: Some(""), ..mounted() }), AppImage::Inherited);
+    assert_eq!(
+        classify(Facts {
+            appimage: running_image(ImageEnv { mountinfo: None, ..mounted() }),
+            ..facts(Os::Linux)
+        }),
+        InstallKind::Unpackaged,
+    );
+}
+
+/// THE TABLE IS READ THE WAY THE KERNEL WRITES IT — over the captured lines, not invented ones.
+#[test]
+fn the_mount_table_is_read_the_way_the_kernel_writes_it() {
+    use std::path::Path;
+
+    let entry = mount_entry_at(MOUNTINFO, Path::new("/tmp/.mount_ohmailDmIlmP")).unwrap();
+    assert_eq!(
+        entry,
+        MountEntry {
+            major: 0,
+            minor: 187,
+            mount_point: "/tmp/.mount_ohmailDmIlmP".into(),
+            fs_type: "fuse.ohmail-linux-x86_64.AppImage".into(),
+            source: "ohmail-linux-x86_64.AppImage".into(),
+        },
+    );
+
+    // An entry with NO optional field before the `-`, which is the shape that breaks a parser
+    // counting fields from the left.
+    let bare = mount_entry_at(MOUNTINFO, Path::new("/run/snapd/ns")).unwrap();
+    assert_eq!((bare.fs_type.as_str(), bare.source.as_str()), ("tmpfs", "tmpfs"));
+    assert_eq!((bare.major, bare.minor), (0, 28));
+
+    // Nothing mounted there, and a line that is not one.
+    assert_eq!(mount_entry_at(MOUNTINFO, Path::new("/tmp/.mount_nothing")), None);
+    assert_eq!(parse_mount_line("1742 34 0:187 / /tmp/x rw"), None);
+    assert_eq!(parse_mount_line(""), None);
+
+    // A LATER mount over the same directory is the one a path resolves through, so it is the one
+    // read. Both orders, because reading the FIRST match instead of the last passes one of them.
+    let shadow = "9001 34 0:200 / /tmp/.mount_ohmailDmIlmP ro,relatime - ext4 /dev/sdb1 ro\n";
+    let image_line = MOUNTINFO.lines().last().unwrap();
+    let over = format!("{MOUNTINFO}{shadow}");
+    let under = MOUNTINFO.replace(image_line, &format!("{shadow}{image_line}"));
+    assert_eq!(mount_entry_at(&over, Path::new("/tmp/.mount_ohmailDmIlmP")).unwrap().fs_type, "ext4");
+    assert_eq!(
+        mount_entry_at(&under, Path::new("/tmp/.mount_ohmailDmIlmP")).unwrap().fs_type,
+        "fuse.ohmail-linux-x86_64.AppImage",
+    );
+    assert_eq!(
+        running_image(ImageEnv { mountinfo: Some(over.as_str()), ..mounted() }),
+        AppImage::Inherited,
+    );
+    assert_eq!(
+        running_image(ImageEnv { mountinfo: Some(under.as_str()), ..mounted() }),
+        AppImage::Running,
+    );
+
+    // The kernel escapes a space as `\040` in the mount point, the type and the source alike.
+    let spaced = "40 34 0:99 / /tmp/.mount_oh\\040mail ro - fuse.oh\\040mail.AppImage oh\\040mail.AppImage ro";
+    let escaped = parse_mount_line(spaced).unwrap();
+    assert_eq!(escaped.mount_point, "/tmp/.mount_oh mail");
+    assert_eq!(escaped.fs_type, "fuse.oh mail.AppImage");
+    assert_eq!(escaped.source, "oh mail.AppImage");
+    assert_eq!(
+        running_image(ImageEnv {
+            appimage: Some(Path::new("/home/someone/oh mail.AppImage")),
+            appdir: None,
+            exe: Some(Path::new("/tmp/.mount_oh mail/usr/bin/ohmail")),
+            exe_device: Some(99),
+            mountinfo: Some(spaced),
+            ..mounted()
+        }),
+        AppImage::Running,
+    );
+
+    // `st_dev` split the way mountinfo prints it, pinned on both numbers this capture measured —
+    // and on a minor of 300, which is where the encoding stops being "the low byte" and a split
+    // that only masked 0xff would agree with the simple one on every row above.
+    assert_eq!(device_pair(MOUNT_DEVICE), (0, 187));
+    assert_eq!(device_pair(DISK_DEVICE), (252, 0));
+    assert_eq!(device_pair(1_048_620), (0, 300));
+    let wide = MOUNTINFO.replace(" 0:187 / /tmp/.mount_ohmailDmIlmP", " 0:300 / /tmp/.mount_ohmailDmIlmP");
+    assert_ne!(wide, MOUNTINFO);
+    assert_eq!(
+        running_image(ImageEnv {
+            exe_device: Some(1_048_620),
+            mountinfo: Some(wide.as_str()),
+            ..mounted()
+        }),
+        AppImage::Running,
+    );
+    assert_eq!(
+        running_image(ImageEnv {
+            exe_device: Some(300),
+            mountinfo: Some(wide.as_str()),
+            ..mounted()
+        }),
+        AppImage::Inherited,
+    );
+}
+
+/// THE MOUNT IS THE RUNTIME'S OWN, at every depth, and an extraction directory is not one however
+/// it is spelled. This is the half of the decision `$APPDIR` cannot make.
 #[test]
 fn the_runtime_mount_is_told_from_an_extraction_directory() {
     use std::path::Path;
-    for inside in [
-        "/tmp/.mount_ohmail42/usr/bin/ohmail",
-        "/tmp/.mount_ohmailXXXXXX/AppRun",
-        "/run/user/1000/.mount_abc123/usr/lib/ohmail/ohmail",
+    for (point, exe) in [
+        ("/tmp/.mount_ohmail42", "/tmp/.mount_ohmail42/usr/bin/ohmail"),
+        ("/tmp/.mount_ohmailXXXXXX", "/tmp/.mount_ohmailXXXXXX/AppRun"),
+        ("/run/user/1000/.mount_abc123", "/run/user/1000/.mount_abc123/usr/lib/ohmail/ohmail"),
     ] {
+        let table = mounted_at(point);
         assert_eq!(
-            running_image(ImageEnv { appdir: None, exe: Some(Path::new(inside)), ..mounted() }),
+            running_image(ImageEnv {
+                appdir: None,
+                exe: Some(Path::new(exe)),
+                mountinfo: Some(table.as_str()),
+                ..mounted()
+            }),
             AppImage::Running,
-            "{inside} is inside a runtime mount",
+            "{exe} is served by the runtime's own mount",
         );
     }
     for outside in [
@@ -1246,9 +1464,14 @@ fn the_runtime_mount_is_told_from_an_extraction_directory() {
         "/home/someone/mount_ohmail/usr/bin/ohmail",
     ] {
         assert_eq!(
-            running_image(ImageEnv { appdir: None, exe: Some(Path::new(outside)), ..mounted() }),
+            running_image(ImageEnv {
+                appdir: None,
+                exe: Some(Path::new(outside)),
+                exe_device: Some(DISK_DEVICE),
+                ..mounted()
+            }),
             AppImage::Inherited,
-            "{outside} is not inside a runtime mount",
+            "{outside} is not served by a runtime mount",
         );
     }
 }

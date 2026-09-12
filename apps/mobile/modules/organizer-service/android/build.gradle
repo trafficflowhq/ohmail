@@ -1,0 +1,42 @@
+apply plugin: 'com.android.library'
+apply plugin: 'kotlin-android'
+
+group = 'app.ohmail.organizer'
+version = '0.1.0'
+
+def expoModulesCorePlugin = new File(
+  project(":expo-modules-core").projectDir.absolutePath,
+  "ExpoModulesCorePlugin.gradle",
+)
+apply from: expoModulesCorePlugin
+applyKotlinExpoModulesCorePlugin()
+useCoreDependencies()
+useExpoPublishing()
+
+android {
+  namespace "app.ohmail.organizer"
+  defaultConfig {
+    minSdkVersion safeExtGet("minSdkVersion", 24)
+    compileSdkVersion safeExtGet("compileSdkVersion", 36)
+    targetSdkVersion safeExtGet("targetSdkVersion", 36)
+  }
+  compileOptions {
+    sourceCompatibility JavaVersion.VERSION_17
+    targetCompatibility JavaVersion.VERSION_17
+  }
+  kotlinOptions {
+    jvmTarget = "17"
+  }
+}
+
+dependencies {
+  // THE APP'S OWN React Native, and never a version of our own — `host-pinning`'s build file
+  // carries the measurement: react-android resolves its transitive versions with `strictly`, so
+  // naming one here fails the build outright, which is the good failure. `compileOnly` because the
+  // application module already puts React Native on the runtime classpath.
+  //
+  // Needed for `HeadlessJsTaskService`, which is what keeps React Native's timers running while
+  // the app is backgrounded. The notification and the service itself are the platform's and
+  // `androidx.core`'s, both already on this classpath through `useCoreDependencies()`.
+  compileOnly "com.facebook.react:react-android"
+}

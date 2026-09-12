@@ -1850,17 +1850,25 @@ describe("the auto-updater", () => {
     expect(updater).toMatch(/tauri_plugin_updater/);
     expect(updater).not.toMatch(/reqwest|hyper|ureq|curl|TcpStream|TcpListener|UnixStream/);
     expect(updater).not.toMatch(/std::(net|process)/);
-    /* TWO DISK READS, AND BOTH ARE NAMED. `install_kind` stats `/.flatpak-info` to tell a
-       sandboxed install — which its software centre updates — from one this app may replace, and
-       it stats `$APPIMAGE` to tell a mounted AppImage from a copy that merely inherited the
-       variable and owns no image to rewrite. Those are the only filesystem calls this module
-       makes: an updater writing files outside the plugin would be applying an update by hand,
-       with none of the verification that lives there. Asserted as the WHOLE list rather than as
-       an allowance, so a third read cannot slip in beside them. */
+    /* FOUR DISK READS, AND EACH ONE IS NAMED BY ITS ARGUMENT. `install_kind` stats
+       `/.flatpak-info` for a sandboxed install, stats `$APPIMAGE` for a file there is something to
+       replace, reads `/proc/self/mountinfo` for what is mounted where, and stats the running
+       executable for the device it is served from — the last two being how a mounted AppImage is
+       told from a copy under a directory somebody named `.mount_something`. Those are the only
+       filesystem calls this module makes: an updater writing files outside the plugin would be
+       applying an update by hand, with none of the verification that lives there. Asserted as the
+       WHOLE list rather than as an allowance, so a fifth read cannot slip in beside them. */
     const disk = [...updater.matchAll(/std::fs::[a-z_]+/g)].map((m) => m[0]);
-    expect(disk).toEqual(["std::fs::metadata", "std::fs::metadata"]);
+    expect(disk).toEqual([
+      "std::fs::metadata",
+      "std::fs::read_to_string",
+      "std::fs::metadata",
+      "std::fs::metadata",
+    ]);
+    expect(updater).toMatch(/std::fs::metadata\("\/proc\/self\/exe"\)/);
+    expect(updater).toMatch(/std::fs::read_to_string\("\/proc\/self\/mountinfo"\)/);
+    expect(updater).toMatch(/std::fs::metadata\(image\)/);
     expect(updater).toMatch(/std::fs::metadata\("\/\.flatpak-info"\)/);
-    expect(updater).toMatch(/std::fs::metadata\(path\)/);
   });
 
   /**
