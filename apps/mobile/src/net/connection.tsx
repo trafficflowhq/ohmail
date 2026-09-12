@@ -301,7 +301,7 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
 
   /**
    * Record the consent for the mailbox this phone opened — the press, and the id it needs.
-   * The route is `POST /mailboxes/:id/organize` and the id is the engine's, so the roster is
+   * The route is `POST /local/mailboxes/:id/organize` and the id is the engine's, so the roster is
    * read first through the same session. A roster that cannot be read is a refusal with its
    * own sentence, never a silent skip: the defect this closes is a phone that reads its own
    * mailbox and organizes nothing while every surface says it is fine. Nothing here waits on
