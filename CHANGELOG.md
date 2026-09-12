@@ -86,14 +86,6 @@ found dead is now ended outright, the next attempt happens, and each attempt is 
 phone, a command written to a connection that had just closed could also take the app down; those
 bytes are refused at the socket and the write is told why.
 
-### The phone names the machine organizing your mailbox
-
-Settings → This phone said “Nothing organizes this mailbox” whether nothing did or another
-computer, a server or another phone held it — under a line describing what this phone does while
-it organizes. It now names the holder and says what this phone does instead: it reads the
-mailbox, moves nothing and screens nothing. Where another phone holds it, the line adds that a
-phone organizes only while ohmail is open on it.
-
 ### A phone keeps re-claiming its mailbox after the first minutes
 
 "Start organizing here" was refused for the rest of the session once the app had been open more
