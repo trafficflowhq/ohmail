@@ -473,20 +473,18 @@ export class DraftsService {
         .limit(1));
       if (!row) throw new ServiceError("not_found", 404, "draft not found");
 
-      // The attempt whose outcome is still open, read AFTER the draft lock so a concurrent
-      // `reserve` is either seen here or blocked until this commits.
-      const [open] = await tx.select({
-        id: outboundSends.id, status: outboundSends.status, createdAt: outboundSends.createdAt,
-      }).from(outboundSends)
+      // EVERY attempt whose outcome is still open — not one of them. Read AFTER the draft lock,
+      // so a concurrent `reserve` is either seen here or blocked until this commits.
+      const open = await tx.select({ status: outboundSends.status, createdAt: outboundSends.createdAt })
+        .from(outboundSends)
         .where(and(
           eq(outboundSends.draftId, id),
           eq(outboundSends.accountId, ctx.accountId),
           inArray(outboundSends.status, [...SEND_ON_RECORD_STATUSES]),
-        ))
-        .limit(1);
+        ));
 
-      if (open && open.status === "pending"
-        && now.getTime() - open.createdAt.getTime() < SEND_STALE_AFTER_MS) {
+      if (open.some((a) => a.status === "pending"
+        && now.getTime() - a.createdAt.getTime() < SEND_STALE_AFTER_MS)) {
         throw new ServiceError(
           "send_still_running", 409,
           "this send may still be running; it can be answered once it has stopped",
@@ -494,14 +492,14 @@ export class DraftsService {
       }
 
       const ledgerStatus = outcome === "arrived" ? "sent" : "failed";
-      const settled = open === undefined ? [] : await tx.update(outboundSends)
+      const settled = open.length === 0 ? [] : await tx.update(outboundSends)
         .set({ status: ledgerStatus, resolvedBy: "person", resolvedAt: now })
         .where(and(
-          eq(outboundSends.id, open.id),
+          eq(outboundSends.draftId, id),
           eq(outboundSends.accountId, ctx.accountId),
-          // THE COMPARE-AND-SWAP. Only an attempt still open is a person's to settle — and it is
-          // re-asserted here because the reconcile pass can finish this row without the draft
-          // lock, between the read above and this write.
+          // THE COMPARE-AND-SWAP, by the DRAFT and not by a row id: this is the predicate the
+          // `unverified`-only version used, widened. Re-asserted here because the reconcile pass
+          // can finish a row without the draft lock, between the read above and this write.
           inArray(outboundSends.status, [...SEND_ON_RECORD_STATUSES]),
         ))
         .returning({ id: outboundSends.id });
