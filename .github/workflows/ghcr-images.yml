@@ -16,23 +16,26 @@
 #
 # NOTHING MOVES A PUBLIC TAG UNTIL EVERY GATE IS GREEN. The order is the design:
 #
-#   1. build-push    — each image × architecture builds NATIVELY and pushes a RUN-SCOPED
+#   1. mirror-images — every image the stack boots that we do NOT build is copied into our own
+#                      registry from `deploy/selfhost/images.lock`, by digest. Idempotent: a row
+#                      already carrying its locked digest is verified, not re-pushed.
+#   2. build-push    — each image × architecture builds NATIVELY and pushes a RUN-SCOPED
 #                      staging tag (`stage-<version>-<run id>-<arch>`), then the prune check
 #                      runs against exactly that tag. Run-scoped so no concurrent or later
 #                      run can swap a checked layer for an unchecked one under the same name;
 #                      the `concurrency` group below serializes runs besides.
-#   2. gate-boot     — a FRESH CLONE of this repository boots the staged images through
+#   3. gate-boot     — a FRESH CLONE of this repository boots the staged images through
 #                      deploy/selfhost, exactly as the README tells a stranger to, and the
 #                      stack must answer: /hello through the proxy, the web app, a healthy
 #                      organizer. This is the claim's own test, before any public tag exists.
 #                      ONCE PER ARCHITECTURE, each on its own native hardware — an image that
 #                      only ever compiled is not an image anyone has run.
-#   3. gate-visibility — the packages must be ANONYMOUSLY pullable, checked against a staged
+#   4. gate-visibility — the packages must be ANONYMOUSLY pullable, checked against a staged
 #                      manifest. GHCR packages are born private and no workflow can flip
 #                      that; on a first release this gate is EXPECTED to fail, its message
 #                      names the one-time fix, and — because promotion has not run — the
 #                      public tags have not moved at all.
-#   4. promote       — only after 1–3 are green do the real tags move, as manifest-list
+#   5. promote       — only after 1–4 are green do the real tags move, as manifest-list
 #                      compositions of the staged pair (no rebuild, so what was checked is what
 #                      ships), and the promoted tags are then asserted anonymously pullable
 #                      themselves. In TWO passes with a gate between them: every `<version>`
@@ -50,7 +53,8 @@
 #
 # EVERY OTHER IMAGE IN THE COMPOSE HAS AN arm64 VARIANT, which is what makes the arm64 boot
 # gate possible rather than aspirational: caddy, postgres, minio, minio/mc and mailpit all
-# publish linux/arm64 in their own manifest lists, and the base these three are built from
+# publish linux/arm64 in their own manifest lists — and we now serve those manifests ourselves,
+# whole, so the arm64 half of each is ours to keep too. The base these three are built from
 # (`node:22-bookworm-slim`) publishes arm64/v8. Checked against the registries, not assumed.
 # `npm ci` picks the matching native halves off the committed lockfile — it records every
 # platform's optional package with its `cpu`/`os` fields, so `@next/swc-linux-arm64-gnu` and
@@ -119,6 +123,45 @@ jobs:
           TREE_VERSION="$(node -p 'require("./package.json").version')" \
             bash .github/scripts/ghcr-image-tags.sh >> "$GITHUB_OUTPUT"
           cat "$GITHUB_OUTPUT"
+
+  # THE THIRD-PARTY HALF OF THE STACK, SERVED BY US. `deploy/selfhost/images.lock` names every
+  # image the compose boots that this repository does not build — caddy, postgres, minio, mc and
+  # mailpit — and this job copies each into `ghcr.io/trafficflowhq` before the boot gate needs it.
+  #
+  # WHY IT EXISTS: on 2026-09-12 both MinIO repositories were deleted from Docker Hub, and every
+  # self-host install — on the release before this one as much as on this one — could no longer
+  # pull its object store. The boot gate caught it and refused to promote, which is the gate
+  # working; but an upstream can do that on any day, to any of these, and a release is not the
+  # only thing it breaks. An install that pulls only from us cannot be taken down that way.
+  #
+  # `crane copy` re-pushes the manifest unchanged, so our copy answers to the SAME digest as the
+  # original — which is what makes one column in the lock the identity of both and lets anyone
+  # verify our mirror against upstream. `buildx imagetools create` would recompose the index and
+  # is the wrong tool here for exactly that reason.
+  #
+  # IDEMPOTENT, and the script asks the DESTINATION first: a row already carrying its locked
+  # digest is verified with no push and no upstream contact at all. Deletions upstream cannot
+  # reach a release once the row is mirrored. The decision lives in a script for the same reason
+  # the tag decision does — a workflow's YAML can be read by a test, its shell can only be run.
+  mirror-images:
+    if: github.repository == 'trafficflowhq/ohmail'
+    needs: version
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: imjasonh/setup-crane@v0.4
+
+      - name: Mirror every third-party image the lock names
+        run: bash .github/scripts/mirror-images.sh
 
   build-push:
     if: github.repository == 'trafficflowhq/ohmail'
@@ -209,7 +252,7 @@ jobs:
   # exist yet.
   gate-boot:
     if: github.repository == 'trafficflowhq/ohmail'
-    needs: [version, build-push]
+    needs: [version, build-push, mirror-images]
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
     strategy:
@@ -265,7 +308,28 @@ jobs:
           ARCH: ${{ matrix.arch }}
         run: |
           set -euo pipefail
-          docker compose pull -q
+          # EVERY IMAGE THIS STACK BOOTS IS ONE OF OURS, asserted against the tree an operator
+          # actually clones. The root test asserts it in the monorepo; this is the same claim
+          # measured on the published artifact, which is the one that ships.
+          for REF in $(docker compose config --images); do
+            case "$REF" in
+              (ghcr.io/trafficflowhq/*) : ;;
+              (*) echo "refusing: $REF is not served by us — see deploy/selfhost/images.lock"; exit 1 ;;
+            esac
+          done
+          # PULLED ONE BY ONE, so an image that cannot be fetched is reported AS that image and
+          # that registry. On 2026-09-12 this gate died at `minio-init` and the operative line was
+          # `pull access denied for minio/mc` — the whole diagnosis, arrived at by reading a
+          # service's crash. It is produced on purpose now rather than found in a log.
+          FAILED=""
+          for REF in $(docker compose config --images); do
+            docker pull -q "$REF" >/dev/null 2>&1 || FAILED="$FAILED $REF"
+          done
+          if [ -n "$FAILED" ]; then
+            echo "the stack could not pull:"
+            for REF in $FAILED; do echo "  $REF   (registry: ${REF%%/*})"; done
+            exit 1
+          fi
           # WHAT THIS GATE RAN IS ASSERTED, NOT INFERRED FROM THE RUNNER LABEL. A matrix
           # whose tag suffix and runner drifted apart would boot one architecture twice and
           # report two green arches — and on hardware with binfmt installed it would not
@@ -314,27 +378,43 @@ jobs:
   # exactly what to do, and the public tags have not moved.
   gate-visibility:
     if: github.repository == 'trafficflowhq/ohmail'
-    needs: [version, build-push]
+    needs: [version, build-push, mirror-images]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
+      - uses: actions/checkout@v4
+
       - name: Anonymous-pull gate — the packages must be publicly pullable
         env:
           TAG: stage-${{ needs.version.outputs.version }}-${{ github.run_id }}-amd64
         run: |
           set -euo pipefail
+          check() { # <package> <reference>
+            TOKEN=$(curl -fsS "https://ghcr.io/token?scope=repository:trafficflowhq/$1:pull" | jq -r .token)
+            curl -fsS -o /dev/null \
+              -H "Authorization: Bearer $TOKEN" \
+              -H "Accept: application/vnd.oci.image.manifest.v1+json, application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.v2+json, application/vnd.docker.distribution.manifest.list.v2+json" \
+              "https://ghcr.io/v2/trafficflowhq/$1/manifests/$2"
+          }
+          PRIVATE=""
           for IMG in ohmail-server ohmail-worker ohmail-web; do
-            TOKEN=$(curl -fsS "https://ghcr.io/token?scope=repository:trafficflowhq/$IMG:pull" | jq -r .token)
-            if ! curl -fsS -o /dev/null \
-                 -H "Authorization: Bearer $TOKEN" \
-                 -H "Accept: application/vnd.oci.image.manifest.v1+json, application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.v2+json, application/vnd.docker.distribution.manifest.list.v2+json" \
-                 "https://ghcr.io/v2/trafficflowhq/$IMG/manifests/$TAG"; then
-              echo "ghcr.io/trafficflowhq/$IMG is not anonymously pullable."
-              echo "One-time fix: package settings -> Danger Zone -> Change visibility -> Public,"
-              echo "for ohmail-server, ohmail-worker and ohmail-web. Then re-run this workflow."
-              exit 1
-            fi
+            check "$IMG" "$TAG" || PRIVATE="$PRIVATE $IMG"
           done
+          # THE MIRRORED IMAGES ARE CHECKED TOO, and they are the likelier half to be wrong: a
+          # GHCR package is born PRIVATE, so the first release that mirrors a new row creates a
+          # package nobody but us can pull. The compose would then name a registry an operator
+          # cannot read — the same broken boot this mirroring exists to prevent, from the other
+          # side. Read from the lock so a new row is covered the day it is added.
+          while read -r NAME UPSTREAM _ _ _; do
+            case "$NAME" in ""|\#*) continue ;; esac
+            check "$NAME" "${UPSTREAM##*:}" || PRIVATE="$PRIVATE $NAME"
+          done < deploy/selfhost/images.lock
+          if [ -n "$PRIVATE" ]; then
+            echo "not anonymously pullable:$PRIVATE"
+            echo "One-time fix per package: package settings -> Danger Zone -> Change visibility"
+            echo "-> Public. Then re-run this workflow."
+            exit 1
+          fi
 
   # The fan-in, LAST: only when every build, the prune checks, the boot and the visibility
   # gates are green do the real tags move, as manifest-list compositions of the staged pair —

@@ -34,7 +34,7 @@ services:
       APP_PORT: 8099
 
   proxy:
-    image: caddy:2.10.2@sha256:c3d7ee5d2b11f9dc54f947f68a734c84e9c9666c92c88a7f30b9cba5da182adb
+    image: ghcr.io/trafficflowhq/mirror-caddy:2.10.2@sha256:c3d7ee5d2b11f9dc54f947f68a734c84e9c9666c92c88a7f30b9cba5da182adb
     restart: on-failure
     depends_on:
       web:
@@ -118,7 +118,7 @@ services:
       start_period: 30s
 
   db:
-    image: postgres:16.15@sha256:e17e86066e5ef83e0952a9347f5c792b7ece00972e2aa787a6986f471b3dd3d5
+    image: ghcr.io/trafficflowhq/mirror-postgres:16.15@sha256:f1c3376c26f2609ab9f29f71f824103fe2fcd8ee0346485cb6122a4f93df6f94
     restart: on-failure
     environment:
       POSTGRES_USER: ohmail
@@ -134,7 +134,7 @@ services:
       retries: 30
 
   minio:
-    image: quay.io/minio/minio:RELEASE.2025-04-22T22-12-26Z@sha256:a1ea29fa28355559ef137d71fc570e508a214ec84ff8083e39bc5428980b015e
+    image: ghcr.io/trafficflowhq/mirror-minio:RELEASE.2025-04-22T22-12-26Z@sha256:a1ea29fa28355559ef137d71fc570e508a214ec84ff8083e39bc5428980b015e
     restart: on-failure
     command: server /data
     env_file:
@@ -148,7 +148,7 @@ services:
       retries: 30
 
   minio-init:
-    image: quay.io/minio/mc:RELEASE.2025-04-16T18-13-26Z@sha256:aead63c77f9db9107f1696fb08ecb0faeda23729cde94b0f663edf4fe09728e3
+    image: ghcr.io/trafficflowhq/mirror-minio-mc:RELEASE.2025-04-16T18-13-26Z@sha256:aead63c77f9db9107f1696fb08ecb0faeda23729cde94b0f663edf4fe09728e3
     depends_on:
       minio:
         condition: service_healthy
@@ -169,7 +169,7 @@ services:
       - mc alias set local http://ohmail_minio_1:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD" && mc mb --ignore-existing "local/$$S3_BUCKET"
 
   mailpit:
-    image: axllent/mailpit:v1.24.2@sha256:3ad9483ac2dea937ae402b95435ab12c3355d2373a1002a49491db0be536d8fa
+    image: ghcr.io/trafficflowhq/mirror-mailpit:v1.24.2@sha256:3ad9483ac2dea937ae402b95435ab12c3355d2373a1002a49491db0be536d8fa
     restart: on-failure
     # The default mail sink's web UI, LOOPBACK ON THE DEVICE ONLY: reachable over an SSH
     # tunnel for whoever wants to read verification mail before configuring a real SMTP

@@ -91,6 +91,21 @@ Plainly, so you can decide with open eyes:
   `docker build -f apps/server/Dockerfile -t ghcr.io/trafficflowhq/ohmail-server:local .`
   (likewise `apps/worker/Dockerfile.selfhost` → `ohmail-worker` and
   `apps/webapp/Dockerfile` → `ohmail-web`), then set `OHMAIL_IMAGE_TAG=local`.
+- **Every image comes from one registry: ours.** Not just the three we
+  build — Caddy, Postgres, MinIO, `mc` and Mailpit are copied into
+  `ghcr.io/trafficflowhq` too, and the compose pulls those copies, pinned by
+  digest. A copy is byte-identical to the original, so the digest in
+  [`deploy/selfhost/images.lock`](../../deploy/selfhost/images.lock) names
+  both and you can check ours against upstream yourself. The reason is
+  plain: on 12 September 2026 both MinIO images were deleted from Docker
+  Hub, and every install that tried a fresh `docker compose up` lost its
+  object store that day. Nobody else's registry decides whether your stack
+  starts now. The lock also records what each image is licensed under and
+  where its source is.
+- **To move a pinned version**, edit that row in `images.lock` — the tag and
+  the digest, read with `crane digest <ref>` and never typed by hand — and
+  the next release mirrors it. Changing a compose line without its lock row
+  is refused before anything is published.
 - **The Umbrel app is a draft.** The manifest lives in
   [`deploy/umbrel/`](../../deploy/umbrel/) and is not yet in an app store.
   [UMBREL.md](./UMBREL.md) separates what works today from what is still

@@ -1,0 +1,26 @@
+# The third-party images the self-host stack boots, and the copies of them we serve.
+#
+# Every row is mirrored to ghcr.io/trafficflowhq/<name> by .github/scripts/mirror-images.sh,
+# which copies the manifest BYTE FOR BYTE — so the digest below names the upstream image and
+# our copy of it at the same time, and anyone can prove the two are the same image by asking
+# both registries for it. The compose files reference the mirrored copy, never upstream.
+#
+# Why: on 2026-09-12 both MinIO images were deleted from Docker Hub and every self-host
+# install lost its object store the moment it tried a fresh `docker compose up`. An upstream
+# that stops serving an image cannot do that to an install again — once a row is mirrored,
+# the mirror job never contacts upstream for it, and the boot never did.
+#
+# To bump a version: change the tag and the digest on one row, then run the mirror job (it
+# runs on every release; `workflow_dispatch` on ghcr-images runs it alone). Read a digest
+# with `crane digest <upstream ref>` and never by hand.
+#
+# LICENCE. Every row is redistributable and the column says under what. The two MinIO images
+# are Red Hat UBI (`distribution-scope=public`) carrying AGPL-3.0 binaries: the source column
+# is the corresponding source that licence requires us to point at, at the same release tag.
+#
+# name             upstream                                            digest                                                                   license     source
+mirror-caddy       docker.io/library/caddy:2.10.2                      sha256:c3d7ee5d2b11f9dc54f947f68a734c84e9c9666c92c88a7f30b9cba5da182adb  Apache-2.0  https://github.com/caddyserver/caddy-docker
+mirror-postgres    docker.io/library/postgres:16.15                    sha256:f1c3376c26f2609ab9f29f71f824103fe2fcd8ee0346485cb6122a4f93df6f94  PostgreSQL  https://github.com/docker-library/postgres
+mirror-minio       quay.io/minio/minio:RELEASE.2025-04-22T22-12-26Z    sha256:a1ea29fa28355559ef137d71fc570e508a214ec84ff8083e39bc5428980b015e  AGPL-3.0    https://github.com/minio/minio
+mirror-minio-mc    quay.io/minio/mc:RELEASE.2025-04-16T18-13-26Z       sha256:aead63c77f9db9107f1696fb08ecb0faeda23729cde94b0f663edf4fe09728e3  AGPL-3.0    https://github.com/minio/mc
+mirror-mailpit     docker.io/axllent/mailpit:v1.24.2                   sha256:3ad9483ac2dea937ae402b95435ab12c3355d2373a1002a49491db0be536d8fa  MIT         https://github.com/axllent/mailpit
