@@ -63,6 +63,8 @@ function clockTime(iso: string): string | null {
 const readable = (address: string | null): string | null =>
   address === null ? null : displayAddress(address);
 import { stripSpeaks, type MailState } from "./mail-state";
+/* The one place any surface asks whether a phone holds the mailbox — see `reader-holder.ts`. */
+import { phoneHolder, phoneHolderKey } from "./reader-holder";
 
 /**
  * Rendered twice, in two shapes. The rail carries everything that acts on the app rather than on mail, so
@@ -354,18 +356,17 @@ function speech(state: MailState, t: Translate, tm: Translate, cloud: boolean): 
        * `busy` either, because this install is not doing anything about it. */
       if (f?.arm === "elsewhere") {
         const name = f.who?.name;
-        /* A PHONE IS THE THIRD KIND THE LEASE RECORDS, and it fell to `filingElsewhereUnknown` —
-           "Another ohmail install files this mailbox on its own schedule" — which says two false
-           things at once: a phone organizes only while its app is open, never on a schedule, and
-           a phone whose claim has lapsed is filing nothing at all. The lapsed arm is the sentence
-           any stopped holder already gets; every ohmail phone writes a claim name, so it has one.
-           The running line is the rail's short form of the one phone sentence the app tells. */
-        const title = f.who?.kind === "cloud"
-          ? t("filingElsewhereCloud")
-          : f.who?.kind === "mobile"
-            ? (f.who.stopped && name
-              ? t("filingElsewhereLocalStopped", { name })
-              : tm("readerHolderPhoneShort"))
+        /* A PHONE IS THE THIRD KIND THE LEASE RECORDS and this rail had arms for two, so a phone
+           fell to `filingElsewhereUnknown` — "Another ohmail install files this mailbox on its
+           own schedule" — which is false twice over: a phone organizes while its app is OPEN,
+           never on a schedule, and a phone whose claim has LAPSED is filing nothing at all. Both
+           of its sentences come from `phoneHolderKey`, the one table every surface asks; the
+           title has room for the clause, so the rail takes the full form. */
+        const phone = phoneHolder(f.who, f.who?.stopped === true);
+        const title = phone
+          ? tm(phoneHolderKey(phone, "full"), { name: name ?? "" })
+          : f.who?.kind === "cloud"
+            ? t("filingElsewhereCloud")
             : f.who?.kind === "local" && name
               ? t(f.who.stopped ? "filingElsewhereLocalStopped" : "filingElsewhereLocal", { name })
               : t("filingElsewhereUnknown");

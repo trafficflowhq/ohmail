@@ -32,7 +32,7 @@ import { agoStamp, dayStamp } from "../../webapp/app/shell/format";
 import { activeFormatLocale, activeFormatZone } from "../../webapp/app/shell/locale";
 import { useMailState } from "../../webapp/app/shell/MailStateProvider";
 import { goFirstRun } from "../../webapp/app/shell/routing";
-import { readerHolder } from "../../webapp/app/shell/reader-holder";
+import { phoneHolder, phoneHolderKey, readerHolder } from "../../webapp/app/shell/reader-holder";
 import { bridgeFetch, engineLogout, retryingBridgeFetch, type EngineStatus } from "./bridge-fetch.js";
 import { firstRunDoorFor } from "./doors.js";
 import { openWeb } from "./native.js";
@@ -1187,6 +1187,11 @@ export function DesktopMailboxes(
       && !m.releaseRequestedAt;
     const stopState: "queued" | "pending" | undefined =
       stopQueued ? "queued" : role === "organizer" && m.releaseRequestedAt ? "pending" : undefined;
+    /* IS THE HOLDER A PHONE, asked once for this row. `mobile` is the third `OrganizerKind` and
+       this pane had arms for two, so a phone took `readerSinceUnknown` — "Since <date>. This
+       computer reads the mailbox" — which names no holder and promises a schedule a phone does
+       not keep. `phoneHolderKey` picks between its two sentences; this file writes neither. */
+    const phone = phoneHolder(m.organizedBy, m.organizerState === "stopped");
     /* THE CHIP'S LABEL, computed once: it is the chip's caption AND the text of the live node
        beside the chip (below), and the two must never disagree. */
     const chipLabel =
@@ -1256,6 +1261,11 @@ export function DesktopMailboxes(
                  next process assembly rather than on a tick. */
               : m.legacyStandDown === true
                 ? t("readerLegacyStandDown")
+                /* A PHONE ABOVE EVERY ARM BELOW IT, stopped one included: both of its sentences
+                   carry the state themselves, `readerStopped` names no phone, and the dated arms
+                   open with a date this row's phone line does not have. */
+                : phone
+                ? t(phoneHolderKey(phone, "full"), { name: holderOf(m) })
                 : m.organizerState === "stopped"
                 /* NO AGE, because there is no timestamp that would make one true. It said "last
                    checked in {when}" and was handed `organizedBy.since` — which is when that install
@@ -1288,13 +1298,7 @@ export function DesktopMailboxes(
                         name: holderOf(m),
                         since: day(m.organizedBy?.since ?? null),
                       })
-                    /* A PHONE IS NOT A DATED INSTALL. Both sentences above describe something
-                       that files on its own schedule; a phone organizes only while its app is
-                       open, and this row used to hand it `readerSinceUnknown`, which names no
-                       holder at all. The stopped arm above still wins for a lapsed claim. */
-                    : m.organizedBy?.kind === "mobile"
-                      ? t("readerHolderPhone")
-                      : t("readerSinceUnknown", { since: day(m.organizedBy?.since ?? null) })
+                    : t("readerSinceUnknown", { since: day(m.organizedBy?.since ?? null) })
           }
         />
         {/* ── THE PRESS IS ANNOUNCED ────────────────────────────────────────────────────────────

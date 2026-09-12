@@ -1855,36 +1855,48 @@ describe("the reader row's three states, and the one that had no holder at all",
   /**
    * THE FOURTH STATE: A PHONE. `mobile` is the third `OrganizerKind` and it had no arm here, so a
    * phone took `readerSinceUnknown` — "Since <date>. This computer reads the mailbox…", which
-   * names no holder at all and promises the schedule a phone does not keep. It organizes only
-   * while its app is open, and that is the whole of what this row now says about one.
+   * names no holder at all and promises the schedule a phone does not keep. It organizes while
+   * its app is open, and that is what this row says about one; the words come from
+   * `reader-holder.ts`'s table, which the webapp's three surfaces read as well.
    *
-   * WATCH IT FAIL: delete the `kind === "mobile"` arm and the first case reddens on
-   * `readerSinceUnknown`, which is the released behaviour exactly.
+   * WATCH IT FAIL: remove `phone` from the ladder and this reddens on `readerSinceUnknown`,
+   * which is the released behaviour exactly.
    */
-  it("(d) a PHONE holder says so, and says a phone organizes only while its app is open", async () => {
-    FACTS = [readerWith({ kind: "mobile", name: "ohmail on a phone", since: "2026-08-30T09:00:00.000Z" })];
+  const PHONE = "ohmail on a phone";
+
+  it("(d) a PHONE holder is named as one, and says a phone organizes while its app is open", async () => {
+    FACTS = [readerWith({ kind: "mobile", name: PHONE, since: "2026-08-30T09:00:00.000Z" })];
     const row = orgRow(await render("local"));
-    expect(row.label).toBe(mailboxCopy.readerLabel!.replace("{name}", "ohmail on a phone"));
-    expect(row.description).toBe(mailboxCopy.readerHolderPhone!);
+    expect(row.label).toBe(mailboxCopy.readerLabel!.replace("{name}", PHONE));
+    expect(row.description).toBe(mailboxCopy.readerHolderPhone!.replace("{name}", PHONE));
     expect(row.description, "the phone took the holder-less sentence")
       .not.toBe(mailboxCopy.readerSinceUnknown!.replace("{since}", "30 Aug 2026"));
     expect(row.description.toLowerCase(), "a phone was called a computer")
       .not.toContain("computer");
   });
 
-  it("(d) a phone whose claim has STOPPED keeps the stopped sentence, never 'organizing'", async () => {
-    /* The stopped arm sits above the kind branch, so a lapsed phone is told it stopped rather
-       than that it is organizing. Asserted from this side because the rail's row is the same
-       fact and the two surfaces may not disagree about it. */
+  it("(d) a phone whose claim recorded no name still gets a phone's sentence", async () => {
+    FACTS = [readerWith({ kind: "mobile", name: "", since: "2026-08-30T09:00:00.000Z" })];
+    const row = orgRow(await render("local"));
+    expect(row.description).toBe(mailboxCopy.readerHolderPhoneUnnamed!);
+    expect(row.description, "an unnamed phone was called another install")
+      .not.toContain(mailboxCopy.readerHolderUnknown!);
+  });
+
+  it("(d) a phone whose claim has STOPPED is past tense, and says nothing is organizing", async () => {
+    /* The same fact the rail's row carries, asserted from this side too: the two surfaces may not
+       disagree about a lapsed phone, and `readerStopped` — which every other holder takes — names
+       no phone and does not say a phone stops when its app closes. */
     FACTS = [{
-      ...readerWith({ kind: "mobile", name: "ohmail on a phone", since: "2026-08-30T09:00:00.000Z" }),
+      ...readerWith({ kind: "mobile", name: PHONE, since: "2026-08-30T09:00:00.000Z" }),
       organizerState: "stopped",
     }];
     const row = orgRow(await render("local"));
-    expect(row.description)
-      .toBe(mailboxCopy.readerStopped!.replace("{name}", "ohmail on a phone"));
+    expect(row.description).toBe(mailboxCopy.readerHolderPhoneStopped!.replace("{name}", PHONE));
     expect(row.description, "a stopped phone was reported as organizing the mailbox")
-      .not.toBe(mailboxCopy.readerHolderPhone!);
+      .not.toBe(mailboxCopy.readerHolderPhone!.replace("{name}", PHONE));
+    expect(row.description, "the stopped phone took the holder-kind-blind sentence")
+      .not.toBe(mailboxCopy.readerStopped!.replace("{name}", PHONE));
   });
 });
 

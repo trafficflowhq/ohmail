@@ -69,3 +69,57 @@ export function holderVerdict(
   if (mailbox.organizedBy === undefined) return "unknown";
   return mailbox.organizedBy === null ? "nobody" : "somebody";
 }
+
+/* ── A PHONE IS THE THIRD HOLDER KIND, AND FOUR SURFACES HAD ARMS FOR TWO ───────────────────
+   `OrganizerKind` is `local | cloud | mobile`. The rail, the desktop mailboxes pane, both
+   first-run reader rows and the restore card branched on `local` and `cloud` and let a phone
+   fall into whichever arm was last — "Another ohmail install files this mailbox on its own
+   schedule", "Since <date>. This computer reads the mailbox", or no holder named at all. A
+   phone's one difference is that it organizes while its app is open, and none of those
+   sentences carried it. Asked ONCE here, so four surfaces cannot drift into four wordings. */
+
+/** Whether the phone still renews its claim — the two states a holder line has to tell apart. */
+export type PhoneHolderState = "organizing" | "stopped";
+
+/** A phone holder, and the two things that decide which of the sentences below it gets. */
+export interface PhoneHolder {
+  state: PhoneHolderState;
+  /** Whether the claim recorded a display name: the sentence interpolates one, or stands without. */
+  named: boolean;
+}
+
+/**
+ * How much room the surface has. `full` is a paragraph and carries the clause; `short` is a line
+ * and drops it, which is what {@link PHONE_HOLDER_WHY_KEY} exists for. `short` is stateless
+ * because its one surface — the restore card — reads a SAVED PROFILE rather than a live claim,
+ * so it knows the producer's kind and nothing about whether that phone still holds anything.
+ */
+export type PhoneHolderVoice = "full" | "short";
+
+/** Is a phone organizing this mailbox, and is it still doing it. `null` for every other holder. */
+export function phoneHolder(
+  organizedBy: ReaderHolderColumns | null | undefined,
+  stopped: boolean,
+): PhoneHolder | null {
+  if (!organizedBy || organizedBy.kind !== "mobile") return null;
+  const name = organizedBy.name;
+  return {
+    state: stopped ? "stopped" : "organizing",
+    named: name !== null && name !== undefined && name.trim() !== "",
+  };
+}
+
+/**
+ * The `mailboxes` key the surface renders. THE ONE TABLE: no surface spells a phone sentence of
+ * its own, and `phone-holder-sentence.test.tsx`'s census refuses a second site that does.
+ */
+export function phoneHolderKey(phone: PhoneHolder, voice: PhoneHolderVoice): string {
+  if (voice === "short") return "readerHolderPhoneShort";
+  if (phone.state === "stopped") {
+    return phone.named ? "readerHolderPhoneStopped" : "readerHolderPhoneStoppedUnnamed";
+  }
+  return phone.named ? "readerHolderPhone" : "readerHolderPhoneUnnamed";
+}
+
+/** The clause the short form has no room for, for that line's title. */
+export const PHONE_HOLDER_WHY_KEY = "readerHolderPhoneWhy";

@@ -27,6 +27,8 @@ import {
   type ProfileImportAppliedWire, type ProfileImportCandidateWire, type ProfileImportCountsWire,
 } from "../api-client";
 import { displayAddress } from "./idn";
+/* The one place any surface asks whether a phone holds the mailbox — see `reader-holder.ts`. */
+import { PHONE_HOLDER_WHY_KEY, phoneHolder, phoneHolderKey } from "./reader-holder";
 
 /** How often an unanswered mailbox is re-asked, at most. The connect case rides the first beat. */
 export const PROFILE_IMPORT_RECHECK_MS = 5 * 60 * 1000;
@@ -335,8 +337,8 @@ export function ProfileImportCard({
   onAcknowledge: () => void;
 }) {
   const t = useTranslations("profileImport");
-  // The phone holder's sentence is one sentence for the whole app, and it lives with the other
-  // holder copy (`mailboxes.reader*`) rather than being spelled a second time here.
+  // The phone holder's line is one line for the whole app and lives with the rest of the holder
+  // copy (`mailboxes.reader*`), rather than being spelled a second time here.
   const tm = useTranslations("mailboxes");
   const locale = useLocale();
   const format = useFormatter();
@@ -383,6 +385,12 @@ export function ProfileImportCard({
   }
 
   const { counts, updatedAt, producer } = offer.candidate;
+  /* WAS IT A PHONE THAT SAVED THIS. The card branched on `cloud` and `local` and let a phone fall
+     into the bare "Saved {when}.", which names nobody, one line under a sentence that would have
+     called it "another computer". A saved profile is a SNAPSHOT and not a live claim, so this is
+     the one surface that cannot know whether that phone still holds anything — `stopped` is
+     `false` here because the wire carries no claim state, not because the phone is running. */
+  const phone = phoneHolder(producer, false);
   const details = detailsOf(t, locale, counts);
   const savedDate = new Date(updatedAt);
   const when = Number.isNaN(savedDate.getTime())
@@ -401,12 +409,16 @@ export function ProfileImportCard({
               : t("savedBy", { when })}
         </p>
       ) : null}
-      {/* WHO SAVED IT, WHEN IT WAS A PHONE. The dated line above has no phone arm — a phone fell
-          into the bare "Saved {when}.", which names nobody, and the local arm one line up says
-          "on another computer". The holder line is its own paragraph so it is said whether or not
-          the stamp parsed, in the same words every other surface uses for a phone. */}
-      {producer.kind === "mobile"
-        ? <p className="pfi-meta">{tm("readerHolderPhoneShort")}</p>
+      {/* ITS OWN PARAGRAPH, so the phone is named whether or not the stamp parsed — the dated
+          line above renders only for a readable `updatedAt`. THE SHORT VOICE: this line has no
+          room for the clause, so the clause is its title, which is the bargain
+          `PHONE_HOLDER_WHY_KEY` exists for. */}
+      {phone
+        ? (
+          <p className="pfi-meta" title={tm(PHONE_HOLDER_WHY_KEY)}>
+            {tm(phoneHolderKey(phone, "short"))}
+          </p>
+        )
         : null}
       {errorLine}
       {/* What the button will do, before it is pressed — including what it will not do. */}

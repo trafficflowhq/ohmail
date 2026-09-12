@@ -29,7 +29,7 @@ import {
 } from "./onboarding";
 import type { FirstRunHost, FirstRunMailboxInput, FirstRunProbeOk } from "./first-run-host";
 import { pullEtaMs, pullRate, pullRemaining, pullSampleStep, type PullSample } from "./pull-rate";
-import { holderVerdict, readerHolder } from "./reader-holder";
+import { holderVerdict, phoneHolder, phoneHolderKey, readerHolder } from "./reader-holder";
 import "./first-run.css";
 
 /**
@@ -714,6 +714,16 @@ export function FirstRun({
    */
   const dated = Boolean(organizedSince);
   /**
+   * AND IS THE HOLDER A PHONE — the third fact, asked once for both reader rows. `mobile` is the
+   * third `OrganizerKind` and neither row had an arm for it, so a phone took the LOCAL sentence:
+   * "This computer reads the mailbox", about a phone, promising a schedule a phone does not
+   * keep. Both of its sentences come from `phoneHolderKey` rather than from here.
+   */
+  const phone = phoneHolder(
+    facts.mailbox?.organizedBy,
+    facts.mailbox?.organizerState === "stopped",
+  );
+  /**
    * IS THIS INSTALL THE ORGANIZER — the one fact the summary is allowed to report work on.
    *
    * `!== "reader"` and not `=== "organizer"`, on {@link OnboardingMailbox.organizerRole}'s own
@@ -1053,32 +1063,29 @@ export function FirstRun({
                  */
                 description={held === "nobody"
                   ? tm("readerNobodyReads")
-                  : facts.mailbox?.organizerState === "stopped"
-                  /* NO AGE, and the prop that carried one is gone with it. `readerStopped` took a
-                     `{when}` and was handed `organizedBy.since` — which is when that install
-                     BECAME the organizer, not when it was last seen; the heartbeat is
-                     deliberately not persisted. The copy dropped the placeholder and this kept
-                     feeding it, which is a prop with a caller and no consumer. */
-                  ? tm("readerStopped", { name: holderName(facts) ?? tm("readerHolderUnknown") })
-                  /* UNDATED BEFORE THE THREE DATED ONES, and ahead of the kind: every arm below
-                     opens with the date, so with no date there is nothing for any of them to
-                     open with. `readerStopped` stays above this — it carries no date by design
-                     and would lose its own sentence to this one. */
-                  : !dated
-                    ? tm("readerReadsOnly")
-                    : held === "unnamed"
-                      ? tm("readerSinceUnknown", { since: organizedSince ?? "" })
-                      : facts.mailbox?.organizedBy?.kind === "cloud"
-                        ? tm("readerSinceCloud", { since: organizedSince ?? "" })
-                        /* A PHONE ON ITS OWN ARM, ahead of the local one it used to fall into —
-                           which says "This computer", about a phone, and promises a schedule a
-                           phone does not keep: it organizes only while its app is open. The
-                           stopped arm above still wins for a lapsed claim. */
-                        : facts.mailbox?.organizedBy?.kind === "mobile"
-                          ? tm("readerHolderPhone")
-                          : tm("readerSinceLocal", {
-                            since: organizedSince ?? "", name: holderName(facts)!,
-                          })}
+                  /* A PHONE ABOVE EVERY ARM BELOW IT, stopped one included: its two sentences
+                     already carry the state, `readerStopped` names no phone, and every dated arm
+                     promises a schedule a phone does not keep. `phoneHolderKey` picks which. */
+                  : phone
+                    ? tm(phoneHolderKey(phone, "full"), { name: holderName(facts) ?? "" })
+                    : facts.mailbox?.organizerState === "stopped"
+                    /* NO AGE, and the prop that carried one is gone with it. `readerStopped` took
+                       a `{when}` and was handed `organizedBy.since` — which is when that install
+                       BECAME the organizer, not when it was last seen; the heartbeat is
+                       deliberately not persisted. */
+                      ? tm("readerStopped", { name: holderName(facts) ?? tm("readerHolderUnknown") })
+                      /* UNDATED BEFORE THE THREE DATED ONES, and ahead of the kind: every arm
+                         below opens with the date, so with no date there is nothing for any of
+                         them to open with. */
+                      : !dated
+                        ? tm("readerReadsOnly")
+                        : held === "unnamed"
+                          ? tm("readerSinceUnknown", { since: organizedSince ?? "" })
+                          : facts.mailbox?.organizedBy?.kind === "cloud"
+                            ? tm("readerSinceCloud", { since: organizedSince ?? "" })
+                            : tm("readerSinceLocal", {
+                              since: organizedSince ?? "", name: holderName(facts)!,
+                            })}
               />
               <SettingsChoice
                 name={`${ids}-elsewhere`} ariaLabel={t("elsewhereTitle")} value={elsewhereChoice}
@@ -1395,18 +1402,18 @@ export function FirstRun({
                        exist, one line under a sentence saying this computer moves nothing. */
                     description={held === "nobody"
                       ? tm("readerNobodyReads")
-                      /* THE SAME UNDATED ARM AS THE BANNER, in the same position. This row has no
-                         stopped arm to sit under, so it is second. */
-                      : !dated
-                        ? tm("readerReadsOnly")
-                        : held === "unnamed"
-                          ? tm("readerSinceUnknown", { since: organizedSince ?? "" })
-                          : facts.mailbox?.organizedBy?.kind === "cloud"
-                            ? tm("readerSinceCloud", { since: organizedSince ?? "" })
-                            /* THE SAME PHONE ARM AS THE BANNER, in the same position and from
-                               the same key: the two rows may not describe one holder differently. */
-                            : facts.mailbox?.organizedBy?.kind === "mobile"
-                              ? tm("readerHolderPhone")
+                      /* THE SAME PHONE ARM AS THE BANNER, in the same position and from the same
+                         derivation: the two rows may not describe one holder differently. */
+                      : phone
+                        ? tm(phoneHolderKey(phone, "full"), { name: holderName(facts) ?? "" })
+                        /* THE SAME UNDATED ARM AS THE BANNER. This row has no stopped arm to sit
+                           under, so it is third. */
+                        : !dated
+                          ? tm("readerReadsOnly")
+                          : held === "unnamed"
+                            ? tm("readerSinceUnknown", { since: organizedSince ?? "" })
+                            : facts.mailbox?.organizedBy?.kind === "cloud"
+                              ? tm("readerSinceCloud", { since: organizedSince ?? "" })
                               : tm("readerSinceLocal", {
                                 since: organizedSince ?? "", name: holderName(facts)!,
                               })}
