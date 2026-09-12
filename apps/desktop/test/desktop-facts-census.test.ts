@@ -96,6 +96,11 @@ describe("the desktop mailbox-facts seam", () => {
       },
       serverMessageCount: 4242,
       smtpMaxSizeBytes: 26_214_400,
+      /* The provider's own Junk folder (mail 0065) — the local engine discovers it on every
+         attach and answers it here. Nested on purpose: the surfaces that render it show the
+         LEAF, so a seam that forwarded a truncated path would still look right in one test and
+         wrong on any server that keeps Junk under INBOX. */
+      junkFolder: "INBOX/Junk",
       /* Why sending is not set up — the local door records it when only the SUBMISSION dial is
          refused, so a mailbox can be receiving perfectly with no way to send. A member of the
          probe taxonomy, so the value here is one a real engine answers with. */
@@ -144,6 +149,9 @@ describe("the desktop mailbox-facts seam", () => {
     expect(got!.hostedMessageCount).toBe(4200);
     expect(got!.messageCount).toBe(4210);
     expect(got!.pendingMoves).toBe(4);
+    /* Untouched, path and all: the rail and search derive the leaf themselves, and a seam that
+       normalised it here would put two spellings of one folder into the product. */
+    expect(got!.junkFolder).toBe("INBOX/Junk");
     expect(got!.displayName).toBe("Someone");
     expect(got!.organizeConsentedAt).toBe("2026-09-02T09:00:00.000Z");
     /* THE NOTICE IS A COMPARISON OF TWO INSTANTS, so a seam that forwarded one and defaulted the
