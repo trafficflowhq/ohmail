@@ -3,8 +3,10 @@ import { networkInterfaces } from "node:os";
 import { makeHttpServer } from "@trafficflow/core/adapters/http-host";
 import {
   createAdmission,
+  socketRefusalReporter,
   HOST_BODY_MAX_BYTES,
   HOST_HEADERS_TIMEOUT_MS,
+  HOST_MAX_CONNECTIONS,
   HOST_REQUEST_TIMEOUT_MS,
   HOST_SHUTDOWN_GRACE_MS,
   type Admission,
@@ -127,6 +129,10 @@ export function startLanListener(opts: {
   graceMs?: number;
   /** TEST SEAM — see `AdapterOptions.connectionsCheckingIntervalMs`. */
   connectionsCheckingIntervalMs?: number;
+  /** TEST SEAM — production takes `HOST_MAX_CONNECTIONS`. */
+  maxConnections?: number;
+  /** TEST SEAM — production takes `HOST_HEADERS_TIMEOUT_MS`. */
+  headersTimeoutMs?: number;
 }): Promise<LanListener> {
   if (!isUnicastInterfaceShape(opts.address)) {
     return Promise.reject(new Error(
@@ -147,10 +153,17 @@ export function startLanListener(opts: {
   const admission = opts.admission ?? createAdmission();
   const tracked = admission.wrap(opts.handle);
   const drained = (): Promise<void> => admission.drained();
+  const refusals = socketRefusalReporter(opts.log);
   const server = makeHttpServer(tracked, {
     bodyMaxBytes: HOST_BODY_MAX_BYTES,
-    headersTimeoutMs: HOST_HEADERS_TIMEOUT_MS,
+    headersTimeoutMs: opts.headersTimeoutMs ?? HOST_HEADERS_TIMEOUT_MS,
     requestTimeoutMs: HOST_REQUEST_TIMEOUT_MS,
+    // The connection bound matters MORE here than on the loopback door: this is the reachable
+    // one, so anyone on the chosen network could otherwise hold every socket the kernel gives.
+    // It also buys the TLS handshake a ceiling, which is where a socket with no header at all
+    // dies on this door — node's own default there is two minutes.
+    maxConnections: opts.maxConnections ?? HOST_MAX_CONNECTIONS,
+    onSocketRefused: (why) => refusals.note(why),
     // The transport half of this door. Same caps, same timeouts, same drain as the loopback
     // door — the ONLY difference between the two listeners is this line.
     tls: { key: opts.identity.key, cert: opts.identity.cert },
@@ -185,6 +198,8 @@ export function startLanListener(opts: {
             grace.unref?.();
             server.close(() => {
               clearTimeout(grace);
+              // Whatever a refusal window still owes is said before the door stops reporting.
+              refusals.flush();
               // Sockets gone ≠ store safe — the drain is the same store-safety wait the
               // loopback door keeps; see `trackAdmission`.
               void drained().then(() => closed());

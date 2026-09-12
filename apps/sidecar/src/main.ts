@@ -3,7 +3,9 @@ import { Writable } from "node:stream";
 import { fileURLToPath } from "node:url";
 import { createSidecar, type Sidecar, type SidecarConfig } from "./engine.js";
 import { createCloudSidecar, type CloudSidecar, type CloudSidecarConfig } from "./cloud-engine.js";
-import { createAdmission, maybeStartHostListener, type HostListener } from "./host-listener.js";
+import {
+  createAdmission, maybeHoldStoodDownPort, maybeStartHostListener, type HostListener,
+} from "./host-listener.js";
 import { maybeStartLanListener, type LanListener } from "./host-lan.js";
 import { encodeFrame, PROTOCOL_VERSION } from "./frame.js";
 import { serveOverStdio, type StdioHost } from "./host.js";
@@ -213,6 +215,23 @@ export function configFromEnv(env: NodeJS.ProcessEnv = process.env): SidecarConf
 }
 
 /**
+ * The stand-down knob, read APART from `configFromEnv` because it composes nothing: no route, no
+ * handler and no state of the engine changes. `OHMAIL_HOST_STAND_DOWN=<port>` says host mode is
+ * off and this port must stay held; `resolveStandDownPort` is the one place that rules on the
+ * value, and it refuses the knob outright while host mode is armed.
+ */
+export function standDownFromEnv(
+  env: NodeJS.ProcessEnv = process.env,
+): { hostMode?: boolean; standDownPort?: number } {
+  return {
+    ...(env.OHMAIL_HOST_MODE === "1" ? { hostMode: true } : {}),
+    ...(env.OHMAIL_HOST_STAND_DOWN?.trim()
+      ? { standDownPort: Number(env.OHMAIL_HOST_STAND_DOWN) }
+      : {}),
+  };
+}
+
+/**
  * The Cloud configuration — and the refusal that makes the safe branch STRUCTURAL. Cloud mode
  * mirrors a hosted account and never opens IMAP, not enforced by the ABSENCE of IMAP settings: the
  * presence of ANY non-empty `OHMAIL_IMAP_*` is a hard refusal, so a launcher materializing every
@@ -373,6 +392,12 @@ export async function runSidecar(): Promise<void> {
   // rather than doubling it. See `createAdmission` in host-listener.ts.
   const admission = createAdmission();
   hostListener = await maybeStartHostListener(sidecar, log, admission);
+  // …and when host mode is OFF, the port it used to publish may still need HOLDING. A
+  // `tailscale serve` registration outlives a withdrawal that refused, so a released port is a
+  // published route to whatever binds it next; `OHMAIL_HOST_STAND_DOWN=<port>` is the shell
+  // asking for the door to stay bound and say it has stopped. Never both: the knob is refused
+  // by name while host mode is armed, so this can only ever run where the mount above declined.
+  hostListener ??= await maybeHoldStoodDownPort(standDownFromEnv(), log);
   // The LAN fallback's second bind — mounted iff the operator chose an interface, on the
   // same port. API-only; `host-lan.ts` carries the audit. A refusal degrades with a
   // named line and every other door keeps serving.
