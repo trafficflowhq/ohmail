@@ -24,16 +24,19 @@ Signed installers — a real Apple Developer ID and an Authenticode certificate.
 
 Opening a big account could take the app past four gigabytes and hold a CPU core for minutes after
 the first sync — on an 8 GB machine the system ran out of memory and began killing other
-applications. The window now keeps a window of your mail — the last ninety days, or five thousand
-messages, whichever is larger — and reaches past it on demand. Nothing about what you can read
-changes: the whole mailbox is still on the machine, in the engine's own store, and older mail and
-search are answered from there. A message's full text is now written once per batch instead of
-twice per message, so loading the recent mail after a first sync no longer pins a core, and the
-full messages the window holds are bounded too. The window also reports what it is costing every
-five minutes beside the engine's own figures, and on Linux it volunteers itself to the kernel ahead
-of your other applications. Tagged mail is kept whatever its age, so a tag still shows all of it;
-History, which has no list of its own on the server, now says it is showing what this device kept
-and points at Search for the rest, instead of printing a count that stops at the window.
+applications. The window now keeps a window of your mail — the last ninety days, at least five
+thousand messages and at most ten thousand — and reaches past it on demand. It keeps that window
+while the mail is still arriving, so importing a large mailbox for the first time costs the window
+the same as living with it afterwards, rather than the whole mailbox until the import finishes.
+Nothing about what you can read changes: the whole mailbox is still on the machine, in the engine's
+own store, and older mail and search are answered from there. A message's full text is now written
+once per batch instead of twice per message, so loading the recent mail after a first sync no longer
+pins a core, and the full messages the window holds are bounded too. The window also reports what it
+is costing every five minutes beside the engine's own figures, and on Linux it volunteers itself to
+the kernel ahead of your other applications. Tagged mail is kept whatever its age, so a tag still
+shows all of it; History, which has no list of its own on the server, now says it is showing what
+this device kept and points at Search for the rest, instead of printing a count that stops at the
+window.
 
 ### A phone asks for a mailbox only when you ask it to
 

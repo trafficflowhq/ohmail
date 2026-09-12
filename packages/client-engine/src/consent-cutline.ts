@@ -538,13 +538,13 @@ export function presentationReader(reader: EntityReader, partition: ConsentParti
       }
       return out;
     },
-    entries<T = unknown>(type: string): Array<{ id: string; entity: T }> {
+    entries<T = unknown>(type: string): Array<{ id: string; entity: T; seq: number }> {
       const rows = reader.entries<T>(type);
       if (type !== "message") return rows;
-      const out: Array<{ id: string; entity: T }> = [];
+      const out: Array<{ id: string; entity: T; seq: number }> = [];
       for (const r of rows) {
         const p = project(r.entity as unknown as EngineMessage);
-        if (p) out.push({ id: r.id, entity: p as unknown as T });
+        if (p) out.push({ id: r.id, entity: p as unknown as T, seq: r.seq });
       }
       return out;
     },

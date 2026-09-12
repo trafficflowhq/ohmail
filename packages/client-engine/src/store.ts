@@ -27,8 +27,12 @@ export class MirrorGenerationChanged extends Error {
 export interface EntityReader {
   get<T = unknown>(type: string, id: string): T | undefined;
   list<T = unknown>(type: string): T[];
-  /** Like list(), but with the record id (some DTOs — message_state — carry no `id`). */
-  entries<T = unknown>(type: string): Array<{ id: string; entity: T }>;
+  /**
+   * Like list(), but with the record id (some DTOs — message_state — carry no `id`) and the
+   * record's last-applied `seq`. The seq is what lets a reader tell a row that arrived in the page
+   * it is looking at from one that was already here — the windowed prune's one-page grace.
+   */
+  entries<T = unknown>(type: string): Array<{ id: string; entity: T; seq: number }>;
   /** Monotonic change stamp — bump ⇒ any derived cache (search index…) is stale. */
   version(): number;
 }
@@ -418,8 +422,8 @@ export abstract class BaseMirrorStore implements MirrorStore {
     return this.bucketsOf(type).map((rec) => rec.entity as T);
   }
 
-  entries<T = unknown>(type: string): Array<{ id: string; entity: T }> {
-    return this.bucketsOf(type).map((rec) => ({ id: rec.id, entity: rec.entity as T }));
+  entries<T = unknown>(type: string): Array<{ id: string; entity: T; seq: number }> {
+    return this.bucketsOf(type).map((rec) => ({ id: rec.id, entity: rec.entity as T, seq: rec.seq }));
   }
 
   getMeta<T = unknown>(key: string): T | undefined {
