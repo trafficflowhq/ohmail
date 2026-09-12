@@ -2291,6 +2291,8 @@
     "readerNobodyReads": "This computer reads it; it moves nothing and screens nothing until you press Organize here.",
     "readerLegacyStandDown": "This copy of ohmail stopped opening the mailbox when it stood down, so it is not reading it either. Organizing here again takes a restart.",
     "readerHolderUnknown": "another install",
+    "readerHolderPhone": "A phone is organizing this mailbox. It does so only while the ohmail app is open on it.",
+    "readerHolderPhoneShort": "Organized by a phone (while its app is open)",
     "readerStopped": "{name} has stopped checking in. Until something organizes this mailbox, new mail waits in the inbox.",
     "organizeHere": "Organize here",
     "organizeHereInstead": "Organize here instead",

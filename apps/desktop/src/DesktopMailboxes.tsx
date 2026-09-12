@@ -1288,7 +1288,13 @@ export function DesktopMailboxes(
                         name: holderOf(m),
                         since: day(m.organizedBy?.since ?? null),
                       })
-                    : t("readerSinceUnknown", { since: day(m.organizedBy?.since ?? null) })
+                    /* A PHONE IS NOT A DATED INSTALL. Both sentences above describe something
+                       that files on its own schedule; a phone organizes only while its app is
+                       open, and this row used to hand it `readerSinceUnknown`, which names no
+                       holder at all. The stopped arm above still wins for a lapsed claim. */
+                    : m.organizedBy?.kind === "mobile"
+                      ? t("readerHolderPhone")
+                      : t("readerSinceUnknown", { since: day(m.organizedBy?.since ?? null) })
           }
         />
         {/* ── THE PRESS IS ANNOUNCED ────────────────────────────────────────────────────────────
