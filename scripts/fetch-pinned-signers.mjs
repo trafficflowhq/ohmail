@@ -6,7 +6,7 @@
  * from the registry, and Sparkle was curled beside it — so either publisher could change what that step
  * executes, blast radius remote code execution on every install. So fetching happens here, in a step
  * holding no key, and every byte is pinned before the signing step may run it: the Tauri signer is pinned in
- * `TAURI` below (version + npm's sha512 `integrity`, since the published repo ships no lockfile to read it
+ * `TAURI` below (version + npm's sha512 `integrity`, since the published repo ships no `pnpm-lock.yaml` to read it
  * from), and Sparkle twice (sha256 of the archive, and sha256 of the `sign_update` binary taken out of it —
  * the archive carries THREE files named `sign_update`, and `find … | head -1` once selected a retired DSA-signing shell script). A pin that does not match is a refusal, never a warning: the point is the signing step cannot start. */
 import { createHash } from "node:crypto";

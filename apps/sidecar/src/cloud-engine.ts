@@ -373,7 +373,7 @@ export const PROBE_DEADLINE_MS = 12_000;
  * something else. The private-CA branch is what this route exists for: a self-host stack issues its
  * own certificates and Node verifies against its compiled-in roots, so it fails
  * `UNABLE_TO_GET_ISSUER_CERT_LOCALLY` (measured against the running stack) — the honest answer names
- * the CA file to install, and is emphatically not an offer to skip verification, which nothing here can do.
+ * the `NODE_EXTRA_CA_CERTS` file to install, never an offer to skip verification, which nothing here can do.
  */
 export async function probeCloudServer(cloudUrl: string, fetchImpl: typeof fetch): Promise<Response> {
   const base = cloudUrl.replace(/\/+$/, "");
