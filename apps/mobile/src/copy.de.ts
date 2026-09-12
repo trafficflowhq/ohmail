@@ -704,6 +704,7 @@ export const DE: Deck = {
   about: "Über diesen Build",
   buildVersion: (version: string) => `Version ${version}`,
   buildVersionWithCode: (version: string, build: string) => `Version ${version} (${build})`,
+  buildCommit: (commit: string) => `Build ${commit}`,
   aboutLive: (origin: string) =>
     `Gekoppelt mit ${origin}. Post wird in einen Spiegel auf dem Gerät synchronisiert; Lesen, Sortieren, Antworten, Weiterleiten und Tags sind live. Neue Nachrichten schreiben und die Suche kommen mit späteren Updates.`,
   aboutOnDevice:

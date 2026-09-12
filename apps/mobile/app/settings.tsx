@@ -11,7 +11,7 @@
 import Constants from "expo-constants";
 import { useCallback, useState, useSyncExternalStore } from "react";
 import { Platform, View } from "react-native";
-import { buildLabel } from "../src/build-info";
+import { buildCommit, buildLabel } from "../src/build-info";
 import { Copy } from "../src/copy";
 import { sayRefusal } from "../src/refusal";
 import { type WakeState } from "../src/net/push";
@@ -145,6 +145,13 @@ function SettingsBody() {
     },
     Platform.OS,
   );
+  /*
+   * WHICH BUILD, not which release. `EXPO_PUBLIC_COMMIT` is read as a literal `process.env`
+   * member because that is the only spelling Expo inlines at bundle time — a computed key reads
+   * `undefined` on the phone, where there is no environment to look in. Baked by the android
+   * workflow from the commit it built; `dev` on anything else. The narrowing is `buildCommit`'s.
+   */
+  const commit = buildCommit(process.env.EXPO_PUBLIC_COMMIT);
 
   return (
     <Screen>
@@ -289,6 +296,12 @@ function SettingsBody() {
                 {version}
               </Txt>
             ) : null}
+            {/* And WHICH BUILD of that version. Its own line rather than appended: the value is
+                forty characters, and a rig reads it off a screenshot. Always rendered — a build
+                with nothing baked in says `dev`, which is the answer, not a missing one. */}
+            <Txt variant="note" tone="ink3">
+              {Copy.buildCommit(commit)}
+            </Txt>
             <Txt variant="note" tone="ink2">
               {Copy.aboutLive(w.account.name)}
             </Txt>

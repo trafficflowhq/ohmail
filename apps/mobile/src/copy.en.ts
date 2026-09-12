@@ -1092,6 +1092,8 @@ const TABLE = {
   /** The build's own name, on the About block. Two shapes — see `src/build-info.ts`. */
   buildVersion: (version: string) => `Version ${version}`,
   buildVersionWithCode: (version: string, build: string) => `Version ${version} (${build})`,
+  /** The commit the artifact was built from, beside the version — see `src/build-info.ts`. */
+  buildCommit: (commit: string) => `Build ${commit}`,
   /** The About block — states what is real on this build, no more. */
   aboutLive: (origin: string) =>
     `Paired with ${origin}. Mail syncs into an on-device mirror; reading, triage, reply, forward and tags are live. Compose from scratch and search arrive with later updates.`,

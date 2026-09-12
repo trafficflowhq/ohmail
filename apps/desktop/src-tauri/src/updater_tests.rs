@@ -469,6 +469,60 @@ fn a_payload_for_another_platform_is_refused() {
 }
 
 #[test]
+fn every_refusal_keeps_the_installed_version_running() {
+    // THE INVARIANT `should_install` IS FOR, driven rather than described. Its docblock used to
+    // say all its refusals report "up to date", which `run` has not done since
+    // `refusal_is_unverifiable` existed — a comment describing a behaviour the code did not have.
+    // What is true of all four is this: `None` is the only way an install is stopped here and
+    // nothing downstream resumes one, so every refusal leaves the installed version running.
+    // Both halves come off ONE table — what gets installed, and what the person is told — so a
+    // change to either can no longer pass because the other was the half being read.
+    let cases: &[(&str, &str, &str, &str, Option<&str>, bool, &str)] = &[
+        // installed, advertised, signed version, signed asset, offered?, unverifiable?, what
+        ("0.13.3", "0.13.4", "0.13.4", ASSET, Some("0.13.4"), false, "the ordinary offer — the positive control"),
+        ("0.13.3", "0.13.3", "0.13.3", ASSET, None, false, "a reinstall of the same release"),
+        ("0.13.3", "0.13.2", "0.13.2", ASSET, None, false, "a downgrade the feed is honest about"),
+        ("0.13.3", "not-a-version", "0.13.4", ASSET, None, true, "a feed advertising nonsense"),
+        ("0.13.3", "0.13.4", "0.13.2", ASSET, None, true, "an old payload sold as a new one"),
+        (
+            "0.13.3", "0.13.4", "0.13.4", "ohmail-linux-aarch64.AppImage", None, true,
+            "another platform's genuinely-signed payload",
+        ),
+    ];
+    for &(installed, advertised, signed, asset, offered, unverifiable, what) in cases {
+        let sig = BASE64.encode(
+            format!(
+                "untrusted comment: signature from tauri secret key\n\
+                 RURV2NTwoaEoMQ==\n\
+                 trusted comment: timestamp:1788240000\tfile:{signed}@{asset}\n\
+                 zKhvIlGHWG3x67M80tyVDQ==\n"
+            )
+            .as_bytes(),
+        );
+        assert_eq!(
+            should_install(installed, advertised, &sig, ASSET),
+            offered.map(|v| semver::Version::parse(v).unwrap()),
+            "installed={installed} advertised={advertised} signed={signed}@{asset} — {what}"
+        );
+        assert_eq!(
+            refusal_is_unverifiable(advertised, &sig, ASSET),
+            unverifiable,
+            "installed={installed} advertised={advertised} signed={signed}@{asset} — the sentence for: {what}"
+        );
+    }
+
+    // The refusal with nothing signed to read at all. It stops the install like the rest, and it
+    // is the one that must never read as "up to date": a release signed without its version stops
+    // every client at once, and that report is what makes nobody look.
+    let unversioned = BASE64.encode(
+        "untrusted comment: x\nRURV2NTwoaEoMQ==\ntrusted comment: timestamp:1\tfile:ohmail-linux-x86_64.AppImage\nzKhvIlGHWG3x67M80tyVDQ==\n"
+            .as_bytes(),
+    );
+    assert_eq!(should_install("0.13.3", "0.13.4", &unversioned, ASSET), None);
+    assert!(refusal_is_unverifiable("0.13.4", &unversioned, ASSET));
+}
+
+#[test]
 fn a_refusal_about_identity_is_not_reported_as_up_to_date() {
     // `should_install` refuses for four reasons and only ONE of them means there is nothing
     // newer. Telling somebody they are up to date when an update exists and this client has

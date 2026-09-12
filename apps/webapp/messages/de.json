@@ -2468,7 +2468,7 @@
     "aiYesSelfhost": "Ja",
     "aiYesSelfhostWhy": "Läuft auf diesem Server mit dem Anthropic-Schlüssel des Betreibers.",
     "providerCloudTitle": "KI in der ohmail Cloud",
-    "providerCloudBody": "Vorschläge und Entwürfe laufen auf ohmails Servern über die Claude-API, innerhalb der KI-Guthabenpunkte deines Tarifs. Gesendet werden nur Absender, Betreff und ein kurzer Auszug. Post, die ohmail als sensibel einstuft, wird nie gesendet.",
+    "providerCloudBody": "Vorschläge und Entwürfe laufen auf ohmails Servern über die Claude-API, innerhalb der KI-Guthabenpunkte deines Tarifs. Gesendet werden nur Absender, Betreff und ein kurzer Auszug. Trägt eine Nachricht einen Code oder einen Anmeldelink, wird dieser entfernt, bevor die Anfrage gebaut wird.",
     "providerSelfhostTitle": "KI auf diesem Server",
     "providerSelfhostOn": "Der Betreiber hat auf diesem Server einen Anthropic-Schlüssel hinterlegt. Vorschläge und Entwürfe laufen darüber.",
     "providerSelfhostOff": "Dieser Server hat keinen KI-Schlüssel. Die Regeln sortieren allein; der Betreiber kann später einen hinterlegen.",
@@ -2583,7 +2583,7 @@
     "remove": "Anbieter und Schlüssel vergessen",
     "forget": "Vergessen",
     "removeWhy": "Entfernt die gespeicherten Schlüssel von diesem Computer. Post kommt weiter an und wird weiter einsortiert.",
-    "note": "Gesendet wird nur, was ein Modell zum Antworten braucht: Absender, Betreff und ein kurzer Auszug. Post, die ohmail als sensibel einstuft — Codes, Zugangsdaten, alles, was danach aussieht — wird nie gesendet, egal welcher Anbieter gewählt ist."
+    "note": "Gesendet wird nur, was ein Modell zum Antworten braucht: Absender, Betreff und ein kurzer Auszug. Trägt eine Nachricht einen Code oder einen Anmeldelink, wird dieser entfernt, bevor die Anfrage gebaut wird — egal welcher Anbieter gewählt ist."
   },
   "shortcuts": {
     "goPile": "Zu {pile}",

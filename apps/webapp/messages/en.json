@@ -2468,7 +2468,7 @@
     "aiYesSelfhost": "Yes",
     "aiYesSelfhostWhy": "Runs on this server with the operator's Anthropic key.",
     "providerCloudTitle": "AI on ohmail Cloud",
-    "providerCloudBody": "Suggestions and drafts run on ohmail's servers through the Claude API, inside your plan's AI credits. Only the sender, the subject and a short extract are sent. Mail ohmail judges sensitive is never sent.",
+    "providerCloudBody": "Suggestions and drafts run on ohmail's servers through the Claude API, inside your plan's AI credits. Only the sender, the subject and a short extract are sent. Where a message carries a code or a login link, the credential itself is removed before the request is built.",
     "providerSelfhostTitle": "AI on this server",
     "providerSelfhostOn": "The operator has set an Anthropic key on this server. Suggestions and drafts run through it.",
     "providerSelfhostOff": "This server has no AI key set. Rules do all the filing; the operator can add a key later.",
@@ -2583,7 +2583,7 @@
     "remove": "Forget the provider and keys",
     "forget": "Forget",
     "removeWhy": "Removes the stored keys from this computer. Mail keeps arriving and keeps being filed.",
-    "note": "Only what a model needs to answer is sent: the sender, the subject and a short extract. Mail ohmail judges sensitive — codes, credentials, anything that looks like one — is never sent, whichever provider is chosen."
+    "note": "Only what a model needs to answer is sent: the sender, the subject and a short extract. Where a message carries a code or a login link, the credential itself is removed before the request is built, whichever provider is chosen."
   },
   "shortcuts": {
     "goPile": "Go to {pile}",

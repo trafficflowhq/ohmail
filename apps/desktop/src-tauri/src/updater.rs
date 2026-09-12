@@ -1499,17 +1499,21 @@ pub fn should_offer(installed: &semver::Version, candidate: &semver::Version) ->
 /// and `the_attack_this_guard_exists_for` drive THIS, so the rule under test is the rule
 /// that ships rather than a copy of it in a table.
 ///
-/// Three refusals, and the middle one is the new one:
+/// FOUR refusals, and the invariant they share is the one worth stating: `None` is the only
+/// way anything here can stop an install, nothing downstream resumes one, so every refusal
+/// leaves the version already on the machine running.
 ///
 ///   1. Either version unparseable → `None`. A feed advertising an unparseable version is
 ///      exactly the kind of thing an updater must not act on.
-///   2. The advertised version disagrees with the SIGNED one → `None`. The feed is not
+///   2. The signed asset is not the one THIS build may install → `None` (see the block below).
+///   3. The advertised version disagrees with the SIGNED one → `None`. The feed is not
 ///      serving what it says it is serving, and only the signature can reveal that.
-///   3. The signed version is not strictly newer → `None`. A downgrade, or a reinstall.
+///   4. The signed version is not strictly newer → `None`. A downgrade, or a reinstall.
 ///
-/// All three are reported as "up to date" rather than as an error: a feed that offers the
-/// wrong version is not something the person at the keyboard can do anything about, and
-/// the honest user-facing fact is that nothing is going to be installed.
+/// What the person is TOLD is decided in `run`, not here, and the four do not share one
+/// sentence: `refusal_is_unverifiable` splits 4 — genuinely "up to date" — from 1–3, which
+/// mean an update exists that this client will not install. Reporting those three as up to
+/// date is the report that hides a release signed without its version.
 pub fn should_install(
     installed: &str,
     advertised: &str,

@@ -1719,11 +1719,19 @@ export async function readLeasePeek(input: ReadLeasePeekInput): Promise<LeasePee
     if (err instanceof MetaFolderTruncatedError) {
       input.log?.("lease_meta_truncated", { read: err.read, limit: err.limit, total: err.total });
     }
+    /* ── THE FAULT KEEPS ITS OWN NAME ────────────────────────────────────────────────────────
+     *
+     * Every throw here used to leave as `list_claims`, so one `LeaseOp` stood for two facts that
+     * an operator has to tell apart: a read that failed and will succeed on the next cycle, and a
+     * `_meta` too full to read, which never heals by waiting. The election's catch already keeps
+     * a refusal that says why — this is the same rule at the other door, and it is what makes the
+     * two doors report one fact under one name. */
+    if (err instanceof LeaseUnavailableError) throw err;
     throw new LeaseUnavailableError(
       err instanceof MetaFolderTruncatedError
         ? err.message
         : `the organizer lease in ${META_FOLDER} could not be read`,
-      { op: "list_claims", cause: err },
+      { op: err instanceof MetaFolderTruncatedError ? "meta_folder_full" : "list_claims", cause: err },
     );
   }
   const claims = messages

@@ -33,6 +33,26 @@ export interface BuildConfig {
  * anything else is treated as absent — `String(undefined)` in a version line is exactly the
  * kind of "(undefined)" that gets screenshotted into a bug report.
  */
+/**
+ * WHAT A BUILD NOBODY STAMPED CALLS ITSELF. A word, not a blank: "this came off somebody's
+ * machine" is a fact a tester should read, and an empty line reads as a failed lookup.
+ */
+export const DEV_COMMIT = "dev";
+
+/**
+ * WHICH COMMIT this artifact was built from — the one thing `versionName (versionCode)` cannot
+ * say. A rig refuses a run whose build is not the candidate, and two builds of one release carry
+ * the same version line. The value is `EXPO_PUBLIC_COMMIT`, baked by the android workflow and
+ * inlined by Expo; the composition reads `process.env` and hands it here.
+ *
+ * Exactly 40 lower-case hex or {@link DEV_COMMIT} — never the raw string. A half-baked value
+ * renders as an identity that matches nothing, which is worse than a word.
+ */
+export function buildCommit(raw: unknown): string {
+  const value = typeof raw === "string" ? raw.trim() : "";
+  return /^[0-9a-f]{40}$/.test(value) ? value : DEV_COMMIT;
+}
+
 export function buildLabel(config: BuildConfig, os: "android" | "ios" | string): string | null {
   const version = typeof config.version === "string" && config.version.trim() !== ""
     ? config.version.trim()

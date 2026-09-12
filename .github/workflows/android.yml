@@ -200,7 +200,18 @@ jobs:
       # mapping from a different minification. In one invocation the question does not arise.
       - name: Build the release APK and App Bundle (debug-signed)
         working-directory: apps/mobile/android
+        env:
+          # WHICH BUILD THIS IS, baked where the JavaScript bundle is made — Gradle runs Metro,
+          # so this is the step whose environment Expo inlines. The About block renders it, and a
+          # device run reads it to refuse a build that is not the one under test; a build with
+          # nothing baked in says `dev`. `EXPO_PUBLIC_` is the prefix Expo inlines, so the name is
+          # not free. Asserted against the artifact two steps down — a bake that stops applying
+          # fails no build on its own.
+          EXPO_PUBLIC_COMMIT: ${{ github.sha }}
         run: ./gradlew assembleRelease bundleRelease --no-daemon
+
+      - name: The APK names the build it was made from
+        run: bash .github/scripts/assert-baked-commit.sh apps/mobile/android/app/build/outputs/apk/release/app-release.apk "${{ github.sha }}"
 
       - name: The artifact is a real APK
         run: |
@@ -426,7 +437,18 @@ jobs:
       # the APK to the release page, the bundle to Play.
       - name: Build the release APK and App Bundle (debug-signed, to be re-signed by the sign job)
         working-directory: apps/mobile/android
+        env:
+          # WHICH BUILD THIS IS, baked where the JavaScript bundle is made — Gradle runs Metro,
+          # so this is the step whose environment Expo inlines. The About block renders it, and a
+          # device run reads it to refuse a build that is not the one under test; a build with
+          # nothing baked in says `dev`. `EXPO_PUBLIC_` is the prefix Expo inlines, so the name is
+          # not free. Asserted against the artifact two steps down — a bake that stops applying
+          # fails no build on its own.
+          EXPO_PUBLIC_COMMIT: ${{ github.sha }}
         run: ./gradlew assembleRelease bundleRelease --no-daemon
+
+      - name: The APK names the build it was made from
+        run: bash .github/scripts/assert-baked-commit.sh apps/mobile/android/app/build/outputs/apk/release/app-release.apk "${{ github.sha }}"
 
       - name: The artifact is a real APK
         run: |
