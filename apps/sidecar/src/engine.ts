@@ -150,6 +150,7 @@ import { localAiRoutes } from "./ai-routes.js";
 import { localAutoSuggestRoutes } from "./auto-suggest-routes.js";
 import { dialect, dialectOf } from "@trafficflow/db/dialect";
 import { openLocalDb, type LocalDb, type LocalDbOpenPhase, type OpenLocalDb } from "./db.js";
+import { inStoreLane } from "./store-lanes.js";
 
 /**
  * The shape {@link SidecarConfig.store} supplies — `openLocalDb`'s own signature, named so a
@@ -4440,7 +4441,16 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           let hasBacklog: boolean;
           let owesFiling: boolean;
           try {
-            const outcome = await runSyncCycle({
+            /**
+             * THE CYCLE RUNS IN THE INGEST LANE, and every statement it issues inherits it.
+             *
+             * This is the only place the name is given: `store-lanes.ts` schedules the one PGlite
+             * connection between the mail coming in and everything else asking for it, and an
+             * async context is how a statement six calls deep says which it is without every repo
+             * method growing a parameter. Unnamed work is interactive, so the reverse mistake —
+             * a window's read counted as ingest — is not reachable from here.
+             */
+            const outcome = await inStoreLane("ingest", async () => runSyncCycle({
             ...syncDeps,
             /* THE GATED CONNECTION, spread over `syncDeps`'s live getter on purpose. The getter is
                what lets a re-dialled mailbox use its new connection; this is what stops a drain
@@ -4465,7 +4475,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
             // indexed read only when a foreign document is present; a faulted read answers what
             // the previous cycle answered.
             importDecisionOpen: await profileSync.importDecisionOpenNow(),
-          });
+          }));
             cycleServed = true;
             ({ hasBacklog, owesFiling } = outcome);
           } finally {

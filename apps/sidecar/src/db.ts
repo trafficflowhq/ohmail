@@ -7,6 +7,7 @@ import { migrate } from "drizzle-orm/pglite/migrator";
 import { mailSchema } from "@trafficflow/db/mail";
 import { MAIL_JOURNAL, adoptBaseline, adoptReissuedOriginals } from "@trafficflow/db/journal";
 import { brandDialect } from "@trafficflow/db/dialect";
+import { createStoreScheduler, scheduleStoreLanes, type StoreLaneCensus } from "./store-lanes.js";
 import type { Diagnostic } from "./log.js";
 
 /**
@@ -73,6 +74,16 @@ export interface OpenLocalDb {
    * `0` when the runtime exposes no heap; see {@link storeHeapBytes}.
    */
   storeBytes(): number;
+  /**
+   * How the one connection was shared between the mail coming in and everything else asking for
+   * it — see `store-lanes.ts`. Cumulative since the open, so a caller reads it twice and
+   * subtracts. Exposed because a scheduler nothing can read is a scheduler nothing can check.
+   *
+   * `null` — and REQUIRED rather than optional — for a store this build does not schedule (the
+   * phone's, whose SQLite goes through the platform and has its own transaction gate). Absent and
+   * "not scheduled" would be the same answer to a reader; this way every store has to say which.
+   */
+  laneCensus(): StoreLaneCensus | null;
   /** Flush and release. Idempotent — shutdown paths call it from more than one place. */
   close(): Promise<void>;
 }
@@ -577,6 +588,16 @@ export async function openLocalDb(dataDir: string, opts: OpenLocalDbOptions = {}
     // name the wrong phase. The total is identical either way: the same promise is awaited, once,
     // a few microseconds earlier.
     await client.waitReady;
+    /**
+     * THE FAIR SHARE, IN FRONT OF THE HANDLE AND BEFORE ANYTHING ELSE HOLDS IT.
+     *
+     * Here and not at each caller: drizzle, the compaction pass and the checkpointer are all handed
+     * this same object, so a wrapper any of them could be given instead would leave that one
+     * outside the scheduler with nothing to say so. See `store-lanes.ts` for what it schedules and
+     * why FIFO is the defect.
+     */
+    const lanes = createStoreScheduler();
+    scheduleStoreLanes(client, lanes);
     const pgliteOpenMs = Date.now() - tOpen;
     const db = brandDialect(drizzle(client, { schema: mailSchema }), "pg");
     // ONE JOURNAL, and the loop is gone with the second one: a `for` over a one-element list is
@@ -631,6 +652,7 @@ export async function openLocalDb(dataDir: string, opts: OpenLocalDbOptions = {}
       timings: { pgliteOpenMs, adoptBaselineMs, migrateMs, compactMs },
       checkpoint,
       storeBytes: () => storeHeapBytes(client),
+      laneCensus: () => lanes.census(),
       close: async () => {
         if (closed) return;
         closed = true;

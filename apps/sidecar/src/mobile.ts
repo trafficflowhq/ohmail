@@ -531,6 +531,13 @@ export async function openPhoneStore(
     // heap Postgres runs inside, and this store has none — SQLite is the platform's, on disk and
     // outside this process, so it contributes nothing to `rss` and there is no half to attribute.
     storeBytes: () => 0,
+    /**
+     * NOT SCHEDULED, said rather than implied. The desktop's two lanes sit in front of ONE PGlite
+     * connection (`store-lanes.ts`); this store is the platform's SQLite behind `exec`, with its
+     * own transaction gate above it (`oneTransactionAtATime`), and putting a second queue under
+     * that gate without a rig that can measure the phone would be a change nobody has watched.
+     */
+    laneCensus: () => null,
     close: async () => { await exec.close(); },
   };
 }
