@@ -124,7 +124,7 @@ export function DraftsView({
             <div className="drafts-group-head" role="heading" aria-level={2}>
               {t("scheduledTitle")}
             </div>
-            <ListRows>
+            <ListRows ariaLabel={t("scheduledTitle")}>
               {scheduled.map((d) => {
                 const to = recipientLine(d);
                 return (
@@ -166,7 +166,7 @@ export function DraftsView({
             </div>
           </>
         ) : null}
-        <ListRows>
+        <ListRows ariaLabel={t("title")}>
           {drafts.length ? (
             drafts.map((d) => {
               const to = recipientLine(d);

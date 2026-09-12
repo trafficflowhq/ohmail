@@ -17,11 +17,14 @@
  * healthy — `quiet` renders `null` (the demo and Desktop are gated to `quiet` in the derivation).
  * `terminal` means the server refused this session in a way no waiting fixes and the loop has
  * stopped — "Retrying." would be false, so it gets its own line and the one remedy; everything
- * else genuinely retries and says so. The importing count is not announced and not hidden: the
- * stable half of each sentence announces once, the volatile half carries `aria-live="off"` — not
- * `aria-hidden`, because the count is the information and removing it would be a second defect.
+ * else genuinely retries and says so. The importing count is not announced by the VISIBLE line and
+ * not hidden: the stable half announces once, the volatile half carries `aria-live="off"`, because
+ * a number that steps several times a second supersedes its own announcement before a reader hears
+ * one. What was missing is that it was then never spoken at all — a first import ran to a screen
+ * reader as one sentence and nothing after it. {@link SyncAnnouncer} says the whole sentence on a
+ * throttle instead.
  */
-import type { ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Spinner } from "@ohmail/ui";
 import { useTranslations } from "next-intl";
 import { apiConfigured } from "../api-client";
@@ -35,6 +38,7 @@ import { displayAddress } from "./idn";
 import { waterlineStamp } from "./format";
 import { activeFormatLocale, activeFormatZone } from "./locale";
 import { clock } from "@ohmail/client-engine";
+import { POLL_MS } from "./sync-scheduler";
 
 /**
  * "14:32" in the reader's own zone — the `as of` and `next try at` halves of the filing sentences.
@@ -70,6 +74,60 @@ import { stripSpeaks, type MailState } from "./mail-state";
  * (`test/sync-notice-one-copy.test.ts` sweeps it). DOM readers: the hidden strip is the first text match
  * — the visible one is in the rail. `speech()` is the one description both shapes read.
  */
+/**
+ * HOW OFTEN THE STRIP MAY SPEAK — and neither number is picked blind.
+ *
+ * The floor is the product's OWN steady cadence for this fact: `POLL_MS`, the visible tab's drain
+ * interval, which is how fast the count moves once a mailbox is settled. Under it the counter steps
+ * per applied page, measured in the perf harness at three commits in the busiest second with a 101 ms
+ * median gap between them — faster than a polite announcement can be spoken, so every one would
+ * supersede the last and the reader would hear a stutter and never a sentence. The second gate exists
+ * because a long import would otherwise announce every eight seconds for an hour: where a denominator
+ * is known, no more than one announcement per 5% of it.
+ */
+const ANNOUNCE_MS = POLL_MS;
+const ANNOUNCE_STEP = 0.05;
+
+/**
+ * The strip's sentence, spoken. Its own component because {@link SyncBar} returns early for the
+ * quiet states, and a hook may not sit behind that.
+ *
+ * `aria-atomic`, so the count is heard inside its sentence rather than as a bare number; INSIDE the
+ * strip, so the `display:none` copy's announcer goes with it and the two variants cannot both speak.
+ * The first update is announced at once — the reader is told an import is running — and after that
+ * both gates apply, with a trailing timer so a suppressed last number is not lost when the count
+ * stops moving.
+ */
+function SyncAnnouncer({ say, progress }: { say: string | null; progress: number | null }) {
+  const [said, setSaid] = useState("");
+  const last = useRef<{ at: number; step: number } | null>(null);
+  useEffect(() => {
+    if (say === null) return;
+    const step = progress === null ? -1 : Math.floor(progress / ANNOUNCE_STEP);
+    const now = Date.now();
+    const prev = last.current;
+    const timeOk = prev === null || now - prev.at >= ANNOUNCE_MS;
+    const stepOk = prev === null || step === -1 || step !== prev.step;
+    if (timeOk && stepOk) {
+      last.current = { at: now, step };
+      setSaid(say);
+      return;
+    }
+    if (!stepOk) return;
+    const id = setTimeout(() => {
+      last.current = { at: Date.now(), step };
+      setSaid(say);
+    }, ANNOUNCE_MS - (now - prev!.at));
+    return () => clearTimeout(id);
+  }, [say, progress]);
+  if (say === null) return null;
+  return (
+    <span className="sync-say" role="status" aria-live="polite" aria-atomic="true">
+      {said}
+    </span>
+  );
+}
+
 /* No default VALUE on the parameter, only on the field. A `= {}` there types the component as
    `(props?: …)`, which is not a `FunctionComponent<P>`, and `createElement(SyncBar, { variant })`
    then resolves to the propless overload and rejects the prop it was given. */
@@ -137,6 +195,7 @@ export function SyncBar({ variant = "shell", hostOffline = false }: {
           </span>
         ) : null}
         {s.link ? <a href={s.link.href}>{s.link.label}</a> : null}
+        <SyncAnnouncer say={s.say ?? null} progress={s.progress ?? null} />
       </div>
     );
   }
@@ -155,6 +214,7 @@ export function SyncBar({ variant = "shell", hostOffline = false }: {
         </span>
       ) : null}
       {s.link ? <a href={s.link.href}>{s.link.label}</a> : null}
+      <SyncAnnouncer say={s.say ?? null} progress={s.progress ?? null} />
     </div>
   );
 }
@@ -176,8 +236,16 @@ interface Speech {
   warn: boolean;
   busy: boolean;
   title: string;
-  /** The volatile half — a climbing count, an elapsed minute, an address. Never announced. */
+  /** The volatile half — a climbing count, an elapsed minute, an address. Never announced HERE. */
   detail: ReactNode | null;
+  /**
+   * THE WHOLE SENTENCE, SPOKEN — title and volatile half in one string, built from the very
+   * expressions the two halves are drawn from so they cannot drift. Absent ⇒ the volatile half is
+   * not worth speaking and the region above already says the stable one. See {@link SyncAnnouncer}.
+   */
+  say?: string | null;
+  /** 0..1 where a denominator is known — the second gate on how often the sentence may be said. */
+  progress?: number | null;
   link: { href: string; label: string } | null;
 }
 
@@ -376,7 +444,10 @@ function speech(state: MailState, t: Translate, tm: Translate, cloud: boolean): 
       // leaves the facts unknown and this strip silent — see `MailStateProvider`.
       return { tone: "", role: "status", warn: false, busy: false, title: t("noMailbox"), detail: null, link: settings };
 
-    case "importing":
+    case "importing": {
+      const counted = state.total !== null
+        ? t("importingOf", { count: state.count, total: state.total })
+        : t("importingCount", { count: state.count });
       return {
         tone: "busy", role: "status", warn: false, busy: true,
         // "Syncing", not "Importing your mailbox". The client can see its own mirror growing;
@@ -390,11 +461,14 @@ function speech(state: MailState, t: Translate, tm: Translate, cloud: boolean): 
         // by design — the moving count alone is what distinguishes working from hung, exactly as
         // before. `mail-state.ts` withholds the total unless it is strictly above the count, so
         // this line can never render a fraction that has already been passed.
-        detail: state.total !== null
-          ? t("importingOf", { count: state.count, total: state.total })
-          : t("importingCount", { count: state.count }),
+        detail: counted,
+        // ONE derivation for both faces: the line a person reads and the sentence a person hears
+        // are the same string, so no wording change can reach one and miss the other.
+        say: `${t("importing")} ${counted}`,
+        progress: state.total !== null ? state.count / state.total : null,
         link: null,
       };
+    }
 
     default:
       // `awaiting` — connected, no cycle has completed, and the mirror is empty. Often the

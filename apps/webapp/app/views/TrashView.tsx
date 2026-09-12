@@ -221,7 +221,7 @@ export function TrashView({
   return (
     <section className="view split view-trash">
       <ListPane title={tRail("trash")} scrollerRef={scrollerRef}>
-        <ListRows>
+        <ListRows ariaLabel={tRail("trash")}>
           {/* UNAVAILABLE IS ITS OWN SENTENCE and never an empty list: a demo that said "nothing
               in Trash" would be claiming something about a mailbox it does not have. */}
           {!page.available ? (
@@ -234,6 +234,7 @@ export function TrashView({
               {win.padTop > 0 ? <div aria-hidden style={{ height: win.padTop }} /> : null}
               {rows.slice(win.start, win.end).map((m) => (
                 <MessageRow
+                  spoken={rowBadge.spoken}
                   key={m.id}
                   id={m.id}
                   from={senderName(m)}
@@ -378,6 +379,7 @@ function TrashLiveSection({
   onSelect: (key: string) => void;
 }) {
   const t = useTranslations("trash");
+  const rowBadge = useRowBadgeCopy();
   /* ONE VERDICT FOR THE WHOLE SECTION (`trashLiveState`), so no two branches here can each
      decide what the window's silence means. */
   const verdict = trashLiveState(live).state;
@@ -420,9 +422,13 @@ function TrashLiveSection({
         </div>
       ) : null}
 
-      {verdict === "rows"
-        ? byDateDesc(live.items).map((i) => (
+      {/* THE SERVER'S OWN TRASH IS ITS OWN LISTBOX, named by the heading above it — these rows
+          are options like every other mail row, and an option outside a listbox states nothing. */}
+      {verdict === "rows" ? (
+        <ListRows ariaLabel={t("liveHead")}>
+          {byDateDesc(live.items).map((i) => (
           <MessageRow
+            spoken={rowBadge.spoken}
             key={trashLiveKeyOf(i)}
             id={trashLiveKeyOf(i)}
             from={displayAddressee(i.from.name, i.from.address)}
@@ -438,8 +444,9 @@ function TrashLiveSection({
             selected={trashLiveKeyOf(i) === activeKey}
             onClick={() => onSelect(trashLiveKeyOf(i))}
           />
-        ))
-        : null}
+        ))}
+        </ListRows>
+      ) : null}
 
       {/* The three quiet answers, each its own sentence: no folder to read, a read that ran past
           the server's budget, and a folder that was read and is empty. */}

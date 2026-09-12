@@ -251,7 +251,7 @@ export function FolderView({
         meta={parent ? folder.name : t("metaCount", { count: messages.length })}
         scrollerRef={scrollerRef}
       >
-        <ListRows>
+        <ListRows ariaLabel={folderLeafOf(folder.name)}>
           {ordered.length ? (
             <>
               {win.padTop > 0 ? <div aria-hidden style={{ height: win.padTop }} /> : null}
@@ -269,6 +269,7 @@ export function FolderView({
                   <div key={m.id}>
                     {label ? <ListGroupLabel>{label}</ListGroupLabel> : null}
                     <MessageRow
+                      spoken={rowBadge.spoken}
                       id={m.id}
                       from={senderName(m)}
                       address={rowAddress(m)}
@@ -313,6 +314,7 @@ export function FolderView({
               <ListGroupLabel>{to("olderTitle")}</ListGroupLabel>
               {olderRows.map((m) => (
                 <MessageRow
+                  spoken={rowBadge.spoken}
                   key={m.id}
                   id={m.id}
                   from={senderName(m)}

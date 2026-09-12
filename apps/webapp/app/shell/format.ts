@@ -450,6 +450,14 @@ export interface RowStampProps {
   time: string;
   /** The other form, as the hover title; absent when there is only one. */
   timeTitle?: string;
+  /**
+   * WHAT THE ROW IS READ OUT WITH — the absolute form, whichever form is on screen, and the same
+   * `fullDateTime` the title above already is. A row's own label replaces everything inside it, so
+   * without this the arrival instant reached the accessibility tree nowhere; and a spoken "Sat"
+   * would be the one reading that cannot say which Saturday. Falls back to the relative form for a
+   * message with no `Date:` header, which has no absolute instant to name.
+   */
+  timeSpoken: string;
   /** The flip, passed on only when there are two forms to flip between. */
   onToggleTime?: () => void;
 }
@@ -462,10 +470,10 @@ export function rowStamp(
 ): RowStampProps {
   const rel = displayTime(m, now);
   const abs = fullDateTime(m);
-  if (!abs) return { time: rel };
+  if (!abs) return { time: rel, timeSpoken: rel };
   return absolute
-    ? { time: abs, timeTitle: rel || undefined, onToggleTime: onToggle }
-    : { time: rel, timeTitle: abs, onToggleTime: onToggle };
+    ? { time: abs, timeTitle: rel || undefined, timeSpoken: abs, onToggleTime: onToggle }
+    : { time: rel, timeTitle: abs, timeSpoken: abs, onToggleTime: onToggle };
 }
 
 /**

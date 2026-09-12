@@ -1669,6 +1669,16 @@ export function OhboxView({
     isResurfaced(m) ? true : presentsUnread(m) && m.id !== armedRead;
 
   /**
+   * WHAT THE ROW PUBLISHES AS ITS SELECTION, and it is not always the pick.
+   *
+   * The Ohbox is the one multi-selectable list, and a multi-selectable listbox's `aria-selected`
+   * is set MEMBERSHIP — so while the set is empty the reader's cursor had nothing to be published
+   * as. `undefined` hands the row back to its cursor (`MessageRow`'s selection block) and changes
+   * nothing that is drawn: the `picked` class is off for `false` and `undefined` alike.
+   */
+  const pickState = (on: boolean): boolean | undefined => (picked.size > 0 ? on : undefined);
+
+  /**
    * `actions` is threaded only by the pin group's own mapper below — `row` itself stays unary
    * because it is passed straight to `.map(row)` in two places, where a second parameter would
    * silently receive the INDEX.
@@ -1683,6 +1693,7 @@ export function OhboxView({
     const sent = sentLabelOf(m);
     return (
     <MessageRow
+      spoken={rowBadge.spoken}
       key={m.id}
       id={m.id}
       from={sent ? sent.label : senderName(m)}
@@ -1716,7 +1727,7 @@ export function OhboxView({
       /* `picked` carries BOTH the styling and the ARIA now — it used to be a
          class name only, so `aria-selected` was set on zero rows and the selection existed
          for sighted mouse users and nobody else. See `MessageRow`. */
-      picked={picked.has(m.id)}
+      picked={pickState(picked.has(m.id))}
       actions={actions}
       onClick={() => {
         if (readColumnHidden() && picked.size > 0) {
@@ -1825,6 +1836,7 @@ export function OhboxView({
     const sentLeads = sent !== null && g.unreadCount === 0;
     return (
       <MessageRow
+        spoken={rowBadge.spoken}
         key={`t:${g.key}`}
         id={target.id}
         /* The fold SHOWS every member, so anything locating "the row where message X is"
@@ -1863,7 +1875,7 @@ export function OhboxView({
            toggle the keys cannot deliver. */
         stateNote={stateNoteOf(target)}
         tags={tagsOfMessage(shown, tags).map((tag) => ({ name: tag.name, hue: hueOf(tag) }))}
-        picked={g.members.every((m) => picked.has(m.id))}
+        picked={pickState(g.members.every((m) => picked.has(m.id)))}
         onClick={() => {
           if (readColumnHidden() && picked.size > 0) {
             // The same contract as the singleton row above — and a folded row toggles all of

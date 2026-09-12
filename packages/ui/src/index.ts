@@ -97,7 +97,7 @@ export type {
   RailMailbox,
 } from "./composites/RailNav.js";
 export { MessageRow } from "./composites/MessageRow.js";
-export type { MessageRowProps, MessageRowTag } from "./composites/MessageRow.js";
+export type { MessageRowProps, MessageRowSpoken, MessageRowTag } from "./composites/MessageRow.js";
 export { ListPane, ListGroupLabel, ListRows } from "./composites/ListPane.js";
 export type { ListPaneProps } from "./composites/ListPane.js";
 export { StreamCard, StreamArt } from "./composites/StreamCard.js";

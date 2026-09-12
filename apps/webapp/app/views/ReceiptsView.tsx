@@ -21,6 +21,7 @@ import { ListPane, ListRows, MessageRow, Waterline } from "@ohmail/ui";
 import { MarkAllRead } from "../components/MarkAllRead";
 import { ShortcutHint } from "../shell/ShortcutHint";
 import { avatarOf, rowAddress, rowStamp, senderName, tagsOfMessage, hueOf, waterlineStamp, withheldCopyKey } from "../shell/format";
+import { useRowBadgeCopy } from "../shell/row-copy";
 import { useKeyBindings, type KeyBinding } from "../shell/keymap";
 import { useZoneNav } from "../shell/zone-nav";
 import { useListWindow } from "../shell/list-window";
@@ -129,6 +130,7 @@ export function ReceiptsView({
 }) {
   const t = useTranslations("receipts");
   const tr = useTranslations("reads");
+  const rowBadge = useRowBadgeCopy();
   /** One key for both streams, and the reasoning is in `ReadsView` beside its own read. */
   const ts = useTranslations("stream");
   const tb = useTranslations("body");
@@ -435,6 +437,7 @@ export function ReceiptsView({
 
   const row = (m: EngineMessage) => (
     <MessageRow
+      spoken={rowBadge.spoken}
       key={m.id}
       id={m.id}
       from={senderName(m)}
@@ -491,9 +494,9 @@ export function ReceiptsView({
             the fresh slice, the waterline when the junction is inside the window, the seen
             slice. */}
         {win.padTop > 0 ? <div aria-hidden style={{ height: win.padTop }} /> : null}
-        <ListRows>{all.slice(freshFrom, freshTo).map(row)}</ListRows>
+        <ListRows ariaLabel={t("title")}>{all.slice(freshFrom, freshTo).map(row)}</ListRows>
         {showWaterline ? <Waterline label={tr("waterline")} meta={wlMeta} /> : null}
-        <ListRows>{all.slice(fresh + seenFrom, fresh + seenTo).map(row)}</ListRows>
+        <ListRows ariaLabel={tr("waterline")}>{all.slice(fresh + seenFrom, fresh + seenTo).map(row)}</ListRows>
         {win.padBottom > 0 ? <div aria-hidden style={{ height: win.padBottom }} /> : null}
         {/* No-collapse rule: every receipt is a real row above. */}
         <div className="tail-row">{t("tail")}</div>

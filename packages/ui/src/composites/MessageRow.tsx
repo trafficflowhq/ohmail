@@ -20,6 +20,21 @@ export interface MessageRowTag {
  */
 export const THREAD_CIRCLES_MAX = 3;
 
+/**
+ * THE WORDS A ROW IS READ OUT WITH — the two facts it draws as colour and shape and therefore
+ * says nothing about. `packages/ui` holds no catalogue (see {@link MessageRowProps.protectedLabel}),
+ * so they arrive from the host; the object is memoized there, because a fresh one per render is a
+ * prop that defeats any comparator a row is ever given.
+ */
+export interface MessageRowSpoken {
+  /** The dot and the heavy ink, in a word. */
+  unread: string;
+  /** The quiet ink, in a word — a read row states its readness rather than merely lacking a dot. */
+  read: string;
+  /** The clip badge, which is an icon with no text at all. */
+  attachment: string;
+}
+
 export interface MessageRowProps {
   /** Stable id, stamped as data-id (and used by useSeenOnScroll). */
   id: string;
@@ -46,6 +61,16 @@ export interface MessageRowProps {
    * still says the exact instant on hover. Absent ⇒ no title.
    */
   timeTitle?: string;
+  /**
+   * THE ARRIVAL STAMP WRITTEN OUT — always the absolute form, whichever form is on screen.
+   *
+   * The stamp a row SHOWS is relative ("Sat", "09:12") and cannot say which Saturday; a screen
+   * reader is given the row's own label and nothing inside it, so until this existed the arrival
+   * time was absent from the accessibility tree entirely. `rowStamp` mints it from the same
+   * `fullDateTime` call it already makes for {@link MessageRowProps.timeTitle}, so the spoken
+   * instant and the hovered one are one derivation. Absent ⇒ the row speaks `time` instead.
+   */
+  timeSpoken?: string;
   /**
    * Flip every stamp in the list between relative and absolute — or absent
    * where no surface holds that preference. One press changes the whole
@@ -87,16 +112,20 @@ export interface MessageRowProps {
   seen?: boolean;
   /** The unread dot fades in place after being marked seen. */
   justSeen?: boolean;
+  /**
+   * THE CURSOR — the row the reading pane is showing. It is the row's
+   * `aria-selected` wherever the list is single-select, and its tab stop
+   * in every list: see the selection block. Absent ⇒ the row states
+   * `aria-selected="false"` and keeps the plain button's tab order.
+   */
   selected?: boolean;
   /**
-   * Multi-select membership, and why it changes the row's role: picking
-   * rows once set `aria-selected` on none of them, and `aria-selected` is
-   * only valid on option/row/gridcell/tab. So a multi-select row declares
-   * `role="option"` inside a `role="listbox"` container (`ListRows`); the
-   * element stays a focusable <button> with no interactive descendants,
-   * which `option` requires. `aria-pressed` would describe the wrong
-   * action (click moves the cursor, `x` picks). Undefined ⇒ no
-   * multi-select; the row stays a plain button.
+   * Multi-select membership, and it OUTRANKS the cursor in what the row
+   * publishes: a multi-selectable listbox's `aria-selected` is set
+   * membership. `aria-pressed` would describe the wrong action (click
+   * moves the cursor, `x` picks). Undefined ⇒ `selected` is what the row
+   * states, which is every other list AND the Ohbox while nothing is
+   * picked. Either way the row is an `option` — see the selection block.
    */
   picked?: boolean;
   /** Spam-grade rendering — less ink. */
@@ -147,6 +176,12 @@ export interface MessageRowProps {
   heldCount?: number;
   /** The held chip's whole phrase ("2 held"), rendered only when `heldCount > 1`. */
   heldLabel?: ReactNode;
+  /**
+   * The words for the two silent facts — see {@link MessageRowSpoken}. Absent ⇒ the row still
+   * speaks its stamp and its capsules, and says nothing about read state or attachments, which
+   * is the showcase's case and no product surface's.
+   */
+  spoken?: MessageRowSpoken;
   /** Spam variant: detection badge text. */
   detection?: string;
   /**
@@ -177,6 +212,7 @@ export function MessageRow(props: MessageRowProps) {
     address,
     time,
     timeTitle,
+    timeSpoken,
     onToggleTime,
     subject,
     destination,
@@ -200,6 +236,7 @@ export function MessageRow(props: MessageRowProps) {
     aiSuggestion,
     heldCount,
     heldLabel,
+    spoken,
     detection,
     actions,
     onClick,
@@ -290,12 +327,31 @@ export function MessageRow(props: MessageRowProps) {
     .filter(Boolean)
     .join(" ");
 
-  // See `picked` above: opting into the multi-select changes the role, because that is the
-  // only role `aria-selected` is defined on.
-  const selection =
-    picked === undefined
-      ? {}
-      : ({ role: "option", "aria-selected": picked ? "true" : "false" } as const);
+  /**
+   * THE ROW'S SELECTION, PUBLISHED — and the role that lets it be.
+   *
+   * Every row is an `option` in the list's `listbox` (`ListRows`), not only the multi-selectable
+   * one: `aria-selected` is defined on option/row/gridcell/tab and nowhere else, so a row with no
+   * role could not state its selection at all — measured at the 0.16.0 candidate as ZERO objects
+   * reporting `selected` in the whole window, after a press proven by the reading pane. Option and
+   * not `row` in a `grid`: the row is one button with NO interactive descendants (the stamp is a
+   * hit test, the `actions` slot stands outside it), and a grid would want a cell model and a
+   * two-dimensional walk that neither the markup nor the keymap has. `picked` wins where a list
+   * offers it, because a multi-selectable listbox's `aria-selected` is set MEMBERSHIP; the cursor
+   * is what is stated everywhere else, the empty set included (`OhboxView.pickState`).
+   */
+  const chosen = picked !== undefined ? picked : selected === true;
+
+  /**
+   * ONE TAB STOP PER LIST — the cursor's row, roving.
+   *
+   * Rows are real buttons, so `aria-activedescendant` (which needs the LISTBOX to hold focus and
+   * a virtual cursor) is the wrong half of the pair; this is the other half. A windowed list
+   * mounts tens of rows out of thousands, and every one of them was a tab stop. The list stays
+   * reachable when the cursor is scrolled out of the window because the pane's scroller is a stop
+   * of its own (`ListPane`). A row given no `selected` at all keeps the plain button's tab order.
+   */
+  const tab = selected === undefined ? undefined : selected ? 0 : -1;
 
   const chips: ReactNode[] = [];
   if (aiSuggestion)
@@ -371,6 +427,31 @@ export function MessageRow(props: MessageRowProps) {
     onClick?.();
   };
 
+  /**
+   * WHAT THE ROW SAYS BESIDE ITS NAME — its stamp, its read state and its capsules, in words.
+   *
+   * `aria-label` on the button REPLACES everything inside it, so a row was one joined string and
+   * four of the five facts a mail list exists to convey were absent from the tree: when it
+   * arrived, whether it has been read, what is on the badge strip, and the selection above. They
+   * are assembled HERE, out of the very props the row draws from, so the spoken row and the drawn
+   * row cannot come apart; `protectedLabel` and `heldLabel` join only when the host handed words
+   * rather than markup, which is every product surface. No node is added — one attribute.
+   */
+  const said: string[] = [];
+  const arrived = timeSpoken ?? time;
+  if (arrived) said.push(arrived);
+  if (spoken) said.push(unread ? spoken.unread : spoken.read);
+  if (hasAttachment && spoken) said.push(spoken.attachment);
+  if (typeof props.protectedLabel === "string") said.push(props.protectedLabel);
+  if (heldCount !== undefined && heldCount > 1 && typeof heldLabel === "string") said.push(heldLabel);
+  if (stateNote) said.push(stateNote);
+  if (place) said.push(place);
+  if (destination) said.push(destination);
+  if (detection) said.push(detection);
+  if (amount) said.push(amount);
+  for (const t of tags ?? []) said.push(t.name);
+  const description = said.length > 0 ? said.join(" \u00b7 ") : undefined;
+
   const rowButton = (
     <button
       type="button"
@@ -379,7 +460,10 @@ export function MessageRow(props: MessageRowProps) {
       data-ids={memberIds && memberIds.length > 0 ? memberIds.join(" ") : undefined}
       data-unseen={unread ? "1" : undefined}
       aria-label={`${from}: ${subject}`}
-      {...selection}
+      aria-description={description}
+      role="option"
+      aria-selected={chosen ? "true" : "false"}
+      tabIndex={tab}
       onClick={press}
     >
       {lead !== null ? (

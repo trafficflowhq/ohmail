@@ -28,6 +28,7 @@ import {
 import { MarkAllRead } from "../components/MarkAllRead";
 import { ShortcutHint } from "../shell/ShortcutHint";
 import { avatarOf, rowAddress, rowStamp, senderName, tagsOfMessage, hueOf, withheldCopyKey } from "../shell/format";
+import { useRowBadgeCopy } from "../shell/row-copy";
 import { useKeyBindings, type KeyBinding } from "../shell/keymap";
 import { useZoneNav } from "../shell/zone-nav";
 import { useListWindow } from "../shell/list-window";
@@ -148,6 +149,7 @@ export function ReadsView({
   onMarkAllRead?: (ids: string[]) => void;
 }) {
   const t = useTranslations("reads");
+  const rowBadge = useRowBadgeCopy();
   /**
    * THE HEADER'S OWN SENTENCE — one key, `stream.newSince`, shared with Receipts and with the
    * rail's tooltip (`rail.readsTitle`, pinned to the same words). The count is the WATERLINE, so
@@ -534,6 +536,7 @@ export function ReadsView({
 
   const row = (m: EngineMessage) => (
     <MessageRow
+      spoken={rowBadge.spoken}
       key={m.id}
       id={m.id}
       from={senderName(m)}
@@ -671,7 +674,7 @@ export function ReadsView({
             slice, then the reserved height below. Two `ListRows` still, so the two groups keep
             their own row containers, but each renders only its share of the mounted window. */}
         {win.padTop > 0 ? <div aria-hidden style={{ height: win.padTop }} /> : null}
-        <ListRows>
+        <ListRows ariaLabel={t("title")}>
           {partition.fresh.slice(freshFrom, freshTo).map((m) => (
             <span key={m.id} style={{ display: "contents" }}>
               {row(m)}
@@ -682,7 +685,7 @@ export function ReadsView({
         {showWaterline ? (
           <Waterline label={t("waterline")} meta={wlMeta} />
         ) : null}
-        <ListRows>{partition.seen.slice(seenFrom, seenTo).map(row)}</ListRows>
+        <ListRows ariaLabel={t("waterline")}>{partition.seen.slice(seenFrom, seenTo).map(row)}</ListRows>
         {win.padBottom > 0 ? <div aria-hidden style={{ height: win.padBottom }} /> : null}
         <div className="tail-row">{t("tail")}</div>
       </ListPane>

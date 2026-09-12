@@ -193,10 +193,11 @@ export function TagView({
           ) : undefined
         }
       >
-        <ListRows>
+        <ListRows ariaLabel={tag.name}>
           {messages.length ? (
             messages.map((m) => (
               <MessageRow
+                spoken={rowBadge.spoken}
                 key={m.id}
                 id={m.id}
                 from={senderName(m)}

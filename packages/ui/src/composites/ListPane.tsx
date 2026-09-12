@@ -90,7 +90,11 @@ export function ListPane({
         {action ? <span className="vhead-action">{action}</span> : null}
       </div>
       {header}
-      <div className="scroller" ref={ref}>
+      {/* THE PANE'S OWN TAB STOP, and the floor under `MessageRow`'s roving one: the cursor's row
+          is the single tabbable row in its list, and a windowed list mounts tens of rows out of
+          thousands — so a reader who has scrolled away from the cursor would have had no way into
+          the list at all. A scrollable region wants to be focusable in its own right besides. */}
+      <div className="scroller" ref={ref} tabIndex={0}>
         {children}
       </div>
       {/* The foot outranks the hints strip — see `foot`. One line under the scroller, and it
@@ -121,13 +125,15 @@ export function ListGroupLabel({ children, group }: { children: ReactNode; group
 }
 
 /**
- * Row container with the shadow-safe gutter.
+ * Row container with the shadow-safe gutter — and the listbox every `MessageRow` is an option of.
  *
- * `multiSelectable` turns it into the listbox that `MessageRow`'s `role="option"` rows need
- * — `aria-selected` on an orphaned option means nothing. Opt-in, and only the Ohbox opts
- * in: a list with no multi-select must not announce itself as one. Give it a label, because
- * a view is normally several of these ("New", "Earlier") and an unlabelled pair of listboxes
- * is worse than none.
+ * THE ROLE IS NOT OPTIONAL ANY MORE. It used to come with `multiSelectable`, which only the Ohbox
+ * passes, so `aria-selected` on every other list's rows would have been an orphaned option stating
+ * nothing. `multiSelectable` now says only what it says — that a reader may hold several rows at
+ * once — and the role is unconditional. `ariaLabel` is REQUIRED for the same reason it was asked
+ * for before: a view is normally several of these ("New", "Earlier"), and an unlabelled pair of
+ * listboxes is worse than none. A required prop is the check; the words are always a label already
+ * on screen, never a new sentence.
  */
 export function ListRows({
   children,
@@ -136,13 +142,14 @@ export function ListRows({
 }: {
   children: ReactNode;
   multiSelectable?: boolean;
-  ariaLabel?: string;
+  ariaLabel: string;
 }) {
   return (
     <div
       className="rows"
-      {...(multiSelectable ? ({ role: "listbox", "aria-multiselectable": "true" } as const) : {})}
-      {...(ariaLabel ? { "aria-label": ariaLabel } : {})}
+      role="listbox"
+      aria-label={ariaLabel}
+      {...(multiSelectable ? ({ "aria-multiselectable": "true" } as const) : {})}
     >
       {children}
     </div>

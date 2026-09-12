@@ -223,7 +223,7 @@ export function HistoryView({
         >
           {t("explainerMore")}
         </InfoNote>
-        <ListRows>
+        <ListRows ariaLabel={t("title")}>
           {messages.length ? (
             <>
               {/* THE ROWS ABOVE, AS HEIGHT. An empty element rather than a margin or a
@@ -234,6 +234,7 @@ export function HistoryView({
               {win.padTop > 0 ? <div aria-hidden style={{ height: win.padTop }} /> : null}
               {messages.slice(win.start, win.end).map((m) => (
                 <MessageRow
+                  spoken={rowBadge.spoken}
                   key={m.id}
                   id={m.id}
                   from={senderName(m)}

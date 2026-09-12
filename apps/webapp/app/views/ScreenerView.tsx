@@ -1094,6 +1094,7 @@ export function ScreenerView({
       const newest = newestHeld(w);
       return (
         <MessageRow
+          spoken={rowBadge.spoken}
           key={w.id}
           id={w.id}
           from={displayAddressee(w.from.name, w.from.address)}
@@ -1175,6 +1176,7 @@ export function ScreenerView({
       const w = x as ScreenerSenderDTO;
       return (
         <MessageRow
+          spoken={rowBadge.spoken}
           key={w.id}
           id={w.id}
           /* NAME AND ADDRESS, AS IN `waiting`. These two segments printed the
@@ -1211,6 +1213,7 @@ export function ScreenerView({
     const r = x as SpamRow;
     return (
       <MessageRow
+        spoken={rowBadge.spoken}
         key={r.sender.id}
         id={r.sender.id}
         from={displayAddressee(r.sender.from.name, r.sender.from.address)}
@@ -1416,13 +1419,15 @@ export function ScreenerView({
            that sheet. The bindings themselves are unchanged (`keys` above). */
         hints={<ShortcutHint />}
       >
-        <ListRows>
-          {junkActive ? (
-            /* Through `selectRow`, exactly like every mirror row: on a narrow viewport the
-               read column is hidden until `onFull(true)`, so a tap that only changed the
-               selection would open nothing (review finding on this commit). */
-            <JunkRows junk={junk!} activeKey={activeId} onSelect={selectRow} />
-          ) : items.length ? (
+        {/* THE JUNK PANEL IS NOT A RUN OF OPTIONS. It carries a search field, per-mailbox notes
+            and a pager, so it stands OUTSIDE the listbox and wraps its own row runs — a text
+            input inside a `role="listbox"` is a control an assistive technology cannot reach by
+            the list's own navigation. Through `selectRow`, exactly like every mirror row: on a
+            narrow viewport the read column is hidden until `onFull(true)`, so a tap that only
+            changed the selection would open nothing (review finding on this commit). */}
+        {junkActive ? <JunkRows junk={junk!} activeKey={activeId} onSelect={selectRow} /> : null}
+        <ListRows ariaLabel={t("title")}>
+          {junkActive ? null : items.length ? (
             items.map(row)
           ) : state.decided.length === 0 ? (
             <Empty segment={segment} settled={settled} />
@@ -1970,9 +1975,11 @@ function DecidedRow({
   onSelect: () => void;
 }) {
   const t = useTranslations("screener");
+  const rowBadge = useRowBadgeCopy();
   const newest = newestHeld(sender);
   return (
     <MessageRow
+      spoken={rowBadge.spoken}
       id={sender.id}
       from={displayAddressee(sender.from.name, sender.from.address)}
       address={displayAddressUnder(sender.from.name, sender.from.address)}
@@ -2449,6 +2456,7 @@ function JunkRows({
   onSelect: (key: string) => void;
 }) {
   const t = useTranslations("screener");
+  const rowBadge = useRowBadgeCopy();
   if (junk.phase === "loading") {
     return (
       <div className="empty" role="status" aria-busy="true">
@@ -2478,6 +2486,7 @@ function JunkRows({
   const localCount = query.length > 0 ? search.localCount : junk.visible.length;
   const row = (i: JunkItemWire) => (
     <MessageRow
+      spoken={rowBadge.spoken}
       key={junkKeyOf(i)}
       id={junkKeyOf(i)}
       from={displayAddressee(i.from.name, i.from.address)}
@@ -2510,11 +2519,12 @@ function JunkRows({
           autoComplete="off"
         />
       </div>
-      {junk.visible.slice(0, localCount).map(row)}
+      <ListRows ariaLabel={t("segJunk")}>{junk.visible.slice(0, localCount).map(row)}</ListRows>
       {query.length > 0 && search.phase === "done" && search.hits.length > 0 ? (
         <p className="scn-junk-note">{t("junkSearchAppended")}</p>
       ) : null}
-      {junk.visible.slice(localCount).map(row)}
+      {/* The server's appended hits are their own list, named by the note above them. */}
+      <ListRows ariaLabel={t("junkSearchAppended")}>{junk.visible.slice(localCount).map(row)}</ListRows>
       {query.length > 0 ? (
         <JunkSearchState search={search} localCount={localCount} />
       ) : null}

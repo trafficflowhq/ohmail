@@ -288,6 +288,7 @@ export function TriageView({
 
     return (
       <MessageRow
+        spoken={rowBadge.spoken}
         key={m.id}
         id={m.id}
         from={senderName(m)}
@@ -379,7 +380,7 @@ export function TriageView({
            already printed on the Reply Run button by `kbdHint`, and `?` works here without
            being advertised at every pane foot in the app. */
       >
-        <ListRows>
+        <ListRows ariaLabel={t("title")}>
           {entries.length ? (
             entries.map(row)
           ) : (
