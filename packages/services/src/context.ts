@@ -89,19 +89,20 @@ export async function runInTransaction<T>(
  * when it started can commit after the sweep and recreate erased state. The fence runs FIRST
  * here, keyed by the account the context carries — the head of the global lock order
  * (`erasure-fence.ts` holds the argument). `lock` raises its strength for a body that will take
- * `accounts FOR UPDATE` later: a share upgraded mid-transaction deadlocks two such callers.
- * `erasure-fence-census.test.ts` reddens a write door that is neither fenced, fenced by
- * construction, nor allow-listed.
+ * `accounts FOR UPDATE` later; `db` names the handle for a caller that holds one directly (the
+ * API layer's `deps.db`, which `serviceContext` also puts on `ctx`). The census reddens a door
+ * that is neither fenced, fenced by construction, nor allow-listed.
  */
 export async function withAccountTx<T>(
   ctx: ServiceContext, fn: (tx: LedgerTx) => Promise<T>,
-  opts: { readonly lock?: LockMode } = {},
+  opts: { readonly lock?: LockMode; readonly db?: ServiceContext["db"] } = {},
 ): Promise<T> {
-  const handle = ctx.db as unknown as {
+  const db = opts.db ?? ctx.db;
+  const handle = db as unknown as {
     transaction: <R>(f: (t: LedgerTx) => Promise<R>) => Promise<R>;
   };
   return handle.transaction(async (tx) => {
-    await fenceErasedAccount(tx as unknown as Tx, dialect(ctx.db), ctx.accountId, opts.lock);
+    await fenceErasedAccount(tx as unknown as Tx, dialect(db), ctx.accountId, opts.lock);
     return fn(tx);
   });
 }

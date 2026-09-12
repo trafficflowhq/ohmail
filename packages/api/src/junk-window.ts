@@ -2,11 +2,11 @@ import { and, eq, inArray, isNull, ne, sql, type SQL } from "drizzle-orm";
 import { dialect } from "@trafficflow/db/dialect";
 import {
   assertOrganizerRole,
-  contacts, folderState, junkSweepCandidateWhere, mailboxes, messageBodies, messages, recordRuleDelta,
+  contacts, folderState, junkSweepCandidateWhere, mailboxes, messageBodies, messages, recordChange,
   rules as rulesTbl, type Tx,
 } from "@trafficflow/db";
 import {
-  FOLDER_PAGE_MAX, MessageGoneError, makeRef, epochOf, sameEpoch,
+  FOLDER_PAGE_MAX, MessageGoneError, makeRef,
   type FolderPage, type FolderPageItem, type FolderSearchPage,
 } from "@trafficflow/core/adapters/imap";
 /* `core/mail`, never the default barrel: the barrel re-exports `ai/workflows/*`, whose workflow runner
@@ -216,7 +216,7 @@ export async function listJunk(
       const held = before[box.id];
       states.push({
         id: box.id, address: box.address, window: "ok",
-        ...(held !== undefined && !sameEpoch(epochOf(held.v), epochOf(page.uidValidity)) ? { reset: true } : {}),
+        ...(held !== undefined && held.v !== page.uidValidity ? { reset: true } : {}),
       });
       return { boxId: box.id, page };
     } catch (err) {
@@ -267,7 +267,7 @@ export async function listJunk(
     } else if (lane.rows.length > 0) {
       // Nothing of this mailbox fit the page: resume exactly where this request began.
       const held = before[lane.boxId];
-      nextBefore[lane.boxId] = held !== undefined && sameEpoch(epochOf(held.v), epochOf(lane.uidValidity))
+      nextBefore[lane.boxId] = held !== undefined && held.v === lane.uidValidity
         ? held
         : { v: lane.uidValidity, s: lane.rows[0]!.seq + 1 };
     } else if (lane.adapterNext !== null) {
@@ -290,7 +290,7 @@ export async function listJunk(
       const held = before[lane.boxId];
       const s = lane.tookAny
         ? lane.lowestTakenSeq
-        : held !== undefined && sameEpoch(epochOf(held.v), epochOf(lane.uidValidity))
+        : held !== undefined && held.v === lane.uidValidity
           ? held.s
           : (lane.rows[0]?.seq ?? 0) + 1;
       nextBefore[lane.boxId] = { v: lane.uidValidity, s: Math.max(1, s) };
@@ -474,7 +474,7 @@ export async function junkBody(
     (adapter) => adapter.fetchByUid(box.junkFolder!, [args.uid], { maxBytes: JUNK_BODY_MAX_BYTES }),
     { budgetMs: JUNK_READ_TIMEOUT_MS },
   );
-  if (!sameEpoch(epochOf(fetched.uidValidity), epochOf(args.uidValidity))) {
+  if (fetched.uidValidity !== args.uidValidity) {
     throw new ServiceError("junk_message_gone", 410, "the Junk folder changed under this row — reload the list");
   }
   if (fetched.oversize.includes(args.uid)) {
@@ -537,7 +537,9 @@ export async function allowSender(
         eq(rulesTbl.enabled, true),
       ))
       .returning({ id: rulesTbl.id });
-    await recordRuleDelta(tx, accountId, disabled.map((r) => r.id), "update");
+    for (const r of disabled) {
+      await recordChange(tx, { accountId, entityType: "rule", entityId: r.id, op: "update", meta: null });
+    }
 
     // 2. The admission — the yes-decision's `contacts` row, idempotent.
     await tx.insert(contacts).values({ accountId, address: addr })
@@ -568,7 +570,7 @@ export async function allowSender(
       provenance: "promoted",
       enabled: true,
     }).returning({ id: rulesTbl.id });
-    await recordRuleDelta(tx, accountId, [rule!.id], "create");
+    await recordChange(tx, { accountId, entityType: "rule", entityId: rule!.id, op: "create", meta: null });
     return { disabledRuleIds: disabled.map((r) => r.id), createdRuleId: rule!.id };
   }, { db: deps.db });
 }
@@ -657,7 +659,7 @@ export async function rescueJunk(
             const fetched = await adapter.fetchByUid(box.junkFolder!, [args.uid], {
               maxBytes: JUNK_BODY_MAX_BYTES,
             });
-            const c = sameEpoch(epochOf(fetched.uidValidity), epochOf(args.uidValidity))
+            const c = fetched.uidValidity === args.uidValidity
               ? fetched.creates.find((x) => x.raw !== undefined)
               : undefined;
             raw = (c?.raw as Buffer | undefined) ?? null;
