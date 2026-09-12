@@ -1519,6 +1519,22 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
     });
   }
 
+  /**
+   * {@link MessageRepo.recordChanges} — the same append for a whole list, through the same
+   * chokepoint. `recordChangeTx` is itself a one-element `recordChangesTx`, so the singular and
+   * the batch cannot drift: one counter allocation, one INSERT, one wake, seqs positional.
+   */
+  async recordChanges(inputs: readonly RepoChangeInput[]): Promise<bigint[]> {
+    if (inputs.length === 0) return [];
+    return recordChangesTx(this.db as LedgerTx, inputs.map((input) => ({
+      accountId: input.accountId,
+      entityType: input.entityType as EntityType,
+      entityId: input.entityId,
+      op: input.op,
+      meta: input.meta ?? null,
+    })));
+  }
+
   // ── Threading (mail 0026) ──
 
   /**

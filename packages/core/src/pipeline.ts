@@ -33,7 +33,7 @@ import { resolveThread } from "./threading.js";
 import { classifyAttemptKey } from "@trafficflow/db/ledger-source";
 import { aiSpendPermitted } from "./ports.js";
 import type {
-  Change, CreditGate, MoveEvidence, PipelineDeps, RepoPort, RoutingPort, FolderStateRow,
+  Change, CreditGate, MoveEvidence, PipelineDeps, RepoPort, RepoChangeInput, RoutingPort, FolderStateRow,
   MessageBodyInput, NativeLocator, StoredMessage,
 } from "./ports.js";
 import type { ClassifierPort, ClassifierResult } from "./classifier-port.js";
@@ -1104,6 +1104,9 @@ export async function commitChange(plan: ChangePlan, deps: CommitDeps): Promise<
 
   if (plan.outcome === "new") {
     const p = plan.new!;
+    // This message's client-visible deltas, collected as the rows are written and appended ONCE
+    // at the end of the branch — see the block at the bottom. Order is seq order.
+    const deltas: RepoChangeInput[] = [];
     const stored = await repo.insertMessage({
       accountId, mailboxId,
       canonical: p.normalized.canonical,
@@ -1217,15 +1220,15 @@ export async function commitChange(plan: ChangePlan, deps: CommitDeps): Promise<
         date: p.normalized.date,
         emitMessageUpdate: false,
       });
-      // Recorded HERE and not inside the resolver: `allocateSeq` holds the account's seq row
-      // lock to commit, so every `threads` lock has to be taken before the first one of these or
-      // a concurrent backfill batch deadlocks against us. See `ThreadResolution.changes`.
+      // Collected HERE and not inside the resolver: the resolver takes the `threads` locks, and
+      // the counter lock this list is eventually allocated from must be taken after every one of
+      // them or a concurrent backfill batch deadlocks against us. See `ThreadResolution.changes`.
       for (const c of resolution.changes) {
-        await repo.recordChange({ accountId, entityType: c.entityType, entityId: c.entityId, op: c.op, meta: null });
+        deltas.push({ accountId, entityType: c.entityType, entityId: c.entityId, op: c.op, meta: null });
       }
     }
 
-    await repo.recordChange({ accountId, entityType: "message", entityId: stored.id, op: "create", meta: null });
+    deltas.push({ accountId, entityType: "message", entityId: stored.id, op: "create", meta: null });
 
     const initial: FolderStateRow = {
       desiredFolder: p.desired,
@@ -1254,7 +1257,7 @@ export async function commitChange(plan: ChangePlan, deps: CommitDeps): Promise<
     // Optimistic, user-wins move change at local commit. The physical
     // move follows outside the tx; a later change corrects any IMAP divergence.
     if (p.desired !== p.arrivalLocator.folder) {
-      await repo.recordChange({
+      deltas.push({
         accountId, entityType: "message", entityId: stored.id, op: "move",
         meta: { from: p.arrivalLocator.folder, to: p.desired },
       });
@@ -1274,7 +1277,7 @@ export async function commitChange(plan: ChangePlan, deps: CommitDeps): Promise<
         spam: p.ai.result.spam,
         status,
       });
-      await repo.recordChange({ accountId, entityType: "routing_decision", entityId: rd.id, op: "create", meta: null });
+      deltas.push({ accountId, entityType: "routing_decision", entityId: rd.id, op: "create", meta: null });
 
       if (!p.ai.autoApplied) {
         const appr = await routing.enqueueApproval({
@@ -1288,9 +1291,19 @@ export async function commitChange(plan: ChangePlan, deps: CommitDeps): Promise<
           confidence: p.ai.result.confidence,
           expiresAt: null,
         });
-        await repo.recordChange({ accountId, entityType: "approval", entityId: appr.id, op: "create", meta: null });
+        deltas.push({ accountId, entityType: "approval", entityId: appr.id, op: "create", meta: null });
       }
     }
+
+    // The whole message's deltas, in ONE append, in collection order. Separately, the thread,
+    // the message and the optimistic move cost four statements EACH — ensure the counter row,
+    // bump it, insert, notify — twelve of the thirty-two an ingested message costs; batched they
+    // cost four. Still inside the caller's transaction, so a change row neither outlives the rows
+    // it names nor arrives before them. LAST, deliberately: the counter row is the account's one
+    // serialization point, and taking it after every other lock this branch wants holds it for
+    // the insert and the commit alone — the rule the threading block above states, now covering
+    // every lock in the branch rather than the `threads` ones.
+    await repo.recordChanges(deltas);
 
     const action: ReconcileAction =
       p.desired === p.arrivalLocator.folder ? { type: "none" } : { type: "move", to: p.desired };

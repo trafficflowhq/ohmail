@@ -428,6 +428,15 @@ export interface RepoPort {
   recordAudit(accountId: string, action: string, payload: unknown, inverse: unknown): Promise<void>;
   /** Append a client-visible change to the delta log in the ambient transaction. */
   recordChange(input: RepoChangeInput): Promise<bigint>;
+  /**
+   * The same append for MANY changes at once, in the order given — one counter allocation, one
+   * INSERT and one wake for the whole list instead of four statements per change. A caller that
+   * knows all of an operation's deltas before it commits uses this: the singular form is three
+   * statements plus a wake EACH, and ingest paid that three times for every message. Seqs come
+   * back positionally, so the k-th change keeps the k-th seq and the relative order the singular
+   * calls produced is the order here. An empty list writes nothing and takes no lock.
+   */
+  recordChanges(inputs: readonly RepoChangeInput[]): Promise<bigint[]>;
 
   // ── Threading. All three run inside the caller's transaction. ──
 
