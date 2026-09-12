@@ -29,6 +29,7 @@ import {
   growthStep,
   pulledCount,
   seedGrowth,
+  wantsImportCounts,
   type MailboxFacts,
   type MailState,
   type MailStateInputs,
@@ -325,18 +326,21 @@ export function MailStateProvider({
   useCommitEffect(() => { answering.current = adopted; }, [adopted]);
 
   /**
-   * DOES ANY MAILBOX STILL HAVE AN IMPORT OPEN? — the one thing that turns `?counts=1` on.
-   *
-   * The count costs a grouped `count(*)` over the store, so it is asked only while it is the
-   * only way to say how far an import has got, and stops at the stamp the door writes.
-   * `=== null`, never `== null`: an engine older than the column omits the field, and `== null`
-   * would arm the aggregate for ever on every poll. Settled in an effect rather than during
-   * render, so the value the poll reads is the one the last commit established.
+   * WHAT THE NEXT POLL NEEDS IN ORDER TO DECIDE `?counts=1` — the inputs, settled at commit. The
+   * DECISION itself is taken at poll time by {@link wantsImportCounts}, and that split is the fix:
+   * its episode arm is time-dependent, so a boolean settled when the deps last changed can only
+   * ever be stale — false through the gap after the door's stamp (the counter then read backwards),
+   * and, once the mirror went still and nothing re-ran the effect, true for ever, which is the
+   * `count(*)` this gate exists to avoid. The inputs are the commit's; the clock is the poll's.
    */
-  const wantsCounts = useRef(false);
+  const countsInputs = useRef<{
+    facts: readonly MailboxFacts[] | null;
+    growth: MirrorGrowth;
+    bootstrapping: boolean;
+  }>({ facts: null, growth, bootstrapping: sync.bootstrapping });
   useEffect(() => {
-    wantsCounts.current = (facts ?? []).some((m) => m.initialImportCompletedAt === null);
-  }, [facts]);
+    countsInputs.current = { facts, growth, bootstrapping: sync.bootstrapping };
+  }, [facts, growth, sync.bootstrapping]);
 
   const read = useCallback(async (): Promise<void> => {
     if (!now.probe) return;
@@ -352,7 +356,10 @@ export function MailStateProvider({
      */
     if (!syncMayRead(probeEngine)) return;
     try {
-      const got = await now.probe({ counts: wantsCounts.current });
+      const ci = countsInputs.current;
+      const got = await now.probe({
+        counts: wantsImportCounts(ci.facts, ci.growth, ci.bootstrapping, Date.now()),
+      });
       if (!syncMayRead(probeEngine)) return;
       /* THE OWNERSHIP TEST. `now` is this callback's OWN identity, frozen when the callback was
          made; `answering.current` is what is on screen when the answer lands. A request issued for

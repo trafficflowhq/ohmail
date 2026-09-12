@@ -749,8 +749,10 @@ export function hostedTotal(mailboxes: readonly MailboxFacts[]): number | null {
  * whose mail predates the window, so it stops while the import runs on. The numerator is
  * {@link MailboxFacts.messageCount} — the store the import writes into — under
  * {@link hostedTotal}'s every-or-nothing rule. Never `hostedMessageCount`: that is the DENOMINATOR
- * this pair is quoted against. `max` with the row count is the safety, so a door that answers
- * nothing leaves the number where it is today and this can never read backwards.
+ * this pair is quoted against. `max` guards the SUMMED path only — the two early returns hand back
+ * the row count itself, so this cannot promise monotonicity on its own, and the sentence that once
+ * claimed it here was false at the moment an import completes. Not reading backwards is the
+ * CALLER's half of the contract, and {@link wantsImportCounts} is where it is kept.
  */
 export function pulledCount(mirrored: number, mailboxes: readonly MailboxFacts[] | null): number {
   if (mailboxes === null || mailboxes.length === 0) return mirrored;
@@ -968,6 +970,26 @@ export function isGrowing(g: MirrorGrowth, now: number): boolean {
 export function isImporting(g: MirrorGrowth, bootstrapping: boolean, now: number): boolean {
   if (g.importing) return now - g.lastRiseAt < IMPORT_END_IDLE_MS;
   return isGrowing(g, now) && bootstrapping;
+}
+
+/**
+ * MAY THE NEXT POLL STOP ASKING FOR `?counts=1`? — the aggregate's one gate.
+ *
+ * It asks the SAME question the strip asks, because the number is quoted by the sentence the strip
+ * writes: the door's completion stamp arrives while {@link isImporting} is still latched (the
+ * episode outlives the stamp by {@link IMPORT_END_IDLE_MS}), and a poll that dropped the aggregate
+ * in that gap left `messageCount` undefined, so {@link pulledCount} fell to its row-count arm and a
+ * large import was reported as the window's floor — backwards, under a screen still saying "importing".
+ * Sourced for exactly as long as it can be quoted; the clock is the CALLER's, never an effect's.
+ */
+export function wantsImportCounts(
+  facts: readonly MailboxFacts[] | null,
+  growth: MirrorGrowth,
+  bootstrapping: boolean,
+  now: number,
+): boolean {
+  if ((facts ?? []).some((m) => m.initialImportCompletedAt === null)) return true;
+  return isImporting(growth, bootstrapping, now);
 }
 
 /**
