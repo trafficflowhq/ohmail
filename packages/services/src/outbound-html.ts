@@ -1,5 +1,6 @@
 import sanitizeHtml from "sanitize-html";
 import { Parser } from "htmlparser2";
+import { DRAFT_BODY_MAX_BYTES } from "@trafficflow/core/mail";
 
 /**
  * OUTBOUND HTML — the allowlist composed messages pass through, plus the text/plain alternative
@@ -19,8 +20,13 @@ import { Parser } from "htmlparser2";
  * when applied; code does not); a test reconciles them, as with `STORED_HTML_CAP_BYTES`. Measured
  * in BYTES: `octet_length` is what the constraint counts, so emoji and accented text must be
  * measured the same way.
+ *
+ * The LITERAL now lives once, in `DRAFT_BODY_MAX_BYTES`: the plain half took the same number for
+ * the same migration's reason, and the composer states one ceiling over whichever half it is
+ * about to store — a client predicate that depended on two literals agreeing is the second number
+ * to keep true that both doc comments warn about.
  */
-export const DRAFT_HTML_CAP_BYTES = 262144;
+export const DRAFT_HTML_CAP_BYTES = DRAFT_BODY_MAX_BYTES;
 
 /** UTF-8 length, matching Postgres `octet_length`. */
 export const htmlByteLength = (html: string): number => Buffer.byteLength(html, "utf8");

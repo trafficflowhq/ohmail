@@ -175,3 +175,6 @@ export { useSeenOnScroll } from "./hooks/useSeenOnScroll.js";
 export type { UseSeenOnScrollOptions, SeenObserver } from "./hooks/useSeenOnScroll.js";
 export { useCommandPalette } from "./hooks/useCommandPalette.js";
 export type { CommandPaletteState } from "./hooks/useCommandPalette.js";
+
+/* format */
+export { formatFileSize } from "./format/file-size.js";

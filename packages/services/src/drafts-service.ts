@@ -1,6 +1,7 @@
 import { and, eq, inArray, isNull, ne } from "drizzle-orm";
 import {
-  claimIdempotencyKey, drafts, mailboxes, messages, outboundSends, recordChange, threads, type Tx,
+  claimIdempotencyKey, drafts, mailboxes, messages, outboundSends, recordChange, recordChanges,
+  threads, type LedgerTx, type Tx,
 } from "@trafficflow/db";
 import { dialect } from "@trafficflow/db/dialect";
 import {
@@ -187,6 +188,33 @@ export class DraftsService {
     return row !== undefined;
   }
 
+  /**
+   * A DRAFT CHANGE THAT MAKES A ROW POINT AT A MESSAGE CARRIES THAT MESSAGE WITH IT.
+   *
+   * A windowed mirror keeps only part of the mailbox and pins whatever it is still using — a draft
+   * replying to a message pins that message (`OhmailEngine.pinnedMessageIds`). A pin arriving for
+   * a message the client evicted BEFORE the pin existed protects a row that is not there, so the
+   * reply renders a hole. Every other server writer of a pinning row already re-emits the message
+   * beside it, which is what re-materializes the row (a `/sync` change carries the full DTO);
+   * this one did not. Emitted only when the change is what ESTABLISHES the reference — a later
+   * save of a draft the client already holds pins nothing new — and the message goes FIRST, so a
+   * page boundary between the two delivers the mail before the thing that points at it. The
+   * draft's own seq is returned and is the higher of the pair, so `X-Sync-Seq` still names the
+   * point at which both are visible.
+   */
+  private async recordDraftChange(
+    tx: LedgerTx, accountId: string, id: string, op: "create" | "update", pinned: string | null,
+  ): Promise<bigint> {
+    if (pinned === null) {
+      return recordChange(tx, { accountId, entityType: "draft", entityId: id, op, meta: null });
+    }
+    const seqs = await recordChanges(tx, [
+      { accountId, entityType: "message", entityId: pinned, op: "update", meta: null },
+      { accountId, entityType: "draft", entityId: id, op, meta: null },
+    ]);
+    return seqs[1]!;
+  }
+
   async get(ctx: ServiceContext, id: string): Promise<DraftDTO> {
     const dto = await materializeDraft(ctx.db, ctx.accountId, id);
     if (!dto) throw new ServiceError("not_found", 404, "draft not found");
@@ -234,9 +262,9 @@ export class DraftsService {
         status: "draft",
         createdAt: now, updatedAt: now,
       }).returning({ id: drafts.id });
-      const s = await recordChange(tx, {
-        accountId: ctx.accountId, entityType: "draft", entityId: row!.id, op: "create", meta: null,
-      });
+      const s = await this.recordDraftChange(
+        tx, ctx.accountId, row!.id, "create", body.inReplyToMessageId ?? null,
+      );
       // The stored response commits atomically with the draft, closing the
       // commit-then-crash window in which a retry would store a SECOND draft.
       let inTx: DraftDTO | null = null;
@@ -380,9 +408,12 @@ export class DraftsService {
         }
         throw new ServiceError("not_found", 404, "draft not found");
       }
-      return recordChange(tx, {
-        accountId: ctx.accountId, entityType: "draft", entityId: id, op: "update", meta: null,
-      });
+      // The patch is what establishes the reference; a patch that does not mention the reply
+      // target leaves whatever the row already named, which every client holding this draft
+      // already knows about.
+      return this.recordDraftChange(
+        tx, ctx.accountId, id, "update", patch.inReplyToMessageId ?? null,
+      );
     });
 
     return this.finish(ctx, id, seq);

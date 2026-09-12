@@ -131,3 +131,18 @@ export function draftBodyOverCeiling(text: string): boolean {
   return utf8ByteLength(text) > DRAFT_BODY_MAX_BYTES;
 }
 
+/**
+ * Is this DRAFT past the ceiling — whichever half of it will be stored?
+ *
+ * The effective body is the larger of the two halves, which is how the request door is priced
+ * (`input-bounds-census.test.ts` takes the MAXIMUM of the two caps, never their sum, because a
+ * request carrying `body` alongside `html` is a 400 and no legal draft holds both). One predicate
+ * and one number, so the composer's sentence cannot be true of one half and false of the other.
+ *
+ * The markup is measured as the editor holds it; the server measures what it stores, after
+ * sanitizing. Past this the save is refused here with a sentence; the server's 413 stays the
+ * authority for anything the sanitizer grows.
+ */
+export function draftOverCeiling(body: string, html?: string | null): boolean {
+  return draftBodyOverCeiling(body) || (html != null && draftBodyOverCeiling(html));
+}

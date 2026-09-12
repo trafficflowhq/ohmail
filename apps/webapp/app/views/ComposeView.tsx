@@ -15,7 +15,8 @@ import { useTranslations } from "next-intl";
 import { addressBook } from "@ohmail/client-engine";
 import type { EngineDraft, OhmailEngine } from "@ohmail/client-engine";
 import type { Editor } from "@tiptap/react";
-import { Button, Chip, Icon, Kbd, TextField, useToast } from "@ohmail/ui";
+import { Button, Chip, Icon, Kbd, TextField, formatFileSize, useToast } from "@ohmail/ui";
+import { DRAFT_BODY_MAX_BYTES } from "@trafficflow/core/outbound-text";
 import { chordKeys, useBinding, useKeyBindings, useModGlyph, useWritingSurface } from "../shell/keymap";
 import { go } from "../shell/routing";
 import { displayAddress } from "../shell/idn";
@@ -35,7 +36,7 @@ import { ComposeAttach, composeAttachCap } from "../components/ComposeAttach";
 import {
   instantOfLocalInput, localInputValue, nextWeekNine, scheduleLabel, todayEvening, tomorrowNine,
 } from "../shell/format";
-import { activeFormatZone } from "../shell/locale";
+import { activeFormatLocale, activeFormatZone } from "../shell/locale";
 import type { ComposeFields, ComposePlan } from "../shell/compose";
 import { draftNoteKey, worthSaving } from "../shell/compose-autosave";
 import { formatRecipientChips, type ResolvedFrom } from "../shell/compose-from";
@@ -1012,7 +1013,14 @@ export function ComposeView({
                   true refusal is worse than either alone. Read from the SAME predicate the save
                   door reads, so the sentence and the behaviour cannot disagree. */}
               {draftNoteKey(fields) === "bodyTooLong" ? (
-                <span className="send-note" role="status">{t("bodyTooLong")}</span>
+                <span className="send-note" role="status">
+                  {/* The sentence names the ceiling now that one formatter can say it — the
+                      number is the same one both halves are measured against, read from the
+                      constant rather than typed, so the copy cannot outlive it. */}
+                  {t("bodyTooLong", {
+                    size: formatFileSize(DRAFT_BODY_MAX_BYTES, activeFormatLocale()),
+                  })}
+                </span>
               ) : (
                 <span className="send-note">{t("draftNote")}</span>
               )}
