@@ -24,6 +24,10 @@ import { makeDrizzleRepo, type DrizzleRepo } from "../../adapters/drizzle-repo.j
 import type { NativeLocator } from "../../ports.js";
 import type { DraftPort, DraftInput, DraftResult } from "../draft.js";
 import { plainTextToOutboundBody } from "../../outbound-text.js";
+/* The model-sink door. The mail half owns it — `packages/core/src/ai/` is refused from the
+ * engine artifact, and `drafting-service.ts` (which the engine DOES mount) screens through the
+ * same function, so the door has to live where both can name it. */
+import { screenModelInput } from "../../sensitive.js";
 import type { ToolName, WorkflowStep } from "../../workflow-shapes.js";
 
 // The gated workflow EXECUTOR — drains a `pending` workflow_run and runs its steps. In CORE at
@@ -207,6 +211,19 @@ async function buildDraftInput(
         ))
         .orderBy(asc(messages.date)).limit(20)
     : [];
+  /**
+   * THE DOOR, before the input object exists. The per-field ingest flags above are structural and
+   * screen each column on its own; a credential split across a subject and a snippet satisfies
+   * every one of them and arrives whole. An automatic pass has nobody to tell, so the refusal
+   * FAILS the step with its class in the reason — one line in the run log, the item skipped, and
+   * no charge, because `prepare` screens before it spends.
+   */
+  const screened = screenModelInput([
+    { label: "incoming", fields: [target.subject, target.snippet, target.fromAddress] },
+    ...kb.map((e) => ({ label: "kb", fields: [e.title, e.content] })),
+    ...siblings.map((s) => ({ label: "thread", fields: [s.snippet, s.from] })),
+  ]);
+  if (!screened.admitted) throw new WorkflowStepError(`credential_screened:${screened.reason}`);
   return {
     incoming: { subject: target.subject, from: target.fromAddress, snippet: target.snippet },
     context: {
@@ -383,6 +400,14 @@ const addKbEntryTool: Tool = {
       title = requireString(args.title, "add_kb_entry.title");
       content = requireString(args.content, "add_kb_entry.content");
     }
+    /**
+     * THE DOOR, and this path is the worse of the two: a KB entry is read back as grounding on
+     * every later draft, so a credential stored here reaches the model again and again. The entry
+     * is NOT added — never a redacted one, which would put a `[REDACTED]` note in the user's own
+     * knowledge base and claim it as their words.
+     */
+    const screened = screenModelInput([{ label: "kb_entry", fields: [title, content] }]);
+    if (!screened.admitted) throw new WorkflowStepError(`credential_screened:${screened.reason}`);
     const inserted = await ctx.tx.insert(kbEntries).values({
       accountId: ctx.accountId, title, content, workflowDedupKey: dedupKey,
       createdAt: ctx.now, updatedAt: ctx.now,

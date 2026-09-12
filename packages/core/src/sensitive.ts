@@ -1636,3 +1636,67 @@ export function screenOutboundText(...parts: Array<string | null | undefined>): 
   }
   return { safe: true, category: null, reason: null };
 }
+
+/* ══════════════════════════════════════════════════════════════════════════════════════════
+ * 10. THE MODEL-SINK DOOR
+ * ════════════════════════════════════════════════════════════════════════════════════════ */
+
+/** The three classes a refusal carries: the reason a screened payload was not sent. */
+export type ModelSinkReason = "vocabulary" | "credential_shape" | "auth_url_token";
+
+/**
+ * One document a model sink is about to serialise — a label for the log and its fields IN ORDER.
+ *
+ * PROSE FIRST, ADDRESSES LAST, and the order is the whole point. {@link CODE_PROXIMITY} is 40
+ * characters, so a 37-character `From:` set between a subject and its snippet pushes the two
+ * halves of a split credential out of each other's window and the join answers `safe` — measured
+ * on `Your passphrase` / `It is 481920…`, which refuses as (subject, snippet, from) and passes as
+ * (subject, from, snippet). The label is a constant this codebase chose, never content.
+ */
+export interface ModelSinkDocument {
+  label: string;
+  fields: Array<string | null | undefined>;
+}
+
+/**
+ * What the door answers, as a union so that "refused" and "no reason" cannot both be true: a
+ * caller narrowing on `admitted` gets a `reason` it can put in a sentence without asserting.
+ * `where` names the refusing document — for the log line, never for the person.
+ */
+export type ModelSinkVerdict =
+  | { admitted: true; reason: null; category: null; where: null }
+  | { admitted: false; reason: ModelSinkReason; category: SensitivityCategory | null; where: string };
+
+/**
+ * The reason class in plain words — the half of the refusal a PERSON reads. One sentence per
+ * class, stated about the MESSAGE rather than about the draft, so the site that refuses supplies
+ * its own consequence ("…, so no draft was generated"). It lives beside the door because three
+ * sinks share it and three copies of it is three different sentences for one refusal.
+ */
+export const MODEL_SINK_REFUSAL_SENTENCE: Record<ModelSinkReason, string> = {
+  vocabulary: "this message reads like an authentication mail",
+  credential_shape: "this message contains something that looks like a credential",
+  auth_url_token: "this message carries a sign-in link with a token in it",
+};
+
+/**
+ * THE ONE DOOR every model sink passes its assembled input through, BEFORE the request exists.
+ *
+ * {@link screenOutboundText} already reads a JOIN; what was missing was a call site handing it
+ * one — the sinks assembled `{subject, from, snippet}` field by field, so a credential split
+ * across a subject and a body passed every per-field flag and arrived whole at the model. Per
+ * DOCUMENT, not one giant join: a code in a KB note and "verification" in an unrelated sibling
+ * are not a credential. A refusal is a REFUSAL, never a redacted payload — that would be a false
+ * state about what the model saw.
+ */
+export function screenModelInput(docs: ModelSinkDocument[]): ModelSinkVerdict {
+  for (const doc of docs) {
+    const screen = screenOutboundText(...doc.fields);
+    if (screen.safe) continue;
+    // Every refusal `screenOutboundText` makes today names its class. `credential_shape` is the
+    // fail-closed default rather than a cast, so a future unclassified refusal still refuses.
+    const reason = screen.reason ?? "credential_shape";
+    return { admitted: false, reason, category: screen.category, where: doc.label };
+  }
+  return { admitted: true, reason: null, category: null, where: null };
+}

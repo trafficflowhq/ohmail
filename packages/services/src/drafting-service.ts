@@ -7,7 +7,10 @@ import { messages, draftAttemptKey, type IdempotencyKey } from "@trafficflow/db"
  * answers. This service names a gate it may be handed; it never builds one, and it must
  * compile in a deployment where no gate and no ledger exist. */
 import type { SpendPort } from "@trafficflow/db";
-import { plainTextToOutboundBody, type DraftInput, type DraftPort } from "@trafficflow/core/mail";
+import {
+  plainTextToOutboundBody, screenModelInput, MODEL_SINK_REFUSAL_SENTENCE,
+  type DraftInput, type DraftPort,
+} from "@trafficflow/core/mail";
 import type { ServiceContext } from "./context.js";
 import { ServiceError } from "./errors.js";
 import { DraftsService, type DraftCreateIdempotency } from "./drafts-service.js";
@@ -127,6 +130,26 @@ export class DraftingService {
     const threadMessages = target.threadId
       ? await this.retrieveThreadContext(ctx, target.threadId, target.id)
       : [];
+
+    /**
+     * THE DOOR, before the input object exists and before the charge. Step 2 above refuses a
+     * target the INGEST flagged; this refuses a payload whose JOIN carries credential material —
+     * the case those per-column flags cannot see, a credential split across a subject and a body.
+     * A refusal is a 422 the person reads, in the reason class's own words, and NO draft: a
+     * redacted draft would be a false state about what the model was shown and what it wrote.
+     */
+    const screened = screenModelInput([
+      { label: "incoming", fields: [target.subject, target.snippet, target.fromAddress] },
+      ...kbHits.map((e) => ({ label: "kb", fields: [e.title, e.content] })),
+      ...threadMessages.map((m) => ({ label: "thread", fields: [m.snippet, m.from] })),
+    ]);
+    if (!screened.admitted) {
+      throw new ServiceError(
+        "credential_screened", 422,
+        `${MODEL_SINK_REFUSAL_SENTENCE[screened.reason]}, so no draft was generated`,
+        { reason: screened.reason },
+      );
+    }
 
     const input: DraftInput = {
       incoming: {
