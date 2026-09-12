@@ -24,6 +24,28 @@ import type { Diagnostic } from "./log.js";
 export type LocalDb = PgliteDatabase<typeof mailSchema>;
 
 /**
+ * THE LOCAL STORE DOES NOT WAIT FOR THE FLUSH — on THIS database and nowhere else (the Cloud's
+ * Postgres and every other handle keep the default; `local-store-durability.test.ts` says so).
+ *
+ * NOT `fsync = off`: the WAL is still written and still ordered, so a hard kill can neither
+ * corrupt the store nor lose a transaction out of the middle — a killed store reopens and recovers
+ * a PREFIX of its log. What it loses is what was committed after the last CHECKPOINT, and that is
+ * a wider window than the name suggests: PGlite is one process with no background writer, so the
+ * checkpointer {@link CHECKPOINT_INTERVAL_MS} arms is the only flush between commits.
+ *
+ * The mirror survives it because the mailbox is the master and because a prefix is what recovery
+ * gives: `sync.ts` writes a folder's cursor AFTER the messages it acknowledges, so a crash that
+ * kept the cursor kept them too, and one that lost them lost the cursor with them. The next cycle
+ * re-fetches. Nothing goes missing that the mailbox does not still hold; a crash costs repeated
+ * work. `local-db.test.ts` kills a mid-ingest store and reads that back off the reopened directory.
+ *
+ * The data directory is Emscripten NODEFS, where every file operation is a synchronous host call,
+ * which makes the commit flush the most expensive thing an ingested message does: measured over
+ * the real sync cycle on Linux, 35.4 -> 24.8 ms of wall per message.
+ */
+const LOCAL_STORE_SYNCHRONOUS_COMMIT = "off";
+
+/**
  * What opening the mirror cost, in wall-clock milliseconds, split by phase. Returned rather than
  * logged, because {@link openLocalDb} has no logger and giving it one would put a second diagnostic
  * seam in a function whose whole job is a database handle — the two constructors that call it own the
@@ -620,6 +642,11 @@ export async function openLocalDb(dataDir: string, opts: OpenLocalDbOptions = {}
     // A no-op everywhere else (`REISSUED_ORIGINALS`, packages/db/src/baseline.ts).
     await adoptReissuedOriginals(db, MAIL_JOURNAL);
     const migrateMs = Date.now() - tMigrate;
+    /* AFTER the migrator, deliberately: a schema change and the journal row that records it are
+       two transactions, so a crash that lost only the second would leave a store whose next launch
+       replays a migration it already has. Migrations run once and are not the cost. See
+       {@link LOCAL_STORE_SYNCHRONOUS_COMMIT} for what this does and does not risk. */
+    await client.exec(`set synchronous_commit = ${LOCAL_STORE_SYNCHRONOUS_COMMIT}`);
     // AFTER the migrator (the table must exist on a first launch) and BEFORE serving: a rewrite
     // holds an exclusive lock, and the one place that lock collides with nothing is here, where
     // no reader has the handle yet. See {@link reclaimBodyBloat} for the measured pathology and
