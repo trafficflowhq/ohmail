@@ -86,7 +86,11 @@ export const KNOWN_SET_NEUTRAL: ReadonlySet<string> = new Set([
   "claimMessageFailures", "resolveMessageFailure", "upgradeDedupKey", "insertMessageBody",
   "insertAttachments", "upsertFolderState", "completeFolderState", "setFolderConflict",
   "deferFolderReconcile",
-  "deferFlagReconcile", "recordAudit", "recordAuditMany", "recordChange", "upsertThread",
+  "deferFlagReconcile", "recordAudit", "recordAuditMany", "recordChange",
+  /* `recordChanges` is `recordChange` for a list — the same two tables (`change_log` and the
+     account's seq counter), neither of them in the projection. Named separately because the list
+     is what the ingest now calls; the singular stays for every caller that knows one delta. */
+  "recordChanges", "upsertThread",
   /* `upsertThread`'s device arm — the same rows, the same reason. It is a separate method rather
      than a branch inside one because the two stores answer "did this insert the row" by different
      mechanisms, not by different spellings; classified here so a reader does not have to find that

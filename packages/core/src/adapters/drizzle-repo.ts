@@ -1520,7 +1520,7 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
   }
 
   /**
-   * {@link MessageRepo.recordChanges} — the same append for a whole list, through the same
+   * {@link RepoPort.recordChanges} — the same append for a whole list, through the same
    * chokepoint. `recordChangeTx` is itself a one-element `recordChangesTx`, so the singular and
    * the batch cannot drift: one counter allocation, one INSERT, one wake, seqs positional.
    */
