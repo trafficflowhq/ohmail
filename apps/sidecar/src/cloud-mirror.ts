@@ -2601,6 +2601,11 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
   };
 
   const runPull = async (): Promise<number> => {
+    /* WHEN THIS PULL BEGAN, for the first-import clock below. A pull walks the whole feed before it
+       can stamp anything, so the pull that finds a first import open is where a large mirror's
+       first pages land; handing the reporter the moment it reported would leave that pull outside
+       the duration it announces. See `first-sync.ts`. */
+    const pullStartedAt = performance.now();
     try {
       /* THE MAILBOXES FIRST, ALWAYS. A message's `mailbox_id` is a foreign key and the drain writes
          it verbatim from the feed, so the rows it points at have to exist before the first page is
@@ -2694,7 +2699,7 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
           removed mailbox has no import to report finishing. */
       for (const row of await activeMirroredMailboxes()) {
         const stamps = await stampSynced(cfg.db, row.id, now(), cursor.bodies.phase === "complete");
-        await firstSync.report(row.id, stamps, () => mirroredMessageCount(cfg.db, row.id));
+        await firstSync.report(row.id, stamps, () => mirroredMessageCount(cfg.db, row.id), pullStartedAt);
       }
       // THE PULL'S LAST WORD — this mirror drained the hosted feed to its horizon at this
       // moment, on this process's own clock. Written at COMPLETION and nowhere earlier, exactly

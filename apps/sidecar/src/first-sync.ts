@@ -17,8 +17,18 @@ export interface FirstSyncReporter {
    *
    * `countMessages` is a thunk because it is a `count(*)` over the mirror: it runs only on the
    * passes that emit, never on a settled mailbox's, which is almost every pass.
+   *
+   * `passStartedAt` is when THIS pass began, on the same monotonic clock — not when it reported.
+   * A pass is up to a hundred cycles, and the one that finds a first import open is the one that
+   * ingests the first fifth of a large mailbox: anchoring on the report would leave it outside
+   * the elapsed time this reporter goes on to announce.
    */
-  report(mailboxId: string, stamps: SyncStamps, countMessages: () => Promise<number>): Promise<void>;
+  report(
+    mailboxId: string,
+    stamps: SyncStamps,
+    countMessages: () => Promise<number>,
+    passStartedAt: number,
+  ): Promise<void>;
 }
 
 export function createFirstSyncReporter(
@@ -26,12 +36,13 @@ export function createFirstSyncReporter(
   opts: { monotonicMs?: () => number } = {},
 ): FirstSyncReporter {
   const monotonicMs = opts.monotonicMs ?? ((): number => performance.now());
-  /** Mailbox → when this launch first saw its import open. Absent ⇒ nothing announced yet. */
+  /** Mailbox → the start of the pass this launch first saw its import open in. Absent ⇒ nothing
+      announced yet. Never the process's own start: a mailbox attached an hour into a launch would
+      otherwise report that hour as import time. */
   const openSince = new Map<string, number>();
-  const bootedAt = monotonicMs();
 
   return {
-    async report(mailboxId, stamps, countMessages): Promise<void> {
+    async report(mailboxId, stamps, countMessages, passStartedAt): Promise<void> {
       // A settled mailbox — every pass of almost every install — costs one boolean and no read.
       /* `stampSynced` cannot report a stamp on a pass that found the import closed — it returns
          before the second statement — so this is the whole of "nothing to say". */
@@ -47,20 +58,26 @@ export function createFirstSyncReporter(
           log("first_sync_finished", {
             mailboxId,
             messages,
-            totalMs: Math.round(monotonicMs() - (announcedAt ?? bootedAt)),
-            reason: "the first import of this mailbox finished; totalMs runs from this launch's " +
-              "first sight of it, so an import that spanned a relaunch reports only this part",
+            totalMs: Math.round(monotonicMs() - (announcedAt ?? passStartedAt)),
+            reason: "the first import of this mailbox finished; totalMs runs from the start of " +
+              "the pass this launch first saw it open in, so an import that spanned a relaunch " +
+              "reports only this part and the boot before it is `boot_phases`, not import time",
           });
           return;
         }
-        openSince.set(mailboxId, monotonicMs());
+        /* THE PASS'S START, never the moment it reported. A pass is up to a hundred cycles, so the
+           one that finds a first import open runs for a quarter of an hour on a large mailbox and
+           lands its first pages before it can say anything: anchoring here on `monotonicMs()` left
+           that whole pass outside the duration the finish line then announced — 27 % of a first
+           import measured end to end on the reference rig. */
+        openSince.set(mailboxId, passStartedAt);
         log("first_sync_started", {
           mailboxId,
           messages,
           reason: "this mailbox's first import is not finished and this launch is working on it; " +
             "messages is what the mirror already holds, so a resumed import is not read as a " +
-            "cold one. The pass that produced this line is not inside the elapsed time reported " +
-            "when it finishes",
+            "cold one. The pass that produced this line IS inside the elapsed time reported when " +
+            "it finishes — it is where a large mailbox's first pages are ingested",
         });
       } catch (err) {
         /* An instrument may not end a drain: the stamps are already written and the mail is

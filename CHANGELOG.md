@@ -134,6 +134,14 @@ whichever arm was last. They now say what a phone is: it organizes this mailbox,
 the ohmail app is open on it. A phone that has stopped renewing its claim is no longer reported as
 still filing.
 
+### How long a first import took, in full
+
+The mail engine writes one line when a mailbox's first import finishes, saying how long it took. The
+clock started at the end of the first pass over the mailbox rather than at its beginning, and on a
+large mailbox that pass is a quarter of an hour of work — so the figure left out the stretch that was
+doing the most. A large first import read as thirty-four minutes where it had taken forty-seven. The
+import is unchanged; the line describing it is now the whole of it.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See

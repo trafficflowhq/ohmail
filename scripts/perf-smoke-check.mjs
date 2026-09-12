@@ -52,8 +52,11 @@ export const BUDGETS = {
   engineRssKb: 450 * 1024,
   /* The engine's own boot, from its `boot_phases.totalReadyMs`. NO MEASUREMENT BEHIND IT YET. */
   engineReadyMs: 4000,
-  /* The first import, from `first_sync_finished`. A released build imported at 33.1 messages a
-   * second; this is 1.8 times that, and it is read only when the import finished inside the run. */
+  /* The first import, from `first_sync_finished`. The released build's own line read 33.1 messages
+   * a second because its clock began at the END of the drain that found the import open; measured
+   * end to end the same mailbox arrived at 24.1, and the reference rig reads 26.0. So this is 2.3
+   * times a released build, and it is read only when the import finished inside the run — against
+   * a `totalMs` that now covers the drain that found the import open. */
   syncMsgPerS: 60,
   /* Everything below is read from `ui_vitals` and has NO MEASUREMENT BEHIND IT YET. */
   startToListMs: 2000,
@@ -269,7 +272,7 @@ export function collect({ samples, log, uiInBundle, expectMessages, fixtureMessa
     if (importMs && importMs > 0) {
       const rate = Math.round((imported / importMs) * 1000);
       add("sync_rate", "RECORDED", rate >= BUDGETS.syncMsgPerS ? "PASS" : "FAIL",
-        `${rate} messages a second against ${BUDGETS.syncMsgPerS}`, "1.8 times a released build's 33.1; recorded while the runner's own speed is unmeasured");
+        `${rate} messages a second against ${BUDGETS.syncMsgPerS}`, "2.3 times a released build's measured 26.0; recorded while the runner's own speed is unmeasured");
     }
   }
 

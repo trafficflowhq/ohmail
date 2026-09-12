@@ -4242,6 +4242,11 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         // `syncDeps` above, which is built once per process — that would freeze the posture for the
         // life of the engine, so an edit in Settings would need a relaunch to take effect.
         const screening = await screeningNow();
+        /* WHEN THIS DRAIN BEGAN, for the first-import clock. A drain is up to a hundred cycles, and
+           the one that finds a first import open lands a large mailbox's first pages before it
+           reports — 13.7 minutes of a 47.4-minute import on the reference rig, which the reported
+           duration used to leave out. `performance.now()`, matching the reporter's own clock. */
+        const passStartedAt = performance.now();
         // Per-cycle wall durations, summarized into one `sync_drain` line below — the read that
         // attributes desktop CPU and quit lag to the pipeline. `Date.now()` deliberately, not the
         // injected `now()`: a test may freeze that clock, and a frozen clock would report every
@@ -4409,7 +4414,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           /* HOW LONG THE FIRST IMPORT TOOK, from the stamps that just decided it — the number
              nobody could read off a log before. The count is a thunk so a settled mailbox's pass
              pays nothing for it; see `first-sync.ts`. */
-          await firstSyncLog.report(mb.id, stamps, () => mirroredMessageCount(db, mb.id));
+          await firstSyncLog.report(mb.id, stamps, () => mirroredMessageCount(db, mb.id), passStartedAt);
           /* AND WHETHER THE IMPORT IS STILL OPEN, from the SAME stamps — the state a surface
              renders must not be able to disagree with the line a log carries about one pass. */
           firstSync.noteStamps(stamps);
