@@ -140,6 +140,21 @@ export interface GetSnapshotOptions {
   cursor?: string;
   /** Messages per page. Clamped to [1, {@link MAX_LIMIT}]. */
   limit?: number;
+  /**
+   * `"tail"` on PAGE 1 asks for the LABELED TAIL ALONE — every message that owns a tag, newest
+   * first, with no window ahead of it and no page-1 live state. A windowed client whose mirror
+   * evicted tagged mail under an older retention policy needs exactly those rows and nothing
+   * else: the ordinary walk reaches them only after paging the whole window, and its page 1 is
+   * the mail such a client already holds. Cost is bounded by how much mail carries a tag, which
+   * is what somebody tagged by hand.
+   *
+   * A STRING and not the literal type, because this is where the vocabulary is decided: the route
+   * forwards whatever the query carried, and anything that is not exactly `"tail"` — a
+   * misspelling, an empty value, a phase a later client invents — is the ordinary walk, byte for
+   * byte. Narrowing at the boundary instead would put the same test in two places, and only one
+   * of them could ever be watched fail.
+   */
+  phase?: string;
 }
 
 /**
@@ -601,6 +616,10 @@ export class SyncService {
     const { db, accountId } = ctx;
     const limit = clampPageLimit(opts.limit, DEFAULT_LIMIT, MAX_LIMIT);
     const cursor = opts.cursor && opts.cursor !== "" ? this.decodeSnapshotCursor(opts.cursor) : null;
+    // TAIL-ONLY: page 1 of a walk that starts IN the tail. Only ever true on page 1 — later pages
+    // carry `phase: "tail"` in the cursor itself, so the resumption is the tail's own and the
+    // caller's parameter is never read twice.
+    const tailOnly = cursor === null && opts.phase === "tail";
 
     // THE GAP-FREE SEQ IS FIXED BEFORE ANY ENTITY READ. See `highWaterSeq` for what depends on
     // this line
@@ -613,7 +632,7 @@ export class SyncService {
       changes.push({ type, op: "create", id, seq, updatedAt, entity });
     };
 
-    if (cursor === null) {
+    if (cursor === null && !tailOnly) {
       // ── Page 1: the live state, one query per type, projected by the SAME functions the
       //    per-row `materialize` path uses. The entity id is the ROW id in every case — a
       //    `message_state` DTO carries `messageId` and not its own, and the client keys on the
@@ -738,7 +757,7 @@ export class SyncService {
     // excluded delivered to nobody, with the cursor past its change for ever. Settled rows are
     // history, which is what the window is for. Every arm filters `account_id` too, so a bug that
     // let the two disagree fails closed rather than leaking into another account's bootstrap.
-    const inTail = cursor?.phase === "tail";
+    const inTail = cursor?.phase === "tail" || tailOnly;
     const reachableTail = inTail
       ? or(
         exists(

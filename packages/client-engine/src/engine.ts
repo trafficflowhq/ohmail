@@ -789,7 +789,7 @@ export const SNAPSHOT_PAGE_1_STATE_KINDS = [
  * {@link SNAPSHOT_PAGE_1_STATE_KINDS}. The drain follows `nextCursor` and nothing else: it stays non-null when drafts
  * outlive the window and its tail, and stopping early leaves them below the cursor adopted.
  */
-export type SnapshotFn = (params: { cursor?: string; limit?: number }) => Promise<SyncSnapshotPage>;
+export type SnapshotFn = (params: { cursor?: string; limit?: number; phase?: "tail" }) => Promise<SyncSnapshotPage>;
 
 /**
  * The adapter capability the cold-start path reaches for. Declared STRUCTURALLY, exactly as {@link
@@ -1313,6 +1313,26 @@ export const LAST_DRAIN_AT_META = "lastDrainAt";
 export const SNAPSHOT_PREFIX_SEQ_META = "snapshotPrefixSeq";
 
 /**
+ * WHICH RETENTION POLICY THIS MIRROR WAS BUILT UNDER. A windowed mirror is a record of what one
+ * policy chose to keep, and a policy that later keeps MORE cannot un-delete what the old one
+ * dropped: the pin stops the next eviction and resurrects nothing. A browser mirror persists
+ * across sessions, so it carries that loss for ever; the desktop's is rebuilt in memory every
+ * launch and never does.
+ *
+ * So the generation is written down, and a mirror whose stamp is behind the running one is owed
+ * ONE bounded re-hydration — see {@link OhmailEngine.rehydrateForPolicy}. ABSENT means a mirror
+ * older than the stamp, which is exactly the set that reported the symptom.
+ */
+export const STORE_POLICY_GENERATION_META = "storePolicyGeneration";
+
+/**
+ * Generation 1: TAGGED MAIL IS PINNED. Bump this only when a policy change makes the mirror keep
+ * mail an older one evicted, and only alongside a re-hydration that can fetch that mail back —
+ * a bump on its own is a wasted walk on every mirror in the field.
+ */
+export const STORE_POLICY_GENERATION = 1;
+
+/**
  * THE FRESHNESS CONTRACT'S THREE STATES, and the value a surface renders — re-exported from
  * `@trafficflow/core/drain-policy`, where the derivation that produces them lives beside them.
  *
@@ -1833,6 +1853,19 @@ export class OhmailEngine {
   private readonly storePolicy: StorePolicy;
   /** Did the last COMPLETED drain settle inside one page? See {@link prefetchRecentBodies}. */
   private caughtUpInOnePage = true;
+  /**
+   * Did THIS drain's policy re-hydration fail to reach the end of the tail? Reset per drain. The
+   * generation stamp is what stops the walk running again, so a walk that did not finish must not
+   * be stamped — see {@link OhmailEngine.rehydrateForPolicy}.
+   */
+  private policyWalkFailed = false;
+  /**
+   * THE ACCOUNT'S SCREENING CUTLINE, as the client was told it — see {@link OhmailEngine.setCutline}.
+   * `null` until a host says otherwise, which is every embedder that has nothing to say and is
+   * today's window exactly.
+   */
+  private cutlineDays: number | null = null;
+  private cutlineAllTime = false;
   /** See {@link STALE_RESUME_MS}; the option exists for tests. */
   private readonly staleResumeMs: number;
   /** In-flight archive passes by query key — see {@link OhmailEngine.searchServer}. */
@@ -2412,6 +2445,8 @@ export class OhmailEngine {
     // seam), and a fresh resume keeps the server's default page, the deployed shape.
     const staleResume = this.isStaleResume();
     await this.freshenStaleResume();
+    this.policyWalkFailed = false;
+    await this.rehydrateForPolicy();
     for (;;) {
       // COLD MIRROR + A SNAPSHOT ROUTE ⇒ TAKE THE SNAPSHOT INSTEAD OF REPLAYING THE LOG.
       //
@@ -2522,6 +2557,16 @@ export class OhmailEngine {
       // mid-backlog leaves the old stamp standing, so the next drain still reads as a stale
       // resume and freshens again (idempotent: the seq guard absorbs the repeat).
       await this.store.setMeta(LAST_DRAIN_AT_META, this.now().toISOString());
+      // AND THE RETENTION GENERATION, at the same settle and under one condition: that nothing
+      // this drain owed the mirror was left unfetched. A cold bootstrap owes nothing (the
+      // snapshot walks the tail itself), a `full` mirror owes nothing, an adapter with no
+      // snapshot route replays every row from seq 0 and owes nothing — each of those reaches
+      // here with the latch down and is stamped once, for ever. Only a tail walk that failed
+      // mid-flight leaves it up, and that mirror is owed the walk again on the next drain.
+      if (!this.policyWalkFailed
+          && this.store.getMeta<number>(STORE_POLICY_GENERATION_META) !== STORE_POLICY_GENERATION) {
+        await this.store.setMeta(STORE_POLICY_GENERATION_META, STORE_POLICY_GENERATION);
+      }
       // ANNOUNCE THE SETTLE. The stamp is what {@link OhmailEngine.freshness} reads, and the
       // last data notify above fired BEFORE the stamp landed — so without this, a surface
       // rendering "as of 14:32 · catching up" off a freshness subscription keeps the label up
@@ -2744,6 +2789,90 @@ export class OhmailEngine {
   }
 
   /**
+   * THE ONE-TIME RE-HYDRATION A WIDENED POLICY OWES A MIRROR IT ALREADY PRUNED. Pinning tagged
+   * mail stops the next eviction and brings nothing back, and no delta will: the `message_tags`
+   * change sits below this mirror's cursor. So a mirror stamped behind {@link
+   * STORE_POLICY_GENERATION} walks the snapshot's LABELED TAIL once — `phase=tail`, bounded by
+   * what somebody tagged by hand rather than by the mailbox.
+   *
+   * ROWS ONLY, on {@link OhmailEngine.freshenStaleResume}'s argument and for its reasons: the
+   * cursor stays the delta's (committing `asOfSeq` would skip every tombstone below it), and
+   * {@link SNAPSHOT_PREFIX_SEQ_META} is not claimed — that marker names a BOOTSTRAP's abandoned
+   * prefix, and writing it here would make the next cold start sweep what this walk wrote.
+   */
+  private async rehydrateForPolicy(): Promise<void> {
+    if (this.store.getMeta<number>(STORE_POLICY_GENERATION_META) === STORE_POLICY_GENERATION) return;
+    // A COLD MIRROR OWES NOTHING: the bootstrap below runs the whole snapshot, tail included.
+    // Read as a fact about the cursor, like {@link isStaleResume}'s own cold gate.
+    if (this.store.getCursor() === "0") return;
+    // A `full` mirror evicted nothing to get back, and an adapter with no snapshot route has
+    // nowhere to ask; both are stamped at the settle rather than walked.
+    if (this.storePolicy.mode !== "windowed") return;
+    if (!this.snapshotFn || this.snapshotUnavailable) return;
+
+    const snapshot = this.snapshotFn;
+    let cursor: string | undefined;
+    let wrote = false;
+    for (;;) {
+      let page: SyncSnapshotPage;
+      try {
+        page = await snapshot({ phase: "tail", ...(cursor !== undefined ? { cursor } : {}) });
+      } catch {
+        // NOT STAMPED. The delta drain that follows is the source of truth and of error
+        // reporting; this mirror is owed the walk again on the next drain, which is the safe
+        // direction — a stamp on a half-finished walk is the defect this method exists to end.
+        this.policyWalkFailed = true;
+        return;
+      }
+      if (page.changes.length > 0) {
+        await this.store.applyChanges(page.changes);
+        wrote = true;
+      }
+      if (page.nextCursor == null || page.nextCursor === "") break;
+      cursor = page.nextCursor;
+    }
+    if (wrote) this.notify();
+  }
+
+  /**
+   * THE ACCOUNT'S SCREENING CUTLINE, so the window can cover it. Dormancy is measured over the
+   * WHOLE account on the server and over the MIRROR here, and those agree only while the mirror
+   * holds every message the cutline reads — the dial offers 90, 180 and 365 days against a
+   * 90-day window, so two of its three rungs put the cutline past it by a click, and a sender
+   * whose only mail the window evicted is then retired into History while the Screener on
+   * another device still asks about them.
+   *
+   * So {@link pruneToPolicy}'s age term keeps the WIDER of the two. `maxRows` is untouched and
+   * still decides the size — the reason the ceiling exists. `all_time` retires nobody by age.
+   * A host that never calls this gets today's window exactly.
+   */
+  setCutline(cutline: { dormancyDays?: number | null; scope?: string | null } | null): void {
+    const days = cutline?.dormancyDays;
+    // `Number.isFinite` and nothing else: it is the one part with a reachable contrary state.
+    // A cutline NARROWER than the window (zero, negative, anything under `days`) is already
+    // inert — `ageFloor` takes the wider of the two — so a bound on the low side would be a
+    // condition nothing could ever be watched fail. `Infinity` and `NaN` are not inert: one
+    // makes the age term keep the whole mailbox, the other makes every comparison against the
+    // floor false and evicts it.
+    this.cutlineDays = typeof days === "number" && Number.isFinite(days) ? days : null;
+    // Anything not exactly `all_time` reads as the window — the client cutline's own rule, and
+    // the safe failure direction here too (a narrower window, never a wider one, by accident).
+    this.cutlineAllTime = cutline?.scope === "all_time";
+  }
+
+  /**
+   * The instant the windowed prune's AGE term measures back from: the wider of the policy's own
+   * `days` and the cutline the account screens by. `-Infinity` under `all_time` — no age retires
+   * anything, and the ceiling is the only bound left.
+   */
+  private ageFloor(policyDays: number): number {
+    if (this.cutlineAllTime) return Number.NEGATIVE_INFINITY;
+    const windowCutoff = this.now().getTime() - policyDays * 86_400_000;
+    if (this.cutlineDays === null) return windowCutoff;
+    return Math.min(windowCutoff, this.now().getTime() - this.cutlineDays * 86_400_000);
+  }
+
+  /**
    * Fetch `GET /sync/snapshot` to completion, committing the cursor with the LAST page and not one page earlier.
    * Every page but the last goes through `applyChanges` (writes rows, never the cursor); only the last goes through
    * `applyResponse`, whose single flush carries the rows and the cursor together (contract §3.3 step 3). A restart
@@ -2898,7 +3027,10 @@ export class OhmailEngine {
     // without one (or with an unparseable one) sorts oldest, but is still protected by the
     // minRows floor and by the pin set — it is never singled out.
     const sorted = [...rows].sort((a, b) => messageTime(b.entity) - messageTime(a.entity));
-    const cutoff = this.now().getTime() - policy.days * 86_400_000;
+    // The WIDER of the policy's own `days` and the account's screening cutline — see
+    // {@link OhmailEngine.setCutline} for why a mirror narrower than its cutline answers a
+    // question the server answers differently.
+    const cutoff = this.ageFloor(policy.days);
     const pinned = this.pinnedMessageIds();
     // The ceiling, in the same newest-first order the floor is counted in: beyond it a row goes
     // for being NUMEROUS rather than for being old, which is the half `days` alone cannot do.

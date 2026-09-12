@@ -480,10 +480,13 @@ export class HttpAdapter implements EngineAdapter {
   /**
    * No 410 branch: a snapshot has no client-supplied cursor to expire.
    */
-  async snapshot(params: { cursor?: string; limit?: number } = {}): Promise<SyncSnapshotPage> {
+  async snapshot(params: { cursor?: string; limit?: number; phase?: "tail" } = {}): Promise<SyncSnapshotPage> {
     const q = new URLSearchParams();
     if (params.cursor) q.set("cursor", params.cursor);
     if (params.limit !== undefined) q.set("limit", String(params.limit));
+    // `phase=tail` asks for the labeled tail alone. A server too old to read it answers the
+    // ordinary walk, which carries the same rows a few pages later and still converges.
+    if (params.phase) q.set("phase", params.phase);
     const qs = q.toString();
     const res = await this.request("GET", qs ? `/sync/snapshot?${qs}` : "/sync/snapshot");
     if (!res.ok) throw await this.rejectionOf(res);

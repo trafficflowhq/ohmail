@@ -123,10 +123,15 @@ export const syncRoutes: Route[] = [
       const cursor = url.searchParams.get("cursor") ?? undefined;
       const limitRaw = url.searchParams.get("limit");
       const limit = limitRaw != null && limitRaw !== "" ? Number(limitRaw) : undefined;
+      // `?phase=tail` — the labeled tail alone, for a client re-hydrating mail its own retention
+      // policy once evicted. FORWARDED RAW: the vocabulary is decided once, in `getSnapshot`,
+      // and a second spelling test here would be a condition with no reachable contrary state.
+      const phase = url.searchParams.get("phase") ?? undefined;
 
       const result = await sync(deps).getSnapshot(serviceContext(deps, req), {
         ...(cursor ? { cursor } : {}),
         ...(limit !== undefined && !Number.isNaN(limit) ? { limit } : {}),
+        ...(phase ? { phase } : {}),
       });
       return jsonResponse(result);
     },
