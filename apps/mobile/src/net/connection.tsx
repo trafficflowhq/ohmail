@@ -16,7 +16,7 @@ import { LOCAL_ENGINE_ORIGIN, mirrorExists, mirrorOwnerKey } from "../engine/boo
 import { nativeEngineDeps } from "../engine/native";
 import {
   discardStandaloneLaunch, endStandaloneHere, holdStandaloneDoor, organizerDoor, sayOrganizeRefused,
-  takeConsentPress, sayOrganizerRestricted, standaloneHere,
+  takeConsentPress, sayOrganizerRestricted, standaloneHere, standaloneLaunchGeneration,
 } from "../engine/organizer-session";
 import { consoleEngineLogSink } from "../engine/engine-log";
 import { decidedState, type DecidedState } from "./decided";
@@ -165,8 +165,12 @@ async function reopenWithBackground(
   const opened = await reopenStandaloneMailbox(deps);
   if (!opened.ok) return opened;
   const { door } = opened;
+  /* THE LAUNCH THIS SESSION BELONGS TO — the door screen's own reason, one path over. The import
+     is not awaited, and a relaunch can still be given up after it: the forget stops this engine,
+     and a session raised over it afterwards would refuse the next connect its own. */
+  const launch = standaloneLaunchGeneration();
   void import("../engine/organizer-session-native")
-    .then((m) => { m.startOrganizerSessionNative(door, door.address); })
+    .then((m) => { m.startOrganizerSessionNative(door, door.address, launch); })
     .catch(() => { sayOrganizerRestricted(); });
   return opened;
 }

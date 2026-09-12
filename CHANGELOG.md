@@ -67,16 +67,19 @@ Signed installers — a real Apple Developer ID and an Authenticode certificate.
 
 Opening a big account could take the app past four gigabytes and hold a CPU core for minutes after
 the first sync — on an 8 GB machine the system ran out of memory and began killing other
-applications. The window now keeps a window of your mail — the last ninety days, or five thousand
-messages, whichever is larger — and reaches past it on demand. Nothing about what you can read
-changes: the whole mailbox is still on the machine, in the engine's own store, and older mail and
-search are answered from there. A message's full text is now written once per batch instead of
-twice per message, so loading the recent mail after a first sync no longer pins a core, and the
-full messages the window holds are bounded too. The window also reports what it is costing every
-five minutes beside the engine's own figures, and on Linux it volunteers itself to the kernel ahead
-of your other applications. Tagged mail is kept whatever its age, so a tag still shows all of it;
-History, which has no list of its own on the server, now says it is showing what this device kept
-and points at Search for the rest, instead of printing a count that stops at the window.
+applications. The window now keeps a window of your mail — the last ninety days, at least five
+thousand messages and at most ten thousand — and reaches past it on demand. It keeps that window
+while the mail is still arriving, so importing a large mailbox for the first time costs the window
+the same as living with it afterwards, rather than the whole mailbox until the import finishes.
+Nothing about what you can read changes: the whole mailbox is still on the machine, in the engine's
+own store, and older mail and search are answered from there. A message's full text is now written
+once per batch instead of twice per message, so loading the recent mail after a first sync no longer
+pins a core, and the full messages the window holds are bounded too. The window also reports what it
+is costing every five minutes beside the engine's own figures, and on Linux it volunteers itself to
+the kernel ahead of your other applications. Tagged mail is kept whatever its age, so a tag still
+shows all of it; History, which has no list of its own on the server, now says it is showing what
+this device kept and points at Search for the rest, instead of printing a count that stops at the
+window.
 
 ### A phone asks for a mailbox only when you ask it to
 
@@ -84,9 +87,10 @@ Opening the app used to ask for the mailbox. Only pressing Connect, or "Start or
 Settings, does now — so a phone reopened beside a computer already organizing that mailbox leaves
 it alone, and says which machine has it. Stopping is remembered: dismissing the notification, or
 handing the mailbox back from Settings, records the stop on the phone itself, so reopening the app
-does not start organizing again and there is a verb to start again. The phone keeps reading the
-mailbox and keeps its mail either way. A phone that stood down because another machine held the
-mailbox now takes it back when that machine lets go, instead of waiting to be restarted, and
+does not start organizing again and there is a verb to start again. Change your mind twice and the
+last press is the one that stands, whichever way round. The phone keeps reading the mailbox and
+keeps its mail either way. A phone that stood down because another machine held the mailbox now
+takes it back when that machine lets go, instead of waiting to be restarted, and
 Settings › This phone follows the mailbox while it is open rather than showing what was true when
 the screen was opened. A connect the phone could not record closes the mailbox again rather than
 leaving it open behind the message, and only one mailbox opens at a time. Forgetting the mailbox
@@ -220,10 +224,11 @@ Coming back asks the mailbox who holds it: free, and the phone takes it again; h
 computer or by ohmail Cloud, and the phone reads it instead. Nothing is taken from a machine that
 has it.
 "Stop organizing here" in Settings takes the notification down along with the mailbox. A stop the
-mail server refuses keeps the notification and says the mailbox could not be handed back, rather
-than clearing the notification over a phone that is still organizing. If your phone's battery
-settings will not let ohmail work in the background at all, Settings says so beside the line that
-describes what this phone does.
+mail server will not complete is no longer reported as done: Settings says the mailbox could not be
+handed back, the phone goes on watching it, and the request stays recorded — so it survives the app
+being closed, and the next round asks the server again. If your phone's battery settings will not
+let ohmail work in the background at all, Settings says so beside the line that describes what this
+phone does.
 
 ### Send later on a phone
 

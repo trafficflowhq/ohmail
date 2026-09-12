@@ -54,7 +54,7 @@ export function hideMessages(base: EntityReader, hidden: ReadonlySet<string>): E
       if (type !== "message") return rows;
       return rows.filter((r) => !hidden.has((r as unknown as EngineMessage).id));
     },
-    entries<T = unknown>(type: string): Array<{ id: string; entity: T }> {
+    entries<T = unknown>(type: string): Array<{ id: string; entity: T; seq: number }> {
       const rows = base.entries<T>(type);
       if (type !== "message") return rows;
       return rows.filter((r) => !hidden.has(r.id));

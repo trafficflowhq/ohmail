@@ -299,9 +299,10 @@ export async function forgetMirror(deps: MobileEngineDeps, ownerKey: string): Pr
 /**
  * The phone keeps a window, not an archive — the browser client's own numbers
  * (`BROWSER_WINDOW` in the webapp's engine-config): the full copy lives on the server or the
- * desktop; search reaches past the window over the wire.
+ * desktop; search reaches past the window over the wire. The ceiling comes with them, and this is
+ * the surface with the least memory to spend on a mailbox that is dense inside ninety days.
  */
-export const MOBILE_WINDOW: StorePolicy = { mode: "windowed", days: 90, minRows: 5000 };
+export const MOBILE_WINDOW: StorePolicy = { mode: "windowed", days: 90, minRows: 5000, maxRows: 10000 };
 
 /**
  * The `?types=` filter every mobile drain carries — the cellular rule, stated as this client's

@@ -24,9 +24,19 @@ import type { StandaloneEngine } from "./standalone-door";
  * it is passed rather than read from a row, because at this moment the door has just opened and no
  * mirror row exists yet — a notice composed from an unread row would name nothing.
  */
-export function startOrganizerSessionNative(engine: StandaloneEngine, address: string): boolean {
+export function startOrganizerSessionNative(
+  engine: StandaloneEngine,
+  address: string,
+  /**
+   * THE LAUNCH THIS SESSION BELONGS TO. Passed through, never decided here: this module supplies
+   * platform facts and nothing else, and the refusal it licenses is `startOrganizerSession`'s.
+   * Both call sites reach this file behind a dynamic import that can settle after their launch
+   * was given up.
+   */
+  generation: number,
+): boolean {
   registerOrganizerTask();
-  return startOrganizerSession({
+  return startOrganizerSession(generation, {
     platform: Platform.OS === "android" ? "android" : "ios",
     engine: {
       handBack: () => engine.handBack(),

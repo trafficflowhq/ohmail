@@ -14,6 +14,16 @@ import type { StorePolicy } from "@ohmail/client-engine";
  */
 
 /**
+ * WHY BOTH WINDOWS CARRY A CEILING, AND WHY IT IS 10 000. `days` with only a floor under it bounds
+ * the window by AGE and not by SIZE, so a mailbox dense inside ninety days sits almost entirely in
+ * a "windowed" mirror — 2.7x the floor on the rig's own large corpus.
+ *
+ * 10 000 is twice the floor, chosen so BOTH halves stay reachable: at 5 000 the ceiling would equal
+ * the floor and `days` could never decide anything, and at 15 000 it is above what ninety days
+ * holds on that corpus and the ceiling never could. Each bound binds for a real mailbox, which is
+ * the only way either can be watched fail.
+ */
+/**
  * THE BROWSER'S WINDOW. A browser mirror is a cache in front of a server that still holds
  * everything, so the window is about what a tab should carry rather than about what exists.
  *
@@ -26,7 +36,7 @@ import type { StorePolicy } from "@ohmail/client-engine";
  * a working, correct, fully-tested app whose only symptom is a mirror that quietly regrows to the
  * whole mailbox, months later, on somebody else's machine.
  */
-export const BROWSER_WINDOW = { mode: "windowed", days: 90, minRows: 5000 } as const satisfies StorePolicy;
+export const BROWSER_WINDOW = { mode: "windowed", days: 90, minRows: 5000, maxRows: 10000 } as const satisfies StorePolicy;
 
 /**
  * THE DESKTOP'S WINDOW — the same size, for a different reason.
@@ -43,4 +53,4 @@ export const BROWSER_WINDOW = { mode: "windowed", days: 90, minRows: 5000 } as c
  * kept as its own constant so the two can be pinned and can diverge on a measurement rather than
  * by accident.
  */
-export const DESKTOP_WINDOW = { mode: "windowed", days: 90, minRows: 5000 } as const satisfies StorePolicy;
+export const DESKTOP_WINDOW = { mode: "windowed", days: 90, minRows: 5000, maxRows: 10000 } as const satisfies StorePolicy;

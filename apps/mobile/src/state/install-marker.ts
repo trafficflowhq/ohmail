@@ -142,12 +142,27 @@ export async function settleInstallGeneration(
  * a refusal for the caller to make, not a value to invent.
  */
 export async function installGeneration(deps: InstallMarkerHost): Promise<string | null> {
+  /* ══ WHAT IT OPENS, IT GIVES BACK — on every exit, the way its sibling above does ══════════
+   *
+   * `settleInstallGeneration` runs once a launch and closes in a `finally`; this runs on every
+   * Connect press and did not close at all. Measured on a device: the third press found the
+   * marker store unopenable, the catch below answered `null`, the screen passed the empty string
+   * on, and the engine refused the launch by name without dialling — so the fourth door was gone
+   * for the rest of the run of the app, over a handle nobody had given back. */
+  let db;
   try {
-    const db = await deps.openExecutor(INSTALL_MARKER_DB);
+    db = await deps.openExecutor(INSTALL_MARKER_DB);
+  } catch {
+    return null;
+  }
+  try {
     const rows = await db.all("SELECT value FROM install WHERE key = ?", [GENERATION_KEY]);
     const held = rows[0]?.value;
     return typeof held === "string" && held !== "" ? held : null;
   } catch {
     return null;
+  } finally {
+    /* A close that throws is not a failed READ, and the row above is already in hand. */
+    try { await db.close?.(); } catch { /* the handle is going either way */ }
   }
 }
