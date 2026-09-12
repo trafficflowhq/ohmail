@@ -1765,6 +1765,13 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
   const parked = useMemo(() => parkedMessageIds(presented), [presented, version]);
   const tagGroups = useMemo(() => tagsCrossView(presented), [presented, version]);
   /**
+   * IS THIS CLIENT'S MIRROR A WINDOW? The configured policy, not a measurement of what the mirror
+   * currently holds: a list derived from the WHOLE mirror — History — is bounded whenever a policy
+   * is in force, and only the policy is still true after a reload and at a mailbox smaller than
+   * the window. Read once per engine; the policy is fixed for the life of one.
+   */
+  const windowedMirror = useMemo(() => engine.storeWindow() !== null, [engine]);
+  /**
    * History: dormant, undecided, and read by construction. Newest first.
    *
    * Every row is stamped with `physicalFolder`, which the projection does not do for History
@@ -7071,6 +7078,9 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
                 canDelete={canDeleteMessage}
                 canReplyAll={canReplyAllTo}
                 onMarkAllRead={markAllRead}
+                /* This list is what the device kept, not the whole of History — see the view's
+                   `windowed` prop, which takes the count off and says where the rest is. */
+                windowed={windowedMirror}
               />
             ) : null}
 

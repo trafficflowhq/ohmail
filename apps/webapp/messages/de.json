@@ -888,6 +888,7 @@
   "history": {
     "title": "Historie",
     "metaCount": "{count, plural, one {1 Nachricht} other {# Nachrichten}}",
+    "windowNote": "Dieses Gerät behält deine neuere Post. Ältere Post bleibt auf deinem Server — du findest sie über die Suche.",
     "explainer": "Post von Leuten, die du nie gescreent hast und die sich lange nicht gemeldet haben.",
     "explainerMore": "Alles ist gelesen, hier wartet also nichts auf dich. Verschoben wurde nichts — jede Nachricht liegt weiter dort, wo dein Mailserver sie hat.",
     "explainerMoreLabel": "Was in der Historie liegt, und wo es liegt",

@@ -2869,6 +2869,17 @@ export class OhmailEngine {
     for (const a of this.store.list<PendingApproval>("approval")) {
       if (a.status === "pending" && a.messageId) pinned.add(a.messageId);
     }
+    /**
+     * A TAGGED MESSAGE, whatever its age. The server serves these deliberately: after the windowed walk meets both
+     * floors, `getSnapshot` opens a LABELED TAIL and carries every message below the window that owns a tag, because
+     * a tagged row evicted from a windowed mirror can never be re-delivered — its `message_tags` change sits below
+     * the client's post-bootstrap cursor. Without this clause the first post-drain prune threw that tail away again,
+     * so a tag whose mail was older than the window showed a fraction of its messages and a count to match.
+     * `labels` is the mirror's own field; an assignment later re-materializes an evicted row as a `message` update.
+     */
+    for (const { id, entity } of this.store.entries<EngineMessage>("message")) {
+      if (entity.labels && entity.labels.length > 0) pinned.add(id);
+    }
     return pinned;
   }
 
@@ -5618,6 +5629,21 @@ export class OhmailEngine {
    * have reached the end of what this device keeps" are different sentences, and only one of them
    * has a control under it.
    */
+  /**
+   * How much of the mailbox this client's mirror is CONFIGURED to keep — the window itself, or
+   * `null` where the mirror is the mailbox (`{ mode: "full" }`, and the absent-config default).
+   *
+   * The POLICY and not a measurement: a latch recording that a prune has happened is lost on every
+   * reload, and "the mirror holds at least `minRows`" is false at exactly that many recent rows. A
+   * list derived from the whole mirror — History, which no wire partition serves — is bounded
+   * whenever this is non-null, whatever the mailbox happens to hold today, and that is the only
+   * form of the fact a surface can state without ever being wrong.
+   */
+  storeWindow(): { days: number; minRows: number } | null {
+    const policy = this.storePolicy;
+    return policy.mode === "windowed" ? { days: policy.days, minRows: policy.minRows } : null;
+  }
+
   listOlderAvailable(): boolean {
     return this.listOlderFn !== null;
   }

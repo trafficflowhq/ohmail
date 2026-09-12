@@ -45,6 +45,7 @@ export function HistoryView({
   canDelete,
   canReplyAll,
   onMarkAllRead,
+  windowed = false,
 }: {
   messages: readonly EngineMessage[];
   /**
@@ -85,6 +86,16 @@ export function HistoryView({
    * unread set is always empty and the affordance renders nothing. Optional and self-hiding.
    */
   onMarkAllRead?: (ids: string[]) => void;
+  /**
+   * IS THIS CLIENT'S MIRROR A WINDOW? `engine.storeWindow() !== null`, resolved by the shell.
+   *
+   * History is derived from the whole mirror and no wire partition serves it, so on a windowed
+   * client this list is what the device kept and its length is NOT the number of messages in the
+   * reader's History. So the count comes off — a bounded number under an unqualified label is the
+   * false state — and the tail says where the rest is. `false` for a mirror that is the mailbox,
+   * which keeps the count and says nothing.
+   */
+  windowed?: boolean;
 }) {
   const t = useTranslations("history");
   const rowBadge = useRowBadgeCopy();
@@ -181,7 +192,7 @@ export function HistoryView({
     <section className="view split view-history">
       <ListPane
         title={t("title")}
-        meta={messages.length ? t("metaCount", { count: messages.length }) : undefined}
+        meta={messages.length && !windowed ? t("metaCount", { count: messages.length }) : undefined}
         action={
           onMarkAllRead ? (
             <MarkAllRead
@@ -257,6 +268,12 @@ export function HistoryView({
             </div>
           )}
         </ListRows>
+        {/* WHERE THIS LIST ENDS, ON A CLIENT THAT KEEPS PART OF THE MAILBOX. The Ohbox's own
+            shape (`sentNote`, `olderPrompt`), without a control: History is derived from the
+            whole mirror and no `GET /messages?view=` partition serves it, so there is nothing
+            to page — Search reads the full store on both tiers and is the reach that works.
+            The sentence states the POLICY, which is true whatever the mailbox holds today. */}
+        {windowed ? <div className="tail-row">{t("windowNote")}</div> : null}
       </ListPane>
       {/* THE READING COLUMN — the Ohbox's own, minus the dwell it does not need: History is
           all-read, so there is no read-state to commit and nothing to arm a timer for. No
