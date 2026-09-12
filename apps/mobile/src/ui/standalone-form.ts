@@ -342,11 +342,20 @@ export function claimHere(
   if (here.organizing === null) return { k: "unknown" };
   if (here.organizing) return { k: "ours", stopping: instruction === "stopping" };
   const held = here.heldBy;
-  /* A STOP THE MAIL SERVER HAS NOT HONOURED IS STILL OURS. The engine arranges nothing while it
-     carries out a release, so `organizing` is false on both endings — and nobody else holds a
-     mailbox whose claim is ours and standing, so this arm sits above `free` and below `theirs`. */
+  /* ══ A STOP THE MAIL SERVER HAS NOT HONOURED IS STILL OURS ═══════════════════════════════
+   *
+   * The engine arranges nothing while it carries out a release, so `organizing` is false on both
+   * of its endings — and on a device that read as a FREE mailbox, with "Start organizing here"
+   * beside it, while the claim was still in `ohmail/_meta`. Nobody else holds a mailbox whose
+   * claim is ours and standing, so this arm sits above `free` and below `theirs`.
+   *
+   * `stopping` comes from the INSTRUCTION exactly as the organizing arm above takes it, and not
+   * from the standing request: a stop still being carried out reads `Stopping`, and one the
+   * server refused reads `Organizing` — which is what is true, and what the sentence beside it
+   * says. Pinned `true` here, the chip said `Stopping` for ever over a stop that had already
+   * failed, and the Stop verb — the only way to ask again — stayed hidden. */
   if (held === null && here.releaseRequestedAt !== null) {
-    return { k: "ours", stopping: true };
+    return { k: "ours", stopping: instruction === "stopping" };
   }
   if (held === null) return { k: "free", starting: instruction === "starting" };
   const kind = holderKind(held.standDownReason);

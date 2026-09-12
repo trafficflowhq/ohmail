@@ -1053,9 +1053,24 @@ async function composePhoneEngine(
     },
   ));
 
+  /* ══ A REFUSED PRESS SAYS WHY, AND THIS DOOR IS THE ONLY PLACE THAT KNOWS ═════════════════
+   *
+   * Both verbs had `return "refused"` exits with no line at all, and the app's own catch turns a
+   * throw into the same word — so a press a person made and watched fail left NOTHING anywhere,
+   * on the device or in the log. Measured on a device: a Start refused for over a minute after a
+   * Stop, with not one line from this door saying what the route had answered.
+   *
+   * Written out at each exit rather than through a helper taking the event as an argument: the
+   * package's log census parses these call sites for LITERAL event names, so a name reaching the
+   * logger through a variable is a line the roster cannot see. */
   const claimHere = async (): Promise<ClaimHereOutcome> => {
     const mailboxId = soleMailbox();
-    if (mailboxId === null) return "refused";
+    if (mailboxId === null) {
+      log("organizer_claim_here_refused", {
+        reason: "this install does not serve exactly one mailbox, so there is none to ask for",
+      });
+      return "refused";
+    }
     let res: Response;
     try {
       res = await pressOwnRoute(`/mailboxes/${encodeURIComponent(mailboxId)}/organize`);
@@ -1072,13 +1087,39 @@ async function composePhoneEngine(
         (b) => b as { outcome?: unknown },
         () => ({ outcome: undefined }),
       );
-      if (body.outcome !== "already_organizing") return "refused";
+      if (body.outcome !== "already_organizing") {
+        log("organizer_claim_here_refused", {
+          mailboxId,
+          status: res.status,
+          reason: "the door answered about this mailbox without making this install its organizer",
+        });
+        return "refused";
+      }
     } else if (res.status !== 202) {
+      log("organizer_claim_here_refused", {
+        mailboxId,
+        status: res.status,
+        reason: "the door refused this install the mailbox and the press is recorded nowhere",
+      });
       return "refused";
     }
+    /* ══ THE DECISION IS WRITTEN WHERE IT IS MADE, NOT WHERE THE CYCLE ENDS ═══════════════════
+     *
+     * This line stood AFTER the forced cycle below, and that cycle queues behind whatever drain is
+     * already running — so a press measured on a device left the door silent for over a minute
+     * while the person watched `Starting`, with nothing to say the press had even been taken. The
+     * door decides here; the gate's own lines close the sequence when it runs. */
+    log("organizer_reclaimed", {
+      mailboxId,
+      status: res.status,
+      reason: "this install was asked to organize this mailbox and no other install is renewing a "
+        + "claim on it, so the consent is recorded and the gate is asked now",
+    });
     /* AND THE GATE IS ASKED NOW. The stamp alone is inert — it is spent by the next gated cycle,
        which on a phone is a poll interval away, and the person is looking at the screen. `resume`
-       is the same forced cycle the foreground path uses and it can displace nobody. */
+       is the same forced cycle the foreground path uses and it can displace nobody. It is AWAITED:
+       `claimed` raises the background session and ends the transition, so answering before the
+       engine organizes would paint an idle mailbox over a start the person was just told worked. */
     await sidecar.resume().catch((err: unknown) => {
       log("organizer_claim_here_cycle_failed", {
         err,
@@ -1086,17 +1127,17 @@ async function composePhoneEngine(
           + "on the next poll instead",
       });
     });
-    log("organizer_reclaimed", {
-      mailboxId,
-      reason: "this install was asked to organize this mailbox and no other install is renewing a "
-        + "claim on it, so the consent is recorded and the gate has been asked",
-    });
     return "claimed";
   };
 
   const stopOrganizing = async (): Promise<StopOrganizingOutcome> => {
     const mailboxId = soleMailbox();
-    if (mailboxId === null) return "refused";
+    if (mailboxId === null) {
+      log("organizer_stop_here_refused", {
+        reason: "this install does not serve exactly one mailbox, so there is none to give up",
+      });
+      return "refused";
+    }
     let res: Response;
     try {
       res = await pressOwnRoute(RELEASE_PATH(mailboxId));
@@ -1108,7 +1149,21 @@ async function composePhoneEngine(
        happened yet"*, so 200 is `not_organizing`/`disconnected`, both of which mean there was
        nothing of ours to give up. Neither is a failure and neither is a release. */
     if (res.status === 200) return "not_organizing";
-    if (res.status !== 202) return "refused";
+    if (res.status !== 202) {
+      log("organizer_stop_here_refused", {
+        mailboxId,
+        status: res.status,
+        reason: "the door refused the stop and recorded nothing, so this install organizes the "
+          + "mailbox still",
+      });
+      return "refused";
+    }
+    /* THE DOOR'S OWN DECISION, before the cycle — the claim's reason one verb over. */
+    log("organizer_stop_here_recorded", {
+      mailboxId,
+      reason: "this install asked to stop organizing this mailbox, the request is on the row where "
+        + "a relaunch reads it, and the gate is asked now",
+    });
     /* THE GATE HONOURS THE REQUEST BEFORE IT READS THE LEASE, so this forced cycle is what takes
        the claim out of the folder and writes the reader role — the person pressed a button and the
        mailbox is free for their other machine within a cycle rather than a poll interval. */
