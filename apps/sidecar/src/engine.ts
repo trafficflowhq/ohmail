@@ -65,8 +65,8 @@ import {
 // for the exact in/out list and the obligations it puts on this composition root.
 import { desktopHostRoutes } from "@trafficflow/api/desktop-host";
 // The boot contract's one comparison. Its own file, with no imports, because the desktop shell's
-// install model has to apply the identical rule and `apps/desktop` declares no `@trafficflow/*`
-// dependency — see the header of `credential-host.ts` for why one definition rather than two.
+// install model has to apply the identical rule and `apps/desktop` declares no `@trafficflow`
+// dependency at all — see the header of `credential-host.ts` for why one definition, not two.
 import { credentialIsForeign, credentialIsForeignSmtp, sealedHost, sealedSmtpHost } from "./credential-host.js";
 import { createSignOutFence, SIGN_OUT_FENCE_WAIT_MS, type SignOutFence } from "./signout-fence.js";
 // The exit from a stand-down, as a ceremony rather than a flag — the SAME function the
@@ -4930,14 +4930,14 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         // timer and organizer claim run on it); tests assert both directions. Same close-then-
         // rethrow shape as `send-adapter.ts` and `attachments-adapter.ts`.
         try {
-          // The lease is read BEFORE the first move, and `ensureFolders` IS a move: creating the
-          // `ohmail/*` tree in a mailbox Cloud organizes is a write this install has no business
-          // making, and reconnect-after-sleep is when a mailbox most likely changed hands. Gated
-          // here, drained through the already-gated inner `drain`, so a launch reads the lease ONCE.
-          // A lease we could not READ is not one we lost: an unreachable `ohmail/_meta` leaves the
-          // organizer paused and the viewer complete rather than a failed launch, exempted BY CLASS
-          // as the hosted worker does. The login is KEPT — it is the connection the next poll asks
-          // over and the one non-throwing exit here with further work to do.
+          // The lease is read BEFORE the first move, and `ensureFolders` IS a move: creating the `ohmail`
+          // folder tree in a mailbox Cloud organizes is a write this install has no business making, and
+          // reconnect-after-sleep is when a mailbox most likely changed hands. Gated here, drained through
+          // the already-gated inner `drain`, so a launch reads the lease ONCE. A lease we could not READ is
+          // not one we lost: an unreachable `ohmail/_meta` leaves the organizer paused and the viewer
+          // complete rather than a failed launch, exempted BY CLASS as the hosted worker does. The login is
+          // KEPT — it is the connection the next poll asks over and the one non-throwing exit here with
+          // further work to do.
           let permitted: boolean;
           try {
             permitted = await serialize(mayOrganize);
@@ -5034,15 +5034,15 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
            * above, on the same `leaseRead: true`, and `mayOrganize` has already cleared the timer
            * and closed the login on that path.
            */
-          // Before the first cycle of an ORGANIZER, always: the pipeline routes into `ohmail/*`
-          // and a move to a folder the server does not have fails. The hosted sync worker does the
-          // same thing at attach time.
+          // Before the first cycle of an ORGANIZER, always: the pipeline routes into the `ohmail`
+          // folder tree, and a move to a folder the server does not have fails. The hosted sync
+          // worker does the same thing at attach time.
           //
-          // NEVER FOR A READER, and this is the sharpest line in the branch above: `ensureFolders`
-          // is the IMAP WRITE that creates somebody else's `ohmail/*` tree, and the header forty
-          // lines up already says so — *"reconnect is learn-then-act … creating the `ohmail/*` tree
-          // in a mailbox Cloud is organizing is a write this install has no business making"*. It
-          // was gated by the `return` that has just gone, so it needs its own gate now.
+          // NEVER FOR A READER, and this is the sharpest line in the branch above: `ensureFolders` is the
+          // IMAP WRITE that creates somebody else's `ohmail` tree, and the header forty lines up already says
+          // so — *"reconnect is learn-then-act … creating the `ohmail` folder tree in a mailbox Cloud is
+          // organizing is a write this install has no business making"*. It was gated by the `return` that
+          // has just gone, so it needs its own gate now.
           if (permitted) {
             /* THE CONNECTION THIS DIAL ESTABLISHED, not the binding. `dialAndGate` captures
                `conn` immediately after `connect()`, and every `await` between there and here —

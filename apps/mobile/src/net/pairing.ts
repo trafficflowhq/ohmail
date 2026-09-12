@@ -558,13 +558,13 @@ export async function probePairing(
   }
 
   // 1b — where is this server's mail API? Measured before the burn: a
-  // one-origin self-host stack serves `/hello`, `/pair/*` and `/auth/*` at
-  // its root and the `/sync` family only under `/api`, so a pairing could
-  // succeed and then mirror nothing forever, with an HTML 404 as the only
-  // clue (`net/server-base.ts` documents and closes it). Measured rather than
-  // derived from the door or flavor — a QR carries an origin and no door —
-  // and placed before the redeem so a server whose API cannot be found costs
-  // a sentence, not a spent code.
+  // one-origin self-host stack serves `/hello` and the `/pair` and `/auth`
+  // routes at its root and the `/sync` family only under `/api`, so a pairing
+  // could succeed and then mirror nothing forever, with an HTML 404 as the
+  // only clue (`net/server-base.ts` documents and closes it). Measured rather
+  // than derived from the door or flavor — a QR carries an origin and no door
+  // — and placed before the redeem so a server whose API cannot be found
+  // costs a sentence, not a spent code.
   const resolved = await resolveApiBase(fetchImpl, origin);
   if (resolved.kind === "refused") {
     // A HANDSHAKE FAILURE HERE READS AS A PIN FAILURE too — the probe is a request to the same

@@ -2388,7 +2388,8 @@ describe("the UI bundle's build config", () => {
      *
      * Comments are stripped from the WHOLE block before the split, the ordering the retired test
      * paid to learn: a comma inside a documenting comment once cut the list mid-sentence and
-     * dropped a name the loop then never checked.
+     * dropped a name the loop then never checked. The workspace's shared scanner is not reachable
+     * here: this file is PUBLISHED and that module is not.
      */
     const barrel = fs.readFileSync(
       path.resolve(APP, "../../packages/client-engine/src/index.ts"),
@@ -2626,9 +2627,10 @@ describe("the UI bundle's build config", () => {
       path.resolve(APP, "../webapp/app/shell/OhboxWords.tsx"),
       "utf8",
     );
-    // Comments say what the code should do; only the code decides what it does — the same
-    // stripping `one-pipeline.test.ts` does, and needed for the same reason: this file's header
-    // names the route and both clients precisely in order to say that it is none of them.
+    // Comments say what the code should do; only the code decides what it does, for the same
+    // reason: this file's header names the route and both clients precisely in order to say that
+    // it is none of them. Stripped here rather than through the shared scanner, which this
+    // PUBLISHED file cannot import.
     const sharedCode = shared
       .replace(/\/\*[\s\S]*?\*\//g, " ")
       .replace(/(^|[^:])\/\/[^\n]*/g, "$1");

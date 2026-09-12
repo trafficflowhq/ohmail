@@ -39,7 +39,9 @@ describe("the platform word", () => {
     /* Source-level, deliberately: the door chooser's user-visible strings all interpolate
        MACHINE_WORD now, and the regression this guards against is precisely a future string
        typing the brand back in. JSX text and string literals both match `this Mac`; the one
-       legitimate "Mac" left in either file is inside comments, which this strips. */
+       legitimate "Mac" left in either file is inside comments, which this strips. The workspace's
+       shared scanner is not reachable here: this file is PUBLISHED and that module is not, so an
+       import of it is one the mirror cannot resolve. */
     for (const rel of ["../src/DoorChooser.tsx", "../src/DesktopSettings.tsx"]) {
       const src = read(rel)
         .replace(/\/\*[\s\S]*?\*\//g, "")
