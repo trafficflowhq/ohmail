@@ -1,11 +1,10 @@
 import { and, eq, ne, sql } from "drizzle-orm";
-import { accountSettings, mailboxes, standDownMemory } from "@trafficflow/db";
+import { accountSettings, mailboxes, standDownMemory, type OrganizerIntent,} from "@trafficflow/db";
 import { dialect, type Dialect } from "@trafficflow/db/dialect";
 // The product default and the scope union, from the ONE place that owns them — never a second
 // literal `60` and never a hand-written string union. `consent-cutline.ts` re-exports these from
 // core for the same reason and its header says so.
 import { DEFAULT_DORMANCY_DAYS, type ScreeningScope } from "@trafficflow/core/mail";
-import type { OrganizerIntent } from "@trafficflow/core/adapters/organizer-lease";
 import { openLocalDb, type LocalDb } from "./db.js";
 
 /**

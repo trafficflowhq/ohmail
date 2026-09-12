@@ -1,6 +1,7 @@
 import { createHmac, hkdfSync, randomUUID, timingSafeEqual } from "node:crypto";
 import {
   CAPABILITY_REQUESTS, CAPABILITY_MOVES, CAPABILITY_RULES, CAPABILITY_PROFILE,
+  type OrganizerIntent,
 } from "@trafficflow/db";
 import { WATCHED_FOLDERS, type ImapAuth } from "./imap-types.js";
 import {
@@ -372,8 +373,7 @@ export interface TakeoverAuthorization {
  * verb's, so an install that grows a second verb carries both, and `kind` stays out of the
  * decision table the 0.14.1 ruling emptied of it.
  */
-export const ORGANIZER_INTENTS = ["join", "takeover"] as const;
-export type OrganizerIntent = (typeof ORGANIZER_INTENTS)[number];
+export { ORGANIZER_INTENTS, type OrganizerIntent } from "@trafficflow/db";
 
 /** A claim message, parsed. */
 export interface OrganizerClaim {

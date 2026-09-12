@@ -93,6 +93,10 @@ export {
   // The gate's TYPE, so a host can state its tier. No permissive VALUE is exported from this
   // package — the only one that exists is in `apps/sidecar`, where the hosted API cannot name it.
   type MailboxAllowancePolicy,
+  // The consent door's input, so the route that validates a body can name the verb it admits
+  // without reaching for the lease module — which `mailbox-takeover.no-imap.test.ts` refuses to
+  // this package's own source and the engine's barrel rule refuses to that route.
+  type OrganizeHereInput,
 } from "./mailbox-service.js";
 // The plan-limit gate the mailbox write path runs inside its transaction.
 /* PUSH: the TYPES only, never the class or the singleton — and from the module that holds only

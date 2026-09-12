@@ -58,6 +58,22 @@ export function isOrganizerKind(v: unknown): v is OrganizerKind {
   return typeof v === "string" && (ORGANIZER_KINDS as readonly string[]).includes(v);
 }
 
+/**
+ * WHAT A PRESS ASKED FOR — `takeover` wants the mailbox whoever holds it, `join` wants one nobody
+ * is organizing and yields at the fence to a live foreign claim however recent the press. The verb
+ * the person pressed, never which KIND of machine they pressed it on: the lease decision table has
+ * been empty of kind since 0.14.1 and stays so. Defined HERE for `CAPABILITY_*`'s reason — core
+ * depends on db, never the reverse, and `packages/services` may not name the lease module at all
+ * (`mailbox-takeover.no-imap.test.ts` refuses the specifier). Closed by
+ * `mailboxes_takeover_intent_closed`; `organizer-lease.ts` re-exports these names.
+ */
+export const ORGANIZER_INTENTS = ["join", "takeover"] as const;
+export type OrganizerIntent = (typeof ORGANIZER_INTENTS)[number];
+
+export function isOrganizerIntent(v: unknown): v is OrganizerIntent {
+  return typeof v === "string" && (ORGANIZER_INTENTS as readonly string[]).includes(v);
+}
+
 /** The lease's occupancy as a reader cycle last saw it. Closed by `mailboxes_organizer_state_closed`. */
 export const ORGANIZER_STATES = ["held", "stopped"] as const;
 export type OrganizerState = (typeof ORGANIZER_STATES)[number];

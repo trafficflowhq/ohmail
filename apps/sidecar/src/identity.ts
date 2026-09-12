@@ -6,10 +6,8 @@ import { and, eq, isNull, sql } from "drizzle-orm";
 import {
   accounts, mailboxes, sessions, users,
   closeStoodDownAppointments, isMailboxDisabledReason, isOrganizerKind, standDownMemory,
-  type MailboxDisabledReason, type Tx,
-} from "@trafficflow/db";
+  type MailboxDisabledReason, type Tx, type OrganizerIntent,} from "@trafficflow/db";
 import { generateToken, hashToken } from "@trafficflow/services/mail";
-import type { OrganizerIntent } from "@trafficflow/core/adapters/organizer-lease";
 import type { LocalDb } from "./db.js";
 
 /**

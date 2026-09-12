@@ -10,8 +10,7 @@ import {
   closeRemovedMailboxAppointments,
   filingDue, filingDeferred, ourOutstandingFiling, isFilingRefusalClass,
   ACCOUNT_THREAD_STRUCTURE_LOCK_CLASS,
-  type AccessVerdict, type LedgerTx, type MailboxErrorCode, type Tx,
-} from "@trafficflow/db";
+  type AccessVerdict, type LedgerTx, type MailboxErrorCode, type Tx, type OrganizerIntent,} from "@trafficflow/db";
 import type { ServiceContext } from "./context.js";
 import { ServiceError } from "./errors.js";
 import { fenceErasedAccount } from "./erasure-fence.js";
@@ -26,7 +25,6 @@ import type { MailboxDTO, MailboxFolderSummary } from "./dto/types.js";
 // The window's vocabulary, from the one place it is defined (core), so the ceremony that writes
 // `dormancy_days` and `screening_scope` cannot disagree with the two cutlines that read them.
 import { DEFAULT_DORMANCY_DAYS, type ScreeningScope } from "@trafficflow/core/mail";
-import type { OrganizerIntent } from "@trafficflow/core/adapters/organizer-lease";
 
 const asTx = (ctx: ServiceContext): Tx => ctx.db as unknown as Tx;
 
