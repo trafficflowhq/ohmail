@@ -31,8 +31,9 @@ const escapeText = (s: string): string =>
  * Promote a plain-text body to `{html, text}`.
  *
  * Empty in, empty out — a whitespace-only body promotes to `{html: "", text: ""}` rather than to
- * an empty paragraph, so a caller can tell "there is nothing here" from "here is a blank
- * message" and store no html at all.
+ * an empty paragraph, so a caller can tell an absent body from a blank one and store no html at
+ * all. (Said without quoted phrases on purpose: this leaf is admitted into the client bundle only
+ * while it imports nothing, and the guard that proves that reads text, not syntax.)
  */
 export function plainTextToOutboundBody(source: string): PromotedBody {
   // Line endings first. A model answer is not guaranteed to use `\n`, and a stray `\r` left in
