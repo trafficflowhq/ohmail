@@ -174,24 +174,63 @@ function itemOf(engine: OhmailEngine, messageId: string, attachmentId: string): 
 }
 
 /**
- * Re-render this component on every engine notification, version bump or not.
+ * WHAT THIS HOOK CAN SHOW, AS ONE COMPARABLE VALUE.
  *
- * See the header: attachment state moves without the mirror moving, so
- * `useEngineVersion` cannot see it. The counter is a ref because `getSnapshot` must return
- * the same value until something actually changes, and a `useState` setter inside a
- * subscription is one render behind.
+ * Every field a strip draws that can still MOVE after the list has landed: the outcome's own
+ * state, the failure's code, and each item's byte state. Filename, type and size are fixed at
+ * the list read; `objectUrl` accompanies `ready` and `error` accompanies `failed`, so neither
+ * moves without the state beside it. A string rather than an object because
+ * `useSyncExternalStore` compares snapshots with `Object.is`, and equal strings are equal.
  */
-function useEngineNotice(engine: OhmailEngine): number {
-  const ticks = useRef(0);
+function attachmentsFingerprint(engine: OhmailEngine, ids: Iterable<string>): string {
+  const parts: string[] = [];
+  for (const id of ids) {
+    const held = engine.attachmentsOf(id, { includeInlineImages: true });
+    if (held.state === "ready") {
+      parts.push(`${id}:ready:${held.items.map((i) => `${i.id}=${i.state}`).join(",")}`);
+    } else if (held.state === "failed") {
+      parts.push(`${id}:failed:${held.code ?? ""}`);
+    } else if (held.state === "loading") {
+      parts.push(`${id}:loading${held.retrying === true ? ":retrying" : ""}`);
+    } else {
+      parts.push(`${id}:${held.state}`);
+    }
+  }
+  return parts.join("|");
+}
+
+/**
+ * Re-render this component when the attachment state IT CAN SHOW moves — version bump or not.
+ *
+ * See the header: attachment state moves without the mirror moving, so `useEngineVersion` cannot
+ * see it, and this used to answer a COUNTER bumped on every engine notification. That made the
+ * consumer — `ShellInner` — re-render the whole window on every publish for the life of the tab:
+ * for the length of a first import with nothing selected and nothing to show, and three times per
+ * message opened, each time redrawing a window whose attachments had not moved a byte. It is the
+ * reason "the shell re-renders per publish" stayed true even after its derivations were keyed
+ * narrowly.
+ *
+ * The fingerprint is over `held` — the release set this hook asked for, which is the selected
+ * message and its conversation siblings, and therefore exactly the ids `itemsOf` can be asked
+ * about. It cannot miss a change the hook is able to render, because it reads the same answer the
+ * render does. A ref is read here deliberately: the set changes only when the selection does, and
+ * a selection change re-renders anyway. `shell-rerender-per-publish.test.tsx` holds both halves —
+ * silent while nothing it draws has moved, live the moment an item's bytes land.
+ */
+function useEngineNotice(
+  engine: OhmailEngine,
+  watching: boolean,
+  held: { current: ReadonlySet<string> },
+): string {
   const subscribe = useCallback(
-    (onChange: () => void) =>
-      engine.subscribe(() => {
-        ticks.current += 1;
-        onChange();
-      }),
-    [engine],
+    (onChange: () => void) => (watching ? engine.subscribe(onChange) : () => {}),
+    [engine, watching],
   );
-  return useSyncExternalStore(subscribe, () => ticks.current, () => 0);
+  return useSyncExternalStore(
+    subscribe,
+    () => (watching ? attachmentsFingerprint(engine, held.current) : ""),
+    () => "",
+  );
 }
 
 /**
@@ -230,7 +269,6 @@ export function useMessageAttachments(
   opts: { onDownloadAllFailed: () => void },
 ): AttachmentsChrome | undefined {
   const available = engine.attachmentsAvailable();
-  useEngineNotice(engine);
   /**
    * Which messages have a download-all IN FLIGHT — a SET, because sibling panels each carry
    * the group verb now. The scalar this replaces held only the LAST press: starting B while A
@@ -255,6 +293,11 @@ export function useMessageAttachments(
    * release set a render input, which it is not.
    */
   const loaded = useRef<Set<string>>(new Set());
+
+  /* THE SUBSCRIPTION, declared here because it fingerprints the release set above. `watching` is
+     the same condition this hook's own two effects open with: with no message selected it asks
+     for no list, holds no release set and has nothing whose state could move. */
+  useEngineNotice(engine, available && messageId !== null, loaded);
 
   /**
    * The engine THIS COMMIT serves — read by completions and by the standing crew, because both

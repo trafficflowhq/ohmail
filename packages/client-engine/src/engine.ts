@@ -1617,6 +1617,22 @@ class OverlayReader implements EntityReader {
   version(): number {
     return this.store.version() * 1_000_003 + this.rev();
   }
+
+  /**
+   * {@link version}'s arithmetic, per type — and the overlay rev rides EVERY type rather than
+   * only the ones an overlay touches. An overlay is a message moving, being filed or being
+   * deleted before the server has said so; folding its rev into every stamp costs a rebuild of
+   * derivations that did not need one, and the alternative — deciding which types an overlay
+   * reaches — is a second opinion about mutation effects that would drift from the first.
+   * Conservative on purpose: a needless rebuild is a cost, a missed one is a stale screen.
+   */
+  stampOf(type: string): number {
+    return this.store.stampOf(type) * 1_000_003 + this.rev();
+  }
+
+  stampExcept(ignore: readonly string[]): number {
+    return this.store.stampExcept(ignore) * 1_000_003 + this.rev();
+  }
 }
 
 /**

@@ -45,6 +45,10 @@ export function hideMessages(base: EntityReader, hidden: ReadonlySet<string>): E
   if (hidden.size === 0) return base;
   return {
     version: () => base.version(),
+    /* Forwarded — the held set is view state, not a record write, and a row entering or leaving
+       it re-renders through the `deleting.held` identity the memos already list. */
+    stampOf: (type) => base.stampOf(type),
+    stampExcept: (ignore) => base.stampExcept(ignore),
     get<T = unknown>(type: string, id: string): T | undefined {
       if (type === "message" && hidden.has(id)) return undefined;
       return base.get<T>(type, id);

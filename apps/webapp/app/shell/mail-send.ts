@@ -35,7 +35,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { OUTBOX_TYPE } from "@ohmail/client-engine";
-import type { EngineMessage, MutationResult, OhmailEngine } from "@ohmail/client-engine";
+import type { EngineMessage, EntityReader, MutationResult, OhmailEngine } from "@ohmail/client-engine";
 import type { ToastFn } from "@ohmail/ui";
 import {
   clearComposeDraft, composePlan, composeSessionId, readComposeDraft, readComposeRow,
@@ -302,10 +302,39 @@ export function sendPendingInOutbox(engine: OhmailEngine, lane: string): boolean
 /**
  * So the durable record of the verb is the evidence, and it lapses when the verb does, with no timer anywhere.
  */
+/**
+ * The lanes the durable outbox currently holds a `mail_send` for, per (reader, outbox stamp).
+ *
+ * Cached because the CALLER is a render-path read: `restoredPending` runs on every render of the
+ * shell, and `list()` answers a fresh array — which, on a store whose per-type buckets are
+ * rebuilt lazily per version, makes the first such call after ANY write walk the whole mirror.
+ * A body publish moves the version and moves nothing in the outbox, so this read paid a
+ * whole-mirror walk per arriving body to answer the same boolean. Keyed on the outbox's OWN
+ * stamp: it moves whenever a queued verb is written, dispatched or retired, which is every way
+ * the answer can change.
+ */
+const outboxLanesCache = new WeakMap<EntityReader, { at: number; lanes: Set<string> }>();
+
 export function sendPendingInDurableOutbox(engine: OhmailEngine, lane: string): boolean {
-  const rows = engine.read().list(OUTBOX_TYPE) as ReadonlyArray<{ mutation?: { kind?: string } }>;
-  return rows.some((r) => r.mutation?.kind === "mail_send"
-    && sendKeyOf(r.mutation as unknown as MailSend) === lane);
+  const reader = engine.read();
+  // A hand-rolled partial reader has no stamp to invalidate on; it gets the honest uncached read.
+  if (typeof reader.stampOf !== "function") {
+    const rows = reader.list(OUTBOX_TYPE) as ReadonlyArray<{ mutation?: { kind?: string } }>;
+    return rows.some((r) => r.mutation?.kind === "mail_send"
+      && sendKeyOf(r.mutation as unknown as MailSend) === lane);
+  }
+  const at = reader.stampOf(OUTBOX_TYPE);
+  let hit = outboxLanesCache.get(reader);
+  if (hit === undefined || hit.at !== at) {
+    const lanes = new Set<string>();
+    for (const r of reader.list(OUTBOX_TYPE) as ReadonlyArray<{ mutation?: { kind?: string } }>) {
+      if (r.mutation?.kind !== "mail_send") continue;
+      lanes.add(sendKeyOf(r.mutation as unknown as MailSend));
+    }
+    hit = { at, lanes };
+    outboxLanesCache.set(reader, hit);
+  }
+  return hit.lanes.has(lane);
 }
 
 /** There is one compose surface, so its send state needs one key. */

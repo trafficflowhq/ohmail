@@ -36,6 +36,7 @@ import { StreamShell, type StreamHandle, type StreamLeaveState } from "../shell/
 import { StreamCardMemo } from "../shell/StreamCardMemo";
 import type { RemoteImagesChrome } from "../shell/remote-images";
 import { useStreamWindow } from "../shell/stream-window";
+import { useBodyStamp } from "../shell/body-slice";
 import { waterlineStamp } from "../shell/format";
 
 export type ReadsChipState = null | "approved" | "corrected";
@@ -578,6 +579,13 @@ export function ReadsView({
   );
   const loadingLabel = tb("loading");
   const failedLabel = tb("failed");
+
+  /* THE BODY SLICE'S SUBSCRIPTION, whole rather than per message: the cards are built in a loop
+     below, where a hook per message is not expressible. The shell does not re-render for a body
+     any more, so without this an arriving body would sit in the mirror unread. It costs one
+     re-render of this view per body; `StreamCardMemo` compares on the body's own primitives, so
+     the card that got the body is the card that redraws. */
+  useBodyStamp();
 
   /* One memoized card per MOUNTED message — the memo keeps an apply that touched nothing from
      re-rendering the run, and the run itself keeps a switch from mounting the pile. `bodyOf` is

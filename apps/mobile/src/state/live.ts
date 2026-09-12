@@ -793,6 +793,8 @@ function gateReader(pres: EntityReader, waiting: ReadonlySet<string>): EntityRea
   };
   return {
     version: () => pres.version(),
+    stampOf: (type) => pres.stampOf(type),
+    stampExcept: (ignore) => pres.stampExcept(ignore),
     get<T = unknown>(type: string, id: string): T | undefined {
       const v = pres.get<T>(type, id);
       if (type !== "message" || v === undefined) return v;

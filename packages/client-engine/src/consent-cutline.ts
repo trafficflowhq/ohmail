@@ -541,6 +541,13 @@ export function presentationReader(reader: EntityReader, partition: ConsentParti
 
   return {
     version: () => reader.version(),
+    /* FORWARDED, and the projection adds nothing of its own: it re-places messages the
+       partition already decided about, so it is stale exactly when its base reader is. A
+       wrapper that dropped these would fall back to nothing — the shell would key its
+       derivations on a stamp that never moves. `reader-stamp-forwarding.test.ts` refuses a
+       wrapper that answers a stamp its base does not. */
+    stampOf: (type) => reader.stampOf(type),
+    stampExcept: (ignore) => reader.stampExcept(ignore),
     get<T = unknown>(type: string, id: string): T | undefined {
       const v = reader.get<T>(type, id);
       if (type !== "message" || v === undefined) return v;

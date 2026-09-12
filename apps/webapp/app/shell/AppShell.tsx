@@ -11,6 +11,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type ComponentProps,
   type MouseEvent as ReactMouseEvent,
   type ReactNode,
 } from "react";
@@ -76,6 +77,7 @@ import {
   EngineProvider,
   useDemoMode, useResolvedDemoMode,
   useEngine,
+  useDerivedVersion,
   useEngineVersion,
   useSyncStatus,
   type OwnerResolver,
@@ -622,6 +624,19 @@ export function DesktopCta({ href, label, dismissLabel, onDismiss }: {
   );
 }
 
+/**
+ * SEARCH'S OWN SUBSCRIPTION — the one view whose input includes bodies.
+ *
+ * The shell keys on {@link useDerivedVersion}, which does not move for a body; the search index
+ * reads `message_body` (`search.ts`), so a body landing while a search is open genuinely changes
+ * the result set. Rather than putting the whole shell back on the global version for one view,
+ * the view takes it here: this wrapper re-renders per body publish and the shell does not.
+ */
+function SearchViewLive(props: Omit<ComponentProps<typeof SearchView>, "version">) {
+  const version = useEngineVersion();
+  return <SearchView {...props} version={version} />;
+}
+
 function ShellRail({ groups, footer, offerDesktopCta, hostConnection, ...rest }: RailNavProps & {
   /**
    * The paired desktop's standing line — the third member of the footer
@@ -1086,7 +1101,11 @@ export function AppShell({
  */
 function MailStateHost({ probe, freshnessProbe, children }: { probe?: MailboxProbe; freshnessProbe?: FreshnessProbe; children: ReactNode }) {
   const engine = useEngine();
-  const version = useEngineVersion();
+  /* THE DERIVED STAMP, not the global version: the one thing this host computes is a count of
+     messages, and a body landing moves neither the count nor anything under it. `children` is a
+     stable element, so the provider re-rendering never reaches the shell — what this removes is
+     the whole-mirror `list("message")` below, once per body publish. */
+  const derived = useDerivedVersion();
   /**
    * EVERY message in the MIRROR — Screener, Reads and Receipts included, not the Ohbox's rows.
    *
@@ -1096,13 +1115,14 @@ function MailStateHost({ probe, freshnessProbe, children }: { probe?: MailboxPro
    * is growing. The engine calls `notify()` once per drained page, so this is live with no extra
    * plumbing.
    */
-  const mirrored = useMemo(() => engine.read().list("message").length, [engine, version]);
+  const mirrored = useMemo(() => engine.read().list("message").length, [engine, derived]);
   /**
    * AND HOW MUCH IT HAS TAKEN IN — the import's producer on this door. Counted at the sync
-   * reader's own door, so eviction cannot move it; sampled on the same version as `mirrored`, so
-   * the pair the provider derives from is read at one instant.
+   * reader's own door, so eviction cannot move it; sampled on the SAME stamp as `mirrored`, so the
+   * pair the provider derives from is read at one instant. The derived stamp and not the global
+   * one for the same reason as the line above: a body landing moves neither number.
    */
-  const received = useMemo(() => engine.receivedMessages(), [engine, version]);
+  const received = useMemo(() => engine.receivedMessages(), [engine, derived]);
   return (
     <MailStateProvider probe={probe} freshnessProbe={freshnessProbe} mirrored={mirrored} received={received}>
       {children}
@@ -1176,7 +1196,22 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
     [t],
   );
   const engine = useEngine();
-  const version = useEngineVersion();
+  /**
+   * TWO STAMPS, AND THE SPLIT IS THE WHOLE OF THIS FILE'S PER-PUBLISH COST.
+   *
+   * `version` is the SUBSCRIPTION — it moves for any record write, bodies included, and it has
+   * to: a body arriving is what the reader waiting for it re-renders on, and `bodyOfMessage`
+   * reads the mirror live rather than through a memo. `derived` is what every whole-mirror pass
+   * below keys on: the same stamp minus the types no derivation reads ({@link NOT_DERIVED_FROM}).
+   *
+   * Counted against this shell before the split: one body publish — a single `message_body`
+   * record, no message, rule, tag, draft or mailbox moved — cost TWENTY whole-mirror passes,
+   * against twenty-three for a `/sync` page of two hundred messages. An open writes three of
+   * them and the eager pass one per message, so most of what the window derived during an
+   * import was derived for facts it never read. With the split those memos hold their
+   * identities, which is also what lets the memoized rows below bail out.
+   */
+  const derived = useDerivedVersion();
   /**
    * The account's mailboxes as `GET /mailboxes` reported them, or `null` for "we cannot see"
    * (Desktop, demo, a Cloud tab before its first poll). Read here — rather than provided here,
@@ -1406,7 +1441,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
     return String(rows[0]?.entity?.updatedAt ?? "");
     // `version` is the subscription; the reader object is stable.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [engine, version]);
+  }, [engine, derived]);
   const consent = useConsentState(!demo, consentTransport, settingsStamp);
   /**
    * The sync loop's posture, for the folders group's third render: `bootstrapping` is "no drain
@@ -1656,7 +1691,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
             foldersEnabled: consent.foldersEnabled,
           }),
     [
-      demo, consent.known, consent.standalone, reader, version, now, consent.dormancyDays,
+      demo, consent.known, consent.standalone, reader, derived, now, consent.dormancyDays,
       consent.screeningBaselineAt, consent.screeningScope, ownAddresses, consent.foldersEnabled,
     ],
   );
@@ -1743,7 +1778,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
     else if (present && !t.present) { t.epoch += 1; t.present = true; }
     else if (!present && t.present) t.present = false;
   }
-  const older = useOlderMail(engine, "ohbox", version);
+  const older = useOlderMail(engine, "ohbox", derived);
   /**
    * The open FOLDER's reach past the mirror window (the folders foundation) — `older`'s twin,
    * keyed to the folder entity id so leaving a folder resets its paging. Called with an
@@ -1751,7 +1786,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
    * (unavailable) — hooks must be unconditional, the scope may be absent.
    */
   const folderOlder = useOlderMail(
-    engine, "folder", version, folderIdForOlder, folderOlderBoundary,
+    engine, "folder", derived, folderIdForOlder, folderOlderBoundary,
     /* The per-render verdicts — `folderTailVerdict` is the pure, branch-tested word (see the
        hook's `suppress` for what each verdict does to the latch): in this folder ⇒ hidden and
        un-latched (an observed return); shown elsewhere by the LIVE entity ⇒ banned; entity
@@ -1770,8 +1805,8 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
    * changed". Every rebuild is retained as long as the render scope that
    * made it, so every callback here reads through a ref
    * (`stable-callback.ts` is the account of that mechanism). */
-  const ohbox = useMemo(() => ohboxView(presented), [presented, version]);
-  const partition = useMemo(() => feedPartition(presented, "reads"), [presented, version]);
+  const ohbox = useMemo(() => ohboxView(presented), [presented, derived]);
+  const partition = useMemo(() => feedPartition(presented, "reads"), [presented, derived]);
   /**
    * Receipts is a FLAT list, exactly as Reads is — no day headings.
    *
@@ -1782,7 +1817,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
    */
   const receipts = useMemo(
     () => receiptsByDay(presented, now).flatMap((g) => g.items),
-    [presented, version, now],
+    [presented, derived, now],
   );
   /**
    * Receipts' OWN waterline partition — `view_meta` "receipts_waterline", independent of
@@ -1792,9 +1827,9 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
    */
   const receiptsPartition = useMemo(
     () => feedPartition(presented, "receipts"),
-    [presented, version],
+    [presented, derived],
   );
-  const piles = useMemo(() => triagePiles(presented), [presented, version]);
+  const piles = useMemo(() => triagePiles(presented), [presented, derived]);
   /**
    * WHICH MAIL IS PARKED IN A BOTTOM PILE — the same derivation `piles` above is built from
    * (`selectors.ts#parkedMessageIds`), so the set and the lists cannot disagree about it.
@@ -1802,8 +1837,8 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
    * Read by `openTargetFor`, which must not route a parked message to the Ohbox: no Ohbox group
    * lists one, so the arrival would select nothing and flash nothing. See that function.
    */
-  const parked = useMemo(() => parkedMessageIds(presented), [presented, version]);
-  const tagGroups = useMemo(() => tagsCrossView(presented), [presented, version]);
+  const parked = useMemo(() => parkedMessageIds(presented), [presented, derived]);
+  const tagGroups = useMemo(() => tagsCrossView(presented), [presented, derived]);
   /**
    * IS THIS CLIENT'S MIRROR A WINDOW? The configured policy, not a measurement of what the mirror
    * currently holds: a list derived from the WHOLE mirror — History — is bounded whenever a policy
@@ -1839,8 +1874,8 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
    * count it was CONSTRUCTED with and this component is inside it; the two are the same
    * expression over the same reader at the same version, so they cannot disagree.
    */
-  const mirroredCount = useMemo(() => reader.list("message").length, [reader, version]);
-  const tags = useMemo(() => reader.list<TagDTO>("tag"), [reader, version]);
+  const mirroredCount = useMemo(() => reader.list("message").length, [reader, derived]);
+  const tags = useMemo(() => reader.list<TagDTO>("tag"), [reader, derived]);
   /**
    * THE MAILBOX'S OWN FOLDERS — `folder` entities off `/sync` (FOLDERS-SPEC.md §4), present in
    * the mirror only while the account's "Use folders" flag is on, and gated AGAIN here on the
@@ -1850,7 +1885,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
    */
   const folders = useMemo(
     () => (consent.foldersEnabled ? reader.list<FolderEntity>("folder") : []),
-    [reader, version, consent.foldersEnabled],
+    [reader, derived, consent.foldersEnabled],
   );
 
   /**
@@ -1883,7 +1918,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
    */
   const folderUnread = useMemo(
     () => (consent.foldersEnabled ? folderUnreadCounts(presented.list<EngineMessage>("message")) : new Map<string, number>()),
-    [presented, version, consent.foldersEnabled],
+    [presented, derived, consent.foldersEnabled],
   );
   /** The open folder entity, and its mail — `tagGroup`'s twin, up here so every piece of route
    *  chrome (the rail highlight, the mobile title, the fallback view) derives from ONE answer
@@ -1903,30 +1938,30 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
               return bt - at || (a.id < b.id ? 1 : a.id > b.id ? -1 : 0);
             })
         : [],
-    [presented, version, openFolder],
+    [presented, derived, openFolder],
   );
   /** Every rule the consent gate has written, newest first. */
-  const rules = useMemo(() => rulesList(reader), [reader, version]);
+  const rules = useMemo(() => rulesList(reader), [reader, derived]);
   const mailboxes = useMemo(
     () => reader.list<MailboxEntity>("mailbox"),
-    [reader, version],
+    [reader, derived],
   );
   const draft = useMemo(
     () => reader.get<EngineDraft>("draft", "draft-compose") ?? null,
-    [reader, version],
+    [reader, derived],
   );
   const aiChip = useMemo(
     () => reader.get<ReadsAiChipEntity>("view_meta", "reads_ai_chip") ?? null,
-    [reader, version],
+    [reader, derived],
   );
   const account = useMemo(
     () => reader.get<{ email: string }>("view_meta", "account") ?? null,
-    [reader, version],
+    [reader, derived],
   );
   /** The demo's VIP block; `/sync` cannot emit `view_meta`, so a live account gets null. */
   const notifications = useMemo(
     () => reader.get<NotificationsMeta>("view_meta", "notifications") ?? null,
-    [reader, version],
+    [reader, derived],
   );
   /**
    * Suggestions for the Screener — bought explicitly, never as a side effect of looking.
@@ -2006,7 +2041,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
     return answer;
   });
   const screener = useScreenerState(
-    engine, version, toast, suggestions.suggestions, presented, autoUnsubscribeDiscloses,
+    engine, derived, toast, suggestions.suggestions, presented, autoUnsubscribeDiscloses,
     // The SAME addresses `consentView` was built from — the queue's rows and the partition's
     // reckoning read one list, so the reader is never a row in their own Screener.
     screenerRole, suggestions.outstandingDecisions, ownAddresses,
@@ -2487,7 +2522,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
         people.map((a) => ({ initials: initialsOf(a.name || a.address), hue: avatarHue(a.address) })),
       );
     return out;
-  }, [presented, version]);
+  }, [presented, derived]);
   const participantsOf = useStableCallback((threadId: string) => participantIndex.get(threadId) ?? NO_PARTICIPANTS);
   /**
    * THE CONVERSATION'S STORED NAME, for the Ohbox's grouped rows — bound here for the same
@@ -2537,7 +2572,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
         threadOf(reader, selectedOhbox.id).some((m) => m.id === previewFor.messageId));
     if (!held) setPreviewFor(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [previewFor, selectedOhbox?.id, version]);
+  }, [previewFor, selectedOhbox?.id, derived]);
 
   /**
    * What the reader is showing, read from the mirror on every render.
@@ -3331,7 +3366,15 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
     () => resolveComposeFrom(fromOptions, compose.fromMailboxId, compose.to),
     [fromOptions, compose.fromMailboxId, compose.to],
   );
-  const composeMailbox = composeFrom.mailboxId ?? sendingMailboxId(reader);
+  /**
+   * THE LAST-RESORT MAILBOX, MEMOIZED — it was read inline, so every render of this component
+   * ran `sendingMailboxId`, which lists the mailboxes AND falls through to the whole mirror's
+   * date order when the account has no seeded mailbox row (the desktop, and a Cloud tab before
+   * its first poll — the two cases this fallback exists for). Twice per body publish, over the
+   * whole mailbox. It answers from records, so the derived stamp is its whole dependency.
+   */
+  const fallbackMailboxId = useMemo(() => sendingMailboxId(reader), [reader, derived]);
+  const composeMailbox = composeFrom.mailboxId ?? fallbackMailboxId;
   /**
    * THE COMPOSE FORM IS A ROW ON THE ACCOUNT — see `compose-autosave.ts`.
    *
@@ -3419,7 +3462,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
    * row. The draft's text seeds the editor, the row stays, and sending creates its own row — stated because it is the
    * one place the "one row birth-to-sent" rule does not yet reach.
    */
-  const drafts = useMemo(() => draftsList(reader), [reader, version]);
+  const drafts = useMemo(() => draftsList(reader), [reader, derived]);
   /**
    * ── THE UNCONFIRMED REPLY ROW THIS MESSAGE ALREADY HAS ──────────────────────────────────
    *
@@ -3650,7 +3693,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
    * row is frozen on the server (`DraftsService.update` refuses it) and adopting one for autosave would point every
    * PUT at a 409.
    */
-  const scheduled = useMemo(() => scheduledSendsList(reader), [reader, version]);
+  const scheduled = useMemo(() => scheduledSendsList(reader), [reader, derived]);
   /**
    * ONLY `confirmed` IS A CANCELLATION. `queued` means the wire refused retryably and the intent is parked — the
    * appointment STILL EXISTS server-side and its clock is still running, so saying "cancelled" (or opening the editor
@@ -5090,7 +5133,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
     }
     // `route` is a fresh object per hash: the fields below are the identity that matters.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [route.messageId, route.view, readerFor, ohboxSel, version, mailState.settled, pileHolds, reader]);
+  }, [route.messageId, route.view, readerFor, ohboxSel, derived, mailState.settled, pileHolds, reader]);
 
   /**
    * Locate the row, in whichever view it landed. One DOM effect and not four props: a search hit can land in four
@@ -6438,7 +6481,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
   // been moved out from under it closes the popover instead of rendering an empty one.
   const senderMenuFor = useMemo(
     () => (senderMenu ? senderScreening(reader, senderMenu.messageId, senderMenu.address) : null),
-    [senderMenu, reader, version],
+    [senderMenu, reader, derived],
   );
 
   // Same shape and the same `version` dep as above, for the same reason: a message whose row has
@@ -6446,7 +6489,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
   // memo that forgot `version` would show a stale token count after a sync drain.
   const subjectRuleFor = useMemo(
     () => (subjectRule ? subjectRuleContext(reader, subjectRule.messageId) : null),
-    [subjectRule, reader, version],
+    [subjectRule, reader, derived],
   );
 
   /**
@@ -7145,9 +7188,8 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
             ) : null}
 
             {effectiveView === "search" ? (
-              <SearchView
+              <SearchViewLive
                 engine={engine}
-                version={version}
                 now={now}
                 query={searchQuery}
                 /* The search mark starts at the question and ends when SearchView paints its
@@ -7190,7 +7232,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
             {effectiveView === "address" ? (
               <AddressView
                 engine={engine}
-                version={version}
+                version={derived}
                 now={now}
                 /* `parseHash` refuses an address branch with an empty segment, so this fallback
                    is unreachable from the router — and it is the shape the contract states a

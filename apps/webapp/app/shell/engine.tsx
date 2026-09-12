@@ -976,6 +976,18 @@ export function useEngine(): OhmailEngine {
 }
 
 /**
+ * The engine if this tree has one — {@link useEngine}'s non-throwing sibling, and the same
+ * carve-out `useMailboxFacts` makes for the same reason. `MessagePane` and `MessageCard` are
+ * published to the desktop mirror and mounted with no provider in several harnesses; they take
+ * their body subscription through this (`body-slice.ts`), and a throw there would take a reading
+ * surface down over a subscription it can simply not have. `null` means exactly one thing:
+ * nothing here will ever publish, so there is nothing to wait for.
+ */
+export function useEngineOrNull(): OhmailEngine | null {
+  return useContext(EngineContext)?.engine ?? null;
+}
+
+/**
  * What the sync loop is doing, for the surfaces that have to say so.
  *
  * A hook rather than a prop threaded through `AppShell` for the same reason the scheduler is
@@ -1077,6 +1089,43 @@ export function useEngineVersion(): number {
   return useSyncExternalStore(
     subscribe,
     () => engine.read().version(),
+    () => 0,
+  );
+}
+
+/**
+ * TYPES NO WHOLE-MIRROR DERIVATION READS — the deny list {@link useDerivedVersion} asks with.
+ *
+ * A `message_body` is read one message at a time, by id, at the moment a surface draws it; no
+ * pile, count, partition or projection lists them. Everything else the mirror holds is fair
+ * game for a derivation, which is why this is a DENY list rather than the list of types that
+ * matter: a type added later is watched by default, and the day a selector learns to read
+ * bodies the honest failure is a needless rebuild rather than a window showing last minute's
+ * mail. `derived-stamp-ignores-only-bodies.test.ts` refuses an entry the selectors do read.
+ */
+export const NOT_DERIVED_FROM: readonly string[] = ["message_body"];
+
+/**
+ * THE VERSION OF WHAT THE WINDOW ACTUALLY DERIVES FROM — {@link useEngineVersion} minus the
+ * bodies, and the measurement that earned it.
+ *
+ * Every whole-mirror pass the shell holds — the consent partition, the presentation projection,
+ * the Ohbox, the two feed partitions, the triage piles, the tag groups, the folder counts, the
+ * rules, the drafts — used to key on the global version, which moves for ANY record write. Most
+ * writes are bodies: an open writes three (`message_body` loading marker, answer, cache trim)
+ * and the eager pass one per message. Counted against the real shell, ONE body publish cost 20
+ * whole-mirror passes and rebuilt every list in the window, for a fact none of them reads —
+ * against 23 for a `/sync` page of two hundred messages. This is what those memos key on now.
+ *
+ * It does NOT replace {@link useEngineVersion} as the shell's subscription: a body arriving must
+ * still reach the reader that is waiting for it, and that is a render, not a derivation.
+ */
+export function useDerivedVersion(): number {
+  const engine = useEngine();
+  const subscribe = useCallback((cb: () => void) => engine.subscribe(cb), [engine]);
+  return useSyncExternalStore(
+    subscribe,
+    () => engine.read().stampExcept(NOT_DERIVED_FROM),
     () => 0,
   );
 }

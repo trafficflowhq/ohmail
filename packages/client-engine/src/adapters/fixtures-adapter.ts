@@ -149,6 +149,10 @@ export class FixturesAdapter implements EngineAdapter {
         return out;
       },
       version: () => this.seq,
+      /* The fixture world has one clock: nothing is written by type here, so every type moves
+         when the world does. Right rather than lazy — the demo's mirror changes wholesale. */
+      stampOf: () => this.seq,
+      stampExcept: () => this.seq,
     };
   }
 

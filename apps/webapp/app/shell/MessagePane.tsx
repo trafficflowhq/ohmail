@@ -24,6 +24,7 @@ import { InlineReply } from "./InlineReply";
 import { inlineForwardKey } from "./mail-send";
 import { chordKeys, useBinding, useKeyPress, useModGlyph } from "./keymap";
 import { useBodyStalled, useMessageChrome, type MessageBarPanel } from "./message-chrome";
+import { useBodyArrival } from "./body-slice";
 import { subscribeSessionRevival, useSessionDead } from "./session-truth";
 import { endOpen } from "./ui-vitals";
 import { MoreMenu, type MoreMenuItem } from "./MoreMenu";
@@ -1464,6 +1465,10 @@ export function MessagePane({
    * the shell hydrated on selection, and carries the state so the two failure modes can say
    * so beneath the text instead of passing as the mail.
    */
+  /* THE SUBSCRIPTION THAT MAKES THE READ LIVE. The shell no longer re-renders for a body — its
+     derivations key on a stamp bodies do not move — so this pane asks for its own message's
+     arrival. Without it the loading marker's snippet would stand until something else moved. */
+  useBodyArrival(message.id);
   const body = chrome.bodyOf(message);
 
   /**

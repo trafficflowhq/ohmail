@@ -36,6 +36,25 @@ export interface EntityReader {
   entries<T = unknown>(type: string): Array<{ id: string; entity: T; seq: number }>;
   /** Monotonic change stamp — bump ⇒ any derived cache (search index…) is stale. */
   version(): number;
+  /**
+   * WHEN A RECORD OF THIS TYPE LAST MOVED — the narrow twin of {@link version}, and the whole of
+   * why it exists: {@link version} moves for ANY record write, and most writes are bodies. An
+   * open writes three `message_body` records (the loading marker, the answer, the cache trim)
+   * and the eager pass writes one per message. Keyed on the global version, every whole-mirror
+   * derivation the window holds rebuilt for a fact none of them reads — measured at 20
+   * whole-mirror passes for one body publish, against 23 for a full page of newly arrived mail.
+   * Same monotonic sequence as {@link version}, so the MAXIMUM over several types is itself a
+   * valid stamp: a type that moves takes the newest version, which exceeds every other type's.
+   */
+  stampOf(type: string): number;
+  /**
+   * The newest stamp of anything OUTSIDE `ignore` — a DENY list, and that direction is the
+   * point. An allow list would go quietly stale the day a derivation learns a new entity type:
+   * the stamp would stop moving for it and the window would hold a projection of a mirror that
+   * had changed. With a deny list a new type is watched by default and only a named one can be
+   * dropped, so the failure mode is a needless rebuild rather than a stale screen.
+   */
+  stampExcept(ignore: readonly string[]): number;
 }
 
 /**
@@ -351,6 +370,7 @@ export abstract class BaseMirrorStore implements MirrorStore {
     this.cursor = "0";
     this.highSeq = 0;
     this.ver++;
+    this.stampAll();
     if (kept.length === 0) return;
     // EVERY kept record goes back, not merely the ones whose flush had not resolved. That
     // distinction is the whole of the outbox case: a verb written before the wipe was flushed
@@ -404,6 +424,44 @@ export abstract class BaseMirrorStore implements MirrorStore {
    * nothing else has to.
    */
   private typeBuckets: { v: number; byType: Map<string, MirrorRecord[]> } | null = null;
+
+  /**
+   * WHICH TYPE LAST MOVED, AND AT WHICH VERSION — {@link EntityReader.stampOf}'s record.
+   *
+   * Written beside every `ver++` rather than derived from the buckets: a bucket rebuild is the
+   * O(mailbox) pass this exists to avoid asking for, so a stamp computed from one would cost
+   * exactly what it saves. Absent from the map means "no record of this type has ever moved",
+   * which reads as the wipe floor below.
+   */
+  private typeStamp = new Map<string, number>();
+  /**
+   * The floor every stamp answers at least. A wipe moves EVERY type — including the ones
+   * holding no rows, which the map cannot name — so it raises this rather than enumerating.
+   */
+  private allStamp = 0;
+
+  /** Record that these types moved. Called AFTER `this.ver++`, so it stamps the new version. */
+  private stampTypes(types: Iterable<string>): void {
+    for (const t of types) this.typeStamp.set(t, this.ver);
+  }
+
+  /** Every type moved — the wipe's stamp. Called after `this.ver++`, like {@link stampTypes}. */
+  private stampAll(): void {
+    this.allStamp = this.ver;
+  }
+
+  stampOf(type: string): number {
+    const own = this.typeStamp.get(type) ?? 0;
+    return own > this.allStamp ? own : this.allStamp;
+  }
+
+  stampExcept(ignore: readonly string[]): number {
+    let out = this.allStamp;
+    for (const [type, at] of this.typeStamp) {
+      if (at > out && !ignore.includes(type)) out = at;
+    }
+    return out;
+  }
 
   private bucketsOf(type: string): MirrorRecord[] {
     if (this.typeBuckets === null || this.typeBuckets.v !== this.ver) {
@@ -533,6 +591,7 @@ export abstract class BaseMirrorStore implements MirrorStore {
     this.highSeq = Math.max(this.highSeq, maxSeqOf(changes));
     if (dirty.length > 0) {
       this.ver++;
+      this.stampTypes(dirty.map((r) => r.type));
       await this.flush(dirty, null, []);
     }
   }
@@ -589,6 +648,7 @@ export abstract class BaseMirrorStore implements MirrorStore {
     for (const rec of recs) this.records.set(recordKey(rec.type, rec.id), rec);
     for (const d of deletes) this.records.delete(recordKey(d.type, d.id));
     this.ver++;
+    this.stampTypes([...recs.map((r) => r.type), ...deletes.map((d) => d.type)]);
   }
 
   /** See {@link MirrorStore.putLocal} — seq 0, latest wins, never through the seq guard. */
@@ -596,6 +656,7 @@ export abstract class BaseMirrorStore implements MirrorStore {
     const rec: MirrorRecord = { type, id, seq: 0, entity };
     this.records.set(recordKey(type, id), rec);
     this.ver++;
+    this.stampTypes([type]);
     await this.flush([rec], null, []);
   }
 
@@ -622,7 +683,10 @@ export abstract class BaseMirrorStore implements MirrorStore {
      * them stale. `dirty` covers the body cascade as well as the page's own rows, so a page that changed nothing
      * visible but purged a body still counts as a change.
      */
-    if (dirty.length > 0) this.ver++;
+    if (dirty.length > 0) {
+      this.ver++;
+      this.stampTypes(dirty.map((r) => r.type));
+    }
     // One atomic flush: page + cursor together (contract §3.3 step 3) — and, since the
     // persistence contract above, every page an earlier flush failed to write goes with it, so
     // the durable cursor can never run ahead of the rows it covers.
@@ -644,18 +708,20 @@ export abstract class BaseMirrorStore implements MirrorStore {
     // pushed it a microtask later and those callers saw the row they had just removed; that is
     // the same defect, in the same three places, that kept this method off `commitLocal`.
     const gone = this.evictLocally(keys);
-    if (gone.length === 0) return;
+    if (gone.keys.length === 0) return;
     this.ver++;
+    this.stampTypes(gone.types);
     // Only the DURABLE half takes its turn.
-    return this.serializeWrite(() => this.purge(gone));
+    return this.serializeWrite(() => this.purge(gone.keys));
   }
 
   /** See {@link MirrorStore.prune} — hard delete, body cascade, cursor and maxSeq untouched. */
   async prune(keys: ReadonlyArray<{ type: string; id: string }>): Promise<void> {
     const gone = this.evictLocally(keys);
-    if (gone.length === 0) return;
+    if (gone.keys.length === 0) return;
     this.ver++;
-    await this.purge(gone);
+    this.stampTypes(gone.types);
+    await this.purge(gone.keys);
   }
 
   /**
@@ -666,11 +732,20 @@ export abstract class BaseMirrorStore implements MirrorStore {
    * the durable delete — {@link prune} purges immediately, {@link pruneSerialized} queues the
    * purge behind the write lane — and both need the eviction itself to be synchronous.
    */
-  private evictLocally(keys: ReadonlyArray<{ type: string; id: string }>): string[] {
+  /**
+   * The storage keys removed AND the types they belonged to. The types are answered rather than
+   * re-derived from the keys by the caller, because the body cascade below removes a type the
+   * caller never named — a `message` prune that stamped only `message` would leave every body
+   * derivation reading a stamp from before the bodies went.
+   */
+  private evictLocally(
+    keys: ReadonlyArray<{ type: string; id: string }>,
+  ): { keys: string[]; types: Set<string> } {
     const gone: string[] = [];
+    const types = new Set<string>();
     for (const { type, id } of keys) {
       const key = recordKey(type, id);
-      if (this.records.delete(key)) gone.push(key);
+      if (this.records.delete(key)) { gone.push(key); types.add(type); }
       // A pruned row must leave the UNFLUSHED set too, or the next carry-forward would write back
       // a record the pass has just decided this device does not keep — the eviction undone by the
       // very mechanism that exists to stop writes going missing.
@@ -680,9 +755,9 @@ export abstract class BaseMirrorStore implements MirrorStore {
       // The cascade. Note it runs whether or not the message record itself was present: a body
       // whose message is already gone is precisely the orphan this must not leave behind.
       const bodyKey = recordKey("message_body", id);
-      if (this.records.delete(bodyKey)) gone.push(bodyKey);
+      if (this.records.delete(bodyKey)) { gone.push(bodyKey); types.add("message_body"); }
     }
-    return gone;
+    return { keys: gone, types };
   }
 
   /**
@@ -744,6 +819,7 @@ export abstract class BaseMirrorStore implements MirrorStore {
     this.cursor = "0";
     this.highSeq = 0;
     this.ver++;
+    this.stampAll();
     // Nothing carried forward may survive a reset: an unflushed record from before the 410 would
     // be written back into the database the reset exists to empty.
     this.unflushed.clear();

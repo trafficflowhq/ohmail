@@ -29,6 +29,7 @@ import { StreamShell, type StreamHandle, type StreamLeaveState } from "../shell/
 import { StreamCardMemo } from "../shell/StreamCardMemo";
 import type { RemoteImagesChrome } from "../shell/remote-images";
 import { useStreamWindow } from "../shell/stream-window";
+import { useBodyStamp } from "../shell/body-slice";
 
 export function ReceiptsView({
   messages,
@@ -399,6 +400,9 @@ export function ReceiptsView({
   );
   const loadingLabel = tb("loading");
   const failedLabel = tb("failed");
+
+  /* `ReadsView`'s subscription, for the same reason and the same cost — see there. */
+  useBodyStamp();
 
   /* One memoized card per MOUNTED message — same shape as `ReadsView.card`. */
   const card = (m: EngineMessage) => {

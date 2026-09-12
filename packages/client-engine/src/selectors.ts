@@ -253,7 +253,17 @@ export function messagesByDateDesc(reader: EntityReader): readonly EngineMessage
   if (typeof reader.version !== "function") {
     return reader.list<EngineMessage>("message").sort(byDateDesc);
   }
-  const v = reader.version();
+  /**
+   * KEYED ON THE MESSAGE STAMP, NOT THE GLOBAL VERSION — and the note below already said why
+   * without acting on it: "arriving bodies change fields on rows whose ids and dates stand". A
+   * body is not a field on a message row at all; it is a `message_body` record. Keyed on
+   * `version()` every body publish MISSED here, and a miss is not free — it is a fresh
+   * whole-mirror `list()`, a Map of every id and a walk of every row, to arrive back at the
+   * order it already held. An open writes three bodies and the eager pass one per message.
+   * The message stamp moves for every arrival, prune, edit and optimistic overlay, which is
+   * every way the order can actually change; `date-order-cache.test.ts` pins both fallthroughs.
+   */
+  const v = typeof reader.stampOf === "function" ? reader.stampOf("message") : reader.version();
   const hit = dateOrderCache.get(reader);
   if (hit && hit.v === v) return hit.all;
   // `list()` builds a fresh array per call (both stores and the projection), so the in-place
@@ -451,6 +461,21 @@ export function oneSourceReader(inner: EntityReader): EntityReader {
 
   return {
     version: () => inner.version(),
+    /* THE STAMP A PROJECTION MOVES UNDER. `winningStates` folds `message_state` into a message's
+       `triage`, so a message row here moves when EITHER type does — a stamp naming only `message`
+       would hold a window over a park the mirror has already recorded. */
+    stampOf(type: string): number {
+      if (type !== "message") return inner.stampOf(type);
+      return Math.max(inner.stampOf("message"), inner.stampOf("message_state"));
+    },
+    /* Same fold, from the deny side: a caller that ignores `message_state` while still reading
+       messages would get the stale screen the deny list exists to prevent, so that one name is
+       dropped from its ignore set. A caller ignoring `message` reads no projection and keeps its
+       list whole — the failure mode stays a needless rebuild, never a stale one. */
+    stampExcept(ignore: readonly string[]): number {
+      if (ignore.includes("message")) return inner.stampExcept(ignore);
+      return inner.stampExcept(ignore.filter((t) => t !== "message_state"));
+    },
     // Inline rather than through `projector()`: this is the per-row read every reading surface
     // makes, and the claim map is already cached — no closure need be built to answer one row.
     get<T = unknown>(type: string, id: string): T | undefined {
