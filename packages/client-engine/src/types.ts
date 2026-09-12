@@ -78,6 +78,7 @@ export type SyncEntityType =
 export type MirrorEntityType =
   | SyncEntityType
   | "screener_sender" | "triage_item" | "mailbox" | "view_meta" | "message_body"
+  | "held_release_group"
   | (string & {});
 
 // ── /sync wire shapes (contract §3.1) ──────────────────────────────────────
@@ -1449,6 +1450,38 @@ export function decodeSeqCursor(cursor: Cursor): number | null {
  * a queued verb IS the user's intent, and an abandoned one is the intent nothing else will
  * deliver. A 410 is a statement about the CURSOR.
  */
+/**
+ * MAIL HELD AT THE GATE BEHIND A RULE ITS OWNER ALREADY WROTE — one row per sender group.
+ *
+ * A client-local type ({@link putLocal}, seq 0) and deliberately NOT a `/sync` entity. The set is a
+ * DERIVATION the server does over the caller's own rules and folder state, and it is answered by a
+ * REST read the way the mailbox and tracker facts are — no `change_log` vocabulary, no `EntityType`
+ * growth, clients refetch. It lives in the mirror rather than in a shell's own state so that the
+ * desktop, the web app and the phone read one selector instead of three derivations that agree
+ * today. The row `id` is the RULE's id, which is exactly what the press posts back.
+ */
+export const HELD_RELEASE_TYPE = "held_release_group";
+
+/** One group on the release screen: the rule, and how much of its mail is stuck at the gate. */
+export interface HeldReleaseGroupDTO {
+  /** The rule's id — this row's own id, and what `releaseHeld` names. */
+  id: string;
+  kind: "sender" | "domain";
+  /** The address, or the domain, the rule matches — lower-cased as stored. */
+  match: string;
+  /** Where the rule would file it. Named beside the count so a press is never a surprise. */
+  destination: Folder;
+  /** Held messages this rule would reach. NEVER summed across groups — see {@link heldReleaseTotalOf}. */
+  count: number;
+  /**
+   * DISTINCT messages across EVERY group, carried on each row because the mirror stores rows and
+   * not a document. One message can sit in two groups (a domain rule and a sender rule inside it
+   * both claim it), so the headline number is this, never the sum. Identical on every row of one
+   * refresh; a stale row is replaced wholesale, never merged.
+   */
+  total: number;
+}
+
 export const OUTBOX_TYPE = "outbox_entry";
 export const OUTBOX_ABANDONED_TYPE = "outbox_abandoned";
 

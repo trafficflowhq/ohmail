@@ -1538,6 +1538,38 @@ input.tag-manage-input { /* by element: the row is the width, the field gives */
    louder thing: its lead takes the accent's ink and the row's badge is the one outlined badge
    in the list. The palette has no red, and nothing here is anyone's fault — the organizer
    answered, and said no — so it is set apart by shape, not by alarm. */
+/* MAIL HELD AT THE GATE BEHIND A RULE ITS OWNER ALREADY WROTE — a quiet block in the header, not
+   a banner. It is an OFFER about mail that is not in the list, so it sits apart from the bulk
+   strip (which acts on what is on screen) and carries its own rule lines: address or domain, where
+   it would go, how much of it there is. Ink and rhythm are the relay note's — the same register,
+   because both are the surface telling you something rather than asking. The group list is the one
+   place a `ul` earns itself here: the rows are a set of facts of equal weight, and a person reads
+   down them before pressing. */
+.scn-held {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: flex-start;
+  max-width: 62ch;
+}
+.scn-held-lead {
+  margin: 0;
+  font-size: calc(12px + var(--type-up));
+  line-height: 1.5;
+  color: var(--ink);
+  font-weight: 600;
+}
+.scn-held-groups {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: calc(11.5px + var(--type-up));
+  line-height: 1.5;
+  color: var(--ink2);
+}
 .scn-relay {
   margin: 0;
   font-size:calc(11.5px + var(--type-up));

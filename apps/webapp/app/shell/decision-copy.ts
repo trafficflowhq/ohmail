@@ -23,6 +23,22 @@ export const PILE_KEY: Record<DecisionDestination, string> = {
   spam: "pileSpam",
 };
 
+/**
+ * THE SAME PILE NAMES, REACHED BY FOLDER — for the one caller that has a rule's destination rather
+ * than a decision: the release row names where each held group would go, and a rule stores a
+ * FOLDER. Derived from {@link PILE_KEY} so the two can never name one pile differently, and
+ * deliberately PARTIAL: `ohmail/Screener` is the gate and is not a pile anyone is filed into, and a
+ * folder outside this list has no name here — the caller shows the folder itself rather than
+ * inventing one. Keys are the frozen six from `@trafficflow/core`.
+ */
+export const PILE_KEY_OF_FOLDER: Readonly<Record<string, string>> = {
+  INBOX: PILE_KEY.ohbox,
+  "ohmail/Reads": PILE_KEY.reads,
+  "ohmail/Receipts": PILE_KEY.receipts,
+  "ohmail/Screened": PILE_KEY.screened,
+  "ohmail/Quarantine": PILE_KEY.spam,
+};
+
 export const PILE_VERB_KEY: Record<DecisionDestination, string> = {
   ...PILE_KEY,
   screened: "pileScreenOut",

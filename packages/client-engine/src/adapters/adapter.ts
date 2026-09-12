@@ -71,6 +71,30 @@ export interface MutationOutcome {
  * image), not something a user thinks of as a file; it arrives so the engine
  * can filter on it rather than guess.
  */
+/** One group as `GET /screener/held-releases` sends it. */
+export interface HeldReleaseGroupWire {
+  ruleId: string;
+  kind: "sender" | "domain";
+  match: string;
+  destination: string;
+  count: number;
+}
+
+/** The read's answer: the groups, the DISTINCT message total, and the server's own group ceiling. */
+export interface HeldReleaseWire {
+  groups: HeldReleaseGroupWire[];
+  /** Distinct messages across every group — never the sum of the counts. */
+  total: number;
+  /** How many groups one press may name. Read rather than hardcoded, so the client cannot drift. */
+  max: number;
+}
+
+/** The press's answer: the groups it released and the distinct messages they held. */
+export interface HeldReleaseResultWire {
+  released: HeldReleaseGroupWire[];
+  total: number;
+}
+
 export interface AttachmentWire {
   id: string;
   filename: string | null;
@@ -207,6 +231,32 @@ export interface EngineAdapter {
    * server, which is what makes it safe to issue on opening a message.
    */
   listAttachments?(messageId: string): Promise<AttachmentWire[]>;
+
+  // ── mail held at the gate behind a rule its owner already wrote ───────────
+  //
+  // Both OPTIONAL, and absence is a real answer: a door that cannot say what
+  // is held renders no release row at all, rather than a control that cannot
+  // work. The FixturesAdapter issues zero requests and so implements neither.
+
+  /**
+   * `GET /screener/held-releases` — the sender groups whose mail is stuck at the gate, with the
+   * rule that would file each one and how much of it there is.
+   *
+   * A derivation the server does over the caller's own rules and folder state, so it is asked
+   * rather than mirrored: `/sync` has no vocabulary for it and clients refetch, the way the
+   * mailbox and tracker facts work. Cheap — one grouped, indexed read; no mailbox is opened.
+   */
+  heldReleases?(): Promise<HeldReleaseWire>;
+
+  /**
+   * `POST /screener/held-releases` — THE PRESS. Releases the named groups, or every group when
+   * `ruleIds` is omitted.
+   *
+   * It moves no mail itself: the server records your consent on each rule and re-opens that
+   * rule's backlog, and the rule engine files the mail on its own pass. So the answer is what was
+   * RELEASED, not what has already moved, and a second press over the same groups releases nothing.
+   */
+  releaseHeld?(ruleIds?: readonly string[]): Promise<HeldReleaseResultWire>;
 
   /**
    * `GET /attachments/:id` — ONE attachment's bytes, fetched live from IMAP.

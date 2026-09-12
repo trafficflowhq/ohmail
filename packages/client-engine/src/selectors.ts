@@ -21,6 +21,8 @@ import {
   type MessageStateDTO,
   type OhmailView,
   type RuleDTO,
+  type HeldReleaseGroupDTO,
+  HELD_RELEASE_TYPE,
   type ScreenerHeldMail,
   type ScreenerSegment,
   type ScreenerSenderDTO,
@@ -1163,6 +1165,36 @@ export function tagsCrossView(reader: EntityReader): TagGroup[] {
  * refused: it reads as "these will move back", exactly the false promise revocation must not
  * make.
  */
+/**
+ * MAIL HELD AT THE GATE BEHIND A RULE ITS OWNER ALREADY WROTE — the release screen's rows.
+ *
+ * Largest group first, because that is the order somebody reads a list of "how much of my mail is
+ * stuck where" in. The rows are a SERVER derivation kept in the mirror ({@link HELD_RELEASE_TYPE});
+ * this selector does not recompute the predicate and must not — the deciding fact is WHO placed the
+ * message at the gate, which `/sync` does not carry, so a client-side derivation would show one
+ * number and release another.
+ *
+ * Empty means the door has not answered or has nothing to offer. Both render as no release row,
+ * which is the same sentence; "zero held messages" is a claim this selector never makes.
+ */
+export function heldReleaseGroups(reader: EntityReader): HeldReleaseGroupDTO[] {
+  return [...reader.list<HeldReleaseGroupDTO>(HELD_RELEASE_TYPE)]
+    .sort((a, b) => b.count - a.count || a.id.localeCompare(b.id));
+}
+
+/**
+ * THE NUMBER ON THE SCREEN — distinct messages across every group, read off the rows rather than
+ * summed over them.
+ *
+ * One message can sit in two groups: a domain rule and a sender rule inside that domain both claim
+ * it, and both counts are honest. Adding them up would tell somebody they hold more mail than they
+ * do, so the server sends the distinct figure and every row carries it. Zero with no rows.
+ */
+export function heldReleaseTotalOf(reader: EntityReader): number {
+  const [first] = reader.list<HeldReleaseGroupDTO>(HELD_RELEASE_TYPE);
+  return first?.total ?? 0;
+}
+
 export function rulesList(reader: EntityReader): RuleDTO[] {
   return reader.list<RuleDTO>("rule").sort((a, b) => {
     const ta = a.createdAt ? Date.parse(a.createdAt) : 0;

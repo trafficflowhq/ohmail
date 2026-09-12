@@ -41,7 +41,7 @@ import {
   type DecisionScope,
 } from "@ohmail/ui";
 import { messageOf, type JunkItemWire } from "../api-client";
-import { PILE_KEY, usePileNames, useDecisionBarCopy } from "../shell/decision-copy";
+import { PILE_KEY, PILE_KEY_OF_FOLDER, usePileNames, useDecisionBarCopy } from "../shell/decision-copy";
 import { useRowBadgeCopy } from "../shell/row-copy";
 import { avatarHue, displayTime } from "../shell/format";
 import { junkKeyOf, type JunkWindowControl } from "../shell/junk-window";
@@ -78,6 +78,16 @@ import { BlockNoticeGloss, type BlockNotice } from "../components/BlockNotice";
  * calling control is rendered only when `suggestedCount > 0`, and those
  * rows are where the list comes from.
  */
+/**
+ * What to CALL the folder a rule would file into. The pile's own name where there is one; the
+ * folder itself where there is not — a customer's rule may name a folder this product has no word
+ * for, and a made-up one would be worse than the real path.
+ */
+function pileNameOfFolder(folder: string, t: (k: string, v?: Record<string, string>) => string): string {
+  const key = PILE_KEY_OF_FOLDER[folder];
+  return key ? t(key) : folder;
+}
+
 function pileList(dests: DecisionDestination[], t: (k: string, v?: Record<string, string>) => string): string {
   const names = dests.map((d) => t(PILE_KEY[d]));
   if (names.length <= 1) return names[0] ?? "";
@@ -1284,6 +1294,42 @@ export function ScreenerView({
                   })
                   : t.rich("pendingBarLeadUnknown", { b: (chunks) => <b>{chunks}</b> })}
               </p>
+            ) : null}
+            {/* MAIL HELD AT THE GATE BEHIND A RULE ITS OWNER ALREADY WROTE.
+                A ROW IN THIS HEADER, not a surface of its own: the mail is in this list, the rules
+                are already written, and the whole of the decision is one press. It names the rule
+                per sender group — the address or domain, and where it would go — because a press
+                whose consequence is a number is a press nobody can weigh.
+
+                Waiting only, and only when there IS such mail: `state.heldRelease` is null both
+                when there is none and when the door cannot say, which render the same and should.
+                The press is not a bulk verb and does not live in the strip below — the strip acts
+                on the senders ON SCREEN, and this acts on mail that is not in the list at all. */}
+            {segment === "waiting" && state.heldRelease ? (
+              <div className="scn-held" role="note">
+                <p className="scn-held-lead">
+                  {t("heldReleaseLead", { count: state.heldRelease.total })}
+                </p>
+                <ul className="scn-held-groups">
+                  {state.heldRelease.groups.map((g) => (
+                    <li key={g.id}>
+                      {t("heldReleaseGroup", {
+                        match: g.match,
+                        count: g.count,
+                        pile: pileNameOfFolder(g.destination, t),
+                      })}
+                    </li>
+                  ))}
+                </ul>
+                <Button
+                  disabled={state.heldRelease.releasing}
+                  aria-busy={state.heldRelease.releasing || undefined}
+                  data-run={state.heldRelease.releasing ? "working" : undefined}
+                  onClick={() => state.heldRelease?.release()}
+                >
+                  {t("heldReleaseAll", { count: state.heldRelease.total })}
+                </Button>
+              </div>
             ) : null}
             {/* A BULK CONTROL MAY NOT OUTLIVE THE THING IT ACTS ON — now the whole of the
                 strip's condition. It carried a second disjunct for the allowance line, which had

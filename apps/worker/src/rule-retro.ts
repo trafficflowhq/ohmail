@@ -5,7 +5,7 @@ import {
 } from "@trafficflow/db";
 import {
   DEFAULT_OHBOX_POLICY, DESTINATIONS, authVerdictFromHeaders, evaluateRules,
-  silentLogger, type Logger, type NormalizedMessage, type Rule,
+  silentLogger, type Destination, type Logger, type NormalizedMessage, type Rule,
 } from "@trafficflow/core";
 import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import { carryDialect, dialect } from "@trafficflow/db/dialect";
@@ -30,6 +30,14 @@ import { carryDialect, dialect } from "@trafficflow/db/dialect";
  * while the pass drained. 100 rows is a few milliseconds of lock.
  */
 export const RULE_RETRO_BATCH = 100;
+
+/**
+ * The screening gate, named once. Spelled here rather than imported from the screener service,
+ * which this pass may not reach: a bulk mover that can pull a service's import graph in is how an
+ * IMAP dialer arrives (`rule-retro.no-imap.test.ts`). The `Destination` annotation is what keeps
+ * the spelling honest — a folder outside the organized six does not compile.
+ */
+const SCREENER_GATE: Destination = "ohmail/Screener";
 
 /**
  * Desired-state rows this pass may create for ONE ACCOUNT in ONE worker cycle.
@@ -127,6 +135,15 @@ interface OwedRule {
   match: string;
   destination: string;
   cursor: string | null;
+  /**
+   * WHEN THE OWNER PRESSED TO RELEASE MAIL THIS RULE NEVER REACHED — `rules.release_held_at`.
+   *
+   * NULL for every rule nobody has pressed, which is almost all of them. Read in exactly one
+   * place ({@link selectCandidates}) and for exactly one widening: an `'external'` row STILL AT
+   * THE GATE becomes a candidate. It is read fresh under the rule's own lock per page, so a press
+   * mid-walk takes effect at the next page and a rule is never walked against a stale licence.
+   */
+  releaseHeldAt: Date | null;
 }
 
 /**
@@ -241,6 +258,7 @@ export async function ruleRetroPass(
         const [live] = await tx.select({
           id: rulesTbl.id, accountId: rulesTbl.accountId, kind: rulesTbl.kind,
           match: rulesTbl.match, destination: rulesTbl.destination, cursor: rulesTbl.retroCursor,
+          releaseHeldAt: rulesTbl.releaseHeldAt,
         }).from(rulesTbl)
           .where(and(
             eq(rulesTbl.id, row.id),
@@ -515,7 +533,22 @@ async function selectCandidates(
      * `'external'` is still excluded — a person dragging a message into INBOX in Apple Mail arrives
      * looking identical, and their hand still wins. The five user-intent exclusions below still apply.
      */
-    inArray(folderState.lastSetBy, ["us", "peer"]),
+    /* THE PRESS THAT RELEASES MAIL STUCK AT THE GATE — `rules.release_held_at`, and nothing else.
+     * Without it this is `'us'`/`'peer'` as above. With it, ONE more shape joins: a row recorded
+     * as a hand file that is STILL AT THE GATE and settled there. That is the set a person is
+     * shown by name and count before they press ("N held messages from senders you already
+     * decided"), and the press is the consent that a placement recorded as theirs may be
+     * reconsidered. THREE terms keep the widening narrow, and each excludes a shape that must not
+     * move: the folder is the gate, so a hand file anywhere else — an INBOX drag, a customer's own
+     * folder — is untouched; desired equals observed, so nothing already in flight is re-decided;
+     * and the licence is per RULE, so it reaches only the senders that rule claims. The five
+     * user-intent exclusions below still apply to every one of them. */
+    opts.rule.releaseHeldAt === null
+      ? inArray(folderState.lastSetBy, ["us", "peer"])
+      : sql`(${folderState.lastSetBy} in ('us', 'peer')
+             or (${folderState.lastSetBy} = 'external'
+                 and ${folderState.desiredFolder} = ${SCREENER_GATE}
+                 and ${folderState.desiredFolder} = ${folderState.observedFolder}))`,
     /* THE MAILBOX IS ONE THIS INSTALL STILL ORGANIZES — BOTH HALVES (mail 0083).
      * `status = 'disabled'` alone stopped being sufficient once the loser of an organizer lease
      * became a READER (which is `connected`) rather than a disabled row: without the second clause

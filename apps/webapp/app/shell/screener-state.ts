@@ -10,18 +10,21 @@
  * presented-only rep routes past the gate through the sender sheet's `planScreeningChange`/`dispatchScreeningChange`
  * (`rule_create` + `applyRetro`), awaited so the toast reflects what the server returned.
  */
-import { useEffect, useMemo, useReducer, useRef } from "react";
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import {
   FOLDER_OF_VIEW,
   isProtectedMessage,
   physicalFolderOf,
+  heldReleaseGroups,
+  heldReleaseTotalOf,
   screenerSegments,
   senderKey,
   type EngineMessage,
   type EngineMutation,
   type EntityReader,
   type Folder,
+  type HeldReleaseGroupDTO,
   type OhmailEngine,
   type ScreenDest,
   type ScreenerSenderDTO,
@@ -107,6 +110,24 @@ interface PendingEntry {
   outTimer: ReturnType<typeof setTimeout>;
 }
 
+/**
+ * MAIL HELD AT THE GATE BEHIND A RULE ITS OWNER ALREADY WROTE — the header's release row.
+ *
+ * `null` when there is nothing to offer, and that covers two cases on purpose: no such mail, and a
+ * door that cannot say (a reader's mailbox answers no groups; an older server has no route). Both
+ * render as no row, which is the same sentence; "you have none" is a claim this never makes.
+ */
+export interface HeldReleaseOffer {
+  /** Distinct messages across every group — the number the row states. Never the sum of the counts. */
+  total: number;
+  /** One per rule, largest first: what would be filed, and where. */
+  groups: HeldReleaseGroupDTO[];
+  /** A press is in flight; a second one is refused rather than queued. */
+  releasing: boolean;
+  /** Release every group, or just the named rules. Re-reads afterwards and says what it released. */
+  release: (ruleIds?: readonly string[]) => void;
+}
+
 export interface ScreenerState {
   /** Waiting rows to render (rows mid-exit carry `pendingOut`). */
   waiting: ScreenerSenderDTO[];
@@ -121,6 +142,12 @@ export interface ScreenerState {
    * "Apply all" had nothing to apply. It exists so the surface can decline
    * to offer "Apply all suggestions" over an empty set.
    */
+  /**
+   * The release offer, or `null`. Read off the mirror, which holds what the DOOR said: the fact
+   * that decides this set is who placed each message at the gate, and `/sync` does not carry it,
+   * so a derivation here would put one number on screen and release another.
+   */
+  heldRelease: HeldReleaseOffer | null;
   suggestedCount: number;
   /**
    * The distinct piles those rows would be filed into, in {@link APPLY_PILE_ORDER}.
@@ -1614,7 +1641,46 @@ export function useScreenerState(
   const guard = <A extends unknown[]>(verb: (...args: A) => void) =>
     (role.mode === "blocked" ? ((..._args: A) => refuseReadOnly()) : verb);
 
+  /* ── MAIL HELD AT THE GATE BEHIND A RULE ITS OWNER ALREADY WROTE ──────────────────────────────
+   *
+   * Asked of the door ONCE per mount, not per version bump: the set changes only when a rule or a
+   * placement does, and re-asking on every mirror bump would put a request behind every body that
+   * lands during a drain. A door that cannot answer leaves the mirror empty and no row appears. */
+  const [releasing, setReleasing] = useState(false);
+  useEffect(() => {
+    void engine.refreshHeldReleases().catch(() => {
+      /* Silent, and deliberately: this is an OFFER. A door that will not answer means no offer to
+         make, which the absent row already says — a toast here would raise a sentence about a
+         feature the person has not asked for yet. */
+    });
+  }, [engine]);
+
+  const heldGroups = useMemo(() => heldReleaseGroups(engine.read()), [engine, version]);
+  const heldTotal = useMemo(() => heldReleaseTotalOf(engine.read()), [engine, version]);
+
+  const pressHeldRelease = useCallback((ruleIds?: readonly string[]) => {
+    if (releasing) return;
+    setReleasing(true);
+    void engine.releaseHeldMail(ruleIds)
+      .then((count) => {
+        // The count the SERVER released, never the one on screen when the press happened: another
+        // door may have decided a sender in between, and the sentence names what actually moved.
+        toast(count > 0 ? t("heldReleased", { count }) : t("heldReleasedNone"));
+      })
+      .catch(() => { toast(t("heldReleaseFailed")); })
+      .finally(() => { setReleasing(false); });
+  }, [engine, releasing, toast, t]);
+
+  /* NO ROW WITHOUT MAIL TO RELEASE — and a reader never sees one either, because the server
+     answers no groups for a mailbox this install does not organize. The `blocked` check is the
+     belt: a mode that renders an inert press is its own small lie (the bulk strip's argument). */
+  const heldRelease: HeldReleaseOffer | null =
+    heldTotal > 0 && heldGroups.length > 0 && role.mode !== "blocked"
+      ? { total: heldTotal, groups: heldGroups, releasing, release: pressHeldRelease }
+      : null;
+
   return {
+    heldRelease,
     waiting: visibleWaiting,
     waitingCount,
     suggestedCount,

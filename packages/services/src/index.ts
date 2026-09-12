@@ -48,6 +48,11 @@ export {
   type ScreenerDeps, type ScreenBody, type ScreenDecisionResult, type ScreenIdempotency,
 } from "./screener-service.js";
 export {
+  heldReleaseGroups, heldReleaseSummary, heldReleaseTotal, releaseHeld,
+  HELD_RELEASE_GROUPS_MAX, HELD_RELEASE_AUDIT_ACTION,
+  type HeldReleaseGroup, type HeldReleaseResult, type HeldReleaseSummary,
+} from "./held-release-service.js";
+export {
   TriageService, triageService,
   type TriageSetBody, type TriageIdempotency, type ListOptions, type FocusReplyView, type PowerThroughView,
 } from "./triage-service.js";

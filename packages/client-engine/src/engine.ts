@@ -53,8 +53,10 @@ import {
   type SyncSnapshotPage,
   type UnsubscribeResult,
   type WithheldMarker,
+  type HeldReleaseGroupDTO,
   OUTBOX_TYPE,
   OUTBOX_ABANDONED_TYPE,
+  HELD_RELEASE_TYPE,
 } from "./types.js";
 
 /**
@@ -3674,6 +3676,55 @@ export class OhmailEngine {
     }
   }
 
+
+  /**
+   * MAIL HELD AT THE GATE BEHIND A RULE ITS OWNER ALREADY WROTE — ask the door, put the answer in
+   * the mirror.
+   *
+   * The groups are a SERVER derivation over rules and folder state, not something a client can work
+   * out: the mirror knows a message is at the gate and knows the rules, but not who placed it there
+   * — the very fact that decides this. So a shell that derived the number itself would show one
+   * figure and release another. The whole set is replaced under ONE version bump ({@link
+   * MirrorStore.commitLocal}), because a half-old list is a wrong number on screen.
+   *
+   * A door that cannot answer leaves the mirror EMPTY, which every surface reads as "no release row
+   * here" — never as zero held mail, which is a different sentence.
+   */
+  async refreshHeldReleases(): Promise<void> {
+    const ask = this.adapter.heldReleases;
+    if (!ask) return;
+    const wire = await ask.call(this.adapter);
+    const before = this.read().list<HeldReleaseGroupDTO>(HELD_RELEASE_TYPE);
+    const keep = new Set(wire.groups.map((g) => g.ruleId));
+    await this.store.commitLocal(
+      wire.groups.map((g) => ({
+        type: HELD_RELEASE_TYPE,
+        id: g.ruleId,
+        entity: {
+          id: g.ruleId, kind: g.kind, match: g.match,
+          destination: g.destination as HeldReleaseGroupDTO["destination"], count: g.count, total: wire.total,
+        } satisfies HeldReleaseGroupDTO,
+      })),
+      before.filter((g) => !keep.has(g.id)).map((g) => ({ type: HELD_RELEASE_TYPE, id: g.id })),
+    );
+    this.notify();
+  }
+
+  /**
+   * THE PRESS. Releases the named groups — or every group when `ruleIds` is omitted — and re-reads.
+   *
+   * The re-read is not a courtesy: the server files nothing synchronously (it records the consent
+   * and re-opens the rule's backlog; the rule engine moves the mail on its own pass), so the only
+   * honest thing the screen can do straight afterwards is say what is left to release. Returns the
+   * distinct message count the press released, which is what a surface reports.
+   */
+  async releaseHeldMail(ruleIds?: readonly string[]): Promise<number> {
+    const press = this.adapter.releaseHeld;
+    if (!press) return 0;
+    const out = await press.call(this.adapter, ruleIds);
+    await this.refreshHeldReleases();
+    return out.total;
+  }
 
   private async putBody(messageId: string, record: MessageBodyRecord | null): Promise<void> {
     await this.store.putLocal("message_body", messageId, record);

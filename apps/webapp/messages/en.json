@@ -713,6 +713,12 @@
       "autoFailed": "That setting did not save. It is unchanged."
     },
     "markAllSpam": "Mark all spam",
+    "heldReleaseLead": "{count, plural, one {1 held message from a sender you already decided} other {# held messages from senders you already decided}}",
+    "heldReleaseGroup": "{match} \u2192 {pile} ({count})",
+    "heldReleaseAll": "Release {count}",
+    "heldReleased": "Released {count}. Your rules file them on the next pass.",
+    "heldReleasedNone": "Nothing left to release.",
+    "heldReleaseFailed": "Could not release that mail. Try again.",
     "noSuggestion": "No suggestion yet for this sender. Choose where their mail goes.",
     "noSuggestionUnavailable": "AI suggestions are not available for this account. Choose where their mail goes.",
     "noSuggestionNoAutoAi": "This sender’s mail is kept out of automatic AI. Choose where their mail goes.",

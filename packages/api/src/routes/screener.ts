@@ -1,4 +1,7 @@
-import { ServiceError, type ScreenBody } from "@trafficflow/services/mail";
+import {
+  ServiceError, heldReleaseSummary, releaseHeld, HELD_RELEASE_GROUPS_MAX,
+  type ScreenBody,
+} from "@trafficflow/services/mail";
 import { serviceContext } from "../context.js";
 import { jsonResponse } from "../responses.js";
 import {
@@ -28,6 +31,55 @@ import { screener, readBody } from "./shared.js";
 interface SuggestBody { senders?: unknown; dryRun?: unknown }
 
 export const screenerRoutes: Route[] = [
+  {
+    /**
+     * MAIL HELD AT THE GATE BEHIND A RULE ITS OWNER ALREADY WROTE — the groups, and the count
+     * beside each one. A read: it spends nothing, opens no mailbox and changes no row.
+     *
+     * NO STEP-UP, on either door. Nothing here names a credential or a destination the caller
+     * did not already choose — the answer is a summary of their own rules over their own held
+     * mail — and the local twin comes for free, because `localRoutes` spreads this table whole.
+     */
+    method: "GET",
+    pattern: "/screener/held-releases",
+    relay: true,
+    cost: "read",
+    handler: async (req, deps) => {
+      const ctx = serviceContext(deps, req);
+      const { groups, total } = await heldReleaseSummary(ctx.db, ctx.accountId);
+      // `total` is DISTINCT messages and never the sum of the group counts — a domain rule and a
+      // sender rule inside it both claim the same mail, honestly, and adding them up would tell a
+      // person they hold more than they do. `max` travels so the client learns the ceiling by
+      // READING it rather than carrying a constant of its own that drifts — `GET /screener`'s
+      // `maxPerRequest` argument.
+      return jsonResponse({ groups, total, max: HELD_RELEASE_GROUPS_MAX });
+    },
+  },
+  {
+    /**
+     * THE PRESS. Releases the named groups — or every group when `ruleIds` is absent — by
+     * recording your consent on each rule and re-opening its backlog. It files nothing
+     * itself: `rule-retro` decides with the rule engine and the reconciler moves the mail.
+     *
+     * Idempotent by the predicate rather than by a key: a released rule is in flight and is no
+     * longer a group, so a replay releases nothing and says so. Same door rule as the read above.
+     */
+    method: "POST",
+    pattern: "/screener/held-releases",
+    relay: true,
+    cost: "work",
+    handler: async (req, deps) => {
+      const ctx = serviceContext(deps, req);
+      const body = await readBody<{ ruleIds?: unknown }>(req);
+      // Left `unknown` to the service on purpose: the service refuses a non-array, a non-string
+      // member and more than `HELD_RELEASE_GROUPS_MAX` ids, and a route that pre-narrowed them
+      // would be a second, weaker copy of that rule.
+      const result = await releaseHeld(ctx, {
+        ruleIds: body.ruleIds as readonly string[] | undefined,
+      });
+      return jsonResponse(result);
+    },
+  },
   {
     method: "GET",
     pattern: "/screener",

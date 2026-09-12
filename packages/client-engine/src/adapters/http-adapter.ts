@@ -27,7 +27,10 @@ import type {
   ServerSearchWire,
   TrashRowWire,
 } from "../engine.js";
-import type { AttachmentWire, EngineAdapter, MutationOutcome, SyncParams } from "./adapter.js";
+import type {
+  AttachmentWire, EngineAdapter, HeldReleaseGroupWire, HeldReleaseResultWire, HeldReleaseWire,
+  MutationOutcome, SyncParams,
+} from "./adapter.js";
 import { retryAfterMsOf, retryingRead } from "./retrying-read.js";
 
 export type FetchLike = (url: string, init?: RequestInit) => Promise<Response>;
@@ -814,6 +817,53 @@ export class HttpAdapter implements EngineAdapter {
    * total — the strip renders `loading` as nothing, so a hang draws a paperclip over an empty message for as long as
    * the tab lives.
    */
+  /**
+   * One group off the wire, narrowed here rather than trusted. A row missing its rule id or its
+   * count is DROPPED rather than rendered as a group with no identity or a press that names
+   * nothing — the surface reads a short list, which is honest, instead of a broken row.
+   */
+  private static heldGroupOf(raw: unknown): HeldReleaseGroupWire | null {
+    const r = raw as Partial<HeldReleaseGroupWire>;
+    const count = typeof r.count === "number" && Number.isFinite(r.count) ? Math.trunc(r.count) : -1;
+    if (typeof r.ruleId !== "string" || r.ruleId === "" || count < 0) return null;
+    if (r.kind !== "sender" && r.kind !== "domain") return null;
+    if (typeof r.match !== "string" || typeof r.destination !== "string") return null;
+    return { ruleId: r.ruleId, kind: r.kind, match: r.match, destination: r.destination, count };
+  }
+
+  async heldReleases(): Promise<HeldReleaseWire> {
+    const res = await this.request("GET", "/screener/held-releases");
+    if (!res.ok) throw await this.rejectionOf(res);
+    const wire = (await res.json()) as { groups?: unknown; total?: unknown; max?: unknown };
+    const groups = Array.isArray(wire.groups)
+      ? wire.groups.map((g) => HttpAdapter.heldGroupOf(g)).filter((g): g is HeldReleaseGroupWire => g !== null)
+      : [];
+    // A server that does not state the total or the ceiling gets no invented one: zero groups say
+    // "nothing to release", and a zero ceiling is read by the caller as "this door cannot press".
+    return {
+      groups,
+      total: typeof wire.total === "number" && Number.isFinite(wire.total) ? Math.trunc(wire.total) : 0,
+      max: typeof wire.max === "number" && Number.isFinite(wire.max) ? Math.trunc(wire.max) : 0,
+    };
+  }
+
+  async releaseHeld(ruleIds?: readonly string[]): Promise<HeldReleaseResultWire> {
+    const res = await this.request("POST", "/screener/held-releases", {
+      // Omitted rather than `null`: absent means EVERY group, and a `null` on the wire would be a
+      // third state the server has to invent a meaning for.
+      body: ruleIds === undefined ? {} : { ruleIds: [...ruleIds] },
+    });
+    if (!res.ok) throw await this.rejectionOf(res);
+    const wire = (await res.json()) as { released?: unknown; total?: unknown };
+    const released = Array.isArray(wire.released)
+      ? wire.released.map((g) => HttpAdapter.heldGroupOf(g)).filter((g): g is HeldReleaseGroupWire => g !== null)
+      : [];
+    return {
+      released,
+      total: typeof wire.total === "number" && Number.isFinite(wire.total) ? Math.trunc(wire.total) : 0,
+    };
+  }
+
   async listAttachments(messageId: string): Promise<AttachmentWire[]> {
     return this.withDeadline(ATTACHMENT_LIST_TIMEOUT_MS, async (signal) => {
       const res = await this.request("GET", `/messages/${encodeURIComponent(messageId)}/attachments`, { signal });

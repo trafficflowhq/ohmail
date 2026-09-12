@@ -761,6 +761,18 @@ export const rules = pgTable("rules", {
   retroMoved: integer("retro_moved").notNull().default(0),
 
   /**
+   * WHEN THE OWNER PRESSED TO RELEASE MAIL THIS RULE NEVER REACHED (mail 0104).
+   *
+   * Mail an install adopted at the screening gate is recorded as a placement no pass may revisit,
+   * so it stays at the gate behind a rule its owner already wrote. This column is the press that
+   * says otherwise, and it is a NARROW licence rather than a flag: `rule-retro` reads it to admit
+   * `'external'` rows STILL AT THE GATE, and nowhere else — outside the gate, and for every rule
+   * without it, a hand placement still wins. NULL is the resting state and there is no backfill,
+   * because a press nobody made is not a press.
+   */
+  releaseHeldAt: timestamp("release_held_at", { withTimezone: true }),
+
+  /**
    * Mail 0050 — a second term on a sender rule: the SUBJECT. One sender sends two kinds of mail
    * (`info@` is the invoice AND the nightly alert), and a sender rule could only file all of it
    * together. NULL is the resting state, "no subject term"; there is no backfill and can never be
