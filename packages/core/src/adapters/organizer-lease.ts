@@ -1982,11 +1982,11 @@ export interface LeaseIo {
   /**
    * THE SELECTED FOLDER'S UID GENERATION, where the server reports one.
    *
-   * OPTIONAL, and this is the one place in this module where an optional capability is the right
-   * shape rather than the trap the rest of it avoids. Absence means "this connection cannot tell
-   * me", which resolves to `null` on BOTH of the reads that are compared — so the comparison finds
-   * no change and the gate behaves exactly as it did before this existed. The capability can only
-   * ADD a refusal, never remove one, so a fake that omits it is not weaker than today; it is today.
+   * Optional on the TYPE and never on an implementation: {@link makeLeaseIo} is the only one this
+   * product ships and it always has the accessor, so absence means one thing — this connection
+   * cannot tell us — and the takeover's confirm refuses on it rather than reading it as "nothing
+   * changed". A double that leaves it out drives the gate in a state no install reaches, which is
+   * what `lease-io-doubles.test.ts` censuses.
    */
   uidValidity?(): number | bigint | null;
 }
@@ -3052,15 +3052,13 @@ export function makeLeaseIo(
       const lock = await client.getMailboxLock(await meta.path());
       try {
         /**
-         * A uid is a fact only under the numbering it was read under. Every ref here came from a
-         * read that sampled the folder's generation beside the records; if the folder was
-         * replaced between that read and this lock, the numbering restarts and these uids name
-         * whatever sits at them — another install's live claim, or the settings document.
-         * Expunging by them would be deleting strangers on a stale map. Only a PROVEN mismatch
-         * refuses — both generations known and different; an unknowable one proceeds, with the
-         * confirm-by-re-read as backstop. Through the door, so that the spellings a server uses
-         * for "no epoch" — absent, `0`, out of RFC 3501's range — are ONE unknown here rather
-         * than a contradiction, which would refuse every cleanup this mailbox ever needs.
+         * A uid is a fact only under the numbering it was read under: if the folder was replaced
+         * between the read that named these refs and this lock, they name whatever sits at them
+         * now — another install's live claim, or the settings document. Only a PROVEN mismatch
+         * refuses (both generations known and different); an unknowable one proceeds, with the
+         * confirm-by-re-read as backstop. Through the door, so that every spelling of "no epoch"
+         * — absent, `0`, out of RFC 3501's range — is ONE unknown here rather than a
+         * contradiction, which would refuse every cleanup this mailbox ever needs.
          */
         const gen = currentGeneration();
         if (epochVerdict(epochOf(generationAtLastRead), epochOf(gen)) === "stale") {
@@ -3682,15 +3680,14 @@ export async function runLeaseGate(input: LeaseGateInput): Promise<LeaseGateResu
        * because "still there" and "I could not look" have the same correct answer here.
        */
       /**
-       * And the UID GENERATION decides whether the two reads' refs are comparable at all: refs are
-       * UIDs, so after a renumbering `stillRefs.has(r)` compares two numbering schemes and can
-       * answer "gone" for a claim sitting right there under a new uid. Three answers, not two, and
-       * the door (`epoch.ts`) is what knows them: the epochs agree; they contradict; or NOBODY
-       * NAMED ONE — which this used to read as "no change detected" and let through. A server that
-       * will not vouch for its folder ids has not said the handover landed, so both non-`usable`
-       * answers are one fact — this read cannot speak about those refs — and take the truncated
-       * read's arm. The refusal is could-not-look, never a stand-down: the mailbox keeps the
-       * organizer it has, the press is not spent, and the next pass looks again.
+       * And the UID GENERATION decides whether the two reads' refs are comparable at all: after a
+       * renumbering `stillRefs.has(r)` compares two numbering schemes and can answer "gone" for a
+       * claim sitting right there under a new uid. Three answers, not two, and the door
+       * (`epoch.ts`) knows them: agree, contradict, or NOBODY NAMED ONE — which this used to read
+       * as "no change detected". Both non-`usable` answers are one fact, this read cannot speak
+       * about those refs, and take the truncated read's arm: could-not-look, never a stand-down.
+       * What a server that never names one costs is measured in
+       * `organizer-lease-meta-window.test.ts`.
        */
       const electionEpoch = epochOf(electionUidValidity);
       const confirmEpoch = epochOf(read.uidValidity);
