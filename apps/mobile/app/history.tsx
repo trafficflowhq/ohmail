@@ -38,11 +38,13 @@ function HistoryBody() {
   const w = useWorld();
   const pull = usePullToSync();
   const [more, setMore] = useState(false);
-  const { items, total, meta } = w.history;
+  const { items, total, meta, pending } = w.history;
   // Unknown ≠ empty (`state/surface.ts`): before this mirror has settled a drain, an empty
   // History shows the row silhouette. "Nothing has settled here yet" over an unsynced database
-  // would be the product asserting a fact about a mailbox it has not read.
-  const surface = listSurface({ settled: w.boot.settled, count: total });
+  // would be the product asserting a fact about a mailbox it has not read — and so would the
+  // same sentence over a settled mirror whose CUTLINE answer is still in flight, which is what
+  // `pending` carries (nothing is retired until the account's own window is known).
+  const surface = listSurface({ settled: w.boot.settled, count: total, pending });
 
   return (
     <Screen>
@@ -82,10 +84,14 @@ function HistoryBody() {
           ) : null}
         </View>
 
-        {surface === "skeleton" ? (
+        {surface === "skeleton" || surface === "pending" ? (
           <Panel style={{ paddingBottom: 4 }}>
             <View style={{ paddingHorizontal: 6, paddingTop: 8 }}>
-              <SkeletonList stalled={w.boot.syncFailure} />
+              <SkeletonList
+                {...(surface === "pending"
+                  ? { note: Copy.cutlinePending }
+                  : { stalled: w.boot.syncFailure })}
+              />
             </View>
           </Panel>
         ) : surface === "empty" ? (

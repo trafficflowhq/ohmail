@@ -75,6 +75,37 @@ import {
 
 /* ─────────────────────────────────────────────────────── the projected read */
 
+/**
+ * THE ACCOUNT'S CUTLINE ANSWER AS THIS SESSION KNOWS IT — three states, because `null` was two.
+ *
+ * `answered` is `GET /consent`'s three fields. The other two were one `null`: **unanswered**, the
+ * read has not landed and an answer IS coming; **unsupplied**, nobody can answer — a server
+ * carrying none of the three fields, or the standalone door, which has none to ask. Unanswered
+ * partitions at `all_time` (the one posture that deletes no row) and WITHHOLDS the piles the
+ * answer decides, so a first paint cannot show a superset that then shrinks; unsupplied is the
+ * settled "retire nobody" this client has always shown.
+ */
+export type ScreeningPosture =
+  | { readonly state: "answered"; readonly answer: ScreeningAnswer }
+  | { readonly state: "unanswered" }
+  | { readonly state: "unsupplied" };
+
+/** The read is outstanding: the derived waiting shelf and History are UNKNOWN, never wide. */
+export const SCREENING_UNANSWERED: ScreeningPosture = { state: "unanswered" };
+
+/** Nobody can answer — a server with none of the three fields, or the standalone door. */
+export const SCREENING_UNSUPPLIED: ScreeningPosture = { state: "unsupplied" };
+
+/** The account's own answer, as the consent read gave it. */
+export function screeningAnswered(answer: ScreeningAnswer): ScreeningPosture {
+  return { state: "answered", answer };
+}
+
+/** The posture a view carries, with the caller who named none in the state whose name that is. */
+function postureOf(v: WorldView): ScreeningPosture {
+  return v.screening ?? SCREENING_UNSUPPLIED;
+}
+
 /** How the reader names days and times: the wall clock, the reader's zone, their language. */
 export interface WorldView {
   now: Date;
@@ -102,13 +133,14 @@ export interface WorldView {
    */
   ownAddresses?: readonly string[];
   /**
-   * THE ACCOUNT'S CUTLINE ANSWER (`GET /consent`), read by the world layer on the folders flag's
-   * own cadence, or `null` until a read succeeds this session. It decides WHICH SENDERS ARE STILL
-   * WORTH A DECISION, and the server answers that from `account_settings` while this client used
-   * to answer it from the engine's default — six waiting senders listed, two shown. Absent ⇒
-   * `null` ⇒ the unanswered posture in {@link presentedOf}.
+   * THE ACCOUNT'S CUTLINE ANSWER AND WHETHER IT IS IN — {@link ScreeningPosture}, read by the
+   * world layer on the folders flag's own cadence (`GET /consent`). It decides WHICH SENDERS ARE
+   * STILL WORTH A DECISION, and the server answers that from `account_settings` while this client
+   * used to answer it from the engine's default — six waiting senders listed, two shown. ABSENT ⇒
+   * `unsupplied`, the state whose name that is: this caller named no answer and none is coming,
+   * which is not the same thing as a read still in flight.
    */
-  screening?: ScreeningAnswer | null;
+  screening?: ScreeningPosture;
 }
 
 /** The phone's own zone, once — `Intl` on Hermes; UTC where the runtime cannot say. */
@@ -124,16 +156,27 @@ export function readerZone(): string {
  * The mirror with every message sitting where it is presented — the same projection the webapp
  * shell feeds its pile selectors (`AppShell` → `consentPartition` → `presentationReader`). The
  * cutline takes the account's answer, never this package's default: `screening` is
- * `GET /consent`'s three fields, `ownAddresses` is `GET /mailboxes`'. `null` is not-answered
- * and files nobody into History: every undecided sender stays at the gate until the account's
- * answer lands, so a boot shows a superset rather than a drop. An undated message is dated by
- * its arrival and `all_time` is read as a mode, so this posture retires nobody at all.
+ * {@link ScreeningPosture} over `GET /consent`'s three fields, `ownAddresses` is
+ * `GET /mailboxes`'. Neither state without an answer partitions by a window nobody asked for:
+ * both take `all_time`, the one posture that deletes NO row from the projection. What separates
+ * them is {@link PresentedWorld.cutlinePending} — see it.
  */
 export interface PresentedWorld {
   /** The projection the pile selectors read — History's rows are absent from its `message` list. */
   reader: EntityReader;
   /** History's own contents, newest first — the SAME partition's other arm. */
   history: readonly EngineMessage[];
+  /**
+   * IS THE ANSWER STILL COMING? True in the `unanswered` posture alone.
+   *
+   * `all_time` retires nobody, so under it the Screener's derived shelf holds EVERY undecided
+   * sender and History holds none — the widest queue any answer can produce. Painting that while
+   * the answer is in flight showed mail that then vanished, one shrink per boot. So the piles the
+   * answer decides are withheld rather than guessed while this is true, and the screens mark them
+   * as unknown ({@link WorldScreener.waitingPending}, {@link WorldHistory.pending}): an empty list
+   * with no marker reads as "no mail", and membership may then only GROW when the answer lands.
+   */
+  cutlinePending: boolean;
 }
 
 /**
@@ -144,32 +187,37 @@ export interface PresentedWorld {
  */
 export function presentedWorld(
   reader: EntityReader, now: Date, foldersEnabled = false,
-  screening?: ScreeningAnswer | null,
+  screening: ScreeningPosture = SCREENING_UNSUPPLIED,
   ownAddresses?: readonly string[],
 ): PresentedWorld {
-  const answered = screening ?? null;
   const partition = consentPartition(reader, {
     now,
     foldersEnabled,
-    ...(answered === null
-      ? { screeningScope: "all_time" as const }
-      : {
-          ...(answered.dormancyDays === null ? {} : { dormancyDays: answered.dormancyDays }),
-          baselineAt: answered.baselineAt,
-          screeningScope: answered.scope,
-        }),
+    ...(screening.state === "answered"
+      ? {
+          ...(screening.answer.dormancyDays === null
+            ? {}
+            : { dormancyDays: screening.answer.dormancyDays }),
+          baselineAt: screening.answer.baselineAt,
+          screeningScope: screening.answer.scope,
+        }
+      : { screeningScope: "all_time" as const }),
     /* Absent ⇒ `consentPartition` falls back to the mirror's `mailbox` entities, and this
        client's sync vocabulary carries none — so an empty set, which is what let the reader
        appear in their own queue. Passed whenever the mailbox read has landed. */
     ...(ownAddresses === undefined ? {} : { ownAddresses }),
   });
-  return { reader: presentationReader(reader, partition), history: partition.history };
+  return {
+    reader: presentationReader(reader, partition),
+    history: partition.history,
+    cutlinePending: screening.state === "unanswered",
+  };
 }
 
 /** The projection alone — {@link presentedWorld}'s first arm, for a caller with no History list. */
 export function presentedOf(
   reader: EntityReader, now: Date, foldersEnabled = false,
-  screening?: ScreeningAnswer | null,
+  screening: ScreeningPosture = SCREENING_UNSUPPLIED,
   ownAddresses?: readonly string[],
 ): EntityReader {
   return presentedWorld(reader, now, foldersEnabled, screening, ownAddresses).reader;
@@ -737,6 +785,13 @@ export interface WorldScreener {
    * alone. The surface states `"device"` rather than passing a count off as the mailbox's.
    */
   source: "server" | "device";
+  /**
+   * IS THIS SHELF WITHHELD? True only where the waiting list is this phone's own derivation AND
+   * the account's cutline answer has not landed ({@link ScreeningPosture} `unanswered`). The
+   * shelf is then EMPTY and the screen says so in words; the count line is silenced with it,
+   * because a "0" beside a shelf nobody has worked out yet is an invented number.
+   */
+  waitingPending: boolean;
 }
 
 const AI_DESTS = new Set<string>(["ohbox", "reads", "receipts", "screened", "spam"]);
@@ -853,9 +908,9 @@ function rowOfServer(s: ServerWaitingSender, v: WorldView, scope: Scope | undefi
  * view state rather than a mirror fact, keyed by the STABLE {@link ScreenerRow.routeKey}. On a
  * paired door the waiting shelf is the server's set exactly: `server` is `GET /screener`'s answer
  * ({@link readScreenerWaiting}), one row per sender it names, in its order — the mirror supplies
- * each row's held mail and a sender it cannot back rides the route's words. `null` is "nobody
- * answered": the standalone door where this phone IS the engine, or a paired read not yet landed;
- * then the derived list stands and {@link WorldScreener.source} says so.
+ * each row's held mail. `null` is "nobody answered": the standalone door, or a paired read not
+ * landed; the derived list then stands and {@link WorldScreener.source} says so — unless the
+ * CUTLINE answer is in flight too, when it is withheld ({@link WorldScreener.waitingPending}).
  */
 export function liveScreener(
   pres: EntityReader, v: WorldView, scopes: Readonly<Record<string, Scope>> = {},
@@ -870,11 +925,19 @@ export function liveScreener(
   const map = (rows: ScreenerSenderDTO[]) =>
     rows.map((dto) => rowOf(dto, scopes[senderKey(dto.from.address)]));
   if (server === null) {
+    /* THE ANSWER IS NOT IN, SO THIS SHELF IS UNKNOWN — not wide. Without an answer the partition
+       runs at `all_time` (`presentedWorld`), which retires nobody: every undecided sender queues
+       here, which is a SUPERSET of what the account's own window will admit. Painting it put mail
+       on the first screen that vanished a moment later. Empty plus the screen's marker instead,
+       so membership can only grow. Only the DERIVED shelf: the route's set is the account's own
+       cutline already, and the two shelves below are decided by rules, not by the window. */
+    const pending = postureOf(v).state === "unanswered";
     return {
-      waiting: map(segments.waiting),
+      waiting: pending ? [] : map(segments.waiting),
       screened: map(segments.screenedOut),
       spam: map(segments.spam),
       source: "device",
+      waitingPending: pending,
     };
   }
   /* THE ROUTE'S SET, IN THE ROUTE'S ORDER — a join, never a union. The derived rows are matched
@@ -893,6 +956,9 @@ export function liveScreener(
     screened: map(segments.screenedOut),
     spam: map(segments.spam),
     source: "server",
+    /* Never withheld: `GET /screener` is the account's own cutline, answered by the server that
+       holds the setting, so a shelf built from it has nothing outstanding behind it. */
+    waitingPending: false,
   };
 }
 
@@ -946,6 +1012,13 @@ export interface WorldHistory {
   /** Newest first — the partition's own order, never re-sorted here. */
   items: WorldMail[];
   total: number;
+  /**
+   * IS HISTORY UNKNOWN RATHER THAN EMPTY? True in the `unanswered` posture, where the partition
+   * runs at `all_time` and so retires nobody: the list is empty because nothing has been decided
+   * yet, not because this mailbox has no old mail. The screen marks it — an empty History under
+   * its ordinary empty state would be the product stating a fact it has not read.
+   */
+  pending: boolean;
 }
 
 /**
@@ -967,7 +1040,7 @@ export function liveHistory(
     row.historyPlace = physicalFolderOf(stamped);
     return row;
   });
-  return { items, total: items.length };
+  return { items, total: items.length, pending: postureOf(v).state === "unanswered" };
 }
 
 /**
@@ -984,7 +1057,7 @@ export function liveMessage(engine: OhmailEngine, id: string, v: WorldView): Wor
   // rides in for exactly the same reason and it is the same failure: a row a list showed under
   // the account's window must open under it too, never under this package's default.
   const world = presentedWorld(
-    engine.read(), v.now, v.foldersEnabled === true, v.screening ?? null, v.ownAddresses,
+    engine.read(), v.now, v.foldersEnabled === true, postureOf(v), v.ownAddresses,
   );
   /* A HISTORY ROW OPENS FROM THE RAW MIRROR, the same answer the webapp's reader gives it
      (`AppShell`'s `setReaderFor`, not `openMessage`). The projection has no such message — that

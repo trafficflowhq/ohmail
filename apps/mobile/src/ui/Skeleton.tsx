@@ -198,9 +198,9 @@ function CardShape({ bars }: { bars: readonly [number, number, number, number] }
 export type SkeletonKind = "mail" | "screener" | "card";
 
 /**
- * The pulsing silhouette a list screen renders while its mirror is UNKNOWN — the `skeleton`
- * arm of `state/surface.ts#listSurface`. Draws where the rows are about to be, in the rows'
- * own geometry, after the grace; renders nothing below it.
+ * The pulsing silhouette a list screen renders while its list is UNKNOWN — the `skeleton` and
+ * `pending` arms of `state/surface.ts#listSurface`. Draws where the rows are about to be, in the
+ * rows' own geometry, after the grace; renders nothing below it.
  */
 export function SkeletonList({
   kind = "mail",
@@ -214,11 +214,20 @@ export function SkeletonList({
    * status, never mail-shaped content, and it clears the moment a retry round starts.
    */
   stalled,
+  /**
+   * A STANDING SENTENCE FOR A WAIT THAT IS NOT A FAILURE — the `pending` arm of
+   * `state/surface.ts#listSurface`: this list was withheld because the account's cutline answer
+   * has not landed, and an empty list with nothing said over it reads as "no mail". Same slot as
+   * `stalled`, which is the failure half; a surface never carries both, and the refusal wins if
+   * one ever does.
+   */
+  note,
 }: {
   kind?: SkeletonKind;
   rows?: number;
   active?: boolean;
   stalled?: RefusalArg | null;
+  note?: string | null;
 }) {
   const show = useLoadingGrace(active);
   const opacity = useBreathe();
@@ -231,12 +240,13 @@ export function SkeletonList({
     ) : (
       MAIL_BARS.slice(0, rows ?? MAIL_BARS.length).map((b, i) => <MailRowShape key={i} bars={b} />)
     );
+  const say = stalled ? sayArg(stalled) : (note ?? null);
   return (
     <View>
-      {stalled ? (
+      {say ? (
         <View style={{ paddingHorizontal: 14, paddingTop: 12 }}>
           <Txt variant="caption" tone="ink3">
-            {sayArg(stalled)}
+            {say}
           </Txt>
         </View>
       ) : null}

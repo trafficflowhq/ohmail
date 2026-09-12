@@ -784,6 +784,14 @@ const TABLE = {
     "Detection reads structure — sender, headers, link targets. Content is not sent anywhere.",
   waitingEmptyTitle: "Nobody is waiting.",
   waitingEmptyHint: "First-time senders knock here before anything reaches your Ohbox.",
+  /**
+   * THE SHELF IS WITHHELD, NOT EMPTY — read by the Screener's waiting shelf and by History
+   * (`state/surface.ts#listSurface` `pending`). Which senders are still worth a decision is the
+   * account's own setting, and until it arrives neither list is this phone's to state: guessing
+   * the wide answer put senders on the first screen who left it again a moment later. One
+   * sentence over the silhouette, so an empty list cannot read as "no mail".
+   */
+  cutlinePending: "Reading your screening settings — until they land, this list is not settled.",
   screenedEmptyTitle: "Nobody is screened out.",
   screenedEmptyHint: "Senders you say No to wait here — held, never deleted.",
   spamEmptyTitle: "No spam held.",

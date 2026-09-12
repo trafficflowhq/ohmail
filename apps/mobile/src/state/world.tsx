@@ -29,7 +29,6 @@ import {
   writeFoldersEnabled,
   writeThemeFace,
   type FoldersConsent,
-  type ScreeningAnswer,
 } from "../net/consent";
 import { readMailboxes, type PhoneMailbox } from "../net/mailboxes";
 import { readScreenerWaiting, type ServerWaitingSender } from "../net/screener";
@@ -65,6 +64,9 @@ import {
   phoneOrganizer,
   presentedWorld,
   scheduleLabel,
+  screeningAnswered,
+  SCREENING_UNANSWERED,
+  SCREENING_UNSUPPLIED,
   staleAsOf,
   readerZone,
   soleMessageMailbox,
@@ -79,6 +81,7 @@ import {
   type WorldMail,
   type WorldPile,
   type WorldScheduled,
+  type ScreeningPosture,
   type WorldScreener,
   type WorldTag,
   type WorldView,
@@ -423,8 +426,8 @@ function emptyWorld(actions: WorldActions): World {
     doorbell: { initials: [], count: 0 },
     reads: { items: [], waterlineAboveId: null, waterLabel: Copy.waterline, newCount: 0, meta: "" },
     receipts: { groups: [], waterlineAboveId: null, waterLabel: Copy.waterline, total: 0, newCount: 0, meta: "" },
-    screener: { waiting: [], screened: [], spam: [], meta: "", source: "device" },
-    history: { items: [], total: 0, meta: "" },
+    screener: { waiting: [], screened: [], spam: [], meta: "", source: "device", waitingPending: false },
+    history: { items: [], total: 0, meta: "", pending: false },
     piles: [],
     pilesMeta: "",
     tags: [],
@@ -540,16 +543,16 @@ export function WorldProvider({ children }: { children: ReactNode }) {
    */
   const [signatures, setSignatures] = useState<Readonly<Record<string, string>> | null>(null);
   /**
-   * THE ACCOUNT'S CUTLINE ANSWER, or `null` until a consent read succeeds this session. It rides
-   * the signatures' read and their exact rule (freshest-successful-read-wins, identity-gated):
-   * nothing on this phone writes it, and the three fields come off the same `GET /consent` body.
+   * THE ACCOUNT'S CUTLINE ANSWER AND WHETHER IT IS IN — {@link ScreeningPosture}, riding the
+   * signatures' read and their exact rule (freshest-successful-read-wins, identity-gated).
    *
-   * `null` is "not answered", and `presentedWorld` treats it as "file nobody into History": until
-   * the account's own answer lands, every undecided sender stays at the gate rather than being
-   * retired by a window nobody asked for. Reset on a session swap with the signatures: account
-   * A's window must not partition account B's mirror.
+   * A session starts `unanswered`, and the piles the answer decides are withheld until it
+   * settles: the only posture this client can partition by meanwhile is `all_time`, which admits
+   * MORE senders than any answer will, so the queue was painted wide and then shrank. A read that
+   * lands with none of the three fields settles it `unsupplied` — an answer, not a wait. Reset on
+   * a session swap: account A's window must not partition account B's mirror.
    */
-  const [screening, setScreening] = useState<ScreeningAnswer | null>(null);
+  const [screening, setScreening] = useState<ScreeningPosture>(SCREENING_UNANSWERED);
   /**
    * The account's mailboxes, or `null` until a read succeeds this session (what
    * {@link World.mailboxes.known} publishes). Nothing on this phone ever writes a mailbox, so
@@ -664,8 +667,10 @@ export function WorldProvider({ children }: { children: ReactNode }) {
     const sigRead = freshestRead<FoldersConsent>((ans) => {
       if (current.current !== m) return;
       setSignatures(ans.signatures);
-      // The cutline half of the SAME answer — see `screening` above.
-      setScreening(ans.screening);
+      /* The cutline half of the SAME answer — see `screening` above. A read that landed with no
+         cutline fields is `unsupplied`, NOT still-waiting: nothing further is coming from this
+         server, so the piles stop being withheld and stand at "retire nobody". */
+      setScreening(ans.screening === null ? SCREENING_UNSUPPLIED : screeningAnswered(ans.screening));
       // …and whether this door carries the folders axis, off the same body and on the same
       // freshest-successful-read-wins rule: the machine's epoch guards the FLAG against the
       // user's write, and nothing on this phone writes a capability.
@@ -729,8 +734,9 @@ export function WorldProvider({ children }: { children: ReactNode }) {
     // rebuilt with the machine, so its tally starts over with it.
     setSignatures(null);
     // …and the cutline answer, for the same reason: a window read off account A must never
-    // decide which of account B's senders are worth a decision.
-    setScreening(null);
+    // decide which of account B's senders are worth a decision. Back to `unanswered`, the state
+    // a session that has asked nothing yet is actually in.
+    setScreening(SCREENING_UNANSWERED);
     // The mailboxes are the outgoing session's answer, for the signatures' reason exactly:
     // account A's addresses must not make account B's reader recognisable, and its holder must
     // not name a banner over B's mail.
@@ -997,18 +1003,23 @@ export function WorldProvider({ children }: { children: ReactNode }) {
 
   const world = useMemo<World>(() => {
     if (engine === null || session === null) return emptyWorld(actions);
+    /* THE STANDALONE DOOR HAS NOBODY TO ASK — this app IS the engine there and `GET /consent` is
+       a route this session does not dial (the same fact the queue read is skipped for, below).
+       Waiting for an answer that can never arrive would withhold the Screener for the life of
+       the session, so that door is `unsupplied`: settled, retiring nobody, marked as nothing. */
+    const posture: ScreeningPosture = session.standalone ? SCREENING_UNSUPPLIED : screening;
     const v: WorldView = {
       now: new Date(), zone, locale, foldersEnabled: foldersOn,
       // Before the first read this is `[]`, which is `NO_OWN_ADDRESSES` — the posture this
       // client had for its whole life, and the right answer for a phone that has not asked yet.
       ownAddresses: addressesNow.current,
-      // `null` until the consent read lands — the unanswered posture, which drops nobody.
-      screening,
+      // The SAME posture the partition below is taken under — the shelves read it for the marker.
+      screening: posture,
     };
     /* ONE partition, both arms (`live.ts#presentedWorld`): `world.reader` is the projection the
        piles group over, `world.history` is the mail the cutline retired. Two calls would be one
        rule read at two clocks — a sender in both lists, or in neither. */
-    const world = presentedWorld(engine.read(), v.now, foldersOn, screening, addressesNow.current);
+    const world = presentedWorld(engine.read(), v.now, foldersOn, posture, addressesNow.current);
     const pres = world.reader;
     const ohbox = liveOhbox(pres, v);
     const reads = liveReads(pres, v);
@@ -1149,7 +1160,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
          the reader in the audience of their own reply. */
       message: (id) => liveMessage(engine, id, {
         now: new Date(), zone, locale, foldersEnabled: foldersOn,
-        ownAddresses: addressesNow.current, screening,
+        ownAddresses: addressesNow.current, screening: posture,
       }),
       sendOutcome: outcomeOf,
       actions,

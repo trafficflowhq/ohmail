@@ -48,11 +48,26 @@ export default function ScreenerScreen() {
   const pull = usePullToSync();
   const [seg, setSeg] = useState<ScreenerSeg>("waiting");
   const empty = emptyFor(seg);
-  const { waiting, screened, spam, meta } = w.screener;
+  const { waiting, screened, spam, meta, waitingPending } = w.screener;
   // Unknown ≠ empty, per SEGMENT: the active shelf's own count against the one settled fact.
   const counts: Record<ScreenerSeg, number> = { waiting: waiting.length, screened: screened.length, spam: spam.length };
-  const surface = listSurface({ settled: w.boot.settled, count: counts[seg] });
-  const shelfEmpty = surface === "empty" ? <Empty {...empty} /> : <SkeletonList kind="screener" stalled={w.boot.syncFailure} />;
+  /* …and the WAITING shelf has a second way of being unknown over a settled mirror: this phone
+     derived it, and the account's cutline answer has not landed, so it was withheld rather than
+     guessed wide (`state/live.ts#WorldScreener.waitingPending`). Only that shelf — the other two
+     are decided by rules the answer has no say in. */
+  const surface = listSurface({
+    settled: w.boot.settled,
+    count: counts[seg],
+    pending: seg === "waiting" && waitingPending,
+  });
+  const shelfEmpty = surface === "empty" ? (
+    <Empty {...empty} />
+  ) : (
+    <SkeletonList
+      kind="screener"
+      {...(surface === "pending" ? { note: Copy.cutlinePending } : { stalled: w.boot.syncFailure })}
+    />
+  );
 
   return (
     <Screen>

@@ -521,6 +521,8 @@ export const DE: Deck = {
     "Die Erkennung liest die Struktur — Absender, Header, Linkziele. Inhalte werden nirgendwohin gesendet.",
   waitingEmptyTitle: "Es wartet niemand.",
   waitingEmptyHint: "Erstabsender klopfen hier an, bevor irgendetwas in deine Ohbox kommt.",
+  cutlinePending:
+    "Deine Screening-Einstellungen werden gelesen — bis sie da sind, steht diese Liste nicht fest.",
   screenedEmptyTitle: "Niemand aussortiert.",
   screenedEmptyHint: "Absender, zu denen du Nein sagst, warten hier — zurückgehalten, nie gelöscht.",
   spamEmptyTitle: "Kein Spam zurückgehalten.",

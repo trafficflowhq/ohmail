@@ -44,9 +44,10 @@ export interface FoldersConsent {
   storable: boolean;
   /**
    * The account's cutline answer, or `null` for a server that carries none of the three fields
-   * (an API deployed before mail 0056). `null` is NOT a window: the projection's unanswered
-   * posture files nothing into History, because this app has no History surface and a dropped
-   * row would be in no list at all. See {@link ScreeningAnswer}.
+   * (an API deployed before mail 0056). `null` here is UNSUPPLIED and never a wait: this read
+   * landed, and no later one from this server is going to carry more. The world layer turns it
+   * into `live.ts#SCREENING_UNSUPPLIED` for exactly that reason — the state a read still in
+   * flight is in has its own name, and the two used to be one `null`. See {@link ScreeningAnswer}.
    */
   screening: ScreeningAnswer | null;
   /**
