@@ -6,7 +6,7 @@ import {
   rules as rulesTbl, type Tx,
 } from "@trafficflow/db";
 import {
-  FOLDER_PAGE_MAX, MessageGoneError, makeRef,
+  FOLDER_PAGE_MAX, MessageGoneError, makeRef, epochOf, sameEpoch,
   type FolderPage, type FolderPageItem, type FolderSearchPage,
 } from "@trafficflow/core/adapters/imap";
 /* `core/mail`, never the default barrel: the barrel re-exports `ai/workflows/*`, whose workflow runner
@@ -216,7 +216,7 @@ export async function listJunk(
       const held = before[box.id];
       states.push({
         id: box.id, address: box.address, window: "ok",
-        ...(held !== undefined && held.v !== page.uidValidity ? { reset: true } : {}),
+        ...(held !== undefined && !sameEpoch(epochOf(held.v), epochOf(page.uidValidity)) ? { reset: true } : {}),
       });
       return { boxId: box.id, page };
     } catch (err) {
@@ -267,7 +267,7 @@ export async function listJunk(
     } else if (lane.rows.length > 0) {
       // Nothing of this mailbox fit the page: resume exactly where this request began.
       const held = before[lane.boxId];
-      nextBefore[lane.boxId] = held !== undefined && held.v === lane.uidValidity
+      nextBefore[lane.boxId] = held !== undefined && sameEpoch(epochOf(held.v), epochOf(lane.uidValidity))
         ? held
         : { v: lane.uidValidity, s: lane.rows[0]!.seq + 1 };
     } else if (lane.adapterNext !== null) {
@@ -290,7 +290,7 @@ export async function listJunk(
       const held = before[lane.boxId];
       const s = lane.tookAny
         ? lane.lowestTakenSeq
-        : held !== undefined && held.v === lane.uidValidity
+        : held !== undefined && sameEpoch(epochOf(held.v), epochOf(lane.uidValidity))
           ? held.s
           : (lane.rows[0]?.seq ?? 0) + 1;
       nextBefore[lane.boxId] = { v: lane.uidValidity, s: Math.max(1, s) };
@@ -474,7 +474,7 @@ export async function junkBody(
     (adapter) => adapter.fetchByUid(box.junkFolder!, [args.uid], { maxBytes: JUNK_BODY_MAX_BYTES }),
     { budgetMs: JUNK_READ_TIMEOUT_MS },
   );
-  if (fetched.uidValidity !== args.uidValidity) {
+  if (!sameEpoch(epochOf(fetched.uidValidity), epochOf(args.uidValidity))) {
     throw new ServiceError("junk_message_gone", 410, "the Junk folder changed under this row — reload the list");
   }
   if (fetched.oversize.includes(args.uid)) {
@@ -659,7 +659,7 @@ export async function rescueJunk(
             const fetched = await adapter.fetchByUid(box.junkFolder!, [args.uid], {
               maxBytes: JUNK_BODY_MAX_BYTES,
             });
-            const c = fetched.uidValidity === args.uidValidity
+            const c = sameEpoch(epochOf(fetched.uidValidity), epochOf(args.uidValidity))
               ? fetched.creates.find((x) => x.raw !== undefined)
               : undefined;
             raw = (c?.raw as Buffer | undefined) ?? null;

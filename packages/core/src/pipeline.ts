@@ -10,9 +10,13 @@ import {
 } from "./rules.js";
 import { classifyDedup, type DedupOutcome } from "./dedup.js";
 // The leaf predicate, not `adapters/imap.js`: this module is the model layer and naming the
-// adapter here would pull `imapflow` into the desktop engine — the same reason `epochOfRef` above
-// is hand-rolled. `gone.ts` carries the rule this file's `move` arm implements.
+// adapter here would pull `imapflow` into the desktop engine. `gone.ts` carries the rule this
+// file's `move` arm implements.
 import { isMessageGone } from "./gone.js";
+// The ref's epoch half, from the MODEL layer's own module rather than the adapter's — and as a
+// discriminated value, so the same-epoch test below cannot be satisfied by two refs that each
+// name no epoch (`{ folder: "", ref: "0:0" }` is the NULL-locator placeholder; two are not one).
+import { epochOfRef, sameEpoch } from "./epoch.js";
 import { reconcile, type ReconcileAction } from "./reconciler.js";
 // TYPE-ONLY, and that is what keeps the model layer's rule intact: `import type` is erased, so
 // this adds no module to any bundle (both files are already engine inputs in any case). The
@@ -41,15 +45,6 @@ import { isOrganizedFolder } from "./types.js";
 
 /** Confidence a graduated pattern must meet before the AI branch auto-applies. */
 export const AUTO_APPLY_CONFIDENCE_BAR = 0.7;
-
-/**
- * The UIDVALIDITY half of a `NativeLocator.ref` (`${uidvalidity}:${uid}`).
- *
- * Hand-rolled rather than imported from `adapters/imap.ts#parseRef`: this module is the model layer
- * and must not pull the IMAP adapter — and with it `imapflow` — into its import graph. The format is
- * declared on {@link NativeLocator} and is the model's own, not the adapter's.
- */
-const epochOfRef = (ref: string): string => ref.split(":")[0] ?? "0";
 
 export interface ApplyContext {
   messageId: string;
@@ -1292,7 +1287,7 @@ export async function commitChange(plan: ChangePlan, deps: CommitDeps): Promise<
   const sameFolderSameEpochCopy =
     e.kind === "duplicate"
     && e.storedLocator.folder === e.arrivalLocator.folder
-    && epochOfRef(e.storedLocator.ref) === epochOfRef(e.arrivalLocator.ref)
+    && sameEpoch(epochOfRef(e.storedLocator.ref), epochOfRef(e.arrivalLocator.ref))
     && e.storedLocator.ref !== e.arrivalLocator.ref;
   const secondCopyInSameEpoch = sameFolderSameEpochCopy && !e.ownAuthored;
   // An own-authored (Sent) copy: record AND repoint — both halves load-bearing. Sent is read from

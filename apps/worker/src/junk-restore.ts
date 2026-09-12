@@ -1,5 +1,5 @@
 import { UNMETERED_STORAGE_CAP, normalizeMime, type Logger, type NormalizedMessage, type StorageCap } from "@trafficflow/core/mail";
-import { parseRef, type MailboxAdapter } from "@trafficflow/core/adapters/imap";
+import { epochOf, parseRef, sameEpoch, type MailboxAdapter } from "@trafficflow/core/adapters/imap";
 import type { JunkFiledHuskRow, WorkerRepo } from "@trafficflow/core/adapters/drizzle-repo";
 
 /**
@@ -217,10 +217,26 @@ export async function junkRestorePass(deps: JunkRestoreDeps): Promise<JunkRestor
       }
       result.fetched += rows.length;
 
+      // An UNNAMED folder epoch proves nothing about any row in this chunk, so the whole chunk
+      // waits rather than being restored onto whatever now wears those UIDs. Said once per
+      // chunk: the fact is the folder's, not each row's.
+      if (!epochOf(found.uidValidity).known) {
+        result.deferred += rows.length;
+        log?.warn("junk_restore_epoch_unknown", {
+          mailboxId, accountId, folder,
+          reason: "the server named no UIDVALIDITY for this folder; the husks stand and are re-offered",
+        });
+        continue;
+      }
+
       for (const row of rows) {
         // THE EPOCH GUARD — the retry pass's, verbatim: a UID number means nothing outside the
         // epoch that issued it. The instance row is stale; the scan re-numbers, we wait.
-        if (found.uidValidity !== "0" && found.uidValidity !== row.uidValidity) { result.deferred++; continue; }
+        // Anything but a NAMED epoch on both sides that AGREE defers: a contradiction means the
+        // scan re-numbered, and an unnamed one (the server answered zero, or nothing) proves
+        // nothing at all. `!== "0"` used to wave the unnamed case through and restore a husk
+        // onto whatever now wears the UID.
+        if (!sameEpoch(epochOf(found.uidValidity), epochOf(row.uidValidity))) { result.deferred++; continue; }
         // Moved or expunged since the instance was written. The scan's next delete observation
         // forgets the instance and the predicate heals itself; nothing to remember here.
         if (found.absent.includes(row.uid)) { result.deferred++; continue; }

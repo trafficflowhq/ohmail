@@ -5,6 +5,7 @@ import {
 } from "@trafficflow/core/mail";
 import {
   WATCHED_FOLDERS, MessageGoneError, parseRef, FILING_BATCH_MAX,
+  epochOf, epochVerdict, sameEpoch, UNKNOWN_EPOCH, type Epoch,
   type ImapCursor, type MailboxAdapter, type PersistedFolderCursor,
 } from "@trafficflow/core/adapters/imap";
 import { LeaseUnavailableError } from "@trafficflow/core/adapters/organizer-lease";
@@ -297,20 +298,21 @@ export async function buildCursor(
   for (const f of names) {
     const row = folderRows.find((r) => r.folder === f);
     const entries = knownByFolder.get(f) ?? [];
-    const rowEpoch = row?.uidValidity ?? "0";
-    const epoch = rowEpoch !== "0" ? rowEpoch : soleEpochOf(entries);
+    const rowEpoch = epochOf(row?.uidValidity);
+    const epoch = rowEpoch.known ? rowEpoch.value : soleEpochOf(entries);
     folders[f] = {
       uidValidity: epoch,
       uidNext: row?.uidNext ?? 0,
       highestModseq: row?.highestModseq ?? "0",
-      // `epoch === "0"` means no epoch can be named for this folder, so NOTHING remembered may be
-      // presented as known — the adapter would read a bare number as belonging to whatever epoch
-      // it is looking at.
-      known: epoch === "0" ? [] : [
+      // An UNNAMED epoch means nothing remembered may be presented as known — the adapter would
+      // read a bare number as belonging to whatever epoch it is looking at. `!== "0"` missed the
+      // `String(undefined)` a silent server persists, so those UIDs were handed over as facts.
+      known: !epochOf(epoch).known ? [] : [
         // `seen` rides along as the flag baseline the no-CONDSTORE fallback diffs against
         // (`KnownEntry.seen`). Dead-letter entries below carry none, which is correct: nothing
         // was ever ingested for them, so no baseline can be stated and none may be diffed.
-        ...entries.filter((e) => e.uidValidity === epoch).map((e) => ({ uid: e.uid, messageId: e.messageId, seen: e.seen })),
+        ...entries.filter((e) => sameEpoch(epochOf(e.uidValidity), epochOf(epoch)))
+          .map((e) => ({ uid: e.uid, messageId: e.messageId, seen: e.seen })),
         // The UIDs this process has written off. They are "known" in the only sense the adapter
         // uses the word — do not fetch this again — and leaving them out is what made one poison
         // message cost a full body fetch on every cycle for ever. Epoch-matched for the same
@@ -333,13 +335,14 @@ export async function buildCursor(
  * it observed and the next pass can name it.
  */
 function soleEpochOf(entries: ReadonlyArray<{ uidValidity: string }>): string {
-  let sole = "";
+  let sole: Epoch = UNKNOWN_EPOCH;
   for (const e of entries) {
-    if (e.uidValidity === "0") return "0";
-    if (sole === "") sole = e.uidValidity;
-    else if (sole !== e.uidValidity) return "0";
+    const cur = epochOf(e.uidValidity);
+    if (!cur.known) return "0";
+    if (!sole.known) sole = cur;
+    else if (!sameEpoch(sole, cur)) return "0";
   }
-  return sole === "" ? "0" : sole;
+  return sole.known ? sole.value : "0";
 }
 
 /** The folder + epoch a change was observed at. */
@@ -774,7 +777,7 @@ async function syncCycleWithin(deps: SyncDeps): Promise<{ hasBacklog: boolean; o
   for (const ch of batch.deletes) {
     const site = siteOf(ch);
     const live = observedEpochs.get(site.folder) ?? batch.newCursor.folders[site.folder]?.uidValidity;
-    if (live === undefined || live === "0" || live !== site.uidValidity) continue;
+    if (live === undefined || !sameEpoch(epochOf(live), epochOf(site.uidValidity))) continue;
     // BOUNDED — see {@link DELETE_EVIDENCE_PER_CYCLE}. The cap is counted over the deletes this
     // cycle BELIEVES, not over everything the adapter reported: a UIDVALIDITY reset's prior-epoch
     // refs are skipped above and must not spend a budget meant for real disappearances.
@@ -1046,13 +1049,22 @@ async function retryFailedMessages(
     for (const row of rows) {
       // ── THE EPOCH GUARD. A UID NUMBER MEANS NOTHING OUTSIDE THE EPOCH THAT ISSUED IT ──────
       //
-      // The record was written under epoch V; the server is reporting V′. Re-ingesting `uid` now
-      // would ingest whatever message the server has RENUMBERED onto that number — a different
-      // message entirely — and would then resolve the record as though the original had arrived. So
-      // the record is void, and closing it loses nothing: a UIDVALIDITY change makes the adapter
-      // emit every prior UID as a delete and re-enumerate the whole folder, so the original message
-      // is offered again as an ordinary unknown UID.
-      if (found.uidValidity !== "0" && found.uidValidity !== row.uidValidity) {
+      // Three answers, not two. A CONTRADICTION voids the record: re-ingesting `uid` would take
+      // whatever the server RENUMBERED onto that number and then resolve the record as though the
+      // original had arrived. Closing loses nothing — a reset re-enumerates the folder and offers
+      // the message again as an unknown UID. An epoch NOBODY NAMED proves neither, so the record
+      // is held and re-read. Read as strings, `"0"` skipped the guard and re-ingested under an
+      // unnamed epoch, and `"undefined"` contradicted every epoch and closed a record whose
+      // message is still on the server.
+      const verdict = epochVerdict(epochOf(row.uidValidity), epochOf(found.uidValidity));
+      if (verdict === "unknown") {
+        log?.warn("message_retry_epoch_unknown", {
+          mailboxId, folder, uid: row.uid,
+          reason: "the server named no UIDVALIDITY for this folder, so the record is held and re-read",
+        });
+        continue;
+      }
+      if (verdict === "stale") {
         try { await close(row, "uidvalidity_changed"); }
         catch (err) { rethrowFenced(err); log?.warn("message_retry_close_failed", { mailboxId, folder, uid: row.uid, err }); }
         continue;
@@ -1154,7 +1166,9 @@ function epochsObserved(batch: { creates: Change[]; moves: Change[]; flagChanges
   const out = new Map<string, string>();
   for (const ch of [...batch.creates, ...batch.moves, ...batch.flagChanges]) {
     const { folder, uidValidity } = siteOf(ch);
-    if (uidValidity !== "0") out.set(folder, uidValidity);
+    // Only a NAMED epoch is an observation. `!== "0"` let a silent server's `String(undefined)`
+    // through and it was persisted as the folder's epoch, which then matched nothing for ever.
+    if (epochOf(uidValidity).known) out.set(folder, uidValidity);
   }
   return out;
 }
@@ -1170,9 +1184,10 @@ function epochsObserved(batch: { creates: Change[]; moves: Change[]; flagChanges
  * zeroing them discards work that was never wrong (and pinned a permanently-truncating folder at `"0"`, killing flags and inbound read-state per folder). Only a genuine `V → V′` reset zeroes; the kept values are the ADAPTER's, and no shape can raise a Sent watermark past mail nobody fetched.
  */
 function epochAware(fc: PersistedFolderCursor, observed: string | undefined): PersistedFolderCursor {
-  if (observed === undefined || observed === fc.uidValidity) return fc;
-  // A PROMOTION, not a reset — see above. Record the epoch, keep the watermarks.
-  if (fc.uidValidity === "0") return { ...fc, uidValidity: observed };
+  if (observed === undefined || sameEpoch(epochOf(observed), epochOf(fc.uidValidity))) return fc;
+  // A PROMOTION, not a reset — see above. Record the epoch, keep the watermarks. An UNNAMED
+  // stored epoch is promoted, never reset: there was no epoch to contradict.
+  if (!epochOf(fc.uidValidity).known) return { ...fc, uidValidity: observed };
   return { uidValidity: observed, uidNext: 0, highestModseq: "0" };
 }
 

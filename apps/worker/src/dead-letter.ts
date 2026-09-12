@@ -1,5 +1,5 @@
 import { MimeParseError, MimeTooLargeError, type NativeLocator } from "@trafficflow/core/mail";
-import { parseRef } from "@trafficflow/core/adapters/imap";
+import { epochOf, parseRef, sameEpoch } from "@trafficflow/core/adapters/imap";
 
 /**
  * A throw that came out of THIS PROCESS'S DATABASE, whatever code it carries. {@link isDatabaseFault}
@@ -467,7 +467,7 @@ export class DeadLetterLedger {
   knownFor(folder: string, uidValidity: string): Array<{ uid: number; messageId: string | null }> {
     const out: Array<{ uid: number; messageId: string | null }> = [];
     for (const it of this.items.values()) {
-      if (it.terminal && it.folder === folder && it.uidValidity === uidValidity) {
+      if (it.terminal && it.folder === folder && sameEpoch(epochOf(it.uidValidity), epochOf(uidValidity))) {
         out.push({ uid: it.uid, messageId: null });
       }
     }
