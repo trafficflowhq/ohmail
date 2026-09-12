@@ -56,7 +56,7 @@ const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Prom
 
 type Invoke = (command: string, payload?: Record<string, unknown>) => Promise<unknown>;
 interface Host {
-  __TAURI_INTERNALS__?: { invoke: Invoke };
+  __TAURI_INTERNALS__?: { invoke: Invoke; transformCallback?: () => number };
 }
 const globe = globalThis as unknown as Host;
 
@@ -87,6 +87,9 @@ interface World {
    *  failure) — set this to drive that arm of the contract. */
   disarmRejects?: string;
   autostartAnswer?: boolean;
+  /** `update_state` — how this copy was installed. Absent leaves the command unstubbed, which is
+   *  an older shell: `updateState()` answers null and the pane reads "unknown". */
+  updateReport?: { version: string; installKind: string };
 }
 
 interface Asked { command: string; payload?: Record<string, unknown> }
@@ -101,6 +104,9 @@ function installShell(w: World): void {
   asked = [];
   engineAsked = [];
   globe.__TAURI_INTERNALS__ = {
+    /* Both halves, because `update.ts` reads the shell as present only when BOTH are functions —
+       a stub with `invoke` alone answers "no shell", which is the older-build arm, not this one. */
+    transformCallback: () => 0,
     invoke: (command, payload) => {
       asked.push(payload === undefined ? { command } : { command, payload });
       switch (command) {
@@ -117,6 +123,9 @@ function installShell(w: World): void {
           return Promise.resolve(world.autostartAnswer ?? (payload as { enabled: boolean }).enabled);
         case "open_tailscale_download":
           return Promise.resolve(undefined);
+        case "update_state":
+          if (world.updateReport === undefined) return Promise.reject(new Error("no update command"));
+          return Promise.resolve(world.updateReport);
         case "engine_request": {
           const p = payload as { method: string; url: string; body: number[] };
           const bodyText = new TextDecoder().decode(Uint8Array.from(p.body));
@@ -819,6 +828,41 @@ describe("an unknown start-at-login state is said, not rendered as off", () => {
     await mount();
     expect(text()).toContain(enHost.autostartUnknown!);
     expect(text()).not.toContain(enHost.autostartWhy!);
+  });
+});
+
+describe("start-at-login is not offered where it cannot be registered", () => {
+  /**
+   * A Flatpak writes `~/.config/autostart` inside its own sandbox, where the desktop session
+   * never looks: the switch would take a press, report success and change nothing. So the row
+   * is replaced by the sentence saying where the setting actually is. The `.deb` arm is the
+   * positive control — the same pane, one field different, draws the switch.
+   */
+  const SERVING_WORLD = { hostState: SERVING, tailscale: RUNNING, routes: EMPTY_LISTS };
+
+  it("a Flatpak gets the sentence and NO switch", async () => {
+    installShell({ ...SERVING_WORLD, updateReport: { version: "0.19.0", installKind: "flatpak" } });
+    await mount();
+    expect(text()).toContain(enHost.autostartSandboxed!);
+    expect(text()).not.toContain(enHost.autostartWhy!);
+    const switches = [...hostEl.querySelectorAll('[role="switch"]')];
+    expect(switches.filter((s) => s.getAttribute("aria-label") === enHost.autostart)).toEqual([]);
+  });
+
+  it("a .deb draws the switch, and the sentence is nowhere", async () => {
+    installShell({ ...SERVING_WORLD, updateReport: { version: "0.19.0", installKind: "deb" } });
+    await mount();
+    expect(text()).toContain(enHost.autostartWhy!);
+    expect(text()).not.toContain(enHost.autostartSandboxed!);
+    const switches = [...hostEl.querySelectorAll('[role="switch"]')];
+    expect(switches.filter((s) => s.getAttribute("aria-label") === enHost.autostart)).toHaveLength(1);
+  });
+
+  it("the German catalogue answers too, and with its own words", async () => {
+    installShell({ ...SERVING_WORLD, updateReport: { version: "0.19.0", installKind: "flatpak" } });
+    await mount(de as never);
+    expect(text()).toContain(deHost.autostartSandboxed!);
+    expect(deHost.autostartSandboxed).not.toBe(enHost.autostartSandboxed);
   });
 });
 

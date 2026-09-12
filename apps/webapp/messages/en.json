@@ -300,6 +300,7 @@
     "autostart": "Start ohmail when you log in",
     "autostartWhy": "So your mail is reachable without opening the app first — while this computer is awake.",
     "autostartUnknown": "The system wouldn't say whether this is on. Flipping the switch sets it fresh either way.",
+    "autostartSandboxed": "This build cannot start itself when you log in — a sandboxed app cannot register a login item for your session. Set it in your desktop's own startup applications instead.",
     "advanced": "Advanced",
     "port": "Port",
     "portWhy": "The engine's door on this computer. Leave it as it is unless something else already uses it.",

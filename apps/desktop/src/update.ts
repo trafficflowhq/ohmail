@@ -98,6 +98,24 @@ export function updateManagedElsewhere(report: UpdateReport): boolean {
   return MANAGED_SENTENCE_KEYS[report.installKind] !== undefined;
 }
 
+/**
+ * Installs that cannot register a login item, and the sentence each shows instead of the switch.
+ *
+ * A sandboxed build writes `~/.config/autostart` inside its OWN data directory, which the desktop
+ * session never reads: the toggle would take a press, report success and do nothing. The honest
+ * mechanism is the Background portal, and until it is wired the row is replaced by a sentence
+ * that says where the setting actually lives. Keyed on the install KIND rather than on a path,
+ * so a build that gains the portal drops out of this table and the row returns by itself.
+ */
+export const AUTOSTART_UNAVAILABLE_KEYS: Partial<Record<InstallKind, string>> = {
+  flatpak: "autostartSandboxed",
+};
+
+/** The sentence replacing the start-at-login row here, or null when the switch is real. */
+export function autostartSentenceKey(kind: InstallKind): string | null {
+  return AUTOSTART_UNAVAILABLE_KEYS[kind] ?? null;
+}
+
 export interface UpdateReport {
   /** The build running in this window. */
   version: string;

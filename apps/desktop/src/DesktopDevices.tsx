@@ -31,7 +31,7 @@
  * (`test/host-client-secure-context.test.ts`); opt-in, address CHOSEN from
  * `GET /local/lan/candidates`, and the no-Tailscale path — no tailnet needed. */
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { useFormatter, useTranslations } from "next-intl";
 import { Button, SettingsRow, SettingsSection, SettingsSubhead, Switch, useToast } from "@ohmail/ui";
 
@@ -42,6 +42,7 @@ import { shortPin } from "./DoorChooser.js";
 
 import { bridgeFetch } from "./bridge-fetch.js";
 import { DOOR_COPY } from "./door-copy.js";
+import { autostartSentenceKey, updateState, type InstallKind } from "./update.js";
 import { QrCode } from "../../webapp/app/shell/QrCode.js";
 import {
   armHostMode,
@@ -239,6 +240,13 @@ export function DesktopDevices() {
      in the dark. The port is advanced-only: defaulted, and shown only to whoever asks. The LAN
      option is default-OFF — same-network access is an opt-in on top of host mode's opt-in. */
   const [autostartDraft, setAutostartDraft] = useState(true);
+  /**
+   * HOW THIS COPY WAS INSTALLED, for the one setting an install can make impossible. `null` is
+   * NOT ANSWERED YET — the shell has not replied, or there is no shell — and `"unknown"` is a
+   * shell that did not name a kind; neither draws a start-at-login switch, because a switch that
+   * may do nothing is worse than a row that is not there yet.
+   */
+  const [installKind, setInstallKind] = useState<InstallKind | null>(null);
   const [portDraft, setPortDraft] = useState<string | null>(null);
   const [advanced, setAdvanced] = useState(false);
   const [lanDraft, setLanDraft] = useState(false);
@@ -276,6 +284,32 @@ export function DesktopDevices() {
       alive.current = false;
     };
   }, []);
+
+  /* One read of how this copy was installed. Outside the app the shell answers nothing, and a
+     kind it does not name degrades to "unknown" — both fall to "not answered", which draws no
+     start-at-login switch. */
+  useEffect(() => {
+    void updateState().then((report) => {
+      if (alive.current) setInstallKind(report?.installKind ?? "unknown");
+    });
+  }, []);
+
+  /**
+   * START AT LOGIN, or the sentence that replaces it.
+   *
+   * The Flatpak cannot register a login item for the host session — its `~/.config/autostart`
+   * is inside the sandbox — so the switch is not drawn there at all; a control that takes a
+   * press and does nothing is the failure this row exists to avoid. `null` while the kind is
+   * unanswered: the row appears once the shell has said, never before.
+   */
+  const autostartRow = (control: ReactNode, description: string): ReactNode => {
+    if (installKind === null) return null;
+    const sandboxed = autostartSentenceKey(installKind);
+    if (sandboxed !== null) {
+      return <SettingsRow label={t("autostart")} description={t(sandboxed)} />;
+    }
+    return <SettingsRow label={t("autostart")} description={description} control={control} />;
+  };
 
   /** The pairing surfaces exist on the stdio door only while armed — never asked otherwise.
    *  A failed AMBIENT read is swallowed, deliberately: in a degraded state the engine behind
@@ -866,17 +900,14 @@ export function DesktopDevices() {
                 {/* The ruled ceremony line, in THIS ceremony too: start-at-login is a visible,
                     default-checked choice wherever host mode can be enabled — arming must never
                     register a login item off a default nobody saw. */}
-                <SettingsRow
-                  label={t("autostart")}
-                  description={t("autostartWhy")}
-                  control={
-                    <Switch
-                      checked={autostartDraft}
-                      ariaLabel={t("autostart")}
-                      onChange={setAutostartDraft}
-                    />
-                  }
-                />
+                {autostartRow(
+                  <Switch
+                    checked={autostartDraft}
+                    ariaLabel={t("autostart")}
+                    onChange={setAutostartDraft}
+                  />,
+                  t("autostartWhy"),
+                )}
                 <div className="acct-actions">
                   <Button variant="primary" onClick={() => void arm(true)} disabled={busy !== null}>
                     {busy === "arm" ? t("enabling") : t("lanEnable")}
@@ -893,17 +924,14 @@ export function DesktopDevices() {
              have to read about ports to turn their mail on. */
           <>
             <p className="acct-lead">{t("ready", { name: probe.dnsName })}</p>
-            <SettingsRow
-              label={t("autostart")}
-              description={t("autostartWhy")}
-              control={
-                <Switch
-                  checked={autostartDraft}
-                  ariaLabel={t("autostart")}
-                  onChange={setAutostartDraft}
-                />
-              }
-            />
+            {autostartRow(
+              <Switch
+                checked={autostartDraft}
+                ariaLabel={t("autostart")}
+                onChange={setAutostartDraft}
+              />,
+              t("autostartWhy"),
+            )}
             {lanChooser}
             {advanced ? (
               <SettingsRow
@@ -1184,20 +1212,18 @@ export function DesktopDevices() {
 
       <SettingsSubhead>{t("runningTitle")}</SettingsSubhead>
 
-      <SettingsRow
-        label={t("autostart")}
-        /* `autostart: null` is the platform declining to say — a fact, not "off". The row says
-           so instead of drawing an off-position switch over an unknown; the switch stays,
-           because flipping it WRITES a definite state either way. */
-        description={host.autostart === null ? t("autostartUnknown") : t("autostartWhy")}
-        control={
-          <Switch
-            checked={host.autostart === true}
-            ariaLabel={t("autostart")}
-            onChange={(v) => void flipAutostart(v)}
-          />
-        }
-      />
+      {/* `autostart: null` is the platform declining to say — a fact, not "off". The row says so
+          instead of drawing an off-position switch over an unknown; the switch stays, because
+          flipping it WRITES a definite state either way. On an install that cannot hold a login
+          item at all there is no switch to draw — `autostartRow` answers that. */}
+      {autostartRow(
+        <Switch
+          checked={host.autostart === true}
+          ariaLabel={t("autostart")}
+          onChange={(v) => void flipAutostart(v)}
+        />,
+        host.autostart === null ? t("autostartUnknown") : t("autostartWhy"),
+      )}
 
       {confirmOff ? (
         <SettingsRow
