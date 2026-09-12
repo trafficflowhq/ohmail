@@ -215,23 +215,18 @@ found dead is now ended outright, the next attempt happens, and each attempt is 
 phone, a command written to a connection that had just closed could also take the app down; those
 bytes are refused at the socket and the write is told why.
 
-### The phone names the machine organizing your mailbox
+### The phone names the computer organizing your mailbox
 
-Settings → This phone said “Nothing organizes this mailbox” whether nothing did or another
-computer, a server or another phone held it — under a line describing what this phone does while
-it organizes. It now names the holder and says what this phone does instead: it reads the
-mailbox, moves nothing and screens nothing. Where another phone holds it, the line adds that a
-phone organizes only while ohmail is open on it.
+When a computer is organizing your mailbox, the phone says so, names it, and reads along instead
+of asking to organize.
 
-### A phone can start organizing again after the first few minutes
+### A phone keeps re-claiming its mailbox after the first minutes
 
 "Start organizing here" was refused for the rest of the session once the app had been open more
 than five minutes, and so was the phone's own watch for a mailbox another machine had released;
-closing the app and opening it was the only way back. The press was asking the mailbox for a recent
-second sign-in, which a phone organizing its own mailbox has no way to give — it now goes through
-the door meant for a machine somebody is holding. A refusal that is going to stand backs off
-instead of asking again every few seconds, and a second phone asking for a mailbox another phone is
-actively organizing is told which phone has it, which is what the screen already said would happen.
+both work now, and a refusal that stands backs off instead of retrying every few seconds. A second
+phone asking for a mailbox another phone is actively organizing does not take it and keeps reading
+the mailbox.
 
 ### A self-hosted install's front door reports its version
 
