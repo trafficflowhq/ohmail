@@ -34,6 +34,57 @@ export type RefreshOutcome = "minted" | "revoked" | "unavailable";
 let lastOutcome: RefreshOutcome | null = null;
 
 /**
+ * What the last refresh was TOLD, beside what it concluded.
+ *
+ * The refresh door used to answer one coded 401 for a revoked family AND for a database blip, so
+ * the two states above were indistinguishable on the wire and a person reporting either produced
+ * the same screenshot. The door now names its refusal and answers a fault as a fault; this
+ * carries what came back so the difference survives into a report and into the console line
+ * below. `status: 0` and a class mean nothing came back at all.
+ */
+export interface RefreshReport {
+  outcome: RefreshOutcome;
+  status: number;
+  /** Our envelope's `error.code`, when the answer carried one. */
+  code: string | null;
+  /** The class of a thrown value — with its VALUE appended when that class is `String`. */
+  errorClass: string | null;
+}
+
+let lastReport: RefreshReport | null = null;
+
+/** What the last `POST /auth/refresh` from this tab was told. `null` before the first one. */
+export function lastRefreshReport(): RefreshReport | null {
+  return lastReport;
+}
+
+/**
+ * Record one refresh, and say a line about it when it did not mint.
+ *
+ * Never the body and never a token: the status, our own error code, and the class of a thrown
+ * value. A thrown STRING carries its value with it, because a string IS its message and a
+ * class-only line discards the whole payload.
+ */
+function recordRefresh(r: RefreshReport): void {
+  lastOutcome = r.outcome;
+  lastReport = r;
+  if (r.outcome === "minted") return;
+  console.warn("session_refresh", {
+    outcome: r.outcome, status: r.status, code: r.code, errorClass: r.errorClass,
+  });
+}
+
+/** The class of a thrown value, carrying the value itself when the class would lose it. */
+function classOf(err: unknown): string {
+  if (typeof err === "string") return `String: ${err}`;
+  if (err === null) return "null";
+  if (err === undefined) return "undefined";
+  if (typeof err !== "object") return typeof err;
+  const named = (err as { name?: unknown }).name;
+  return typeof named === "string" && named.length > 0 ? named : "Object";
+}
+
+/**
  * What did the last `POST /auth/refresh` from this tab learn? `null` before the first one.
  *
  * Read INSIDE a caller's own error path, after `api()` has already refreshed-and-retried, so
@@ -268,23 +319,28 @@ export async function resumeSession(opts: ResumeOptions = {}): Promise<boolean> 
       // latch additionally requires OUR error envelope: a 401
       // with no parseable `error.code` is a platform interposing itself.
       if (res.status === 204) {
-        lastOutcome = "minted";
+        recordRefresh({ outcome: "minted", status: 204, code: null, errorClass: null });
         markSessionAlive();
         return true;
       }
-      if (res.status === 401 && (await codedRefusal(res))) {
-        lastOutcome = "revoked";
+      // Read ONCE, for both facts: whether the envelope is ours, and which refusal it names.
+      const code = res.status === 401 ? await refusalCode(res) : null;
+      if (code !== null) {
+        recordRefresh({ outcome: "revoked", status: 401, code, errorClass: null });
         markSessionDead();
         return false;
       }
       // Everything else: an uncoded 401 (a platform interposing), a 5xx, a 403, a body this
       // client cannot read. The refresh did not happen and nothing was learned about the
       // session — which is a different fact from "revoked" and is recorded as one.
-      lastOutcome = "unavailable";
+      recordRefresh({
+        outcome: "unavailable", status: res.status, code: await faultCode(res), errorClass: null,
+      });
       return false;
-    } catch {
-      lastOutcome = "unavailable";
-      return false;                    // offline, aborted, DNS — not resumable right now
+    } catch (err) {
+      // Offline, aborted, DNS — not resumable right now, and no answer to read a code from.
+      recordRefresh({ outcome: "unavailable", status: 0, code: null, errorClass: classOf(err) });
+      return false;
     }
   });
   /*
@@ -302,14 +358,24 @@ export async function resumeSession(opts: ResumeOptions = {}): Promise<boolean> 
   return started;
 }
 
-/** Did this refusal come from OUR envelope — `{error: {code}}` — rather than from a platform? */
-async function codedRefusal(res: Response): Promise<boolean> {
+/**
+ * The refusal's own code, when this came from OUR envelope — `{error: {code}}` — rather than
+ * from a platform. `null` means the answer was not ours, which is what keeps a deployment
+ * protection page or a proxy interstitial from counting as the server's verdict.
+ */
+async function refusalCode(res: Response): Promise<string | null> {
   try {
     const body = (await res.json()) as { error?: { code?: unknown } } | null;
-    return typeof body?.error?.code === "string";
+    const code = body?.error?.code;
+    return typeof code === "string" ? code : null;
   } catch {
-    return false;
+    return null;
   }
+}
+
+/** The same read on a NON-verdict answer: a fault's code is for the log, never for a decision. */
+async function faultCode(res: Response): Promise<string | null> {
+  return res.bodyUsed ? null : refusalCode(res);
 }
 
 /**

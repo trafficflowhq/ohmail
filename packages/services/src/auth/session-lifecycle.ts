@@ -33,6 +33,22 @@ export function refuseCrossAccountCredential(ctx: ServiceContext, credentialAcco
 }
 
 /**
+ * WHAT KIND OF FAILURE WAS THAT — one classification, read by this module's recovery arm and by
+ * the route that answers a browser. `session_refused`: the server judged THIS session (an unknown,
+ * expired or replayed token, a revoked or capped session), so the jar holds nothing worth keeping.
+ * `request_refused`: a 4xx about the REQUEST (a credential for another account) — this browser's
+ * own session was never judged. `fault`: a 5xx `ServiceError`, or anything that is not one at all;
+ * NOTHING was decided, and a token the server still honours must survive for the next attempt.
+ * Both defects it replaces mapped a fault onto a verdict — a jar destroyed, and a reuse sweep.
+ */
+export type RefreshFailure = "session_refused" | "request_refused" | "fault";
+
+export function classifyRefreshFailure(err: unknown): RefreshFailure {
+  if (!(err instanceof ServiceError) || err.httpStatus >= 500) return "fault";
+  return err.httpStatus === 401 ? "session_refused" : "request_refused";
+}
+
+/**
  * SessionLifecycle — the session MACHINERY, carved out of `AuthService` so the desktop-as-host
  * tier can run it: `establish`, rotation with reuse detection, family revocation, logout,
  * devices, step-up introspection, the paired-device mint. NOT the identity ceremony — that stays
@@ -813,7 +829,7 @@ export class SessionLifecycle {
    * traffic forces rotation at expiry. The residual is the ambiguity itself: a thief replaying
    * during that exact sleep is re-admitted — audited (`refresh_recovered`), consuming the dormant
    * tail. Bounded six ways: family-, time-, idle-, use-bound (in the session lock), single-winner
-   * (`FOR UPDATE`), cookie-only. A fault answers `null`: fail closed.
+   * (`FOR UPDATE`), cookie-only. A FAULT is neither answer — rethrown; see the catch.
    */
   private async recoverLostRotation(
     ctx: ServiceContext,
@@ -920,16 +936,27 @@ export class SessionLifecycle {
             : null;
         }
         // Audited IN the claim's transaction: no recovery without its row while the
-        // bookkeeping works, and a bookkeeping fault rolls the claim back (the catch below
-        // answers null — the sweep, never a silent re-admission).
+        // bookkeeping works, and a bookkeeping fault rolls the claim back — never a silent
+        // re-admission, and never the sweep either: the catch below rethrows it, so the caller
+        // hears about the fault and the family survives it.
         const [user] = await tx.select().from(users)
           .where(eq(users.id, existing.userId)).limit(1);
         await this.audit(tx, user ?? null, "refresh_recovered", undefined, txCtx,
           `family=${existing.familyId} session=${existing.sessionId}`);
         return this.mintRotation(txCtx, tx, existing, now, ttls);
       });
-    } catch {
-      return null;
+    } catch (err) {
+      /*
+       * A FAULT IS NOT A REPLAY. This answered `null` for every thrown value, and `null` here
+       * falls into the reuse sweep below the call — so a driver error or a lock timeout inside
+       * the recovery revoked the family and told the person their token had been stolen.
+       * Only a REFUSAL may answer `null`; nothing in here refuses today, and the arm is kept so
+       * a future one lands on the sweep rather than on a 500. Everything else is rethrown: the
+       * transaction has rolled back, so the presented token, the dormant tail and the family are
+       * exactly as they were and the next attempt re-runs this classification unchanged.
+       */
+      if (classifyRefreshFailure(err) !== "fault") return null;
+      throw err;
     }
   }
 
