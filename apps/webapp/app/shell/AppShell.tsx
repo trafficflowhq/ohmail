@@ -127,7 +127,7 @@ import {
   sendPendingInOutbox, useMailSend, readReplyDraft, writeReplyDraft,
   readReplyMeta, writeReplyMeta, type SendState,
 } from "./mail-send";
-import { attachSendLockDraft, holdOf } from "./send-lock";
+import { attachSendLockDraft, holdOf, releaseSendLockForRow } from "./send-lock";
 import {
   clearComposeDraft,
   composePlan,
@@ -3675,13 +3675,38 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
    * well would be narrating what the reader can see. A refusal is reported, because that is the case where the screen
    * does NOT change.
    */
+  /** Rows this session has already released the durable record for — see the latch below. */
+  const resolvedRows = useRef<Set<string>>(new Set<string>());
   const resolveHeldSend = useStableCallback(
     (draftId: string, outcome: "arrived" | "not_arrived") => {
       void engine.mutate({ kind: "draft_resolve", draftId, outcome }).then((res) => {
-        if (res.status === "confirmed") return;
-        // A resolve that did not land leaves the row held; the overlay has already rolled back,
-        // so the note above it still reads "not confirmed" and the verbs are still there.
-        toast(t("drafts.resolveFailed"));
+        if (res.status !== "confirmed") {
+          /* A resolve that did not land leaves the row held; the overlay has already rolled back,
+             so the note above it still reads "not confirmed" and the verbs are still there. The
+             server refuses a send that may STILL BE RUNNING by name, and that refusal gets its own
+             sentence: "it failed" and "not yet" are different things to be told. */
+          toast(t(res.error?.code === "send_still_running"
+            ? "drafts.resolveStillRunning"
+            : "drafts.resolveFailed"));
+          return;
+        }
+        /* THE DURABLE RECORD IS SPENT, AND IT LEAVES BY THE ONE DOOR. The server has answered for
+           this row, so the jar entry that was holding the message must go — through the same
+           `releaseSendLockForRow` the settled compose uses, never a second release path. Without
+           it `holdOf` went on answering `parked` from the record and the row a person had just
+           resolved was still undiscardable on this browser. The SESSION is passed only for the row
+           this compose is holding — `discardDraft`'s rule, for its reason. */
+        if (resolvedRows.current.has(draftId)) return;
+        /* THE LATCH, and it is load-bearing: a second confirm for this row arriving late (a
+           double-tap, a replayed verb) would release whatever record names the row AT THAT MOMENT
+           — and by then a fresh send of the recovered text may have minted one. Freeing a key a
+           request is still carrying is how the next press mints a second one. Released once. */
+        resolvedRows.current.add(draftId);
+        const heldRow = readComposeRow();
+        releaseSendLockForRow(
+          COMPOSE_SEND_KEY, draftId,
+          heldRow !== null && heldRow === draftId ? composeSessionId() : null,
+        );
       });
     },
   );

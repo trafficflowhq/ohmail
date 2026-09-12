@@ -2896,6 +2896,7 @@
     "resolveArrived": "It arrived",
     "resolveNotArrived": "It didn't arrive",
     "resolveFailed": "That didn't reach the server. The message is still held here.",
+    "resolveStillRunning": "This send may still be running. You can answer for it once it has stopped.",
     "noSubject": "(no subject)",
     "noRecipient": "No recipient yet",
     "isReply": "Reply",

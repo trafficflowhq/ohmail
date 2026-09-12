@@ -5,7 +5,7 @@ import {
 } from "@trafficflow/db";
 import { dialect } from "@trafficflow/db/dialect";
 import {
-  DRAFT_BODY_MAX_BYTES, draftBodyOverCeiling, utf8ByteLength, type EmailAddress,
+  DRAFT_BODY_MAX_BYTES, createLogger, draftBodyOverCeiling, utf8ByteLength, type EmailAddress,
 } from "@trafficflow/core/mail";
 import type { ServiceContext } from "./context.js";
 import { IdempotencyRaceLost, ServiceError } from "./errors.js";
@@ -15,7 +15,16 @@ import { DRAFT_HTML_CAP_BYTES, htmlByteLength, prepareOutboundBody } from "./out
 
 // The per-MESSAGE ceiling, imported rather than restated: two ceilings on one list that can
 // disagree is how the reply-all regression happened. See {@link DRAFT_MAX_RECIPIENTS}.
-import { SEND_MAX_RECIPIENTS } from "./send-service.js";
+// The per-MESSAGE ceiling and the staleness cutoff, imported rather than restated: `resolve`
+// refuses an attempt younger than this window because it may still be running, and a second
+// spelling of that number is a second answer to "is this send over".
+import { SEND_MAX_RECIPIENTS, SEND_STALE_AFTER_MS } from "./send-service.js";
+
+/**
+ * Where a person's answer for a stuck send is recorded — the same `service` the machine's own
+ * endings use (`send_phases`), so one log read shows both ways a send can finish.
+ */
+const resolveLog = createLogger({ service: "send" });
 
 /**
  * For `create`: claim the idempotency row INSIDE the transaction that writes the draft.
@@ -166,6 +175,14 @@ export type SendResolution = "arrived" | "not_arrived";
  * undeletable for ever.
  */
 const SEND_ON_RECORD_STATUSES = ["pending", "unverified"] as const;
+
+/**
+ * The two draft statuses a person can be stuck in, and the only ones {@link DraftsService.resolve}
+ * moves. `unverified` is the server's own word for an ambiguous ending; `sending` is a row whose
+ * attempt never came back to say anything at all. Both hold the only copy of a message and
+ * neither has a clock that will free it, so both answer to the same two verbs.
+ */
+const HELD_DRAFT_STATUSES = ["unverified", "sending"] as const;
 
 export class DraftsService {
   /**
@@ -420,14 +437,25 @@ export class DraftsService {
   }
 
   /**
-   * A person answers for a send this server could not confirm. `finalizeUnverified` leaves the
-   * draft at `unverified` ("check your Sent folder") — a question with nowhere to put the answer:
-   * the row was frozen, keyed on STATUS. One transaction; lock order draft THEN its sends. Every
-   * write is a compare-and-swap on `unverified`: a repeated resolve answers 200 with the row as
-   * it stands; the other outcome arriving second cannot reopen the first (`not_arrived` after
-   * `arrived` would manufacture a duplicate send). `arrived` → ledger and draft `sent`, row kept.
-   * `not_arrived` → ledger `failed`, draft ordinary again; the next Send mints a fresh key.
+   * A person answers for a send this server could not confirm, or for one that never answered at
+   * all. `finalizeUnverified` leaves the draft at `unverified` ("check your Sent folder") and a
+   * died-mid-flight attempt leaves it at `sending` for ever — two questions with nowhere to put
+   * the answer, because both rows were frozen on STATUS. One transaction; lock order draft THEN
+   * its sends. `arrived` → ledger and draft `sent`, row kept. `not_arrived` → ledger `failed`,
+   * draft ordinary again with its text; the next Send mints a fresh key, which is the retry.
    * Neither touches the IMAP mailbox: the mailbox is the master.
+   */
+
+  /**
+   * THE ONE THING A PERSON MAY NOT ANSWER FOR is a send that may still be running: marking a live
+   * attempt `failed` frees the row for a second delivery of mail already on the wire. A `pending`
+   * attempt younger than {@link SEND_STALE_AFTER_MS} is refused by name, writing nothing.
+   */
+
+  /**
+   * Every write is a compare-and-swap, so a repeat is the asked-for state and the other outcome
+   * arriving second cannot reopen the first. With no OPEN attempt left the LEDGER names the state
+   * and not the person — a recorded `sent` is a fact, and a verb must never overwrite one.
    */
   async resolve(ctx: ServiceContext, id: string, outcome: SendResolution): Promise<DraftMutation> {
     if (outcome !== "arrived" && outcome !== "not_arrived") {
@@ -436,6 +464,7 @@ export class DraftsService {
       );
     }
     const now = ctx.now();
+    let line: { sendId: string | null; status: string | null } = { sendId: null, status: null };
     const seq = await asTx(ctx).transaction(async (tx) => {
       // The draft first — see the header: this is the row a concurrent reservation takes
       // `FOR KEY SHARE` on, and `FOR UPDATE` is the mode that conflicts with it.
@@ -444,30 +473,62 @@ export class DraftsService {
         .limit(1));
       if (!row) throw new ServiceError("not_found", 404, "draft not found");
 
-      const ledgerStatus = outcome === "arrived" ? "sent" : "failed";
-      const settled = await tx.update(outboundSends)
-        .set({ status: ledgerStatus, resolvedBy: "person", resolvedAt: now })
+      // The attempt whose outcome is still open, read AFTER the draft lock so a concurrent
+      // `reserve` is either seen here or blocked until this commits.
+      const [open] = await tx.select({
+        id: outboundSends.id, status: outboundSends.status, createdAt: outboundSends.createdAt,
+      }).from(outboundSends)
         .where(and(
           eq(outboundSends.draftId, id),
           eq(outboundSends.accountId, ctx.accountId),
-          // THE COMPARE-AND-SWAP. Only an ambiguous attempt is a person's to settle.
-          eq(outboundSends.status, "unverified"),
+          inArray(outboundSends.status, [...SEND_ON_RECORD_STATUSES]),
+        ))
+        .limit(1);
+
+      if (open && open.status === "pending"
+        && now.getTime() - open.createdAt.getTime() < SEND_STALE_AFTER_MS) {
+        throw new ServiceError(
+          "send_still_running", 409,
+          "this send may still be running; it can be answered once it has stopped",
+        );
+      }
+
+      const ledgerStatus = outcome === "arrived" ? "sent" : "failed";
+      const settled = open === undefined ? [] : await tx.update(outboundSends)
+        .set({ status: ledgerStatus, resolvedBy: "person", resolvedAt: now })
+        .where(and(
+          eq(outboundSends.id, open.id),
+          eq(outboundSends.accountId, ctx.accountId),
+          // THE COMPARE-AND-SWAP. Only an attempt still open is a person's to settle — and it is
+          // re-asserted here because the reconcile pass can finish this row without the draft
+          // lock, between the read above and this write.
+          inArray(outboundSends.status, [...SEND_ON_RECORD_STATUSES]),
         ))
         .returning({ id: outboundSends.id });
 
-      // Nothing ambiguous was on record: already resolved, or never held. The asked-for state, so
-      // it is reported as success — and the `change_log` row is still emitted, because the caller
-      // is entitled to a seq it can drain against whether or not this call was the one that moved
-      // the row (`ScheduleService.cancel`'s idempotent arm does exactly this).
-      if (settled.length === 0) {
-        return recordChange(tx, {
-          accountId: ctx.accountId, entityType: "draft", entityId: id, op: "update", meta: null,
-        });
+      /**
+       * WHICH STATE THE DRAFT IS RESOLVED TO. The person decides only when their answer moved an
+       * open attempt. Otherwise the ledger decides: a terminal `sent` attempt means the message
+       * went, whatever was pressed — the draft is freed from `sending`/`unverified` either way,
+       * which is the whole point of the verb, but never into a state the record contradicts.
+       */
+      let named: "sent" | "draft";
+      if (settled.length > 0) {
+        named = outcome === "arrived" ? "sent" : "draft";
+      } else {
+        const [delivered] = await tx.select({ id: outboundSends.id }).from(outboundSends)
+          .where(and(
+            eq(outboundSends.draftId, id),
+            eq(outboundSends.accountId, ctx.accountId),
+            eq(outboundSends.status, "sent"),
+          ))
+          .limit(1);
+        named = delivered === undefined ? "draft" : "sent";
       }
 
-      await tx.update(drafts)
+      const freed = await tx.update(drafts)
         .set({
-          status: outcome === "arrived" ? "sent" : "draft",
+          status: named,
           // An appointment's failure sentence does not survive a resolution: it was about a
           // scheduled send that is now definitively over, and leaving it would put a stale
           // explanation on a row that has just become an ordinary draft.
@@ -480,12 +541,32 @@ export class DraftsService {
           eq(drafts.id, id), eq(drafts.accountId, ctx.accountId),
           // The draft's OWN compare-and-swap — `finalizeSent`'s rule. A row somebody has already
           // recovered by hand must not be dragged back out of the state it is in.
-          eq(drafts.status, "unverified"),
-        ));
+          inArray(drafts.status, [...HELD_DRAFT_STATUSES]),
+        ))
+        .returning({ id: drafts.id });
 
+      line = { sendId: settled[0]?.id ?? null, status: freed.length > 0 ? named : null };
+
+      // The `change_log` row is emitted whether or not this call was the one that moved the row:
+      // the caller is entitled to a seq it can drain against (`ScheduleService.cancel`'s
+      // idempotent arm does exactly this).
       return recordChange(tx, {
         accountId: ctx.accountId, entityType: "draft", entityId: id, op: "update", meta: null,
       });
+    });
+
+    /**
+     * The ending, recorded where the machine's endings are. `state` tells an operator whether
+     * this call was the one that freed the row or found it already answered — without it a log
+     * full of `send_resolved` cannot distinguish a stuck row from a double-tap.
+     */
+    resolveLog.info("send_resolved", {
+      draftId: id,
+      accountId: ctx.accountId,
+      sendId: line.sendId ?? undefined,
+      outcome,
+      status: line.status ?? undefined,
+      state: line.status === null ? "already" : "moved",
     });
 
     return this.finish(ctx, id, seq);
