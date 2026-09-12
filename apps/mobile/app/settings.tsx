@@ -334,6 +334,10 @@ function ThisPhonePanel() {
   /* WHAT A FAILED START SAID. Its own state and not `organizeRefusal`, which is the LAUNCH press's
      record: a person pressing Start is owed an answer about the press they just made. */
   const [startFailed, setStartFailed] = useState(false);
+  /* AND A FAILED STOP, which is the other direction of the same debt: the chip goes back to
+     `Organizing` on its own, and without a sentence beside it that reads as the press having
+     done nothing rather than as the mailbox having refused to be given back. */
+  const [stopFailed, setStopFailed] = useState(false);
   /**
    * ══ THE DOOR'S STATE, LIVE — this panel was correct only at MOUNT ═══════════════════════════
    *
@@ -462,6 +466,11 @@ function ThisPhonePanel() {
                     {Copy.settingsStartHereFailed}
                   </Txt>
                 ) : null}
+                {stopFailed && row.key === HERE_CARD ? (
+                  <Txt variant="note" tone="ink2" accessibilityRole="alert">
+                    {Copy.settingsStopHereFailed}
+                  </Txt>
+                ) : null}
                 {mayStopHere(claim) ? (
                   <Button
                     label={Copy.settingsStopHere}
@@ -482,6 +491,7 @@ function ThisPhonePanel() {
                     variant="quiet"
                     onPress={() => {
                       setStartFailed(false);
+                      setStopFailed(false);
                       /* THROUGH THE ONE DOOR, which reads the instruction in force: pressed during
                          a stop this is queued once and run when the stop completes, rather than
                          racing it. The engine's own verb underneath refuses a live foreign claim,
@@ -512,16 +522,21 @@ function ThisPhonePanel() {
             onPress={() => {
               const id = confirming;
               setConfirming(null);
-              /* RECORDED BEFORE THE REQUEST LEAVES, so the chip stops saying "Organizing" the
-                 moment the press lands rather than a poll later — and a refusal is not a reason
-                 to claim the mailbox is still being filed by a phone that asked to stop. */
               /* ══ THE STOP IS ONE INSTRUCTION, AND IT TAKES THE NOTIFICATION WITH IT ═══════
                  `pressOrganizeHere` records the release the ROW keeps — the ceremony a relaunch
                  reads — and drops the session behind it, in that order and as one act. Pressed
                  while a start is in flight it cancels that start rather than running beside it.
-                 The paired arm has no engine here and keeps its route. */
-              if (id === HERE_CARD) void pressOrganizeHere("stop");
-              else {
+                 A release the mail server refused leaves this phone organizing, and the door says
+                 `refused` rather than reporting the instruction as already in force — the chip
+                 goes back to `Organizing` on its own and this is the sentence beside it. */
+              if (id === HERE_CARD) {
+                setStopFailed(false);
+                void pressOrganizeHere("stop").then((outcome) => {
+                  setStopFailed(outcome === "refused");
+                });
+              } else {
+                /* THE PAIRED ARM HAS NO ENGINE HERE AND KEEPS ITS ROUTE, and its press is recorded
+                   before the request leaves so the chip stops saying "Organizing" at once. */
                 setAsked((cur) => (cur.includes(id) ? cur : [...cur, id]));
                 if (session !== null) void releaseMailbox(session, id);
               }

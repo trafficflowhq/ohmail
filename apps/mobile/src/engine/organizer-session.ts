@@ -469,12 +469,20 @@ async function startHere(): Promise<PressOutcome> {
 
 async function stopHere(): Promise<PressOutcome> {
   const stopped = await stopOrganizingStandalone();
-  /* AND THE NOTIFICATION COMES DOWN WITH THE CLAIM — a service left standing would say
-     "Organizing" over a phone that reads. */
-  await stopOrganizerSession();
-  /* `false` is "nothing of ours was recorded as given up", which is the state the person asked
-     for rather than a failure — `PhoneEngine.stopOrganizing`'s own contract. */
-  return stopped ? "stopped" : "standing";
+  /* ══ THE ENGINE'S ANSWER DECIDES WHAT HAPPENS TO THE SESSION, NOT THE PRESS ════════════════
+   *
+   * The teardown ran unconditionally, so a release the mail server refused took the notification,
+   * the foreground service and both watches down over a phone that was STILL ORGANIZING — the
+   * row says organizer, the claim stands, and the next launch resumes a mailbox nothing serviced.
+   * That is the defect the person's stop was built to end, arriving by the refusal arm. So the
+   * session comes down only where the engine says this install has let the mailbox go, which is
+   * the same reading the chip takes; `stopOrganizingStandalone`'s `false` cannot be that reading,
+   * because it is also what a mailbox with nothing to give up answers. */
+  const stillOrganizing = standaloneHere()?.organizing === true;
+  if (!stillOrganizing) await stopOrganizerSession();
+  /* AND THE PRESS SAYS SO. `standing` means "already in force" and would be a second false state;
+     `false` with the mailbox let go is the nothing-to-give-up case and is what was asked for. */
+  return stillOrganizing ? "refused" : stopped ? "stopped" : "standing";
 }
 
 /**

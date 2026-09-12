@@ -259,6 +259,9 @@ const TABLE = {
   settingsStartHere: "Start organizing here",
   settingsStartHereFailed:
     "This phone could not start organizing that mailbox. Nothing changed. Try again in a moment.",
+  settingsStopHereFailed:
+    "This phone could not hand that mailbox back, so it is still organizing it. Try again in a "
+    + "moment.",
 
   /* The standalone door's own refusals. Each one names what is missing; none of them ever
      carries the password, which is not an argument any of these takes. */

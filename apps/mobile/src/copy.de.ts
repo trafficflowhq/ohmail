@@ -146,6 +146,9 @@ export const DE: Deck = {
   settingsStartHere: "Hier organisieren",
   settingsStartHereFailed:
     "Dieses Telefon konnte dieses Postfach nicht zu organisieren beginnen. Nichts hat sich geändert. Versuche es in einem Moment noch einmal.",
+  settingsStopHereFailed:
+    "Dieses Telefon konnte dieses Postfach nicht zurückgeben und organisiert es weiter. Versuche "
+    + "es in einem Moment noch einmal.",
 
   /* Die Absagen der eigenständigen Tür. Keine davon trägt je das Passwort. */
   standaloneNoEngine:
