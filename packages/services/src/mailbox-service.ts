@@ -20,6 +20,10 @@ import { sweepMailboxData, type MailboxSweepResult } from "./mailbox-erasure.js"
  * full `@trafficflow/services` barrel, which only a hosted process imports, registers the gate
  * on load; `@trafficflow/services/mail` does not, and a local host passes its own policy. */
 import { defaultMailboxAllowance } from "./mailbox-allowance-registry.js";
+/* The head of the mailbox lock order, imported as a STATEMENT rather than reached through the
+ * gate: which policy a host installed decides whether the gate runs, and the lock order may not
+ * depend on that. */
+import { lockAccountRow } from "./mailbox-allowance.js";
 import type { KeyProvider } from "./auth/crypto.js";
 import type { MailboxDTO, MailboxFolderSummary } from "./dto/types.js";
 // The window's vocabulary, from the one place it is defined (core), so the ceremony that writes
@@ -1275,6 +1279,10 @@ export class MailboxService {
     const access = await this.access(ctx.accountId);
 
     const out = await asTx(ctx).transaction(async (tx) => {
+      // The account row FIRST, before any `mailboxes` row — the order `delete` takes with its
+      // erasure fence, and the whole argument is in {@link lockAccountRow}. Unconditional: whether
+      // the allowance gate is reached is decided by rows this transaction has not read yet.
+      await lockAccountRow(tx as LedgerTx, dialect(ctx.db), ctx.accountId);
       const [existing] = await dialect(ctx.db).forUpdate(tx.select().from(mailboxes)
         .where(and(
           eq(mailboxes.accountId, ctx.accountId),
@@ -1398,6 +1406,10 @@ export class MailboxService {
     const access = await this.access(ctx.accountId);
 
     return asTx(ctx).transaction(async (tx) => {
+      // The account row FIRST, before any `mailboxes` row — the order `delete` takes with its
+      // erasure fence, and the whole argument is in {@link lockAccountRow}. Unconditional: whether
+      // the allowance gate is reached is decided by rows this transaction has not read yet.
+      await lockAccountRow(tx as LedgerTx, dialect(ctx.db), ctx.accountId);
       // `FOR UPDATE`, and it is the fix for a race between two concurrent PATCHes.
       // Without it a credentials-only PATCH took NO lock at all — it writes `mailbox_credentials`
       // and never touches the `mailboxes` row — so it could read a row as 'connected', have the
@@ -1940,6 +1952,10 @@ export class MailboxService {
     const access = await this.access(ctx.accountId);
 
     return asTx(ctx).transaction(async (tx) => {
+      // The account row FIRST, before any `mailboxes` row — the order `delete` takes with its
+      // erasure fence, and the whole argument is in {@link lockAccountRow}. Unconditional: whether
+      // the allowance gate is reached is decided by rows this transaction has not read yet.
+      await lockAccountRow(tx as LedgerTx, dialect(ctx.db), ctx.accountId);
       // `FOR UPDATE`, in the same order and on the same row as `update` and `delete` take it, so
       // the three serialize instead of interleaving. Without it, an organize and a `delete` can
       // both read the row and commit in either order, and the losing order leaves a mailbox that
