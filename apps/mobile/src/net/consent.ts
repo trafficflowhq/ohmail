@@ -28,9 +28,21 @@ export interface ScreeningAnswer {
   scope: "window" | "all_time";
 }
 
-/** The four fields this app reads off `GET /consent` today. */
+/** The five fields this app reads off `GET /consent` today. */
 export interface FoldersConsent {
   on: boolean;
+  /**
+   * CAN THE PAIRED DOOR STORE THE FLAG AT ALL — whether the answer CARRIES the folders axis, not
+   * what it says about it. `null` and an instant both mean the door has the axis (off / on);
+   * ABSENT means a door with no folders axis: `localRoutes` wraps its consent group in
+   * `withoutFoldersFlag`, and every door built from that table — the desktop host a phone pairs
+   * with, an operator's self-host server, this app's own standalone door — removes the field.
+   * Measured: with the field present-and-null the phone drew "Use folders", the press wrote, the
+   * PATCH echo omitted the axis, and the switch snapped back to off with no sentence at all.
+   * Two states named rather than one collapsed: `on` says what the account chose, this says
+   * whether choosing is a thing this door can keep.
+   */
+  storable: boolean;
   /**
    * The account's cutline answer, or `null` for a server that carries none of the three fields
    * (an API deployed before mail 0056). `null` is NOT a window: the projection's unanswered
@@ -99,6 +111,10 @@ export async function readFoldersEnabled(session: ConnectedSession): Promise<Fol
     // `wire.foldersEnabledAt != null` (consent-state.ts).
     return {
       on: typeof body.foldersEnabledAt === "string" && body.foldersEnabledAt !== "",
+      // Presence, not value — see {@link FoldersConsent.storable}. `in` for the same reason
+      // `screeningOf` uses it: `foldersEnabledAt: null` is a real answer on every door that has
+      // the axis and reads identically to an absent field otherwise.
+      storable: "foldersEnabledAt" in body,
       screening: screeningOf(body),
       signatures: signaturesOf(body.signatures),
       // A value this build does not know (a future face, a malformed field) reads as "no
@@ -124,7 +140,15 @@ export async function writeFoldersEnabled(session: ConnectedSession, enabled: bo
     body: JSON.stringify({ foldersEnabled: enabled }),
   });
   if (res.status !== 200) throw new Error(`consent write refused (${res.status})`);
-  const body = (await res.json()) as { foldersEnabledAt?: unknown };
+  const body = (await res.json()) as Record<string, unknown> & { foldersEnabledAt?: unknown };
+  /* AN ABSENT AXIS IS NOT "OFF". The route echoes only the fields it acted on, and a door built
+     from `localRoutes` drops `foldersEnabled` before the handler sees it — so the 200 comes back
+     with no `foldersEnabledAt` at all. Read as `{ on: false }` that is the server calmly saying
+     "off" about a write it never made, which is exactly how the switch came to flip and snap back
+     in silence. It is a refusal, and the pane's one failure sentence is the honest answer. */
+  if (!("foldersEnabledAt" in body)) {
+    throw new Error("consent write stored nothing: this server carries no folders setting");
+  }
   return { on: typeof body.foldersEnabledAt === "string" && body.foldersEnabledAt !== "" };
 }
 

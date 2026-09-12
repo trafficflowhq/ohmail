@@ -261,12 +261,20 @@ function SettingsBody() {
           account does not have (the webapp FoldersRow's rule; the world layer holds it). A
           plain switch and not a confirm: ON is a read-only act on the mailbox — it shows
           folders that already exist and moves nothing.
+
+          WITHHELD where the door cannot keep the choice (`w.folders.storable`) — the paired
+          desktop host, a self-host server, this app's own standalone door: their consent answer
+          carries no folders axis, the PATCH is dropped, and the switch used to flip and snap
+          back with nothing said. The same structural rule the shared shell applies to its
+          Folders section (`consent.foldersStorable`), one client further.
         */}
-        <FoldersPanel
-          on={w.folders.enabled}
-          pending={w.folders.pending}
-          setEnabled={w.folders.setEnabled}
-        />
+        {w.folders.storable ? (
+          <FoldersPanel
+            on={w.folders.enabled}
+            pending={w.folders.pending}
+            setEnabled={w.folders.setEnabled}
+          />
+        ) : null}
 
         {/* about — one sentence, true of the session on screen */}
         <Panel style={{ paddingVertical: 18, marginBottom: 10 }}>

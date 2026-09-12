@@ -50,8 +50,11 @@ import { helloRoutes } from "./hello.js";
  * owns the IMAP connection), and a control wired to nothing is worse than an absent one. At the
  * route, not in the window: the field cannot be written and cannot read as anything but off, for
  * any client. Read and write both: either alone is a half-truth.
+ *
+ * Exported for its guard, which drives it over a synthetic route rather than reading this file
+ * as text: the wrapper's behaviour is the claim, and a needle in source is not it.
  */
-function withoutFoldersFlag(routes: Route[]): Route[] {
+export function withoutFoldersFlag(routes: Route[]): Route[] {
   return routes.map((r) => {
     const isSettings = r.method === "PATCH" && r.pattern === "/consent/settings";
     const isRead = r.method === "GET" && r.pattern === "/consent";
@@ -80,17 +83,20 @@ function withoutFoldersFlag(routes: Route[]): Route[] {
           }
           return r.handler(req, deps, params);
         }
-        /* THE READ. `foldersEnabledAt` is forced to null so the flag reads OFF whatever the row
-           holds — a row written on another door before this install was pointed at the database,
-           or by a build that predates this wrapper. */
+        /* THE READ. The field is REMOVED, not nulled. Both spellings read as OFF in every client
+           (`foldersEnabledAt != null`), so the flag still reads off whatever the row holds. What
+           they do not share is the second fact: `null` is an axis this door CARRIES and could
+           store an instant on; ABSENT is a door with no folders axis at all. A paired client
+           cannot see this wrapper, so under `null` it drew the switch, wrote, got a 200 whose
+           echo omits the field, and read that as "off" -- a control that flips and snaps back
+           with nothing said. The PATCH echo already states the fact by omission; now both
+           halves of this door say one thing. */
         const res = await r.handler(req, deps, params);
         if (res.status !== 200) return res;
         const wire = (await res.clone().json().catch(() => null)) as Record<string, unknown> | null;
         if (wire === null || !("foldersEnabledAt" in wire)) return res;
-        return new Response(JSON.stringify({ ...wire, foldersEnabledAt: null }), {
-          status: res.status,
-          headers: res.headers,
-        });
+        const { foldersEnabledAt: _noAxisHere, ...rest } = wire;
+        return new Response(JSON.stringify(rest), { status: res.status, headers: res.headers });
       },
     };
   });

@@ -249,6 +249,14 @@ export interface World {
    */
   folders: {
     enabled: boolean;
+    /**
+     * Whether the paired server can KEEP a folders choice — `GET /consent` carrying the
+     * `foldersEnabledAt` axis at all (`net/consent.ts#FoldersConsent.storable`). False on every
+     * door built from `localRoutes`, which serves no folder verb and removes the field: there
+     * Settings withholds the control instead of drawing one whose write is dropped. Never gates
+     * the LIST — {@link enabled} is the authority for what renders.
+     */
+    storable: boolean;
     list: FolderEntity[];
     /** Per-folder unread over the projection, keyed `mailboxId|name`. */
     unread: ReadonlyMap<string, number>;
@@ -423,6 +431,8 @@ function emptyWorld(actions: WorldActions): World {
     scheduled: [],
     folders: {
       enabled: false,
+      // Nothing is connected, so no door has said it cannot keep one: today's interface.
+      storable: true,
       list: [],
       unread: new Map(),
       byId: () => undefined,
@@ -509,6 +519,17 @@ export function WorldProvider({ children }: { children: ReactNode }) {
    */
   const [foldersOn, setFoldersOn] = useState(false);
   const [foldersPending, setFoldersPending] = useState(false);
+  /**
+   * DOES THE PAIRED SERVER CARRY THE FOLDERS SETTING AT ALL (`FoldersConsent.storable`) —
+   * a different question from {@link foldersOn}, which is what the account chose. TRUE until a
+   * successful read says otherwise: that is today's interface, and it cannot mislead, since the
+   * flag itself is off until a server answers. A door built from `localRoutes` — the desktop host
+   * this phone pairs with, an operator's self-host server, this app's own standalone door — has no
+   * folders axis and omits the field; there the Settings control is withheld rather than drawn over
+   * a write the server will drop. Reset with the flag on a session swap: account A's door says
+   * nothing about account B's.
+   */
+  const [foldersStorable, setFoldersStorable] = useState(true);
   /**
    * The account's stored signatures, or `null` until a consent read SUCCEEDS this session
    * (`signaturesKnown`, structurally — see {@link World.signatures}). They ride the SAME
@@ -645,6 +666,10 @@ export function WorldProvider({ children }: { children: ReactNode }) {
       setSignatures(ans.signatures);
       // The cutline half of the SAME answer — see `screening` above.
       setScreening(ans.screening);
+      // …and whether this door carries the folders axis, off the same body and on the same
+      // freshest-successful-read-wins rule: the machine's epoch guards the FLAG against the
+      // user's write, and nothing on this phone writes a capability.
+      setFoldersStorable(ans.storable);
     });
     /* THE MAILBOX READ, built beside the folders machine and gated on the SAME identity: a
        superseded session's late answer applies nothing. Its own request rather than a field on
@@ -696,6 +721,9 @@ export function WorldProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     setFoldersOn(false);
     setFoldersPending(false);
+    // The door's capability is the outgoing session's answer too; the next session starts at
+    // today's interface until its own read lands.
+    setFoldersStorable(true);
     // The signatures are the outgoing session's answer — the next session starts unknown
     // (account A's signature must never dress account B's composer); the tracker itself is
     // rebuilt with the machine, so its tally starts over with it.
@@ -1070,6 +1098,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
         const list = foldersOn ? liveFolders(engine.read()) : [];
         return {
           enabled: foldersOn,
+          storable: foldersStorable,
           list,
           unread: foldersOn ? liveFolderUnread(pres) : new Map<string, number>(),
           byId: (id: string) => list.find((f) => f.id === id),
@@ -1115,7 +1144,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
     // failure sentence is part of what an unsettled screen renders.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [engine, session, scopes, zone, locale, actions, version, outcomeSeq, outcomeOf, freshBeat,
-    foldersOn, foldersPending, setFoldersEnabled, signatures, screening, screenerServer, conn.syncing,
+    foldersOn, foldersPending, foldersStorable, setFoldersEnabled, signatures, screening, screenerServer, conn.syncing,
     conn.syncError, accountFace, accountFaceKnown, facePending, applyFaceAllDevices]);
 
   /**

@@ -16,9 +16,11 @@
 import type { JunkWire } from "../../../webapp/app/shell/junk-window";
 import type { MailboxFacts } from "../../../webapp/app/shell/mail-state";
 import type { ProfileImportTransport } from "../../../webapp/app/shell/ProfileImportCard";
+import type { ConsentTransport } from "../../../webapp/app/shell/consent-state";
 import type { OlderBodyWire } from "../../../webapp/app/shell/older-body";
 import type { TrashWire } from "../../../webapp/app/shell/trash-window";
 import { olderBodyVia } from "@ohmail/client-engine";
+import { consentVia } from "../consent-wire.js";
 import { junkVia } from "../junk-wire.js";
 import { readMailboxFactsVia } from "../mailbox-facts-wire.js";
 import { profileImportVia } from "../profile-import-wire.js";
@@ -72,4 +74,24 @@ export function junkOverBearer(bearer: BearerManager): JunkWire {
 
 export function trashOverBearer(bearer: BearerManager): TrashWire {
   return trashVia(bearer.fetch);
+}
+
+/**
+ * THE ACCOUNT'S CONSENT ROW OVER THE BEARER — the wire this page had none of. Without it
+ * `useConsentState`'s `reachable` is `transport !== undefined || apiConfigured()`, and
+ * `apiConfigured()` is false in this artifact: the hook rested, `known` stayed false, and the
+ * screening window, the dormancy dial and the image, tracking-pixel and auto-unsubscribe rows
+ * were all withheld with nothing naming why — on a door whose host serves every one of those
+ * routes one hop away (`desktopHostRoutes` spreads `localRoutes`, which mounts `consentRoutes`).
+ * The desktop's own window had the wire; the phone paired to it did not.
+ *
+ * `foldersStorable: false` — the same declaration `consentOverBridgeStandalone` makes, for the
+ * same reason and with the same authority: this page is served BY a desktop host, whose table
+ * wraps the consent group in `withoutFoldersFlag`, so no folder verb exists here and the flag
+ * cannot be raised. Declared rather than probed, because the route table this bundle's server
+ * mounts is a build fact, not a runtime question (`doors.ts`'s rule). The day §17 mounts the
+ * verbs on that table this line moves with them.
+ */
+export function consentOverBearer(bearer: BearerManager): ConsentTransport {
+  return { ...consentVia(bearer.fetch), foldersStorable: false };
 }

@@ -37,8 +37,8 @@ import { setStorageOwner } from "../../../webapp/app/shell/storage-owner";
 import { BearerManager } from "./bearer.js";
 import { PairScreen } from "./PairScreen.js";
 import {
-  junkOverBearer, mailboxFactsOverBearer, olderBodyOverBearer, profileImportOverBearer,
-  trashOverBearer,
+  consentOverBearer, junkOverBearer, mailboxFactsOverBearer, olderBodyOverBearer,
+  profileImportOverBearer, trashOverBearer,
 } from "./transports.js";
 
 /**
@@ -158,6 +158,10 @@ export function HostGate({ bearer }: { bearer: BearerManager }) {
      dependency that decides whether the section is supported at all. */
   const junk = useMemo(() => junkOverBearer(bearer), [bearer]);
   const trash = useMemo(() => trashOverBearer(bearer), [bearer]);
+  /* The account's consent row, memoised for the reason above and for one more: `useConsentState`
+     treats the wire as the dependency that decides whether it fetches at all, so a fresh object
+     per render would re-ask `GET /consent` on every paint. */
+  const consent = useMemo(() => consentOverBearer(bearer), [bearer]);
 
   /**
    * WHOSE `localStorage` PARTITION THE SHARED SHELL USES ON THIS DOOR — established in
@@ -224,6 +228,12 @@ export function HostGate({ bearer }: { bearer: BearerManager }) {
          for what the flag in front of them still decides. */
       junkWire={junk}
       trashWire={trash}
+      /* THE ACCOUNT'S CONSENT ROW, over the same bearer socket. Without it this page's
+         `useConsentState` rested — `apiConfigured()` is false in this artifact — so `known`
+         stayed false and the screening window, the dormancy dial and the three privacy switches
+         were withheld on a door that serves all of them. The flag in front of the Folders pane
+         is still off here and says so (`consentOverBearer`). */
+      consentTransport={consent}
     />
   );
 }

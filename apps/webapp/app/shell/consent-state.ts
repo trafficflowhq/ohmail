@@ -32,12 +32,13 @@ export interface ConsentTransport {
   /**
    * Can the server behind this wire actually STORE the folders flag — the one capability this transport
    * declares, because the route cannot be asked. `foldersRoutes` are mounted on the hosted table alone;
-   * `localRoutes` wraps the consent group in `withoutFoldersFlag` (read forces `foldersEnabledAt` null,
-   * PATCH drops the field silently, so no client can raise a flag whose verbs would 404). That wrapper is
-   * invisible from here — the GET answers 200, `known` goes true, and the shared shell drew the whole
-   * Folders pane on standalone: a switch that flips, writes nothing, snaps back. Declared by whoever
-   * built the wire — the only place that knows the route table. Required, not optional: an absent field
-   * would select the branch that draws the dead pane.
+   * `localRoutes` wraps the consent group in `withoutFoldersFlag` (the read REMOVES `foldersEnabledAt`,
+   * the PATCH drops the field silently, so no client can raise a flag whose verbs would 404). The GET
+   * still answers 200 and `known` still goes true, and the shared shell drew the whole Folders pane on
+   * standalone: a switch that flips, writes nothing, snaps back. Declared by whoever built the wire —
+   * the only place that knows the route table — rather than inferred from the absent field, which a
+   * server too old to have the column omits for a different reason. Required, not optional: an absent
+   * field here would select the branch that draws the dead pane.
    */
   foldersStorable: boolean;
   state: () => Promise<ConsentStateWire>;
