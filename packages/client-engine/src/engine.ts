@@ -5825,21 +5825,14 @@ export class OhmailEngine {
     // contract is to answer — `useMailSend.flush` re-arms its backoff only when a result says
     // the key is still queued, and an empty array reads as "nothing left".
     /**
-     * LATE ANSWERS FIRST, AND ABOVE THE HOLD CHECK.
+     * LATE ANSWERS FIRST AND ABOVE THE HOLD CHECK, because a late answer is the answer to the very
+     * request that armed the hold — below it, the settlement a locked composer is waiting on was
+     * never handed over while the barrier stood, which is exactly when it exists.
      *
-     * A late answer is the answer to the very request that armed the hold. Draining it below the
-     * check meant it was never handed over while the barrier stood — which is exactly when it
-     * exists — so a composer waiting on a send's settlement stayed locked until something else
-     * happened to flush, and a create's server id sat in a map nobody read.
-     */
-    /**
-     * CLAIMED ON THE WAY IN, HANDED OVER BY ID ON THE WAY OUT, never cleared wholesale.
-     *
-     * `clear()` emptied the map before this flush knew what it would hand back, so an answer that
-     * landed while the flush was open was thrown away by it — the settlement a composer is waiting
-     * on, removed by an unrelated consumer and dropped on the floor. The claim is what keeps a
-     * concurrent flush from handing the same answer over twice; the per-id removal is what keeps
-     * this one from taking answers it is not handing over.
+     * CLAIMED on the way in, HANDED OVER BY ID on the way out, never cleared wholesale: the claim
+     * is what keeps a concurrent flush from handing one answer over twice or emptying the map
+     * under this one, and the per-id removal is what keeps this flush from taking answers it is
+     * not handing over.
      */
     const claimed = this.claimLate();
     if (this.outboxHold) {
