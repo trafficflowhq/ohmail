@@ -309,6 +309,12 @@ const TABLE = {
     "The answer to organizing this mailbox could not be read, so nothing was recorded. Pull to refresh to ask again.",
   organizeHereDisconnected:
     "This mailbox is turned off, so ohmail is not filing it. Connect it again and ohmail will take it from there.",
+  /* A LOOK THAT DID NOT LAND, and its own sentence rather than the numbered one below. The door
+     answers 503 where it could not see whether anybody holds the mailbox, which on the first
+     press is usually a launch still dialling — so this names the likely cause and the one thing
+     to do, and claims nothing about another machine, which is the answer the door withheld. */
+  organizeHereStillLooking:
+    "ohmail could not check whether another computer has this mailbox — it may still be connecting. Nothing was recorded; try again in a moment.",
   organizeHereRefused: (status: number) =>
     `Organizing this mailbox was refused (${status}). Another machine may hold it — check what organizes it in Settings.`,
 

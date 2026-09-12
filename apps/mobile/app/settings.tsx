@@ -45,6 +45,8 @@ import {
   type PhoneClaim,
   mayStartHere,
   mayStopHere,
+  pressSaidLine,
+  type PressSaid,
 } from "../src/ui/standalone-form";
 import { useLocale, useLocaleControls } from "../src/i18n/LocaleProvider";
 import { type AppLocale } from "../src/i18n/locale";
@@ -347,16 +349,13 @@ const HERE_CARD = "this-phone";
 function ThisPhonePanel() {
   const w = useWorld();
   const [confirming, setConfirming] = useState<string | null>(null);
-  /* WHAT A FAILED START SAID. Its own state and not `organizeRefusal`, which is the LAUNCH press's
-     record: a person pressing Start is owed an answer about the press they just made. */
-  /* THREE STATES, NOT TWO. A boolean here collapsed "this phone could not start" with "this phone
-     could not check whether another computer has the mailbox", and the second is the one the door
-     now refuses a press over — a person told the first would go looking for a fault on the phone. */
-  const [startRefusal, setStartRefusal] = useState<"refused" | "unreadable" | null>(null);
-  /* AND A FAILED STOP, which is the other direction of the same debt: the chip goes back to
-     `Organizing` on its own, and without a sentence beside it that reads as the press having
-     done nothing rather than as the mailbox having refused to be given back. */
-  const [stopFailed, setStopFailed] = useState(false);
+  /* WHAT THE LAST PRESS ANSWERED. Its own state and not `organizeRefusal`, which is the LAUNCH
+     press's record: a person pressing a verb here is owed an answer about the press they just made.
+     ONE RECORD FOR BOTH VERBS, and it is spent by {@link pressSaidLine} against the claim: two
+     booleans side by side could both stand over one card, and neither was cleared by anything but
+     another press — so a stop the server refused and then honoured left its sentence under
+     "Nothing organizes this mailbox" with the Start verb beside it (measured on a device). */
+  const [said, setSaid] = useState<PressSaid>(null);
   /**
    * The door's state, live — this panel was correct only at MOUNT. `standaloneHere()` was read in
    * the render and nothing re-rendered, so `Stopping` and `Organizing` stood for minutes over a
@@ -501,19 +500,13 @@ function ThisPhonePanel() {
                     {sayRefusal(consentRefusal)}
                   </Txt>
                 )}
-                {/* AND WHAT A FAILED START SAID, beside the press that made it. */}
-                {startRefusal !== null && row.key === HERE_CARD ? (
+                {/* AND WHAT THE LAST PRESS SAID, beside the press that made it — for as long as
+                    it is still true of the claim beside it, and not one render longer. */}
+                {pressSaidLine(said, claim) === null || row.key !== HERE_CARD ? null : (
                   <Txt variant="note" tone="ink2" accessibilityRole="alert">
-                    {startRefusal === "unreadable"
-                      ? Copy.settingsStartHereUnreadable
-                      : Copy.settingsStartHereFailed}
+                    {pressSaidLine(said, claim)}
                   </Txt>
-                ) : null}
-                {stopFailed && row.key === HERE_CARD ? (
-                  <Txt variant="note" tone="ink2" accessibilityRole="alert">
-                    {Copy.settingsStopHereFailed}
-                  </Txt>
-                ) : null}
+                )}
                 {mayStopHere(claim) ? (
                   <Button
                     label={Copy.settingsStopHere}
@@ -533,15 +526,16 @@ function ThisPhonePanel() {
                     label={Copy.settingsStartHere}
                     variant="quiet"
                     onPress={() => {
-                      setStartRefusal(null);
-                      setStopFailed(false);
+                      setSaid(null);
                       /* THROUGH THE ONE DOOR, which reads the instruction in force: pressed during
                          a stop this is queued once and run when the stop completes, rather than
                          racing it. The engine's own verb underneath refuses a live foreign claim,
                          so it can never produce a second organizer. */
                       void pressOrganizeHere("start").then(async (outcome) => {
-                        setStartRefusal(
-                          outcome === "refused" || outcome === "unreadable" ? outcome : null,
+                        setSaid(
+                          outcome === "refused" ? "startRefused"
+                            : outcome === "unreadable" ? "startUnreadable"
+                              : null,
                         );
                         /* THE ASK, WHERE ORGANIZING ACTUALLY STARTED — the door's Connect runs the
                            same gate at the same moment. A refused start asks for nothing: a
@@ -580,9 +574,9 @@ function ThisPhonePanel() {
                  goes back to `Organizing` on its own and this is the sentence beside it.
                  There is one card this sheet can open over: `mayStopHere` answers true only for
                  `ours`, which only the door in this process produces. */
-              setStopFailed(false);
+              setSaid(null);
               void pressOrganizeHere("stop").then((outcome) => {
-                setStopFailed(outcome === "refused");
+                setSaid(outcome === "refused" ? "stopRefused" : null);
               });
             }}
           />

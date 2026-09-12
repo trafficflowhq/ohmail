@@ -188,6 +188,8 @@ export const DE: Deck = {
     "Die Antwort zum Organisieren dieses Postfachs war nicht lesbar, es wurde nichts gespeichert. Zieh zum Aktualisieren, um erneut zu fragen.",
   organizeHereDisconnected:
     "Dieses Postfach ist ausgeschaltet, ohmail sortiert es nicht ein. Verbinde es wieder, dann übernimmt ohmail von dort.",
+  organizeHereStillLooking:
+    "ohmail konnte nicht prüfen, ob ein anderer Computer dieses Postfach hat — vielleicht verbindet es sich noch. Es wurde nichts gespeichert; versuch es gleich noch einmal.",
   organizeHereRefused: (status: number) =>
     `Das Organisieren dieses Postfachs wurde abgelehnt (${status}). Vielleicht hält es eine andere Maschine — sieh in den Einstellungen nach, was es organisiert.`,
 

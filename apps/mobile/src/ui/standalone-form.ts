@@ -425,3 +425,37 @@ export function claimNoteLine(claim: PhoneClaim, os: string): string | null {
       return platformRuleLine(os);
   }
 }
+
+/**
+ * WHAT THE LAST PRESS ANSWERED — a record of one act, never a description of the current state.
+ *
+ * Three words and not two booleans: the panel held `startRefusal` and `stopFailed` side by side
+ * and rendered each on its own, so the two could both be standing at once over one card.
+ */
+export type PressSaid = "startRefused" | "startUnreadable" | "stopRefused" | null;
+
+/**
+ * THE SENTENCE BESIDE THE VERB, AND IT MAY NOT OUTLIVE THE STATE IT DESCRIBES.
+ *
+ * Measured on a device: a stop the mail server could not confirm put *"This phone could not hand
+ * that mailbox back, so it is still organizing it"* under the chip — correct, while the claim was
+ * still ours. The standing request was then honoured on the next round with no second press, and
+ * the panel carried the new chip over the old sentence: `Nothing organizes this mailbox`, that
+ * sentence beneath it, and `Start organizing here` offered. Nothing but another press cleared it.
+ *
+ * So the press RECORDS and the claim DECIDES, read together at every render. Each sentence is
+ * false in exactly the states the other verb's is true of: "could not hand it back, so it is still
+ * organizing it" is about a claim of ours, and "could not start … nothing changed" is about one
+ * that is not. `unknown` keeps whatever was said — it means the engine has not answered yet, and
+ * taking the sentence away there would drop the answer to a press somebody has just made.
+ */
+export function pressSaidLine(said: PressSaid, claim: PhoneClaim): string | null {
+  if (said === null) return null;
+  if (claim.k !== "unknown") {
+    const ours = claim.k === "ours";
+    if (said === "stopRefused" ? !ours : ours) return null;
+  }
+  return said === "stopRefused" ? Copy.settingsStopHereFailed
+    : said === "startUnreadable" ? Copy.settingsStartHereUnreadable
+      : Copy.settingsStartHereFailed;
+}

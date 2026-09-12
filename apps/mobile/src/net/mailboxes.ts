@@ -232,9 +232,27 @@ export async function organizeHere(
       holderKind: typeof held?.kind === "string" ? held.kind : "",
     };
   }
-  /* EVERY OTHER STATUS IS A REFUSAL WITH ITS NUMBER IN IT. 503 is a row this install could not
-     read, 400 a screening answer the door would not store, 404 an engine older than the local
-     spelling; none is a state this app can mend, and all are sentences a person can act on —
-     which an Ohbox that never fills is not. */
+  /* ── A LOOK THAT DID NOT LAND IS NOT A NUMBER ─────────────────────────────────────────────
+   *
+   * The door answers 503 `organizer_unreadable` exactly where it could not see whether anybody
+   * holds the mailbox, and deliberately never 409 — "nobody is told a machine has their mailbox on
+   * a look that did not land". Every phone mailbox is born a consent-less reader, so the FIRST
+   * consent press always takes the live look, and on a slow network it is made while the launch is
+   * still dialling: the ordinary way to meet this. It arrived as the numbered sentence below,
+   * which got both halves wrong at once — a status a person cannot act on, and "another machine
+   * may hold it", the very claim the door had refused to make. The CODE and not the status, so a
+   * 503 this app does not recognise keeps its number. */
+  if (res.status === 503) {
+    const code = await res.json().then(
+      (b) => (b as { error?: { code?: unknown } }).error?.code,
+      () => undefined,
+    );
+    if (code === "organizer_unreadable") {
+      return { kind: "refused", reason: refuse("organizeHereStillLooking") };
+    }
+  }
+  /* EVERY OTHER STATUS IS A REFUSAL WITH ITS NUMBER IN IT. 400 is a screening answer the door
+     would not store, 404 an engine older than the local spelling; none is a state this app can
+     mend, and all are sentences a person can act on — which an Ohbox that never fills is not. */
   return { kind: "refused", reason: refuse("organizeHereRefused", res.status) };
 }
