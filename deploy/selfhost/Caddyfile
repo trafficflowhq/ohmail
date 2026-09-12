@@ -9,10 +9,11 @@
 	# ACME, which cannot issue for it and retries for thirty days.
 	{$OHMAIL_TLS_DIRECTIVE:}
 
-	# HTTPS from here on: never dial this host in the clear again. One year, no preload — a
-	# self-host domain is the operator's to submit, nobody else's. `includeSubDomains` covers
-	# every name UNDER the origin, so on an apex domain every subdomain has to be HTTPS too.
-	# It belongs on this site and nowhere else: not the plain-HTTP door below, not
+	# HTTPS from here on: never dial this host in the clear again. Two years, and neither
+	# `includeSubDomains` nor `preload` — both reach names this file cannot vouch for, and on
+	# an apex origin the first would take every OTHER subdomain with it for the whole max-age.
+	# Append `; includeSubDomains` yourself if you own every name under your origin. The header
+	# belongs on this site and nowhere else: not the plain-HTTP door below, not
 	# Caddyfile.external-tls, not routes.caddy, which both doors import.
 	#
 	# The placeholder below is empty unless OHMAIL_TLS_INTERNAL is set, where it removes the
@@ -22,7 +23,7 @@
 	{$OHMAIL_HSTS_DIRECTIVE:}
 	header {
 		defer
-		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		Strict-Transport-Security "max-age=63072000"
 	}
 
 	import /etc/caddy/routes.caddy
