@@ -9,7 +9,7 @@ import {
 } from "@trafficflow/db";
 import { DESTINATIONS, isAwayPile, awayScopeFitsAudience, type AwayPile } from "@trafficflow/core/mail";
 import {
-  ProfileUnavailableError, profileFingerprint,
+  PROFILE_VERSION, ProfileUnavailableError, profileFingerprint,
   type OrganizerProfileDoc, type ProfileReadResult, type ProfileRuleEntry,
 } from "@trafficflow/core/adapters/organizer-profile";
 import { serializeOrganizerProfile } from "@trafficflow/core/adapters/organizer-profile-store";
@@ -314,7 +314,11 @@ export class ProfileImportService {
     // Already what the local store says ⇒ nothing an import would change, so nothing is asked.
     // (The organizer releases its own hold by this same comparison — one serializer, one answer.)
     const local = await serializeOrganizerProfile(db, ctx.accountId, mailboxId);
-    if (profileFingerprint(local) === fingerprint) return { state: "none" };
+    // AT THE DOCUMENT'S CANONICAL VERSION, not at this build's. The fingerprint is taken over a
+    // versioned canonical form, so hashing the local store at v2 and a v1 document at v1 answers
+    // "were these written by the same build", not "do they say the same thing" — and this line
+    // decides whether the person is shown an import card for settings they already have.
+    if (profileFingerprint(local, fresh.doc.v) === fingerprint) return { state: "none" };
 
     return {
       state: "found",
@@ -628,7 +632,11 @@ export class ProfileImportService {
     await this.assertMailbox(ctx, mailboxId);
     const fingerprint = typeof body.fingerprint === "string" && body.fingerprint.length > 0
       ? body.fingerprint : null;
-    const newerV = typeof body.v === "number" && Number.isSafeInteger(body.v) && body.v > 1
+    // GREATER THAN WHAT THIS BUILD WRITES — the same test the reader makes. It was the literal
+    // `1`, which was that test only while this build wrote v1: at v2 it would file a dismissal of
+    // an ordinary readable document as a newer-format one, keyed to a version number instead of
+    // to the content, and the content question would go on being asked.
+    const newerV = typeof body.v === "number" && Number.isSafeInteger(body.v) && body.v > PROFILE_VERSION
       ? body.v : null;
     if (fingerprint === null && newerV === null) {
       throw new ServiceError("validation_failed", 400, "fingerprint (or v for a newer document) is required");

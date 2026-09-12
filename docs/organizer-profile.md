@@ -37,11 +37,11 @@ One RFC822 message in `ohmail/_meta`:
   substring from the body's first `{` to its last `}` — the preamble is
   guaranteed not to contain `{`.
 
-## The JSON document, version 1
+## The JSON document, version 2
 
 ```jsonc
 {
-  "v": 1,                          // format version. REQUIRED. See versioning below.
+  "v": 2,                          // format version. REQUIRED. See versioning below.
   "updatedAt": "<ISO 8601>",       // when this copy was written, by the writer's clock
   "producer": {                    // which kind of organizer wrote it — provenance, not identity
     "kind": "local" | "cloud" | …, // an open set; readers must tolerate unknown kinds
@@ -85,7 +85,7 @@ The envelope:
 
 | Field | Type | Meaning |
 | --- | --- | --- |
-| `v` | integer ≥ 1 | Format version. Required. This page documents version 1. |
+| `v` | integer ≥ 1 | Format version. Required. This page documents version 2; ohmail reads version 1 as well, and always will. The number names the field set **and** the canonical ordering the document is written in — see versioning. |
 | `updatedAt` | ISO 8601 string | When this copy was written, by the writer's clock. Readers coalesce duplicate messages by it — newest wins. |
 | `producer` | object | Provenance, never identity: `kind` is an open set (`"local"`, `"cloud"`, a future value — readers must tolerate unknown kinds), `version` is the writer's build label. |
 
@@ -173,7 +173,7 @@ The format: versioned JSON, documented in ohmail's published source
 (packages/core/src/adapters/organizer-profile.ts).
 
 {
-  "v": 1,
+  "v": 2,
   "updatedAt": "2026-08-27T09:30:00.000Z",
   "producer": {
     "kind": "local",
@@ -275,6 +275,22 @@ decision durably is.
   document that a later build decorated with extra fields reads the fields it
   knows and drops the rest — that is what lets an older desktop and a newer
   server read each other's documents.
+- **`v` also names the canonical order.** ohmail identifies a document by a
+  hash of its canonical form, and compares that hash across installs, so the
+  ordering rule is part of the format rather than a detail of one writer.
+  Version 1 sorts each array by its natural keys; entries agreeing on those
+  keep the order they were written in. Version 2 sorts by the natural keys and
+  then by the entry's own serialization, which orders every pair of entries
+  that differ at all, and serializes object keys in code-unit order. Two
+  installs holding the same configuration therefore write byte-identical v2
+  documents whatever order their storage returned it in.
+- **Version 1 is read for ever, exactly as it was written.** A v1 document is
+  never re-ordered on being read — its identity is the one its writer gave it,
+  so an install still recognises a document it wrote last year. It is rewritten
+  as v2 the next time its settings change, and not before.
+- **An older ohmail asks you to update.** A build that implements v1 only will
+  read a v2 document as newer than it understands: it leaves the document
+  alone, keeps its own settings, and says so. Updating that install clears it.
 - A reader **refuses only** a document whose `v` is greater than the version
   it implements, and the refusal is a typed "newer" result, never an error:
   the caller says "written by a newer ohmail" and leaves the document alone.
@@ -292,12 +308,12 @@ the mailbox password (the organizer holds it, the document does not), not API
 keys, not encryption material. The serializers read only the configuration
 named above, and the test suite pins the document's exact key census so a new
 field is a reviewed decision, not a drive-by. The document also carries no
-adaptive state (learning signals, graduations) — v1 is the human-made
+adaptive state (learning signals, graduations) — it is the human-made
 configuration and nothing inferred.
 
 ## What does not travel
 
-Version 1 carries the human-made configuration and nothing inferred or
+The document carries the human-made configuration and nothing inferred or
 device-bound. Deliberately absent, so nobody discovers it at a switch:
 
 - triage piles and Resurface timers — decisions about individual messages,

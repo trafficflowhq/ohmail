@@ -11,15 +11,32 @@ import {
  * The portable organizer profile — how a mailbox carries its own organizer configuration. The
  * lease answers WHO organizes; this document answers HOW, in the same `ohmail/_meta`. One RFC822
  * message: `X-Ohmail-Profile: 1` discriminates, `X-Ohmail-Install-Id` names the writer, the body
- * is a human preamble plus the JSON document. Format v1, public and FROZEN: natural keys only,
+ * is a human preamble plus the JSON document. Public and versioned by `v`: natural keys only,
  * never a row id; a screen-out is a rule to `ohmail/Screened`. Unknown fields are ignored; only a
  * greater `v` is refused, as a typed `newer` result the writer will not overwrite; absence means
  * defaults. Never secrets, never adaptive state. Update = append new, THEN expunge old; readers
  * coalesce by `updatedAt`. Only the active organizer writes.
+ *
+ * `v` names the CANONICAL FORM as well as the field set, because the fingerprint is taken over
+ * the canonical form. v1 is frozen as shipped; v2 orders totally. Both are read for ever, a
+ * fingerprint is compared only to one taken at its own version, and a v1 document becomes v2 on
+ * its next write.
  */
 
-/** The profile format version this build writes and fully understands. */
-export const PROFILE_VERSION = 1;
+/**
+ * THE FORMAT VERSION THIS BUILD WRITES — and, inseparably, the version of the CANONICAL FORM its
+ * fingerprints are taken in. The canonical form is what the fingerprint hashes, so a build that
+ * changes the ordering rule has changed every document's identity and must say so in the document.
+ * v1 is FROZEN exactly as shipped and is read for ever; v2 is a TOTAL order. A v1 document is
+ * re-canonicalised to v2 by its NEXT WRITE, never on read.
+ */
+export const PROFILE_VERSION = 2;
+
+/** The oldest format version this build reads. Every version from here to {@link PROFILE_VERSION}. */
+export const PROFILE_VERSION_MIN_READ = 1;
+
+/** The canonical forms this build can take a fingerprint in. */
+export type ProfileCanonicalVersion = 1 | 2;
 
 /**
  * How many uids go into one FETCH command when the settings records are addressed by uid. Keeps
@@ -33,7 +50,14 @@ const PROFILE_SEARCH_UID_WINDOW = 500;
 /** How many windows one search may walk before it reports that it could not ask. */
 const PROFILE_SEARCH_WINDOW_BUDGET = 20;
 
-/** The discriminator and bookkeeping headers. The lease's `H` table, for the profile. */
+/**
+ * The discriminator and bookkeeping headers. The lease's `H` table, for the profile.
+ *
+ * `X-Ohmail-Profile: 1` is the DISCRIMINATOR and never moves with {@link PROFILE_VERSION}: it
+ * answers "is this one of ours", which is the same question at every format version. The
+ * document's version is `v`, inside the JSON, where a reader that has already decided to parse
+ * can act on it.
+ */
 const H = {
   profile: "X-Ohmail-Profile",
   installId: "X-Ohmail-Install-Id",
@@ -96,9 +120,10 @@ export interface ProfileNotifyRuleEntry {
  * document still carries the field and the parser does not read it — an unknown key is not an
  * error, which makes the removal safe in both directions. `throttle` is new and defaults to
  * `'per_day'` for a document predating it, the rate every migrated row carries. `PROFILE_VERSION`
- * deliberately does NOT move: the envelope's version is about what a reader must understand to
- * apply a document safely, and both changes are field-level compatible — bumping would make older
- * installs refuse a document they can read perfectly well.
+ * did NOT move for either: the version is about what a reader must understand to apply a document
+ * safely, and both changes are field-level compatible in both directions — bumping would have made
+ * older installs refuse a document they read perfectly well. (It moved to 2 later, for the
+ * canonical ORDER, which is not a fact about the field set.)
  */
 export interface ProfileAwayResponder {
   enabled: boolean;
@@ -132,8 +157,8 @@ export interface OrganizerProfilePayload {
    * configuration the ORGANIZER applies, so a read-only install must see what it currently is.
    * `null` is no signature, and ABSENT parses to `null` too — deliberately not distinguished,
    * unlike `throttle`, because a signature has no third state and "unknown" would buy nothing.
-   * `PROFILE_VERSION` does not move, on mail 0087's argument: field-level compatible in both
-   * directions, and a bump would make older installs refuse a document they can read.
+   * `PROFILE_VERSION` did not move for this, on mail 0087's argument: field-level compatible in
+   * both directions, and a bump would have made older installs refuse a document they can read.
    */
   signature: string | null;
 }
@@ -157,71 +182,139 @@ export function isEmptyProfilePayload(p: OrganizerProfilePayload): boolean {
 }
 
 /**
- * ONE CANONICAL ORDER, so equality is content equality.
+ * ONE CANONICAL ORDER PER VERSION, so equality is content equality.
  *
  * The dirty check that drives write-behind is a fingerprint comparison, and a fingerprint over an
  * unordered serialization would report "changed" whenever a database happened to return rows in a
  * different order — which is a rewrite of the document per poll interval on some drivers. Sorting
  * by the natural keys makes the fingerprint a function of the configuration and of nothing else.
+ *
+ * v1's comparators sort on the natural keys and stop, so two entries agreeing on those and
+ * differing elsewhere compare EQUAL and a stable sort leaves them in ARRIVAL order: measured, six
+ * permutations of one three-entry screener produced six different fingerprints. That fingerprint
+ * is compared across installs, so two installs holding identical configuration in a different
+ * order each read the other's document as a stranger's.
+ *
+ * The order could not simply be made total: the canonical form is what the fingerprint is taken
+ * over, so every already-written tied document would re-fingerprint and an install would read its
+ * own week-old document as foreign. Hence a VERSION. v1 stays exactly as shipped and keeps its
+ * documents' identities; v2 is total; the reader accepts both for ever, a fingerprint is only
+ * ever compared to another taken at the SAME version, and a v1 document becomes v2 on its next
+ * write — never on read.
  */
 /**
  * Order two strings the same way on every machine. `localeCompare` is locale-dependent, and these
  * orderings feed {@link canonicalizeProfilePayload}, whose output {@link profileFingerprint}
  * hashes and compares ACROSS INSTALLS — different ICU, different fingerprint, every takeover
- * refused for ever. UTF-16 CODE UNIT order — defined by the language, not ICU. The comparators
- * are still not total orders, on purpose: a tied document's fingerprint depends on input order. A
- * final tie-break was written, measured and REVERTED: it changes the canonical form, so every
- * already-written tied document re-fingerprints and an install reads its own document as a
- * stranger's — a format migration, not a comparator change.
+ * refused for ever. UTF-16 CODE UNIT order — defined by the language, not ICU.
  */
 function byCodeUnit(a: string, b: string): number {
   return a < b ? -1 : a > b ? 1 : 0;
 }
 
-export function canonicalizeProfilePayload(p: OrganizerProfilePayload): OrganizerProfilePayload {
-  const str = (v: string | undefined | null): string => v ?? "";
+/**
+ * ONE STRING PER VALUE — v2's serialization, and the tie-break's key.
+ *
+ * Object keys in code-unit order rather than whichever order a literal in this file happens to
+ * declare them in, so the canonical form is a function of the CONTENT alone: re-ordering one of
+ * the object literals below must not re-fingerprint every document in every mailbox. `-0`
+ * normalises to `0`, stated rather than inherited from `JSON.stringify`. A non-finite number
+ * cannot arrive — the parser refuses one — and an `undefined` value is a key that is not there.
+ */
+function canonicalJson(value: unknown): string {
+  if (value === null) return "null";
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  if (typeof value === "number") return JSON.stringify(Object.is(value, -0) ? 0 : value);
+  if (typeof value === "object") {
+    const o = value as Record<string, unknown>;
+    const keys = Object.keys(o).filter((k) => o[k] !== undefined).sort(byCodeUnit);
+    return `{${keys.map((k) => `${JSON.stringify(k)}:${canonicalJson(o[k])}`).join(",")}}`;
+  }
+  return JSON.stringify(value) ?? "null";
+}
+
+/**
+ * Sort by `cmp`, then by the entry's OWN canonical JSON — which is what makes the order total.
+ *
+ * Two entries surviving the tie-break have identical canonical bytes, so no ordering of them is
+ * distinguishable in the canonical form and the sort's stability stops being load-bearing.
+ */
+function totalSort<T>(xs: readonly T[], cmp: (a: T, b: T) => number): T[] {
+  return [...xs].sort((a, b) => cmp(a, b) || byCodeUnit(canonicalJson(a), canonicalJson(b)));
+}
+
+/* The normalised entry shapes — shared by both versions, which differ ONLY in the sort. */
+const emptyIfAbsent = (v: string | undefined | null): string => v ?? "";
+
+function normalizeScreener(s: ProfileScreenerEntry): ProfileScreenerEntry {
+  return s.name === undefined || s.name === null ? { address: s.address } : { address: s.address, name: s.name };
+}
+
+function normalizeRule(r: ProfileRuleEntry): ProfileRuleEntry {
   return {
-    screener: [...p.screener]
-      .map((s) => (s.name === undefined || s.name === null ? { address: s.address } : { address: s.address, name: s.name }))
-      .sort((a, b) => byCodeUnit(a.address, b.address)),
-    rules: [...p.rules]
-      .map((r) => ({
-        kind: r.kind, match: r.match, destination: r.destination,
-        priority: r.priority, enabled: r.enabled, provenance: r.provenance,
-        ...(r.subjectContains === undefined || r.subjectContains === null ? {} : { subjectContains: r.subjectContains }),
-        ...(r.bodyContains === undefined || r.bodyContains === null ? {} : { bodyContains: r.bodyContains }),
-      }))
-      .sort((a, b) =>
-        byCodeUnit(a.kind, b.kind)
-        || byCodeUnit(a.match, b.match)
-        || byCodeUnit(str(a.subjectContains), str(b.subjectContains))
-        || byCodeUnit(str(a.bodyContains), str(b.bodyContains))
-        || byCodeUnit(a.destination, b.destination)
-        || a.priority - b.priority
-        || byCodeUnit(a.provenance, b.provenance)
-        || Number(a.enabled) - Number(b.enabled)),
-    notifyRules: [...p.notifyRules]
-      .map((n) => ({ kind: n.kind, target: n.target }))
-      .sort((a, b) => byCodeUnit(a.kind, b.kind) || byCodeUnit(a.target, b.target)),
-    awayResponder: p.awayResponder === null ? null : {
-      enabled: p.awayResponder.enabled,
-      body: p.awayResponder.body,
-      startsAt: p.awayResponder.startsAt,
-      endsAt: p.awayResponder.endsAt,
-      audience: p.awayResponder.audience,
-      throttle: p.awayResponder.throttle,
-      /* SORTED, because the value is a SET and the endpoint does not preserve order — two
-         payloads meaning the same scope must not hash differently. ABSENT WHEN ABSENT, for the
-         reason the signature field spells out one key below: adding a key here for a document
-         that never had one would change the fingerprint of every profile an older ohmail wrote. */
-      /* `Array.isArray` AND NOT A TRUTHINESS TEST. `[...new Set("ohmail/Reads")]` spreads a STRING
-         into its characters, so a malformed in-memory payload would be canonicalised into a
-         plausible-looking array of single letters and published as one. A non-array is dropped
-         here, which leaves the parser to refuse the document it arrives in. */
-      ...(Array.isArray(p.awayResponder.piles)
-        ? { piles: [...new Set(p.awayResponder.piles)].sort(byCodeUnit) }
-        : {}),
-    },
+    kind: r.kind, match: r.match, destination: r.destination,
+    priority: r.priority, enabled: r.enabled, provenance: r.provenance,
+    ...(r.subjectContains === undefined || r.subjectContains === null ? {} : { subjectContains: r.subjectContains }),
+    ...(r.bodyContains === undefined || r.bodyContains === null ? {} : { bodyContains: r.bodyContains }),
+  };
+}
+
+function cmpScreener(a: ProfileScreenerEntry, b: ProfileScreenerEntry): number {
+  return byCodeUnit(a.address, b.address);
+}
+
+function cmpRule(a: ProfileRuleEntry, b: ProfileRuleEntry): number {
+  return byCodeUnit(a.kind, b.kind)
+    || byCodeUnit(a.match, b.match)
+    || byCodeUnit(emptyIfAbsent(a.subjectContains), emptyIfAbsent(b.subjectContains))
+    || byCodeUnit(emptyIfAbsent(a.bodyContains), emptyIfAbsent(b.bodyContains))
+    || byCodeUnit(a.destination, b.destination)
+    || a.priority - b.priority
+    || byCodeUnit(a.provenance, b.provenance)
+    || Number(a.enabled) - Number(b.enabled);
+}
+
+function cmpNotify(a: ProfileNotifyRuleEntry, b: ProfileNotifyRuleEntry): number {
+  return byCodeUnit(a.kind, b.kind) || byCodeUnit(a.target, b.target);
+}
+
+/**
+ * The away section, identical at both versions: `piles` is already a deduped sorted SET and every
+ * other field is scalar, so there is no order here for a tie-break to decide.
+ */
+function normalizeAway(a: ProfileAwayResponder | null): ProfileAwayResponder | null {
+  if (a === null) return null;
+  return {
+    enabled: a.enabled,
+    body: a.body,
+    startsAt: a.startsAt,
+    endsAt: a.endsAt,
+    audience: a.audience,
+    throttle: a.throttle,
+    /* SORTED, because the value is a SET and the endpoint does not preserve order — two
+       payloads meaning the same scope must not hash differently. ABSENT WHEN ABSENT, for the
+       reason the signature field spells out one key below: adding a key here for a document
+       that never had one would change the fingerprint of every profile an older ohmail wrote. */
+    /* `Array.isArray` AND NOT A TRUTHINESS TEST. `[...new Set("ohmail/Reads")]` spreads a STRING
+       into its characters, so a malformed in-memory payload would be canonicalised into a
+       plausible-looking array of single letters and published as one. A non-array is dropped
+       here, which leaves the parser to refuse the document it arrives in. */
+    ...(Array.isArray(a.piles) ? { piles: [...new Set(a.piles)].sort(byCodeUnit) } : {}),
+  };
+}
+
+/**
+ * FORMAT v1 — FROZEN. Not a style to keep tidy: every profile message an ohmail up to 0.17 wrote
+ * into somebody's mailbox has its identity in these bytes, and every stored import resolution and
+ * detection marker holds a hash of them. Changing anything here re-fingerprints those documents
+ * and re-asks questions their owners already answered. New rules go in a new version.
+ */
+function canonicalizeV1(p: OrganizerProfilePayload): OrganizerProfilePayload {
+  return {
+    screener: [...p.screener].map(normalizeScreener).sort(cmpScreener),
+    rules: [...p.rules].map(normalizeRule).sort(cmpRule),
+    notifyRules: [...p.notifyRules].map((n) => ({ kind: n.kind, target: n.target })).sort(cmpNotify),
+    awayResponder: normalizeAway(p.awayResponder),
     tagNames: [...p.tagNames].sort(byCodeUnit),
     /* `?? null` RATHER THAN A PASS-THROUGH, and it is the fingerprint that needs it. An in-memory
        payload assembled without this key has `undefined` here; `JSON.stringify` drops an undefined
@@ -235,25 +328,107 @@ export function canonicalizeProfilePayload(p: OrganizerProfilePayload): Organize
 }
 
 /**
- * The content identity of a payload — sha256 over the canonical serialization.
+ * FORMAT v2 — the same rules with a TOTAL order: every array sorted by its stated comparator and
+ * then by the entry's own canonical JSON, which no two distinguishable entries can tie on. The
+ * FIELDS are v1's, unchanged in name and meaning; only the ordering rule and the serialization
+ * moved, which is the whole of what a canonical-form version is allowed to be.
+ */
+function canonicalizeV2(p: OrganizerProfilePayload): OrganizerProfilePayload {
+  return {
+    screener: totalSort(p.screener.map(normalizeScreener), cmpScreener),
+    rules: totalSort(p.rules.map(normalizeRule), cmpRule),
+    notifyRules: totalSort(p.notifyRules.map((n) => ({ kind: n.kind, target: n.target })), cmpNotify),
+    awayResponder: normalizeAway(p.awayResponder),
+    // Strings are their own canonical form, so code-unit order is already total over them.
+    tagNames: [...p.tagNames].sort(byCodeUnit),
+    signature: p.signature ?? null,
+  };
+}
+
+/**
+ * The canonical form at `version` — v1 as shipped, v2 total. An unsupported version THROWS rather
+ * than falling back: silently canonicalising an unknown format at this build's rules would mint a
+ * confident fingerprint for a document nobody here can read. Unreachable through the parser, which
+ * refuses a greater `v` as `newer` before a payload is ever built.
+ */
+export function canonicalizeProfilePayload(
+  p: OrganizerProfilePayload,
+  version: number = PROFILE_VERSION,
+): OrganizerProfilePayload {
+  if (version === 1) return canonicalizeV1(p);
+  if (version === 2) return canonicalizeV2(p);
+  throw new RangeError(`no canonical form for profile version ${version}`);
+}
+
+/** Which canonical form a payload's fingerprint is taken in when the caller does not say. */
+function canonicalVersionOf(p: { v?: number }): number {
+  return p.v === 1 || p.v === 2 ? p.v : PROFILE_VERSION;
+}
+
+/**
+ * The content identity of a payload — sha256 over the canonical serialization, TAGGED with the
+ * version it was taken in.
  *
  * `updatedAt` and `producer` are deliberately NOT part of it: they describe the WRITE, not the
  * configuration, and folding them in would make every copy of identical configuration look
  * different — which defeats both the dirty check and the "this found document is what I already
  * have" comparison the read-on-takeover path makes.
+ *
+ * THE VERSION IS THE DOCUMENT'S when it has one, and this build's otherwise: a document parsed
+ * out of a mailbox keeps the identity it was written with, so a resolution or marker an older
+ * ohmail stored still matches it. v1 stays a BARE hex, which is what every stored row already
+ * holds; v2 and later carry a `"<v>:"` prefix, so two fingerprints from different versions can
+ * never compare equal by accident. {@link compareProfileFingerprints} names that third outcome.
+ *
+ * Comparing a LOCAL payload to a found document is a question about content, so it is asked at
+ * ONE version — pass the document's — never by hashing each at its own.
  */
-export function profileFingerprint(p: OrganizerProfilePayload): string {
-  return createHash("sha256").update(JSON.stringify(canonicalizeProfilePayload(p)), "utf8").digest("hex");
+export function profileFingerprint(
+  p: OrganizerProfilePayload & { v?: number },
+  version: number = canonicalVersionOf(p),
+): string {
+  const canonical = canonicalizeProfilePayload(p, version);
+  const bytes = version === 1 ? JSON.stringify(canonical) : canonicalJson(canonical);
+  const hash = createHash("sha256").update(bytes, "utf8").digest("hex");
+  return version === 1 ? hash : `${version}:${hash}`;
 }
 
-/** The envelope, assembled in the spec's key order over a canonicalized payload. */
+/** Which canonical form a fingerprint was taken in. An untagged one is v1, by construction. */
+export function profileFingerprintVersion(fingerprint: string): number {
+  const at = fingerprint.indexOf(":");
+  if (at <= 0) return 1;
+  const v = Number(fingerprint.slice(0, at));
+  return Number.isSafeInteger(v) && v >= 1 ? v : 1;
+}
+
+/**
+ * `different-version` IS NOT `different`, and the distinction is the whole point of versioning the
+ * form: two fingerprints taken at different versions say NOTHING about whether the configurations
+ * agree, so the answer is a re-canonicalise signal — write it out again at this build's version —
+ * and never a conflict to surface to somebody.
+ */
+export function compareProfileFingerprints(a: string, b: string): "same" | "different" | "different-version" {
+  if (a === b) return "same";
+  return profileFingerprintVersion(a) === profileFingerprintVersion(b) ? "different" : "different-version";
+}
+
+/**
+ * The envelope, assembled in the spec's key order over a canonicalized payload.
+ *
+ * THE STAMPED `v` AND THE FORM THE PAYLOAD WAS CANONICALISED IN ARE ONE VALUE. They were two
+ * literals a line apart, and a document stamped v2 whose arrays were ordered by v1's rules would
+ * be a lie no reader could detect — it parses, it fingerprints, and it fingerprints WRONG on
+ * every other install. `version` exists so an older document can be rebuilt exactly as its
+ * writer wrote it; it defaults to what this build writes.
+ */
 export function makeProfileDoc(
   payload: OrganizerProfilePayload,
   meta: { updatedAt: Date; producer: { kind: string; version: string } },
+  version: number = PROFILE_VERSION,
 ): OrganizerProfileDoc {
-  const canonical = canonicalizeProfilePayload(payload);
+  const canonical = canonicalizeProfilePayload(payload, version);
   return {
-    v: PROFILE_VERSION,
+    v: version,
     updatedAt: meta.updatedAt.toISOString(),
     producer: { kind: meta.producer.kind, version: meta.producer.version },
     screener: canonical.screener,
@@ -494,7 +669,7 @@ export function parseProfileMessage(raw: string, ref?: unknown): ProfileRecord |
   }
   const rawDoc = parsed as Record<string, unknown>;
   const v = rawDoc.v;
-  if (typeof v !== "number" || !Number.isInteger(v) || v < 1) return malformed("unreadable version");
+  if (typeof v !== "number" || !Number.isInteger(v) || v < PROFILE_VERSION_MIN_READ) return malformed("unreadable version");
 
   const installId = get(H.installId) ?? null;
   if (v > PROFILE_VERSION) {
@@ -1495,8 +1670,14 @@ export async function writeOrganizerProfile(input: WriteProfileInput): Promise<W
   const unseen = records.find((r): r is ParsedProfileMessage => {
     if (isMalformedProfile(r) || r.status !== "ok") return false;
     if (r.installId === installId) return false;
-    const fp = profileFingerprint(r.doc!);
-    return fp !== docFingerprint && !known.has(fp);
+    // HAVE I SEEN THIS DOCUMENT — asked at the document's OWN version, because that is the
+    // identity the caller stored when it surfaced it (and an older ohmail stored before that).
+    if (known.has(profileFingerprint(r.doc!))) return false;
+    // IS IT THE SAME CONFIGURATION — a different question, and both payloads are in hand, so it
+    // is asked at ONE version. A v1 document saying exactly what this write says is not new
+    // information; refusing it as `foreign` would turn every install's first v2 write into a
+    // conflict nobody could clear, which is a version difference read as a disagreement.
+    return profileFingerprint(r.doc!, doc.v) !== docFingerprint;
   });
   if (unseen) return { written: false, reason: "foreign", doc: unseen.doc!, installId: unseen.installId };
 

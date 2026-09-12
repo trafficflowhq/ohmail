@@ -16,10 +16,32 @@ import type { MailboxAdapter } from "@trafficflow/core/adapters/imap";
 import { serializeOrganizerProfile } from "@trafficflow/core/adapters/organizer-profile-store";
 import {
   PROFILE_VERSION, ProfileUnavailableError, isEmptyProfilePayload, makeProfileDoc, profileFingerprint,
-  readOrganizerProfile, writeOrganizerProfile,
+  profileFingerprintVersion, readOrganizerProfile, writeOrganizerProfile,
   type OrganizerProfileDoc, type OrganizerProfilePayload, type ProfileIo, type ProfileOp,
   type ProfileReadResult,
 } from "@trafficflow/core/adapters/organizer-profile";
+
+/**
+ * DOES THE LOCAL STORE SAY WHAT THIS DOCUMENT SAYS — asked at ONE canonical version, the
+ * document's.
+ *
+ * The fingerprint is taken over a canonical form and the canonical form is versioned, so hashing
+ * each side at its own version answers a different question: a v1 document holding exactly the
+ * local configuration would come back DIFFERENT, and every caller here reads "different" as a
+ * foreign document to hold, surface and ask the person about. A version difference is a
+ * re-canonicalise signal — the next write emits v2 — never a disagreement.
+ */
+function localSaysWhatTheDocumentSays(local: OrganizerProfilePayload, doc: OrganizerProfileDoc): boolean {
+  return profileFingerprint(local, doc.v) === profileFingerprint(doc);
+}
+
+/**
+ * The same question against a fingerprint we STORED rather than a document we hold: the version
+ * travels in the fingerprint, so the local payload is hashed at the version the stored one names.
+ */
+function localSaysWhatAFingerprintSays(local: OrganizerProfilePayload, fingerprint: string): boolean {
+  return profileFingerprint(local, profileFingerprintVersion(fingerprint)) === fingerprint;
+}
 
 /**
  * THE WORKER'S HALF OF THE PORTABLE ORGANIZER PROFILE — composition only.
@@ -338,8 +360,8 @@ export class OrganizerProfileSync {
           accountId: deps.accountId, mailboxId: deps.mailboxId, newerV: v.v,
         }));
       } else if (v.kind === "found") {
-        const localFp = profileFingerprint(await serializeOrganizerProfile(deps.db, deps.accountId, deps.mailboxId));
-        open = v.fingerprint !== localFp && !(await profileImportResolutionExists(deps.db, {
+        const local = await serializeOrganizerProfile(deps.db, deps.accountId, deps.mailboxId);
+        open = !localSaysWhatAFingerprintSays(local, v.fingerprint) && !(await profileImportResolutionExists(deps.db, {
           accountId: deps.accountId, mailboxId: deps.mailboxId, fingerprint: v.fingerprint,
         }));
       }
@@ -397,8 +419,8 @@ export class OrganizerProfileSync {
         let next: Awaited<ReturnType<OrganizerProfileSync["deriveNextHold"]>> = { kind: "lapse" };
         if (hasProfileIo(deps.adapter)) {
           const still = await readOrganizerProfile(deps.adapter.profileIo({ installId: deps.self.installId, mailboxId: deps.mailboxId }));
-          const localFp = profileFingerprint(await serializeOrganizerProfile(deps.db, deps.accountId, deps.mailboxId));
-          next = await this.deriveNextHold(still, localFp);
+          const local = await serializeOrganizerProfile(deps.db, deps.accountId, deps.mailboxId);
+          next = await this.deriveNextHold(still, local);
         }
         // Nothing below throws. The answered subject is released and the folder's current
         // question (or clean lapse) committed in one motion.
@@ -407,8 +429,8 @@ export class OrganizerProfileSync {
         });
         await this.commitNextHold(next, log);
       } else if (this.holdFingerprint !== null) {
-        const localFp = profileFingerprint(await serializeOrganizerProfile(deps.db, deps.accountId, deps.mailboxId));
-        if (localFp === this.holdFingerprint) {
+        const local = await serializeOrganizerProfile(deps.db, deps.accountId, deps.mailboxId);
+        if (localSaysWhatAFingerprintSays(local, this.holdFingerprint)) {
           // CONVERGENCE: the store is ACCOUNT-scoped, so the same travelling profile imported through
           // a SIBLING mailbox — or a hand-edit — can make local state equal the held document with no
           // resolution row for THIS mailbox; the candidate leaves the confirm surface the moment they
@@ -422,7 +444,7 @@ export class OrganizerProfileSync {
           if (hasProfileIo(deps.adapter)) {
             const still = await readOrganizerProfile(deps.adapter.profileIo({ installId: deps.self.installId, mailboxId: deps.mailboxId }));
             stillConverged = still.state === "found" && profileFingerprint(still.doc) === this.holdFingerprint;
-            if (!stillConverged) next = await this.deriveNextHold(still, localFp);
+            if (!stillConverged) next = await this.deriveNextHold(still, local);
           }
           if (stillConverged) {
             const converged = this.holdFingerprint;
@@ -508,7 +530,7 @@ export class OrganizerProfileSync {
       // ownership alone cannot tell "never owned" from "mid-supersede".
       if (this.seenForeignFingerprints.has(fp)) return;
       const payload = await serializeOrganizerProfile(deps.db, deps.accountId, deps.mailboxId);
-      if (fp === profileFingerprint(payload)) { await this.lapseStaleMarker(read, profileFingerprint(payload), log); return; }
+      if (localSaysWhatTheDocumentSays(payload, read.doc)) { await this.lapseStaleMarker(read, payload, log); return; }
       // Already answered (an earlier hold on this same document, resolved by import or decline):
       // a re-attach must not re-open a question the person closed.
       if (await profileImportResolutionExists(deps.db, {
@@ -539,7 +561,7 @@ export class OrganizerProfileSync {
    */
   private async reholdFromFolder(
     io: ProfileIo,
-    localFingerprint: string,
+    local: OrganizerProfilePayload,
     log: (event: string, detail: Record<string, unknown>) => void,
   ): Promise<"standing" | "lapsed"> {
     const still: ProfileReadResult = await readOrganizerProfile(io);
@@ -550,7 +572,7 @@ export class OrganizerProfileSync {
     // can throw, and a throw must leave the standing hold standing (a swap that
     // cleared first left the gate open for a debounce interval when the replacement's resolution
     // read faulted). The caller's catch retries next tick either way.
-    const next = await this.deriveNextHold(still, localFingerprint);
+    const next = await this.deriveNextHold(still, local);
     await this.commitNextHold(next, log);
     return next.kind === "lapse" ? "lapsed" : "standing";
   }
@@ -563,7 +585,7 @@ export class OrganizerProfileSync {
    */
   private async deriveNextHold(
     still: ProfileReadResult,
-    localFingerprint: string,
+    local: OrganizerProfilePayload,
   ): Promise<
     | { kind: "found"; fingerprint: string; doc: OrganizerProfileDoc }
     | { kind: "newer"; v: number }
@@ -572,7 +594,7 @@ export class OrganizerProfileSync {
     const { deps } = this;
     if (still.state === "found" && still.installId !== deps.self.installId) {
       const newFp = profileFingerprint(still.doc);
-      if (newFp !== localFingerprint && !(await profileImportResolutionExists(deps.db, {
+      if (!localSaysWhatTheDocumentSays(local, still.doc) && !(await profileImportResolutionExists(deps.db, {
         accountId: deps.accountId, mailboxId: deps.mailboxId, fingerprint: newFp,
       }))) {
         return { kind: "found", fingerprint: newFp, doc: still.doc };
@@ -644,7 +666,7 @@ export class OrganizerProfileSync {
    */
   private async lapseStaleMarker(
     read: ProfileReadResult,
-    localFingerprint: string | null,
+    local: OrganizerProfilePayload | null,
     log: (event: string, detail: Record<string, unknown>) => void,
   ): Promise<void> {
     const { deps } = this;
@@ -658,7 +680,7 @@ export class OrganizerProfileSync {
       (marker.state === "found" && read.state === "found" && marker.fingerprint !== null
         && profileFingerprint(read.doc) === marker.fingerprint
         && read.installId !== deps.self.installId
-        && (localFingerprint === null || profileFingerprint(read.doc) !== localFingerprint))
+        && (local === null || !localSaysWhatTheDocumentSays(local, read.doc)))
       || (marker.state === "newer" && read.state === "newer" && read.v === marker.v);
     if (!stillAsks) {
       await this.writeMarker({
@@ -720,7 +742,7 @@ export class OrganizerProfileSync {
       }
 
       if (!this.seeded) {
-        await this.seed(io, fp, log);
+        await this.seed(io, payload, log);
         this.seeded = true;
       }
 
@@ -743,18 +765,18 @@ export class OrganizerProfileSync {
           // two ticks would otherwise never be seen at all. Derivation reads run BEFORE the
           // release commits, so a fault leaves the answered hold standing for the next tick.
           const stillNewer = await readOrganizerProfile(io);
-          const nextNewer = await this.deriveNextHold(stillNewer, fp);
+          const nextNewer = await this.deriveNextHold(stillNewer, payload);
           log("organizer_profile_detected", {
             mailboxId: deps.mailboxId, accountId: deps.accountId, state: "resolved",
           });
           await this.commitNextHold(nextNewer, log);
         } else {
-          await this.reholdFromFolder(io, fp, log);
+          await this.reholdFromFolder(io, payload, log);
         }
         return;
       }
       if (this.holdFingerprint !== null) {
-        if (fp === this.holdFingerprint) {
+        if (localSaysWhatAFingerprintSays(payload, this.holdFingerprint)) {
           // Local state converged onto the found document (the import was applied, exactly):
           // the hold is over, and there is nothing to write — the document already says this.
           // The folder is re-read BEFORE the release commits (the same rule as
@@ -764,7 +786,7 @@ export class OrganizerProfileSync {
           const stillConverged = await (async (): Promise<boolean> => {
             const still = await readOrganizerProfile(io);
             if (still.state === "found" && profileFingerprint(still.doc) === this.holdFingerprint) return true;
-            const next = await this.deriveNextHold(still, fp);
+            const next = await this.deriveNextHold(still, payload);
             await this.commitNextHold(next, log);
             return false;
           })();
@@ -795,7 +817,7 @@ export class OrganizerProfileSync {
           // hold now also defers the consent gate (`PlanDeps.importDecisionOpen`), so a hold
           // whose document was expunged or replaced would otherwise track a question the
           // confirm surface is not offering — in either direction (see `reholdFromFolder`).
-          await this.reholdFromFolder(io, fp, log);
+          await this.reholdFromFolder(io, payload, log);
           // …and RETURN, writing nothing either way: a standing or re-armed hold forbids the
           // write, and after a lapse the next tick reads the folder fresh and takes the
           // ordinary arms for whatever now stands there.
@@ -806,7 +828,7 @@ export class OrganizerProfileSync {
         // BEFORE the release commits, so a fault leaves the answered hold standing for the next
         // tick instead of stranding the mailbox released with the replacement unheld.
         const still = await readOrganizerProfile(io);
-        const next = await this.deriveNextHold(still, fp);
+        const next = await this.deriveNextHold(still, payload);
         log("organizer_profile_detected", {
           mailboxId: deps.mailboxId, accountId: deps.accountId, state: "resolved",
         });
@@ -829,7 +851,7 @@ export class OrganizerProfileSync {
         // of a transient organizer overlap (two documents from two writers, neither of which
         // will ever change its store again) and what notices a document appearing
         // under an established organizer without any local change.
-        await this.verifyFolder(io, fp, log);
+        await this.verifyFolder(io, payload, log);
         return;
       }
       // A mailbox that has said nothing gets no document: writing an empty payload into a fresh
@@ -929,7 +951,7 @@ export class OrganizerProfileSync {
   /** The read-on-takeover. Throws only through `onOrganize`'s catch, which retries next tick. */
   private async seed(
     io: ProfileIo,
-    localFingerprint: string,
+    local: OrganizerProfilePayload,
     log: (event: string, detail: Record<string, unknown>) => void,
   ): Promise<void> {
     const { deps } = this;
@@ -993,7 +1015,7 @@ export class OrganizerProfileSync {
       case "found": {
         const docFingerprint = profileFingerprint(read.doc);
         const ours = read.installId === deps.self.installId;
-        if (ours || docFingerprint === localFingerprint) {
+        if (ours || localSaysWhatTheDocumentSays(local, read.doc)) {
           // Our own previous write (stale or not), or a foreign one that says exactly what we
           // would say: seed the dirty check from it and let write-behind do its ordinary work.
           // A foreign-but-identical document is ours to replace on the next change — record it,
@@ -1002,7 +1024,7 @@ export class OrganizerProfileSync {
           this.lastWrittenFingerprint = docFingerprint;
           if (!ours) this.seenForeignFingerprints.add(docFingerprint);
           detected(ours ? "found_own" : "found_in_sync");
-          await this.lapseStaleMarker(read, localFingerprint, log);
+          await this.lapseStaleMarker(read, local, log);
           return;
         }
         clearProvisionalHold();
@@ -1032,7 +1054,7 @@ export class OrganizerProfileSync {
    */
   private async verifyFolder(
     io: ProfileIo,
-    localFingerprint: string,
+    local: OrganizerProfilePayload,
     log: (event: string, detail: Record<string, unknown>) => void,
   ): Promise<void> {
     const { deps } = this;
@@ -1066,7 +1088,7 @@ export class OrganizerProfileSync {
       case "found": {
         const docFingerprint = profileFingerprint(read.doc);
         const ours = read.installId === deps.self.installId;
-        if (docFingerprint === localFingerprint) {
+        if (localSaysWhatTheDocumentSays(local, read.doc)) {
           // The current document says what we say. A residue copy beside it is the overlap's
           // leftover — reopen the dirty check so the next tick rewrites and expunges it.
           if (read.residue > 0) this.lastWrittenFingerprint = null;
