@@ -67,7 +67,7 @@ export { Switch } from "./primitives/Switch.js";
 export type { SwitchProps } from "./primitives/Switch.js";
 export { Spinner } from "./primitives/Spinner.js";
 export type { SpinnerProps } from "./primitives/Spinner.js";
-export { ToastHost, useToast } from "./primitives/Toast.js";
+export { ToastHost, useToast, useOptionalToast } from "./primitives/Toast.js";
 export type { ToastHostProps, ToastOptions, ToastFn } from "./primitives/Toast.js";
 export { Card } from "./primitives/Card.js";
 export type { CardProps, CardLift } from "./primitives/Card.js";

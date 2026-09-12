@@ -151,6 +151,9 @@ import { useDraftReply, type DraftedReply } from "./draft-reply";
 import { RichEditor } from "./RichEditor";
 import { TagPicker, placePicker, type TagPickerState } from "./TagPicker";
 import { KeymapProvider, useCursorPlacer, useKeyBindings, useModGlyph, type KeyBinding } from "./keymap";
+/* THE ONE CURSOR PLACER — the mechanism every list view shares; this shell is the `global`
+   claimant, answering for the three views whose cursor it holds. See `cursor-placer.ts`. */
+import { CURSOR_HINT_MS, placeFirstRow, useCursorHint, type CursorHost } from "./cursor-placer";
 import { createSeenBatcher } from "./seen-batch";
 import { readColumnHidden, readColumnHiddenFor, watchZeroPushTier, zeroPushTier } from "./narrow";
 import { ZoneCursor, currentZone, setRailSummon } from "./zone-nav";
@@ -580,14 +583,11 @@ export function showDesktopCta(opts: { demo: boolean; desktop: boolean }): boole
 export const DESKTOP_CTA_DISMISSED = "ohmail.desktopCtaDismissed";
 
 /**
- * HOW LONG THE CURSOR HINT STANDS — the one line the first press of a message verb on a
- * cursorless list shows (`placeCursor`). Shorter than the toast's 2600 ms default, because this
- * one carries no action to reach for and the second press is meant to follow it immediately.
- *
- * Exported so a guard reads the number rather than restating it: a hint that outlives the press
- * it explains, or vanishes before it can be read, is a difference a test should be able to see.
+ * HOW LONG THE CURSOR HINT STANDS — re-exported from the module that owns the placement
+ * (`cursor-placer.ts`), so the constant sits with the one line it times and every caller and
+ * guard still reads it from here.
  */
-export const CURSOR_HINT_MS = 2400;
+export { CURSOR_HINT_MS };
 
 /**
  * A subtle, dismissible line at the foot of the rail: "Get ohmail for
@@ -5175,38 +5175,28 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
    */
 
   /**
-   * The DOM row is read because the scroll needs the element, and the null-check earns its keep twice: it is what a
-   * click would have hit, and it is `null` for a surface holding a list in state without rendering it. A `false`
-   * consumes nothing — the keypress stays exactly as inert as an empty list should feel.
+   * The ROWS AND THE SELECTOR, per route, and nothing else: the placement itself — first row, the
+   * DOM check, the scroll nudge, the one line — is `placeFirstRow`'s, the same call every other
+   * list view makes. An unnamed route hands over an empty list, which declines; `route.view`, not
+   * `effectiveView`, because that is what `focused` reads. Focus does not move: the person is
+   * already on the keyboard, and `.row.sel` is the ring the list already draws.
    */
+  const sayCursorPlaced = useCursorHint();
   const placeCursor = useStableCallback((label: string): boolean => {
-    if (focused != null) return false;
-    const first =
+    const current = focused?.id ?? null;
+    const host: CursorHost =
       route.view === "ohbox"
-        ? (allOhbox[0] ?? null)
+        ? { rows: allOhbox, current, scope: ".view", select: setOhboxSel }
         : route.view === "reads"
-          ? (partition.fresh[0] ?? partition.seen[0] ?? null)
+          ? { rows: [...partition.fresh, ...partition.seen], current, scope: ".view", select: setReadsCur }
           : route.view === "receipts"
-            ? (receipts[0] ?? null)
-            : null;
-    if (first == null) return false;
-    const row = document.querySelector<HTMLElement>(`.view .row[data-id="${CSS.escape(first.id)}"]`);
-    if (row == null) return false;
-    if (route.view === "ohbox") setOhboxSel(first.id);
-    else if (route.view === "reads") setReadsCur(first.id);
-    else setReceiptsCur(first.id);
-    /* The same nudge a click's selection gets — `block: "nearest"`, the whole list's convention
-       (`ReadsView`, `ReceiptsView`, `TriageView`). Optional-chained on the METHOD, not the node:
-       jsdom mounts these views without implementing it (`RulesView`'s precedent). */
-    row.scrollIntoView?.({ block: "nearest" });
-    /* ONE LINE, THE VERB THE NEXT PRESS RUNS, and the toast primitive's own live region announces
-       it (`role="status" aria-live="polite"`). No action button: there is nothing to undo about a
-       cursor, and an Undo beside it would read as "put the mail back". Focus does not move — the
-       person is already on the keyboard, and `.row.sel` is the ring the list already draws. */
-    toast(t("cursor.placed", { label }), { duration: CURSOR_HINT_MS });
-    return true;
+            ? { rows: receipts, current, scope: ".view", select: setReceiptsCur }
+            : { rows: [], current, scope: ".view", select: () => {} };
+    return placeFirstRow(host, label, sayCursorPlaced);
   });
-  useCursorPlacer(placeCursor);
+  /* `global`: the claim a VIEW holding its own cursor beats, so a split view places its own row
+     rather than this shell declining for a route it holds no cursor for. */
+  useCursorPlacer(placeCursor, "global");
 
 
   /**
