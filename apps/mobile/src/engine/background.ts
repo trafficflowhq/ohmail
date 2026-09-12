@@ -389,6 +389,25 @@ export function createBackgroundOrganizing(deps: BackgroundDeps): BackgroundOrga
   const armReclaim = (): void => {
     if (reclaim !== null) return;
     reclaim = setInterval(() => {
+      /* ══ THE TICK SAYS SO, WHATEVER IT GOES ON TO DO — and this is the whole of the re-derive ══
+       *
+       * `moved()` was called only where this machine had CHANGED something: a re-claim that landed,
+       * a notification torn down, an app-state edge. Nothing said so when the ENGINE moved on its
+       * own, and a stand-down is exactly that — measured, a laptop took the mailbox, this install's
+       * engine stood down 7.8 s later, and the open panel read `Organizing` with `Stop organizing
+       * here` for 6 min 26 s, correcting only when somebody left Settings and came back. The claim
+       * direction re-derived in 22.9 s for one reason: the re-claim ran through this machine and
+       * this machine called `moved()`.
+       *
+       * So the TICK says it, both directions, and the reader decides whether anything changed —
+       * `pokeOrganizerState` compares the panel's whole input and notifies only on a difference, so
+       * an unchanged mailbox costs one comparison and no render. Bound: the panel reflects the
+       * engine's own answer within one tick of {@link beatEveryMs} (10 s beside a foreground
+       * service on the device measured, {@link CLAIM_WATCH_MS} without one).
+       *
+       * OUTSIDE the queue, for {@link armWatch}'s reason: a slow IMAP read behind the serial gate
+       * must not hold the screen's cue behind it. */
+      moved();
       /* THROUGH THE SAME QUEUE as every other act on this mailbox, so a re-claim can never overlap
          a hand-back, a resume or a stop — the {@link serial} header's whole argument. */
       void serial(() => reclaimCheck());
