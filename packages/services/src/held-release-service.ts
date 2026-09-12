@@ -6,7 +6,7 @@ import {
 import { dialect } from "@trafficflow/db/dialect";
 import { SCREENER_FOLDER } from "./screener-service.js";
 import { ServiceError } from "./errors.js";
-import type { ServiceContext } from "./context.js";
+import { withAccountTx, type ServiceContext } from "./context.js";
 
 /* MAIL HELD AT THE GATE BEHIND A RULE ITS OWNER ALREADY WROTE — counted here, released by a press.
    An install that adopts mail at the screening gate records the placement as one no pass may
@@ -239,7 +239,10 @@ export async function releaseHeld(
     }
   }
 
-  return ctx.db.transaction(async (t) => {
+  /* THROUGH THE FENCE, like every other account-owned write in this package. The press writes a
+     rule and an audit row, and a transaction opened straight on the handle can commit them AFTER
+     an erasure sweep has finished — a row belonging to an account that no longer exists. */
+  return withAccountTx(ctx, async (t) => {
     // Read the groups INSIDE the transaction that acts on them: the count written to the audit row
     // is then the count the press released, not one measured before somebody else's decision landed.
     const groups = await heldReleaseGroups(t as unknown as Tx, ctx.accountId);
