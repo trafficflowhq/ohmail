@@ -448,12 +448,14 @@ desktop portal. Start-at-login is not offered in this build.
 
 > [!IMPORTANT]
 > **A packaged install does not update itself, and no longer offers to.** A build
-> installed from the `.deb` or the `.rpm` reads how it was installed and does not
-> ask the release feed at all: "Check for Updates" is in the menu, disabled, and
-> says *"Updates Come from Your Package Manager"*, and Settings → About says the
-> same thing beside the version you are running. Update by installing the new
-> package over the old one — or use the **AppImage**, which is the Linux build
-> that applies its own updates.
+> installed from the `.deb`, the `.rpm` or as a Flatpak reads how it was
+> installed and does not ask the release feed at all: "Check for Updates" is in
+> the menu, disabled, and says *"Updates Come from Your Package Manager"* — or
+> *"Updates Come from Your Software Centre"* on the Flatpak — and Settings →
+> About says the same thing beside the version you are running. Update by
+> installing the new package over the old one, or let your software centre do it
+> — or use the **AppImage**, which is the Linux build that applies its own
+> updates.
 >
 > It used to offer, and this release is where that stops. A packaged build asked
 > the feed for a package of its own kind, did not find one (the feed publishes
