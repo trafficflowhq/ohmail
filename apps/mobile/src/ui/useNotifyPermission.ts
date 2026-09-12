@@ -1,13 +1,11 @@
 /**
- * THE ASK, AS ONE THING BOTH PRESSES DO. The fourth door's Connect and the This-phone panel's
- * start verb are the two moments organizing begins on this phone, and neither may grow its own
- * version of the sequence: decide, spend the ask, show the sentence, then the system prompt, then
- * record what the phone can do.
+ * THE ASK, AS ONE THING BOTH PRESSES DO. Organizing begins at two moments on this phone, and
+ * neither may grow its own version of the sequence: decide, spend the ask, show the sentence,
+ * then the system prompt, then record what the phone can do.
  *
- * `gate()` resolves when the sheet is answered, so a press can await it and go on — and resolves
- * at once where there is nothing to ask (iOS, already granted, asked before). Every rule it
- * consults lives in `engine/notification-permission.ts`; this holds the sheet's open state and the
- * promise the press waits on.
+ * `gate()` resolves when the sheet is answered, so a press can await it and go on — and at once
+ * where there is nothing to ask. Every rule lives in `engine/notification-permission.ts`; this
+ * holds the sheet's open state and the promise the press waits on.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 

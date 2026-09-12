@@ -1,14 +1,11 @@
 /**
- * The open message's action bar, as arithmetic. The bar's box numbers live here rather than
- * inline in the JSX so a test can lay the row out at a phone's width — this workspace has no
- * React Native renderer, so the layout is only measurable where it is stated as data.
+ * The open message's action bar, as arithmetic. The box numbers live here rather than inline in
+ * the JSX so a test can lay the row out at a phone's width — this workspace has no React Native
+ * renderer, so the layout is only measurable where it is stated as data.
  *
- * The law is WRAP, which is the law every other group of pills on this phone already follows
- * (`app/message/[id].tsx`, `(tabs)/screener.tsx`, `MailRow.tsx`, `sender/[seg]/[id].tsx`). The
- * bar previously scrolled instead, and a horizontal ScrollView CLIPS: at 1080 px / 420 dpi the
- * fourth verb was cut mid-glyph — "Resurface" at the pill's right edge, "Wieder auftauchen" as
- * a bare "W". More is never inside the wrap, so it can neither overlap a pill nor land alone
- * on a second line.
+ * The law is WRAP, the law every other group of pills on this phone already follows. The bar
+ * scrolled instead, and a horizontal ScrollView CLIPS: at 1080 px / 420 dpi the fourth verb was
+ * cut mid-glyph. More is never inside the wrap, so it can neither overlap a pill nor land alone.
  */
 
 /** The bar's own box: side padding, the gap before More, and More's square. */

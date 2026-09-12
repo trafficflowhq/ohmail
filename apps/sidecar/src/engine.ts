@@ -5109,15 +5109,13 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           armHeartbeat();
         },
         /**
-         * Stop this mailbox, give its claim back, and leave the store alone. The install's
-         * `stop()` used to close the
-         * store too, because one mailbox going down WAS the engine going down; with several, this
-         * stops one login and one timer while the others serve out of the same database. The
-         * in-flight cycle is AWAITED, not cancelled: a drain mid-batch has rows committed and a
-         * cursor about to move, and dropping it re-reads mail already had. The whole is BOUNDED —
-         * a half-open link has nothing to end a command, and this method holds three waits (the
-         * queue, an in-flight re-dial, and `close()`'s LOGOUT). One budget of a drain interval is
-         * spent across all three; when it runs out the socket is DESTROYED, ending the hung command.
+         * Stop this mailbox, give its claim back, and leave the store alone: one login and one
+         * timer go down while the other mailboxes serve out of the same database. The in-flight
+         * cycle is AWAITED, not cancelled — a drain mid-batch has rows committed and a cursor
+         * about to move, and dropping it re-reads mail already had. BOUNDED, because a half-open
+         * link has nothing to end a command: three waits (the queue, an in-flight re-dial, and
+         * `close()`'s LOGOUT) share one drain interval, and when it runs out the socket is
+         * DESTROYED, ending the hung command.
          */
         async detach() {
           stopped = true;
@@ -5137,18 +5135,15 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
              It SHARES the budget rather than getting its own: two bounds in sequence would be a
              stop that can take twice as long as the number this method promises. */
           if (!wedged) wedged = !(await settledWithin(redialInFlight, left()));
-          /* AND THE CLAIM GOES BACK, then the LOGOUT — ONE wait, in that order.
-             The claim first because the release needs the login; left standing it obstructs every
-             other install for `DEFAULT_STALE_AFTER_MS` while the machine that wrote it is gone.
-             `releaseOwnClaim` is the function the gate's stopped arm and the removal route call,
-             and only where this install believes it organizes — a reader's would be an IMAP read
-             that can only fail over a claim it does not hold. The logout keeps its own rule: its
-             rejection reaches the log, because a server that answers the LOGOUT with an error is
-             a different thing from one that answers nothing.
-             ONE `settledWithin` and started in a MICROTASK, both for the same bound: a fourth hop
-             re-derives its deadline from the clock, and `setTimeout` schedules against the loop's
-             clock, which a synchronous prologue does not refresh. Either spends a millisecond of
-             the interval this method promises — measured, as a 299 against a 300 ms bound. */
+          /* AND THE CLAIM GOES BACK, then the LOGOUT — ONE wait, in that order. The claim first
+             because the release needs the login; left standing it obstructs every other install
+             for `DEFAULT_STALE_AFTER_MS` while the machine that wrote it is gone. Only where this
+             install believes it organizes — a reader's release would be an IMAP read that can only
+             fail. The logout's rejection still reaches the log: a server answering LOGOUT with an
+             error is not one answering nothing. ONE `settledWithin`, started in a MICROTASK, both
+             for the bound: a fourth hop re-derives its deadline, and `setTimeout` schedules against
+             the loop's clock, which a synchronous prologue does not refresh — measured as a 299
+             against a 300 ms bound. */
           if (!wedged) {
             const politely = Promise.resolve().then(() => (organizer.organizing
               ? releaseOwnClaim(

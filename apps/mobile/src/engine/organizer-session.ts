@@ -543,14 +543,12 @@ let restrictedSaid = false;
 /**
  * AND THE OTHER ONE — this phone may not show the notification its organizing stands behind.
  *
- * A SEPARATE record from {@link restrictedSaid} because it is a separate fact with a separate
- * sentence and a separate remedy: battery saver is a mode a person turns on, a denied
- * `POST_NOTIFICATIONS` is a permission they can give back in system settings. Collapsed into one
- * record, an Android 13+ first install was told its battery saver was the reason.
+ * A SEPARATE record from {@link restrictedSaid}: separate fact, separate sentence, separate
+ * remedy. Collapsed into one, an Android 13+ first install was told battery saver was the reason.
  *
- * Unlike the restriction, this one is CLEARABLE — see {@link sayNotificationsOn}. The permission
- * can be granted from outside the app at any moment, and a record that could only be set would
- * keep "Notifications are off" on screen over a phone that had just been given them.
+ * CLEARABLE, unlike the restriction — see {@link sayNotificationsOn}: the permission can be given
+ * back from system settings at any moment, and a record that could only be set would keep
+ * "Notifications are off" on screen over a phone that had just been granted them.
  */
 let notificationsOff = false;
 

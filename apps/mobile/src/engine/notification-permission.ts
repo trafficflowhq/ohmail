@@ -1,30 +1,12 @@
 /**
- * ══════════════════════════════════════════════════════════════════════════════════════════
- *  MAY THIS PHONE SHOW THE NOTIFICATION ITS ORGANIZING STANDS BEHIND — asked once, at the press
- * ══════════════════════════════════════════════════════════════════════════════════════════
+ * MAY THIS PHONE SHOW THE NOTIFICATION ITS ORGANIZING STANDS BEHIND — asked once, at the press.
  *
- * On Android 13+ `POST_NOTIFICATIONS` starts DENIED, and the organizer's foreground service
- * refuses to start without it (`OrganizerService.canPostNotification`): `start` answers `false`
- * before the system is asked, `background.ts` hands the mailbox back, and the phone organizes
- * only while the app is open. Nothing is hidden and nothing is killed — the app declines. That is
- * the fact the sentence in the deck states, and it is why the ask belongs here rather than in the
- * service.
- *
- * Three device runs before this one granted the permission with `pm grant` first, so they measured
- * the wiring and never the permission; a first install has no such help.
- *
- * ── WHERE IT IS ASKED, AND WHERE IT IS NOT ─────────────────────────────────────────────────
- *
- * At the press that starts organizing on THIS phone — the fourth door's Connect and the
- * This-phone panel's start verb — and nowhere else. Never at launch: `reopenWithBackground`
- * raises a session on every relaunch that adopts a stored row, so a request inside
- * `startOrganizerSession` would be a permission dialog in front of somebody who opened their mail.
- *
- * ── THE RULES ARE HERE AND THE PLATFORM CALLS ARE NOT ──────────────────────────────────────
- *
- * `background.ts`'s split, for its reason: this workspace has no React Native renderer, so every
- * decision is driven by the node suite through {@link NotificationPermissionHost} and only the
- * four platform calls live in `notification-permission-native.ts`.
+ * On Android 13+ `POST_NOTIFICATIONS` starts DENIED and the organizer's foreground service
+ * refuses to start without it, so `background.ts` hands the mailbox back and the phone organizes
+ * only while the app is open. Asked at the press that starts organizing here and nowhere else;
+ * never at launch, where it would be a dialog in front of somebody who only opened their mail.
+ * The rules live here and the four platform calls in `notification-permission-native.ts`, so the
+ * node suite drives every decision through {@link NotificationPermissionHost}.
  */
 
 /** What the OS answered. `blocked` is Android's "never ask again". */
@@ -67,13 +49,11 @@ export function notificationBacksOrganizing(platform: string): boolean {
  * SHOULD THIS PRESS ASK? Three noes and one yes, and the noes are not the same no.
  *
  *  · not this platform — there is no notification to permit (iOS);
- *  · already enabled — the permission is held, so a prompt would be a dialog about nothing;
- *  · asked before — this install has spent its one ask. Android will not show the dialog again
- *    after a refusal, so re-requesting would put OUR sentence on screen in front of an OS prompt
- *    that never appears: the re-prompt loop, with the loop invisible.
- *
- * A platform call that throws answers `false` — the press goes on and starts organizing; the
- * background half's own decline is what says the notification is not showing.
+ *  · already enabled — a prompt would be a dialog about nothing;
+ *  · asked before — Android never shows the dialog twice, so re-requesting would put OUR
+ *    sentence in front of an OS prompt that never appears: the re-prompt loop, made invisible.
+ * A platform call that throws answers `false`: the press goes on, and the background half's
+ * own decline is what says the notification is not showing.
  */
 export async function shouldAskForOrganizerNotification(
   host: NotificationPermissionHost,

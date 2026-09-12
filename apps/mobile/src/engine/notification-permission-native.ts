@@ -1,15 +1,12 @@
 /**
  * The platform half of the notification permission — `PermissionsAndroid`, the keystore record and
- * the way to system settings. The `background-native.ts` idiom and its charter: every rule lives in
+ * the way to system settings. The `background-native.ts` idiom: every rule lives in
  * `notification-permission.ts`, this file supplies four facts and has no branch of its own.
  *
- * ── WHY NOT `unified-push.ts`'s `requestNotificationPermission` ─────────────────────────────
- *
- * That one asks for the same Android permission and cannot be reused here: `expo-unified-push`
- * short-circuits `requestPermissions()` to `"denied"` and `checkPermissions()` to `false` whenever
- * it detects an emulator, without showing a dialog. Borrowing it would record a permanent refusal
- * on every emulator — including the rig this feature has to be measured on — for a permission the
- * device may well hold. `PermissionsAndroid` is the OS's own answer on every device.
+ * NOT `unified-push.ts`'s `requestNotificationPermission`, which asks for the same permission:
+ * `expo-unified-push` short-circuits it to "denied" on any emulator without showing a dialog, so
+ * borrowing it would record a permanent refusal on every rig for a permission the device may hold.
+ * `PermissionsAndroid` is the OS's own answer on every device.
  */
 import { Linking, PermissionsAndroid, Platform } from "react-native";
 import * as SecureStore from "expo-secure-store";

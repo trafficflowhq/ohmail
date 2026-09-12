@@ -183,13 +183,11 @@ export const INTENT_EXPIRED_CLASS = "screener.intent.expired";
 /**
  * EVERY INTENT THIS BOOT SHOULD ACT ON, and the expired ones reported in the same pass.
  *
- * `nowMs` is injected rather than read, so the TTL is testable without a fake clock over the whole
- * suite and so the caller's clock is the engine's clock.
+ * `nowMs` is injected, so the TTL is testable without a fake clock over the whole suite.
  *
- * The sweep WRITES: an expired intent is removed here rather than left to be re-read and
- * re-rejected on every boot for ever. It is also RETURNED and COUNTED, which is the half that was
- * missing: removal is not the fact — a press that will never be carried out is — and the line
- * carries the class and how many, never a sender.
+ * The sweep WRITES: an expired intent is removed rather than re-read and re-rejected on every
+ * boot for ever. It is also RETURNED and COUNTED — removal is not the fact, a press that will
+ * never be carried out is — and the line carries the class and how many, never a sender.
  */
 export function takeScreenerIntents(nowMs: number): ScreenerIntentSweep {
   const rows = load();
