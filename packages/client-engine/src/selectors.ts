@@ -1006,6 +1006,10 @@ export function screenerSegments(
         // suggestion, so a derived row has none. `GET /screener` still returns
         // `aiSuggestion` for desktop/native and for enrichment later.
         ai: null,
+        /* WHY THERE WILL NEVER BE ONE, when that is the answer. `no_ai` mail is kept away from
+           every model, so this sender’s row is not waiting for a run to reach it. Read off the
+           representative, which is the message a suggestion would have been about. */
+        ...(rep.sensitivity?.no_ai ? { noAi: true as const } : {}),
         // Oldest first — the order every preview renders, and ALL of them.
         held: [...newestFirst].reverse().map((m) => heldOf(reader, m, now, locale, zone, day)),
         ...(segment === "screened_out" && repDate

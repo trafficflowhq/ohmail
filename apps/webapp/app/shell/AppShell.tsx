@@ -6953,6 +6953,10 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
                         absorb: suggestions.absorb,
                       })
                 }
+                /* WHY THE ROWS WITH NO ADVICE HAVE NONE. One fact, read once, rendered on every
+                   such row — the refusal used to reach the person as a single toast under the
+                   batch that discovered it while every waiting row went on saying "yet". */
+                noSuggestionStanding={suggestions.standing}
                 segment={route.screenerSegment}
                 selection={scnSel}
                 onSelect={(segment, id) => setScnSel((s) => ({ ...s, [segment]: id }))}

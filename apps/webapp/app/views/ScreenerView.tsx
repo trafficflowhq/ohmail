@@ -61,6 +61,9 @@ import { APPLY_PILE_ORDER, type PendingDecision } from "../shell/screener-state"
 import type { ScreenerRole } from "../shell/mail-state";
 import type { HeldBodyStall, ScreenerState, SpamRow } from "../shell/screener-state";
 import type { SuggestBatchControl } from "../shell/screener-suggest";
+import {
+  NO_SUGGESTION_KEY, noSuggestionReason, type SuggestStanding,
+} from "../shell/no-suggestion";
 import type { RemoteImagesChrome } from "../shell/remote-images";
 import { MessageBody } from "../components/MessageBody";
 import { BlockNoticeGloss, type BlockNotice } from "../components/BlockNotice";
@@ -505,6 +508,7 @@ export function ScreenerView({
   state,
   suggest,
   suggestNode,
+  noSuggestionStanding = null,
   segment,
   selection,
   settled,
@@ -534,6 +538,14 @@ export function ScreenerView({
    * with different words on them.
    */
   suggestNode?: ReactNode;
+  /**
+   * THE SPEND REFUSAL A RUN LAST REPORTED, threaded down to the rows. A row with no advice used to
+   * say "No suggestion yet for this sender" on every account, including one whose entitlement
+   * refuses — a promise nothing could keep, standing on thousands of rows while the real fact
+   * arrived once, as a toast. Absent on a host with no such notion (the desktop, the demo), which
+   * reads as "nothing is refusing".
+   */
+  noSuggestionStanding?: SuggestStanding | null;
   /**
    * WHAT THE ACCOUNT'S AI ALLOWANCE IS DOING — one line under whichever control is offered above. Injected for the
    * same reason both controls are: the answer is a billing read, and this file is compiled into a binary that has no
@@ -1426,6 +1438,7 @@ export function ScreenerView({
             remoteImages={remoteImages}
             onBack={() => onFull(false)}
             role={state.role}
+            standing={noSuggestionStanding}
             {...(decisionFor(current as ScreenerSenderDTO) !== undefined
               ? { decision: decisionFor(current as ScreenerSenderDTO)! }
               : {})}
@@ -1982,6 +1995,7 @@ function WaitingPreview({
   onBack,
   role,
   decision,
+  standing,
 }: {
   sender: ScreenerSenderDTO;
   scope: DecisionScope;
@@ -2009,6 +2023,8 @@ function WaitingPreview({
   bodyStall: (messageId: string) => HeldBodyStall | null;
   remoteImages?: RemoteImagesChrome;
   onBack: () => void;
+  /** See `ScreenerViewProps.noSuggestionStanding` — the row's sentence is derived from it. */
+  standing: SuggestStanding | null;
 }) {
   const t = useTranslations("screener");
   const piles = usePileNames();
@@ -2116,8 +2132,12 @@ function WaitingPreview({
             )}
           </div>
         ) : (
-          <div className="scn-why scn-why-none">
-            <span>{t("noSuggestion")}</span>
+          /* NO ADVICE, AND WHY NOT — three states, one sentence each. "Yet" belongs to exactly one
+             of them: a sender no run has reached. It is false for `no_ai` mail, which no model
+             will ever see, and false on an account whose spend is refused. `data-why` is the
+             state a test reads, so the assertion is not on a sentence's wording. */
+          <div className="scn-why scn-why-none" data-why={noSuggestionReason(sender, standing)}>
+            <span>{t(NO_SUGGESTION_KEY[noSuggestionReason(sender, standing)])}</span>
           </div>
         )}
         {sender.held.length > 1 ? (

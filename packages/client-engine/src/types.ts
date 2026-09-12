@@ -721,6 +721,13 @@ export interface ScreenerSenderDTO {
    * can drift, and a "last body" is how held mail becomes hidden mail.
    */
   held: ScreenerHeldMail[];
+  /**
+   * TRUE when this sender’s representative message is `no_ai` — mail the sensitivity pass keeps
+   * away from a model. Such a row can never carry a suggestion, and it used to say "No suggestion
+   * yet", a promise nothing was ever going to keep. Optional and only ever `true`: absent means
+   * "not that", which is what a fixture row and an older mirror both are.
+   */
+  noAi?: true;
   /** screened_out only */
   screenedOn?: string;
   /** spam only */

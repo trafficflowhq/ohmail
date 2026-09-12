@@ -714,6 +714,8 @@
     },
     "markAllSpam": "Mark all spam",
     "noSuggestion": "No suggestion yet for this sender. Choose where their mail goes.",
+    "noSuggestionUnavailable": "AI suggestions are not available for this account. Choose where their mail goes.",
+    "noSuggestionNoAutoAi": "This sender’s mail is kept out of automatic AI. Choose where their mail goes.",
     "aiSuggests": "AI suggests",
     "aiHolds": "AI did not place this sender — that one is yours",
     "aiHoldChip": "Needs you",

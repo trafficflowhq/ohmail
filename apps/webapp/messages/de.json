@@ -714,6 +714,8 @@
     },
     "markAllSpam": "Alles als Spam markieren",
     "noSuggestion": "Für diesen Absender liegt noch kein Vorschlag vor. Wähl, wohin seine Post geht.",
+    "noSuggestionUnavailable": "KI-Vorschläge sind für dieses Konto nicht verfügbar. Wähl, wohin seine Post geht.",
+    "noSuggestionNoAutoAi": "Die Post dieses Absenders bleibt von der automatischen KI ausgenommen. Wähl, wohin seine Post geht.",
     "aiSuggests": "KI schlägt vor",
     "aiHolds": "Die KI hat diesen Absender nicht einsortiert — der gehört dir",
     "aiHoldChip": "Braucht dich",

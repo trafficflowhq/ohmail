@@ -22,6 +22,7 @@ import {
 /* The decided-and-waiting shape, owned by the module that renders it. Type-only, so this does not
    close a runtime cycle with `screener-state.ts`, which reads this file's overlay type. */
 import type { PendingDecision } from "./screener-state";
+import type { SuggestStanding } from "./no-suggestion";
 
 /**
  * One sender's suggestion, in the vocabulary the rows already speak. All five piles appear
@@ -192,6 +193,13 @@ export interface ScreenerSuggestions {
    * live half (a press in THIS session) is recorded by `useScreenerState`.
    */
   outstandingDecisions: readonly PendingDecision[];
+  /**
+   * The spend refusal a run last reported, or `null`. Read by the ROWS: a sender no run has
+   * reached says "no suggestion yet", and "yet" is false on an account that may not spend — the
+   * refusal arrived as a one-off toast under the batch that found it and every waiting row went on
+   * promising an answer. `null` until a run has stopped, and `null` again once one has not.
+   */
+  standing: SuggestStanding | null;
   /**
    * Put answers into the overlay from somewhere that is not this hook.
    * There is exactly one overlay on screen — `useScreenerState` joins it
@@ -429,6 +437,13 @@ export function useScreenerSuggestions(opts: {
   /** See {@link SuggestBatchControl.progress}. Written beside `notice`, never derived from it. */
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
   const [maxPerRequest, setMaxPerRequest] = useState(ASSUMED_MAX_PER_REQUEST);
+  /**
+   * WHY EVERY UNANSWERED ROW HAS NO ANSWER — see {@link ScreenerSuggestions.standing}. A run that
+   * stops on the spend gate is reporting a condition, not an event: it will stop at the same place
+   * next time. Set when a run stops and cleared when one finishes without stopping, which is the
+   * only evidence this client gets that the condition has lifted.
+   */
+  const [standing, setStanding] = useState<SuggestStanding | null>(null);
   /** See {@link ScreenerSuggestions.outstandingDecisions} — read off the one page fetch below. */
   const [outstanding, setOutstanding] = useState<readonly PendingDecision[]>([]);
   /**
@@ -946,6 +961,10 @@ export function useScreenerSuggestions(opts: {
             if (res.stopped) break;
           }
           if (io.current.run !== run) return;
+          // The run reached its end: either it stopped on the gate (and every row it never asked
+          // about is waiting on the same refusal) or it did not, which is this client's only
+          // evidence that an earlier refusal has lifted.
+          setStanding(stopped ?? null);
           setPhase("closed");
           setNotice(null);
           // CLEARED, not left at `{done: total}`. A full track that never goes away is a claim
@@ -1031,7 +1050,9 @@ export function useScreenerSuggestions(opts: {
   };
 
   // `merge` is the whole of `absorb`, exposed rather than reimplemented — see the interface.
-  return { suggestions, absorb: merge, forSenders, autoOptIn, outstandingDecisions: outstanding };
+  return {
+    suggestions, absorb: merge, forSenders, autoOptIn, outstandingDecisions: outstanding, standing,
+  };
 }
 
 /**
