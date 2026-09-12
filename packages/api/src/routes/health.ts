@@ -657,6 +657,14 @@ export const MAIL_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // the connect flow. Its CHECK arrives under a NEW name in the same migration, so a name probe
   // would add nothing the column probe does not already answer, and it gets no separate entry.
   ["mailboxes", "takeover_intent"],
+  // mail 0107_release_held_at — one column: the press that releases mail held at the screening
+  // gate behind a rule its owner already wrote. Probed because BOTH halves name it. The API reads
+  // it on `GET /screener/held-releases` and writes it on the press, and `RulesService.list`
+  // selects whole rows, so a too-early API 42703s the rules surface as well as the release screen.
+  // The worker's retro pass selects it per page to decide whether a walk is a release walk, so a
+  // worker ahead of the migration fails every page and moves no mail at all — not just this
+  // feature's. Deploy order migration → API → worker, 0034's reasoning exactly.
+  ["rules", "release_held_at"],
 ] as const;
 
 /**
@@ -933,7 +941,7 @@ export const MAIL_EXPECTED_MARKERS =
 // 0067/0068 (the device-sync alert's withdrawn SECURITY DEFINER carrier and its retirement)
 // add no column and get no marker: a function's absence is the ALERT RULE's own isolated,
 // tolerated state, not a schema fault a serving API should 503 over.
-export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0105_sync_blocked_reason_clock_off";
+export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0107_release_held_at";
 
 
 /* `CLOUD_SCHEMA_MARKER_JOURNAL_TAG` moved to `./health-cloud.js`: it is the NAME of a cloud

@@ -76,6 +76,13 @@ export function pgDialect(): Dialect {
 
     ilike: (column, pattern) => sql`${column} ilike ${pattern}`,
 
+    /* `substring … from position('@' in …)` and NOT `split_part(…, '@', 2)`: the two disagree on
+       an address carrying two separators, and this is the spelling `rule-retro.ts#matchPredicate`
+       and `screener-service#heldRowsForDomain` already use — so the set a rule MOVES and the set
+       it is COUNTED over stay one set. `messages_account_from_domain_idx` is built on it. */
+    domainOf: (address) =>
+      sql`substring(lower(${address}) from position('@' in lower(${address})) + 1)`,
+
     interval: (ms: number) => sql`(${`${Math.trunc(ms)} milliseconds`}::interval)`,
 
     // The server keeps microseconds; a sort key that must survive a round trip through a

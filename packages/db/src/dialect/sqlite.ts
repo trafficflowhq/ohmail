@@ -132,6 +132,15 @@ export function sqliteDialect(): Dialect {
 
     ilike: (column, pattern) => sql`lower(${column}) like lower(${pattern})`,
 
+    /* `instr`/`substr`, this store's spelling of the server's `position`/`substring`. Both are
+       1-based and both answer the FIRST separator, so the two return the same string for the same
+       address — including an address carrying two `@`, where the naive spellings part company.
+       An address with no `@` gives `instr` 0, so `substr(x, 1)` returns the WHOLE string; the
+       server's `position` answers 0 for the same input and its `substring … from 1` does the same.
+       Equal, and equally harmless: a rule's match never contains an address. */
+    domainOf: (address) =>
+      sql`substr(lower(${address}), instr(lower(${address}), '@') + 1)`,
+
     interval: (ms: number) => sql`${Math.trunc(ms)}`,
 
     /* THE IDENTITY, and that is a fact rather than a shrug: this store keeps epoch MILLISECONDS,

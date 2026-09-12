@@ -10,7 +10,7 @@
  * presented-only rep routes past the gate through the sender sheet's `planScreeningChange`/`dispatchScreeningChange`
  * (`rule_create` + `applyRetro`), awaited so the toast reflects what the server returned.
  */
-import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
+import { useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import {
   FOLDER_OF_VIEW,
@@ -1658,7 +1658,13 @@ export function useScreenerState(
   const heldGroups = useMemo(() => heldReleaseGroups(engine.read()), [engine, version]);
   const heldTotal = useMemo(() => heldReleaseTotalOf(engine.read()), [engine, version]);
 
-  const pressHeldRelease = useCallback((ruleIds?: readonly string[]) => {
+  /* NOT `useCallback`, and the census in `render-scope-census.test.ts` is why. A memoized closure
+     declared in this hook shares ONE runtime context with everything else the invocation binds — the
+     projected reader, the queue, the suggestion overlay — so keeping one across renders pins that
+     whole frame for as long as the callback lives (the renderer that reached 1 GB an idle hour).
+     A press handler is cheap to rebuild and is handed straight to a button, so there is nothing to
+     memoize for: the identity is read once per render and never used as a dependency. */
+  const pressHeldRelease = (ruleIds?: readonly string[]): void => {
     if (releasing) return;
     setReleasing(true);
     void engine.releaseHeldMail(ruleIds)
@@ -1669,7 +1675,7 @@ export function useScreenerState(
       })
       .catch(() => { toast(t("heldReleaseFailed")); })
       .finally(() => { setReleasing(false); });
-  }, [engine, releasing, toast, t]);
+  };
 
   /* NO ROW WITHOUT MAIL TO RELEASE — and a reader never sees one either, because the server
      answers no groups for a mailbox this install does not organize. The `blocked` check is the

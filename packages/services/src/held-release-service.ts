@@ -1,5 +1,6 @@
 import { and, eq, inArray, isNotNull, isNull, or, sql } from "drizzle-orm";
 import { auditLog, folderState, mailboxes, messages, rules as rulesTbl, type Tx } from "@trafficflow/db";
+import { dialect } from "@trafficflow/db/dialect";
 import { SCREENER_FOLDER } from "./screener-service.js";
 import { ServiceError } from "./errors.js";
 import type { ServiceContext } from "./context.js";
@@ -130,37 +131,39 @@ function decidedRule(accountId: string) {
 }
 
 /**
- * DOES THIS RULE CLAIM THIS SENDER — THE PASS'S OWN EXPRESSION, CHARACTER FOR CHARACTER.
+ * DOES THIS RULE CLAIM THIS SENDER — THE PASS'S OWN QUESTION, ASKED THROUGH THE DIALECT.
  *
  * This is `rule-retro.ts#matchPredicate` and `screener-service#heldRowsForDomain` written as a
  * join, and it must stay their twin: the set this COUNTS and the set the pass MOVES are offered to
  * a person as one number, so an expression that merely agrees on ordinary input is not good enough.
- * The domain arm is `substring(… from position('@' …) + 1)` and NOT `split_part(…, '@', 2)` —
- * the two differ on an address containing two `@`, which is the case the pass settled — and not
- * `like '%@corp.com'`, which has no index and also matches `evil-corp.com`. `btrim(lower(…))` on
- * the stored match is the SQL spelling of the pass's `rule.match.trim().toLowerCase()`.
+ * The domain arm goes through {@link Dialect.domainOf} rather than being spelled here, because this
+ * module is LOADED BY THE PHONE BUNDLE — `substring … position` is a construct only the server
+ * accepts, and a store that threw on it would answer the release screen with a crash rather than a
+ * count (`dialect-census.test.ts` refuses the pg-only spelling by name).
+ *
+ * `trim(lower(…))` on the stored match is the SQL spelling of the pass's
+ * `rule.match.trim().toLowerCase()`, and both stores have both functions.
  */
-const ruleClaimsSender = sql`(
+const ruleClaimsSender = (d: ReturnType<typeof dialect>) => sql`(
      (${rulesTbl.kind} = 'sender'
-      and btrim(lower(${rulesTbl.match})) = lower(${messages.fromAddress}))
+      and trim(lower(${rulesTbl.match})) = lower(${messages.fromAddress}))
   or (${rulesTbl.kind} = 'domain'
-      and btrim(lower(${rulesTbl.match})) = substring(
-            lower(${messages.fromAddress})
-            from position('@' in lower(${messages.fromAddress})) + 1))
+      and trim(lower(${rulesTbl.match})) = ${d.domainOf(messages.fromAddress)})
 )`;
 
 /** The screen's rows: every group with mail stuck behind it, largest first. */
 export async function heldReleaseGroups(
   db: Tx, accountId: string,
 ): Promise<HeldReleaseGroup[]> {
+  const d = dialect(db);
   const rows = await db
     .select({
       ruleId: rulesTbl.id, kind: rulesTbl.kind, match: rulesTbl.match,
       destination: rulesTbl.destination,
-      count: sql<number>`count(${messages.id})::int`,
+      count: sql<number>`${d.castInt(sql`count(${messages.id})`)}`,
     })
     .from(rulesTbl)
-    .innerJoin(messages, and(eq(messages.accountId, rulesTbl.accountId), ruleClaimsSender))
+    .innerJoin(messages, and(eq(messages.accountId, rulesTbl.accountId), ruleClaimsSender(d)))
     .innerJoin(folderState, eq(folderState.messageId, messages.id))
     .where(and(decidedRule(accountId), heldAtGate(accountId)))
     .groupBy(rulesTbl.id, rulesTbl.kind, rulesTbl.match, rulesTbl.destination)
@@ -182,11 +185,14 @@ export async function heldReleaseTotal(
   db: Tx, accountId: string, groups: readonly HeldReleaseGroup[],
 ): Promise<number> {
   if (groups.length === 0) return 0;
+  const d = dialect(db);
+  // The ids are this account's OWN group keys, read out of `heldReleaseGroups` a few statements
+  // ago and bounded by `HELD_RELEASE_GROUPS_MAX` — never a caller's list.
   const ids = groups.map((g) => g.ruleId);
   const [row] = await db
-    .select({ n: sql<number>`count(distinct ${messages.id})::int` })
+    .select({ n: sql<number>`${d.castInt(sql`count(distinct ${messages.id})`)}` })
     .from(rulesTbl)
-    .innerJoin(messages, and(eq(messages.accountId, rulesTbl.accountId), ruleClaimsSender))
+    .innerJoin(messages, and(eq(messages.accountId, rulesTbl.accountId), ruleClaimsSender(d)))
     .innerJoin(folderState, eq(folderState.messageId, messages.id))
     .where(and(decidedRule(accountId), heldAtGate(accountId), inArray(rulesTbl.id, ids)));
   return Number(row?.n ?? 0);

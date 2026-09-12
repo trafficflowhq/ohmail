@@ -284,6 +284,20 @@ export interface Dialect {
    */
   hasNonBlank(column: SQL | unknown): SQL;
 
+  /**
+   * THE DOMAIN OF AN ADDRESS — everything after the FIRST `@`, lower-cased.
+   *
+   * Here because the two stores spell it with different functions and the answer has to be the
+   * SAME SET on both: a domain rule decides which of somebody's mail moves, and a phone that read
+   * the question differently from the server would file a different set of messages.
+   *
+   * The FIRST `@` is the whole point and is not incidental. `split_part(addr, '@', 2)` disagrees on
+   * an address containing two, and `like '%@corp.com'` — the spelling that needs no function at
+   * all — matches `a@b@corp.com`, which belongs to `b@corp.com`, as well as having no index. Both
+   * implementations below are the same statement about the same first separator.
+   */
+  domainOf(address: SQL | unknown): SQL;
+
   /** A duration, as the timestamp columns can be offset by it. */
   interval(ms: number): SQL;
 
