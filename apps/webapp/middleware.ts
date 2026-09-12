@@ -382,9 +382,10 @@ function withPathname(request: NextRequest, pathname: string): URL {
 /**
  * The matcher is STATICALLY ANALYSED by `next build` — it is read out of the source,
  * not evaluated — so `APP_ROUTE` cannot appear here and the paths have to be spelled
- * again as literals. A drift guard asserts they never drift from
- * `OWN_PATHS` in `next.config.mjs`, because a silent divergence would leave the rewrite
- * target publicly reachable or a legacy host serving the product.
+ * again as literals. A drift guard asserts they never drift from `EDGE_PATHS` — the routes
+ * marked `edge: true` in `routes.mjs`, the one table this app's split is declared in — because
+ * a silent divergence would leave the rewrite target publicly reachable or a legacy host
+ * serving the product.
  *
  * `/de` — the German landing — sits with the other MARKETING documents rather than beside `/`,
  * because that is what it is: a static page this origin answers, matched for the canonical-host
@@ -393,7 +394,7 @@ function withPathname(request: NextRequest, pathname: string): URL {
  *
  * NOTHING BUT PATH LITERALS BELONGS INSIDE THE ARRAY, comments included. Both drift guards read
  * this list by pulling every double-quoted string out of the bracket span, so a note containing
- * `"/"` reads as a duplicate matcher entry and fails the comparison against `OWN_PATHS` — which
+ * `"/"` reads as a duplicate matcher entry and fails the comparison against the table — which
  * is a guard failure that looks exactly like a routing mistake. Measured while adding `/de`.
  */
 export const config = {

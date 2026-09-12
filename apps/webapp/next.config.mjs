@@ -1,7 +1,14 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import createNextIntlPlugin from "next-intl/plugin";
+import { API_BASE, rewritesFor } from "./routes.mjs";
 const withNextIntl = createNextIntlPlugin();
+
+/* The route table is `routes.mjs` — one declaration read by this config AND by every
+   guard, so the split cannot be spelled twice and go stale. Re-exported here because
+   `next.config.mjs` is where the rest of the tree already imports these names from. */
+export { OWN_PATHS, OWN_ROUTES, EDGE_PATHS, API_BASE, REFRESH_PATH, FLATHUB_VERIFICATION }
+  from "./routes.mjs";
 
 /**
  * SAME-ORIGIN SESSION TOPOLOGY — RE-DERIVED FOR ONE ORIGIN.
@@ -118,9 +125,6 @@ export const API_BASE_VAR = "NEXT_PUBLIC_API_BASE";
  */
 export const PUBLIC_FLAVOR_VAR = "NEXT_PUBLIC_OHMAIL_FLAVOR";
 
-/** The path the browser sees. Must match the `API_PREFIX` `apps/api-vercel` strips. */
-export const API_BASE = "/api";
-
 /** The build identity Next inlines for the (i) panel. DERIVED — never set by hand. */
 export const BUILD_VAR = "NEXT_PUBLIC_BUILD";
 
@@ -177,143 +181,6 @@ export function buildIdentity(env) {
   return sha === "" ? "dev" : sha.slice(0, 7);
 }
 
-/**
- * The ONE path the API owns outside {@link API_BASE}, and why it has to.
- *
- * `packages/api/src/cookies.ts` scopes the refresh cookie `Path=/auth/refresh` — the API's
- * own path, because the API is the only thing that ever needed to read it. Set-Cookie
- * attributes pass through a rewrite unmodified, so on `ohmail.app` the browser stores
- * `tf_refresh` at `/auth/refresh` and will send it to exactly one URL: `/auth/refresh` on
- * `ohmail.app`. `/api/auth/refresh` is NOT that URL — the cookie is not in scope for it —
- * so routing refresh only through the `/api` prefix makes the refresh token unreachable and
- * every web session simply dies at the access TTL with no way to renew.
- *
- * Two ways to fix it: widen the cookie, or serve the path the cookie already names. The
- * standing rule freezes `cookies.ts` (a `Path=/` refresh cookie rides along on every request to the app,
- * which is precisely the exposure the narrow path exists to prevent), so the topology
- * absorbs it: this second rewrite makes `ohmail.app/auth/refresh` a real URL that lands on
- * `api.ohmail.app/auth/refresh`. The rewrite suite derives this constant FROM the
- * `Path=` attribute in `cookies.ts` and fails if the two ever drift.
- *
- * Under one origin this path is also the single reserved segment the MARKETING side may
- * never claim: `/auth/*` belongs to the API, and a marketing page called `/auth-something`
- * is fine while `app/auth/…/page.tsx` is not. See {@link OWN_PATHS}.
- */
-export const REFRESH_PATH = "/auth/refresh";
-
-/**
- * THE SPLIT, ENUMERATED. Every path this deployment answers ITSELF, and therefore every
- * path the `/api/*` proxy does not get to see.
- *
- * One origin means the marketing routes, the product routes and the API proxy share a
- * namespace, and "they happen not to collide today" is not a design. So they are listed:
- *
- *   MARKETING (route group `(marketing)`, root layout #1, landing.css)
- *     /                      the landing — and, after `middleware.ts` rewrites it for a
- *                            validated session, the mail client. One URL, two renders.
- *     /de                    the same landing in German (route group `(marketing-de)`, root
- *                            layout #3, the same landing.css). Marketing only: the session
- *                            gate runs on `/` and nowhere else, so a signed-in reader who
- *                            opens `/de` gets the German page, exactly as `/privacy` stays
- *                            `/privacy` for them.
- *     /privacy /imprint /subprocessors
- *
- *   PRODUCT (route group `(product)`, root layout #2, app.css)
- *     /mailbox               INTERNAL. The rewrite target for a signed-in `/`; middleware
- *                            308s any direct request back to `/`.
- *     /login /join /verify-email
- *                            `/verify-email?token=…` is the target of the verification
- *                            mail. It is OURS and must never be proxied: `/api/:path*` would
- *                            not match it, but leaving it off this list is how a page ends up
- *                            served by the wrong thing after the next rewrite edit.
- *     /link-desktop          the browser half of signing the desktop app in: the app opens this
- *                            address, the page mints a one-use handoff code, the person retypes
- *                            it into the app. It is the one page here whose ADDRESS is a product
- *                            surface in another program — the Rust shell's link table names it —
- *                            so it may never move without that table moving too.
- *     /demo                  the REAL mail client in demo mode, framed by the landing. It is
- *                            answered directly with its own static CSP header
- *                            (`frame-ancestors 'self'`, see {@link DEMO_CSP}) and runs NO edge
- *                            function — deliberately excluded from the middleware matcher, like
- *                            the manifest and the icons.
- *
- *   SHARED, outside both groups
- *     /manifest.webmanifest  one manifest for the origin
- *     /api/waitlist          the marketing form's own server-side hop — see below
- *     /favicon.ico /favicon.svg /icon-*.png /maskable-*.png /apple-touch-icon.png
- *     /og.png                static, from `public/`
- *
- *   PROXIED TO api.ohmail.app
- *     /api/:path*   (everything under /api that is not a file route)
- *     /auth/refresh
- *
- * **`/api/waitlist` is the one deliberate shadow, and it is a real decision.** A `rewrites()`
- * ARRAY is `afterFiles`, so the filesystem route wins over `/api/:path*` and the marketing
- * form is served by `app/api/waitlist/route.ts` rather than proxied to the API's own
- * `/waitlist`. That ordering is asserted by a proxy guard over a real socket rather than assumed.
- *
- * The REASON for the local handler changed with the merge and the old one no longer
- * applies: it used to exist because `ohmail.app` could never be an auth origin, so a
- * browser POST straight to the API answered 403 `cross_site_denied`. `ohmail.app` IS an
- * auth origin now, and that POST would succeed. What keeps the handler is the other half
- * of its job: a proxied `/api/*` request carries the browser's whole cookie jar to the
- * API, and the waitlist is a PUBLIC, unauthenticated form that has no business seeing a
- * session. The local handler forwards an email address and a tier and nothing else — no
- * cookies, no IP, no user agent.
- */
-export const OWN_PATHS = Object.freeze([
-  "/", "/privacy", "/imprint", "/subprocessors",
-  // `/de` is the GERMAN landing — the same composition `/` renders, under a second marketing
-  // root layout that pins the German `lang` attribute (`app/(marketing-de)`). A path rather than
-  // a negotiated body on `/`: one URL with two bodies needs `Vary: Accept-Language` to be
-  // cacheable at all, and Next overwrites `Vary` on an App Router response (`middleware.ts`
-  // records that, measured against a real `next start`). The legal pages
-  // have no German twin on purpose — their text is binding and deliberately outside the
-  // catalogue — so this is one path, not a mirrored tree.
-  "/de",
-  // `/resume` is INTERNAL like `/mailbox`: the rewrite target for a browser holding the
-  // `tf_resume` marker but no usable access cookie. Middleware 308s a direct request back
-  // to `/`, so it never appears in the address bar — but it is a path this deployment
-  // answers, so it belongs here or the matcher/OWN_PATHS drift test fails (correctly).
-  "/mailbox", "/resume", "/login", "/join", "/verify-email", "/link-desktop",
-  // `/setup` is the self-host FIRST-RUN ceremony (`app/(product)/setup`). Mounted on every
-  // deployment — one route tree, one bundle — and gated by the SERVER: the form renders only
-  // while `GET /hello` answers `needsSetup: true`, which the managed API never does. It takes
-  // the setup token in a form, so middleware serves it as a credential page (strict CSP,
-  // no-referrer, no-store), exactly like `/login`.
-  "/setup",
-  // `/join/invite` is the invite landing (`app/(product)/join/invite`) — the page the link
-  // from Settings → Invites opens, self-host only (the page compiles to a 404 on the
-  // managed flavor). The pairing token rides the URL FRAGMENT, which never reaches a server,
-  // a log or a Referer; middleware serves the path as a credential page because the nonce CSP
-  // is what stops injected inline script from reading `location.hash`.
-  "/join/invite",
-  // `/demo` is the real mail client in demo mode (`app/(product)/demo/page.tsx`), framed by
-  // the landing. It is a path this deployment answers, so it belongs here — but it is served
-  // with its own static CSP header (`frame-ancestors 'self'`) and runs no edge function, so
-  // the matcher/OWN_PATHS drift test excludes it from the matcher alongside the manifest.
-  "/demo",
-  "/manifest.webmanifest", "/api/waitlist",
-  // `/version` answers a short digest of the build this deployment is serving, for one reader:
-  // a tab that loaded some time ago and wants to know whether it is still the app this origin
-  // serves (`app/shell/build-watch.ts`). Not under `/api`, so it shadows nothing — it is a fact
-  // about the WEB deployment rather than about the API. Excluded from the middleware matcher
-  // alongside the manifest: it is machine-read, carries no session and needs no canonical-host
-  // redirect, so an edge invocation in front of it would buy nothing.
-  "/version",
-  // `/flathub-verification` serves the token Flathub reads to confirm this domain owns the
-  // app id (`app/(marketing)/flathub-verification`). The well-known path Flathub actually
-  // fetches is rewritten onto it below, so the token lives in one place; with no token
-  // configured the route has no body, which is the 404 the path gave before it existed.
-  "/flathub-verification",
-  // The catch-all behind the branded 404 (`app/(marketing)/[...missing]/page.tsx`): every
-  // path no route above claims, answered with `notFound()` and a real 404 status. In this
-  // list because this deployment does answer those paths; excluded from the middleware
-  // matcher (see the drift test) because an edge invocation in front of every scanner's
-  // garbage path buys nothing — and a catch-all is not a literal the statically-read
-  // matcher could carry anyway.
-  "/[...missing]",
-]);
 
 /**
  * The only hosts this app is allowed to proxy live cookies to.
@@ -646,15 +513,6 @@ assertApiBaseNotOverridden(process.env[API_BASE_VAR], origin, selfhost);
 assertPublicFlavorNotOverridden(process.env[PUBLIC_FLAVOR_VAR], selfhost);
 
 /** @type {import('next').NextConfig} */
-/**
- * Flathub reads `/.well-known/org.flathub.VerifiedApps.txt` on this domain to prove the app id
- * `app.ohmail.desktop` is ours. A Next route segment cannot be named `.well-known`, so the path is
- * rewritten onto a route that answers it — and 404s while no token is configured.
- */
-export const FLATHUB_VERIFICATION = [
-  { source: "/.well-known/org.flathub.VerifiedApps.txt", destination: "/flathub-verification" },
-];
-
 const nextConfig = {
   // @trafficflow/core is here for its dependency-free SOURCE subpaths and nothing else — today
   // `@trafficflow/core/ics` (read directly by this app), `@trafficflow/core/reply-subject`
@@ -742,14 +600,10 @@ const nextConfig = {
     // On a self-host build `origin` is null BY CONSTRUCTION (the flavor refuses the variable),
     // so this same branch is the flavor's `rewrites() === []` contract: the reverse proxy in
     // front of this container owns the split. Asserted in test/selfhost-flavor.test.ts.
-    if (!origin) return [];
-    return [
-      ...FLATHUB_VERIFICATION,
-      { source: `${API_BASE}/:path*`, destination: `${origin}/:path*` },
-      // The refresh cookie's own Path — see {@link REFRESH_PATH}. Without this the token
-      // exists in the jar and is never sent anywhere, and web sessions expire permanently.
-      { source: REFRESH_PATH, destination: `${origin}${REFRESH_PATH}` },
-    ];
+    //
+    // Every entry comes from `routes.mjs` and nothing is added here: a rewrite spelled in this
+    // file would be the fourth enumeration that went stale when the Flathub route landed.
+    return rewritesFor(origin);
   },
 
   webpack: (config) => {
