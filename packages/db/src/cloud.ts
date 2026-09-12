@@ -133,6 +133,13 @@ export {
   type ApiFaultInput, type ApiFaultArm, type ApiFaultRouteCount,
 } from "./api-faults.js";
 
+/* The passkey ceremony table's retention (cloud 0034) — the bounded, opportunistic prune the
+ * three ceremony START doors call. CLOUD-ONLY, like the table itself. */
+export {
+  pruneWebauthnChallenges,
+  WEBAUTHN_CHALLENGE_RETENTION_MS, WEBAUTHN_CHALLENGE_PRUNE_LIMIT,
+} from "./webauthn-challenges.js";
+
 /**
  * The PUSH arm — the pager's second vendor. Same seam, same `PostJson`, a different company,
  * a different credential and a different delivery channel from the mail arm above; the whole

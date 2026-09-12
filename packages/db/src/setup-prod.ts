@@ -6,7 +6,9 @@ import { onNotice } from "./notices.js";
 import { runMigrations, JOURNALS } from "./migrate.js";
 import { ROLE_DEFAULT_TIMEOUTS } from "./client.js";
 import { ensureSearchExtensions, ensureWithheldProvenanceIndex } from "./search-setup.js";
-import { ensureHotPathIndexes, HOT_PATH_INDEXES } from "./hot-path-indexes.js";
+import {
+  ensureHotPathIndexes, HOT_PATH_INDEXES, DEFERRED_HOT_PATH_INDEXES,
+} from "./hot-path-indexes.js";
 import { transactionPoolerReason, sessionUrlRejection } from "./session-url.js";
 import {
   applySupabaseLockdown, closeDataApiEndpoint, dataApiBindingProblems, dataApiBindingUnprovable,
@@ -77,6 +79,8 @@ export interface ProdSetupReport {
   trigramIndexes: string[];
   /** Which of {@link HOT_PATH_INDEXES} exist, sorted — verified fail-closed below. */
   hotPathIndexes: string[];
+  /** Deferred indexes whose table has crossed its ceiling and which are still missing. */
+  deferredIndexesOverCeiling: string[];
   /** Index whose leading columns are `(account_id, seq)` — the `change_log` PK backs it. */
   changeLogCompositeIndex: string | null;
   /** A real fuzzy computation on the live server: a typo must match, noise must not. */
@@ -601,6 +605,7 @@ export async function setupProdDatabase(
     // The two `ensureHotPathIndexes` builds, read back by name. `indisvalid` as well as
     // existence: a failed CONCURRENTLY build leaves an index `pg_indexes` lists quite happily
     // and the planner refuses to use, which is the one state that would otherwise report OK.
+    const wantedIdx = [...HOT_PATH_INDEXES, ...DEFERRED_HOT_PATH_INDEXES.map((d) => d.name)];
     const hotIdx = await rows<{ indexname: string }>(
       db,
       sql`select c.relname as indexname
@@ -608,8 +613,21 @@ export async function setupProdDatabase(
             join pg_class c on c.oid = x.indexrelid
             join pg_namespace n on n.oid = c.relnamespace
            where n.nspname = 'public' and x.indisvalid
-             and c.relname in ('audit_log_account_action_idx', 'messages_account_date_order_idx')`,
+             and c.relname = any(${sql.param(wantedIdx)})`,
     );
+    // A DEFERRED index is absent on purpose while its table is small, so what is verified is its
+    // REASON: present, or the table still under the ceiling. Without this the deferral is a
+    // condition nobody can watch stop being true.
+    const deferredOverCeiling: string[] = [];
+    for (const d of DEFERRED_HOT_PATH_INDEXES) {
+      if (hotIdx.some((r) => r.indexname === d.name)) continue;
+      const over = await rows<{ n: number }>(
+        db,
+        sql`select count(*)::int as n
+              from (select 1 from ${sql.raw(`public."${d.table}"`)} limit ${d.minRows}) s`,
+      );
+      if (Number(over[0]?.n ?? 0) >= d.minRows) deferredOverCeiling.push(d.name);
+    }
     // The composite the sync path depends on: an index on change_log whose FIRST TWO
     // key columns are (account_id, seq), in that order. Today it is the primary key's
     // backing index (`change_log_account_id_seq_pk`, migration 0002) — this asserts the
@@ -660,6 +678,7 @@ export async function setupProdDatabase(
       pgTrgmVersion: ext[0]?.extversion ?? null,
       trigramIndexes: idx.map((r) => r.indexname).sort(),
       hotPathIndexes: hotIdx.map((r) => r.indexname).sort(),
+      deferredIndexesOverCeiling: deferredOverCeiling.sort(),
       changeLogCompositeIndex: composite[0]?.indexname ?? null,
       fuzzy,
       supabaseLockdown,
@@ -684,6 +703,11 @@ export async function setupProdDatabase(
       if (!report.hotPathIndexes.includes(want)) {
         problems.push(`hot-path index missing or INVALID: ${want}`);
       }
+    }
+    for (const want of report.deferredIndexesOverCeiling) {
+      problems.push(
+        `deferred index missing and its table is no longer small — build it: ${want}`,
+      );
     }
     if (report.pgTrgm) {
       const f = report.fuzzy;

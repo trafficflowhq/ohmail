@@ -765,13 +765,28 @@ interface FetchBodiesCapableAdapter {
 export const BODIES_IDS_MAX = 20;
 
 /**
+ * WHAT PAGE 1 CARRIES BESIDES ITS OWN MESSAGES — the account-wide rows small enough to have no page of their own.
+ *
+ * This used to be a sentence, and the sentence went stale: it read "all live state" for a release after the server
+ * had started paging children with their parents. `test/snapshot-page-1-definition.test.ts` derives the same set from
+ * the producer and refuses a disagreement, so the definition cannot drift again without a red.
+ *
+ * `approval` is in the set and is NOT page-1-only: an approval whose message the window excludes has no page to ride
+ * with, so it rides here, while every other approval rides its parent's page. `draft` is NOT in the set: drafts are
+ * paged newest-first like messages, so page 1 carries the first page of them rather than all of them.
+ */
+export const SNAPSHOT_PAGE_1_STATE_KINDS = [
+  "rule", "approval", "tag", "folder", "settings",
+] as const;
+
+/**
  * `GET /sync/snapshot` as the engine calls it — see {@link SyncSnapshotPage} for the protocol. `cursor` is the
  * server's own opaque paging token from the previous page, absent on the first. `limit` is a hint the engine does not
  * currently send. PAGE 1 IS NOT "ALL LIVE STATE": a message's children ride with the page carrying their parent and
  * DRAFTS ride the pages newest-first, so no page holds the whole of anything and a client-imposed limit would cut a
- * message away from its own children. Page 1 is the newest page of messages, their state, the newest page of drafts,
- * and the rows too small to have a page — rules, tags, settings. The drain follows `nextCursor` and nothing else: it
- * stays non-null when drafts outlive the window and its tail, and stopping early leaves them below the cursor adopted.
+ * message away from its own children. Page 1 is the newest page of messages, the state belonging to them, and
+ * {@link SNAPSHOT_PAGE_1_STATE_KINDS}. The drain follows `nextCursor` and nothing else: it stays non-null when drafts
+ * outlive the window and its tail, and stopping early leaves them below the cursor adopted.
  */
 export type SnapshotFn = (params: { cursor?: string; limit?: number }) => Promise<SyncSnapshotPage>;
 

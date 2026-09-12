@@ -1,35 +1,27 @@
-import { sql, type SQL } from "drizzle-orm";
-import { MIGRATION_LOCK_KEY, MIGRATION_LOCK_TIMEOUT_MS } from "./migrate.js";
+import { sql } from "drizzle-orm";
+import {
+  ensureConcurrentIndexes, type ConcurrentIndexSpec, type SqlExecutor,
+} from "./concurrent-index.js";
 
 /**
- * Two hot-path indexes, built CONCURRENTLY outside the migrator. They cannot be journal
- * statements: the shared migrator wraps the journal pass in ONE transaction, and `CREATE INDEX
- * CONCURRENTLY` refuses inside a transaction block (25001, measured through the real migrator);
- * it runs AFTER the migrator on the setup command's autocommit session. Both reads scan today,
- * measured with `EXPLAIN`: the profile-import "already resolved?" probe on `audit_log` (runs on
- * every candidate, and an audit log only grows) and the storage-eviction victim read on
- * `messages` (a Sort — no index offers `coalesce(date, created_at), id` order). Three tiny tables
- * named by the same measurement get NO index: the planner would decline to use one.
+ * The hot-path indexes, built CONCURRENTLY outside the migrator — `concurrent-index.ts` owns the
+ * how, this file owns the WHICH. Two are built at any size: the profile-import "already
+ * resolved?" probe on `audit_log` (runs on every candidate, and an audit log only grows) and the
+ * storage-eviction victim read on `messages` (a Sort — no index offers `coalesce(date,
+ * created_at), id` order). Both scan today, measured with `EXPLAIN`.
  */
-interface SqlExecutor {
-  execute(query: SQL): Promise<unknown>;
-}
 
-interface IndexSpec {
-  /** Index name, unqualified; created and probed pinned to `public.<table>`. */
-  readonly name: string;
-  readonly table: string;
-  /** The `create index concurrently if not exists …` body, without the leading verb. */
-  readonly ddl: SQL;
-}
+/**
+ * THE DEFERRAL RULE, AS A NUMBER: an index lands only where the planner would actually use one,
+ * and it will not use one on a table this small. Measured on this tip against the stuck-send
+ * read's own predicate: the planner DECLINED the partial index at 50, 100 and 200 rows and chose
+ * an Index Only Scan from 400 up, so a thousand is past the crossover with room and below any
+ * size that would surprise somebody. Deferral used to be a sentence in a commit body, which is
+ * why the two indexes it deferred were still deferred when the tables had moved on.
+ */
+export const DEFERRED_INDEX_MIN_ROWS = 1000;
 
-/** The indexes this module owns — exported so the setup command can verify them by name. */
-export const HOT_PATH_INDEXES = [
-  "audit_log_account_action_idx",
-  "messages_account_date_order_idx",
-] as const;
-
-const SPECS: readonly IndexSpec[] = [
+export const HOT_PATH_INDEX_SPECS: readonly ConcurrentIndexSpec[] = [
   {
     name: "audit_log_account_action_idx",
     table: "audit_log",
@@ -45,68 +37,40 @@ const SPECS: readonly IndexSpec[] = [
     ddl: sql`create index concurrently if not exists "messages_account_date_order_idx"
       on public.messages using btree ("account_id",(coalesce("date","created_at")),"id")`,
   },
+  {
+    // THE DEFERRED ONE, and the deferral is now a condition rather than a note: it builds itself
+    // the first time setup runs against a deployment whose table has crossed
+    // {@link DEFERRED_INDEX_MIN_ROWS}. PARTIAL on the alert's own predicate — `status = 'pending'`
+    // holds only in-flight sends, so the index stays small however large the table grows.
+    // Its twin from the same measurement, `billing_events(status)`, is gone: cloud 0032 dropped
+    // the table with the billing plane.
+    name: "outbound_sends_pending_created_idx",
+    table: "outbound_sends",
+    minRows: DEFERRED_INDEX_MIN_ROWS,
+    ddl: sql`create index concurrently if not exists "outbound_sends_pending_created_idx"
+      on public.outbound_sends using btree ("created_at") where "status" = 'pending'`,
+  },
 ];
 
-const rowsOf = <T,>(r: unknown): T[] =>
-  Array.isArray(r) ? (r as T[]) : ((r as { rows?: T[] }).rows ?? []);
-
 /**
- * Idempotent, and safe to run against a database at any migration position.
- *
- * Serialized under the MIGRATION advisory lock, for the reason the provenance prebuild states:
- * `CREATE INDEX CONCURRENTLY` publishes an `indisvalid = false` row WHILE BUILDING, which from a
- * second caller's seat is indistinguishable from a failed leftover — and "cleaning up" that would
- * race the first caller's live build. A failed concurrent build really does leave an invalid index
- * that `IF NOT EXISTS` then treats as present, permanently, so an invalid leftover is dropped
- * concurrently and rebuilt.
+ * The names, DERIVED from the specs so the two lists cannot drift — the setup command verifies
+ * these, and a name added to the spec table but not to a verify list is the shape that made an
+ * unverified index possible. Unconditional ones are verified fail-closed; a DEFERRED one is
+ * verified only against its own reason (present, or its table still under the ceiling).
  */
+export const HOT_PATH_INDEXES: readonly string[] =
+  HOT_PATH_INDEX_SPECS.filter((s) => s.minRows === undefined).map((s) => s.name);
+
+export const DEFERRED_HOT_PATH_INDEXES: readonly { name: string; table: string; minRows: number }[] =
+  HOT_PATH_INDEX_SPECS.filter((s) => s.minRows !== undefined)
+    .map((s) => ({ name: s.name, table: s.table, minRows: s.minRows! }));
+
+/** Idempotent, and safe to run against a database at any migration position. */
 export async function ensureHotPathIndexes(
   db: SqlExecutor, opts: { log?: (msg: string) => void } = {},
 ): Promise<void> {
-  if (!Number.isInteger(MIGRATION_LOCK_TIMEOUT_MS) || MIGRATION_LOCK_TIMEOUT_MS < 0) {
-    throw new Error("MIGRATION_LOCK_TIMEOUT_MS must be a non-negative integer");
-  }
-  const key = MIGRATION_LOCK_KEY as unknown as number;
-  await db.execute(sql.raw(`set lock_timeout = ${MIGRATION_LOCK_TIMEOUT_MS}`));
-  try {
-    await db.execute(sql`select pg_advisory_lock(${key})`);
-  } catch (err) {
-    throw new Error(
-      `could not take the migration advisory lock (${MIGRATION_LOCK_KEY}) within ` +
-        `${MIGRATION_LOCK_TIMEOUT_MS}ms for the hot-path index build — another setup or migration ` +
-        `is running against this database. Wait for it and re-run; this step is idempotent. ` +
-        `Cause: ${err instanceof Error ? err.message : String(err)}`,
-    );
-  }
-  // Reset before any DDL: a concurrent build must not be abortable by the acquisition timeout.
-  await db.execute(sql.raw("set lock_timeout = 0"));
-  try {
-    for (const spec of SPECS) {
-      const present = rowsOf<{ present: boolean }>(await db.execute(sql`
-        select count(*) > 0 as present from information_schema.tables
-         where table_schema = 'public' and table_name = ${spec.table}`));
-      if (present[0]?.present !== true) {
-        // A database this early has no such table, so there is nothing to index and nothing to
-        // repair. Named rather than silent: the next setup run, after the migrator, builds it.
-        opts.log?.(`hot-path index ${spec.name}: ${spec.table} does not exist yet — skipped`);
-        continue;
-      }
-      const state = rowsOf<{ valid: boolean }>(await db.execute(sql`
-        select i.indisvalid as valid
-          from pg_index i join pg_class c on c.oid = i.indexrelid
-         where i.indrelid = ${sql.raw(`'public.${spec.table}'::regclass`)}
-           and c.relname = ${spec.name}`));
-      const ix = state[0];
-      if (ix !== undefined && ix.valid !== true) {
-        opts.log?.(`hot-path index ${spec.name}: an INVALID leftover from a failed concurrent build — dropped and rebuilt`);
-        await db.execute(sql.raw(`drop index concurrently if exists public."${spec.name}"`));
-      } else if (ix !== undefined) {
-        continue;   // present and valid — the ordinary re-run
-      }
-      opts.log?.(`hot-path index ${spec.name}: building concurrently on ${spec.table}`);
-      await db.execute(spec.ddl);
-    }
-  } finally {
-    await db.execute(sql`select pg_advisory_unlock(${key})`);
-  }
+  await ensureConcurrentIndexes(db, HOT_PATH_INDEX_SPECS, {
+    label: "the hot-path index build",
+    ...(opts.log ? { log: opts.log } : {}),
+  });
 }

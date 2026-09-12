@@ -16,6 +16,7 @@ import {
   invites,
   waitlist,
   pushSubscriptions,
+  pruneWebauthnChallenges,
 } from "@trafficflow/db/cloud";
 import type { ServiceContext } from "../context.js";
 import { OAuthCodeReplayed, ServiceError } from "../errors.js";
@@ -1111,10 +1112,8 @@ export class AuthService extends SessionLifecycle {
     const user = await this.loadUser(db, userId);
     const existing = await this.webauthnCreds(db, userId);
     const options = await buildRegistrationOptions(this.cfg, user, existing);
-    await db.insert(webauthnChallenges).values({
-      userId, challenge: options.challenge, type: "registration",
-      rpId: this.cfg.rpID, origin,
-      expiresAt: new Date(ctx.now().getTime() + this.cfg.webauthnChallengeTtlMs),
+    await this.openChallenge(db, ctx, {
+      userId, challenge: options.challenge, type: "registration", origin,
     });
     return { options };
   }
@@ -1172,10 +1171,8 @@ export class AuthService extends SessionLifecycle {
     const lt = await this.peekLoginToken(db, ctx, b.loginToken);
     const allow = await this.webauthnCreds(db, lt.userId);
     const options = await buildAuthenticationOptions(this.cfg, allow);
-    await db.insert(webauthnChallenges).values({
-      loginTokenId: lt.id, challenge: options.challenge, type: "authentication",
-      rpId: this.cfg.rpID, origin,
-      expiresAt: new Date(ctx.now().getTime() + this.cfg.webauthnChallengeTtlMs),
+    await this.openChallenge(db, ctx, {
+      loginTokenId: lt.id, challenge: options.challenge, type: "authentication", origin,
     });
     return { options };
   }
@@ -1452,10 +1449,8 @@ export class AuthService extends SessionLifecycle {
       throw new ServiceError("unprocessable", 422, "no passkey enrolled");
     }
     const options = await buildAuthenticationOptions(this.cfg, allow);
-    await db.insert(webauthnChallenges).values({
-      userId, challenge: options.challenge, type: "authentication",
-      rpId: this.cfg.rpID, origin,
-      expiresAt: new Date(ctx.now().getTime() + this.cfg.webauthnChallengeTtlMs),
+    await this.openChallenge(db, ctx, {
+      userId, challenge: options.challenge, type: "authentication", origin,
     });
     return { options };
   }
@@ -2114,6 +2109,36 @@ export class AuthService extends SessionLifecycle {
     if (claimed.length === 0) {
       throw new ServiceError("unauthorized", 401, "login session expired");
     }
+  }
+
+  /**
+   * OPEN a ceremony — the one door all three `…Options` methods write their challenge through,
+   * and the only place the table is pruned.
+   *
+   * One helper rather than three inserts because the prune has to sit on EVERY start: the table
+   * grows by exactly one row per ceremony opened and by nothing else, so pruning here makes the
+   * removal rate proportional to the growth rate, which is what bounds the table (see
+   * {@link pruneWebauthnChallenges} for the per-call bound that lets the first upgraded
+   * deployment drain a backlog instead of paying for it on one sign-in).
+   *
+   * The prune's failure is SWALLOWED, and this is the one place that is right: the row it
+   * would have removed is already unusable, the ceremony row this call just wrote is committed,
+   * and a table that kept one expired row is not a reason to refuse somebody's passkey. It is
+   * not a silent fallback for a missing capability — the insert on the line above proves the
+   * table is there — and the next ceremony start prunes again with the same bound.
+   */
+  private async openChallenge(
+    db: Tx, ctx: ServiceContext,
+    v: { userId?: string; loginTokenId?: string; challenge: string; type: string; origin: string },
+  ): Promise<void> {
+    await db.insert(webauthnChallenges).values({
+      ...(v.userId !== undefined ? { userId: v.userId } : {}),
+      ...(v.loginTokenId !== undefined ? { loginTokenId: v.loginTokenId } : {}),
+      challenge: v.challenge, type: v.type,
+      rpId: this.cfg.rpID, origin: v.origin,
+      expiresAt: new Date(ctx.now().getTime() + this.cfg.webauthnChallengeTtlMs),
+    });
+    await pruneWebauthnChallenges(db, { now: ctx.now() }).catch(() => 0);
   }
 
   private async consumeChallenge(

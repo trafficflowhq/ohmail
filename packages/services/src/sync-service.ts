@@ -1,6 +1,6 @@
 import { and, asc, desc, eq, exists, gt, inArray, isNull, lt, or, sql } from "drizzle-orm";
 import {
-  approvals, changeLog, drafts, messages, messageTags, seqBounds,
+  approvals, changeLog, drafts, messages, messageTags, routingDecisions, seqBounds,
   rules, tags, type EntityType,
 } from "@trafficflow/db";
 import type { Db, ServiceContext } from "./context.js";
@@ -594,7 +594,9 @@ export class SyncService {
    * page of messages. EVERY page carries the THREADS its own messages name, their child rows, and
    * the next {@link SNAPSHOT_DRAFT_PAGE} drafts. Three phases: the message window
    * (`SNAPSHOT_WINDOW` — two floors and a ceiling), then a TAIL restricted to messages owning a
-   * `message_tags` row, then drafts outliving both. Every row is `op:"create"` at `seq = asOfSeq`.
+   * `message_tags` row, a pending approval or a pending routing decision — below the window those
+   * are otherwise unreachable — then drafts outliving both. Every row is `op:"create"` at
+   * `seq = asOfSeq`.
    */
   async getSnapshot(ctx: ServiceContext, opts: GetSnapshotOptions = {}): Promise<SnapshotResponse> {
     const { db, accountId } = ctx;
@@ -727,22 +729,48 @@ export class SyncService {
           isNull(messages.date),
         );
 
-    // ── THE LABELED-MESSAGES TAIL PREDICATE (only in the tail phase) ─────────────────────────
+    // ── THE TAIL PREDICATE: WHAT A MESSAGE BELOW THE WINDOW MUST OWN TO BE CARRIED ───────────
     //
-    // Once the window is satisfied the walk switches to the tail (see the stop logic below): the
-    // SAME keyset walk, resumed from where the window stopped, but restricted to messages that own
-    // a `message_tags` row. Its cost — pages and rows — is bounded by how much mail carries a tag,
-    // never by the size of the mailbox, because an unlabeled row below the window fails this EXISTS
-    // and is never read. `message_tags.account_id` is denormalized, so it is filtered here too,
-    // belt-and-braces with the outer `messages.account_id`: a bug that ever let the two disagree
-    // must fail closed rather than leak one account's tagged mail into another's bootstrap.
+    // Once the window is satisfied the walk switches to the tail: the SAME keyset walk, resumed
+    // where the window stopped, restricted to messages that own something the client cannot do
+    // without. Its cost — pages and rows — is bounded by how much mail owns one of these, never by
+    // the size of the mailbox: a message owning none fails every EXISTS and is never read.
+    //
+    // A TAG, because a tag rail over mail the client does not hold shows an empty rail.
+    //
+    // A PENDING APPROVAL or a PENDING ROUTING DECISION, because those are ACTIONS somebody is
+    // being asked to take. Keying children to their parent's page closed a real hole — the client
+    // used to be handed actionable state for messages it never received — but it opened this one:
+    // a pending row whose message the window excludes was then delivered to nobody at all, and the
+    // cursor moved past its change for ever. Settled rows are not carried: an approved or rejected
+    // approval below the window is history, and history is what the window is for.
+    //
+    // Every arm filters `account_id` as well as the message id, belt-and-braces with the outer
+    // `messages.account_id`: a bug that ever let the two disagree must fail closed rather than
+    // leak one account's mail into another's bootstrap.
     const inTail = cursor?.phase === "tail";
-    const labeled = inTail
-      ? exists(
-        db.select({ x: sql`1` }).from(messageTags).where(and(
-          eq(messageTags.messageId, messages.id),
-          eq(messageTags.accountId, accountId),
-        )),
+    const reachableTail = inTail
+      ? or(
+        exists(
+          db.select({ x: sql`1` }).from(messageTags).where(and(
+            eq(messageTags.messageId, messages.id),
+            eq(messageTags.accountId, accountId),
+          )),
+        ),
+        exists(
+          db.select({ x: sql`1` }).from(approvals).where(and(
+            eq(approvals.messageId, messages.id),
+            eq(approvals.accountId, accountId),
+            eq(approvals.status, "pending"),
+          )),
+        ),
+        exists(
+          db.select({ x: sql`1` }).from(routingDecisions).where(and(
+            eq(routingDecisions.messageId, messages.id),
+            eq(routingDecisions.accountId, accountId),
+            eq(routingDecisions.status, "pending_approval"),
+          )),
+        ),
       )
       : undefined;
 
@@ -754,7 +782,7 @@ export class SyncService {
       // a deleted entity already tombstones.
       isNull(messages.deletedAt),
       ...(keyset ? [keyset] : []),
-      ...(labeled ? [labeled] : []),
+      ...(reachableTail ? [reachableTail] : []),
     );
 
     const rows = await db
@@ -811,13 +839,14 @@ export class SyncService {
     // ── WHERE THE NEXT PAGE COMES FROM: window → tail → drafts → done ────────────────────────
     //
     // The window is the recency floor or the volume floor, whichever is not yet met, under the row
-    // CEILING. When it stops the walk opens the LABELED TAIL rather than ending: tagged mail below
-    // the window is dropped from every windowed mirror and no delta re-delivers it, its
-    // `message_tags` change sitting below the client's post-bootstrap cursor. The tail ends on a
-    // short page; a walk that ran off the end of the mailbox has no tail at all.
+    // CEILING. When it stops the walk opens the TAIL rather than ending: a message below the window
+    // owning a tag, a pending approval or a pending routing decision is dropped from every windowed
+    // mirror and no delta re-delivers it, its own change sitting below the client's post-bootstrap
+    // cursor. The tail resumes the same keyset under `reachableTail` and ends on a short page; a
+    // walk that ran off the end of the mailbox has no tail at all.
     // THE CEILING STOPS THE WINDOW, NEVER THE TAIL — counted newest-first like the floor, so it
-    // ends the walk above it and tagged mail below leaves by the same tail. Read at a PAGE
-    // boundary, so a snapshot serves at most `maxRows` plus the page in flight.
+    // ends the walk above it and everything the tail reaches below leaves by the same tail. Read at
+    // a PAGE boundary, so a snapshot serves at most `maxRows` plus the page in flight.
     let nextCursor: string | null;
     if (inTail) {
       nextCursor = fullPage ? keysetOf("tail") : null;

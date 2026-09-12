@@ -1,0 +1,23 @@
+-- THE PASSKEY CEREMONY TABLE STOPS BEING PERMANENT.
+--
+-- `webauthn_challenges` (cloud 0000) holds single-use, short-lived ceremony state: a challenge a
+-- passkey registration or assertion is signed over, bound to an origin and an RP-ID, valid for
+-- `webauthnChallengeTtlMs`. Nothing ever deleted one. The row is unreadable the moment it expires
+-- (`consumeChallenge` refuses on `expires_at <= now`), so every row past its expiry is dead weight
+-- that only grows — and it grows for ANYONE who can open a ceremony, which on the sign-in surface
+-- is anyone holding a login token. There was also no index of any kind beyond the primary key, so
+-- the consume read's filter ran as a sequential scan over all of that history.
+--
+-- Both halves are fixed by the same index. `webauthn_challenges_expires_idx` is the key the
+-- opportunistic prune walks (`expires_at < cutoff ORDER BY expires_at LIMIT n`), and the prune is
+-- what keeps the table at the size that makes the consume read's scan small. See
+-- `pruneWebauthnChallenges` for the retention window and the per-call bound.
+--
+-- A plain `CREATE INDEX` and not `CONCURRENTLY`: this is a journal statement, the migrator wraps
+-- the pass in one transaction, and the table it locks is the one nobody can be signing in through
+-- during a migration. The largest this table can be is one deployment's whole passkey history,
+-- which the same migration then starts draining.
+--
+-- ROLLBACK is `DROP INDEX webauthn_challenges_expires_idx`. No column, constraint or row changes.
+
+CREATE INDEX IF NOT EXISTS "webauthn_challenges_expires_idx" ON "webauthn_challenges" USING btree ("expires_at");
