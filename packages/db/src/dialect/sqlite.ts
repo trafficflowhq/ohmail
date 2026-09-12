@@ -92,6 +92,7 @@ export function sqliteDialect(): Dialect {
 
     now: () => NOW_MS,
     ts: (at: Date) => sql`${at.getTime()}`,
+    tsOrNull: (at: Date | null) => (at === null ? sql`null` : sql`${at.getTime()}`),
 
     castInt: (v) => sql`CAST(${v} AS INTEGER)`,
     castText: (v) => sql`CAST(${v} AS TEXT)`,

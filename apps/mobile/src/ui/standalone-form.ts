@@ -10,6 +10,10 @@
  */
 import { portMeansImplicitTls, serverGuessFor } from "@ohmail/client-engine";
 import { Copy } from "../copy";
+/* TYPE ONLY, so the session's module state does not travel into every consumer of this module.
+   The mapping from the instruction to a chip is a DECISION and belongs here rather than in a
+   component — the header's rule. */
+import type { OrganizeInstruction } from "../engine/organizer-session";
 import type { Refusal, RefusalKey } from "../refusal";
 
 /** The two steps. The limitations screen comes first and cannot be skipped. */
@@ -200,8 +204,8 @@ export type PhoneClaim =
   | { k: "unknown" }
   /** This install holds the claim. `stopping` = a hand-back is asked for and not yet confirmed. */
   | { k: "ours"; stopping: boolean }
-  /** Read, and no install holds it. */
-  | { k: "free" }
+  /** Read, and no install holds it. `starting` = a start is asked for and not yet confirmed. */
+  | { k: "free"; starting: boolean }
   /** Somebody else holds it, and named itself. */
   | { k: "theirs"; name: string; kind: HolderKind }
   /** Somebody else holds it and named nothing — an install from before the holder columns. */
@@ -215,7 +219,7 @@ export function claimChipLabel(claim: PhoneClaim): string | null {
     case "ours":
       return claim.stopping ? Copy.phoneStateStopping : Copy.phoneStateOrganizing;
     case "free":
-      return Copy.phoneStateNotOrganized;
+      return claim.starting ? Copy.phoneStateStarting : Copy.phoneStateNotOrganized;
     case "theirs":
       return Copy.phoneStateReader(claim.name);
     case "theirsUnnamed":
@@ -243,7 +247,10 @@ export function mayStopHere(claim: PhoneClaim): boolean {
  * and say it had.
  */
 export function mayStartHere(claim: PhoneClaim): boolean {
-  return claim.k === "free";
+  /* …and not while one is already being carried out. `stopping` has the same rule on the verb
+     above and for the same reason: a second press would queue a second instruction for a thing
+     that is already happening. */
+  return claim.k === "free" && !claim.starting;
 }
 
 /**
@@ -278,7 +285,9 @@ export function claimFrom(
 ): PhoneClaim {
   if (!read.known) return { k: "unknown" };
   const holder = read.organizer;
-  if (holder === null) return { k: "free" };
+  /* NEVER `starting` ON A PAIRED ROW: this app holds no engine to ask, so there is no start verb
+     here and no transition to be in. */
+  if (holder === null) return { k: "free", starting: false };
   if (holder.name === ourName) {
     /* A stop this app asked for is the newest word until the row carries it; once the row says
        `stopped`, the row is. Either way the chip must not read "Organizing" — the desktop's
@@ -310,12 +319,20 @@ export function claimHere(
     organizing: boolean | null;
     heldBy: { name: string; standDownReason: string } | null;
   },
-  stopAsked: boolean = false,
+  /**
+   * THE SESSION'S ONE STANDING INSTRUCTION, and it may only ever MODIFY the engine's answer.
+   *
+   * This took a `stopAsked` boolean the panel held as its own screen state, which nothing ever
+   * spent: the chip read `Stopping` for three minutes over a phone that was filing mail, and
+   * settled only on leaving Settings. The instruction is settled from the engine's own word
+   * (`organizerInstruction`), so a transition ends when the engine says it has.
+   */
+  instruction: OrganizeInstruction = "idle",
 ): PhoneClaim {
   if (here.organizing === null) return { k: "unknown" };
-  if (here.organizing) return { k: "ours", stopping: stopAsked };
+  if (here.organizing) return { k: "ours", stopping: instruction === "stopping" };
   const held = here.heldBy;
-  if (held === null) return { k: "free" };
+  if (held === null) return { k: "free", starting: instruction === "starting" };
   const kind = holderKind(held.standDownReason);
   return held.name.length > 0
     ? { k: "theirs", name: held.name, kind }
@@ -333,8 +350,16 @@ export function claimHere(
  * the desktop's words (`mailboxes.readerReadsOnly`). No arm offers a takeover — there is no such
  * press in this panel, and promising one would be a claim the screen makes false.
  */
-export function claimNoteLine(claim: PhoneClaim, os: string): string {
+export function claimNoteLine(claim: PhoneClaim, os: string): string | null {
   switch (claim.k) {
+    case "free":
+      /* AND NOTHING AT ALL WHERE NOTHING ORGANIZES IT. The platform rule tells somebody to dismiss
+         a notification to stop — under the words "Nothing organizes this mailbox", beside a verb
+         that says "Start organizing here". It is an instruction about a notification that is not
+         there, so the free state gets no note; `unknown` keeps its silence for the same reason. */
+      return null;
+    case "unknown":
+      return null;
     case "theirs":
       return claim.kind === "mobile"
         ? Copy.phoneStateReaderWhyPhone(claim.name)

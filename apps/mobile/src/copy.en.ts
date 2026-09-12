@@ -210,6 +210,10 @@ const TABLE = {
   phoneThisPhone: "This phone",
   phoneStateOrganizing: "Organizing",
   phoneStateStopping: "Stopping",
+  /* The sixth, and the only one with no desktop twin: a computer has no start to wait through —
+     its press lands on an idle mailbox. A phone's can be queued behind a stop it changed its mind
+     about, and the chip has to say which of the two is happening. */
+  phoneStateStarting: "Starting",
   phoneStateNotOrganized: "Nothing organizes this mailbox",
   phoneStateReader: (name: string) => `Organized by ${name}`,
   phoneStateReaderLegacy: "Organized by another install",

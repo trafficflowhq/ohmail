@@ -123,6 +123,8 @@ export const DE: Deck = {
   phoneThisPhone: "Dieses Telefon",
   phoneStateOrganizing: "Organisiert",
   phoneStateStopping: "Wird beendet",
+  /* Ohne Desktop-Zwilling: nur auf dem Telefon kann ein Start hinter einem Stopp warten. */
+  phoneStateStarting: "Wird gestartet",
   phoneStateNotOrganized: "Dieses Postfach wird von nichts organisiert",
   phoneStateReader: (name: string) => `Organisiert von ${name}`,
   phoneStateReaderLegacy: "Organisiert von einer anderen Installation",
