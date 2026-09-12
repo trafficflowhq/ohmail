@@ -27,6 +27,8 @@ command: ohmail
 #   ipc/wayland/fallback-x11/dri — the WebKitGTK window.
 #   secrets  — the key that encrypts the local mirror lives in the login keyring.
 #   Notifications — the one notice the engine posts when new mail is filed.
+#   StatusNotifierWatcher — the tray icon host mode draws. Without it the icon is the only
+#     way to see that this computer is serving a phone, and to quit, and it is simply absent.
 # There is deliberately no --filesystem grant of any kind: the engine's database, its log and
 # any attachment it writes live under the app's own data directory, and a file it opens goes
 # out through the OpenURI portal.
@@ -38,6 +40,7 @@ finish-args:
   - --device=dri
   - --talk-name=org.freedesktop.secrets
   - --talk-name=org.freedesktop.Notifications
+  - --talk-name=org.kde.StatusNotifierWatcher
 
 cleanup:
   - /include

@@ -27,11 +27,17 @@ flatpak run --command=flatpak-node-generator org.flatpak.Builder \
   -o apps/desktop/flatpak/node-sources.json
 ```
 
+Both are generated, and a build resolves only what they declare — a dependency bump that leaves
+them behind builds nowhere and fails inside the builder. `node scripts/flathub-manifest.mjs
+--check` reads every checksum the lockfiles name and refuses a source file that is missing one.
+The npm generator's `-r` walks the lockfiles from the tree root, so the root `package-lock.json`
+is the one it starts at; `--check --mirror <that tree>` includes it.
+
 The release notes in `app.ohmail.Desktop.metainfo.xml` are derived from `CHANGELOG.md` by
 `scripts/appstream-releases.mjs`; run it with `--write` after a version lands and commit the
 result. Without `--write` it checks, and it is what the CI job runs.
 
-## The three questions this app's permissions raise
+## The four questions this app's permissions raise
 
 **Why it carries its own Node runtime.** The mail engine — the IMAP client, the mail parser, the
 local database — is a Node program, and it is in this repository under `apps/sidecar`. Relying on
@@ -48,6 +54,12 @@ installs updates; the app reads that it is running in a Flatpak and does not ask
 at all. Host mode, which serves the person's own phone on their own network, is the other user of
 the socket.
 
+**Why `--talk-name=org.kde.StatusNotifierWatcher`.** Host mode — the app serving this person's
+own phone on their own network — draws a tray icon, and the icon is where that state is reported
+and where Quit lives. A sandboxed app that builds one without this name gets no icon and no
+error: the computer would be serving a phone with nothing on screen saying so. The grant is the
+status-notifier host and nothing else; the app owns no bus name of its own beyond its app id.
+
 **Why `--talk-name=org.freedesktop.secrets`.** The app mirrors the mailbox to a database on the
 computer and encrypts it. The key is kept in the login keyring rather than in a file beside the
 data, which is the only place it is meaningfully safer. Without the grant the app says the keyring
@@ -61,3 +73,23 @@ writes live under the app's own data directory; a file the person opens is hande
 Start-at-login is not offered in this build. The other Linux builds write a `~/.config/autostart`
 entry, which a sandboxed app cannot do for the host session, and the honest mechanism — the
 Background portal — is not wired yet. The setting is hidden here rather than shown and ignored.
+
+## What the linters say
+
+`appstreamcli validate` and Flathub's own linter are run against the files in this directory.
+
+- `flatpak-builder-lint manifest app.ohmail.Desktop.yml` — no findings. The submission manifest,
+  rendered by `scripts/flathub-manifest.mjs` with the tag and commit pinned, is linted the same
+  way and is also clean — with the two generated source files BESIDE it, which is the shape the
+  pull request has. Linted on its own it reports `manifest-json-warnings`, because the two names
+  in `sources:` are includes resolved next to the manifest and there is nothing there to include.
+- `appstreamcli validate app.ohmail.Desktop.metainfo.xml` and `flatpak-builder-lint appstream` —
+  two `screenshot-image-not-found`, one per `<image>`. The URLs name this repository's default
+  branch, and the files are in this directory; they resolve once this tree is published, which is
+  before the submission is opened. Both are re-run at that point and the answer is then zero
+  findings, not an explanation. `test/flatpak-metainfo.test.ts` holds the half that can be read
+  offline: every `<image>` names a path that exists here, so a renamed screenshot is red at once
+  rather than at review.
+- One pedantic note, `cid-contains-uppercase-letter`, on the `D` of `app.ohmail.Desktop`. It stays:
+  Flathub's own linter refuses an id whose last component is a lowercase `desktop`, so the two
+  rules point opposite ways and only one of them is a submission requirement.
