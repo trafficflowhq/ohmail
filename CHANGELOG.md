@@ -31,7 +31,9 @@ search are answered from there. A message's full text is now written once per ba
 twice per message, so loading the recent mail after a first sync no longer pins a core, and the
 full messages the window holds are bounded too. The window also reports what it is costing every
 five minutes beside the engine's own figures, and on Linux it volunteers itself to the kernel ahead
-of your other applications.
+of your other applications. Tagged mail is kept whatever its age, so a tag still shows all of it;
+History, which has no list of its own on the server, now says it is showing what this device kept
+and points at Search for the rest, instead of printing a count that stops at the window.
 
 ### A phone asks for a mailbox only when you ask it to
 
@@ -43,7 +45,10 @@ does not start organizing again and there is a verb to start again. The phone ke
 mailbox and keeps its mail either way. A phone that stood down because another machine held the
 mailbox now takes it back when that machine lets go, instead of waiting to be restarted, and
 Settings › This phone follows the mailbox while it is open rather than showing what was true when
-the screen was opened.
+the screen was opened. A connect the phone could not record closes the mailbox again rather than
+leaving it open behind the message, and only one mailbox opens at a time. Forgetting the mailbox
+says whether its claim went back to the mail server, so you are not told it is free while another
+machine still cannot have it.
 
 ### A phone that loses its network says so
 
@@ -171,9 +176,11 @@ takes the mailbox, or the phone stops being able to do the work, it comes down.
 Coming back asks the mailbox who holds it: free, and the phone takes it again; held by your
 computer or by ohmail Cloud, and the phone reads it instead. Nothing is taken from a machine that
 has it.
-"Stop organizing here" in Settings takes the notification down along with the mailbox. If your
-phone's battery settings will not let ohmail work in the background at all, Settings says so
-beside the line that describes what this phone does.
+"Stop organizing here" in Settings takes the notification down along with the mailbox. A stop the
+mail server refuses keeps the notification and says the mailbox could not be handed back, rather
+than clearing the notification over a phone that is still organizing. If your phone's battery
+settings will not let ohmail work in the background at all, Settings says so beside the line that
+describes what this phone does.
 
 ### Send later on a phone
 
