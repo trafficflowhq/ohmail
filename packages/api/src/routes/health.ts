@@ -650,6 +650,13 @@ export const MAIL_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // `MAIL_CHECK_DEFINITION_MARKERS` and the tag's "newest" sentence sits there — the tag is
   // single-valued, so the sentence moves with it).
   ["folder_state", "trashed_from"],
+  // mail 0104_mailbox_takeover_intent — one column: WHICH VERB wrote the takeover stamp beside
+  // it, which is what lets the lease refuse a press that asked to join a mailbox rather than take
+  // it. Probed on the whole-row-select rule `signature_html` states above: `MailboxService.list`
+  // selects whole rows, so an API deployed ahead of the migration 42703s the mailbox panel and
+  // the connect flow. Its CHECK arrives under a NEW name in the same migration, so a name probe
+  // would add nothing the column probe does not already answer, and it gets no separate entry.
+  ["mailboxes", "takeover_intent"],
 ] as const;
 
 /**
@@ -922,7 +929,7 @@ export const MAIL_EXPECTED_MARKERS =
 // 0067/0068 (the device-sync alert's withdrawn SECURITY DEFINER carrier and its retirement)
 // add no column and get no marker: a function's absence is the ALERT RULE's own isolated,
 // tolerated state, not a schema fault a serving API should 503 over.
-export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0103_organizer_kind_mobile";
+export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0104_mailbox_takeover_intent";
 
 
 /* `CLOUD_SCHEMA_MARKER_JOURNAL_TAG` moved to `./health-cloud.js`: it is the NAME of a cloud

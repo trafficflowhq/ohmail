@@ -182,13 +182,23 @@ export type StopOrganizingOutcome =
   | "refused";
 
 /**
- * `POST /mailboxes/:id/organize` — the ONE route that records a consent, matched on the path.
+ * EVERY ROUTE ON THIS HANDLE THAT RECORDS A CONSENT — BOTH SPELLINGS, matched on the path.
  *
- * Anchored at both ends and with no slash inside the id, so `/mailboxes/x/organize/anything` is
- * not this route and `/local/mailboxes/:id/organize` (the desktop shell's door, which this build
- * does not serve) could not be mistaken for it.
+ * It used to be `/mailboxes/:id/organize` alone, under a sentence saying this build does not serve
+ * the `/local/` spelling. That was false: the local consent route is ahead of the shared table on
+ * this same handle, so a press on it reached the stamp writer with neither the refusal below nor
+ * the join intent applied. One regex, so the door cannot be taught one spelling and not the other.
+ * Anchored at both ends with no slash inside the id.
  */
-const ORGANIZE_ROUTE = /^\/mailboxes\/([^/]+)\/organize$/;
+const ORGANIZE_ROUTE = /^\/(?:local\/)?mailboxes\/([^/]+)\/organize$/;
+
+/**
+ * THE VERB THIS PHONE DOES NOT HAVE. `POST /local/organizer/takeover` makes this install the
+ * organizer of its own row whoever holds the mailbox — a desktop button, and on this handle it is
+ * refused rather than forwarded. The refusal below is what makes "there is no takeover verb on
+ * this phone" a fact about the door instead of a sentence about the app.
+ */
+const TAKEOVER_ROUTE = "/local/organizer/takeover";
 
 /** `POST /mailboxes/:id/release` — the person's stop, as the row records it. */
 const RELEASE_PATH = (id: string): string => `/mailboxes/${encodeURIComponent(id)}/release`;
@@ -747,14 +757,14 @@ async function composePhoneEngine(
   void launched.catch(() => undefined);
 
   /**
-   * The consent door refuses a mailbox another machine is organizing. `net/mailboxes.ts` has
-   * always claimed the route answers 409 where another install holds the mailbox, and it never
-   * did: `MailboxService.organizeHere` writes a stamp and leaves the decision to the gate, right
-   * for a desktop where the press is a person's finger. On a phone the press is a LAUNCH, so a
-   * relaunch beside a laptop that held the mailbox took the claim — two organizers, nobody asked.
-   * So the claim becomes true HERE, at the phone's own door: no takeover verb exists here, so a
-   * live foreign holder is always a 409 with the holder named. An UNREADABLE row is 503, not 409
-   * — not evidence about who holds the mailbox — so a retry is offered only for the one it heals.
+   * The consent door refuses a mailbox another machine is organizing — THE FAST PATH, not the
+   * enforcement. On a phone the press is a LAUNCH, so a relaunch beside a laptop that held the
+   * mailbox took the claim; this answers that in one round trip, off the row the last poll left.
+   *
+   * The row it reads is up to one poll old, so a press inside that window passes here and meets a
+   * live holder AT THE FENCE, which is where it is now refused — on the `join` intent
+   * {@link organizeWithJoinIntent} writes into every request this door forwards. An UNREADABLE row
+   * is 503, not 409, so a retry is offered only for the one it heals.
    */
   const refuseIfOrganizedElsewhere = async (req: Request): Promise<Response | null> => {
     if (req.method !== "POST") return null;
@@ -811,16 +821,65 @@ async function composePhoneEngine(
   };
 
   /**
+   * THE VERB THIS DOOR WRITES, onto every consent request that passes it — here and not in the
+   * app, because a check the caller supplies is one the next caller can be added past.
+   *
+   * Three things the rebuild must get right: `req.body` is never touched (React Native's bodies
+   * are not the streams `new Request(req.body, …)` expects); `content-length` is dropped, the body
+   * having grown by a key; and the door's key is spread LAST, so a body asking for `takeover` gets
+   * `join`. An unparseable body is forwarded untouched, so the API's own refusal answers it.
+   */
+  const organizeWithJoinIntent = async (req: Request): Promise<Request> => {
+    const raw = await req.text();
+    let parsed: Record<string, unknown>;
+    try {
+      const v: unknown = raw === "" ? {} : JSON.parse(raw);
+      if (v === null || typeof v !== "object" || Array.isArray(v)) return new Request(req, { body: raw });
+      parsed = v as Record<string, unknown>;
+    } catch {
+      return new Request(req, { body: raw });
+    }
+    const headers = new Headers(req.headers);
+    headers.delete("content-length");
+    headers.set("content-type", "application/json");
+    return new Request(req.url, {
+      method: req.method,
+      headers,
+      body: JSON.stringify({ ...parsed, intent: "join" }),
+    });
+  };
+
+  /**
    * ══ THE PHONE'S ONE DOOR — and `claimHere` goes through it, which is the whole point ════════
    *
-   * Composed once and used by BOTH the app-facing `handle` and the engine's own two verbs. A
-   * second path to the route would make the refusal above a check one caller can be added past,
-   * and the caller that would be added past it is exactly the one this lane exists for — measured
-   * here: with `claimHere` pressing `sidecar.handle` directly, the claim watch reached the service
-   * over a live foreign claim and the 409 never ran.
+   * Composed once and used by BOTH the app-facing `handle` and the engine's own two verbs: with
+   * `claimHere` pressing `sidecar.handle` directly, the claim watch reached the service over a
+   * live foreign claim and the 409 never ran.
+   *
+   * THREE ACTS, in order: the takeover verb is refused outright, a live foreign holder is refused
+   * off the row, and whatever is left through a consent path is forwarded carrying `join`.
    */
-  const phoneHandle = async (req: Request): Promise<Response> =>
-    await refuseIfOrganizedElsewhere(req) ?? sidecar.handle(req);
+  const phoneHandle = async (req: Request): Promise<Response> => {
+    if (req.method === "POST" && new URL(req.url).pathname === TAKEOVER_ROUTE) {
+      log("organizer_takeover_verb_absent", {
+        reason: "this install has no takeover verb, so the route that makes it the organizer "
+          + "whoever holds the mailbox is not served here and nothing was written",
+      });
+      return new Response(
+        JSON.stringify({
+          error: {
+            code: "not_found",
+            message: "this phone has no takeover verb",
+          },
+        }),
+        { status: 404, headers: { "content-type": "application/json" } },
+      );
+    }
+    const refused = await refuseIfOrganizedElsewhere(req);
+    if (refused !== null) return refused;
+    const isConsent = req.method === "POST" && ORGANIZE_ROUTE.test(new URL(req.url).pathname);
+    return sidecar.handle(isConsent ? await organizeWithJoinIntent(req) : req);
+  };
 
   /** The engine pressing its OWN door, with this launch's bearer. See {@link SELF_ORIGIN}. */
   const pressOwnRoute = async (path: string): Promise<Response> => phoneHandle(new Request(

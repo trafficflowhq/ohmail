@@ -354,7 +354,26 @@ export type OrganizerKind = "local" | "cloud" | "mobile";
 export interface TakeoverAuthorization {
   /** The instant the press was recorded, as the row holds it. */
   authorizedAt: Date;
+  /**
+   * WHICH VERB WAS PRESSED — required, and the one field here whose absence would be dangerous.
+   *
+   * Optional it would default at every call site to the value that displaces, so the install with
+   * no takeover verb would keep taking live holders' mailboxes behind a green suite. The five
+   * call sites are all in `src` and the compiler names them.
+   */
+  intent: OrganizerIntent;
 }
+
+/**
+ * WHAT THE PERSON PRESSED, per claim — never which KIND of machine they pressed it on.
+ *
+ * `takeover` asks for the mailbox whoever holds it; `join` asks only for a mailbox nobody is
+ * organizing, and yields to a live holder however recently it was pressed. The distinction is the
+ * verb's, so an install that grows a second verb carries both, and `kind` stays out of the
+ * decision table the 0.14.1 ruling emptied of it.
+ */
+export const ORGANIZER_INTENTS = ["join", "takeover"] as const;
+export type OrganizerIntent = (typeof ORGANIZER_INTENTS)[number];
 
 /** A claim message, parsed. */
 export interface OrganizerClaim {
@@ -377,6 +396,13 @@ export interface OrganizerClaim {
    * All three mean "nobody pressed for this", which is the honest thing to rank below a press.
    */
   authorizedAt: Date | null;
+  /**
+   * WHICH VERB THIS TENURE RESTS ON. Descriptive here: a FOREIGN claim's intent decides nothing,
+   * so an unreadable one is folded to `takeover` rather than refused — see {@link parseClaim}.
+   * Its one reader is the gate's own carry-forward, so a tenure keeps the verb it was taken with.
+   * A record written before this field says `takeover`, which is what those installs do.
+   */
+  intent: OrganizerIntent;
   /**
    * WHAT THIS ORGANIZER OFFERS A READER, as the claim advertises it. Empty means none — which is
    * what every pre-0.14.1 claim says, and it is a true statement about those installs rather than
@@ -515,6 +541,14 @@ const H = {
    * on a machine that is never going to answer.
    */
   capabilities: "X-Ohmail-Capabilities",
+  /**
+   * WHICH VERB THIS TENURE RESTS ON — written only for `join`, absent for `takeover`.
+   *
+   * Absent is the only spelling of "takeover" on purpose: every record any shipped build wrote
+   * lacks the header, and those installs DO take over, so no record needs migrating and an older
+   * reader that ignores the key still ranks the folder the way its own build always did.
+   */
+  intent: "X-Ohmail-Intent",
 } as const;
 
 /**
@@ -562,6 +596,14 @@ export interface ClaimInput {
    * sees anyway.
    */
   capabilities: readonly string[];
+  /**
+   * WHICH VERB THIS TENURE RESTS ON. OPTIONAL, and deliberately not required the way
+   * {@link authorizedAt} is: there the default was the dangerous value — an omitted press ranked
+   * every claim unpressed and turned the feature off behind a green suite — while here the
+   * default is `takeover`, which is exactly what every call site written before this field
+   * already did. Nothing reads a foreign claim's intent, so an omitted one decides nothing.
+   */
+  intent?: OrganizerIntent;
 }
 
 /**
@@ -590,6 +632,8 @@ export function formatClaim(c: ClaimInput): string {
     `${H.heartbeat}: ${c.heartbeat.toISOString()}`,
     `${H.claimedAt}: ${c.claimedAt.toISOString()}`,
     ...(c.authorizedAt ? [`${H.authorizedAt}: ${c.authorizedAt.toISOString()}`] : []),
+    // ONLY `join` IS WRITTEN — the absent header is "takeover", on the rule three lines above.
+    ...(c.intent === "join" ? [`${H.intent}: join`] : []),
     ...(capabilities.length > 0 ? [`${H.capabilities}: ${capabilities.join(", ")}`] : []),
     `${H.displayName}: ${headerSafe(c.displayName)}`,
     `${H.nonce}: ${headerSafe(c.nonce)}`,
@@ -706,6 +750,19 @@ export function parseClaim(raw: string, ref?: unknown): ClaimRecord | null {
     .map((v) => v.trim().toLowerCase())
     .filter((v) => v !== "");
 
+  /* ── AN INTENT THIS READER CANNOT READ IS `takeover`, AND THAT IS NOT `authorizedAt`'S RULE ──
+   *
+   * `X-Ohmail-Authorized-At` is refused when present-and-unreadable, and duplicated when the
+   * election RANKS it: a crafted stamp that two readers read differently elects two organizers.
+   * Nothing ranks a foreign claim's intent — the only intent the decision consults is the one on
+   * the press being offered — so a claim whose intent is absent, misspelled or stated twice is
+   * read as `takeover`, the value every record written before this field means. Refusing it here
+   * would let an unreadable header decide the election through the back door, and folding it to
+   * `join` would let a corrupted byte quietly demote a real press.
+   */
+  const intent: OrganizerIntent =
+    count(H.intent) === 1 && (get(H.intent) ?? "").toLowerCase() === "join" ? "join" : "takeover";
+
   const claim: OrganizerClaim = {
     installId,
     kind,
@@ -715,6 +772,7 @@ export function parseClaim(raw: string, ref?: unknown): ClaimRecord | null {
     displayName: get(H.displayName) ?? "",
     nonce: get(H.nonce) ?? "",
     authorizedAt,
+    intent,
     capabilities,
   };
   return ref === undefined ? claim : { ...claim, ref };
@@ -1089,9 +1147,9 @@ function runElection(claims: readonly ClaimRecord[], now: Date, staleAfterMs: nu
  * unrecognised KIND — stand down. (3) We hold the strongest live claim — organize; continuation
  * covers resumption. (4) No readable claim — organize. (5) DELETED — it refused an authorized
  * local over a live Cloud; the numbering keeps the names tests use. (6) A human pressed for THIS
- * install more recently than any live rival — organize and DISPLACE; STRICT, and no
- * stamp-older-than-claimedAt check, which would break the two-press race. (7) Lost, folder
- * renewing — stand down. (8) Lost, folder quiet — `available`: offerable, never taken.
+ * install more recently than any live rival, AND pressed a verb that displaces — organize and
+ * DISPLACE; STRICT, and no stamp-older-than-claimedAt check, which would break the two-press
+ * race. (7) Lost, folder renewing — stand down. (8) Lost, folder quiet — offerable, never taken.
  */
 export function decideLease(input: DecideLeaseInput): LeaseVerdict {
   const { self, now } = input;
@@ -1197,7 +1255,19 @@ export function decideLease(input: DecideLeaseInput): LeaseVerdict {
     // reads 2099 must not be able to press its way past every honest organizer for ever. The row
     // is not a more trustworthy clock than the folder — it is the SAME machine's clock.
     : Math.min(takeover.authorizedAt.getTime(), now.getTime() + MAX_FUTURE_SKEW_MS);
-  if (takeover !== null && ourPress > livePress) {
+  /**
+   * AND THE VERB DECIDES WHETHER A NEWER PRESS MAY DISPLACE AT ALL. A `join` asks for a mailbox
+   * nobody is organizing; against a live foreign claim it yields however recent it is, and rules
+   * 7/8 name the holder. Liveness is the RAW predicate rules 1/2 use, never `election.live`:
+   * that set has no `renewing` term, so on a folder holding only stale residue every candidate
+   * is "live" against the newest of them and a join would be refused the mailbox it is entitled
+   * to. Tested as `=== "takeover"`, so an untyped caller reads as a join — the direction that
+   * can only produce FEWER organizers.
+   */
+  const liveForeign = input.claims.some((c): boolean =>
+    !isMalformed(c) && !rawOurs(c) && rawIsLive(c));
+  const mayDisplace = takeover !== null && (takeover.intent === "takeover" || !liveForeign);
+  if (mayDisplace && ourPress > livePress) {
     // Every ref the read held for the beaten organizers — the RAW claim list, not the candidates:
     // coalesce keeps one claim per install, the folder legitimately holds duplicates
     // (append-then-expunge crash residue), and a displacement built from the coalesced set misses
@@ -3105,6 +3175,14 @@ export async function runLeaseGate(input: LeaseGateInput): Promise<LeaseGateResu
   const authorizedAt = verdict.authorized
     ? (input.takeover?.authorizedAt ?? null)
     : (newestOwn?.authorizedAt ?? null);
+  /* The VERB travels with the tenure exactly as the press does, off the same two sources: an
+     authorized win carries the verb it rested on, every other win carries forward the one the
+     prior claim recorded. A renewal that wrote nothing would make a join tenure describe itself
+     as a takeover one cycle later — harmless to the election, which never reads a foreign
+     claim's intent, and a lie in the folder a person can open. */
+  const intent: OrganizerIntent = verdict.authorized
+    ? (input.takeover?.intent ?? "takeover")
+    : (newestOwn?.intent ?? "takeover");
 
   const nonce = newNonce();
   try {
@@ -3118,6 +3196,7 @@ export async function runLeaseGate(input: LeaseGateInput): Promise<LeaseGateResu
         nonce,
         protocol: self.protocol ?? CLAIM_PROTOCOL,
         authorizedAt,
+        intent,
         capabilities: input.capabilities,
       }),
     );

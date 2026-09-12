@@ -5,6 +5,7 @@ import { dialect, type Dialect } from "@trafficflow/db/dialect";
 // literal `60` and never a hand-written string union. `consent-cutline.ts` re-exports these from
 // core for the same reason and its header says so.
 import { DEFAULT_DORMANCY_DAYS, type ScreeningScope } from "@trafficflow/core/mail";
+import type { OrganizerIntent } from "@trafficflow/core/adapters/organizer-lease";
 import { openLocalDb, type LocalDb } from "./db.js";
 
 /**
@@ -58,6 +59,13 @@ export interface AuthorizeTakeoverInput {
   address?: string;
   mailboxId?: string;
   now: Date;
+  /**
+   * WHICH VERB WAS PRESSED — required on both doors, for `MailboxService.organizeHere`'s reason.
+   * The stamp says a person asked; only this says what they asked for, and the lease's rule 6
+   * consults it at the fence. Every caller in this package passes `"takeover"`: this install has
+   * a takeover verb and that is what its two doors mean.
+   */
+  intent: OrganizerIntent;
 }
 
 /**
@@ -155,6 +163,9 @@ export async function authorizeOrganizerTakeover(
       // reader cannot turn back into a date.
       organizeConsentedAt: sql`coalesce(${mailboxes.organizeConsentedAt}, ${dialect(db).ts(input.now)})`,
       takeoverAuthorizedAt: input.now,
+      // …AND THE VERB, in the same write as the stamp: the gate reads the row once, so a row that
+      // says a press happened and cannot say what it asked for must never exist.
+      takeoverIntent: input.intent,
       /* AND THE REQUEST IS CANCELLED IN THE SAME WRITE, which is the half that makes the press a
          countermand rather than a second instruction beside the first. Left standing, the poll's
          release arm reaches it again on the very next pass and spends the stamp this write just
@@ -266,6 +277,13 @@ export async function requestOrganizerTakeover(
   db: LocalDb,
   input: {
     mailboxId: string; now: Date;
+    /**
+     * WHICH VERB WAS PRESSED — required on both doors, for `MailboxService.organizeHere`'s reason.
+     * The stamp says a person asked; only this says what they asked for, and the lease's rule 6
+     * consults it at the fence. Every caller in this package passes `"takeover"`: this install has
+     * a takeover verb and that is what its two doors mean.
+     */
+    intent: OrganizerIntent;
     /**
      * THE ACCOUNT THE SCREENING STATE BELONGS TO. Required WITH `screening` and meaningless
      * without it: `account_settings` is keyed by account, and this install serves exactly one —
@@ -384,6 +402,8 @@ export async function requestOrganizerTakeover(
         // `Date` postgres-js refuses, and the instant literal the two stores disagree about.
         organizeConsentedAt: sql`coalesce(${mailboxes.organizeConsentedAt}, ${dialect(db).ts(input.now)})`,
         takeoverAuthorizedAt: input.now,
+        // …AND THE VERB, in the same write as the stamp — see the CLI door above.
+        takeoverIntent: input.intent,
         /* Cancelled here for the reason its twin in the CLI arm gives: a request left standing is
            spent by the very next release pass, which destroys the press one poll later. */
         releaseRequestedAt: null,
@@ -426,7 +446,11 @@ export async function runOrganizeHere(env: NodeJS.ProcessEnv = process.env): Pro
 
   const opened = await openLocalDb(dataDir);
   try {
-    const result = await authorizeOrganizerTakeover(opened.db, { address, now: new Date() });
+    /* `"takeover"`, as the command's own name says: `organize-here` is a person at this machine
+       asking for this mailbox whoever holds it. */
+    const result = await authorizeOrganizerTakeover(
+      opened.db, { address, now: new Date(), intent: "takeover" },
+    );
     process.stdout.write(`${TAKEOVER_MESSAGES[result.outcome]}\n`);
     return result.outcome === "authorized" ? 0 : 1;
   } finally {

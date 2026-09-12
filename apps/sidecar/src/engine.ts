@@ -116,6 +116,7 @@ import {
 // `notePeekedHolder`.
 import {
   readLeasePeek, deriveRequestKey, type LeasePeekIo, type OrganizerKind,
+  type OrganizerIntent,
 } from "@trafficflow/core/adapters/organizer-lease";
 import type { ImapAuth } from "@trafficflow/core/adapters/imap-types";
 import { OrganizerProfileSync, syncProfileMirror } from "@trafficflow/worker/profile";
@@ -2997,6 +2998,12 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
        * flight; a button press must not block behind an IMAP timeout.
        */
       let observedTakeoverAt: Date | null = mb.takeoverAuthorizedAt;
+      /**
+       * WHAT THAT PRESS ASKED FOR, moving with the stamp beside it and never read on its own. The
+       * pair is one fact: the in-flight-press comparison below clears exactly the stamp this pass
+       * READ, so an intent fetched by a second statement could describe a different press.
+       */
+      let observedIntent: OrganizerIntent = mb.takeoverIntent;
 
       /**
        * Has anybody asked this install to organize this mailbox — `organize_consented_at`, as the row
@@ -3281,6 +3288,9 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
              * indexed point-read per poll, in the same statement as the columns beside it.
              */
             role: mailboxes.organizerRole,
+            // Mail 0104 — the VERB behind `at`, in the SAME statement for the reason every column
+            // here is in it: the gate decides from one read of this row.
+            intent: mailboxes.takeoverIntent,
             releaseAt: mailboxes.releaseRequestedAt,
             // The holder columns, so the peek below can tell a CHANGE from a no-op without a
             // second round trip — and so a value another writer moved is not compared against a
@@ -3299,6 +3309,10 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
             rowRead = true;
             takeoverAuthorized = row.at !== null;
             observedTakeoverAt = row.at;
+            /* A value outside the column's closed set cannot be written by this program; read as
+               the verb that YIELDS rather than the one that displaces, which is the direction
+               that cannot end with two organizers. */
+            observedIntent = row.intent === "takeover" ? "takeover" : "join";
             consented = row.consentedAt !== null;
             rowRole = row.role;
             releaseRequested = row.releaseAt;
@@ -3645,8 +3659,11 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           // stand-down below compares against before voiding anything. A `now()` here would make
           // every press look like it happened at the moment of the gate — so a stale press that
           // ought to lose rule 6 would win it, on every cycle, for ever.
+
+          // AND THE VERB, which lets rule 6 refuse a press that asked only to JOIN a mailbox
+          // another install is organizing. Read in the same statement as the instant.
           takeover: takeoverAuthorized && observedTakeoverAt !== null
-            ? { authorizedAt: observedTakeoverAt }
+            ? { authorizedAt: observedTakeoverAt, intent: observedIntent }
             : null,
           ...(config.leaseStaleAfterMs !== undefined ? { staleAfterMs: config.leaseStaleAfterMs } : {}),
           log,
@@ -5608,7 +5625,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                * is measured from — written separately, there is a gap in which the cutoff is the
                * default. The account is the LAUNCH SESSION's, never a value from the body. */
             const mailboxId = localOrganizeMatch[1]!;
-            let body: { screening?: { dormancyDays?: unknown; scope?: unknown } } = {};
+            let body: { intent?: unknown; screening?: { dormancyDays?: unknown; scope?: unknown } } = {};
             try {
               body = (await req.json()) as typeof body;
             } catch {
@@ -5629,6 +5646,13 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
             try {
               const result = await requestOrganizerTakeover(db, {
                 mailboxId, now: now(), accountId: core.accountId,
+                /* THE VERB, AND THE BODY MAY ONLY WEAKEN IT — `packages/api`'s `organizeInputOf`
+                   rule, spelled the same way on this door because this door writes the same
+                   stamp. `"join"` is the one admitted value; anything else is the takeover this
+                   desktop's button has always meant. The PHONE's door does not depend on its app
+                   sending it (`mobile.ts` writes it over every consent request it forwards), so a
+                   caller can ask for less than the button and never for more. */
+                intent: body.intent === "join" ? "join" : "takeover",
                 ...(screening ? { screening } : {}),
               });
               log("local_mailbox_organize_consented", {
@@ -5873,7 +5897,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                 attached = await attachLocal(
                   freshRow ?? {
                     id: dto.id, address: dto.address, displayName: dto.displayName ?? null,
-                    standDownReason: null, takeoverAuthorizedAt: null,
+                    standDownReason: null, takeoverAuthorizedAt: null, takeoverIntent: "join",
                   },
                    /* Never the seed — this was `isSeedRow(dto.address)` for one round, on the
                     * reasoning that an added mailbox cannot be the configured address because the
@@ -5971,7 +5995,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                   const attached = await attachLocal(
                     repointed ?? {
                       id: dto.id, address: dto.address, displayName: dto.displayName ?? null,
-                      standDownReason: null, takeoverAuthorizedAt: null,
+                      standDownReason: null, takeoverAuthorizedAt: null, takeoverIntent: "join",
                     },
                     /* NOT THE SEED, on the add route's reasoning above and one of its own: this
                        reattach follows a PATCH that has just proved a credential against the host
@@ -6190,7 +6214,11 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
               { status: 400, headers: { "content-type": "application/json" } },
             );
           }
-          const result = await requestOrganizerTakeover(db, { mailboxId, now: now() });
+          /* `"takeover"`, as the route's name says: this is the desktop's "take this mailbox back"
+             button, the one verb the phone's door refuses to forward at all. */
+          const result = await requestOrganizerTakeover(db, {
+            mailboxId, now: now(), intent: "takeover",
+          });
           log("organizer_takeover_authorized", {
             // `verdict` and not `outcome`: `ALLOWED_FIELDS` carries the former, and a field the
             // census drops is an instrumented line that says nothing in production.

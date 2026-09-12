@@ -296,7 +296,11 @@ export async function runReconcileCron(
         now: () => new Date(),
         // The instant, not a flag (0.14.1) — the election ranks one press against another, so the
         // row's own stamp travels unchanged. See `mayOrganize` in `index.ts`.
-        takeover: row.takeoverAuthorizedAt ? { authorizedAt: row.takeoverAuthorizedAt } : null,
+        // AND THE VERB — see `index.ts`'s gate. The backstop runs the same fence, so it has to
+        // hand it the same two facts about the press or it would decide a case the poll refuses.
+        takeover: row.takeoverAuthorizedAt
+          ? { authorizedAt: row.takeoverAuthorizedAt, intent: row.takeoverIntent }
+          : null,
         ...(config.organizer?.staleAfterMs !== undefined ? { staleAfterMs: config.organizer.staleAfterMs } : {}),
         log: (event, detail) => { log.info(event, { ...detail, mailboxId, accountId: row.accountId }); },
       });

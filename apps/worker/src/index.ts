@@ -121,7 +121,9 @@ import {
 // The APPEND-less read of `ohmail/_meta` — see `LeasePeekCapableAdapter`. A reader LOOKS at the
 // lease every cycle to keep `organizer_state` and the holder columns honest, and looking must
 // never write a claim: `readLeasePeek` takes the read-only IO and creates nothing.
-import { readLeasePeek, deriveRequestKey } from "@trafficflow/core/adapters/organizer-lease";
+import {
+  readLeasePeek, deriveRequestKey, type OrganizerIntent,
+} from "@trafficflow/core/adapters/organizer-lease";
 
 /** How often the leader runs the global maintenance pass (expired-idempotency-key sweep). */
 export const MAINTENANCE_EVERY_MS = 60 * 60 * 1000;
@@ -343,6 +345,14 @@ interface MailboxRuntime {
    */
   lease: {
     takeoverAuthorizedAt: Date | null;
+    /**
+     * Mail 0104. WHAT THAT PRESS ASKED FOR — `takeover` asks for the mailbox whoever holds it,
+     * `join` asks only for one nobody is organizing. Read in the same statement as the stamp and
+     * meaningless without it; Cloud's own door writes `takeover`, so this reads `takeover` for
+     * every press a person makes here, and the field exists because the FENCE is shared with an
+     * install that has no takeover verb.
+     */
+    takeoverIntent: OrganizerIntent;
     disabledReason: string | null;
     /**
      * Mail 0083. WHAT THE ROW SAYS THE ROLE IS — which is not the same thing as what this process
@@ -1233,6 +1243,8 @@ export async function startWorkerWithLock(
       mb: { mailboxId: string; accountId: string },
       lease: {
         takeoverAuthorizedAt: Date | null; disabledReason: string | null;
+        /** Mail 0104 — the VERB behind the stamp; see {@link MailboxRuntime.lease}. */
+        takeoverIntent: OrganizerIntent;
         organizerRole: OrganizerRole;
         organizeConsentedAt: Date | null;
         /** Mail 0088 — "stop organizing this mailbox, keep my mail", honoured before anything. */
@@ -1483,7 +1495,12 @@ export async function startWorkerWithLock(
         // handed over unchanged, because the election ranks presses against each other: what
         // decides a contest between this install and another one that has ALSO been pressed for is
         // which person pressed last, and a boolean cannot say.
-        takeover: lease.takeoverAuthorizedAt ? { authorizedAt: lease.takeoverAuthorizedAt } : null,
+
+        // AND THE VERB, which lets rule 6 refuse a press that asked only to JOIN a mailbox
+        // somebody else is organizing. The two are one fact about one press.
+        takeover: lease.takeoverAuthorizedAt
+          ? { authorizedAt: lease.takeoverAuthorizedAt, intent: lease.takeoverIntent }
+          : null,
         ...(organizerStaleAfterMs !== undefined ? { staleAfterMs: organizerStaleAfterMs } : {}),
         log: (event: string, detail: Record<string, unknown>): void => {
           log.info(event, { ...detail, mailboxId: mb.mailboxId, accountId: mb.accountId });
@@ -2066,7 +2083,8 @@ export async function startWorkerWithLock(
           leasePermit: { noLease: "not_supplied" } as OrganizerWriteAuthority,
         };
         const leaseRow = {
-          takeoverAuthorizedAt: mb.takeoverAuthorizedAt, disabledReason: mb.disabledReason,
+          takeoverAuthorizedAt: mb.takeoverAuthorizedAt, takeoverIntent: mb.takeoverIntent,
+          disabledReason: mb.disabledReason,
           // Mail 0083 — see `MailboxRuntime.lease.organizerRole`. This is the shape the promotion
           // hole was reachable through: an existing reader row attaches with no stamp and a null
           // reason, so without this the gate had nothing left to notice it by.
@@ -2648,7 +2666,9 @@ export async function startWorkerWithLock(
             // authorized by the connect flow while this mailbox was already serving reaches the
             // next cycle's gate instead of waiting for a restart.
             attached.lease = {
-              takeoverAuthorizedAt: mb.takeoverAuthorizedAt, disabledReason: mb.disabledReason,
+              // Mail 0104 — the verb moves with the stamp on every refresh, for the same reason.
+              takeoverAuthorizedAt: mb.takeoverAuthorizedAt, takeoverIntent: mb.takeoverIntent,
+              disabledReason: mb.disabledReason,
               // Mail 0083, refreshed with the other two: a promotion or demotion written by
               // another process (the connect flow, the reconcile backstop) is a fact about this
               // row, and a value captured at attach would leave this gate deciding against it.

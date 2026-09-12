@@ -11,6 +11,7 @@ import {
   buildImapAuth, oauthSmtpEndpoint, type ImapAuth, type CredMetaAuth,
 } from "@trafficflow/core/adapters/imap";
 import { makeDrizzleRepo, type DrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
+import type { OrganizerIntent } from "@trafficflow/core/adapters/organizer-lease";
 import { asDatabaseFault, markDatabaseFaults } from "./db-fault.js";
 import type { SyncWriteFence } from "./sync.js";
 import { carryDialect } from "@trafficflow/db/dialect";
@@ -63,6 +64,14 @@ export interface EnabledMailbox {
    * all of them: the connect flow that stamps it lands separately.
    */
   takeoverAuthorizedAt: Date | null;
+  /**
+   * Mail 0104. WHAT that press asked for. `takeover` asks for the mailbox whoever holds it;
+   * `join` asks only for one nobody is organizing and yields at the fence to a live foreign
+   * claim. Cloud's own door writes `takeover`, so every press made here reads that; the field
+   * exists because the fence is shared with an install that has no takeover verb. On the roster
+   * row for `takeoverAuthorizedAt`'s reason exactly — another process writes the pair.
+   */
+  takeoverIntent: OrganizerIntent;
   /**
    * Mail 0027. A lease reason left over from a previous stand-down that a human has since
    * re-enabled past. Read only so the gate knows there is something to CLEAR — nothing decides
@@ -233,6 +242,8 @@ export async function loadEnabledMailboxes(
       id: mailboxes.id, accountId: mailboxes.accountId,
       provider: mailboxes.provider, address: mailboxes.address, status: mailboxes.status,
       takeoverAuthorizedAt: mailboxes.takeoverAuthorizedAt,
+      // Mail 0104 — the VERB behind the stamp, in the same statement as the stamp.
+      takeoverIntent: mailboxes.takeoverIntent,
       disabledReason: mailboxes.disabledReason,
       organizerRole: mailboxes.organizerRole,
       organizedByKind: mailboxes.organizedByKind,
@@ -261,6 +272,8 @@ export async function loadEnabledMailboxes(
     .map((r) => ({
       accountId: r.accountId, mailboxId: r.id, provider: r.provider, address: r.address, status: r.status,
       takeoverAuthorizedAt: r.takeoverAuthorizedAt ?? null,
+      // COERCED, never trusted — `join` is the safe direction, as `reader` is below.
+      takeoverIntent: r.takeoverIntent === "takeover" ? "takeover" : "join",
       disabledReason: r.disabledReason ?? null,
       // COERCED, never trusted — see the field. `reader` is the safe direction.
       organizerRole: isOrganizerRole(r.organizerRole) ? r.organizerRole : "reader",
@@ -311,6 +324,8 @@ export async function loadMailboxById(
 ): Promise<
   {
     accountId: string; status: string; takeoverAuthorizedAt: Date | null;
+    /** Mail 0104 — the VERB behind the stamp; the backstop runs the same gate the roster does. */
+    takeoverIntent: OrganizerIntent;
     disabledReason: string | null;
     /**
      * Mail 0090. The SALT of the request key's derivation, so the backstop derives the same key
@@ -333,6 +348,7 @@ export async function loadMailboxById(
     .select({
       accountId: mailboxes.accountId, status: mailboxes.status,
       takeoverAuthorizedAt: mailboxes.takeoverAuthorizedAt,
+      takeoverIntent: mailboxes.takeoverIntent,
       disabledReason: mailboxes.disabledReason,
       organizerRole: mailboxes.organizerRole,
       releaseRequestedAt: mailboxes.releaseRequestedAt,
@@ -342,7 +358,11 @@ export async function loadMailboxById(
   const r = rows[0];
   if (!r) return null;
   // COERCED, `reader` on anything unrecognised — see `EnabledMailbox.organizerRole`.
-  return { ...r, organizerRole: isOrganizerRole(r.organizerRole) ? r.organizerRole : "reader" };
+  return {
+    ...r,
+    organizerRole: isOrganizerRole(r.organizerRole) ? r.organizerRole : "reader",
+    takeoverIntent: r.takeoverIntent === "takeover" ? "takeover" : "join",
+  };
 }
 
 /** The DISTINCT accounts of a mailbox set, in selection order (the per-account cron loop). */

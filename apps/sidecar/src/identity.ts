@@ -9,6 +9,7 @@ import {
   type MailboxDisabledReason, type Tx,
 } from "@trafficflow/db";
 import { generateToken, hashToken } from "@trafficflow/services/mail";
+import type { OrganizerIntent } from "@trafficflow/core/adapters/organizer-lease";
 import type { LocalDb } from "./db.js";
 
 /**
@@ -56,6 +57,13 @@ export interface LocalWorld {
    * the mailbox back on a later launch.
    */
   takeoverAuthorizedAt: Date | null;
+  /**
+   * Mail 0104 — WHAT that press asked for. `takeover` asks for the mailbox whoever holds it;
+   * `join` asks only for one nobody is organizing, and the lease refuses it against a live
+   * foreign claim however recent the press. Read in the same statement as the stamp; meaningless
+   * while the stamp is NULL.
+   */
+  takeoverIntent: OrganizerIntent;
 }
 
 export interface EnsureLocalWorldInput {
@@ -136,6 +144,9 @@ export async function ensureLocalWorld(db: LocalDb, input: EnsureLocalWorldInput
       organizerReleasedAt: mailboxes.organizerReleasedAt,
       organizeConsentedAt: mailboxes.organizeConsentedAt,
       takeoverAuthorizedAt: mailboxes.takeoverAuthorizedAt,
+      // Mail 0104 — the VERB behind the stamp, read in the SAME statement as the stamp and never
+      // separately: the gate acts on the pair, and two reads can straddle a press.
+      takeoverIntent: mailboxes.takeoverIntent,
     })
     .from(mailboxes)
     .where(and(
@@ -188,6 +199,7 @@ export async function ensureLocalWorld(db: LocalDb, input: EnsureLocalWorldInput
       mailboxId: standing?.id ?? "",
       standDownReason: standing ? standDownMemory(standing) : null,
       takeoverAuthorizedAt: standing?.takeoverAuthorizedAt ?? null,
+      takeoverIntent: standing?.takeoverIntent === "takeover" ? "takeover" : "join",
     };
   }
 
@@ -223,7 +235,10 @@ export async function ensureLocalWorld(db: LocalDb, input: EnsureLocalWorldInput
       .returning({ id: mailboxes.id })
   )[0]!.id;
 
-  return { accountId, userId, mailboxId, standDownReason: null, takeoverAuthorizedAt: null };
+  return {
+    accountId, userId, mailboxId, standDownReason: null,
+    takeoverAuthorizedAt: null, takeoverIntent: "join",
+  };
 }
 
 /** One live mailbox, as the boot reads it before building a runtime for it. */
@@ -233,6 +248,8 @@ export interface LocalRosterRow {
   displayName: string | null;
   standDownReason: string | null;
   takeoverAuthorizedAt: Date | null;
+  /** Mail 0104 — what the press above ASKED FOR; meaningless while the stamp is NULL. */
+  takeoverIntent: OrganizerIntent;
 }
 
 /**
@@ -268,6 +285,9 @@ export async function loadLocalRoster(db: LocalDb, accountId: string): Promise<L
       organizerReleasedAt: mailboxes.organizerReleasedAt,
       organizeConsentedAt: mailboxes.organizeConsentedAt,
       takeoverAuthorizedAt: mailboxes.takeoverAuthorizedAt,
+      // Mail 0104 — the VERB behind the stamp, read in the SAME statement as the stamp and never
+      // separately: the gate acts on the pair, and two reads can straddle a press.
+      takeoverIntent: mailboxes.takeoverIntent,
     })
     .from(mailboxes)
     .where(and(
@@ -281,6 +301,10 @@ export async function loadLocalRoster(db: LocalDb, accountId: string): Promise<L
     displayName: r.displayName ?? null,
     standDownReason: standDownMemory(r),
     takeoverAuthorizedAt: r.takeoverAuthorizedAt ?? null,
+    /* A value the column's closed set does not hold cannot be written by this program, and a
+       store that somehow carries one is read as the verb that yields rather than the one that
+       displaces — the direction that cannot produce two organizers. */
+    takeoverIntent: r.takeoverIntent === "takeover" ? "takeover" : "join",
   }));
 }
 

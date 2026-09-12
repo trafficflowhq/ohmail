@@ -26,6 +26,7 @@ import type { MailboxDTO, MailboxFolderSummary } from "./dto/types.js";
 // The window's vocabulary, from the one place it is defined (core), so the ceremony that writes
 // `dormancy_days` and `screening_scope` cannot disagree with the two cutlines that read them.
 import { DEFAULT_DORMANCY_DAYS, type ScreeningScope } from "@trafficflow/core/mail";
+import type { OrganizerIntent } from "@trafficflow/core/adapters/organizer-lease";
 
 const asTx = (ctx: ServiceContext): Tx => ctx.db as unknown as Tx;
 
@@ -124,6 +125,16 @@ export type MailboxReleaseResult =
  */
 export interface OrganizeHereInput {
   imap?: { pass: string };
+  /**
+   * WHICH VERB THE PERSON PRESSED — required, and the stamp below is meaningless without it.
+   *
+   * This door serves Cloud, the desktop's local API and the phone's, and only the phone has no
+   * takeover verb: its press is a launch, so it may open a mailbox nobody is organizing and must
+   * never take one another machine holds. The stamp alone cannot say that, so the verb is carried
+   * to the fence on the row and `decideLease` rule 6 consults it there. Required rather than
+   * defaulted, because a default here is a door that quietly asks for more than the button said.
+   */
+  intent: OrganizerIntent;
   /**
    * The screening window, chosen in the same breath as consent — it must ride the same
    * transaction. The defect is not the window: `screening_baseline_at` is written by THE FIRST
@@ -1890,8 +1901,12 @@ export class MailboxService {
    * alone CORRUPTS — a stand-down and a disconnect share `status='disabled'`, told apart only by
    * the reason. A disconnected mailbox is refused, never revived.
    */
+  /* NO `= {}` DEFAULT ANY MORE. It was harmless while every field was optional and is not now:
+     a caller that supplies nothing would ask for the verb it never named, and the verb decides
+     whether this press may take a mailbox off a machine that is organizing it. The argument is
+     required so the compiler names every door. */
   async organizeHere(
-    ctx: ServiceContext, id: string, input: OrganizeHereInput = {},
+    ctx: ServiceContext, id: string, input: OrganizeHereInput,
     opts?: UpdateMailboxOptions,
   ): Promise<MailboxTakeoverResult> {
     /**
@@ -2047,6 +2062,10 @@ export class MailboxService {
         // Flipping the role here would make a button in a browser the thing that decides who
         // organizes a mailbox, with no reference to what the mailbox itself says.
         takeoverAuthorizedAt: ctx.now(),
+        // …AND THE VERB THAT WROTE IT, in the same statement, because the two are one fact. Split
+        // across two writes there is an instant in which the row says a press happened and cannot
+        // say what it asked for, and the gate reads the row once.
+        takeoverIntent: input.intent,
         // Consent, written once and never moved. `COALESCE` because consent is the FIRST time
         // somebody agreed: re-running onboarding, or claiming back after a handover, must not
         // rewrite the record of when the person originally said yes — it also makes this
