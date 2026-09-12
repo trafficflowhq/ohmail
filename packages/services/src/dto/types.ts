@@ -874,14 +874,22 @@ export interface DraftDTO {
   inReplyToMessageId: string | null;
   subject: string;
   /**
-   * The text/plain body. Always present and always authoritative for a plain draft.
+   * The text/plain body, authoritative for a plain draft.
    *
    * When {@link html} is set this is the alternative DERIVED from it on the server rather than
    * anything a client supplied — see `outbound-html.ts`. A `multipart/alternative` is a promise
-   * that its two parts say the same thing, and deriving one from the other is what makes that
-   * promise structural instead of a convention two clients have to keep.
+   * that its two parts say the same thing, and deriving one from the other makes that structural.
+   *
+   * `null` on ONE path: a bounded page will not carry a stored body past `DRAFT_BODY_MAX_BYTES`,
+   * and {@link bodyOmitted} says so. Never truncated, and never on a single-row read.
    */
-  body: string;
+  body: string | null;
+  /**
+   * Why {@link body} is `null` — present exactly when it is, absent otherwise. A reader that
+   * knows only "no body" cannot tell a page that omitted it from a server that never sends one,
+   * so the pairing is held in both directions by a test beside the snapshot writer.
+   */
+  bodyOmitted?: "over_ceiling";
   /** The rich body, sanitized. `null` for a plain-text draft — the ordinary case. */
   html: string | null;
   to: EmailAddress[];

@@ -1048,6 +1048,7 @@
     "attachQualityCap": "Some pictures kept their previous size — the total must stay under {size}.",
     "attachDuplicate": "Already attached: {filenames}",
     "draftNote": "Saved to your drafts after a moment",
+    "bodyTooLong": "Too long to save. Shorten the message and it saves again.",
     "editorAria": "Message body",
     "editorPlaceholder": "Write your message…",
     "draftTag": "AI draft — not sent",

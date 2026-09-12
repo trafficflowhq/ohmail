@@ -564,6 +564,16 @@ export interface EngineDraft {
    * can seed an editor from a body nobody sent. {@link draftBodyKnown} is the one predicate.
    */
   body: string | null;
+  /**
+   * Why {@link body} is `null`, when the page that dropped it said so — `over_ceiling` is a
+   * stored body past `DRAFT_BODY_MAX_BYTES`, which `/sync/snapshot` will not carry.
+   *
+   * Optional, and it changes NO decision: {@link draftBodyKnown} is still the one predicate, and
+   * a body is unknown whether or not a reason arrived (an older server sends none). It is here so
+   * "this page left it out" and "this body is too large for a page" are not one state — a
+   * distinction a support answer needs and a truncation would have destroyed.
+   */
+  bodyOmitted?: "over_ceiling";
   to: EmailAddress[];
   cc: EmailAddress[];
   /** Blind-carbon recipients. Delivered on the envelope only; never a header on the sent mail. */

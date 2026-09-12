@@ -55,7 +55,7 @@ const MAX_BIGSERIAL = 9_223_372_036_854_775_807n;
  */
 const MAX_EMITTED = 10_000_000;
 import {
-  approvalRowToDTO, draftRowToDTO, folderRowToDTO, materialize, materializeApprovals,
+  approvalRowToDTO, draftRowToSnapshotDTO, folderRowToDTO, materialize, materializeApprovals,
   materializeDrafts, materializeMessageChildren, materializeMessages,
   materializeMessagesInOrder, materializeMessageStates, materializeRoutingDecisions,
   materializeRules, materializeSettings,
@@ -555,8 +555,12 @@ export class SyncService {
         emit("approval", a.id, approvalRowToDTO(a), a.updatedAt.toISOString());
       }
 
+      // EVERY DRAFT, AND NOT EVERY DRAFT'S BYTES. The row set is the account's whole live state,
+      // which is why it is here and unpaged; the BODIES are what made that unbounded in size as
+      // well as in count, so they go through the page's own projection — a stored body past
+      // `DRAFT_BODY_MAX_BYTES` arrives as `null` with its reason, and the client asks for it by id.
       const draftRows = await db.select().from(drafts).where(eq(drafts.accountId, accountId));
-      for (const d of draftRows) emit("draft", d.id, draftRowToDTO(d), d.updatedAt.toISOString());
+      for (const d of draftRows) emit("draft", d.id, draftRowToSnapshotDTO(d), d.updatedAt.toISOString());
 
       // TAGS ARE LIVE STATE, IN FULL, AND ON PAGE 1. A tag is identity — a name and a hue — and
       // the client renders its rail by filtering the tag list against each message's `labels`.

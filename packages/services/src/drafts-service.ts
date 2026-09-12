@@ -3,12 +3,15 @@ import {
   claimIdempotencyKey, drafts, mailboxes, messages, outboundSends, recordChange, threads, type Tx,
 } from "@trafficflow/db";
 import { dialect } from "@trafficflow/db/dialect";
-import type { EmailAddress } from "@trafficflow/core/mail";
+import {
+  DRAFT_BODY_MAX_BYTES, draftBodyOverCeiling, utf8ByteLength, type EmailAddress,
+} from "@trafficflow/core/mail";
 import type { ServiceContext } from "./context.js";
 import { IdempotencyRaceLost, ServiceError } from "./errors.js";
 import { materializeDraft } from "./dto/materialize.js";
 import type { DraftDTO } from "./dto/types.js";
 import { DRAFT_HTML_CAP_BYTES, htmlByteLength, prepareOutboundBody } from "./outbound-html.js";
+
 // The per-MESSAGE ceiling, imported rather than restated: two ceilings on one list that can
 // disagree is how the reply-all regression happened. See {@link DRAFT_MAX_RECIPIENTS}.
 import { SEND_MAX_RECIPIENTS } from "./send-service.js";
@@ -198,7 +201,7 @@ export class DraftsService {
     const mailboxId = await this.validMailbox(ctx, body.mailboxId);
     const subject = this.validSubject(body.subject);
     const rich = this.richBody(body.html, body.body);
-    const text = rich ? rich.text : this.validString(body.body, "body");
+    const text = rich ? rich.text : this.validBody(body.body);
     const html = rich ? rich.html : null;
     const to = this.validAddresses(body.to, "to");
     const cc = this.validAddresses(body.cc, "cc");
@@ -286,7 +289,7 @@ export class DraftsService {
     } else {
       if (patch.html === null) set.html = null;
       if (patch.body !== undefined) {
-        set.body = this.validString(patch.body, "body");
+        set.body = this.validBody(patch.body);
         // A PLAIN edit of a RICH draft is refused rather than resolved. Writing `body` alone
         // would leave the row holding two bodies that disagree â the html the sender still sees
         // in their editor, and the text every plaintext recipient would get â and silently
@@ -625,13 +628,32 @@ export class DraftsService {
   }
 
   /**
+   * The PLAIN body, type-checked and bounded. Its own validator for {@link validSubject}'s reason:
+   * the shared {@link validString} bounds nothing, so this column was the one size-proportional
+   * field on the route with no ceiling of its own. {@link DRAFT_BODY_MAX_BYTES} is the rich half's
+   * number, so the two formats agree; the rich arm never reaches here, its `body` being derived
+   * from html already held to that ceiling. `draft_too_large`/413 is the class the rich half
+   * already answers with — two codes for one fact would be a distinction buying nothing.
+   */
+  private validBody(v: unknown): string {
+    const body = this.validString(v, "body");
+    if (draftBodyOverCeiling(body)) {
+      throw new ServiceError(
+        "draft_too_large", 413,
+        `this message is ${utf8ByteLength(body)} bytes of text; the limit is ${DRAFT_BODY_MAX_BYTES}`,
+      );
+    }
+    return body;
+  }
+
+  /**
    * The subject, type-checked and bounded — its own validator: the ceiling was briefly inside the
    * shared {@link validString}, and `body` goes through that too, so a plain-text draft with a
    * long body was refused about a limit that has nothing to do with it while a rich draft of the
    * same length passed. A bound that depends on the format the user chose is not a bound. The
-   * plain body's ceiling is the request door and nothing else; the rich body has its own
-   * (`DRAFT_HTML_CAP_BYTES`) — markup is where a megabyte hides, plain text is what a person
-   * typed.
+   * plain body has its own too ({@link validBody}), and it is the rich half's number — markup is
+   * where a megabyte hides, but a plain body with no ceiling was the same megabyte through a
+   * wider door.
    */
   private validSubject(v: unknown): string {
     const subject = this.validString(v, "subject");

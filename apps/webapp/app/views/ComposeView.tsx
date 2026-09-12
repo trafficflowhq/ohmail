@@ -37,7 +37,7 @@ import {
 } from "../shell/format";
 import { activeFormatZone } from "../shell/locale";
 import type { ComposeFields, ComposePlan } from "../shell/compose";
-import { worthSaving } from "../shell/compose-autosave";
+import { draftNoteKey, worthSaving } from "../shell/compose-autosave";
 import { formatRecipientChips, type ResolvedFrom } from "../shell/compose-from";
 import { SignatureBlock } from "../shell/SignatureBlock";
 import { SIG_FOLLOWING } from "../shell/signature";
@@ -1005,8 +1005,17 @@ export function ComposeView({
                 <span className="send-note" role="status">{held.sentence}</span>
               ) : null}
               {/* The scratch buffer, stated exactly as strongly as it is true: this browser, not
-                  the mailbox. Drafts kept on the server are not built yet. */}
-              <span className="send-note">{t("draftNote")}</span>
+                  the mailbox. Drafts kept on the server are not built yet — AND NOT AT ALL past
+                  `DRAFT_BODY_MAX_BYTES`, which is why the two sentences are one choice rather than
+                  two notes: "saved to your drafts after a moment" is a promise the autosave stops
+                  keeping the moment the body crosses the ceiling, and a false promise beside a
+                  true refusal is worse than either alone. Read from the SAME predicate the save
+                  door reads, so the sentence and the behaviour cannot disagree. */}
+              {draftNoteKey(fields) === "bodyTooLong" ? (
+                <span className="send-note" role="status">{t("bodyTooLong")}</span>
+              ) : (
+                <span className="send-note">{t("draftNote")}</span>
+              )}
             </div>
 
             <SendStatus send={shown} scope="compose" />

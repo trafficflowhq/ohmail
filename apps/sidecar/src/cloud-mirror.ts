@@ -639,6 +639,11 @@ async function messagePresent(tx: Tx, id: string): Promise<boolean> {
   return rows.length > 0;
 }
 
+async function draftPresent(tx: Tx, id: string): Promise<boolean> {
+  const rows = await tx.select({ id: drafts.id }).from(drafts).where(eq(drafts.id, id)).limit(1);
+  return rows.length > 0;
+}
+
 async function threadPresent(tx: Tx, id: string): Promise<boolean> {
   const rows = await tx.select({ id: threads.id }).from(threads).where(eq(threads.id, id)).limit(1);
   return rows.length > 0;
@@ -1118,6 +1123,18 @@ async function applyUpsert(
       const inReplyTo = d.inReplyToMessageId && (await messagePresent(tx, d.inReplyToMessageId))
         ? d.inReplyToMessageId
         : null;
+      /* ── THE ONE FIELD A PAGE MAY LEAVE OUT, AND `?? ""` WAS THE WAY TO LOSE MAIL ─────────
+         `DraftDTO.body` is `null` when a bounded page would not carry it (a stored body past
+         `DRAFT_BODY_MAX_BYTES`). Coalescing that to `""` wrote an EMPTY body over the mirror's
+         copy, and `drafts.body` is `NOT NULL` here, so this store cannot say "unknown" the way
+         the browser mirror can — the compose surface would then open an empty editor on a
+         message that is not empty and autosave the blank back to the account. So the body is
+         left out of the write entirely: a row we already hold keeps its text and lands
+         `"partial"` (the ledger must not read it as the entity's full state), and a row we have
+         never seen is not created at all, which is the arm an unknown mailbox already takes.
+         The next single-row read or edit carries the body and settles it. */
+      const bodyCarried = typeof d.body === "string";
+      if (!bodyCarried && !(await draftPresent(tx, d.id))) return false;
       const body = {
         accountId: world.accountId,
         // The draft's OWN sending mailbox — see the message branch. A draft written against the
@@ -1127,7 +1144,7 @@ async function applyUpsert(
         threadId: d.threadId ?? null,
         inReplyToMessageId: inReplyTo,
         subject: d.subject ?? "",
-        body: d.body ?? "",
+        ...(bodyCarried ? { body: d.body as string } : {}),
         html: d.html ?? null,
         to: d.to ?? [],
         cc: d.cc ?? [],
@@ -1135,11 +1152,18 @@ async function applyUpsert(
         status: d.status,
         updatedAt: asDate(d.updatedAt) ?? now,
       };
-      await tx.insert(drafts).values({ id: d.id, ...body })
-        .onConflictDoUpdate({ target: drafts.id, set: body });
+      if (bodyCarried) {
+        await tx.insert(drafts).values({ id: d.id, ...body, body: d.body as string })
+          .onConflictDoUpdate({ target: drafts.id, set: body });
+      } else {
+        // UPDATE, never an upsert: an insert would need a `body` value, and the only one
+        // available is the empty string this branch exists to refuse. The row was present a
+        // statement ago; if it has since gone, nothing is written and nothing is invented.
+        await tx.update(drafts).set(body).where(eq(drafts.id, d.id));
+      }
       gen?.draft.add(d.id);
       if (d.threadId) gen?.thread.add(d.threadId);   // the thread stub this draft pinned
-      return wantsReplyParent && inReplyTo === null ? "partial" : true;
+      return !bodyCarried || (wantsReplyParent && inReplyTo === null) ? "partial" : true;
     }
     case "approval": {
       const a = ch.entity as ApprovalDTO | undefined;

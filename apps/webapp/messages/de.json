@@ -1048,6 +1048,7 @@
     "attachQualityCap": "Einige Bilder behalten ihre bisherige Grösse — insgesamt sind höchstens {size} möglich.",
     "attachDuplicate": "Bereits angehängt: {filenames}",
     "draftNote": "Liegt nach einem Moment in deinen Entwürfen",
+    "bodyTooLong": "Zu lang zum Speichern. Kürze die Nachricht, dann wird sie wieder gespeichert.",
     "editorAria": "Nachrichtentext",
     "editorPlaceholder": "Schreib deine Nachricht …",
     "draftTag": "KI-Entwurf — nicht gesendet",
