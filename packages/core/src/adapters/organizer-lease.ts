@@ -382,6 +382,15 @@ export interface OrganizerClaim {
   protocol: number;
   /** ISO instant of the last renew. NOT IMAP INTERNALDATE — that is the server's clock. */
   heartbeat: Date;
+  /**
+   * THE SERVER'S OWN STAMP FOR THIS RECORD — IMAP INTERNALDATE, the instant the mail server took
+   * delivery of it, and the one time in this folder no install's clock can be wrong about.
+   *
+   * The decision layer ages and ranks by it ({@link withServerClock}), so a laptop reading 2099
+   * can neither age every honest claim nor look newer than one. `null` where the READ could not
+   * report it, and absence keeps the writer's own stamp rather than inventing a time.
+   */
+  serverStamp: Date | null;
   /** ISO instant this install BECAME organizer, as distinct from last seen. */
   claimedAt: Date;
   displayName: string;
@@ -649,8 +658,14 @@ export function formatClaim(c: ClaimInput): string {
   return lines.join("\r\n");
 }
 
-/** Read the headers of one message. Returns `null` when it is not a claim at all. */
-export function parseClaim(raw: string, ref?: unknown): ClaimRecord | null {
+/**
+ * Read the headers of one message. Returns `null` when it is not a claim at all.
+ *
+ * `serverStamp` is the record's IMAP INTERNALDATE, which is not a header and so cannot be parsed
+ * out of `raw` — it is carried BESIDE the source by every read ({@link RawClaimMessage}) and
+ * handed in here so that one object holds both of a record's two times.
+ */
+export function parseClaim(raw: string, ref?: unknown, serverStamp?: Date | null): ClaimRecord | null {
   const headerBlock = raw.split(/\r?\n\r?\n/, 1)[0] ?? "";
   const headers = new Map<string, string>();
   const seen = new Map<string, number>();
@@ -768,6 +783,7 @@ export function parseClaim(raw: string, ref?: unknown): ClaimRecord | null {
     kind,
     protocol,
     heartbeat,
+    serverStamp: serverStamp instanceof Date && !Number.isNaN(serverStamp.getTime()) ? serverStamp : null,
     claimedAt: Number.isNaN(claimedAt.getTime()) ? heartbeat : claimedAt,
     displayName: get(H.displayName) ?? "",
     nonce: get(H.nonce) ?? "",
@@ -806,23 +822,87 @@ export function ownClockSkewMs(
 }
 
 /**
+ * A QUARTER OF THE STALENESS WINDOW — how far this install's own clock may sit from the mail
+ * server's and still write a claim.
+ *
+ * A FRACTION of the window rather than a fixed figure, because the window is a parameter and the
+ * damage scales with it: at a one-minute window, 61 seconds of lag was enough for a reader to take
+ * the mailbox with our live record in `displace`. A quarter leaves three quarters of the window for
+ * the thing the window is actually for — a machine that slept through a renew.
+ */
+export const CLOCK_SKEW_WINDOW_FRACTION = 4;
+
+/**
+ * The bound, in both directions, for a given window. Capped at {@link MAX_FUTURE_SKEW_MS} on the
+ * way up: a window above forty minutes would otherwise license a writer to stamp a heartbeat
+ * further ahead than any reader will believe, which is the one state a writer-side check exists to
+ * make unreachable. The cap is what closes the configured-window case — the tolerance is not
+ * widened to meet the window (that is the seventy-three-year lockout with a shorter number); the
+ * WRITER is held to the smaller of the two.
+ */
+export function clockSkewBoundMs(staleAfterMs: number): number {
+  return Math.min(Math.floor(staleAfterMs / CLOCK_SKEW_WINDOW_FRACTION), MAX_FUTURE_SKEW_MS);
+}
+
+/**
  * Is this install's clock fit to write a claim — the WRITER-side check, and it has to be here: no
  * reader-side rule can fix a wrong writer clock, and the tie-breaker is the server's clock, which
- * both machines see. Two bounds, because the directions are not symmetric: AHEAD is tolerated to
- * {@link MAX_FUTURE_SKEW_MS} — past it every reader excludes our heartbeat from the renewal
- * evidence and the mailbox is offered to somebody else while we go on organizing it; BEHIND only
- * to `staleAfterMs` — at a one-minute window, 61 seconds of lag lets a reader take the mailbox
- * with our live record in `displace`. The refusal names which bound fired. `null` skew refuses
- * nothing.
+ * both machines see. SYMMETRIC, because both directions cost the same thing: ahead, our heartbeat
+ * outranks and ages every honest peer and our press outranks every honest press; behind, our live
+ * record reads as residue and the mailbox is handed to somebody else while we go on filing mail
+ * into it. Two organizers either way. The refusal names which bound fired. `null` skew — an
+ * install that has never written a claim here — refuses nothing.
  */
 export function clockSkewRefusal(input: {
   skewMs: number | null; staleAfterMs: number;
 }): { skewMs: number; bound: "ahead" | "behind"; boundMs: number } | null {
   const { skewMs, staleAfterMs } = input;
   if (skewMs === null) return null;
-  if (skewMs > MAX_FUTURE_SKEW_MS) return { skewMs, bound: "ahead", boundMs: MAX_FUTURE_SKEW_MS };
-  if (-skewMs >= staleAfterMs) return { skewMs, bound: "behind", boundMs: staleAfterMs };
+  const boundMs = clockSkewBoundMs(staleAfterMs);
+  if (skewMs > boundMs) return { skewMs, bound: "ahead", boundMs };
+  if (-skewMs > boundMs) return { skewMs, bound: "behind", boundMs };
   return null;
+}
+
+/**
+ * THE REFERENCE CLOCK, SUBSTITUTED ONCE — every decision this module makes about AGE and RECENCY
+ * reads the mail server's stamp, never the writer's.
+ *
+ * The writer's `X-Ohmail-Heartbeat` is a claim about time made by the machine whose clock is in
+ * question, so a laptop booting at 2099 wrote heartbeats no honest peer could outrank and a laptop
+ * 61 seconds slow wrote records that read as residue — and no reader-side rule could tell either
+ * from the truth, because believing an old-looking stamp is the permanent lockout and disbelieving
+ * it is the displacement. IMAP settles it: INTERNALDATE is stamped by the SERVER at the append, one
+ * clock both machines see, and it cannot be forged by a broken one.
+ *
+ * ONE substitution, at the two doors of the decision layer ({@link decideLease}, {@link
+ * peekLease}), so every predicate below keeps reading `heartbeat` and there is exactly one place
+ * the server's clock enters. `clampFuture` already establishes the idiom: this layer decides over
+ * ADJUSTED COPIES and never mutates what the parser produced.
+ *
+ * A record with NO server stamp is left exactly as it is — today's reading, with the believability
+ * ceiling still over it. Absence means this READ could not ask the server (a connection that does
+ * not report INTERNALDATE, or a caller that parsed a record out of a source it already held); it is
+ * not evidence about the record, so it may not change the record's standing in either direction.
+ */
+export function withServerClock(claims: readonly ClaimRecord[]): readonly ClaimRecord[] {
+  let changed = false;
+  const out = claims.map((c) => {
+    if (isMalformed(c)) return c;
+    /* READ STRUCTURALLY, not as the type promises. `serverStamp` is REQUIRED on the claim so that
+       the one producer — the parser — cannot forget it; but this package's tests are not
+       typechecked and build claims as object literals, so an absent field arrives here as
+       `undefined` and the type says otherwise. Absent and `null` are the same answer anyway: this
+       read could not ask the server. */
+    const stamp = c.serverStamp;
+    if (!(stamp instanceof Date) || Number.isNaN(stamp.getTime())) return c;
+    if (stamp.getTime() === c.heartbeat.getTime()) return c;
+    changed = true;
+    return { ...c, heartbeat: stamp };
+  });
+  /* The same array back when nothing moved, so the ordinary path allocates nothing and an identity
+     comparison a caller makes across the two is not quietly broken by a no-op substitution. */
+  return changed ? out : claims;
 }
 
 export interface DecideLeaseInput {
@@ -1157,7 +1237,14 @@ export function decideLease(input: DecideLeaseInput): LeaseVerdict {
   const takeover = input.takeover ?? null;
   const ourProtocol = self.protocol ?? CLAIM_PROTOCOL;
 
-  const election = runElection(input.claims, now, staleAfterMs);
+  /* THE SERVER'S CLOCK ENTERS HERE AND NOWHERE ELSE BELOW — see {@link withServerClock}. Every
+     read of the claim list in this function is of `claims` rather than `input.claims`, including
+     the RAW scans: a raw scan against the un-substituted list would judge liveness on the writer's
+     own stamp, which is the whole of the defect, and the two lists would disagree about one
+     record. */
+  const claims = withServerClock(input.claims);
+
+  const election = runElection(claims, now, staleAfterMs);
 
   /**
    * Is this claim OURS? The clone defence, unchanged in substance.
@@ -1198,7 +1285,7 @@ export function decideLease(input: DecideLeaseInput): LeaseVerdict {
   // OLDER record hidden behind a rankable newer sibling would otherwise never trip this arm —
   // and every downstream consumer of this verdict (the takeover's displacement above all)
   // would treat a live claim in a format we cannot read as beatable residue.
-  const unrankable = input.claims.find((c): c is OrganizerClaim =>
+  const unrankable = claims.find((c): c is OrganizerClaim =>
     !isMalformed(c) && !rawOurs(c) && (c.protocol > ourProtocol || c.kind === "unknown") && rawIsLive(c));
   if (unrankable) return { verdict: "stand_down", reason: "organized_elsewhere:unknown", by: unrankable };
 
@@ -1264,7 +1351,7 @@ export function decideLease(input: DecideLeaseInput): LeaseVerdict {
    * to. Tested as `=== "takeover"`, so an untyped caller reads as a join — the direction that
    * can only produce FEWER organizers.
    */
-  const liveForeign = input.claims.some((c): boolean =>
+  const liveForeign = claims.some((c): boolean =>
     !isMalformed(c) && !rawOurs(c) && rawIsLive(c));
   const mayDisplace = takeover !== null && (takeover.intent === "takeover" || !liveForeign);
   if (mayDisplace && ourPress > livePress) {
@@ -1278,7 +1365,7 @@ export function decideLease(input: DecideLeaseInput): LeaseVerdict {
     // nonce, anything bearing our id). A same-id claim with a different nonce while ours is armed
     // is a restored clone's and displaces like any other. Rules 1/2 hold over the raw list too:
     // an authorized expunge of a record we cannot read must be impossible by construction.
-    const displaced = input.claims
+    const displaced = claims
       .filter((c) => (isMalformed(c)
         ? true
         : !(c.installId === self.installId && (self.lastNonce === null || c.nonce === self.lastNonce))
@@ -1393,7 +1480,12 @@ export interface PeekLeaseInput {
 /** Pure. No IO, no identity, no side effects — the whole table is unit-testable. */
 export function peekLease(input: PeekLeaseInput): LeasePeek {
   const staleAfterMs = input.staleAfterMs ?? DEFAULT_STALE_AFTER_MS;
-  const { valid, malformed } = coalesce(input.claims);
+  /* The SAME substitution the gate makes, at this surface's own door — see {@link
+     withServerClock}. The preview and the gate reading one folder through two clocks is
+     `LEASE-PREVIEW-BELIEVABILITY-BOUNDARY`: the preview offered a takeover the gate then refused,
+     and the caller's stand-down path spent the person's one-shot press on it. */
+  const claims = withServerClock(input.claims);
+  const { valid, malformed } = coalesce(claims);
 
   /**
    * The preview sees what the gate sees, raw duplicates included. Rule 1/2 scans the RAW list: a
@@ -1412,7 +1504,7 @@ export function peekLease(input: PeekLeaseInput): LeasePeek {
   // as a live holder while the gate had already stopped refusing over it, so a person was told
   // another computer was organizing their mailbox by a build that would have let them take it.
   // This is the seam the two copies of the folder-relative test hid from each other.
-  const rawValid = input.claims.filter((c): c is OrganizerClaim => !isMalformed(c));
+  const rawValid = claims.filter((c): c is OrganizerClaim => !isMalformed(c));
   const clock = readFolderClock(rawValid, input.now, staleAfterMs);
   /**
    * An install is renewing if ANY of its raw records says so. Coalesce keeps the newest heartbeat
@@ -1603,7 +1695,7 @@ export async function readLeasePeek(input: ReadLeasePeekInput): Promise<LeasePee
     );
   }
   const claims = messages
-    .map((m) => parseClaim(m.raw, m.ref))
+    .map((m) => parseClaim(m.raw, m.ref, m.internalDate ?? null))
     .filter((c): c is ClaimRecord => c !== null);
   return peekLease({
     claims,
@@ -1773,6 +1865,39 @@ export class LeaseUnavailableError extends Error {
     super(message, options);
     this.name = "LeaseUnavailableError";
     this.op = options.op;
+  }
+}
+
+/**
+ * THIS COMPUTER'S CLOCK DISAGREES WITH THE MAIL SERVER'S, so no claim was written.
+ *
+ * A {@link LeaseUnavailableError} and deliberately a SUBCLASS of it rather than a fourth verdict:
+ * every host already exempts that class by name, so a wrong clock leaves the mailbox unattached and
+ * un-quarantined and our own claim ages out un-renewed — while a STAND-DOWN would void a one-shot
+ * press this pass could never have honoured, which is the defect the preview row names. The numbers
+ * ride on the error because the sentence a person is shown needs them, and an optional field on the
+ * base class would be a field absent at the one site that reads it.
+ */
+export class LeaseClockSkewError extends LeaseUnavailableError {
+  /** Our stamp minus the server's. Positive is ahead. */
+  readonly skewMs: number;
+  /** Which bound fired, and what it was — {@link clockSkewBoundMs}. */
+  readonly bound: "ahead" | "behind";
+  readonly boundMs: number;
+  constructor(message: string, detail: { skewMs: number; bound: "ahead" | "behind"; boundMs: number }) {
+    super(message, { op: "clock_skew" });
+    this.name = "LeaseClockSkewError";
+    this.skewMs = detail.skewMs;
+    this.bound = detail.bound;
+    this.boundMs = detail.boundMs;
+  }
+  /**
+   * How far off, in whole minutes, never below one — the figure the sentence quotes. A skew of
+   * forty seconds rounds to zero, and "your clock is off by 0 minutes" is a sentence that tells
+   * somebody nothing is wrong while their mailbox is not being organized.
+   */
+  get offByMinutes(): number {
+    return Math.max(1, Math.round(Math.abs(this.skewMs) / 60_000));
   }
 }
 
@@ -2657,9 +2782,18 @@ async function searchHeaders(
   const out: RawClaimMessage[] = [];
   for (let i = 0; i < capped.length; i += SEARCH_FETCH_BATCH) {
     const batch = capped.slice(i, i + SEARCH_FETCH_BATCH);
-    for await (const m of client.fetch(batch.join(","), { uid: true, headers: true }, { uid: true })) {
+    /* `internalDate` is asked for HERE for the reason it is asked for in `readMetaFolderWindow`,
+       and the two are the only places a claim is built from the wire: a read that drops the
+       server's stamp hands the decision layer records it can only age by the writer's own clock —
+       silently, and exactly on the busy folders this path exists to serve. */
+    for await (const m of client.fetch(
+      batch.join(","), { uid: true, headers: true, internalDate: true }, { uid: true },
+    )) {
       if (!m.headers) continue;
-      out.push({ ref: m.uid, raw: m.headers.toString("utf8") });
+      out.push({
+        ref: m.uid, raw: m.headers.toString("utf8"),
+        internalDate: m.internalDate instanceof Date ? m.internalDate : null,
+      });
     }
   }
   return out;
@@ -3005,6 +3139,15 @@ interface GateRead {
   uidValidity: number | bigint | null;
 }
 
+/**
+ * WHICH IOs HAVE ALREADY REPORTED A WRONG CLOCK. See the refusal in {@link runLeaseGate}.
+ *
+ * A `WeakSet` so a mailbox that goes away takes its entry with it — this module holds no registry
+ * and must not start one. The only state in the decision path, and it decides nothing: dropping it
+ * would cost log volume, never a verdict.
+ */
+const clockSkewReported = new WeakSet<object>();
+
 export async function runLeaseGate(input: LeaseGateInput): Promise<LeaseGateResult> {
   const { io, self, now } = input;
   const log = input.log ?? ((): void => undefined);
@@ -3096,8 +3239,12 @@ export async function runLeaseGate(input: LeaseGateInput): Promise<LeaseGateResu
        * protocol licenses an install to remove what it wrote, so its own residue is pruned to the
        * newest and the cycle refuses; next cycle the set is smaller. Nothing another install wrote
        * is touched — the folder is the customer's. */
+      /* Ordered by THIS install's own stamps, and that is licensed rather than overlooked: the
+         set holds only records this install wrote, and the skew check above has already refused
+         the cycle if its clock is outside the bound — so the order of its own appends is the
+         server's order too, to within a quarter of the window. */
       const ours = set
-        .map((m) => ({ ref: m.ref, claim: parseClaim(m.raw, m.ref) }))
+        .map((m) => ({ ref: m.ref, claim: parseClaim(m.raw, m.ref, m.internalDate ?? null) }))
         .filter((c): c is { ref: unknown; claim: OrganizerClaim } =>
           c.claim !== null && !isMalformed(c.claim) && c.claim.installId === self.installId);
       /**
@@ -3156,12 +3303,12 @@ export async function runLeaseGate(input: LeaseGateInput): Promise<LeaseGateResu
   /**
    * The writer's own clock, before any append — read from the election's records (our own claim
    * carries both stamps for one instant), so it costs no round trip and is judged before this
-   * gate can write. A refusal is `LeaseUnavailableError`, deliberately not a stand-down: both
-   * hosts exempt the class, the mailbox does not sync and is not quarantined, our claim ages out
-   * un-renewed — while a stand-down would void a one-shot press this pass could never have
-   * honoured. One-cycle residual, stated: an install that has never written a claim has no pair
-   * to measure, so its first gate run is unchecked; its own append supplies the pair and the next
-   * cycle refuses.
+   * gate can write. A refusal is {@link LeaseClockSkewError}, a `LeaseUnavailableError` and
+   * deliberately not a stand-down: both hosts exempt the class, the mailbox does not sync and is
+   * not quarantined, our claim ages out un-renewed — while a stand-down would void a one-shot
+   * press this pass could never have honoured. One-cycle residual, stated: an install that has
+   * never written a claim has no pair to measure, so its first gate run is unchecked; its own
+   * append supplies the pair and the next cycle refuses.
    */
   const staleWindowMs = input.staleAfterMs ?? DEFAULT_STALE_AFTER_MS;
   if (staleWindowMs > MAX_FUTURE_SKEW_MS) {
@@ -3172,19 +3319,31 @@ export async function runLeaseGate(input: LeaseGateInput): Promise<LeaseGateResu
   const skew = clockSkewRefusal({
     skewMs: ownClockSkewMs(messages, self.installId), staleAfterMs: staleWindowMs,
   });
-  if (skew !== null) {
-    log("lease_clock_skew_refused", { skewMs: skew.skewMs, bound: skew.bound, boundMs: skew.boundMs });
-    throw new LeaseUnavailableError(
+  if (skew === null) {
+    /* Re-armed the moment the clock is inside the bound again, so the line is written once PER
+       EPISODE rather than once per process: a clock corrected and then broken again is a second
+       thing worth reading about. */
+    clockSkewReported.delete(io);
+  } else {
+    /* ONCE, not once a cycle. A wrong clock lasts days and this gate runs every poll, so the
+       unlatched form wrote thousands of identical lines and buried the one that mattered. The
+       latch is per IO — one connection's view of one mailbox — because that is the granularity a
+       person's fix (correct the clock) clears. */
+    if (!clockSkewReported.has(io)) {
+      clockSkewReported.add(io);
+      log("lease_clock_skew_refused", { skewMs: skew.skewMs, bound: skew.bound, boundMs: skew.boundMs });
+    }
+    throw new LeaseClockSkewError(
       `this computer's clock is ${Math.round(Math.abs(skew.skewMs) / 1000)}s ` +
       `${skew.bound === "ahead" ? "ahead of" : "behind"} the mail server's, which is more than the ` +
       `${Math.round(skew.boundMs / 1000)}s the organizer lease can tolerate; no claim is written ` +
       `until the clock is corrected`,
-      { op: "clock_skew" },
+      skew,
     );
   }
 
   const claims = messages
-    .map((m) => parseClaim(m.raw, m.ref))
+    .map((m) => parseClaim(m.raw, m.ref, m.internalDate ?? null))
     .filter((c): c is ClaimRecord => c !== null);
 
   const verdict = decideLease({
@@ -3326,7 +3485,7 @@ export async function runLeaseGate(input: LeaseGateInput): Promise<LeaseGateResu
      */
     const after = (await electionRead(await readClaims(() => io.listClaims()))).records;
     verifyClaims = after
-      .map((m) => parseClaim(m.raw, m.ref))
+      .map((m) => parseClaim(m.raw, m.ref, m.internalDate ?? null))
       .filter((c): c is ClaimRecord => c !== null);
   } catch (err) {
     throw new LeaseUnavailableError(
@@ -3491,7 +3650,7 @@ export async function runLeaseGate(input: LeaseGateInput): Promise<LeaseGateResu
       }
       const after = read.records;
       const afterClaims = after
-        .map((m) => parseClaim(m.raw, m.ref))
+        .map((m) => parseClaim(m.raw, m.ref, m.internalDate ?? null))
         .filter((c): c is ClaimRecord => c !== null);
       const ownStanding = afterClaims
         .filter((c): c is OrganizerClaim => !isMalformed(c) && c.installId === self.installId && c.nonce === nonce);
