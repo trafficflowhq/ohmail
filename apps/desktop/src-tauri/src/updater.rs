@@ -311,9 +311,9 @@ pub struct Facts {
     /// gates on and the installer that would have run cannot disagree. `None` on a build the
     /// bundler never packaged.
     pub bundled_as: Option<InstallKind>,
-    /// Is `$APPIMAGE` set? The runtime sets it to the file it mounted, and the plugin takes it as
-    /// the path to rewrite.
-    pub appimage_env: bool,
+    /// Is this process the AppImage `$APPIMAGE` names? See [`AppImage`] — the variable alone is
+    /// not the fact, because every child of an AppImage inherits it.
+    pub appimage: AppImage,
     /// Does `/.flatpak-info` exist? The marker inside the sandbox, and the reliable one —
     /// `FLATPAK_ID` is not always inherited.
     pub flatpak_info: bool,
@@ -322,18 +322,33 @@ pub struct Facts {
     pub os: Os,
 }
 
+/// Is the running executable the AppImage `$APPIMAGE` names? The variable is not the answer: the
+/// runtime exports it to the process it launches and every child inherits it, so a copy extracted
+/// from an image, or anything started from a terminal that is itself an AppImage, sees it set
+/// while owning no image at all. Those copies have nothing the plugin could rewrite, and offering
+/// them an update is a press that reports done and changes nothing.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum AppImage {
+    /// `$APPIMAGE` is unset or empty. Nothing here was launched by an AppImage runtime.
+    #[default]
+    None,
+    /// `$APPIMAGE` is set and this process is NOT the image it names — an extracted copy, an
+    /// `APPIMAGE_EXTRACT_AND_RUN` start, or a child of some other AppImage.
+    Inherited,
+    /// This process IS that image: the executable resolves inside the mount the runtime made, and
+    /// the path names a regular file — a file that exists to be replaced.
+    Running,
+}
+
 /// The one decision, as a pure function of what the machine says. The ORDER is the design:
 ///
 ///  1. The sandbox marker wins outright — a Flatpak is a Flatpak whatever a bundler wrote, and
 ///     the software centre is what updates it.
-///  2. The bundler's record next, for every kind but the AppImage, and ahead of `$APPIMAGE`
-///     because that variable is INHERITED: a process started from a terminal that is itself
-///     inside an AppImage sees it set, and a packaged install must not be talked into replacing a
-///     stranger's file by an environment it did not set.
-///  3. `$APPIMAGE` then decides the AppImage ALONE, not together with the bundler's mark. An
+///  2. The bundler's record next, for every kind but the AppImage, and ahead of the AppImage fact
+///     because a packaged install must not be talked into replacing a stranger's file.
+///  3. The AppImage fact then decides the AppImage ALONE, not together with the bundler's mark. An
 ///     AppImage whose mark went missing would otherwise stop updating with nothing on screen to
-///     say so, and an extracted copy — which has no file to rewrite — is exactly what the
-///     variable's absence names.
+///     say so, and an extracted copy carries the mark while having no image to rewrite.
 ///  4. Under a system prefix with no mark: a distribution built this and owns the files.
 pub fn classify(facts: Facts) -> InstallKind {
     if facts.flatpak_info {
@@ -345,12 +360,61 @@ pub fn classify(facts: Facts) -> InstallKind {
         }
     }
     match facts.os {
-        Os::Linux if facts.appimage_env => InstallKind::AppImage,
+        Os::Linux if facts.appimage == AppImage::Running => InstallKind::AppImage,
         Os::Linux if facts.system_path => InstallKind::LinuxPackage,
         Os::Linux => InstallKind::Unpackaged,
         Os::Windows => InstallKind::WindowsSetup,
         Os::Mac => InstallKind::MacBundle,
     }
+}
+
+/// What the machine says about `$APPIMAGE`, as values rather than as an environment — so every
+/// case below is a row in a table instead of a variable a test would have to set globally.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct ImageEnv<'a> {
+    /// `$APPIMAGE`, empty read as absent: the file the runtime mounted, and the only file the
+    /// plugin's AppImage installer rewrites.
+    pub appimage: Option<&'a std::path::Path>,
+    /// Is `$APPIMAGE_EXTRACT_AND_RUN` PRESENT? The runtime then unpacked the image to a temporary
+    /// directory and ran the copy: nothing is mounted and the running files are not the image.
+    pub extract_and_run: bool,
+    /// `$APPDIR` — the mount point the runtime made. Inherited exactly as `$APPIMAGE` is, and set
+    /// by an extracted `AppRun` to the extraction directory, so it CONFIRMS the mount below and
+    /// never establishes it alone.
+    pub appdir: Option<&'a std::path::Path>,
+    /// `/proc/self/exe`, resolved.
+    pub exe: Option<&'a std::path::Path>,
+    /// Does `$APPIMAGE` name a regular file? Measured by [`read_facts`]; there is nothing to
+    /// replace if it does not.
+    pub image_is_a_file: bool,
+}
+
+/// Is this path inside a mount the AppImage runtime made? The runtime mounts each image under a
+/// `mkdtemp` directory it names `.mount_…` (`/tmp/.mount_ohmailXXXXXX/usr/bin/ohmail`), and an
+/// EXTRACTED tree is a directory somebody chose — which is the whole difference the finding turns
+/// on. `$APPDIR` cannot answer it alone: an extracted `AppRun` sets that variable to the
+/// extraction directory, so the exe would sit inside it in both cases.
+fn inside_runtime_mount(path: &std::path::Path) -> bool {
+    path.ancestors().any(|dir| {
+        dir.file_name().is_some_and(|name| name.to_string_lossy().starts_with(".mount_"))
+    })
+}
+
+/// The AppImage fact, from what was measured. Every refusal below is a copy that cannot replace
+/// itself, and each is its own row in `updater_tests.rs`.
+pub fn running_image(env: ImageEnv<'_>) -> AppImage {
+    if env.appimage.is_none() {
+        return AppImage::None;
+    }
+    if env.extract_and_run || !env.image_is_a_file {
+        return AppImage::Inherited;
+    }
+    let Some(exe) = env.exe else { return AppImage::Inherited };
+    // Both halves: the runtime's own mount, and `$APPDIR` agreeing with it where it is set.
+    if !inside_runtime_mount(exe) || env.appdir.is_some_and(|dir| !exe.starts_with(dir)) {
+        return AppImage::Inherited;
+    }
+    AppImage::Running
 }
 
 /// Is this path under a system prefix? Compared by PATH COMPONENT rather than as a string prefix,
@@ -376,18 +440,37 @@ fn bundled_as() -> Option<InstallKind> {
     }
 }
 
+/// A variable set to nothing is not a path, and an unset one is not an empty one.
+fn env_path(name: &str) -> Option<std::path::PathBuf> {
+    std::env::var_os(name)
+        .filter(|value| !value.is_empty())
+        .map(std::path::PathBuf::from)
+}
+
 fn read_facts() -> Facts {
+    let exe = std::env::current_exe().ok();
+    let appimage = env_path("APPIMAGE");
+    let appdir = env_path("APPDIR");
     Facts {
         bundled_as: bundled_as(),
-        // A variable set to nothing is not a path to an AppImage.
-        appimage_env: std::env::var_os("APPIMAGE").is_some_and(|value| !value.is_empty()),
-        // The ONE disk read this module makes, and `desktop-shell.test.ts` holds it to exactly
-        // this one: an updater that touched the filesystem anywhere else would be applying an
-        // update by hand, outside the plugin that verifies payloads.
+        appimage: running_image(ImageEnv {
+            appimage: appimage.as_deref(),
+            // PRESENCE, exactly as the runtime reads it: `APPIMAGE_EXTRACT_AND_RUN=0` extracts
+            // too, so a value test here would disagree with the thing that actually decided.
+            extract_and_run: std::env::var_os("APPIMAGE_EXTRACT_AND_RUN").is_some(),
+            appdir: appdir.as_deref(),
+            exe: exe.as_deref(),
+            // The SECOND of this module's two disk reads, and `desktop-shell.test.ts` holds it to
+            // exactly these two: an updater that touched the filesystem anywhere else would be
+            // applying an update by hand, outside the plugin that verifies payloads.
+            image_is_a_file: appimage
+                .as_deref()
+                .and_then(|path| std::fs::metadata(path).ok())
+                .is_some_and(|meta| meta.is_file()),
+        }),
+        // The FIRST: the Flatpak marker inside the sandbox.
         flatpak_info: std::fs::metadata("/.flatpak-info").is_ok(),
-        system_path: std::env::current_exe()
-            .map(|exe| path_is_system(&exe))
-            .unwrap_or(false),
+        system_path: exe.as_deref().map(path_is_system).unwrap_or(false),
         os: HOST_OS,
     }
 }
