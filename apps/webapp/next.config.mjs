@@ -301,6 +301,11 @@ export const OWN_PATHS = Object.freeze([
   // alongside the manifest: it is machine-read, carries no session and needs no canonical-host
   // redirect, so an edge invocation in front of it would buy nothing.
   "/version",
+  // `/flathub-verification` serves the token Flathub reads to confirm this domain owns the
+  // app id (`app/(marketing)/flathub-verification`). The well-known path Flathub actually
+  // fetches is rewritten onto it below, so the token lives in one place; with no token
+  // configured the route has no body, which is the 404 the path gave before it existed.
+  "/flathub-verification",
   // The catch-all behind the branded 404 (`app/(marketing)/[...missing]/page.tsx`): every
   // path no route above claims, answered with `notFound()` and a real 404 status. In this
   // list because this deployment does answer those paths; excluded from the middleware
