@@ -235,16 +235,12 @@ export async function recordChanges(tx: LedgerTx, changes: readonly ChangeInput[
 /**
  * THE ONE DOOR FOR A RULE WHOSE STATE MOVED.
  *
- * `rule` is a synced entity, so a client shows the rule it was last told about. A writer that
- * moves a rule's state without appending here leaves that client showing the old state for ever
- * — nothing looks wrong at the write, and nothing later corrects it. There were four such
- * writers (promotion, the re-enable, the lifetime-net demotion, the migration retarget) and one
- * arm that did file, which is why this is a door and not a convention: `rule-state-delta-census`
- * refuses a new rule-state write site that does not call it.
- *
- * `ruleIds` are the rows whose state ACTUALLY changed — a `.returning()` from the write, never
- * the rows it was asked about; an empty list writes nothing and takes no lock. {@link LedgerTx}
- * is the requirement, not a preference: the delta and the row commit together or neither does.
+ * `rule` is a synced entity, so a client shows the rule it was last told about; a writer that
+ * moves the state without appending here leaves it showing the old one for ever, with nothing
+ * wrong at the write and nothing later to correct it. Four writers were in that state, which is
+ * why this is a door — `rule-state-delta-census` refuses a write site that does not call it.
+ * `ruleIds` are the rows a `.returning()` says ACTUALLY changed, never the rows asked about.
+ * {@link LedgerTx} is the requirement: the delta and the row commit together or neither does.
  */
 /**
  * The same delta as a ROW, for the one writer that cannot append on the spot: the profile import
