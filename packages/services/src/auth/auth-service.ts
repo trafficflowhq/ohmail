@@ -1292,6 +1292,10 @@ export class AuthService extends SessionLifecycle {
       throw new ServiceError("unprocessable", 422, "cannot remove the last 2FA method");
     }
     await db.delete(totpSecrets).where(eq(totpSecrets.userId, userId));
+    // Factor removal is a compromise ceremony, so it takes the credential-change rule: every
+    // other session of this user goes with the factor, the caller's own stays. Without it a
+    // removed authenticator left every session it had minted live AND renewable.
+    await this.revokeOtherSessions(ctx, userId);
   }
 
   // Step-up re-verification — the inline ceremony behind a stale 5-minute window. `withStepUp`

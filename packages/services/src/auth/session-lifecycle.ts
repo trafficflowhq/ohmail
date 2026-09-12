@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { carryDialect } from "@trafficflow/db/dialect";
 import { dialect } from "@trafficflow/db/dialect";
-import { and, desc, eq, gt, gte, inArray, isNotNull, isNull, lt, ne, or } from "drizzle-orm";
+import { and, desc, eq, gt, gte, inArray, isNotNull, isNull, lt, ne, or, type SQL } from "drizzle-orm";
 import { devices, refreshTokens, sessions, users, type Tx } from "@trafficflow/db";
 import { runInTransaction, type ServiceContext } from "../context.js";
 import { ServiceError } from "../errors.js";
@@ -339,16 +339,29 @@ export class SessionLifecycle {
     if (opts.olderThanDays !== undefined) {
       preds.push(lt(sessions.lastSeenAt, new Date(now.getTime() - opts.olderThanDays * DAY_MS)));
     }
-    // Set-based AND atomic, one measured defect each. Set-based: the per-family loop (two awaited
-    // UPDATEs each, serially) was 400+ round trips on exactly the accounts this verb exists for,
-    // inside a request with a 60-second ceiling — a "Sign out all" that times out having revoked
-    // only a PREFIX. One guarded claim takes the whole scope; the refresh families die in bounded
-    // IN-chunks off the claim's own RETURNING. Atomic: with the claim committing separately, a
-    // failed chunk left every session revoked, some refresh rows live, and the RETRY claimed zero
-    // rows (`revoked_at IS NULL`) — it could never revisit those families. One transaction holds
-    // claim, sweeps and audit: a mid-sweep death rolls the claim back and the retry does the
-    // whole job. Families are 1:1 with sessions by construction, so sweeping tokens by the
-    // claimed familyIds is `revokeFamily`'s exact reach.
+    return this.revokeClaimedSessions(ctx, userId, preds, now);
+  }
+
+  /**
+   * Claim every session matching `preds` and sweep their refresh families, in ONE transaction.
+   * The shared core behind both mass revocations — "sign out all other web sessions" and the
+   * credential-change rule below — because two hand-written claim-and-sweep pairs agree until
+   * one of them is edited.
+   *
+   * Set-based AND atomic, one measured defect each. Set-based: the per-family loop (two awaited
+   * UPDATEs each, serially) was 400+ round trips on exactly the accounts this verb exists for,
+   * inside a request with a 60-second ceiling — a "Sign out all" that times out having revoked
+   * only a PREFIX. One guarded claim takes the whole scope; the refresh families die in bounded
+   * IN-chunks off the claim's own RETURNING. Atomic: with the claim committing separately, a
+   * failed chunk left every session revoked, some refresh rows live, and the RETRY claimed zero
+   * rows (`revoked_at IS NULL`) — it could never revisit those families. One transaction holds
+   * claim, sweeps and audit: a mid-sweep death rolls the claim back and the retry does the
+   * whole job. Families are 1:1 with sessions by construction, so sweeping tokens by the
+   * claimed familyIds is `revokeFamily`'s exact reach.
+   */
+  protected async revokeClaimedSessions(
+    ctx: ServiceContext, userId: string, preds: SQL[], now: Date,
+  ): Promise<{ revoked: number }> {
     return this.inTransaction(ctx, async (txCtx) => {
       const tx = asTx(txCtx);
       const claimed = await tx.update(sessions)
@@ -370,6 +383,31 @@ export class SessionLifecycle {
       }
       return { revoked: claimed.length };
     });
+  }
+
+  /**
+   * THE CREDENTIAL-CHANGE RULE: changing or removing an authentication factor signs out every
+   * OTHER session of that user, and leaves the caller signed in where it is — its session id AND
+   * its family are both excluded, the same way `revokeWebSessions` spares its caller.
+   *
+   * Removing a second factor is precisely the gesture somebody makes when they believe that
+   * factor is compromised, and a ceremony that revoked nothing left every session the factor had
+   * minted live and renewable. NOT device-less-scoped like `revokeWebSessions`: a compromised
+   * factor signed in wherever it could, so the sweep reaches paired devices too.
+   */
+  protected async revokeOtherSessions(
+    ctx: ServiceContext, userId: string,
+  ): Promise<{ revoked: number }> {
+    const db = asTx(ctx);
+    const now = ctx.now();
+    const current = ctx.sessionId
+      ? (await db.select({ familyId: sessions.familyId }).from(sessions)
+        .where(eq(sessions.id, ctx.sessionId)).limit(1))[0]
+      : undefined;
+    const preds = [eq(sessions.userId, userId), isNull(sessions.revokedAt)];
+    if (ctx.sessionId) preds.push(ne(sessions.id, ctx.sessionId));
+    if (current) preds.push(ne(sessions.familyId, current.familyId));
+    return this.revokeClaimedSessions(ctx, userId, preds, now);
   }
 
   /** Throws `step_up_required` unless the current session had a 2FA assertion
