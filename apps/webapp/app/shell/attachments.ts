@@ -202,20 +202,12 @@ function attachmentsFingerprint(engine: OhmailEngine, ids: Iterable<string>): st
 /**
  * Re-render this component when the attachment state IT CAN SHOW moves — version bump or not.
  *
- * See the header: attachment state moves without the mirror moving, so `useEngineVersion` cannot
- * see it, and this used to answer a COUNTER bumped on every engine notification. That made the
- * consumer — `ShellInner` — re-render the whole window on every publish for the life of the tab:
- * for the length of a first import with nothing selected and nothing to show, and three times per
- * message opened, each time redrawing a window whose attachments had not moved a byte. It is the
- * reason "the shell re-renders per publish" stayed true even after its derivations were keyed
- * narrowly.
- *
- * The fingerprint is over `held` — the release set this hook asked for, which is the selected
- * message and its conversation siblings, and therefore exactly the ids `itemsOf` can be asked
- * about. It cannot miss a change the hook is able to render, because it reads the same answer the
- * render does. A ref is read here deliberately: the set changes only when the selection does, and
- * a selection change re-renders anyway. `shell-rerender-per-publish.test.tsx` holds both halves —
- * silent while nothing it draws has moved, live the moment an item's bytes land.
+ * See the header for why a version cannot see it. This answered a COUNTER bumped on every engine
+ * notification, and its consumer is `ShellInner`: the whole window redrew on every publish for the
+ * length of a first import, with nothing selected and nothing to show. The fingerprint is over
+ * `held` — the release set, exactly the ids `itemsOf` can be asked about — so it cannot miss a
+ * change this hook could render; `watching` is the condition its own effects open with.
+ * `shell-rerender-per-publish.test.tsx` holds both halves.
  */
 function useEngineNotice(
   engine: OhmailEngine,

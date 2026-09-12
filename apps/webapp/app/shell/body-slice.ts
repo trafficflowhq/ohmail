@@ -1,29 +1,14 @@
 "use client";
 
 /**
- * THE BODY SLICE — the one part of the mirror the window reads BY ID at the moment it draws, and
- * the only part with a subscription of its own.
+ * THE BODY SLICE — the one part of the mirror read BY ID at draw time, and the only part with a
+ * subscription of its own. Everything else the window shows is a whole-mirror derivation; nothing
+ * lists bodies, so a body concerns only the surface drawing that message.
  *
- * Everything else the window shows is a whole-mirror derivation: a pile, a partition, a count, a
- * projection. Bodies are not. Nothing lists them; a surface asks for the body of the one message
- * it is drawing, and the answer concerns no other surface. That asymmetry is why they get their
- * own door rather than riding the shell's version — counted against the real shell, ONE body
- * publish re-rendered the whole window and rebuilt twenty whole-mirror passes for a fact none of
- * them reads, and an open publishes three (the loading marker, the answer, the cache trim).
- *
- * With the shell's derivations keyed on {@link useDerivedVersion}, a body landing no longer
- * reaches them — so the surfaces that DO draw a body have to ask for it here, or they would go
- * on showing the snippet the loading marker left. `body-slice-census.test.ts` refuses a file
- * that calls `bodyOf` in a render without one of these hooks: a body that never appears is the
- * kind of failure that renders as its own healthy state.
- *
- * Two hooks, because there are two shapes of consumer:
- *
- *  · {@link useBodyArrival} — a surface drawing ONE message (the reading pane, a conversation
- *    card). It re-renders when THAT message's body record changes and for no other body.
- *  · {@link useBodyStamp} — a surface drawing many in a loop, where a hook per message is not
- *    expressible. It re-renders when any body lands; its rows are memoized on the body's own
- *    primitives, so the one row whose body arrived is the one that redraws.
+ * The shell's derivations key on {@link useDerivedVersion}, which bodies do not move — so a
+ * surface that draws one must ask here, or it goes on showing the loading marker's snippet
+ * (`derived-stamp-census.test.ts` refuses a `bodyOf` draw with no subscription). {@link
+ * useBodyArrival} draws ONE message; {@link useBodyStamp} draws many in a loop.
  */
 
 import { useCallback, useSyncExternalStore } from "react";

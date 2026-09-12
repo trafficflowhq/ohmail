@@ -1106,19 +1106,14 @@ export function useEngineVersion(): number {
 export const NOT_DERIVED_FROM: readonly string[] = ["message_body"];
 
 /**
- * THE VERSION OF WHAT THE WINDOW ACTUALLY DERIVES FROM — {@link useEngineVersion} minus the
- * bodies, and the measurement that earned it.
+ * THE VERSION OF WHAT THE WINDOW DERIVES FROM — {@link useEngineVersion} minus the bodies.
  *
- * Every whole-mirror pass the shell holds — the consent partition, the presentation projection,
- * the Ohbox, the two feed partitions, the triage piles, the tag groups, the folder counts, the
- * rules, the drafts — used to key on the global version, which moves for ANY record write. Most
- * writes are bodies: an open writes three (`message_body` loading marker, answer, cache trim)
- * and the eager pass one per message. Counted against the real shell, ONE body publish cost 20
- * whole-mirror passes and rebuilt every list in the window, for a fact none of them reads —
- * against 23 for a `/sync` page of two hundred messages. This is what those memos key on now.
- *
- * It does NOT replace {@link useEngineVersion} as the shell's subscription: a body arriving must
- * still reach the reader that is waiting for it, and that is a render, not a derivation.
+ * Every whole-mirror pass the shell holds used to key on the global version, which moves for ANY
+ * record write, and most writes are bodies: an open writes three and the eager pass one per
+ * message. Counted against the real shell, ONE body publish cost 20 whole-mirror passes — against
+ * 23 for a `/sync` page of two hundred messages. It does not replace {@link useEngineVersion}: a
+ * body must still reach the reader waiting for it, which is a render rather than a derivation
+ * (`body-slice.ts` holds that subscription).
  */
 export function useDerivedVersion(): number {
   const engine = useEngine();

@@ -303,15 +303,12 @@ export function sendPendingInOutbox(engine: OhmailEngine, lane: string): boolean
  * So the durable record of the verb is the evidence, and it lapses when the verb does, with no timer anywhere.
  */
 /**
- * The lanes the durable outbox currently holds a `mail_send` for, per (reader, outbox stamp).
+ * The lanes the durable outbox holds a `mail_send` for, per (reader, outbox stamp).
  *
- * Cached because the CALLER is a render-path read: `restoredPending` runs on every render of the
- * shell, and `list()` answers a fresh array — which, on a store whose per-type buckets are
- * rebuilt lazily per version, makes the first such call after ANY write walk the whole mirror.
- * A body publish moves the version and moves nothing in the outbox, so this read paid a
- * whole-mirror walk per arriving body to answer the same boolean. Keyed on the outbox's OWN
- * stamp: it moves whenever a queued verb is written, dispatched or retired, which is every way
- * the answer can change.
+ * Cached because the caller is a render-path read: `restoredPending` runs on every render of the
+ * shell, and the first `list()` after ANY write rebuilds the store's per-type buckets — a whole-
+ * mirror walk, paid per arriving body to answer the same boolean. Keyed on the outbox's own
+ * stamp, which moves whenever a queued verb is written, dispatched or retired.
  */
 const outboxLanesCache = new WeakMap<EntityReader, { at: number; lanes: Set<string> }>();
 

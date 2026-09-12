@@ -1197,19 +1197,14 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
   );
   const engine = useEngine();
   /**
-   * TWO STAMPS, AND THE SPLIT IS THE WHOLE OF THIS FILE'S PER-PUBLISH COST.
+   * THE KEY EVERY WHOLE-MIRROR PASS BELOW TAKES — the mirror's version minus the types no
+   * derivation reads ({@link NOT_DERIVED_FROM}, which is the bodies).
    *
-   * `version` is the SUBSCRIPTION — it moves for any record write, bodies included, and it has
-   * to: a body arriving is what the reader waiting for it re-renders on, and `bodyOfMessage`
-   * reads the mirror live rather than through a memo. `derived` is what every whole-mirror pass
-   * below keys on: the same stamp minus the types no derivation reads ({@link NOT_DERIVED_FROM}).
-   *
-   * Counted against this shell before the split: one body publish — a single `message_body`
-   * record, no message, rule, tag, draft or mailbox moved — cost TWENTY whole-mirror passes,
-   * against twenty-three for a `/sync` page of two hundred messages. An open writes three of
-   * them and the eager pass one per message, so most of what the window derived during an
-   * import was derived for facts it never read. With the split those memos hold their
-   * identities, which is also what lets the memoized rows below bail out.
+   * Counted before the split: one body publish — a single `message_body` record, no message,
+   * rule, tag, draft or mailbox moved — cost TWENTY whole-mirror passes, against twenty-three
+   * for a `/sync` page of two hundred messages. An open writes three and the eager pass one per
+   * message, so most of what the window derived during an import was derived for nothing. The
+   * surfaces that draw a body subscribe to it themselves (`body-slice.ts`).
    */
   const derived = useDerivedVersion();
   /**
