@@ -343,16 +343,19 @@ export async function buildSeedReview(ctx: ServiceContext, limit = SEED_SCAN_LIM
       id: messages.id,
       date: messages.date,
       subject: messages.subject,
-      // FIVE KEYS, NOT THE WHOLE HEADER BLOB.
-      //
-      // The scan reads `To`/`Cc` and the three headers that mark a message as machine-written,
-      // and nothing else. Selecting `headers` whole ships every stored header of up to
-      // SEED_SCAN_LIMIT messages — Received chains included — across the wire and into memory
-      // for a function that discards all of it. Projecting server-side turns the dominant cost
-      // of this read into a few kilobytes. `jsonb_strip_nulls` keeps the shape a caller would
-      // have got from the real column: a header that is absent stays absent, rather than
-      // arriving as an explicit null that `hasOwnProperty` would answer yes to.
-      headers: sql<Record<string, unknown> | null>`jsonb_strip_nulls(jsonb_build_object(
+      /* FIVE KEYS AND NOT THE WHOLE HEADER BLOB — a DECLARED BRANCH, because the reason to
+         project is the WIRE. Selecting `headers` whole ships every stored header of up to
+         SEED_SCAN_LIMIT messages, Received chains included, for a function that reads five keys;
+         `jsonb_strip_nulls` keeps the shape the real column would have given, so an absent header
+         stays absent rather than arriving as an explicit null `hasOwnProperty` answers yes to.
+         Neither function exists on the device store — and there is no wire there, so its arm
+         selects the COLUMN, which is also the only spelling that decodes: a raw fragment carries
+         no column codec, and this store keeps its JSON as text, so `sql`${headers}`` hands back
+         the string `{"to":[…]}` and every `hasOwnProperty` below answers no. The consumers read
+         five names, so the extra keys the column carries change no answer. */
+      headers: dialect(ctx.db).name === "sqlite"
+        ? messageBodies.headers
+        : sql<Record<string, unknown> | null>`jsonb_strip_nulls(jsonb_build_object(
         'to', ${messageBodies.headers} -> 'to',
         'cc', ${messageBodies.headers} -> 'cc',
         'auto-submitted', ${messageBodies.headers} -> 'auto-submitted',
