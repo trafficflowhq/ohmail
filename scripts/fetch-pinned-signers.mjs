@@ -13,7 +13,7 @@ import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync, rmSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join, relative, resolve } from "node:path";
 
 /* Sparkle ships no lockfile here, so both pins are written down. They move together with the
  * version, and a bump that forgets them is a refusal rather than a silent new signer. */
@@ -158,8 +158,13 @@ const signUpdate = join(sparkleDir, "bin", "sign_update");
 if (!existsSync(signUpdate)) throw new Error(`Sparkle ${SPARKLE.version} carries no bin/sign_update`);
 requirePin("Sparkle bin/sign_update", signUpdate, SPARKLE.signUpdateSha256, "sha256");
 
-/* The signing step reads these two paths out of a file rather than re-deriving them, so it can
- * run with no network and nothing to resolve. */
-const manifest = { tauriSigner, signUpdate };
+/* The signing job reads these two paths out of a file rather than re-deriving them, so it can run
+ * with no network and nothing to resolve. RELATIVE to this directory, because the job that signs is
+ * not the job that fetched: it receives `outDir` as an artifact, unpacked wherever it likes, and an
+ * absolute path from another runner would name a file that is not there. */
+const manifest = {
+  tauriSignerRel: relative(outDir, tauriSigner),
+  signUpdateRel: relative(outDir, signUpdate),
+};
 writeFileSync(join(outDir, "signers.json"), `${JSON.stringify(manifest, null, 2)}\n`);
 process.stdout.write(`tauri signer  ${tauriSigner}\nsparkle signer ${signUpdate}\n`);

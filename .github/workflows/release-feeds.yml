@@ -80,26 +80,36 @@ on:
         required: true
         type: string
 
+# Read here, and write in exactly one place: the job that attaches the feeds
+# takes the write scope, and the job that holds the signing keys takes neither.
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: release-feeds-${{ github.event.release.tag_name || inputs.tag }}
   cancel-in-progress: false
 
 jobs:
-  feeds:
-    name: sign + publish latest.json and appcast-macos.xml
+  # ── 1 · PREPARE · no secret is available to this job, and every byte the
+  # signing job runs is pinned in it. All of this used to be one job and one
+  # shell step: both private keys sat in the environment that fetched the
+  # release assets, resolved a floating `@tauri-apps/cli@2` from the registry
+  # and unpacked a curled Sparkle archive.
+  prepare:
+    name: resolve the release's assets and pin the signers
     # Desktop releases only. An Android release (android-v*) attaches an APK and
     # no desktop binaries, so running here could only fail — and a red run on
     # every phone release teaches people to ignore this workflow's failures,
     # which are the ones that strand updaters. A manual dispatch names its tag
-    # on purpose and always runs.
+    # on purpose and always runs. The two jobs below need no `if:` of their own:
+    # a skipped `needs:` skips them.
     if: github.event_name == 'workflow_dispatch' || startsWith(github.event.release.tag_name, 'v')
-    # macOS, because Sparkle's sign_update is a macOS binary; the Tauri minisign
-    # step runs here too, so both feeds are produced from one asset download.
+    # macOS, because the app's Info.plist is read with PlistBuddy here and
+    # Sparkle's sign_update is a macOS binary in the job below.
     runs-on: macos-15
     timeout-minutes: 20
+    permissions:
+      contents: read
 
     steps:
       # CHECK OUT THE TAG BEING RELEASED, NOT THE REF THIS RUN WAS LAUNCHED ON.
@@ -117,6 +127,7 @@ jobs:
       - uses: actions/checkout@v7
         with:
           ref: ${{ github.event.release.tag_name || inputs.tag }}
+          persist-credentials: false
 
       # AND THE TOOLS FROM THE LAUNCHING REF, in a directory of their own. The checkout above is
       # pinned to the tag on purpose — the version label must come from the same commit as the
@@ -128,21 +139,19 @@ jobs:
       - uses: actions/checkout@v7
         with:
           path: .tools
+          persist-credentials: false
 
       - uses: actions/setup-node@v7
         with:
           node-version: 22
 
-      # ── 1 · EVERYTHING THAT REACHES THE NETWORK, AND NO KEY IN SIGHT ─────
+      # ── EVERYTHING THAT REACHES THE NETWORK, AND NO KEY IN SIGHT ─────────
       #
-      # This step and the one that signs used to be one `run:`. Both private keys
-      # were in its environment while it fetched release assets, resolved a floating
-      # `@tauri-apps/cli@2` from the registry and unpacked a curled Sparkle archive —
-      # so whatever those publishers shipped that day ran with the keys that sign
-      # every update. Splitting it is the whole point: the fetching happens here with
-      # no key, each signer is checked against a pin, and the signing step below has
-      # nothing left to download.
-      - name: Download the release assets and pin the signers
+      # This step fetches the release's assets, resolves one payload per
+      # platform, pins both signers by bytes and stages the lot for the signing
+      # job. No secret is available to it: the keys live in the job below, which
+      # downloads nothing.
+      - name: Resolve the assets, pin the signers and stage them for signing
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag }}
@@ -236,7 +245,7 @@ jobs:
           # ── THE METADATA FROM A PREVIOUS RUN IS DELETED, NOT KEPT ─────────
           #
           # `gh release download` takes EVERY asset, and on any second run of
-          # this job — a draft signed and then published, a re-dispatch, a
+          # this workflow — a draft signed and then published, a re-dispatch, a
           # recovery — that includes the `latest.json`, `appcast-macos.xml` and
           # `SHA256SUMS` this run is about to replace. Keeping them is not
           # harmless: the checksum file below hashes what is in this directory,
@@ -251,46 +260,67 @@ jobs:
           rm -f assets/latest.json assets/appcast-macos.xml assets/SHA256SUMS
           echo "assets to be signed and hashed:"; ls -la assets
 
-          # ── NAMED, NOT GLOBBED, FOR THE REASON THE LINUX PICKS GIVE BELOW ──
+          # ── ONE FILE PER PLATFORM, RESOLVED AND THEN ASSERTED BY NAME ─────
           #
-          # This was `pick '*-setup.exe'`, and `pick` ends in `head -1`. The
-          # comment under the Linux picks argues the whole case: two files
-          # matching one glob makes the payload choice arbitrary, and the
-          # signature verifies either way because the feed says nothing about
-          # what the bytes are. Windows had exactly one match and so the glob
-          # was harmless — until the CLIENT started refusing a payload whose
-          # signed asset name is not the one its build expects
-          # (`updater.rs::EXPECTED_ASSET`). A glob that ever picked a
-          # differently-named installer would now publish a feed every Windows
-          # install silently refuses, reporting itself up to date. So the name is
-          # written down, in the same place and the same way as the other three.
-          WIN_EXE="assets/ohmail-windows-setup.exe"
-          # ── THE TWO LINUX AppImages ARE PICKED BY NAME, NOT BY GLOB ────────
-          #
-          # This used to be `pick '*.AppImage'`, and `pick` ends in `head -1`.
-          # That was correct for exactly as long as there was one AppImage on a
-          # release. There are two now — x86_64 and aarch64 — and the glob would
-          # have chosen between them by whatever order `ls` returned, then signed
-          # that file and published it under BOTH Linux keys. Every arm64 install
-          # would have been handed an x86_64 payload, or every x86_64 install an
-          # arm64 one, and the signature would have verified either way: the feed
-          # says nothing about what architecture the bytes are for.
-          #
-          # `build.yml`'s header calls the artifact names a contract for this
-          # exact reason ("two files matching one glob makes the update feed's
-          # payload pick arbitrary"). This is the consumer that contract exists
-          # to protect, so it names both files and refuses if either is absent.
-          LIN_X64_APPIMAGE="assets/ohmail-linux-x86_64.AppImage"
-          LIN_ARM_APPIMAGE="assets/ohmail-linux-aarch64.AppImage"
+          # A signature says nothing about what it signed, so the payload pick
+          # may never be "whatever matched first". This was `pick '*.AppImage'`
+          # ending in `head -1`, which was correct for exactly as long as there
+          # was one AppImage: with two, it chose by whatever order `ls` returned
+          # and published that file under BOTH Linux keys, and the signature
+          # verified either way. `pick_one` lists everything matching a
+          # platform's pattern, refuses zero, refuses two by naming both, and
+          # then requires the single match to be the canonical filename — which
+          # the client also refuses to install under any other name
+          # (`updater.rs::EXPECTED_ASSET`). `build.yml`'s header calls the
+          # artifact names a contract; this is the consumer it protects.
+          pick_one() {
+            local platform
+            local canonical
+            local pattern
+            local matches
+            local count
+            platform="$1"; canonical="$2"; pattern="$3"
+            matches="$(ls assets/$pattern 2>/dev/null || true)"
+            count="$(printf '%s\n' "$matches" | grep -c . || true)"
+            if [ "$count" = 0 ]; then
+              echo "no asset for $platform is attached to $RELEASE_TAG — expected assets/$canonical" >&2
+              return 1
+            fi
+            if [ "$count" != 1 ]; then
+              echo "$count assets match $pattern, and one of them would be signed as $platform:" >&2
+              printf '%s\n' "$matches" >&2
+              echo "A feed says nothing about what its payload is, so this pick may not be arbitrary." >&2
+              return 1
+            fi
+            if [ "$matches" != "assets/$canonical" ]; then
+              echo "$platform resolved to $matches; installs of that platform refuse any name but $canonical" >&2
+              return 1
+            fi
+            printf %s "$matches"
+          }
+          WIN_EXE="$(pick_one windows-x86_64 ohmail-windows-setup.exe '*setup*.exe')"
           # A GZIPPED TAR AND NOT A ZIP, and this is not a preference. Tauri's
           # macOS updater unpacks its payload with GzDecoder + tar and has no
           # zip path at all (tauri-plugin-updater `install_inner`, macOS). The
           # previous `ohmail.app.zip` was for Sparkle, which reads both — so one
           # tar.gz serves both feeds and the zip is retired.
-          # Named for the same reason as the Windows installer above: the
-          # client refuses any asset name but its own build's.
-          MAC_TGZ="assets/ohmail.app.tar.gz"
-          # ── THE TWO RPMs, NAMED LIKE EVERYTHING ELSE ──────────────────────
+          MAC_TGZ="$(pick_one darwin ohmail.app.tar.gz '*.app.tar.gz')"
+          # TWO Linux artifacts that each run on ONE architecture, so the two
+          # entries can never be collapsed: `tauri-plugin-updater` derives the
+          # arch half of its key from `cfg!(target_arch)` in the running binary,
+          # an arm64 install asks for `linux-aarch64` and nothing else, and
+          # there is no fallback — the payload would not run.
+          LIN_X64_APPIMAGE="$(pick_one linux-x86_64 ohmail-linux-x86_64.AppImage '*x86_64*.AppImage')"
+          LIN_ARM_APPIMAGE="assets/ohmail-linux-aarch64.AppImage"
+          if [ "$ARM_LINUX" = 1 ]; then
+            LIN_ARM_APPIMAGE="$(pick_one linux-aarch64 ohmail-linux-aarch64.AppImage '*aarch64*.AppImage')"
+          else
+            test ! -e "$LIN_ARM_APPIMAGE" || {
+              echo "$RELEASE_TAG is below $ARM_FROM but carries an arm64 AppImage — nothing built one for it" >&2
+              exit 1
+            }
+          fi
+          # ── THE TWO RPMs, RESOLVED LIKE EVERYTHING ELSE ───────────────────
           # They carry no platform key in latest.json — see the header's note on
           # why there is no `-deb` key either, which applies word for word to a
           # package manager's install — so this job does not sign them. It still
@@ -300,20 +330,9 @@ jobs:
           # by-name arrangement in this job exists to catch.
           LIN_X64_RPM="assets/ohmail-linux-x86_64.rpm"
           LIN_ARM_RPM="assets/ohmail-linux-aarch64.rpm"
-          test -s "$WIN_EXE"  || { echo "no ohmail-windows-setup.exe attached to $RELEASE_TAG" >&2; exit 1; }
-          test -s "$MAC_TGZ"  || { echo "no ohmail.app.tar.gz attached to $RELEASE_TAG" >&2; exit 1; }
-          test -s "$LIN_X64_APPIMAGE" || { echo "no ohmail-linux-x86_64.AppImage attached to $RELEASE_TAG" >&2; exit 1; }
-          if [ "$ARM_LINUX" = 1 ]; then
-            test -s "$LIN_ARM_APPIMAGE" || { echo "no ohmail-linux-aarch64.AppImage attached to $RELEASE_TAG" >&2; exit 1; }
-          else
-            test ! -e "$LIN_ARM_APPIMAGE" || {
-              echo "$RELEASE_TAG is below $ARM_FROM but carries an arm64 AppImage — nothing built one for it" >&2
-              exit 1
-            }
-          fi
           if [ "$RPM_LINUX" = 1 ]; then
-            test -s "$LIN_X64_RPM" || { echo "no ohmail-linux-x86_64.rpm attached to $RELEASE_TAG" >&2; exit 1; }
-            test -s "$LIN_ARM_RPM" || { echo "no ohmail-linux-aarch64.rpm attached to $RELEASE_TAG" >&2; exit 1; }
+            LIN_X64_RPM="$(pick_one linux-x86_64-rpm ohmail-linux-x86_64.rpm '*x86_64*.rpm')"
+            LIN_ARM_RPM="$(pick_one linux-aarch64-rpm ohmail-linux-aarch64.rpm '*aarch64*.rpm')"
           else
             for stray in "$LIN_X64_RPM" "$LIN_ARM_RPM"; do
               test ! -e "$stray" || {
@@ -363,7 +382,7 @@ jobs:
           # signatures, which is a stronger claim than a hash on the same page.
           # `assets/` holds only the binary payloads at this point — the three
           # metadata files were deleted above — so the glob covers exactly what
-          # this release publishes and nothing this job is about to rewrite.
+          # this release publishes and nothing the publish job is about to rewrite.
           ( cd assets && shasum -a 256 -- * > ../SHA256SUMS )
           echo "--- SHA256SUMS ---"; cat SHA256SUMS
           # ── COVERAGE IS ASSERTED BY NAME, NOT BY A FLOOR ──────────────────
@@ -411,10 +430,9 @@ jobs:
           # And it verifies where it was made. `--check` reads the names
           # relative to the working directory, so it runs inside assets/.
           ( cd assets && shasum -a 256 --check ../SHA256SUMS )
-          # The FRESH file is placed beside the payloads so the offline verifier
-          # below reads the one this run is about to publish. Without this it
-          # would read whatever a previous run left there, and certify it.
-          cp SHA256SUMS assets/SHA256SUMS
+          # It travels to the publish job on the metadata artifact, and that job
+          # checks the assets it downloads back off the release against it — two
+          # independent downloads agreeing, rather than a copy handed over.
 
           # The .app the appcast describes, and the handover floor — read from the
           # bundle, no key involved.
@@ -452,35 +470,137 @@ jobs:
           fi
           echo "handover floor ok: $BUNDLE_VER > $LAST_SWIFT_BUILD"
 
-          # ── THE SIGNERS, PINNED BEFORE THE KEYS EXIST IN ANY ENVIRONMENT ──
-          # Two pins the release cannot start without: the Tauri signer against the
-          # `integrity` this repository's own pnpm-lock.yaml records, and Sparkle's
-          # `sign_update` by the sha256 of the archive AND of the binary inside it.
-          # The script says why each one is there.
+          # ── THE SIGNERS, PINNED WHERE NO KEY CAN BE READ ──────────────────
+          # Two pins the release cannot start without: the Tauri signer against
+          # the sha512 integrity npm publishes for that exact tarball, and
+          # Sparkle's `sign_update` by the sha256 of the archive AND of the
+          # binary taken out of it. A pin that does not match refuses here, in a
+          # job no secret is available to. The script says why each one is there.
           node .tools/scripts/fetch-pinned-signers.mjs signers
 
-          # What the next two steps need, so neither has to re-derive it.
+          # ── THE MANIFEST THE OTHER TWO JOBS READ ──────────────────────────
+          # They run on their own runners, so every value is written down once:
+          # the version and the arm64 floor, the app's own plist numbers, and
+          # one canonical filename per platform key. A job that re-derives a
+          # payload name is a second place for the pick to go wrong.
+          jq -n \
+            --arg tag        "$RELEASE_TAG" \
+            --arg version    "$VERSION" \
+            --arg arm_from   "$ARM_FROM" \
+            --arg arm_linux  "$ARM_LINUX" \
+            --arg pub_date   "$PUB_DATE_ISO" \
+            --arg short_ver  "$SHORT_VER" \
+            --arg bundle_ver "$BUNDLE_VER" \
+            --arg min_os     "$MIN_OS" \
+            --arg win        "$(basename "$WIN_EXE")" \
+            --arg mac_tgz    "$(basename "$MAC_TGZ")" \
+            --arg lin_x64    "$(basename "$LIN_X64_APPIMAGE")" \
+            --arg lin_arm    "$(basename "$LIN_ARM_APPIMAGE")" \
+            '{
+               tag: $tag, version: $version, armFrom: $arm_from, armLinux: $arm_linux,
+               pubDateIso: $pub_date,
+               app: { shortVersion: $short_ver, bundleVersion: $bundle_ver, minimumSystemVersion: $min_os },
+               payload: { win: $win, macTgz: $mac_tgz, linX64: $lin_x64, linArm: $lin_arm }
+             }' > manifest.json
+          jq . manifest.json > /dev/null   # it is valid JSON or the step fails here
+          echo "--- manifest.json ---"; cat manifest.json
+
+          # ── STAGED FOR THE SIGNING JOB, AND LISTED BY BYTES ───────────────
+          # One artifact holding only what must be signed and the two pinned
+          # signers. `upload-artifact` does not carry the executable bit, so the
+          # signing job restores it — after checking every file against this
+          # list, and the file COUNT against it too, since `--check` reads the
+          # list and so cannot see a file that was added.
+          rm -rf signing-input meta && mkdir -p signing-input/payload meta
+          cp "$WIN_EXE" "$MAC_TGZ" "$LIN_X64_APPIMAGE" signing-input/payload/
+          if [ "$ARM_LINUX" = 1 ]; then cp "$LIN_ARM_APPIMAGE" signing-input/payload/; fi
+          mv signers signing-input/signers
+          cp manifest.json signing-input/manifest.json
+          # `-print0`, because Sparkle's archive carries filenames with SPACES in
+          # them and a whitespace-split list hashes files that do not exist —
+          # measured. Written outside the directory it lists, so the list cannot
+          # race itself into the listing; `--check` does not care about order.
+          ( cd signing-input && find payload signers manifest.json -type f -print0 | xargs -0 shasum -a 256 > ../inputs.sha256 )
+          mv inputs.sha256 signing-input/inputs.sha256
+          echo "staged $(grep -c . signing-input/inputs.sha256) signing input(s)"
+          cp manifest.json SHA256SUMS meta/
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ohmail-desktop-signing-input
+          path: signing-input
+          retention-days: 1
+          if-no-files-found: error
+
+      # The metadata travels on its own artifact, so the publish job never
+      # downloads a payload it has no use for.
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ohmail-desktop-release-metadata
+          path: meta
+          retention-days: 1
+          if-no-files-found: error
+
+  # ── 2 · SIGN · the keys, and nothing else on this runner ─────────────────
+  #
+  # A fresh runner and no checkout: nothing this repository ships has run here
+  # before the keys arrive, the token is read-only and cannot alter a release,
+  # and there is nothing left to download. Every input was pinned in the prepare
+  # job and is checked again below, before a key is in any environment.
+  sign:
+    name: sign the update payloads
+    needs: prepare
+    runs-on: macos-15
+    timeout-minutes: 20
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      - name: Fetch the signing inputs from the prepare job
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: ohmail-desktop-signing-input
+          path: signing-input
+
+      - name: Check every input against the list the prepare job wrote
+        run: |
+          set -euo pipefail
+          test -f signing-input/inputs.sha256 || { echo "the prepare job's input list did not arrive" >&2; exit 1; }
+          WANT="$(grep -c . signing-input/inputs.sha256 || true)"
+          GOT="$(cd signing-input && find payload signers manifest.json -type f | grep -c . || true)"
+          test "$WANT" = "$GOT" || {
+            echo "the signing inputs carry $GOT file(s) and the pinned list names $WANT" >&2
+            echo "A file the list does not name is a file nothing pinned." >&2
+            exit 1
+          }
+          # `--quiet` prints only the files that FAILED — a refusal has to name
+          # its subject, and `> /dev/null` threw that line away.
+          ( cd signing-input && shasum -a 256 --check --quiet inputs.sha256 )
+          echo "$WANT signing input(s) match the bytes the prepare job pinned"
+          # The executable bit, which the artifact does not carry. These are the
+          # bytes just checked, so this restores it and changes nothing else.
+          SIGN_UPDATE_REL="$(jq -r .signUpdateRel signing-input/signers/signers.json)"
+          chmod +x "signing-input/signers/$SIGN_UPDATE_REL"
+          MANIFEST=signing-input/manifest.json
           {
-            echo "VERSION=$VERSION"
-            echo "ARM_LINUX=$ARM_LINUX"
-            echo "WIN_EXE=$WIN_EXE"
-            echo "MAC_TGZ=$MAC_TGZ"
-            echo "LIN_X64_APPIMAGE=$LIN_X64_APPIMAGE"
-            echo "LIN_ARM_APPIMAGE=$LIN_ARM_APPIMAGE"
-            echo "ARM_FROM=$ARM_FROM"
-            echo "PUB_DATE_ISO=$PUB_DATE_ISO"
-            echo "SHORT_VER=$SHORT_VER"
-            echo "BUNDLE_VER=$BUNDLE_VER"
-            echo "MIN_OS=$MIN_OS"
+            echo "VERSION=$(jq -r .version "$MANIFEST")"
+            echo "ARM_LINUX=$(jq -r .armLinux "$MANIFEST")"
+            echo "WIN_EXE=signing-input/payload/$(jq -r .payload.win "$MANIFEST")"
+            echo "MAC_TGZ=signing-input/payload/$(jq -r .payload.macTgz "$MANIFEST")"
+            echo "LIN_X64_APPIMAGE=signing-input/payload/$(jq -r .payload.linX64 "$MANIFEST")"
+            echo "LIN_ARM_APPIMAGE=signing-input/payload/$(jq -r .payload.linArm "$MANIFEST")"
           } >> "$GITHUB_ENV"
 
-      # ── 2 · THE ONLY STEP THAT HOLDS A KEY ───────────────────────────────
+      # ── THE ONLY STEP THAT HOLDS A KEY ───────────────────────────────────
       #
-      # No network and no resolution: it runs the two binaries the step above
-      # pinned, over files already on disk. Each key is written to a private temp
-      # file and passed BY PATH, which keeps it off the process argument list and
-      # out of the signer's environment — the Sparkle half already worked this way
-      # and the Tauri half now does too.
+      # It runs the two pinned binaries over files already on disk: no network,
+      # no resolution, nothing of this repository's. Each key is written to a
+      # private temp file and passed BY PATH, which keeps it off the process
+      # argument list and out of the signer's environment.
       - name: Sign the artifacts
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
@@ -491,11 +611,13 @@ jobs:
           test -n "${TAURI_SIGNING_PRIVATE_KEY:-}" || { echo "TAURI_SIGNING_PRIVATE_KEY is not set" >&2; exit 1; }
           test -n "${OHMAIL_SPARKLE_ED_PRIVATE_KEY:-}" || { echo "OHMAIL_SPARKLE_ED_PRIVATE_KEY is not set" >&2; exit 1; }
 
-          # The pinned signers, read from the manifest the step above wrote rather
-          # than searched for: `find … -name sign_update | head -1` reads directory
-          # order over three candidates, one of them the retired DSA signer.
-          TAURI_SIGNER="$(jq -r .tauriSigner signers/signers.json)"
-          SIGN_UPDATE="$(jq -r .signUpdate signers/signers.json)"
+          # The pinned signers, by the relative paths the pinning script wrote
+          # rather than searched for: `find … -name sign_update | head -1` reads
+          # directory order over three candidates, one of them the retired DSA
+          # signer.
+          SIGNERS=signing-input/signers
+          TAURI_SIGNER="$SIGNERS/$(jq -r .tauriSignerRel "$SIGNERS/signers.json")"
+          SIGN_UPDATE="$SIGNERS/$(jq -r .signUpdateRel "$SIGNERS/signers.json")"
           test -f "$TAURI_SIGNER" || { echo "no pinned Tauri signer at $TAURI_SIGNER" >&2; exit 1; }
           test -x "$SIGN_UPDATE"  || { echo "no pinned sign_update at $SIGN_UPDATE" >&2; exit 1; }
 
@@ -556,7 +678,7 @@ jobs:
           # payload it cannot read a version out of. That makes this step
           # load-bearing in a way that fails QUIETLY if it regresses — a client
           # that refuses every update reports "up to date" — so the offline
-          # verifier at the end of this job asserts the trusted comment names
+          # verifier in the publish job asserts the trusted comment names
           # this release, and fails the publish rather than shipping a feed that
           # would stall every install.
           sign_tauri() {
@@ -591,7 +713,7 @@ jobs:
             # published`, so the release is ALREADY the target of
             # /releases/latest/download/… before a byte of it is verified. If
             # the signing step regressed and only the verifier at the end
-            # noticed, the job would abort having uploaded no feed at all —
+            # noticed, the run would abort having uploaded no feed at all —
             # leaving the newest release "latest" with no latest.json behind it,
             # and every installed client getting a fetch failure until somebody
             # re-dispatched this workflow. The verifier is still the gate; this
@@ -651,11 +773,13 @@ jobs:
             test -n "$LIN_ARM_SIG" || { echo "empty Linux arm64 signature" >&2; exit 1; }
           fi
 
-          # The signatures are left on disk for the next step, which holds no key.
-          printf %s "$WIN_SIG"     > signing/win.sig
-          printf %s "$LIN_X64_SIG" > signing/lin-x64.sig
-          printf %s "$MAC_SIG"     > signing/mac.sig
-          if [ "$ARM_LINUX" = 1 ]; then printf %s "$LIN_ARM_SIG" > signing/lin-arm.sig; fi
+          # The signatures, and nothing else, are what leaves this job: the
+          # signed copies stay behind on the runner.
+          mkdir -p signatures
+          printf %s "$WIN_SIG"     > signatures/win.sig
+          printf %s "$LIN_X64_SIG" > signatures/lin-x64.sig
+          printf %s "$MAC_SIG"     > signatures/mac.sig
+          if [ "$ARM_LINUX" = 1 ]; then printf %s "$LIN_ARM_SIG" > signatures/lin-arm.sig; fi
 
           # sign_update --ed-key-file <file> <archive>  → sparkle:edSignature="…" length="…"
           # Sparkle 2.9.4 REMOVED the inline `-s <key>` form ("Specifying private key as an argument
@@ -667,12 +791,53 @@ jobs:
             *edSignature=*length=*) : ;;
             *) echo "unexpected sign_update output: $ENCLOSURE_ATTRS" >&2; exit 1 ;;
           esac
-          printf %s "$ENCLOSURE_ATTRS" > signing/enclosure.attrs
+          printf %s "$ENCLOSURE_ATTRS" > signatures/enclosure.attrs
 
-      # ── 3 · THE FEEDS, FROM SIGNATURES ALREADY MADE ──────────────────────
-      # Writes, verifies and attaches. It reads the .sig files the signing step
-      # left and never sees a key, so the verifier and both `gh` calls run with
-      # nothing to leak.
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ohmail-desktop-signatures
+          path: signatures
+          retention-days: 1
+          if-no-files-found: error
+
+  # ── 3 · PUBLISH · the feeds, from signatures already made ────────────────
+  #
+  # Writes, verifies and attaches. No key reaches this job, so the verifier and
+  # the three `gh` calls run with nothing to leak — and the write scope lives
+  # here, in the job that has no key, and nowhere else.
+  publish:
+    name: write, verify and attach the feeds
+    needs: [prepare, sign]
+    runs-on: macos-15
+    timeout-minutes: 20
+    permissions:
+      contents: write
+
+    steps:
+      # The tag's own tree. `verify-feeds.mjs` checks both feeds against the
+      # public keys THIS release's clients carry, so it reads them out of the
+      # commit the binaries were built from.
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.release.tag_name || inputs.tag }}
+          persist-credentials: false
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      - name: Fetch the release metadata from the prepare job
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: ohmail-desktop-release-metadata
+          path: meta
+
+      - name: Fetch the signatures from the signing job
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: ohmail-desktop-signatures
+          path: signatures
+
       - name: Write, verify and attach the feeds
         env:
           GH_TOKEN: ${{ github.token }}
@@ -682,12 +847,42 @@ jobs:
           set -euo pipefail
           REPO="$GITHUB_REPOSITORY"
           BASE="https://github.com/$REPO/releases/download/$RELEASE_TAG"
+          # Everything the feeds say, read back out of the prepare job's
+          # manifest: no name and no version is derived twice.
+          VERSION="$(jq -r .version meta/manifest.json)"
+          ARM_LINUX="$(jq -r .armLinux meta/manifest.json)"
+          ARM_FROM="$(jq -r .armFrom meta/manifest.json)"
+          PUB_DATE_ISO="$(jq -r .pubDateIso meta/manifest.json)"
+          SHORT_VER="$(jq -r .app.shortVersion meta/manifest.json)"
+          BUNDLE_VER="$(jq -r .app.bundleVersion meta/manifest.json)"
+          MIN_OS="$(jq -r .app.minimumSystemVersion meta/manifest.json)"
+          WIN_EXE="assets/$(jq -r .payload.win meta/manifest.json)"
+          MAC_TGZ="assets/$(jq -r .payload.macTgz meta/manifest.json)"
+          LIN_X64_APPIMAGE="assets/$(jq -r .payload.linX64 meta/manifest.json)"
+          LIN_ARM_APPIMAGE="assets/$(jq -r .payload.linArm meta/manifest.json)"
+          test "$(jq -r .tag meta/manifest.json)" = "$RELEASE_TAG" \
+            || { echo "the manifest was written for $(jq -r .tag meta/manifest.json), not $RELEASE_TAG" >&2; exit 1; }
           NOTES="${RELEASE_BODY:-ohmail $VERSION}"
-          WIN_SIG="$(cat signing/win.sig)"
-          LIN_X64_SIG="$(cat signing/lin-x64.sig)"
-          MAC_SIG="$(cat signing/mac.sig)"
-          ENCLOSURE_ATTRS="$(cat signing/enclosure.attrs)"
-          if [ "$ARM_LINUX" = 1 ]; then LIN_ARM_SIG="$(cat signing/lin-arm.sig)"; fi
+
+          # ── THE BYTES, FETCHED BACK OFF THE RELEASE A SECOND TIME ─────────
+          # The verifier below checks the signatures against the assets AS
+          # ATTACHED, so this job downloads them itself instead of carrying the
+          # prepare job's copies across: two independent downloads agreeing
+          # through SHA256SUMS is a check, and a copy handed over would not be.
+          # The three metadata files this run replaces are deleted for the
+          # reason the prepare job gives — the checksums must not cover them.
+          rm -rf assets && mkdir assets
+          gh release download "$RELEASE_TAG" --repo "$REPO" --dir assets --clobber
+          rm -f assets/latest.json assets/appcast-macos.xml assets/SHA256SUMS
+          cp meta/SHA256SUMS SHA256SUMS
+          ( cd assets && shasum -a 256 --check ../SHA256SUMS )
+          cp SHA256SUMS assets/SHA256SUMS
+
+          WIN_SIG="$(cat signatures/win.sig)"
+          LIN_X64_SIG="$(cat signatures/lin-x64.sig)"
+          MAC_SIG="$(cat signatures/mac.sig)"
+          ENCLOSURE_ATTRS="$(cat signatures/enclosure.attrs)"
+          if [ "$ARM_LINUX" = 1 ]; then LIN_ARM_SIG="$(cat signatures/lin-arm.sig)"; fi
 
           jq -n \
             --arg version  "$VERSION" \
