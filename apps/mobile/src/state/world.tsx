@@ -1006,9 +1006,12 @@ export function WorldProvider({ children }: { children: ReactNode }) {
    */
   useEffect(() => {
     if (engine === null) return;
-    engine.setCutline(screening === null
-      ? null
-      : { dormancyDays: screening.dormancyDays, scope: screening.scope });
+    /* ONLY AN ANSWER IS A CUTLINE. `unanswered` is the read still outstanding and `unsupplied` is
+       a server that carries none of the three fields — neither is a cutoff, and handing the engine
+       one built from either is the wide guess this posture exists to stop. */
+    engine.setCutline(screening.state === "answered"
+      ? { dormancyDays: screening.answer.dormancyDays, scope: screening.answer.scope }
+      : null);
   }, [engine, screening]);
 
   const world = useMemo<World>(() => {
