@@ -1470,18 +1470,14 @@ export const OUTBOX_UNKEYED_CREATE_TTL_MS = 24 * 60 * 60 * 1000;
  * hundreds of megabytes, which is why the tail deliberately never enters the pass.
  */
 /**
- * HOW MANY BACKLOG PAGES SHARE ONE PUBLISH, while a drain is catching up.
+ * HOW MANY BACKLOG PAGES SHARE ONE PUBLISH while a drain is catching up.
  *
- * A publish is what makes the shell re-derive the whole mirror and re-render, and during a first
- * import that is the renderer's whole cost. Measured in a real browser renderer over a large
- * mailbox: the same shell over the same settled window costs 660 MB mounted AFTER the import and
- * 950 MB when it renders its way through it a page at a time — about 1.8 MB of resident peak per
- * re-render. Nothing else moved that number: not the window's row ceiling (five and ten thousand
- * read the same), not the eager body pass, not the page cadence, not how much mail there was.
+ * A publish re-derives the whole mirror and re-renders, and during a first import that is the
+ * renderer's whole cost: the same shell costs 660 MB mounted after the import and 950 MB
+ * rendering through it a page at a time. Not the row ceiling, not the eager pass, not cadence.
  *
- * Eight because it is the largest step that still reads as mail arriving rather than as a screen
- * that jumps: at the deployed backlog page size it is one visible update per few thousand messages,
- * several times a minute on a real import. A catch-up that ends mid-group publishes at the settle.
+ * Eight is the largest step that still reads as mail arriving rather than a screen that jumps;
+ * a catch-up ending mid-group publishes at the settle, so no row waits.
  */
 export const BACKLOG_PUBLISH_PAGES = 8;
 
