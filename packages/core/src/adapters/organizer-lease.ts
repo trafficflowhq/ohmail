@@ -340,9 +340,21 @@ export const DEFAULT_STALE_AFTER_MS = 10 * 60 * 1000;
  * of an install's claims, and `decideLease` excludes only `rawOurs` (install id AND the armed
  * nonce) — the phone's own older copy was a live claim it could not rank, and it stood down from
  * its own mailbox every cycle. Both halves are one set now; the database carries the member too
- * (`ORGANIZER_KINDS`, `packages/db/src/organizer-role.ts`).
+ * (`ORGANIZER_KINDS`, `packages/db/src/organizer-role.ts`). A VALUE, not only a type: the writers
+ * are not all TypeScript, and a tool outside this package derives its word list from this line.
  */
-export type OrganizerKind = "local" | "cloud" | "mobile";
+export const ORGANIZER_KIND_WORDS = ["local", "cloud", "mobile"] as const;
+
+/** Who is holding a claim — see {@link ORGANIZER_KIND_WORDS}. */
+export type OrganizerKind = (typeof ORGANIZER_KIND_WORDS)[number];
+
+/**
+ * Is this a word this build both writes and admits? One predicate for the claim door and the
+ * request door: a rig that wrote `desktop` produced claims every build parsed as `unknown`.
+ */
+export function isOrganizerKindWord(word: string): word is OrganizerKind {
+  return (ORGANIZER_KIND_WORDS as readonly string[]).includes(word);
+}
 
 /**
  * A human asked for this install, and WHEN. It used to be the string `"authorized"`: a
@@ -745,8 +757,7 @@ export function parseClaim(raw: string, ref?: unknown, serverStamp?: Date | null
      it (the engine tier may not depend on the private half) and `organizer-lease-reasons.test.ts`
      reconciles the two. */
   const kindRaw = (get(H.kind) ?? "").toLowerCase();
-  const kind: OrganizerKind | "unknown" =
-    kindRaw === "local" || kindRaw === "cloud" || kindRaw === "mobile" ? kindRaw : "unknown";
+  const kind: OrganizerKind | "unknown" = isOrganizerKindWord(kindRaw) ? kindRaw : "unknown";
 
   /* ── AN ABSENT PRESS IS `null`; AN UNREADABLE ONE IS MALFORMED ──────────────────────────────
    *
@@ -4234,12 +4245,11 @@ export function parseRequestEnvelope(raw: string, ref?: unknown): RequestEnvelop
   const installId = get(RH.installId);
   if (!installId || installId.length > 256) return malformed("no or oversized install id");
 
-  /* The claim arm's set, spelled once more because the request header is a second door onto the
-     same vocabulary — widening one and not the other refuses a phone's requests alone. */
+  /* The claim arm's set, asked through the same predicate: the request header is a second door
+     onto one vocabulary, and a set spelled twice is a set that widens on one door only. */
   const organizerKindRaw = (get(RH.organizerKind) ?? "").toLowerCase();
   const organizerKind: OrganizerKind | "unknown" =
-    organizerKindRaw === "local" || organizerKindRaw === "cloud" || organizerKindRaw === "mobile"
-      ? organizerKindRaw : "unknown";
+    isOrganizerKindWord(organizerKindRaw) ? organizerKindRaw : "unknown";
 
   const protocolRaw = get(RH.protocol);
   const protocol = Number(protocolRaw);
