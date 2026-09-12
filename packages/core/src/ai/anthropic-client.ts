@@ -1,3 +1,4 @@
+import { assertPublicHttpUrlShape } from "../net/ssrf-guard.js";
 import type { AnthropicLike } from "./classify.js";
 import type { Logger } from "../log.js";
 
@@ -160,7 +161,18 @@ export function callCeilingMs(o: { timeoutMs?: number; maxRetries?: number } = {
 export interface AnthropicClientOptions {
   /** The API key. NEVER logged, never put in an error message (see {@link scrub}). */
   apiKey: string;
+  /**
+   * Where the model lives. Judged at construction by the repository's own address gate — see
+   * {@link assertModelBaseUrl}. Absent ⇒ {@link DEFAULT_ANTHROPIC_BASE_URL}.
+   */
   baseUrl?: string;
+  /**
+   * Permit a {@link baseUrl} on a loopback/private address. OFF by default, and the ONLY
+   * relaxation: scheme, userinfo and the reserved name spaces still apply. For the one
+   * deployment shape that needs it — a self-host operator running their own model gateway on
+   * their own box — where the strict rule would refuse a correct configuration.
+   */
+  allowPrivateBaseUrl?: boolean;
   /** Per-ATTEMPT timeout. Total wall time can reach `timeoutMs × (maxRetries + 1)` plus backoff. */
   timeoutMs?: number;
   /** Retries after the first attempt. 0 ⇒ never retry. */
@@ -236,7 +248,10 @@ export function makeAnthropicClient(opts: AnthropicClientOptions): AnthropicLike
   const apiKey = opts.apiKey;
   if (!apiKey) throw new Error("makeAnthropicClient: apiKey is required");
 
-  const baseUrl = (opts.baseUrl ?? DEFAULT_ANTHROPIC_BASE_URL).replace(/\/+$/, "");
+  const baseUrl = assertModelBaseUrl(
+    (opts.baseUrl ?? DEFAULT_ANTHROPIC_BASE_URL).replace(/\/+$/, ""),
+    opts.allowPrivateBaseUrl === true,
+  );
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const maxRetries = Math.max(0, opts.maxRetries ?? DEFAULT_MAX_RETRIES);
   const backoffMs = opts.backoffMs ?? DEFAULT_BACKOFF_MS;
@@ -365,6 +380,31 @@ export function makeAnthropicClient(opts: AnthropicClientOptions): AnthropicLike
  * VARIABLE and never the value — config errors surface in `/health`'s `detail`, and the moment
  * one echoes the secret the pattern gets copied to something that matters.
  */
+/**
+ * The base URL gate. This is the one outbound path carrying BOTH the reader's mail and a live
+ * credential, so the string an operator sets takes the same address rules every other outbound
+ * URL in this repository takes: https only, no userinfo, no loopback/private/link-local address
+ * and none of the reserved name spaces. It runs at CONSTRUCTION — boot — so a wrong value fails
+ * the deployment rather than the first customer's mail. A gateway on an explicit port is
+ * admitted: that is an ordinary shape and not an address rule.
+ *
+ * `assertPublicHttpUrlShape` is the shared gate's synchronous half, not a second copy of it. It
+ * resolves nothing, so a NAME's addresses are unchecked here; the value is operator-set at boot
+ * and the socket is an ordinary `fetch`, which has no pin to honour anyway.
+ */
+export function assertModelBaseUrl(baseUrl: string, allowPrivate: boolean): string {
+  try {
+    assertPublicHttpUrlShape(baseUrl, {
+      httpsOnly: !allowPrivate, allowExplicitPort: true, allowPrivateAddress: allowPrivate,
+    });
+  } catch (e) {
+    // Re-thrown naming the variable an operator can act on; the gate's own message says nothing
+    // about where the value came from, and "not a permitted url" alone is unactionable at boot.
+    throw new Error(`ANTHROPIC_BASE_URL is ${(e as Error).message}`);
+  }
+  return baseUrl;
+}
+
 export function assertAnthropicKey(value: string): string {
   const key = value.trim();
   if (!key.startsWith(ANTHROPIC_KEY_PREFIX)) {

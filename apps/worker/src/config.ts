@@ -1009,6 +1009,10 @@ export function loadAiPorts(
   const client = makeAnthropicClient({
     apiKey: assertAnthropicKey(raw),
     baseUrl: env.ANTHROPIC_BASE_URL?.trim() || undefined,
+    // The base URL decides where the API key and the reader's mail go, so it is gated by the
+    // repository's address rules inside `makeAnthropicClient` — a wrong value fails this boot.
+    // `=== "1"` exactly, like `TF_PUSH_ALLOW_PRIVATE`: "true"/"yes" must not arm a relaxation.
+    allowPrivateBaseUrl: env.TF_AI_ALLOW_PRIVATE?.trim() === "1",
     // A hung model call blocks the worker's SERIAL cycle queue, and therefore every other
     // mailbox in this process — so the per-attempt deadline here is a liveness property of the
     // whole worker, not a per-request nicety. Two retries at 30 s bounds one classify at ~90 s
