@@ -2959,6 +2959,24 @@ export function fitScale(columnPx: number, naturalPx: number, reflow = false): n
 }
 
 /**
+ * THE DOCUMENT'S IDENTITY — the body frame's key. Writing `srcdoc` on a frame already on screen
+ * is a NAVIGATION: the element stays, and so does every document it has held, on that frame's
+ * back/forward list — where WebKit keeps the render tree, the layers and the decoded pictures
+ * alive, unreachable from JavaScript and invisible to a heap snapshot. Keyed on this, a
+ * different document is a different ELEMENT and the browser drops the old one whole. FNV-1a
+ * over the built document (bounded by {@link MAX_HTML_CHARS}); a hash and not a counter, so a
+ * rebuild producing the SAME bytes keeps the frame it has rather than re-parsing the mail.
+ */
+export function frameIdentity(doc: string): string {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < doc.length; i++) {
+    h ^= doc.charCodeAt(i);
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return `${h.toString(16).padStart(8, "0")}-${doc.length}`;
+}
+
+/**
  * THE SCROLLABLE ANCESTORS OF THE FRAME, nearest first, plus the document scroller. {@link measure} sizes the frame
  * by briefly SHRINKING it to {@link PROBE_PX}. Anything that scrolls above the frame — the reading pane, the app
  * column, the page itself — has its own `scrollHeight` drop by the difference the instant the frame shrinks, and the
@@ -3162,7 +3180,23 @@ export function MessageBody({
 }: MessageBodyProps) {
   const frameRef = useRef<HTMLIFrameElement | null>(null);
   const shellRef = useRef<HTMLDivElement | null>(null);
-  const [ready, setReady] = useState(false);
+  /**
+   * WHICH DOCUMENT THE FRAME ON SCREEN HAS ACTUALLY LOADED — the `frameKey` of it, not a bare
+   * "did something load once". This was a boolean, and a boolean cannot answer the question the
+   * effects below ask now that a new document arrives as a NEW ELEMENT: between the commit that
+   * mounts the fresh frame and its `load`, the element is there and its document is the empty
+   * one the browser starts every frame with. Measuring THAT writes a 120 px frame and forgets
+   * the mail's height; a boolean left over from the previous document says it is fine to.
+   */
+  const [loadedKey, setLoadedKey] = useState<string | null>(null);
+  /**
+   * The last height this component measured, carried across the element swap. The frame is a new
+   * element per document, so its inline height starts unset and the sheet would collapse to the
+   * stylesheet's 120 px floor for the fraction of a second before the new mail measures — a jump
+   * on every message opened. Reinstating the previous height keeps the swap as motionless as the
+   * navigation it replaces.
+   */
+  const heightRef = useRef<string>("");
 
   /**
    * DARK VIEWING — READ THE THEME, LET THE READER OVERRIDE IT PER MESSAGE: `useOptionalTheme` and not `useTheme`:
@@ -3249,6 +3283,21 @@ export function MessageBody({
     // frame, and never by taking however long the neutralising would have taken.
     if (oversize) return { state: "oversize" as const };
     if (clean.trim().length === 0) return null;
+    const doc = buildMailDocument(clean, {
+      // `proxy` is non-null exactly when the reader has consented AND a source could be
+      // stated, so this is the one value both the rewrite and the policy were decided from.
+      imgSource: proxy ? imgSource : null,
+      dark: darkWanted && light,
+      // Baked in, never toggled: unlike `dark` this is a property of the document rather than
+      // of the theme, so it can only change when `html` changes — and that already rebuilds
+      // the frame. See `isRigidLayout` for what decides it.
+      reflow,
+      // The mail's own paper, so a message this viewer declines to invert does not sit on a
+      // white sheet it never asked for — but a near-neutral light ground (the grey a template
+      // drops behind a white letter) is clamped back to the app's white, see clampedPaper.
+      // Ignored whenever the filter is on — see FRAME_CSS.
+      paper: clampedPaper(background),
+    });
     return {
       state: "ok" as const,
       /**
@@ -3276,21 +3325,9 @@ export function MessageBody({
       // a dep — rebuilding the srcdoc on a theme change would re-parse and re-measure the whole
       // mail, which is exactly what the attribute mechanism exists to avoid. A rebuild driven
       // by a real dep (html/proxy/mount) reads the current value here, so the two never diverge.
-      doc: buildMailDocument(clean, {
-        // `proxy` is non-null exactly when the reader has consented AND a source could be
-        // stated, so this is the one value both the rewrite and the policy were decided from.
-        imgSource: proxy ? imgSource : null,
-        dark: darkWanted && light,
-        // Baked in, never toggled: unlike `dark` this is a property of the document rather than
-        // of the theme, so it can only change when `html` changes — and that already rebuilds
-        // the frame. See `isRigidLayout` for what decides it.
-        reflow,
-        // The mail's own paper, so a message this viewer declines to invert does not sit on a
-        // white sheet it never asked for — but a near-neutral light ground (the grey a template
-        // drops behind a white letter) is clamped back to the app's white, see clampedPaper.
-        // Ignored whenever the filter is on — see FRAME_CSS.
-        paper: clampedPaper(background),
-      }),
+      doc,
+      /** This document's own name — see {@link frameIdentity}. It is the frame element's key. */
+      frameKey: frameIdentity(doc),
       blocked,
       sheets,
       /** The unresolved `cid:` references — what the request effect below reports upward. */
@@ -3321,8 +3358,8 @@ export function MessageBody({
    * FLIP THE DARK TRANSFORM ON THE LIVE DOCUMENT — never by rebuilding the srcdoc. The transform is gated on
    * `:root[data-ohmail-dark]` in the frame's own sheet, so switching it on or off is one attribute write on the
    * frame's `documentElement`. A rebuild would re-parse the sender's html and force a fresh measurement pass; this
-   * does neither, so a theme change (or the reader's per-message override) is instant and motionless. `ready` and
-   * `mail` are deps so the attribute is re-asserted after the frame (re)loads — a new srcdoc starts from whatever
+   * does neither, so a theme change (or the reader's per-message override) is instant and motionless. `loadedKey`
+   * and `mail` are deps so the attribute is re-asserted after the frame loads — a fresh frame starts from whatever
    * `dark` was baked in, and this keeps the live document in step with the current value. In jsdom `contentDocument`
    * is null, so this is a no-op there, which is why the dark transform's real proof is a browser check and not this
    * file.
@@ -3331,7 +3368,7 @@ export function MessageBody({
     const doc = frameRef.current?.contentDocument;
     if (!doc?.documentElement) return;
     doc.documentElement.toggleAttribute("data-ohmail-dark", dark);
-  }, [dark, ready, mail]);
+  }, [dark, loadedKey, mail]);
 
   /**
    * Size the frame to the mail — and the obvious way to do it runs away. A fixed-height frame with its own scrollbar
@@ -3379,6 +3416,15 @@ export function MessageBody({
    * with the feedback edge that needed them: the reading is a pure function of the content, so
    * a re-measure that changes nothing writes the same string, a no-op.
    */
+  /**
+   * Stable, so React detaches and attaches the ref only when the ELEMENT changes — which is
+   * exactly once per document now, and is where the remembered height goes back on.
+   */
+  const attachFrame = useCallback((el: HTMLIFrameElement | null) => {
+    frameRef.current = el;
+    if (el && heightRef.current) el.style.height = heightRef.current;
+  }, []);
+
   const measure = useCallback(() => {
     const frame = frameRef.current;
     const doc = frame?.contentDocument;
@@ -3439,6 +3485,9 @@ export function MessageBody({
       root.style.removeProperty("--ohmail-scale");
     }
     frame.style.height = h > 0 ? `${h}px` : restore;
+    // Remembered for the NEXT element — see `heightRef`. Written here and nowhere else, so the
+    // height the swap reinstates is always the last one this function actually decided.
+    heightRef.current = frame.style.height;
     /**
      * THE FRAME'S HEIGHT AND ITS DOCUMENT'S SCROLLABILITY ARE ONE DECISION: A scaled document's layout height is its
      * UNSCALED one — a transform is a paint operation — so sizing the frame to the painted extent leaves the document
@@ -3457,7 +3506,10 @@ export function MessageBody({
   }, []);
 
   useEffect(() => {
-    if (!ready) return;
+    // THE FRAME ON SCREEN MUST BE THE ONE THIS MAIL LOADED. A fresh element's document is the
+    // browser's empty one until `load` fires, and measuring or observing that measures nothing
+    // and observes a body that is about to be replaced.
+    if (mail?.state !== "ok" || loadedKey !== mail.frameKey) return;
     measure();
     const frame = frameRef.current;
     const shell = shellRef.current;
@@ -3468,7 +3520,7 @@ export function MessageBody({
     if (body) ro.observe(body);
     if (shell) ro.observe(shell);
     return () => ro.disconnect();
-  }, [ready, measure, mail]);
+  }, [loadedKey, measure, mail]);
 
   /**
    * IS THERE A FRAME ON SCREEN, OR IS THIS THE APP'S OWN TYPE?: Computed HERE, above the three early returns below,
@@ -3733,7 +3785,15 @@ export function MessageBody({
            hole in a dark panel. It follows the per-message override, not just the theme. */
         <div className="mb-sheet" data-dark={surfaceDark ? "1" : undefined}>
           <iframe
-            ref={frameRef}
+            /**
+             * A DIFFERENT DOCUMENT IS A DIFFERENT ELEMENT — see {@link frameIdentity}. Re-using
+             * one frame across a reading session leaves every document it has held on that
+             * frame's back/forward list, and WebKit keeps those alive whole. The key makes React
+             * take the old frame out of the document instead, which is the one thing that
+             * releases the render tree, the layers and the decoded pictures with it.
+             */
+            key={mail.frameKey}
+            ref={attachFrame}
             className="mb-frame"
             title={COPY.frameTitle}
             sandbox={FRAME_SANDBOX}
@@ -3750,7 +3810,7 @@ export function MessageBody({
                  have moved the links before this runs. */
               const frameDoc = (ev.currentTarget as HTMLIFrameElement).contentDocument;
               if (frameDoc) interceptLinkClicks(frameDoc, { trustSameOrigin: false });
-              setReady(true);
+              setLoadedKey(mail.frameKey);
               measure();
             }}
           />
