@@ -82,6 +82,30 @@ export function holdStandaloneDoor(opened: StandaloneEngine): boolean {
 export const organizerDoor = (): StandaloneEngine | null => door;
 
 /**
+ * ══ ONE ENGINE IN THIS PROCESS, AND A SECOND PRESS DOES NOT MAKE ANOTHER ════════════════════
+ *
+ * {@link holdStandaloneDoor} is first-start-wins, which keeps the DOOR right and leaves the
+ * second engine running with nothing holding it: two engines polling one device store is two
+ * organizers of one mailbox, which is the invariant this app lives under. A door is held only
+ * after a launch returns, so the door alone cannot refuse a press made while one is in flight —
+ * this slot is that half. Both openers take it: the fourth door's Connect, and the relaunch the
+ * connection layer runs over a stored row.
+ */
+let launching = false;
+
+/** Take the launch slot, or `standing` — an engine is already alive, or one is being opened. */
+export function takeStandaloneLaunch(): "open" | "standing" {
+  if (door !== null || launching) return "standing";
+  launching = true;
+  return "open";
+}
+
+/** Give it back — on EVERY exit of a launch, or the next press is refused for the run of the app. */
+export function releaseStandaloneLaunch(): void {
+  launching = false;
+}
+
+/**
  * ══ WHO IS WATCHING THIS MODULE'S STATE — the Settings panel, and nothing else yet ══════════
  *
  * The panel read {@link standaloneHere} at RENDER and nothing re-rendered it, so it was correct
@@ -585,6 +609,35 @@ export async function endStandaloneHere(): Promise<void> {
 }
 
 /**
+ * ══ A REFUSED CONNECT LEAVES NO ENGINE AND NO SEAL ══════════════════════════════════════════
+ *
+ * The launch succeeded and the app could not record the mailbox it had opened, and the screen
+ * said so over an engine, a door and a session that were all still alive: the next Connect
+ * started a SECOND engine over the same device store, which `holdStandaloneDoor` and
+ * {@link startOrganizerSession} both silently declined to adopt — an orphan polling one mailbox
+ * beside the one the app talks to. So the refusal is the one exit and it undoes the launch.
+ *
+ * The seal goes with it, which is the device-divergence lane's rule one arm over: the credential
+ * is written at ATTACH, before anything dials, and `resolveLogin` lets the STORE win — so a
+ * second press with a corrected server would dial the first press's coordinates and hand back an
+ * opened mailbox with nothing on the wire. Only here: the forget above deletes the whole store.
+ */
+export async function discardStandaloneLaunch(): Promise<void> {
+  const held = door;
+  door = null;
+  instruction = "idle";
+  queued = null;
+  sessionDeps = null;
+  notifyOrganizerState();
+  if (held !== null) await held.handBack().catch(() => undefined);
+  await stopOrganizerSession();
+  if (held !== null) {
+    await held.forgetStoredLogin().catch(() => undefined);
+    await held.stop().catch(() => undefined);
+  }
+}
+
+/**
  * ══ ASK AGAIN ONLY IF SOMETHING MOVED — the claim watch's cue, and the reason it is gated ══════
  *
  * The session's watch fires on a timer whether the mailbox changed or not, and that is what makes
@@ -624,6 +677,7 @@ export function pokeOrganizerState(): void {
 export function forgetOrganizerSessionForTests(): void {
   live = null;
   door = null;
+  launching = false;
   instruction = "idle";
   queued = null;
   inFlight = null;

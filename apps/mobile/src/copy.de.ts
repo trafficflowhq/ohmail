@@ -166,7 +166,11 @@ export const DE: Deck = {
   standaloneOtherMailbox:
     "Das Postfach auf diesem Telefon ist nicht das, welches dieser Eintrag nennt. Entferne den Eintrag und öffne das Postfach erneut.",
   standaloneNotStored: (detail: string) =>
-    `Dieses Telefon konnte das gerade geöffnete Postfach nicht speichern: ${detail}`,
+    `Dieses Telefon konnte das gerade geöffnete Postfach nicht speichern: ${detail}. Es wurde `
+    + "wieder geschlossen und nichts behalten — versuch Verbinden noch einmal.",
+  standaloneAlreadyOpen:
+    "Dieses Telefon hat schon ein Postfach geöffnet. Entferne es unter Server, bevor du ein "
+    + "anderes öffnest.",
   /* Der Einwilligungs-Aufruf. Keine dieser Zeilen behauptet, das Telefon organisiere gerade. */
   organizeHereUnreachable: (detail: string) =>
     `ohmail konnte nicht darum bitten, dieses Postfach zu organisieren: ${detail}`,

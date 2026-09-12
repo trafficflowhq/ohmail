@@ -15,8 +15,8 @@ import { faultDetail, refuse, type Refusal, type RefusalArg } from "../refusal";
 import { LOCAL_ENGINE_ORIGIN, mirrorExists, mirrorOwnerKey } from "../engine/boot";
 import { nativeEngineDeps } from "../engine/native";
 import {
-  endStandaloneHere, holdStandaloneDoor, organizerDoor, sayOrganizeRefused, takeConsentPress,
-  sayOrganizerRestricted, standaloneHere,
+  discardStandaloneLaunch, endStandaloneHere, holdStandaloneDoor, organizerDoor, sayOrganizeRefused,
+  takeConsentPress, sayOrganizerRestricted, standaloneHere,
 } from "../engine/organizer-session";
 import { consoleEngineLogSink } from "../engine/engine-log";
 import { decidedState, type DecidedState } from "./decided";
@@ -593,9 +593,15 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
               accountId: door.accountId,
             });
           } catch (err) {
-            /* The keystore refused to record the mailbox. The engine is running and nothing names
-               it, which is exactly the state a relaunch could not recover from, so it is said here
-               rather than navigated past. */
+            /* ══ THE KEYSTORE REFUSED TO RECORD THE MAILBOX, AND THIS IS THE ONE EXIT ═════════
+               The engine was left RUNNING here, with the door and the session it had just been
+               given, and only the sentence changed: the next Connect opened a second engine over
+               the same device store — two organizers of one mailbox, the invariant this app lives
+               under — because `holdStandaloneDoor` and `startOrganizerSession` are both
+               first-start-wins and decline the newcomer silently. So the refusal undoes the
+               launch: the claim goes back, the session and the engine stop, and the credential
+               this launch sealed is discarded so the next press dials what is on the form. */
+            await discardStandaloneLaunch();
             const reason = refuse("standaloneNotStored", faultDetail(err));
             if (stillCurrent()) enter({ k: "refused", reason });
             return { ok: false, reason };

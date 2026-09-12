@@ -381,6 +381,16 @@ export interface PhoneEngine {
    * not always a failure: a mailbox this install was not organizing has nothing to give up.
    */
   stopOrganizing(): Promise<boolean>;
+  /**
+   * DISCARD THE PASSWORD THIS LAUNCH SEALED — for the refusal the APP decides, not this one.
+   *
+   * The seal is written at attach, before anything dials, and the refusals this module decides
+   * already remove it ({@link removeRefusedSeal}). A launch this module completed and the app then
+   * could not record is the same state by a different road: a credential the store will let win
+   * over the next press's corrected form. So the act is offered rather than left to a caller that
+   * has no way to reach the store.
+   */
+  forgetStoredLogin(): Promise<boolean>;
   /** What each mailbox reports — the row's answer, not the gate's optimism. */
   runtimes(): { organizer: Record<string, OrganizerState>; connection: Record<string, MailboxConnectionState> };
   /** Flush and release. */
@@ -1107,6 +1117,7 @@ async function composePhoneEngine(
     resume: () => sidecar.resume(),
     claimHere,
     stopOrganizing,
+    forgetStoredLogin: () => sidecar.forgetStoredLogin(),
     runtimes: () => ({ organizer: sidecar.organizerStates(), connection: sidecar.connectionStates() }),
     stop: () => sidecar.stop(),
   } };

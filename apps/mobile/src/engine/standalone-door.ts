@@ -50,6 +50,15 @@ export interface StandaloneEngine {
   address: string;
   /** Remove this install's claim on every mailbox and leave the rows alone. */
   handBack(): Promise<readonly { mailboxId: string; released: number | null }[]>;
+  /**
+   * DISCARD THE PASSWORD THIS ENGINE SEALED FOR ITSELF — the refused launch's second effect.
+   *
+   * The seal is written at attach, before anything dials, and `resolveLogin` lets the STORE win:
+   * a launch the app could not record leaves a credential that beats the next press's corrected
+   * form. The engine already removes it on the refusals IT decides (`mailbox_open_seal_discarded`);
+   * this is the same act for the one the APP decides, and the only caller is that refusal.
+   */
+  forgetStoredLogin(): Promise<boolean>;
   /** Force one gated cycle per mailbox, so the lease is re-read now. */
   resume(): Promise<void>;
   /**
@@ -222,6 +231,7 @@ export function imapConfigFor(fields: StandaloneFields): {
  * around it, in the reader's own language.
  */
 export const PHONE_CLAIM_NAME = "ohmail on a phone";
+
 
 /**
  * IS THIS PROFILE ROW THE MAILBOX THIS PHONE OPENED ITSELF? The ORIGIN decides, and nothing else.

@@ -281,7 +281,10 @@ const TABLE = {
   standaloneOtherMailbox:
     "The mailbox on this phone is not the one this entry names. Forget this entry and open the mailbox again.",
   standaloneNotStored: (detail: string) =>
-    `This phone could not record the mailbox it just opened: ${detail}`,
+    `This phone could not record the mailbox it just opened: ${detail}. It was closed again and `
+    + "nothing was kept — try Connect once more.",
+  standaloneAlreadyOpen:
+    "This phone already has a mailbox open. Forget it in Servers before opening another one.",
   /* The consent press (`net/mailboxes.ts#organizeHere`). Each one names what the mailbox answered;
      none of them claims the phone is organizing, because on these arms it is not. */
   organizeHereUnreachable: (detail: string) =>
