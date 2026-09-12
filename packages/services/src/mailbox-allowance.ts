@@ -3,7 +3,6 @@ import {
   accounts, mailboxes, NotInTransactionError,
   type AccessRefusal, type AccessVerdict, type LedgerTx,
 } from "@trafficflow/db";
-import type { Dialect } from "@trafficflow/db/dialect";
 import { ServiceError } from "./errors.js";
 
 /**
@@ -134,20 +133,6 @@ export function decideMailboxAllowance(a: MailboxAllowance): MailboxRefusal | nu
   return null;
 }
 
-
-/**
- * THE ACCOUNT ROW, `FOR UPDATE` — the HEAD of the mailbox lock order, and a statement of its own
- * because three doors must take it BEFORE they touch a `mailboxes` row. `delete` reads the same row
- * first (the erasure fence, `FOR SHARE`) and locks the mailbox second; a door that locked the
- * mailbox first and reached the allowance gate second closed the cycle, and Postgres killed one
- * side with `40P01 deadlock detected` — a confirm and a disconnect on one account, one of them a
- * 500. EXCLUSIVE, not shared: a shared head lock orders nothing, so the upgrade at the gate would
- * re-open the same cycle. THROUGH THE SEAM, like the fence: on a single-writer device store the
- * clause is a no-op and the ordering is already the store's.
- */
-export async function lockAccountRow(tx: LedgerTx, d: Dialect, accountId: string): Promise<void> {
-  await d.forUpdate(tx.select({ id: accounts.id }).from(accounts).where(eq(accounts.id, accountId)).limit(1));
-}
 
 /** What {@link readMailboxAllowance} needs beyond the transaction it runs in. */
 export interface MailboxAllowanceInput {

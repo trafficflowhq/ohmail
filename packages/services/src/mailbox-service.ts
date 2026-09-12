@@ -23,7 +23,7 @@ import { defaultMailboxAllowance } from "./mailbox-allowance-registry.js";
 /* The head of the mailbox lock order, imported as a STATEMENT rather than reached through the
  * gate: which policy a host installed decides whether the gate runs, and the lock order may not
  * depend on that. */
-import { lockAccountRow } from "./mailbox-allowance.js";
+import { lockAccountRow } from "./account-lock.js";
 import type { KeyProvider } from "./auth/crypto.js";
 import type { MailboxDTO, MailboxFolderSummary } from "./dto/types.js";
 // The window's vocabulary, from the one place it is defined (core), so the ceremony that writes
