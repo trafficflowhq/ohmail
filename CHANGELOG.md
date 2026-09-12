@@ -22,6 +22,32 @@ login keyring and notifications, and has no access to your files — attachments
 through the desktop portal. It does not check for updates, because a software centre installs
 them. It is not on Flathub yet; the README says how to build and install it yourself meanwhile.
 
+### The desktop app reports what it costs and how it feels
+
+The app already wrote the mail engine's memory into its log every five minutes. The window's own
+memory was measured only on Linux; it is measured on macOS and Windows now too, each through that
+system's own reading. The app also reports how fast it feels, in the same log: how long the window
+took to start and to show a usable list, and the median and 95th percentile of opening a message,
+switching view and searching. Counts and durations only — no subject, no address, no folder name —
+and none of it leaves the machine.
+
+### Stopping and starting again on a phone is one instruction
+
+Press "Stop organizing here" in Settings, change your mind, press "Start organizing here": the phone
+either refused to start again for as long as the app stayed open, or started and went on saying
+"Stopping" while it was filing mail. There is one instruction now — Start pressed during a stop
+waits for the stop and then starts, Stop pressed during a start cancels it — and Settings shows the
+state the mailbox is in rather than the last button you pressed. The stop is written down on the
+phone itself, so reopening the app does not undo it. Where nothing organizes a mailbox, the panel no
+longer explains how to dismiss a notification that is not showing.
+
+### Every Linux build measures start time and memory
+
+The build could prove the packaged app opens a window and nothing about what it costs. The Linux job
+now runs the packaged app against a generated ten-thousand-message mailbox and reads the app's own
+numbers back — how long the engine took to be ready, and how much memory the engine and the window
+hold — each against a written budget. Over a budget fails the build.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
