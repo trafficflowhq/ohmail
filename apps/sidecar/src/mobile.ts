@@ -819,21 +819,12 @@ async function composePhoneEngine(
   /**
    * ══ THE CONSENT DOOR, AND IT ANSWERS IN THREE WORDS ═══════════════════════════════════════
    *
-   * Not the enforcement — that is the fence, where {@link organizeWithJoinIntent}'s `join` meets a
-   * live holder however recent the press. This is the door, and what it must never do is admit a
-   * press over a mailbox it could not see.
-   *
-   * `held` on the row is the FAST PATH: one indexed read, no round trip, and it is the state a
-   * phone beside a laptop that holds the mailbox meets on every relaunch. `stopped` is a look that
-   * ANSWERED and found nobody renewing — the gate's own `available`, and a mailbox a press may
-   * take. NULL is neither: the schema says so in its own comment, *"we have not looked"*, and this
-   * door used to read it as "nobody holds it". So on NULL the door stops reading the row and asks
-   * the ENGINE to look — the same APPEND-less bounded read the poll makes, on the connection this
-   * install already holds. Three answers come back and only `free` admits the press.
-   *
-   * An UNREADABLE anything — the row, or the folder — is 503 and never 409: a retry is offered for
-   * the one it heals, and nobody is told a machine has their mailbox on the strength of a look
-   * that did not land.
+   * Not the enforcement — that is the fence. What this must never do is admit a press over a
+   * mailbox it could not see. `held` on the row is the FAST PATH: one indexed read, no round trip.
+   * `stopped` is a look that ANSWERED and found nobody renewing. NULL is neither — the schema says
+   * *"we have not looked"*, and this door used to read it as "nobody holds it" — so on NULL the
+   * door asks the ENGINE to look, and only `free` admits the press. An UNREADABLE row or folder is
+   * 503 and never 409: nobody is told a machine has their mailbox on a look that did not land.
    */
   /** 503 with the code the app renders as its own sentence. Never 409: the two are different
    *  facts and a person told "another computer has it" about a look that did not land would go
@@ -872,15 +863,11 @@ async function composePhoneEngine(
       /* ══ THE ROW CANNOT SAY, SO THE ENGINE LOOKS ═══════════════════════════════════════════
        *
        * `organizer_state` NULL is "we have not looked", and this door used to read it as "nobody
-       * holds it". Measured on the phone's own composition: with the engine's adapter unable to
-       * read `ohmail/_meta` — no read-only accessor, or a FETCH the server refused — the columns
-       * were byte-identical to an unorganized mailbox's, the press was admitted 202, the consent
-       * and the authorization were written, and `claimHere` answered `claimed`. Three arms, one
-       * door, one answer, and the one it must never give.
-       *
-       * So the door peeks through its OWN engine: the same APPEND-less, bounded read the poll
-       * makes, on the connection this install already holds, answering free / held / unreadable.
-       * Only on this path — a row that says `held` is still the fast path and costs no round trip.
+       * holds it". Measured on the phone's own composition with the adapter unable to read
+       * `ohmail/_meta`: the columns were byte-identical to an unorganized mailbox's, the press was
+       * admitted 202, consent and authorization were written, and `claimHere` answered `claimed`.
+       * So the door peeks through its OWN engine — the same APPEND-less bounded read the poll
+       * makes — answering free / held / unreadable. Only on this path; a `held` row costs nothing.
        */
       const looked = await sidecar.peekOrganizer(mailboxId);
       if (looked.answer === "free") return null;
@@ -987,12 +974,9 @@ async function composePhoneEngine(
    *
    * Composed once and used by BOTH the app-facing `handle` and the engine's own two verbs: with
    * `claimHere` pressing `sidecar.handle` directly, the claim watch reached the service over a
-   * live foreign claim and the 409 never ran.
-   *
-   * THREE ACTS, in order: the takeover verb is refused outright, a live foreign holder is refused
-   * off the row, and whatever is left through a consent path is forwarded carrying `join`.
-   *
-   * The ANSWER; the door that logs it is `phoneHandle` below.
+   * live foreign claim and the 409 never ran. THREE ACTS, in order: the takeover verb is refused
+   * outright, a live foreign holder is refused off the row, and whatever is left through a consent
+   * path is forwarded carrying `join`. The ANSWER; the door that logs it is `phoneHandle` below.
    */
   const answer = async (req: Request): Promise<Response> => {
       /* THE ONE-ORGANIZER RULE FIRST, on every organize and takeover spelling. A live foreign
@@ -1032,13 +1016,11 @@ async function composePhoneEngine(
   /**
    * ══ AND EVERY REFUSAL THIS DOOR ANSWERS NAMES ITSELF ═══════════════════════════════════
    *
-   * `GET /mailboxes` over this door answers a row under Node and was refused on a device,
-   * twice, unreadable both times: the app's roster read folds a non-200 and a throw into one
-   * `null` ("could not ask"), so the status that decided it existed nowhere. The line is
-   * written HERE, where the answer is decided, through the engine's own hardened logger — an
-   * app composing it would be a second logger outside the field allowlist. A refusal is `info`
-   * (the ordinary answer for a phone whose mailbox another machine organizes); a throw is the
-   * failure. `route` and `method` go through `log.ts`'s describers, which drop the query first.
+   * `GET /mailboxes` over this door answers a row under Node and was refused on a device, twice,
+   * unreadable both times: the app's roster read folds a non-200 and a throw into one `null`, so
+   * the status that decided it existed nowhere. Written HERE, through the engine's own hardened
+   * logger — an app composing it would be a second logger outside the field allowlist. A refusal
+   * is `info`; a throw is the failure. `route` and `method` drop the query first.
    */
   const phoneHandle = async (req: Request): Promise<Response> => {
     /* LITERAL FIELDS AT BOTH CALL SITES, never a spread of a shared object: the census that

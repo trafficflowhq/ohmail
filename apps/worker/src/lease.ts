@@ -278,12 +278,10 @@ function standDownReason(verdict: Exclude<LeaseVerdict, { verdict: "organize" }>
  * What an unreadable lease is CALLED on the mailbox row.
  *
  * ONE derivation for both arms of the sync loop — the attach and the cycle — because the two used
- * to spell `"lease_unreadable"` as a literal each, and a refusal that means something else at one
- * of them would have been renamed at one and not the other. A wrong clock is not a folder that
- * could not be read: the sentence behind `lease_unreadable` says ohmail cannot read its own folder
- * on that server, which is false here and names nothing anybody can act on, while the one thing a
- * person can do about a wrong clock is set it. Every other `LeaseUnavailableError` keeps the
- * answer it had.
+ * to spell `"lease_unreadable"` as a literal each. A wrong clock is not a folder that could not be
+ * read: `lease_unreadable`'s sentence says ohmail cannot read its own folder on that server, which
+ * is false here and names nothing anybody can act on, while the one thing a person can do about a
+ * wrong clock is set it. Every other `LeaseUnavailableError` keeps the answer it had.
  */
 export function leaseBlockReason(err: LeaseUnavailableError): MailboxSyncBlockReason {
   return err instanceof LeaseClockSkewError ? "clock_off" : "lease_unreadable";

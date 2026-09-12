@@ -15,16 +15,12 @@ import { DRAFT_BODY_MAX_BYTES } from "@trafficflow/core/mail";
 
 /**
  * Ceiling on one stored/sent html body, in bytes. 262144 = 256 KiB — `message_bodies`' number,
- * argued in `0022_message_body_html_cap.sql`, not repeated here. This constant and
- * `drafts_html_cap` in `0037_draft_html.sql` are one ceiling expressed twice (a migration freezes
- * when applied; code does not); a test reconciles them, as with `STORED_HTML_CAP_BYTES`. Measured
- * in BYTES: `octet_length` is what the constraint counts, so emoji and accented text must be
- * measured the same way.
- *
- * The LITERAL now lives once, in `DRAFT_BODY_MAX_BYTES`: the plain half took the same number for
- * the same migration's reason, and the composer states one ceiling over whichever half it is
- * about to store — a client predicate that depended on two literals agreeing is the second number
- * to keep true that both doc comments warn about.
+ * argued in `0022_message_body_html_cap.sql`. This constant and `drafts_html_cap` in
+ * `0037_draft_html.sql` are one ceiling expressed twice (a migration freezes when applied; code
+ * does not) and a test reconciles them. Measured in BYTES: `octet_length` is what the constraint
+ * counts. The LITERAL now lives once, in `DRAFT_BODY_MAX_BYTES` — the plain half took the same
+ * number for the same migration's reason, and a client predicate that depended on two literals
+ * agreeing is the second number to keep true that both doc comments warn about.
  */
 export const DRAFT_HTML_CAP_BYTES = DRAFT_BODY_MAX_BYTES;
 

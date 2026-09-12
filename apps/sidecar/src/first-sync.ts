@@ -96,37 +96,24 @@ export function createFirstSyncReporter(
 /**
  * WHAT THIS MAILBOX'S FIRST SYNC HAS PRODUCED — the third answer `MailboxConnectionState` carries.
  *
- * `finished` is the import stamp: this mailbox has been read to the end at least once, whether it
- * held a thousand messages or none. `pending` is a first sync still working — nothing has come
- * back yet, or mail is landing. `produced_nothing_readable` is the one nothing reported before: a
- * drain has come back, the mirror holds NOT ONE message for this mailbox, and either the import
- * never finished or messages were seen and written off.
- *
- * IT LIVES HERE AND NOT IN `roster.ts`, WHICH IS WHERE ITS FIELD IS. `roster.ts` imports the IMAP
- * adapter and the worker's lease types, and `cloud-engine-census.test.ts` walks `import type`
- * edges like any other — so a type import from this module would put the organizer inside Cloud
- * mode's graph and the census refuses it by name. The dependency runs the other way: `roster.ts`
- * takes the name from here.
+ * `finished` is the import stamp; `pending` is a first sync still working; and
+ * `produced_nothing_readable` is the one nothing reported before — a drain has come back, the
+ * mirror holds NOT ONE message, and either the import never finished or mail was written off.
+ * IT LIVES HERE AND NOT IN `roster.ts`: that file imports the IMAP adapter and the worker's lease
+ * types, so a type import from it would put the organizer inside Cloud mode's graph, which
+ * `cloud-engine-census.test.ts` refuses by name. `roster.ts` takes the name from here.
  */
 export type FirstSyncState = "pending" | "finished" | "produced_nothing_readable";
 
 /**
  * WHAT ONE MAILBOX'S FIRST SYNC HAS PRODUCED, KEPT AS THREE FACTS AND DERIVED — never stored.
  *
- * The state is not settable: no path can assert "this mailbox is fine", which is the whole defect
- * this closes. A mailbox reported `reachable: true` with `unreachableSince: null` while its first
- * sync had materialised nothing, and every surface rendered that as a quiet mailbox — the failure
- * looking exactly like its own healthy state.
- *
- * The three facts are the engine's own, and none of them is a clock:
- *
- *   · `importClosed` — `initial_import_completed_at`, learned from the stamps the drain itself
- *     writes ({@link SyncStamps}). A settled mailbox reports `importWasOpen: false` on its first
- *     pass, so a relaunch of one costs no read at all.
- *   · `drainEnded` — at least one drain of this mailbox has COME BACK since the door opened,
- *     however it ended. Without it a door one second old would read as unreadable.
- *   · the mirror's own two facts ({@link mirroredFirstSyncFacts}) — asked through a thunk, and
- *     only while the answer can still change, for `report`'s reason above.
+ * The state is not settable: no path can assert "this mailbox is fine", which is the defect this
+ * closes — a mailbox reported reachable while its first sync had materialised nothing, the failure
+ * looking exactly like its own healthy state. The three facts are the engine's own and none is a
+ * clock: `importClosed` from the stamps the drain writes ({@link SyncStamps}); `drainEnded`, at
+ * least one drain back since the door opened, without which a one-second-old door reads as
+ * unreadable; and the mirror's own two ({@link mirroredFirstSyncFacts}), asked through a thunk.
  */
 export interface FirstSyncTracker {
   /** The derived answer. A snapshot, like every other field the runtime exposes. */

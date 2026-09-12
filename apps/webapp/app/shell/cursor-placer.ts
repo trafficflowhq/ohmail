@@ -4,16 +4,11 @@
  * ONE CURSOR PLACER, FOR EVERY LIST VIEW.
  *
  * The rule it carries is the dispatcher's (`keymap.tsx#DisabledReason`): a message verb pressed on
- * a list that has rows and no cursor PLACES the cursor and says so, performing nothing — the
- * second press performs. Nothing is placed on arrival: `AppShell.selectedOhbox` records what a
- * `?? allOhbox[0]` fallback did on open — it fetched a body from the person's own server and put
- * somebody's mail in the reading column — and ⌫ is that hazard with a delete on the end.
- *
- * It lives here rather than in the shell because the shell holds the cursor for exactly three of
- * its views. Every other list holds its own, and three hosts each spelling "first row, scroll it
- * into view, say which verb the next press runs" is how three lists come to place a cursor three
- * different ways. One spelling; a host supplies only the rows it is showing and the row selector
- * it already has.
+ * a list that has rows and no cursor PLACES the cursor and says so, performing nothing. Nothing is
+ * placed on arrival — a `?? allOhbox[0]` fallback fetched a body from the person's own server on
+ * open, and ⌫ is that hazard with a delete on the end. It lives here rather than in the shell
+ * because the shell holds the cursor for three of its views and every other list holds its own:
+ * one spelling, and a host supplies only its rows and the row selector it already has.
  */
 import { useTranslations } from "next-intl";
 import { useOptionalToast } from "@ohmail/ui";

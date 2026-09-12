@@ -419,16 +419,12 @@ export function useComposeAutosave(opts: {
       savedMailbox.current !== null && mailboxId !== savedMailbox.current;
     if (signature === saved.current && !mailboxMoved) return;
     /* ── THE CEILING IS STATED BEFORE THE PUT, NOT DISCOVERED AS A 413 ────────────────────────
-       The server refuses EITHER half past `DRAFT_BODY_MAX_BYTES` with `draft_too_large`, and this
-       hook's error path is a deliberate silence (see the catch below), so an oversized body would
-       be retried every pause for ever with nothing on screen to say the account is not keeping
-       up. Both halves through one predicate over the effective body: the formatted one used to
-       413 in silence exactly where the plain one now speaks, and a ceiling a surface states for
-       one half of a message and not the other is a rule a person cannot learn.
-       Refused here instead, where `ComposeView` renders the sentence from the same predicate.
-       Nothing is taken away from the author: the text stays in the form and in the scratch
-       buffer, `saved` is not advanced, and the first edit that brings the body back under the
-       ceiling saves the whole message. */
+       The server refuses EITHER half past `DRAFT_BODY_MAX_BYTES`, and this hook's error path is a
+       deliberate silence, so an oversized body would be retried every pause for ever with nothing
+       on screen. Both halves through one predicate over the effective body: a ceiling a surface
+       states for one half of a message and not the other is a rule a person cannot learn.
+       Nothing is taken away from the author — the text stays in the form and in the scratch
+       buffer, `saved` is not advanced, and the first edit back under the ceiling saves it all. */
     if (draftOverCeiling(fields.body, fields.html)) return;
     // A create with no mailbox would be a 400 the user cannot act on, and the From line is
     // already saying there is nowhere to send from. Nothing is written until there is.

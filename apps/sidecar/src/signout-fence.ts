@@ -1,22 +1,12 @@
 /**
  * ONE SIGN-OUT FENCE. Signing out removes every mailbox password this install holds, and nothing
- * that was already on its way may write one back afterwards.
+ * already on its way may write one back afterwards.
  *
- * The clear deletes the credential row and reads it back inside its own transaction, so it cannot
- * report success over a delete that removed nothing. What a read-back cannot see is a writer that
- * is ALREADY IN FLIGHT: sealing a password dials the server first and commits seconds later, so a
- * sign-out in that window proved the row gone, answered, and the probe then sealed it again.
- *
- * So a sign-out is an EPOCH rather than a statement: {@link SignOutFence.signOut} bumps it first,
- * then waits (bounded) for every writer that started under the previous one, and only then are the
- * stores discarded and the answer given. A writer reads the epoch it began under — stale means a
- * sign-out overtook it, and it discards what it wrote rather than leaving it. A writer that starts
- * after the bump never raced anything. The same epoch governs the DIAL: a runtime that resolved a
- * password before a sign-out does not open a login on the copy it holds in memory.
- *
- * It is deliberately per-ENGINE and not per-process: a sign-out is a fact about one install's
- * stores, and a module-level counter would make two engines in one process (every test that stands
- * up a second one, and the phone's relaunch) share a sign-out neither performed.
+ * A read-back cannot see a writer ALREADY IN FLIGHT: sealing a password dials first and commits
+ * seconds later, so a sign-out in that window proved the row gone, answered, and the probe sealed
+ * it again. So a sign-out is an EPOCH: bump, wait (bounded) for every writer that started under
+ * the previous one, then discard the stores. A stale epoch means a sign-out overtook the writer,
+ * which discards what it wrote; the same epoch governs the DIAL. Per-ENGINE, never per-process.
  */
 
 /** One credential write, from the moment it starts to the moment it has settled. */

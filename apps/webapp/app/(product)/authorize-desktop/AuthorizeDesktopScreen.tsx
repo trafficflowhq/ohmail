@@ -3,15 +3,11 @@
 /**
  * "Sign the app in?" — the confirmation in front of the native authorization.
  *
- * Nothing is minted on load. The page READS what is being asked for (which app, which account,
- * what it gets) and waits; the press is what mints, and it carries the session's CSRF token, which
- * is exactly what a request composed somewhere else cannot produce. The address arrives masked
- * from the server — this screen can be shared or photographed, and it only has to say WHICH
- * account, not spell it out.
- *
- * The countdown is the SERVER's number (`expiresIn`). A literal here would be a second copy of
- * `oauthAuthorizeRequestTtlMs` that drifts, and at zero the buttons go rather than grey out: a
- * dead ceremony left pressable is something a person keeps pressing.
+ * Nothing is minted on load: the page READS what is being asked for and waits, and the press
+ * carries the session's CSRF token, which a request composed somewhere else cannot produce. The
+ * address arrives masked — this screen can be shared or photographed. The countdown is the
+ * SERVER's number (`expiresIn`); a literal would be a second copy of `oauthAuthorizeRequestTtlMs`
+ * that drifts. At zero the buttons go rather than grey out.
  */
 
 import { useEffect, useRef, useState } from "react";

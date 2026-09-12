@@ -379,13 +379,11 @@ export type EngineConfig = LocalDoorConfig | CloudDoorConfig | HostDoorConfig;
 /**
  * ONE DOOR GESTURE AT A TIME — the window's half of the sign-out fence.
  *
- * `Shell::logout` reads the door configuration ONCE and acts on that snapshot: it asks the engine
- * to clear the credential the door it read holds, then removes `config.json`. A door switch
- * landing inside that window replaces the engine underneath it, so the clear is sent to the new
- * door and the OLD door's sealed mailbox password stays on disk — under a sign-out the person was
- * told had happened. Both gestures are invoked from this module and nowhere else, which is what
- * makes a latch here a fence rather than a narrowing: while one is out the other is refused,
- * with a sentence rather than a silent queue.
+ * `Shell::logout` reads the door configuration ONCE and acts on that snapshot. A door switch
+ * landing inside that window replaces the engine underneath it, so the clear reaches the NEW
+ * door and the old door's sealed password stays on disk under a sign-out the person was told
+ * had happened. Both gestures are invoked from this module and nowhere else, which is what
+ * makes a latch here a fence: while one is out the other is refused, with a sentence.
  */
 let doorGesture: "none" | "signing out" | "changing the door" = "none";
 

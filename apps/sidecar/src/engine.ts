@@ -595,20 +595,14 @@ export interface Sidecar {
    */
   credentialState(): Promise<CredentialState>;
   /**
-   * Forget the stored mailbox password; answers whether there was one to forget. This is what
-   * makes signing out of the local door mean something: the shell can delete its own
-   * configuration and stop this process, but the sealed credential lives inside the mirror's
-   * database — and the mirror is frozen on a door switch rather than deleted, because the mail
-   * is on the user's own server and re-pulling it is expensive and pointless. So the one thing
-   * that has to go is removed here, leaving everything else where it is.
+   * Forget the stored mailbox password; answers whether there was one to forget. The shell can
+   * delete its own configuration and stop this process, but the sealed credential lives in the
+   * mirror's database — and the mirror is frozen on a door switch rather than deleted, because
+   * the mail is on the user's own server. So the one thing that has to go is removed here.
    *
-   * IT DOES END THE LOGIN that password bought, and it used to leave it open on the reasoning
-   * that tearing down the socket was the shell's job. The socket is the credential in use: the
-   * desktop stops this process a moment later, but nothing guarantees that on every door, and a
-   * poll timer left running re-dialled from the copy the attachment still holds in memory. So the
-   * sign-out epoch moves with the row (`signout-fence.ts`), the live connection is closed, and
-   * every later dial reads that epoch and refuses. The next launch has no password and serves the
-   * mirror — the documented no-password state.
+   * IT DOES END THE LOGIN that password bought. The socket IS the credential in use: a poll timer
+   * left running re-dialled from the copy the attachment still held. The sign-out epoch moves with
+   * the row (`signout-fence.ts`), the live connection closes, and every later dial refuses.
    */
   forgetStoredLogin(): Promise<boolean>;
   /**
@@ -1227,10 +1221,9 @@ export function credentialsRefused(err: unknown): boolean {
  * up, the login stands, and one command was declined. Calling that an outage told a person their
  * connection was lost by a server that had just signed them in.
  *
- * Read off imapflow's `responseStatus` and off the command WE sent — `responseText` and the `[…]`
- * code are the server's words and may steer nothing here. FETCH only, the class this was measured
- * on; a declined CREATE, MOVE or APPEND still records an outage. A refused SIGN-IN is excluded by
- * class: that answer is `signInRefused`, which suspends the re-dial, and the two must not merge.
+ * Read off imapflow's `responseStatus` and off the command WE sent; the server's words steer
+ * nothing. FETCH only — a declined CREATE, MOVE or APPEND still records an outage. A refused
+ * SIGN-IN is excluded by class: that answer is `signInRefused`, and the two must not merge.
  */
 export function fetchRefusal(err: unknown): "NO" | "BAD" | null {
   if (credentialsRefused(err)) return null;

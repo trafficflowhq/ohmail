@@ -2380,17 +2380,12 @@ export function connectionSay(
 /**
  * WHAT THE FIRST SYNC OF THIS MAILBOX PRODUCED, as one verdict — the engine answers, this ranks.
  *
- * BESIDE {@link connectionSay} and deliberately not folded into it. They are different facts with
- * different remedies and two surfaces need both at once: a link that has just come back and a
- * mailbox nothing has ever been read from are true together, and a single ranking would have to
- * drop one of them. Measured, driving the engine against a server that signs you in and refuses to
- * hand over the mail: the link reads dead AND the first sync has produced nothing, and the
- * person's screen owes both sentences — "Reconnecting…" alone sends them to look at their network,
- * and it is not their network.
- *
- * `null` is "nothing has said" — a paired session, a build with no engine, or a door whose first
- * drain has not come back — and is its own state for `connectionSay`'s reason: reading it as
- * "nothing could be read" would put that sentence on screen a second after the door opened.
+ * BESIDE {@link connectionSay} and deliberately not folded into it: two surfaces need both at
+ * once, and a single ranking would have to drop one. Measured against a server that signs you in
+ * and refuses to hand over the mail, the link reads dead AND the first sync has produced nothing
+ * — "Reconnecting…" alone sends somebody to look at a network that is fine. `null` is "nothing
+ * has said" (a paired session, no engine, a first drain not back) and is its own state, for
+ * `connectionSay`'s reason.
  */
 export type FirstSyncSay = "pending" | "finished" | "nothingReadable";
 

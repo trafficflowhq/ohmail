@@ -892,13 +892,10 @@ export type FunctionDefinitionMarker = readonly [proname: string, bodySubstring:
  * The MAIL constraints probed by definition — see {@link CheckDefinitionMarker}.
  * `away_responders_piles_closed` was created by 0096 over two members and replaced by 0101 over
  * four; the name is identical on both databases, so a name probe certifies a 0096 host while the
- * constraint refuses every scope the settings pane offers — a save the person is told succeeded,
- * rejected inside the write's transaction. `mailboxes_sync_blocked_reason_closed` is the same
- * shape from 0102 and again from 0105: a member added under the existing name, and against the
- * older database the worker's soft-block write is refused at the one moment it exists to record.
- * The needle in both is the vocabulary the migration adds, and it moves with each replacement —
- * the newest vocabulary is strictly the stronger probe, since a database carrying it carries every
- * earlier member too.
+ * constraint refuses every scope the settings pane offers. `mailboxes_sync_blocked_reason_closed`
+ * is the same shape from 0102 and again from 0105. The needle in both is the vocabulary the
+ * migration adds, and it moves with each replacement — the newest is strictly the stronger probe,
+ * since a database carrying it carries every earlier member too.
  */
 export const MAIL_CHECK_DEFINITION_MARKERS: ReadonlyArray<CheckDefinitionMarker> = [
   ["away_responders_piles_closed", "ohmail/Screener"],

@@ -1669,20 +1669,12 @@ export class AuthService extends SessionLifecycle {
   /**
    * OPEN the native authorization — and mint nothing anybody can spend.
    *
-   * This used to BE the ceremony: a GET carrying whatever session cookie the browser happened to
-   * send came in, a code went out to the client's `redirect_uri`, and a link somebody else composed
-   * therefore authorized as the person who clicked it. A GET is not a consent. So the arms are
-   * split: this one validates the request and writes it down, {@link approveAuthorize} behind the
-   * session's CSRF token is the only thing that mints, and what the route hands the browser is a
-   * REQUEST HANDLE — worth nothing to whoever holds it, because only the session that opened it
-   * can confirm it.
-   *
-   * The gate stays on the ROUTE (`stepUp: true`, now on both halves) and this method deliberately
-   * does not repeat it — `withStepUp` is where every step-up decision is made, and a second
-   * implementation is how the two drift. What the session row IS read for is not the gate:
-   * `POST /oauth/token` asserts no factor of its own, so the session it establishes has no honest
-   * `last_twofa_at` to write — the authorizing session has the real one, and it is carried on the
-   * request row so the confirmation mints the same provenance the old path did.
+   * This used to BE the ceremony: a GET carrying whatever session cookie the browser sent came in,
+   * a code went out to the client's `redirect_uri`, and a link somebody else composed therefore
+   * authorized as the person who clicked it. So the arms are split: this one validates and writes
+   * the request down, {@link approveAuthorize} behind the session's CSRF token is the only thing
+   * that mints, and the browser gets a REQUEST HANDLE only its own session can confirm. The gate
+   * stays on the ROUTE (`stepUp: true`); the session row is read to carry `last_twofa_at` forward.
    */
   async authorize(ctx: ServiceContext, q: AuthorizeQuery): Promise<{ request: string; expiresIn: number }> {
     const userId = this.requireUser(ctx);
@@ -1888,19 +1880,14 @@ export class AuthService extends SessionLifecycle {
     const db = asTx(ctx);
     const row = (await db.select().from(oauthAuthCodes)
       .where(eq(oauthAuthCodes.codeHash, hashToken(b.code))).limit(1))[0];
-    // A SECOND PRESENTATION OF A REAL CODE, which is the thing RFC 6749 §4.1.2 asks for two
-    // answers to and only got one of. Refusing is not enough: these codes travel through a
-    // redirect URI, so a code arriving twice is the signal that somebody other than the client
-    // read it — and what the first presentation bought is then held by a party we cannot name.
-    // It is withdrawn. The family IS the code row's id (see the `establish` call below), so the
-    // revocation reaches exactly what this code minted and nothing else.
+    // A SECOND PRESENTATION OF A REAL CODE, which is what RFC 6749 §4.1.2 asks two answers to and
+    // only got one of. Refusing is not enough: these codes travel through a redirect URI, so a code
+    // arriving twice is the signal somebody other than the client read it — and what the first
+    // presentation bought is held by a party we cannot name. It is withdrawn. The family IS the
+    // code row's id, so the revocation reaches exactly what this code minted.
     //
-    // Judged BEFORE PKCE on purpose. A replay that cannot produce the verifier is still a replay
-    // — the code was seen — and waiting for a correct verifier would mean the one case this
-    // defends against never triggers it. The cost is that a client retrying an exchange it has
-    // already completed loses its session; the same call was made for `refresh_token` on this
-    // surface ("a re-presented consumed token is theft and revokes the family"), and a native
-    // client re-spending a spent code is a bug either way.
+    // Judged BEFORE PKCE on purpose: a replay that cannot produce the verifier is still a replay,
+    // and waiting for a correct one would mean the case this defends against never triggers it.
     if (row?.consumedAt) {
       const revoked = await this.revokeFamily(db, row.id, ctx.now());
       // The counts leave by the ERROR, which is the only seam this layer has to a logger: what the
@@ -1944,16 +1931,12 @@ export class AuthService extends SessionLifecycle {
     const user = await this.loadUser(db, row.userId);
     // NO `method`, so no `2fa_verified` row: no factor was asserted HERE, and a code plus a PKCE
     // verifier is not one. `twofaAt` therefore INHERITS the authorizing session's real
-    // `last_twofa_at` off the code row instead of stamping `now` — the session this
-    // mints ages out of step-up on the schedule of the factor it actually descends from, rather
-    // than arriving with a full fresh window it never earned. NULL if the code carried none,
-    // which fails step-up closed.
+    // `last_twofa_at` off the code row instead of stamping `now`, so the session this mints ages
+    // out of step-up on the schedule of the factor it descends from. NULL fails step-up closed.
     //
     // `familyId` IS THE CODE ROW'S ID, and that is the whole linkage a replay needs: without it
-    // "revoke what this code issued" had nothing to name, because no column joined a code to the
-    // session it became. A family id is an internal grouping key, never presented as a
-    // credential, so borrowing an unguessable value that already means "this authorization"
-    // costs nothing and makes the revocation exact rather than approximate.
+    // "revoke what this code issued" had nothing to name. A family id is an internal grouping key,
+    // never presented as a credential, so it costs nothing and makes the revocation exact.
     const est = await this.establish(ctx, user, {
       method: undefined, kind: "macos", ip: ctx.ip, twofaAt: row.twofaAt, familyId: row.id,
     });

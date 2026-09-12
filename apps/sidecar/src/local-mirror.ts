@@ -115,16 +115,11 @@ export async function mirroredMessageCount(db: LocalDb, mailboxId: string): Prom
  * HAS THIS MAILBOX EVER PUT ANYTHING IN THE MIRROR, AND HAS ANYTHING BEEN WRITTEN OFF —
  * the two facts the first-sync state is derived from, in one read each.
  *
- * `limit(1)` and never a count: the question is "any", the answer is asked on every drain of a
- * mailbox whose first sync has not settled, and `count(*)` over a mirror that may hold tens of
- * thousands of rows is the wrong shape for a question with a yes/no answer. Both columns are
- * indexed by `mailboxId`.
- *
- * `wroteOff` is what tells an EMPTY mailbox apart from one whose mail could not be stored: the
- * ingest's quarantine writes a `message_failures` row when a message exhausts its attempts, so a
- * mirror with no messages and at least one of those saw mail and kept none of it. Read only where
- * there are no messages at all — a written-off message among thousands of good ones says nothing
- * about the first sync.
+ * `limit(1)` and never a count: the question is "any", it is asked on every unsettled drain, and
+ * both columns are indexed by `mailboxId`. `wroteOff` tells an EMPTY mailbox apart from one whose
+ * mail could not be stored — the ingest's quarantine writes a `message_failures` row when a
+ * message exhausts its attempts. Read only where there are no messages at all: one written-off
+ * message among thousands of good ones says nothing about the first sync.
  */
 export async function mirroredFirstSyncFacts(
   db: LocalDb, mailboxId: string,

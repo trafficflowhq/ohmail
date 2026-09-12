@@ -48,18 +48,12 @@ export type CredentialState =
 
   /**
    * Whether this install can reach one mailbox's server right now, and what its first sync
-   * produced. Not on {@link OrganizerState} and must not be folded in, because the two answer
-   * different questions the pane needs both: "who organizes this mailbox" is a fact about the
-   * LEASE and survives an outage untouched (saying otherwise would invite taking back a mailbox
-   * never taken away), while "can I reach it" is a fact about a SOCKET and decides whether "On
-   * this machine" is presently true in any useful sense. In memory only: a dead connection does
-   * not survive a restart (a relaunch dials fresh), so a column recording it would be a durable
-   * statement about a transient fact.
-   *
-   * {@link firstSync} rides here rather than beside it because both are answers to "what is this
-   * link doing for my mail", both are read in ONE pass by every surface that renders them, and a
-   * second record would be a second clock — the pair could then disagree with itself about a
-   * mailbox that is reachable and has never been read.
+   * produced. Not on {@link OrganizerState}: "who organizes this mailbox" is a fact about the
+   * LEASE and survives an outage untouched, while "can I reach it" is about a SOCKET. In memory
+   * only — a dead connection does not survive a restart, so a column would be a durable statement
+   * about a transient fact. {@link firstSync} rides here because both answer "what is this link
+   * doing for my mail", both are read in ONE pass by every surface, and a second record would be a
+   * second clock that could disagree with itself.
    */
 export interface MailboxConnectionState {
   /** False from the first observation of death until a re-dial completes. */
@@ -121,15 +115,11 @@ export interface OrganizerState {
   /**
    * IS THIS MAILBOX CLAIMED BY THIS INSTALL — the instruction, not the pass's progress.
    *
-   * {@link organizing} answers what THIS PASS may arrange, and it flips only once the gate has
-   * read the lease AND taken its permit — one IMAP round trip after this install's claim is
-   * already standing in `ohmail/_meta`. In that window a reader of `organizing` cannot tell a
-   * mailbox this install has just claimed from one nobody has consented to, and the phone's
-   * background arm read the second: press "Organize here", leave the screen inside the window,
-   * and the claim stood over a phone organizing nothing until it lapsed. This is the third
-   * state — consent recorded and the row saying organizer — set where the gate becomes entitled
-   * to the lease and cleared the moment the claim leaves (a release, a hand-back, a stand-down)
-   * or was never ours (pre-consent, a reader, an unreadable row).
+   * {@link organizing} flips only once the gate has read the lease AND taken its permit — one IMAP
+   * round trip after this install's claim is already standing in `ohmail/_meta`. In that window a
+   * reader cannot tell a mailbox just claimed from one nobody consented to, and the phone's
+   * background arm read the second. This is the third state — consent recorded and the row saying
+   * organizer — set where the gate becomes entitled to the lease and cleared when the claim leaves.
    */
   claimed: boolean;
 }
@@ -274,15 +264,10 @@ export interface LocalMailboxRuntime {
    * LOOK AT `ohmail/_meta` NOW, AND ANSWER IN THREE WORDS — free, held-by, or unreadable.
    *
    * The APPEND-less read this runtime's own poll makes, exposed so a DOOR can ask it rather than
-   * read the holder columns and guess. The columns cannot carry the third answer: `organizer_state`
-   * is `held`, `stopped` or NULL, and NULL means "we have not looked" — so a door that treats NULL
-   * as "nobody holds it" answers a press over a mailbox it could not see. It never throws and it
-   * never writes: {@link LeasePeekAnswer}'s `unreadable` is the refusal, in a value.
-   *
-   * NOT inside the serial queue. `handBack` takes it because it WRITES and must not land between a
-   * gate's claim and the drain that claim authorises; this is a SELECT and a FETCH, which imapflow
-   * already queues on the connection — and a press made to wait out a full drain is a door that
-   * hangs for a minute on the one surface a person is watching.
+   * guess off the holder columns: `organizer_state` is `held`, `stopped` or NULL, and NULL means
+   * "we have not looked". It never throws and never writes — `unreadable` is the refusal, in a
+   * value. NOT inside the serial queue: `handBack` takes it because it WRITES, while this is a
+   * SELECT and a FETCH imapflow already queues, and a press made to wait out a drain hangs.
    */
   peekOrganizer(): Promise<LeasePeekAnswer>;
   /** Can this install open this mailbox right now? Read fresh from the store on every call. */

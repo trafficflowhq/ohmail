@@ -6,15 +6,12 @@ import { pipeline } from "node:stream/promises";
 
 /**
  * The hand-rolled node:http adapter — IncomingMessage/ServerResponse to fetch Request/Response;
- * the route table is the framework. A node-only subpath (`@trafficflow/core/adapters/http-host`)
- * with two consumers that must not diverge: the self-host server (via its `src/http.ts` shim) and
- * the sidecar's host door (`host-listener.ts`). Five points, held by real-socket tests in both:
- * `Readable.toWeb(req)` with `duplex: "half"`, no body forwarded for a body-less request;
- * multi-value `Set-Cookie` via `getSetCookie()`; streaming responses via
- * `Readable.fromWeb(...).pipe(res)` so `/events` SSE frames move as enqueued; a body byte cap
- * plus `headersTimeout`/`requestTimeout` against slow and lying clients; and an optional
- * CONNECTION bound, because every one of those counts a REQUEST and a socket that never finishes
- * its headers is not one.
+ * the route table is the framework. A node-only subpath with two consumers that must not diverge:
+ * the self-host server and the sidecar's host door. Five points, held by real-socket tests in
+ * both: `Readable.toWeb(req)` with `duplex: "half"` and no body for a body-less request;
+ * multi-value `Set-Cookie` via `getSetCookie()`; streaming via `Readable.fromWeb(...).pipe(res)`
+ * so SSE frames move as enqueued; a body byte cap plus `headersTimeout`/`requestTimeout`; and an
+ * optional CONNECTION bound, because every one of those counts a REQUEST.
  */
 
 export interface AdapterOptions {

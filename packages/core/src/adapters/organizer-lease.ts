@@ -875,25 +875,14 @@ export function clockSkewRefusal(input: {
 }
 
 /**
- * THE REFERENCE CLOCK, SUBSTITUTED ONCE — every decision this module makes about AGE and RECENCY
- * reads the mail server's stamp, never the writer's.
+ * THE REFERENCE CLOCK, SUBSTITUTED ONCE — every decision about AGE and RECENCY reads the mail
+ * server's stamp, never the writer's.
  *
- * The writer's `X-Ohmail-Heartbeat` is a claim about time made by the machine whose clock is in
- * question, so a laptop booting at 2099 wrote heartbeats no honest peer could outrank and a laptop
- * 61 seconds slow wrote records that read as residue — and no reader-side rule could tell either
- * from the truth, because believing an old-looking stamp is the permanent lockout and disbelieving
- * it is the displacement. IMAP settles it: INTERNALDATE is stamped by the SERVER at the append, one
- * clock both machines see, and it cannot be forged by a broken one.
- *
- * ONE substitution, at the two doors of the decision layer ({@link decideLease}, {@link
- * peekLease}), so every predicate below keeps reading `heartbeat` and there is exactly one place
- * the server's clock enters. `clampFuture` already establishes the idiom: this layer decides over
- * ADJUSTED COPIES and never mutates what the parser produced.
- *
- * A record with NO server stamp is left exactly as it is — today's reading, with the believability
- * ceiling still over it. Absence means this READ could not ask the server (a connection that does
- * not report INTERNALDATE, or a caller that parsed a record out of a source it already held); it is
- * not evidence about the record, so it may not change the record's standing in either direction.
+ * `X-Ohmail-Heartbeat` is a claim about time by the machine whose clock is in question: a laptop
+ * booting at 2099 outranked every honest peer and one 61 seconds slow read as residue, and no
+ * reader-side rule told either from the truth. INTERNALDATE is the SERVER's. ONE substitution, at
+ * the two doors ({@link decideLease}, {@link peekLease}), over ADJUSTED COPIES; a record with NO
+ * server stamp is left as it is, because absence means this READ could not ask.
  */
 export function withServerClock(claims: readonly ClaimRecord[]): readonly ClaimRecord[] {
   let changed = false;
@@ -972,22 +961,14 @@ function coalesce(claims: readonly ClaimRecord[]): { valid: OrganizerClaim[]; ma
 }
 
 /**
- * Newest first, and the ONLY comparison in this module made between two records of ONE INSTALL —
- * `coalesce`'s per-id fold and the writer's own residue prune. Both callers ask the same question:
- * which of these did this machine write last.
+ * Newest first, and the ONLY comparison in this module between two records of ONE INSTALL: which
+ * of these did this machine write last.
  *
- * THE SERVER'S STAMP DECIDES FIRST, as everywhere else. But IMAP INTERNALDATE has SECOND
- * resolution, so two appends by one machine inside one second carry the SAME stamp — and a renew is
- * append-then-expunge, which is exactly two appends in quick succession. Falling straight to the
- * nonce there ordered our own two claims at RANDOM: half the time the fold kept the SUPERSEDED one,
- * the clone defence then read it as a live clone of us (its nonce is not the one we just wrote) and
- * the gate answered `available` about a mailbox it had just renewed. Reproduced against a real mail
- * server at one run in three.
- *
- * So a tie on the server's stamp falls to the WRITER's — which is sound precisely here and nowhere
- * else: both records came from ONE clock, so it cannot be wrong about their ORDER however wrong it
- * is about the time. The nonce stays underneath both, so two records a machine wrote in one
- * millisecond still order identically for every reader.
+ * THE SERVER'S STAMP DECIDES FIRST. But INTERNALDATE has SECOND resolution, and a renew is
+ * append-then-expunge — two appends inside one second, same stamp. Falling straight to the nonce
+ * ordered our own two claims at RANDOM, the clone defence read the survivor as a live clone of us
+ * and the gate answered `available` about a mailbox it had just renewed (one run in three against
+ * a real server). So a tie falls to the WRITER's stamp: one clock cannot be wrong about ORDER.
  */
 function compareRecency(a: OrganizerClaim, b: OrganizerClaim): number {
   const d = b.heartbeat.getTime() - a.heartbeat.getTime();
@@ -1746,18 +1727,14 @@ export async function readLeasePeek(input: ReadLeasePeekInput): Promise<LeasePee
 // ── THE PEEK'S THREE ANSWERS ────────────────────────────────────────────────────────────────
 
 /**
- * WHAT A LOOK AT `ohmail/_meta` ANSWERED — three answers, and the third is the reason this type
- * exists.
+ * WHAT A LOOK AT `ohmail/_meta` ANSWERED — three answers, and the third is why this type exists.
  *
  * `free` and `held` are facts about the folder. `unreadable` is a fact about the LOOK, and the one
  * a caller keeps collapsing into `free` because both leave it with no holder to name. Measured on
- * the phone's consent door: an install whose adapter could not read the folder — no read-only
- * accessor at all, or a FETCH the server refused — left the holder columns exactly as a mailbox
- * nobody has ever organized leaves them, so the door admitted the press, wrote the consent and the
- * authorization, and answered the app "claimed". Nothing anywhere said a look had failed.
- *
- * So the answers are a VALUE rather than a return-or-throw: a caller that must decide from a peek
- * takes this and the compiler names the third arm. Only `free` means "nothing holds this mailbox".
+ * the phone's consent door: an install whose adapter could not read the folder left the holder
+ * columns exactly as an unorganized mailbox leaves them, so the door admitted the press, wrote the
+ * consent and answered "claimed". So the answers are a VALUE rather than a return-or-throw, and
+ * the compiler names the third arm. Only `free` means "nothing holds this mailbox".
  */
 export type LeasePeekAnswer =
   /** The folder was read and nothing is renewing a claim in it. The only answer that admits one. */
@@ -1769,11 +1746,9 @@ export type LeasePeekAnswer =
    * nobody does.
    *
    * `op` is `no_lease_peek_io` for an adapter with no read-only accessor, and otherwise whatever
-   * {@link readLeasePeek} assigned. Measured while this was written: that is `list_claims` for
-   * every fault out of `listClaims`, a folder over the read ceiling INCLUDED — so the op separates
-   * "no accessor" from "the read failed" and nothing finer. A folder too full to read is told
-   * apart by the `lease_meta_truncated` line the read emits through {@link
-   * AnswerLeasePeekInput.log}, not by this field.
+   * {@link readLeasePeek} assigned — measured as `list_claims` for every fault out of `listClaims`,
+   * a folder over the read ceiling INCLUDED. A folder too full to read is told apart by the
+   * `lease_meta_truncated` line the read emits, not by this field.
    */
   | { readonly answer: "unreadable"; readonly op: LeaseOp; readonly cause: unknown };
 

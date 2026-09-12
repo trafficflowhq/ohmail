@@ -31,16 +31,12 @@ export const oauthRoutes: Route[] = [
     /**
      * THE GET THAT NO LONGER ACTS.
      *
-     * It used to mint a native authorization code and 302 straight to the client's `redirect_uri`,
-     * on nothing but the session cookie the browser happened to be carrying — so a link composed
-     * by somebody else and clicked by a signed-in person authorized a four-hundred-day native
-     * credential as them, with no confirmation and, being a GET, no CSRF check available to make.
-     * Now it validates the request, writes it down unspendable, and bounces to a page. `POST
-     * /oauth/authorize` below is where the minting moved.
-     *
-     * Still `raw` (no JSON envelope — the answer is a redirect) and still `public` + `stepUp`: what
-     * that pair buys is unchanged and is stated at the POST. The reduced chain runs `withStepUp`
-     * (`app.ts#RAW_PIPELINE`), so an anonymous caller gets its 401 here rather than at the page.
+     * It used to mint a native authorization code and 302 straight to the client's `redirect_uri`
+     * on nothing but the session cookie the browser happened to carry — so a link composed by
+     * somebody else and clicked by a signed-in person authorized a four-hundred-day credential as
+     * them, with no CSRF check available to make. Now it validates, writes the request down
+     * unspendable, and bounces to a page. Still `raw` and still `public` + `stepUp`: what that
+     * pair buys is unchanged and is stated at the POST, where the minting moved.
      */
     method: "GET",
     pattern: "/oauth/authorize",
@@ -96,13 +92,10 @@ export const oauthRoutes: Route[] = [
      * THE CONFIRMATION — the gesture that mints, and the reason the GET above can be harmless.
      *
      * An unsafe method on a cookie session, so `withCsrf` applies: the token is recomputed from
-     * the session this request presented, which is what a link somebody else composed cannot
-     * produce. `stepUp: true` for the reason it was put on the old GET (SEC3-AUTH-6): what this
-     * mints buys, at `POST /oauth/token`, a session on the native surface — a new family, a new
-     * device row, `nativeRefreshTtlMs` — and without the gate any live fifteen-minute bearer could
-     * grow itself an independently-revocable four-hundred-day credential the victim's device
-     * revocation does not touch. Not `public`: the enrollment-scoped cookie has no business
-     * authorizing a native app, and the plain session gate is the right refusal here.
+     * the session this request presented, which a link somebody else composed cannot produce.
+     * `stepUp: true` for the reason it was put on the old GET (SEC3-AUTH-6): what this mints buys
+     * a session on the native surface, and without the gate any live fifteen-minute bearer could
+     * grow itself a four-hundred-day credential device revocation does not touch. Not `public`.
      */
     method: "POST",
     pattern: "/oauth/authorize",

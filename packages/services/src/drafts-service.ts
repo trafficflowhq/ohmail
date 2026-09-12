@@ -208,16 +208,12 @@ export class DraftsService {
   /**
    * A DRAFT CHANGE THAT MAKES A ROW POINT AT A MESSAGE CARRIES THAT MESSAGE WITH IT.
    *
-   * A windowed mirror keeps only part of the mailbox and pins whatever it is still using — a draft
-   * replying to a message pins that message (`OhmailEngine.pinnedMessageIds`). A pin arriving for
-   * a message the client evicted BEFORE the pin existed protects a row that is not there, so the
-   * reply renders a hole. Every other server writer of a pinning row already re-emits the message
-   * beside it, which is what re-materializes the row (a `/sync` change carries the full DTO);
-   * this one did not. Emitted only when the change is what ESTABLISHES the reference — a later
-   * save of a draft the client already holds pins nothing new — and the message goes FIRST, so a
-   * page boundary between the two delivers the mail before the thing that points at it. The
-   * draft's own seq is returned and is the higher of the pair, so `X-Sync-Seq` still names the
-   * point at which both are visible.
+   * A windowed mirror pins whatever it is still using — a draft replying to a message pins that
+   * message. A pin arriving for a message the client evicted BEFORE the pin existed protects a row
+   * that is not there, so the reply renders a hole. Every other server writer of a pinning row
+   * already re-emits the message beside it; this one did not. Emitted only when the change is what
+   * ESTABLISHES the reference, and the message goes FIRST so a page boundary delivers the mail
+   * before the thing that points at it. The draft's seq is the higher of the pair.
    */
   private async recordDraftChange(
     tx: LedgerTx, accountId: string, id: string, op: "create" | "update", pinned: string | null,

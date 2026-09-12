@@ -174,12 +174,10 @@ interface Registry {
    * Offer to place the cursor for as long as the caller is mounted — see {@link CursorPlacer};
    * returns the release. A claim rather than a prop: the host that owns the cursor (`AppShell`) is
    * a CHILD of this provider. Exactly one placer answers — the one claimed most recently — and
-   * nothing falls through, not even on decline: a placer answers `false` both for "my list is
-   * empty" and "not my surface", and a second host asked after a decline would draw a selection
-   * ring on a list the pressed verb does not act on. "Most recently" is not "innermost" (React runs
-   * a child's effects first — {@link BindingScope} carries that scar), which is why the claim
-   * carries a {@link PlacerScope}: a view's claim beats the shell's, and only then does recency
-   * decide. `global` is the default, so the shell keeps answering for every route no view claims.
+   * nothing falls through, not even on decline, or a second host would draw a selection ring on a
+   * list the pressed verb does not act on. "Most recently" is not "innermost" (React runs a
+   * child's effects first), which is why the claim carries a {@link PlacerScope}: a view's claim
+   * beats the shell's, and only then does recency decide. `global` is the default.
    */
   claimCursorPlacer: (place: CursorPlacer, scope?: PlacerScope) => () => void;
 }
