@@ -482,7 +482,12 @@ export function MessageRow(props: MessageRowProps) {
   return (
     <div className="row-slot" role="presentation">
       {rowButton}
-      <span className="row-actions">{actions}</span>
+      {/* The inner box is what the fade is painted on — see `.row-actions-in` in row.css: the
+          wrapper spans the row so the controls centre on it, and a backdrop that tall would
+          cover the stamp on the row's first line. */}
+      <span className="row-actions">
+        <span className="row-actions-in">{actions}</span>
+      </span>
     </div>
   );
 }
