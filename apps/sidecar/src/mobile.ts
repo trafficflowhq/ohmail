@@ -188,19 +188,13 @@ const RELEASE_PATH = (id: string): string => `/mailboxes/${encodeURIComponent(id
 const SELF_ORIGIN = "http://engine.invalid";
 
 /**
- * ══ WHO HOLDS THIS MAILBOX, IF IT IS NOT THIS INSTALL ══════════════════════════════════════
- *
- * The row's own holder columns, as the gate's last APPEND-less peek left them — `organizer_state`
- * is `held` only while at least one claim in `ohmail/_meta` is still being renewed
- * (`peekLease`: *"`held` — at least one claim is still being renewed"*), so it is LIVENESS and not
- * the row's memory of a stand-down. `disabled_reason` is the memory and outlives the holder, which
- * is exactly why it is not the term read here: a mailbox whose laptop has gone away must not be
- * refused to the phone in front of the person.
- *
- * A claim carrying OUR install id is not foreign. That is own-role resumption — a crash, a
- * restore, a stranded record of a dead predecessor — and refusing it would leave a person unable
- * to start their own phone again. A NULL stored id is the other direction and stays refused: a
- * live claim from a build that records no id is genuinely another install.
+ * Who holds this mailbox, if it is not this install. The row's holder columns, as the gate's last
+ * peek left them: `organizer_state` is `held` only while a claim in `ohmail/_meta` is still being
+ * renewed, so it is LIVENESS, not the row's memory of a stand-down. `disabled_reason` is that
+ * memory and outlives the holder, which is why it is not read here — a mailbox whose laptop has
+ * gone away must not be refused to the phone in front of the person. A claim carrying OUR install
+ * id is not foreign (own-role resumption after a crash or restore); a NULL stored id is a live
+ * claim from a build that records no id, so it stays refused as another install.
  */
 async function liveForeignHolder(
   db: LocalDb,
@@ -271,31 +265,23 @@ export interface PhoneEngine {
    */
   resume(): Promise<void>;
   /**
-   * ══ THE PERSON ASKED FOR THIS PHONE — the consent, recorded, and the claim taken now ═══════
-   *
-   * A method rather than a request the app composes, and that is the privacy census rather than
-   * taste: the phone's privacy census admits a URL and a transport in six named files, and
-   * the app's organizer session is not one of them. So the app presses a verb and the engine's own
-   * door presses the route.
-   *
-   * Three answers, and {@link ClaimHereOutcome} says what each one is. `held` is the whole point:
-   * a live foreign claim is refused AT THE DOOR, so no caller — not a relaunch, not the watcher —
-   * can take a mailbox another machine is organizing.
+   * The person asked for this phone — the consent recorded and the claim taken now. A method
+   * rather than a request the app composes, because the phone's privacy census admits a URL and a
+   * transport in six named files and the app's organizer session is not one of them: the app
+   * presses a verb, the engine's own door presses the route. Three answers, named by
+   * {@link ClaimHereOutcome}; `held` is the point — a live foreign claim is refused AT THE DOOR,
+   * so no caller can take a mailbox another machine is organizing.
    */
   claimHere(): Promise<ClaimHereOutcome>;
   /**
-   * ══ THE PERSON STOPPED — and this is the half a relaunch can still read ════════════════════
-   *
-   * {@link handBack} removes the claim and deliberately leaves the ROW saying organizer, because
-   * it serves an app leaving the foreground: the next resume takes the mailbox back with no press.
-   * A PERSON's stop is the opposite instruction and needs the opposite durability — it must
-   * survive the app being killed and reopened — so it goes through the release ceremony the row
-   * records: `release_requested_at`, honoured by the gate before it reads the lease at all, which
-   * writes the reader role and `organizer_released_at`. A reader with no press never re-enters the
-   * gate, which is what makes the stop stick across every later launch.
-   *
-   * `true` when the release was recorded. `false` is "nothing was recorded", which is a state and
-   * not always a failure: a mailbox this install was not organizing has nothing to give up.
+   * The person stopped — the half a relaunch can still read. {@link handBack} removes the claim
+   * but leaves the ROW saying organizer, serving an app that left the foreground: the next resume
+   * takes the mailbox back with no press. A person's stop is the opposite and needs the opposite
+   * durability, surviving the app being killed, so it goes through the release ceremony the row
+   * records: `release_requested_at`, honoured by the gate before the lease, writing the reader
+   * role and `organizer_released_at`. A reader with no press never re-enters the gate. `true` when
+   * the release was recorded; `false` is "nothing recorded" — a mailbox this install was not
+   * organizing has nothing to give up, which is a state, not a failure.
    */
   stopOrganizing(): Promise<boolean>;
   /** What each mailbox reports — the row's answer, not the gate's optimism. */
@@ -736,23 +722,14 @@ async function composePhoneEngine(
   void launched.catch(() => undefined);
 
   /**
-   * ══ THE CONSENT DOOR REFUSES A MAILBOX ANOTHER MACHINE IS ORGANIZING ══════════════════════
-   *
-   * `net/mailboxes.ts` in the app has always CLAIMED this — *"the route answers 409 where another
-   * install holds the mailbox"* — and the route never did: `MailboxService.organizeHere` writes a
-   * stamp and leaves the decision to the gate, which is right for a desktop, where the press is a
-   * person's finger and the 0.14.1 election is meant to let them take a mailbox back from a machine
-   * they can no longer reach. On a phone it was reached by a LAUNCH, so a plain relaunch beside a
-   * laptop that held the mailbox wrote a fresh authorization 2.3 s after standing down correctly
-   * and held the claim 19 s later: two organizers, nobody asked.
-   *
-   * So the claim becomes true HERE, at the phone's own door, and only here — the hosted and desktop
-   * doors keep the election they were ruled to have. There is no takeover verb on this phone, so
-   * a live foreign holder is a 409 with the holder named, always, whoever pressed.
-   *
-   * An UNREADABLE row is 503 and not 409: it is not evidence about who holds the mailbox, and the
-   * gate takes the same reading one layer down (*"an unreadable row is not permission"*). Both
-   * refuse the claim; they are told apart so a retry is offered for the one a retry can heal.
+   * The consent door refuses a mailbox another machine is organizing. `net/mailboxes.ts` has
+   * always claimed the route answers 409 where another install holds the mailbox, and it never
+   * did: `MailboxService.organizeHere` writes a stamp and leaves the decision to the gate, right
+   * for a desktop where the press is a person's finger. On a phone the press is a LAUNCH, so a
+   * relaunch beside a laptop that held the mailbox took the claim — two organizers, nobody asked.
+   * So the claim becomes true HERE, at the phone's own door: no takeover verb exists here, so a
+   * live foreign holder is always a 409 with the holder named. An UNREADABLE row is 503, not 409
+   * — not evidence about who holds the mailbox — so a retry is offered only for the one it heals.
    */
   const refuseIfOrganizedElsewhere = async (req: Request): Promise<Response | null> => {
     if (req.method !== "POST") return null;

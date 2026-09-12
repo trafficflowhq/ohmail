@@ -1044,19 +1044,13 @@ export const REDIAL_BACKOFF_BASE_MS = 15_000;
 export const REDIAL_BACKOFF_MAX_MS = 5 * 60_000;
 
 /**
- * ══ HOW LONG THIS COMPOSITION WAITS BEFORE IT CALLS A CONNECTION DEAD, AND HOW IT RE-DIALS ══
- *
- * The four numbers above were measured for a desktop that runs for days, where a dead socket is
- * rare and a login the provider counts is the expensive mistake. A phone organizes the mailbox
- * only while ohmail is open — a session of minutes — and loses its route for seconds at a time,
- * so the same numbers read as a broken app: measured on a phone, 2 min 27 s of failing cycles
- * with ONE `mailbox_reconnect_failed` in them, which is exactly what 8 cycles at a 15 s poll and
- * a ladder starting at 15 s produce.
- *
- * So the bounds become a PROFILE, selected by what this install already claims as
- * ({@link OrganizerKind}). No new flag: the discriminator exists, it is written into the claim,
- * and `composition-passes.ts` is the prior art for an exhaustive record over it — a fourth kind
- * cannot reach the claim without an answer here.
+ * How long this composition waits before calling a connection dead, and how it re-dials.
+ * The four bounds above suit a desktop that runs for days, where a dead socket is rare and a
+ * counted login is the costly mistake. A phone organizes only while ohmail is open and drops its
+ * route for seconds, so the same numbers read as a broken app. The bounds therefore become a
+ * PROFILE selected by {@link OrganizerKind} — no new flag: the discriminator is already in the
+ * claim, and `composition-passes.ts` is the prior art for an exhaustive record over it, so a
+ * fourth kind cannot reach the claim without an answer here.
  */
 export interface ReconnectProfile {
   /** The duration bound over failing cycles — see {@link LOCAL_CONNECTION_DEAD_AFTER_MS}. */
@@ -2478,24 +2472,14 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
       /** Wall-clock instant before which no re-dial is attempted. */
       let redialNotBefore = 0;
       /**
-       * WALL-CLOCK INSTANT BEFORE WHICH A PRESS IS NOT HONOURED — a floor under the one path
-       * that is allowed to skip the ladder.
-       *
-       * A forced dial skips {@link redialNotBefore}, and a dial that fails FAST settles in well
-       * under a second. So without this a second press — a remounted pane, a second window, a
-       * person pressing twice — skipped the wait again, and repeated presses dialled once per
-       * press: the 15-second-to-5-minute ladder defeated by a control anybody can hold down,
-       * against a server that has already refused to answer.
-       *
-       * A press is worth ONE attempt per base step. After a forced dial FAILS this is set to
-       * `now + reconnect.ladderMs[0]` and `force` is refused until it passes; the press still
-       * answers 202, and the row still says what it said. A forced dial that SUCCEEDS clears it,
-       * because the thing it was rationing is over.
-       *
-       * SEPARATE FROM `redialNotBefore`, deliberately. That one is the automatic ladder and
-       * widens to five minutes; this is a fixed floor under the manual path. Folding them
-       * together would either give a press the five-minute wait back (the defect this lane
-       * closed) or let a press reset the automatic ladder (the one it refused to do).
+       * Wall-clock instant before which a press is not honoured — a floor under the one path
+       * allowed to skip the ladder. A forced dial skips {@link redialNotBefore} and a fast failure
+       * settles in under a second, so without this a second press dials again and repeated presses
+       * defeat the 15 s–5 min ladder against a server already refusing. A press is worth ONE
+       * attempt per base step: after a forced dial fails this is set to `now + reconnect.ladderMs[0]`
+       * and `force` is refused until it passes (the press still answers 202); a successful dial
+       * clears it. Kept separate from `redialNotBefore` — that widens to five minutes; folding them
+       * would give a press the long wait back or let it reset the ladder.
        */
       let forcedNotBefore = 0;
 
@@ -4773,33 +4757,14 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
        */
       let redialInFlight: Promise<void> = Promise.resolve();
       /**
-       * @param force A PERSON PRESSED "SYNC NOW". Skips the backoff WAIT and nothing else.
-       *
-       * The ladder is right for a poll and wrong for a person. `redialNotBefore` widens to five
-       * minutes so a server that is down is not knocked on four times a minute; the cost is that
-       * after the network comes back the mailbox can sit unreachable for the rest of that wait,
-       * and the one control the product offers for it did nothing. Measured on the Omarchy
-       * guest: five failed attempts at 15/45/90/150/255 s, the sixth at +295 s, and a press in
-       * between changed nothing.
-       *
-       * EVERY OTHER EARLY RETURN STILL HOLDS, and each is a different kind of no:
-       * `stopped` and `connectionDeadSince === null` say there is nothing to re-dial;
-       * `redialling` says one is already in flight, so a second press joins it rather than
-       * opening a second login; the credential guard says the mailbox is waiting for a person,
-       * not for the network; and `signInRefused` says the SERVER has already answered no — a
-       * press must not turn that into repeated LOGIN attempts, which is what providers throttle
-       * and some answer by locking the account. A press is evidence that somebody is waiting.
-       * It is not evidence that the password changed.
-       *
-       * AND IT DOES NOT RESET THE LADDER. `redialAttempts` is untouched, so a forced attempt
-       * that fails leaves the backoff exactly where it was: the press bought one dial, not a
-       * fresh start.
-       *
-       * NOR IS IT UNLIMITED. Skipping the wait is not the same as having no wait: a failed dial
-       * settles in well under a second, so an unbounded `force` let repeated presses dial once
-       * per press and reproduced the four-times-a-minute knocking from the other side. A press
-       * is honoured at most once per this profile's first ladder step — see
-       * {@link forcedNotBefore} and {@link ReconnectProfile}.
+       * @param force A person pressed "Sync now". Skips the backoff WAIT and nothing else: the
+       * ladder is right for a poll and wrong for a person, who otherwise watched the one control
+       * do nothing after the network returned. Every other early return still holds — `stopped`
+       * and `connectionDeadSince === null` (nothing to re-dial), `redialling` (join, don't open a
+       * second login), the credential guard, and `signInRefused` (the SERVER said no; a press
+       * must not become repeated LOGIN attempts providers throttle or lock). It does NOT reset the
+       * ladder (`redialAttempts` untouched) and is NOT unlimited — honoured at most once per this
+       * profile's first ladder step ({@link forcedNotBefore}, {@link ReconnectProfile}).
        */
       const redialIfDead = async ({ force = false }: { force?: boolean } = {}): Promise<void> => {
         if (stopped || connectionDeadSince === null || redialling) return;
@@ -4834,24 +4799,15 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         const detectedBy = connectionDeadBy;
         try {
           const old = adapter;
-          /* ── THE DEAD CONNECTION IS DESTROYED, NOT ASKED TO LEAVE POLITELY ─────────────────
-           *
-           * `close()` issues a LOGOUT and IMAP commands are serialized, so it queues behind a
-           * command that is already hung and waits out the hang it was escaping — the contract
-           * {@link MailboxAdapter.forceClose} states, on the one caller that had not read it.
-           * A half-open link (a phone losing its route: the socket answers TCP, nothing answers
-           * IMAP) has nothing to end that wait, so the LOGOUT never settled, `finally` never
-           * ran, and `redialling` — the latch EVERY later attempt returns on, the poll's and the
-           * person's press alike — was held for the life of the process. Measured on a device:
-           * one `mailbox_reconnect_failed`, then no dial ever again and zero bytes on the wire
-           * with the route restored, while the drain went on failing every fifteen seconds.
-           * Destroying the socket is also the only thing that ends the hung command.
-           *
-           * THIS AND THE DETECTOR'S TEARDOWN ARE ONE MECHANISM, not a fix and a belt. Measured
-           * by mutating both: with either one destroying, the dial happens — because destroying
-           * the socket is what ends the OTHER one's hung LOGOUT. With both polite there is no
-           * dial at all, which is the device's reading. So neither may be relaxed on the grounds
-           * that the other covers it. */
+          /* The dead connection is DESTROYED, not asked to leave politely. `close()` issues a
+             LOGOUT, and IMAP commands are serialized, so it queues behind a command already hung
+             and waits out the hang it was escaping ({@link MailboxAdapter.forceClose}). On a
+             half-open link (the socket answers TCP, nothing answers IMAP) the LOGOUT never settles,
+             `finally` never runs, and `redialling` — the latch every later attempt returns on — is
+             held for the life of the process, so no dial ever happens again. This and the
+             detector's teardown are ONE mechanism: destroying the socket is what ends the other's
+             hung LOGOUT, so with both polite there is no dial at all and neither may be relaxed on
+             the grounds that the other covers it. */
           if (old.forceClose !== undefined) {
             try { old.forceClose(); } catch { /* the socket is going away regardless */ }
           } else {
@@ -4934,22 +4890,14 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                 "throttle and some answer by locking the account",
             });
           } else if (force) {
-            /* ONLY A FORCED ATTEMPT ARMS THE PRESS'S FLOOR, and the `if` is the whole of it.
-               An earlier version armed this on ANY failed dial, which reads harmless and is not:
-               during an outage the POLL fails on its own cadence, so the floor would be re-armed
-               every 15 s to 5 min and a press would be refused almost whenever anybody made one
-               — the defect this lane closed, rebuilt out of its own remedy. Caught by the
-               press-through-the-route control, which went red the moment it ran beside the rest
-               of the file.
-
-               UNJITTERED AND FIXED AT THE LADDER'S FIRST STEP, unlike the arm below. It moves
-               with the profile for the reason the profile exists: a press rationed at the
-               desktop's 15 s on a phone whose automatic ladder runs at 5 s would be the control
-               making the heal slower, which is the defect this floor was added to avoid.
-               The jitter exists to stop several mailboxes knocking in unison after an outage,
-               which is a property of the AUTOMATIC cadence; a person pressing a button is not a
-               herd, and a floor that moved would make "press again in fifteen seconds" a thing
-               nobody could state. */
+            /* Only a FORCED attempt arms the press's floor. Arming it on any failed dial reads
+               harmless and is not: during an outage the poll fails on its own cadence, so the
+               floor would re-arm every 15 s–5 min and a press be refused almost whenever made.
+               UNJITTERED and fixed at the base step, unlike the arm below: it moves with the
+               profile so a press rationed at the desktop's 15 s on a phone whose ladder runs at
+               5 s does not make the heal slower. Jitter stops mailboxes knocking in unison after
+               an outage, a property of the automatic cadence; a person pressing is not a herd,
+               and a floor that moved would make "press again in fifteen seconds" unstatable. */
             forcedNotBefore = Date.now() + reconnect.ladderMs[0]!;
           } else {
             /* AND ONLY THE POLL CLIMBS THE LADDER — a press is one dial, not evidence about the
@@ -5092,32 +5040,14 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           armHeartbeat();
         },
         /**
-         * STOP THIS MAILBOX AND LEAVE THE STORE ALONE.
-         *
-         * The install's `stop()` used to be this and the store close together, because one
-         * mailbox going down WAS the engine going down. They are different acts now: removing
-         * one mailbox of three stops one login and one timer, and the other two go on serving
-         * out of the same database. So the store close stays with the engine and this closes
-         * exactly what this mailbox holds.
-         *
-         * The in-flight cycle is awaited rather than cancelled — a drain half-way through a
-         * batch has rows committed and a cursor it is about to move, and dropping it there is
-         * how a mailbox re-reads mail it already had.
-         *
-         * ── AND THE WHOLE OF IT IS BOUNDED: ON A HALF-OPEN LINK IT NEVER ENDED ──────────────
-         *
-         * A half-open link — a phone losing its route: the socket answers TCP, nothing answers
-         * IMAP — has nothing to end a command, and this method has THREE waits a command can
-         * hold: the queue, an in-flight re-dial, and the polite `close()` whose LOGOUT queues
-         * behind whatever is already hung. Measured: the drain parks in its PREFLIGHT PROBE,
-         * which runs OUTSIDE the serial queue, so the queue is clear and what hung was the
-         * LOGOUT — a bound on the queue alone was half a fix and the case that found it is in
-         * `reconnect-after-close.test.ts`.
-         *
-         * So there is ONE budget — one drain interval, past which a cycle is not "about to
-         * finish", it is wedged — spent across all three, and when it runs out the socket is
-         * DESTROYED. That is also the only thing that ends the hung command, so nothing is left
-         * to wait for and this returns without a LOGOUT.
+         * Stop this mailbox and leave the store alone. The install's `stop()` used to close the
+         * store too, because one mailbox going down WAS the engine going down; with several, this
+         * stops one login and one timer while the others serve out of the same database. The
+         * in-flight cycle is AWAITED, not cancelled: a drain mid-batch has rows committed and a
+         * cursor about to move, and dropping it re-reads mail already had. The whole is BOUNDED —
+         * a half-open link has nothing to end a command, and this method holds three waits (the
+         * queue, an in-flight re-dial, and `close()`'s LOGOUT). One budget of a drain interval is
+         * spent across all three; when it runs out the socket is DESTROYED, ending the hung command.
          */
         async detach() {
           stopped = true;
