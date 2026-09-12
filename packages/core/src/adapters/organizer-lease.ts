@@ -391,6 +391,15 @@ export interface OrganizerClaim {
    * report it, and absence keeps the writer's own stamp rather than inventing a time.
    */
   serverStamp: Date | null;
+  /**
+   * WHAT THE WRITER'S OWN CLOCK SAID, kept beside the substitution rather than under it.
+   *
+   * `withServerClock` replaces `heartbeat` with {@link serverStamp}, which is right for every
+   * comparison BETWEEN machines. One comparison is between two records of ONE machine — which of
+   * its own appends came last — and the server's second-resolution stamp cannot answer it for a
+   * renew's two appends. See {@link compareRecency}.
+   */
+  writerStamp: Date;
   /** ISO instant this install BECAME organizer, as distinct from last seen. */
   claimedAt: Date;
   displayName: string;
@@ -783,6 +792,7 @@ export function parseClaim(raw: string, ref?: unknown, serverStamp?: Date | null
     kind,
     protocol,
     heartbeat,
+    writerStamp: heartbeat,
     serverStamp: serverStamp instanceof Date && !Number.isNaN(serverStamp.getTime()) ? serverStamp : null,
     claimedAt: Number.isNaN(claimedAt.getTime()) ? heartbeat : claimedAt,
     displayName: get(H.displayName) ?? "",
@@ -961,11 +971,40 @@ function coalesce(claims: readonly ClaimRecord[]): { valid: OrganizerClaim[]; ma
   return { valid: [...newest.values()], malformed };
 }
 
-/** Newest heartbeat first; equal heartbeats break on the nonce, so the result is order-free. */
+/**
+ * Newest first, and the ONLY comparison in this module made between two records of ONE INSTALL —
+ * `coalesce`'s per-id fold and the writer's own residue prune. Both callers ask the same question:
+ * which of these did this machine write last.
+ *
+ * THE SERVER'S STAMP DECIDES FIRST, as everywhere else. But IMAP INTERNALDATE has SECOND
+ * resolution, so two appends by one machine inside one second carry the SAME stamp — and a renew is
+ * append-then-expunge, which is exactly two appends in quick succession. Falling straight to the
+ * nonce there ordered our own two claims at RANDOM: half the time the fold kept the SUPERSEDED one,
+ * the clone defence then read it as a live clone of us (its nonce is not the one we just wrote) and
+ * the gate answered `available` about a mailbox it had just renewed. Reproduced against a real mail
+ * server at one run in three.
+ *
+ * So a tie on the server's stamp falls to the WRITER's — which is sound precisely here and nowhere
+ * else: both records came from ONE clock, so it cannot be wrong about their ORDER however wrong it
+ * is about the time. The nonce stays underneath both, so two records a machine wrote in one
+ * millisecond still order identically for every reader.
+ */
 function compareRecency(a: OrganizerClaim, b: OrganizerClaim): number {
   const d = b.heartbeat.getTime() - a.heartbeat.getTime();
   if (d !== 0) return d;
+  const w = writerStampOf(b) - writerStampOf(a);
+  if (w !== 0) return w;
   return a.nonce < b.nonce ? -1 : a.nonce > b.nonce ? 1 : 0;
+}
+
+/**
+ * The instant the WRITER put on this record, whether or not the decision layer has substituted the
+ * server's over it. `withServerClock` replaces `heartbeat`, so the original survives only on
+ * `serverStamp`'s twin — which is the point: this is the one term that must read the writer's clock
+ * on purpose, and it says so rather than reaching for a field that may already have been replaced.
+ */
+function writerStampOf(c: OrganizerClaim): number {
+  return c.writerStamp instanceof Date ? c.writerStamp.getTime() : c.heartbeat.getTime();
 }
 
 /**
