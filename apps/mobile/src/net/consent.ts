@@ -34,13 +34,12 @@ export interface FoldersConsent {
   /**
    * CAN THE PAIRED DOOR STORE THE FLAG AT ALL — whether the answer CARRIES the folders axis, not
    * what it says about it. `null` and an instant both mean the door has the axis (off / on);
-   * ABSENT means a door with no folders axis: `localRoutes` wraps its consent group in
-   * `withoutFoldersFlag`, and every door built from that table — the desktop host a phone pairs
-   * with, an operator's self-host server, this app's own standalone door — removes the field.
+   * ABSENT means no folders axis at all, which is every door built from `localRoutes`: the
+   * desktop host a phone pairs with, a self-host server, this app's own standalone door.
    * Measured: with the field present-and-null the phone drew "Use folders", the press wrote, the
    * PATCH echo omitted the axis, and the switch snapped back to off with no sentence at all.
-   * Two states named rather than one collapsed: `on` says what the account chose, this says
-   * whether choosing is a thing this door can keep.
+   * Two states named rather than one collapsed — `on` is what the account chose, this is whether
+   * choosing is a thing this door can keep.
    */
   storable: boolean;
   /**

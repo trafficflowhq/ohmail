@@ -44,15 +44,12 @@ import { helloRoutes } from "./hello.js";
 /**
  * The consent group with the folders flag taken out — for both doors built from this table.
  * `foldersRoutes` is spread at `routes/index.ts` and nowhere else, so the verbs exist on the
- * hosted table alone; on neither door here may the flag be raised — `local-consent.ts` composes
- * `PATCH /consent/settings { foldersEnabled }`, so a standalone user could switch folders on and
- * meet four 404s. The flag and not the verbs: serving them is a feature (the standalone engine
- * owns the IMAP connection), and a control wired to nothing is worse than an absent one. At the
- * route, not in the window: the field cannot be written and cannot read as anything but off, for
- * any client. Read and write both: either alone is a half-truth.
- *
- * Exported for its guard, which drives it over a synthetic route rather than reading this file
- * as text: the wrapper's behaviour is the claim, and a needle in source is not it.
+ * hosted table alone; on neither door here may the flag be raised — a standalone user who
+ * switched folders on would meet four 404s. The flag and not the verbs: serving them is a
+ * feature (the engine owns the IMAP connection), and a control wired to nothing is worse than an
+ * absent one. At the route, not in the window, so no client can raise it; read and write both,
+ * because either alone is a half-truth. Exported for its guard, which drives it over a synthetic
+ * route rather than reading this file as text.
  */
 export function withoutFoldersFlag(routes: Route[]): Route[] {
   return routes.map((r) => {

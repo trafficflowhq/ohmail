@@ -77,20 +77,14 @@ export function trashOverBearer(bearer: BearerManager): TrashWire {
 }
 
 /**
- * THE ACCOUNT'S CONSENT ROW OVER THE BEARER — the wire this page had none of. Without it
- * `useConsentState`'s `reachable` is `transport !== undefined || apiConfigured()`, and
- * `apiConfigured()` is false in this artifact: the hook rested, `known` stayed false, and the
- * screening window, the dormancy dial and the image, tracking-pixel and auto-unsubscribe rows
- * were all withheld with nothing naming why — on a door whose host serves every one of those
- * routes one hop away (`desktopHostRoutes` spreads `localRoutes`, which mounts `consentRoutes`).
- * The desktop's own window had the wire; the phone paired to it did not.
- *
- * `foldersStorable: false` — the same declaration `consentOverBridgeStandalone` makes, for the
- * same reason and with the same authority: this page is served BY a desktop host, whose table
- * wraps the consent group in `withoutFoldersFlag`, so no folder verb exists here and the flag
- * cannot be raised. Declared rather than probed, because the route table this bundle's server
- * mounts is a build fact, not a runtime question (`doors.ts`'s rule). The day §17 mounts the
- * verbs on that table this line moves with them.
+ * THE ACCOUNT'S CONSENT ROW OVER THE BEARER — the wire this page had none of. `useConsentState`
+ * takes `transport !== undefined || apiConfigured()` as reachable and `apiConfigured()` is false
+ * in this artifact, so the hook rested: the screening window, the dormancy dial and the three
+ * privacy rows were withheld with nothing naming why, on a door whose host serves every one of
+ * them one hop away. The desktop's own window had the wire; the phone paired to it did not.
+ * `foldersStorable: false` is `consentOverBridgeStandalone`'s declaration, with the same
+ * authority: this page is served BY a desktop host, whose table wraps the consent group in
+ * `withoutFoldersFlag`. Declared rather than probed — the server's route table is a build fact.
  */
 export function consentOverBearer(bearer: BearerManager): ConsentTransport {
   return { ...consentVia(bearer.fetch), foldersStorable: false };

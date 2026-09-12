@@ -3,11 +3,10 @@
  *
  * The controls are the shared shell's (`shell/consent-state.ts`); the routes, the one-axis
  * PATCH rule and the refusal contract are here, once, for every door that carries them: the
- * desktop window over its bridge (`local-consent.ts`) and the served host client over its
- * bearer socket (`host-client/transports.ts`) — the paired phone's browser, which had no
- * consent wire at all and rested with every consent-backed control withheld. This module
- * imports no transport, `junk-wire.ts`'s rule: a file shared with the bridge binding puts the
- * shell command's name into the bundle a phone is handed, which `scan:host` refuses.
+ * desktop window over its bridge (`local-consent.ts`) and the served host client over its bearer
+ * socket (`host-client/transports.ts`), which had no consent wire at all. This module imports no
+ * transport, `junk-wire.ts`'s rule: a file shared with the bridge binding puts the shell
+ * command's name into the bundle a phone is handed, which `scan:host` refuses.
  */
 
 import type { ConsentTransport } from "../../webapp/app/shell/consent-state";
