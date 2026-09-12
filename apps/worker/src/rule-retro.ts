@@ -40,6 +40,31 @@ export const RULE_RETRO_BATCH = 100;
 const SCREENER_GATE: Destination = "ohmail/Screener";
 
 /**
+ * IS THIS WALK THE RELEASE PRESS, OR AN ORDINARY RETRO?
+ *
+ * The press ("N held messages from senders you already decided") writes `release_held_at` and
+ * `retro_requested_at` in ONE statement at ONE instant, so equal values mean the last thing asked
+ * of this rule was that press and nothing has asked since. A rule edited afterwards with *apply to
+ * existing mail* moves `retro_requested_at` forward and the two part company.
+ *
+ * It decides TWO things at once in {@link selectCandidates}, and they belong together:
+ *
+ *  · the WIDENING — `'external'` joins the candidates, because a placement recorded as a hand file
+ *    is exactly what the person pressed to reconsider;
+ *  · the NARROWING — the walk touches ONLY mail still settled AT THE GATE.
+ *
+ * The narrowing is what makes the press honest, and it was added after measuring the opposite: a
+ * bare re-arm re-opened the rule's WHOLE backlog, so pressing "release 1 held message" also re-filed
+ * a `'peer'` message sitting in Reads that the screen had never counted. The number a person is
+ * shown is the number that moves.
+ */
+function isReleaseRun(rule: OwedRule): boolean {
+  return rule.releaseHeldAt !== null
+    && rule.retroRequestedAt !== null
+    && rule.releaseHeldAt.getTime() === rule.retroRequestedAt.getTime();
+}
+
+/**
  * Desired-state rows this pass may create for ONE ACCOUNT in ONE worker cycle.
  *
  * The bound is the RECONCILER, not this pass: `reconcileFolders` walks an unbounded
@@ -139,11 +164,20 @@ interface OwedRule {
    * WHEN THE OWNER PRESSED TO RELEASE MAIL THIS RULE NEVER REACHED — `rules.release_held_at`.
    *
    * NULL for every rule nobody has pressed, which is almost all of them. Read in exactly one
-   * place ({@link selectCandidates}) and for exactly one widening: an `'external'` row STILL AT
-   * THE GATE becomes a candidate. It is read fresh under the rule's own lock per page, so a press
-   * mid-walk takes effect at the next page and a rule is never walked against a stale licence.
+   * place ({@link selectCandidates}), for one widening and one narrowing. It is read fresh under
+   * the rule's own lock per page, so a press mid-walk takes effect at the next page and a rule is
+   * never walked against a stale licence.
    */
   releaseHeldAt: Date | null;
+  /**
+   * `rules.retro_requested_at` — carried ONLY to tell a RELEASE run from an ordinary one.
+   *
+   * The press writes this and {@link releaseHeldAt} in one statement at one instant, so the two
+   * being EQUAL means "the last thing asked of this rule was the release press, and nothing has
+   * asked since". Any ordinary re-arm — a rule edited with *apply to existing mail* — moves this
+   * forward and leaves the licence behind, which is exactly when the narrowing must lift.
+   */
+  retroRequestedAt: Date | null;
 }
 
 /**
@@ -258,7 +292,7 @@ export async function ruleRetroPass(
         const [live] = await tx.select({
           id: rulesTbl.id, accountId: rulesTbl.accountId, kind: rulesTbl.kind,
           match: rulesTbl.match, destination: rulesTbl.destination, cursor: rulesTbl.retroCursor,
-          releaseHeldAt: rulesTbl.releaseHeldAt,
+          releaseHeldAt: rulesTbl.releaseHeldAt, retroRequestedAt: rulesTbl.retroRequestedAt,
         }).from(rulesTbl)
           .where(and(
             eq(rulesTbl.id, row.id),
@@ -543,12 +577,11 @@ async function selectCandidates(
      * folder — is untouched; desired equals observed, so nothing already in flight is re-decided;
      * and the licence is per RULE, so it reaches only the senders that rule claims. The five
      * user-intent exclusions below still apply to every one of them. */
-    opts.rule.releaseHeldAt === null
-      ? inArray(folderState.lastSetBy, ["us", "peer"])
-      : sql`(${folderState.lastSetBy} in ('us', 'peer')
-             or (${folderState.lastSetBy} = 'external'
-                 and ${folderState.desiredFolder} = ${SCREENER_GATE}
-                 and ${folderState.desiredFolder} = ${folderState.observedFolder}))`,
+    isReleaseRun(opts.rule)
+      ? sql`(${folderState.lastSetBy} in ('us', 'peer', 'external')
+             and ${folderState.desiredFolder} = ${SCREENER_GATE}
+             and ${folderState.desiredFolder} = ${folderState.observedFolder})`
+      : inArray(folderState.lastSetBy, ["us", "peer"]),
     /* THE MAILBOX IS ONE THIS INSTALL STILL ORGANIZES — BOTH HALVES (mail 0083).
      * `status = 'disabled'` alone stopped being sufficient once the loser of an organizer lease
      * became a READER (which is `connected`) rather than a disabled row: without the second clause
