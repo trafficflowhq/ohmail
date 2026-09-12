@@ -1439,7 +1439,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
     const rows = engine.read().entries<{ updatedAt?: string }>("settings");
     if (rows.length === 0) return null;
     return String(rows[0]?.entity?.updatedAt ?? "");
-    // `version` is the subscription; the reader object is stable.
+    // `derived` is the subscription; the reader object is stable.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [engine, derived]);
   const consent = useConsentState(!demo, consentTransport, settingsStamp);
@@ -1797,9 +1797,10 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
   );
 
   /* Engine-derived world. Every memo below is a whole-mirror pass keyed
-   * `[presented, version]`: `presented` because a new consent projection is
-   * a different mirror, `version` because the projection cannot carry a
-   * cache of its own. These rebuild when what they derive from changes —
+   * `[presented, derived]`: `presented` because a new consent projection is
+   * a different mirror, `derived` because the projection cannot carry a
+   * cache of its own.  `derived` and not the global version: a body landing
+   * moves the mirror and moves nothing any of these read (`useDerivedVersion`). These rebuild when what they derive from changes —
    * the mirror, the overlay on it (`useEngineVersion` merges it), or where
    * consent presents the rows — never read them as "only when a message
    * changed". Every rebuild is retained as long as the render scope that
@@ -3396,7 +3397,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
        AND OFF THE DURABLE OUTBOX BESIDE IT, which is the half a phase cannot supply: React state
        starts empty on every mount, so a RELOAD inside that window came back with no row, no phase
        and no reason to wait — and the timer created the second row while the replay was still
-       carrying the first. `version` is in this component's render path, so the read re-runs as the
+       carrying the first. `derived` is in this component's render path, so the read re-runs as the
        queue drains. */
     sendInFlight: SEND_IN_FLIGHT_PHASES.has(mailSend.stateOf(COMPOSE_SEND_KEY).phase)
       || sendPendingInOutbox(engine, COMPOSE_SEND_KEY)
@@ -5090,7 +5091,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
           ? pileHolds(route.view, id)
           : null;
       // Not in the mirror YET — or in it while its pile is still deriving (a reload restores
-      // against a boot the drain is still filling): WAIT, unagreed, so the `version` dep
+      // against a boot the drain is still filling): WAIT, unagreed, so the `derived` dep
       // re-runs this per delta. Once the mail state is settled the answer is final: a row the
       // mirror never produces is not this mirror's to restore — normalize the bar back to the
       // place and stay put (a link from another account's mirror, a deleted message) — and a
@@ -6356,9 +6357,9 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
    * `engine.read()` is called at INVOCATION time, not closed over, so the callback is
    * stable across version bumps — the chrome context below would otherwise churn for every
    * consumer on every delta — while what it returns is always the current mirror, including
-   * the optimistic overlay. A `useMemo` keyed on `version` would give the same freshness and
-   * a new identity every bump; a `useMemo` that forgot `version` would go stale, which is
-   * exactly the bug `senderMenuFor` carries a `version` dep to avoid.
+   * the optimistic overlay. A `useMemo` keyed on `derived` would give the same freshness and
+   * a new identity every bump; a `useMemo` that forgot it would go stale, which is
+   * exactly the bug `senderMenuFor` carries a `derived` dep to avoid.
    */
   const conversationOf = useStableCallback((messageId: string) => threadOf(engine.read(), messageId));
 
@@ -6484,9 +6485,9 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
     [senderMenu, reader, derived],
   );
 
-  // Same shape and the same `version` dep as above, for the same reason: a message whose row has
+  // Same shape and the same `derived` dep as above, for the same reason: a message whose row has
   // just been moved out from under the sheet closes it rather than rendering an empty one, and a
-  // memo that forgot `version` would show a stale token count after a sync drain.
+  // memo that forgot it would show a stale token count after a sync drain.
   const subjectRuleFor = useMemo(
     () => (subjectRule ? subjectRuleContext(reader, subjectRule.messageId) : null),
     [subjectRule, reader, derived],
