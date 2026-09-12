@@ -48,6 +48,14 @@ now runs the packaged app against a generated ten-thousand-message mailbox and r
 numbers back — how long the engine took to be ready, and how much memory the engine and the window
 hold — each against a written budget. Over a budget fails the build.
 
+### The Screener works out its list once per change
+
+The Screener's list is derived from the mail itself, and it was derived again from scratch every
+time anything in the mailbox moved — hundreds of times while a first sync is running, and whether
+or not the Screener was the view you had open. It is worked out once per change now, shared by
+everything that asks for it, and a change re-derives only the senders whose mail it touched. On a
+large mailbox that is the difference between dropping frames while mail arrives and not.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
