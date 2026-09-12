@@ -1188,6 +1188,41 @@ export function credentialsRefused(err: unknown): boolean {
 }
 
 /**
+ * DID THE SERVER ANSWER A FETCH AND REFUSE IT — a tagged `NO` or `BAD`, never a dead socket. A
+ * mailbox over quota, a backend being repaired, a host throttling body fetches: the connection is
+ * up, the login stands, and one command was declined. Calling that an outage told a person their
+ * connection was lost by a server that had just signed them in.
+ *
+ * Read off imapflow's `responseStatus` and off the command WE sent — `responseText` and the `[…]`
+ * code are the server's words and may steer nothing here. FETCH only, the class this was measured
+ * on; a declined CREATE, MOVE or APPEND still records an outage. A refused SIGN-IN is excluded by
+ * class: that answer is `signInRefused`, which suspends the re-dial, and the two must not merge.
+ */
+export function fetchRefusal(err: unknown): "NO" | "BAD" | null {
+  if (credentialsRefused(err)) return null;
+  for (let e: unknown = err, hops = 0; e !== null && e !== undefined && hops < 8; hops++) {
+    const status = (e as { responseStatus?: unknown }).responseStatus;
+    const sent = (e as { executedCommand?: unknown }).executedCommand;
+    if ((status === "NO" || status === "BAD") && typeof sent === "string" && IMAP_FETCH_SENT.test(sent)) {
+      return status;
+    }
+    e = (e as { cause?: unknown }).cause;
+  }
+  return null;
+}
+
+/** {@link fetchRefusal} as the one bit a branch wants. */
+export function fetchRefused(err: unknown): boolean {
+  return fetchRefusal(err) !== null;
+}
+
+/**
+ * The command THIS PROCESS sent, matched on its verb. imapflow builds `executedCommand` from what
+ * we handed it, so it is ours to read; the tag is whatever the driver minted and is skipped.
+ */
+const IMAP_FETCH_SENT = /^\S+ (?:UID )?FETCH\b/i;
+
+/**
  * Did this failure come from the connection, or from the work? The bound counts connection-class failures and nothing
  * else. `LeaseUnavailableError` alone was wrong: an organizer's drain reads `ohmail/_meta` first, so a dead socket
  * surfaces as that class — a READER's gate takes the append-less peek, which never throws by design, so its dead
@@ -2718,6 +2753,26 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
             "no connection event said so — so the connection is treated as dead on the evidence " +
             "of the cycles themselves; the next drain re-dials and re-reads the lease before it " +
             "moves anything",
+        });
+      };
+
+      /**
+       * THE SERVER ANSWERED AND DECLINED THE READ — one line per SETTLED ATTEMPT.
+       *
+       * Not a connection line and deliberately not filed as one: `mailbox_connection_unavailable`
+       * is what a person is shown "Connection lost" over, and this pass reached an answering
+       * server on a standing login. `status` is our own two-member set read off the driver's
+       * `responseStatus`; the server's own response text and `[…]` code are never carried — a
+       * mailbox over quota must not be able to write its own words into a log line.
+       */
+      const noteFetchRefused = (err: unknown): void => {
+        log("mailbox_fetch_unavailable", {
+          err,
+          mailboxId: mb.id,
+          status: fetchRefusal(err),
+          reason: "the mail server answered this pass's FETCH and refused it, so this mailbox's " +
+            "mail could not be read; the connection and the sign-in both stand, the drain keeps " +
+            "its login, and the next pass asks again",
         });
       };
 
@@ -4585,6 +4640,11 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           return cycles;
         } catch (err) {
           noteCycleFailed(err);
+          /* AND THE REFUSAL IS NAMED, once per settled attempt. `noteCycleFailed` already exempts
+             it correctly — a tagged `NO` is not a connection failure and never advanced the bound
+             — but it exempted it in SILENCE, so every poll after the launch left no line at all
+             and a mailbox nothing could be read from looked like a mailbox with nothing in it. */
+          if (fetchRefused(err)) noteFetchRefused(err);
           throw err;
         } finally {
           /* A DRAIN CAME BACK — HOWEVER IT CAME BACK. In a `finally` because the arm that
@@ -4811,7 +4871,22 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
               log("special_folder_discovery_failed", { err });
             }
           }
-          await serialize(() => drain(100, gen, conn));
+          /* ── A FETCH THE SERVER REFUSED IS NOT A FAILED LAUNCH ──────────────────────────
+           *
+           * The lease arm's exemption above, one command later: the socket is up, the login
+           * stands, the lease has been read, and what failed is the WORK. Rethrowing put the
+           * launch through two call sites that both assume the socket — this function's `catch`,
+           * which closes the login it just opened, and `start()`'s, which records a dead
+           * connection for any launch failure. Measured on both doors against a relay answering
+           * content FETCHes with a tagged `NO`: the mailbox read `reachable: false` and the app
+           * said "Connection lost. Reconnecting…". So the login is KEPT, the caller arms the poll,
+           * and the next drain asks again over the same connection. Narrow BY CLASS. */
+          try {
+            await serialize(() => drain(100, gen, conn));
+          } catch (err) {
+            if (!fetchRefused(err)) throw err;
+            noteFetchRefused(err);
+          }
           // (the poll timer is armed by the caller — see the header)
           return { leaseRead: true };
         } catch (err) {
