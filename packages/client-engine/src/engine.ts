@@ -886,6 +886,17 @@ function messageTime(m: EngineMessage): number {
 }
 
 /**
+ * ONE ORDER FOR BOTH HALVES OF THE BODY CACHE — `runEagerBodies` takes the newest by it,
+ * {@link OhmailEngine.trimBodyCache} evicts the oldest by it. They must not merely both mean
+ * "by date": two mails sharing a timestamp may be ordered arbitrarily, but a boundary row the
+ * two ordered differently would be fetched by one and dropped by the other on every drain, so
+ * the id breaks the tie and makes the pair a total order.
+ */
+function olderFirst(a: { id: string; t: number }, b: { id: string; t: number }): number {
+  return a.t - b.t || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+}
+
+/**
  * The outcome of one archive pass. It NEVER rejects — see {@link OhmailEngine.searchServer}.
  *
  * `unavailable` is a first-class answer and not an error: it is what the demo and the desktop
@@ -1690,6 +1701,13 @@ export const RENDERED_PINS = 64;
  * steady state after an eager pass is exactly full, nothing is dropped that the pass will
  * immediately ask for again, and a reader who opens more than this many messages in one session
  * pays for the most recent thousand rather than for all of them.
+ *
+ * THE SIZE IS ONLY HALF OF IT — THE ORDER IS THE OTHER HALF, and it used to be write recency,
+ * which is the reverse of what this paragraph claims. The pass writes newest-first, so the newest
+ * mail was the coldest entry and one poll of K arrivals dropped the K bodies the pass had just
+ * fetched; the next pass re-fetched them and its own write dropped the band below. Eviction is by
+ * MESSAGE DATE, oldest first ({@link olderFirst}) — the window's own definition, so what the pass
+ * wants and what the cache keeps are the same set and the pass settles at zero.
  */
 export const BODY_CACHE_MAX = EAGER_BODIES_MAX;
 
@@ -1887,11 +1905,12 @@ export class OhmailEngine {
   private readonly renderedIds = new Set<string>();
 
   /**
-   * Hydrated bodies in read order, newest last — the LRU the {@link BODY_CACHE_MAX} trim evicts
-   * from. Separate from `renderedIds`, which is a 64-deep hold for the windowed prune: this one is
-   * as deep as the body cache and is the only thing that knows which mail was read longest ago.
+   * THE IDS WHOSE BODIES THIS SESSION HOLDS — the set {@link BODY_CACHE_MAX} bounds and
+   * {@link OhmailEngine.trimBodyCache} evicts from. A membership set and deliberately not an
+   * order: the order that decides an eviction is the MESSAGE DATE, read from the mirror at the
+   * trim. Separate from `renderedIds`, which is the 64-deep hold of what a surface is showing.
    */
-  private readonly bodyRecency = new Set<string>();
+  private readonly heldBodies = new Set<string>();
 
   /**
    * One trim at a time. Body batches run concurrently (four slots), so two `putBodies` can reach
@@ -2835,11 +2854,22 @@ export class OhmailEngine {
    * actually reading.
    */
   private async runEagerBodies(gen: number): Promise<void> {
-    const entries = this.read().entries<EngineMessage>("message");
-    const ids = entries
-      .sort((a, b) => (b.entity.date ?? "").localeCompare(a.entity.date ?? ""))
-      .slice(0, EAGER_BODIES_MAX)
-      .map((e) => e.id);
+    const ranked = this.read()
+      .entries<EngineMessage>("message")
+      .map((e) => ({ id: e.id, t: messageTime(e.entity) }));
+    // The SAME order {@link trimBodyCache} evicts by, read backwards — see {@link olderFirst}.
+    ranked.sort((a, b) => olderFirst(b, a));
+    const newest = ranked.slice(0, EAGER_BODIES_MAX);
+    /**
+     * ASK FOR WHAT THE CACHE CAN ACTUALLY HOLD. The trim never evicts a body the reader has open,
+     * so every pinned message OLDER than this window is holding one of the {@link BODY_CACHE_MAX}
+     * slots the pass would fill; asking for the full window anyway would have the pass and the
+     * trim trade its oldest ranks on every drain, which is the loop this order exists to close.
+     */
+    const inWindow = new Set(newest.map((w) => w.id));
+    let reserved = 0;
+    for (const id of this.renderedIds) if (!inWindow.has(id) && this.heldBodies.has(id)) reserved += 1;
+    const ids = newest.slice(0, Math.max(0, EAGER_BODIES_MAX - reserved)).map((w) => w.id);
     // The stop check is BETWEEN slices here and INSIDE the slice via `stopped` — a batch answer
     // the server truncated on its byte budget leaves a per-id tail of up to
     // {@link EAGER_BODIES_SLICE} single requests, and without a check in there a teardown between
@@ -3260,9 +3290,8 @@ export class OhmailEngine {
    * re-opened is held again rather than ageing out mid-read.
    */
   private noteRendered(messageId: string): void {
-    // A rendered message is also the most recently READ body, so the two orders move together —
-    // otherwise the trim would evict the body of a message the reader just opened.
-    this.touchBody(messageId);
+    // This set is the ONLY thing holding the body of a message the reader opened that is older
+    // than the eager window: `trimBodyCache` evicts by date, and old is exactly what it is.
     this.renderedIds.delete(messageId);
     this.renderedIds.add(messageId);
     while (this.renderedIds.size > RENDERED_PINS) {
@@ -4070,7 +4099,7 @@ export class OhmailEngine {
 
   private async putBody(messageId: string, record: MessageBodyRecord | null): Promise<void> {
     await this.store.putLocal("message_body", messageId, record);
-    if (record?.state === "ready") this.touchBody(messageId);
+    this.holdBody(messageId, record?.state === "ready");
     this.notify();
     await this.trimBodyCache();
   }
@@ -4094,49 +4123,65 @@ export class OhmailEngine {
       entries.map((e) => ({ type: "message_body", id: e.id, entity: e.record })),
       [],
     );
-    for (const e of entries) if (e.record?.state === "ready") this.touchBody(e.id);
+    for (const e of entries) this.holdBody(e.id, e.record?.state === "ready");
     this.notify();
     await this.trimBodyCache();
   }
 
-  /** Newest last. A re-read moves an id back to the newest end, exactly as `noteRendered` does. */
-  private touchBody(messageId: string): void {
-    this.bodyRecency.delete(messageId);
-    this.bodyRecency.add(messageId);
+  /**
+   * WHAT THIS SESSION HOLDS, after one write. Membership and not an order — the order that
+   * decides an eviction is the message date. Only a `ready` record occupies a slot: a purge or a
+   * failure writes no mail, so it must GIVE ONE BACK, or the bound would be paid by bodies that
+   * are still there while records holding nothing were counted as if they were.
+   */
+  private holdBody(messageId: string, ready: boolean): void {
+    if (ready) this.heldBodies.add(messageId);
+    else this.heldBodies.delete(messageId);
   }
 
   /**
-   * DROP THE LEAST RECENTLY READ BODIES BACK TO {@link BODY_CACHE_MAX}.
+   * DROP THE OLDEST MAIL'S BODIES BACK TO {@link BODY_CACHE_MAX} — oldest by MESSAGE DATE.
+   *
+   * The order is the invariant. The eager window is "the newest {@link EAGER_BODIES_MAX}", so a
+   * cache that keeps anything else is a cache the pass disagrees with, and the two then trade the
+   * same ids every drain — which is what write recency did here, for ever, on an idle mailbox.
+   * Date, through the {@link olderFirst} order the pass itself takes, makes the keep-set and the
+   * want-set the same set.
    *
    * A DELETE and not a tombstone: an absent record is "never asked", so the next open re-fetches
    * the body from the store on this machine, while a tombstone would read as "asked, and there is
-   * nothing" and the mail would render empty for ever. Never evicts a message the reader is looking
-   * at — `renderedIds` is the same hold that keeps the windowed prune off those rows — and one
-   * `commitLocal` for the lot, so a trim costs one derivation rather than one per body.
+   * nothing" and the mail would render empty for ever. One `commitLocal` for the lot, so a trim
+   * costs one derivation rather than one per body.
    */
   private async trimBodyCache(): Promise<void> {
     if (this.trimmingBodies) return; // a concurrent batch is already trimming — see the latch
-    if (this.bodyRecency.size <= BODY_CACHE_MAX) return;
+    if (this.heldBodies.size <= BODY_CACHE_MAX) return;
     /**
-     * COUNTED FROM THE RECENCY INDEX, NEVER FROM A STORE SCAN. `entries("message_body")` goes
-     * through `bucketsOf`, which rebuilds every type bucket whenever the version has moved — and
-     * the write that brought us here just moved it. Scanning per body would put the O(N) cost back
-     * that batching the writes removed.
+     * COUNTED FROM THE HELD SET AND DATED BY KEYED READS, NEVER BY A STORE SCAN.
+     * `entries("message")` goes through `bucketsOf`, which rebuilds every type bucket whenever the
+     * version has moved — and the write that brought us here just moved it. `get` is a map lookup
+     * against the same records and rebuilds nothing, so dating the held set costs one lookup per
+     * held body rather than the O(mailbox) pass batching the writes removed.
      */
-    const victims: string[] = [];
-    const owed = this.bodyRecency.size - BODY_CACHE_MAX;
-    for (const id of this.bodyRecency) {
-      if (victims.length >= owed) break;
+    const owed = this.heldBodies.size - BODY_CACHE_MAX;
+    const view = this.read();
+    const dated: Array<{ id: string; t: number }> = [];
+    for (const id of this.heldBodies) {
       // Never the mail under the reader's eyes: the same hold that keeps the windowed prune off
-      // those rows (`renderedIds`). A pinned id stays and a later one is evicted in its place.
+      // those rows (`renderedIds`). A pinned id stays and an older one is evicted in its place.
       if (this.renderedIds.has(id)) continue;
-      victims.push(id);
+      const msg = view.get<EngineMessage>("message", id);
+      // No row at all — the mirror dropped the message and this body is holding nothing anybody
+      // can open. 0 is the oldest there is, so it goes first.
+      dated.push({ id, t: msg === undefined ? 0 : messageTime(msg) });
     }
+    dated.sort(olderFirst);
+    const victims = dated.slice(0, owed).map((d) => d.id);
     if (victims.length === 0) return;
     this.trimmingBodies = true;
     try {
       await this.store.commitLocal([], victims.map((id) => ({ type: "message_body", id })));
-      for (const id of victims) this.bodyRecency.delete(id);
+      for (const id of victims) this.heldBodies.delete(id);
       this.notify();
     } finally {
       this.trimmingBodies = false;
