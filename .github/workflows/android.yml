@@ -218,6 +218,15 @@ jobs:
       - name: The push registration is not in logcat
         run: bash .github/scripts/assert-log-hygiene.sh apps/mobile/android/app/build/outputs/apk/release/app-release.apk
 
+      # THE APP SAYS IT KEEPS ORGANIZING WHILE IT IS NOT IN FRONT OF YOU, AND ONLY THE BINARY CAN
+      # SETTLE THAT. A release APK was built and installed with no foreground service in it at all
+      # — the local module that implements it was simply not in the tree this build ran from — and
+      # every other check here passed. The app started, synced, organized on screen, and filed
+      # nothing the moment it was backgrounded. This reads the dex and the merged manifest for the
+      # service and its declaration, so the same absence is a red build rather than a shipped one.
+      - name: The phone can organize in the background
+        run: bash .github/scripts/assert-organizer-service.sh apps/mobile/android/app/build/outputs/apk/release/app-release.apk
+
       - name: The artifact is a real App Bundle
         run: |
           set -euo pipefail
@@ -428,6 +437,12 @@ jobs:
       # rules do nothing without it, and an APK with the leak back in is otherwise shippable.
       - name: The push registration is not in logcat
         run: bash .github/scripts/assert-log-hygiene.sh apps/mobile/android/app/build/outputs/apk/release/app-release.apk
+
+      # On the TAG path too, and for the same reason: this is the artifact people install, and it
+      # is the only place the background-organizing claim can be settled. The dex and the merged
+      # manifest are read for the service and its declaration.
+      - name: The phone can organize in the background
+        run: bash .github/scripts/assert-organizer-service.sh apps/mobile/android/app/build/outputs/apk/release/app-release.apk
 
       - name: The artifact is a real App Bundle
         run: |
