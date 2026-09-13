@@ -5,7 +5,8 @@ import {
 } from "@trafficflow/db";
 import { WATCHED_FOLDERS, type ImapAuth } from "./imap-types.js";
 import {
-  boundListResponse, boundedFetch, ImapDeadline, IMAP_META_BYTES_MAX, IMAP_META_DEADLINE_MS,
+  boundListResponse, boundedFetch, ImapDeadline, isImapBoundExceeded,
+  IMAP_META_BYTES_MAX, IMAP_META_DEADLINE_MS,
 } from "./imap-bounds.js";
 import { epochOf, epochVerdict } from "../epoch.js";
 import {
@@ -275,10 +276,14 @@ export interface MetaFolderClient extends MetaNamespaceSource {
  * moved between cycles is seen on the next one.
  */
 export interface MetaFolderRef {
-  /** LIST and resolve, fresh. Also warms {@link MetaFolderRef.path}. */
-  locate(): Promise<MetaFolderLocation>;
+  /**
+   * LIST and resolve, fresh. Also warms {@link MetaFolderRef.path}. Takes the read's budget where
+   * it has one — see {@link metaReadBudget}: the LIST is the first of the read's four commands and
+   * was the one with no clock on it at all.
+   */
+  locate(budget?: ImapDeadline): Promise<MetaFolderLocation>;
   /** The path to address, resolving on first use and remembered after. */
-  path(): Promise<string>;
+  path(budget?: ImapDeadline): Promise<string>;
   /** Remember a path the SERVER named — a CREATE's landed path is truer than any derivation. */
   adopt(path: string): void;
 }
@@ -289,7 +294,10 @@ export function makeMetaFolderRef(
 ): MetaFolderRef {
   let known: string | null = null;
 
-  const locate = async (): Promise<MetaFolderLocation> => {
+  const locate = async (budget?: ImapDeadline): Promise<MetaFolderLocation> => {
+    const listed = await (budget === undefined
+      ? client.list()
+      : budget.race(client.list(), META_FOLDER));
     const at = resolveMetaFolder({
       /*
        * THE ONE LIST THIS MODULE ISSUES, AND IT IS THE SERVER'S ARRAY.
@@ -299,8 +307,12 @@ export function makeMetaFolderRef(
        * cost a million strings through the resolution below, on every cycle, in a process every
        * other mailbox shares. Same ceilings, same helper: a count on the response and a length on
        * each path.
+       *
+       * The COUNT ceilings were here before the clock was: a server may also answer this one
+       * command slowly for ever, which no count sees, so the array is raced against the read's
+       * own budget where the caller entered one.
        */
-      list: boundListResponse(await client.list()),
+      list: boundListResponse(listed),
       bare: toServerPath(META_FOLDER),
       namespaces: personalNamespacesOf(client),
     });
@@ -310,13 +322,51 @@ export function makeMetaFolderRef(
 
   return {
     locate,
-    async path(): Promise<string> {
-      return known ?? (await locate()).path;
+    async path(budget?: ImapDeadline): Promise<string> {
+      return known ?? (await locate(budget)).path;
     },
     adopt(path: string): void {
       known = path;
     },
   };
+}
+
+/**
+ * THE BUDGET ONE READ OF `ohmail/_meta` SPENDS — entered where the read BEGINS, not where its
+ * last segment does.
+ *
+ * A read of this folder is four server commands: LIST to resolve it, SELECT to open it, STATUS to
+ * count it, FETCH to take the window. Only the FETCH carried a clock, so the three in front of it
+ * were bounded by nothing at all and the FETCH then started its {@link IMAP_META_DEADLINE_MS}
+ * fresh however long they had taken — the constant bounded a quarter of the read and named the
+ * whole of it. One object, created here and passed down, is what makes that sentence true; a
+ * literal per segment is four budgets composing into a total nobody bounded.
+ */
+export function metaReadBudget(now: () => number = Date.now): ImapDeadline {
+  return ImapDeadline.in(IMAP_META_DEADLINE_MS, "read_deadline", now);
+}
+
+/**
+ * SELECT the folder under the read's clock — the second of the four segments.
+ *
+ * A lock that arrives after the clock ran out would be held by nobody: the waiter has left, its
+ * `finally` can no longer run, and every later command on the connection queues behind a lock with
+ * no owner. So the release is attached to the late arrival BEFORE the wait is abandoned. Without a
+ * budget this is the bare call it always was.
+ */
+async function lockWithin(
+  client: Pick<LeaseImapClient, "getMailboxLock">, path: string, budget?: ImapDeadline,
+): Promise<{ release(): void }> {
+  const pending = client.getMailboxLock(path);
+  if (budget === undefined) return pending;
+  try {
+    return await budget.race(pending, path);
+  } catch (err) {
+    // Not `await`ed: the point is to stop waiting. If the SELECT never lands there is nothing to
+    // release and the rejection is already the caller's answer.
+    void pending.then((lock) => { lock.release(); }, () => { /* it never arrived */ });
+    throw err;
+  }
 }
 
 /** The claim format this build writes and understands. */
@@ -1631,24 +1681,43 @@ export interface LeasePeekIo {
  * path-equality read reported "nobody organizes this mailbox" while the claim sat one namespace
  * prefix away, renewing.
  */
-export function makeLeasePeekIo(client: LeaseImapClient, toServerPath: (canonical: string) => string): LeasePeekIo {
+export function makeLeasePeekIo(
+  client: LeaseImapClient,
+  toServerPath: (canonical: string) => string,
+  /**
+   * The clock the read's budget reads. Injectable for the same reason {@link
+   * readMetaFolderWindow}'s is: a case drives the SHIPPING ceiling rather than a lowered one,
+   * because a test that has to shorten the bound is not testing the bound.
+   */
+  limits?: { now?: () => number },
+): LeasePeekIo {
+  const now = limits?.now ?? Date.now;
   const meta = makeMetaFolderRef(client, toServerPath);
   return {
     async listClaims(): Promise<RawClaimMessage[]> {
-      const at = await meta.locate();
+      /*
+       * THE CLOCK STARTS HERE, not at the FETCH. This look is four server commands and the FETCH
+       * was the only one under a budget, so a server that answered the LIST, the SELECT or the
+       * STATUS a byte at a time held this peek — and the door waiting on it — for as long as it
+       * liked, while the ceiling that was supposed to bound the read reported nothing. Every
+       * breach leaves by the same door as any other fault here: `LeaseUnavailableError`, which
+       * renders as "could not look" and never as "nobody holds it".
+       */
+      const budget = metaReadBudget(now);
+      const at = await meta.locate(budget);
       // An ABSENT folder is zero claims — the truth, and the semantics this object's docblock
       // promises. A folder that could not be RESOLVED is a throw, which `readLeasePeek` turns
       // into `LeaseUnavailableError`: "I could not look" and "nobody holds it" must stay
       // unreachable from one another.
       if (at.row === null) return [];
 
-      const lock = await client.getMailboxLock(at.path);
+      const lock = await lockWithin(client, at.path, budget);
       try {
         // The shared bounded read — see {@link readMetaFolderWindow}. A folder too full to read in
         // one window is reported as a read that FAILED, which {@link readLeasePeek} turns into
         // {@link LeaseUnavailableError}: this surface exists to tell a person who holds their
         // mailbox, and "I could not see all of it" must render as unknown rather than as nobody.
-        const read = await readMetaFolderWindow(client, at.path);
+        const read = await readMetaFolderWindow(client, at.path, undefined, undefined, budget);
         if (!read.truncated) return read.records;
         /* ── A FULL FOLDER MUST NOT RENDER AS "NOBODY HOLDS THIS MAILBOX" ────────────────────
          *
@@ -1673,7 +1742,7 @@ export function makeLeasePeekIo(client: LeaseImapClient, toServerPath: (canonica
           client,
           at.path,
           { header: { [H.lease]: true } },
-          { max: META_RECORDS_MAX_PER_FETCH, refuseWhenOver: true },
+          { max: META_RECORDS_MAX_PER_FETCH, refuseWhenOver: true, budget },
         );
         if (claims !== null) return claims;
         throw new MetaFolderTruncatedError(
@@ -2156,17 +2225,27 @@ export interface SequenceProbeClient {
 export async function lastSequence(
   client: SequenceProbeClient,
   path: string | undefined,
+  /** The read's clock — the third of its four segments. See {@link metaReadBudget}. */
+  budget?: ImapDeadline,
 ): Promise<number | undefined> {
   if (path === undefined || typeof client.status !== "function") return undefined;
   try {
-    const st = await client.status(path, { messages: true });
+    const probe = client.status(path, { messages: true });
+    const st = await (budget === undefined ? probe : budget.race(probe, path));
     // `false` is a real answer here, not a missing one: the library returns it when the command's
     // preconditions are not met or it fails, so this cannot optional-chain through `st`. Both that
     // and a reply without the field mean the same thing to the caller — the count is unknown, use
     // the whole-folder fallback.
     const messages = typeof st === "object" && st !== null ? st.messages : undefined;
     return typeof messages === "number" ? messages : undefined;
-  } catch {
+  } catch (err) {
+    /*
+     * A SPENT CLOCK IS NOT AN UNKNOWN COUNT. The `catch` is here for a server that cannot answer
+     * STATUS, whose caller then reads the folder whole — which is exactly the wrong thing to do
+     * with a budget that has already run out: the refusal would be swallowed here and re-raised
+     * one round trip later, naming the FETCH for a stall that happened in the STATUS.
+     */
+    if (isImapBoundExceeded(err)) throw err;
     return undefined;
   }
 }
@@ -2300,8 +2379,17 @@ export async function readMetaFolderWindow(
   /**
    * The clock the read's deadline reads. Injectable so a case can drive the SHIPPING ceiling
    * instead of a lowered one — a test that has to shorten the bound is not testing the bound.
+   * Ignored when `budget` is supplied: that budget already carries its own clock.
    */
   now: () => number = Date.now,
+  /**
+   * THE READ'S BUDGET, where the caller entered one — see {@link metaReadBudget}. This function
+   * is the LAST of the four segments, so a fresh clock here is a clock that cannot see the three
+   * commands in front of it: whatever the LIST, the SELECT and the STATUS spent, a budget made
+   * here would hand the FETCH the whole ceiling again. Absent, it makes its own, which is what a
+   * caller reading the window on its own still gets.
+   */
+  budget?: ImapDeadline,
 ): Promise<MetaFolderRead> {
   // An empty `_meta` is the normal state of a fresh mailbox, and `1:*` is not a valid messageset
   // when a mailbox holds nothing. The failure this defends: the folder is created one call
@@ -2320,7 +2408,7 @@ export async function readMetaFolderWindow(
    * not a fast path, because there is no way to know whether it is current ({@link
    * selectedCount}).
    */
-  const probed = await lastSequence(client, path);
+  const probed = await lastSequence(client, path, budget);
 
   /* A CACHED COUNT MAY END THE READ, BUT MAY NEVER BE COUNTED BACK FROM ────────────────────
    *
@@ -2348,8 +2436,10 @@ export async function readMetaFolderWindow(
   // A function rather than a loop in place, because the shift check below has to be able to run it
   // AGAIN with a wider range — and the two attempts SHARE one clock. A budget per attempt would
   // make the constant's own claim ("one read of the folder") false in exactly the case the
-  // re-read fires, and per-read ceilings compose into a total nobody bounded.
-  const budget = ImapDeadline.in(IMAP_META_DEADLINE_MS, "read_deadline", now);
+  // re-read fires, and per-read ceilings compose into a total nobody bounded. The caller's budget
+  // is that same clock reaching one segment further back; it is used as given, never composed
+  // with a second one made here.
+  const clock = budget ?? metaReadBudget(now);
   const readFrom = async (
     start: number,
   ): Promise<{ records: RawMetaMessage[]; evicted: boolean; by: MetaTruncation | null }> => {
@@ -2380,7 +2470,7 @@ export async function readMetaFolderWindow(
     {
       max: META_RECORDS_MAX_PER_FETCH,
       bytes: { max: IMAP_META_BYTES_MAX, of: (m) => m.headers?.byteLength ?? 0 },
-      deadline: budget,
+      deadline: clock,
       onOverflow: "evict",
       ...(path === undefined ? {} : { folder: path }),
       map: (m): RawMetaMessage | null =>
@@ -2600,6 +2690,8 @@ async function searchDescending(
   query: { header: Record<string, string | boolean>; before?: Date },
   max: number,
   span?: { from?: number; downTo?: number },
+  /** The read's clock, where the caller entered one — see {@link metaReadBudget}. */
+  budget?: ImapDeadline,
 ): Promise<DescendingWalk> {
   if (typeof client.search !== "function") return { kind: "refused" };
 
@@ -2613,7 +2705,7 @@ async function searchDescending(
    * So it is a STATUS on the folder by name, every time; an absent or unusable answer is `null`,
    * which every caller treats as could-not-ask and none organizes on.
    */
-  const top = await highestUid(client, path);
+  const top = await highestUid(client, path, budget);
 
   /* ONE CALL SITE, and the census in `organizer-lease-meta-window.test.ts` counts on it: two ways
    * of asking this server about this folder, no more. The windowed walk and the unbounded fallback
@@ -2641,7 +2733,11 @@ async function searchDescending(
 
   for (let window = 0; window < SEARCH_WINDOW_BUDGET; window++) {
     const lo = Math.max(bottom, hi - SEARCH_UID_WINDOW + 1);
-    const found = await client.search({ ...query, uid: `${lo}:${hi}` }, { uid: true });
+    /* The WINDOW budget bounds how many searches this walk issues; it says nothing about how long
+     * one of them takes, and a walk of sixteen windows each just under a per-command ceiling is a
+     * stall the window count cannot see. The read's own clock is the bound on the total. */
+    const search = client.search({ ...query, uid: `${lo}:${hi}` }, { uid: true });
+    const found = await (budget === undefined ? search : budget.race(search, path));
     if (!Array.isArray(found)) return { kind: "refused" };
     out.push(...found);
     if (lo === bottom) return { kind: "covered", uids: out };
@@ -2665,13 +2761,20 @@ async function searchDescending(
  */
 async function highestUid(
   client: Pick<LeaseImapClient, "status">, path: string,
+  /** The read's clock, where the caller entered one — see {@link metaReadBudget}. */
+  budget?: ImapDeadline,
 ): Promise<number | null> {
   if (typeof client.status !== "function") return null;
   try {
-    const st = await client.status(path, { uidNext: true });
+    const probe = client.status(path, { uidNext: true });
+    const st = await (budget === undefined ? probe : budget.race(probe, path));
     const next = typeof st === "object" && st !== null ? st.uidNext : undefined;
     return typeof next === "number" && next > 1 ? next - 1 : null;
-  } catch {
+  } catch (err) {
+    // `lastSequence`'s rule, and for its reason: a spent clock is the read's refusal, not a
+    // server declining to answer. Swallowed here it would come back as "could not ask", which
+    // every caller reads as a mailbox it may not organize — a stall wearing a refusal's clothes.
+    if (isImapBoundExceeded(err)) throw err;
     return null;
   }
 }
@@ -2744,11 +2847,17 @@ async function searchHeaders(
     onShortfall?: (fact: { floor: number; ownUid: number | null; closed: boolean }) => void;
     /** Fired when the anchor actually bounded a read, so a caller can tell what rested on it. */
     onGapRead?: () => void;
+    /**
+     * The read's clock — see {@link metaReadBudget}. This function is a WALK (a STATUS, up to
+     * two windowed searches per window budget, then a fetch per batch), so a per-command clock
+     * here would compose into a total nobody bounded; the caller's single budget is the total.
+     */
+    budget?: ImapDeadline;
   },
 ): Promise<RawClaimMessage[] | null> {
   if (typeof client.search !== "function") return null;
   const max = opts?.max ?? SEARCH_UIDS_MAX;
-  const walk = await searchDescending(client, path, query, max);
+  const walk = await searchDescending(client, path, query, max, undefined, opts?.budget);
   /* ── A WALK THAT RAN OUT OF BUDGET IS STILL NOT AN ANSWER ────────────────────────────────
    *
    * Every caller but one reads a short walk exactly as it always did: could not look. The claim
@@ -2776,7 +2885,9 @@ async function searchHeaders(
      * how two organizers happen.
      */
     opts?.onGapRead?.();
-    const below = await searchDescending(client, path, query, max, { from: walk.floor - 1, downTo: gap });
+    const below = await searchDescending(
+      client, path, query, max, { from: walk.floor - 1, downTo: gap }, opts?.budget,
+    );
     if (below.kind === "refused") return null;
     if (below.kind === "short") {
       /* Even the gap is deeper than one cycle may read. Fail closed exactly as before — but say
@@ -2823,16 +2934,31 @@ async function searchHeaders(
     /* `internalDate` is asked for HERE for the reason it is asked for in `readMetaFolderWindow`,
        and the two are the only places a claim is built from the wire: a read that drops the
        server's stamp hands the decision layer records it can only age by the writer's own clock —
-       silently, and exactly on the busy folders this path exists to serve. */
-    for await (const m of client.fetch(
-      batch.join(","), { uid: true, headers: true, internalDate: true }, { uid: true },
-    )) {
-      if (!m.headers) continue;
-      out.push({
-        ref: m.uid, raw: m.headers.toString("utf8"),
-        internalDate: m.internalDate instanceof Date ? m.internalDate : null,
-      });
-    }
+       silently, and exactly on the busy folders this path exists to serve.
+
+       Pulled through the bounded read rather than a bare `for await`: the batch is a uid list WE
+       chose, so a reply longer than it is a server over-answering a bounded page (`page_rows`),
+       and a `for await` consults no clock between rows — the one shape a byte-a-minute server
+       parks the whole walk in. Both axes come from the same budget the walk started with. */
+    const page = await boundedFetch(
+      client.fetch(
+        batch.join(","), { uid: true, headers: true, internalDate: true }, { uid: true },
+      ),
+      {
+        max: batch.length,
+        bound: "page_rows",
+        ...(opts?.budget === undefined ? {} : { deadline: opts.budget }),
+        folder: path,
+        map: (m): RawClaimMessage | null =>
+          m.headers
+            ? {
+                ref: m.uid, raw: m.headers.toString("utf8"),
+                internalDate: m.internalDate instanceof Date ? m.internalDate : null,
+              }
+            : null,
+      },
+    );
+    for (const m of page.items) if (m !== null) out.push(m);
   }
   return out;
 }
@@ -2841,11 +2967,14 @@ export function makeLeaseIo(
   client: LeaseImapClient,
   toServerPath: (canonical: string) => string,
   identity: MetaIdentity,
+  /** The clock the reads' budgets read — see {@link makeLeasePeekIo}. */
+  limits?: { now?: () => number },
 ): LeaseIo {
   // The seam's own check: this package's tests are not typechecked, so a construction site that
   // omits an identity would bind `undefined` and every mailbox in the process would share one
   // memory under that key. Silent, and the exact defect the key exists to prevent.
   assertMetaIdentity("makeLeaseIo", identity);
+  const now = limits?.now ?? Date.now;
   // ONE resolution, shared with the APPEND-less peek. A writer and a reader that spell "where is
   // `_meta`" differently is exactly how each ends up renewing a claim the other cannot see.
   const meta = makeMetaFolderRef(client, toServerPath);
@@ -2893,8 +3022,12 @@ export function makeLeaseIo(
     },
 
     async listClaims(): Promise<RawClaimMessage[]> {
-      const metaPath = await meta.path();
-      const lock = await client.getMailboxLock(metaPath);
+      // ONE BUDGET FOR THE WHOLE READ — see {@link metaReadBudget}. The gate runs this every
+      // cycle and holds the folder's lock across it, so an unclocked segment in front of the
+      // FETCH stalls the mailbox's mail, not merely this call.
+      const budget = metaReadBudget(now);
+      const metaPath = await meta.path(budget);
+      const lock = await lockWithin(client, metaPath, budget);
       try {
         // The gate's read is bounded, and this is the read that most needed it: it had no ceiling
         // at all, so a folder anyone with APPEND rights can write to decided how much work every
@@ -2905,7 +3038,7 @@ export function makeLeaseIo(
         // claim looks like. No claim is appended, nothing is expunged, and the install keeps
         // whatever role it had — `ensureMetaFolder` has already run, so that is the exact
         // guarantee.
-        const read = await readMetaFolderWindow(client, metaPath);
+        const read = await readMetaFolderWindow(client, metaPath, undefined, undefined, budget);
         // BESIDE THE RECORDS, INSIDE THE LOCK — see `generationAtLastRead`. Sampled before the
         // truncation throw as well, because the gate acts on that window too.
         sampleGeneration();
@@ -2956,12 +3089,15 @@ export function makeLeaseIo(
        * refused with a code, never sliced. Given up: residue buried under more than a window
        * refuses `over_ceiling` — the caller's lapse bound ends that.
        */
-      const metaPath = await meta.path();
-      const lock = await client.getMailboxLock(metaPath);
+      // The release reads the folder to enumerate its own records, so it is a read like the
+      // others and takes the same one budget across all four of its segments.
+      const budget = metaReadBudget(now);
+      const metaPath = await meta.path(budget);
+      const lock = await lockWithin(client, metaPath, budget);
       try {
         let read: MetaFolderRead;
         try {
-          read = await readMetaFolderWindow(client, metaPath);
+          read = await readMetaFolderWindow(client, metaPath, undefined, undefined, budget);
         } catch (err) {
           /* The read itself died — the connection, the SELECT, the FETCH. The provider's failure
            * rides in `cause`, where the logger reduces it to class + code and never its text. */
@@ -2999,8 +3135,11 @@ export function makeLeaseIo(
      * from "there is evidence here I cannot read", and that evidence must survive the search.
      */
     async listClaimRecords(): Promise<RawClaimMessage[] | null> {
-      const claimPath = await meta.path();
-      const lock = await client.getMailboxLock(claimPath);
+      // The window's fallback is a read like the window is, and a longer one — a STATUS, up to
+      // two windowed walks and a fetch per batch. One budget across all of it.
+      const budget = metaReadBudget(now);
+      const claimPath = await meta.path(budget);
+      const lock = await lockWithin(client, claimPath, budget);
       try {
         /* ── AN ANCHOR FROM ANOTHER GENERATION IS NOT AN ANCHOR ──────────────────────────────
          *
@@ -3022,6 +3161,7 @@ export function makeLeaseIo(
         const invalidated = lastClaimReadFact;
         let gapWasRead = false;
         const set = await searchHeaders(client, claimPath, { header: { [H.lease]: true } }, {
+          budget,
           gapDownTo: ownUid,
           onGapRead: () => { gapWasRead = true; },
           onShortfall: (fact) => {
@@ -4777,11 +4917,16 @@ function makeMetaRecordsList(
    * else's, and it made every comparison meaningless in both directions.
    */
   onGeneration?: (generation: Generation) => void,
+  /** The clock the read's budget reads — see {@link makeLeasePeekIo}. */
+  now: () => number = Date.now,
 ): (beforeUid?: number) => Promise<RawMetaMessage[]> {
   return async (beforeUid?: number): Promise<RawMetaMessage[]> => {
+    // One budget for the whole read — the LIST below included, which is where this one used to
+    // wait without a clock. See {@link metaReadBudget}.
+    const budget = metaReadBudget(now);
     let at: MetaFolderLocation;
     try {
-      at = await meta.locate();
+      at = await meta.locate(budget);
     } catch (err) {
       throw new RequestUnavailableError(
         `${META_FOLDER} could not be located`, { op, cause: err },
@@ -4793,12 +4938,12 @@ function makeMetaRecordsList(
       );
     }
     try {
-      const lock = await client.getMailboxLock(at.path);
+      const lock = await lockWithin(client, at.path, budget);
       try {
         // The shared bounded read — see {@link readMetaFolderWindow}. An empty folder is a real
         // answer and comes back as one; a folder too full for a single window is not, and falls
         // into the refusal below for the same reason an ABSENT folder does.
-        const read = await readMetaFolderWindow(client, at.path, beforeUid);
+        const read = await readMetaFolderWindow(client, at.path, beforeUid, undefined, budget);
         // Inside the lock, with `_meta` open: this is the only place the right folder is
         // guaranteed to be the selected one.
         onGeneration?.(generationOf(client));
