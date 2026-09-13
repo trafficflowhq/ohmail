@@ -8,17 +8,17 @@ import {
   type SearchTier,
 } from "@trafficflow/core/search-rank";
 import type { EntityReader } from "./store.js";
-import { folderLeaf, isProtectedMessage, VIEW_OF_FOLDER, type EngineMessage, type MessageBodyRecord } from "./types.js";
+import { folderLeaf, VIEW_OF_FOLDER, type EngineMessage } from "./types.js";
 
 /**
  * Instant local search over the mirror: field-weighted lexical tokens over
- * subject / from / snippet / whatever body text this device holds, plus a
- * padded-trigram fuzzy arm. The arms are tiers (`search-rank` in core; the
- * hosted door applies the same rule): exact and prefix matches are the
- * answer, the fuzzy arm runs only when that is empty, into `similar` — a
- * subject-weighted guess must not outrank a body-weighted certainty.
- * Coverage is partial (the wire carries a 200-char snippet; hydrated bodies
- * ARE indexed): every result reports {@link SearchCoverage}, the UI states it.
+ * subject / from / recipients / the 200-char snippet, plus a padded-trigram
+ * fuzzy arm, which runs only when the exact tier is empty.
+ *
+ * BODY TEXT IS NOT IN THIS INDEX — the archive is the body search (`GET
+ * /search`, Postgres FTS). Indexing bodies whole made one build seconds of
+ * main-thread work that a version bump asked for again. Coverage is partial
+ * by construction: every result reports {@link SearchCoverage}.
  */
 
 export interface SearchMatch {
@@ -73,6 +73,8 @@ export interface AddressCounts {
 export interface AddressResult {
   items: SearchHit[];
   counts: AddressCounts;
+  /** The index is still filling — see {@link LocalSearchResult.indexing}. Same rule, same sentence. */
+  indexing: boolean;
 }
 
 /**
@@ -98,18 +100,19 @@ export interface SearchFacets {
 }
 
 /**
- * WHAT THE LOCAL INDEX WAS ABLE TO READ — reported with every result, because a surface
- * that shows these hits is implicitly making a claim about the corpus.
+ * WHAT THE LOCAL INDEX WAS ABLE TO READ — reported with every result, because a surface that
+ * shows these hits is implicitly making a claim about the corpus.
  *
- * `full` counts messages whose whole text is on this device: a fixture row's own `body`, or a
- * `message_body` record that opening the message hydrated. Everything else contributed its subject, its
- * sender and at most 200 characters of preview. On the demo `full === messages`; on a live
- * account it starts at 0 and grows by one every time somebody opens a message.
+ * `full` counts messages whose whole text this index read. It is ZERO, always, and that is the
+ * statement rather than an omission: every message contributes subject, sender, recipients and
+ * at most 200 characters of preview, and the whole text is searched in the archive. The field
+ * stays because the surface's sentence is built from it — a device that indexes bodies again
+ * sets it, and the test beside it pins the zero until one does.
  */
 export interface SearchCoverage {
   /** Messages in the mirror when this index was built. */
   messages: number;
-  /** …of which the FULL text was indexable. Never greater than `messages`. */
+  /** …of which the FULL text was indexable. Zero — see {@link SearchCoverage}. */
   full: number;
 }
 
@@ -136,11 +139,20 @@ export interface LocalSearchResult {
   facets: SearchFacets;
   /** What this answer is an answer OVER. See {@link SearchCoverage}. */
   coverage: SearchCoverage;
+  /**
+   * A NEWER INDEX IS STILL BEING BUILT — these rows are over an older mirror than the one on
+   * screen, or (with `coverage.messages === 0`) over nothing yet. A surface says so: an empty
+   * list while the index is filling is "not yet", never "nothing", and the two are different
+   * sentences. {@link SearchIndex.search} always reports `false` — an index that answers is
+   * built; whether the ENGINE has a newer build in flight is the engine's fact and it overrides
+   * this on the way out.
+   */
+  indexing: boolean;
 }
 
 /**
- * Field weights. Subject over sender over body text — a term in the subject line is a stronger
- * statement about what a message is about than the same term buried in its body.
+ * Field weights. Subject over sender over preview text — a term in the subject line is a stronger
+ * statement about what a message is about than the same term buried in the first 200 characters.
  *
  * These now only ever compare LIKE WITH LIKE. Before the tiers they also decided exact-versus-
  * guess contests, which is the comparison they are useless for: `3 × 0.43` beat `1 × 1.0` and
@@ -148,6 +160,18 @@ export interface LocalSearchResult {
  */
 const FIELD_WEIGHT = { subject: 3, from: 2, text: 1 } as const;
 const FUZZY_THRESHOLD = 0.4;
+
+/**
+ * HOW LONG ONE SYNCHRONOUS STRETCH OF AN INDEX BUILD MAY RUN — see {@link SearchIndex.buildSliced}.
+ *
+ * One frame at 60 Hz is 16.7 ms, so a slice that ends at 16 leaves the browser its frame. It is a
+ * FLOOR on the check rather than a ceiling on the work: the slice ends at the first message whose
+ * indexing carried it past the mark, so the real stretch is 16 ms plus one message.
+ */
+export const BUILD_SLICE_MS = 16;
+
+/** The clock a never-yielding fill is handed: it is never read, because `sliceMs` is `null`. */
+const ZERO_CLOCK = (): number => 0;
 
 /**
  * Multi-word queries prefer the phrase — a bonus when the typed words appear
@@ -220,31 +244,91 @@ export class SearchIndex {
   private readonly addresses = new Map<string, Map<string, AddressSides>>();
   private readonly trigramCache = new Map<string, Set<string>>();
   private readonly messages = new Map<string, EngineMessage>();
-  private full = 0;
 
   /**
-   * Build over the mirror — messages AND the bodies that have been hydrated.
+   * ONE INDEXING LOOP, TWO DOORS — a generator, so the time-sliced door and the synchronous one
+   * cannot drift into two loops with two sets of rules. It yields whenever the current slice has
+   * run for `sliceMs`; `null` means never yield, which is what {@link SearchIndex.build} passes.
    *
-   * The `message_body` pass is what makes `add`'s second argument worth having. Reading the
-   * records into a map first is not an optimisation: `reader.list` is O(n) per call, and
-   * looking one up per message would be O(n²) on a mirror of any real size, on every keystroke.
+   * `rows` is read from the reader ONCE by the caller and is the corpus for the whole walk: it
+   * holds entity references, and every mirror write replaces the entity object rather than
+   * mutating it, so what this walk sees is the mirror as of that one read. That is what makes a
+   * finished index attributable to one version even though the walk spans several.
+   */
+  private *fill(rows: readonly EngineMessage[], sliceMs: number | null, now: () => number): Generator<void> {
+    let mark = now();
+    for (const m of rows) {
+      this.add(m);
+      if (sliceMs !== null && now() - mark >= sliceMs) {
+        yield;
+        mark = now();
+      }
+    }
+  }
+
+  /**
+   * Build over the mirror in one synchronous pass — the door for a corpus small enough that the
+   * cost does not matter (tests, a fixture world) and the fallback shape of the sliced door.
+   * A surface on the keystroke path takes {@link SearchIndex.buildSliced} instead.
    */
   static build(reader: EntityReader): SearchIndex {
+    return fillSync(new SearchIndex(), reader.list<EngineMessage>("message"));
+  }
+
+  /** {@link fill} with no slicing — reachable from {@link fillSync}, which is the only caller. */
+  fillAll(rows: readonly EngineMessage[]): Generator<void> {
+    return this.fill(rows, null, ZERO_CLOCK);
+  }
+
+  /**
+   * THE SYNCHRONOUS BUILD, BUT ONLY IF THE CORPUS IS SMALL ENOUGH TO BE WORTH IT — `null` when
+   * it is not, and the caller then goes through {@link SearchIndex.buildSliced}.
+   *
+   * The bound is read from the reader's own row array BEFORE a single message is indexed, so a
+   * refusal costs the walk nothing. It exists because a demo world, a fixture mount and a young
+   * mailbox all index inside a frame, and making those wait a macrotask for their first answer
+   * would be a regression dressed as a fix: the keystroke path is only worth protecting from work
+   * that is actually large.
+   */
+  static buildWithin(reader: EntityReader, maxMessages: number): SearchIndex | null {
+    const rows = reader.list<EngineMessage>("message");
+    return rows.length > maxMessages ? null : fillSync(new SearchIndex(), rows);
+  }
+
+  /**
+   * THE SAME BUILD, HANDED BACK TO THE EVENT LOOP EVERY {@link BUILD_SLICE_MS}.
+   *
+   * The build is main-thread JavaScript over the whole mirror, and it used to run to completion
+   * inside one call from a keystroke handler. Sliced, no single stretch of it can miss a frame,
+   * so a person keeps typing into a box that is still filling. `cancelled` is asked on both
+   * sides of every yield and answering `true` abandons the walk and returns `null`: a mirror
+   * that was wiped under a build must not have that build's index installed over the new one.
+   */
+  static async buildSliced(
+    reader: EntityReader,
+    opts: {
+      sliceMs?: number;
+      now?: () => number;
+      cancelled?: () => boolean;
+      yieldTo?: () => Promise<void>;
+    } = {},
+  ): Promise<SearchIndex | null> {
+    const cancelled = opts.cancelled ?? (() => false);
+    const yieldTo = opts.yieldTo ?? (() => new Promise<void>((r) => setTimeout(r, 0)));
     const idx = new SearchIndex();
-    const bodies = new Map<string, string>();
-    for (const b of reader.list<MessageBodyRecord>("message_body")) {
-      // Only `ready` is text. `loading` and `failed` records carry `text: ""` and indexing
-      // them would count a message as covered because we ASKED for its body, not because we
-      // have it — which is exactly the shape of claim this gap is about.
-      if (b.state === "ready") bodies.set(b.messageId, b.text);
+    if (cancelled()) return null;
+    const rows = reader.list<EngineMessage>("message");
+    for (const _ of idx.fill(rows, opts.sliceMs ?? BUILD_SLICE_MS, opts.now ?? Date.now)) {
+      await yieldTo();
+      if (cancelled()) return null;
     }
-    for (const m of reader.list<EngineMessage>("message")) idx.add(m, bodies.get(m.id));
-    return idx;
+    return cancelled() ? null : idx;
   }
 
   /** What this index was able to read. Reported with every result — see {@link SearchCoverage}. */
   coverage(): SearchCoverage {
-    return { messages: this.messages.size, full: this.full };
+    // `full` is structurally zero: no body text enters this index. See {@link SearchCoverage}.
+    return { messages: this.messages.size, full: 0 };
   }
 
   private index(term: string, messageId: string, weight: number): void {
@@ -299,7 +383,7 @@ export class SearchIndex {
   messagesWith(address: string, direction: AddressDirection = "any"): AddressResult {
     const key = addressMatchKey(address);
     const byMessage = key === "" ? undefined : this.addresses.get(key);
-    if (byMessage === undefined) return { items: [], counts: { any: 0, from: 0, to: 0 } };
+    if (byMessage === undefined) return { items: [], counts: { any: 0, from: 0, to: 0 }, indexing: false };
 
     const counts: AddressCounts = { any: 0, from: 0, to: 0 };
     const rows: Array<{ hit: SearchHit; row: RankedRow }> = [];
@@ -323,23 +407,20 @@ export class SearchIndex {
       });
     }
     rows.sort((a, b) => compareRanked(a.row, b.row));
-    return { items: rows.map((r) => r.hit), counts };
+    return { items: rows.map((r) => r.hit), counts, indexing: false };
   }
 
   /**
-   * `hydrated` is the `message_body` record's text when this device has one. `m.body` is the
-   * fixture world's own field and is `undefined` on every Cloud row — the two are separate
-   * arguments rather than one because `types.ts` keeps them in separate records deliberately:
-   * a `mark_seen` echo replaces the message entity and would wipe a body written onto it.
+   * ONE MESSAGE'S HEADERS AND ITS PREVIEW — never its body.
+   *
+   * It used to take the hydrated `message_body` text as a second argument and tokenize the whole
+   * mail. A body is prose of thousands of characters against a subject's handful, so the term set
+   * it minted was most of the index and most of the build; the archive already searches bodies
+   * with Postgres FTS, and a second whole-text index on the device bought a narrower answer for
+   * main-thread seconds. What stays is what the wire already carries on the message row.
    */
-  add(m: EngineMessage, hydrated?: string): void {
+  add(m: EngineMessage): void {
     this.messages.set(m.id, m);
-    // Every message's full body is indexed — bodies are no longer withheld from the reader, so a
-    // search over the reader's own mailbox reaches all of it, sensitive mail included.
-    // ({@link isProtectedMessage} is a constant `false` now; it is left in the expression as the
-    // one named seam should that policy ever change again.)
-    const whole = isProtectedMessage(m) ? undefined : (m.body ?? hydrated);
-    if (whole !== undefined) this.full++;
     for (const t of tokenize(m.subject)) this.index(t, m.id, FIELD_WEIGHT.subject);
     for (const t of tokenize(`${m.from.name ?? ""} ${m.from.address}`)) this.index(t, m.id, FIELD_WEIGHT.from);
     // THE EXACT ADDRESSES, on top of the tokens above — see {@link SearchIndex.addresses}.
@@ -349,9 +430,10 @@ export class SearchIndex {
     this.indexAddress(m.from.address, m.id, "from");
     for (const who of m.to ?? []) this.indexAddress(who.address, m.id, "to");
     for (const who of m.cc ?? []) this.indexAddress(who.address, m.id, "to");
-    // The snippet is indexed alongside the body: the two strings are not always prefix-related, so
-    // dropping it would lose terms.
-    for (const t of tokenize(`${m.snippet} ${whole ?? ""}`)) this.index(t, m.id, FIELD_WEIGHT.text);
+    // The preview — `bodySnippet()` in core, whitespace-collapsed and cut at 200 characters. The
+    // whole of the body text this index holds, and the reason a term past that cut is an archive
+    // question rather than a device one.
+    for (const t of tokenize(m.snippet)) this.index(t, m.id, FIELD_WEIGHT.text);
   }
 
   /**
@@ -477,7 +559,7 @@ export class SearchIndex {
   private verbatim(query: string, limit: number): LocalSearchResult {
     const needle = query.trim().toLowerCase();
     if (needle === "") {
-      return { items: [], similar: [], tier: "exact", facets: emptyFacets(), coverage: this.coverage() };
+      return { items: [], similar: [], tier: "exact", facets: emptyFacets(), coverage: this.coverage(), indexing: false };
     }
     const match: SearchMatch = { token: needle, term: needle, fuzzy: false };
     /**
@@ -508,7 +590,7 @@ export class SearchIndex {
       score: r.score,
       matches: [match],
     }));
-    return { items, similar: [], tier: "exact", facets: facetsOf(items), coverage: this.coverage() };
+    return { items, similar: [], tier: "exact", facets: facetsOf(items), coverage: this.coverage(), indexing: false };
   }
 
   /**
@@ -530,7 +612,7 @@ export class SearchIndex {
     const exact = this.intersect(qTokens, (q) => this.literalHits(q));
     if (!showSimilar(exact.size)) {
       const items = this.rank(exact, phrase, limit);
-      return { items, similar: [], tier: "exact", facets: facetsOf(items), coverage: this.coverage() };
+      return { items, similar: [], tier: "exact", facets: facetsOf(items), coverage: this.coverage(), indexing: false };
     }
 
     // `exact` is empty here under today's floor; the subtraction below does not assume that, so
@@ -545,8 +627,21 @@ export class SearchIndex {
       tier: items.length === 0 && similar.length > 0 ? "similar" : "exact",
       facets: facetsOf(items.length > 0 ? items : similar),
       coverage: this.coverage(),
+      indexing: false,
     };
   }
+}
+
+/**
+ * Drain {@link SearchIndex.fill} with no yielding — the shape both synchronous doors take. A
+ * function rather than a repeated `for` loop so there is exactly one place that says "never
+ * yield" and the two doors cannot come to mean different things by it.
+ */
+function fillSync(idx: SearchIndex, rows: readonly EngineMessage[]): SearchIndex {
+  for (const _ of idx.fillAll(rows)) {
+    // `fillAll` never yields; the loop exists to drive the generator to completion.
+  }
+  return idx;
 }
 
 /** `Date:` as millis for the tie-break, or `null` for a message that has none. */
@@ -563,6 +658,29 @@ function stampOf(m: EngineMessage): number | null {
  */
 function phraseField(text: string): string {
   return ` ${(text.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? []).join(" ")} `;
+}
+
+/**
+ * THE ANSWER WHEN THERE IS NO INDEX YET — an empty list that SAYS it is empty for want of an
+ * index rather than for want of mail. The distinction is the whole of it: a surface handed
+ * `items: []` with nothing else to read prints "Nothing on this device", which is a claim about
+ * somebody's mailbox made by a build that has not run. `coverage.messages` is 0 for the same
+ * reason — this is an answer over nothing, and it reports that rather than borrowing a count.
+ */
+export function indexingResult(): LocalSearchResult {
+  return {
+    items: [],
+    similar: [],
+    tier: "exact",
+    facets: emptyFacets(),
+    coverage: { messages: 0, full: 0 },
+    indexing: true,
+  };
+}
+
+/** {@link indexingResult}'s twin for the address view — same rule, same reason. */
+export function indexingAddressResult(): AddressResult {
+  return { items: [], counts: { any: 0, from: 0, to: 0 }, indexing: true };
 }
 
 function emptyFacets(): SearchFacets {

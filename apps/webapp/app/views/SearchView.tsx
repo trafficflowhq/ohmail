@@ -170,9 +170,21 @@ export function SearchView({
   onExit,
   junkSaid = null,
   junkReadable = false,
+  indexRev = 0,
 }: {
   engine: OhmailEngine;
   version: number;
+  /**
+   * WHICH INDEX ANSWERED — {@link OhmailEngine.searchIndexRevision}, and the second half of the
+   * local pass's key. `version` alone stopped being enough when the index started lagging the
+   * mirror deliberately: a build settling changes what search can answer with no record having
+   * moved, and a memo keyed on the mirror would hold the pre-build answer until the next drain.
+   *
+   * Defaulted rather than required so a fixture mount (`SearchView` driven directly by a test or
+   * by the desktop's harness) stays a two-line call; such a mount has one engine and one index
+   * for its lifetime, so a constant is the correct key for it and not a missing one.
+   */
+  indexRev?: number;
   now: Date;
   query: string;
   onQuery: (q: string) => void;
@@ -242,7 +254,7 @@ export function SearchView({
     const r = engine.search(trimmed);
     return { result: r, tookMs: Math.max(1, Math.round(performance.now() - t0)) };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [engine, trimmed, version]);
+  }, [engine, trimmed, version, indexRev]);
 
   /**
    * THE SEARCH MARK ENDS AT THE FIRST RESULTS — the budget's "first results < 500 ms", measured
@@ -254,6 +266,19 @@ export function SearchView({
   useEffect(() => {
     if (result !== null) endSearch();
   }, [result]);
+
+  /**
+   * FILL THE INDEX WHILE THE PERSON IS STILL TYPING THE FIRST WORD. The engine builds it in
+   * slices off the keystroke path, so the cost of asking early is nothing and the answer is
+   * there by the second character rather than after it. Idempotent — a build already in flight
+   * is joined, a fresh index is left alone.
+   */
+  useEffect(() => {
+    void engine.warmSearchIndex();
+  }, [engine]);
+
+  /** The index has not caught up with this mirror — every sentence below says so. */
+  const indexing = result?.indexing ?? false;
 
   // ── the archive pass ──────────────────────────────────────────────────────
   //
@@ -631,7 +656,7 @@ export function SearchView({
   useKeyBindings(keys);
 
   /**
-   * The honest sentence — one of six, one always on screen while a query is. `scopeDevice` is load-bearing:
+   * The honest sentence — one of seven, one always on screen while a query is. `scopeDevice` is load-bearing:
    * what the view says while only local results are in hand, naming the three fields the index reads. It used
    * to break at zero: "Nothing on this device." directly above "…plus the full text of none." — assembled, not
    * written. So the device half is suppressed when the mirror is empty (`coverage.messages === 0`, not `full` —
@@ -640,7 +665,18 @@ export function SearchView({
    * what a reader would count — the fact stays, the arithmetic goes. The sixth arm, `timeout`, was the
    * unrepresentable state ({@link ARCHIVE_TIMEOUT_MS}).
    */
-  const device = !result || result.coverage.messages === 0 ? null : <>{t("scopeDevice")} </>;
+  const device = indexing ? (
+    /*
+     * A SEVENTH ARM, and it outranks the inventory: while the index is filling, what this
+     * device holds is not yet what it can answer, so stating the inventory would describe a
+     * corpus the results are not over. It is also the one arm that survives
+     * `coverage.messages === 0`, because that zero now means "no index yet" as well as "no
+     * mail" and the two need different sentences.
+     */
+    <>{t("scopeIndexing")} </>
+  ) : !result || result.coverage.messages === 0 ? null : (
+    <>{t("scopeDevice")} </>
+  );
   const scope = !result ? null : current === null || current.state === "searching" ? (
     <>
       {device}
@@ -736,7 +772,15 @@ export function SearchView({
                result while the archive is still running must not read as an empty corpus. */
             <div className="empty">
               <span className="glyph">🌫</span>
-              <b>{current?.state === "ready" ? t("emptyTitleAll") : t("emptyTitle")}</b>
+              {/* "Nothing" is the wrong word for a device that has not finished looking. The
+                  indexing arm outranks both settled titles for that reason. */}
+              <b>
+                {indexing
+                  ? t("emptyTitleIndexing")
+                  : current?.state === "ready"
+                    ? t("emptyTitleAll")
+                    : t("emptyTitle")}
+              </b>
               {scope}
               {/* …and the pass that does not exist. No arm of `scope` can name the provider's
                   Junk folder, because nothing here ever searched it (JUNK-INVISIBLE). */}

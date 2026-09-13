@@ -161,7 +161,14 @@ export function AddressView({
    * the plain arm takes over without a change to this file. The refusal arm is the only one that
    * carries a control — see it for why.
    */
-  const deviceHalf = t("addressDevice", { count: view.counts[direction] });
+  /*
+   * The device half says what it is: a count once the index has read this mirror, and "still
+   * indexing" before that. A zero printed over a filling index is a claim that this address has
+   * written nothing, made by a pass that has not looked.
+   */
+  const deviceHalf = view.indexing
+    ? t("scopeIndexing")
+    : t("addressDevice", { count: view.counts[direction] });
   const archiveHalf =
     archive.state === "searching" ? (
       t("scopeSearching")

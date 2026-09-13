@@ -1125,6 +1125,25 @@ export function useDerivedVersion(): number {
   );
 }
 
+/**
+ * WHICH SEARCH INDEX ANSWERED — {@link OhmailEngine.searchIndexRevision}, subscribed.
+ *
+ * The instant index lags the mirror on purpose: rebuilding it on every version bump is a
+ * whole-mirror walk per keystroke, which is what froze the window. So a build SETTLING is a
+ * change to what search can answer with no record having moved, and the search view keys on this
+ * beside {@link useDerivedVersion}. The engine notifies when a build settles, which is what makes
+ * this a live value rather than a number read once.
+ */
+export function useSearchIndexRevision(): number {
+  const engine = useEngine();
+  const subscribe = useCallback((cb: () => void) => engine.subscribe(cb), [engine]);
+  return useSyncExternalStore(
+    subscribe,
+    () => engine.searchIndexRevision(),
+    () => 0,
+  );
+}
+
 /** The overlay-merged reader (stable object; version() tracks change). */
 export function useReader(): EntityReader {
   return useEngine().read();

@@ -78,7 +78,7 @@ import {
   useDemoMode, useResolvedDemoMode,
   useEngine,
   useDerivedVersion,
-  useEngineVersion,
+  useSearchIndexRevision,
   useSyncStatus,
   type OwnerResolver,
   type ProvidedEngine,
@@ -627,16 +627,19 @@ export function DesktopCta({ href, label, dismissLabel, onDismiss }: {
 }
 
 /**
- * SEARCH'S OWN SUBSCRIPTION — the one view whose input includes bodies.
+ * SEARCH'S OWN SUBSCRIPTION — the mirror it derives from, and the index that answers.
  *
- * The shell keys on {@link useDerivedVersion}, which does not move for a body; the search index
- * reads `message_body` (`search.ts`), so a body landing while a search is open genuinely changes
- * the result set. Rather than putting the whole shell back on the global version for one view,
- * the view takes it here: this wrapper re-renders per body publish and the shell does not.
+ * It took the GLOBAL version while the index read `message_body`. The index no longer reads
+ * bodies (`search.ts` — the archive is the body search), so the global version would re-run the
+ * local pass for writes it cannot see: an open writes three body records and the eager pass one
+ * per message, each of them a rebuild on the keystroke path. {@link useDerivedVersion} is the
+ * honest key, and {@link useSearchIndexRevision} the other half — the index lags the mirror by
+ * design, so a build settling changes the answer with no record having moved.
  */
-function SearchViewLive(props: Omit<ComponentProps<typeof SearchView>, "version">) {
-  const version = useEngineVersion();
-  return <SearchView {...props} version={version} />;
+function SearchViewLive(props: Omit<ComponentProps<typeof SearchView>, "version" | "indexRev">) {
+  const version = useDerivedVersion();
+  const indexRev = useSearchIndexRevision();
+  return <SearchView {...props} version={version} indexRev={indexRev} />;
 }
 
 function ShellRail({ groups, footer, offerDesktopCta, hostConnection, ...rest }: RailNavProps & {

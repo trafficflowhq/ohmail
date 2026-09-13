@@ -94,6 +94,13 @@ export interface AddressView {
   archive: AddressArchive;
   /** Whether `archive` covers `direction`. See {@link AddressCoverage}. */
   coverage: AddressCoverage;
+  /**
+   * THE DEVICE HALF IS NOT FINISHED — the engine's instant index is still filling, so `items` and
+   * `counts` are over less than this mirror holds. A separate field and not a zero count: "none
+   * from this address" and "not looked yet" are different sentences, and printing the first while
+   * the second is true is the shape of false state this view exists to avoid.
+   */
+  indexing: boolean;
 }
 
 /**
@@ -120,7 +127,7 @@ export function messagesWith(
   engine: OhmailEngine,
   address: string,
   direction: AddressDirection = DEFAULT_ADDRESS_DIRECTION,
-): { items: EngineSearchHit[]; counts: AddressCounts } {
+): { items: EngineSearchHit[]; counts: AddressCounts; indexing: boolean } {
   return engine.messagesWith(address, direction);
 }
 
@@ -262,5 +269,5 @@ export function useAddressView({
       ? "senders-only"
       : "complete";
 
-  return { items, counts: device.counts, archive, coverage };
+  return { items, counts: device.counts, archive, coverage, indexing: device.indexing };
 }
