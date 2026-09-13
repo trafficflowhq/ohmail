@@ -1,0 +1,39 @@
+-- THE PASSKEY CONSUME READ GETS THE INDEX ITS OWN PREDICATE NAMES.
+--
+-- Cloud 0034 gave this table a retention rule and the index the PRUNE walks (`expires_at`). It
+-- did not give the read the prune exists to protect anything: `consumeChallenge`
+-- (`packages/services/src/auth/auth-service.ts`) matches
+--
+--     type = $1  AND  consumed_at IS NULL  AND  (user_id = $2 | login_token_id = $2)
+--     [AND challenge = $3]  ORDER BY created_at DESC  LIMIT 1
+--
+-- and no index on this table can serve that. Measured on real Postgres at 1 003 and 50 003 rows,
+-- all three call arms (registration, assertion, step-up) planned `Seq Scan -> Sort`:
+-- cost 33.05 at 1 003 rows and 1 677.06 at 50 003 for the two selector arms, 1 802.07 for the
+-- step-up arm that also carries `challenge`. With the two indexes below all three plan
+-- `Index Scan` at a FLAT cost of 8.43, and the Sort is gone.
+--
+-- TWO INDEXES AND NOT ONE: the selector is `user_id` for a registration or a step-up and
+-- `login_token_id` for an assertion, exactly one of which is non-null on any row, so a single
+-- leading column cannot serve both arms. A single index on `challenge` was measured and rejected
+-- — it serves the step-up arm alone and leaves the other two at Seq Scan cost 5 293.06.
+--
+-- PARTIAL on `consumed_at IS NULL`, which is in every one of the three predicates: the index then
+-- holds open ceremonies only and a consumed row leaves it on the claiming UPDATE.
+--
+-- `created_at` IS IN THE KEY and its omission was measured too. Without it the plan is an Index
+-- Scan plus a Sort over every open ceremony that selector holds, and how many that is, is chosen
+-- by whoever opened them — the same remotely-influenceable width mail 0080 fixed on `sessions`.
+-- With it the `LIMIT 1` stops at the first index tuple. Ascending, not descending: a btree is
+-- read backwards for free, and the plan says `Index Scan Backward` at the same cost.
+--
+-- NOT `CONCURRENTLY`, for cloud 0034's reason on this same table: the migrator wraps the journal
+-- pass in one transaction and the statement is refused inside one. The table is bounded by 0034's
+-- prune to one challenge TTL plus the retention window, so the lock is momentary.
+--
+-- ROLLBACK is `DROP INDEX webauthn_challenges_open_login_idx, webauthn_challenges_open_user_idx`.
+-- No column, constraint or row changes.
+
+CREATE INDEX IF NOT EXISTS "webauthn_challenges_open_login_idx" ON "webauthn_challenges" USING btree ("login_token_id","type","created_at") WHERE "consumed_at" IS NULL;
+--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "webauthn_challenges_open_user_idx" ON "webauthn_challenges" USING btree ("user_id","type","created_at") WHERE "consumed_at" IS NULL;

@@ -141,6 +141,13 @@
       "when": 1791328224217,
       "tag": "0034_webauthn_challenge_expiry",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1791328224218,
+      "tag": "0035_webauthn_open_ceremony_idx",
+      "breakpoints": true
     }
   ]
 }

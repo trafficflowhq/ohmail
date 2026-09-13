@@ -51,7 +51,18 @@ export const webauthnChallenges = pgTable("webauthn_challenges", {
   expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
   consumedAt: timestamp("consumed_at", { withTimezone: true }),   // single-use marker
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
-});
+}, (t) => ({
+  // cloud 0034 — the key the retention prune walks (`expires_at < cutoff ORDER BY expires_at`).
+  ixExpires: index("webauthn_challenges_expires_idx").on(t.expiresAt),
+  // cloud 0035 — the two `consumeChallenge` reads. Exactly one selector is non-null on any row,
+  // so one leading column cannot serve both arms; PARTIAL on the `consumed_at IS NULL` every
+  // predicate carries, and `created_at` is in the key so the `LIMIT 1` stops at the first tuple
+  // rather than sorting however many ceremonies one caller chose to open.
+  ixOpenLogin: index("webauthn_challenges_open_login_idx").on(t.loginTokenId, t.type, t.createdAt)
+    .where(sql`"consumed_at" is null`),
+  ixOpenUser: index("webauthn_challenges_open_user_idx").on(t.userId, t.type, t.createdAt)
+    .where(sql`"consumed_at" is null`),
+}));
 
 export const totpSecrets = pgTable("totp_secrets", {
   id: uuid("id").defaultRandom().primaryKey(),

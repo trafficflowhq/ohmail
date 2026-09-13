@@ -176,6 +176,11 @@ export const CLOUD_INDEX_MARKERS: ReadonlyArray<string> = [
   // class names: the consume read still answers, every suite is green, and the table grows for
   // anyone who can open a ceremony while the prune scans instead of seeking.
   "webauthn_challenges_expires_idx",
+  // Cloud 0035 — the two keys `consumeChallenge` itself reads by, one per selector arm. Same
+  // silent shape and one step sharper: absent, every passkey verification scans every open
+  // ceremony on the deployment, and how many that is, is chosen by whoever opened them.
+  "webauthn_challenges_open_login_idx",
+  "webauthn_challenges_open_user_idx",
 ] as const;
 
 /**
@@ -238,9 +243,10 @@ export const CLOUD_TIER_MARKERS = SCHEMA_MARKERS;
  * markers, no CHECK-definition marker (all three CHECKs are new constraints on new objects) and
  * no index marker. 0032 drops tables and takes no marker of any class: no name's presence means
  * "sixteen tables are gone", and an untaken drop costs disk only. 0034 is one index, probed by its
- * INDEX marker alone, exactly as 0024 is. The tag asserts reconciliation against the newest entry.
+ * INDEX marker alone, exactly as 0024 is; 0035 is two, and takes two. The tag asserts
+ * reconciliation against the newest entry.
  */
-export const CLOUD_SCHEMA_MARKER_JOURNAL_TAG = "0034_webauthn_challenge_expiry";
+export const CLOUD_SCHEMA_MARKER_JOURNAL_TAG = "0035_webauthn_open_ceremony_idx";
 
 /** The journal entries {@link SCHEMA_MARKERS} was last reconciled against (asserted by a test). */
 export const SCHEMA_MARKER_JOURNAL_TAG =
