@@ -572,6 +572,24 @@ export class WorkflowExecutor {
           });
           continue;
         }
+        /* ── THE RECORDER, AND IT IS DELIBERATELY NOT A CEILING ───────────────────────────
+         *
+         * A run has no per-step wall clock, and it cannot honestly have one yet: a deadline's
+         * number would be a guess, and a guessed ceiling on a step that calls a model is a
+         * refusal fired on honest work. What is missing first is the READING. This records it —
+         * the wall time one applied step cost, the drafting call included, on the row that
+         * already exists per `(runId, stepIndex)`.
+         *
+         * Started HERE, after the idempotency check and before the sensitivity reads: a step
+         * that was already applied cost nothing this pass and must not report a duration, and
+         * everything from this line on is what a deadline would have to cover — the two
+         * ownership reads, `prepare` with its model call and its ledger write, and the step
+         * transaction.
+         *
+         * `Date.now()` and never `now`: `now` is the PASS's stamp, frozen for every row this run
+         * writes, so a duration measured against it would be zero for every step and the
+         * recorder would be a column of zeroes nobody could tell from a fast step. */
+        const stepStartedAtMs = Date.now();
         // (ii) Sensitivity, THIRD layer. The pre-flight refused the whole run and (iv) re-checks at write
         //      time; this one exists because prepare moved the model and the money EARLIER than
         //      the in-tx check, and a message flagged sensitive since the pre-flight must not
@@ -620,8 +638,16 @@ export class WorkflowExecutor {
             prepared,
           );
           // The canonical inverse home. One audit_log row per applied step.
+          /* `durationMs` rides on the marker rather than on a column of its own: the row is
+           * already written once per applied step and is already keyed the way a reading has to
+           * be grouped. `stepAlreadyApplied` reads `stepIndex` out of this payload and is
+           * unaffected by a field beside it. */
           await repo.recordAudit(run.accountId, "workflow_step",
-            { runId: run.id, stepIndex: i, tool: step.tool, effect }, inverse);
+            {
+              runId: run.id, stepIndex: i, tool: step.tool, effect,
+              durationMs: Date.now() - stepStartedAtMs,
+            },
+            inverse);
           // Advance the durable cursor + append the convenience log entry — SAME tx as the effect.
           //
           // It deliberately does NOT re-stamp `workflow_runs.claimed_at` as a heartbeat. Two
