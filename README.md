@@ -485,6 +485,12 @@ it may install. There is no repeating timer and no other phone-home.
 `scripts/verify-feeds.mjs` checks both feeds offline; CI runs it on every
 release.
 
+A release becomes *Latest* only once those feeds are on it and answering: the
+workflow that signs them marks a new release a prerelease until all three have
+been read back from the address your app uses. If they never attach,
+`/releases/latest` stays on the last release whose feeds work, so your app keeps
+an update path instead of a 404.
+
 A build that cannot replace its own files does not make that request at all: a
 `.deb` or `.rpm` install, a Flatpak, and a build from source read how they were
 installed and say where updates come from instead — a Flatpak says your software

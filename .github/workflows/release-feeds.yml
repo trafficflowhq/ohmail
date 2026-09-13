@@ -70,6 +70,19 @@ name: release feeds
 # -setup.exe and the two .AppImages) are attached to the release. It signs those
 # exact bytes and points the feeds at their download URLs.
 
+# ── WHEN THIS RUNS, AND WHY THE TRIGGER IS NOT THE FENCE ──────────────────
+#
+# `published` is the one activity type that fires for every publish: a stable
+# release, a prerelease, and a prerelease published out of a draft. The pair
+# `released` + `prereleased` reads as the more precise spelling and is a trap —
+# "the prereleased type will not trigger for pre-releases published from draft
+# releases, but the published type will trigger", and a stable publish fires
+# `published` AND `released`, which would run all of this twice for one release.
+#
+# So the state a release was published in is not read from the trigger. It is
+# read from the release page, by the first job below, which then puts the page
+# in the state it belongs in until its feeds are on it.
+
 on:
   release:
     types: [published]
@@ -79,6 +92,13 @@ on:
         description: The release tag to (re)generate feeds for, e.g. v0.5.0
         required: true
         type: string
+      promote:
+        description: >-
+          Take the prerelease flag off once the three feeds are verified. Turn it
+          off to attach feeds to a page that must stay a prerelease.
+        required: false
+        default: true
+        type: boolean
 
 # Read here, and write in exactly one place: the job that attaches the feeds
 # takes the write scope, and the job that holds the signing keys takes neither.
@@ -90,6 +110,91 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # ── 0 · THE FENCE · "LATEST" IS A STATE THIS WORKFLOW GRANTS, AND IT GRANTS
+  # IT LAST ───────────────────────────────────────────────────────────────────
+  #
+  # Publishing a release makes it Latest at once, and
+  # `/releases/latest/download/latest.json` is the address every installed
+  # client is pinned to. The three jobs below need minutes to resolve, sign and
+  # attach that file. Between the two there is a release that is Latest with no
+  # feed, and an outage or a timeout leaves it that way: every installed
+  # client's update check reads 404 until somebody repairs the page by hand.
+  # That is 0.16.2, and about five minutes of 0.17.0.
+  #
+  # A prerelease is not Latest — `/releases/latest` resolves to the PREVIOUS
+  # release and serves ITS feed, so installed clients keep an update path. That
+  # is the correct state for a release whose feeds are not on it yet, so this
+  # job puts the page there before anything that can fail, and the last step of
+  # `publish` takes the flag off once all three feeds have been read back from
+  # the address clients use. A run that dies in between leaves a prerelease.
+  #
+  # WHY A JOB AND NOT A STEP. It must close before the first thing that can
+  # fail, and only a job with `contents: write` can move the flag — so putting
+  # it in `prepare` would mean giving the write scope to the job that downloads
+  # and resolves. It holds no key, checks nothing out, and runs two `gh` calls
+  # on Linux: no job in this file holds both a signing key and a token that can
+  # rewrite a release, which is the separation the split below exists for.
+  # Ubuntu because neither call needs macOS, and because a runner that starts
+  # sooner is a shorter window in which the release is Latest with no feeds.
+  #
+  # The flag is moved with this job's own GITHUB_TOKEN, and GITHUB_TOKEN
+  # -triggered events create no workflow runs, so this cannot start a second
+  # run of itself.
+  fence:
+    name: hold the release as a prerelease until its feeds are on it
+    # Desktop releases only, the same rule the jobs below state; they need no
+    # `if:` beyond it, because a skipped `needs:` skips them.
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.event.release.tag_name, 'v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    outputs:
+      fence: ${{ steps.fence.outputs.fence }}
+      entered_prerelease: ${{ steps.fence.outputs.entered_prerelease }}
+
+    steps:
+      # If the flag will not go ON, the run CONTINUES: the page is already
+      # Latest without feeds, and attaching them is the only thing that helps
+      # it. The state is printed by name and the summary says so.
+      - name: Fence the release until its feeds are on it
+        id: fence
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag }}
+        run: |
+          set -euo pipefail
+          REPO="$GITHUB_REPOSITORY"
+          STATE="$(gh release view "$RELEASE_TAG" --repo "$REPO" --json isPrerelease,isDraft)"
+          PRE="$(printf '%s' "$STATE" | jq -r '.isPrerelease')"
+          DRAFT="$(printf '%s' "$STATE" | jq -r '.isDraft')"
+          echo "entered_prerelease=$PRE" >> "$GITHUB_OUTPUT"
+          if [ "$DRAFT" = true ]; then
+            echo "fence=draft" >> "$GITHUB_OUTPUT"
+            echo "$RELEASE_TAG is a draft: it is not Latest, and publishing it is not this job's to do."
+            exit 0
+          fi
+          if [ "$PRE" = true ]; then
+            echo "fence=already" >> "$GITHUB_OUTPUT"
+            echo "$RELEASE_TAG is a prerelease: /releases/latest still serves the previous release's feeds."
+            exit 0
+          fi
+          # Latest, with no feeds on it. Close the fence — and prove it closed, because
+          # an edit that answers 0 and changes nothing would leave the release exposed
+          # while this run reported it protected.
+          if gh release edit "$RELEASE_TAG" --repo "$REPO" --prerelease; then
+            NOW="$(gh release view "$RELEASE_TAG" --repo "$REPO" --json isPrerelease | jq -r '.isPrerelease')"
+          else
+            NOW=unknown
+          fi
+          if [ "$NOW" = true ]; then
+            echo "fence=fenced" >> "$GITHUB_OUTPUT"
+            echo "$RELEASE_TAG was published as Latest with no feeds on it; it is a prerelease until they are."
+          else
+            echo "fence=not-applied" >> "$GITHUB_OUTPUT"
+            echo "FENCE-NOT-APPLIED $RELEASE_TAG: the prerelease flag would not go on, so the release is Latest with no feeds until this run attaches them." >&2
+          fi
+
   # ── 1 · PREPARE · no secret is available to this job, and every byte the
   # signing job runs is pinned in it. All of this used to be one job and one
   # shell step: both private keys sat in the environment that fetched the
@@ -97,6 +202,7 @@ jobs:
   # and unpacked a curled Sparkle archive.
   prepare:
     name: resolve the release's assets and pin the signers
+    needs: fence
     # Desktop releases only. An Android release (android-v*) attaches an APK and
     # no desktop binaries, so running here could only fail — and a red run on
     # every phone release teaches people to ignore this workflow's failures,
@@ -807,7 +913,7 @@ jobs:
   # here, in the job that has no key, and nowhere else.
   publish:
     name: write, verify and attach the feeds
-    needs: [prepare, sign]
+    needs: [fence, prepare, sign]
     runs-on: macos-15
     timeout-minutes: 20
     permissions:
@@ -839,6 +945,7 @@ jobs:
           path: signatures
 
       - name: Write, verify and attach the feeds
+        id: feeds
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag }}
@@ -1018,6 +1125,26 @@ jobs:
             latest.json appcast-macos.xml SHA256SUMS
           echo "uploaded latest.json, appcast-macos.xml and SHA256SUMS to $RELEASE_TAG"
 
+          # WHAT THE RELEASE CARRIES, READ BACK FROM THE RELEASE — not inferred from
+          # the upload's exit code. One marker file per feed that is actually on the
+          # page; the summary states what these say and nothing else, so a run that
+          # ends here cannot report three feeds it does not have.
+          mkdir -p feeds-state/attached
+          ON_PAGE="$(gh release view "$RELEASE_TAG" --repo "$REPO" --json assets --jq '.assets[].name')"
+          MISSING=""
+          for f in latest.json appcast-macos.xml SHA256SUMS; do
+            if printf '%s\n' "$ON_PAGE" | grep -qx "$f"; then
+              : > "feeds-state/attached/$f"
+            else
+              MISSING="$MISSING $f"
+            fi
+          done
+          if [ -n "$MISSING" ]; then
+            for f in $MISSING; do echo "FEEDS-NOT-ATTACHED $f" >&2; done
+            echo "the upload reported success and the release does not carry:$MISSING" >&2
+            exit 1
+          fi
+
           # ── …and what was attached is what was verified ────────────────────
           # Fetched back and compared byte for byte rather than verified again:
           # identical bytes carry the signatures already checked above, and an
@@ -1031,23 +1158,169 @@ jobs:
           cmp SHA256SUMS uploaded/SHA256SUMS
           echo "the attached feeds and checksums are byte-identical to the verified ones"
 
+      # ── 4 · READ THEM BACK FROM THE ADDRESS CLIENTS USE ──────────────────
+      #
+      # The step above compared what was attached against what was verified over
+      # the API. Clients do not read the API. They read
+      # `/releases/download/<tag>/<file>`, through a cache that answers a miss
+      # with a 404 and then remembers it — measured at 0.16.2, where the first
+      # read of a freshly attached feed was a cached 404. So every read here
+      # carries a fresh cache-buster and reports the page, not the cache.
+      #
+      # Each feed is fetched from that address, compared byte for byte with the
+      # file this run signed, and `latest.json` is asked which version it
+      # announces: a feed serving another release's manifest is an installed
+      # client offered the wrong payload. A feed that will not answer is named
+      # `FEEDS-NOT-ATTACHED <file>` and fails the job, which leaves the page a
+      # prerelease.
+      - name: Read the three feeds back from where clients read them
+        id: served
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag }}
+        run: |
+          set -euo pipefail
+          REPO="$GITHUB_REPOSITORY"
+          BASE="https://github.com/$REPO/releases/download/$RELEASE_TAG"
+          # The version this release is, read back out of the prepare job's manifest — the one
+          # place it is written, and the same file the step above builds the feeds from.
+          VERSION="$(jq -r .version meta/manifest.json)"
+          mkdir -p feeds-state/served served-copy
+          for f in latest.json appcast-macos.xml SHA256SUMS; do
+            GOT=""
+            for attempt in 1 2 3 4 5 6 7 8 9 10; do
+              if curl -fsSL --max-time 30 -o "served-copy/$f" \
+                   "$BASE/$f?cb=$(date +%s)-$RANDOM-$attempt"; then GOT=1; break; fi
+              sleep 6
+            done
+            if [ -z "$GOT" ]; then
+              echo "FEEDS-NOT-ATTACHED $f" >&2
+              echo "$f did not answer at $BASE in ten reads." >&2
+              exit 1
+            fi
+            # The version is asked BEFORE the byte comparison, and of the served file. Either
+            # order refuses the same releases, but this one refuses them by the fact that
+            # matters — the address clients read is serving another release's manifest — and it
+            # leaves both refusals reachable: a feed with the right version and the wrong bytes
+            # is what the comparison below is for.
+            if [ "$f" = latest.json ]; then
+              SERVED_VERSION="$(jq -r '.version // empty' "served-copy/$f" 2>/dev/null || true)"
+              if [ "$SERVED_VERSION" != "$VERSION" ]; then
+                echo "FEEDS-NOT-ATTACHED latest.json" >&2
+                echo "the served feed announces ${SERVED_VERSION:-no version}; this release is $VERSION." >&2
+                exit 1
+              fi
+            fi
+            if ! cmp -s "$f" "served-copy/$f"; then
+              echo "FEEDS-NOT-ATTACHED $f" >&2
+              echo "$f is served, but not the bytes this run signed." >&2
+              exit 1
+            fi
+            if [ "$f" = latest.json ]; then echo "served_version=$SERVED_VERSION" >> "$GITHUB_OUTPUT"; fi
+            : > "feeds-state/served/$f"
+            echo "served: $f"
+          done
+          echo "all three feeds answer at $BASE, byte for byte, and latest.json announces $VERSION"
+
+      # ── 5 · LATEST, GRANTED LAST ─────────────────────────────────────────
+      #
+      # This step carries no `if:` on purpose: every step above it must have
+      # succeeded for it to run at all, so the flag can only come off a release
+      # whose three feeds are on the page AND answering from the address clients
+      # read. A failure anywhere above leaves a prerelease, and
+      # `/releases/latest` keeps resolving to the last release whose feeds work.
+      # An older feed is an update path. A 404 is not.
+      - name: Grant latest, now that the feeds are on the release
+        id: promote
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag }}
+          PROMOTE: ${{ github.event_name != 'workflow_dispatch' || inputs.promote }}
+          FENCE: ${{ needs.fence.outputs.fence }}
+        run: |
+          set -euo pipefail
+          REPO="$GITHUB_REPOSITORY"
+          if [ "$FENCE" = draft ]; then
+            echo "promoted=no" >> "$GITHUB_OUTPUT"
+            echo "reason=the page is a draft" >> "$GITHUB_OUTPUT"
+            echo "the feeds are on $RELEASE_TAG; it is a draft, and publishing it is not this job's to do."
+            exit 0
+          fi
+          if [ "$PROMOTE" != true ]; then
+            echo "promoted=no" >> "$GITHUB_OUTPUT"
+            echo "reason=this run was dispatched with promote off" >> "$GITHUB_OUTPUT"
+            echo "the feeds are on $RELEASE_TAG; the page stays a prerelease because this run was asked to leave it one."
+            exit 0
+          fi
+          gh release edit "$RELEASE_TAG" --repo "$REPO" --prerelease=false
+          NOW="$(gh release view "$RELEASE_TAG" --repo "$REPO" --json isPrerelease | jq -r '.isPrerelease')"
+          if [ "$NOW" != false ]; then
+            echo "promoted=no" >> "$GITHUB_OUTPUT"
+            echo "reason=the prerelease flag would not come off" >> "$GITHUB_OUTPUT"
+            echo "LATEST-NOT-GRANTED $RELEASE_TAG: the flag is still on after the edit." >&2
+            exit 1
+          fi
+          echo "promoted=yes" >> "$GITHUB_OUTPUT"
+          echo "LATEST-GRANTED $RELEASE_TAG"
+
+      # ── 6 · WHAT HAPPENED, AS OPPOSED TO WHAT USUALLY HAPPENS ────────────
+      # This step runs on a failure and on a cancellation too, so every line it
+      # writes is read rather than assumed: the per-feed answers come from marker
+      # files the steps that did the work wrote, and the page's state is re-read
+      # from the release itself, here, at the end. A summary that describes the
+      # happy path while the job was red is how a stranded release gets reported
+      # as a finished one.
       - name: Run summary
         if: always()
         run: |
+          set -uo pipefail
+          state() { if [ -e "feeds-state/$1/$2" ]; then printf yes; else printf no; fi; }
+          PAGE="$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json isPrerelease,isDraft 2>/dev/null || true)"
+          if [ -n "$PAGE" ]; then
+            case "$(printf '%s' "$PAGE" | jq -r '"\(.isDraft) \(.isPrerelease)"')" in
+              "true "*)      PAGE_STATE="\`$RELEASE_TAG\` is a draft." ;;
+              "false true")  PAGE_STATE="\`$RELEASE_TAG\` is a **prerelease** — \`/releases/latest\` resolves to the previous release and serves its feeds, so installed clients keep an update path." ;;
+              *)             PAGE_STATE="\`$RELEASE_TAG\` is **Latest**." ;;
+            esac
+          else
+            PAGE_STATE="The state of \`$RELEASE_TAG\` could not be read from this run."
+          fi
+          NOT_ANSWERING=""
+          for f in latest.json appcast-macos.xml SHA256SUMS; do
+            [ -e "feeds-state/served/$f" ] || NOT_ANSWERING="$NOT_ANSWERING $f"
+          done
           {
             echo '### update feeds'
             echo
-            echo '| feed | for |'
-            echo '|---|---|'
-            echo '| `latest.json` | Windows, Linux and macOS (Tauri, minisign) |'
-            echo '| `appcast-macos.xml` | the handover for installed SwiftUI clients (Sparkle, EdDSA) |'
-            echo '| `SHA256SUMS` | the SHA-256 of every binary asset, as attached |'
+            echo '| feed | for | on the release | answering |'
+            echo '|---|---|---|---|'
+            printf '| `latest.json` | Windows, Linux and macOS (Tauri, minisign) | %s | %s |\n' \
+              "$(state attached latest.json)" "$(state served latest.json)"
+            printf '| `appcast-macos.xml` | the handover for installed SwiftUI clients (Sparkle, EdDSA) | %s | %s |\n' \
+              "$(state attached appcast-macos.xml)" "$(state served appcast-macos.xml)"
+            printf '| `SHA256SUMS` | the SHA-256 of every binary asset, as attached | %s | %s |\n' \
+              "$(state attached SHA256SUMS)" "$(state served SHA256SUMS)"
             echo
-            echo "Attached to \`$RELEASE_TAG\`; served from \`/releases/latest/download/\`."
+            echo "$PAGE_STATE"
+            case "$FENCE" in
+              fenced)      echo "This run marked it a prerelease before it started, because it was published as Latest with no feeds on it." ;;
+              not-applied) echo "FENCE-NOT-APPLIED \`$RELEASE_TAG\`: it was published as Latest with no feeds and the prerelease flag would not go on." ;;
+              '')          echo 'This run did not reach the fence step.' ;;
+            esac
             echo
-            echo 'Both were verified against the public keys committed in this repository'
-            echo 'before being attached, and the attached bytes were compared back against'
-            echo 'the verified ones. To check them yourself, from a clone of this repository:'
+            if [ -z "$NOT_ANSWERING" ]; then
+              echo 'Both feeds were verified against the public keys committed in this repository'
+              echo 'before being attached, and all three were read back from'
+              echo "\`/releases/download/$RELEASE_TAG/\` and compared byte for byte with what was"
+              echo "signed here. \`latest.json\` announces ${SERVED_VERSION:-no version}."
+            else
+              for f in $NOT_ANSWERING; do echo "FEEDS-NOT-ATTACHED $f"; done
+              echo
+              echo 'A release whose feeds are not on it stays a prerelease, and installed clients'
+              echo "keep reading the previous release's feed. Repair this one by running this"
+              echo 'workflow against the tag; it becomes Latest when all three feeds answer.'
+            fi
+            echo
+            echo 'To check the feeds yourself, from a clone of this repository:'
             echo
             echo '```'
             echo 'gh release download <tag> --dir assets'
@@ -1056,4 +1329,7 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
         env:
+          GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag }}
+          FENCE: ${{ needs.fence.outputs.fence }}
+          SERVED_VERSION: ${{ steps.served.outputs.served_version }}
