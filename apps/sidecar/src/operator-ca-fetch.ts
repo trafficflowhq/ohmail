@@ -46,7 +46,7 @@ export function operatorCa(dataDir: string, log?: Diagnostic): string | null {
        inside the handshake, where the refusal a person reads is about their server. */
     new X509Certificate(pem);
   } catch {
-    log?.("cloud_operator_ca_unusable", {
+    log?.("cloud_operator_ca_unavailable", {
       reason: "a certificate authority file is present in this app's data folder but could not be " +
         "read as a certificate, so it is not being used to check the server's identity",
     });
