@@ -222,9 +222,16 @@ export const STATIC_REWRITES = Object.freeze([...FLATHUB_VERIFICATION]);
  */
 export function rewritesFor(origin) {
   if (!origin) return [];
+  // NEXT OWNS WHAT THIS RETURNS, so every entry leaves here as a fresh, unfrozen object.
+  // `next/dist/lib/load-custom-routes.js` assigns `route.source` and `route.destination` on
+  // each rewrite it loads. The table above stays frozen — the freeze is the claim that nothing
+  // edits it at runtime — and spreading a frozen ARRAY copies element REFERENCES, so handing
+  // those straight over killed an ARMED build: "Cannot assign to read only property 'source'".
+  // Unarmed the function returns `[]` and never reaches them, which is why every build gate,
+  // all of which run unarmed, read green. The copy is the boundary; keep it at the `return`.
   return [
     ...STATIC_REWRITES,
     { source: `${API_BASE}/:path*`, destination: `${origin}/:path*` },
     { source: REFRESH_PATH, destination: `${origin}${REFRESH_PATH}` },
-  ];
+  ].map((r) => ({ ...r }));
 }
