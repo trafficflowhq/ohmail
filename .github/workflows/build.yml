@@ -1444,6 +1444,17 @@ jobs:
           for t in xwd xwininfo; do
             command -v "$t" > /dev/null || { echo "launch check: $t is not installed"; exit 1; }
           done
+          # THE BUNDLE MAY NOT SHIP THE MACHINE'S OPENER. `engine.rs` looks for `xdg-open` at
+          # /usr/bin and /usr/local/bin and then on PATH, and the AppImage launcher puts the
+          # AppDir FIRST on PATH for everything it starts — so an `xdg-open` inside the bundle
+          # would answer instead of the machine's. The bundle already ships `xdg-mime` for its
+          # own use, which is how this hazard is known to be reachable rather than imagined.
+          ./build/ohmail-linux-x86_64.AppImage --appimage-extract > /dev/null
+          if [ -e squashfs-root/usr/bin/xdg-open ]; then
+            echo "launch check: the bundle ships an xdg-open, which would answer for the machine's" >&2
+            exit 1
+          fi
+          rm -rf squashfs-root
           Xvfb :99 -screen 0 1400x900x24 &
           XVFB=$!
           # Waited for, not slept on: a capture against a server that is not up
@@ -2468,6 +2479,17 @@ jobs:
           for t in xwd xwininfo; do
             command -v "$t" > /dev/null || { echo "launch check: $t is not installed"; exit 1; }
           done
+          # THE BUNDLE MAY NOT SHIP THE MACHINE'S OPENER. `engine.rs` looks for `xdg-open` at
+          # /usr/bin and /usr/local/bin and then on PATH, and the AppImage launcher puts the
+          # AppDir FIRST on PATH for everything it starts — so an `xdg-open` inside the bundle
+          # would answer instead of the machine's. The bundle already ships `xdg-mime` for its
+          # own use, which is how this hazard is known to be reachable rather than imagined.
+          ./build/ohmail-linux-aarch64.AppImage --appimage-extract > /dev/null
+          if [ -e squashfs-root/usr/bin/xdg-open ]; then
+            echo "launch check: the bundle ships an xdg-open, which would answer for the machine's" >&2
+            exit 1
+          fi
+          rm -rf squashfs-root
           Xvfb :99 -screen 0 1400x900x24 &
           XVFB=$!
           # Waited for, not slept on: a capture against a server that is not up
@@ -2877,6 +2899,22 @@ jobs:
           # (it fails on a stock ubuntu-latest with `libicui18n.so.77: cannot open shared
           # object file`), so running it here would be a false red about the app.
           flatpak build flatpak-build /app/lib/ohmail/runtime/node --version
+
+          # AND THE RUNTIME CARRIES THE OPENER THE APP RESOLVES. Inside the sandbox `xdg-open`
+          # is the Platform's portal shim — the app execs it and never talks to the portal
+          # itself — and `engine.rs` looks for it at /usr/bin first. A runtime that stopped
+          # shipping xdg-utils would install cleanly and open no link at all, which is a defect
+          # a person finds and no build step here would. The runtime is read out of the manifest
+          # rather than written down twice.
+          R=$(sed -n 's/^runtime: *//p' apps/desktop/flatpak/app.ohmail.Desktop.yml | head -1)
+          V=$(sed -n "s/^runtime-version: *//p" apps/desktop/flatpak/app.ohmail.Desktop.yml \
+                | head -1 | tr -d "'\"")
+          [ -n "$R" ] && [ -n "$V" ] || { echo "the manifest names no runtime" >&2; exit 1; }
+          flatpak info "$R//$V" > /dev/null 2>&1 || {
+            echo "the $R//$V runtime is not installed, so nothing was asked about it" >&2; exit 1; }
+          flatpak run --command=sh "$R//$V" -c 'command -v xdg-open' || {
+            echo "the $R//$V runtime has no xdg-open — every link in the app would do nothing" >&2
+            exit 1; }
 
       # Flathub's own linter, over the manifest and then the built repository.
       # It is the closest thing to the review the submission gets.
