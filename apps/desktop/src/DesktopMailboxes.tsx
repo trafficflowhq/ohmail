@@ -66,6 +66,16 @@ export interface MailboxReach {
    * password anybody needs to re-type.
    */
   credentialBlocked: { state: "unreadable" | "foreign-host"; confirmed: boolean } | null;
+  /**
+   * THIS MAILBOX'S SETTINGS DOCUMENT CANNOT BE READ OR WRITTEN — `null` while it can.
+   *
+   * Its own fact and below the socket arms, because the server here is answering perfectly: mail
+   * is coming down and the rules that decide where it goes cannot be read. Measured on the
+   * 0.18.0 release candidate — drains every sixteen seconds, `ohmail/_meta` refusing every read,
+   * and this row saying Up to date for the life of the install. `code` is the refusal's own identifier, shown
+   * so the sentence a person quotes and the line a maintainer reads name one fact.
+   */
+  profileBlocked: { code: string | null; confirmed: boolean } | null;
   /** ISO instant of the FIRST observation of death in the current outage; null while reachable. */
   unreachableSince: string | null;
 }
@@ -295,6 +305,17 @@ export async function readMailboxReachVia(
        withholds the advice, rather than telling somebody to sign in again on one reading. */
     return { state: b.state, confirmed: b.confirmed === true };
   };
+  /* THE SETTINGS-DOCUMENT BLOCK, read the same way its sibling is. `confirmed` decides whether
+     there is anything to say at all here — the engine raises this object only once the condition
+     is settled — so an absent or false `confirmed` reads as nothing to report, which is the safe
+     half on this pane's standing rule. A `code` that is not a string is dropped and the sentence
+     stands without it: an unnamed refusal is still a refusal. */
+  const profileBlock = (raw: unknown): MailboxReach["profileBlocked"] => {
+    if (typeof raw !== "object" || raw === null) return null;
+    const b = raw as { code?: unknown; confirmed?: unknown };
+    if (b.confirmed !== true) return null;
+    return { code: typeof b.code === "string" && b.code !== "" ? b.code : null, confirmed: true };
+  };
   /* ── ONE ELEMENT IS A FACT ABOUT ONE ROW, NEVER ABOUT THE WHOLE READ ───────────────────
    * `const it = raw as {…}` then `it.mailboxId` THREW on a `null` element, and the throw
    * left the whole function — `setReach` never ran, the slice on screen stayed whatever it
@@ -308,7 +329,7 @@ export async function readMailboxReachVia(
   for (const raw of items) {
     const it = (typeof raw === "object" && raw !== null ? raw : {}) as {
       mailboxId?: unknown; reachable?: unknown; unreachableSince?: unknown; signInRefused?: unknown;
-      credentialBlocked?: unknown;
+      credentialBlocked?: unknown; profileBlocked?: unknown;
     };
     /* NO ID, NOTHING TO SAY IT ABOUT. Dropped rather than faulted: marking the slice would let one
        unattributable entry speak for rows it never named. */
@@ -316,7 +337,7 @@ export async function readMailboxReachVia(
     if (typeof it.reachable !== "boolean") {
       out[it.mailboxId] = {
         answered: false, reachable: false, signInRefused: false, credentialBlocked: null,
-        unreachableSince: null,
+        profileBlocked: null, unreachableSince: null,
       };
       continue;
     }
@@ -332,6 +353,9 @@ export async function readMailboxReachVia(
          nothing, and half of this object is not a fact. A `state` outside the two the engine can
          send is dropped rather than rendered — the sentence is chosen by it. */
       credentialBlocked: credentialBlock(it.credentialBlocked),
+      /* Same rule again: an engine older than the field says nothing about it, and nothing is
+         what an absent field means. */
+      profileBlocked: profileBlock(it.profileBlocked),
     };
   }
   /* STAMPED WHERE THE ANSWER IS MADE, not where it is stored: the sequence guard discards a read
@@ -1220,6 +1244,25 @@ export function DesktopMailboxes(
     if (r && reachStale(reach, now)) return say(t("desktopStateUnknown"));
     if (m.organizerRole === "reader") return say(t("stateReading"));
     if (m.syncBlockedSince) return say(t("desktopStatePaused"));
+    /* ── THE SETTINGS CANNOT BE READ, AND THAT IS NOT A PROGRESS STATE ────────────────────
+     *
+     * ABOVE all three progress arms and below every socket arm, which is exactly what the fact
+     * is: the server is answering, mail is coming down, and the document that says where it
+     * should GO refuses every read. The three arms below would each be true and each be the
+     * wrong sentence — "Up to date" most of all, which is what this row said on the 0.18.0 release candidate
+     * while `ohmail/_meta` refused `list_profiles` on every drain for the life of the install
+     * and eight messages sat in INBOX. The engine raises this only once the condition is settled
+     * (two drains, or one at boot), so a provider that was not ready on a single pass says
+     * nothing here.
+     *
+     * A FACT AND A NAME, no advice: nothing the person can do fixes a folder read, the engine
+     * keeps trying on its own, and the code is what makes a support conversation about this one
+     * exchange instead of three. */
+    if (r?.profileBlocked) {
+      return say(t("desktopStateSettingsUnreadable", {
+        code: r.profileBlocked.code ?? t("desktopUnknownCode"),
+      }));
+    }
     if (m.lastSyncAt === null) return say(t("desktopStateFirstOpen"));
     if (m.initialImportCompletedAt === null) return say(t("desktopStateCatchingUp"));
     return say(t("desktopStateUpToDate"));

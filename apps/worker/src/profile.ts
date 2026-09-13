@@ -183,6 +183,26 @@ export class OrganizerProfileSync {
    */
   private lastFailure: { op: ProfileOp | null; errorClass: string } | null = null;
   /**
+   * HOW MANY TICKS IN A ROW HAVE FAILED, and the refusal's own name — the two halves of
+   * {@link profileBlock}, which is what puts a sentence on the mailbox row.
+   *
+   * Kept beside {@link lastFailure} and not folded into it, because they answer different
+   * questions: that one is "have I already said this", keyed by `(op, errorClass)` so a
+   * DIFFERENT fault is worth a new line; this one is "how long has something been wrong",
+   * which a change of fault does not reset — a folder that refuses one way and then another
+   * is not a folder that recovered.
+   */
+  private consecutiveFailures = 0;
+  private lastFailureCode: string | null = null;
+  /**
+   * HAS ANY TICK OF THIS ORGANIZING LIFE EVER COMPLETED. The `confirmed` rule's exception: a
+   * first refusal is ordinarily a provider that was not ready, but on an attachment with no
+   * working tick behind it there is no good reading for it to be a blip against, so it is
+   * already the whole of what this install knows about the folder. Measured: a restart
+   * reproduced the refusal at boot and the row still read Up to date.
+   */
+  private everSucceeded = false;
+  /**
    * HOW MANY FAILURES THIS OBJECT HAS NOTED, ever. Not a metric — a NESTING GUARD.
    *
    * {@link onOrganize} calls {@link armHoldFromFolder} inside its own try, and that arm has its
@@ -214,6 +234,11 @@ export class OrganizerProfileSync {
     const errorClass = describeError(err).errorClass;
     const previous = this.lastFailure;
     this.lastFailure = { op, errorClass };
+    /* The row's half. Counted here rather than at the catch so a failure recorded by the NESTED
+       preflight arm counts exactly like one from the tick — both are ticks that did not maintain
+       the document, which is the only thing the sentence claims. */
+    this.consecutiveFailures += 1;
+    this.lastFailureCode = describeError(err).errorCode;
     this.failuresNoted += 1;
     if (previous !== null && previous.op === op && previous.errorClass === errorClass) return;
     log("organizer_profile_write_failed", {
@@ -237,6 +262,13 @@ export class OrganizerProfileSync {
   ): void {
     const { deps } = this;
     const previous = this.lastFailure;
+    /* THE ROW'S HALF IS CLEARED FIRST AND UNCONDITIONALLY, above the `previous === null` return.
+       A tick completed, so this attachment HAS a working reading of the folder — true whether or
+       not a failure was standing, and it is what licenses holding the next single refusal silent.
+       Under the return it would never be set on a healthy first tick. */
+    this.consecutiveFailures = 0;
+    this.lastFailureCode = null;
+    this.everSucceeded = true;
     if (previous === null) return;
     this.lastFailure = null;
     log("organizer_profile_recovered", {
@@ -246,6 +278,26 @@ export class OrganizerProfileSync {
         "that had been reported once and then held silent; the line exists so a reader can tell " +
         "a standing fault from one that is over",
     });
+  }
+
+  /**
+   * WHAT THE MAILBOX ROW SHOULD SAY ABOUT THIS MAILBOX'S SETTINGS — `null` while they are being
+   * maintained, and the refusal's own name when they are not.
+   *
+   * The failure latch above ends a log line that repeated; this ends the SILENCE, which is the
+   * half a person feels. Measured on the 0.18.0 release candidate: `organizer_profile_write_failed`
+   * `op: list_profiles` `errorCode: profile_gap_too_deep` on every drain, reproduced at boot
+   * after a restart, and a row reading Organized · Up to date · Organizing throughout, with
+   * eight messages sitting in INBOX. Nobody reads a desktop log.
+   *
+   * TWO CONSECUTIVE, or ONE where nothing has ever worked — the `confirmed` rule the credential
+   * block already states, with the exception {@link everSucceeded} explains. Derived and never
+   * stored: the counter IS the state, and a second record would be a second clock.
+   */
+  profileBlock(): { code: string | null; confirmed: boolean } | null {
+    if (this.consecutiveFailures === 0) return null;
+    if (this.consecutiveFailures < 2 && this.everSucceeded) return null;
+    return { code: this.lastFailureCode, confirmed: true };
   }
 
   /**
@@ -274,6 +326,13 @@ export class OrganizerProfileSync {
        and a re-promotion is a new organizing life that has said nothing yet — carrying the latch
        across would let a standing fault go unannounced for the whole of it. */
     this.lastFailure = null;
+    /* AND SO DOES THE ROW'S SENTENCE, for the same reason read from the other end: a reader is
+       not maintaining this document at all, so a fault carried over from the organizing life
+       that just ended would be a sentence about work nobody is doing. `everSucceeded` goes with
+       them — the new life has no working tick behind it either. */
+    this.consecutiveFailures = 0;
+    this.lastFailureCode = null;
+    this.everSucceeded = false;
   }
 
   /**

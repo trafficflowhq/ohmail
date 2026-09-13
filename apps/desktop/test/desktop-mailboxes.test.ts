@@ -3714,3 +3714,92 @@ describe("a stored password this computer cannot use is an outage, and says whic
     expect(text).not.toContain(copy.desktopStateCredentialUnreadable!);
   });
 });
+
+/**
+ * ══════════════════════════════════════════════════════════════════════════════════════════
+ *  THE SETTINGS DOCUMENT CANNOT BE READ, AND THE ROW SAYS SO INSTEAD OF "UP TO DATE"
+ * ══════════════════════════════════════════════════════════════════════════════════════════
+ *
+ * Measured on the 0.18.0 release candidate. The mailbox was claimed, the takeover authorized, and
+ * from that moment `ohmail/_meta` refused every profile read: `organizer_profile_write_failed`
+ * `op: list_profiles` `errorCode: profile_gap_too_deep`, on every drain, reproduced at boot after
+ * a restart. The drain itself was perfect — `sync_drain` every sixteen seconds, `drained: true` —
+ * so this row read Organized on this computer · Up to date · Organizing for the life of the
+ * install while eight appended messages sat in INBOX and no sentence reached the person.
+ *
+ * The health of a row that ORGANIZES is not the drain alone: the drain says mail is coming down,
+ * and this says whether the rules that decide where it goes can be read at all. Same family as
+ * the stored-password block above, and the same shape.
+ *
+ * WATCH THEM FAIL: delete the `profileBlocked` arm from `stateOf` and the first two cases redden
+ * on "Up to date". Drop the `confirmed` term from the parser and the third reddens, the sentence
+ * raised on a single drain's refusal.
+ */
+describe("a mailbox whose settings document refuses every read does not read Up to date", () => {
+  const copy = (messages as unknown as { mailboxes: Record<string, string> }).mailboxes;
+  const settingsSentence = (code: string): string =>
+    copy.desktopStateSettingsUnreadable!.replace("{code}", code);
+
+  /** A LIVE link — the whole point: the server is answering and the document still refuses. */
+  const reach = (over: Record<string, unknown>): Response => new Response(JSON.stringify({
+    items: [{ mailboxId: "mbx-1", reachable: true, unreachableSince: null, ...over }],
+  }), { status: 200, headers: { "content-type": "application/json" } });
+
+  it("says the settings cannot be read, and names the refusal", async () => {
+    FACTS = [MAILBOX];
+    bridgeReply = () => reach({
+      profileBlocked: { code: "profile_gap_too_deep", confirmed: true },
+    });
+
+    const text = (await render("local")).textContent ?? "";
+    expect(text, "a mailbox whose rules cannot be read reported itself up to date")
+      .not.toContain(copy.desktopStateUpToDate!);
+    expect(text).toContain(settingsSentence("profile_gap_too_deep"));
+  });
+
+  it("an unnamed refusal is still a refusal", async () => {
+    /* A thrown value with no `code` is rarer and not less true. The sentence stands with the
+       catalogue's own word for an unknown code rather than being withheld. */
+    FACTS = [MAILBOX];
+    bridgeReply = () => reach({ profileBlocked: { code: null, confirmed: true } });
+
+    const text = (await render("local")).textContent ?? "";
+    expect(text).not.toContain(copy.desktopStateUpToDate!);
+    expect(text).toContain(settingsSentence(copy.desktopUnknownCode!));
+  });
+
+  it("ONE unsettled drain says nothing — the sentence waits for the condition to settle", async () => {
+    /* The engine raises `confirmed` only at the second consecutive refusal, or the first where
+       nothing has ever worked. A pane that rendered an unconfirmed block would put a fault on
+       the row for a provider that was not ready on one pass. */
+    FACTS = [MAILBOX];
+    bridgeReply = () => reach({ profileBlocked: { code: "profile_gap_too_deep", confirmed: false } });
+
+    const text = (await render("local")).textContent ?? "";
+    expect(text, "an unsettled refusal was rendered as a standing fault")
+      .not.toContain(settingsSentence("profile_gap_too_deep"));
+    expect(text).toContain(copy.desktopStateUpToDate!);
+  });
+
+  it("POSITIVE CONTROL — an engine that says nothing, and a dead socket, are unchanged", async () => {
+    FACTS = [MAILBOX];
+    /* An engine older than the field sends no `profileBlocked` at all, and nothing is what an
+       absent field means: the healthy row stays healthy. */
+    bridgeReply = () => reach({});
+    let text = (await render("local")).textContent ?? "";
+    expect(text).toContain(copy.desktopStateUpToDate!);
+    await act(async () => { root!.unmount(); });
+    root = null;
+
+    /* And the socket arms still outrank it: a server nobody can reach is not a settings problem,
+       and telling somebody their rules cannot be read would point at the wrong thing entirely. */
+    bridgeReply = () => reach({
+      reachable: false,
+      unreachableSince: new Date(Date.now() - 20 * 60_000).toISOString(),
+      profileBlocked: { code: "profile_gap_too_deep", confirmed: true },
+    });
+    text = (await render("local")).textContent ?? "";
+    expect(text).toContain(copy.desktopStateUnreachable!);
+    expect(text).not.toContain(settingsSentence("profile_gap_too_deep"));
+  });
+});

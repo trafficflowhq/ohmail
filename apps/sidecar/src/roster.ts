@@ -65,6 +65,27 @@ export interface CredentialBlock {
   confirmed: boolean;
 }
 
+/**
+ * WHY THIS INSTALL CANNOT KEEP THIS MAILBOX'S SETTINGS DOCUMENT — the profile's half of
+ * {@link CredentialBlock}'s shape, and deliberately the same shape.
+ */
+export interface ProfileBlock {
+  /**
+   * The refusal's `errorCode`, or `null` where the thrown value carried none. The same alphabet
+   * `organizer_profile_write_failed` publishes, so the sentence a person is shown and the line a
+   * maintainer reads name one fact rather than two.
+   */
+  code: string | null;
+  /**
+   * THE CONDITION HAS BEEN SEEN TWICE, or once with no working reading behind it. The credential
+   * block's rule: a single refusal can be a provider that was not ready on one drain, and a
+   * sentence raised on it is noise nobody can act on. Always `true` where the block exists at
+   * all — the field is here so the shape matches its sibling and a later softer state has
+   * somewhere to live.
+   */
+  confirmed: boolean;
+}
+
   /**
    * Whether this install can reach one mailbox's server right now, and what its first sync
    * produced. Not on {@link OrganizerState}: "who organizes this mailbox" is a fact about the
@@ -103,6 +124,18 @@ export interface MailboxConnectionState {
    * that looks connected is moving no mail.
    */
   credentialBlocked: CredentialBlock | null;
+  /**
+   * THIS MAILBOX'S SETTINGS DOCUMENT COULD NOT BE READ OR WRITTEN — see {@link ProfileBlock},
+   * `null` while it is being maintained.
+   *
+   * The same family as {@link credentialBlocked} and here for the same reason: it is a reason a
+   * mailbox that looks connected is not being organized the way its person asked. Measured on
+   * the 0.18.0 release candidate — a claimed mailbox whose `ohmail/_meta` refused every read, drains succeeding
+   * every sixteen seconds, and the row reading Up to date for the life of the install. The drain
+   * cannot see this: it answers "is mail coming down", and this answers "can this install read
+   * the rules it is supposed to apply".
+   */
+  profileBlocked: ProfileBlock | null;
   /**
    * What this mailbox's first sync produced — see {@link FirstSyncState}. Derived from the
    * engine's own facts (the import stamp its drain writes, and whether the mirror holds anything

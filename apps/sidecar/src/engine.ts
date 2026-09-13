@@ -5568,6 +5568,11 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                socket was opened at all here, so "can't reach the mail server" would send somebody
                to look at a network that is working. See {@link CredentialBlock}. */
             credentialBlocked: credentialBlock,
+            /* AND WHETHER THE SETTINGS DOCUMENT CAN BE KEPT AT ALL — read off the profile sync,
+               which is the only thing that knows. The drain cannot answer this: it says mail is
+               coming down, and a claimed mailbox whose `ohmail/_meta` refuses every read drains
+               perfectly while none of the person's rules can be read. See {@link ProfileBlock}. */
+            profileBlocked: profileSync.profileBlock(),
             /* THE DIAGNOSIS, not just the fact. "Can't reach the mail server" over a server that
                answered and said no is the wrong sentence: it sends somebody to look at their
                network when the answer is their password. */
@@ -6383,6 +6388,11 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                  read confirmed it. Two flat fields would admit "confirmed" with nothing to be
                  confirmed about. No server name and no address, like every other field here. */
               credentialBlocked: r.connection.credentialBlocked,
+              /* THE SETTINGS-DOCUMENT BLOCK, on the same reasoning and in the same shape: the
+                 refusal's own code and whether it has been seen enough times to say. The code is
+                 an identifier this build produces, never a server's text — nothing here carries
+                 a message, a server name or an address. */
+              profileBlocked: r.connection.profileBlocked,
             }));
             /* One line where this route answers, so a question that never arrived can be told
                from an answer that was refused — from the log's side those are the same absence.

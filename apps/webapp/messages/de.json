@@ -2301,6 +2301,7 @@
     "desktopStateUnknown": "Der Mailserver lässt sich gerade nicht prüfen.",
     "desktopStateLastAnswered": "Letzte Antwort {when}.",
     "desktopStatePaused": "Pausiert",
+    "desktopStateSettingsUnreadable": "ohmail kann die Einstellungen dieses Postfachs nicht lesen ({code}). Es versucht es weiter.",
     "desktopStateFirstOpen": "Wird zum ersten Mal geöffnet",
     "desktopStateCatchingUp": "Holt noch auf",
     "desktopStateUpToDate": "Aktuell",

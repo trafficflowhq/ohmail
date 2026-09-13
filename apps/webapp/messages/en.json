@@ -2301,6 +2301,7 @@
     "desktopStateUnknown": "Can't check the mail server right now.",
     "desktopStateLastAnswered": "Last answered {when}.",
     "desktopStatePaused": "Paused",
+    "desktopStateSettingsUnreadable": "ohmail can't read this mailbox's settings ({code}). It keeps trying.",
     "desktopStateFirstOpen": "Opening for the first time",
     "desktopStateCatchingUp": "Still catching up",
     "desktopStateUpToDate": "Up to date",
