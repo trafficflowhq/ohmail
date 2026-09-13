@@ -135,9 +135,16 @@ function extension(id: string, critical: boolean, value: Buffer): Buffer {
  * is kept in the past so a machine whose clock has not yet synchronised at boot does not present
  * a not-yet-valid certificate to a client that (unlike ours) does check.
  */
-export function buildSelfSignedCert(publicKey: KeyObject, privateKey: KeyObject): Buffer {
+export function buildSelfSignedCert(
+  publicKey: KeyObject,
+  privateKey: KeyObject,
+  /* The name in the certificate. The door's own is the default and the only one product code
+     passes; a fixture that needs a certificate for a name a resolver will answer for gives its
+     own rather than growing a second minter beside this one. */
+  name: string = LAN_CERT_NAME,
+): Buffer {
   const spki = publicKey.export({ type: "spki", format: "der" });
-  const subject = nameOf(LAN_CERT_NAME);
+  const subject = nameOf(name);
   const tbs = seq(
     explicit(0, integer(2)), // v3
     integer(randomBytes(16)),
@@ -159,7 +166,7 @@ export function buildSelfSignedCert(publicKey: KeyObject, privateKey: KeyObject)
         extension(OID_KEY_USAGE, true, bitString(Buffer.from([0x80]), 7)),
         extension(OID_EXT_KEY_USAGE, false, seq(oid(OID_SERVER_AUTH))),
         // One name, and it asserts nothing — see the header.
-        extension(OID_SUBJECT_ALT_NAME, false, seq(implicitPrimitive(2, Buffer.from(LAN_CERT_NAME, "ascii")))),
+        extension(OID_SUBJECT_ALT_NAME, false, seq(implicitPrimitive(2, Buffer.from(name, "ascii")))),
       ),
     ),
   );
