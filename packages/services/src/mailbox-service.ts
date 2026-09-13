@@ -2025,11 +2025,9 @@ export class MailboxService {
        * healthy mailbox — precisely what lets a gate seize a mailbox past a live foreign claim.
        */
       /**
-       * A STAND-DOWN IS NOT A DISCONNECT, and `status` alone cannot tell them apart — the header
-       * says so and this guard did not, so the one remedy the pane offers a stood-down row
-       * refused itself with the sentence written for a mailbox the person removed. The reason is
-       * the discriminator: `delete` clears it in the same statement that writes the tombstone, so
-       * a non-null reason means the organizer lease stood this install down.
+       * A STAND-DOWN IS NOT A DISCONNECT, and `status` alone cannot tell them apart. The reason
+       * column is the discriminator: `delete` clears it in the same statement that writes the
+       * tombstone, so a non-null reason means the organizer lease stood this install down.
        *
        * `!== null` rather than the membership test, matching every read side: an UNRECOGNISED
        * member is a NEWER writer's stand-down (`standDownToken`, `isMailboxDisabledReason`'s own

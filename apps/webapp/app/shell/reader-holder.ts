@@ -166,17 +166,14 @@ export interface HolderWho {
   /** That same date as a person reads it, when the surface has formatted one. */
   shown?: string | null;
   /**
-   * WHETHER THE CLAIM ITSELF RECORDED A NAME — read by the PHONE arm alone, and it exists
-   * because that arm is the only one for which a surface's fallback spelling would be a lie.
+   * WHETHER THE CLAIM ITSELF RECORDED A NAME — read by the PHONE arm alone, because that arm is
+   * the only one where a surface's fallback spelling would be a lie. Other arms treat a
+   * surface-supplied word (the desktop pane's "another install") as a name, and rightly.
    *
-   * A surface that supplies its own word for a holder it cannot name (the desktop pane's
-   * "another install") hands that word as {@link HolderWho.name}, and the kind arms rightly treat
-   * it as a name: the sentence reads "Since 30 Aug · another install", which is that pane's
-   * shipped wording and its own control. A PHONE has two sentences that differ precisely in
-   * whether a name is interpolated, and "another install is organizing this mailbox — a phone
-   * organizes while its app is open" is a phone described as a computer. So the phone arm asks
-   * the claim, not the surface. Absent, it derives from the name, which is what a surface that
-   * passes the raw column wants.
+   * The phone has two sentences differing only in whether a name is interpolated, so "another
+   * install is organizing this mailbox — a phone organizes while its app is open" would describe
+   * a phone as a computer. So the phone arm asks the claim, not the surface; absent, it derives
+   * from the name, which is what a surface passing the raw column wants.
    */
   claimNamed?: boolean;
 }
@@ -194,10 +191,9 @@ export interface HolderSentence {
  * The `mobile` arm is {@link phoneHolderKey}, which this subsumes rather than copies: a second
  * table for the same question is the drift `phone-holder-sentence.test.tsx` exists to refuse.
  *
- * `voice` is the room the surface has — `short` drops the clause, which is what
- * {@link PHONE_HOLDER_WHY_KEY} exists for, and a short line never carries a verb clause either.
- * `since` decides only whether the DATED arms are reachable: every one of them opens with the
- * date, so with none there is nothing for them to open with (the em-dash defect).
+ * `voice` `short` drops the clause ({@link PHONE_HOLDER_WHY_KEY}) and never carries a verb clause.
+ * `since` decides only whether the DATED arms are reachable: each opens with the date, so with
+ * none there is nothing to open with (the em-dash defect).
  */
 export function holderSentence(
   input: { who: HolderWho; verb: HolderVerb; voice?: PhoneHolderVoice },

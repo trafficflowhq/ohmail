@@ -718,19 +718,14 @@ export function FirstRun({
      not keep. The derivation that fixed it lives inside `holderSentence` now, with the six other
      arms it used to stand beside. */
   /**
-   * THE HOLDER SENTENCE THIS SCREEN RENDERS — the table, asked once, for both reader rows.
-   *
-   * The rows used to carry a seven-arm ladder each, spelled twice in this file and twice more in
-   * the desktop pane and the rail. `holderSentence` holds it now, the phone's two sentences
-   * included; this closes over `tm` so a row is one call.
+   * THE HOLDER SENTENCE THIS SCREEN RENDERS — `holderSentence` asked once for both reader rows,
+   * the phone's two sentences included, closing over `tm` so a row is one call.
    *
    * THE VERB IS `none`, AND THAT IS NOT AN OVERSIGHT. Issue #5 is about surfaces that name a
-   * holder and leave a person with no way out; this screen is the opposite case — the way out is
-   * the CHOICE rendered directly under this row, in its own words ("Organize here instead" /
-   * "Read only"), and a sentence telling somebody to go and press something else would send them
-   * away from the control they are looking at. The clause is carried where the press has to be
-   * FOUND — the desktop's mailbox row and the rail — and withheld where it is already on screen.
-   * Caught by this file's three existing controls, which asserted the plain sentence here.
+   * holder and leave no way out; here the way out is the CHOICE rendered directly under this row
+   * ("Organize here instead" / "Read only"), so a clause sending someone elsewhere would point
+   * away from it. The press clause is carried where the press must be FOUND (the desktop row and
+   * the rail) and withheld here. Kept honest by this file's three existing sentence controls.
    */
   const tmSaid = (who: HolderWho): string => {
     const said = holderSentence({ who, verb: "none" });

@@ -658,13 +658,11 @@ export function DesktopMailboxes(
     /**
      * WHO HELD THE MAILBOX WHEN THE BUTTON WAS PRESSED — the half issue #5 is about.
      *
-     * The note under a press used to be composed from the ROW, which is a poll up to a minute
-     * old, so the sentence naming the install that keeps the mailbox could name the one that had
-     * already gone. Captured in the same statement that makes the request instead: the phone's
-     * door does the same thing from the other side (it writes the holder onto the engine's own
-     * organizer state as it refuses, so `standaloneHere().heldBy` names it on that very render),
-     * and this is that rule on a door whose refusal carries no holder at all. `null` where the
-     * row named nobody — which is the released row's ordinary case, not a missing read.
+     * Captured in the same statement that makes the request, not from the ROW: a poll up to a
+     * minute old could name an install that has already gone. The phone's door does the same from
+     * the other side (it writes the holder onto the engine's organizer state as it refuses, so
+     * `standaloneHere().heldBy` names it on that render); this is that rule on a door whose refusal
+     * carries no holder. `null` where the row named nobody — the released row's ordinary case.
      */
     heldBy: HolderWho | null;
   }>>(() => new Map());
