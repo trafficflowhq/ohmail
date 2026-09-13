@@ -1577,10 +1577,6 @@ export const BACKLOG_PUBLISH_PAGES = 8;
  * What makes it affordable is the WINDOW rather than the number. With {@link EngineOptions.storePolicy}
  * absent — `full`, which evicts nothing — the same pass re-derives the whole mailbox a hundred times
  * and costs 7.5 s here, about three sync cadences on an 8 GB machine.
- *
- * ONE KNOWN HOLE, measured and not yet closed: this pass writes newest-first and
- * {@link BODY_CACHE_MAX}'s trim evicts the least recently WRITTEN, so an arrival drops the newest
- * bodies the pass just fetched and the next pass fetches them again.
  */
 export const EAGER_BODIES_MAX = 1000;
 
