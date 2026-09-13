@@ -1674,25 +1674,14 @@ class OverlayReader implements EntityReader {
 const MAX_CONCURRENT_BODIES = 4;
 
 /**
- * HOW OFTEN THE INSTANT INDEX MAY BE REBUILT — the floor between two builds, from the end of one
- * to the start of the next, and consulted only when a search is actually asked.
+ * HOW MANY MESSAGES THE INSTANT INDEX TAKES ON INSIDE ONE CALL — the bound on both synchronous
+ * paths: the FIRST build (above it, {@link SearchIndex.buildSliced} off the keystroke path) and
+ * one incremental catch-up (above it, the index is rebuilt from scratch instead).
  *
- * The mirror's version moves on every drain and on every body publish, and the index used to be
- * rebuilt the next time anything asked for it: on a large mailbox, a whole-mirror walk per
- * keystroke. Thirty seconds states what a search box owes — mail from the last half minute may
- * not be in the instant answer, the archive pass beside it has no such lag, and the alternative
- * (an index always exactly current) is what froze the window.
- */
-const SEARCH_INDEX_REBUILD_MIN_MS = 30_000;
-
-/**
- * THE LARGEST MIRROR THE INSTANT INDEX IS BUILT FOR SYNCHRONOUSLY — above it the build is sliced
- * ({@link SearchIndex.buildSliced}) and the first search answers "indexing" instead.
- *
- * SET FROM THE MEASURED RATE, not guessed: the body-free build runs at 22 microseconds a message
- * (30 000 in 656 ms, this host, 2026-09-13), so one 16 ms frame buys about 730 and five hundred
- * leaves margin for a slower core. The demo world is forty messages and every fixture mount is
- * smaller, so the surfaces that answered the first keystroke synchronously still do.
+ * SET FROM THE MEASURED RATE, not guessed: indexing runs at 22 microseconds a message (30 000 in
+ * 656 ms, this host, 2026-09-13), so one 16 ms frame buys about 730 and five hundred leaves
+ * margin for a slower core. It is the ceiling entered at the TOP of each call, so no amount of
+ * mail arriving at once turns a keystroke into a whole-mirror walk.
  */
 const SEARCH_INDEX_SYNC_MAX = 500;
 
@@ -1907,10 +1896,10 @@ export class OhmailEngine {
   /** {@link oneSourceReader} over the overlay — what {@link OhmailEngine.read} hands out. */
   private readonly resolvedView: EntityReader;
   /**
-   * THE INSTANT INDEX AND THE MIRROR IT IS AN INDEX OF. `builtAt` is this engine's clock at the
-   * moment the build finished — {@link SEARCH_INDEX_REBUILD_MIN_MS} is measured from it.
+   * THE INSTANT INDEX AND THE MIRROR IT IS AN INDEX OF. `version` is reassigned as the index is
+   * refreshed in place, so the pair stays one fact — see {@link OhmailEngine.searchIndex}.
    */
-  private searchCache: { version: number; index: SearchIndex; builtAt: number } | null = null;
+  private searchCache: { version: number; index: SearchIndex } | null = null;
   /** The build in flight, with the token that abandons it. One at a time — see {@link OhmailEngine.startSearchBuild}. */
   private searchBuild: { version: number; cancelled: boolean; done: Promise<void> } | null = null;
   private syncing: Promise<void> | null = null;
@@ -6146,49 +6135,57 @@ export class OhmailEngine {
   }
 
   /**
-   * THE INDEX TO ANSWER FROM, AND THE BUILD THAT IS OWED — one place, because `search` and
+   * THE INDEX TO ANSWER FROM, AND THE WORK THAT IS OWED — one place, because `search` and
    * `messagesWith` must never hold two opinions about what this device knows.
    *
-   * A STALE INDEX ANSWERS. It used to be "the version moved, so rebuild, now, inside this call",
-   * and both halves were the defect: the version moves on every drain and every body publish, so
-   * a person typing paid a whole-mirror build per keystroke and the window pegged for minutes.
-   * The index a moment ago beats a frozen window, so the old one answers while the new one fills.
+   * IT IS UPDATED, NOT REBUILT. The mirror's version moves on every drain, so "the version
+   * moved, so rebuild" was a whole-mirror walk per keystroke — the freeze. A version bump now
+   * costs the messages that actually moved ({@link SearchIndex.refresh}), which on an ordinary
+   * drain is a page of mail and usually none at all.
    */
   private searchIndex(): SearchIndex | null {
     const cache = this.searchCache;
     const version = this.readerView.version();
     if (cache !== null && cache.version === version) return cache.index;
+    if (cache !== null) {
+      /*
+       * The catch-up, bounded at the top: past `SEARCH_INDEX_SYNC_MAX` changed messages `refresh`
+       * refuses rather than spending the keystroke, and the sliced rebuild below takes it — a
+       * re-bootstrap replacing every row must not arrive as one synchronous walk.
+       */
+      if (cache.index.refresh(this.readerView, SEARCH_INDEX_SYNC_MAX) !== null) {
+        cache.version = version;
+        return cache.index;
+      }
+      this.searchCache = null;
+    }
     /*
-     * A MIRROR SMALL ENOUGH TO INDEX INSIDE A FRAME IS REBUILT HERE, EVERY TIME IT MOVES. The
-     * staleness floor is a trade against COST and under `SEARCH_INDEX_SYNC_MAX` there is none, so
-     * mail the reader has just sent is findable the moment it lands, exactly as it was.
+     * NOTHING TO ANSWER FROM. A mirror small enough to index inside a frame is indexed here, so a
+     * demo world and a fixture mount answer the first keystroke rather than the second.
      *
-     * Deliberately no `searchIndexRev++` here: the index is installed and its answer returned
-     * inside one call, so there is nobody to tell — and this runs inside a render, where moving a
-     * value a `useSyncExternalStore` snapshot reads makes that snapshot unstable.
+     * Deliberately no `searchIndexRev++` on this path: the index is installed and its answer
+     * returned inside one call, so there is nobody to tell — and this runs inside a render, where
+     * moving a value a `useSyncExternalStore` snapshot reads makes that snapshot unstable.
      */
     const quick = SearchIndex.buildWithin(this.readerView, SEARCH_INDEX_SYNC_MAX);
     if (quick !== null) {
-      this.searchCache = { version, index: quick, builtAt: this.now().getTime() };
+      this.searchCache = { version, index: quick };
       return quick;
     }
     this.startSearchBuild();
-    return cache === null ? null : cache.index;
+    return null;
   }
 
   /**
-   * START THE BUILD IF ONE IS DUE — never more than one at a time, and never sooner than
-   * {@link SEARCH_INDEX_REBUILD_MIN_MS} after the last one finished.
+   * START THE FIRST BUILD IF ONE IS OWED — one at a time, and never restarted by a newer version.
    *
-   * The throttle is on the REBUILD and not on the answer: a search always answers, from whatever
-   * index stands. Only ONE build runs at a time and a newer version never restarts it, which is
-   * what keeps a mirror that moves every few seconds from starving its own index — a build that
-   * is allowed to finish leaves an index; one that is restarted at every bump leaves none.
+   * Reached only when there is no index to update: the first search on a large mirror, and a
+   * catch-up too large to spend on a keystroke. A build that is allowed to finish leaves an
+   * index; one restarted at every version bump on a mirror that moves every few seconds leaves
+   * none, which is why a newer version does not cancel this.
    */
   private startSearchBuild(): void {
     if (this.searchBuild !== null) return;
-    const cache = this.searchCache;
-    if (cache !== null && this.now().getTime() - cache.builtAt < SEARCH_INDEX_REBUILD_MIN_MS) return;
     // Read BEFORE the walk and with no await in between: `buildSliced`'s first act is the
     // reader pass, so this is the version the finished index is an index of.
     const version = this.readerView.version();
@@ -6203,7 +6200,7 @@ export class OhmailEngine {
         if (this.searchBuild !== token) return;
         this.searchBuild = null;
         if (index === null) return; // abandoned — see `invalidateSearchIndex`
-        this.searchCache = { version, index, builtAt: this.now().getTime() };
+        this.searchCache = { version, index };
         // The view keys on this, not on the mirror's version: a build settling changes what
         // search can answer without a record moving.
         this.searchIndexRev++;

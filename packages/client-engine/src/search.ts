@@ -212,6 +212,17 @@ function trigrams(term: string): Set<string> {
   return out;
 }
 
+/**
+ * CAN DICE REACH THE THRESHOLD AT ALL, FROM THE TWO SET SIZES? A cheap refusal before the
+ * intersection, and it is EXACT rather than a heuristic: `2c/(|A|+|B|)` with `c ≤ min(|A|,|B|)`
+ * is at most `2min/(min+max)`, which drops below 0.4 exactly once `max > 4·min`. So a term this
+ * refuses could not have cleared the threshold whatever its trigrams were — no match is lost,
+ * which is what makes it a prune and not a narrowing of typo tolerance.
+ */
+function cannotReach(a: number, b: number): boolean {
+  return (a > b ? a : b) > 4 * (a < b ? a : b);
+}
+
 function diceSimilarity(a: Set<string>, b: Set<string>): number {
   let common = 0;
   for (const t of a) if (b.has(t)) common++;
@@ -226,6 +237,24 @@ interface Posting {
 interface AddressSides {
   from: boolean;
   to: boolean;
+}
+
+/** What one message posted, so {@link SearchIndex.apply} can take exactly that back out. */
+interface PostedBy {
+  terms: string[];
+  addresses: string[];
+}
+
+/**
+ * THE MESSAGES THAT MOVED — what {@link SearchIndex.apply} costs its time in.
+ *
+ * An update is an `upserted` entry, not a patch: a message is re-indexed whole, which is both
+ * simpler and exact, and is still O(one message). `removed` carries ids because a removed message
+ * is gone from the mirror and there is nothing left to read fields off.
+ */
+export interface SearchDelta {
+  upserted: readonly EngineMessage[];
+  removed: readonly string[];
 }
 
 export class SearchIndex {
@@ -244,6 +273,15 @@ export class SearchIndex {
   private readonly addresses = new Map<string, Map<string, AddressSides>>();
   private readonly trigramCache = new Map<string, Set<string>>();
   private readonly messages = new Map<string, EngineMessage>();
+  /**
+   * messageId → the terms and address keys it posted — the REVERSE MAP that makes a removal
+   * exact without a second pass. The alternative that LOOKS equivalent is re-tokenizing the
+   * message's fields at removal time, and it is not: it pays the tokenize work again, which is
+   * the work this whole change exists to stop paying, and it is correct only while the caller
+   * removes BEFORE it replaces. Written by {@link add} from the same loop that posts, so the two
+   * cannot disagree about what was posted — which is the property the removal reads.
+   */
+  private readonly postedBy = new Map<string, { terms: string[]; addresses: string[] }>();
 
   /**
    * ONE INDEXING LOOP, TWO DOORS — a generator, so the time-sliced door and the synchronous one
@@ -331,14 +369,22 @@ export class SearchIndex {
     return { messages: this.messages.size, full: 0 };
   }
 
-  private index(term: string, messageId: string, weight: number): void {
+  private index(term: string, messageId: string, weight: number, posted: PostedBy): void {
     let map = this.postings.get(term);
     if (!map) {
       map = new Map();
       this.postings.set(term, map);
-      this.trigramCache.set(term, trigrams(term));
+      /*
+       * A TRIGRAM SET ONLY FOR A TERM THE FUZZY ARM CAN REACH. `fuzzyHits` skips every term
+       * shorter than MIN_FUZZY_TERM_LEN before it looks the set up, so one minted for a shorter
+       * term is memory nothing ever reads — and short terms are the common ones. The floor is
+       * the same constant both sides read, so the invariant "every term the arm reaches has a
+       * set" holds by construction rather than by a check.
+       */
+      if (term.length >= MIN_FUZZY_TERM_LEN) this.trigramCache.set(term, trigrams(term));
     }
     const existing = map.get(messageId);
+    if (existing === undefined) posted.terms.push(term);
     if (!existing || existing.weight < weight) map.set(messageId, { weight });
   }
 
@@ -352,7 +398,7 @@ export class SearchIndex {
    * bucket under the empty key would collect every such message and then answer them all to a
    * caller whose address happened to normalize to nothing.
    */
-  private indexAddress(address: string, messageId: string, side: "from" | "to"): void {
+  private indexAddress(address: string, messageId: string, side: "from" | "to", posted: PostedBy): void {
     const key = addressMatchKey(address);
     if (key === "") return;
     let byMessage = this.addresses.get(key);
@@ -362,7 +408,10 @@ export class SearchIndex {
     }
     const sides = byMessage.get(messageId);
     if (sides) sides[side] = true;
-    else byMessage.set(messageId, { from: side === "from", to: side === "to" });
+    else {
+      byMessage.set(messageId, { from: side === "from", to: side === "to" });
+      posted.addresses.push(key);
+    }
   }
 
   /**
@@ -421,19 +470,99 @@ export class SearchIndex {
    */
   add(m: EngineMessage): void {
     this.messages.set(m.id, m);
-    for (const t of tokenize(m.subject)) this.index(t, m.id, FIELD_WEIGHT.subject);
-    for (const t of tokenize(`${m.from.name ?? ""} ${m.from.address}`)) this.index(t, m.id, FIELD_WEIGHT.from);
+    const posted = { terms: [] as string[], addresses: [] as string[] };
+    this.postedBy.set(m.id, posted);
+    for (const t of tokenize(m.subject)) this.index(t, m.id, FIELD_WEIGHT.subject, posted);
+    for (const t of tokenize(`${m.from.name ?? ""} ${m.from.address}`)) this.index(t, m.id, FIELD_WEIGHT.from, posted);
     // THE EXACT ADDRESSES, on top of the tokens above — see {@link SearchIndex.addresses}.
     // `?? []` on the recipients and not on `from`: the mirror is persisted on the device and a
     // row written by a build that predates `to`/`cc` genuinely has neither, exactly as
     // `address-book.ts` guards them; `from` has been on the DTO since the first message row.
-    this.indexAddress(m.from.address, m.id, "from");
-    for (const who of m.to ?? []) this.indexAddress(who.address, m.id, "to");
-    for (const who of m.cc ?? []) this.indexAddress(who.address, m.id, "to");
+    this.indexAddress(m.from.address, m.id, "from", posted);
+    for (const who of m.to ?? []) this.indexAddress(who.address, m.id, "to", posted);
+    for (const who of m.cc ?? []) this.indexAddress(who.address, m.id, "to", posted);
     // The preview — `bodySnippet()` in core, whitespace-collapsed and cut at 200 characters. The
     // whole of the body text this index holds, and the reason a term past that cut is an archive
     // question rather than a device one.
-    for (const t of tokenize(m.snippet)) this.index(t, m.id, FIELD_WEIGHT.text);
+    for (const t of tokenize(m.snippet)) this.index(t, m.id, FIELD_WEIGHT.text, posted);
+  }
+
+  /**
+   * BRING THE INDEX UP TO A SET OF CHANGED MESSAGES — O(the messages that moved), never O(the
+   * mirror). An upsert is a removal followed by an add, in that order: a message whose subject
+   * was edited ends up posting under its new terms and under none of its old ones, and doing it
+   * the other way round would add the new postings and then take them straight back out.
+   */
+  apply(delta: SearchDelta): void {
+    for (const id of delta.removed) this.remove(id);
+    for (const m of delta.upserted) {
+      this.remove(m.id);
+      this.add(m);
+    }
+  }
+
+  /**
+   * EVERYTHING ONE MESSAGE POSTED, TAKEN BACK OUT. A term whose last posting goes takes its
+   * posting map and its trigram set with it, so a mailbox that turns over does not accumulate
+   * empty maps the prefix and fuzzy arms then walk on every keystroke.
+   */
+  private remove(id: string): void {
+    const posted = this.postedBy.get(id);
+    this.messages.delete(id);
+    this.postedBy.delete(id);
+    if (posted === undefined) return;
+    for (const term of posted.terms) {
+      const map = this.postings.get(term);
+      if (map === undefined) continue;
+      map.delete(id);
+      if (map.size === 0) {
+        this.postings.delete(term);
+        this.trigramCache.delete(term);
+      }
+    }
+    for (const key of posted.addresses) {
+      const byMessage = this.addresses.get(key);
+      if (byMessage === undefined) continue;
+      byMessage.delete(id);
+      if (byMessage.size === 0) this.addresses.delete(key);
+    }
+  }
+
+  /**
+   * BRING THE INDEX UP TO THE MIRROR — the delta producer, and `null` when more than
+   * `maxChanges` messages moved, which tells the caller to build afresh instead.
+   *
+   * The changed set is found by ENTITY IDENTITY, not by a subscription: every mirror write
+   * replaces the entity object rather than mutating it, so `messages.get(id) === entity` is an
+   * exact "unchanged". Deliberate over hooking the sixteen writers, one of which a hand-wired
+   * feed would miss silently. The walk is a pointer compare per row; the INDEXING work, which is
+   * the cost this exists to remove, is proportional to what moved.
+   */
+  refresh(reader: EntityReader, maxChanges: number): number | null {
+    const rows = reader.entries<EngineMessage>("message");
+    const upserted: EngineMessage[] = [];
+    const seen = new Set<string>();
+    let added = 0;
+    for (const { id, entity } of rows) {
+      seen.add(id);
+      if (!this.messages.has(id)) added++;
+      if (this.messages.get(id) === entity) continue;
+      upserted.push(entity);
+      if (upserted.length > maxChanges) return null;
+    }
+    /*
+     * REMOVALS WITHOUT A THIRD WALK. After the loop `seen` is the mirror's id set, so
+     * |mirror| = |kept| + |added| and the messages this index still holds that the mirror does
+     * not are |held| + |added| - |seen|. Equal means none, and the walk below is skipped — which
+     * is the common case, since nothing removes a message on an ordinary drain.
+     */
+    const removed: string[] = [];
+    if (this.messages.size + added !== seen.size) {
+      for (const id of this.messages.keys()) if (!seen.has(id)) removed.push(id);
+    }
+    if (upserted.length + removed.length > maxChanges) return null;
+    this.apply({ upserted, removed });
+    return upserted.length + removed.length;
   }
 
   /**
@@ -478,7 +607,10 @@ export class SearchIndex {
     for (const [term, map] of this.postings) {
       if (term === q || term.startsWith(q)) continue;
       if (term.length < MIN_FUZZY_TERM_LEN) continue;
-      const sim = diceSimilarity(qTri, this.trigramCache.get(term)!);
+      // Every term past that floor has a set — {@link SearchIndex.index} mints on the same floor.
+      const tTri = this.trigramCache.get(term)!;
+      if (cannotReach(qTri.size, tTri.size)) continue;
+      const sim = diceSimilarity(qTri, tTri);
       if (sim < FUZZY_THRESHOLD) continue;
       for (const [id, p] of map) {
         const score = p.weight * sim;

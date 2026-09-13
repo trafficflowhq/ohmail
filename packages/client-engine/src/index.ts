@@ -300,6 +300,7 @@ export {
   type AddressDirection,
   type AddressResult,
   type LocalSearchResult,
+  type SearchDelta,
   type SearchFacets,
   type SearchHit,
   type SearchMatch,
