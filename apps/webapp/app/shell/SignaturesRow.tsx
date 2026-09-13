@@ -145,13 +145,12 @@ export function SignaturesRow({
         /**
          * A MAILBOX THIS INSTALL ONLY READS — the editor is a report, not a control.
          *
-         * The signature in force is published by whoever organizes the mailbox; this install's
-         * own row is inert, and a Save here would write a value no message will ever carry. So
-         * the editor renders the organizer's text read-only under a sentence saying where it was
-         * set, and Save and Discard are not offered at all — a disabled button invites a press
-         * and then explains itself, which is a worse answer than not claiming the affordance.
-         * ABSENT reads as "organizer", the column's default: a roster too old to carry the field
-         * must not lock the editors on an install that owns its mailbox.
+         * The signature in force is published by whoever organizes the mailbox and this install's
+         * own row is inert, so the editor renders the organizer's text read-only under a sentence
+         * saying where it was set, and Save and Discard are not offered at all — a disabled button
+         * invites a press and then explains itself. ABSENT reads as "organizer", the column's
+         * default: a roster too old to carry the field must not lock the editors on an install
+         * that owns its mailbox.
          */
         const reading = mb.organizerRole === "reader";
         return (

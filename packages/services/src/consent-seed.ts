@@ -1130,28 +1130,13 @@ export async function mailboxSignatureHtmls(
 
 /**
  * THE SIGNATURE MAPS AS COMPOSE MUST SEE THEM — `{ mailboxId: text }` and `{ mailboxId: html }`,
- * with the ORGANIZER'S published signature winning on every mailbox this install only READS.
- *
- * `mailboxes.signature` is the answer for a mailbox this install organizes. On one somebody else
- * organizes, that column is a dead local copy and the live value is in the organizer's published
- * document, cached by the reader's cycle in `mailbox_profile_mirror` (mail 0094) — so a reader
- * answering `GET /consent` from its own rows alone told every composer the person had no sign-off
- * while the text sat one table away. Measured on a desktop reading a Cloud-organized mailbox: the
- * document carried the signature and the compose map was empty.
- *
- * A DOCUMENT WINS WHOLE, and the granularity is the part worth stating: the fallback is "there is
- * no document", never "the document has no signature in it". A cached document saying
- * `signature: null` is somebody's decision that this mailbox signs with nothing, and the
- * IMPORTER already honours it that way — it writes `null` into the column rather than leaving
- * what is there, because "treating it as 'leave what is here' would make the import
- * non-idempotent" (`profile-import-service.ts`). Falling back to the local row on a null would
- * make one document mean two different things depending on whether it had been imported yet,
- * and the dead row would come back for the one person who deliberately cleared their sign-off.
- * A reader with NO document keeps its own row: nothing has said otherwise, and dropping the
- * sign-off while the mirror catches up is a change nobody asked for.
- *
- * An absent key stays absent in both maps: it is the resting state, and inventing an empty string
- * for a mailbox with no signature would make the compose block render a blank tail.
+ * with the ORGANIZER'S published signature winning on every mailbox this install only READS: on
+ * those, `mailboxes.signature` is a dead local copy and the live value is the organizer's
+ * document, cached by the reader's cycle in `mailbox_profile_mirror` (mail 0094). A DOCUMENT WINS
+ * WHOLE — the fallback is "there is no document", never "the document has no signature in it",
+ * because a cached `signature: null` is somebody's decision to sign with nothing and the importer
+ * already honours it that way. A reader with NO document keeps its own row. An absent key stays
+ * absent in both maps: inventing an empty string would render a blank tail in compose.
  */
 export async function effectiveMailboxSignatures(
   db: ServiceContext["db"], accountId: string,

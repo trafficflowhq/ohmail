@@ -162,24 +162,14 @@ export interface OrganizerProfilePayload {
    */
   signature: string | null;
   /**
-   * THE SIGNATURE'S MARKUP — `mailboxes.signature_html`, the formatted form of the field above,
-   * and OPTIONAL, which is the whole of its compatibility rule.
-   *
-   * The plain text already travelled (mail 0094) and the markup did not, so a reader showed the
-   * organizer's sign-off as unformatted text and sent it that way — while the reader→organizer
-   * REQUEST payload has carried `signatureHtml` since 2026-09-10, which made the asymmetry a
-   * one-way street: formatting could be asked for and never read back.
-   *
-   * ABSENT WHEN ABSENT, on `piles`' rule and for its exact reason: a document that never had this
-   * key must keep the fingerprint it was written with, so the canonical form OMITS it rather than
-   * serializing `null` the way the frozen `signature` field does. Absent and `null` are therefore
-   * one state — "this signature has no formatting in it" — which is not the same as having no
-   * signature, and {@link signature} is what answers that. Markup without text is not a state this
-   * format can express: the canonical form drops it, because `withSignature` puts the TEXT on the
-   * plain body in both branches and markup with nothing beside it would send a formatted sign-off
-   * to everybody but a plaintext reader. `PROFILE_VERSION` deliberately does not move, on the
-   * argument `signature` and `throttle` already made: field-level compatible in both directions,
-   * and a bump would make older installs refuse a document they read perfectly well.
+   * THE SIGNATURE'S MARKUP — `mailboxes.signature_html`, OPTIONAL, and that is the whole of its
+   * compatibility rule. Absent and `null` are ONE state, "no formatting in this signature", which
+   * is not the same as having no signature ({@link signature} answers that). The canonical form
+   * OMITS the key rather than serializing `null` the way the frozen `signature` field does, so a
+   * document written before this key keeps its fingerprint — `piles`' rule, for `piles`' reason.
+   * Markup with no text beside it is not representable: `withSignature` puts the TEXT on the
+   * plain body in both branches, so markup alone would send a formatted sign-off to everyone but
+   * a plaintext reader. `PROFILE_VERSION` does not move — field-level compatible both ways.
    */
   signatureHtml?: string | null;
 }
@@ -375,15 +365,13 @@ function canonicalizeV2(p: OrganizerProfilePayload): OrganizerProfilePayload {
 
 /**
  * THE MARKUP KEY, PRESENT ONLY WHEN IT SAYS SOMETHING — the spread that keeps every document an
- * older ohmail wrote at the fingerprint it was written with.
- *
- * `signature`, one key up, is emitted as `?? null` because it has been in the frozen form since
- * mail 0094 and every document already carries it. This key is NEW, so emitting `null` for a
- * document that never had it would re-fingerprint the lot — `piles`' argument, and the same
- * remedy. Two further collapses, both deliberate: markup that is blank after trimming is no
- * markup (an empty `<p></p>` is a tag and not a sign-off), and markup with NO TEXT beside it is
- * dropped, because the text half is what a plaintext recipient reads and a document offering
- * only the formatted form describes a message nobody can send.
+ * older ohmail wrote at the fingerprint it was written with. `signature`, one key up, is emitted
+ * as `?? null` because it has been in the frozen form since mail 0094; this key is NEW, so
+ * emitting `null` for a document that never had it would re-fingerprint the lot. Two collapses,
+ * both deliberate: markup blank after trimming is no markup (an empty `<p></p>` is a tag, not a
+ * sign-off), and markup with NO TEXT beside it is dropped, because the text half is what a
+ * plaintext recipient reads and a document offering only the formatted form describes a message
+ * nobody can send.
  */
 function signatureHtmlOf(p: OrganizerProfilePayload): { signatureHtml?: string } {
   const text = p.signature ?? null;
