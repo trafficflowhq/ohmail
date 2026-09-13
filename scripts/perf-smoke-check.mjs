@@ -20,14 +20,15 @@
  * usage:
  *   perf-smoke-check.mjs --samples <tsv> --engine-log <log> [--bundle <file>]
  *                        [--expect-messages <n>] [--fixture-messages <n>]
+ *                        [--budget-table <file>]   (defaults to the perf budgets table beside it)
  *   perf-smoke-check.mjs --sample --pid <pid> --out <tsv> --seconds <n> [--interval <s>]
  *   perf-smoke-check.mjs --perf-smoke-only   the selftest: every arm watched failing and admitting
  *
  * verdict: PERF_SMOKE: GREEN rc 0 - RED rc 1 - REFUSED rc 3.
  */
 import { readFileSync, readdirSync, writeFileSync, appendFileSync, existsSync } from "node:fs";
-import { join } from "node:path";
-import { pathToFileURL } from "node:url";
+import { join, dirname } from "node:path";
+import { pathToFileURL, fileURLToPath } from "node:url";
 
 /* ── THE BUDGETS, EACH WITH WHAT IT CAME FROM ─────────────────────────────────────────────────
  *
@@ -184,6 +185,21 @@ export const UI_VITALS_READS = {
   long_tasks: "longTasks",
 };
 
+/* ── THE DERIVATION FIGURES, ON THAT SAME LINE ────────────────────────────────────────────────
+ *
+ * The window rebuilds what it shows from the mirror on every version bump, on the thread that
+ * draws, and reports that pass's cost beside the marks above: the worst pass, the p50 and p95 over
+ * the last hundred, and how many bumps paid for them. This check reads all four and budgets only
+ * the p95 — the one a ceiling is stated for. The three durations are `null` when the window derived
+ * nothing in a window; `deriveCount` is a plain count, and a count of zero is a real reading.
+ */
+export const UI_VITALS_DERIVE_READS = {
+  derive_ms: "deriveMs",
+  derive_p50: "deriveP50Ms",
+  derive_p95: "deriveP95Ms",
+  derive_count: "deriveCount",
+};
+
 /** Every `ui_vitals` line, by SERVICE as well as event — the tag is part of the vocabulary. */
 export function uiVitalsLines(log) {
   const out = [];
@@ -239,7 +255,9 @@ export function bundleVocabulary(path) {
   if (!path || !existsSync(path)) return null;
   const bytes = readFileSync(path);
   const fields = {};
-  for (const [id, field] of Object.entries(UI_VITALS_READS)) fields[id] = bytes.includes(field);
+  for (const [id, field] of [...Object.entries(UI_VITALS_READS), ...Object.entries(UI_VITALS_DERIVE_READS)]) {
+    fields[id] = bytes.includes(field);
+  }
   return { event: bytes.includes(UI_VITALS_EVENT), fields };
 }
 
@@ -247,11 +265,42 @@ export function bundleCarriesUiVitals(path) {
   return bundleVocabulary(path)?.event ?? null;
 }
 
+/* ── THE DERIVATION p95 BUDGET, READ FROM THE TABLE AND NEVER SPELLED HERE ─────────────────────
+ *
+ * A budget is a number with an origin, never a literal in the check. The renderer and engine
+ * ceilings live in the perf budgets table; the derivation p95's millisecond budget lives in that
+ * same table's `latency` block. This reads it the way that table is read everywhere — parse the
+ * file, walk to the entry, take the number. A ceiling nobody has ruled yet is `null`, not a zero,
+ * and comes back as `null`: the arm then prints UNBUDGETED against the goal rather than inventing a
+ * red. A table that cannot be read is the same as an unruled ceiling — never a default.
+ */
+export function readDeriveP95Budget(tablePath) {
+  let table;
+  try {
+    table = JSON.parse(readFileSync(tablePath, "utf8"));
+  } catch (err) {
+    return { present: false, ceilingMs: null, goalMs: null, origin: null, status: "unreadable", why: String(err && err.message) };
+  }
+  const b = table?.latency?.["derive-p95"];
+  if (!b) return { present: false, ceilingMs: null, goalMs: null, origin: null, status: "absent" };
+  const num = (v) => (typeof v === "number" && Number.isFinite(v) ? v : null);
+  return {
+    present: true,
+    ceilingMs: num(b.ceilingMs),
+    goalMs: num(b.goalMs),
+    origin: typeof b.origin === "string" ? b.origin : null,
+    status: typeof b.status === "string" ? b.status : num(b.ceilingMs) === null ? "unmeasured" : "ruled",
+  };
+}
+
+/* The table beside this script, resolved from this file's own location. */
+export const DEFAULT_BUDGET_TABLE = join(dirname(fileURLToPath(import.meta.url)), "..", "docs", "ohmail", "perf-budgets.json");
+
 /* ── THE ARMS ─────────────────────────────────────────────────────────────────────────────────
  * A DECIDES arm is one that has been watched failing on a real measurement, and only a DECIDES
  * arm can turn the run red. Everything else is printed, and says on its own line that it is.
  */
-export function collect({ samples, log, uiInBundle, uiFields, expectMessages, fixtureMessages }) {
+export function collect({ samples, log, uiInBundle, uiFields, expectMessages, fixtureMessages, deriveBudget }) {
   const arms = [];
   const add = (id, kind, status, reading, note) => arms.push({ id, kind, status, reading, note });
 
@@ -376,6 +425,58 @@ export function collect({ samples, log, uiInBundle, uiFields, expectMessages, fi
     }
     const value = fold === "sum" ? values.reduce((a, b) => a + b, 0) : Math.max(...values);
     add(id, kind, within ? (within(value) ? "PASS" : "FAIL") : "READ", reading(value), note);
+  }
+
+  /* ── THE FOUR DERIVATION FIGURES ─────────────────────────────────────────────────────────────
+   * Read off the same `ui_vitals` lines. Only the p95 has a ceiling; the other three are printed.
+   * The three silences are the vocabulary's own: a name an OLDER emitter never carried is UNREAD; a
+   * name the emitter version DOES carry (its field is in the bundle) that this run's log never wrote
+   * is the drift defect — REFUSED by name, because nothing there was measured; a name present but
+   * `null` in every window is NOT MEASURED. Evaluated only when there ARE `ui_vitals` lines — the
+   * whole-instrument absence is the `ui_vitals` arm's above, not four copies of it here. */
+  if (uiLines.length > 0) {
+    for (const [id, field] of Object.entries(UI_VITALS_DERIVE_READS)) {
+      if (uiFields && uiFields[id] === false) {
+        add(id, "RECORDED", "UNREAD", `<this build's emitter carries no "${field}">`, "");
+        continue;
+      }
+      const { keyLines, values } = readUiVitalsField(uiLines, field);
+      if (keyLines === 0) {
+        if (uiFields && uiFields[id] === true) {
+          return { refused: `the window carries "${field}" and wrote it in none of ${uiLines.length} ui_vitals lines — this log and this check no longer share one vocabulary` };
+        }
+        add(id, "RECORDED", "UNREAD", `<no "${field}" here, and no bundle to say the emitter carries it>`, "");
+        continue;
+      }
+      if (values.length === 0) {
+        add(id, "RECORDED", "NOT MEASURED", `"${field}" was null in all ${keyLines} of its lines`, "a window that derived nothing measured no milliseconds");
+        continue;
+      }
+      if (id === "derive_count") {
+        add(id, "RECORDED", "READ", `${values.reduce((a, b) => a + b, 0)} derivations`, "how many version bumps paid for the durations beside it");
+        continue;
+      }
+      /* The worst report of the run, as the latency durations are. */
+      const value = Math.max(...values);
+      if (id !== "derive_p95") {
+        add(id, "RECORDED", "READ", `${value} ms`, "");
+        continue;
+      }
+      /* The p95 is budgeted ONLY where the table rules a ceiling; otherwise it is printed against
+       * the goal and reddens nothing — the derivation is expected over the one-frame goal until a
+       * fix moves it, and the arm says so rather than calling a measured build red. */
+      const ceiling = deriveBudget && typeof deriveBudget.ceilingMs === "number" ? deriveBudget.ceilingMs : null;
+      if (ceiling !== null) {
+        const origin = (deriveBudget && deriveBudget.origin) || "the table";
+        add(id, "DECIDES", value <= ceiling ? "PASS" : "FAIL",
+          `p95 ${value} ms against ${ceiling} ms (${origin})`, "");
+      } else {
+        const goal = deriveBudget && typeof deriveBudget.goalMs === "number" ? deriveBudget.goalMs : null;
+        add(id, "RECORDED", "UNBUDGETED",
+          goal !== null ? `p95 ${value} ms against a ${goal} ms goal, no ruled ceiling` : `p95 ${value} ms, no ruled ceiling`,
+          "the derivation p95 has no ruled ceiling yet; the first run under the goal gives it one");
+      }
+    }
   }
 
   /* No "every arm was unread" refusal here, and the absence is deliberate: past the sample-shape
@@ -606,6 +707,7 @@ if (RUN_AS_SCRIPT) {
     const expect = Number(opt("expect-messages", "0"));
     const fixture = Number(opt("fixture-messages", String(expect)));
     const vocabulary = bundleVocabulary(opt("bundle", null));
+    const deriveBudget = readDeriveP95Budget(opt("budget-table", DEFAULT_BUDGET_TABLE));
     const { text, code } = render(collect({
       samples: readFileSync(samplesPath, "utf8"),
       log: readFileSync(logPath, "utf8"),
@@ -613,6 +715,7 @@ if (RUN_AS_SCRIPT) {
       uiFields: vocabulary?.fields ?? null,
       expectMessages: expect,
       fixtureMessages: fixture,
+      deriveBudget,
     }));
     process.stdout.write(`${text}\n`);
     process.exit(code);
