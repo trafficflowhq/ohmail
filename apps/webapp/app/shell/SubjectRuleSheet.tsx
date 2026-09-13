@@ -68,7 +68,7 @@ export function SubjectRuleSheet({
 }: {
   state: SubjectRuleState;
   ctx: SubjectRuleContext;
-  onConfirm: (term: string, dest: ScreeningDest, field: TermField) => void;
+  onConfirm: (term: string, dest: ScreeningDest, field: TermField, applyRetro: boolean) => void;
   onClose: () => void;
 }) {
   const t = useTranslations("screening");
@@ -83,6 +83,13 @@ export function SubjectRuleSheet({
   const [custom, setCustom] = useState<string>(ctx.subject);
   /** The destination awaiting its confirm press, or null. One question at a time. */
   const [pending, setPending] = useState<ScreeningDest | null>(null);
+  /**
+   * Whether the rule also reaches the mail already filed — the sender sheet's second switch, here
+   * too, because a narrowed rule has the same past as a broad one and the same answer must be
+   * sayable. On by default (`RETRO_DEFAULT_ON`), and it rides the confirm so the row it changes is
+   * the one the person is reading.
+   */
+  const [applyRetro, setApplyRetro] = useState(RETRO_DEFAULT_ON);
 
   useEffect(() => {
     const onDown = (e: MouseEvent) => {
@@ -107,7 +114,7 @@ export function SubjectRuleSheet({
     ?? custom;
   // Computed through the SAME function the plan uses, so the number the sheet shows and the work that
   // happens cannot disagree — `SenderMenu`'s rule, applied here.
-  const plan = planSubjectRule(ctx, term, pending ?? "reads", field);
+  const plan = planSubjectRule(ctx, term, pending ?? "reads", field, applyRetro);
   const tokenCount = ctx.token ? subjectMatchCount(ctx.messages, ctx.token) : 0;
   // LIVE, against the edited value — the same case-folded substring test the server applies, so
   // the number tracks every keystroke and cannot disagree with the rule it measures.
@@ -296,7 +303,7 @@ export function SubjectRuleSheet({
             lead={
               plan.already
                 ? t("subjectConfirmAlready")
-                : RETRO_DEFAULT_ON
+                : applyRetro
                   ? t("subjectConfirmFine", { count: plan.matched })
                   : t("subjectConfirmFineFuture")
             }
@@ -304,6 +311,26 @@ export function SubjectRuleSheet({
           >
             {t(plan.field === "body" ? "bodyConfirmMore" : "subjectConfirmMore")}
           </InfoNote>
+          {/* The past-mail answer, beside the sentence it changes. Withheld when a rule of this
+              exact shape already stands: there the press writes nothing and files only the visible
+              mail, so an option about the backlog would be a control with no effect. */}
+          {plan.already ? null : (
+            <button
+              type="button"
+              role="switch"
+              aria-checked={applyRetro}
+              aria-label={t("retroToggleAria")}
+              className="sm-retro"
+              onClick={() => setApplyRetro((on) => !on)}
+            >
+              <span className="lab">
+                <b>{t("retroToggle")}</b>
+              </span>
+              <span className="switch" aria-hidden="true">
+                <i />
+              </span>
+            </button>
+          )}
           <span className="sm-confirm-row">
             <button
               type="button"
@@ -313,7 +340,7 @@ export function SubjectRuleSheet({
                  into a no-op. `plan.already` stays pressable — its press is the honest "nothing
                  will be written" the fine print above has already stated. */
               disabled={!plan.already && plan.ruleMutations.length === 0}
-              onClick={() => { setPending(null); onConfirm(plan.term, pending, plan.field); }}
+              onClick={() => { setPending(null); onConfirm(plan.term, pending, plan.field, applyRetro); }}
             >
               {t("subjectConfirmGo", { dest: piles[pending] })}
             </button>

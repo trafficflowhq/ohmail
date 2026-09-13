@@ -159,6 +159,13 @@ export interface ScreenBody {
    */
   dest?: Destination;
   scope?: "sender" | "domain";   // default "sender"
+  /**
+   * Also apply the PROMOTED rule to this sender's mail that has already left the gate. Absent is
+   * `true`, the contract `POST /rules` already carries; a non-boolean is a 400 rather than a
+   * coercion, because `"false"` is truthy and reading an attempt to decline as consent to
+   * reorganize a mailbox is the failure that check exists for.
+   */
+  applyRetro?: boolean;
 }
 
 /** Idempotency handle threaded in by the route; the row is written IN the decide tx. */
@@ -863,6 +870,7 @@ export class ScreenerReadService {
   private async validateScreenerDecision(ctx: ServiceContext, id: string, b: ScreenBody): Promise<{
     scope: "sender" | "domain"; decision: "yes" | "no"; dest: Destination | undefined;
     target: AppliedScreenerRow; address: string; domain: string; appliedFolder: Destination;
+    applyRetro: boolean;
   }> {
     // ── THE ROUTE HANDS THIS BODY OVER UNVALIDATED ──────────────────────────────────────────
     //
@@ -895,6 +903,12 @@ export class ScreenerReadService {
     // the user did not give, and which half to trust is a coin toss. MEMBERSHIP FIRST:
     // `effectForDestination("ohmail/Screener")` is `"deny"`, so the agreement check alone accepts
     // it for any `no`.
+    // The past-mail answer — checked, never coerced, on `decision`'s reasoning one paragraph up:
+    // this decides whether a whole backlog is re-filed, and `"false"` is truthy.
+    if (b.applyRetro !== undefined && typeof b.applyRetro !== "boolean") {
+      throw new ServiceError("validation_failed", 400, "applyRetro must be a boolean");
+    }
+    const applyRetro = b.applyRetro ?? true;
     const dest = b.dest;
     if (dest !== undefined) {
       if (typeof dest !== "string" || !DECIDABLE_FOLDERS.has(dest)) {
@@ -948,7 +962,7 @@ export class ScreenerReadService {
       );
     }
 
-    return { scope, decision, dest, target, address, domain, appliedFolder };
+    return { scope, decision, dest, target, address, domain, appliedFolder, applyRetro };
   }
 
   /**
@@ -1012,11 +1026,11 @@ export class ScreenerReadService {
     ctx: ServiceContext, id: string,
     v: {
       scope: "sender" | "domain"; decision: "yes" | "no"; address: string; appliedFolder: Destination;
-      target: AppliedScreenerRow;
+      target: AppliedScreenerRow; applyRetro: boolean;
     },
     opts: { idempotency?: ScreenIdempotency | null },
   ): Promise<ScreenDecisionResult> {
-    const { scope, decision, address, appliedFolder, target } = v;
+    const { scope, decision, address, appliedFolder, target, applyRetro } = v;
     let rerouted: AppliedScreenerRow[] = [];
 
     const result = await asTx(ctx).transaction(async (tx) => {
@@ -1042,7 +1056,7 @@ export class ScreenerReadService {
       try {
         applied = await applyScreenerDecision(carryDialect(ctx.db, tx) as typeof tx, {
           accountId: ctx.accountId, mailboxId: target.mailboxId, scope, address, appliedFolder, decision,
-          triggeringActionId: `screener:${id}`, now: ctx.now(),
+          triggeringActionId: `screener:${id}`, now: ctx.now(), applyRetro,
         });
       } catch (err) {
         // `applyScreenerDecision` fences the account itself, first — see its own header. Its
@@ -1173,7 +1187,7 @@ export class ScreenerReadService {
     ctx: ServiceContext, id: string,
     v: {
       scope: "sender" | "domain"; decision: "yes" | "no"; address: string; domain: string;
-      appliedFolder: Destination; target: AppliedScreenerRow;
+      appliedFolder: Destination; target: AppliedScreenerRow; applyRetro: boolean;
     },
     eligibility: RequestEligibility,
     opts: { idempotency?: ScreenIdempotency | null },
@@ -1185,7 +1199,7 @@ export class ScreenerReadService {
       );
     }
 
-    const { scope, decision, address, domain, appliedFolder } = v;
+    const { scope, decision, address, domain, appliedFolder, applyRetro } = v;
     const requestId = randomUUID();
     const match = scope === "domain" ? domain : address;
     const decidedAt = ctx.now();
@@ -1213,7 +1227,7 @@ export class ScreenerReadService {
           // Exactly what the drain needs to call `applyScreenerDecision` again, unchanged — see
           // that function's `ApplyScreenerDecisionInput`. `match` rides along for
           // `listOutstandingForAccount`'s own read; the drain does not use it.
-          payload: { scope, address, appliedFolder, decision, match },
+          payload: { scope, address, appliedFolder, decision, match, applyRetro },
           holder: eligibility.by,
           requestId,
           decidedAt,

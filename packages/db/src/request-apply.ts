@@ -565,6 +565,14 @@ export interface ValidatedRuleUpdate {
   key: RuleKey;
   set: { destination?: string; priority?: number; enabled?: boolean };
   applyRetro: boolean;
+  /**
+   * Did the request SAY `applyRetro: true`, as opposed to saying nothing? The two differ here and
+   * nowhere else: absence means "the sender had no opinion" and leaves the retarget rule below in
+   * charge; an explicit yes is the person asking an existing rule for the mail already filed, which
+   * re-arms it even when nothing about the rule moved. The local half is `RulesService.update`'s
+   * `retroAsked`, and the two must stay one rule.
+   */
+  retroAsked: boolean;
 }
 
 /** `rule.delete`'s payload, validated. */
@@ -673,7 +681,7 @@ export function validateRulePayload(kind: string, payload: unknown): ValidatedRu
     }
     // An update naming nothing is not a change — the same rule `profile.update` follows.
     if (Object.keys(set).length === 0) return null;
-    return { op: "update", key, set, applyRetro };
+    return { op: "update", key, set, applyRetro, retroAsked: o.applyRetro === true };
   }
 
   return null;   // a kind this function was not asked about
@@ -715,11 +723,11 @@ async function findRuleByKey(tx: Tx, accountId: string, key: RuleKey): Promise<{
 /**
  * Apply one rule request. RETRO is the default: creating a rule applies it to mail already on
  * disk (mail 0034), so `retro_requested_at` is stamped on create unless the request says
- * otherwise, and on update ONLY when what the rule claims or where it sends actually MOVED —
- * compared against the STORED value, so a habit-click re-sending the same destination costs
- * nothing. `retro_done_at` and `retro_cursor` are cleared with it: a re-arm that left the cursor
- * at the end of a previous run would resume there and move nothing. `provenance` is `manual`,
- * never `promoted`: a request is a person pressing something on their own install, and claiming
+ * otherwise, and on update when what the rule claims or where it sends actually MOVED — compared
+ * against the STORED value, so a habit-click costs nothing — or when the request STATED
+ * `applyRetro: true`, a person asking an existing rule for the mail already filed. `retro_done_at`
+ * and `retro_cursor` are cleared with it: a re-arm that left the cursor at the end of a previous
+ * run would resume there and move nothing. `provenance` is `manual`, never `promoted`: claiming
  * `promoted` would make an explicit rule look learned.
  */
 export async function applyRuleRequest(
@@ -779,10 +787,14 @@ export async function applyRuleRequest(
      rules against each other without changing what any one of them files, and `enabled` is
      handled by the pass itself. */
   const retargeted = set.destination !== undefined && set.destination !== found.destination;
-  if (retargeted && payload.applyRetro) {
+  // …or the request asked for the backlog outright, which is the one way to re-open a rule whose
+  // routing did not move. `retroAsked` and not `applyRetro`: the latter defaults an absent field to
+  // true, and a travelled habit-click would then re-walk everything.
+  if ((retargeted && payload.applyRetro) || payload.retroAsked) {
     set.retroRequestedAt = now;
     set.retroDoneAt = null;
     set.retroCursor = null;
+    set.retroMoved = 0;
   }
 
   await tx.update(rulesTbl).set(set)

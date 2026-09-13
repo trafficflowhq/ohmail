@@ -449,6 +449,11 @@ export class RulesService {
    * 0050): narrowing leaves mail unclaimed, widening brings unexamined mail into scope — same
    * reset. The pass never un-files what a rule stopped claiming.
    */
+  /**
+   * THE SECOND DOOR (0.19): an EXPLICIT `applyRetro: true` re-arms a rule whose destination did not
+   * move — *also move the mail already in my mailbox*, asked of a rule that already exists. The
+   * field's PRESENCE licenses it, never the absent⇒true default, so a habit-click re-walks nothing.
+   */
   async update(
     ctx: ServiceContext, id: string, patch: PatchRuleBody,
     opts: { idempotency?: RuleIdempotency | null } = {},
@@ -460,6 +465,14 @@ export class RulesService {
     if (patch.priority !== undefined) set.priority = this.validPriority(patch.priority);
     if (patch.enabled !== undefined) set.enabled = patch.enabled;
     const applyRetro = this.validApplyRetro(patch.applyRetro);
+    /**
+     * ASKING AN EXISTING RULE FOR THE BACKLOG — the field PRESENT and true, never the default.
+     * A retarget re-arms on its own below; this is the other press: *also move the mail already in
+     * my mailbox* on a rule whose destination did not move. Read off `patch.applyRetro` itself
+     * rather than `applyRetro`, whose absent⇒true default would make every habit-click PATCH
+     * re-walk the whole backlog (`rules-subject-term.test.ts` pins that it must not).
+     */
+    const retroAsked = patch.applyRetro === true;
 
     return asTx(ctx).transaction(async (tx) => {
       /**
@@ -518,7 +531,10 @@ export class RulesService {
       const bodyMoved = set.bodyContains !== undefined
         && (set.bodyContains ?? null) !== (before?.bodyContains ?? null);
       const retargeted = before !== undefined && (destinationMoved || subjectMoved || bodyMoved);
-      if (retargeted && applyRetro) {
+      // `release_held_at` is deliberately NOT written: equal timestamps are how `rule-retro.ts`
+      // recognizes the held-release press and narrows the walk to mail settled at the gate. This
+      // is the ordinary, unnarrowed retro — the whole backlog the rule claims.
+      if (before !== undefined && ((retargeted && applyRetro) || retroAsked)) {
         set.retroRequestedAt = ctx.now();
         set.retroDoneAt = null;
         set.retroCursor = null;
@@ -554,7 +570,7 @@ export class RulesService {
            organizer applies the request and republishes its document. */
         travel = await fanOutRuleEdit(
           tx as unknown as Tx, ctx, plan, "rule.update",
-          ruleRequestPayload(keyOf(), travelSet(), applyRetro),
+          ruleRequestPayload(keyOf(), travelSet(), patch.applyRetro === undefined ? undefined : applyRetro),
         );
         const unchanged = await materializeRule(asDb(tx), ctx.accountId, id);
         if (!unchanged) throw new ServiceError("not_found", 404, "rule not found");
@@ -596,7 +612,7 @@ export class RulesService {
       if (!travelled(plan)) return { rule, seq: Number(seq) };
       travel = await fanOutRuleEdit(
         tx as unknown as Tx, ctx, plan, "rule.update",
-        ruleRequestPayload(keyOf(), travelSet(), applyRetro),
+        ruleRequestPayload(keyOf(), travelSet(), patch.applyRetro === undefined ? undefined : applyRetro),
       );
       return { rule, seq: Number(seq), travel };
     });

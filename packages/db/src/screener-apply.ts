@@ -76,6 +76,12 @@ export interface ValidatedRequestPayload {
   address: string;
   appliedFolder: string;
   decision: "yes" | "no";
+  /**
+   * Whether the person asked for the promoted rule to reach mail already filed. Absent ⇒ `true`,
+   * the same default every other door carries, so a payload written by a build that predates the
+   * option keeps today's behaviour; a non-boolean refuses the whole record rather than coercing.
+   */
+  applyRetro: boolean;
 }
 
 /** A generous ceiling on the address field alone — RFC 5321's own 254-octet mailbox limit, doubled. */
@@ -107,7 +113,12 @@ export function validateRequestPayload(payload: unknown): ValidatedRequestPayloa
   // could claim `scope: "domain"` against an address with no `@` at all.
   if (scope === "domain" && domainOf(address) === "") return null;
 
-  return { scope, address, appliedFolder, decision };
+  // Absent is the default, a non-boolean is a refusal — `"false"` is truthy, and reading a decline
+  // as consent to re-file a backlog is the mistake this whole validator exists to make impossible.
+  if (p.applyRetro !== undefined && typeof p.applyRetro !== "boolean") return null;
+  const applyRetro = p.applyRetro === undefined ? true : p.applyRetro;
+
+  return { scope, address, appliedFolder, decision, applyRetro };
 }
 
 /**
@@ -273,6 +284,14 @@ export interface ApplyScreenerDecisionInput {
    * drain path must not be the one thing that can move this account-wide cutoff.
    */
   stampBaseline?: boolean;
+  /**
+   * Also apply the PROMOTED rule to this sender's mail that has already left the gate. Defaults
+   * `true`, the same default `RulesService.create` carries, because the surfaces state the answer
+   * either way. The decide files the HELD mail itself; this stamps `retro_requested_at` so
+   * `rule-retro.ts` owns the rest — without it a sender with five messages waiting and four
+   * hundred already in Reads had no door to the four hundred.
+   */
+  applyRetro?: boolean;
 }
 
 export interface ApplyScreenerDecisionResult {
@@ -297,7 +316,7 @@ export async function applyScreenerDecision(
 ): Promise<ApplyScreenerDecisionResult> {
   const {
     accountId, mailboxId, scope, address, appliedFolder, decision, triggeringActionId, now,
-    stampBaseline = true,
+    stampBaseline = true, applyRetro = true,
   } = input;
   const domain = domainOf(address);
 
@@ -330,6 +349,11 @@ export async function applyScreenerDecision(
     destination: appliedFolder,
     provenance: "promoted",
     enabled: true,
+    // The backlog this decision does NOT reach: the held bag is re-routed below, and everything of
+    // this sender's that was filed before the gate held them is `rule-retro.ts`'s, on the press the
+    // surface just carried. NULL when declined — "nobody asked" is a different fact from "asked
+    // and finished", and the worker's owed predicate reads exactly that difference.
+    retroRequestedAt: applyRetro ? now : null,
   }).returning({ id: rulesTbl.id });
   // Tracked and returned so an HTTP caller can re-emit it as `X-Sync-Seq` on an idempotent
   // replay — `claimIdempotencyKey`'s own `seq` field. The drain has no such replay contract and

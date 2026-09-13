@@ -1609,8 +1609,18 @@ const TABLE = {
   unsavedKindFolder: "A folder change",
   unsavedKindRule: "A rule change",
 
+  /**
+   * The two sentences the screening sheet can truthfully say, one per answer to the past-mail
+   * switch. The old single sentence promised that "what is already here moves", which the pass
+   * does not do: it re-evaluates each message through the rules and skips anything the person has
+   * already replied to, filed by hand or set aside — so the verb is "applies the rule to", and the
+   * mail it reaches is the mail ohmail itself filed, never a folder of the person's own.
+   */
   screeningNote: (target: string) =>
-    `Becomes a rule — future mail from ${target} files there automatically, and what is already here moves.`,
+    `Becomes a rule — future mail from ${target} files there automatically. Mail already here stays where it is.`,
+  screeningNoteRetro: (target: string) =>
+    `Becomes a rule — future mail from ${target} files there automatically, and ohmail applies the rule to the mail it has already filed for you. Messages you have replied to, filed yourself or set aside are left alone.`,
+  screeningRetroToggle: "Also move the mail already in your mailbox",
 };
 
 /**

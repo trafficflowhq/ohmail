@@ -168,7 +168,8 @@
 /* ── the rule: a settings row. ONE button is the whole row — label, note and knob — so the
    row is the switch (`role="switch"` on it) and a tap anywhere on it turns the rule. The knob
    is the switch primitive's drawing, keyed off THIS button's state rather than its own. ── */
-.sm-rule {
+.sm-rule,
+.sm-retro {
   display: flex;
   align-items: center;
   gap: 14px;
@@ -180,27 +181,32 @@
   color: var(--ink);
   cursor: pointer;
 }
-.sm-rule:hover {
+.sm-rule:hover,
+.sm-retro:hover {
   background: var(--tint);
 }
-.sm-rule .lab {
+.sm-rule .lab,
+.sm-retro .lab {
   flex: 1 1 0;
   min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 2px;
 }
-.sm-rule .lab b {
+.sm-rule .lab b,
+.sm-retro .lab b {
   font-size:calc(12.5px + var(--type-up));
   font-weight: 600;
 }
-.sm-rule .lab small {
+.sm-rule .lab small,
+.sm-retro .lab small {
   font-size:calc(11.5px + var(--type-up));
   line-height: 1.45;
   color: var(--ink3);
   font-variant-numeric: tabular-nums;
 }
-.sm-rule .switch {
+.sm-rule .switch,
+.sm-retro .switch {
   margin-left: 0;
   pointer-events: none;
 }
@@ -208,15 +214,28 @@
    `background:` shorthand here resets `background-clip` and the checked switch paints its whole
    phone hit box. Three sites set this colour and all three must be longhands — a `background-clip`
    re-declared in the phone block instead would be a second copy that the next shorthand undoes. */
-.sm-rule[aria-checked="true"] .switch {
+.sm-rule[aria-checked="true"] .switch,
+.sm-retro[aria-checked="true"] .switch {
   background-color: var(--accent);
 }
-.sm-rule[aria-checked="true"] .switch i {
+.sm-rule[aria-checked="true"] .switch i,
+.sm-retro[aria-checked="true"] .switch i {
   transform: translateX(17px);
 }
-.sm-rule:focus-visible {
+.sm-rule:focus-visible,
+.sm-retro:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: -2px;
+}
+/* ── the past-mail option: the same settings row, indented under the rule, because it is a
+   question ABOUT that rule and not a peer of it. It inherits `.sm-rule`'s box through the shared
+   selectors above; only the indent, the lighter hairline and the smaller label are its own. ── */
+.sm-retro {
+  padding-left: 34px;
+  border-top: 1px solid var(--hair-soft);
+}
+.sm-retro .lab b {
+  font-weight: 500;
 }
 /* ── the ways onward — links, not verbs: each opens a different question ── */
 .sm-links {

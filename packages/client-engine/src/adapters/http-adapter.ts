@@ -992,6 +992,9 @@ export class HttpAdapter implements EngineAdapter {
             // default it has always had, which is what keeps a client that predates this field working unchanged.
             ...(m.dest ? { dest: FOLDER_OF_VIEW[m.dest] } : {}),
             ...(m.scope ? { scope: m.scope } : {}),
+            // The past-mail answer, omitted when unstated on the line above's reasoning: an older
+            // client that cannot ask keeps the server's default rather than silently declining.
+            ...(m.applyRetro === undefined ? {} : { applyRetro: m.applyRetro }),
           },
           idempotencyKey: opts.idempotencyKey,
         });
@@ -1285,7 +1288,14 @@ export class HttpAdapter implements EngineAdapter {
 
       case "rule_update": {
         const res = await this.request("PATCH", `/rules/${encodeURIComponent(m.ruleId)}`, {
-          body: { destination: m.destination },
+          body: {
+            destination: m.destination,
+            // OMITTED when the caller said nothing, and that is the whole contract: the server
+            // re-arms a retarget's retro by default, and reads an explicit `true` as "apply this
+            // rule to my old mail" even when the destination did not move. Sending the default
+            // anyway would make every habit-click PATCH a whole-backlog walk.
+            ...(m.applyRetro === undefined ? {} : { applyRetro: m.applyRetro }),
+          },
           idempotencyKey: opts.idempotencyKey,
         });
         if (!res.ok) throw await this.rejectionOf(res);

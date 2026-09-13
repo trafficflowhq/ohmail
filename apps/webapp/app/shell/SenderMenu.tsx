@@ -24,12 +24,19 @@
 /**
  * The addition that changes the default: creating a rule also applies it to the mail already in the
  * mailbox, and that is the default. Choosing a destination for a sender PAST the gate writes a rule as
- * well as moving the mail (`rule_create`); the toggle is ON by default. Only offered for a sender the
- * Screener is NOT holding — a waiting sender's rule is promoted by `POST /screener/:id` inside the
- * decision itself. The rule path does NOT carry the unsubscribe disclosure, and that is checked, not
- * assumed: `unsubscribe.onScreenOut` has exactly one production caller (`screener-service.ts`,
- * `decide`'s reject branch) and `RulesService.create` calls nothing — a rule written past the gate
- * arms nothing today, so warning here would train people to click through the real confirm above.
+ * well as moving the mail (`rule_create`); the toggle is ON by default. The rule toggle is only
+ * offered for a sender the Screener is NOT holding — a waiting sender's rule is promoted by
+ * `POST /screener/:id` inside the decision itself. The rule path does NOT carry the unsubscribe
+ * disclosure, checked not assumed: `unsubscribe.onScreenOut` has one production caller
+ * (`screener-service.ts`, `decide`'s reject branch) and `RulesService.create` calls nothing, so
+ * warning here would train people to click through the real confirm above.
+ */
+
+/**
+ * THE PAST IS ITS OWN QUESTION (0.19). It rode the rule toggle, so keeping old mail where it was
+ * meant abandoning the rule — the opposite of the choice asked for. A second switch under the rule,
+ * on by default, offered at the gate too: there the rule is a given and the backlog is all that is
+ * left to decide.
  */
 import { useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
@@ -79,7 +86,12 @@ export function SenderMenu({
 }: {
   state: SenderMenuState;
   sender: SenderScreening;
-  onChoose: (dest: ScreeningDest, scope: ScreeningScope, makeRule: boolean) => void;
+  onChoose: (
+    dest: ScreeningDest,
+    scope: ScreeningScope,
+    makeRule: boolean,
+    applyRetro: boolean,
+  ) => void;
   onOpenDetail: (scope: ScreeningScope) => void;
   /**
    * OPEN THE SUBJECT-RULE SHEET for this sender — the row below the detail link.
@@ -112,6 +124,12 @@ export function SenderMenu({
   const [confirm, setConfirm] = useState<ScreeningDest | null>(null);
   /** ON by default. The requirement is about the DEFAULT, not about offering an option. */
   const [makeRule, setMakeRule] = useState(true);
+  /**
+   * …and whether that rule also reaches the mail already filed — the SECOND question, which used
+   * to ride the first. Same default, on; separate state, because "file their future mail there
+   * and leave my old mail alone" was unsayable while the only opt-out was abandoning the rule.
+   */
+  const [applyRetro, setApplyRetro] = useState(RETRO_DEFAULT_ON);
 
   useEffect(() => {
     const onDown = (e: MouseEvent) => {
@@ -144,18 +162,18 @@ export function SenderMenu({
    * here for the preview and there for the dispatch is one function evaluated twice, not two
    * implementations that agree today.
    */
-  const preview = confirm ? planScreeningChange(sender, confirm, scope, makeRule) : null;
+  const preview = confirm ? planScreeningChange(sender, confirm, scope, makeRule, applyRetro) : null;
 
   const commit = (dest: ScreeningDest) => {
     // The disclosure is owed exactly when the wire will arm auto-unsubscribe AND the mechanism is
     // armed at all. `ScreeningPlan.unsubscribes` decides the first — the one place that condition
     // about the PATH lives — and {@link autoUnsubscribe} the second; see its note for why the two
     // are separate questions rather than one flag pushed down into the planner.
-    if (autoUnsubscribe && planScreeningChange(sender, dest, scope, makeRule).unsubscribes) {
+    if (autoUnsubscribe && planScreeningChange(sender, dest, scope, makeRule, applyRetro).unsubscribes) {
       setConfirm(dest);
       return;
     }
-    onChoose(dest, scope, makeRule);
+    onChoose(dest, scope, makeRule, applyRetro);
   };
 
   /**
@@ -227,7 +245,8 @@ export function SenderMenu({
           ABOVE the destinations, because it changes what clicking one of them does and a
           control read afterwards is not a choice. Offered only past the gate: a waiting
           sender's rule is promoted by the decide itself, so a switch there would be a control
-          that cannot change the outcome.
+          that cannot change the outcome. The PAST-mail row below is offered in both places,
+          because that answer changes the outcome at the gate as well.
 
           It is a settings row — the label block left, the switch right, the note under — and
           the WHOLE row is the switch (`role="switch"` on the one button; the knob inside it is a
@@ -244,16 +263,36 @@ export function SenderMenu({
         >
           <span className="lab">
             <b>{t("ruleToggle")}</b>
-            {/* The retroactive half, said before the click and with its size: the rule is applied to
-                mail already on the server by a worker pass. It rides the SAME switch — turning the
-                rule off is the opt-out, and `planScreeningChange` reports `retro: false` for every
-                plan that writes no rule, so control and behaviour cannot come apart. It says "apply
-                the rule to", never "move" or "every message": the pass re-evaluates through
-                `evaluateRules` (a higher-priority deny rule keeps its mail) and skips anything the
-                user already acted on — a promise about the outcome would be false for both. */}
-            {makeRule && RETRO_DEFAULT_ON ? (
-              <small>{t("ruleRetro", { count: subject.messages.length })}</small>
-            ) : null}
+          </span>
+          <span className="switch" aria-hidden="true">
+            <i />
+          </span>
+        </button>
+      ) : null}
+
+      {/* ── AND WHETHER IT REACHES THE MAIL ALREADY HERE ─────────────────────────────────
+          A second row, indented under the rule, because it is a question ABOUT the rule and not a
+          peer of it. Offered whenever a rule will be in force — past the gate that means the switch
+          above is on; at the gate the decide promotes one regardless, so this is the only answer
+          left to give, and it is the only door to a decided sender's mail that has already left the
+          Screener.
+
+          The note states the SIZE with the mirror's own honesty (`auditCount`'s grammar): the count
+          is what this install has synced, and the pass walks what is on the server. The count is
+          never phrased as a promise that they all move — the pass re-evaluates through
+          `evaluateRules` and skips what the user acted on; the footer states the leave-alone set. */}
+      {subject.waiting || makeRule ? (
+        <button
+          type="button"
+          role="switch"
+          aria-checked={applyRetro}
+          aria-label={t("retroToggleAria")}
+          className="sm-retro"
+          onClick={() => setApplyRetro((on) => !on)}
+        >
+          <span className="lab">
+            <b>{t("retroToggle")}</b>
+            <small>{t("retroToggleNote", { count: subject.messages.length })}</small>
           </span>
           <span className="switch" aria-hidden="true">
             <i />
@@ -291,7 +330,7 @@ export function SenderMenu({
             {t("unsubFineMore")}
           </InfoNote>
           <span className="sm-confirm-row">
-            <button type="button" className="go" onClick={() => { setConfirm(null); onChoose(confirm, scope, makeRule); }}>
+            <button type="button" className="go" onClick={() => { setConfirm(null); onChoose(confirm, scope, makeRule, applyRetro); }}>
               {t("unsubCommit")}
             </button>
             <button type="button" onClick={() => setConfirm(null)}>{t("cancel")}</button>
@@ -366,17 +405,23 @@ export function SenderMenu({
           destination a rule already covers, nothing is written and only the outcome sentence stays
           true. The toast, which does know, names the difference — `screeningToast`. */}
       <div className="sm-foot">
+        {/* One sentence per pair of answers — (a rule, the past) at the gate and past it. The
+            retroactive arm names the past AND the thing that has no undo: mail this moves stays
+            moved when the rule is later revoked, because `DELETE /rules/:id` touches the rules row
+            and nothing else. It says "the mail ohmail has already filed for you" rather than "the
+            mail already in your mailbox", which was wider than the pass: only the six folders
+            ohmail organizes are candidates, so a customer's own folders and their Sent are never
+            touched. */}
         {subject.waiting
-          ? scope === "domain"
-            ? t("footRuleDomain", { domain: whichDomain })
-            : t("footRule", { sender: who })
+          ? applyRetro
+            ? scope === "domain"
+              ? t("footRuleRetroDomain", { domain: whichDomain })
+              : t("footRuleRetro", { sender: who })
+            : scope === "domain"
+              ? t("footRuleDomain", { domain: whichDomain })
+              : t("footRule", { sender: who })
           : makeRule
-            ? RETRO_DEFAULT_ON
-              // The sentence that used to promise only the future. It now names the
-              // past as well, AND the thing that has no undo — mail this moves stays moved when
-              // the rule is later revoked, because `DELETE /rules/:id` touches the rules row and
-              // nothing else. Saying so here is the "way back" this feature actually has: the
-              // count and the choice, before the click.
+            ? applyRetro
               ? scope === "domain"
                 ? t("footWillRuleRetroDomain", { domain: whichDomain })
                 : t("footWillRuleRetro", { sender: who })

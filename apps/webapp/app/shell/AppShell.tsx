@@ -203,6 +203,7 @@ import { SenderMenu, type SenderMenuState } from "./SenderMenu";
 import { SenderAuditPanel, type SenderAuditState } from "./SenderAuditPanel";
 import { attributeMessages } from "./sender-audit";
 import {
+  RETRO_DEFAULT_ON,
   dispatchScreeningChange,
   planScreeningChange,
   senderScreening,
@@ -4074,6 +4075,9 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
     dest: ScreeningDest,
     scope: ScreeningScope = "sender",
     makeRule = true,
+    // The sheet's second switch — whether the rule also reaches the mail already filed. Threaded
+    // rather than defaulted here: the planner's default decides only what an untaught caller gets.
+    applyRetro = RETRO_DEFAULT_ON,
     // The contact-chip override (viewer redesign): the sheet resolved a To/Cc address, so the
     // dispatch must resolve the SAME one — a plan computed from the message id alone would
     // preview one person's mail and move the sender's.
@@ -4082,7 +4086,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
     setSenderMenu(null);
     const sender = senderScreening(reader, messageId, address);
     if (!sender) return;
-    const plan = planScreeningChange(sender, dest, scope, makeRule);
+    const plan = planScreeningChange(sender, dest, scope, makeRule, applyRetro);
     const place = PLACE_LABEL[dest] ?? dest;
     // The SUBJECT of the sentence follows the scope, or a domain decision would report
     // itself as being about the one address the user happened to click.
@@ -4173,11 +4177,11 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
    * so a toast fired on click would be green in every test and wrong on a live account. Dispatched here rather than
    * inside the sheet so the sheet stays a pure render of a plan, and so the awaiting is testable without a DOM.
    */
-  const confirmSubjectRule = useStableCallback((messageId: string, term: string, dest: ScreeningDest, field: TermField = "subject") => {
+  const confirmSubjectRule = useStableCallback((messageId: string, term: string, dest: ScreeningDest, field: TermField = "subject", applyRetro = RETRO_DEFAULT_ON) => {
     setSubjectRule(null);
     const ctx = subjectRuleContext(reader, messageId);
     if (!ctx) return;
-    const plan = planSubjectRule(ctx, term, dest, field);
+    const plan = planSubjectRule(ctx, term, dest, field, applyRetro);
     const place = PLACE_LABEL[dest] ?? dest;
     const rules = plan.ruleMutations.map((m) => engine.mutate(m));
     for (const m of plan.mutations) {
@@ -7897,7 +7901,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
           // The address override travels on EVERY dispatch off this sheet, or the sheet would
           // show the chip's person and rule on the message's sender — the cc-chip guard names
           // this exact seam.
-          onChoose={(dest, scope, makeRule) => changeScreening(senderMenu!.messageId, dest, scope, makeRule, senderMenu!.address)}
+          onChoose={(dest, scope, makeRule, applyRetro) => changeScreening(senderMenu!.messageId, dest, scope, makeRule, applyRetro, senderMenu!.address)}
           autoUnsubscribe={autoUnsubscribeDiscloses}
           onOpenDetail={(scope) => openSenderAudit(senderMenu!.messageId, scope, senderMenu!.address)}
           // The subject sheet resolves the message's SENDER (`subjectRuleContext`), so under an
@@ -7917,7 +7921,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
           key={subjectRule!.messageId}
           state={subjectRule!}
           ctx={subjectRuleFor}
-          onConfirm={(term, dest, field) => confirmSubjectRule(subjectRule!.messageId, term, dest, field)}
+          onConfirm={(term, dest, field, applyRetro) => confirmSubjectRule(subjectRule!.messageId, term, dest, field, applyRetro)}
           onClose={() => setSubjectRule(null)}
         />
       ) : null}

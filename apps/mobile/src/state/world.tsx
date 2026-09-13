@@ -973,7 +973,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
           sendOutcome: (key) => outcomeOf(key),
           tagToggle: (id, tag, assigned) => void acts.tagToggle(id, tag, assigned),
           tagCreate: (id, name) => void acts.tagCreate(id, name),
-          screenSender: (id, dest, scope) => void acts.screenSender(id, dest, scope),
+          screenSender: (id, dest, scope, applyRetro) => void acts.screenSender(id, dest, scope, applyRetro),
           folderCreate: (mailboxId, name) => void acts.folderCreate(mailboxId, name),
           folderRename: (id, name) => void acts.folderRename(id, name),
           folderDelete: (id) => void acts.folderDelete(id),

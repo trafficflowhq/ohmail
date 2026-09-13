@@ -111,6 +111,9 @@ const KIND_HANDLERS: Readonly<Record<string, KindHandler | undefined>> = {
         // The drain never stamps `screening_baseline_at`. See
         // `ApplyScreenerDecisionInput.stampBaseline`'s own doc comment for why.
         stampBaseline: false,
+        // The reader's own past-mail answer, carried across the install boundary rather than
+        // re-defaulted here: a decline made on one install must not become consent on another.
+        applyRetro: decision.applyRetro,
       });
       return { applied: true };
     };

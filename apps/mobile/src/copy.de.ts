@@ -1020,5 +1020,8 @@ export const DE: Deck = {
   unsavedKindRule: "Eine Regel-Änderung",
 
   screeningNote: (target: string) =>
-    `Wird zur Regel — künftige Post von ${target} wird automatisch dorthin einsortiert, und was schon hier ist, wird verschoben.`,
+    `Wird zur Regel — künftige Post von ${target} wird automatisch dorthin einsortiert. Post, die schon hier ist, bleibt, wo sie ist.`,
+  screeningNoteRetro: (target: string) =>
+    `Wird zur Regel — künftige Post von ${target} wird automatisch dorthin einsortiert, und ohmail wendet die Regel auf die Post an, die es schon für dich einsortiert hat. Nachrichten, die du beantwortet, selbst einsortiert oder geparkt hast, bleiben unberührt.`,
+  screeningRetroToggle: "Auch die Post verschieben, die schon im Postfach liegt",
 };

@@ -346,7 +346,14 @@ function TagSheet({ m, tags, onClose }: { m: WorldMail; tags: WorldTag[]; onClos
 
 function ScreeningSheet({ m, onClose }: { m: WorldMail; onClose: () => void }) {
   const w = useWorld();
+  const t = useTheme();
   const [scope, setScope] = useState<Scope>("sender");
+  /**
+   * Whether the rule also reaches the mail already filed — the webapp's second switch, same
+   * default. It used to be sent as a hard `true` with nothing on screen saying so, which is a
+   * promise the person could neither read nor decline.
+   */
+  const [applyRetro, setApplyRetro] = useState(true);
   const domain = domainOf(m.from.address);
   const hasDomain = m.from.address.includes("@") && domain !== "";
   const target = scope === "domain" ? `@${domain}` : m.from.address;
@@ -368,15 +375,36 @@ function ScreeningSheet({ m, onClose }: { m: WorldMail; onClose: () => void }) {
           />
         </View>
       ) : null}
+      {/* THE PAST-MAIL OPTION, ABOVE THE DESTINATIONS, because it changes what pressing one of
+          them does and a control read afterwards is not a choice. A switch by ROLE and STATE, so
+          it is pressable and readable rather than a decorated row. */}
+      <Tap
+        accessibilityRole="switch"
+        accessibilityState={{ checked: applyRetro }}
+        accessibilityLabel={Copy.screeningRetroToggle}
+        onPress={() => setApplyRetro((on) => !on)}
+        style={({ pressed }) => ({
+          flexDirection: "row",
+          alignItems: "center",
+          gap: 10,
+          paddingHorizontal: 16,
+          paddingVertical: 13,
+          backgroundColor: pressed ? t.c.tint : "transparent",
+        })}
+      >
+        <Txt variant="button" style={{ flexShrink: 1 }}>{Copy.screeningRetroToggle}</Txt>
+        <View style={{ flex: 1 }} />
+        {applyRetro ? <Icon name="check" size={14} color={t.c.accentInk} /> : null}
+      </Tap>
       {DESTINATIONS.map((dest: Destination) => (
         <SheetRow
           key={dest}
           label={`→ ${destLabel(dest)}`}
-          onPress={() => { onClose(); w.actions.screenSender(m.id, dest, scope); }}
+          onPress={() => { onClose(); w.actions.screenSender(m.id, dest, scope, applyRetro); }}
         />
       ))}
       <Txt variant="caption" tone="ink3" style={{ paddingHorizontal: 14, paddingTop: 8 }}>
-        {Copy.screeningNote(target)}
+        {applyRetro ? Copy.screeningNoteRetro(target) : Copy.screeningNote(target)}
       </Txt>
     </Sheet>
   );

@@ -280,11 +280,11 @@ export interface ScreeningPlan {
    */
   matched: number;
   /**
-   * Whether the rule this writes will ALSO be applied to mail already on the server.
+   * Whether the rule this leaves in force will ALSO be applied to mail already on the server.
    *
-   * False for every plan that writes no rule, and for the explicit opt-out. Never true for
-   * `promoted`: a waiting sender's mail is re-routed by `decide` inside the decision itself, so
-   * a retroactive pass over it would be a second mover for mail already handled.
+   * False for every plan that writes no rule, and for the explicit opt-out. True for `promoted`
+   * too since the decide carries the answer: it re-routes the HELD mail itself, and the rule it
+   * promotes owns everything of that sender's that had already left the gate.
    */
   retro: boolean;
   /** Distinct addresses whose mail this touches — the number the domain copy states. */
@@ -309,7 +309,8 @@ export interface ScreeningPlan {
  * last-write-wins per entity) — the same ordering `screener-state.ts` documents. `makeRule`
  * defaults TRUE, because the default is where the requirement lives; `false` is the explicit
  * non-default the sheet keeps reachable, and what the BULK path passes — its confirm copy promises
- * no rule.
+ * no rule. `applyRetro` is the second answer, defaulting the same way: it decides whether the rule
+ * also reaches the mail already filed, and it is expressible on every path this plans.
  */
 export function planScreeningChange(
   s: SenderScreening,
@@ -325,14 +326,14 @@ export function planScreeningChange(
   const promoted = subject.waiting && subject.representativeId != null;
 
   /**
-   * The rule ladder, and it runs before the moves — the durable half lands first, so an interrupted sequence leaves a
-   * rule with mail on its way rather than moved mail with nothing remembering why. 1. A WAITING subject makes no
-   * `rule_create` — `decide` promotes one server-side. 2. A rule already pointing at the destination ⇒ nothing to
-   * write. 3. One pointing somewhere else is RETARGETED — every one: identical `manual` rules fall to an ID tie-break
-   * in `compareRules`, so leaving the old one makes "future mail files there too" a coin toss. 4. Otherwise, write
-   * one. A covering rule of the OTHER kind is not consulted (a new `sender` rule outranks a `domain` one). A
-   * subject-term rule (mail 0050) is never retargeted: it is one SLICE, deliberately built — it outranks the new
-   * broad rule for its slice, and the broad rule takes the rest.
+   * The rule ladder, before the moves — the durable half lands first, so an interrupted sequence leaves a rule with
+   * mail on its way rather than moved mail with nothing remembering why. 1. A WAITING subject makes no `rule_create`;
+   * `decide` promotes one server-side, carrying the past-mail answer. 2. A rule already at the destination is re-armed
+   * for the backlog when that answer is yes, and otherwise left alone. 3. One pointing elsewhere is RETARGETED — every
+   * one: identical `manual` rules fall to an ID tie-break in `compareRules`, so leaving the old one makes "future mail
+   * files there too" a coin toss. 4. Otherwise, write one. A covering rule of the OTHER kind is not consulted (a new
+   * `sender` rule outranks a `domain` one). A subject-term rule (mail 0050) is never retargeted: it is one SLICE,
+   * deliberately built — it outranks the new broad rule for its slice, and the broad rule takes the rest.
    */
   const covering = makeRule && !promoted
     // Neither term may be present (mail 0050/0051): a subject- or body-narrowed rule is the rule
@@ -350,9 +351,21 @@ export function planScreeningChange(
   } else if (makeRule) {
     if (covering.some((r) => r.destination === wanted)) {
       ruleState = "already";
+      // NOTHING TO WRITE ABOUT THE FUTURE — a rule already sends their mail there. The PAST is a
+      // different question, and it used to go unasked: the sheet promised the mail already here
+      // would follow and this branch emitted no mutation at all. With the option on, the covering
+      // rule is re-armed at the SAME destination (`applyRetro: true` on an unmoved rule is the
+      // server's re-arm); with it off nothing is written and a habit-click stays free.
+      if (applyRetro) {
+        for (const r of covering.filter((c) => c.destination === wanted)) {
+          ruleMutations.push({ kind: "rule_update", ruleId: r.id, destination: wanted, applyRetro: true });
+        }
+      }
     } else if (covering.length > 0) {
       ruleState = "retargeted";
-      for (const r of covering) ruleMutations.push({ kind: "rule_update", ruleId: r.id, destination: wanted });
+      for (const r of covering) {
+        ruleMutations.push({ kind: "rule_update", ruleId: r.id, destination: wanted, applyRetro });
+      }
     } else {
       ruleState = "created";
       ruleMutations.push({
@@ -381,6 +394,10 @@ export function planScreeningChange(
       senderId: subject.representativeId,
       decision,
       scope,
+      // The past-mail answer travels with the decision, because the rule the decide promotes is
+      // the only rule this press writes: without it a decided sender's mail that has already left
+      // the gate is never reconsidered, and the sheet has no control that could ask.
+      applyRetro,
       // ── THE BUTTON THE USER PRESSED, AND IT USED TO BE THE LITERAL `"ohbox"` ─────────────
       //
       // This read `...(decision === "yes" ? { dest: "ohbox" as const } : {})` — the sheet's
@@ -419,7 +436,10 @@ export function planScreeningChange(
   const toMove = outOfPlace.slice(0, RETRO_VISIBLE_MOVES);
   for (const m of toMove) mutations.push({ kind: "move", messageId: m.id, folder: wanted });
 
-  const retro = applyRetro && (ruleState === "created" || ruleState === "retargeted");
+  // Every state that leaves a rule in force can now be asked for the backlog: `created` and
+  // `retargeted` as before, `already` through the re-arm above, and `promoted` through the decide.
+  // `none` writes no rule, so there is nothing to apply.
+  const retro = applyRetro && ruleState !== "none";
   return {
     mutations,
     ruleMutations,
@@ -447,7 +467,7 @@ export function planScreeningChange(
  * `place`, `count`).
  */
 export type ScreeningToastKey =
-  | "toastRuled" | "toastRetargeted" | "toastAlreadyRuled"
+  | "toastRuled" | "toastRetargeted" | "toastAlreadyRuled" | "toastAlreadyRuledRetro"
   | "toastRuleQueued" | "toastRuleFailed" | "toastMoved";
 
 export function screeningToast(
@@ -458,7 +478,10 @@ export function screeningToast(
     case "none":
       return "toastMoved";
     case "already":
-      return "toastAlreadyRuled";
+      // A press on a rule that already files there used to do nothing, and the sentence said so.
+      // With the past-mail option on it re-arms that rule for the backlog, so the sentence names
+      // the thing that just happened rather than only the thing that already had.
+      return plan.retro ? "toastAlreadyRuledRetro" : "toastAlreadyRuled";
     /**
      * THE DECIDE PATH IS NOT AWAITED AND KEEPS THE SENTENCE IT SHIPPED WITH. Its rule is
      * written by the server inside the decision's own transaction — there is no separate

@@ -900,6 +900,14 @@ export type EngineMutation =
       /** "&read" seen-semantics: a Yes files the held mail already-seen (unread=false). */
       read?: boolean;
       scope?: "sender" | "domain";
+      /**
+       * Also apply the promoted rule to mail that has already left the gate. The decide files the
+       * HELD mail and stops, so a sender with five messages waiting and four hundred already in
+       * Reads had no door to the four hundred; this arms `rules.retro_requested_at` on the rule the
+       * decision promotes. Absent = the server's default (true), the same contract `rule_create`
+       * uses — the surface states it either way.
+       */
+      applyRetro?: boolean;
     }
   | {
       kind: "tag_assign";
@@ -1216,7 +1224,18 @@ export type EngineMutation =
    * one sender's decision into a whole domain's without saying so. Both are refused here
    * rather than offered thinly.
    */
-  | { kind: "rule_update"; ruleId: string; destination: Folder }
+  | {
+      kind: "rule_update";
+      ruleId: string;
+      destination: Folder;
+      /**
+       * Also apply the rule to mail already filed, as the user answered it. The server re-arms the
+       * retro on a retarget unless this says otherwise; an explicit `true` re-arms a rule whose
+       * destination did NOT move, which is the only way to ask an existing rule for the backlog.
+       * Absent means the caller has nothing to say and the server's own rule stands.
+       */
+      applyRetro?: boolean;
+    }
   /**
    * Make a rule from past the gate — the verb that did not exist. Creating a rule must also
    * apply to mail already in the mailbox, by default. A new verb because `screener_decide` only

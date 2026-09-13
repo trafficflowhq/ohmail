@@ -1453,7 +1453,7 @@ export interface LiveWorldActions {
    * SCREENING from the open message: where THIS SENDER's mail goes — the webapp sender sheet's
    * rule ladder (`sender-screening.ts#planScreeningChange`), in the phone's idiom.
    */
-  screenSender(messageId: string, dest: Destination, scope: Scope): Promise<boolean>;
+  screenSender(messageId: string, dest: Destination, scope: Scope, applyRetro?: boolean): Promise<boolean>;
 
   /* The folder verbs (FOLDERS-SPEC.md stage 2) — the webapp `useFolderVerbs` arms.
    * User-commanded real IMAP operations in the user's own mailbox, on the same engine
@@ -2020,14 +2020,16 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
   /**
    * Screening from the open message — the rule ladder, mirrored from
    * `apps/webapp/app/shell/sender-screening.ts#planScreeningChange`: (1) a subject still waiting
-   * at the gate is decided with `screener_decide` on its newest held message — the server
-   * promotes the rule in the decision's own transaction; (2) an enabled term-free rule of the
-   * same kind already at the destination writes nothing; (3) rules pointing elsewhere — every
-   * one, never just the first — are retargeted with `rule_update`; (4) otherwise one is written,
-   * with `applyRetro`. The moves are the optimistic half, capped at `RETRO_VISIBLE_MOVES` (50);
-   * the rule is awaited and reported, the moves roll their own rows back. Raw mirror reads.
+   * at the gate is decided with `screener_decide`, which carries the past-mail answer; (2) a
+   * term-free rule of the same kind already at the destination writes no new rule and is re-armed
+   * for the backlog when that answer is yes; (3) rules pointing elsewhere — every one — are
+   * retargeted; (4) otherwise one is written. The moves are the optimistic half, capped at
+   * `RETRO_VISIBLE_MOVES` (50); the rule is awaited and reported, the moves roll their own rows
+   * back. Raw mirror reads.
    */
-  const screenSender = async (messageId: string, dest: Destination, scope: Scope): Promise<boolean> => {
+  const screenSender = async (
+    messageId: string, dest: Destination, scope: Scope, applyRetro = true,
+  ): Promise<boolean> => {
     const raw = engine.read();
     const m = raw.get<EngineMessage>("message", messageId);
     if (!m) return false;
@@ -2051,7 +2053,12 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     let ruled: Promise<boolean>;
     if (waiting) {
       ruled = watched(
-        engine.mutate({ kind: "screener_decide", senderId: waiting.id, decision, dest: dest as ScreenDest, scope }),
+        engine.mutate({
+          kind: "screener_decide", senderId: waiting.id, decision, dest: dest as ScreenDest, scope,
+          // The past-mail answer rides the decision, because the rule it promotes is the only rule
+          // this press writes — the webapp's ruling, on the same wire.
+          applyRetro,
+        }),
       );
       // The decide relocates the HELD rows and promotes the rule — it does not touch the
       // subject's mail that already left the gate. Those rows move beside it (the webapp's
@@ -2072,11 +2079,20 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
       );
       const retargets: EngineMutation[] = standing
         .filter((r) => r.destination !== wanted)
-        .map((r) => ({ kind: "rule_update", ruleId: r.id, destination: wanted }));
+        .map((r) => ({ kind: "rule_update", ruleId: r.id, destination: wanted, applyRetro }));
+      /* A standing rule ALREADY at the destination writes nothing about the future — and, with the
+         past-mail option on, re-arms that rule for the backlog: an explicit `applyRetro: true` on a
+         PATCH whose destination did not move is the server's re-arm. Off, it writes nothing at all
+         and a habit-click stays free. The webapp's `planScreeningChange` ladder, verbatim. */
+      const rearms: EngineMutation[] = applyRetro
+        ? standing
+            .filter((r) => r.destination === wanted)
+            .map((r) => ({ kind: "rule_update", ruleId: r.id, destination: wanted, applyRetro: true }))
+        : [];
       const writes: EngineMutation[] =
         standing.length === 0
-          ? [{ kind: "rule_create", ruleKind: scope, match, destination: wanted, applyRetro: true }]
-          : retargets;
+          ? [{ kind: "rule_create", ruleKind: scope, match, destination: wanted, applyRetro }]
+          : [...retargets, ...rearms];
       ruled = Promise.all(writes.map((w) => watched(engine.mutate(w)))).then((rs) => rs.every(Boolean));
       // The optimistic half: what the reader can see moves now; the server's pass does the rest.
       subject
@@ -2190,7 +2206,7 @@ export interface WorldActions {
   sendOutcome(key: string): "pending" | "confirmed" | "rolled_back" | "unverified" | "unknown";
   tagToggle(messageId: string, tag: WorldTag, assigned: boolean): void;
   tagCreate(messageId: string, name: string): void;
-  screenSender(messageId: string, dest: Destination, scope: Scope): void;
+  screenSender(messageId: string, dest: Destination, scope: Scope, applyRetro?: boolean): void;
   /* The folder verbs — see {@link LiveWorldActions} for each arm's contract. */
   folderCreate(mailboxId: string, name: string): void;
   folderRename(folderId: string, name: string): void;
@@ -2235,7 +2251,7 @@ export function stableActions(current: () => WorldActions): WorldActions {
     sendOutcome: (key) => current().sendOutcome(key),
     tagToggle: (id, tag, assigned) => void current().tagToggle(id, tag, assigned),
     tagCreate: (id, name) => void current().tagCreate(id, name),
-    screenSender: (id, dest, scope) => void current().screenSender(id, dest, scope),
+    screenSender: (id, dest, scope, applyRetro) => void current().screenSender(id, dest, scope, applyRetro),
     folderCreate: (mailboxId, name) => void current().folderCreate(mailboxId, name),
     folderRename: (id, name) => void current().folderRename(id, name),
     folderDelete: (id) => void current().folderDelete(id),
