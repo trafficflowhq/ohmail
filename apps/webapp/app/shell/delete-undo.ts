@@ -93,6 +93,14 @@ export interface DeleteUndoCopy {
    * namespace) so the Screener and the delete key say one sentence.
    */
   noUndo: string;
+  /**
+   * THE SERVER SAID THERE IS NOTHING LEFT TO ACT ON — the restore's own outcome, and not a
+   * refusal: a mail server empties its own Trash, so the copy a restore would carry can be gone
+   * by the time the window closes. `failed` may not be said about it ("it's still in Trash" is
+   * false of a message the server removed). Optional because a verb with no such outcome has no
+   * sentence to give; the dispatch only ever answers `gone` where the door can say it.
+   */
+  gone?: string;
   /** The same three for a press over MORE THAN ONE message. Optional; see above. */
   deletedMany?: (count: number) => string;
   undoneMany?: (count: number) => string;
@@ -221,15 +229,25 @@ export function createDeleteUndo(deps: DeleteUndoDeps): DeleteUndo {
        leave a press that is half on the wire and no longer written down anywhere. */
     let outstanding = ids.length;
     let refused = 0;
+    let gone = 0;
     const settled = () => {
       outstanding -= 1;
       if (outstanding > 0) return;
       disarmDeleteIntent(pressId);
       if (refused > 0) deps.toast(say(deps.copy.failed, deps.copy.failedMany, refused));
+      // SAID APART FROM THE REFUSAL, and after it, because they are different facts: one says the
+      // mail is where it was, the other that the mail server no longer has it. A `gone` with no
+      // sentence falls back to the refusal rather than to silence — the surface still owes the
+      // person something — and the restore window supplies one.
+      if (gone > 0) deps.toast(deps.copy.gone ?? say(deps.copy.failed, deps.copy.failedMany, gone));
     };
     for (const messageId of ids) {
       void deps.mutate(messageId, pressId).then(
-        (res) => { if (res.status === "rolled_back") refused += 1; settled(); },
+        (res) => {
+          if (res.status === "gone") gone += 1;
+          else if (res.status === "rolled_back") refused += 1;
+          settled();
+        },
         () => { refused += 1; settled(); },
       );
     }
@@ -389,7 +407,7 @@ export function replayDeleteIntents(
 export function restoreDispatch(
   restoreFromTrash: (
     messageId: string, opts: { intentId: string },
-  ) => Promise<{ state: string; restoreTo?: string }>,
+  ) => Promise<{ state: string; restoreTo?: string; code?: string | null }>,
   /**
    * WHERE IT IS GOING, said when the SERVER has answered — and never at the press. The answer is a queued intent, so
    * the sentence the caller raises says "Restoring", not "Restored". The window's own `deleted` sentence is raised
@@ -414,6 +432,11 @@ export function restoreDispatch(
       onRestored?.(outcome.restoreTo && outcome.restoreTo !== "" ? outcome.restoreTo : "INBOX");
       return { status: "applied" };
     }
+    /* THE DOOR'S OWN ANSWER FOR A COPY THAT IS GONE, kept apart from a refusal. The server
+       refuses the restore because no copy of the message is left on the mail server — the same
+       410 the Junk rescue answers — and the window's refusal sentence says the mail is still in
+       Trash, which is false of a message the server removed. */
+    if (outcome.code === "message_gone") return { status: "gone" };
     return { status: "rolled_back" };
   };
 }

@@ -1524,7 +1524,7 @@ async function fileChunk(
         // {@link voidGoneFiling} for why those are the only two readings. Cross-checking
         // `result.gone` as well would be a second reading of one fact, with a branch no test can
         // redden.
-        if (!newLoc) { await voidGoneFiling(r, accountId, p); continue; }
+        if (!newLoc) { await voidGoneFiling(r, accountId, p, special); continue; }
         // Mail 0065: ONE completion writer for every path that lands a move — the ordinary
         // converge, the junk filing's satisfied/parked/husked shape, and the delete's park.
         // Written ONLY here, after `moveMany` reported the batch whole: the claim follows the
@@ -1589,8 +1589,39 @@ async function recordAudits(
  * `primaryInstanceVanished` tells them apart — the SAME predicate ingest treats as adoption evidence,
  * true only once the DELETE is durably observed under a matching epoch. The write is the COMPLETION write (`observed := desired`), and `native_locator` is left alone deliberately (clearing it would erase the adoption evidence). Takes the repo it must write through, because one caller is already fenced.
  */
-async function voidGoneFiling(repo: WorkerRepo, accountId: string, p: PendingFolderState): Promise<void> {
+async function voidGoneFiling(
+  repo: WorkerRepo, accountId: string, p: PendingFolderState, special: SpecialFolderMap,
+): Promise<void> {
   if (!(await repo.primaryInstanceVanished(p.messageId))) return;
+  /* A RESTORE OUT OF TRASH IS VOIDED AGAINST THE OBSERVATION, NEVER `observed := desired`.
+   * A mail server empties its own Trash on its own schedule, so between the delete's move and the
+   * restore's the copy can be gone — and completing the restore would say the message is back in
+   * INBOX with the server holding nothing anywhere. The observation is what is true: it is still
+   * where it last was, and there is no copy left to carry. The tombstone stands (nothing here
+   * clears `deleted_at`; only a LANDED move does), the row leaves the queue converged on the
+   * truth, and the restore verb refuses at the door rather than queueing a move that cannot run. */
+  const trash = special.trashFolder;
+  if (trash !== null && p.observedFolder === trash && p.desiredFolder !== trash) {
+    const adopted = await repo.adoptFolderState(
+      p.messageId,
+      { desiredFolder: p.observedFolder, observedFolder: p.observedFolder, lastSetBy: p.lastSetBy },
+      p.desiredFolder,
+    );
+    await repo.recordAudit(
+      accountId,
+      adopted ? "reconcile.restore.gone" : "reconcile.move.superseded",
+      {
+        messageId: p.messageId, from: p.nativeLocator, to: p.desiredFolder,
+        reason: adopted
+          ? "the copy this restore would have carried is no longer on the mail server — the "
+            + "message stays deleted, and the restore is not offered again"
+          : "the gone-restore void was computed against a desired folder that has since changed; "
+            + "nothing was written and the newer intent stands",
+      },
+      null,
+    );
+    return;
+  }
   // CONDITIONAL, for `completeFolderState`'s stated reason: `p` was read before this pass's IMAP
   // work, so voiding through `upsertFolderState` would write a superseded desire back over a
   // decision committed since — and a VOID is the worst place to do it, because the row leaves the
@@ -1648,7 +1679,7 @@ async function fileOne(deps: SyncDeps, p: PendingPhysical, special: SpecialFolde
       // Already moved (crash between IMAP move and DB update) → leave pending; the next
       // changesSince adopts it. Expunged outright → nothing will ever adopt it; see
       // voidGoneFiling for how the two are told apart.
-      await fencedGroup(deps, (r) => voidGoneFiling(r, accountId, p));
+      await fencedGroup(deps, (r) => voidGoneFiling(r, accountId, p, special));
       return false;
     }
     if (isTransportFailure(err)) {

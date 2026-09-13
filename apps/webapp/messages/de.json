@@ -919,6 +919,7 @@
     "toastRestoringTo": "Wird in {place} wiederhergestellt…",
     "toastRestoreUndone": "Bleibt im Papierkorb.",
     "toastRestoreFailed": "Konnte nicht wiederhergestellt werden — sie ist noch im Papierkorb.",
+    "restoreGone": "Diese Nachricht ist nicht mehr im Papierkorb \u2014 dein Mailserver hat sie wom\u00f6glich entfernt.",
     "noErase": "ohmail löscht nie unwiderruflich — zum endgültigen Entfernen nutze deinen eigenen Mail-Client.",
     "restoring": "Wird wiederhergestellt…",
     "unavailable": "Der Papierkorb ist hier nicht verfügbar.",

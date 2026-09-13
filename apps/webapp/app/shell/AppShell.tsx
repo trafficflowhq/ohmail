@@ -1336,6 +1336,10 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
       undo: t("screener.toastUndo"),
       undone: t("trash.toastRestoreUndone"),
       failed: t("trash.toastRestoreFailed"),
+      /* AND THE OTHER OUTCOME THE RESTORE HAS: the mail server emptied its own Trash, so there is
+         no copy left to put back. `failed` says "it's still in Trash", which is false of exactly
+         this case — the one sentence a person must not be given about mail that is gone. */
+      gone: t("trash.restoreGone"),
       /* THE SAME SENTENCE THE DELETE WINDOW SAYS: a refused jar takes the undo away, not the
          restore. Required by `DeleteUndoCopy` so no window can offer an undo it cannot honour. */
       noUndo: t("session.noUndoHere"),
