@@ -741,6 +741,14 @@ function generationOf(client: { readonly mailbox?: { uidValidity?: number | bigi
 export type ProfileUidAsk =
   | { readonly kind: "uids"; readonly uids: number[] }
   /**
+   * NOBODY HAS PUBLISHED SETTINGS — proved, not inferred, and a first-class answer because the
+   * WRITER needs one. With only `uids` and `unknown`, a folder holding no document could be
+   * reported only as a refusal, and a refusal stops the write that would create the first
+   * document: a mailbox whose `_meta` had lost its settings could never get them back. Given
+   * only by a search of the WHOLE folder, so it is a measurement; an empty WINDOW never gives it.
+   */
+  | { readonly kind: "absent" }
+  /**
    * `code` is the SAME FACT as `why`, in the alphabet a log line can carry.
    *
    * `why` is prose and a log line never carries prose: measured on a reader for nine hours,
@@ -975,6 +983,14 @@ export function makeProfileIo(
          * because nothing confirms it and a window in the wrong place loses the document. */
         if (probed === 0) return out;
         if (probed === undefined && cached === 0) return out;
+        /**
+         * THE SERVER'S COUNT, and only the server's. It licenses the complete search that lets
+         * {@link ProfileUidAsk} answer `absent` — see the walk's last arm. The cached `exists`
+         * deliberately does not reach it: `cached` may end this read at zero (cheap to be wrong
+         * about in one direction) but a stale-low cache authorising "the folder is small enough
+         * to search whole" would authorise an absence nobody measured, which is the lapse this
+         * module's honesty rule exists to prevent.
+         */
         const total = probed;
         /**
          * Both axes, and both evict from the FRONT. The count ceiling stops many small messages,
@@ -1046,7 +1062,16 @@ export function makeProfileIo(
          * folder plainly holding a document — settings lapsed silently. The ask reports which
          * happened: `unknown` refuses the cycle; only `uids` may decide anything.
          */
-        const profileUids = async (c: ProfileImapClient): Promise<ProfileUidAsk> => {
+        const profileUids = async (
+          c: ProfileImapClient,
+          /**
+           * The folder's MESSAGE COUNT as the server answered it one command ago, or `undefined`
+           * when it could not be asked. The licence for the complete search below, and never
+           * taken from the connection's cache: a count that may be wrong high would authorise an
+           * unbounded read, and one that may be wrong low would authorise an absence.
+           */
+          count: number | undefined,
+        ): Promise<ProfileUidAsk> => {
           if (typeof c.search !== "function" || typeof c.status !== "function") {
             return {
               kind: "unknown", code: "profile_search_unsupported",
@@ -1132,12 +1157,50 @@ export function makeProfileIo(
               gapHi = lo - 1;
             }
           }
-          // Deeper than two budgets: still a refusal, but a named one.
+          /* ── ABSENT IS AN ANSWER, AND ONLY A COMPLETE SEARCH MAY GIVE IT ───────────────────
+           *
+           * Two budgets have found nothing, and by the rule above that is still not "there is
+           * nothing" — something may lie below. What settles it is the other axis: the folder's
+           * MESSAGE COUNT. A search's cost scales with the messages it examines, not with the uid
+           * range it names, so a folder inside the fetch ceiling can be searched WHOLE for the
+           * price of one command however deep its uid space has grown — and `ohmail/_meta`'s uid
+           * space grows per lease heartbeat while the folder itself stays small, which is the
+           * shape every mailbox in this defect had.
+           *
+           * `1:*` because `*` is resolved by the SERVER to the highest uid the folder holds: the
+           * range is complete even if our UIDNEXT reading is stale, which a `1:<top>` written
+           * from that reading would not be. An empty answer to a complete search is a measured
+           * absence, and the writer may create the first document on it.
+           *
+           * Measured (the 0.18.0 release candidate, reproduced at 0.17.0): three claims, no document, UIDNEXT
+           * past 40 000 — a mailbox whose person had just authorized a takeover, whose every
+           * settings write refused `profile_gap_too_deep` for the rest of the install's life, and
+           * whose row read "Up to date" throughout. */
+          if (count !== undefined && count <= PROFILE_MESSAGES_MAX_PER_FETCH) {
+            const all = await c.search(
+              { header: { [H.profile]: true }, uid: "1:*" }, { uid: true },
+            );
+            if (!Array.isArray(all)) {
+              return {
+                kind: "unknown", code: "profile_search_refused",
+                why: "the complete search of the folder was refused",
+              };
+            }
+            if (all.length === 0) return { kind: "absent" };
+            return { kind: "uids", uids: all.sort((a, b) => a - b) };
+          }
+          /**
+           * Deep AND populous, or a server that would not say how many messages it holds: still a
+           * refusal, and still a named one. This is the only folder left that no bounded read can
+           * settle — above the fetch ceiling a complete search is no longer bounded, and an
+           * unknown count is not a small one. Absence is never inferred from either.
+           */
           return {
             kind: "unknown", code: "profile_gap_too_deep",
             why: "the settings document lies further below the top of the uid space than "
-              + `${2 * PROFILE_SEARCH_WINDOW_BUDGET * PROFILE_SEARCH_UID_WINDOW} uids, so no `
-              + "bounded read of this folder can reach it",
+              + `${2 * PROFILE_SEARCH_WINDOW_BUDGET * PROFILE_SEARCH_UID_WINDOW} uids, and the `
+              + "folder holds too many messages to search whole, so no bounded read of it can "
+              + "reach the document",
           };
         };
 
@@ -1276,7 +1339,7 @@ export function makeProfileIo(
          * delivery: the byte ceiling was applied to `m.source`, already buffered whole; sizes
          * come first in a cheap pass, source fetched only for survivors of both ceilings.
          */
-        const searched = await profileUids(client);
+        const searched = await profileUids(client, total);
         /**
          * A failed ask refuses the cycle; it does not pick a different way to look. The fallback
          * read the folder by sequence range, unbounded, and returned whatever survived two
@@ -1293,6 +1356,10 @@ export function makeProfileIo(
             { op: "list_profiles", code: searched.code },
           );
         }
+        /* A MEASURED ABSENCE IS AN EMPTY LIST — the same answer a folder that never published
+         * settings gives, because it is the same fact. Distinct from the refusal above, which is
+         * "could not ask": the caller reads no documents and the writer may create the first. */
+        if (searched.kind === "absent") return out;
         const read = await readByUid(searched.uids);
 
 
