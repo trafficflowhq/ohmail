@@ -1675,9 +1675,27 @@ jobs:
           kill "$APP" 2>/dev/null || true
           kill "$XVFB" 2>/dev/null || true
           docker rm -f ohmail-perf-imap > /dev/null 2>&1 || true
+          # THE SUMMARY SAYS WHAT THE CHECKER SAID, not what the step concluded.
+          # A refusal forgiven by PERF_SMOKE_REQUIRED=0 gave the step a green tick
+          # and a summary block nobody opens, so rc 3 — the 10k import not
+          # finishing in 420 s on the runner — read as a pass for a whole
+          # candidate. Forgiven is not the same as measured, and the heading is
+          # where a reader looks first.
+          case "$RC" in
+            0) PERF_HEAD='the app on a ten-thousand-message mailbox — MEASURED, inside every budget' ;;
+            1) PERF_HEAD='the app on a ten-thousand-message mailbox — OVER A BUDGET' ;;
+            3) PERF_HEAD='the app on a ten-thousand-message mailbox — REFUSED: NO MEASUREMENT WAS TAKEN' ;;
+            *) PERF_HEAD="the app on a ten-thousand-message mailbox — the checker exited $RC, which is not a verdict" ;;
+          esac
           {
-            echo '### the app on a ten-thousand-message mailbox'
+            echo "### $PERF_HEAD"
             echo
+            if [ "$RC" = "3" ] && [ "$PERF_SMOKE_REQUIRED" != "1" ]; then
+              echo '**This job is green and nothing was measured.** The refusal is forgiven by'
+              echo '`PERF_SMOKE_REQUIRED=0` until one runner has shown the rig produces a verdict at all.'
+              echo 'Read the lines below before treating this candidate as measured.'
+              echo
+            fi
             echo '```'
             cat perf-smoke/verdict.txt 2>/dev/null || echo 'the check produced no verdict'
             echo '```'
@@ -1692,6 +1710,7 @@ jobs:
             1) exit 1 ;;                # a verdict, over a budget: always red
             3)                          # a refusal: the rig produced no measurement
               if [ "$PERF_SMOKE_REQUIRED" = "1" ]; then exit 1; fi
+              echo "::warning title=perf smoke REFUSED::no measurement was taken; this step is green only because PERF_SMOKE_REQUIRED=0"
               echo "perf smoke: refused, and this file does not yet require a verdict — see PERF_SMOKE_REQUIRED"
               ;;
             *)
