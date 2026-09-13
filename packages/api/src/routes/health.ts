@@ -341,8 +341,8 @@ export const MAIL_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // One additive nullable column on `mailboxes`, and it earns a marker for exactly the
   // whole-row-select reason its two neighbours above do: `MailboxService.list` selects whole
   // rows, so an API deployed ahead of the migration 42703s the mailbox panel and the connect
-  // flow — and `mailboxSignatures` (the `GET /consent` map) selects the column by name, so the
-  // consent read 42703s too. No worker half, no CHECK, no INDEX — read through account-scoped
+  // flow — and `effectiveMailboxSignatures` (the `GET /consent` map) selects the column by name,
+  // so the consent read 42703s too. No worker half, no CHECK, no INDEX — read through account-scoped
   // mailbox selects only. Deploy order: migration → API.
   ["mailboxes", "signature"],
   // mail 0049_mailbox_sync_requested_at — the enforced-sync doorbell, on the whole-row-select
@@ -636,7 +636,7 @@ export const MAIL_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // detected by reading a column name.
   ["folder_state", "last_error_class"],
   // mail 0098_signature_html — one column: the markup half of a mailbox's signature. Probed for a
-  // sharper reason than the holder columns: `mailboxSignatureHtmls` selects this column by name
+  // sharper reason than the holder columns: `effectiveMailboxSignatures` selects this column by name
   // on every `GET /consent` — the settings read every client makes at boot, not a panel somebody
   // may never open. A database certified healthy while missing it serves an account that cannot
   // load its own settings. The derived text half needs no marker: `mailboxes.signature` predates
