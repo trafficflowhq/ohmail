@@ -187,6 +187,7 @@ export {
 export {
   UnsubscribeService, makeUnsubscribeService, nodeOneClickPost, makeNodeOneClickPost,
   ONE_CLICK_BODY, unsubscribeListKey,
+  UNSUB_SYNC_MAX, UNSUB_SYNC_BUDGET_MS,
   UNSUB_DRAIN_WINDOW_MS, UNSUB_DRAIN_ACCOUNTS_PER_RUN, UNSUB_DRAIN_TARGETS_PER_ACCOUNT,
   UNSUB_DRAIN_BUDGET_MS,
   type UnsubscribeDeps, type OneClickPost, type UnsubscribeResult, type UnsubscribeRefusal,

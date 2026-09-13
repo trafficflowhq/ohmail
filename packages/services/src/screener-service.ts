@@ -96,7 +96,15 @@ export interface ScreenerDeps {
    * and it never throws, because the user's filing decision is the product and the
    * unsubscribe is a courtesy on top of it.
    */
-  unsubscribe?: { onScreenOut(ctx: ServiceContext, messageIds: string[]): Promise<unknown> };
+  unsubscribe?: {
+    /**
+     * Returns what it LOOKED AT, structurally rather than by importing the service's own type:
+     * this port exists so the Screener does not depend on that module, and `considered` is the
+     * one number a decision has to report — the difference between it and the target count is
+     * what the hourly drain still owes.
+     */
+    onScreenOut(ctx: ServiceContext, messageIds: string[]): Promise<{ considered: number }>;
+  };
 }
 
 /**
@@ -164,6 +172,18 @@ export interface ScreenDecisionResult {
   messageId: string;
   appliedFolder: Folder;
   createdRuleId: string | null;
+  /**
+   * WHAT THIS REQUEST'S UNSUBSCRIBE FAN-OUT DID, and what it left. `done` of `of` with `of`
+   * larger is the honest half of a per-request ceiling: the request stops and the hourly drain
+   * finishes the rest, and saying so is what keeps the acknowledged state and the HTTP answer in
+   * agreement.
+   *
+   * ABSENT MEANS THIS REQUEST STARTED NO FAN-OUT — a "yes" decision, a deployment with no
+   * unsubscribe port, a decision that re-routed nothing, and an IDEMPOTENT REPLAY, which is
+   * served from the stored row before `decide` runs and therefore posts to nobody. It never
+   * means "the fan-out finished", and nothing may read it as a completion.
+   */
+  unsubscribed?: { done: number; of: number };
 }
 
 /**
@@ -1127,7 +1147,16 @@ export class ScreenerReadService {
     // NOT performed on the drain's apply of a reader's request — see `applyScreenerDecision`'s
     // header.
     if (this.deps.unsubscribe && decision === "no") {
-      await this.deps.unsubscribe.onScreenOut(ctx, rerouted.map((m) => m.messageId));
+      const targets = rerouted.map((m) => m.messageId);
+      // The sweep is REPORTED now rather than discarded. It used to be awaited and thrown away,
+      // which was honest only while the fan-out ran every target: under a per-request ceiling the
+      // caller would otherwise be told a decision was applied with no way to know that the
+      // courtesy it started is still running somewhere. `considered` is what this request
+      // actually looked at; the rest are the drain's.
+      const sweep = await this.deps.unsubscribe.onScreenOut(ctx, targets);
+      if (targets.length > 0) {
+        result.unsubscribed = { done: sweep.considered, of: targets.length };
+      }
     }
 
     return result;

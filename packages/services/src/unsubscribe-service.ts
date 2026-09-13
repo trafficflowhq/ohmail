@@ -167,6 +167,26 @@ export interface UnsubscribeSweep {
 }
 
 /**
+ * HOW MANY TARGETS ONE REQUEST MAY POST TO, and how long it may spend doing it.
+ *
+ * One post is bounded at {@link ONE_CLICK_TIMEOUT_MS} — 8 s — and the hosted API runs on a
+ * 60-second invocation (`message-service.ts` states the same ceiling against the same platform).
+ * Fifty targets is therefore up to 400 s inside a request that has 60, which is the row's defect
+ * with numbers on it. The decision's own transaction and the physical IMAP moves happen first, so
+ * the fan-out's share is the invocation MINUS a stated 20-second margin for them and the
+ * response: 40 s, which is five posts at the measured worst case.
+ *
+ * BOTH AXES, because they bound different failures. A clock alone lets a mailbox whose targets
+ * all refuse instantly walk a thousand messages inside one request; a count alone leaves five
+ * eight-second posts inside a request that has twenty seconds left.
+ *
+ * The remainder is not dropped: `drainScreenedOut` is what makes stopping here honest, and it is
+ * poked hourly. Neither number may rise without that one being re-read.
+ */
+export const UNSUB_SYNC_MAX = 5;
+export const UNSUB_SYNC_BUDGET_MS = 40_000;
+
+/**
  * HOW FAR BACK THE DRAIN LOOKS. `since` has no default by design — a mature mailbox holds
  * thousands of pre-feature screen-outs and sweeping them would announce the address to the very
  * senders it was screened away from — and a scheduled pass has nobody to type a date. This is
@@ -449,13 +469,8 @@ export class UnsubscribeService {
    * turn this into an unsubscribe by passing the wrong ids.
    */
   async onScreenOut(ctx: ServiceContext, messageIds: readonly string[]): Promise<UnsubscribeSweep> {
-    // NO CEILING HERE YET, AND THE ORDER IS THE POINT. A cap on this path without a drain behind
-    // it converts an over-long request into silently unfinished work — the row this closes says
-    // so in its own words, and the drain has no production caller until it is wired. The
-    // parameter exists so that the cap is a two-value change with a control, made in the commit
-    // that can honestly promise the remainder is picked up.
     return this.postEach(ctx, messageIds, {
-      count: messageIds.length, budgetMs: Number.POSITIVE_INFINITY,
+      count: UNSUB_SYNC_MAX, budgetMs: UNSUB_SYNC_BUDGET_MS,
     });
   }
 
