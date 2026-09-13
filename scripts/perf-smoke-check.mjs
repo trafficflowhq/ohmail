@@ -154,23 +154,6 @@ export function lastField(log, event, field) {
   return found;
 }
 
-export function allFields(log, event, field) {
-  const out = [];
-  const re = new RegExp(`"${field}":(-?\\d+)`);
-  for (const line of log.split("\n")) {
-    if (!line.includes(`"event":"${event}"`)) continue;
-    const m = re.exec(line);
-    if (m) out.push(Number(m[1]));
-  }
-  return out;
-}
-
-export function percentile(values, p) {
-  if (!values.length) return null;
-  const sorted = [...values].sort((a, b) => a - b);
-  const k = Math.min(sorted.length, Math.max(1, Math.ceil((p / 100) * sorted.length)));
-  return sorted[k - 1];
-}
 
 /* ── WHETHER THE FRAME AND LATENCY HALF IS EVEN IN THIS BUILD ─────────────────────────
  *
@@ -183,6 +166,57 @@ export function percentile(values, p) {
  */
 export const UI_VITALS_EVENT = "ui_vitals";
 
+/* ── THE VOCABULARY THE WINDOW WRITES, AND THIS CHECK AS ITS FOURTH HOME ──────────────────────
+ *
+ * The window composes the report, the desktop shell's Rust writes the line from its OWN list of
+ * names, and this file reads it back. They did not agree: this file read `startToListMs`,
+ * `openMs`, `frameGapMs` and `longTaskMs` under `"service":"shell"`, none of which the window has
+ * ever written — so on a build inside every budget three arms answered "wrote none of these
+ * marks" and turned the job red while the fourth scored a perfect zero out of nothing.
+ * A census in the workspace holds these names equal to the shell's list and to the report's own
+ * keys, so a rename reddens there rather than here as a performance verdict.
+ */
+export const UI_VITALS_SERVICE = "ui";
+export const UI_VITALS_READS = {
+  start_to_list: "listUsableMs",
+  open_p95: "openP95Ms",
+  long_frames: "longFrames",
+  long_tasks: "longTasks",
+};
+
+/** Every `ui_vitals` line, by SERVICE as well as event — the tag is part of the vocabulary. */
+export function uiVitalsLines(log) {
+  const out = [];
+  for (const line of log.split("\n")) {
+    if (line.includes(`"event":"${UI_VITALS_EVENT}"`)
+      && line.includes(`"service":"${UI_VITALS_SERVICE}"`)) out.push(line);
+  }
+  return out;
+}
+
+/**
+ * One field across those lines, in the THREE states the wire format actually has.
+ *
+ * The shell writes every name it knows on every line and puts `null` where the window did not
+ * answer, so a missing KEY and a null VALUE are different facts. Missing means this log and this
+ * check no longer share a vocabulary; null means nothing was measured in that window — nobody
+ * opens a message during the CI run, so `openP95Ms` is honestly null there. Folding the two into
+ * a zero is the reading this whole file exists to refuse.
+ */
+export function readUiVitalsField(lines, field) {
+  const number = new RegExp(`"${field}":(-?\\d+)`);
+  const key = new RegExp(`"${field}":`);
+  let keyLines = 0;
+  const values = [];
+  for (const line of lines) {
+    if (!key.test(line)) continue;
+    keyLines += 1;
+    const m = number.exec(line);
+    if (m) values.push(Number(m[1]));
+  }
+  return { keyLines, values };
+}
+
 export function uiVitalsState({ inBundle, lineCount }) {
   if (inBundle && lineCount > 0) return { armed: true, state: "measured" };
   if (inBundle && lineCount === 0) {
@@ -194,16 +228,30 @@ export function uiVitalsState({ inBundle, lineCount }) {
   return { armed: false, state: "absent", why: "this build carries no frame instrument, so start, frame and open latency are unread" };
 }
 
-export function bundleCarriesUiVitals(path) {
+/**
+ * What the artifact's own bytes carry, read once: the event, and each arm's field name.
+ *
+ * Per FIELD and not per instrument, so the half of the vocabulary that has landed arms its own
+ * arms and the half that has not stays UNREAD — the reason the instrument arms itself from the
+ * build rather than from a flag, applied one name at a time.
+ */
+export function bundleVocabulary(path) {
   if (!path || !existsSync(path)) return null;
-  return readFileSync(path).includes(UI_VITALS_EVENT);
+  const bytes = readFileSync(path);
+  const fields = {};
+  for (const [id, field] of Object.entries(UI_VITALS_READS)) fields[id] = bytes.includes(field);
+  return { event: bytes.includes(UI_VITALS_EVENT), fields };
+}
+
+export function bundleCarriesUiVitals(path) {
+  return bundleVocabulary(path)?.event ?? null;
 }
 
 /* ── THE ARMS ─────────────────────────────────────────────────────────────────────────────────
  * A DECIDES arm is one that has been watched failing on a real measurement, and only a DECIDES
  * arm can turn the run red. Everything else is printed, and says on its own line that it is.
  */
-export function collect({ samples, log, uiInBundle, expectMessages, fixtureMessages }) {
+export function collect({ samples, log, uiInBundle, uiFields, expectMessages, fixtureMessages }) {
   const arms = [];
   const add = (id, kind, status, reading, note) => arms.push({ id, kind, status, reading, note });
 
@@ -277,37 +325,57 @@ export function collect({ samples, log, uiInBundle, expectMessages, fixtureMessa
   }
 
   /* The frame and latency half, armed by the artifact rather than by a flag. */
-  const uiLines = (log.match(new RegExp(`"event":"${UI_VITALS_EVENT}"`, "g")) ?? []).length;
-  const ui = uiVitalsState({ inBundle: uiInBundle === true, lineCount: uiLines });
+  const uiLines = uiVitalsLines(log);
+  const ui = uiVitalsState({ inBundle: uiInBundle === true, lineCount: uiLines.length });
   if (ui.state === "broken" || ui.state === "impossible") {
     add("ui_vitals", "DECIDES", "FAIL", ui.why, "");
   } else if (ui.state === "absent") {
     add("ui_vitals", "RECORDED", "UNREAD", ui.why, "");
   }
+  /* Two of these four DECIDE and two are printed, and which is which is a fact about what the
+   * window can answer rather than a preference. `longFrames` is a COUNT the window took at its
+   * own threshold and no ceiling for that count has been measured, so a budget here would be an
+   * invented number. `longTasks` comes from an observer WebKit does not have, so the Linux
+   * desktop — the one platform this check runs on — writes 0 whether or not a task ran long, and
+   * an arm that cannot fail where it runs is an arm nobody can watch fail. */
   const latency = [
-    ["start_to_list", allFields(log, UI_VITALS_EVENT, "startToListMs"), (v) => v <= BUDGETS.startToListMs, BUDGETS.startToListMs, 95],
-    ["open_p95", allFields(log, UI_VITALS_EVENT, "openMs"), (v) => v <= BUDGETS.openP95Ms, BUDGETS.openP95Ms, 95],
-    ["frame_gap", allFields(log, UI_VITALS_EVENT, "frameGapMs"), (v) => v <= BUDGETS.frameGapMs, BUDGETS.frameGapMs, 100],
-    ["long_task", allFields(log, UI_VITALS_EVENT, "longTaskMs"), null, BUDGETS.longTaskMs, 100],
+    ["start_to_list", "DECIDES", "worst",
+      (v) => `${v} ms against ${BUDGETS.startToListMs} ms`, (v) => v <= BUDGETS.startToListMs,
+      "the window's own cold start to a usable list; no measurement behind the budget yet"],
+    ["open_p95", "DECIDES", "worst",
+      (v) => `p95 ${v} ms against ${BUDGETS.openP95Ms} ms`, (v) => v <= BUDGETS.openP95Ms,
+      "the window computes this p95 over its last hundred opens; the worst report of the run"],
+    ["long_frames", "RECORDED", "sum",
+      (v) => `${v} frames over ${BUDGETS.frameGapMs} ms`, null,
+      "the window counts these at its own threshold, which the census holds equal to this budget"],
+    ["long_tasks", "RECORDED", "sum",
+      (v) => `${v} tasks over ${BUDGETS.longTaskMs} ms against ${BUDGETS.longTaskMax}`, null,
+      "WebKit has no long-task observer, so a 0 here is not a measurement on the Linux desktop"],
   ];
-  for (const [id, values, within, budget, p] of latency) {
+  for (const [id, kind, fold, reading, within, note] of latency) {
+    const field = UI_VITALS_READS[id];
     if (!ui.armed) {
       add(id, "RECORDED", "UNREAD", `<no frame instrument in this build>`, "");
       continue;
     }
-    if (id === "long_task") {
-      const over = values.filter((v) => v > budget).length;
-      add(id, "DECIDES", over <= BUDGETS.longTaskMax ? "PASS" : "FAIL",
-        `${over} tasks over ${budget} ms against ${BUDGETS.longTaskMax}`, "");
+    if (uiFields && uiFields[id] === false) {
+      add(id, "RECORDED", "UNREAD", `<this build carries no "${field}">`, "");
       continue;
     }
-    if (!values.length) {
-      add(id, "DECIDES", "FAIL", "the frame instrument shipped and wrote none of these marks", "");
+    const { keyLines, values } = readUiVitalsField(uiLines, field);
+    /* The drift reddens on EVERY arm, printed ones included: a name this check reads and the log
+     * does not carry is the defect itself, not a budget question. */
+    if (keyLines === 0) {
+      add(id, "DECIDES", "FAIL",
+        `the window wrote no "${field}" in ${uiLines.length} ui_vitals lines — this log and this check no longer share one vocabulary`, "");
       continue;
     }
-    const value = percentile(values, p);
-    add(id, "DECIDES", within(value) ? "PASS" : "FAIL",
-      `${p === 100 ? "worst" : `p${p}`} ${value} ms against ${budget} ms over ${values.length} marks`, "");
+    if (values.length === 0) {
+      add(id, "RECORDED", "NOT MEASURED", `"${field}" was null in all ${keyLines} of its lines`, note);
+      continue;
+    }
+    const value = fold === "sum" ? values.reduce((a, b) => a + b, 0) : Math.max(...values);
+    add(id, kind, within ? (within(value) ? "PASS" : "FAIL") : "READ", reading(value), note);
   }
 
   /* No "every arm was unread" refusal here, and the absence is deliberate: past the sample-shape
@@ -537,10 +605,12 @@ if (RUN_AS_SCRIPT) {
     }
     const expect = Number(opt("expect-messages", "0"));
     const fixture = Number(opt("fixture-messages", String(expect)));
+    const vocabulary = bundleVocabulary(opt("bundle", null));
     const { text, code } = render(collect({
       samples: readFileSync(samplesPath, "utf8"),
       log: readFileSync(logPath, "utf8"),
-      uiInBundle: bundleCarriesUiVitals(opt("bundle", null)),
+      uiInBundle: vocabulary?.event ?? null,
+      uiFields: vocabulary?.fields ?? null,
       expectMessages: expect,
       fixtureMessages: fixture,
     }));
