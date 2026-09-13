@@ -1671,14 +1671,24 @@ jobs:
             cat perf-smoke/verdict.txt 2>/dev/null || echo 'the check produced no verdict'
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
-          # rc 1 is the app over a budget and always fails. rc 3 is a refusal —
-          # the rig produced no measurement — and fails only once this file
-          # says the rig has been seen working.
-          if [ "$RC" = "1" ]; then exit 1; fi
-          if [ "$RC" = "3" ] && [ "$PERF_SMOKE_REQUIRED" = "1" ]; then exit 1; fi
-          if [ "$RC" = "3" ]; then
-            echo "perf smoke: refused, and this file does not yet require a verdict — see PERF_SMOKE_REQUIRED"
-          fi
+          # EVERY CODE THIS STEP ADMITS, NAMED — and everything else fails the job.
+          # The three the checker means are 0, 1 and 3; the step used to `exit 0`
+          # on all the rest, so a checker that died for a reason nobody had
+          # thought about (a usage error, a missing file, a crash) finished the
+          # job green and the build shipped with no measurement behind it.
+          case "$RC" in
+            0) ;;                       # a verdict, inside every budget
+            1) exit 1 ;;                # a verdict, over a budget: always red
+            3)                          # a refusal: the rig produced no measurement
+              if [ "$PERF_SMOKE_REQUIRED" = "1" ]; then exit 1; fi
+              echo "perf smoke: refused, and this file does not yet require a verdict — see PERF_SMOKE_REQUIRED"
+              ;;
+            *)
+              echo "perf smoke: the checker exited $RC, which is not a code this step admits (0, 1, 3)."
+              echo "  That is the checker failing to run, not the app passing — failing the job."
+              exit 1
+              ;;
+          esac
           exit 0
 
       - name: Keep the perf smoke's own files
