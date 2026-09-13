@@ -2020,6 +2020,34 @@ export interface RawClaimMessage {
 }
 
 /**
+ * WHAT THE FOLDER LOOKED LIKE FROM OUTSIDE IT — three counters the server keeps, and no record.
+ *
+ * A claim is a message, so "is my claim still there" is a question about the folder's CONTENT and
+ * answering it properly costs a SELECT and a FETCH. This is the cheap half of it: nothing may be
+ * appended without raising `uidNext`, and with `uidNext` unmoved nothing can have been expunged
+ * without moving `messages` — so a stamp equal to an earlier one proves the folder holds exactly
+ * the records it held then, our own claim among them. It cannot say WHAT changed, only that
+ * something did, and the caller's answer to that is to read the folder properly.
+ */
+export interface MetaFolderStamp {
+  /** The generation these counters are numbered in; `null` where the server did not say. */
+  readonly uidValidity: number | bigint | null;
+  /** The uid the next APPEND will be given. Monotone within a generation — the append detector. */
+  readonly uidNext: number;
+  /** How many messages the folder holds. With `uidNext` held, the expunge detector. */
+  readonly messages: number;
+}
+
+/**
+ * DID THE FOLDER STAND STILL BETWEEN THESE TWO STAMPS? Every term has to match, and a `null`
+ * generation matches only another `null`: unknown is not "the same", the rule this module holds to
+ * everywhere a numbering is compared.
+ */
+export function sameMetaStamp(a: MetaFolderStamp, b: MetaFolderStamp): boolean {
+  return a.uidNext === b.uidNext && a.messages === b.messages && a.uidValidity === b.uidValidity;
+}
+
+/**
  * The narrow IO the lease needs, and nothing else.
  *
  * None of these operations is on `MailboxAdapter` — the lease needs APPEND, SEARCH,
@@ -2077,6 +2105,17 @@ export interface LeaseIo {
    * what `lease-io-doubles.test.ts` censuses.
    */
   uidValidity?(): number | bigint | null;
+
+  /**
+   * THE FOLDER'S OWN COUNTERS, ASKED OF THE SERVER BY NAME — one command that reads no record.
+   *
+   * What a holder of a permit asks between reads: a stamp equal to the one taken at its last read
+   * proves the folder has not moved, so the claim that read admitted is still standing. `null` for
+   * every way of not knowing — no STATUS on this connection, a refusal, a reply missing a counter —
+   * and the caller then keeps whatever bound it had, because an unanswerable probe is not evidence
+   * that anything changed and must never become a stand-down on its own.
+   */
+  stampMeta?(): Promise<MetaFolderStamp | null>;
 }
 
 /**
@@ -2120,9 +2159,13 @@ export interface LeaseImapClient extends MetaFolderClient {
      * `uidNext` is asked for the same way the count is: from the SERVER, by name, on the folder.
      * Never from `client.mailbox`, whose fields are whatever the last untagged response left
      * behind — see {@link searchDescending} for what a stale one costs.
+     *
+     * `uidValidity` rides the same command for {@link MetaFolderStamp}: the counters mean nothing
+     * across a renumbering, and asking for it separately would be a second round trip for a field
+     * the server is already composing a reply about.
      */
-    query: { messages?: boolean; uidNext?: boolean },
-  ): Promise<{ messages?: number; uidNext?: number } | false | undefined>;
+    query: { messages?: boolean; uidNext?: boolean; uidValidity?: boolean },
+  ): Promise<{ messages?: number; uidNext?: number; uidValidity?: number | bigint } | false | undefined>;
   /**
    * SEARCH the selected folder by HEADER. Optional. Not the count probe — that asks STATUS for a
    * scalar; this asks the server WHICH messages carry an id, so a release can find its own records
@@ -3051,6 +3094,39 @@ export function makeLeaseIo(
 
     uidValidity(): number | bigint | null {
       return generationAtLastRead;
+    },
+
+    /**
+     * ONE STATUS, NO SELECT, NO FETCH — see {@link MetaFolderStamp}. Asked of the server by name
+     * while the pass holds another folder open, which is the situation this exists for.
+     *
+     * It NEVER throws, and that is the load-bearing part: the caller is a write boundary, and a
+     * throw there is classified by callers as this message's own failure. Every unknown — no
+     * STATUS on the connection, a refused command, a reply short of a counter, a spent read budget
+     * — is `null`, "I could not prove the folder stood still", and the caller decides what to do
+     * about not knowing. Nothing here decides whether anybody organizes anything.
+     */
+    async stampMeta(): Promise<MetaFolderStamp | null> {
+      if (typeof client.status !== "function") return null;
+      try {
+        const budget = metaReadBudget(now);
+        const path = await meta.path(budget);
+        const st = await budget.race(
+          client.status(path, { messages: true, uidNext: true, uidValidity: true }), path,
+        );
+        if (typeof st !== "object" || st === null) return null;
+        // BOTH counters or nothing: with either half missing the pair proves nothing, and half a
+        // stamp compared as a whole one would read an append as "unchanged".
+        if (typeof st.messages !== "number" || typeof st.uidNext !== "number") return null;
+        const gen = st.uidValidity;
+        return {
+          messages: st.messages,
+          uidNext: st.uidNext,
+          uidValidity: typeof gen === "number" || typeof gen === "bigint" ? gen : null,
+        };
+      } catch {
+        return null;
+      }
     },
 
     async appendClaim(raw: string): Promise<void> {

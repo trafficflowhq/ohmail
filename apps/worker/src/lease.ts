@@ -2,8 +2,9 @@ import {
   CAPABILITY_REQUESTS, CAPABILITY_MOVES, CAPABILITY_PROFILE, CAPABILITY_RULES, deriveRequestKey,
   DEFAULT_STALE_AFTER_MS, LeaseUnavailableError, LeaseClockSkewError, META_FOLDER,
   ClaimReleaseError,
-  isMalformed, parseClaim, runLeaseGate,
-  type LeaseIo, type LeaseOp, type LeaseSelf, type LeaseVerdict, type OrganizerClaim,
+  isMalformed, parseClaim, runLeaseGate, sameMetaStamp,
+  type LeaseIo, type LeaseOp, type LeaseSelf, type LeaseVerdict, type MetaFolderStamp,
+  type OrganizerClaim,
   type RawClaimMessage,
   type TakeoverAuthorization,
 } from "@trafficflow/core/adapters/organizer-lease";
@@ -594,6 +595,12 @@ export interface LeasePermit {
   readonly verifiedAt: Date;
   /** How many times the lease was re-read (as against served from inside the TTL). */
   readonly reads: number;
+  /**
+   * How many times the folder was STAMPED — the cheap question asked at every boundary the clock
+   * and the count both cleared. Test-visible beside `reads`, because the whole claim this fix
+   * makes is about the gap between the two: many probes, one read.
+   */
+  readonly probes: number;
   /** Write boundaries passed since the last re-read — the second trigger beside the clock. */
   readonly writesSinceRead: number;
   /** TRUE once a stand-down has killed this permit. A dead permit is never revived. */
@@ -678,8 +685,51 @@ export async function acquireLeasePermit(input: LeasePermitInput): Promise<Lease
   let issuedAt: Date;
   let uidValidity: number | bigint | null = null;
   let reads = 0;
+  let probes = 0;
   let writesSinceRead = 0;
   let revoked = false;
+
+  /**
+   * THE CLAIM THIS PERMIT RIDES IS A MESSAGE, AND A TAKEOVER DELETES IT. Both of this receipt's
+   * bounds are its own, so a gate that expunged our claim went unnoticed until the TTL or the
+   * hundredth write — two organizers across the whole handover. Every boundary the bounds clear
+   * now asks the folder {@link MetaFolderStamp} instead: unchanged counters prove it still holds
+   * the records the last read decided from, this install's claim among them, and anything else is
+   * a reason to run the gate rather than a verdict of its own. One IO handle, taken once — a probe
+   * building one per write would re-resolve the folder's path at every boundary.
+   */
+  const stampIo = hasLeaseIo(input.adapter)
+    ? input.adapter.leaseIo({ installId: input.self.installId, mailboxId: input.mailboxId })
+    : null;
+  let stamp: MetaFolderStamp | null = null;
+  let unstampedSaid = false;
+  /**
+   * SAID ONCE PER PERMIT. A connection that cannot stamp keeps exactly the bound it had — the
+   * clock and the write count — and that degraded mode is named where somebody can read it rather
+   * than being the silence it was before. Once, because the alternative is a line per write.
+   */
+  const restamp = async (): Promise<void> => {
+    stamp = stampIo?.stampMeta !== undefined ? await stampIo.stampMeta() : null;
+    if (stamp === null && !unstampedSaid) {
+      unstampedSaid = true;
+      input.log?.("lease_permit_unstamped", { mailboxId: input.mailboxId });
+    }
+  };
+  /**
+   * HAS THE FOLDER MOVED SINCE THE READ THIS RECEIPT CAME FROM? `false` is "it has not, or this
+   * connection cannot say" — never a stand-down, which only the gate may reach.
+   *
+   * A stamp that ANSWERED before and cannot now is read as movement: we were proving the claim
+   * still stood and can no longer prove it, so the honest act is to look properly. That costs at
+   * most one extra gate run, because the read's own restamp then leaves `stamp` null and every
+   * later boundary falls back to the clock.
+   */
+  const movedSince = async (): Promise<boolean> => {
+    if (stamp === null || stampIo?.stampMeta === undefined) return false;
+    probes++;
+    const now = await stampIo.stampMeta();
+    return now === null || !sameMetaStamp(now, stamp);
+  };
 
   const read = async (): Promise<void> => {
     const at = clock();
@@ -713,6 +763,10 @@ export async function acquireLeasePermit(input: LeasePermitInput): Promise<Lease
     lastNonce = outcome.nonce;
     verifiedAt = at;
     writesSinceRead = 0;
+    // AFTER the renew, never before it: the gate's own APPEND and EXPUNGE move the folder, so a
+    // baseline taken in front of them describes a folder that no longer exists and every later
+    // boundary would read our own write as somebody else's.
+    await restamp();
     // The claim in the folder is now this one — see {@link LeasePermitInput.onRenew}. Last, so a
     // caller is never told about a renewal this permit has not finished recording.
     input.onRenew?.({ nonce: outcome.nonce, at });
@@ -723,6 +777,9 @@ export async function acquireLeasePermit(input: LeasePermitInput): Promise<Lease
     lastNonce = input.adopt.outcome.nonce;
     verifiedAt = input.adopt.at;
     reads = 1;
+    // The adopted read was the CALLER's, so the baseline is taken here instead — a gap of one
+    // resolution, against the whole TTL this receipt would otherwise be believed for.
+    await restamp();
   } else {
     await read();
   }
@@ -737,6 +794,7 @@ export async function acquireLeasePermit(input: LeasePermitInput): Promise<Lease
     },
     get verifiedAt(): Date { return verifiedAt; },
     get reads(): number { return reads; },
+    get probes(): number { return probes; },
     get writesSinceRead(): number { return writesSinceRead; },
     get revoked(): boolean { return revoked; },
     async check(): Promise<void> {
@@ -757,7 +815,14 @@ export async function acquireLeasePermit(input: LeasePermitInput): Promise<Lease
       // and both cases fail if either comparison is loosened.
       const stale = clock().getTime() - verifiedAt.getTime() >= ttlMs;
       const worked = writesSinceRead >= writesPerRecheck;
-      if (stale || worked) await read();
+      if (stale || worked) {
+        await read();
+        return;
+      }
+      // Neither bound is anywhere near, which is exactly the window a chosen handover lands in.
+      // The stamp is asked only here: a boundary that is about to re-read anyway has nothing to
+      // prove, and paying for both would put a STATUS in front of every hundredth gate run.
+      if (await movedSince()) await read();
     },
   };
 }
