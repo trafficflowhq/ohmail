@@ -188,5 +188,11 @@ export const SQLITE_JOURNAL: readonly SqliteJournalEntry[] = [
     "statements": [
       "ALTER TABLE \"mailboxes\" ADD COLUMN \"signed_out_at\" integer;"
     ]
+  },
+  {
+    "name": "0109_gate_release_done_at.sql",
+    "statements": [
+      "ALTER TABLE \"account_settings\" ADD COLUMN \"gate_release_done_at\" integer;"
+    ]
   }
 ] as const;

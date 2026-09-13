@@ -2161,6 +2161,16 @@ export const accountSettings = pgTable("account_settings", {
    */
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  /**
+   * THE ONE-TIME GATE RELEASE, PER ACCOUNT — when `gateReleasePass` last swept this account (mail
+   * 0109). An account that confirmed its seed before 0.19.0 carries rules with no retro request,
+   * so mail already at the screening gate from those senders is behind a decision nothing will
+   * ever act on; the pass arms the release, frees what the gate holds from contact-only senders,
+   * and stamps this. Read as `IS NOT NULL`; NULL, an absent row and a failed read all mean "not
+   * swept", the only default that can still repair an account. LAST in the declaration because
+   * `ADD COLUMN` appends and `schema-twin-parity.test.ts` compares this order with the twin's.
+   */
+  gateReleaseDoneAt: timestamp("gate_release_done_at", { withTimezone: true }),
 });
 
 /**

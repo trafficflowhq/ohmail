@@ -2018,6 +2018,11 @@ export const accountSettings = sqliteTable("account_settings", {
   // the password changes the key, which is exactly when older records should stop verifying.
   createdAt: integer("created_at", { mode: "timestamp_ms" }).default(NOW_MS).notNull(),
   updatedAt: integer("updated_at", { mode: "timestamp_ms" }).default(NOW_MS).notNull(),
+  // The one-time gate release's per-account marker (mail 0109) — the twin of the server column,
+  // as epoch milliseconds like every timestamp on this store. NULL is "not swept yet". LAST in
+  // the declaration because `ALTER TABLE … ADD COLUMN` appends, and `sqlite-baseline.test.ts`
+  // compares the store's PRAGMA order with this one.
+  gateReleaseDoneAt: integer("gate_release_done_at", { mode: "timestamp_ms" }),
 });
 
 /**

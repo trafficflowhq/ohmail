@@ -58,15 +58,10 @@ const asTx = (ctx: ServiceContext): Tx => ctx.db as unknown as Tx;
  * anybody does towards a correspondent is WRITE TO THEM, so the first question is not "who do you
  * want to hear from" but "here are the people you have written to; shall we let them through?" —
  * the list is shown BEFORE anything acts on it, and confirming it is the consent event. Three
- * narrowings: ADDRESS-LEVEL ONLY, never domain (writing to one person at a provider says nothing
- * about the rest; domain-wide consent stays an explicit user rule); TO AND CC both count (copying
- * somebody in is addressing them); NO RETRO — a seeded rule routes future mail and does not
- * re-file mail that is already filed: one confirmation must never turn into thousands of moves.
- *
- * The one thing it DOES release is the mail this account's own gate is still holding from those
- * people: rows whose desired and observed folder are both `ohmail/Screener`, and nothing else.
- * That is not the past — it is mail waiting for the very decision being made. See
- * {@link confirmSeed}, which carries the measurement.
+ * narrowings: ADDRESS-LEVEL ONLY, never domain; TO AND CC both count; NO RETRO — a seeded rule
+ * routes future mail and does not re-file mail already filed. The one thing it DOES release is
+ * what the gate still holds from those people, rows settled at `ohmail/Screener` and nothing else
+ * ({@link confirmSeed} carries the measurement).
  */
 
 /**
@@ -499,27 +494,16 @@ function chunked<T>(items: readonly T[], size: number): T[][] {
 
 /**
  * Write the consent the user just gave. One transaction, NO `folder_state` row touched here: the
- * addresses are INTERSECTED with a freshly computed review list, never trusted — the list is the
- * offer and a confirmation can only be a subset of it. One effect per person is enforced by a ROW
- * LOCK and a re-read (two concurrent submits used to both insert duplicates): the transaction
- * opens by locking `account_settings`, THEN asks which addresses already carry a rule — a
- * concurrent confirm's rules are visible and drop out. The stamp records WHEN the review was last
- * confirmed: re-running writes rules for whoever is new.
- *
- * ── AND THE MAIL THIS ACCOUNT'S GATE IS ALREADY HOLDING FROM THESE PEOPLE ─────────────────
- *
- * The rules carry `release_held_at` EQUAL TO `retro_requested_at`, which is
- * `rule-retro.ts#isReleaseRun`'s shape: that pass then walks ONLY rows whose desired AND observed
- * folder are both the screening gate, for the senders these rules name. It is not a retroactive
- * apply — "consent granted in bulk must not move the past" still holds for every row outside the
- * gate, and the pass's own five user-intent exclusions still apply to the ones inside it.
- *
- * Written because the absence was MEASURED costing mail: a reported account confirmed its seed
- * the day after its import, five of one correspondent's messages were still sitting at the gate
- * from the day before, nothing was ever owed for them (a NULL `retro_requested_at` is not owed
- * work), and months later the Screener was still calling a decade-long correspondent a first-time
- * sender. The seed confirmation IS the press — a person naming somebody they write to is
- * consenting to exactly this.
+ * addresses are INTERSECTED with a freshly computed review, never trusted. One effect per person
+ * is enforced by a ROW LOCK and a re-read — the transaction opens by locking `account_settings`,
+ * THEN asks which addresses already carry a rule, so a concurrent confirm's rules drop out.
+ */
+/*
+ * AND THE MAIL THE GATE IS ALREADY HOLDING FROM THESE PEOPLE: the rules carry `release_held_at`
+ * EQUAL to `retro_requested_at`, `isReleaseRun`'s shape, so the pass walks only rows settled at
+ * the gate for these senders. Measured: a reported account's five held messages, imported the day
+ * before its confirmation, were still there months later because a NULL `retro_requested_at` is
+ * not owed work — and the Screener called their sender first-time the whole time.
  */
 export async function confirmSeed(
   ctx: ServiceContext, addresses: readonly string[],

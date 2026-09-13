@@ -140,6 +140,15 @@ export const WORKER_PASSES: readonly WorkerPass[] = [
     fence: "leader lock; desired-state writes only (the reconciler carries them to IMAP)",
   },
   {
+    name: "gate_release",
+    module: `${W}/gate-release.ts`, entry: "gateReleasePass",
+    triggers: ["cycle-tail"],
+    cadence: "every cycle tail, per account, until account_settings.gate_release_done_at is stamped",
+    budget: "GATE_RELEASE_BATCH rules armed and gate rows released per account per cycle",
+    owns: "an account that confirmed its seed before 0.19.0 gets the mail stuck at its gate back, once",
+    fence: "leader lock; arms rules for rule_retro and writes desired-state only",
+  },
+  {
     name: "ohbox_tidy",
     module: `${W}/ohbox-tidy.ts`, entry: "ohboxTidyPass",
     triggers: ["cycle-tail"],

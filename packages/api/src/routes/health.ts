@@ -672,6 +672,14 @@ export const MAIL_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // ahead of the migration 42703s the mailbox panel — and the credential writers read it to
   // refuse a save that began before the sign-out, on this computer or a phone paired to it.
   ["mailboxes", "signed_out_at"],
+  // mail 0109_gate_release_done_at — one column on `account_settings`: the per-account marker of
+  // the one-time gate release. Probed on the whole-row-select rule `signature_html` states above,
+  // and on the same door it names: `consentSettings` selects this table whole on every
+  // `GET /consent`, the settings read every client makes at boot, so an API deployed ahead of the
+  // migration 42703s an account's own settings — not just this repair. The worker reads it too,
+  // and a worker ahead of the migration fails the sweep for every account. Deploy order
+  // migration → API → worker, 0107's reasoning exactly.
+  ["account_settings", "gate_release_done_at"],
 ] as const;
 
 /**
@@ -948,7 +956,7 @@ export const MAIL_EXPECTED_MARKERS =
 // 0067/0068 (the device-sync alert's withdrawn SECURITY DEFINER carrier and its retirement)
 // add no column and get no marker: a function's absence is the ALERT RULE's own isolated,
 // tolerated state, not a schema fault a serving API should 503 over.
-export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0108_mailbox_signed_out_at";
+export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0109_gate_release_done_at";
 
 
 /* `CLOUD_SCHEMA_MARKER_JOURNAL_TAG` moved to `./health-cloud.js`: it is the NAME of a cloud

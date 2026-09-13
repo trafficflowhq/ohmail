@@ -1358,20 +1358,11 @@ export class ScreenerReadService {
     const active = opts.cutline
       ? senderIsActiveSql(d, ctx.accountId, sql`lower(${reps.fromAddress})`, opts.cutline)
       : undefined;
-    /* ── A SENDER THIS ACCOUNT ALREADY KNOWS IS NOT A FIRST-TIME SENDER ─────────────────────
-     *
-     * Beside the cutline and not folded into it, because it answers the other question: the
-     * cutline asks whether a sender is still worth ASKING about, this asks whether they were
-     * already ANSWERED. `cutlineCounts` had the rule half of it and this query had nothing, so
-     * `GET /screener` listed a correspondent of a decade — an enabled `seeded-from-sent` rule
-     * and a `contacts` row both naming them — under a header that calls them first-time, because
-     * mail imported before the seed never left the gate. One expression, both readers.
-     *
-     * UNCONDITIONAL, unlike `active`: the cutline is an account SETTING a caller may not have
-     * read, and this is not. Their held mail is not hidden by it — it is the held-releases
-     * surface's ({@link heldReleaseGroups}) and the gate-release pass's, both of which reach the
-     * rows this excludes. A DENY decision does not exclude: that mail is the Screened-out tab's.
-     */
+    /* A SENDER THIS ACCOUNT ALREADY KNOWS IS NOT A FIRST-TIME SENDER. Beside the cutline and not
+       folded into it: the cutline asks whether a sender is worth ASKING about, this asks whether
+       they were already ANSWERED. UNCONDITIONAL, unlike `active` — the cutline is a SETTING a
+       caller may not have read, and this is not. Their held mail is not hidden by it: the
+       held-releases surface and the gate-release pass both reach the rows this excludes. */
     const rows = await ctx.db.select().from(reps)
       .where(and(
         eq(reps.rank, 1),

@@ -85,6 +85,7 @@ import { threadJoinHealPass, type ThreadJoinHealCursor } from "./thread-join-hea
 import { inboundQuietPass } from "./inbound-quiet.js";
 import { makeAwayReplySweep } from "./away-reply-sweep.js";
 import { ruleRetroPass } from "./rule-retro.js";
+import { gateReleasePass } from "./gate-release.js";
 import { apiFaultPrunePass } from "./api-fault-prune.js";
 import { ohboxTidyPass } from "./ohbox-tidy.js";
 import { screenerAutoApplyPass } from "./screener-auto.js";
@@ -3922,6 +3923,35 @@ export async function startWorkerWithLock(
         } catch (err) {
           noteIfSharedDatabaseFault(err);
           log.error("workflow_drain_failed", { accountId, err });
+        }
+      }
+
+      // Give back the mail stuck at the screening gate behind a decision the account already made.
+      // BEFORE the retro pass below and in its own try/catch and loop, for that loop's reason: one
+      // account's failure must not skip the rest. Running first is deliberate — it arms the release
+      // licence on rules the retro pass then walks in the SAME cycle, so an affected account is
+      // repaired in one pass of the tail instead of two. For every account already swept the call is
+      // one indexed read of `account_settings` and no more, and it stops for ever once the marker is
+      // stamped. It needs nothing beyond the db and core packages, the same dependency reason the
+      // two passes below state without naming the forbidden package (`deps.test.ts` scans this
+      // file's raw text).
+      for (const accountId of passAccounts) {
+        if (stopped) return;
+        try {
+          const r = await gateReleasePass(db as unknown as Tx, { accountId, log }, new Date());
+          if (r.ran && (r.rulesArmed > 0 || r.contactRowsReleased > 0 || r.completed)) {
+            log.info("gate_release_swept", {
+              accountId, rulesArmed: r.rulesArmed,
+              contactRowsReleased: r.contactRowsReleased, completed: r.completed,
+            });
+          }
+        } catch (err) {
+          log.error("gate_release_failed", {
+            accountId, err,
+            reason: "no account was marked swept, so the next cycle starts it again; a rule this " +
+              "pass already armed is in flight and drops out of its own selection, and a row it " +
+              "already released is desired into the Ohbox and no longer at the gate",
+          });
         }
       }
 

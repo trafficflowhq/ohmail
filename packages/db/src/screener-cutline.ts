@@ -140,37 +140,23 @@ export function senderIsActiveSql(
 /**
  * THE DESTINATIONS THAT SAY YES — `rules.ts#effectForDestination`'s allow side, as data.
  *
- * RE-DECLARED, not imported, for {@link CUTLINE_DEFAULT_DORMANCY_DAYS}' reason: `db` may not
- * depend on `@trafficflow/core`. `screener-decided.test.ts` derives the same list from
- * `effectForDestination` over `DESTINATIONS` and pins the two equal, so a seventh folder that
- * changes side there reddens here rather than silently widening what counts as a decision.
- * A destination OUTSIDE this list is read as a deny — including a string the column holds that
- * is not one of the six — which is the safe direction: an unrecognised folder leaves the sender
- * in the queue instead of quietly exempting them.
+ * RE-DECLARED for {@link CUTLINE_DEFAULT_DORMANCY_DAYS}' reason, and DERIVED from that function by
+ * `screener-cutline-one-owner.test.ts`, so a seventh folder reddens rather than widening what
+ * counts as a decision. Anything outside the list reads as a deny — including a string the column
+ * holds that is not one of the six — which leaves the sender in the queue rather than exempting
+ * them on a folder nobody has classified.
  */
 export const CUTLINE_ALLOW_DESTINATIONS: readonly string[] = ["INBOX", "ohmail/Reads", "ohmail/Receipts"];
 
 /**
- * HAS THIS ACCOUNT ALREADY DECIDED IT KNOWS THIS SENDER — the queue's other half.
- *
- * The cutline says whether a sender is still worth ASKING about; this says whether they were
- * already ANSWERED. `cutlineCounts` spelled the rule half inline and `GET /screener` asked
- * nothing at all, so a correspondent of a decade with an enabled `seeded-from-sent` rule and a
- * `contacts` row was listed as a first-time sender — held mail imported before the seed never
- * left the gate, and the header counted it. One expression, both readers.
- *
- * A DECISION is an enabled `sender`/`domain` rule naming the author whose destination is on the
- * ALLOW side ({@link CUTLINE_ALLOW_DESTINATIONS}), OR a `contacts` row for the address — the set
- * `evaluateRules` reads as "senders this account knows". A DENY rule does not exclude and DEFEATS
- * the contact arm: mail somebody decided against belongs to the Screened-out tab, and its sender
- * stays answerable exactly as before this predicate existed.
- *
- * `senderExpr` is the outer query's already-lowercased address, as {@link senderIsActiveSql}
- * takes it. `trim(lower(match))` is the SQL spelling of `rule.match.trim().toLowerCase()`, the
- * same one `rule-retro.ts#matchPredicate` and `held-release-service.ts#ruleClaimsSender` use, so
- * the set this EXCLUDES and the set a rule MOVES are one set. The domain arm goes through
- * {@link Dialect.domainOf}: the phone runs this engine, and `substring … position` is a
- * server-only construct.
+ * HAS THIS ACCOUNT ALREADY DECIDED IT KNOWS THIS SENDER — the queue's other half. The cutline asks
+ * whether a sender is still worth ASKING about; this asks whether they were already ANSWERED.
+ * `cutlineCounts` spelled the rule half inline and `GET /screener` asked nothing, so a
+ * correspondent of a decade carrying an enabled rule AND a `contacts` row was listed as
+ * first-time. A DECISION is an enabled `sender`/`domain` rule naming the author with an ALLOW
+ * destination, or a `contacts` row; a DENY rule does not exclude and DEFEATS the contact arm.
+ * `trim(lower(match))` is `matchPredicate`'s normalisation in SQL, so the set this excludes is the
+ * set a rule moves, and the domain arm goes through {@link Dialect.domainOf} for the phone.
  */
 export function senderIsDecidedSql(d: Dialect, accountId: string, senderExpr: SQL): SQL {
   const allow = sql`(${sql.join(CUTLINE_ALLOW_DESTINATIONS.map((f) => sql`${f}`), sql`, `)})`;
