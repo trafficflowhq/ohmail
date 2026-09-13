@@ -299,28 +299,22 @@
 }
 .att-tile[data-state="failed"] .att-state { color: var(--accent-ink); }
 
-/* A one-second sweep beside the sentence, `.mbx-wait`'s move: says "running" without
-   asking to be watched. The sentence, not the sweep, carries the meaning. */
-.att-spin {
-  width: 10px;
-  height: 10px;
-  flex: none;
-  border-radius:var(--r-pill);
-  border: 1.5px solid var(--hair);
-  border-top-color: var(--accent);
-  animation: att-spin 1s linear infinite;
-}
+/* The waiting mark beside the sentence is the PRODUCT'S one loader, `@ohmail/ui`'s `Spinner`:
+   a segment travels the frame's perimeter and the frame itself never moves. Nothing here sizes,
+   colours or animates it — `spinner.css` owns all three, and the old local ring rotated, which
+   under ohmarchy (square frame, `--r-pill: 0`) read as a spinning box. `.att-spin` is a
+   PLACEMENT hook only. The sentence, not the mark, carries the meaning. */
 
-/* Inside the state line the sweep sits on the sentence's FIRST line when it wraps;
+/* Inside the state line the mark sits on the sentence's FIRST line when it wraps;
    inside the capsule (one line by construction) it needs no offset. */
 .att-state .att-spin { margin-top: 3px; }
 
-@keyframes att-spin { to { transform: rotate(360deg); } }
 /* One keyframe, both breathers — state, not decoration (send-working's exact shape). */
 @keyframes att-working { 50% { background: var(--tint2); } }
 
 @media (prefers-reduced-motion: reduce) {
-  .att-spin { animation: none; }
+  /* The mark needs no arm here: it carries no animation of its own, and base.css runs the
+     primitive's own lap once so the segment lands at its start and rests. */
   /* The breathers rest on the louder tint so loading ≠ idle while standing still. */
   .att-tile[data-state="loading"],
   .att-all[data-working] { animation: none; background: var(--tint2); }

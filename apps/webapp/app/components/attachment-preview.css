@@ -142,13 +142,12 @@ body.ap-lock { overflow: hidden; }
 .ap-card-detail { font-size:calc(12.5px + var(--type-up)); color: var(--ink3); line-height: 1.5; }
 .ap-card-action { margin-top: 6px; }
 
-.ap-spin {
-  width: 15px; height: 15px; flex: none;
-  border: 1.6px solid var(--hair);
-  border-top-color: var(--accent);
-  border-radius:var(--r-avatar);
-  animation: ap-spin .7s linear infinite;
-}
+/* The product's one loader (`@ohmail/ui`'s `Spinner`), sized for the overlay's larger type.
+   The old local ring rotated, which is exactly what reads wrong under ohmarchy's square radius
+   token; the primitive moves a segment ALONG the frame and owns the colour and the lap. */
+/* Two classes deep on purpose: `.spin` sizes itself at one class, and source order between
+   two single-class rules is whatever the bundler decides. */
+.ap-busy .ap-spin { width: 15px; height: 15px; }
 
 /* ── footer hints ── */
 .ap-foot {
@@ -167,8 +166,6 @@ body.ap-lock { overflow: hidden; }
 
 @keyframes ap-fade { from { opacity: 0; } to { opacity: 1; } }
 @keyframes ap-rise { from { opacity: 0; transform: translateY(12px) scale(.99); } to { opacity: 1; transform: none; } }
-@keyframes ap-spin { to { transform: rotate(360deg); } }
-
 @media (max-width: 640px) {
   .ap-scrim { padding: 0; }
   .ap-panel { width: 100vw; height: 100vh; border-radius: 0; }
@@ -180,6 +177,7 @@ body.ap-lock { overflow: hidden; }
 
 @media (prefers-reduced-motion: reduce) {
   .ap-scrim, .ap-panel { animation: none; }
-  .ap-spin { animation-duration: 1.4s; }
+  /* The mark needs no arm: base.css runs the primitive's own lap once, so the segment lands
+     at its start and rests — still a waiting mark, standing still. */
   .ap-nav:hover { transform: translateY(-50%); }
 }

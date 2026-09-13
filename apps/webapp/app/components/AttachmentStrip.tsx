@@ -27,7 +27,7 @@
 import { useMemo, type ReactNode } from "react";
 import { isCalendarMime, parseIcsEvent } from "@trafficflow/core/ics";
 import "./attachment-strip.css";
-import { formatFileSize } from "@ohmail/ui";
+import { formatFileSize, Spinner } from "@ohmail/ui";
 import { activeFormatLocale, liveCopy } from "../shell/locale";
 import { IcsEventCard } from "./IcsEventCard";
 
@@ -339,7 +339,7 @@ function Tile({
   const stateLine: ReactNode =
     item.state === "loading" ? (
       <>
-        <span className="att-spin" aria-hidden="true" />
+        <Spinner className="att-spin" />
         {COPY.loading}
       </>
     ) : item.state === "failed" ? (
@@ -454,7 +454,7 @@ function ListState({ sentence, title, working, onRetry }: {
         {/* Spoken like the tile's own state line — the transition failed → retrying → strip is
             a change a screen reader user is entitled to hear without going looking. */}
         <span className="att-list-say" role="status">
-          {working ? <span className="att-spin" aria-hidden="true" /> : null}
+          {working ? <Spinner className="att-spin" /> : null}
           {sentence}
         </span>
         {working || onRetry ? (
@@ -608,7 +608,7 @@ function ReadyStrip({ items, onOpen, onPreview, canPreview, onDownloadAll, downl
           >
             {downloadingAll ? (
               <>
-                <span className="att-spin" aria-hidden="true" />
+                <Spinner className="att-spin" />
                 {COPY.downloadingAll}
               </>
             ) : (

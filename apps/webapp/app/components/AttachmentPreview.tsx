@@ -45,7 +45,7 @@ import type { PDFDocumentLoadingTask, PDFDocumentProxy, RenderTask } from "pdfjs
 import type { AttachmentItem } from "./AttachmentStrip";
 import { useKeyBindings } from "../shell/keymap";
 import "./attachment-preview.css";
-import { formatFileSize } from "@ohmail/ui";
+import { formatFileSize, Spinner } from "@ohmail/ui";
 import { activeFormatLocale, liveCopy } from "../shell/locale";
 
 /* ── what can be looked at, and what merely downloads ─────────────────────────────────── */
@@ -592,7 +592,7 @@ function renderContent({
 function Busy({ label }: { label: string }) {
   return (
     <div className="ap-busy" role="status">
-      <span className="ap-spin" aria-hidden="true" />
+      <Spinner className="ap-spin" />
       <span>{label}</span>
     </div>
   );
