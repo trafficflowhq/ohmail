@@ -6,6 +6,7 @@ import { jsonResponse } from "../responses.js";
 import type { Route } from "../router.js";
 import type { ApiDeps } from "../deps.js";
 import { mailbox, sync } from "./shared.js";
+import { pagingNumber } from "../query-bounds.js";
 
 /**
  * The EntityType values a `?types=` CSV may name; unknown tokens are dropped. `"tag"` has to be
@@ -109,8 +110,7 @@ export const syncRoutes: Route[] = [
     handler: async (req, deps) => {
       const url = new URL(req.url);
       const since = url.searchParams.get("since") ?? undefined;
-      const limitRaw = url.searchParams.get("limit");
-      const limit = limitRaw != null && limitRaw !== "" ? Number(limitRaw) : undefined;
+      const limit = pagingNumber(url.searchParams.get("limit"));
       const types = parseTypes(url.searchParams.get("types"));
 
       const result = await sync(deps).getChanges(serviceContext(deps, req), {
@@ -145,8 +145,7 @@ export const syncRoutes: Route[] = [
     handler: async (req, deps) => {
       const url = new URL(req.url);
       const cursor = url.searchParams.get("cursor") ?? undefined;
-      const limitRaw = url.searchParams.get("limit");
-      const limit = limitRaw != null && limitRaw !== "" ? Number(limitRaw) : undefined;
+      const limit = pagingNumber(url.searchParams.get("limit"));
       // `?phase=tail` — the labeled tail alone, for a client re-hydrating mail its own retention
       // policy once evicted. A CLOSED SET AT THE READ, which is where `input-bounds-census` asks
       // for a caller-chosen value's bound: anything else is the ordinary walk, the safe direction

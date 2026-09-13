@@ -9,6 +9,7 @@ import {
 } from "../junk-window.js";
 import type { Route } from "../router.js";
 import { screener, readBody } from "./shared.js";
+import { pagingNumber } from "../query-bounds.js";
 
 /**
  * The flagship Screener. `GET /screener` is the derived first-contact queue (one entry per held
@@ -88,8 +89,7 @@ export const screenerRoutes: Route[] = [
     handler: async (req, deps) => {
       const url = new URL(req.url);
       const cursor = url.searchParams.get("cursor") ?? undefined;
-      const limitRaw = url.searchParams.get("limit");
-      const limit = limitRaw != null ? Number(limitRaw) : undefined;
+      const limit = pagingNumber(url.searchParams.get("limit"));
       const page = await screener(deps).list(serviceContext(deps, req), { cursor, limit });
       // `suggestable` is the PRICE of this page — `{ senders, credits }` — so a control can
       // state both before it offers the button, from the response it already has.

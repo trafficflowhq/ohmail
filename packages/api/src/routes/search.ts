@@ -11,6 +11,7 @@ import { serviceContext } from "../context.js";
 import { errorResponse, jsonResponse } from "../responses.js";
 import type { Route } from "../router.js";
 import { search } from "./shared.js";
+import { pagingNumber } from "../query-bounds.js";
 
 /**
  * Hybrid search: lexical+fuzzy RRF, account-scoped; facets ride query params; an empty `q` yields
@@ -54,7 +55,7 @@ export const searchRoutes: Route[] = [
             `direction must be one of ${ADDRESS_DIRECTIONS.join(", ")}`,
           );
         }
-        const addrLimitRaw = url.searchParams.get("limit");
+        const addrLimit = pagingNumber(url.searchParams.get("limit"));
         // The service refuses a direction it cannot serve from an index; that refusal is a
         // `ServiceError` and reaches the client through `withErrorEnvelope` as its own code,
         // never re-spelled here — one refusal, one place, so the desktop door
@@ -62,14 +63,13 @@ export const searchRoutes: Route[] = [
         const addrOpts: AddressSearchOptions = {
           address,
           direction: directionRaw,
-          ...(addrLimitRaw != null ? { limit: Number(addrLimitRaw) } : {}),
+          ...(addrLimit !== undefined ? { limit: addrLimit } : {}),
         };
         return jsonResponse(await search(deps).searchByAddress(serviceContext(deps, req), addrOpts));
       }
 
       const q = url.searchParams.get("q") ?? "";
-      const limitRaw = url.searchParams.get("limit");
-      const limit = limitRaw != null ? Number(limitRaw) : undefined;
+      const limit = pagingNumber(url.searchParams.get("limit"));
 
       // Before any work: an order we cannot honour is refused, never quietly re-read as
       // relevance. `null` (absent) falls through to the service's own default.

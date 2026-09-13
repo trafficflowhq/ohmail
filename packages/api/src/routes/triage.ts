@@ -3,6 +3,7 @@ import { serviceContext } from "../context.js";
 import { jsonResponse } from "../responses.js";
 import type { Route } from "../router.js";
 import { triage, readBody } from "./shared.js";
+import { pagingNumber } from "../query-bounds.js";
 
 /** The wire body for a triage set. The resurface time is accepted under either the
  * contract's `bubbleUpAt` or the plan's `untilTs` alias (bubbled_up requires it). */
@@ -44,8 +45,7 @@ export const triageRoutes: Route[] = [
       const url = new URL(req.url);
       const state = (url.searchParams.get("state") ?? "") as TriageState;
       const cursor = url.searchParams.get("cursor") ?? undefined;
-      const limitRaw = url.searchParams.get("limit");
-      const limit = limitRaw != null ? Number(limitRaw) : undefined;
+      const limit = pagingNumber(url.searchParams.get("limit"));
       const page = await triage(deps).listByState(serviceContext(deps, req), state, { cursor, limit });
       return jsonResponse({ items: page.items, nextCursor: page.nextCursor });
     },

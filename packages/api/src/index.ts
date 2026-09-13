@@ -87,6 +87,12 @@ export {
   JSON_BODY_MAX_BYTES, LARGE_BODY_ROUTES,
 } from "./body-ceiling.js";
 
+// THE PAGING QUERY SEAM — the shape of a caller-chosen count, refused once at dispatch; see
+// `query-bounds.ts`. The BAND stays with the service that owns it.
+export {
+  firstMisshapenQuery, pagingNumber, PAGING_QUERY_BOUNDS, type QueryBoundKind,
+} from "./query-bounds.js";
+
 // Responses.
 export { jsonResponse, errorResponse, type JsonResponseInit } from "./responses.js";
 

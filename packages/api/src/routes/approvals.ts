@@ -3,6 +3,7 @@ import { serviceContext } from "../context.js";
 import { jsonResponse } from "../responses.js";
 import type { Route } from "../router.js";
 import { approval, readBody } from "./shared.js";
+import { pagingNumber } from "../query-bounds.js";
 
 /**
  * §5.4 — approvals. `GET /approvals?status=pending` lists the queue. `POST
@@ -24,8 +25,7 @@ export const approvalRoutes: Route[] = [
       const url = new URL(req.url);
       const status = url.searchParams.get("status") ?? undefined;
       const cursor = url.searchParams.get("cursor") ?? undefined;
-      const limitRaw = url.searchParams.get("limit");
-      const limit = limitRaw != null ? Number(limitRaw) : undefined;
+      const limit = pagingNumber(url.searchParams.get("limit"));
       const page = await approval(deps).list(serviceContext(deps, req), {
         status: status as ListApprovalsOptions["status"],
         cursor,

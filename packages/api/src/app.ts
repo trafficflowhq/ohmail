@@ -2,6 +2,7 @@ import { isUuid } from "@trafficflow/services/mail";
 import { ownerCookieValue } from "./cookies.js";
 import type { ApiDeps } from "./deps.js";
 import { errorResponse } from "./responses.js";
+import { firstMisshapenQuery } from "./query-bounds.js";
 import { matchRoute, type Handler, type Route, type RouteParams } from "./router.js";
 import {
   withCsrf, withErrorEnvelope, withIdempotency, withRequestGuard, withRequestId,
@@ -194,7 +195,8 @@ export function createApp(routes: Route[]): App {
 async function dispatch(
   routes: Route[], req: Request, deps: ApiDeps,
 ): Promise<{ res: Response; route: Route | null }> {
-  const { pathname } = new URL(req.url);
+  const url = new URL(req.url);
+  const { pathname } = url;
   const m = matchRoute(routes, req.method, pathname);
   if (!m.matched) {
     return {
@@ -208,6 +210,17 @@ async function dispatch(
   if (badParam) {
     return {
       res: errorResponse("validation_failed", 400, `${badParam} must be an id`, undefined, false),
+      route: m.route,
+    };
+  }
+  // The query string's twin of the line above, and here for the same reason: a caller-chosen
+  // count reached a clamp that raised `?limit=` to one row and answered a page of one. Before
+  // `withSession`, so it can never reach the database, and on every pipeline — a middleware
+  // would miss the `raw` and `anonymous` routes and the sidecar's own `createApp`.
+  const badQuery = firstMisshapenQuery(url);
+  if (badQuery) {
+    return {
+      res: errorResponse("validation_failed", 400, badQuery.message, undefined, false),
       route: m.route,
     };
   }

@@ -3,6 +3,7 @@ import { serviceContext } from "../context.js";
 import { jsonResponse } from "../responses.js";
 import type { Route } from "../router.js";
 import { notify, readBody, noContent } from "./shared.js";
+import { pagingNumber } from "../query-bounds.js";
 
 /**
  * §5.11 — notify rules (3 endpoints): the opt-INTO-notifications list (push off by
@@ -19,7 +20,7 @@ export const notifyRoutes: Route[] = [
       const url = new URL(req.url);
       const page = await notify(deps).list(serviceContext(deps, req), {
         cursor: url.searchParams.get("cursor") ?? undefined,
-        limit: url.searchParams.get("limit") != null ? Number(url.searchParams.get("limit")) : undefined,
+        limit: pagingNumber(url.searchParams.get("limit")),
       });
       return jsonResponse({ items: page.items, nextCursor: page.nextCursor });
     },

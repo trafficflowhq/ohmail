@@ -18,6 +18,7 @@ import {
 } from "./health-cloud.js";
 import type { ApiDeps } from "../deps.js";
 import type { Handler, Route, RouteParams } from "../router.js";
+import { pagingNumber } from "../query-bounds.js";
 
 /**
  * `GET /admin/*` — the eight reads behind the staff console; no write route here (queries:
@@ -202,8 +203,8 @@ function accountQueryOf(req: Request): AccountQuery {
     filter: (allowed as readonly string[]).includes(filter ?? "")
       ? (filter as AccountQuery["filter"])
       : "all",
-    page: Number(params.get("page") ?? 0),
-    pageSize: Number(params.get("pageSize") ?? 0),
+    page: pagingNumber(params.get("page")) ?? 0,
+    pageSize: pagingNumber(params.get("pageSize")) ?? 0,
   };
 }
 

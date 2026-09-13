@@ -8,6 +8,7 @@ import { serviceContext } from "../context.js";
 import { jsonResponse } from "../responses.js";
 import type { Route } from "../router.js";
 import { message, drafting, drafter, readBody, spendOf } from "./shared.js";
+import { pagingNumber } from "../query-bounds.js";
 
 /**
  * Messages. `GET /messages?view=…` is the view-partitioned list (400 on a missing or unknown
@@ -28,8 +29,7 @@ export const messageRoutes: Route[] = [
       const url = new URL(req.url);
       const view = url.searchParams.get("view") ?? "";
       const cursor = url.searchParams.get("cursor") ?? undefined;
-      const limitRaw = url.searchParams.get("limit");
-      const limit = limitRaw != null ? Number(limitRaw) : undefined;
+      const limit = pagingNumber(url.searchParams.get("limit"));
       // `view=folder` (the folders foundation): the folder ENTITY id addresses the list, and
       // the optional (beforeDate, beforeId) keyset is the caller's mirror boundary — page one
       // starts strictly below it so a windowed client is never re-served what it already holds.
@@ -60,8 +60,7 @@ export const messageRoutes: Route[] = [
     handler: async (req, deps) => {
       const url = new URL(req.url);
       const after = url.searchParams.get("after") ?? undefined;
-      const limitRaw = url.searchParams.get("limit");
-      const limit = limitRaw != null ? Number(limitRaw) : undefined;
+      const limit = pagingNumber(url.searchParams.get("limit"));
       // Split on the wire rather than validated here: the service owns the cap and the id shape,
       // for the same reason it owns the cursor's — one place decides what this route accepts.
       // A present-but-empty `ids=` is still the ids MODE (an empty answer), never a silent

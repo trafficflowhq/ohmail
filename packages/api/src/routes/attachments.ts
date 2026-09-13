@@ -4,6 +4,7 @@ import { jsonResponse, errorResponse } from "../responses.js";
 import { makeOpenAdapter } from "../attachments-adapter.js";
 import type { Route } from "../router.js";
 import { attachments, readBody } from "./shared.js";
+import { pagingNumber } from "../query-bounds.js";
 
 /**
  * Attachments & files. Metadata lives server-side; the blob bytes do not — `GET /attachments/:id`
@@ -136,7 +137,7 @@ export const attachmentRoutes: Route[] = [
         type: typeParam === "big" || typeParam === "all" ? typeParam : undefined,
         q: url.searchParams.get("q") ?? undefined,
         cursor: url.searchParams.get("cursor") ?? undefined,
-        limit: url.searchParams.get("limit") != null ? Number(url.searchParams.get("limit")) : undefined,
+        limit: pagingNumber(url.searchParams.get("limit")),
       });
       return jsonResponse({ items: page.items, nextCursor: page.nextCursor });
     },

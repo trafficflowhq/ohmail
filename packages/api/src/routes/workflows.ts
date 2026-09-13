@@ -3,6 +3,7 @@ import { serviceContext } from "../context.js";
 import { jsonResponse } from "../responses.js";
 import type { Route } from "../router.js";
 import { workflows, readBody } from "./shared.js";
+import { pagingNumber } from "../query-bounds.js";
 
 /**
  * Workflows. Account-scoped CRUD over `workflows` + the run enqueue, all REST-only: no
@@ -111,8 +112,7 @@ export const workflowsRoutes: Route[] = [
     handler: async (req, deps) => {
       const url = new URL(req.url);
       const cursor = url.searchParams.get("cursor") ?? undefined;
-      const limitRaw = url.searchParams.get("limit");
-      const limit = limitRaw != null ? Number(limitRaw) : undefined;
+      const limit = pagingNumber(url.searchParams.get("limit"));
       const status = url.searchParams.get("status") ?? undefined;
       const workflowId = url.searchParams.get("workflowId") ?? undefined;
       const page = await workflows(deps).listRuns(serviceContext(deps, req), { cursor, limit, status, workflowId });

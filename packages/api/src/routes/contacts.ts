@@ -2,6 +2,7 @@ import { serviceContext } from "../context.js";
 import { jsonResponse } from "../responses.js";
 import type { Route } from "../router.js";
 import { contacts, readBody, noContent } from "./shared.js";
+import { pagingNumber } from "../query-bounds.js";
 
 interface PatchContactBody { name?: string | null }
 interface NoteBody { body?: string }
@@ -11,7 +12,7 @@ const qp = (req: Request): { cursor?: string; limit?: number; q?: string } => {
   return {
     q: url.searchParams.get("q") ?? undefined,
     cursor: url.searchParams.get("cursor") ?? undefined,
-    limit: url.searchParams.get("limit") != null ? Number(url.searchParams.get("limit")) : undefined,
+    limit: pagingNumber(url.searchParams.get("limit")),
   };
 };
 

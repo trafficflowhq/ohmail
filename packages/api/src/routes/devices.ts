@@ -7,6 +7,7 @@ import { json, noContent, readBody } from "./shared.js";
 // `services.auth` is deliberately the bare lifecycle. The hosted `AuthService` extends it, so
 // nothing hosted changes shape through this accessor.
 import { sessionLifecycle } from "./session-lifecycle.js";
+import { pagingNumber } from "../query-bounds.js";
 
 /** §2.7 — sessions, devices & audit. */
 export const deviceRoutes: Route[] = [
@@ -39,8 +40,7 @@ export const deviceRoutes: Route[] = [
     cost: "read",
     handler: async (req, deps) => {
       const p = new URL(req.url).searchParams;
-      const limitRaw = p.get("limit");
-      const limit = limitRaw != null && limitRaw !== "" ? Number(limitRaw) : undefined;
+      const limit = pagingNumber(p.get("limit"));
       const opts: { cursor?: string; limit?: number } = {
         ...(p.get("cursor") ? { cursor: p.get("cursor")! } : {}),
         ...(limit != null && Number.isFinite(limit) ? { limit } : {}),

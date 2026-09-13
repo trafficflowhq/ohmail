@@ -4,6 +4,7 @@ import { serviceContext } from "../context.js";
 import { errorResponse, jsonResponse } from "../responses.js";
 import type { Route } from "../router.js";
 import { privacy } from "./shared.js";
+import { pagingNumber } from "../query-bounds.js";
 
 /**
  * The spy-pixel blocker surface (4 endpoints). `GET /img` is mounted again; its return condition
@@ -156,7 +157,7 @@ export const privacyRoutes: Route[] = [
       const page = await privacy(deps).listTrackerEvents(serviceContext(deps, req), {
         messageId: params.id!,
         cursor: url.searchParams.get("cursor") ?? undefined,
-        limit: url.searchParams.get("limit") != null ? Number(url.searchParams.get("limit")) : undefined,
+        limit: pagingNumber(url.searchParams.get("limit")),
       });
       return jsonResponse({ items: page.items });
     },
@@ -170,7 +171,7 @@ export const privacyRoutes: Route[] = [
       const url = new URL(req.url);
       const page = await privacy(deps).listTrackerEvents(serviceContext(deps, req), {
         cursor: url.searchParams.get("cursor") ?? undefined,
-        limit: url.searchParams.get("limit") != null ? Number(url.searchParams.get("limit")) : undefined,
+        limit: pagingNumber(url.searchParams.get("limit")),
       });
       return jsonResponse({ items: page.items, nextCursor: page.nextCursor });
     },

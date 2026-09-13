@@ -3,6 +3,7 @@ import { serviceContext } from "../context.js";
 import { jsonResponse } from "../responses.js";
 import type { Route } from "../router.js";
 import { snippets, readBody, noContent } from "./shared.js";
+import { pagingNumber } from "../query-bounds.js";
 
 /**
  * §5.13 — snippets CRUD (5 endpoints). REST-only (no /sync entity). PUT is a
@@ -18,7 +19,7 @@ export const snippetsRoutes: Route[] = [
       const url = new URL(req.url);
       const page = await snippets(deps).list(serviceContext(deps, req), {
         cursor: url.searchParams.get("cursor") ?? undefined,
-        limit: url.searchParams.get("limit") != null ? Number(url.searchParams.get("limit")) : undefined,
+        limit: pagingNumber(url.searchParams.get("limit")),
       });
       return jsonResponse({ items: page.items, nextCursor: page.nextCursor });
     },

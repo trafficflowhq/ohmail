@@ -3,6 +3,7 @@ import { serviceContext } from "../context.js";
 import { jsonResponse } from "../responses.js";
 import type { Route } from "../router.js";
 import { kb, readBody, noContent } from "./shared.js";
+import { pagingNumber } from "../query-bounds.js";
 
 /**
  * §5 /kb — Knowledge Base CRUD (5 endpoints). REST-only (no /sync
@@ -20,7 +21,7 @@ export const kbRoutes: Route[] = [
       const url = new URL(req.url);
       const page = await kb(deps).list(serviceContext(deps, req), {
         cursor: url.searchParams.get("cursor") ?? undefined,
-        limit: url.searchParams.get("limit") != null ? Number(url.searchParams.get("limit")) : undefined,
+        limit: pagingNumber(url.searchParams.get("limit")),
       });
       return jsonResponse({ items: page.items, nextCursor: page.nextCursor });
     },
