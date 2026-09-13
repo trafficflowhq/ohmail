@@ -1,13 +1,13 @@
 import { closeSync, existsSync, fstatSync, mkdirSync, openSync, readFileSync, readdirSync, rmSync, statSync, writeSync } from "node:fs";
 import { join } from "node:path";
 import { uptime as osUptime } from "node:os";
-import { PGlite } from "@electric-sql/pglite";
+import { PGlite, type Transaction as PgliteTransaction } from "@electric-sql/pglite";
 import { drizzle, type PgliteDatabase } from "drizzle-orm/pglite";
 import { migrate } from "drizzle-orm/pglite/migrator";
 import { mailSchema } from "@trafficflow/db/mail";
 import { MAIL_JOURNAL, adoptBaseline, adoptReissuedOriginals } from "@trafficflow/db/journal";
 import { brandDialect } from "@trafficflow/db/dialect";
-import { createStoreScheduler, scheduleStoreLanes, type StoreLaneCensus } from "./store-lanes.js";
+import { createStoreScheduler, currentStoreLane, scheduleStoreLanes, type StoreLaneCensus } from "./store-lanes.js";
 import type { Diagnostic } from "./log.js";
 
 /**
@@ -24,26 +24,49 @@ import type { Diagnostic } from "./log.js";
 export type LocalDb = PgliteDatabase<typeof mailSchema>;
 
 /**
- * THE LOCAL STORE DOES NOT WAIT FOR THE FLUSH — on THIS database and nowhere else (the Cloud's
- * Postgres and every other handle keep the default; `local-store-durability.test.ts` says so).
+ * THE INGEST'S OWN TRANSACTION DOES NOT WAIT FOR THE FLUSH — that transaction, and nothing else on
+ * this database or any other (`local-store-durability.test.ts` says so, from both sides).
  *
- * NOT `fsync = off`: the WAL is still written and still ordered, so a hard kill can neither
- * corrupt the store nor lose a transaction out of the middle — a killed store reopens and recovers
- * a PREFIX of its log. What it loses is what was committed after the last CHECKPOINT, and that is
- * a wider window than the name suggests: PGlite is one process with no background writer, so the
- * checkpointer {@link CHECKPOINT_INTERVAL_MS} arms is the only flush between commits.
+ * NOT `fsync = off`: the log is still written and still ordered, so a killed store reopens and
+ * recovers a PREFIX of it. What the ingest loses is what it committed since the last CHECKPOINT —
+ * PGlite is one process with no background writer, so the checkpointer {@link
+ * CHECKPOINT_INTERVAL_MS} arms is the only flush between commits — and that is safe because the
+ * mailbox is the master: `sync.ts` writes a folder's cursor AFTER the messages it acknowledges, so
+ * a lost tail takes its cursor with it and the next cycle re-fetches. `local-db.test.ts` kills a
+ * mid-ingest store and reads that back off the reopened directory.
  *
- * The mirror survives it because the mailbox is the master and because a prefix is what recovery
- * gives: `sync.ts` writes a folder's cursor AFTER the messages it acknowledges, so a crash that
- * kept the cursor kept them too, and one that lost them lost the cursor with them. The next cycle
- * re-fetches. Nothing goes missing that the mailbox does not still hold; a crash costs repeated
- * work. `local-db.test.ts` kills a mid-ingest store and reads that back off the reopened directory.
- *
- * The data directory is Emscripten NODEFS, where every file operation is a synchronous host call,
- * which makes the commit flush the most expensive thing an ingested message does: measured over
- * the real sync cycle on Linux, 35.4 -> 24.8 ms of wall per message.
+ * THE SCOPE IS THE TRANSACTION AND NOT THE SESSION, and that is the whole of this constant's
+ * history. The commit flush is also what keeps the log drained: with it gone session-wide, a
+ * statement that dirties hundreds of buffers pays the WAL-before-data flush at every eviction
+ * instead — measured 2 474 ms against 77 ms for identical work (same blocks, same log bytes, same
+ * syscalls), which is the shape of the store's own compaction and of a mailbox erase.
  */
-const LOCAL_STORE_SYNCHRONOUS_COMMIT = "off";
+const INGEST_SYNCHRONOUS_COMMIT = "off";
+
+/**
+ * Put {@link INGEST_SYNCHRONOUS_COMMIT} inside the ingest's transactions, in place on the client
+ * this module constructed — so drizzle, the compaction pass and the checkpointer all reach the same
+ * object. `SET LOCAL` reverts at the commit, so the setting can never outlive the transaction that
+ * asked for it, and the lane is read INSIDE the transaction because that is where the drain's async
+ * context is live (`store-lanes.ts`). Unnamed work is interactive and keeps Postgres' default,
+ * which covers the migrator, the compaction and every window read without depending on where in
+ * this file the call sits.
+ */
+function relaxIngestCommits(client: PGlite): void {
+  const inner = client.transaction.bind(client);
+  Object.defineProperty(client, "transaction", {
+    configurable: true,
+    writable: true,
+    value: function relaxed<T>(cb: (tx: PgliteTransaction) => Promise<T>): Promise<T | undefined> {
+      return inner(async (tx) => {
+        if (currentStoreLane() === "ingest") {
+          await tx.exec(`set local synchronous_commit = ${INGEST_SYNCHRONOUS_COMMIT}`);
+        }
+        return cb(tx);
+      });
+    },
+  });
+}
 
 /**
  * What opening the mirror cost, in wall-clock milliseconds, split by phase. Returned rather than
@@ -679,6 +702,10 @@ export async function openLocalDb(dataDir: string, opts: OpenLocalDbOptions = {}
      * why FIFO is the defect.
      */
     const lanes = createStoreScheduler();
+    /* BEFORE the scheduler, so an admission still wraps a whole transaction rather than sitting
+       inside one. See {@link relaxIngestCommits}: the migrator below runs outside every lane and
+       therefore keeps the default, which is what a schema change and its journal row need. */
+    relaxIngestCommits(client);
     scheduleStoreLanes(client, lanes);
     const pgliteOpenMs = Date.now() - tOpen;
     const db = brandDialect(drizzle(client, { schema: mailSchema }), "pg");
@@ -702,11 +729,6 @@ export async function openLocalDb(dataDir: string, opts: OpenLocalDbOptions = {}
     // A no-op everywhere else (`REISSUED_ORIGINALS`, packages/db/src/baseline.ts).
     await adoptReissuedOriginals(db, MAIL_JOURNAL);
     const migrateMs = Date.now() - tMigrate;
-    /* AFTER the migrator, deliberately: a schema change and the journal row that records it are
-       two transactions, so a crash that lost only the second would leave a store whose next launch
-       replays a migration it already has. Migrations run once and are not the cost. See
-       {@link LOCAL_STORE_SYNCHRONOUS_COMMIT} for what this does and does not risk. */
-    await client.exec(`set synchronous_commit = ${LOCAL_STORE_SYNCHRONOUS_COMMIT}`);
     // AFTER the migrator (the table must exist on a first launch) and BEFORE serving: a rewrite
     // holds an exclusive lock, and the one place that lock collides with nothing is here, where
     // no reader has the handle yet. See {@link reclaimBodyBloat} for the measured pathology and
