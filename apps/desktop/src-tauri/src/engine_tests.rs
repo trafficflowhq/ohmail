@@ -2893,7 +2893,11 @@ fn a_saved_attachment_lands_in_downloads_and_never_outside_it() {
     assert_eq!(saved.file_name().and_then(|n| n.to_str()), Some("Quarterly report.pdf"));
     assert_eq!(fs::read(&saved).expect("read"), b"bytes");
 
-    for escape in ["../escaped.pdf", "a/b.pdf", r"..\escaped.pdf", "..", ".", "sub/dir/x.pdf"] {
+    // No backslash row: `\` is an ORDINARY character in a unix file name, so `..\x.pdf` is a
+    // legal single name here and refusing it would be asserting Windows' rules on Linux. The
+    // backslash is `attachment_file_name`'s job — it maps every one of them to `_` before this
+    // function is ever reached, on every platform, and `engine_tests.rs` asserts that above.
+    for escape in ["../escaped.pdf", "a/b.pdf", "..", ".", "sub/dir/x.pdf"] {
         let out = save_into_downloads(&root, escape, b"x");
         assert!(out.is_err(), "save_into_downloads({escape:?}) wrote {out:?}");
     }
