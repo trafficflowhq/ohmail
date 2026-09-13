@@ -2039,12 +2039,17 @@ export interface MetaFolderStamp {
 }
 
 /**
- * DID THE FOLDER STAND STILL BETWEEN THESE TWO STAMPS? Every term has to match, and a `null`
- * generation matches only another `null`: unknown is not "the same", the rule this module holds to
- * everywhere a numbering is compared.
+ * DID THE FOLDER STAND STILL BETWEEN THESE TWO STAMPS?
+ *
+ * The generation goes through the door like every other epoch here: a PROVEN renumbering is
+ * movement whatever the counters say, and an UNNAMED one proves nothing either way — it must not
+ * report movement on every boundary against a server that does not report UIDVALIDITY, which would
+ * be a gate run per write. The counters answer in that case, and they are the terms the takeover
+ * moves anyway.
  */
 export function sameMetaStamp(a: MetaFolderStamp, b: MetaFolderStamp): boolean {
-  return a.uidNext === b.uidNext && a.messages === b.messages && a.uidValidity === b.uidValidity;
+  if (epochVerdict(epochOf(a.uidValidity), epochOf(b.uidValidity)) === "stale") return false;
+  return a.uidNext === b.uidNext && a.messages === b.messages;
 }
 
 /**
