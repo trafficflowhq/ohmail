@@ -2,7 +2,7 @@ import { and, asc, desc, eq, isNull, sql, type SQL } from "drizzle-orm";
 import { dialect } from "@trafficflow/db/dialect";
 import {
   accountSettings, folderState, messages,
-  resolveCutline, senderIsActiveSql, type ResolvedCutline,
+  resolveCutline, senderIsActiveSql, senderIsDecidedSql, type ResolvedCutline,
   screenerAttemptKey, storeScreenerSuggestion,
   screenerSuggestedSenderExists, hasScreenerSuggestionForSender, AI_ACTION_WEIGHTS,
   type SpendPort, type Tx,
@@ -419,6 +419,11 @@ async function selectCandidates(
       opts.cutline
         ? senderIsActiveSql(d, opts.accountId, sql`lower(${reps.fromAddress})`, opts.cutline)
         : undefined,
+      // (5) THE DECIDED PREDICATE — the same expression the queue's page excludes through, and
+      // UNCONDITIONAL for that page's reason. This pass builds its own candidate set, so arm (4)'s
+      // argument reaches it twice: a sender the Screener no longer lists is a sender no surface
+      // shows, and buying advice about them is money spent on a question nobody is asked.
+      sql`not ${senderIsDecidedSql(d, opts.accountId, sql`lower(${reps.fromAddress})`)}`,
     ))
     .orderBy(asc(reps.createdAt), asc(reps.messageId))
     .limit(opts.limit);
