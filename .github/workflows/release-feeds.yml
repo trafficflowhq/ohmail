@@ -677,16 +677,33 @@ jobs:
           set -euo pipefail
           test -f signing-input/inputs.sha256 || { echo "the prepare job's input list did not arrive" >&2; exit 1; }
           WANT="$(grep -c . signing-input/inputs.sha256 || true)"
-          GOT="$(cd signing-input && find payload signers manifest.json -type f | grep -c . || true)"
-          test "$WANT" = "$GOT" || {
-            echo "the signing inputs carry $GOT file(s) and the pinned list names $WANT" >&2
-            echo "A file the list does not name is a file nothing pinned." >&2
+          # THE GATE PINS CONTENT, NOT A COUNT. The prepare job walks a tree that still
+          # has its symlinks — a macOS framework is built from them, so
+          # Sparkle.framework/Headers and Versions/Current/Headers are one file — and
+          # `upload-artifact` resolves them, so the tree arriving here carries the same
+          # bytes at more paths than the list has lines. Comparing counts refused that,
+          # which is a shape every byte of is already pinned. What must never happen is a
+          # file whose CONTENT nothing pinned, and that is what is asked here.
+          ( cd signing-input && find payload signers manifest.json -type f -print0 \
+              | xargs -0 shasum -a 256 > ../present.sha256 )
+          cut -d' ' -f1 signing-input/inputs.sha256 | sort -u > pinned.hashes
+          UNPINNED="$(cut -d' ' -f1 present.sha256 | sort -u | comm -23 - pinned.hashes | grep -c . || true)"
+          if [ "$UNPINNED" != 0 ]; then
+            echo "$UNPINNED signing input(s) carry content no pinned hash accounts for:" >&2
+            while read -r h rest; do
+              grep -q "^$h$" pinned.hashes || echo "  unpinned: ${rest# }" >&2
+            done < present.sha256
             exit 1
-          }
+          fi
+          GOT="$(grep -c . present.sha256 || true)"
+          echo "$GOT signing input path(s), every one carrying pinned content"
+          if [ "$GOT" != "$WANT" ]; then
+            echo "  $((GOT - WANT)) are duplicate paths of pinned files — a framework's resolved symlinks"
+          fi
           # `--quiet` prints only the files that FAILED — a refusal has to name
           # its subject, and `> /dev/null` threw that line away.
           ( cd signing-input && shasum -a 256 --check --quiet inputs.sha256 )
-          echo "$WANT signing input(s) match the bytes the prepare job pinned"
+          echo "$WANT pinned path(s) match the bytes the prepare job pinned"
           # The executable bit, which the artifact does not carry. These are the
           # bytes just checked, so this restores it and changes nothing else.
           SIGN_UPDATE_REL="$(jq -r .signUpdateRel signing-input/signers/signers.json)"
