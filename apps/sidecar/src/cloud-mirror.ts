@@ -272,6 +272,13 @@ interface CursorState {
    * mirrors bootstrapped while the drain still asked for eight of the feed's nine types.
    */
   tagBackfill: boolean;
+  /**
+   * Set once that repair has APPLIED A PAGE. Its detection gate is "this mirror holds no tags at
+   * all", which its own first page falsifies — so a repair that failed on page 2 was permanently
+   * retired by the tags page 1 had written. The marker has to be earned, and this is what makes
+   * the gate ask a question the repair's own output cannot answer.
+   */
+  tagBackfillBegun: boolean;
   /** The one-time folder backfill's consumed flag — `tagBackfill`'s shape, for the folder
    *  entities the pre-folders apply loop dropped while the cursor advanced past them. */
   folderBackfill: boolean;
@@ -426,6 +433,7 @@ interface CursorFile {
   /** The serialized {@link WindowPass}; absent on every file from before the opening window. */
   window?: unknown;
   tagBackfill?: unknown;
+  tagBackfillBegun?: unknown;
   folderBackfill?: unknown;
   capMarkerRepair?: unknown;
   /** ISO instant of the last completed pull; absent on every file from before the freshen. */
@@ -445,6 +453,9 @@ function readCursor(path: string): CursorState {
       bootstrapping: j.bootstrapping === true,
       window: readWindowPass(j.window),
       tagBackfill: j.tagBackfill === true,
+      // Absent on every file written before this marker existed, which reads FALSE — "never
+      // started" — so those mirrors keep the cheap presence gate they have always had.
+      tagBackfillBegun: j.tagBackfillBegun === true,
       folderBackfill: j.folderBackfill === true,
       // `=== true`, never `?? true`: an absent key must read FALSE. The inverse would silently
       // exempt every install that HAS the defect and leave only fresh ones correct.
@@ -459,7 +470,8 @@ function readCursor(path: string): CursorState {
     // statement about mirrors that exist.
     return {
       version: CURSOR_VERSION, sync: "0", bodies: { phase: "unresolved" },
-      bootstrapping: false, window: { phase: "pending" }, tagBackfill: false, folderBackfill: false,
+      bootstrapping: false, window: { phase: "pending" }, tagBackfill: false,
+      tagBackfillBegun: false, folderBackfill: false,
       // A fresh install has no pre-marker rows and its walk writes markers from the start.
       capMarkerRepair: true,
       // And it has never completed a pull: the bootstrap's own window owns "newest first" here.
@@ -476,6 +488,7 @@ function writeCursor(path: string, state: CursorState): void {
     bootstrapping: state.bootstrapping,
     window: writeWindowPass(state.window),
     tagBackfill: state.tagBackfill,
+    tagBackfillBegun: state.tagBackfillBegun,
     folderBackfill: state.folderBackfill,
     capMarkerRepair: state.capMarkerRepair,
     ...(state.lastDrainAt !== null ? { lastDrainAt: state.lastDrainAt } : {}),
@@ -2229,8 +2242,9 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
   /**
    * The stale-mirror tag repair, once per install (see {@link applyTagBackfill} for the damage).
    * Three gates in cost order, each also a correctness statement: the cursor flag (never asked
-   * twice); ZERO local tag rows (the whole detection — any tag means the type was served, so it is
-   * left alone, and a fresh sign-in arrives already bootstrapped); and the hosted account HAS tags.
+   * twice); ZERO local tag rows AND a repair that never started (any tag means the type was
+   * served — unless this repair's own first page put it there, which is how a run that failed on
+   * page 2 retired itself); and the hosted account HAS tags.
    * A failed probe is NOT a failed pull — it swallows, leaves the flag unset and retries, or it
    * would put the write-through proxy into `503 offline_read_only`. It drains the WHOLE snapshot
    * (the tail carries tagged mail older than the window), sets the flag only on completion, and is
@@ -2280,7 +2294,12 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
 
     const held = await cfg.db.select({ id: tags.id }).from(tags)
       .where(eq(tags.accountId, cfg.world.accountId)).limit(1);
-    if (held.length > 0) {
+    // AND THIS REPAIR HAS NEVER STARTED. "Any tag means the type was served" is only true of a
+    // mirror whose tags nobody put there: page 1 of a failed run writes tags, and reading those
+    // back as the detection signal retired the repair permanently — the paging loop below
+    // carefully returns WITHOUT marking on a failed page, and this gate undid it on the next
+    // launch. A repair that has applied a page finishes by finishing.
+    if (held.length > 0 && !cursor.tagBackfillBegun) {
       markConsidered();
       return 0;
     }
@@ -2295,6 +2314,12 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
         if (aborted) return totalTags;
         const snap = await fetchSnapshotPage(pageCursor);
         if (!snap) return totalTags;   // a page failed → NOT marked done; the next pull retries
+        // BEFORE the write that makes the presence gate lie, and persisted, so a crash between
+        // the two leaves the next launch able to tell "nobody put tags here" from "I did".
+        if (!cursor.tagBackfillBegun) {
+          cursor.tagBackfillBegun = true;
+          writeCursor(cfg.cursorPath, cursor);
+        }
         const written = await applyTagBackfill(cfg.db, cfg.world, snap, now());
         totalTags += written.tags;
         totalMessages += written.messages;
