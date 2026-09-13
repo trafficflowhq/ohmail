@@ -36,6 +36,16 @@ export const LONG_FRAME_MS = 50;
 /** A task longer than this blocks every input for its whole duration. */
 export const LONG_TASK_MS = 200;
 
+/**
+ * How long the frame sampler keeps running after the last thing somebody did.
+ *
+ * A frame-gap sampler that re-arms for ever is 60 callbacks a second for the life of the window,
+ * which is a floor the instrument itself puts under the app it is measuring. Frame gaps are a fact
+ * about INTERACTION — nobody drops a frame nobody was waiting for — so the sampler runs while the
+ * window is being used and for ten seconds after, and not at all while the document is hidden.
+ */
+export const INTERACTION_QUIET_MS = 10_000;
+
 /** The report, as the shell composes it: numbers and nulls, nothing else. */
 export type UiVitalsReport = Record<string, number | null>;
 
@@ -222,7 +232,19 @@ let frameHandle: number | null = null;
  * own test, which is why the sentinel is a different type from the value.
  */
 let lastFrameAt: number | null = null;
+/**
+ * How many frames the sampler actually saw in this report window.
+ *
+ * `longFrames: 0` out of a window that sampled NOTHING is a perfect score for a measurement that
+ * never happened, and that is the one reading an instrument may not give. Zero frames seen makes
+ * the field `null` — "not measured" — which is what an untouched five minutes honestly is.
+ */
+let framesSeen = 0;
+/** The sampler runs until this moment; every interaction pushes it out. */
+let activeUntil = 0;
 let taskObserver: PerformanceObserver | null = null;
+/** Undoes the arming listeners, or `null` when none are attached. */
+let detachArming: (() => void) | null = null;
 
 /**
  * ONE frame observed — the whole rule, and the function the sampler runs.
@@ -233,20 +255,60 @@ let taskObserver: PerformanceObserver | null = null;
 export function sampleFrame(at: number): void {
   if (lastFrameAt !== null && at - lastFrameAt > LONG_FRAME_MS) longFrames += 1;
   lastFrameAt = at;
+  framesSeen += 1;
 }
 
-/** The loop. Allocates nothing per frame — the cost of the instrument is two numbers. */
+/** Is this document hidden? `false` where there is no document to ask. */
+function hiddenNow(): boolean {
+  return typeof document !== "undefined" && document.visibilityState === "hidden";
+}
+
+/**
+ * The loop. Allocates nothing per frame, and stops itself: the quiet window having run out, or
+ * the document having gone hidden, ends it until somebody does something again.
+ */
 function onFrame(at: number): void {
+  if (hiddenNow() || Date.now() > activeUntil) {
+    frameHandle = null;
+    // The gap ACROSS a stop is not a dropped frame — see {@link lastFrameAt}.
+    lastFrameAt = null;
+    return;
+  }
   sampleFrame(at);
   frameHandle = requestAnimationFrame(onFrame);
 }
 
-function startSampler(): void {
+/**
+ * Somebody is using the window: run the sampler, and keep running for
+ * {@link INTERACTION_QUIET_MS} after the last of it. Never while hidden — a background tab's frame
+ * gaps are the browser's throttling, not the app's cost, and measuring them would make every
+ * report about whichever tab the reader left open.
+ */
+export function armUiVitalsSampler(): void {
+  if (hiddenNow()) return;
+  activeUntil = Date.now() + INTERACTION_QUIET_MS;
   if (typeof requestAnimationFrame === "function" && frameHandle === null) {
-    // The gap to the PREVIOUS session's last frame is not a dropped frame.
+    // The gap to the PREVIOUS window's last frame is not a dropped frame.
     lastFrameAt = null;
     frameHandle = requestAnimationFrame(onFrame);
   }
+}
+
+function startSampler(): void {
+  /* The four things a person does with a window, plus the return to a tab they had left. `scroll`
+     and `wheel` are captured because neither reaches the document from inside a scroller on its
+     own; all five are passive — this arms an instrument, it never answers the gesture. */
+  if (typeof document !== "undefined" && detachArming === null) {
+    const arm = (): void => armUiVitalsSampler();
+    const opts = { capture: true, passive: true } as const;
+    const events = ["pointerdown", "keydown", "wheel", "scroll", "visibilitychange"] as const;
+    for (const e of events) document.addEventListener(e, arm, opts);
+    detachArming = () => {
+      for (const e of events) document.removeEventListener(e, arm, opts);
+    };
+  }
+  // The load IS the first interaction: a cold start is exactly the window whose frames matter.
+  armUiVitalsSampler();
   /* `longtask` is Chromium's and is absent on WebKit, which is the Linux and macOS desktops. The
      frame counter above is present everywhere and is the reading that survives; a browser without
      the observer reports `longTasks: 0`, which is why the two are separate fields. */
@@ -272,6 +334,9 @@ function stopSampler(): void {
     cancelAnimationFrame(frameHandle);
   }
   frameHandle = null;
+  activeUntil = 0;
+  detachArming?.();
+  detachArming = null;
   taskObserver?.disconnect();
   taskObserver = null;
 }
@@ -302,7 +367,8 @@ export function takeUiVitals(): UiVitalsReport {
     searchP50Ms: percentile(rings.search.values, 50),
     searchP95Ms: percentile(rings.search.values, 95),
     searchCount: rings.search.sinceReport,
-    longFrames,
+    // `null` and not `0` when the sampler saw no frame at all in this window — see {@link framesSeen}.
+    longFrames: framesSeen === 0 ? null : longFrames,
     longTasks,
     // The WORST derivation in the window, not the mean: a mean over two thousand of them hides the
     // one that held the thread for a quarter of a second.
@@ -315,6 +381,7 @@ export function takeUiVitals(): UiVitalsReport {
   rings.search.sinceReport = 0;
   longFrames = 0;
   longTasks = 0;
+  framesSeen = 0;
   return report;
 }
 
@@ -357,6 +424,9 @@ export function useUiVitals(): void {
 
 /** Everything back to nothing. A TEST seam: the counters are module state and suites share it. */
 export function resetUiVitalsForTest(): void {
+  // The sampler and its arming listeners are module state too: a suite that left one running
+  // would arm the next suite's window from the previous one's events.
+  stopSampler();
   rings.open = newRing();
   rings.switch = newRing();
   rings.search = newRing();
@@ -365,6 +435,8 @@ export function resetUiVitalsForTest(): void {
   startup.engineReady = null;
   longFrames = 0;
   longTasks = 0;
+  framesSeen = 0;
+  activeUntil = 0;
   pendingOpen.clear();
   pendingSwitch = null;
   pendingSearch = null;
