@@ -22,9 +22,9 @@ Signed installers — a real Apple Developer ID and an Authenticode certificate.
 
 ### ohmail builds as a Flatpak
 
-The manifest is in the repository at `apps/desktop/flatpak/app.ohmail.Desktop.yml`: every crate,
-every npm package and the Node runtime the mail engine runs on are declared there as checksummed
-sources. The Flatpak asks for the network, a window, your
+The manifest is in the repository at `apps/desktop/flatpak/app.ohmail.Desktop.yml`, and it builds
+the app without reaching the network: every crate, every npm package and the Node runtime the mail
+engine runs on are declared, checksummed sources. The Flatpak asks for the network, a window, your
 login keyring and notifications, and has no access to your files — attachments you open go out
 through the desktop portal. It does not check for updates, because a software centre installs
 them. It is not on Flathub yet; the README says how to build and install it yourself meanwhile.

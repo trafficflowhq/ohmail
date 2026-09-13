@@ -9,26 +9,12 @@
  * other rather than keeping a second copy. The check makes a tag that moves `## [Unreleased]` to a
  * version and forgets the metainfo go red instead of shipping a stale software-centre entry.
  */
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-/** The changelog this derives from, resolved for the tree it is running in. The monorepo keeps it
- *  under the payload root it publishes from; the published repository — the tree the Flatpak job
- *  checks out — carries it at the root. The payload spelling is asked first because a monorepo
- *  checkout can also hold a stray root CHANGELOG.md, and deriving the block from a file nobody
- *  maintains is worse than not deriving it. Naming only the payload spelling made the job die
- *  ENOENT in the published tree before it compared anything, which is a gate that cannot pass. */
-export function changelogIn(root) {
-  const payload = join(root, "public", "ohmail", "CHANGELOG.md");
-  const published = join(root, "CHANGELOG.md");
-  if (existsSync(payload)) return payload;
-  if (existsSync(published)) return published;
-  return null;
-}
-
-export const CHANGELOG = changelogIn(ROOT);
+export const CHANGELOG = join(ROOT, "public", "ohmail", "CHANGELOG.md");
 export const METAINFO = join(ROOT, "apps", "desktop", "flatpak", "app.ohmail.Desktop.metainfo.xml");
 
 /** How many released versions the block carries. Newest first, which is the order AppStream reads. */
@@ -94,13 +80,6 @@ export function withReleases(metainfo, block) {
 
 if (import.meta.url === `file://${process.argv[1]}`) {
   const write = process.argv.includes("--write");
-  if (!CHANGELOG) {
-    process.stderr.write(
-      "appstream-releases: no changelog under " + ROOT +
-      " — looked for public/ohmail/CHANGELOG.md, then CHANGELOG.md\n",
-    );
-    process.exit(1);
-  }
   const wanted = withReleases(
     readFileSync(METAINFO, "utf8"),
     renderReleases(releasesFrom(readFileSync(CHANGELOG, "utf8")).slice(0, LIMIT)),
