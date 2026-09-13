@@ -30,6 +30,7 @@ import {
 import { addressKey } from "../../webapp/app/shell/address-key";
 import { agoStamp, dayStamp } from "../../webapp/app/shell/format";
 import { activeFormatLocale, activeFormatZone } from "../../webapp/app/shell/locale";
+import { useEngineOrNull } from "../../webapp/app/shell/engine";
 import { useMailState } from "../../webapp/app/shell/MailStateProvider";
 import { goFirstRun } from "../../webapp/app/shell/routing";
 import { phoneHolder, phoneHolderKey, readerHolder } from "../../webapp/app/shell/reader-holder";
@@ -486,6 +487,10 @@ export function DesktopMailboxes(
   /* The SAME binding the sync line reads, and `refresh` is what its own comment offers this pane:
      "Re-read the mailbox facts now. The Settings pane calls it after a connect or a resync." */
   const { mailboxes: facts, mirrored, state: mailState, freshness, refresh } = useMailState();
+  /* THE WINDOW'S OWN MIRROR, because `refresh` above refreshes mailbox FACTS and nothing else.
+     `OrNull` rather than `useEngine`: this pane renders on a door that may be showing an engine
+     that has not bound yet, and a removal must not throw for want of one. */
+  const engine = useEngineOrNull();
   /* What can go wrong here: the engine refuses a resync (offline, most often), or the operating
      system refuses to open a browser. One line, rendered where the press happened. */
   const [problem, setProblem] = useState<string | null>(null);
@@ -851,6 +856,16 @@ export function DesktopMailboxes(
          * predates the field — "older engine", not a claim left behind. */
         const outcome = await res.json().catch(() => null) as { claimReleased?: boolean } | null;
         if (outcome?.claimReleased === false) setProblem(t("desktopRemovedClaimLeftBehind"));
+        /* ── AND THE WINDOW'S OWN MIRROR, BEFORE THE PANE SAYS THE REMOVAL HAPPENED ────────
+         * The route deletes the mailbox's mail from the engine's store; this window renders a
+         * SEPARATE mirror that learns only from the change log it drains. Measured before the
+         * engine wrote a receipt: the removal reported success and the messages, their cached
+         * bodies and the unsent draft stayed on screen. The receipt exists now, so one drain
+         * here is what makes the sentence below true at the moment it is said.
+         * SWALLOWED on failure rather than reported: the receipt is a durable change-log row,
+         * so an engine that could not be drained this second applies it at the next ordinary
+         * poll — the screen is late, never wrong, and there is nothing for a person to do. */
+        await engine?.syncOnce().catch(() => { /* the receipt is durable; the next poll applies it */ });
         /* ── THE SINGLE-MAILBOX SIGN-OUT STOOD HERE — this is the deletion its note asked
          * for, and the measurement it was built on stands: on the released 0.13.7 a removal
          * cleared the row, credential, claim and mirror and NOT `config.json`, so the next
