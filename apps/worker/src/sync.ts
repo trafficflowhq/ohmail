@@ -56,14 +56,11 @@ export class LeaderFencedError extends Error {
 
 /**
  * The mailbox this cycle is reading has been REMOVED — thrown from inside the commit's own
- * transaction, by {@link assertMailboxStillHere}, and it aborts the whole cycle.
- *
- * The lease answers who may organize a mailbox; it does not answer whether the mailbox is still
- * there. A person removing one while an arrival was awaiting classification got a tombstoned row,
- * an emptied mirror, and then the pending ingest committing that message anyway — mail left on the
- * machine and its arrival announced to the window after the receipt saying the mailbox was gone.
- * Standalone installs wait the pass out first (`quiesce`); this is what holds when the wait is
- * exceeded, and it is the ONLY thing holding on a hosted worker, where the removal happens in
+ * transaction by {@link assertMailboxStillHere}, aborting the whole cycle. The lease answers WHO
+ * may organize a mailbox, not whether it is still there: a removal landing while an arrival awaited
+ * classification left a tombstoned row, an emptied mirror, and the pending ingest committing that
+ * message anyway — mail left on the machine. Standalone installs wait the pass out first
+ * (`quiesce`); this is the ONLY thing holding on a hosted worker, where the removal happens in
  * another process that cannot wait for anything.
  */
 export class MailboxRemovedError extends Error {
@@ -466,19 +463,14 @@ function rethrowFenced(err: unknown): void {
 }
 
 /**
- * THE MAILBOX IS STILL HERE — asked inside the commit's transaction, never before it.
- *
- * `planChange` runs its reads and its classifier call outside any transaction, so a removal can
- * land in the gap between planning a message and committing it. The row is taken at `share`
- * strength so the two transactions order rather than overlap: either this commit holds the row and
- * the removal waits (its own sweep then takes these rows), or the removal holds it and this read
- * returns the tombstone.
- *
- * REFUSED on `disabled` and on NO ROW, admitted on everything else. `disabled` is a removal or a
- * plan-disable and both mean the same thing to a write of mail; no row at all is the erasure
- * sweep's answer. `error` is admitted deliberately — it says ohmail cannot currently REACH the
- * mailbox, which is the ordinary state a recovering cycle commits from, and refusing there would
- * make a transient outage into mail this pass never writes.
+ * THE MAILBOX IS STILL HERE — asked inside the commit's transaction, never before it. `planChange`
+ * reads and classifies outside any transaction, so a removal can land between planning a message
+ * and committing it. The row is taken at `share` strength so the two transactions ORDER rather than
+ * overlap: this commit holds the row and the removal waits, or the removal holds it and this reads
+ * the tombstone. REFUSED on `disabled` (a removal or plan-disable) and on NO ROW (the erasure
+ * sweep's answer); admitted on everything else. `error` is admitted deliberately — it means ohmail
+ * cannot currently REACH the mailbox, the ordinary state a recovering cycle commits from, and
+ * refusing there would turn a transient outage into mail this pass never writes.
  */
 async function assertMailboxStillHere(repo: DrizzleRepo, mailboxId: string): Promise<void> {
   const status = await repo.mailboxStatusForWrite(mailboxId);

@@ -5334,8 +5334,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
        * ladder is right for a poll and wrong for a person, who otherwise watched the one control
        * do nothing after the network returned. Every other early return still holds — `stopped`
        * and `connectionDeadSince === null` (nothing to re-dial), `redialling` (join, don't open a
-       * second login), the credential arm (which retries the stored READ rather than dialling),
-       * and `signInRefused` (the SERVER said no; a press
+       * second login), the credential guard, and `signInRefused` (the SERVER said no; a press
        * must not become repeated LOGIN attempts providers throttle or lock). It does NOT reset the
        * ladder (`redialAttempts` untouched) and is NOT unlimited — honoured at most once per this
        * profile's first ladder step ({@link forcedNotBefore}, {@link ReconnectProfile}).
@@ -5588,16 +5587,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         credentialState: async () => (await resolveLogin()).state,
         forgetStoredLogin,
         async start() {
-          // ── NO PASSWORD, NO CONNECTION — AND THAT IS NOT A FAILED LAUNCH ──────────────────
-          //
-          // Offline is a property of this mode: the organizer is paused and the viewer is
-          // complete, so the bridge keeps serving the mirror and the shell shows a password
-          // field. Throwing here instead would make a missing password look like a broken app,
-          // and a mailbox whose key was replaced would be unrecoverable rather than one prompt
-          // away. Deliberately BEFORE `connect()`: an empty password is a login attempt the
-          // server will refuse, and a refused login on some providers counts toward a lockout.
-          //
-          // ── …BUT A PASSWORD THAT IS THERE AND CANNOT BE USED IS AN OUTAGE ─────────────────
+          // ── A PASSWORD THAT IS THERE AND CANNOT BE USED IS AN OUTAGE ──────────────────────
           //
           // One line used to cover three different facts. `absent` is genuinely quiet: nothing is
           // stored and a person is being asked for one. `unreadable` and `foreign-host` are the
@@ -5610,6 +5600,14 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
             schedule();
             return;
           }
+          // ── NO PASSWORD, NO CONNECTION — AND THAT IS NOT A FAILED LAUNCH ──────────────────
+          //
+          // Offline is a property of this mode: the organizer is paused and the viewer is
+          // complete, so the bridge keeps serving the mirror and the shell shows a password
+          // field. Throwing here instead would make a missing password look like a broken app,
+          // and a mailbox whose key was replaced would be unrecoverable rather than one prompt
+          // away. Deliberately BEFORE `connect()`: an empty password is a login attempt the
+          // server will refuse, and a refused login on some providers counts toward a lockout.
           if (login.state !== "ready" || !login.pass) return;
           /* …AND NOT AFTER A SIGN-OUT. Same shape and same place as the line above, for the same
              reason: this is not a failed launch, it is an install with no password to use. The
@@ -5666,16 +5664,13 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           armHeartbeat();
         },
         /**
-         * STOP TAKING WORK AND WAIT OUT THE PASS THAT IS ALREADY RUNNING — the half of a stop that
-         * has to happen BEFORE the caller writes anything about this mailbox.
-         *
-         * The removal route's three acts used to run straight past a pass parked in a server call,
-         * and the pass then committed its messages into a mailbox that had been tombstoned and
-         * emptied: mail left on the machine, and the window told about its arrival after the
+         * STOP TAKING WORK AND WAIT OUT THE PASS ALREADY RUNNING — the half of a stop that must
+         * happen BEFORE the caller writes anything about this mailbox. The removal route used to
+         * run straight past a pass parked in a server call, which then committed its messages into
+         * a tombstoned, emptied mailbox: mail left on the machine, its arrival announced after the
          * receipt that said the mailbox was gone. So the row and the mirror are not touched until
-         * this returns. The login is deliberately left OPEN — the claim release needs it, and
-         * `detach()` closes it afterwards on the SAME budget, so a removal still costs one drain
-         * interval and not two.
+         * this returns. The login is left OPEN — the claim release needs it, and `detach()` closes
+         * it on the SAME budget, so a removal costs one drain interval and not two.
          */
         async quiesce() {
           const waiting = queued > 0;
@@ -6796,16 +6791,12 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
             const mailboxId = localRemoveMatch[1]!;
             try {
                /* ── THE PASS IN FLIGHT, WAITED OUT BEFORE ANYTHING IS WRITTEN ──────────────────
-                *
                 * FIRST, ahead of the tombstone and the wipe, and that order is the fix. It used to
-                * run LAST, inside `detach()` below: a pass parked in a server call resumed after
-                * the row was tombstoned and the mail deleted, committed the messages it was
-                * carrying into a mailbox that no longer existed, and emitted their arrival to the
-                * window AFTER the receipt that said the mailbox was gone. The person removed a
-                * mailbox and its mail stayed on the machine. Bounded by one drain interval, shared
-                * with `detach()`; past that the pass's own writes are refused by
-                * `assertMailboxStillHere` rather than committed behind the removal.
-                *
+                * run LAST inside `detach()`: a pass parked in a server call resumed after the row
+                * was tombstoned and the mail deleted, committed its messages into a mailbox that no
+                * longer existed, and announced their arrival after the receipt that said it was
+                * gone — mail left on the machine. Bounded by one drain interval, shared with
+                * `detach()`; past that the pass's own writes are refused by `assertMailboxStillHere`.
                 * The login is NOT closed here — the claim release below needs it. */
               await runtimes.get(mailboxId)?.quiesce();
               // The SHARED service, through the same `services` factory every other route on this
@@ -6827,13 +6818,10 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                 * login, renews an organizer claim each poll and serves the mirror. All three were
                 * measured still running after a removal — a phantom organizer that stands other
                 * installs down, and a mirror that made a re-added address serve every message twice.
-                * ORDER: quiesce (above), then release, wipe, and stop — the release needs the login
-                * the stop closes, and the wipe needs the pass already finished rather than merely
-                * asked to stop. It read "an in-flight cycle finishes against a tombstoned row every
-                * write refuses", and no write refused: the commit asked the lease, never the row.
-                * Both halves are fixed — the pass is waited out here, and `assertMailboxStillHere`
-                * refuses a commit into a removed mailbox. BEST EFFORT, individually: the removal
-                * has happened for the person. */
+                * ORDER: quiesce (above), release, wipe, then stop — the release needs the login the
+                * stop closes, the wipe needs the pass already finished. `assertMailboxStillHere`
+                * refuses any commit that finishes into the removed mailbox. BEST EFFORT: the
+                * removal has happened for the person. */
                /* "If the roster holds it", not "if it is the one mailbox". This read
                 * `if (mailboxId === world.mailboxId)`, the same statement while an install ran one
                 * mailbox and a silent hole the moment it runs two: removing the SECOND matched
