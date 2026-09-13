@@ -378,8 +378,15 @@ export const PROBE_DEADLINE_MS = 12_000;
 export async function probeCloudServer(cloudUrl: string, fetchImpl: typeof fetch): Promise<Response> {
   const base = cloudUrl.replace(/\/+$/, "");
   const target = `${base}/hello`;
-  const refuse = (message: string, kind: string): Response =>
-    json({ error: { code: "cloud_probe_failed", message, details: { kind, target } } }, 502);
+  /* `more` is the structured half of a refusal whose remedy is mechanical — today only the
+     certificate's names. It rides in `details` beside `kind`, so a surface can read the two names
+     without parsing the sentence, and the sentence carries them too because the window renders the
+     engine's message whole (`self-host.ts#probeConfiguredServer`). */
+  const refuse = (message: string, kind: string, more?: Record<string, unknown>): Response =>
+    json(
+      { error: { code: "cloud_probe_failed", message, details: { kind, target, ...(more ?? {}) } } },
+      502,
+    );
 
   let res: Response;
   try {
@@ -563,14 +570,34 @@ const TLS_FAILURE_CODES = new Set([
  * `TypeError` whose `cause` is the real one, and reading only the outer error would classify every
  * single failure — a wrong name, a refused port, an untrusted certificate — as the same shrug.
  */
-export function describeProbeFailure(err: unknown, target: string): [message: string, kind: string] {
-  const code = errorCode(err);
+export function describeProbeFailure(
+  err: unknown,
+  target: string,
+): [message: string, kind: string, more?: Record<string, unknown>] {
+  const failure = transportFailure(err);
+  const code = failure?.code ?? null;
   if (code !== null && TLS_FAILURE_CODES.has(code)) {
     if (code === "ERR_TLS_CERT_ALTNAME_INVALID") {
+      /* THE ONE TLS REFUSAL WHOSE REMEDY IS MECHANICAL — a certificate issued for another name —
+         and it used to name neither name, so the person was told to use "the address the
+         certificate was issued for" while this process was holding it. */
+      const { presented, requested } = certificateNames(failure?.at);
+      const shown = presented.slice(0, MAX_CERT_NAMES);
+      const rest = presented.length - shown.length;
+      const names = shown.length === 0
+        ? null
+        : `${shown.join(", ")}${rest > 0 ? ` and ${rest} more` : ""}`;
+      const message = names === null
+        ? `${target} answered, but its certificate is for a different name. Use the address the `
+          + "certificate was issued for."
+        : `${target} answered, but its certificate is for ${names}`
+          + `${requested === null ? "" : `, not ${requested}`}. Use one of the names the `
+          + "certificate was issued for, or give that server a certificate for the address you typed.";
+      if (names === null) return [message, "tls_name"];
       return [
-        `${target} answered, but its certificate is for a different name. Use the address the ` +
-          "certificate was issued for.",
+        message,
         "tls_name",
+        { tls: { presented, ...(requested === null ? {} : { requested }) } },
       ];
     }
     if (code === "CERT_HAS_EXPIRED" || code === "CERT_NOT_YET_VALID") {
@@ -613,14 +640,14 @@ export function describeProbeFailure(err: unknown, target: string): [message: st
  * problem it was holding. The first code found wins — a mixed aggregate is a judgement call, and the
  * first attempt's answer is the one the connection would have used.
  */
-function errorCode(err: unknown): string | null {
+function transportFailure(err: unknown): { code: string; at: unknown } | null {
   const seen = new Set<unknown>();
-  const walk = (cur: unknown, depth: number): string | null => {
+  const walk = (cur: unknown, depth: number): { code: string; at: unknown } | null => {
     if (cur === null || cur === undefined || depth > 5 || seen.has(cur)) return null;
     seen.add(cur);
     const code = (cur as { code?: unknown }).code;
-    if (typeof code === "string") return code;
-    if ((cur as { name?: unknown }).name === "TimeoutError") return "TimeoutError";
+    if (typeof code === "string") return { code, at: cur };
+    if ((cur as { name?: unknown }).name === "TimeoutError") return { code: "TimeoutError", at: cur };
     const nested = (cur as { errors?: unknown }).errors;
     if (Array.isArray(nested)) {
       for (const one of nested) {
@@ -631,6 +658,44 @@ function errorCode(err: unknown): string | null {
     return walk((cur as { cause?: unknown }).cause, depth + 1);
   };
   return walk(err, 0);
+}
+
+/** The code alone, for the branches that need nothing else. ONE walk, so the two cannot diverge. */
+function errorCode(err: unknown): string | null {
+  return transportFailure(err)?.code ?? null;
+}
+
+/** At most this many names go into a sentence somebody reads; a certificate may carry hundreds. */
+const MAX_CERT_NAMES = 4;
+
+/**
+ * THE TWO NAMES A HOSTNAME MISMATCH IS ABOUT, off the error Node threw — `host` is what was asked
+ * for and `cert.subjectaltname` is what the server presented (falling back to the subject's common
+ * name for a certificate old enough to have no SAN). Public by construction: they are what that
+ * address serves to anyone who connects, and no key, token or fingerprint is read here.
+ *
+ * The list is TRUNCATED rather than dropped — a wildcard bundle can carry hundreds of names, and a
+ * refusal that pastes all of them is one nobody reads.
+ */
+function certificateNames(at: unknown): { presented: string[]; requested: string | null } {
+  const e = at as { host?: unknown; cert?: unknown };
+  const requested = typeof e.host === "string" && e.host.trim() !== "" ? e.host.trim() : null;
+  const cert = e.cert as { subjectaltname?: unknown; subject?: unknown } | undefined;
+
+  const presented: string[] = [];
+  const san = cert?.subjectaltname;
+  if (typeof san === "string") {
+    for (const entry of san.split(",")) {
+      /* `DNS:a.example.com, IP Address:10.0.0.1` — the TYPE is dropped and the value kept, because
+         the person is being asked to compare it with the address they typed. */
+      const value = entry.trim().replace(/^[A-Za-z ]+:/, "").trim();
+      if (value !== "" && !presented.includes(value)) presented.push(value);
+    }
+  }
+  const cn = (cert?.subject as { CN?: unknown } | undefined)?.CN;
+  if (presented.length === 0 && typeof cn === "string" && cn.trim() !== "") presented.push(cn.trim());
+
+  return { presented, requested };
 }
 
 export async function createCloudSidecar(config: CloudSidecarConfig): Promise<CloudSidecar> {
