@@ -17,12 +17,6 @@ import { ServiceError } from "./errors.js";
 import { accountMailboxesProbe, refuseOverAccountMailboxes } from "./read-bounds.js";
 import { fenceErasedAccount } from "./erasure-fence.js";
 import { fenceSignedOutMailbox, type CredentialOrigin } from "./signed-out-fence.js";
-
-/**
- * The origin of a credential written into a mailbox row this very transaction creates. A sign-out
- * of a mailbox that did not exist cannot have overtaken it, so the fence has nothing to compare.
- */
-const MINTED_HERE: CredentialOrigin = { row: "minted-here" };
 import { sweepMailboxData, type MailboxSweepResult } from "./mailbox-erasure.js";
 /* The DEFAULT policy is registered rather than imported, so the paid gate is not an import edge
  * out of a module the desktop engine bundles — this one is mounted by the local API too. The
@@ -40,6 +34,12 @@ import type { MailboxDTO, MailboxFolderSummary } from "./dto/types.js";
 import { DEFAULT_DORMANCY_DAYS, type ScreeningScope } from "@trafficflow/core/mail";
 
 const asTx = (ctx: ServiceContext): Tx => ctx.db as unknown as Tx;
+
+/**
+ * The origin of a credential written into a mailbox row this very transaction creates. A sign-out
+ * of a mailbox that did not exist cannot have overtaken it, so the fence has nothing to compare.
+ */
+const MINTED_HERE: CredentialOrigin = { row: "minted-here" };
 
 /**
  * What {@link MailboxService.takeover} found, and therefore what it did.
@@ -1408,6 +1408,13 @@ export class MailboxService {
       );
     }
 
+    /* THE SIGN-OUT STAMP AS THIS WRITE FOUND IT, read before anything dials. The probes below
+       spend seconds on somebody's mail server, and a sign-out can run to completion inside that
+       window; `upsertCredOn` re-reads this value under the row lock and refuses when it moved. */
+    const signedOutBefore = (patch.imap?.pass || patch.smtp?.pass)
+      ? (await this.signedOutAtOf(ctx, id)) ?? null
+      : null;
+
     /**
      * The rotated credential is tried BEFORE it replaces a working one — before the transaction,
      * for `create`'s reason plus one more: this transaction holds `FOR UPDATE` on the mailbox
@@ -1418,13 +1425,6 @@ export class MailboxService {
      * transaction re-reads `FOR UPDATE`; a row that changes in between costs one wasted dial,
      * never a wrong write.
      */
-    /* THE SIGN-OUT STAMP AS THIS WRITE FOUND IT, read before anything dials. The probes below
-       spend seconds on somebody's mail server, and a sign-out can run to completion inside that
-       window; `upsertCredOn` re-reads this value under the row lock and refuses when it moved. */
-    const signedOutBefore = (patch.imap?.pass || patch.smtp?.pass)
-      ? (await this.signedOutAtOf(ctx, id)) ?? null
-      : null;
-
     const merged = patch.imap?.pass
       ? await this.probedImapMeta(ctx, id, patch, opts)
       : undefined;

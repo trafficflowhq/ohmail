@@ -2446,7 +2446,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         try {
           const sealed = await keyProvider.encrypt(envPass);
           await db.transaction(async (tx) => {
-            await fenceSignedOutMailbox(tx as never, dialect(db), mb.id, sealOrigin);
+            await fenceSignedOutMailbox(tx as unknown as Tx, dialect(db), mb.id, sealOrigin);
             await tx.insert(mailboxCredentials).values({
               mailboxId: mb.id,
               transport: "imap",
@@ -2492,8 +2492,8 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           if ((err as { code?: string }).code !== "signed_out") throw err;
           log("stored_login_seal_discarded", {
             mailboxId: mb.id,
-            reason: "this install signed out while the launch was sealing its password, so the "
-              + "row it had just written was removed again and nothing dials on it",
+            reason: "this install had signed out of this mailbox before the launch finished "
+              + "sealing its password, so no password was stored and nothing dials on it",
           });
         } finally {
           bootSeal.settle();
@@ -5845,7 +5845,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
               row: "already-there", signedOutAt: await signedOutAtOf(seedRow.id),
             };
             await db.transaction(async (tx) => {
-              await fenceSignedOutMailbox(tx as never, dialect(db), seedRow.id, copyOrigin);
+              await fenceSignedOutMailbox(tx as unknown as Tx, dialect(db), seedRow.id, copyOrigin);
               await tx.insert(mailboxCredentials).values({
                 mailboxId: seedRow.id,
                 transport: "smtp",
