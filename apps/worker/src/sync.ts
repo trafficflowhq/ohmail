@@ -1664,9 +1664,13 @@ async function voidGoneFiling(
       { desiredFolder: p.observedFolder, observedFolder: p.observedFolder, lastSetBy: p.lastSetBy },
       p.desiredFolder,
     );
+    /* `reconcile.move.voided` and not a word of its own: `audit_log.action` is a CLOSED SET
+       (`auditAction` refuses anything outside it, which is how this arm was caught writing one),
+       and a purged restore IS a voided move. What makes it this kind of void is the reason below,
+       which is where the fact belongs. */
     await repo.recordAudit(
       accountId,
-      adopted ? "reconcile.restore.gone" : "reconcile.move.superseded",
+      adopted ? "reconcile.move.voided" : "reconcile.move.superseded",
       {
         messageId: p.messageId, from: p.nativeLocator, to: p.desiredFolder,
         reason: adopted
