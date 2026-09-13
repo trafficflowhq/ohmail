@@ -25,11 +25,14 @@ them. It is not on Flathub yet; the README says how to build and install it your
 ### The desktop app reports what it costs and how it feels
 
 The app already wrote the mail engine's memory into its log every five minutes. The window's own
-memory was measured only on Linux; it is measured on macOS and Windows now too, each through that
-system's own reading. The app also reports how fast it feels, in the same log: how long the window
-took to start and to show a usable list, and the median and 95th percentile of opening a message,
-switching view and searching. Counts and durations only — no subject, no address, no folder name —
-and none of it leaves the machine.
+memory is measured too now, on all three systems, each through that system's own reading. On Linux
+the first version of this looked for a process name longer than Linux gives, found nothing and
+reported it as nothing to report; it identifies the window's processes by the command that started
+them now, and a reading it could not take says so instead of reading as a zero. The app also
+reports how fast it feels, in the same log: how long the window took to start and to show a usable
+list, and the median and 95th percentile of opening a message, switching view and searching.
+Counts and durations only — no subject, no address, no folder name — and none of it leaves the
+machine.
 
 ### Stopping and starting again on a phone is one instruction
 
