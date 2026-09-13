@@ -22,12 +22,13 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { OhmailEngine } from "@ohmail/client-engine";
+import { useOptionalToast } from "@ohmail/ui";
 
 import { AppShell } from "../../webapp/app/shell/AppShell";
 import { setStorageOwner } from "../../webapp/app/shell/storage-owner";
 import { BootSkeleton } from "../../webapp/app/shell/BootSkeleton";
 import { go, goFirstRun, goSettings, useHashRoute } from "../../webapp/app/shell/routing";
-import { setMailtoSink } from "../../webapp/app/shell/open-external";
+import { setMailtoSink, setOpenFailureSink } from "../../webapp/app/shell/open-external";
 import { agoStamp } from "../../webapp/app/shell/format";
 import {
   unknownSpeaks, type HostConnection,
@@ -74,6 +75,9 @@ import { readChannels } from "../../webapp/app/shell/notification-settings";
 import { parseMailto, type MailtoDraft } from "./mailto.js";
 import { DefaultMailAsk, DefaultMailRow } from "./DesktopDefaultMail.js";
 import { createLocalEngine, type EngineStatus } from "./bridge-fetch.js";
+
+/** How much of a refused address the one-line toast shows. The host is at the front. */
+const ADDRESS_SHOWN = 80;
 
 /**
  * How often the window re-asks while the engine is on its way up.
@@ -188,6 +192,22 @@ export function DesktopGate() {
     setMailtoSink(seed);
     return () => setMailtoSink(null);
   }, []);
+
+  /* AND WHO SAYS SO WHEN A LINK WILL NOT OPEN. Registered here for `setMailtoSink`'s reason —
+     the interceptor is armed at the entry point, before React exists, and the only surface that
+     can say anything is under a toast host that does not exist yet. The buttons that open a web
+     page have shown this sentence since they were written; the anchor path had a console line
+     and nothing on screen, which is the defect this feature exists to end arriving through the
+     one door left open. A long address is cut: the host is at the front and a toast is one line. */
+  const toast = useOptionalToast();
+  useEffect(() => {
+    if (!toast) return;
+    setOpenFailureSink((url) => {
+      const shown = url.length > ADDRESS_SHOWN ? `${url.slice(0, ADDRESS_SHOWN)}…` : url;
+      toast(DOOR_COPY.linkNoBrowser(machineWord(), shown));
+    });
+    return () => setOpenFailureSink(null);
+  }, [toast]);
 
   const onStatus = useCallback((next: EngineStatus) => {
     setShell({ kind: "status", status: next });

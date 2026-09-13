@@ -145,6 +145,11 @@ const EN = {
   /* The one sentence the chooser says about the machine rather than about the mailbox. */
   noBrowser: (machine: string) =>
     `This ${machine} would not open a browser. The page is at ohmail.app/link-desktop.`,
+  /* The same fact about a link in a message, and the address rather than a remedy: the causes
+     are several (no browser, none set as default, no xdg-open) and the person can act on the
+     address whichever it is. The shell shortens a long one — see `DesktopGate`. */
+  linkNoBrowser: (machine: string, address: string) =>
+    `This ${machine} would not open a browser. The address is ${address}.`,
   browserSignInFailed: "The browser sign-in could not be started.",
 
   /* ── THE HOST-JOIN CARD: paste the link, see what answered, then pair ────────────────────
@@ -621,6 +626,7 @@ export const DOOR_COPY: typeof EN = liveCopy("desktopDoor", EN, {
   serverReached: ["server", "address"],
   cloudLeadSignIn: ["machine"],
   noBrowser: ["machine"],
+  linkNoBrowser: ["machine", "address"],
   mailboxWhyReadsNamed: ["name"],
   credReadyWhy: ["machine"],
   credAbsentWhy: ["machine"],

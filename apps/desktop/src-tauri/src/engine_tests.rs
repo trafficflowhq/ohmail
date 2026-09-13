@@ -2902,3 +2902,216 @@ fn the_sweep_reads_its_window_in_both_directions() {
 fn the_write_ceiling_is_the_services_single_fetch_ceiling() {
     assert_eq!(ATTACHMENT_MAX_BYTES, 32 * 1024 * 1024);
 }
+
+/* ═══ THE OPENER: WHAT IT RUNS, IN WHOSE ENVIRONMENT, AND WHAT IT DOES WHEN IT CANNOT ═══════ */
+
+/// THE PLATFORM'S OWN OPENER, ASSERTED ON THE PLATFORM THAT COMPILED IT.
+///
+/// The three arms are `#[cfg]`-gated, so only one exists per build and only one can be read here;
+/// `desktop-open-external.test.ts` reads all three out of the source on every platform. This is
+/// the half that no source scan can answer: that the arm which COMPILED resolves to the program
+/// this machine actually has.
+#[test]
+fn the_opener_runs_this_platform_s_own_program() {
+    let command = opener_command(std::ffi::OsStr::new("https://example.com/"))
+        .expect("this machine has no opener at all");
+    let program = PathBuf::from(command.get_program());
+    #[cfg(target_os = "macos")]
+    assert_eq!(program, PathBuf::from("/usr/bin/open"));
+    #[cfg(target_os = "windows")]
+    assert_eq!(program, PathBuf::from("rundll32.exe"));
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    {
+        assert_eq!(
+            program.file_name().and_then(|n| n.to_str()),
+            Some("xdg-open"),
+            "the Linux arm no longer runs xdg-open",
+        );
+        // ABSOLUTE, which is the whole of the repair: a bare name is resolved by whatever `PATH`
+        // the child is handed, and the AppImage puts its own bin first on that.
+        assert!(program.is_absolute(), "the Linux arm is a bare name again: {program:?}");
+    }
+}
+
+/// A MACHINE WITH NO `xdg-open` IS NAMED, NOT AN ENOENT WEARING "would not open a browser".
+///
+/// Both arms, because a search that finds nothing everywhere would pass the absent case while
+/// being useless: the first drives a directory holding the tool, the second the same directory
+/// empty. Delete the `locations` arm of [`find_opener`] and the first goes red; make it answer
+/// `Some` unconditionally and the second does.
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+#[test]
+fn a_missing_xdg_open_is_a_sentence_and_a_present_one_is_found() {
+    let dir = std::env::temp_dir()
+        .join(format!("ohmail-opener-{}-{}", std::process::id(), SEQ.fetch_add(1, Ordering::SeqCst)));
+    fs::create_dir_all(&dir).expect("temp dir");
+    let tool = dir.join("xdg-open");
+    fs::write(&tool, "#!/bin/sh\nexit 0\n").expect("could not write the stand-in tool");
+
+    let on_path = std::ffi::OsString::from(dir.as_os_str());
+    assert_eq!(
+        find_opener(&[], Some(&on_path), None),
+        Some(tool.clone()),
+        "a tool on PATH was not found",
+    );
+    assert_eq!(
+        find_opener(&[tool.to_str().unwrap()], None, None),
+        Some(tool.clone()),
+        "a tool at a known location was not found, and no PATH was needed to find it",
+    );
+
+    // The AppDir's own bin is skipped: the copy a bundle ships is not the machine's answer.
+    assert_eq!(
+        find_opener(&[], Some(&on_path), Some(dir.as_path())),
+        None,
+        "a tool inside the AppDir was taken for the machine's own",
+    );
+
+    fs::remove_file(&tool).expect("could not take the stand-in tool away");
+    assert_eq!(find_opener(&[], Some(&on_path), None), None, "a tool that is gone was found");
+    assert!(NO_OPENER.contains("xdg-utils"), "the sentence does not name the remedy");
+}
+
+/// THE BROWSER DOES NOT INHERIT THIS BUNDLE'S LIBRARY PATH OR ITS `PATH`.
+///
+/// Measured on a released AppImage: the launcher exports nine variables and puts the AppDir first
+/// on `PATH`, so `xdg-open` would ask the `xdg-mime` we ship which handler to use and the browser
+/// would load our glib. Delete a key from `BUNDLE_ENV` and the first assertion names it.
+#[test]
+fn the_opener_does_not_hand_the_browser_this_bundle() {
+    let command = opener_command(std::ffi::OsStr::new("https://example.com/"))
+        .expect("this machine has no opener at all");
+    let removed: Vec<String> = command
+        .get_envs()
+        .filter(|(_, value)| value.is_none())
+        .map(|(key, _)| key.to_string_lossy().into_owned())
+        .collect();
+    for key in BUNDLE_ENV {
+        assert!(removed.iter().any(|r| r == key), "the opener passes {key} to the browser");
+    }
+    assert!(
+        BUNDLE_ENV.contains(&"LD_LIBRARY_PATH") && BUNDLE_ENV.contains(&"GIO_EXTRA_MODULES"),
+        "the two the AppImage launcher sets by name are no longer in the list",
+    );
+}
+
+/// THE HOST HALF OF A LIST SURVIVES; THE BUNDLE'S HALF GOES; NOTHING LEFT MEANS NO VARIABLE.
+///
+/// An empty `PATH` is not the platform default — it is no directories at all, which is how an
+/// escape silently fails to escape, so [`host_half`] answers `None` and the caller removes the
+/// variable instead of setting it empty.
+#[test]
+fn a_list_variable_keeps_only_the_machine_s_own_entries() {
+    let appdir = PathBuf::from("/tmp/ohmail-appdir");
+    let mixed = std::env::join_paths([
+        appdir.join("usr/bin"),
+        PathBuf::from("/usr/bin"),
+        appdir.join("bin"),
+        PathBuf::from("/bin"),
+    ])
+    .expect("could not build the list");
+    let kept = host_half(&mixed, &appdir).expect("the host half was thrown away");
+    let kept: Vec<PathBuf> = std::env::split_paths(&kept).collect();
+    assert_eq!(kept, [PathBuf::from("/usr/bin"), PathBuf::from("/bin")]);
+
+    let only_bundle =
+        std::env::join_paths([appdir.join("usr/bin"), appdir.join("bin")]).expect("could not build");
+    assert_eq!(
+        host_half(&only_bundle, &appdir),
+        None,
+        "a list with nothing but the bundle in it became an empty list rather than no list",
+    );
+    assert_eq!(BUNDLE_PATH_LISTS, &["PATH", "XDG_DATA_DIRS"]);
+}
+
+/// AN OPENER THAT STARTS AND THEN REFUSES IS A REFUSAL, NOT A SUCCESS.
+///
+/// The defect this repairs, in one sentence: a successful `spawn` means a process started,
+/// never that anything opened. Measured on a machine with `xdg-open` and no handler — the child
+/// exits 3 with "no method available for opening" while the `Ok` is already back at the window,
+/// so the link does nothing and nothing anywhere says so. Three arms, because two of them are
+/// each other's control: a refusal must be seen, a success must not be invented, and an opener
+/// that keeps running (it execs the browser itself) must not be read as either.
+#[test]
+fn an_opener_that_exits_non_zero_is_a_refusal_and_one_still_running_is_not() {
+    let refused = "ohmail: this computer would not open a browser";
+
+    let mut command = Command::new(node());
+    command.args(["-e", "process.exit(3)"]);
+    let err = run_opener(command, refused).expect_err("an opener that exited 3 was read as success");
+    assert!(err.starts_with(refused), "the refusal does not say what failed: {err}");
+    assert!(err.contains('3'), "the refusal does not carry the opener's own verdict: {err}");
+
+    let mut command = Command::new(node());
+    command.args(["-e", "process.exit(0)"]);
+    run_opener(command, refused).expect("an opener that succeeded was read as a refusal");
+
+    // Still running at the deadline: an opener that execs the browser and waits for it. Not a
+    // refusal — and the wait is bounded, so the window is answered either way.
+    let mut command = Command::new(node());
+    command.args(["-e", "setTimeout(() => {}, 60_000)"]);
+    let started = Instant::now();
+    let child = run_opener(command, refused);
+    assert!(child.is_ok(), "an opener still running was read as a refusal");
+    assert!(
+        started.elapsed() < OPENER_VERDICT * 3,
+        "the window waited far past the deadline for an opener that never exits",
+    );
+}
+
+/// THE OPENER IS REACHED WITH THE EXACT ADDRESS, AND WITHOUT THIS BUNDLE'S WIRING.
+///
+/// A stand-in opener that writes down what it was handed. This is the assertion a driven click in
+/// CI would make — "the opener was invoked with this address" — taken where it can actually be
+/// driven: the packaged app's first screen carries no link, so nothing at the launch check can
+/// reach the opener at all (measured). Here the whole path runs: the `Command` the table builds,
+/// the scrub, the spawn, and the verdict read off the child.
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+#[test]
+fn the_opener_is_handed_the_address_and_not_the_bundle() {
+    let dir = std::env::temp_dir()
+        .join(format!("ohmail-stub-{}-{}", std::process::id(), SEQ.fetch_add(1, Ordering::SeqCst)));
+    fs::create_dir_all(&dir).expect("temp dir");
+    let seen = dir.join("seen.txt");
+    let stub = dir.join("xdg-open");
+    fs::write(
+        &stub,
+        format!(
+            "#!/bin/sh\n{{ echo \"argv=$1\"; echo \"LD_LIBRARY_PATH=${{LD_LIBRARY_PATH-unset}}\"; \
+             echo \"GIO_EXTRA_MODULES=${{GIO_EXTRA_MODULES-unset}}\"; \
+             echo \"PATH=$PATH\"; }} > '{}'\n",
+            seen.display()
+        ),
+    )
+    .expect("write the stand-in opener");
+    let mode = std::os::unix::fs::PermissionsExt::from_mode(0o755);
+    fs::set_permissions(&stub, mode).expect("make the stand-in opener runnable");
+
+    let address = "https://example.test/story?id=7&x=1";
+    let mut command = Command::new(&stub);
+    command.arg(address);
+    // The AppImage's wiring, put on deliberately: without it the scrub would have nothing to take
+    // off and this would pass for a Command that never scrubbed anything.
+    command.env("LD_LIBRARY_PATH", "/appdir/usr/lib");
+    command.env("GIO_EXTRA_MODULES", "/appdir/usr/lib/gio/modules");
+    command.env("PATH", format!("/appdir/usr/bin:{}", dir.display()));
+    let appimage = |key: &str| -> Option<OsString> {
+        match key {
+            "APPDIR" => Some(OsString::from("/appdir")),
+            "PATH" => Some(OsString::from(format!("/appdir/usr/bin:{}", dir.display()))),
+            "XDG_DATA_DIRS" => Some(OsString::from("/appdir/usr/share:/usr/share")),
+            _ => None,
+        }
+    };
+    scrub_from(&mut command, appimage);
+
+    run_opener(command, "ohmail: this computer would not open a browser")
+        .expect("the stand-in opener was read as a refusal");
+
+    let seen = fs::read_to_string(&seen).expect("the opener was never reached");
+    assert!(seen.contains(&format!("argv={address}")), "the opener got a different address: {seen}");
+    assert!(seen.contains("LD_LIBRARY_PATH=unset"), "the browser was handed our library path");
+    assert!(seen.contains("GIO_EXTRA_MODULES=unset"), "the browser was handed our gio modules");
+    assert!(!seen.contains("/appdir/usr/bin"), "the AppDir is still first on the child's PATH");
+    assert!(seen.contains(&dir.display().to_string()), "the machine's own PATH entries went too");
+}

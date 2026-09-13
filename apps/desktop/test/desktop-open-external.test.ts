@@ -332,3 +332,167 @@ describe("the message frame is wired to the same handler", () => {
     expect(body).toMatch(/contentDocument/);
   });
 });
+
+/* ─────────────────────────────────────────────────────────────────────────────────────────
+   A REFUSAL THE PERSON CAN SEE. The anchor path was the last silent edge of this feature:
+   a `console.error` in a window whose devtools nobody opens. The two `openWeb` buttons have
+   shown a sentence since they were written; this is that sentence for the other path.
+   ───────────────────────────────────────────────────────────────────────────────────────── */
+
+describe("a link the shell will not open says so", () => {
+  it("the rejection reaches the surface that can speak, with the address", async () => {
+    host.__TAURI_INTERNALS__ = {
+      invoke: (command, payload) => {
+        invoked.push({ command, payload });
+        return Promise.reject(new Error("ohmail: this computer would not open a browser (exit 3)"));
+      },
+    };
+    const mod = await freshModule();
+    mod.enableExternalLinks();
+    install(mod, document, true);
+
+    const said: string[] = [];
+    mod.setOpenFailureSink((url) => said.push(url));
+    disposers.push(() => mod.setOpenFailureSink(null));
+
+    clickAnchor(document, "https://example.test/story?id=7");
+    // The invoke is fired without being awaited by the handler; the rejection lands a turn later.
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(said, "a refused link said nothing anywhere a person could see")
+      .toEqual(["https://example.test/story?id=7"]);
+  });
+
+  it("with no sink registered the click is still cancelled and nothing throws", async () => {
+    host.__TAURI_INTERNALS__ = {
+      invoke: () => Promise.reject(new Error("no")),
+    };
+    const mod = await freshModule();
+    mod.enableExternalLinks();
+    install(mod, document, true);
+    // The web app's permanent state, and the desktop's before the gate mounts: the rejection goes
+    // to the log alone. An unhandled rejection here would be a worse failure than the silence.
+    expect(clickAnchor(document, "https://example.test/"), "the click was left to the webview")
+      .toBe(false);
+    await new Promise((r) => setTimeout(r, 0));
+  });
+});
+
+/* ─────────────────────────────────────────────────────────────────────────────────────────
+   THE PLATFORM TABLE, ON EVERY PLATFORM. Only one arm of `opener_command` compiles per build,
+   so the Rust unit beside it can only ever assert the arm it was built for; these read all
+   three out of the source, which runs everywhere. Anchored on the FUNCTION'S OWN BODY rather
+   than matched against the whole file — a needle that can be satisfied by a comment three
+   thousand lines away is not an assertion about this function.
+   ───────────────────────────────────────────────────────────────────────────────────────── */
+
+/** One `fn`'s body, from its signature to the brace that closes it. */
+function bodyOf(source: string, signature: string): string {
+  const at = source.indexOf(signature);
+  expect(at, `${signature} is not in the source any more`).toBeGreaterThan(-1);
+  const open = source.indexOf("{", at);
+  let depth = 0;
+  for (let i = open; i < source.length; i += 1) {
+    if (source[i] === "{") depth += 1;
+    else if (source[i] === "}") {
+      depth -= 1;
+      if (depth === 0) return source.slice(open, i + 1);
+    }
+  }
+  throw new Error(`${signature} does not close`);
+}
+
+describe("the one platform table, read on every platform", () => {
+  const engine = sourceOf("src-tauri/src/engine.rs");
+  const table = bodyOf(engine, "fn opener_command(");
+
+  it("macOS opens with the system opener, by absolute path", () => {
+    expect(table).toMatch(/Command::new\("\/usr\/bin\/open"\)/);
+  });
+
+  it("Windows opens through rundll32 and never through a shell", () => {
+    // `cmd /c start` re-parses its own command line, so a URL out of a mail body carrying `&`
+    // arrives unquoted and cmd reads it as a command separator. Asserted on the table's body so
+    // the prose above it cannot satisfy either half.
+    expect(table).not.toMatch(/Command::new\("cmd"\)/);
+    expect(table).toMatch(/Command::new\("rundll32\.exe"\)/);
+    expect(table).toMatch(/url\.dll,FileProtocolHandler/);
+  });
+
+  it("Linux runs an xdg-open it has LOOKED FOR, and names its absence", () => {
+    // A bare name is resolved by whatever `PATH` the child is handed, and the AppImage launcher
+    // puts its own bin first on that. The lookup is the repair; the sentence is what a person
+    // gets instead of an ENOENT wearing the words "would not open a browser".
+    expect(table).not.toMatch(/Command::new\("xdg-open"\)/);
+    expect(table).toMatch(/xdg_open_program\(\)/);
+    const at = engine.indexOf("const XDG_OPEN_LOCATIONS");
+    expect(at, "the places to look for xdg-open are gone").toBeGreaterThan(-1);
+    const locations = engine.slice(at, engine.indexOf(";", at));
+    expect(locations).toContain("/usr/bin/xdg-open");
+    expect(locations).toContain("/usr/local/bin/xdg-open");
+    const named = engine.indexOf("const NO_OPENER");
+    expect(named, "the sentence for a machine with no xdg-open is gone").toBeGreaterThan(-1);
+    expect(engine.slice(named, engine.indexOf(";", named))).toContain("install xdg-utils");
+  });
+
+  it("the browser is not handed this bundle's own wiring", () => {
+    expect(table).toMatch(/scrub_bundled_environment\(&mut command\)/);
+    const list = engine.slice(engine.indexOf("const BUNDLE_ENV"), engine.indexOf("const BUNDLE_PATH_LISTS"));
+    // Measured on a released AppImage: these are what the launcher exports, plus the two list
+    // variables below, which are pruned rather than dropped because their host half is needed.
+    for (const key of [
+      "LD_LIBRARY_PATH", "GTK_PATH", "GTK_EXE_PREFIX", "GTK_DATA_PREFIX", "GTK_IM_MODULE_FILE",
+      "GTK_THEME", "GDK_PIXBUF_MODULE_FILE", "GIO_EXTRA_MODULES", "GSETTINGS_SCHEMA_DIR",
+    ]) {
+      expect(list, `the opener passes ${key} to the browser`).toContain(`"${key}"`);
+    }
+    // `scrub_from` is the half that does the work; `scrub_bundled_environment` only supplies the
+    // process environment to it, so that this can be driven with an AppImage's variables in hand.
+    const scrub = bodyOf(engine, "fn scrub_from<F>(");
+    expect(scrub).toMatch(/env_remove/);
+    expect(scrub).toMatch(/host_half/);
+    expect(bodyOf(engine, "fn scrub_bundled_environment(")).toMatch(/scrub_from\(/);
+  });
+
+  it("a spawn that started is not an open that happened", () => {
+    // The reported case: `xdg-open` with no handler exits 3 while the `Ok` is already back at the
+    // window. The shell reads the child's verdict within a bound instead of dropping it.
+    const run = bodyOf(engine, "fn run_opener(");
+    expect(run).toMatch(/try_wait\(\)/);
+    expect(run).toMatch(/status\.success\(\)/);
+    expect(run).not.toMatch(/\.map\(\|_\| \(\)\)/);
+  });
+});
+
+describe("the window is granted the two sibling commands as well", () => {
+  const engine = sourceOf("src-tauri/src/engine.rs");
+  const grant = (() => {
+    const cap = engine.match(/const LOCAL_ENGINE_CAPABILITY: &str = r#"([\s\S]*?)"#;/);
+    expect(cap, "LOCAL_ENGINE_CAPABILITY could not be read out of engine.rs").not.toBeNull();
+    return JSON.parse(cap![1]!) as { windows: string[]; permissions: string[] };
+  })();
+
+  it("`open_link` and `open_attachment` are registered AND named", () => {
+    // 0.9.7's shape, which is what makes this family fail silently: a command registered and not
+    // granted is refused at the ACL with no window and no log. `open_external` has had this pair
+    // of assertions since that release; its two siblings spawn the same opener and had neither.
+    for (const command of ["open_link", "open_attachment"]) {
+      expect(engine, `${command} is not in the invoke handler`)
+        .toMatch(new RegExp(`generate_handler!\\[[^\\]]*\\b${command}\\b`, "s"));
+      expect(grant.permissions, `the window may not call ${command}`)
+        .toContain(`allow-${command.replace("_", "-")}`);
+    }
+  });
+
+  it("a permission this binary cannot resolve is DROPPED AND NAMED, never dropped quietly", () => {
+    // 0.9.8 turned the launch abort into a degrade, which was right and is why a mismatch now
+    // produces a window whose links do nothing. The log line is the only thread back from that
+    // symptom to its cause, so it is held down here by the name it must carry.
+    const reconcile = engine.slice(engine.indexOf("match resolvable_grant(LOCAL_ENGINE_CAPABILITY"));
+    const arm = reconcile.slice(0, reconcile.indexOf("Err(reason)"));
+    expect(arm, "the drop no longer loops over what went missing").toMatch(/for permission in &missing/);
+    expect(arm, "the log line does not name the permission that was dropped")
+      .toMatch(/\{permission\}/);
+    expect(arm).toMatch(/build defect/);
+  });
+});

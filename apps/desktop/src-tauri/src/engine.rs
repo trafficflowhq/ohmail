@@ -3643,35 +3643,176 @@ pub fn link_url_for(key: &str, challenge: Option<&str>) -> Result<String, String
 /// "open this the way this user's own settings say to", and it takes a local path as readily as a
 /// URL. It is executed DIRECTLY, so no shell parses anything — see [`open_external`] for the
 /// injection this replaced.
+/// The sentence for a machine that has no `xdg-open` at all.
+///
+/// Named, because the alternative is an ENOENT wearing the words "would not open a browser" — a
+/// machine missing xdg-utils and a machine whose browser refused read identically, and only one
+/// of them has a remedy the person can act on. The .deb and the .rpm declare no dependencies on
+/// purpose (the runtime ships inside the artifact), so this is a state the packages allow.
+#[cfg(all(feature = "local-engine", not(any(target_os = "macos", target_os = "windows"))))]
+const NO_OPENER: &str =
+    "ohmail: this computer has no xdg-open — install xdg-utils and links will open again";
+
+/// The two places distributions put `xdg-open`, tried before `PATH`.
+#[cfg(all(feature = "local-engine", not(any(target_os = "macos", target_os = "windows"))))]
+const XDG_OPEN_LOCATIONS: &[&str] = &["/usr/bin/xdg-open", "/usr/local/bin/xdg-open"];
+
+/// Where `xdg-open` is: the two usual places, then `PATH` minus the AppDir — the same half the
+/// child is handed by [`scrub_bundled_environment`], so what resolves here is what the child
+/// would have resolved. The shape is `default_mail.rs`'s `run_xdg`, which has resolved the
+/// sibling tool this way since it existed. Every input is an argument so the absent case can be
+/// driven; [`xdg_open_program`] is the one place that reads the environment.
+#[cfg(all(feature = "local-engine", not(any(target_os = "macos", target_os = "windows"))))]
+fn find_opener(
+    locations: &[&str],
+    path: Option<&std::ffi::OsStr>,
+    appdir: Option<&Path>,
+) -> Option<PathBuf> {
+    if let Some(found) = locations.iter().map(Path::new).find(|p| p.is_file()) {
+        return Some(found.to_path_buf());
+    }
+    std::env::split_paths(path?)
+        .filter(|dir| match appdir {
+            Some(root) => !dir.starts_with(root),
+            None => true,
+        })
+        .map(|dir| dir.join("xdg-open"))
+        .find(|p| p.is_file())
+}
+
+#[cfg(all(feature = "local-engine", not(any(target_os = "macos", target_os = "windows"))))]
+fn xdg_open_program() -> Option<PathBuf> {
+    let appdir = std::env::var_os("APPDIR").map(PathBuf::from);
+    find_opener(
+        XDG_OPEN_LOCATIONS,
+        std::env::var_os("PATH").as_deref(),
+        appdir.as_deref(),
+    )
+}
+
+/// THE BUNDLE'S OWN WIRING, WHICH THE BROWSER MUST NOT INHERIT.
+///
+/// Measured on a released AppImage: the launcher exports these nine and puts the AppDir first on
+/// `PATH`, "for everything it starts and nothing downstream can take it back off". A browser
+/// started from here would load our glib instead of its own, and `xdg-open` would ask the
+/// `xdg-mime` we ship which handler to use. The engine spawn has scrubbed its own environment
+/// since it existed (`Launch::unset`); this is that defence for the other spawn, unconditional
+/// because no platform's opener wants this process's library path.
 #[cfg(feature = "local-engine")]
-fn opener_command(target: &std::ffi::OsStr) -> Command {
+const BUNDLE_ENV: &[&str] = &[
+    "LD_LIBRARY_PATH",
+    "GTK_PATH",
+    "GTK_EXE_PREFIX",
+    "GTK_DATA_PREFIX",
+    "GTK_IM_MODULE_FILE",
+    "GTK_THEME",
+    "GDK_PIXBUF_MODULE_FILE",
+    "GIO_EXTRA_MODULES",
+    "GSETTINGS_SCHEMA_DIR",
+];
+
+/// The two list variables are PRUNED, not removed: their host half is what the opener needs. A
+/// list that prunes to nothing is removed outright — an empty `PATH` is not the platform default,
+/// it is no directories at all, which is how an escape silently fails to escape.
+#[cfg(feature = "local-engine")]
+const BUNDLE_PATH_LISTS: &[&str] = &["PATH", "XDG_DATA_DIRS"];
+
+/// One list variable's host half: its entries, minus everything under the AppDir. `None` when
+/// nothing is left — the caller removes the variable rather than setting it empty.
+#[cfg(feature = "local-engine")]
+fn host_half(value: &std::ffi::OsStr, appdir: &Path) -> Option<std::ffi::OsString> {
+    let kept: Vec<PathBuf> =
+        std::env::split_paths(value).filter(|dir| !dir.starts_with(appdir)).collect();
+    if kept.is_empty() {
+        return None;
+    }
+    std::env::join_paths(&kept).ok()
+}
+
+/// The environment is an argument rather than a read, so the pruning can be driven by a test with
+/// an AppImage's variables in hand — this machine has none of them, and a scrub with nothing to
+/// take off would pass for a scrub that does nothing.
+#[cfg(feature = "local-engine")]
+fn scrub_from<F>(command: &mut Command, read: F)
+where
+    F: Fn(&str) -> Option<std::ffi::OsString>,
+{
+    // REMOVE FIRST, THEN SET, for `spawn_engine`'s reason: the two lists never overlap today and
+    // this order means they never can.
+    for key in BUNDLE_ENV {
+        command.env_remove(key);
+    }
+    let Some(appdir) = read("APPDIR").filter(|d| !d.is_empty()).map(PathBuf::from) else {
+        return;
+    };
+    for key in BUNDLE_PATH_LISTS {
+        let Some(value) = read(key) else { continue };
+        match host_half(&value, &appdir) {
+            Some(host) => command.env(key, host),
+            None => command.env_remove(key),
+        };
+    }
+}
+
+#[cfg(feature = "local-engine")]
+fn scrub_bundled_environment(command: &mut Command) {
+    scrub_from(command, |key| std::env::var_os(key));
+}
+
+#[cfg(feature = "local-engine")]
+fn opener_command(target: &std::ffi::OsStr) -> Result<Command, String> {
     #[cfg(target_os = "macos")]
-    {
+    let mut command = {
         let mut c = Command::new("/usr/bin/open");
         c.arg(target);
         c
-    }
+    };
     #[cfg(target_os = "windows")]
-    {
+    let mut command = {
         let mut c = Command::new("rundll32.exe");
         c.arg("url.dll,FileProtocolHandler");
         c.arg(target);
         c
-    }
+    };
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-    {
-        let mut c = Command::new("xdg-open");
+    let mut command = {
+        let mut c = Command::new(xdg_open_program().ok_or(NO_OPENER)?);
         c.arg(target);
         c
+    };
+    scrub_bundled_environment(&mut command);
+    Ok(command)
+}
+
+/// How long the shell listens for the opener to FAIL before it answers the window.
+///
+/// A successful `spawn` means a process started, never that anything opened: measured, an
+/// `xdg-open` on a machine with no handler exits 3 with "no method available for opening" while
+/// the `Ok` is already back at the window — so the link did nothing and nothing anywhere said so,
+/// which is this whole family's defect returning through the one door left open. An opener that
+/// hands off exits in milliseconds; one that execs the browser itself is still running at the
+/// deadline, and still running is not a refusal.
+#[cfg(feature = "local-engine")]
+const OPENER_VERDICT: Duration = Duration::from_millis(1200);
+
+#[cfg(feature = "local-engine")]
+fn run_opener(mut command: Command, refused: &str) -> Result<(), String> {
+    let mut child = command.spawn().map_err(|err| format!("{refused} ({err})"))?;
+    let deadline = Instant::now() + OPENER_VERDICT;
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) if status.success() => return Ok(()),
+            Ok(Some(status)) => return Err(format!("{refused} ({status})")),
+            Ok(None) if Instant::now() >= deadline => return Ok(()),
+            Ok(None) => std::thread::sleep(Duration::from_millis(25)),
+            Err(err) => return Err(format!("{refused} ({err})")),
+        }
     }
 }
 
 #[cfg(feature = "local-engine")]
 pub(crate) fn spawn_opener(url: &str) -> Result<(), String> {
-    opener_command(url.as_ref())
-        .spawn()
-        .map(|_| ())
-        .map_err(|err| format!("ohmail: this computer would not open a browser ({err})"))
+    run_opener(opener_command(url.as_ref())?, "ohmail: this computer would not open a browser")
 }
 
 /// Hand ONE file this process has just written to whatever this machine opens that kind with.
@@ -3682,10 +3823,7 @@ pub(crate) fn spawn_opener(url: &str) -> Result<(), String> {
 /// function sanitised, so nothing a message carried decides where this points.
 #[cfg(feature = "local-engine")]
 fn spawn_file_opener(path: &Path) -> Result<(), String> {
-    opener_command(path.as_os_str())
-        .spawn()
-        .map(|_| ())
-        .map_err(|err| format!("ohmail: this computer would not open that file ({err})"))
+    run_opener(opener_command(path.as_os_str())?, "ohmail: this computer would not open that file")
 }
 
 /// Open one of [`LINKS`] in the user's own browser.

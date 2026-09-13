@@ -145,6 +145,21 @@ export function setMailtoSink(sink: ((raw: string) => void) | null): void {
   mailtoSink = sink;
 }
 
+/**
+ * Who says so when the shell will not open an address — `setMailtoSink`'s twin, registered the
+ * same way and for the same reason: a document-level listener has no UI context of its own, and
+ * the surface that HAS one does not exist until the gate has mounted. `null` — the web app's
+ * permanent state — leaves the rejection in the window's log, which is where it went before this
+ * seam existed. This is the one edge of the feature that was still silent: a link that did
+ * nothing is the defect, and a repair whose own failure is invisible is that defect wearing it.
+ */
+let openFailureSink: ((url: string) => void) | null = null;
+
+/** Point the refusal at a surface that can say it, or pass `null` to take it away. */
+export function setOpenFailureSink(sink: ((url: string) => void) | null): void {
+  openFailureSink = sink;
+}
+
 interface TauriInternals {
   invoke(command: string, payload?: Record<string, unknown>): Promise<unknown>;
 }
@@ -154,9 +169,10 @@ interface TauriInternals {
  *
  * The rejection arm is a `console.error` and not a swallow: this whole slice exists because a
  * link failed without a trace, and a second silent failure mode in the fix would be the same
- * defect wearing the repair. There is no UI context at a document-level listener to raise a
- * toast from — the caller is a click on any anchor in the window — so the window's own log is
- * where it goes, which is the one place a report can quote.
+ * defect wearing the repair. The log is where a report can quote it from; {@link
+ * setOpenFailureSink} is where a person hears about it, registered by the surface that has one
+ * because a document-level listener has no UI context of its own. Both, not either: the log
+ * outlives the toast.
  */
 async function askShellToOpen(url: string): Promise<void> {
   const host = globalThis as { __TAURI_INTERNALS__?: Partial<TauriInternals> };
@@ -166,6 +182,7 @@ async function askShellToOpen(url: string): Promise<void> {
     await (internals as TauriInternals).invoke(OPEN_EXTERNAL_COMMAND, { url });
   } catch (err) {
     console.error(`ohmail: the shell would not open ${url}`, err);
+    openFailureSink?.(url);
   }
 }
 

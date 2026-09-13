@@ -3246,6 +3246,7 @@
     "cloudUsePassword": "Use my password instead",
     "cloudUseBrowser": "Sign in with browser",
     "noBrowser": "This {machine} would not open a browser. The page is at ohmail.app/link-desktop.",
+    "linkNoBrowser": "This {machine} would not open a browser. The address is {address}.",
     "browserSignInFailed": "The browser sign-in could not be started.",
     "password": "Password",
     "totpLabel": "Code from your authenticator app",
