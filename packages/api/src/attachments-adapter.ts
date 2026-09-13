@@ -181,18 +181,14 @@ export function makeOpenAdapter(deps: ApiDeps, opts: OpenAdapterOptions = {}): O
 
   return async (mailboxId: string): Promise<AttachmentAdapter> => {
     const opened = await openImapUnderCap(deps, mailboxId, max, waitMs);
-    /* ── ONE CLOCK PER OPERATION, AND THE SOCKET DIES ON A BREACH ──────────────────────────
-     *
-     * This door holds ONE adapter across a multi-part walk and closes it itself, so the door's
-     * own dial-and-read budget is the wrong unit in both directions: it would end an honest
-     * download making steady progress, and a walk of parts each just under it is a stall nothing
-     * sees. The unit is one operation — see {@link IMAP_OPERATION_DEADLINE_MS}.
-     *
-     * A breach DESTROYS the socket rather than leaving it for the caller's `close()`, for the
-     * reason `imap-door.ts` states: a graceful close is a LOGOUT the driver queues behind the
-     * command that is hanging, so the teardown would wait in the same queue as the read we just
-     * gave up on — and the mailbox's slot in the shared cap with it. `dead` latches so the
-     * caller's own `close()` afterwards is a no-op rather than that same queued LOGOUT.
+    /* ── ONE CLOCK PER OPERATION, AND THE SOCKET DIES ON A BREACH ──
+     * This door holds ONE adapter across a multi-part walk and closes it itself, so the unit is
+     * one operation ({@link IMAP_OPERATION_DEADLINE_MS}), not the door's dial-and-read budget,
+     * which would end an honest download or miss a walk of parts each just under it. A breach
+     * DESTROYS the socket rather than leaving it for the caller's `close()`: a graceful close is
+     * a LOGOUT the driver queues behind the hanging command, so the teardown — and the mailbox's
+     * slot in the shared cap — would wait on the read we gave up on. `dead` latches so the
+     * caller's later `close()` is a no-op, not that queued LOGOUT.
      */
     let dead = false;
     return {

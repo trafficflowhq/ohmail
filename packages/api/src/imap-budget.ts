@@ -21,20 +21,13 @@ import { ServiceError } from "@trafficflow/services/mail";
 export const IMAP_DOOR_DEADLINE_MS = boundFromEnv("TF_IMAP_DOOR_DEADLINE_MS", 20_000);
 
 /**
- * THE PER-OPERATION CLOCK, for a door that holds ONE adapter across several operations.
- *
- * The attachment walk is that door: it opens one connection, fetches part after part under its
- * byte and part ceilings, and closes the socket itself. `IMAP_DOOR_DEADLINE_MS` is the wrong shape
- * for it in both directions — it would end an honest multi-part download that is making steady
- * progress, and it would bound nothing at all if it were measured per operation, since 20 s is
- * chosen against a serverless invocation and not against a download. So the UNIT is one operation:
- * a hung fetch ends, a long honest lifetime lives.
- *
- * The NUMBER is the adapter's own {@link IMAP_READ_DEADLINE_MS} and not a new literal — it is
- * exactly the same question ("how long may one read of one mail server take before the answer is
- * that we could not read it") and it is answered there against the socket's inactivity timer,
- * which a byte-a-minute reply resets for ever. A second number here would be a second thing to
- * keep true.
+ * THE PER-OPERATION CLOCK, for a door that holds ONE adapter across several operations (the
+ * attachment walk opens one connection, fetches part after part, and closes the socket itself).
+ * `IMAP_DOOR_DEADLINE_MS` is the wrong shape both ways — it would end an honest multi-part
+ * download, and bound nothing per operation, since 20 s is chosen against a serverless
+ * invocation. So the UNIT is one operation: a hung fetch ends, a long honest lifetime lives. The
+ * NUMBER is the adapter's own {@link IMAP_READ_DEADLINE_MS}, not a new literal — the same
+ * question, answered there against the socket's inactivity timer, so it stays one thing to keep true.
  */
 export const IMAP_OPERATION_DEADLINE_MS = IMAP_READ_DEADLINE_MS;
 

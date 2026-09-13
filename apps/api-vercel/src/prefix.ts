@@ -1,17 +1,12 @@
 
 /**
- * The two CONSTANTS this host's pipeline is configured by — and nothing else, because this is
- * the module the WEB APP reaches into: its tests import {@link API_PREFIX} so the browser
- * rewrite and the stripped prefix cannot drift, and that app typechecks its tests, so every
- * specifier here has to resolve inside the web app's own install. A check refuses a workspace
- * import here by name; it was paid for by a production `next build` that failed with "Cannot
- * find module '@trafficflow/api'" while every local command was green — in a workspace
- * checkout the package resolves through the repository root whether or not the app declares it.
- *
- * THE CANONICALIZER USED TO LIVE HERE and now lives once, in `@trafficflow/api`
- * (`canonical-path.ts`), reached from `normalize.ts` and `handler.ts` — modules nothing
- * outside this app imports. Three code-identical copies of the rule that decides a request
- * hash meant it could be corrected in one and stay wrong in two.
+ * The two CONSTANTS this host's pipeline is configured by — and nothing else. The WEB APP
+ * reaches into this module (its tests import {@link API_PREFIX} so the browser rewrite and the
+ * stripped prefix cannot drift) and it typechecks its tests, so every specifier here must
+ * resolve inside the web app's own install: a check refuses a workspace import here by name,
+ * because in a workspace checkout `@trafficflow/api` resolves through the repository root
+ * whether or not the app declares it, and a production `next build` then fails where every
+ * local command is green.
  */
 
 /** The prefix the webapp's `/api/:path*` rewrite may leave on the path. */

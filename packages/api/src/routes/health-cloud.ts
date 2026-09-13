@@ -237,14 +237,11 @@ export const CLOUD_TIER_MARKERS = SCHEMA_MARKERS;
  */
 /**
  * What each cloud migration is probed by, and the ones no class can see. Ordinary migrations take
- * a column marker. 0017 and 0018 are one added column each, their failures write-shaped. 0020 is
- * the first data-only cloud migration — no DDL, nothing to probe; the journal accounting is its
- * record. 0024 is one partial index, probed by its INDEX marker alone. 0030 takes three column
- * markers, no CHECK-definition marker (all three CHECKs are new constraints on new objects) and
- * no index marker. 0032 drops tables and takes no marker of any class: no name's presence means
- * "sixteen tables are gone", and an untaken drop costs disk only. 0034 is one index, probed by its
- * INDEX marker alone, exactly as 0024 is; 0035 is two, and takes two. The tag asserts
- * reconciliation against the newest entry.
+ * a column marker; an added column fails write-shaped. The exceptions carry no marker and the
+ * journal accounting is their record: a data-only migration has no DDL to probe, and a table drop
+ * means "these tables are gone", which an untaken drop leaves costing disk only. An index
+ * migration is probed by its INDEX marker alone; a CHECK on a new object takes nothing extra. The
+ * tag asserts reconciliation against the newest entry.
  */
 export const CLOUD_SCHEMA_MARKER_JOURNAL_TAG = "0035_webauthn_open_ceremony_idx";
 

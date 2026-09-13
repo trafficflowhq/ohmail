@@ -3,18 +3,14 @@ import type { ApiDeps } from "./deps.js";
 import { IMAP_DOOR_DEADLINE_MS, imapDoorTimedOut, isImapDoorTimeout, raced } from "./imap-budget.js";
 
 /**
- * Every API-side IMAP dial runs under one budget and ends its socket. A door here dials a
- * mail server nobody vetted, on a request a signed-in caller can repeat, and a graceful
- * `close()` is a LOGOUT the driver queues behind the command that is hanging — a server that
- * accepts a command and never answers held the connection, the mailbox's slot in the shared
- * cap, and the invocation, while the teardown waited in the same queue. The socket timeouts
- * are inactivity timers, reset by every byte, so a reply arriving a byte a minute is never
- * idle. Two rules, one mechanism: one budget for dial and read together, and a breach
- * destroys the socket (`forceClose`) — that is what makes holding the slot affordable.
- *
- * The budget, the refusal and the race itself live in `imap-budget.ts`, because the attachment
- * door — which this module imports — needs the same refusal for a per-operation clock of its own
- * and importing back would be a cycle. Re-exported here so every caller keeps one import.
+ * Every API-side IMAP dial runs under one budget and ends its socket. A door here dials a mail
+ * server nobody vetted, on a request a signed-in caller can repeat, and a graceful `close()` is a
+ * LOGOUT the driver queues behind a hanging command — a server that never answers would hold the
+ * connection, the mailbox's slot in the shared cap, and the invocation while the teardown waits
+ * in that queue. The socket timeouts are inactivity timers reset by every byte, so a byte-a-minute
+ * reply is never idle: one budget for dial and read together, and a breach destroys the socket
+ * (`forceClose`). The budget and refusal live in `imap-budget.ts` (re-exported here) so the
+ * attachment door can share them without an import cycle.
  */
 export { IMAP_DOOR_DEADLINE_MS, imapDoorTimedOut, isImapDoorTimeout };
 

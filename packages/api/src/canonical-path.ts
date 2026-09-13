@@ -1,14 +1,10 @@
 /**
- * The canonical pathname: RFC 3986 §6.2.2 escape normalization, slash runs collapsed, exactly one
- * leading `/api` dropped, one trailing slash dropped except at the root. No case folding — static
- * route segments are compared byte-for-byte, so folding would match routes the server would 404.
- *
- * THE ONLY DEFINITION. Both hosts and the relay call this one — `apps/server/src/handler.ts`
- * and `apps/api-vercel/src/normalize.ts` through the `@trafficflow/api` barrel,
- * `relay-allowlist.ts` directly. They used to hold code-identical copies pinned by a text
- * compare, which says the three agree today and not that a correction reaches all three;
- * `relay-allowlist-census.test.ts` now refuses a second definition anywhere under
- * `apps/` or `packages/`.
+ * The canonical pathname, and THE ONLY DEFINITION of it: RFC 3986 §6.2.2 escape normalization,
+ * slash runs collapsed, exactly one leading `/api` dropped, one trailing slash dropped except at
+ * the root. No case folding — static route segments are compared byte-for-byte, so folding would
+ * match routes the server would 404. Both hosts and the relay call this one function;
+ * `relay-allowlist-census.test.ts` refuses a second definition anywhere under `apps/` or
+ * `packages/`, because code-identical copies agree today without a correction reaching all three.
  */
 
 /** The prefix the webapp's same-origin split may leave on the path. */
