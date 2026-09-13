@@ -5,6 +5,7 @@ export { ServiceError, IdempotencyRaceLost, OAuthCodeReplayed, SettleFailed, Tra
  * the request that triggers one of these reads carries a single scalar. See `read-bounds.ts`. */
 export {
   ReadBoundExceeded, FOLDER_INVENTORY_MAX, folderInventoryProbe, refuseOverFolderInventory,
+  ACCOUNT_MAILBOXES_MAX_READ, accountMailboxesProbe, refuseOverAccountMailboxes,
   type ReadBoundKind,
 } from "./read-bounds.js";
 export type { ServiceContext, Db } from "./context.js";

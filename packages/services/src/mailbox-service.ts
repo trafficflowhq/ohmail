@@ -14,6 +14,7 @@ import {
 } from "@trafficflow/db";
 import { withAccountTx, type ServiceContext } from "./context.js";
 import { ServiceError } from "./errors.js";
+import { accountMailboxesProbe, refuseOverAccountMailboxes } from "./read-bounds.js";
 import { fenceErasedAccount } from "./erasure-fence.js";
 import { sweepMailboxData, type MailboxSweepResult } from "./mailbox-erasure.js";
 /* The DEFAULT policy is registered rather than imported, so the paid gate is not an import edge
@@ -1789,11 +1790,21 @@ export class MailboxService {
       // for; `wireInstant` is the one place it is written, with a byte-for-byte comparison
       // against the old SQL output. It also keeps the statement free of anything only one store
       // can render.
+      /* BOUNDED AT THE READ, and refused rather than truncated — see `read-bounds.ts`. This read
+       * had no ceiling of any kind: every CONNECTED mailbox of the account, whose ids become the
+       * `IN` list below. The ceiling is a DECLARED sanity bound while the real reading is
+       * collected, set far above any honest account, and it refuses by name because this answer
+       * has to cover every connected mailbox — a silent prefix would be the same defect wearing
+       * a ceiling's name. The `IN` stays: `for update` does not lock against INSERTs, so dropping
+       * it for a re-derived predicate would stamp a mailbox connected mid-statement without
+       * reporting it. */
       const mine = await dialect(ctx.db).forUpdate(tx.select({
         id: mailboxes.id,
         standing: mailboxes.syncRequestedAt,
       }).from(mailboxes)
-        .where(and(eq(mailboxes.accountId, ctx.accountId), eq(mailboxes.status, "connected"))));
+        .where(and(eq(mailboxes.accountId, ctx.accountId), eq(mailboxes.status, "connected")))
+        .limit(accountMailboxesProbe()));
+      refuseOverAccountMailboxes(mine, "this account");
       if (mine.length === 0) return [];
       // `now()` — the DATABASE's instant, at its own precision, so the returned baseline and
       // the worker's `stampMailboxSyncNow` write are the same clock. The age predicate is

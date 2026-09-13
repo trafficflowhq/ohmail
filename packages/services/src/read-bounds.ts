@@ -22,7 +22,7 @@ import { ServiceError } from "./errors.js";
  * one per call site. A code rather than a sentence because it is compared in tests and reaches an
  * operator through the refusal.
  */
-export type ReadBoundKind = "folder_inventory";
+export type ReadBoundKind = "folder_inventory" | "account_mailboxes";
 
 /**
  * A ceiling on STORED cardinality was crossed while answering a request.
@@ -67,6 +67,30 @@ export class ReadBoundExceeded extends ServiceError {
 export const FOLDER_INVENTORY_MAX = 10_000;
 
 /**
+ * MAILBOXES ONE ACCOUNT-WIDE READ MAY COVER — a DECLARED SANITY CEILING, and the declaration is
+ * the honest part.
+ *
+ * The site this exists for is `requestPull`'s re-stamp: a `select … for update` of every CONNECTED
+ * mailbox of one account, no `LIMIT`, whose ids then become an `IN` list. The self-host imposes no
+ * mailbox count of any kind, so the collection is accumulated state with nothing above it.
+ *
+ * **The reading is OWED, and this number is not it.** What must be measured is the largest real
+ * per-account mailbox count, and whether a deployment cap should exist at all is a product
+ * decision nobody has taken. Until then this is the shape `IMAP_LIST_MAX_FOLDERS` uses for the same
+ * reason: a bound set so far above any honest account that it cannot fire on real work, so it
+ * catches a runaway without pretending to be a product limit. Each element here costs a stored
+ * credential and a mail server that answered, so a thousand of them is a thousand successful IMAP
+ * connects rather than anything a request can ask for.
+ *
+ * It REFUSES BY NAME rather than truncating, and the `IN` stays: dropping it and re-deriving the
+ * account+status predicate inside the UPDATE is not equivalent under concurrency — `for update`
+ * does not lock against INSERTs, so a mailbox connected between the two statements would be
+ * stamped without being reported. A silent truncation would be the same defect with a ceiling's
+ * name on it.
+ */
+export const ACCOUNT_MAILBOXES_MAX_READ = 1_000;
+
+/**
  * The ceiling as a `LIMIT` argument: one row past it, so the read can tell at-the-ceiling from
  * over it without a second COUNT. Every caller pairs it with {@link refuseOverFolderInventory}.
  */
@@ -77,6 +101,23 @@ export const folderInventoryProbe = (): number => FOLDER_INVENTORY_MAX + 1;
  * is the price of one round trip — but the ceiling is what the driver transferred, and it is one
  * row, not the collection.
  */
+export const accountMailboxesProbe = (): number => ACCOUNT_MAILBOXES_MAX_READ + 1;
+
+/**
+ * Refuse an account-wide mailbox read that came back over the ceiling — see {@link
+ * ACCOUNT_MAILBOXES_MAX_READ}. Never a truncation: the caller's whole job is to answer FOR every
+ * connected mailbox, and an answer covering some of them silently is the state the ceiling exists
+ * to make unreachable.
+ */
+export function refuseOverAccountMailboxes(read: { length: number }, what: string): void {
+  if (read.length <= ACCOUNT_MAILBOXES_MAX_READ) return;
+  throw new ReadBoundExceeded(
+    "account_mailboxes", ACCOUNT_MAILBOXES_MAX_READ, read.length,
+    `${what} covers more than ${ACCOUNT_MAILBOXES_MAX_READ} connected mailboxes, which is more `
+    + "than one answer can cover; nothing was changed",
+  );
+}
+
 export function refuseOverFolderInventory(read: { length: number }, what: string): void {
   if (read.length <= FOLDER_INVENTORY_MAX) return;
   throw new ReadBoundExceeded(
