@@ -136,3 +136,63 @@ export function senderIsActiveSql(
     having ${active}
   )`;
 }
+
+/**
+ * THE DESTINATIONS THAT SAY YES — `rules.ts#effectForDestination`'s allow side, as data.
+ *
+ * RE-DECLARED, not imported, for {@link CUTLINE_DEFAULT_DORMANCY_DAYS}' reason: `db` may not
+ * depend on `@trafficflow/core`. `screener-decided.test.ts` derives the same list from
+ * `effectForDestination` over `DESTINATIONS` and pins the two equal, so a seventh folder that
+ * changes side there reddens here rather than silently widening what counts as a decision.
+ * A destination OUTSIDE this list is read as a deny — including a string the column holds that
+ * is not one of the six — which is the safe direction: an unrecognised folder leaves the sender
+ * in the queue instead of quietly exempting them.
+ */
+export const CUTLINE_ALLOW_DESTINATIONS: readonly string[] = ["INBOX", "ohmail/Reads", "ohmail/Receipts"];
+
+/**
+ * HAS THIS ACCOUNT ALREADY DECIDED IT KNOWS THIS SENDER — the queue's other half.
+ *
+ * The cutline says whether a sender is still worth ASKING about; this says whether they were
+ * already ANSWERED. `cutlineCounts` spelled the rule half inline and `GET /screener` asked
+ * nothing at all, so a correspondent of a decade with an enabled `seeded-from-sent` rule and a
+ * `contacts` row was listed as a first-time sender — held mail imported before the seed never
+ * left the gate, and the header counted it. One expression, both readers.
+ *
+ * A DECISION is an enabled `sender`/`domain` rule naming the author whose destination is on the
+ * ALLOW side ({@link CUTLINE_ALLOW_DESTINATIONS}), OR a `contacts` row for the address — the set
+ * `evaluateRules` reads as "senders this account knows". A DENY rule does not exclude and DEFEATS
+ * the contact arm: mail somebody decided against belongs to the Screened-out tab, and its sender
+ * stays answerable exactly as before this predicate existed.
+ *
+ * `senderExpr` is the outer query's already-lowercased address, as {@link senderIsActiveSql}
+ * takes it. `trim(lower(match))` is the SQL spelling of `rule.match.trim().toLowerCase()`, the
+ * same one `rule-retro.ts#matchPredicate` and `held-release-service.ts#ruleClaimsSender` use, so
+ * the set this EXCLUDES and the set a rule MOVES are one set. The domain arm goes through
+ * {@link Dialect.domainOf}: the phone runs this engine, and `substring … position` is a
+ * server-only construct.
+ */
+export function senderIsDecidedSql(d: Dialect, accountId: string, senderExpr: SQL): SQL {
+  const allow = sql`(${sql.join(CUTLINE_ALLOW_DESTINATIONS.map((f) => sql`${f}`), sql`, `)})`;
+  const claims = sql`(
+       (rd.kind = 'sender' and trim(lower(rd.match)) = ${senderExpr})
+    or (rd.kind = 'domain' and trim(lower(rd.match)) = ${d.domainOf(senderExpr)})
+  )`;
+  const ruleFor = (side: SQL): SQL => sql`exists (
+    select 1 from rules rd
+     where rd.account_id = ${d.castUuid(accountId)}
+       and rd.enabled
+       and rd.kind in ('sender', 'domain')
+       and ${side}
+       and ${claims}
+  )`;
+  return sql`(
+       ${ruleFor(sql`rd.destination in ${allow}`)}
+    or (exists (
+          select 1 from contacts cd
+           where cd.account_id = ${d.castUuid(accountId)}
+             and lower(cd.address) = ${senderExpr}
+        )
+        and not ${ruleFor(sql`rd.destination not in ${allow}`)})
+  )`;
+}

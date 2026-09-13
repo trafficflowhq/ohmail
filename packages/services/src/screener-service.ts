@@ -12,7 +12,7 @@ import {
   AI_ACTION_WEIGHTS,
   // 0.14.1, 0.14.1 — the request path. See `screener-apply.ts` and `organizer-role.ts` in
   // `@trafficflow/db` for why the transactional core and the eligibility read live there.
-  resolveCutline, senderIsActiveSql, type ResolvedCutline,
+  resolveCutline, senderIsActiveSql, senderIsDecidedSql, type ResolvedCutline,
   heldRowById, applyScreenerDecision, AccountErasedError, readAccountErasedAt, domainOf,
   readRequestEligibility, readOrganizerRole, insertOrganizerRequest, listOutstandingForAccount,
   OrganizedElsewhereError, MailboxNotFoundError, ringFilingDoorbell,
@@ -1358,10 +1358,25 @@ export class ScreenerReadService {
     const active = opts.cutline
       ? senderIsActiveSql(d, ctx.accountId, sql`lower(${reps.fromAddress})`, opts.cutline)
       : undefined;
+    /* ── A SENDER THIS ACCOUNT ALREADY KNOWS IS NOT A FIRST-TIME SENDER ─────────────────────
+     *
+     * Beside the cutline and not folded into it, because it answers the other question: the
+     * cutline asks whether a sender is still worth ASKING about, this asks whether they were
+     * already ANSWERED. `cutlineCounts` had the rule half of it and this query had nothing, so
+     * `GET /screener` listed a correspondent of a decade — an enabled `seeded-from-sent` rule
+     * and a `contacts` row both naming them — under a header that calls them first-time, because
+     * mail imported before the seed never left the gate. One expression, both readers.
+     *
+     * UNCONDITIONAL, unlike `active`: the cutline is an account SETTING a caller may not have
+     * read, and this is not. Their held mail is not hidden by it — it is the held-releases
+     * surface's ({@link heldReleaseGroups}) and the gate-release pass's, both of which reach the
+     * rows this excludes. A DENY decision does not exclude: that mail is the Screened-out tab's.
+     */
     const rows = await ctx.db.select().from(reps)
       .where(and(
         eq(reps.rank, 1),
         active,
+        sql`not ${senderIsDecidedSql(d, ctx.accountId, sql`lower(${reps.fromAddress})`)}`,
         opts.after
           // Row comparison, which is the `date desc, id desc` keyset written as one expression:
           // strictly "older" than the cursor tuple, with the id breaking a shared date. Bound

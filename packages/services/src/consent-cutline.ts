@@ -2,7 +2,9 @@ import { sql, type SQL } from "drizzle-orm";
 import { DEFAULT_DORMANCY_DAYS, type ScreeningScope } from "@trafficflow/core/mail";
 import type { ServiceContext } from "./context.js";
 import { dialect, type Dialect } from "@trafficflow/db/dialect";
-import { activeSenderExpr, anyOf, cutlineInstant, resolveCutline } from "@trafficflow/db";
+import {
+  activeSenderExpr, anyOf, cutlineInstant, resolveCutline, senderIsDecidedSql,
+} from "@trafficflow/db";
 
 /**
  * The cutline, server-side — how many senders are still owed a decision. The client computes this
@@ -180,10 +182,19 @@ export async function cutlineCounts(
     ),
     classified as (
       select i.addr, i.undecided_residence,
+             -- The two CTEs above are this file's own rule half, kept because it is WIDER than
+             -- the shared predicate: a DENY rule is a decision here and must stay one, or a
+             -- sender somebody said no to would re-enter the waiting count. The OR carries the
+             -- shared expression, which is the queue page's exclusion verbatim, so a sender the
+             -- queue refuses to list can never be one this count still calls first-time. Its own
+             -- contribution is the CONTACT arm; the allow-rule arm is already covered above, and
+             -- the redundancy is the point: one expression, both readers, no drift. (NO BACKTICKS
+             -- in this template literal -- see the note above.)
              (exists (select 1 from decided_sender r where r.m = i.addr)
               or (${d.strpos(sql`i.addr`, sql`'@'`)} > 0
                   and exists (select 1 from decided_domain dd
-                               where dd.m = ${d.substr(sql`i.addr`, sql`${d.strpos(sql`i.addr`, sql`'@'`)} + 1`)}))) as decided,
+                               where dd.m = ${d.substr(sql`i.addr`, sql`${d.strpos(sql`i.addr`, sql`'@'`)} + 1`)}))
+              or ${senderIsDecidedSql(d, ctx.accountId, sql`i.addr`)}) as decided,
              ${activeSenderExpr(d, resolved, {
                anyUnread: sql`i.any_unread`,
                anyUnreadInWindow: sql`i.any_unread_in_window`,

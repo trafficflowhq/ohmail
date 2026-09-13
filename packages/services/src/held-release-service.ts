@@ -70,9 +70,17 @@ export interface HeldReleaseSummary {
  *
  * A row is held-by-a-decided-sender when all of this holds:
  *
- *   · the placement was recorded by an install rather than by ohmail's own filing — `last_set_by`
- *     `'external'` (a pre-0.14.1 reader, and a hand file, which the press is the consent for) or
- *     `'peer'` (another install of the same account);
+ *   · the placement was written by a writer this product knows — an ALLOW-LIST over the three
+ *     `last_set_by` values that exist (`'external'`, a pre-0.14.1 reader and a hand file, which
+ *     the press is the consent for; `'peer'`, another install of the same account; `'us'`, this
+ *     product's own filing), exactly the three the release arm of
+ *     `rule-retro.ts#selectCandidates` admits, so the set counted and the set moved are one set.
+ *     `'us'` was excluded on the argument that "the ordinary retro reaches those", and MEASURED
+ *     it does not: `confirmSeed` writes its rules with `retro_requested_at` NULL, so their
+ *     backlog is never owed, and mail this product itself put at the gate before the seed sat
+ *     there for months while this screen reported nothing to release. The list is therefore not
+ *     the narrowing — the two gate equalities below are — but it stays an allow-list, so a fourth
+ *     writer nobody has thought about is excluded by default rather than released in bulk;
  *   · it is STILL AT THE GATE and settled there — desired and observed BOTH `ohmail/Screener`, so
  *     nothing is already in flight for it. Two equalities against the gate rather than
  *     `desired = observed`: identical over this set, and it keeps the pass's twin of this clause
@@ -95,7 +103,7 @@ function heldAtGate(accountId: string) {
   return and(
     eq(messages.accountId, accountId),
     isNull(messages.deletedAt),
-    sql`${folderState.lastSetBy} in ('external', 'peer')`,
+    sql`${folderState.lastSetBy} in ('external', 'peer', 'us')`,
     eq(folderState.desiredFolder, SCREENER_FOLDER),
     eq(folderState.observedFolder, SCREENER_FOLDER),
     sql`exists (
