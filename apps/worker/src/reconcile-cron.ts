@@ -22,7 +22,7 @@ import { OrganizerProfileSync } from "./profile.js";
 import { makeStorageCapResolver } from "./storage-cap.js";
 import {
   CLOUD_DISPLAY_NAME, LeaseUnavailableError, OrganizerStandDownError, acquireLeasePermit,
-  cloudInstallId, mailboxHasRequestKey, type LeasePermit,
+  cloudInstallId, leaseStoodDown, mailboxHasRequestKey, type LeasePermit,
 } from "./lease.js";
 import { isCliEntry } from "./entry.js";
 import { cronEvent, runCronCli } from "./cron-log.js";
@@ -435,7 +435,13 @@ export async function runReconcileCron(
       // standing to write: `OrganizerStandDownError`, `LeaderFencedError`, and `LeaseUnavailableError` (an
       // unreadable lease is an unanswered question, and a WRITE must not proceed on one) — all handed on
       // to the arms below. Skipping costs only a delay; the records wait for the next drain.
-      const mayStillWrite = !(cycleError instanceof OrganizerStandDownError)
+      /* The stand-down is asked of the PERMIT and no longer of the throw's class: every
+         stand-down on this path comes from one of the `permit.check()` calls above, and the
+         permit's latch also catches the shape the class cannot — a refusal swallowed inside the
+         cycle (`fileOne`, `reconcileFlags`, `folderOpsPass` each catch all but a fence), which
+         arrives here with `cycleError` null and a sweep that would acknowledge and expunge
+         records in a mailbox another install now organizes. The class arm below is unchanged. */
+      const mayStillWrite = !leaseStoodDown(permit)
         && !(cycleError instanceof LeaderFencedError)
         && !(cycleError instanceof LeaseUnavailableError)
         // A shared-database fault is the third: this drain is database work end to end, so on a

@@ -628,6 +628,30 @@ export interface LeasePermitInput extends Omit<MailboxLeaseInput, "now"> {
    * because the TTL is measured from the look, not from this call.
    */
   adopt?: { outcome: Extract<MailboxLeaseOutcome, { organize: true }>; at: Date };
+  /**
+   * WHAT THIS PERMIT JUST RENEWED, handed back to whoever holds the nonce.
+   *
+   * A re-read is a renew: it writes a new claim and expunges the one before it. The caller's own
+   * `lastNonce` is then a nonce nothing in the folder carries, and its next gate reads this
+   * install's own claim as a restored CLONE of itself — it stands itself down and leaves that
+   * fresh claim standing. One writer owns the settled nonce, so the permit that wrote it says so
+   * here. `at` is the instant of the read, for callers whose lapse bound is measured from it.
+   */
+  onRenew?: (renewal: { nonce: string | null; at: Date }) => void;
+}
+
+/**
+ * HAS THE PERMIT THIS PASS RODE STOOD DOWN? — the one question a post-pass write asks.
+ *
+ * Not the class of whatever was thrown: `fileOne`, `reconcileFlags` and `folderOpsPass` each
+ * swallow everything but a fence, so a stand-down mid-cycle reaches the end of the pass as NO
+ * ERROR AT ALL, and a gate reading error classes lets the pass go on to acknowledge and expunge
+ * records in a mailbox somebody else now organizes. The permit's own latch is the fact, and it is
+ * set before the throw that carries it. A composition holding no permit answers `false` — "not
+ * asked" is not "stood down", and a reader's own writes must not be refused by this.
+ */
+export function leaseStoodDown(authority: OrganizerWriteAuthority): boolean {
+  return "revoked" in authority && authority.revoked;
 }
 
 /**
@@ -646,6 +670,7 @@ export async function acquireLeasePermit(input: LeasePermitInput): Promise<Lease
   delete (base as Partial<LeasePermitInput>).ttlMs;
   delete (base as Partial<LeasePermitInput>).writesPerRecheck;
   delete (base as Partial<LeasePermitInput>).adopt;
+  delete (base as Partial<LeasePermitInput>).onRenew;
 
   // The nonce this permit has written, threaded into every later read — see the docblock.
   let lastNonce: string | null = input.self.lastNonce;
@@ -688,6 +713,9 @@ export async function acquireLeasePermit(input: LeasePermitInput): Promise<Lease
     lastNonce = outcome.nonce;
     verifiedAt = at;
     writesSinceRead = 0;
+    // The claim in the folder is now this one — see {@link LeasePermitInput.onRenew}. Last, so a
+    // caller is never told about a renewal this permit has not finished recording.
+    input.onRenew?.({ nonce: outcome.nonce, at });
   };
 
   if (input.adopt) {

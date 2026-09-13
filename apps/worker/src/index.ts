@@ -115,7 +115,8 @@ import { OrganizerProfileSync, syncProfileMirror } from "./profile.js";
 import type { ProfileIo } from "@trafficflow/core/adapters/organizer-profile";
 import {
   readMailboxLease, acquireLeasePermit, releaseMailboxClaim, cloudInstallId, CLOUD_DISPLAY_NAME,
-  LeaseUnavailableError, leaseBlockReason, DEFAULT_STALE_AFTER_MS, type OrganizerWriteAuthority,
+  LeaseUnavailableError, leaseBlockReason, leaseStoodDown, DEFAULT_STALE_AFTER_MS,
+  type OrganizerWriteAuthority,
   type LeaseSelf, type LeasePeekCapableAdapter,
 } from "./lease.js";
 // The APPEND-less read of `ohmail/_meta` — see `LeasePeekCapableAdapter`. A reader LOOKS at the
@@ -1532,6 +1533,11 @@ export async function startWorkerWithLock(
         // `MIN_PERMIT_TTL_MS` refuses. Every write in the cycle that follows asks this receipt.
         nonce.leasePermit = await acquireLeasePermit({
           ...leaseArgs, adopt: { outcome, at: gateAskedAt },
+          /* THE NONCE THE PERMIT RENEWS IS THIS RUNTIME'S NONCE. A re-read past the deadline or
+             the write count writes a new claim and expunges the old one; holding the old nonce
+             made the next cycle's gate read this worker's own claim as a restored clone, stand it
+             down, and leave a live claim with nobody behind it. See `LeasePermitInput.onRenew`. */
+          onRenew: ({ nonce: renewed }) => { nonce.leaseNonce = renewed; },
         });
         // ONE-SHOT. The authorization bought this becoming and no other; leaving it set would
         // let a lapse-then-resubscribe seize the mailbox back months later from whatever a human
@@ -3292,7 +3298,17 @@ export async function startWorkerWithLock(
            * layer down, where a partial folder read is ACTED on: that is a read deciding what it knows,
            * this is a write claiming standing it failed to establish. Skipping costs a delay — the
            * records remain, and the next pass drains them once the lease reads again. */
-          const cycleMayStillWrite = !(cycleError instanceof LeaderFencedError)
+          /* ── AND THE PERMIT'S OWN LAST VERDICT, WHICH NO CLASS IN THIS LIST NAMES ─────────
+           *
+           * A stand-down mid-cycle revokes the permit. `fileOne`, `reconcileFlags` and
+           * `folderOpsPass` swallow everything but a fence, so it reaches here as NO ERROR and
+           * this cycle would go on to acknowledge and expunge records in a mailbox another
+           * install now organizes. Asked of the permit, both shapes are one fact. ORGANIZER only:
+           * a reader holds no permit and its own drive below must not be refused by a receipt
+           * left over from before its demotion. */
+          const permitStoodDown = organize && leaseStoodDown(rt.leasePermit);
+          const cycleMayStillWrite = !permitStoodDown
+            && !(cycleError instanceof LeaderFencedError)
             && !(cycleError instanceof LeaseUnavailableError)
             // ── AND A SHARED-DATABASE FAULT IS NOT SOMETHING TO DRAIN THROUGH EITHER ─────────
             //
@@ -3421,7 +3437,11 @@ export async function startWorkerWithLock(
            * by a live desktop claim appended a profile document to `ohmail/_meta` on the next cycle —
            * two installs writing settings into one `_meta`, the co-tenancy hazard, and a reader mirrors,
            * marks read and sends; publishing configuration is an organizer's act. */
-          if (rt.role === "organizer") await rt.profile.onOrganize();
+          /* …and not on a permit that stood down mid-cycle. The publish is an append and an
+             expunge in `ohmail/_meta`, and it is reached on exactly the shape the role check
+             cannot see: a refusal swallowed inside the cycle leaves `cycleError` null, so this
+             line runs with `rt.role` still holding the answer the gate gave before the drain. */
+          if (rt.role === "organizer" && !permitStoodDown) await rt.profile.onOrganize();
           // The first stamp does not wait for the rest of the rotation. The batched write below stamps
           // everything that synced this pass and is still the steady-state writer, but this loop is
           // SERIAL, so a mailbox's very first `last_sync_at` waited on every other's bounded batch — and

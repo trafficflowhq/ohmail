@@ -112,7 +112,7 @@ import { runSyncCycle, type SyncDeps } from "@trafficflow/worker/sync";
 // window, at exactly the moment somebody has chosen to leave.
 import {
   readMailboxLease, acquireLeasePermit, releaseMailboxClaim, LeaseUnavailableError,
-  DEFAULT_STALE_AFTER_MS, type OrganizerWriteAuthority,
+  leaseStoodDown, DEFAULT_STALE_AFTER_MS, type OrganizerWriteAuthority,
 } from "@trafficflow/worker/lease";
 // The APPEND-LESS read, straight from core: an install that has not been asked to organize must
 // still be able to say who does, and `runLeaseGate` cannot answer that question without taking
@@ -3915,7 +3915,19 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           // self-stand-down `MIN_PERMIT_TTL_MS` refuses.
           // No TTL knob: one value for the fleet (`DEFAULT_PERMIT_TTL_MS`). A configurable window
           // beside a fixed believability cutoff is silently the smaller of the two.
-          leasePermit = await acquireLeasePermit({ ...leaseArgs, adopt: { outcome, at: gateAskedAt }, now });
+          leasePermit = await acquireLeasePermit({
+            ...leaseArgs, adopt: { outcome, at: gateAskedAt }, now,
+            /* ── A RENEWAL THIS INSTALL PERFORMED IS THIS INSTALL'S CLAIM ─────────────────
+             *
+             * The permit re-reads past its deadline or its write count, and a re-read RENEWS:
+             * new nonce in the folder, the old copy expunged. Held here, the old nonce made the
+             * next gate read our own claim as a restored clone — this install stood ITSELF down
+             * and left a live claim nobody was behind, refusing the next install for a staleness
+             * window — and made `releaseOwnClaim` address a claim that no longer exists, so
+             * "stop organizing here" released nothing. One writer owns the settled nonce.
+             */
+            onRenew: ({ nonce: renewed, at }) => { leaseNonce = renewed; lastLeaseRenewalAt = at; },
+          });
           // The gate renewed this install's claim with `gateAskedAt` as its heartbeat — the fact
           // the release's lapse bound reads. See `lastLeaseRenewalAt`.
           lastLeaseRenewalAt = gateAskedAt;
@@ -4734,8 +4746,18 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           // read failing (not "another organizer holds it"). This channel appends acks and expunges
           // records, and its standing comes only from the lease, so it must not proceed on an
           // unanswered question; skipping costs a delay, the next pass drains once the lease reads.
-          const cycleMayStillWrite = !(cycleError instanceof LeaseUnavailableError
-            || cycleError instanceof ConnectionReplacedError);
+          /* ── AND THE PERMIT'S OWN LAST VERDICT, WHICH IS NOT A CLASS OF THROW ─────────────
+           *
+           * A stand-down mid-drain revokes the permit, and only ONE of the drain's write sites
+           * lets the refusal out: `fileOne`, `reconcileFlags` and `folderOpsPass` each swallow
+           * everything but a fence, so the ordinary shape of this defect reaches here with
+           * `cycleError` NULL and the pass reporting success. Asked of the permit instead, both
+           * shapes are one fact. Only when this pass was ORGANIZING: a reader holds no permit and
+           * its own channel below must not be refused by a receipt from before its demotion. */
+          const permitStoodDown = organizing && leaseStoodDown(leasePermit);
+          const cycleMayStillWrite = !permitStoodDown
+            && !(cycleError instanceof LeaseUnavailableError
+              || cycleError instanceof ConnectionReplacedError);
           if (cycleMayStillWrite) try {
             /* ── THE POST-DRAIN WRITES ARE ON THE GATED CONNECTION, AND ARE CHECKED FIRST ────
              *
@@ -4799,7 +4821,12 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
              itself resolves its adapter through the same getter, so the check is what stands
              between it and a replaced connection. */
           assertSameConnection(gen, conn);
-          if (organizing) await profileSync.onOrganize(conn);
+          /* AND NOT IF THE PERMIT STOOD DOWN — the same fact the request channel above asks. The
+             publish is an append and an expunge in `ohmail/_meta`, and it is reached on exactly
+             the shape that hides the stand-down: a refusal swallowed inside the cycle leaves
+             `cycleError` null, so the line above lets this run. `organizing` is the gate's answer
+             from before the drain and says nothing about what happened during it. */
+          if (organizing && !permitStoodDown) await profileSync.onOrganize(conn);
           return cycles;
         });
 
