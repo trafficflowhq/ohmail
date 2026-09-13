@@ -302,15 +302,12 @@ export function makeMetaFolderRef(
       /*
        * THE ONE LIST THIS MODULE ISSUES, AND IT IS THE SERVER'S ARRAY.
        *
-       * The adapter funnels its own LIST sites through one bounded helper; this one is reached
+       * The adapter funnels its LIST sites through one bounded helper, but this one is reached
        * with the RAW client, so it was outside that guarantee — a server naming a million folders
-       * cost a million strings through the resolution below, on every cycle, in a process every
-       * other mailbox shares. Same ceilings, same helper: a count on the response and a length on
-       * each path.
-       *
-       * The COUNT ceilings were here before the clock was: a server may also answer this one
-       * command slowly for ever, which no count sees, so the array is raced against the read's
-       * own budget where the caller entered one.
+       * cost a million strings every cycle, in a process every other mailbox shares. Same helper,
+       * same ceilings: a count on the response and a length on each path, raced against the read's
+       * own budget, since a server may also answer this one command slowly for ever, which no
+       * count sees.
        */
       list: boundListResponse(listed),
       bare: toServerPath(META_FOLDER),
@@ -335,12 +332,11 @@ export function makeMetaFolderRef(
  * THE BUDGET ONE READ OF `ohmail/_meta` SPENDS — entered where the read BEGINS, not where its
  * last segment does.
  *
- * A read of this folder is four server commands: LIST to resolve it, SELECT to open it, STATUS to
- * count it, FETCH to take the window. Only the FETCH carried a clock, so the three in front of it
- * were bounded by nothing at all and the FETCH then started its {@link IMAP_META_DEADLINE_MS}
- * fresh however long they had taken — the constant bounded a quarter of the read and named the
- * whole of it. One object, created here and passed down, is what makes that sentence true; a
- * literal per segment is four budgets composing into a total nobody bounded.
+ * A read of this folder is four server commands: LIST, SELECT, STATUS, FETCH. Only the FETCH
+ * carried a clock, so the three in front were bounded by nothing and the FETCH started its
+ * {@link IMAP_META_DEADLINE_MS} fresh however long they had taken — the constant bounded a quarter
+ * of the read and named the whole of it. One object, created here and passed down, is what makes
+ * that sentence true.
  */
 export function metaReadBudget(now: () => number = Date.now): ImapDeadline {
   return ImapDeadline.in(IMAP_META_DEADLINE_MS, "read_deadline", now);

@@ -331,20 +331,13 @@ export class AwayResponderService {
 
   /**
    * THE NOTICE'S BODY, TYPE-CHECKED AND BOUNDED — the one field on this route whose size a caller
-   * chooses.
-   *
-   * It was type-checked and nothing else. The row is stored once and then placed in an
-   * `OutboundMessage` the worker sends over SMTP to every eligible correspondent for as long as
-   * the responder is on, so the request door's ceiling is a bound on ONE request and not on this
-   * value's life: a single PUT buys unbounded outbound bytes. That is the shape a `door:`
-   * disposition may not be used for, stated in the input-bounds census at the attachment door
-   * that learned it.
-   *
-   * {@link DRAFT_BODY_MAX_BYTES} rather than a number of its own, for the reason that constant's
-   * own docblock gives about the two draft halves: two ceilings on the same kind of value are a
-   * second number to keep true. This is the same kind of value — a plain body this product sends
-   * as mail — and 256 KiB is a tripwire rather than a working part, far past anything a person
-   * types into an away notice.
+   * chooses. It was type-checked and nothing else, yet the row is stored once and then sent over
+   * SMTP to every eligible correspondent for as long as the responder is on, so the request door's
+   * ceiling bounds ONE request and not this value's life: a single PUT would buy unbounded
+   * outbound bytes — the shape a `door:` disposition may not be used for. So {@link
+   * DRAFT_BODY_MAX_BYTES} rather than a number of its own: the same kind of value — a plain body
+   * this product sends as mail — where a second ceiling would be a second number to keep true, and
+   * 256 KiB is a tripwire far past anything a person types into an away notice.
    */
   private validBody(v: unknown): string | null {
     if (v === undefined || v === null) return null;

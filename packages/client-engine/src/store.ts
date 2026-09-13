@@ -586,32 +586,14 @@ export abstract class BaseMirrorStore implements MirrorStore {
   }
 
   /**
-   * A MAILBOX THE SERVER NO LONGER HOLDS TAKES EVERYTHING KEYED BY IT — the receipt's cascade.
-   *
-   * The server emits ONE `mailbox` delete for a removal (`change-log.ts`, the `"mailbox"` member
-   * of `EntityType`): a per-message receipt for a mailbox tens of thousands deep is the same
-   * sentence written tens of thousands of times, and a client that only tombstoned the mailbox
-   * row itself would go on rendering its mail. Measured before this existed: a removal reported
-   * success while the window still held the removed mailbox's messages, their cached bodies and
-   * its unsent draft, and went on counting them.
-   *
-   * STRUCTURAL, NOT A LIST OF TYPES. Pass one takes every record whose entity names the removed
-   * mailbox in `mailboxId` — messages, drafts, folders, and anything later that is keyed the same
-   * way — so a new mailbox-keyed entity is covered by construction rather than by a list somebody
-   * has to remember. Pass two takes what hangs off those messages: a record whose entity names
-   * one in `messageId`, or whose own id IS one (`message_body` and `message_state` are keyed that
-   * way). Threads are deliberately NOT reachable by either: they are account-scoped and one
-   * conversation can hold a sibling mailbox's messages, which is exactly why the server's own
-   * wipe leaves them standing.
-   *
-   * TOMBSTONES, in the page's own dirty set, so the removal and the cursor become durable in ONE
-   * flush and no kill can leave a cursor past a removal the mirror has not applied. A record that
-   * came from the server keeps the HIGHER of its own seq and the receipt's — a removal is
-   * terminal, so no page arriving out of order may resurrect the mail — and a client-local record
-   * (seq 0, a cached body) stays at 0, which is where every client-local row lives.
-   *
-   * Two passes over the mirror, once per removal. That is the cost of not making every reader
-   * carry a mailbox predicate for the rest of the session.
+   * A MAILBOX THE SERVER NO LONGER HOLDS TAKES EVERYTHING KEYED BY IT — the receipt's cascade, on
+   * ONE `mailbox` delete. STRUCTURAL, not a list of types: pass one takes every record naming the
+   * removed mailbox in `mailboxId`; pass two takes what hangs off those messages (a `messageId`,
+   * or an id that IS one — `message_body`, `message_state`). Threads are deliberately NOT reachable
+   * — account-scoped, and one conversation can hold a sibling mailbox's messages, so the server's
+   * own wipe leaves them standing too. Tombstoned in the page's own dirty set so removal and cursor
+   * turn durable in ONE flush; a record keeps the HIGHER of its seq and the receipt's, and a
+   * client-local row (seq 0) stays at 0.
    */
   private cascadeMailboxRemoval(applied: MirrorRecord[]): MirrorRecord[] {
     /* ONLY A RECEIPT THAT WON THE SEQ GUARD — `applied` is `applyToRecords`' own dirty set, so a

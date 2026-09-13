@@ -2,19 +2,13 @@ import { ServiceError } from "./errors.js";
 
 /**
  * Ceilings on what STORED STATE may make a request read — the database twin of the adapter's
- * `imap-bounds.ts` and of the request door's input bounds, and the axis neither of them can see.
- *
- * The input bounds ask how large a REQUEST may be; they are answered by a scalar path parameter
- * and have nothing left to bound. The IMAP bounds ask how much a SERVER may send. Between them
- * sits a third kind: a request carrying one id, reading a collection this account has been filling
- * for a year, with no cardinality ceiling anywhere on the way. That is `FR-ACCUMULATED-STATE-
- * UNBOUNDED`, and its members are invisible to both censuses by construction.
- *
- * The rule is the adapter's, restated for a database: bound the READ, not the RESULT. A `LIMIT`
- * applied after the driver has transferred the rows is documentation, and a `LIMIT` with no
- * refusal is worse than none — it answers a COUNT question with an arbitrary subset and calls it
- * a number. So every bound here reads one row PAST its ceiling and refuses when it arrives: the
- * caller gets a complete answer or a stated refusal, never a quiet partial one.
+ * `imap-bounds.ts` and of the request door's input bounds, the axis neither can see: the input
+ * bounds bound a REQUEST's size and the IMAP bounds what a SERVER sends, but a request carrying one
+ * id can read a collection this account has filled for a year with no cardinality ceiling — an
+ * `FR-ACCUMULATED-STATE-
+ * UNBOUNDED` read, invisible to both censuses. The rule is the adapter's, for a database: bound the
+ * READ, not the RESULT, so every bound here reads one row PAST its ceiling and refuses when it
+ * arrives — a `LIMIT` with no refusal only answers a COUNT with an arbitrary subset, not a stated one.
  */
 
 /**
@@ -53,40 +47,24 @@ export class ReadBoundExceeded extends ServiceError {
 /**
  * FOLDERS ONE MIRRORED SUBTREE MAY COVER.
  *
- * The number is the adapter's, on purpose and by citation rather than by import: the mirror is
- * filled from LIST, `IMAP_LIST_MAX_FOLDERS` is 10 000, and its own reading is "two orders of
- * magnitude above the largest real mailbox measured (~137 folders) and far below the worker's
- * memory budget — it catches a runaway, not an unusual filer". A subtree is a SUBSET of one
- * mailbox's inventory, so the same number is a ceiling with room to spare on a read that asks for
- * less. `read-bounds-agree.test.ts` asserts the two have not drifted, which is what makes the
- * restatement safe; importing it here would pull the IMAP adapter into every request path.
- *
- * Not imported and not derived downward: a ceiling that says "a tenth of the adapter's" would be a
- * number nobody measured wearing a citation's clothes.
+ * The number is the adapter's, by citation rather than import: the mirror is filled from LIST,
+ * `IMAP_LIST_MAX_FOLDERS` is 10 000 — two orders of magnitude above the largest real mailbox and
+ * far below the worker's memory budget, so it catches a runaway, not an unusual filer. A subtree
+ * is a SUBSET of one mailbox's inventory, so the same number has room to spare here.
+ * `read-bounds-agree.test.ts` asserts the two have not drifted, which is what makes the
+ * restatement safe; importing it would pull the IMAP adapter into every request path.
  */
 export const FOLDER_INVENTORY_MAX = 10_000;
 
 /**
  * MAILBOXES ONE ACCOUNT-WIDE READ MAY COVER — a DECLARED SANITY CEILING, and the declaration is
- * the honest part.
- *
- * The site this exists for is `requestPull`'s re-stamp: a `select … for update` of every CONNECTED
- * mailbox of one account, no `LIMIT`, whose ids then become an `IN` list. The self-host imposes no
- * mailbox count of any kind, so the collection is accumulated state with nothing above it.
- *
- * **The reading is OWED, and this number is not it.** What must be measured is the largest real
- * per-account mailbox count, and whether a deployment cap should exist at all is a product
- * decision nobody has taken. Until then this is the shape `IMAP_LIST_MAX_FOLDERS` uses for the same
- * reason: a bound set so far above any honest account that it cannot fire on real work, so it
- * catches a runaway without pretending to be a product limit. Each element here costs a stored
- * credential and a mail server that answered, so a thousand of them is a thousand successful IMAP
- * connects rather than anything a request can ask for.
- *
- * It REFUSES BY NAME rather than truncating, and the `IN` stays: dropping it and re-deriving the
- * account+status predicate inside the UPDATE is not equivalent under concurrency — `for update`
- * does not lock against INSERTs, so a mailbox connected between the two statements would be
- * stamped without being reported. A silent truncation would be the same defect with a ceiling's
- * name on it.
+ * the honest part. The site is `requestPull`'s re-stamp: a `select … for update` of every
+ * CONNECTED mailbox of one account, no `LIMIT`, whose ids become an `IN` list; the self-host caps
+ * no mailbox count, so the collection is accumulated state. The reading is OWED and this number is
+ * not it, so — like `IMAP_LIST_MAX_FOLDERS` — it is set far above any honest account, to catch a
+ * runaway without posing as a product limit. It REFUSES BY NAME rather than truncating, and the
+ * `IN` stays: `for update` does not lock against INSERTs, so re-deriving the predicate inside the
+ * UPDATE would stamp a mailbox connected mid-statement without reporting it — a silent truncation.
  */
 export const ACCOUNT_MAILBOXES_MAX_READ = 1_000;
 

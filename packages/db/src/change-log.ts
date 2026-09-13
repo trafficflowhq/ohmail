@@ -81,22 +81,14 @@ export type EntityType =
    */
   | "settings"
   /**
-   * A MAILBOX THIS ACCOUNT NO LONGER HOLDS — emitted with op `"delete"` and NOTHING ELSE, which
-   * is why it needs no materializer: `SyncService.getChanges` short-circuits a delete into the
-   * tombstone bucket before it materializes anything. The entity id is the MAILBOX's id and the
-   * row is the whole receipt; a client cascades its own dependents from it, exactly as
-   * `MessageService.delete`'s convention says.
-   *
-   * ONE ROW FOR A WHOLE MAILBOX, and that is the point. A mirror learns only from this log, so a
-   * removal that deletes the mail without appending here leaves every client rendering the mailbox
-   * it removed — messages, cached bodies, unsent drafts and the received count. Per-message
-   * receipts say the same thing in as many rows as the mailbox has mail.
-   *
-   * NOT WRITTEN BY AN ORDINARY DISCONNECT. `MailboxService.delete` without `erase` is a SOFT
-   * delete: the credentials go and the mail stays, deliberately, so a client that dropped its rows
-   * on it would hide history the server still holds. Only the two acts that actually take a
-   * mailbox's mail off the store emit it — the standalone install's `wipeLocalMirror` and the
-   * hosted erasure's `sweepMailboxData`.
+   * A MAILBOX THIS ACCOUNT NO LONGER HOLDS — emitted with op `"delete"` and nothing else, so it
+   * needs no materializer (`getChanges` short-circuits a delete into the tombstone bucket). The
+   * entity id is the MAILBOX's id and the row is the whole receipt; a client cascades its own
+   * dependents from it. ONE ROW FOR A WHOLE MAILBOX: a mirror learns only from this log, so a
+   * removal that appends nothing here leaves every client rendering the mailbox it removed. NOT
+   * written by an ordinary disconnect — a soft `MailboxService.delete` keeps the mail; only the
+   * two acts that take a mailbox's mail off the store emit it (`wipeLocalMirror`,
+   * `sweepMailboxData`).
    */
   | "mailbox";
 

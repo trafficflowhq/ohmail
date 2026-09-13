@@ -572,23 +572,15 @@ export class WorkflowExecutor {
           });
           continue;
         }
-        /* ── THE RECORDER, AND IT IS DELIBERATELY NOT A CEILING ───────────────────────────
-         *
-         * A run has no per-step wall clock, and it cannot honestly have one yet: a deadline's
-         * number would be a guess, and a guessed ceiling on a step that calls a model is a
-         * refusal fired on honest work. What is missing first is the READING. This records it —
-         * the wall time one applied step cost, the drafting call included, on the row that
-         * already exists per `(runId, stepIndex)`.
-         *
-         * Started HERE, after the idempotency check and before the sensitivity reads: a step
-         * that was already applied cost nothing this pass and must not report a duration, and
-         * everything from this line on is what a deadline would have to cover — the two
-         * ownership reads, `prepare` with its model call and its ledger write, and the step
-         * transaction.
-         *
-         * `Date.now()` and never `now`: `now` is the PASS's stamp, frozen for every row this run
-         * writes, so a duration measured against it would be zero for every step and the
-         * recorder would be a column of zeroes nobody could tell from a fast step. */
+        /* ── THE RECORDER, AND IT IS DELIBERATELY NOT A CEILING ──
+         * A run has no per-step wall clock, and cannot honestly have one yet: a guessed deadline
+         * on a step that calls a model is a refusal fired on honest work. What is missing first is
+         * the READING, and this records it — the wall time one applied step cost, the drafting
+         * call included, on the row that already exists per `(runId, stepIndex)`. Started HERE,
+         * after the idempotency check (an already-applied step cost nothing this pass and must not
+         * report a duration) and before everything a deadline would have to cover. `Date.now()`
+         * and never `now`: `now` is the PASS's frozen stamp, so a duration measured against it
+         * would be zero for every step. */
         const stepStartedAtMs = Date.now();
         // (ii) Sensitivity, THIRD layer. The pre-flight refused the whole run and (iv) re-checks at write
         //      time; this one exists because prepare moved the model and the money EARLIER than
