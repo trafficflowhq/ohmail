@@ -2617,12 +2617,15 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
        */
       let outageSince: Date | null = null;
       /**
-       * WHICH OBSERVATION MARKED IT DEAD. Two producers, and they are worth telling apart in a
-       * log because only one of them is fast: the adapter's own `close`/`error` event (seconds),
-       * and the duration bound over failing cycles (the arm that works for a connection whose
-       * death produced no event at all).
+       * WHICH OBSERVATION MARKED IT DEAD, and they are worth telling apart in a log because they
+       * are not equally fast and they are not about the same thing: the adapter's own
+       * `close`/`error` event (seconds), the duration bound over failing cycles (the arm that
+       * works for a connection whose death produced no event at all), the NOOP heartbeat, and
+       * `credential` — no socket was ever opened, because the stored password could not be used.
+       * The last one names the launch rather than a connection, and saying `event` there would
+       * tell a reader a socket reported its own death when none was dialled.
        */
-      let connectionDeadBy: "event" | "bound" | "heartbeat" | null = null;
+      let connectionDeadBy: "event" | "bound" | "heartbeat" | "credential" | null = null;
       /**
        * Whether this runtime has already reported that its connection cannot be probed — once per
        * attachment, since it is a property of the adapter. An adapter with no
@@ -2750,7 +2753,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         credentialBlock = { state, confirmed: false };
         if (connectionDeadSince === null) {
           connectionDeadSince = now();
-          connectionDeadBy = "event";
+          connectionDeadBy = "credential";
         }
         outageSince ??= connectionDeadSince;
         log("mailbox_login_unavailable", {
@@ -5352,6 +5355,12 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
             return;
           }
           if (stopped) return;
+          /* AND THE HEARTBEAT THIS LAUNCH NEVER ARMED. `start()` returned before `armHeartbeat()`
+             when the password could not be used, so a mailbox healed here would run with two death
+             detectors where every other one has three — and the missing one is the half-open link,
+             which neither of the others describes. Reached at most once: the guard above is false
+             from the moment the read opens. */
+          armHeartbeat();
         }
           /* The re-dial joins `tail` so `detach()` waits FOR it, but is not put INTO it. It cannot
            * queue behind `tail` — `dialAndGate` takes the queue twice, so a queued re-dial waits
