@@ -28,7 +28,7 @@ import {
 } from "../api-client";
 import { displayAddress } from "./idn";
 /* The one place any surface asks whether a phone holds the mailbox — see `reader-holder.ts`. */
-import { PHONE_HOLDER_WHY_KEY, phoneHolder, phoneHolderKey } from "./reader-holder";
+import { PHONE_HOLDER_WHY_KEY, holderSentence, phoneHolder } from "./reader-holder";
 
 /** How often an unanswered mailbox is re-asked, at most. The connect case rides the first beat. */
 export const PROFILE_IMPORT_RECHECK_MS = 5 * 60 * 1000;
@@ -416,7 +416,16 @@ export function ProfileImportCard({
       {phone
         ? (
           <p className="pfi-meta" title={tm(PHONE_HOLDER_WHY_KEY)}>
-            {tm(phoneHolderKey(phone, "short"))}
+            {/* THE TABLE'S ONE DOOR, and the verb is `none` — deliberately. This card reads a
+                SAVED PROFILE, not a live claim: there is no mailbox to take over from here, and a
+                sentence offering a press this surface does not have is the issue-#5 defect
+                pointing the other way. The short voice drops the clause into the title, which is
+                the bargain `PHONE_HOLDER_WHY_KEY` exists for. */}
+            {tm(holderSentence({
+              who: { kind: producer.kind, name: null },
+              verb: "none",
+              voice: "short",
+            }).key)}
           </p>
         )
         : null}

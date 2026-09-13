@@ -29,7 +29,7 @@ import {
 } from "./onboarding";
 import type { FirstRunHost, FirstRunMailboxInput, FirstRunProbeOk } from "./first-run-host";
 import { pullEtaMs, pullRate, pullRemaining, pullSampleStep, type PullSample } from "./pull-rate";
-import { holderVerdict, phoneHolder, phoneHolderKey, readerHolder } from "./reader-holder";
+import { type HolderWho, holderSentence, holderVerdict, readerHolder } from "./reader-holder";
 import "./first-run.css";
 
 /**
@@ -713,16 +713,29 @@ export function FirstRun({
    * diverge; the holder's NAME stays on the label.
    */
   const dated = Boolean(organizedSince);
+  /* A PHONE IS THE THIRD HOLDER KIND and neither row had an arm for it, so a phone took the LOCAL
+     sentence — "This computer reads the mailbox", about a phone, promising a schedule a phone does
+     not keep. The derivation that fixed it lives inside `holderSentence` now, with the six other
+     arms it used to stand beside. */
   /**
-   * AND IS THE HOLDER A PHONE — the third fact, asked once for both reader rows. `mobile` is the
-   * third `OrganizerKind` and neither row had an arm for it, so a phone took the LOCAL sentence:
-   * "This computer reads the mailbox", about a phone, promising a schedule a phone does not
-   * keep. Both of its sentences come from `phoneHolderKey` rather than from here.
+   * THE HOLDER SENTENCE THIS SCREEN RENDERS — the table, asked once, for both reader rows.
+   *
+   * The rows used to carry a seven-arm ladder each, spelled twice in this file and twice more in
+   * the desktop pane and the rail. `holderSentence` holds it now, the phone's two sentences
+   * included; this closes over `tm` so a row is one call.
+   *
+   * THE VERB IS `none`, AND THAT IS NOT AN OVERSIGHT. Issue #5 is about surfaces that name a
+   * holder and leave a person with no way out; this screen is the opposite case — the way out is
+   * the CHOICE rendered directly under this row, in its own words ("Organize here instead" /
+   * "Read only"), and a sentence telling somebody to go and press something else would send them
+   * away from the control they are looking at. The clause is carried where the press has to be
+   * FOUND — the desktop's mailbox row and the rail — and withheld where it is already on screen.
+   * Caught by this file's three existing controls, which asserted the plain sentence here.
    */
-  const phone = phoneHolder(
-    facts.mailbox?.organizedBy,
-    facts.mailbox?.organizerState === "stopped",
-  );
+  const tmSaid = (who: HolderWho): string => {
+    const said = holderSentence({ who, verb: "none" });
+    return tm(said.key, { ...said.params, name: said.params.name ?? tm("readerHolderUnknown") });
+  };
   /**
    * IS THIS INSTALL THE ORGANIZER — the one fact the summary is allowed to report work on.
    *
@@ -1065,27 +1078,19 @@ export function FirstRun({
                   ? tm("readerNobodyReads")
                   /* A PHONE ABOVE EVERY ARM BELOW IT, stopped one included: its two sentences
                      already carry the state, `readerStopped` names no phone, and every dated arm
-                     promises a schedule a phone does not keep. `phoneHolderKey` picks which. */
-                  : phone
-                    ? tm(phoneHolderKey(phone, "full"), { name: holderName(facts) ?? "" })
-                    : facts.mailbox?.organizerState === "stopped"
-                    /* NO AGE, and the prop that carried one is gone with it. `readerStopped` took
-                       a `{when}` and was handed `organizedBy.since` — which is when that install
-                       BECAME the organizer, not when it was last seen; the heartbeat is
-                       deliberately not persisted. */
-                      ? tm("readerStopped", { name: holderName(facts) ?? tm("readerHolderUnknown") })
-                      /* UNDATED BEFORE THE THREE DATED ONES, and ahead of the kind: every arm
-                         below opens with the date, so with no date there is nothing for any of
-                         them to open with. */
-                      : !dated
-                        ? tm("readerReadsOnly")
-                        : held === "unnamed"
-                          ? tm("readerSinceUnknown", { since: organizedSince ?? "" })
-                          : facts.mailbox?.organizedBy?.kind === "cloud"
-                            ? tm("readerSinceCloud", { since: organizedSince ?? "" })
-                            : tm("readerSinceLocal", {
-                              since: organizedSince ?? "", name: holderName(facts)!,
-                            })}
+                     promises a schedule a phone does not keep. `holderSentence` picks which. */
+                  /* ── ONE TABLE, AND IT SAYS WHAT TO PRESS (issue #5) ────────────────────
+                     The same seven-arm ladder the desktop pane and the rail each spelled for
+                     themselves; `holderSentence` is now the one place it lives. The verb here is
+                     `start` — the choice under this row, not a takeover button — so the sentence
+                     promises the press this screen actually offers. */
+                  : tmSaid({
+                    kind: facts.mailbox?.organizedBy?.kind ?? (held === "unnamed" ? "unknown" : null),
+                    name: holderName(facts),
+                    stopped: facts.mailbox?.organizerState === "stopped",
+                    since: dated ? organizedSince ?? "" : null,
+                    shown: organizedSince ?? "",
+                  })}
               />
               <SettingsChoice
                 name={`${ids}-elsewhere`} ariaLabel={t("elsewhereTitle")} value={elsewhereChoice}
@@ -1404,19 +1409,16 @@ export function FirstRun({
                       ? tm("readerNobodyReads")
                       /* THE SAME PHONE ARM AS THE BANNER, in the same position and from the same
                          derivation: the two rows may not describe one holder differently. */
-                      : phone
-                        ? tm(phoneHolderKey(phone, "full"), { name: holderName(facts) ?? "" })
-                        /* THE SAME UNDATED ARM AS THE BANNER. This row has no stopped arm to sit
-                           under, so it is third. */
-                        : !dated
-                          ? tm("readerReadsOnly")
-                          : held === "unnamed"
-                            ? tm("readerSinceUnknown", { since: organizedSince ?? "" })
-                            : facts.mailbox?.organizedBy?.kind === "cloud"
-                              ? tm("readerSinceCloud", { since: organizedSince ?? "" })
-                              : tm("readerSinceLocal", {
-                                since: organizedSince ?? "", name: holderName(facts)!,
-                              })}
+                      /* THE SAME TABLE AS THE BANNER, from the same derivation: the two rows may
+                         not describe one holder differently, which is why neither spells a
+                         sentence of its own any more. */
+                      : tmSaid({
+                        kind: facts.mailbox?.organizedBy?.kind ?? (held === "unnamed" ? "unknown" : null),
+                        name: holderName(facts),
+                        stopped: facts.mailbox?.organizerState === "stopped",
+                        since: dated ? organizedSince ?? "" : null,
+                    shown: organizedSince ?? "",
+                      })}
                   />
                   <SettingsRow label={t("doneReaderClaim")} description={t("doneReaderClaimWhy")} />
                 </>

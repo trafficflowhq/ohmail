@@ -175,3 +175,12 @@ export const UI_KEYS = {
 export function searchSortKey(owner: string | null): string {
   return `ohmail.ui.search.sort.${owner ?? "local"}`;
 }
+
+/*
+ * `ohmail.ui.readingAlong.<owner>` — which mailboxes this install is reading along on purpose.
+ *
+ * Named here so everything this app stores stays greppable from one prefix, and DECLARED in
+ * `reading-along.ts` (`READING_ALONG_PREFIX`, `readingAlongKey`) rather than here: that module
+ * owns what the value means, sign-out sweeps the prefix, and a key spelled in two files is two
+ * spellings waiting to disagree. Importing it back here would close a cycle for nothing.
+ */

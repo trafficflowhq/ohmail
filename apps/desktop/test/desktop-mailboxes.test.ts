@@ -199,6 +199,19 @@ interface Host {
 }
 const host = globalThis as unknown as Host;
 
+/**
+ * THE QUEUED NOTE, AS THE PANE RENDERS IT — the catalogue string is a template now.
+ *
+ * `organizeHereQueued` gained `{name}` when it stopped promising a take-over this door does not
+ * perform: it says the holder KEEPS the mailbox if it is still organizing, which is what the same
+ * outcome's command-line wording has always said, and a sentence that names a consequence has to
+ * name whose. The cases below assert the rendered sentence rather than the raw key, so the
+ * template can never pass for the text.
+ */
+const queuedNote = (name: string): string =>
+  (messages as unknown as { mailboxes: Record<string, string> })
+    .mailboxes.organizeHereQueued!.replace("{name}", name);
+
 const MAILBOX: MailboxFacts = {
   id: "mbx-1",
   address: "someone@example.test",
@@ -1613,13 +1626,13 @@ describe("a standing stop request is on the row, and the pane's notes end when t
     /* The opener is withheld while its well is open, so the exact label finds the confirm. */
     await act(async () => { buttonExactly(el, "Organize here")!.click(); });
     expect(el.textContent ?? "", "the press left no note while the row has not yet answered")
-      .toContain(mailboxCopy.organizeHereQueued!);
+      .toContain(queuedNote("another install"));
 
     // The gate's next pass promotes: the row says organizer, and the note's promise is kept.
     FACTS = [ORGANIZING];
     await repaint("local");
     expect(el.textContent ?? "", "the 'Asked for' note outlived the takeover it was about")
-      .not.toContain(mailboxCopy.organizeHereQueued!);
+      .not.toContain(queuedNote("another install"));
     expect(el.textContent ?? "").toContain(mailboxCopy.stateOrganizingHere!);
   });
 
@@ -1706,7 +1719,22 @@ describe("a standing stop request is on the row, and the pane's notes end when t
 describe("the reader row's three states, and the one that had no holder at all", () => {
   const mailboxCopy = (messages as unknown as { mailboxes: Record<string, string> }).mailboxes;
   /** The sentence every "since" line ends with — the half that must not survive state (a). */
-  const READS_MAILBOX = mailboxCopy.readerSinceUnknown!.replace("Since {since}. ", "");
+  /**
+   * THE READS CLAUSE, COMMON TO BOTH FORMS.
+   *
+   * It used to be `readerSinceUnknown` minus its date clause, which was the whole of what a dated
+   * sentence said after the date. A holder sentence now ENDS with what to press (issue #5), so the
+   * two forms share only their opening and a constant taken from either one stops being a
+   * substring of the other — a negative built on it would have gone on passing while saying
+   * nothing. Taken from the plain key and cut at the clause boundary, so it is exactly the part
+   * every form still carries.
+   */
+  const READS_MAILBOX = mailboxCopy.readerReadsOnly!.replace(
+    "; it moves nothing and screens nothing.", "",
+  );
+  /** …and the whole sentence a NAMED holder's dated row renders, press clause included. */
+  const READS_MAILBOX_HOW = mailboxCopy.readerSinceLocalHow!
+    .replace("Since {since} · {name}. ", "");
   /** How every dated sentence on this pane opens. Absent from both holder-less states. */
   const SINCE = "Since ";
 
@@ -1785,7 +1813,9 @@ describe("the reader row's three states, and the one that had no holder at all",
     }];
     const said = (await render("local")).textContent ?? "";
     expect(said).toContain(mailboxCopy.readerLabel!.replace("{name}", "omarchy"));
-    expect(said).toContain(READS_MAILBOX);
+    /* The WHOLE sentence, clause included: a named holder's row is exactly the row issue #5 is
+       about, so "it still says it reads the mailbox" is no longer the whole assertion. */
+    expect(said).toContain(READS_MAILBOX_HOW);
     expect(said).not.toContain(mailboxCopy.readerNobodyReads!);
   });
 
@@ -2317,7 +2347,7 @@ describe("the pane tells the truth about the outage, the holder and the standing
     await act(async () => { buttonSaying(el, "Organize here")!.click(); });
     await act(async () => { buttonExactly(el, "Organize here")!.click(); });
     expect(el.textContent ?? "", "the takeover press left no note").toContain(
-      mailboxCopy.organizeHereQueued!,
+      queuedNote("another install"),
     );
 
     // The gate promotes: the note's promise is kept and it ends.
@@ -2327,7 +2357,7 @@ describe("the pane tells the truth about the outage, the holder and the standing
       organizeConsentedAt: "2026-08-01T09:00:00.000Z",
     }];
     await repaint("local");
-    expect(el.textContent ?? "").not.toContain(mailboxCopy.organizeHereQueued!);
+    expect(el.textContent ?? "").not.toContain(queuedNote("another install"));
 
     // ── AND NOW THE STOP, which is a NEWER press about the same mailbox.
     bridgeReply = () => new Response(JSON.stringify({ outcome: "requested" }), {
@@ -2341,7 +2371,7 @@ describe("the pane tells the truth about the outage, the holder and the standing
     await repaint("local");
     const done = el.textContent ?? "";
     expect(done, "a note promising a takeover 'within a minute' came back over a stop that undid it")
-      .not.toContain(mailboxCopy.organizeHereQueued!);
+      .not.toContain(queuedNote("another install"));
     expect(buttonSaying(el, "Organize here"),
       "the stale takeover note hid the only way back onto the mailbox").not.toBeNull();
   });
@@ -2371,7 +2401,7 @@ describe("the pane tells the truth about the outage, the holder and the standing
     /* THE NAME'S HALF ONLY: `dayStamp` renders in the app's own format register, so pinning the
        whole sentence would test the formatter. The clause AFTER the date is the one this case is
        about, and it opened with " · ." when the name was empty. */
-    const named = mailboxCopy.readerSinceLocal!;
+    const named = mailboxCopy.readerSinceLocalHow!;
     expect(said, "the date line ended mid-sentence where the name should be")
       .toContain(named.slice(named.indexOf("· {name}"))
         .replace("{name}", mailboxCopy.readerHolderUnknown!));
@@ -2513,7 +2543,7 @@ describe("the pane tells the truth about the outage, the holder and the standing
     const el = await render("local");
     await act(async () => { buttonSaying(el, "Organize here")!.click(); });
     await act(async () => { buttonExactly(el, "Organize here")!.click(); });
-    expect(el.textContent ?? "").toContain(mailboxCopy.organizeHereQueued!);
+    expect(el.textContent ?? "").toContain(queuedNote("another install"));
 
     /* No press here: the row simply comes back with a release nobody at this window made. */
     FACTS = [{
@@ -2526,7 +2556,7 @@ describe("the pane tells the truth about the outage, the holder and the standing
     }];
     await repaint("local");
     expect(el.textContent ?? "", "a takeover promise outlived a release made elsewhere")
-      .not.toContain(mailboxCopy.organizeHereQueued!);
+      .not.toContain(queuedNote("another install"));
     expect(buttonSaying(el, "Organize here"),
       "the superseded note kept the way back hidden").not.toBeNull();
   });
@@ -3306,7 +3336,7 @@ describe("the compact card — the role chip, its description, the quiet verb an
     expect(c.label).toBe(mailboxCopy.readerLabel!.replace("{name}", "omarchy"));
     /* The clause after the date, as the blank-holder case reads it: the date itself is the
        formatter's and is not pinned here. */
-    const named = mailboxCopy.readerSinceLocal!;
+    const named = mailboxCopy.readerSinceLocalHow!;
     expect(c.description).toContain(named.slice(named.indexOf("· {name}")).replace("{name}", "omarchy"));
     expect(buttonExactly(el, mailboxCopy.organizeHereInstead!)).not.toBeNull();
     expect(buttonExactly(el, mailboxCopy.stopOrganizingHandBack!),
@@ -3451,5 +3481,146 @@ describe("the compact card — the role chip, its description, the quiet verb an
       .toBe(mailboxCopy.chipStopping!);
     // And it says what the chip says — the two are one label.
     expect((live()!.textContent ?? "").trim()).toBe(chip(el).label);
+  });
+});
+
+/* ══════════════════════════════════════════════════════════════════════════════════════════
+   THE REFUSAL SAYS WHO HAS IT AND WHAT TO PRESS — issue #5
+   ══════════════════════════════════════════════════════════════════════════════════════════
+
+   What was reported: another install organizes the mailbox, every surface says so, and none of
+   them says which install or what to do about it. Two halves were missing on this pane.
+
+   ONE — the sentence. Seven of the row's arms named a holder and stopped; only the arm for a
+   mailbox NOBODY organizes told a person what to press. The rows that name a holder are the rows
+   somebody is stuck on.
+
+   TWO — WHERE a refused press is said. It went to `setProblem`, the single `join-error` line
+   ABOVE every row: a sentence about one mailbox rendered where it cannot say which, in a pane
+   that may hold four, carrying the engine's raw reason with no holder and no verb in it.
+
+   And the note under an ACCEPTED press promised what this door does not perform: "This computer
+   takes over on its next pass — the other install becomes a reader". The door AUTHORIZES, it does
+   not seize — the engine reads the lease first and a holder still renewing keeps the mailbox,
+   which is what the same outcome's command-line wording has always said.
+
+   ── THE MUTATIONS THESE CASES WERE WATCHED AGAINST ──────────────────────────────────────────
+    · `holderSentence`'s `how()` returning the plain key      → the sentence cases go red;
+    · the refusal routed back to `setProblem`                  → the row case goes red;
+    · `heldBy` on the `reclaimed` entry replaced by a re-read of the row → the staleness case goes
+      red, which is the one that matters: it is the whole difference between naming the install
+      that was there when the button was pressed and naming whatever the next poll brought back.
+*/
+describe("a reader row says who organizes the mailbox and what to press", () => {
+  const HELD: MailboxFacts = {
+    ...MAILBOX,
+    organizerRole: "reader",
+    organizedBy: { kind: "local", name: "omarchy", since: "2026-08-31T00:00:00.000Z" },
+    organizerState: "held",
+    organizeConsentedAt: "2026-08-01T09:00:00.000Z",
+  } as MailboxFacts;
+
+  beforeEach(() => { try { globalThis.localStorage.clear(); } catch { /* no jar */ } });
+
+  /** Re-render the SAME root, so the pane's per-press state survives while the facts move —
+   *  the shape of the next poll answering. `render()` would mount a fresh pane and discard the
+   *  very state the staleness case is about. The file's other repaint helper is local to its
+   *  own block; this is the same shape, kept to what these cases pass. */
+  async function repaint(door: string): Promise<void> {
+    const { DesktopMailboxes } = await import("../src/DesktopMailboxes.js");
+    await act(async () => {
+      root!.render(
+        h(
+          IntlProvider,
+          { locale: "en", messages: messages as never, timeZone: "UTC" } as never,
+          h(
+            ThemeProvider,
+            { storageKey: "ohmail.theme" } as never,
+            h(ToastHost, null, h(DesktopMailboxes, { door } as never)),
+          ),
+        ),
+      );
+    });
+  }
+
+  it("names the holder AND the press, in one sentence", async () => {
+    FACTS = [HELD];
+    const el = await render("local");
+    const said = el.textContent ?? "";
+    expect(said, "the row named the holder and no way out").toContain(
+      "To organize it here, press Organize here instead",
+    );
+    expect(said).toContain("omarchy");
+  });
+
+  it("a REFUSED press is said on the row, with the holder — not on the pane's one line", async () => {
+    FACTS = [HELD];
+    bridgeReply = () => new Response(
+      JSON.stringify({ error: { message: "the mailbox is organized elsewhere" } }),
+      { status: 409, headers: { "content-type": "application/json" } },
+    );
+    const el = await render("local");
+    await act(async () => { buttonSaying(el, "Organize here instead")!.click(); });
+    await act(async () => { buttonSaying(el, "Organize here")!.click(); });
+
+    const row = el.querySelector(".mbx-org");
+    expect(row, "the organizer block is gone").not.toBeNull();
+    expect(
+      row!.textContent ?? "",
+      "the refusal did not reach the row it is about",
+    ).toContain("the mailbox is organized elsewhere");
+    expect(
+      row!.textContent ?? "",
+      "the refusal named no holder and no press — the defect issue #5 reports",
+    ).toContain("To organize it here, press Organize here instead");
+    /* AND NOT in the pane's one line, which is for failures that name no mailbox. */
+    expect(el.querySelector("p.join-error")).toBeNull();
+  });
+
+  it("the accepted note names the holder CAPTURED AT THE PRESS, not the one a later poll brings", async () => {
+    FACTS = [HELD];
+    bridgeReply = () => new Response(
+      JSON.stringify({ outcome: "authorized" }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    );
+    const el = await render("local");
+    await act(async () => { buttonSaying(el, "Organize here instead")!.click(); });
+    await act(async () => { buttonSaying(el, "Organize here")!.click(); });
+
+    /* ── AND NOW THE POLL MOVES, which is the whole case ────────────────────────────────────
+       Without this the row and the press agree and the note would read the same either way —
+       a setup that settles the mechanism it is meant to watch. A takeover press is answered in
+       milliseconds and the shared poll runs every thirty seconds, so "the holder changed between
+       the press and the next paint" is the ordinary case, not a contrived one. */
+    FACTS = [{
+      ...HELD,
+      organizedBy: { kind: "local", name: "someone else", since: "2026-09-01T00:00:00.000Z" },
+    } as MailboxFacts];
+    await repaint("local");
+
+    const after = el.textContent ?? "";
+    expect(
+      after,
+      "the note was recomposed from the row and now names an install the press was not about",
+    ).toContain(queuedNote("omarchy"));
+    expect(after, "the row did not take the newer holder").toContain("someone else");
+    expect(
+      after,
+      "the note still promises a take-over this door does not perform",
+    ).not.toContain("The other install becomes a reader");
+  });
+
+  it("reading along here is a press, and it never hides a DIFFERENT install", async () => {
+    FACTS = [HELD];
+    const el = await render("local");
+    const along = buttonSaying(el, "Got it");
+    expect(along, "there is no way to say this is on purpose").not.toBeNull();
+    await act(async () => { along!.click(); });
+    expect(el.textContent ?? "", "the press left no trace").toContain("You are reading along");
+    /* The block a person comes here to read is still labelled as the answer's place. */
+    expect(
+      el.querySelector(".mbx-org")?.getAttribute("aria-label"),
+      "the settings block lost the name of what it holds",
+    ).toBe("Who organizes this mailbox");
   });
 });

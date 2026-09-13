@@ -123,3 +123,148 @@ export function phoneHolderKey(phone: PhoneHolder, voice: PhoneHolderVoice): str
 
 /** The clause the short form has no room for, for that line's title. */
 export const PHONE_HOLDER_WHY_KEY = "readerHolderPhoneWhy";
+
+/* ── AND WHAT TO PRESS, WHICH NO HOLDER SENTENCE CARRIED (issue #5) ─────────────────────────
+   Every sentence above names WHO organizes the mailbox and stops there. Measured on the shipped
+   build: of the desktop pane's nine arms only `readerNobodyReads` — the arm for NOBODY holding it
+   — says what to press, so the rows that DO name a holder, which are the ones a person is stuck
+   on, name no way out. The rail is the same: four sentences, no verb, a link to Settings.
+
+   The verb is the SURFACE's, because it differs per surface and only the surface knows whether
+   its press exists; the SENTENCE is this table's, so four surfaces cannot word one state four
+   ways. `none` returns the sentence the surface already had — a surface with no press may not
+   offer one. */
+
+/** The holder kinds a sentence is written for. `unknown` is a recorded holder this build cannot name. */
+export type HolderKind = "cloud" | "local" | "mobile" | "unknown";
+
+/**
+ * What the surface offers, as the verb its own control carries.
+ *
+ * `reclaim` is the desktop row's "Organize here instead"; `takeover` the browser's ceremony;
+ * `start` the first-run choice; `none` a surface with no press at all — the restore card reads a
+ * SAVED PROFILE, and a rail on a door whose take-over route is not served is the same case.
+ */
+export type HolderVerb = "reclaim" | "takeover" | "start" | "none";
+
+/** The holder as any door reports it — the polled columns, or a refusal's own body. */
+export interface HolderWho {
+  kind: HolderKind | string | null;
+  /**
+   * The holder's name as THIS SURFACE calls it — empty or absent is "a holder we cannot name".
+   *
+   * The surface owns the spelling, not this table: the desktop pane calls an unnamed holder
+   * "another install" (`holderOf`) and therefore keeps the arm for its kind, while first run
+   * passes the raw column and takes the arm written for a holder with no name. One table, one
+   * sentence per state, and each surface still decides what it calls a machine nobody named.
+   */
+  name?: string | null;
+  /** Whether the claim has stopped renewing. The two states want opposite sentences. */
+  stopped?: boolean;
+  /** WHETHER there is a date — the raw column, never a formatted one. See {@link HolderWho.shown}. */
+  since?: string | null;
+  /** That same date as a person reads it, when the surface has formatted one. */
+  shown?: string | null;
+  /**
+   * WHETHER THE CLAIM ITSELF RECORDED A NAME — read by the PHONE arm alone, and it exists
+   * because that arm is the only one for which a surface's fallback spelling would be a lie.
+   *
+   * A surface that supplies its own word for a holder it cannot name (the desktop pane's
+   * "another install") hands that word as {@link HolderWho.name}, and the kind arms rightly treat
+   * it as a name: the sentence reads "Since 30 Aug · another install", which is that pane's
+   * shipped wording and its own control. A PHONE has two sentences that differ precisely in
+   * whether a name is interpolated, and "another install is organizing this mailbox — a phone
+   * organizes while its app is open" is a phone described as a computer. So the phone arm asks
+   * the claim, not the surface. Absent, it derives from the name, which is what a surface that
+   * passes the raw column wants.
+   */
+  claimNamed?: boolean;
+}
+
+/** Which sentence, with which parameters, and the verb it was built for. */
+export interface HolderSentence {
+  key: string;
+  params: Record<string, string>;
+  verb: HolderVerb;
+}
+
+/**
+ * WHICH SENTENCE THIS HOLDER GETS, and whether it says what to press.
+ *
+ * The `mobile` arm is {@link phoneHolderKey}, which this subsumes rather than copies: a second
+ * table for the same question is the drift `phone-holder-sentence.test.tsx` exists to refuse.
+ *
+ * `voice` is the room the surface has — `short` drops the clause, which is what
+ * {@link PHONE_HOLDER_WHY_KEY} exists for, and a short line never carries a verb clause either.
+ * `since` decides only whether the DATED arms are reachable: every one of them opens with the
+ * date, so with none there is nothing for them to open with (the em-dash defect).
+ */
+export function holderSentence(
+  input: { who: HolderWho; verb: HolderVerb; voice?: PhoneHolderVoice },
+): HolderSentence {
+  const { who, verb } = input;
+  const voice = input.voice ?? "full";
+  const name = who.name;
+  const named = name !== null && name !== undefined && name.trim() !== "";
+  const params: Record<string, string> = {};
+  if (named) params.name = name!.trim();
+  /* THE DATE IS DECIDED ON THE RAW VALUE AND RENDERED FROM `shown`.
+     `day(null)` is an em dash deliberately — right for a stamp somebody hovers, wrong for the one
+     clause that PROMISES a date — so a surface that formats before asking would make the undated
+     arm unreachable and announce "Since — · ohmail Cloud", which is the defect `readerReadsOnly`
+     exists for. Asked on `since`, rendered from `shown ?? since`. */
+  if (who.since) params.since = who.shown ?? who.since;
+
+  /* A PHONE FIRST, on the rule the four surfaces already carry: both of its sentences state the
+     state themselves, and every dated arm below promises a schedule a phone does not keep. */
+  if (who.kind === "mobile") {
+    /* `named` is this table's own reading of what it was handed; `claimNamed` is the claim's,
+       and the phone arm prefers it — see {@link HolderWho.claimNamed}. `phoneHolder` asks only
+       whether the name is empty, so the flag is passed as one. */
+    const phoneNamed = who.claimNamed ?? named;
+    const phone = phoneHolder(
+      { kind: "mobile", name: phoneNamed ? name ?? "" : null },
+      who.stopped === true,
+    )!;
+    return {
+      key: phoneHolderKey({ ...phone, named: phoneNamed }, voice),
+      params,
+      verb,
+    };
+  }
+
+  /* A SHORT LINE HAS NO ROOM FOR A CLAUSE, so it keeps the plain sentence whatever the verb is. */
+  const withVerb = verb !== "none" && voice === "full";
+  const how = (key: string): string => (withVerb ? `${key}How` : key);
+
+  if (who.stopped === true) return { key: how("readerStopped"), params, verb };
+  if (!who.since) return { key: "readerReadsOnly", params, verb };
+  /* THE LOCAL ARM NAMES A MACHINE, so it is taken only where there is something to name —
+     which is a question about what the SURFACE handed over, not about the claim. A pane that
+     supplies its own word for an unnamed holder ("another install") takes this arm and reads
+     "Since 30 Aug · another install"; one that passes the raw column falls to the arm written for
+     a holder with no name, whose label has already said "another install" and must not say it
+     twice. Both wordings are shipped, both are guarded by their own surface's control, and the
+     difference is the fallback — not this table. */
+  if (who.kind === "local" && named) return { key: how("readerSinceLocal"), params, verb };
+  if (who.kind === "cloud") return { key: how("readerSinceCloud"), params, verb };
+  return { key: how("readerSinceUnknown"), params, verb };
+}
+
+/**
+ * THE RAIL'S OWN TABLE — the same question in the strip's words (`sync`, not `mailboxes`).
+ *
+ * A second function rather than a `voice`, because these are not the reader sentences abbreviated:
+ * the strip is about FILING that is waiting, and it says who will do it. The verb clause is the
+ * same bargain — `none` keeps the sentence the rail already had.
+ */
+export function filingElsewhereKey(who: HolderWho, verb: HolderVerb): string {
+  const name = who.name;
+  const named = name !== null && name !== undefined && name.trim() !== "";
+  const how = (key: string): string => (verb === "none" ? key : `${key}How`);
+  if (who.kind === "cloud") return how("filingElsewhereCloud");
+  if (who.kind === "local" && named) {
+    return how(who.stopped === true ? "filingElsewhereLocalStopped" : "filingElsewhereLocal");
+  }
+  return how("filingElsewhereUnknown");
+}

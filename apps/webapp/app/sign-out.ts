@@ -13,6 +13,7 @@ import { bindApiOwner, blockApiOwner } from "./api-client";
 import { forgetOwner, markSignedOutPending } from "./shell/owner-cookie";
 import { SCREENER_INTENTS_PREFIX } from "./shell/screener-intents";
 import { DELETE_INTENTS_PREFIX } from "./shell/delete-intents";
+import { READING_ALONG_PREFIX } from "./shell/reading-along";
 import { SEND_LOCKS_PREFIX } from "./shell/send-lock";
 
 /**
@@ -166,6 +167,12 @@ export async function forgetThisBrowser(
     // once the local unsubscribe kills the endpoint. The SWITCHES are not
     // here: a per-install preference, like `ohmail.theme`.
     NOTIFICATION_SUBSCRIPTION_PREFIX,
+    // `ohmail.ui.readingAlong.<owner>` — which mailboxes this install was told it is reading
+    // along on purpose. Its `ohmail.ui.` siblings all survive a sign-out, and this one does not:
+    // the VALUE carries the holder's own machine name, which is the account's (it is on the admin
+    // DTO's deny-list for that reason), so leaving it behind would leave somebody's machine name
+    // in a shared browser's jar. The intention costs one press to state again.
+    READING_ALONG_PREFIX,
   ]);
   survivors.push(...durable.survivors);
   // The mirror-name registry is swept BY `clearAllMirrors` itself (it removes the names it proved

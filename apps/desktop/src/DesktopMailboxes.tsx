@@ -33,7 +33,12 @@ import { activeFormatLocale, activeFormatZone } from "../../webapp/app/shell/loc
 import { useEngineOrNull } from "../../webapp/app/shell/engine";
 import { useMailState } from "../../webapp/app/shell/MailStateProvider";
 import { goFirstRun } from "../../webapp/app/shell/routing";
-import { phoneHolder, phoneHolderKey, readerHolder } from "../../webapp/app/shell/reader-holder";
+import {
+  type HolderWho, holderSentence, phoneHolder, phoneHolderKey, readerHolder,
+} from "../../webapp/app/shell/reader-holder";
+import {
+  clearReadingAlong, readingAlong, setReadingAlong,
+} from "../../webapp/app/shell/reading-along";
 import { bridgeFetch, engineLogout, retryingBridgeFetch, type EngineStatus } from "./bridge-fetch.js";
 import { firstRunDoorFor } from "./doors.js";
 import { openWeb } from "./native.js";
@@ -627,7 +632,41 @@ export function DesktopMailboxes(
      * mailbox go — which compares equal to itself and to nothing else.
      */
     releasedAt: string | null;
+    /**
+     * WHO HELD THE MAILBOX WHEN THE BUTTON WAS PRESSED — the half issue #5 is about.
+     *
+     * The note under a press used to be composed from the ROW, which is a poll up to a minute
+     * old, so the sentence naming the install that keeps the mailbox could name the one that had
+     * already gone. Captured in the same statement that makes the request instead: the phone's
+     * door does the same thing from the other side (it writes the holder onto the engine's own
+     * organizer state as it refuses, so `standaloneHere().heldBy` names it on that very render),
+     * and this is that rule on a door whose refusal carries no holder at all. `null` where the
+     * row named nobody — which is the released row's ordinary case, not a missing read.
+     */
+    heldBy: HolderWho | null;
   }>>(() => new Map());
+  /**
+   * WHY A PRESS WAS REFUSED, PER MAILBOX — and it is per mailbox because the pane's one line is not.
+   *
+   * A refusal used to be thrown into `problem`, the single `join-error` line above every row: a
+   * sentence about ONE mailbox, rendered where it cannot say which, over a pane that may hold
+   * four. It also arrived as the engine's raw reason with no holder and no verb in it, which is
+   * the whole of what issue #5 reports. The pane's line keeps the failures that genuinely name no
+   * mailbox (a refused browser, a resync that never reached a row); anything about a row renders
+   * ON that row, with the holder captured at the press and the verb this pane offers.
+   */
+  const [refused, setRefused] = useState<ReadonlyMap<string, string>>(() => new Map());
+  /**
+   * THE READING-ALONG RECORD IS NOT REACT STATE, so a press has to say when it moved.
+   *
+   * `reading-along.ts` keeps the intention in this install's own storage, which is right — it
+   * outlives the pane and belongs to the install, not to a render — but nothing in React watches
+   * it, so the first version of this press wrote the record and left the offer standing on screen
+   * with the old sentence under it. Caught by the case that presses it. A counter, not a copy of
+   * the record: the store stays the one place the answer lives, and this only says "read it
+   * again".
+   */
+  const [alongSaid, setAlongSaid] = useState(0);
   /** Mailboxes whose takeover request is in flight, so the button debounces. */
   const [reclaiming, setReclaiming] = useState<ReadonlySet<string>>(() => new Set());
   /**
@@ -718,8 +757,14 @@ export function DesktopMailboxes(
    * NOT SEIZE: the engine reads the lease first, so a renewing holder keeps the mailbox.
    * LOCAL DOOR ONLY: the hosted takeover is the account's ceremony, not served here.
    */
-  const reclaim = (id: string, releasedAt: string | null): void => {
+  const reclaim = (id: string, releasedAt: string | null, heldBy: HolderWho | null): void => {
     setProblem(null);
+    setRefused((m) => {
+      if (!m.has(id)) return m;
+      const next = new Map(m);
+      next.delete(id);
+      return next;
+    });
     setReclaiming((q) => new Set(q).add(id));
     void (async () => {
       try {
@@ -732,7 +777,7 @@ export function DesktopMailboxes(
         const body = (await res.json()) as { outcome?: unknown };
         setReclaimed((m) => new Map(m).set(
           id,
-          { outcome: takeoverOutcome(body.outcome), releasedAt },
+          { outcome: takeoverOutcome(body.outcome), releasedAt, heldBy },
         ));
         /* ── AND A TAKEOVER IS A NEWER PRESS ABOUT THE SAME MAILBOX ────────────────────────
          *
@@ -749,7 +794,15 @@ export function DesktopMailboxes(
         // re-read rather than keep rendering the stand-down it was showing.
         refresh();
       } catch (err) {
-        setProblem(err instanceof Error ? err.message : String(err));
+        /* ON THE ROW, because this refusal names a mailbox. The pane's one line keeps the
+           failures that name none — see {@link refused}. The holder captured at the press is on
+           the row beside it, so the sentence says who has the mailbox and what to press, which
+           neither the engine's reason nor a poll-old row could say on its own. */
+        setRefused((m) => new Map(m).set(id, err instanceof Error ? err.message : String(err)));
+        /* A PRESS WITHDRAWS THE INTENTION, and a refused one is exactly when the sentence is
+           needed back: somebody who asked to organize the mailbox here is no longer reading
+           along on purpose, whatever they pressed earlier. */
+        clearReadingAlong(id);
       } finally {
         setReclaiming((q) => {
           const next = new Set(q);
@@ -996,6 +1049,19 @@ export function DesktopMailboxes(
    * row was correctly classified as "a holder we cannot name" and then named it blankly —
    * two halves of one fact disagreeing inside one banner.
    */
+  /**
+   * THE ROW'S HOLDER IN THE SENTENCE TABLE'S SHAPE — asked once, so the pane cannot describe one
+   * holder two ways. `null` where nothing is recorded: `readerHolder` is the one place that
+   * decides whether a holder EXISTS, and the object's presence is that fact.
+   */
+  const whoOf = (m: MailboxFacts): HolderWho | null =>
+    readerHolder(m.organizedBy) === "nobody" ? null : {
+      kind: m.organizedBy?.kind ?? "unknown",
+      name: m.organizedBy?.name ?? null,
+      stopped: m.organizerState === "stopped",
+      since: m.organizedBy?.since ?? null,
+    };
+
   const holderOf = (m: MailboxFacts): string =>
     m.organizedBy?.name?.trim()
     || (m.organizedBy?.kind === "cloud" ? "ohmail Cloud" : t("readerHolderUnknown"));
@@ -1219,8 +1285,17 @@ export function DesktopMailboxes(
           : role === "released"
             ? t("stateNotOrganized")
             : t("readerLabel", { name: holderOf(m) });
+    /* THE NAMED PLACE THE ANSWER ALWAYS IS. Reading along here silences the strip that repeats it,
+       never this — "always readable in the mailbox's settings" is only a promise if the block a
+       person comes here to read is labelled as the thing they came to read. */
     return (
-      <div className="mbx-org" data-role={role} data-state={stopState}>
+      <div
+        className="mbx-org"
+        data-role={role}
+        data-state={stopState}
+        role="group"
+        aria-label={t("readerAlongWho")}
+      >
         <div className="mbx-role">
         {/* THE CHIP IS THE (i). One button: its caption is the role's label, the sentence that
             stood under the label is its accessible description, and hover, focus or a press opens
@@ -1276,44 +1351,40 @@ export function DesktopMailboxes(
                  next process assembly rather than on a tick. */
               : m.legacyStandDown === true
                 ? t("readerLegacyStandDown")
-                /* A PHONE ABOVE EVERY ARM BELOW IT, stopped one included: both of its sentences
-                   carry the state themselves, `readerStopped` names no phone, and the dated arms
-                   open with a date this row's phone line does not have. */
-                : phone
-                ? t(phoneHolderKey(phone, "full"), { name: holderOf(m) })
-                : m.organizerState === "stopped"
-                /* NO AGE, because there is no timestamp that would make one true. It said "last
-                   checked in {when}" and was handed `organizedBy.since` — which is when that install
-                   BECAME the organizer, and the heartbeat is deliberately not persisted. A holder
-                   that organized for eight months and stopped this morning was reported absent for
-                   eight months. The fact worth stating is that it stopped. */
-                ? t("readerStopped", { name: holderOf(m) })
-                /* ── NO DATE LINE WITHOUT A DATE, and the em dash is why this arm exists ─────
-                   `day(null)` is "—" deliberately (`format.ts`: a dash reads better than
-                   "Invalid Date") — right for a stamp somebody hovers, wrong for the one
-                   clause that PROMISES a date: a real holder whose `since` was never written
-                   announced "Since — · ohmail Cloud", reading as a fault in the mailbox. Every
-                   arm below opens with the date, so with none there is nothing to open with;
-                   the holder's name is not lost — the label carries it. ABOVE the kind and
-                   BELOW `readerStopped`, which carries no date by design; the browser's two
-                   reader surfaces select the same arm in the same position, from the same key. */
-                : !m.organizedBy?.since
-                ? t("readerReadsOnly")
-                /* EVERY KIND ON ITS OWN BRANCH. `unknown` is a legal kind and a reader may have no
-                   holder recorded at all, and both used to fall through to the CLOUD sentence — so a
-                   row whose wire says nothing about Cloud announced "ohmail Cloud". The third
-                   sentence names no holder, because none is known. */
-                : m.organizedBy?.kind === "local"
-                  ? t("readerSinceLocal", {
+                /* ── ONE TABLE FOR EVERY HOLDER, AND IT NOW SAYS WHAT TO PRESS (issue #5) ──
+                   Seven arms stood here — a phone's two through `phoneHolderKey`, a stopped
+                   holder, an undated one, and one per kind — and only the LAST of them, the arm
+                   for a mailbox nobody organizes, told a person what to do about it. The rows
+                   that name a holder are the rows somebody is stuck on, and they named no way
+                   out; the rail, first run and the restore card each spelled the same ladder
+                   again. `holderSentence` is that ladder, asked once, and the VERB is this
+                   pane's own: the row's button reads "Organize here instead", so the sentence
+                   may promise exactly that press and no other. The date arms and their order are
+                   unchanged — they moved, they were not rewritten. */
+                : (() => {
+                  const said = holderSentence({
+                    who: {
+                      kind: m.organizedBy?.kind ?? "unknown",
+                      /* THIS PANE'S OWN WORD for a holder it cannot name, which is what keeps
+                         its dated sentence reading "Since 30 Aug · another install" rather than
+                         dropping the clause. The CLAIM's namedness rides beside it for the phone
+                         arm, where a fallback spelling would describe a phone as a computer. */
                       name: holderOf(m),
-                      since: day(m.organizedBy?.since ?? null),
-                    })
-                  : m.organizedBy?.kind === "cloud"
-                    ? t("readerSinceCloud", {
-                        name: holderOf(m),
-                        since: day(m.organizedBy?.since ?? null),
-                      })
-                    : t("readerSinceUnknown", { since: day(m.organizedBy?.since ?? null) })
+                      claimNamed: Boolean(m.organizedBy?.name?.trim()),
+                      stopped: m.organizerState === "stopped",
+                      /* RAW for the question, FORMATTED for the sentence — `day(null)` is an em
+                         dash, and asking on it makes the undated arm unreachable. */
+                      since: m.organizedBy?.since ?? null,
+                      shown: day(m.organizedBy?.since ?? null),
+                    },
+                    verb: "reclaim",
+                  });
+                  /* `holderOf` still supplies the NAME, because it is the one place that decides
+                     what an unnamed holder is called on this pane (`ohmail Cloud`, or the
+                     catalogue's word) — the table decides the SENTENCE, not the spelling of a
+                     machine nobody named. */
+                  return t(said.key, { ...said.params, name: holderOf(m) });
+                })()
           }
         />
         {/* ── THE PRESS IS ANNOUNCED ────────────────────────────────────────────────────────────
@@ -1325,6 +1396,31 @@ export function DesktopMailboxes(
             speaks when the label moves — "Stopping" at the press, then the role the row settles
             into. The same `chipLabel`, so it cannot say something the chip does not. */}
         <span className="mbx-say" role="status">{chipLabel}</span>
+        {/* ── AND THE PERSON WHO MEANT IT THIS WAY CAN SAY SO ONCE (issue #5) ──────────────
+            One press, this install, this mailbox, this holder. It silences the sentence on the
+            rail — the surface that repeats it on every poll — and NEVER the line below, which is
+            what "always readable in the mailbox's settings" means: the fact stays exactly where
+            somebody would go to look it up. A different install taking the mailbox over re-shows
+            everything, because the intention was about the one that was there. Offered only on a
+            reader row with a holder to be reading along WITH. */}
+        {role === "reader" && whoOf(m) ? (
+          readingAlong(m.id, whoOf(m), undefined, alongSaid) ? (
+            <span className="mbx-say-set">{t("readerAlongSet", { name: holderOf(m) })}</span>
+          ) : (
+            <Button
+              variant="ghost"
+              className="mbx-quiet"
+              onClick={() => {
+                setReadingAlong(m.id, whoOf(m));
+                /* See {@link alongSaid}: the record moved, and only this makes the pane read it
+                   again. `refresh()` is the SHARED poller and answers a different question. */
+                setAlongSaid((n) => n + 1);
+              }}
+            >
+              {t("readerAlongHere")}
+            </Button>
+          )
+        ) : null}
         {/* THE VERB, WITHHELD WHILE ITS OWN WELL IS OPEN — one place to answer, and no button
             that re-asks a question already on screen.
 
@@ -1419,7 +1515,10 @@ export function DesktopMailboxes(
                 disabled={reclaiming.has(m.id)}
                 onClick={() => {
                   setClaimFor(null);
-                  reclaim(m.id, m.organizerReleasedAt ?? null);
+                  /* THE HOLDER, READ HERE — in the statement that makes the request, so the note
+                     under it names the install that was there when the button was pressed rather
+                     than whatever the next poll brings back. */
+                  reclaim(m.id, m.organizerReleasedAt ?? null, whoOf(m));
                 }}
               >
                 {t("organizeHereConfirm")}
@@ -1466,12 +1565,26 @@ export function DesktopMailboxes(
             route RECORDS a request and returns. The gate acts on it at its next tick, which may
             be a minute away and is not this window's to watch. And not `ok`
             either: this window has not been told the mailbox moved, and a tick would say it had. */}
+        {/* ── WHAT THE PRESS ANSWERED, AND IT NO LONGER PROMISES WHAT THE LEASE DECIDES ──────
+            `organizeHereQueued` said "This computer takes over on its next pass — the other
+            install becomes a reader", which this door cannot know: it AUTHORIZES, it does not
+            seize, and the engine reads the lease first — a holder still renewing keeps the
+            mailbox. The same outcome's command-line wording has always said so. The sentence now
+            says it too, and names the install it is about from the holder CAPTURED AT THE PRESS
+            (`reclaimed`'s `heldBy`), never from a row a poll may have moved since. With nobody
+            recorded there is no install to name and the released row's own sentence is the true
+            one, so the name falls back to the catalogue's word for a holder we cannot name. */}
         {takeoverStanding(m) ? (
           reclaimed.get(m.id)!.outcome === "authorized" ? (
             role !== "organizer" ? (
               <SettingsVerdict
                 state="off"
-                headline={m.legacyStandDown === true ? t("organizeHereQueuedLegacy") : t("organizeHereQueued")}
+                headline={m.legacyStandDown === true ? t("organizeHereQueuedLegacy") : t("organizeHereQueued", {
+                  name: reclaimed.get(m.id)!.heldBy?.name?.trim()
+                    || (reclaimed.get(m.id)!.heldBy?.kind === "cloud"
+                      ? "ohmail Cloud"
+                      : t("readerHolderUnknown")),
+                })}
               />
             ) : null
           ) : (
@@ -1480,6 +1593,26 @@ export function DesktopMailboxes(
                been superseded is as stale as the queued one. */
             <SettingsNote>{t(`desktopOrganizeHere_${reclaimed.get(m.id)!.outcome}`)}</SettingsNote>
           )
+        ) : null}
+        {/* ── A REFUSED PRESS, ON THE ROW IT IS ABOUT ──────────────────────────────────────────
+            The engine's own reason, and under it the one sentence the reason never carries: who
+            has the mailbox and what to press for it. Both halves are needed — the reason says
+            what went wrong, the sentence says what to do — and neither was on screen before
+            (issue #5): the reason went to the pane's line above every row, and the holder went
+            nowhere at all. */}
+        {refused.has(m.id) ? (
+          <SettingsNote>
+            {t("organizeHereRefused", { reason: refused.get(m.id)! })}
+            {whoOf(m) ? (
+              <>
+                {" "}
+                {t(
+                  holderSentence({ who: whoOf(m)!, verb: "reclaim" }).key,
+                  holderSentence({ who: whoOf(m)!, verb: "reclaim" }).params,
+                )}
+              </>
+            ) : null}
+          </SettingsNote>
         ) : null}
         {released.has(m.id) && released.get(m.id) !== "requested" ? (
           <SettingsNote>{t("stopOrganizingNot")}</SettingsNote>

@@ -479,9 +479,18 @@ describe("an install that only READS a mailbox can ask to organize it", () => {
     expect(text).toContain("takes over on its next pass");
     expect(text, "the modern engine was sent to restart for a stamp its gate re-reads")
       .not.toContain("Quit and reopen");
-    /* WHAT THE LOSER DOES IS STILL SAID — it is the other install that becomes a reader now,
-       because this one is the one taking the mailbox. The sentence changed sides with the rule. */
-    expect(text).toContain("becomes a reader and keeps its copy of your mail");
+    /* ── AND WHAT THE OTHER INSTALL DOES IS NO LONGER PROMISED ────────────────────────────
+       This asserted "becomes a reader and keeps its copy of your mail" — said about a machine
+       this door has no authority over. The press AUTHORIZES, it does not seize: the engine reads
+       the lease first, and a holder still renewing keeps the mailbox, which is what the same
+       outcome's command-line wording has always said and what this pane now says too. The
+       sentence still names the other install — it is the half a person needs — and states the
+       condition instead of the outcome. */
+    expect(text).toContain("is still organizing the mailbox, it keeps it");
+    expect(text, "the note promises an outcome the lease decides")
+      .not.toContain("becomes a reader and keeps its copy of your mail");
+    /* AND IT NAMES THE INSTALL, which is the whole of issue #5 on this path. */
+    expect(text).toContain("zorin-9950");
   });
 
   /**

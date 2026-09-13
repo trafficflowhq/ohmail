@@ -64,7 +64,8 @@ const readable = (address: string | null): string | null =>
   address === null ? null : displayAddress(address);
 import { stripSpeaks, type MailState } from "./mail-state";
 /* The one place any surface asks whether a phone holds the mailbox — see `reader-holder.ts`. */
-import { phoneHolder, phoneHolderKey } from "./reader-holder";
+import { filingElsewhereKey, phoneHolder, phoneHolderKey } from "./reader-holder";
+import { readingAlong } from "./reading-along";
 
 /**
  * Rendered twice, in two shapes. The rail carries everything that acts on the app rather than on mail, so
@@ -354,7 +355,17 @@ function speech(state: MailState, t: Translate, tm: Translate, cloud: boolean): 
       /* WHO FILES IT. Never `warn`: nothing has failed and nothing on this side is late — the
        * mailbox is organized somewhere else, which is a configuration the person chose. Never
        * `busy` either, because this install is not doing anything about it. */
-      if (f?.arm === "elsewhere") {
+      /* ── SOMEBODY WHO HAS DECIDED THIS IS RIGHT IS NOT TOLD IT AGAIN (issue #5) ──────────
+         The strip is where the sentence is most relentless: it is on screen at all times and
+         re-renders on every poll. One press in Settings → Mailboxes says "I'm reading along
+         here", and while that intention stands FOR THIS HOLDER this arm is skipped and the strip
+         falls through to the ordinary sentences about our own side, which are true — it does not
+         go blank, and the filing count is not hidden by the arms below. A DIFFERENT holder
+         re-shows it: the intention is about one install, not about the mailbox. */
+      const readingAlongHere = Boolean(f?.who && readingAlong(f.who.mailboxId, {
+        kind: f.who.kind, name: f.who.name, stopped: f.who.stopped, since: f.who.since,
+      }));
+      if (f?.arm === "elsewhere" && !readingAlongHere) {
         const name = f.who?.name;
         /* A PHONE IS THE THIRD KIND THE LEASE RECORDS and this rail had arms for two, so a phone
            fell to `filingElsewhereUnknown` — "Another ohmail install files this mailbox on its
@@ -363,13 +374,18 @@ function speech(state: MailState, t: Translate, tm: Translate, cloud: boolean): 
            of its sentences come from `phoneHolderKey`, the one table every surface asks; the
            title has room for the clause, so the rail takes the full form. */
         const phone = phoneHolder(f.who, f.who?.stopped === true);
+        /* ── AND WHAT TO PRESS, WHICH THIS STRIP NEVER SAID (issue #5) ─────────────────────
+           Four sentences naming who files the mailbox, and not one of them said how to take it
+           back — the strip's only affordance was a link, and a link is not an instruction. The
+           verb is `takeover` because Settings → Mailboxes is where that press lives and this
+           rail is served on the door that has it; the sentence names it. `filingElsewhereKey`
+           is the table, so the strip and the pane cannot word one state two ways. */
         const title = phone
           ? tm(phoneHolderKey(phone, "full"), { name: name ?? "" })
-          : f.who?.kind === "cloud"
-            ? t("filingElsewhereCloud")
-            : f.who?.kind === "local" && name
-              ? t(f.who.stopped ? "filingElsewhereLocalStopped" : "filingElsewhereLocal", { name })
-              : t("filingElsewhereUnknown");
+          : t(filingElsewhereKey(
+            { kind: f.who?.kind ?? null, name: name ?? null, stopped: f.who?.stopped === true },
+            "takeover",
+          ), { name: name ?? "" });
         return {
           tone: "", role: "status", warn: false, busy: false,
           title,

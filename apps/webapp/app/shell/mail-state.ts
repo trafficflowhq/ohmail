@@ -1290,8 +1290,21 @@ export interface FilingReport {
   waitedMinutes: number | null;
   /** Whole seconds since the organizer's last pass finished, or null. */
   lastPassSeconds: number | null;
-  /** For `elsewhere`: who files this mailbox, and whether they are still renewing the claim. */
-  who: { kind: string | null; name: string | null; stopped: boolean } | null;
+  /**
+   * For `elsewhere`: who files this mailbox, and whether they are still renewing the claim.
+   *
+   * `mailboxId` and `since` ride along for the intention this strip can be silenced by
+   * (`reading-along.ts`): the id is what an intention is stored AGAINST, and `since` is the half
+   * of the holder's identity that changes when a different install takes the mailbox over — the
+   * install id itself is deliberately not on the wire. Neither is rendered.
+   */
+  who: {
+    kind: string | null;
+    name: string | null;
+    stopped: boolean;
+    mailboxId: string;
+    since: string | null;
+  } | null;
   /** When the facts behind this were read — the strip says "as of HH:MM". */
   asOf: string | null;
 }
@@ -1428,6 +1441,8 @@ function filingReportOf(live: MailboxFacts[], now: number): FilingReport | null 
         // different sentences. ABSENT reads as NOT stopped, the safe direction: telling somebody
         // their other machine is off when it is on is the more alarming error.
         stopped: elsewhere.organizerState === "stopped",
+        mailboxId: elsewhere.id,
+        since: elsewhere.organizedBy?.since ?? null,
       },
     };
   }
