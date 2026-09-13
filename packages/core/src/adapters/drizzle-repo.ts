@@ -18,6 +18,10 @@ import {
   type JunkHuskIdentity, type JunkUnhuskOutcome,
 } from "../husk-restore.js";
 import { foldMessageIdDomain } from "../identity.js";
+// THE ONE DOOR for a UIDVALIDITY comparison — `epoch.ts`. A bare `===` between two generations
+// reads two unknowns as agreement, which is the fail-open this module must not re-invent; the
+// census over three source roots refuses one.
+import { epochOf, sameEpoch } from "../epoch.js";
 
 /**
  * How many ledger rows one delivery report may name. A report quotes at most
@@ -776,9 +780,14 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
     }).from(messageInstances).where(and(
       eq(messageInstances.messageId, messageId), eq(messageInstances.isPrimary, true),
     )).limit(1);
-    if (live && live.folder === locator.folder && live.uidvalidity === uidValidity && live.uid === uid) return;
+    const namesThisSpot = live !== undefined
+      && live.folder === locator.folder
+      && live.uid === uid
+      && sameEpoch(epochOf(live.uidvalidity), epochOf(uidValidity));
+    if (namesThisSpot) return;
     throw new Error(
-      `setPrimaryInstance: ${locator.folder} already holds that uid for another message`,
+      `setPrimaryInstance: this message's primary instance does not name ${locator.folder} at that `
+      + "uid — the place belongs to another message, or its generation cannot be proved",
     );
   }
 
