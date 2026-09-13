@@ -13,6 +13,13 @@ See [Status](README.md#status--read-this-first).
 
 ## [Unreleased]
 
+### Still to come
+
+Signed installers — a real Apple Developer ID and an Authenticode certificate. See
+[Roadmap](README.md#roadmap).
+
+## [0.18.0] — 2026-09-13
+
 ### ohmail builds as a Flatpak
 
 The manifest is in the repository at `apps/desktop/flatpak/app.ohmail.Desktop.yml`, and it builds
@@ -144,11 +151,6 @@ clock started at the end of the first pass over the mailbox rather than at its b
 large mailbox that pass is a quarter of an hour of work — so the figure left out the stretch that was
 doing the most. A large first import read as thirty-four minutes where it had taken forty-seven. The
 import is unchanged; the line describing it is now the whole of it.
-
-### Still to come
-
-Signed installers — a real Apple Developer ID and an Authenticode certificate. See
-[Roadmap](README.md#roadmap).
 
 ## [0.17.0] — 2026-09-12
 
@@ -6183,7 +6185,8 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.17.0...HEAD
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.18.0...HEAD
+[0.18.0]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.18.0
 [0.17.0]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.17.0
 [0.16.2]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.16.2
 [0.16.1]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.16.1
