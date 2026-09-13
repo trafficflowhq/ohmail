@@ -74,6 +74,29 @@
   </screenshots>
 
   <releases>
+    <release version="0.18.0" date="2026-09-13">
+      <description>
+        <ul>
+          <li>ohmail builds as a Flatpak</li>
+          <li>The desktop app reports what it costs and how it feels</li>
+          <li>Stopping and starting again on a phone is one instruction</li>
+          <li>Every Linux build measures start time and memory</li>
+          <li>The Screener works out its list once per change</li>
+          <li>A Screener decision that waited too long says so</li>
+          <li>A phone never takes a mailbox your computer is organizing</li>
+          <li>A rule applies to the mail that arrives after it</li>
+          <li>Quitting hands the mailbox back</li>
+          <li>Organizing a mailbox no longer fails while another one is being disconnected</li>
+          <li>A draft has a size limit</li>
+          <li>A large mailbox's first sync is bounded on the server as well</li>
+          <li>The desktop is stricter about the server address it stores</li>
+          <li>The reading screen's actions fit every phone width, in both languages</li>
+          <li>The phone asks for the notification it organizes behind</li>
+          <li>When a phone is organizing a mailbox, the app says so</li>
+          <li>How long a first import took, in full</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.17.0" date="2026-09-12">
       <description>
         <ul>
@@ -176,31 +199,6 @@
           <li>Screen readers and small controls</li>
           <li>RPM packages for Fedora and openSUSE</li>
           <li>Sentences that say what the product does</li>
-        </ul>
-      </description>
-    </release>
-    <release version="0.15.0" date="2026-09-09">
-      <description>
-        <ul>
-          <li>The phone chooser says what a phone can be</li>
-          <li>Small fixes on phones</li>
-          <li>On the phone, message bodies read at the reader's size and long button labels wrap</li>
-          <li>The same message cannot be sent twice, even from a client that has lost its place</li>
-          <li>The verbs stay with you while you read a long message</li>
-          <li>Reading views say who else got the message</li>
-          <li>Selecting messages uses the same bar as reading one</li>
-          <li>Backspace and Delete move a message to Trash</li>
-          <li>A window left open no longer holds every render's work, and a parked card can be unparked</li>
-          <li>Four small fixes in the reading pane</li>
-          <li>Compose opens ready to type</li>
-          <li>Clearing a search, a keyboard hint on the demo, and one name for the Ohbox</li>
-          <li>A computer that stopped organizing no longer holds the mailbox for ever</li>
-          <li>The mailbox row says when it cannot check, instead of "Up to date"</li>
-          <li>Re-filing mail on a mailbox another install organizes</li>
-          <li>Setup credits on ohmail Cloud: whether one was granted, and why not</li>
-          <li>The trial note counts credits, not actions</li>
-          <li>A fault inside the local mail engine is written down</li>
-          <li>The local engine's answers carry a request id</li>
         </ul>
       </description>
     </release>
