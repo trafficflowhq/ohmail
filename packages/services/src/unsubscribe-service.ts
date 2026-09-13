@@ -1,4 +1,4 @@
-import { and, eq, gte, inArray, isNull } from "drizzle-orm";
+import { and, asc, eq, gte, inArray, isNull, sql } from "drizzle-orm";
 import { dialect } from "@trafficflow/db/dialect";
 import {
   assertOrganizerRole,
@@ -8,7 +8,7 @@ import {
   authVerdictFromHeaders, oneClickUnsubscribeUri, unsubscribeHeaderState,
   type AuthVerdict, type Destination, type UnsubscribeHeaderState,
 } from "@trafficflow/core/mail";
-import type { ServiceContext } from "./context.js";
+import type { Db, ServiceContext } from "./context.js";
 import { ServiceError } from "./errors.js";
 import { assertPublicHttpUrl, type HostResolver } from "./ssrf-guard.js";
 import { pinnedHttpRequest } from "./pinned-fetch.js";
@@ -157,7 +157,41 @@ export interface UnsubscribeSweep {
   posted: number;
   skipped: number;
   failed: number;
+  /**
+   * Targets this call was HANDED and did not reach, because its own ceiling stopped it. Not a
+   * failure and not a skip: those two say something happened to a message, and this says the
+   * call stopped before looking. It is what makes "5 of 50 done" sayable, and the drain is what
+   * makes it true.
+   */
+  remaining: number;
 }
+
+/**
+ * HOW FAR BACK THE DRAIN LOOKS. `since` has no default by design — a mature mailbox holds
+ * thousands of pre-feature screen-outs and sweeping them would announce the address to the very
+ * senders it was screened away from — and a scheduled pass has nobody to type a date. This is
+ * that date, DERIVED rather than chosen: three of the drain's own cadences — one hour, the
+ * cadence its production caller is scheduled at — so two missed runs still reach what the last
+ * one deferred, plus a 24-hour envelope for an outage of the host that runs it. It reaches what a
+ * RECENT request deferred and never the historical backlog. What makes a row eligible at all is
+ * the COMMITTED decision: `folder_state.desired_folder` is written in the decision's own
+ * transaction, so a decision that did not commit has no candidate here.
+ *
+ * The outage envelope is the part that is DECLARED rather than measured: how long this
+ * deployment has actually been dark in one stretch is a reading the 0.19.1 rig does not take
+ * yet, and it is filed as owed. Twenty-four hours is above every outage this deployment has had.
+ */
+export const UNSUB_DRAIN_WINDOW_MS = 3 * 60 * 60 * 1000 + 24 * 60 * 60 * 1000;
+
+/**
+ * ONE DRAIN RUN'S SHAPE. Accounts first, because the candidate read is per account and an
+ * unbounded account list is the same defect one level up; then targets within an account, so one
+ * busy account cannot spend the whole run; then the clock, which is what actually stops it —
+ * 45 s against the same 60-second invocation the sync ceiling is measured against.
+ */
+export const UNSUB_DRAIN_ACCOUNTS_PER_RUN = 20;
+export const UNSUB_DRAIN_TARGETS_PER_ACCOUNT = 10;
+export const UNSUB_DRAIN_BUDGET_MS = 45_000;
 
 /**
  * WHICH MESSAGES MAY BE UNSUBSCRIBED FROM: REJECT DESTINATIONS ONLY, NEVER KEEP DESTINATIONS.
@@ -415,7 +449,32 @@ export class UnsubscribeService {
    * turn this into an unsubscribe by passing the wrong ids.
    */
   async onScreenOut(ctx: ServiceContext, messageIds: readonly string[]): Promise<UnsubscribeSweep> {
-    const sweep: UnsubscribeSweep = { considered: 0, posted: 0, skipped: 0, failed: 0 };
+    // NO CEILING HERE YET, AND THE ORDER IS THE POINT. A cap on this path without a drain behind
+    // it converts an over-long request into silently unfinished work — the row this closes says
+    // so in its own words, and the drain has no production caller until it is wired. The
+    // parameter exists so that the cap is a two-value change with a control, made in the commit
+    // that can honestly promise the remainder is picked up.
+    return this.postEach(ctx, messageIds, {
+      count: messageIds.length, budgetMs: Number.POSITIVE_INFINITY,
+    });
+  }
+
+  /**
+   * POST TO EACH OF THESE, UNDER A CEILING THE CALLER SUPPLIES — the one body both entry points
+   * run, and the ceiling is a parameter for a reason the row this closes states: if the drain
+   * routed through the interactive path it would inherit the interactive cap whatever its own
+   * caller asked for, and would then report a remainder it could never pick up.
+   *
+   * It never throws. The filing decision is the product and the unsubscribe a courtesy, so a
+   * caller awaiting this after its own commit must not be handed an error to decide about.
+   */
+  private async postEach(
+    ctx: ServiceContext, messageIds: readonly string[],
+    ceiling: { count: number; budgetMs: number },
+  ): Promise<UnsubscribeSweep> {
+    const sweep: UnsubscribeSweep = {
+      considered: 0, posted: 0, skipped: 0, failed: 0, remaining: 0,
+    };
 
     // THE ACCOUNT SWITCH, READ HERE AND NOWHERE ELSE (mail 0054). `block_auto_unsubscribe_at`
     // NOT NULL means this account asked that a screen-out stop leaving lists on their behalf.
@@ -427,7 +486,18 @@ export class UnsubscribeService {
     // the honest return: `considered` counts what the pass LOOKED at, and it looked at nothing.
     if (await this.blocked(ctx)) return sweep;
 
+    // The clock starts at the first post, not at the ceiling's declaration: the switch read above
+    // is the caller's cost, not this budget's.
+    const startedAt = Date.now();
     for (const id of messageIds) {
+      // BOTH AXES, CHECKED BEFORE THE POST AND NEVER AFTER IT. A count-only ceiling leaves five
+      // eight-second posts inside a request that has twenty seconds left; a clock-only one lets a
+      // mailbox whose targets all refuse instantly walk the whole list. Whatever is left when
+      // either fires is `remaining`, which is a promise the drain keeps.
+      if (sweep.considered >= ceiling.count || Date.now() - startedAt >= ceiling.budgetMs) {
+        sweep.remaining += 1;
+        continue;
+      }
       sweep.considered += 1;
       try {
         // `"automatic"`, which is what turns on the identity gate above. The button calls
@@ -461,7 +531,7 @@ export class UnsubscribeService {
    * the date. `limit` is required for the same reason at smaller scale.
    */
   async sweepScreenedOut(
-    ctx: ServiceContext, opts: { since: Date; limit: number },
+    ctx: ServiceContext, opts: { since: Date; limit: number; budgetMs?: number },
   ): Promise<UnsubscribeSweep> {
     if (!(opts.since instanceof Date) || Number.isNaN(opts.since.getTime())) {
       throw new ServiceError("unsubscribe_no_cutoff", 400,
@@ -476,19 +546,123 @@ export class UnsubscribeService {
     // on it. It filters on the MESSAGE not yet having supplied a record, and `unsubscribe`'s
     // claim does the real de-duplication a moment later against the key that actually matters.
     // This join is an optimisation; the unique index is the correctness.
+    //
+    // THE TWO HEADER KEYS, AND WHY A DRAIN WITHOUT THEM IS DECORATIVE. `run()` refuses a message
+    // with no `List-Unsubscribe`, or one whose `-Post` is missing, BEFORE the claim — so no
+    // record row is written and the message stays a candidate for ever. Most screened-out mail
+    // publishes no one-click route at all, so a bounded pass would spend its whole budget
+    // re-refusing the same rows and never reach what a request deferred. These are KEY EXISTENCE
+    // tests and not a second copy of the grammar: `list-unsubscribe-post` present at all is RFC
+    // 8058's own precondition, and every value question stays in the parser that owns it. What
+    // still survives a pass is the malformed shape — a `-Post` over `mailto:` only — and the
+    // window is what bounds that.
     const candidates = await asTx(ctx).select({ id: messages.id })
       .from(messages)
       .innerJoin(folderState, eq(folderState.messageId, messages.id))
+      // INNER, not LEFT: the headers live on the body row, and a message with no body row has no
+      // headers, so it can never be actionable. Its absence is a filter, not a missing value.
+      .innerJoin(messageBodies, eq(messageBodies.messageId, messages.id))
       .leftJoin(unsubscribeRecords, eq(unsubscribeRecords.messageId, messages.id))
       .where(and(
         eq(messages.accountId, ctx.accountId),
         inArray(folderState.desiredFolder, REJECT_DESTINATIONS as string[]),
         gte(folderState.updatedAt, opts.since),
         isNull(unsubscribeRecords.id),
+        sql`jsonb_exists(${messageBodies.headers}, 'list-unsubscribe')`,
+        sql`jsonb_exists(${messageBodies.headers}, 'list-unsubscribe-post')`,
       ))
+      // OLDEST FIRST. An unordered LIMIT is a sample, and a sample can hand back the same rows
+      // for ever while the oldest never move — here that would mean the rows closest to falling
+      // out of the drain's window are the ones it never reaches.
+      .orderBy(asc(folderState.updatedAt), asc(messages.id))
       .limit(opts.limit);
 
-    return this.onScreenOut(ctx, candidates.map((c) => c.id));
+    return this.postEach(ctx, candidates.map((c) => c.id), {
+      count: opts.limit, budgetMs: opts.budgetMs ?? UNSUB_DRAIN_BUDGET_MS,
+    });
+  }
+
+  /**
+   * THE DRAIN'S PRODUCTION ENTRY — one bounded run over every account that has something owed.
+   *
+   * `sweepScreenedOut` is account-scoped and needs a cutoff somebody typed. A scheduled pass has
+   * nobody to type one, so the cutoff is {@link UNSUB_DRAIN_WINDOW_MS} back from now: it reaches
+   * what a recent request deferred and never the historical backlog the manual sweep's refusal
+   * exists to protect. Three bounds, because there are three ways this could be unbounded — the
+   * number of ACCOUNTS it looks at, the number of TARGETS within one, and the CLOCK, which is
+   * what actually stops a run.
+   */
+  async drainScreenedOut(
+    db: Db,
+    opts: {
+      now: () => Date; requestId: string;
+      accounts?: number; perAccount?: number; budgetMs?: number;
+    },
+  ): Promise<{ accounts: number; sweep: UnsubscribeSweep; remaining: boolean }> {
+    const accounts = opts.accounts ?? UNSUB_DRAIN_ACCOUNTS_PER_RUN;
+    const perAccount = opts.perAccount ?? UNSUB_DRAIN_TARGETS_PER_ACCOUNT;
+    const budgetMs = opts.budgetMs ?? UNSUB_DRAIN_BUDGET_MS;
+    const since = new Date(opts.now().getTime() - UNSUB_DRAIN_WINDOW_MS);
+    const tx = db as unknown as Tx;
+
+    // The account list is the candidate query one level up, grouped: an account is owed something
+    // iff it has a candidate in the window. OLDEST CANDIDATE FIRST, so the rows closest to
+    // falling out of the window are reached first, and LIMITed — a run's account list is as
+    // unbounded as its target list if nobody says otherwise.
+    //
+    // The switch predicate here is an OPTIMISATION and not a second decision-maker: it can only
+    // REMOVE accounts, never admit one, and `postEach` reads the switch at the seam exactly as it
+    // does for an interactive screen-out. Without it a blocked account's candidates would hold a
+    // place in every run until they aged out of the window, which is starvation with a bound
+    // rather than none — the bound is not the argument for leaving it.
+    const oldest = sql<string>`min(${folderState.updatedAt})`;
+    const owed = await tx.select({ accountId: messages.accountId })
+      .from(messages)
+      .innerJoin(folderState, eq(folderState.messageId, messages.id))
+      .innerJoin(messageBodies, eq(messageBodies.messageId, messages.id))
+      .leftJoin(unsubscribeRecords, eq(unsubscribeRecords.messageId, messages.id))
+      .leftJoin(accountSettings, eq(accountSettings.accountId, messages.accountId))
+      .where(and(
+        inArray(folderState.desiredFolder, REJECT_DESTINATIONS as string[]),
+        gte(folderState.updatedAt, since),
+        isNull(unsubscribeRecords.id),
+        isNull(accountSettings.blockAutoUnsubscribeAt),
+        sql`jsonb_exists(${messageBodies.headers}, 'list-unsubscribe')`,
+        sql`jsonb_exists(${messageBodies.headers}, 'list-unsubscribe-post')`,
+      ))
+      .groupBy(messages.accountId)
+      .orderBy(asc(oldest))
+      .limit(accounts);
+
+    const sweep: UnsubscribeSweep = {
+      considered: 0, posted: 0, skipped: 0, failed: 0, remaining: 0,
+    };
+    const startedAt = Date.now();
+    let visited = 0;
+    let cutShort = false;
+    for (const row of owed) {
+      const spent = Date.now() - startedAt;
+      if (spent >= budgetMs) { cutShort = true; break; }
+      visited += 1;
+      const one = await this.sweepScreenedOut(
+        { db, accountId: row.accountId, userId: null, now: opts.now, requestId: opts.requestId },
+        { since, limit: perAccount, budgetMs: budgetMs - spent },
+      );
+      sweep.considered += one.considered;
+      sweep.posted += one.posted;
+      sweep.skipped += one.skipped;
+      sweep.failed += one.failed;
+      sweep.remaining += one.remaining;
+    }
+
+    // WHETHER ANYTHING IS STILL OWED, stated rather than inferred by the caller: the clock cut
+    // this run short, an account's own ceiling left targets behind, or the account list came back
+    // full and there may be another behind it. The next run picks up where this one stopped.
+    return {
+      accounts: visited,
+      sweep,
+      remaining: cutShort || sweep.remaining > 0 || owed.length >= accounts,
+    };
   }
 
   /**
