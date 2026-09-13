@@ -1289,6 +1289,25 @@ async function composePhoneEngine(
           + "on the next poll instead",
       });
     });
+    /* ══ AND THE ANSWER IS THE CYCLE'S OWN READING, NOT THE CONSENT IT RECORDED ═══════════════
+     *
+     * This said `claimed` for every recorded consent. The cycle above settles through
+     * `Promise.allSettled`, so the catch beside it cannot fire — measured: zero lines on the arm
+     * that reproduces this — and a connection gone before the gate took its permit left the app
+     * raising an organizer session over a mailbox with no claim in `ohmail/_meta` and a row still
+     * saying reader. `organizing` is the field and not {@link OrganizerState.claimed}: that one is
+     * the INSTRUCTION, set before the lease append and carried through an outage, so it reads
+     * `true` on this very arm. The consent stands and the next poll asks again, which is what the
+     * door's `unreadable` already means — and an outage is not a refusal. */
+    const settled = sidecar.organizerStates()[mailboxId];
+    if (settled === undefined || !settled.organizing) {
+      log("organizer_claim_here_unconfirmed", {
+        mailboxId,
+        reason: "the consent is recorded and the forced cycle did not take the claim, so this "
+          + "install is not organizing this mailbox yet and the next poll asks again",
+      });
+      return "unreadable";
+    }
     return "claimed";
   };
 
