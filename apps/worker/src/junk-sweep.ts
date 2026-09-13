@@ -103,6 +103,10 @@ export function sweepStateForPress(state: SweepScanState, command: string): Swee
  * operator reads it. Conditional now, and a single constant so the two arms cannot drift into
  * saying different things about one condition.
  */
+export const SWEEP_UNMAPPED_REASON =
+  "the mail server moved this message and did not say where it landed — nothing was recorded, "
+  + "and the next scan adopts the move";
+
 export const SWEEP_GONE_REASON =
   "not at the locator ohmail/Quarantine recorded — the next scan re-finds it if it still exists";
 
@@ -305,6 +309,10 @@ export async function junkSweepPass(opts: {
     // invocation, so a refusal is reported and left rather than scheduled. ONLY the IMAP call
     // sits in the try: its refusal is what selects the fallback.
     let batched: MoveManyResult | null = null;
+    // The batch's THIRD answer: the mail moved and the server would not say where. Nothing was
+    // recorded, and the per-message fallback must not run — it would spend one command per member
+    // rediscovering a source that is already empty and report landed work as gone.
+    let unmapped = false;
     if (typeof adapter.moveMany === "function") {
       // AGAIN, because `stillDesired` sits between the ask above and this write: an unbounded
       // database wait there can outlive the permit's TTL, so the receipt would be checked and then
@@ -312,10 +320,21 @@ export async function junkSweepPass(opts: {
       if (execute) await assertMayWriteToMailbox(writeAuthority);
       try {
         const res = await adapter.moveMany(chunk.map((p) => p.nativeLocator!), junk);
-        if (res.batched) batched = res;
+        if (res.outcome === "batched") batched = res;
+        else if (res.outcome === "moved_unmapped") unmapped = true;
       } catch {
         batched = null;
       }
+    }
+    if (unmapped) {
+      // DEFERRED, which is the counter's own meaning: this is our bookkeeping, not the pile
+      // refusing. The mail is in Junk; the next scan finds it gone from the quarantine folder and
+      // the sweep's one-time command is not retired by a scan that "moved nothing".
+      for (const p of chunk) {
+        result.deferred++;
+        result.skipped.push({ messageId: p.messageId, reason: SWEEP_UNMAPPED_REASON });
+      }
+      continue;
     }
     if (batched !== null) {
       for (const p of chunk) {

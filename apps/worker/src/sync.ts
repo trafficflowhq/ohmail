@@ -1330,11 +1330,12 @@ function classifyMoveRefusal(err: unknown): FilingRefusalClass {
  * Execute our intended moves, grouped by (source folder → destination) and filed in batches. Returns
  * whether the budget was reached with rows still pending, which the caller turns into a re-kick (see
  * {@link RECONCILE_MOVES_PER_CYCLE} and {@link MailboxAdapter.moveMany}). THE FALLBACK IS THE DESIGN,
- * not a safety net: `moveMany` answers `batched: false` for every group it cannot prove equivalent to
- * moving each member on its own, and it answers BEFORE writing anything — so everything below has
- * exactly two shapes (a batch that fully succeeded, or a group that goes through the untouched
- * per-message path) and never a half-filed group. A throw takes the same fallback: per-message is
- * where a single message earns its own verdict and its own `reconcile.move.failed` row.
+ * not a safety net: `moveMany` answers `declined` for every group it cannot prove equivalent to moving
+ * each member on its own, before writing anything, and that group goes through the untouched
+ * per-message path. Its third answer, `moved_unmapped`, is the one shape the fallback must NOT take:
+ * the mail moved and the server did not say where, so nothing is recorded and nothing is re-issued.
+ * Never a half-filed group either way. A throw takes the per-message fallback: that is where a single
+ * message earns its own verdict and its own `reconcile.move.failed` row.
  */
 async function reconcileFolders(deps: SyncDeps): Promise<boolean> {
   const { repo, accountId, mailboxId } = deps;
@@ -1485,14 +1486,28 @@ async function fileChunk(
   } catch {
     return null;
   }
-  if (!result.batched) return null;
+  // THE THREE ANSWERS, and the third is the one this used to get wrong. `declined` is a refusal
+  // taken BEFORE any command, so the group is owed to the per-message path. `moved_unmapped` says
+  // the mail HAS moved and the server would not name where — sending those members to `fileOne`
+  // spends a round trip each rediscovering the source is gone, so the chunk answers HANDLED with
+  // nothing written: every row stays pending and due, and the next `changesSince` adopts what the
+  // server shows, exactly as the uncommitted-bookkeeping path below already does.
+  if (result.outcome === "declined") return null;
+  if (result.outcome === "moved_unmapped") {
+    log?.warn("reconcile_move_batch_unmapped", {
+      mailboxId, accountId, size: chunk.length, to: folderLabel(toFolder),
+      reason: "the mail server moved this group and did not say where each message landed; " +
+        "nothing was recorded, every row stays pending, and the next scan adopts the moves",
+    });
+    return { reopened: false };
+  }
 
   // ONE WRITE GROUP for the whole chunk's bookkeeping — a transaction whether or not there is a fence
   // (see {@link fencedGroup}). It has to be: a chunk's locator/state/audit writes that half-commit
   // leave some members claiming a destination their `folder_state` disagrees with, and the batched
   // path has no per-member retry to notice. A failure of the group is contained rather than rethrown,
   // and the chunk still answers HANDLED (non-null): the moves LANDED (`moveMany` reports `batched`
-  // only for a group it performed whole), so sending the members to `fileOne` would spend one round
+  // only for a group it performed whole and mapped), so sending the members to `fileOne` would spend one round
   // trip each rediscovering the source is gone. Nothing was written, every row is still pending and
   // due, and the next `changesSince` adopts what the server shows — the same convergence a crash takes.
   let reopened = false;

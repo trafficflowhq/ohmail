@@ -3190,7 +3190,7 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
   /**
    * The same comparison as {@link assertLocatorEpoch}, as a question rather than a refusal —
    * for {@link moveMany}, whose contract is to DECLINE a group it cannot prove equivalent
-   * (`batched: false`) rather than to throw one error for fifty messages. Same call discipline:
+   * (`declined`) rather than to throw one error for fifty messages. Same call discipline:
    * only meaningful under the lock for `locator.folder`.
    */
   private locatorEpochStale(locator: NativeLocator): boolean {
@@ -3355,7 +3355,7 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
    * File a GROUP sharing a source folder and destination in a handful of round trips instead of
    * per message — see {@link MailboxAdapter.moveMany} and {@link FILING_BATCH_MAX}. Measured:
    * {@link move} is five commands per message — 1 137 decisions took 583 s of IMAP time; a batch
-   * pays the five once per chunk. It refuses (`batched: false`, nothing written, before the `UID
+   * pays the five once per chunk. It refuses (`declined`, nothing written, before the `UID
    * MOVE`) whenever it cannot prove equivalence: no MOVE or UIDPLUS; a destination Message-ID
    * hit; COPYUID not naming every message. Crash states are exactly `move`'s: a
    * moved-but-uncommitted message turns up in `gone` and `changesSince` adopts it. The Message-ID
@@ -3364,8 +3364,12 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
   async moveMany(
     locators: readonly NativeLocator[], toFolder: string,
   ): Promise<MoveManyResult> {
-    const empty: MoveManyResult = { batched: false, moved: new Map(), gone: [] };
-    if (locators.length === 0) return { batched: true, moved: new Map(), gone: [] };
+    // DECLINED is the answer before anything is written; UNMAPPED is the answer after `UID MOVE`
+    // has run and the server has not named where the mail landed. They used to be one value, so a
+    // caller told "nothing was written" re-filed mail that had moved.
+    const empty: MoveManyResult = { outcome: "declined", moved: new Map(), gone: [] };
+    const movedUnmapped: MoveManyResult = { outcome: "moved_unmapped", moved: new Map(), gone: [] };
+    if (locators.length === 0) return { outcome: "batched", moved: new Map(), gone: [] };
     if (locators.length > FILING_BATCH_MAX) {
       throw new Error(`moveMany: ${locators.length} exceeds FILING_BATCH_MAX (${FILING_BATCH_MAX}); the caller must chunk`);
     }
@@ -3392,7 +3396,7 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
     // addresses whatever the SELECTed mailbox currently numbers, so a set from two epochs cannot
     // be right about more than one — and a member whose epoch nobody named cannot be proved to
     // belong to the one the others agree on. Any unknown member, or two known epochs, declines
-    // (`batched: false`) rather than throwing: the caller re-files one at a time and `move`'s
+    // (`declined`) rather than throwing: the caller re-files one at a time and `move`'s
     // guard gives each row its own verdict. The old precheck FILTERED the unknown members out
     // before looking, so `{0:10, 8:11}` moved uid 10 on uid 11's agreement and an all-unknown
     // chunk moved with no comparison at all. Every member now carries the same named epoch, so
@@ -3431,7 +3435,7 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
     // A UID the server did not return is GONE — the batch's {@link MessageGoneError}, reported
     // rather than thrown because one vanished message must not cost the other forty-nine.
     const gone = [...wanted.keys()].filter((uid) => !present.has(uid)).map((uid) => wanted.get(uid)!);
-    if (present.size === 0) return { batched: true, moved: new Map(), gone };
+    if (present.size === 0) return { outcome: "batched", moved: new Map(), gone };
 
     // Step 2: the destination pre-check, asked ONCE for the whole group. See the header.
     const ids = [...present.values()]
@@ -3472,24 +3476,28 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
         // check alone would let a folder recycled in that window take the write.
         if (epochRep && this.locatorEpochStale(epochRep)) return empty;
         const res = await this.client.messageMove(uids, dstPath, { uid: true });
-        if (!res || typeof res === "boolean") return empty;
+        // FROM HERE THE MAIL HAS MOVED, so every refusal below answers `moved_unmapped`, never
+        // the pre-write fallback: a server that reports the move as a bare `true`, or a `uidMap`
+        // that does not name every message, leaves us unable to say WHERE each landed — which is
+        // a reason not to record anything, and no reason at all to move it a second time.
+        if (!res || typeof res === "boolean") return movedUnmapped;
         const map = res.uidMap;
         // A map that does not name every message cannot say where the unnamed ones landed. The
         // per-message path can recover that by fingerprint; this one refuses instead — and it may,
         // because the messages HAVE moved and the caller commits nothing, so the next pass sees
         // them gone from the source and adopts them through `changesSince`.
-        if (!map || map.size !== uids.length) return empty;
+        if (!map || map.size !== uids.length) return movedUnmapped;
         const validity = res.uidValidity ?? dstUidValidity;
         for (const uid of uids) {
           const dstUid = map.get(uid);
-          if (dstUid == null) return empty;
+          if (dstUid == null) return movedUnmapped;
           moved.set(wanted.get(uid)!.ref, { folder: toFolder, ref: makeRef(validity, dstUid) });
         }
       } finally {
         lock.release();
       }
     }
-    return { batched: true, moved, gone };
+    return { outcome: "batched", moved, gone };
   }
 
   /**

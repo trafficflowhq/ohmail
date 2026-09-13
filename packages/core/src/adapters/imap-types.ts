@@ -538,15 +538,27 @@ export const DEFAULT_SYNC_BATCH_MAX_BYTES = 32 * 1024 * 1024;
 export const FILING_BATCH_MAX = 50;
 
 /**
- * What {@link MailboxAdapter.moveMany} answers. `batched: false` means NOTHING WAS WRITTEN and
- * the caller owes the whole group to {@link MailboxAdapter.move}; there is no partial outcome.
+ * What {@link MailboxAdapter.moveMany} answers — THREE outcomes, because "declined" and "moved,
+ * then could not say where" are opposite facts and a boolean told the caller only the first.
+ * `declined` used to carry both: three returns sat AFTER `UID MOVE` and answered with the
+ * pre-write fallback, so a caller reading "nothing was written" re-filed mail that had moved.
  *
  * `moved` is keyed by the SOURCE locator's `ref` — the caller holds locators, not bare UIDs, and
- * a ref is the only key that stays meaningful across the epoch it names.
+ * a ref is the only key that stays meaningful across the epoch it names. Both are empty unless
+ * the outcome is `batched`.
  */
+export type MoveManyOutcome =
+  /** The group ended as per-member {@link MailboxAdapter.move} would have left it. */
+  | "batched"
+  /** NOTHING WAS WRITTEN, before any command: the caller owes the whole group to `move`. */
+  | "declined"
+  /** The server MOVED the mail and did not name where: nothing was written, and the caller may
+   * not move it again — the rows stay pending and `changesSince` adopts what the server shows. */
+  | "moved_unmapped";
+
 export interface MoveManyResult {
-  /** True ⇒ `moved` and `gone` together account for every locator passed in. */
-  batched: boolean;
+  /** Which of the three happened. `batched` ⇒ `moved` and `gone` account for every locator. */
+  outcome: MoveManyOutcome;
   /** Source `ref` → the locator the message now has at the destination. */
   moved: Map<string, NativeLocator>;
   /** Members the source folder no longer holds — the batch's `MessageGoneError`. */
@@ -847,13 +859,14 @@ export interface MailboxAdapter {
   move(locator: NativeLocator, toFolder: string): Promise<NativeLocator>;
   /**
    * File a group of messages sharing a source folder and destination in a handful of round trips
-   * instead of a handful per message. `batched: true` means the folders end in the state
-   * per-member {@link move} would have produced, `moved` naming where each landed; `batched:
-   * false` means NOTHING WAS WRITTEN and the caller owes the whole group to `move` — the
-   * implementation refuses before it writes; no partial outcome. `gone` carries members whose UID
-   * the source no longer holds ({@link MessageGoneError} reported, not thrown), so one vanished
-   * message does not cost the group; `changesSince` adopts what happened. The group must not
-   * exceed {@link FILING_BATCH_MAX}. Optional; fakes keep compiling.
+   * instead of a handful per message. `outcome: "batched"` means the folders end in the state
+   * per-member {@link move} would have produced, `moved` naming where each landed; `"declined"`
+   * means NOTHING WAS WRITTEN and the caller owes the whole group to `move`; `"moved_unmapped"`
+   * means the server moved the mail and would not say where, so nothing was written and the
+   * caller may NOT move it again. `gone` carries members whose UID the source no longer holds
+   * ({@link MessageGoneError} reported, not thrown), so one vanished message does not cost the
+   * group; `changesSince` adopts what happened. The group must not exceed
+   * {@link FILING_BATCH_MAX}. Optional; fakes keep compiling.
    */
   moveMany?(locators: readonly NativeLocator[], toFolder: string): Promise<MoveManyResult>;
   /* ── The USER-COMMANDED folder verbs (FOLDERS-SPEC.md stage 2) — executed only by the
