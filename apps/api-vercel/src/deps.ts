@@ -365,15 +365,14 @@ function buildServices(cfg: HostConfig): ApiServices {
         baseUrl: cfg.entitlements.url,
         secret: cfg.entitlements.secret,
         /*
-         * WHERE A CREDIT-CHECK OUTAGE GOES TO BE COUNTED (cloud 0033). The client warns on every
-         * spent budget by itself; this is the half a board can read. `entitlementsFaultRow` owns
-         * the mapping — a SYNTHETIC route so these never double-count the route's own 503 row,
-         * and `"api"` because the table's CHECK admits no third arm yet.
+         * WHERE A CREDIT-CHECK OUTAGE GOES TO BE COUNTED (cloud 0033). `entitlementsFaultRow`
+         * owns the mapping: a SYNTHETIC route, so these never double-count the route's own 503
+         * row, and `"api"` because the table's CHECK admits no third arm yet.
          *
-         * A fresh pooled handle with the same short acquire ceiling the 5xx recorder uses, for
-         * the same reason: an abandoned insert must not sit on the pool in front of the next
-         * request. The client AWAITS this — serverless is killed the moment it answers — and
-         * swallows a throw, so a dark board never becomes the customer's error.
+         * A fresh pooled handle with the same short acquire ceiling the 5xx recorder uses — an
+         * abandoned insert must not sit on the pool in front of the next request. Awaited,
+         * because serverless is killed the moment it answers, and a throw is swallowed so a dark
+         * board never becomes the customer's error.
          */
         onCallFault: async (f) => {
           await recordApiFault(

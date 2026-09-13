@@ -38,21 +38,14 @@ export interface ApiFaultInput {
 }
 
 /**
- * A CREDIT-CHECK CALL FAULT AS A ROW (cloud 0033) — the mapping, here beside the constraints it
- * has to satisfy, so it has its own test instead of living inside a composition root.
+ * A CREDIT-CHECK CALL FAULT AS A ROW (cloud 0033), beside the constraints it must satisfy.
  *
- * The route is SYNTHETIC and names the far end and its path. That is the whole point: the route
+ * The route is SYNTHETIC and names the far end and its path (`entitlements:/v1/spend`): the route
  * whose request failed already writes its own 503 row, so a second row under that pattern would
- * double the count every rule on this table reads. `entitlements:/v1/spend` is its own series.
- *
- * `arm` is a PARAMETER and not a literal, because the honest value is neither of the two this
- * table admits — `api_faults_arm_check` is `("arm" IN ('api','worker'))`, measured refusing
- * `entitlements` with 23514 — so the caller passes the arm it really is and a widened CHECK is a
- * one-value change, not a rewrite.
- *
- * The status is CHECK-constrained to 500-599: nothing arriving reads 504, the program's own 5xx
- * passes through, and anything else reads 502. A 4xx written here would be refused by the
- * database and take the diagnosis with it.
+ * double every count read from this table. `arm` is a PARAMETER, not a literal —
+ * `api_faults_arm_check` is `("arm" IN ('api','worker'))`, measured refusing `entitlements` with
+ * 23514 — so a widened CHECK is a one-value change. The status is CHECK-constrained to 500-599:
+ * nothing arriving reads 504, the program's own 5xx passes through, anything else reads 502.
  */
 export function entitlementsFaultRow(
   fault: { path: string; status: number | null }, arm: ApiFaultArm, at: Date,

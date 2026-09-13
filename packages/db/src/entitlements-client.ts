@@ -19,16 +19,12 @@ import { assertAttemptKey } from "./ledger-source.js";
 
 /**
  * THE BUDGET ON EVERY CALL, AND ITS ORIGIN — a stated budget, not a ceiling somebody liked.
- *
  * Measured 2026-09-13 with the program beside its own database: `/v1/access` p50 0.34 s, max
- * 0.39 s, and p95 291 ms in production. Five seconds is about twelve times that — the room a bad
- * day needs, and no more, because `screener-service.ts` subtracts this from the admission window
- * and every second here costs senders per request.
- *
- * The 3 000 ms it replaces was the program's OWN p50 while it ran an ocean from its database, and
- * a budget equal to the far end's typical answer fails on every slow day: it fired on each spend,
- * the verdict read `fault`, the route answered 503 — and the program completed that same spend
- * seconds later and CHARGED for it. One number for every path, because no path is slow now.
+ * 0.39 s, p95 291 ms in production. Five seconds is about twelve times that, and no more, because
+ * `screener-service.ts` subtracts it from the admission window. The 3 000 ms it replaces was the
+ * program's OWN p50 across an ocean: it fired on each spend, the verdict read `fault`, the route
+ * answered 503 — and the program completed that spend seconds later and CHARGED for it. One
+ * number for every path, because no path is slow now.
  */
 export const ENTITLEMENTS_CALL_BUDGET_MS = 5_000;
 
