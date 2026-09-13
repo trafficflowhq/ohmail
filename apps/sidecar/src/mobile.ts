@@ -964,7 +964,10 @@ async function composePhoneEngine(
          ordinary — a restore, a fresh row, a stand-down that cleared them. Refusing there answers
          a person "another install is organizing this mailbox" about the phone in their hand.
          `LeaseHolder.installId` exists for exactly this question. */
-      if (looked.holder.installId === deps.installId) return null;
+      if (looked.holder.installId === deps.installId) {
+        refusedHolders.delete(mailboxId);
+        return null;
+      }
       /* A HOLDER THE ROW HAD NOT CAUGHT UP WITH. The claim's own display name, through the same
          normaliser the row's column is written with, so the app is handed one spelling. */
       holder = {
