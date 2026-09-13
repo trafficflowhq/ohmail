@@ -118,12 +118,13 @@ export interface ScreenerSuggestDeps extends ScreenerDeps {
   /**
    * THE WALL-CLOCK CEILING THIS HOST KILLS A REQUEST AT — declared by the composition root,
    * ABSENT for a host that has none. `suggest` admits lanes only while there is time left to
-   * finish the work about to start (`admissionDeadline`): this − the model call's ceiling − the
-   * store after it. Three hosts compose this service and ONE is killed by a platform: the
-   * serverless API (`maxDuration = 60`). The others are ordinary processes, and the desktop
-   * deliberately permits a SIXTY SECOND model call — a window sized for serverless would refuse
-   * every sender after the first round there. Stated, never inferred: absent means "nothing kills
-   * a request here", a claim a deployment makes about itself.
+   * finish the work about to start (`admissionDeadline`): this − the spend call's budget −
+   * the model call's ceiling − the store after it. Three hosts compose this service and ONE is
+   * killed by a platform: the serverless API (`maxDuration = 60`). The others are ordinary
+   * processes, and the desktop deliberately permits a SIXTY SECOND model call — a window sized
+   * for serverless would refuse every sender after the first round there. Stated, never
+   * inferred: absent means "nothing kills a request here", a claim a deployment makes about
+   * itself.
    */
   invocationBudgetMs?: number;
   /**
@@ -238,11 +239,16 @@ const SUGGEST_LANES = 5;
  * THE ADMISSION WINDOW — DERIVED, NOT CHOSEN. A request killed by the platform has no error
  * handling: no response, no `finally`, no idempotency row — a sender charged and claimed before
  * that is money moved for a verdict nobody sees; the next attempt is told `duplicate`. So the
- * window is what is left after the worst case a lane is about to start: invocation − the model
- * call's ceiling − the store after it. A round 45 s was wrong by construction: a lane admitted
- * then may legitimately spend `SUGGEST_MODEL_CALL_CEILING_MS`, past the invocation on its own.
- * Refusing costs one honest "retry". Measured from the TOP of `suggest`, so a slow preflight eats
- * the window; `Date.now()`, not `ctx.now()` — a frozen test clock would switch it off silently.
+ * window is what is left after the worst case a lane is about to start: invocation − the SPEND
+ * CALL's budget − the model call's ceiling − the store after it. A round 45 s was wrong by
+ * construction: a lane admitted then may legitimately spend `SUGGEST_MODEL_CALL_CEILING_MS`, past
+ * the invocation on its own. Refusing costs one honest "retry". Measured from the TOP of
+ * `suggest`, so a slow preflight eats the window; `Date.now()`, not `ctx.now()` — a frozen test
+ * clock would switch it off silently.
+ *
+ * The release AFTER the store is the one awaited step deliberately left OUT, an invariant rather
+ * than an omission: a kill there loses nothing — the suggestion is durable, the claim expires on
+ * its own, and the next attempt reads the stored row for free.
  */
 /** `maxDuration` on the catch-all route this service is served from. */
 const SUGGEST_INVOCATION_BUDGET_MS = 60_000;
@@ -261,9 +267,18 @@ const SUGGEST_MODEL_CALL_CEILING_MS = 40_000;
 /** The verdict's own transaction and the response after it. */
 const SUGGEST_STORE_MARGIN_MS = 3_000;
 
+/**
+ * THE SPEND CALL'S OWN BUDGET — the first thing an admitted lane does, and on a metered host it is
+ * a network call to another program. It was never subtracted here, which put the worst case 3 s
+ * past the invocation on its own. Restated rather than imported, because `src` may not name the
+ * Cloud barrel: `suggest-lane-gate.test.ts` pins it to the client's `ENTITLEMENTS_CALL_BUDGET_MS`.
+ */
+const SUGGEST_SPEND_CALL_CEILING_MS = 5_000;
+
 /** What is left to admit lanes in, on a host whose ceiling is {@link SUGGEST_INVOCATION_BUDGET_MS}. */
 const SUGGEST_ADMISSION_WINDOW_MS =
-  SUGGEST_INVOCATION_BUDGET_MS - SUGGEST_MODEL_CALL_CEILING_MS - SUGGEST_STORE_MARGIN_MS;
+  SUGGEST_INVOCATION_BUDGET_MS - SUGGEST_SPEND_CALL_CEILING_MS
+  - SUGGEST_MODEL_CALL_CEILING_MS - SUGGEST_STORE_MARGIN_MS;
 
 /**
  * THE WINDOW FOR A HOST THAT STATES ITS OWN CEILING — a dependency, not the constant above. Three
@@ -278,7 +293,8 @@ const SUGGEST_ADMISSION_WINDOW_MS =
 export function admissionDeadline(invocationBudgetMs: number | undefined): number {
   if (invocationBudgetMs === undefined) return Number.POSITIVE_INFINITY;
   return Date.now()
-    + Math.max(0, invocationBudgetMs - SUGGEST_MODEL_CALL_CEILING_MS - SUGGEST_STORE_MARGIN_MS);
+    + Math.max(0, invocationBudgetMs - SUGGEST_SPEND_CALL_CEILING_MS
+      - SUGGEST_MODEL_CALL_CEILING_MS - SUGGEST_STORE_MARGIN_MS);
 }
 
 /**
@@ -292,7 +308,9 @@ const SUGGEST_PER_SENDER_BUDGET_MS = 3_000;
  * WHAT THIS SERVER TELLS A CLIENT TO PUT IN ONE REQUEST — published as
  * `suggestable.recommendedPerRequest`, a fact about THIS BUILD. DERIVED like the window: lanes
  * admit in rounds of `SUGGEST_LANES`, each round one sender's wall time, so the largest request
- * that reliably finishes is lanes × floor(window / per-sender) = 5 × floor(17 s / 3 s) = 25. A
+ * that reliably finishes is lanes × floor(window / per-sender) = 5 × floor(12 s / 3 s) = 20. It
+ * was 25 while the spend call cost the window nothing, which was never true — a request of 25 had
+ * been overrunning its invocation on a slow program for as long as one existed. A
  * chosen forty fit only while every sender answered at the measured 2 s — slower pushes the tail
  * past the window, those senders come back `spend_unavailable`, the client HALTS its chunks on
  * `stopped`. Deliberately BELOW `MAX_SUGGEST_SENDERS`: the cap is the 413 boundary, this is the
@@ -308,6 +326,7 @@ export const SUGGEST_RECOMMENDED_PER_REQUEST =
  */
 export const SUGGEST_ADMISSION = {
   invocationMs: SUGGEST_INVOCATION_BUDGET_MS,
+  spendCallCeilingMs: SUGGEST_SPEND_CALL_CEILING_MS,
   modelCallCeilingMs: SUGGEST_MODEL_CALL_CEILING_MS,
   storeMarginMs: SUGGEST_STORE_MARGIN_MS,
   windowMs: SUGGEST_ADMISSION_WINDOW_MS,
