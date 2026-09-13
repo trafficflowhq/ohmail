@@ -87,6 +87,14 @@ type Stage = "list" | "form" | "edit" | "remove" | "password" | "factor" | "savi
 type Factor = "webauthn" | "totp" | "recovery_code";
 
 /**
+ * What a take-over press did, for the one caller that has to tell two refusals apart. `step_up`
+ * has already PLACED the person — at the password step, with the ask still standing — so landing
+ * them anywhere else would throw the ceremony away; `refused` and `settled` both belong on the
+ * list the row is on.
+ */
+type TakeoverVerdict = "settled" | "step_up" | "refused";
+
+/**
  * What the edit form holds. Separate from the connect form's {@link Typed} on purpose: an edit is a
  * PATCH of stored settings, so every field is a correction that may be omitted, and the server
  * merges what is sent over what it has. The ports are strings because they are input values, parsed
@@ -738,6 +746,18 @@ export function MailboxSection() {
   const [takingOver, setTakingOver] = useState<ReadonlySet<string>>(() => new Set());
 
   /**
+   * THE MAILBOX A TAKE-OVER IS ABOUT, held across the step-up ceremony — the fourth thing a
+   * verified factor can make, beside a create, a patch and a delete.
+   *
+   * `POST /mailboxes/:id/organize` is step-up gated, and nothing refreshes `sessions.last_twofa_at`
+   * except completing a login: this file's own header says a person sitting in their mailbox is
+   * essentially never step-up fresh. So the press almost always answered 403 and this pane printed
+   * the refusal and stopped — on the one row whose only remedy is that press. The gating does not
+   * change and the window is not widened; what changes is where the refusal LEAVES somebody.
+   */
+  const [takeoverFor, setTakeoverFor] = useState<string | null>(null);
+
+  /**
    * STOP ORGANIZING THIS MAILBOX HERE, AND KEEP THE MAIL — the mirror of {@link confirmTakeover}. It records a
    * request and does not perform it. The claim lives in the customer's own IMAP folder, so only the process holding
    * that connection can give it up: the worker honours the request at its next gate, which is why the copy says
@@ -769,12 +789,12 @@ export function MailboxSection() {
     }
   }, [refresh, t]);
 
-  const confirmTakeover = useCallback(async (id: string): Promise<void> => {
+  const confirmTakeover = useCallback(async (id: string): Promise<TakeoverVerdict> => {
     setError(null);
     setTakingOver((q) => new Set(q).add(id));
     try {
       const result = await mailboxApi.organize(id);
-      if (!alive.current) return;
+      if (!alive.current) return "settled";
       setOrganizer(null);
       setNotice(
         result.outcome === "authorized" ? t("organizerQueued")
@@ -784,12 +804,25 @@ export function MailboxSection() {
       // The row's status changed under us on the authorized path, and only the server knows the
       // new one — a local guess would be a second source of truth for `status`.
       await refresh();
+      return "settled";
     } catch (err) {
-      if (!alive.current) return;
+      if (!alive.current) return "refused";
       setOrganizer(null);
       setError(messageOf(err));
       // Nothing was asked for, so the way back must stay reachable — see `takingOver`.
       setTakingOver((q) => { const n = new Set(q); n.delete(id); return n; });
+      /* THE REFUSAL THAT IS NOT A DEAD END. The window closed — or, on this route, was never open
+         — so the ceremony runs here, in place, exactly as it does for a create or a patch, and
+         the ask is held in `takeoverFor` until a factor verifies. The verdict is returned rather
+         than inferred by the caller: a second refusal must leave the person at the factor step,
+         and the stage this sets is not readable from the closure that just called us. */
+      if (codeOf(err) === "step_up_required") {
+        setTakeoverFor(id);
+        setChallenge(null);
+        setStage("password");
+        return "step_up";
+      }
+      return "refused";
     }
   }, [refresh, t]);
 
@@ -1510,9 +1543,30 @@ export function MailboxSection() {
     }
   };
 
-  /** Which write the verified factor makes. A removal DELETEs, an edit PATCHes, else it creates. */
+  /**
+   * THE TAKE-OVER, RUN FROM A VERIFIED FACTOR — the ceremony's fourth ending. It re-presses the
+   * same authorization the row's button presses; what the ceremony bought is a fresh
+   * `last_twofa_at`, nothing more.
+   */
+  const finishTakeover = async (id: string): Promise<void> => {
+    setStage("saving");
+    const verdict = await confirmTakeover(id);
+    if (!alive.current) return;
+    // A second refusal has put the person back at the password step with the ask still held;
+    // landing them on the list here would discard the ceremony they are halfway through.
+    if (verdict === "step_up") return;
+    setTakeoverFor(null);
+    setStage("list");
+  };
+
+  /**
+   * Which write the verified factor makes. A take-over authorizes, a removal DELETEs, an edit
+   * PATCHes, else it creates. `takeoverFor` is read FIRST and the four are mutually exclusive by
+   * construction — each is entered from a resting list.
+   */
   const finishCeremony = (): Promise<void> =>
-    (removing ? removeMailbox() : editing ? saveEdit() : connect());
+    (takeoverFor ? finishTakeover(takeoverFor)
+      : removing ? removeMailbox() : editing ? saveEdit() : connect());
 
   const submitPassword = (e: React.FormEvent): void => {
     e.preventDefault();
@@ -2724,9 +2778,13 @@ export function MailboxSection() {
             <Button variant="primary" type="submit" disabled={busy || !email}>
               {busy ? t("working") : t("continue")}
             </Button>
-            {/* Back to whichever form we came from — both still hold every typed field. */}
+            {/* Back to whichever form we came from — both still hold every typed field. A
+                take-over has no form behind it: the ask was one press on a row, so back is the
+                list that row is on, and the ask is dropped with it rather than left standing
+                against the next factor somebody verifies for something else. */}
             <Button onClick={() => {
-              setStage(removing ? "remove" : editing ? "edit" : "form");
+              if (takeoverFor) setTakeoverFor(null);
+              setStage(takeoverFor ? "list" : removing ? "remove" : editing ? "edit" : "form");
               setPassword(""); setError(null);
             }}>
               {t("back")}
@@ -2800,7 +2858,11 @@ export function MailboxSection() {
 
       {stage === "saving" ? (
         <p className="acct-lead">
-          {removing ? t("removeWorking") : editing ? t("savingEdit") : t("connecting")}
+          {/* A take-over connects nothing — the credential is already stored and the claim is the
+              worker's next pass — so it takes the neutral word rather than "Connecting…", which
+              would describe an act this press does not perform. */}
+          {takeoverFor ? t("working")
+            : removing ? t("removeWorking") : editing ? t("savingEdit") : t("connecting")}
         </p>
       ) : null}
 

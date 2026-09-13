@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray, isNotNull, ne, sql, type SQL } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNotNull, ne, or, sql, type SQL } from "drizzle-orm";
 import { carryDialect, dialect } from "@trafficflow/db/dialect";
 import {
   assertOrganizerRole,
@@ -1987,7 +1987,19 @@ export class MailboxService {
        * re-authorizing a becoming that has happened would put a spendable takeover stamp on a
        * healthy mailbox — precisely what lets a gate seize a mailbox past a live foreign claim.
        */
-      if (current.status === "disabled") {
+      /**
+       * A STAND-DOWN IS NOT A DISCONNECT, and `status` alone cannot tell them apart — the header
+       * says so and this guard did not, so the one remedy the pane offers a stood-down row
+       * refused itself with the sentence written for a mailbox the person removed. The reason is
+       * the discriminator: `delete` clears it in the same statement that writes the tombstone, so
+       * a non-null reason means the organizer lease stood this install down.
+       *
+       * `!== null` rather than the membership test, matching every read side: an UNRECOGNISED
+       * member is a NEWER writer's stand-down (`standDownToken`, `isMailboxDisabledReason`'s own
+       * note), and narrowing it to a disconnect here would file that as "the user removed this".
+       */
+      const stoodDown = current.status === "disabled" && current.disabledReason !== null;
+      if (current.status === "disabled" && !stoodDown) {
         // The tombstone. See the header — this is a refusal, never a revival. It is checked
         // BEFORE the role, because a removed mailbox's role says nothing about it and answering
         // `already_organizing` for a row the user deleted would be a lie in the reassuring
@@ -2084,6 +2096,17 @@ export class MailboxService {
       if (input.screening) await this.writeScreeningAnswer(tx, ctx, input.screening);
 
       const rows = await tx.update(mailboxes).set({
+        /**
+         * THE THIRD COLUMN THE HEADER NAMES, and only for the stand-down. A stood-down row is off
+         * the roster (`loadEnabledMailboxes` filters `status <> 'disabled'`), so a stamp and a
+         * cleared reason would leave the mailbox exactly as dead as it was — the stamp alone is
+         * INERT, which is the header's own word for it.
+         *
+         * CONDITIONAL, and that is the whole care: written unconditionally it would move an
+         * `error` row to `connected` and report a mailbox healthy that cannot log in. A live row
+         * is already `connected` and this key is absent for it.
+         */
+        ...(stoodDown ? { status: "connected" as const } : {}),
         // NOT the role. **The GATE promotes, and this is the whole reason the ceremony is safe to
         // expose on every door.** All this writes is a request; the worker's next pass reads the
         // claim in the mailbox and decides, and if another organizer is still renewing and
@@ -2138,9 +2161,10 @@ export class MailboxService {
           eq(mailboxes.id, id),
           eq(mailboxes.accountId, ctx.accountId),
           // NOT `status = 'disabled'` any more — a reader is CONNECTED, so the old predicate
-          // matched nothing this method is now for. `<> 'disabled'` is the honest restatement:
-          // never revive a tombstone, and the two states this ceremony serves are both live.
-          ne(mailboxes.status, "disabled"),
+          // matched nothing this method is now for. Never revive a TOMBSTONE is what it has
+          // always meant, and a tombstone is two columns: `<> 'disabled'` spelled that alone, so
+          // it also fenced out the stand-down this ceremony exists to reverse.
+          or(ne(mailboxes.status, "disabled"), isNotNull(mailboxes.disabledReason)),
         ))
         .returning({ id: mailboxes.id });
 
@@ -2157,11 +2181,11 @@ export class MailboxService {
        */
       return { outcome: "authorized" as const, previousReason: standDownMemory(current) };
     }, { lock: "update" }).catch((err: unknown) => {
-      // Kept from the `disabled → connected` era: this statement no longer moves `status`, so it
-      // no longer inserts into the active-address index and 23505 is unreachable from here. It
-      // stays because the honest answer to an address conflict on this door is still
-      // `addressTaken()` rather than a 500, and a future edit that restores a status move must not
-      // have to rediscover that.
+      // AND THE EDIT THAT RESTORES THE STATUS MOVE IS HERE, so this is live again rather than
+      // kept for a future: a stood-down row re-enters `mailboxes_active_address_uq` (partial, on
+      // `status <> 'disabled'`), and migration 0083 left exactly the rows that have a live
+      // sibling on the same address disabled. Claiming one back raises 23505, and the honest
+      // answer is `addressTaken()` — the live sibling IS the mailbox — rather than a 500.
       if (isActiveAddressConflict(err)) throw addressTaken();
       throw err;
     });
