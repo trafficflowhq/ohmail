@@ -26,13 +26,12 @@ export const OPEN_ATTACHMENT_COMMAND = "open_attachment";
 /**
  * The shell command that saves one attachment into the PERSON'S Downloads folder.
  *
- * The download and the open are two different acts and this app had only the second: pressing an
+ * The download and the open are different acts and this app had only the second: pressing an
  * attachment wrote the file under the app's own directory and handed it to the platform viewer, so
- * on a Mac an image opened in Preview, nothing arrived in `~/Downloads`, and "Download all" had no
- * desktop meaning at all. This is the DOWNLOAD — the same thing `<a download>` does in a browser,
- * performed by the shell because a webview with no download handler cancels the navigation.
- * `engine.rs` still owns every part of the path, including the `name (2).ext` numbering that keeps
- * a save from overwriting a file already sitting in that folder.
+ * an image opened in Preview, nothing arrived in `~/Downloads`, and "Download all" had no desktop
+ * meaning. This is the DOWNLOAD — what `<a download>` does in a browser, performed by the shell
+ * because a webview with no download handler cancels the navigation. `engine.rs` owns every part
+ * of the path, including the `name (2).ext` numbering that keeps a save from overwriting.
  */
 export const SAVE_ATTACHMENT_COMMAND = "save_attachment";
 
@@ -57,15 +56,13 @@ export function desktopAttachmentsEnabled(): boolean {
 
 /**
  * Whether this build must hand a type to the operating system rather than draw it itself. PDF and
- * PDF only, for a specific reason: the renderer is aliased out of both desktop bundles because it
- * cannot start under this window's `worker-src 'none'` (`apps/desktop/src/no-pdfjs.ts`); images
- * and text are drawn from bytes the app already holds. `MessagePane` reads this to decide which
- * tiles are offered the in-app viewer: a `true` removes the small eye, because an eye whose only
- * outcome is a panel saying to download instead is a control that lies about what it does. The
- * tile's own press then does what every attachment press does — it saves the file into this
- * computer's Downloads folder, where the reader opens it in whatever they use. The type test is spelled
- * here rather than imported from `AttachmentPreview` (which imports this module's siblings — a
- * cycle); it is one string, and the suite pins the pair.
+ * PDF only: the renderer is aliased out of both desktop bundles because it cannot start under this
+ * window's `worker-src 'none'` (`apps/desktop/src/no-pdfjs.ts`), while images and text are drawn
+ * from bytes the app already holds. `MessagePane` reads this to decide which tiles are offered the
+ * in-app viewer — a `true` removes the small eye, because an eye whose only outcome is a panel
+ * saying to download instead is a control that lies. The tile's press then saves the file like
+ * every other. The type test is spelled here rather than imported from `AttachmentPreview`, which
+ * would be a cycle; it is one string, and the suite pins the pair.
  */
 export function opensInSystemViewer(mimeType: string): boolean {
   if (!armed) return false;
@@ -79,20 +76,12 @@ interface TauriInternals {
 /**
  * Ask the shell to write one attachment and open it, and say so if it will not.
  *
- * NO SURFACE CALLS THIS TODAY. Every attachment verb in the product says Download, and a Download
- * that opens a file in a viewer instead of saving it is the defect {@link saveAttachmentToDownloads}
- * exists to end. The door stays because the shell's half of it is whole and proven — it is what an
- * explicit Open verb would use the day one is added — and until then the window bundle does not
- * name the command at all (`scripts/scan-artifact.mjs` says so in its marker list).
- *
- * The bytes go up as an
- * array of numbers — the bridge's own wire: `offline-guard.ts` refuses the runtime's custom-scheme IPC,
- * so every command travels the JSON message channel, and the same attachment already came DOWN it this
- * way (`bridge-fetch.ts#asBytes`). The bound is the mail service's own single-fetch ceiling, enforced
- * twice: the client never fetches a part over it, and the shell refuses one again. The rejection arm is a
- * `console.error`, not a swallow: this slice exists because a press failed without a trace, and a second
- * silent failure inside the repair would be the same defect wearing the fix. Answers whether the shell
- * was asked at all, so the caller can tell "handed over" from "there is no shell here".
+ * NO SURFACE CALLS THIS TODAY: every attachment verb says Download, and a Download that opens in a
+ * viewer is the defect {@link saveAttachmentToDownloads} exists to end. The door stays because the
+ * shell's half is whole — it is what an explicit Open verb would use — and until then the window
+ * bundle does not name the command at all. The bytes go up as an array of numbers, the bridge's
+ * own wire, bounded by the mail service's single-fetch ceiling enforced at both ends. A rejection
+ * is logged, never swallowed; the answer says whether the shell was asked at all.
  */
 export async function openAttachmentWithSystemViewer(blob: Blob, filename: string): Promise<boolean> {
   const host = globalThis as { __TAURI_INTERNALS__?: Partial<TauriInternals> };
@@ -113,10 +102,9 @@ export async function openAttachmentWithSystemViewer(blob: Blob, filename: strin
  *
  * The same wire as its neighbour above — bytes as an array of numbers over the JSON message
  * channel, the same ceiling enforced at both ends — and the same refusal to swallow: a shell that
- * would not save goes to the console, because this family of defects is silent by nature and a
- * second silent failure inside the repair would be the first one wearing the fix. A `false` covers
- * both "there is no shell here" and "the shell refused", and the caller treats them the same: it
- * does not claim a file was saved.
+ * would not save goes to the console, because this family of defects is silent by nature. A
+ * `false` covers both "there is no shell here" and "the shell refused", and the caller treats them
+ * the same: it does not claim a file was saved.
  */
 export async function saveAttachmentToDownloads(blob: Blob, filename: string): Promise<boolean> {
   const host = globalThis as { __TAURI_INTERNALS__?: Partial<TauriInternals> };

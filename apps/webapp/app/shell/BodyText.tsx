@@ -194,14 +194,11 @@ export type InlineNode = TextRun | LineBreak | StyledRun | LinkRun;
 /**
  * A run of rich inline content, and WHAT CONTAINED IT decides its spacing.
  *
- * `"paragraph"` is a real `<p>` (and a list item, which the list's own rule spaces): a block the
- * sender meant as a paragraph, and it gets paragraph spacing. `"line"` is everything else, and
- * `<div>` is the case that matters — Apple Mail, Gmail and Outlook all compose a letter as one
- * `<div>` PER LINE with `<div><br></div>` where the writer pressed return twice. Spacing every one
- * of those as a paragraph put a blank line between every line of every message those clients send,
- * while the writer's own blank lines vanished, so the rendering was wrong in both directions at
- * once. A line has no spacing of its own; the blank lines are the ones the sender wrote.
- *
+ * `"paragraph"` is a real `<p>` (and a list item, spaced by the list's own rule): a block the
+ * sender meant as a paragraph. `"line"` is everything else, and `<div>` is the case that matters —
+ * mail clients compose one `<div>` per LINE, with `<div><br></div>` for a double return. Spacing
+ * those as paragraphs put a blank line between every line while the writer's own blank lines
+ * vanished. A line has no spacing of its own; the blank lines are the ones the sender wrote.
  * `attribution` re-uses the plain path's role and style and outranks both.
  */
 export interface RichParagraphNode {

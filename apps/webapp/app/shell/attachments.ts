@@ -126,18 +126,12 @@ export type Delivery = "saved" | "downloaded" | "refused";
 /**
  * Deliver one file, by whichever route this window actually has — and the same act on both.
  *
- * In a browser tab {@link saveObjectUrl} is the whole answer. In the desktop window the `download`
- * attribute asks the webview to turn the navigation into a download, and a webview whose host
- * registered no handler cancels it silently — every attachment press did nothing. The first repair
- * handed the bytes to the platform VIEWER instead, which ended the silence and answered a different
- * question: a Download button that opened an image in Preview and left nothing in the person's
- * Downloads folder. So the desktop arm now asks the shell to SAVE, which is what both surfaces'
- * button has always said (`engine.rs#save_attachment` owns the folder, the name and the `name (2)`
- * numbering). `open-attachment.ts` carries the mechanism; this is the one place either route is
- * chosen, and the desktop arm never falls back to the anchor (there it is not a slower route, it is
- * nothing at all). `blob` is the engine's retained typed Blob, minted with the object URL so the two
- * cannot diverge ({@link OhmailEngine.attachmentBlobOf}); without bytes the anchor is all that is
- * left.
+ * A browser tab uses {@link saveObjectUrl}. In the desktop window the `download` attribute is
+ * cancelled silently by a webview with no download handler, so every press did nothing; handing
+ * the bytes to the platform VIEWER fixed the silence and answered the wrong question, opening an
+ * image in Preview and leaving nothing in Downloads. So the desktop arm asks the shell to SAVE,
+ * what both buttons have always said, and never falls back to the anchor — there it is nothing at
+ * all. `blob` is minted with the object URL so the two cannot diverge.
  */
 export async function deliverFile(
   blob: Blob | undefined,
@@ -155,19 +149,12 @@ export async function deliverFile(
 /**
  * Deliver a whole strip, and answer how many landed in the person's Downloads folder.
  *
- * ONE FUNCTION RATHER THAN A LOOP AT THE CALL SITE, because the two routes want opposite things
- * and only one of them can be written as the other's loop:
- *
- *  · the BROWSER arm must be one synchronous run with no `await` between the anchor clicks —
- *    browsers treat an unbroken run as one act and ask once, and spacing it across tasks drops
- *    the later downloads;
- *  · the DESKTOP arm must be sequential and awaited — each file is a host call that writes into a
- *    directory shared with everything else the person has downloaded, and the collision numbering
- *    is decided by the filesystem at the moment of the write, so two presses racing for
- *    `Invoice.pdf` must not be in flight together.
- *
- * The count is what the strip's notice is allowed to claim: files the shell said it wrote, never
- * files that were asked for.
+ * ONE FUNCTION RATHER THAN A LOOP AT THE CALL SITE, because the two routes want opposite things:
+ * the BROWSER arm must be one synchronous run with no `await` between the anchor clicks (browsers
+ * treat an unbroken run as one act and drop the later downloads when it is spaced across tasks),
+ * while the DESKTOP arm must be sequential and awaited, because the collision numbering is decided
+ * by the filesystem at the moment of the write and two presses racing for `Invoice.pdf` must not
+ * be in flight together. The count is what the notice may claim: files the shell said it wrote.
  */
 export async function deliverAll(
   files: ReadonlyArray<{ blob: Blob | undefined; url: string; filename: string }>,

@@ -1885,23 +1885,14 @@ const RICH_INLINE = new Set(["br", "strong", "b", "em", "i", "u", "a", "span", "
 const RICH_PARAGRAPH_CONTAINERS = new Set(["p", "li"]);
 
 /**
- * The block walk: accumulate inline content into a run, flush it at every block boundary, and emit
- * the structural kinds by name.
- *
- * ── WHAT A RUN BECOMES, AND WHY IT IS NOT ALWAYS A PARAGRAPH ───────────────────────────────
- *
- * Every run used to become a paragraph with paragraph spacing. Apple Mail, Gmail and Outlook all
- * compose a letter as one `<div>` per LINE — twelve lines is twelve divs, and a blank line the
- * writer typed is `<div><br></div>` — so a message that reads as twelve consecutive lines in the
- * client that sent it arrived here with a blank line between every one of them. The sender's own
- * blank lines, meanwhile, were dropped: a run holding nothing but a `br` trims to no words, and
- * "no words" was the rule for discarding the whitespace BETWEEN a mail builder's divs.
- *
- * So two rules, and each is the other's answer:
- *
- *  · the container decides the spacing ({@link RICH_PARAGRAPH_CONTAINERS}) — a div is a line;
- *  · a wordless run is dropped ONLY when it is pure whitespace. One carrying a `br` is a blank
- *    line somebody wrote, and it survives as exactly one empty line.
+ * The block walk: accumulate inline content into a run, flush at every block boundary, emit the
+ * structural kinds by name. Mail clients compose a letter as one `<div>` PER LINE, with
+ * `<div><br></div>` where the writer pressed return twice, so spacing every run as a paragraph put
+ * a blank line between every line while the writer's own blank lines vanished — wrong both ways at
+ * once. Two rules, each the other's answer: the CONTAINER decides the spacing ({@link
+ * RICH_PARAGRAPH_CONTAINERS}), a div being a line; and a wordless run is dropped ONLY when pure
+ * whitespace, since one carrying a `br` is a blank line somebody wrote and survives as exactly one
+ * empty line.
  */
 function blocksOf(container: Element, depth: number, b: RichBudget, nest: number): BodyNode[] {
   if (nest > MAX_WALK_DEPTH) { poison(b); return []; }

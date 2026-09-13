@@ -4087,14 +4087,13 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           leaseNonce = outcome.nonce;
           /* ══ THE ROW FOLLOWS THE CLAIM, WITH NOTHING BETWEEN THEM ══════════════════════════
            *
-           * `readMailboxLease` has just said ORGANIZE, which means this install's claim stands in
-           * `ohmail/_meta` and has been verified there. From that instant to the row saying
-           * `organizer` nothing else may be awaited: measured at this line the promotion sat behind
-           * `acquireLeasePermit`'s `stampMeta`, an IMAP STATUS worth ~83 ms, and for that whole
-           * window the folder advertised this install as the organizer while its own row said
-           * `reader` — the row every write door consults. So the promotion is issued here and the
-           * permit is taken after it; the permit adopts this same read and needs nothing the row
-           * write produces.
+           * `readMailboxLease` has just said ORGANIZE, so this install's claim stands in
+           * `ohmail/_meta` and is verified there. From that instant to the row saying `organizer`
+           * nothing else may be awaited: measured here, the promotion sat behind
+           * `acquireLeasePermit`'s `stampMeta`, an IMAP STATUS worth ~83 ms, and for that window
+           * the folder advertised this install as organizer while its own row — the one every
+           * write door consults — still said `reader`. The promotion is issued here and the permit
+           * taken after it; the permit adopts this same read.
            */
           // THE MEMORY IS SPENT WITH THE STAMP. Reaching here past a remembered stand-down means a
           // human pressed the button and the lease agreed; leaving the memory set would make the
@@ -5347,14 +5346,14 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
        */
       let redialInFlight: Promise<void> = Promise.resolve();
       /**
-       * @param force A person pressed "Sync now". Skips the backoff WAIT and nothing else: the
-       * ladder is right for a poll and wrong for a person, who otherwise watched the one control
-       * do nothing after the network returned. Every other early return still holds — `stopped`
-       * and `connectionDeadSince === null` (nothing to re-dial), `redialling` (join, don't open a
-       * second login), the credential guard, and `signInRefused` (the SERVER said no; a press
+       * @param force A person pressed "Sync now". Skips the backoff WAIT and nothing else: the ladder is
+       * right for a poll, wrong for a person watching the one control do nothing after the network
+       * returned. Every other early return still holds — `stopped` and `connectionDeadSince === null`
+       * (nothing to re-dial), `redialling` (join, don't open a second login), the credential arm (which
+       * retries the stored READ rather than dialling), and `signInRefused` (the SERVER said no; a press
        * must not become repeated LOGIN attempts providers throttle or lock). It does NOT reset the
-       * ladder (`redialAttempts` untouched) and is NOT unlimited — honoured at most once per this
-       * profile's first ladder step ({@link forcedNotBefore}, {@link ReconnectProfile}).
+       * ladder (`redialAttempts` untouched) and is NOT unlimited — at most once per this profile's first
+       * ladder step ({@link forcedNotBefore}, {@link ReconnectProfile}).
        */
       const redialIfDead = async ({ force = false }: { force?: boolean } = {}): Promise<void> => {
         if (stopped || connectionDeadSince === null || redialling) return;
