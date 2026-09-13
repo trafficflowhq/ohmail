@@ -51,10 +51,10 @@ state the mailbox is in rather than the last button you pressed. The stop is wri
 phone itself, so reopening the app does not undo it. Where nothing organizes a mailbox, the panel no
 longer explains how to dismiss a notification that is not showing.
 
-### Every Linux build measures start time and memory
+### The Linux build measures start time and memory
 
-The build could prove the packaged app opens a window and nothing about what it costs. The Linux job
-now runs the packaged app against a generated ten-thousand-message mailbox and reads the app's own
+The build could prove the packaged app opens a window and nothing about what it costs. The x86_64
+Linux job now runs the packaged app against a generated ten-thousand-message mailbox and reads the app's own
 numbers back — how long the engine took to be ready, and how much memory the engine and the window
 hold — each against a written budget. Over a budget fails the build.
 
@@ -93,7 +93,8 @@ on all of their mail. Mail already waiting when you wrote the rule is unchanged.
 
 The organizer claim ohmail keeps in your mailbox is returned when the app closes, whichever way
 you quit and on a phone as well, so your other machine can take over at once instead of waiting up
-to ten minutes for the claim to go stale. The machine is still the organizer of record: opening it
+to ten minutes for the claim to go stale. The claim lives in the mailbox, so quitting while your
+mail server cannot be reached leaves it to go stale as before. The machine is still the organizer of record: opening it
 again takes the mailbox back unless somebody else has taken it first.
 
 ### Organizing a mailbox no longer fails while another one is being disconnected
@@ -144,12 +145,13 @@ whichever arm was last. They now say what a phone is: it organizes this mailbox,
 the ohmail app is open on it. A phone that has stopped renewing its claim is no longer reported as
 still filing.
 
-### How long a first import took, in full
+### How long a first import took
 
 The mail engine writes one line when a mailbox's first import finishes, saying how long it took. The
 clock started at the end of the first pass over the mailbox rather than at its beginning, and on a
 large mailbox that pass is a quarter of an hour of work — so the figure left out the stretch that was
-doing the most. A large first import read as thirty-four minutes where it had taken forty-seven. The
+doing the most. A large first import read as thirty-four minutes where it had taken forty-seven. The figure is one
+run's: an import that finishes after a restart is timed from the restart. The
 import is unchanged; the line describing it is now the whole of it.
 
 ### Links and buttons open your browser again on Linux
