@@ -51,12 +51,11 @@ export const WIPED_TABLES: readonly string[] = [
  * Delete everything this install mirrored for one mailbox, and SAY SO in the change log so the
  * window's own mirror drops it too. Idempotent; safe on an empty store.
  *
- * NOT a transaction, and that is a decision rather than an omission. The caller has already
- * committed the tombstone and the credential deletion — the acts that make the mailbox stop
- * working — so a failure part-way through here leaves a REMOVED mailbox with some of its mail
- * still on disk, which is untidy and harmless, and is recoverable by removing again. Wrapping it
- * would instead put a long multi-table delete inside the same lock as a lifecycle write, on a
- * database that is also serving the window, for no correctness this needs.
+ * NOT a transaction, and that is a decision. The caller has already committed the tombstone and
+ * the credential deletion, so a failure part-way here leaves a REMOVED mailbox with some mail
+ * still on disk — untidy, harmless, and recoverable by removing again. Wrapping it would put a
+ * long multi-table delete inside the same lock as a lifecycle write, on a database also serving
+ * the window, for no correctness this needs.
  */
 export async function wipeLocalMirror(
   db: LocalDb, args: { accountId: string; mailboxId: string },
@@ -64,20 +63,14 @@ export async function wipeLocalMirror(
   const { accountId, mailboxId } = args;
   await deleteMailboxRows(db, mailboxId);
 
-  /* ── THE RECEIPT, AND IT IS PART OF THE WIPE RATHER THAN BESIDE IT ──────────────────────────
-   *
+  /* ── THE RECEIPT, AND IT IS PART OF THE WIPE RATHER THAN BESIDE IT ──
    * On this door the local database is BOTH server and mirror — but the WINDOW is not this
-   * database: it runs its own mirror and learns what exists only from the change log it drains.
-   * So the deletes above take the mail off the disk and change nothing on the screen: measured,
-   * the window kept rendering the removed mailbox's messages, their cached bodies and its unsent
-   * draft, and went on counting them, after the removal had reported success. One row says it
-   * (`recordMailboxRemoved`); the client cascades its own dependents from the mailbox id.
-   *
-   * INSIDE THIS FUNCTION so no caller can take the mail without saying so, and AFTER the deletes
-   * so the receipt is only ever true: a wipe that dies part-way leaves both sides holding the
-   * same rows, which is the state the caller's log already describes and a second removal clears.
-   * Its own transaction, because `recordChanges` allocates the account's next seq under the
-   * counter's row lock and refuses an autocommit handle — and a transaction is what makes the
+   * database: it runs its own mirror and learns what exists only from the change log it drains, so
+   * the deletes above take the mail off disk and change nothing on screen until one row says it
+   * (`recordMailboxRemoved`), from which the client cascades its dependents. INSIDE this function
+   * so no caller can take the mail without saying so, and AFTER the deletes so the receipt is only
+   * ever true. Its own transaction, because `recordChanges` allocates the account's next seq under
+   * the counter's row lock and refuses an autocommit handle, and a transaction is what makes the
    * wake fire at COMMIT rather than for a row that rolled back.
    */
   await db.transaction(async (tx) => {
@@ -89,12 +82,10 @@ export async function wipeLocalMirror(
  * The TABLE WALK alone, with no receipt and no transaction of its own — {@link wipeLocalMirror}'s
  * body, named so the Cloud door can run the same deletes inside ITS page transaction when the
  * hosted feed says a mailbox was erased. One spelling of "what a mailbox's mail is", because two
- * would drift the moment a table is added; `local-mirror-census.test.ts` reads {@link
- * WIPED_TABLES} against the FK graph and so covers both callers.
- *
- * Takes the generic query runner rather than {@link LocalDb}: on the standalone door it is handed
- * the top-level handle, on the Cloud door the page's transaction handle, and the statements are
- * identical.
+ * would drift the moment a table is added; `local-mirror-census.test.ts` reads {@link WIPED_TABLES}
+ * against the FK graph and so covers both callers. Takes the generic query runner rather than
+ * {@link LocalDb}: the standalone door hands the top-level handle, the Cloud door the page's
+ * transaction handle, and the statements are identical.
  */
 export async function deleteMailboxRows(db: Tx, mailboxId: string): Promise<void> {
   /** The mailbox's own messages, as a subquery — never a list of ids read into memory. */

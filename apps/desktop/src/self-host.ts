@@ -139,16 +139,14 @@ export interface SelfHostStep {
  */
 
 /*
- * ON A FRESH INSTALL THERE IS NO ENGINE TO ASK — the shell is `NotConfigured` and every
- * bridge request answers "the engine has not been configured", so probe-first made this door
- * impossible on the installs most likely to walk it. The order is decided by WHAT THERE IS TO
- * LOSE, read from the shell: `state === "not_configured"` means no mirror, no sealed session,
- * no settings to cost — that install configures FIRST, and the probing engine IS the
- * candidate's, so the operator's private CA (`NODE_EXTRA_CA_CERTS`, composed only for a
- * self-hosted configuration) is in place for its own proof. An install that already holds a
- * door still probes first, and its private CA is in place too: the candidate probe loads
- * `cloud-ca.pem` itself, at the moment it dials, rather than inheriting whatever roots the
- * running engine was launched with (`apps/sidecar/src/operator-ca-fetch.ts`).
+ * ON A FRESH INSTALL THERE IS NO ENGINE TO ASK — the shell is `NotConfigured` and every bridge
+ * request answers "the engine has not been configured", so probe-first is impossible on the
+ * installs most likely to walk this door. The order is decided by WHAT THERE IS TO LOSE, read
+ * from the shell: `state === "not_configured"` means no mirror, no sealed session, nothing to
+ * cost, so that install configures FIRST and the probing engine IS the candidate's. An install
+ * that already holds a door probes first too, and its private CA is in place either way: the
+ * candidate probe loads `cloud-ca.pem` itself at the moment it dials, rather than inheriting
+ * whatever roots the running engine was launched with (`apps/sidecar/src/operator-ca-fetch.ts`).
  */
 export async function configureSelfHostDoor(typedOrigin: string, address: string): Promise<SelfHostStep> {
   const addressProblem = selfHostProblem(typedOrigin);

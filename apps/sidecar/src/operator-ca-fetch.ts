@@ -9,21 +9,14 @@ import { OPERATOR_CA_FILE } from "./cloud-origin.js";
 import type { Diagnostic } from "./log.js";
 
 /**
- * THE OPERATOR'S OWN CERTIFICATE AUTHORITY, ACTIVE IN THE PROCESS THAT IS DOING THE PROBING.
- *
- * A self-hosted server usually issues its own certificates, and the way somebody tells this app to
- * trust theirs is a file named `cloud-ca.pem` in the data folder. Until now that file reached the
- * engine only as `NODE_EXTRA_CA_CERTS` at LAUNCH — which closes a fresh install and leaves the
- * TRANSITION open: an install that already holds a door and moves to a private-CA server probes
- * the candidate through the engine that is already running, and that process started before the
- * person chose the door. The probe failed on trust, and nothing they could type would have helped,
- * because a running Node cannot be given another root.
- *
- * So the CANDIDATE probe carries its own trust instead of borrowing the launch environment's: the
- * file is read at probe time and added to the system roots for that connection. Verification stays
- * exactly as strict — every default check runs, the hostname included — and this widens only WHO
- * may vouch for the certificate. Nothing here can turn a check off, and the word for doing so
- * appears in one file in this directory, which is not this one (`host-pin-probe.test.ts` counts).
+ * THE OPERATOR'S OWN CERTIFICATE AUTHORITY, ACTIVE IN THE PROCESS THAT IS DOING THE PROBING. A
+ * self-hosted server usually issues its own certificates, trusted by a `cloud-ca.pem` in the data
+ * folder. That file used to reach the engine only as `NODE_EXTRA_CA_CERTS` at LAUNCH, so an
+ * install moving to a private-CA server probed through the already-running engine — started before
+ * the door was chosen — and failed on a trust nothing typeable could fix. So the CANDIDATE probe
+ * reads the file at probe time and adds it to the system roots for that one connection, verifying
+ * just as strictly and widening only WHO may vouch. Nothing here can turn a check off; the word for
+ * doing so lives in one other file in this directory, which `host-pin-probe.test.ts` counts.
  */
 
 /** How long a probe connection waits. The caller's own deadline bounds the request above this. */

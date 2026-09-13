@@ -1230,17 +1230,14 @@ export async function reconcileMailbox(deps: SyncDeps): Promise<{ owesMore: bool
 export const RECONCILE_MOVES_PER_CYCLE = 500;
 
 /**
- * Pending `\Seen` writes ONE CYCLE MAY PUSH. `listPendingFlagStates` had no limit at all, and its
- * own port doc said so — "this queue is unbounded" was written as a reason to filter the DUE rows,
- * not as a state anybody wanted. Each row here is one IMAP STORE, the same per-message round trip
- * that made the folder queue a 583-second monopoly on a serial cycle, so the queue that can be
- * filled the fastest (a select-all-and-mark-read in another client, a retro pass) had no ceiling
- * on the work it handed the worker.
- *
- * 500, the filing budget's number for the filing budget's reason — the same one the delete-evidence
- * cap took: a few seconds of IMAP, short enough that no other mailbox waits, large enough that an
- * ordinary day finishes in one pass. Nothing is dropped: the rows stay `pending`, the pass reports
- * that it still owes work, and the caller re-kicks rather than waiting out `pollIntervalMs`.
+ * Pending `\Seen` writes ONE CYCLE MAY PUSH. `listPendingFlagStates` had no limit at all, and each
+ * row is one IMAP STORE — the same per-message round trip that made the folder queue a 583-second
+ * monopoly on a serial cycle — so the queue that fills fastest (a select-all-and-mark-read in
+ * another client, a retro pass) handed the worker unbounded work. 500, the filing budget's number
+ * for its reason (the delete-evidence cap took the same): a few seconds of IMAP, short enough that
+ * no other mailbox waits, large enough that an ordinary day finishes in one pass. Nothing is
+ * dropped — the rows stay `pending`, the pass reports it still owes work, and the caller re-kicks
+ * rather than waiting out `pollIntervalMs`.
  */
 export const RECONCILE_FLAGS_PER_CYCLE = 500;
 

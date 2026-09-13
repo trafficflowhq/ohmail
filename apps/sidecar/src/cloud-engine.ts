@@ -1170,17 +1170,15 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
           return refuseUnlessDesktopHost(await probeCloudDoor(origin, injectedFetch ?? fetch), origin);
         }
 
-        /* THE ORIGIN, NOT A BASE — `probeCloudDoor` is what decides whether the API is at the
-           root or under `/api`, because that answer comes from the server's own greeting and not
-           from anything this window could know.
-
-           AND IT DIALS WITH THE OPERATOR'S OWN CA, read from the data folder at THIS MOMENT. The
-           candidate is somebody's own server and usually issues its own certificates; the trust
-           for that used to arrive only as `NODE_EXTRA_CA_CERTS` at launch, which a process
-           already running cannot be given. An install MOVING to such a server therefore probed
-           with the previous door's trust and was refused for a reason nothing the person typed
-           could fix. `probeTransport` falls back to the platform's `fetch` when no CA is
-           installed, so a publicly-trusted server is dialled exactly as before. */
+        /* THE ORIGIN, NOT A BASE — `probeCloudDoor` decides whether the API is at the root or
+           under `/api` from the server's own greeting, not from anything this window could know.
+           AND IT DIALS WITH THE OPERATOR'S OWN CA, read from the data folder at THIS MOMENT: the
+           candidate is somebody's own server and usually issues its own certificates, whose trust
+           used to arrive only as `NODE_EXTRA_CA_CERTS` at launch — which a process already running
+           cannot be given, so an install moving to such a server probed with the previous door's
+           trust and was refused for a reason nothing the person typed could fix. `probeTransport`
+           falls back to the platform's `fetch` when no CA is installed, so a publicly-trusted
+           server is dialled exactly as before. */
         return probeCloudDoor(origin, injectedFetch ?? probeTransport(config.dataDir, log));
       }
 

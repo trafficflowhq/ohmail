@@ -58,35 +58,25 @@ export const STALE_CLAIM_MS = 15 * 60_000;
 
 /**
  * AT MOST THIS MANY RUNS PER PASS, OLDEST ENQUEUE FIRST — and the same ceiling on the reaper's
- * read beside it.
- *
- * Both reads selected EVERY matching row: `pending` with no `LIMIT` and no order, `running` the
- * same. `workflow_runs` is append-only state a caller adds to one `POST /workflows/:id/run` at a
- * time, so one account with a backlog handed the shared pass a list of whatever length it had
- * accumulated and the pass then ran each to completion — which is how one account pins the pass
- * every other account's runs are waiting behind.
- *
- * The worker's own number for "one batch per poll" — the ingest batch's own per-cycle ceiling
- * (`DEFAULT_SYNC_BATCH_MAX_MESSAGES`), which the two sibling drains took for the same reason:
- * `REQUEST_DRAIN_MAX_PER_CYCLE`, `TOMBSTONE_MAX_PER_CYCLE`. Deferred, never dropped: the rows keep
- * their status, the order is `created_at` so the next pass takes the next batch rather than the
- * same one, and `pollIntervalMs` (60 s) brings the next pass.
+ * read beside it. Both reads selected EVERY matching row, no `LIMIT` and no order; `workflow_runs`
+ * is append-only, so one account with a backlog handed the shared pass a list of whatever length
+ * it had accumulated and pinned the pass every other account's runs wait behind. The number is the
+ * worker's own "one batch per poll" (`DEFAULT_SYNC_BATCH_MAX_MESSAGES`, which the sibling drains
+ * `REQUEST_DRAIN_MAX_PER_CYCLE` and `TOMBSTONE_MAX_PER_CYCLE` took for the same reason). Deferred,
+ * never dropped: the rows keep their status, the order is `created_at` so the next pass takes the
+ * next batch, and `pollIntervalMs` (60 s) brings it.
  */
 export const WORKFLOW_DRAIN_MAX_PER_PASS = 200;
 
 /**
- * THE PASS STOPS CLAIMING NEW RUNS ONCE THE POLL THAT SCHEDULED IT HAS ELAPSED.
- *
- * A count ceiling bounds the LIST; it does not bound the WORK, because a run is not a message —
- * it executes up to `MAX_WORKFLOW_STEPS` steps, and a step can call a model. Two hundred of those
- * in one pass outlives any poll interval, and a drain that outlives its poll delays every pass in
- * the cycle behind it.
- *
- * `pollIntervalMs` is the number this rests on: its default is 60 s (`config.ts`), and a
- * deployment that tunes it passes its own through `deps.passDeadlineMs`. Nothing in flight is
- * abandoned — the deadline is consulted BEFORE a claim, so a run either was never claimed (still
- * `pending`, taken by the next pass) or runs to completion. Interrupting a run mid-step is the
- * reaper's business and needs a per-step budget nobody has measured yet.
+ * THE PASS STOPS CLAIMING NEW RUNS ONCE THE POLL THAT SCHEDULED IT HAS ELAPSED. A count ceiling
+ * bounds the LIST, not the WORK: a run is not a message — it executes up to `MAX_WORKFLOW_STEPS`
+ * steps, a step can call a model, and 200 of those outlive any poll interval, so a drain that
+ * outlives its poll delays every pass behind it. `pollIntervalMs` is the number this rests on
+ * (default 60 s in `config.ts`; a deployment tunes it through `deps.passDeadlineMs`). Nothing in
+ * flight is abandoned — the deadline is consulted BEFORE a claim, so a run was either never claimed
+ * (still `pending`, taken next pass) or runs to completion. Interrupting a run mid-step is the
+ * reaper's business, and needs a per-step budget nobody has measured yet.
  */
 export const WORKFLOW_DRAIN_PASS_DEADLINE_MS = 60_000;
 

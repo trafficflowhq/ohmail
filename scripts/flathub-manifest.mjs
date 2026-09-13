@@ -1,19 +1,13 @@
 #!/usr/bin/env node
 /**
  * flathub-manifest.mjs — render the Flathub submission manifest from the one in this repository,
- * and check that the offline sources beside it are still the lockfiles'.
- *
- *     node scripts/flathub-manifest.mjs --tag v0.19.0 --commit <40-hex> [-o <file>]
- *     node scripts/flathub-manifest.mjs --check [--mirror <published checkout>]
- *
- * Flathub builds a TAG; this repository's manifest builds the checkout it sits in. The two differ
- * in exactly one place — the app module's first source — so the pinned copy is derived and the
- * test asserts that is the only difference. A second hand-maintained manifest is how a permission
- * added here fails to reach the one people actually install.
- *
- * `--check` is the other half: `cargo-sources.json` and `node-sources.json` are GENERATED, and a
- * dependency bump that leaves them behind is not visible until `npm ci --offline` fails inside a
- * Flathub builder, at review time. Every checksum a lockfile names must be a source here.
+ * and check that the offline sources beside it are still the lockfiles'. Flathub builds a TAG and
+ * this repository's manifest builds the checkout it sits in; the two differ in exactly one place
+ * (the app module's first source), the pinned copy is derived, and the test asserts that is the
+ * only difference — a second hand-maintained manifest is how a permission added here fails to
+ * reach the one people install. `--check` is the other half: `cargo-sources.json` and
+ * `node-sources.json` are GENERATED, so a dependency bump that leaves them behind must fail here
+ * rather than inside a Flathub builder at review time.
  */
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
