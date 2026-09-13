@@ -19,9 +19,9 @@ import {
  * `staff-channels.test.ts`, which reads the writers back out of the tree. Widening a set is an
  * edit here plus a writer; neither alone moves.
  *
- * `credit_ledger`'s source suffixes are the fourth channel the gap row named and they are NOT
- * here: credits are billing, billing is the private plane, and the public repo carries no
- * `credit_ledger` table to constrain. The channel is listed in `changes/fix-018-admin-freetext.md`
+ * The billing channel's source suffixes are the fourth channel the gap row named and they are
+ * NOT here: credits are billing, billing is the private plane, and the public repo carries no
+ * such table to constrain. The channel is listed in `changes/fix-018-admin-freetext.md`
  * as the plane's to close.
  */
 export interface StaffChannel {
@@ -89,8 +89,8 @@ export const AUDIT_LOG_ACTIONS: readonly string[] = [
      them all: `staff-role.pg.test.ts` seeds `admin.account.suspend` against a real database and
      reads it back through the blind role. A set derived from this tree's INSERTs alone would
      have rendered a real staff action as `other`, which is how that test found it.
-     `admin.credits.adjust` is the staff ACT, not a ledger row — `credit_ledger` itself is the
-     plane's table and is not a channel here. */
+     `admin.credits.adjust` is the staff ACT, not a ledger row — the ledger table itself is
+     the plane's and is not a channel here. */
   "admin.mailbox.resync", "admin.account.suspend", "admin.account.resume", "admin.send.retry",
   "admin.credits.adjust", "admin.oauth.microsoft.save",
   // ── the routing pipeline (`packages/core/src/pipeline.ts`) ───────────────────────────────
