@@ -252,21 +252,14 @@ export interface LocalRosterRow {
 }
 
 /**
- * Every mailbox this install runs, oldest first — and on a TIE, by `id`, which is not decoration.
- * Nothing in this program writes `created_at`, so every row takes the store default, and the local
- * store's clock resolves to a millisecond: two mailboxes added back to back share one stamp often
- * enough to measure. `(created_at, id)` is then the whole order, and because `id` is unique it is
- * TOTAL — the list cannot reorder between two reads. What it is not is MEANINGFUL on a tie: those
- * rows come back in uuid order, which is stable and arbitrary, not the order they were added in.
- * Both dialect twins have `id` and neither has a monotonic column, so this is the order both can
- * keep. The boot's one roster read: `status <> 'disabled'`
- * and nothing else, narrower than {@link ensureLocalWorld}'s existence predicate: a paused row is
- * the same mailbox and must not be duplicated, but it is not RUNNING and gets no login, claim or
- * poll timer — being found and being attached are different questions. The old ≤0.13.x paused row
- * that made this a one-way door (excluded ⇒ no runtime ⇒ no lease read ⇒ a takeover that can never
- * be spent) is ended by {@link endLegacyOrganizerPauses} before this read, so the exclusion now
- * covers exactly the rows the current build leaves `disabled`. READ ONCE at boot, never on a timer:
- * the only writers of this table are this engine's own routes, so attach and detach are events.
+ * Every mailbox this install runs, oldest first, ties broken by `id`. Nothing writes `created_at`,
+ * so rows take the store default on a millisecond clock and back-to-back adds share a stamp.
+ * `(created_at, id)` is TOTAL — the list cannot reorder between reads — but a tie is uuid order,
+ * stable and arbitrary, never insertion order. Both dialect twins have `id`; neither has a
+ * monotonic column. The read excludes only `status <> 'disabled'`, narrower than
+ * {@link ensureLocalWorld}: a paused row is the same mailbox, must not be duplicated, and gets no
+ * login, claim or poll timer. {@link endLegacyOrganizerPauses} runs first, so no legacy paused row
+ * stays excluded for ever. READ ONCE at boot: the only writers are this engine's own routes.
  */
 export async function loadLocalRoster(db: LocalDb, accountId: string): Promise<LocalRosterRow[]> {
   const rows = await db
