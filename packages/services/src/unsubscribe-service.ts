@@ -169,37 +169,25 @@ export interface UnsubscribeSweep {
 /**
  * HOW MANY TARGETS ONE REQUEST MAY POST TO, and how long it may spend doing it.
  *
- * One post is bounded at {@link ONE_CLICK_TIMEOUT_MS} — 8 s — and the hosted API runs on a
- * 60-second invocation (`message-service.ts` states the same ceiling against the same platform).
- * Fifty targets is therefore up to 400 s inside a request that has 60, which is the row's defect
- * with numbers on it. The decision's own transaction and the physical IMAP moves happen first, so
- * the fan-out's share is the invocation MINUS a stated 20-second margin for them and the
- * response: 40 s, which is five posts at the measured worst case.
- *
- * BOTH AXES, because they bound different failures. A clock alone lets a mailbox whose targets
- * all refuse instantly walk a thousand messages inside one request; a count alone leaves five
- * eight-second posts inside a request that has twenty seconds left.
- *
- * The remainder is not dropped: `drainScreenedOut` is what makes stopping here honest, and it is
- * poked hourly. Neither number may rise without that one being re-read.
+ * One post is bounded at {@link ONE_CLICK_TIMEOUT_MS} — 8 s — against a 60-second invocation, so
+ * fifty targets is up to 400 s inside a request that has 60. The decision's transaction and the
+ * IMAP moves come first, so the fan-out's share is that invocation minus a stated 20-second
+ * margin: 40 s, five posts at the measured worst case. BOTH AXES, because a clock alone lets a
+ * mailbox whose targets all refuse instantly walk a thousand messages. The remainder is not
+ * dropped — `drainScreenedOut` makes stopping honest, and neither number rises without it.
  */
 export const UNSUB_SYNC_MAX = 5;
 export const UNSUB_SYNC_BUDGET_MS = 40_000;
 
 /**
- * HOW FAR BACK THE DRAIN LOOKS. `since` has no default by design — a mature mailbox holds
- * thousands of pre-feature screen-outs and sweeping them would announce the address to the very
- * senders it was screened away from — and a scheduled pass has nobody to type a date. This is
- * that date, DERIVED rather than chosen: three of the drain's own cadences — one hour, the
- * cadence the worker's pass registry states for `unsubscribe_drain` — so two missed runs reach what the last
- * one deferred, plus a 24-hour envelope for an outage of the host that runs it. It reaches what a
- * RECENT request deferred and never the historical backlog. What makes a row eligible at all is
- * the COMMITTED decision: `folder_state.desired_folder` is written in the decision's own
- * transaction, so a decision that did not commit has no candidate here.
- *
- * The outage envelope is the part that is DECLARED rather than measured: how long this
- * deployment has actually been dark in one stretch is a reading the 0.19.1 rig does not take
- * yet, and it is filed as owed. Twenty-four hours is above every outage this deployment has had.
+ * HOW FAR BACK THE DRAIN LOOKS. `since` has no default by design — sweeping a mature mailbox's
+ * pre-feature screen-outs would announce the address to the senders it was screened away from —
+ * and a scheduled pass has nobody to type a date. DERIVED: three of the cadence the worker's pass
+ * registry states for `unsubscribe_drain` (one hour), so two missed runs still reach what the
+ * last deferred, plus a 24-hour outage envelope. Eligibility is the COMMITTED decision —
+ * `folder_state.desired_folder` is written in the decision's own transaction. The envelope is
+ * DECLARED, not measured: how long this deployment has been dark in one stretch is a reading
+ * owed to the 0.19.1 rig, and 24 h is above every outage it has had.
  */
 export const UNSUB_DRAIN_WINDOW_MS = 3 * 60 * 60 * 1000 + 24 * 60 * 60 * 1000;
 
@@ -556,21 +544,15 @@ export class UnsubscribeService {
       throw new ServiceError("unsubscribe_no_limit", 400, "a sweep needs an explicit positive limit");
     }
 
-    // LEFT JOIN … IS NULL rather than NOT IN (…): the record is keyed by (mailbox, list) and the
-    // list key is only knowable from the message's headers, so the candidate query cannot filter
-    // on it. It filters on the MESSAGE not yet having supplied a record, and `unsubscribe`'s
-    // claim does the real de-duplication a moment later against the key that actually matters.
-    // This join is an optimisation; the unique index is the correctness.
+    // LEFT JOIN … IS NULL, not NOT IN (…): the list key is knowable only from the headers, so the
+    // query filters on the MESSAGE not yet having supplied a record and the claim de-duplicates
+    // against the key that matters. This join is an optimisation; the unique index is correctness.
     //
-    // THE TWO HEADER KEYS, AND WHY A DRAIN WITHOUT THEM IS DECORATIVE. `run()` refuses a message
-    // with no `List-Unsubscribe`, or one whose `-Post` is missing, BEFORE the claim — so no
-    // record row is written and the message stays a candidate for ever. Most screened-out mail
-    // publishes no one-click route at all, so a bounded pass would spend its whole budget
-    // re-refusing the same rows and never reach what a request deferred. These are KEY EXISTENCE
-    // tests and not a second copy of the grammar: `list-unsubscribe-post` present at all is RFC
-    // 8058's own precondition, and every value question stays in the parser that owns it. What
-    // still survives a pass is the malformed shape — a `-Post` over `mailto:` only — and the
-    // window is what bounds that.
+    // THE TWO HEADER KEYS ARE WHAT MAKES THE DRAIN MORE THAN DECORATIVE: `run()` refuses a message
+    // with no `List-Unsubscribe`, or no `-Post`, BEFORE the claim, so no record row is written and
+    // it stays a candidate for ever — and most screened-out mail publishes no route at all. KEY
+    // EXISTENCE only, never a second copy of the grammar; the malformed shape (a `-Post` over
+    // `mailto:` alone) survives a pass, and the window is what bounds that.
     const candidates = await asTx(ctx).select({ id: messages.id })
       .from(messages)
       .innerJoin(folderState, eq(folderState.messageId, messages.id))

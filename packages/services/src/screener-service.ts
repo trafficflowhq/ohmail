@@ -173,15 +173,12 @@ export interface ScreenDecisionResult {
   appliedFolder: Folder;
   createdRuleId: string | null;
   /**
-   * WHAT THIS REQUEST'S UNSUBSCRIBE FAN-OUT DID, and what it left. `done` of `of` with `of`
-   * larger is the honest half of a per-request ceiling: the request stops and the hourly drain
-   * finishes the rest, and saying so is what keeps the acknowledged state and the HTTP answer in
-   * agreement.
+   * WHAT THIS REQUEST'S UNSUBSCRIBE FAN-OUT DID, and what it left: `done` of `of` is the honest
+   * half of a per-request ceiling, since the hourly drain finishes the rest.
    *
-   * ABSENT MEANS THIS REQUEST STARTED NO FAN-OUT — a "yes" decision, a deployment with no
-   * unsubscribe port, a decision that re-routed nothing, and an IDEMPOTENT REPLAY, which is
-   * served from the stored row before `decide` runs and therefore posts to nobody. It never
-   * means "the fan-out finished", and nothing may read it as a completion.
+   * ABSENT MEANS THIS REQUEST STARTED NO FAN-OUT — a "yes", a deployment with no unsubscribe
+   * port, a decision that re-routed nothing, or an IDEMPOTENT REPLAY, served from the stored row
+   * before `decide` runs and therefore posting to nobody. It never means the fan-out finished.
    */
   unsubscribed?: { done: number; of: number };
 }
