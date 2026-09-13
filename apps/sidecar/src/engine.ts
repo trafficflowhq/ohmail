@@ -2580,10 +2580,21 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
        * when there is no password to derive from (an OAuth mailbox, or a login not yet resolved),
        * which is the honest degraded mode: no key means the claim advertises no `requests` and a
        * reader is refused at the door with the holder named. */
-      /* `let` for `imapConfig.auth`'s reason and not a second one: this key IS the credential
-         this mailbox dials with, so the two move together or the invariant above is broken by
-         whichever of them moved alone. */
-      let requestKey = deriveRequestKey({ auth: imapConfig.auth, address: mb.address });
+      let requestKey: string | null = null;
+      /**
+       * THE PASSWORD THIS MAILBOX DIALS WITH, AND THE KEY DERIVED FROM IT — one writer for both.
+       *
+       * The request key is HKDF over that password, so the two cannot move apart: left behind, it
+       * stays `null` and every request record a reader wrote refuses as a forgery, with the log
+       * naming an attack. A second derivation site would be a second chance to move one alone —
+       * so the launch and the later read that opens the row both come through here, and
+       * `request-key-agreement.test.ts`'s one-site census holds by construction.
+       */
+      const useDialledPassword = (pass: string): void => {
+        imapConfig.auth = { user: mbImap.auth.user, pass };
+        requestKey = deriveRequestKey({ auth: imapConfig.auth, address: mb.address });
+      };
+      useDialledPassword(login.pass ?? "");
 
       // The connection's own state — the fact the engine used to have no way to hold. A desktop
       // process outlives its sockets: a lid closed past the provider's idle timeout, a Wi-Fi
@@ -2776,8 +2787,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         const fresh = await resolveLogin();
         if (fresh.state === "ready" && fresh.pass) {
           login = fresh;
-          imapConfig.auth = { user: mbImap.auth.user, pass: fresh.pass };
-          requestKey = deriveRequestKey({ auth: imapConfig.auth, address: mb.address });
+          useDialledPassword(fresh.pass);
           credentialBlock = null;
           log("mailbox_login_restored", {
             mailboxId: mb.id,
@@ -5303,7 +5313,8 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
        * ladder is right for a poll and wrong for a person, who otherwise watched the one control
        * do nothing after the network returned. Every other early return still holds — `stopped`
        * and `connectionDeadSince === null` (nothing to re-dial), `redialling` (join, don't open a
-       * second login), the credential guard, and `signInRefused` (the SERVER said no; a press
+       * second login), the credential arm (which retries the stored READ rather than dialling),
+       * and `signInRefused` (the SERVER said no; a press
        * must not become repeated LOGIN attempts providers throttle or lock). It does NOT reset the
        * ladder (`redialAttempts` untouched) and is NOT unlimited — honoured at most once per this
        * profile's first ladder step ({@link forcedNotBefore}, {@link ReconnectProfile}).
@@ -5332,7 +5343,14 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
            without this the mailbox stayed dark until the app was quit. A read that does not open
            climbs the ladder exactly as a failed dial does. */
         if (login.state !== "ready" || !login.pass) {
-          if (!(await rereadCredential())) { climbTheLadder(); return; }
+          if (!(await rereadCredential())) {
+            /* AND ONLY THE POLL CLIMBS, exactly as the failed dial below decides it: a press is
+               one reading, not evidence about when a store might open, so it arms its own floor
+               and leaves the automatic wait where it was. */
+            if (force) forcedNotBefore = Date.now() + reconnect.ladderMs[0]!;
+            else climbTheLadder();
+            return;
+          }
           if (stopped) return;
         }
           /* The re-dial joins `tail` so `detach()` waits FOR it, but is not put INTO it. It cannot
