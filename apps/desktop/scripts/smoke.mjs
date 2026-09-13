@@ -497,6 +497,16 @@ function installShellStub(window) {
             frame(200, "OK", { state: "current", asOf: new Date().toISOString(), draining: false }),
           );
         }
+        /* HELD RELEASES — `GET /screener/held-releases`, asked at mount by the Screener so the
+           "release what your rules already hold" card knows whether it has anything to offer.
+           The honest resting answer for this stub's settled mailbox is no groups and no held
+           mail, with the REAL ceiling: the client reads `max` rather than carrying a constant,
+           and a zero there would say "this door cannot press" about a door that can. GET only —
+           the press is a POST and a user action this boot never takes. Added AFTER the check
+           named it red, like the two entries above it. */
+        if (url === "/screener/held-releases" && (payload?.method ?? "GET") === "GET") {
+          return Promise.resolve(frame(200, "OK", { groups: [], total: 0, max: 200 }));
+        }
         /* The profile-import PROBE — the "we found your ohmail settings on this mailbox" card
            asks once per mailbox at mount (`useProfileImport`), on both doors, since the desktop
            wired its transport. `state: "none"` is the honest resting answer — this stub's
