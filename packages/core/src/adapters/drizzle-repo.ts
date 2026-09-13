@@ -265,6 +265,20 @@ export interface WorkerRepo extends RepoPort, RoutingPort {
   getMailbox(mailboxId: string): Promise<
     { id: string; accountId: string; address: string; kickstartAt: Date | null } | null
   >;
+  /**
+   * This mailbox's `status`, HELD for the rest of the caller's transaction — the question an
+   * ingest asks itself before it commits mail.
+   *
+   * A plain read would not be enough and the difference is the whole point. `MailboxService.delete`
+   * takes the row `FOR UPDATE` and then (on a standalone install) deletes the mirror, so a reader
+   * that merely LOOKED could see `active`, be overtaken by the removal, and commit its messages
+   * after the mail was taken — which is the defect. At `share` strength the two orders are the only
+   * two: this transaction gets the row first and the removal waits for it (the messages commit and
+   * the removal's own wipe takes them), or the removal gets it first and this read returns the
+   * tombstone. Shared and not exclusive because ingests of one mailbox must not queue behind each
+   * other; a removal excludes them all. `null` ⇔ no such row.
+   */
+  mailboxStatusForWrite(mailboxId: string): Promise<string | null>;
   /** Record that the kickstart COMPLETED. Returns false when it had already run. */
   markKickstarted(mailboxId: string, at: Date): Promise<boolean>;
   /**
@@ -1946,6 +1960,15 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
       const inner = new DrizzleRepo(txdb as Db, this.d);
       return fn(inner);
     });
+  }
+
+  async mailboxStatusForWrite(mailboxId: string): Promise<string | null> {
+    const rows = await this.d.forUpdate(
+      this.db.select({ status: mailboxes.status }).from(mailboxes)
+        .where(eq(mailboxes.id, mailboxId)).limit(1),
+      { mode: "share" },
+    );
+    return rows[0]?.status ?? null;
   }
 
   async getMailbox(mailboxId: string) {

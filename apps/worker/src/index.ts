@@ -55,7 +55,7 @@ import {
 } from "./health.js";
 import { acquireLeaderLock, leaderLockKeyFor, LockLostError, type LeaderLock } from "./leader-lock.js";
 import { startApiCron, type ApiCronHandle, type ApiCronTargetHealth } from "./api-cron.js";
-import { runSyncCycle, LeaderFencedError, type SyncDeps } from "./sync.js";
+import { runSyncCycle, LeaderFencedError, MailboxRemovedError, type SyncDeps } from "./sync.js";
 import {
   applyMetaRequests, driveOutstandingRequests, settleOwnOutstandingRequests,
 } from "./request-drain.js";
@@ -3632,6 +3632,21 @@ export async function startWorkerWithLock(
                   "NOT a stand-down; this mailbox syncs nothing this cycle, and the row will say so",
             });
             if (due) toReconnect.push({ rt, unavailableMs });
+            return;
+          }
+          /* A REMOVED MAILBOX IS NOT A FAILING ONE. The person disconnected it while this cycle
+             was planning a message; the commit refused rather than writing mail into a tombstone
+             (`assertMailboxStillHere`). Counted toward `maxSyncFailures` it would be three polls
+             from "your mailbox is broken" about a mailbox somebody deliberately removed — and the
+             quarantine write is fenced on the row anyway, so the counter would climb against a
+             state nothing can reach. The next roster pass drops it; nothing here needs to act. */
+          if (err instanceof MailboxRemovedError) {
+            log.info("sync_cycle_mailbox_removed", {
+              mailboxId: rt.mailboxId, accountId: rt.accountId,
+              reason: "this mailbox was removed while the cycle was reading it, so the pending "
+                + "writes were refused rather than committed into a mailbox that is gone — NOT "
+                + "counted toward maxSyncFailures and not quarantined",
+            });
             return;
           }
           if (err instanceof ClassifierFaultError) {

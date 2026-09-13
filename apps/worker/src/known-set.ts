@@ -75,6 +75,9 @@ export const KNOWN_SET_NEUTRAL: ReadonlySet<string> = new Set([
      `messages` column the memo reads. */
   "markAwayReplyUndeliverable",
   "isGraduated", "getMailbox", "listScreenerBacklog", "getMailboxFolders", "listKnownLocators",
+  /* `mailboxes.status`, one column, locked for the transaction — the ingest's own "is this
+     mailbox still here". A read of a table this projection does not join at all. */
+  "mailboxStatusForWrite",
   "listPendingFolderStates", "listPendingFlagStates",
   // the mail-0065 junk/delete wave's reads — special-folder discovery, the AI-authored
   // quarantine probe, and the junk-restore pass's candidate read (bodies joined to instances,

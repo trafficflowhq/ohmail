@@ -54,6 +54,25 @@ export class LeaderFencedError extends Error {
   }
 }
 
+/**
+ * The mailbox this cycle is reading has been REMOVED — thrown from inside the commit's own
+ * transaction, by {@link assertMailboxStillHere}, and it aborts the whole cycle.
+ *
+ * The lease answers who may organize a mailbox; it does not answer whether the mailbox is still
+ * there. A person removing one while an arrival was awaiting classification got a tombstoned row,
+ * an emptied mirror, and then the pending ingest committing that message anyway — mail left on the
+ * machine and its arrival announced to the window after the receipt saying the mailbox was gone.
+ * Standalone installs wait the pass out first (`quiesce`); this is what holds when the wait is
+ * exceeded, and it is the ONLY thing holding on a hosted worker, where the removal happens in
+ * another process that cannot wait for anything.
+ */
+export class MailboxRemovedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "MailboxRemovedError";
+  }
+}
+
 /** See the block above. Implemented by the hosted worker; absent everywhere else. */
 export interface SyncWriteFence {
   /** TRUE once this process has observed losing its lease — synchronous, checked before work. */
@@ -447,6 +466,30 @@ function rethrowFenced(err: unknown): void {
 }
 
 /**
+ * THE MAILBOX IS STILL HERE — asked inside the commit's transaction, never before it.
+ *
+ * `planChange` runs its reads and its classifier call outside any transaction, so a removal can
+ * land in the gap between planning a message and committing it. The row is taken at `share`
+ * strength so the two transactions order rather than overlap: either this commit holds the row and
+ * the removal waits (its own sweep then takes these rows), or the removal holds it and this read
+ * returns the tombstone.
+ *
+ * REFUSED on `disabled` and on NO ROW, admitted on everything else. `disabled` is a removal or a
+ * plan-disable and both mean the same thing to a write of mail; no row at all is the erasure
+ * sweep's answer. `error` is admitted deliberately — it says ohmail cannot currently REACH the
+ * mailbox, which is the ordinary state a recovering cycle commits from, and refusing there would
+ * make a transient outage into mail this pass never writes.
+ */
+async function assertMailboxStillHere(repo: DrizzleRepo, mailboxId: string): Promise<void> {
+  const status = await repo.mailboxStatusForWrite(mailboxId);
+  if (status !== null && status !== "disabled") return;
+  throw new MailboxRemovedError(
+    `this mailbox is ${status === null ? "gone" : status} — the write is refused rather than `
+    + "committed into a mailbox that has been removed",
+  );
+}
+
+/**
  * One sync pass. Returns whether the adapter still owes a backlog: a first sync is drained in bounded
  * batches (`DEFAULT_SYNC_BATCH_MAX_MESSAGES`) and the caller re-kicks instead of waiting out
  * `pollIntervalMs` — the difference between one opaque multi-hour cycle and a series of short
@@ -673,7 +716,12 @@ async function syncCycleWithin(deps: SyncDeps): Promise<{ hasBacklog: boolean; o
     try {
       await run();
     } catch (err) {
-      if (err instanceof ClassifierFaultError || err instanceof LeaseUnavailableError) throw err;
+      // `MailboxRemovedError` joins the two: it is not evidence about the message either, and
+      // counting an attempt against it — or writing a `message_failures` row — would leave a
+      // record of somebody's mail behind in a mailbox they removed, which is the defect one table
+      // along. Terminal for the cycle, like the fence.
+      if (err instanceof ClassifierFaultError || err instanceof LeaseUnavailableError
+        || err instanceof MailboxRemovedError) throw err;
       // A fence refusal is proof of lost leadership, never evidence about the message: counting
       // an attempt against it — let alone writing it off — would spend a customer's mail on our
       // own handover.
@@ -826,9 +874,13 @@ async function syncCycleWithin(deps: SyncDeps): Promise<{ hasBacklog: boolean; o
   for (const ch of [...batch.creates, ...batch.moves]) {
     await attempt(ch, async () => {
       const plan = await planChange(ch, { repo, accountId, mailboxId, classifier, credits, routing: repo, trustedAuthservIds, ohboxPolicy, ohboxBar, screeningCutoff, importDecisionOpen, readerMode });
-      await fencedIngest(deps, (txRepo) =>
-        commitChange(plan, { repo: txRepo, routing: txRepo, accountId, mailboxId, storageCap }),
-      );
+      await fencedIngest(deps, async (txRepo) => {
+        // The row is taken FIRST and inside this transaction: `planChange` above ran outside any
+        // transaction and may have spent a classifier call there, which is exactly the gap a
+        // removal lands in. See {@link assertMailboxStillHere}.
+        await assertMailboxStillHere(txRepo, mailboxId);
+        await commitChange(plan, { repo: txRepo, routing: txRepo, accountId, mailboxId, storageCap });
+      });
     });
   }
 
@@ -844,6 +896,11 @@ async function syncCycleWithin(deps: SyncDeps): Promise<{ hasBacklog: boolean; o
   for (const ch of batch.flagChanges) {
     await attempt(ch, async () => {
       await fencedIngest(deps, async (txRepo) => {
+        // THE SAME QUESTION AS THE INGEST ABOVE, for the same reason. A flag write updates a row
+        // rather than creating one, so a removed mailbox's sweep has usually taken the row out
+        // from under it already — but "usually" is the wrong word for a write, and the two
+        // transactions may not be ordered differently just because one of them is smaller.
+        await assertMailboxStillHere(txRepo, mailboxId);
         const outcome = await txRepo.applyExternalFlag(mailboxId, ch.locator, ch.seen ?? false);
         if (!outcome?.changed) return;
         await txRepo.recordChange({

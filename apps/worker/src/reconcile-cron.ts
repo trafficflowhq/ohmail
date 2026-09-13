@@ -15,7 +15,7 @@ import {
   accountInShard, clearOrganizerStandDown, loadMailboxById, makeSyncWriteFence,
   markMailboxStoodDown, stampMailboxSyncNow, type LeaderFence,
 } from "./mailboxes.js";
-import { LeaderFencedError, runSyncCycle, type SyncDeps } from "./sync.js";
+import { LeaderFencedError, MailboxRemovedError, runSyncCycle, type SyncDeps } from "./sync.js";
 import { isSharedDatabaseFault } from "./dead-letter.js";
 import { applyMetaRequests } from "./request-drain.js";
 import { OrganizerProfileSync } from "./profile.js";
@@ -448,7 +448,11 @@ export async function runReconcileCron(
         // Postgres outage it can only spend one IMAP round trip per mailbox to fail in a way the
         // first mailbox already established. The always-on worker's twin excludes it for the same
         // reason.
-        && !isSharedDatabaseFault(cycleError);
+        && !isSharedDatabaseFault(cycleError)
+        // And the fourth: the mailbox was REMOVED mid-cycle. The drain appends and expunges records
+        // in the customer's own `ohmail/_meta`, which is the last thing to do to a mailbox somebody
+        // has just disconnected — the records are nobody's to acknowledge any more.
+        && !(cycleError instanceof MailboxRemovedError);
       if (mayStillWrite) {
         try {
           await applyMetaRequests(
@@ -476,6 +480,19 @@ export async function runReconcileCron(
       // uses rather than folded into the fence's arm. §3.4's rule, held at the re-check: "somebody
       // else holds this" and "I lost my shard" must not be reachable from one another.
       if (err instanceof OrganizerStandDownError) return await standDown(err);
+      /* AND THE MAILBOX GOING AWAY UNDER THE SWEEP, on the fence's reasoning and not its
+         mechanism: the person removed it while this pass was planning a message, the commit was
+         refused with nothing written, and there is no successor to hand anything to. Reported as
+         a skip because a throw here exits 1 and pages somebody for a mailbox a customer chose to
+         disconnect. */
+      if (err instanceof MailboxRemovedError) {
+        log.info(cronEvent("reconcile", "mailbox_removed"), {
+          mailboxId, accountId: row.accountId,
+          reason: "this mailbox was removed while the sweep was reading it; the pending writes "
+            + "were refused rather than committed into a mailbox that is gone",
+        });
+        return { ran: false, reason: "mailbox-removed" };
+      }
       if (!(err instanceof LeaderFencedError)) throw err;
       // NOT A FAILURE — a handover. The fence keys on the shard, so one refusal means every later
       // write would be refused too, and the write group that was refused wrote nothing. Reported
@@ -524,9 +541,11 @@ export async function runReconcileCron(
 }
 
 if (isCliEntry(import.meta.url)) {
-  // `reason` is one of seven author-written literals (`worker-live`, `other-shard`,
-  // `mailbox-disabled`, `stood-down`, `lease-unreadable`, `leadership-lost`, `unknown`), never a
-  // runtime-composed string — which is why it may ride on the line at all.
+  // `reason` is one of eight author-written literals (`worker-live`, `other-shard`,
+  // `mailbox-disabled`, `mailbox-removed`, `stood-down`, `lease-unreadable`, `leadership-lost`,
+  // `unknown`), never a runtime-composed string — which is why it may ride on the line at all.
+  // `mailbox-disabled` and `mailbox-removed` are different readings: the first is a row that was
+  // already a tombstone when the sweep looked, the second a removal that landed mid-sweep.
   void runCronCli("reconcile", runReconcileCron, (r) => ({
     ran: r.ran, fields: r.ran ? undefined : { reason: r.reason ?? "unknown" },
   }));

@@ -3206,10 +3206,28 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
       /** One serial queue: a poll tick must never start a cycle while one is running, and `stop()`
        *  must be able to wait for whatever is in flight before closing IMAP and the database. */
       let tail: Promise<unknown> = Promise.resolve();
+      /** How much this queue still owes — what {@link LocalMailboxRuntime.quiesce} reports on. A
+       *  count and not a boolean because the queue is a chain: a caller that has joined it but not
+       *  started is as much "in flight" to a stop as the body currently running. */
+      let queued = 0;
       const serialize = <T>(fn: () => Promise<T>): Promise<T> => {
-        const run = tail.then(fn, fn);
+        queued += 1;
+        const run = tail.then(fn, fn).finally(() => { queued -= 1; });
         tail = run.catch(() => undefined);
         return run;
+      };
+      /**
+       * WHEN THIS MAILBOX STARTED STOPPING — one instant for the whole stop, however many methods
+       * it takes. A removal quiesces and then detaches; giving each its own `detachWaitMs` would
+       * be a stop that can take twice as long as the number `detach()` promises, which is the
+       * argument that method already makes about its own three waits.
+       */
+      let stopStartedAt: number | null = null;
+      /** Set only where {@link LocalMailboxRuntime.quiesce} is what stopped this runtime. */
+      let heldForRemoval = false;
+      const stopLeft = (): number => {
+        stopStartedAt ??= Date.now();
+        return stopStartedAt + detachWaitMs - Date.now();
       };
 
       // The organizer lease — the LOCAL half. A local install cannot query the hosted database
@@ -5648,6 +5666,72 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           armHeartbeat();
         },
         /**
+         * STOP TAKING WORK AND WAIT OUT THE PASS THAT IS ALREADY RUNNING — the half of a stop that
+         * has to happen BEFORE the caller writes anything about this mailbox.
+         *
+         * The removal route's three acts used to run straight past a pass parked in a server call,
+         * and the pass then committed its messages into a mailbox that had been tombstoned and
+         * emptied: mail left on the machine, and the window told about its arrival after the
+         * receipt that said the mailbox was gone. So the row and the mirror are not touched until
+         * this returns. The login is deliberately left OPEN — the claim release needs it, and
+         * `detach()` closes it afterwards on the SAME budget, so a removal still costs one drain
+         * interval and not two.
+         */
+        async quiesce() {
+          const waiting = queued > 0;
+          /* WHO PUT IT ON HOLD, so `unquiesce` can only take back what this did. A runtime that
+             was already stopped — a removal discovered mid-launch, a takeover that found the row
+             gone — is NOT revived by a removal that then failed; it is still stopped for its own
+             reason. The wait below runs either way: `stopped` can be set mid-pass. */
+          heldForRemoval = !stopped;
+          stopped = true;
+          if (timer) clearTimeout(timer);
+          if (heartbeatTimer) clearTimeout(heartbeatTimer);
+          if (waiting) {
+            log("local_mailbox_pass_awaited", {
+              mailboxId: mb.id,
+              pollIntervalMs: detachWaitMs,
+              reason: "this mailbox was reading mail when it was stopped; the pass is waited out "
+                + "before anything is written about the mailbox, so nothing it is carrying is "
+                + "committed after the row has been removed",
+            });
+          }
+          const wedged = !(await settledWithin(tail, stopLeft()))
+            || !(await settledWithin(redialInFlight, stopLeft()));
+          if (wedged) {
+            log("local_mailbox_pass_not_awaited", {
+              mailboxId: mb.id,
+              pollIntervalMs: detachWaitMs,
+              reason: "this mailbox did not finish its pass within one drain interval, so the stop "
+                + "went ahead without it; the pass's own writes are refused against a removed "
+                + "mailbox rather than committed behind it",
+            });
+          }
+        },
+        /**
+         * TAKE THE MAILBOX BACK OFF HOLD — for the caller that quiesced and then did NOT remove it.
+         *
+         * `MailboxService.delete` can refuse (it owns the row check) or fail, and the removal
+         * route holds the mailbox BEFORE it asks. Without this, a refused removal left a mailbox
+         * the person still has with its poll timer cleared and its runtime stopped until the next
+         * launch, while Settings went on reporting it reachable — the false-state class, reached
+         * through a failure of the very act that is supposed to leave nothing behind.
+         */
+        unquiesce() {
+          if (!heldForRemoval) return;
+          heldForRemoval = false;
+          stopped = false;
+          /* AND THE BUDGET GOES BACK TOO. It is a wall-clock instant, so a hold that was taken and
+             released an hour ago would leave the next `detach()` with a budget already spent: it
+             would wait zero, call itself wedged and destroy a live socket on a mailbox that is
+             stopping normally. */
+          stopStartedAt = null;
+          /* The two timers the hold cleared, and nothing else: the login was never closed, the
+             claim was never released, and the pass this hold waited out has already ended. */
+          schedule();
+          armHeartbeat();
+        },
+        /**
          * Stop this mailbox, give its claim back, and leave the store alone: one login and one
          * timer go down while the other mailboxes serve out of the same database. The in-flight
          * cycle is AWAITED, not cancelled — a drain mid-batch has rows committed and a cursor
@@ -5660,8 +5744,12 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           stopped = true;
           if (timer) clearTimeout(timer);
           if (heartbeatTimer) clearTimeout(heartbeatTimer);
-          const startedAt = Date.now();
-          const left = (): number => startedAt + detachWaitMs - Date.now();
+          /* The budget is armed by whichever stop method arrives first — `quiesce()` on the
+             removal route, this one everywhere else — and `startedAt` is read back from it so the
+             forced-teardown line below measures the whole stop rather than this method's slice. */
+          const left = stopLeft;
+          left();                                  // arms it where nothing has yet
+          const startedAt = stopStartedAt as number;
           /* THE QUEUE, which a drain parked inside a serialized body holds. */
           let wedged = !(await settledWithin(tail, left()));
           /* AND THE RE-DIAL, WHICH IS NOT IN THE QUEUE — see {@link redialInFlight}. Without this
@@ -6707,6 +6795,19 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                * computer. The SERVICE is `MailboxService.delete`, the hosted door's method. */
             const mailboxId = localRemoveMatch[1]!;
             try {
+               /* ── THE PASS IN FLIGHT, WAITED OUT BEFORE ANYTHING IS WRITTEN ──────────────────
+                *
+                * FIRST, ahead of the tombstone and the wipe, and that order is the fix. It used to
+                * run LAST, inside `detach()` below: a pass parked in a server call resumed after
+                * the row was tombstoned and the mail deleted, committed the messages it was
+                * carrying into a mailbox that no longer existed, and emitted their arrival to the
+                * window AFTER the receipt that said the mailbox was gone. The person removed a
+                * mailbox and its mail stayed on the machine. Bounded by one drain interval, shared
+                * with `detach()`; past that the pass's own writes are refused by
+                * `assertMailboxStillHere` rather than committed behind the removal.
+                *
+                * The login is NOT closed here — the claim release below needs it. */
+              await runtimes.get(mailboxId)?.quiesce();
               // The SHARED service, through the same `services` factory every other route on this
               // door resolves — never a second implementation of the tombstone, the credential
               // deletion or the appointment close. The context is the request's own: this install
@@ -6726,10 +6827,13 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                 * login, renews an organizer claim each poll and serves the mirror. All three were
                 * measured still running after a removal — a phantom organizer that stands other
                 * installs down, and a mirror that made a re-added address serve every message twice.
-                * ORDER: release, wipe, then stop (release needs the login the stop closes; the wipe
-                * needs the poll not mid-cycle). `serialize` is not taken — `stopped` is what the
-                * drain checks, and an in-flight cycle finishes against a tombstoned row every write
-                * refuses. BEST EFFORT, individually: the removal has happened for the person. */
+                * ORDER: quiesce (above), then release, wipe, and stop — the release needs the login
+                * the stop closes, and the wipe needs the pass already finished rather than merely
+                * asked to stop. It read "an in-flight cycle finishes against a tombstoned row every
+                * write refuses", and no write refused: the commit asked the lease, never the row.
+                * Both halves are fixed — the pass is waited out here, and `assertMailboxStillHere`
+                * refuses a commit into a removed mailbox. BEST EFFORT, individually: the removal
+                * has happened for the person. */
                /* "If the roster holds it", not "if it is the one mailbox". This read
                 * `if (mailboxId === world.mailboxId)`, the same statement while an install ran one
                 * mailbox and a silent hole the moment it runs two: removing the SECOND matched
@@ -6810,6 +6914,11 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                 status: 200, headers: { "content-type": "application/json" },
               });
             } catch (err) {
+              /* THE HOLD COMES OFF FIRST. This route puts the mailbox on hold before it asks the
+                 service to remove it, so a refusal here would otherwise leave a mailbox the person
+                 still has with no poll timer and a stopped runtime, reporting itself reachable.
+                 `unquiesce` takes back only a hold this request placed. */
+              runtimes.get(mailboxId)?.unquiesce();
               // The service's own honest sentence, mapped by hand because this handler sits
               // AHEAD of the route table and therefore ahead of `withErrorEnvelope`.
               const e = err as { code?: string; httpStatus?: number; message?: string };

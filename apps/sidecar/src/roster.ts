@@ -254,6 +254,25 @@ export interface LocalMailboxRuntime {
   syncUntilQuiet(maxCycles?: number, opts?: { force?: boolean }): Promise<number>;
   /** Connect, ensure the tree if organizing, drain, then poll. Never throws for "no password". */
   start(): Promise<void>;
+  /**
+   * Stop taking work and wait out the pass already running — WITHOUT closing the login.
+   *
+   * The half of a stop that has to happen before a caller writes anything about this mailbox. A
+   * removal tombstones the row and takes the mail off this machine; a pass parked in a server
+   * call resumes after that and commits its messages into a mailbox that no longer exists, so the
+   * mail stays and the window is told it arrived after the receipt saying the mailbox is gone.
+   * The login stays open because the claim release needs it, and {@link detach} closes it
+   * afterwards on the same budget — a removal costs one drain interval, not two.
+   */
+  quiesce(): Promise<void>;
+  /**
+   * Take the mailbox back off hold — for a caller that quiesced and then did NOT remove it.
+   *
+   * Only ever undoes a hold {@link quiesce} itself placed: a runtime that was already stopped for
+   * its own reason stays stopped. Without it a refused removal left a mailbox the person still has
+   * with no poll timer, reporting itself reachable.
+   */
+  unquiesce(): void;
   /** Stop this mailbox's timer, wait for the in-flight cycle and close its login. Leaves the
    *  store alone — the store is the install's, not this row's. */
   detach(): Promise<void>;
