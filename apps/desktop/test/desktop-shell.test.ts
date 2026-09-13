@@ -723,7 +723,10 @@ describe("the Rust side", () => {
    * naming its `allow-…` permission cannot be resolved — so neither `cargo check` nor `cargo test`
    * can see it. The set equality below is the only thing that does.
    */
-  it("declares and registers its twenty-three commands only in the local build", () => {
+  /* The count in this name has been wrong once already — it read "twenty-three" at twenty-four.
+     The ASSERTION is the set equality against `COMMANDS` below and never a literal, so the name
+     says what the case is about instead of carrying a number that drifts. */
+  it("declares and registers exactly its own commands, only in the local build", () => {
     const build = read("src-tauri/build.rs");
     const engine = read("src-tauri/src/engine.rs");
     // Host mode's, the default-mail and the Omarchy commands are DEFINED in their own modules;
@@ -764,8 +767,16 @@ describe("the Rust side", () => {
       // hypothetical one.
       "open_external",
       // The bytes of one attachment and a display name, written under the shell's own directory
-      // and opened in the platform's usual viewer.
+      // and opened in the platform's usual viewer. Nothing in the window calls it today — every
+      // attachment verb the product offers says Download — but the shell keeps the door for an
+      // explicit Open verb, and a DECLARED command with no caller is inert, while a GRANTED one
+      // that is undeclared is the launch abort this whole case exists for.
       "open_attachment",
+      // …and the same two fields saved into the PERSON'S Downloads folder instead, which is what
+      // a button that says Download has always promised. The shell picks the folder, sanitises
+      // the name with the open command's own rule, and numbers a collision rather than
+      // overwriting anything already there.
+      "save_attachment",
       // HOST MODE — all of it through the shell's own commands, none of it through a plugin's
       // permissions. The window reads a typed state, probes the tailnet, arms and disarms (the
       // serve invocation is composed from constants in host.rs and pinned by its tests to
