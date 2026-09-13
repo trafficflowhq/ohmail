@@ -75,7 +75,8 @@ One RFC822 message in `ohmail/_meta`:
     "piles": ["INBOX" | "ohmail/Reads" | "ohmail/Receipts" | "ohmail/Screener", …]
   },
   "tagNames": ["<tag name>", …],   // the names of this mailbox's tags
-  "signature": "<string or null>"  // the sign-off on mail sent from this address
+  "signature": "<string or null>",     // the sign-off on mail sent from this address
+  "signatureHtml": "<string>"          // optional — that sign-off's formatting, when it has any
 }
 ```
 
@@ -144,6 +145,13 @@ one supplies the default, so a document remains readable in both directions.
 
 Whether an outgoing message actually carries it is the compose window's decision — the signature
 is visible and removable there. This document records what the sign-off IS, not that it is used.
+
+**`signatureHtml`** — the same sign-off's formatting, when it has any. Optional, and ABSENT rather
+than `null` when there is none: a document that never carried this key must keep the fingerprint it
+was written with, so writers omit it and readers treat absent, `null` and blank markup as the one
+answer, "this signature is plain text". It never appears without `signature` beside it — the plain
+text is what a recipient reading in plain text gets, and markup alone would describe a message that
+cannot be sent. The envelope's `v` does not move for this, on `signature`'s own argument.
 
 ## A complete example
 

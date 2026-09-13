@@ -1,7 +1,8 @@
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { dialect } from "@trafficflow/db/dialect";
 import {
-  accountSettings, contacts, mailboxes, messageBodies, messages, recordChanges, recordRuleDelta, rules,
+  accountSettings, contacts, mailboxes, mailboxProfileMirror, messageBodies, messages,
+  recordChanges, recordRuleDelta, rules,
   type LedgerTx, type OrganizedBy, type Tx,
 } from "@trafficflow/db";
 import { listMailboxUserFolders, listUserFolders } from "./folders.js";
@@ -1125,6 +1126,94 @@ export async function mailboxSignatureHtmls(
     if (r.signatureHtml !== null) out[r.id] = r.signatureHtml;
   }
   return out;
+}
+
+/**
+ * THE SIGNATURE MAPS AS COMPOSE MUST SEE THEM — `{ mailboxId: text }` and `{ mailboxId: html }`,
+ * with the ORGANIZER'S published signature winning on every mailbox this install only READS.
+ *
+ * `mailboxes.signature` is the answer for a mailbox this install organizes. On one somebody else
+ * organizes, that column is a dead local copy and the live value is in the organizer's published
+ * document, cached by the reader's cycle in `mailbox_profile_mirror` (mail 0094) — so a reader
+ * answering `GET /consent` from its own rows alone told every composer the person had no sign-off
+ * while the text sat one table away. Measured on a desktop reading a Cloud-organized mailbox: the
+ * document carried the signature and the compose map was empty.
+ *
+ * A DOCUMENT WINS WHOLE, and the granularity is the part worth stating: the fallback is "there is
+ * no document", never "the document has no signature in it". A cached document saying
+ * `signature: null` is somebody's decision that this mailbox signs with nothing, and the
+ * IMPORTER already honours it that way — it writes `null` into the column rather than leaving
+ * what is there, because "treating it as 'leave what is here' would make the import
+ * non-idempotent" (`profile-import-service.ts`). Falling back to the local row on a null would
+ * make one document mean two different things depending on whether it had been imported yet,
+ * and the dead row would come back for the one person who deliberately cleared their sign-off.
+ * A reader with NO document keeps its own row: nothing has said otherwise, and dropping the
+ * sign-off while the mirror catches up is a change nobody asked for.
+ *
+ * An absent key stays absent in both maps: it is the resting state, and inventing an empty string
+ * for a mailbox with no signature would make the compose block render a blank tail.
+ */
+export async function effectiveMailboxSignatures(
+  db: ServiceContext["db"], accountId: string,
+): Promise<{ signatures: Record<string, string>; signaturesHtml: Record<string, string> }> {
+  const rows = await db
+    .select({
+      id: mailboxes.id,
+      role: mailboxes.organizerRole,
+      signature: mailboxes.signature,
+      signatureHtml: mailboxes.signatureHtml,
+      doc: mailboxProfileMirror.doc,
+    })
+    .from(mailboxes)
+    /* LEFT, so a mailbox with no mirrored document still appears with its own row. The account
+       column is in the JOIN predicate as well as the id: the mirror is keyed by mailbox alone, so
+       joining on the id would admit whatever row carried that uuid — the rule every read on that
+       table follows (`profile-mirror-read.ts`). */
+    .leftJoin(mailboxProfileMirror, and(
+      eq(mailboxProfileMirror.mailboxId, mailboxes.id),
+      eq(mailboxProfileMirror.accountId, accountId),
+    ))
+    .where(eq(mailboxes.accountId, accountId));
+
+  const signatures: Record<string, string> = {};
+  const signaturesHtml: Record<string, string> = {};
+  for (const r of rows) {
+    /* THE MIRROR IS READ FOR A READER AND FOR NOBODY ELSE. An organizer's own rows ARE the
+       configuration, and a stale document left from before this install took the mailbox over
+       describes what somebody else last published — `readMailboxProfile` refuses to read it for
+       the same reason, and the two must not disagree about which half is in force. */
+    const mirrored = r.role !== "organizer" ? profileSignature(r.doc) : null;
+    // `mirrored !== null` is "a document exists", not "the document has a signature" — see the
+    // header. `profileSignature` returns null for the first and `{ signature: null }` for the
+    // second precisely so this line can tell them apart.
+    const text = mirrored !== null ? mirrored.signature : r.signature;
+    /* The markup half follows the TEXT half's source rather than being resolved on its own: a
+       document's plain sign-off beside the local row's old markup would send one thing to a
+       plaintext reader and another to everybody else, which is the one disagreement the two maps
+       exist to prevent (`withSignature` puts `sig` on `body` in both branches). */
+    const html = mirrored !== null ? mirrored.signatureHtml : r.signatureHtml;
+    if (text !== null && text !== undefined) signatures[r.id] = text;
+    if (html !== null && html !== undefined) signaturesHtml[r.id] = html;
+  }
+  return { signatures, signaturesHtml };
+}
+
+/**
+ * The two signature fields out of a mirrored document, or `null` when there is no document at all.
+ * A row present with `signature: null` is a real answer — "the organizer has no sign-off for this
+ * mailbox" — and is NOT the same as no row, which is why the return distinguishes them.
+ */
+function profileSignature(
+  doc: unknown,
+): { signature: string | null; signatureHtml: string | null } | null {
+  if (doc === null || doc === undefined || typeof doc !== "object") return null;
+  const o = doc as Record<string, unknown>;
+  const signature = typeof o.signature === "string" && o.signature.trim().length > 0
+    ? o.signature : null;
+  const signatureHtml = signature !== null
+    && typeof o.signatureHtml === "string" && o.signatureHtml.trim().length > 0
+    ? o.signatureHtml : null;
+  return { signature, signatureHtml };
 }
 
 /**

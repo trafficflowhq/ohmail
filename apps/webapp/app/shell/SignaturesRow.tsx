@@ -48,9 +48,21 @@ export function SignaturesRow({
   signaturesHtml,
   setMailboxSignature,
 }: {
-  /** The account's mailboxes — id + address, `GET /mailboxes`' order. */
-  mailboxes: ReadonlyArray<{ id: string; address: string }>;
-  /** The stored text map, server-confirmed — `{ mailboxId: text }`, absent key = none. */
+  /**
+   * The account's mailboxes — id + address, `GET /mailboxes`' order, plus the one fact that
+   * decides whether an editor here is a control or a report: `organizerRole`. On a mailbox
+   * somebody else organizes, the signature in force is THEIRS and the local row is a dead copy,
+   * so the editor shows their text and does not offer to change it. Optional, and an absent role
+   * reads as "this install organizes it" — the column's own default and the only safe direction:
+   * a roster too old to carry the field would otherwise lock every editor on the account.
+   */
+  mailboxes: ReadonlyArray<{ id: string; address: string; organizerRole?: string | null }>;
+  /**
+   * The stored text map, server-confirmed — `{ mailboxId: text }`, absent key = none. On a mailbox
+   * this install only reads, the value is the ORGANIZER'S published one rather than the local row
+   * (`effectiveMailboxSignatures`), which is what makes the read-only editor below show the
+   * sign-off outgoing mail will actually carry instead of a copy nothing applies.
+   */
   signatures: Readonly<Record<string, string>>;
   /**
    * The stored MARKUP map, server-confirmed — `{ mailboxId: html }`, absent key = this
@@ -130,14 +142,28 @@ export function SignaturesRow({
         const shown = draft ?? stored;
         const dirty = draft !== undefined
           && (draft.text !== stored.text || draft.html !== stored.html);
+        /**
+         * A MAILBOX THIS INSTALL ONLY READS — the editor is a report, not a control.
+         *
+         * The signature in force is published by whoever organizes the mailbox; this install's
+         * own row is inert, and a Save here would write a value no message will ever carry. So
+         * the editor renders the organizer's text read-only under a sentence saying where it was
+         * set, and Save and Discard are not offered at all — a disabled button invites a press
+         * and then explains itself, which is a worse answer than not claiming the affordance.
+         * ABSENT reads as "organizer", the column's default: a roster too old to carry the field
+         * must not lock the editors on an install that owns its mailbox.
+         */
+        const reading = mb.organizerRole === "reader";
         return (
           <div className="sig-settings" key={mb.id}>
             <div className="lab">
               <b>{mb.address}</b>
               <span>
-                {stored.text.trim().length > 0
-                  ? t("signatures.mailboxOn")
-                  : t("signatures.mailboxOff")}
+                {reading
+                  ? t("signatures.mailboxRead")
+                  : stored.text.trim().length > 0
+                    ? t("signatures.mailboxOn")
+                    : t("signatures.mailboxOff")}
               </span>
             </div>
             <RichEditor
@@ -145,7 +171,7 @@ export function SignaturesRow({
               ariaLabel={`${t("signatures.title")}: ${mb.address}`}
               value={shown}
               placeholder={t("signatures.placeholder")}
-              editable={pending === null}
+              editable={!reading && pending === null}
               onChange={(v) => setDrafts((cur) => ({ ...cur, [mb.id]: v }))}
             />
             {/* THE LIVE PREVIEW — the block as a message will carry it, drawn from the SAME
@@ -165,6 +191,7 @@ export function SignaturesRow({
                 />
               </div>
             ) : null}
+            {reading ? null : (
             <div className="sig-settings-actions">
               <Button
                 variant="primary"
@@ -183,6 +210,7 @@ export function SignaturesRow({
                 </Button>
               ) : null}
             </div>
+            )}
           </div>
         );
       })}

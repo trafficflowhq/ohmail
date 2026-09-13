@@ -591,7 +591,17 @@ export class ProfileImportService {
        * is written as `null`: "no signature" is a statement, and treating it as "leave what is
        * here" would make the import non-idempotent.
        */
-      await tx.update(mailboxes).set({ signature: doc.signature })
+      await tx.update(mailboxes).set({
+        signature: doc.signature,
+        /* BOTH HALVES OR NEITHER, and the `??` is what makes it terminate. The two columns are one
+           value — a markup save derives the text, a plain save clears the markup — so applying the
+           text alone would leave this mailbox's old formatting under somebody else's words. An
+           ABSENT key means "this sign-off has no formatting", which is `null` in the column, so it
+           is written as `null` rather than left alone: the import's convergence test compares the
+           local serialization to the held document, and a column the importer never clears makes
+           them differ for ever. */
+        signatureHtml: doc.signatureHtml ?? null,
+      })
         .where(and(eq(mailboxes.id, mailboxId), eq(mailboxes.accountId, ctx.accountId)));
 
       // One allocation for every change row (contacts/notify/away are REST-only, so only the

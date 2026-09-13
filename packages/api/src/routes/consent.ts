@@ -1,6 +1,6 @@
 import {
   buildSeedReview, confirmSeed, consentSettings, cutlineCounts, mailboxFoldersOff,
-  mailboxSignatures, mailboxSignatureHtmls,
+  effectiveMailboxSignatures,
   resetScreeningState, setAutoSuggest, setBlockAutoUnsubscribe, setBlockRemoteImages,
   setBlockTrackingPixels,
   setDormancyDays, setFoldersEnabled, setLocale, setMailboxFoldersEnabled, setMailboxSignature,
@@ -530,8 +530,13 @@ async function applyConsentSettings(
       // BOTH maps travel back whichever one was written, because a write to either CHANGES
       // both columns — a markup save derives the text, and a plain save clears the markup. An
       // echo carrying only the map that was posted would leave the pane rendering a stale half.
-      out.signatures = await mailboxSignatures(txCtx.db, txCtx.accountId);
-      out.signaturesHtml = await mailboxSignatureHtmls(txCtx.db, txCtx.accountId);
+      // THE SAME READER THE GET USES, so the echo and the next read cannot disagree: on a
+      // mailbox this install only reads, the organizer's published signature is what compose
+      // uses, and an echo of the local row alone would put a value on screen that no message
+      // will carry.
+      const echoed = await effectiveMailboxSignatures(txCtx.db, txCtx.accountId);
+      out.signatures = echoed.signatures;
+      out.signaturesHtml = echoed.signaturesHtml;
     }
     if (hasLocale) {
       out.locale = (await setLocale(txCtx, locale as string | null)).locale;
@@ -602,6 +607,11 @@ export const consentRoutes: Route[] = [
         ? null
         : new Date(settings.screeningBaselineAt);
       const counts = await cutlineCounts(ctx, { dormancyDays, baselineAt });
+      /* BOTH SIGNATURE MAPS FROM ONE READ, and it is the read that knows about the ORGANIZER.
+         On a mailbox this install only reads, `mailboxes.signature` is a dead local copy and the
+         live sign-off is in the organizer's published document; asking for the two maps
+         separately would also mean two joins answering about one mailbox at two instants. */
+      const effectiveSignatures = await effectiveMailboxSignatures(ctx.db, ctx.accountId);
       return jsonResponse({
         seedConfirmedAt: settings.seedConfirmedAt,
         screeningResetAt: settings.screeningResetAt,
@@ -660,14 +670,17 @@ export const consentRoutes: Route[] = [
         // (`{ mailboxId: text }`). A mailbox absent from the map has no signature, which is
         // what the column's NULL means and what an older client that never reads the field
         // assumes; an older SERVER simply omits the field, and the client's absent-means-none
-        // read is the same picture.
-        signatures: await mailboxSignatures(ctx.db, ctx.accountId),
+        // read is the same picture. ON A MAILBOX SOMEBODY ELSE ORGANIZES the value is THEIR
+        // published one, not this install's dead row — `effectiveMailboxSignatures` states the
+        // rule, and before it a desktop reading a Cloud-organized mailbox composed with no
+        // sign-off while the text sat cached one table away.
+        signatures: effectiveSignatures.signatures,
         // PER-MAILBOX SIGNATURE MARKUP (mail 0098) — only the mailboxes whose signature has
         // formatting in it. An absent key here is "no formatting", NEVER "no signature":
         // the map above answers that, and the two are read together. Present-and-empty for
         // `signatures`' reason — a client can tell this server having read the rows from one
         // too old to carry the field, and both pictures render the same.
-        signaturesHtml: await mailboxSignatureHtmls(ctx.db, ctx.accountId),
+        signaturesHtml: effectiveSignatures.signaturesHtml,
         // THE INTERFACE LANGUAGE — `'de'`, or `null` for "this account has no preference". Sent as
         // `null` rather than omitted, and normalised to the default rather than to a string, for
         // the same reason `blockRemoteImagesAt` is: the client has to be able to tell "this server

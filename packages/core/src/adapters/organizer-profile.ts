@@ -161,6 +161,27 @@ export interface OrganizerProfilePayload {
    * both directions, and a bump would have made older installs refuse a document they can read.
    */
   signature: string | null;
+  /**
+   * THE SIGNATURE'S MARKUP — `mailboxes.signature_html`, the formatted form of the field above,
+   * and OPTIONAL, which is the whole of its compatibility rule.
+   *
+   * The plain text already travelled (mail 0094) and the markup did not, so a reader showed the
+   * organizer's sign-off as unformatted text and sent it that way — while the reader→organizer
+   * REQUEST payload has carried `signatureHtml` since 2026-09-10, which made the asymmetry a
+   * one-way street: formatting could be asked for and never read back.
+   *
+   * ABSENT WHEN ABSENT, on `piles`' rule and for its exact reason: a document that never had this
+   * key must keep the fingerprint it was written with, so the canonical form OMITS it rather than
+   * serializing `null` the way the frozen `signature` field does. Absent and `null` are therefore
+   * one state — "this signature has no formatting in it" — which is not the same as having no
+   * signature, and {@link signature} is what answers that. Markup without text is not a state this
+   * format can express: the canonical form drops it, because `withSignature` puts the TEXT on the
+   * plain body in both branches and markup with nothing beside it would send a formatted sign-off
+   * to everybody but a plaintext reader. `PROFILE_VERSION` deliberately does not move, on the
+   * argument `signature` and `throttle` already made: field-level compatible in both directions,
+   * and a bump would make older installs refuse a document they read perfectly well.
+   */
+  signatureHtml?: string | null;
 }
 
 /** The payload wrapped in its versioned envelope — the document as written. */
@@ -178,7 +199,12 @@ export function isEmptyProfilePayload(p: OrganizerProfilePayload): boolean {
        this key carries `undefined`, one parsed from a document carries `null`, and both mean "no
        signature". Comparing to `null` alone would call the first one non-empty — so a mailbox with
        nothing configured would publish a document instead of staying silent. */
-    && (p.signature ?? null) === null;
+    && (p.signature ?? null) === null
+    /* Not a separate arm in practice — the canonical form drops markup with no text beside it, so
+       a payload whose only content is `signatureHtml` is empty once canonicalised. Stated anyway,
+       because this predicate runs on the RAW payload and "publish nothing" must be decided on
+       what the payload says rather than on what the canonicaliser would make of it. */
+    && (p.signatureHtml ?? null) === null;
 }
 
 /**
@@ -324,6 +350,7 @@ function canonicalizeV1(p: OrganizerProfilePayload): OrganizerProfilePayload {
        have", so the disagreement shows up as an import prompt that cannot be made to go away.
        Normalised here, in the one function every fingerprint goes through. */
     signature: p.signature ?? null,
+    ...signatureHtmlOf(p),
   };
 }
 
@@ -342,7 +369,27 @@ function canonicalizeV2(p: OrganizerProfilePayload): OrganizerProfilePayload {
     // Strings are their own canonical form, so code-unit order is already total over them.
     tagNames: [...p.tagNames].sort(byCodeUnit),
     signature: p.signature ?? null,
+    ...signatureHtmlOf(p),
   };
+}
+
+/**
+ * THE MARKUP KEY, PRESENT ONLY WHEN IT SAYS SOMETHING — the spread that keeps every document an
+ * older ohmail wrote at the fingerprint it was written with.
+ *
+ * `signature`, one key up, is emitted as `?? null` because it has been in the frozen form since
+ * mail 0094 and every document already carries it. This key is NEW, so emitting `null` for a
+ * document that never had it would re-fingerprint the lot — `piles`' argument, and the same
+ * remedy. Two further collapses, both deliberate: markup that is blank after trimming is no
+ * markup (an empty `<p></p>` is a tag and not a sign-off), and markup with NO TEXT beside it is
+ * dropped, because the text half is what a plaintext recipient reads and a document offering
+ * only the formatted form describes a message nobody can send.
+ */
+function signatureHtmlOf(p: OrganizerProfilePayload): { signatureHtml?: string } {
+  const text = p.signature ?? null;
+  const html = p.signatureHtml ?? null;
+  if (text === null || html === null || html.trim().length === 0) return {};
+  return { signatureHtml: html };
 }
 
 /**
@@ -437,6 +484,11 @@ export function makeProfileDoc(
     awayResponder: canonical.awayResponder,
     tagNames: canonical.tagNames,
     signature: canonical.signature,
+    /* SPREAD, not a `?? null` assignment: the canonical form decides whether this key exists at
+       all, and re-stating it here as an explicit `null` would put back exactly the byte that
+       re-fingerprints every document written before the field. This line is the envelope
+       carrying what the canonicaliser answered, and nothing else. */
+    ...(canonical.signatureHtml === undefined ? {} : { signatureHtml: canonical.signatureHtml }),
   };
 }
 
@@ -619,7 +671,16 @@ function readPayload(raw: Record<string, unknown>): OrganizerProfilePayload {
   // undefined for a non-string, so a document carrying a number or an object here reads as "no
   // signature" rather than putting a stranger's value into an outgoing mail.
   const signature: string | null = asString(raw.signature) ?? null;
-  return { screener, rules, notifyRules, awayResponder, tagNames, signature };
+  /* ABSENT, null AND A NON-STRING ALL PARSE TO "no markup" — the field's own rule. Kept as an
+     OPTIONAL key on the way out rather than an explicit `null` so a document that carried none
+     round-trips to the same bytes and the same fingerprint; `canonicalizeProfilePayload` drops
+     it again for a payload with no text, so the two halves cannot come apart here either. */
+  const signatureHtml = asString(raw.signatureHtml);
+  return {
+    screener, rules, notifyRules, awayResponder, tagNames, signature,
+    ...(signature !== null && typeof signatureHtml === "string" && signatureHtml.trim().length > 0
+      ? { signatureHtml } : {}),
+  };
 }
 
 /**

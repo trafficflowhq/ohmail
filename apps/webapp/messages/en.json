@@ -1393,6 +1393,7 @@
       "note": "One signature per mailbox. Leave the field empty to sign with nothing.",
       "placeholder": "Write a signature…",
       "mailboxOn": "Added to messages you write from this address.",
+      "mailboxRead": "Set on the install that organizes this mailbox.",
       "mailboxOff": "No signature — messages go out as written.",
       "save": "Save",
       "saving": "Saving…",

@@ -61,7 +61,14 @@ export async function serializeOrganizerProfile(
       // configuration no store ever held. Scoped by ACCOUNT as well as by mailbox — a predicate
       // on the id alone would serialize whatever row carried that uuid, and the account column is
       // the only thing that makes "this mailbox is ours" a property of the query.
-      await tx.select({ signature: mailboxesTbl.signature }).from(mailboxesTbl)
+      await tx.select({
+        signature: mailboxesTbl.signature,
+        // The MARKUP half, in the same statement as the text for the reason the whole snapshot
+        // exists: the two columns are written together by `setMailboxSignature` (a markup save
+        // derives the text, a plain save clears the markup), so reading them apart could publish
+        // a formatted sign-off beside somebody else's words.
+        signatureHtml: mailboxesTbl.signatureHtml,
+      }).from(mailboxesTbl)
         .where(and(eq(mailboxesTbl.id, mailboxId), eq(mailboxesTbl.accountId, accountId))),
     ] as const;
   }, { isolationLevel: "repeatable read", accessMode: "read only" });
@@ -92,5 +99,11 @@ export async function serializeOrganizerProfile(
     // answer here on purpose: a mailbox that is not this account's is not a state this serializer
     // can report on, and its caller has already established the mailbox before asking.
     signature: mailboxRows[0]?.signature ?? null,
+    /* PRESENT ONLY WHEN THERE IS MARKUP — the payload's optional key, so a mailbox whose
+       signature is plain serializes byte for byte the document this serializer wrote before the
+       field existed. `canonicalizeProfilePayload` applies the same rule again and drops markup
+       with no text beside it; stating it here keeps the RAW payload the key census reads honest
+       about what the store actually holds. */
+    ...(mailboxRows[0]?.signatureHtml ? { signatureHtml: mailboxRows[0].signatureHtml } : {}),
   };
 }

@@ -1393,6 +1393,7 @@
       "note": "Eine Signatur pro Postfach. Lass das Feld leer, um ohne Signatur zu senden.",
       "placeholder": "Signatur schreiben…",
       "mailboxOn": "Wird unter Nachrichten von dieser Adresse gesetzt.",
+      "mailboxRead": "Auf der Installation gesetzt, die dieses Postfach organisiert.",
       "mailboxOff": "Keine Signatur — Nachrichten gehen wie geschrieben raus.",
       "save": "Speichern",
       "saving": "Speichert…",
