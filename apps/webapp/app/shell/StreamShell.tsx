@@ -65,6 +65,15 @@ const ANCHOR_FRAMES = 90;
 const ANCHOR_STABLE_FRAMES = 3;
 
 /**
+ * How long the anchor-hold loop keeps running after the last thing that could move the content.
+ *
+ * Longer than the clamp's half-second transition, whose intermediate heights fire no event of
+ * their own: the mutation that starts it opens the window, and the window must still be open when
+ * it finishes. A second also covers an image decoding after its `src` landed.
+ */
+export const HOLD_QUIET_MS = 1000;
+
+/**
  * What the stream knew when it was left — the leave-commit's whole input.
  * `newestSeenId` is the newest card actually DISPLAYED at any point during
  * the visit — normally the first card, but a card arriving above a reader
@@ -333,7 +342,8 @@ export const StreamShell = forwardRef<
    * scroll, and "compensate only when scrollTop did not change" ignores exactly that case. Not a
    * ResizeObserver: measured, 27 height changes delivered THREE callbacks — `content-visibility: auto`
    * suppresses observations inside skipped subtrees; one rect per frame sees hydration, clamp fill and
-   * re-measure, plus non-card changes. Suspended during a landing (`jumpRef`); `behavior: "instant"`.
+   * re-measure, plus non-card changes. Suspended during a landing (`jumpRef`); `behavior: "instant"`;
+   * armed by change rather than by the clock — see the loop.
    */
   const holdRef = useRef<{ sid: string; offset: number; scrollTop: number } | null>(null);
   const holdRafRef = useRef(0);
@@ -366,7 +376,23 @@ export const StreamShell = forwardRef<
         : null;
     };
 
+    /**
+     * THE LOOP NEEDS A REASON TO BE RUNNING, and re-arming every frame is not one.
+     *
+     * Re-armed unconditionally it is a 60 Hz forced layout for the life of a mounted stream —
+     * measured on the shipped shell with nobody touching the app: 60 callbacks and 240
+     * `getBoundingClientRect` calls a second, against ZERO DOM mutations. So it runs inside a
+     * window opened by anything that can move the content it holds and closed
+     * {@link HOLD_QUIET_MS} after the last of them, and never while the document is hidden.
+     *
+     * THE ANCHOR SURVIVES THE STOP, and that is what keeps the hold correct: the loop stops
+     * because nothing moved, so the offset it remembers is still true, and a change arriving in
+     * the same frame as its own arm is measured against the position from BEFORE it.
+     */
+    let activeUntil = 0;
+    const hidden = () => typeof document !== "undefined" && document.hidden;
     const frame = () => {
+      if (hidden() || Date.now() > activeUntil) { holdRafRef.current = 0; return; }
       holdRafRef.current = requestAnimationFrame(frame);
       const rootRect = el.getBoundingClientRect();
       if (rootRect.height <= 0) return; // detached, or a hidden tab: nothing to hold
@@ -399,10 +425,44 @@ export const StreamShell = forwardRef<
          one or the offset it is compared against grows without bound. */
       remember(rootRect.top);
     };
-    holdRafRef.current = requestAnimationFrame(frame);
+
+    /**
+     * WHAT ARMS IT. The DOM edit is watched, not the height: a `MutationObserver` sees the body
+     * arriving, the clamp class going on and the re-measure at the moment they are made, where a
+     * `ResizeObserver` sees three of twenty-seven (`content-visibility: auto`, above). A CSS
+     * transition's own intermediate heights are nobody's event, which is what the quiet window is
+     * for — it outlasts the clamp's half second from the mutation that started it, and
+     * `transitionrun`/`transitionend`/`animationend` extend it either way. `load` is captured
+     * rather than bubbled: an image's does not bubble.
+     */
+    const arm = () => {
+      if (hidden()) return;
+      activeUntil = Date.now() + HOLD_QUIET_MS;
+      if (!holdRafRef.current) holdRafRef.current = requestAnimationFrame(frame);
+    };
+    const observer = typeof MutationObserver === "function" ? new MutationObserver(arm) : null;
+    observer?.observe(el, { subtree: true, childList: true, attributes: true, characterData: true });
+    el.addEventListener("scroll", arm, { passive: true });
+    el.addEventListener("transitionrun", arm);
+    el.addEventListener("transitionend", arm);
+    el.addEventListener("animationend", arm);
+    el.addEventListener("load", arm, true);
+    window.addEventListener("resize", arm);
+    document.addEventListener("visibilitychange", arm);
+    arm(); // mounting IS a change: the first cards are arriving as this runs.
+
     return () => {
       if (holdRafRef.current) cancelAnimationFrame(holdRafRef.current);
       holdRafRef.current = 0;
+      activeUntil = 0;
+      observer?.disconnect();
+      el.removeEventListener("scroll", arm);
+      el.removeEventListener("transitionrun", arm);
+      el.removeEventListener("transitionend", arm);
+      el.removeEventListener("animationend", arm);
+      el.removeEventListener("load", arm, true);
+      window.removeEventListener("resize", arm);
+      document.removeEventListener("visibilitychange", arm);
       holdRef.current = null;
       holdAccRef.current = 0;
     };
