@@ -24,12 +24,13 @@ export type TakeoverAuthorizationOutcome =
   | "authorized"
   /**
    * The mailbox is not stood down; this install already organizes it, so no stamp is written and
-   * none may be — a second press is not a second becoming. What it MEANS differs by caller:
-   * {@link authorizeOrganizerTakeover} (the CLI) writes nothing and its message says so, while
-   * {@link requestOrganizerTakeover} (the button and setup flow) DOES write when a `screening` answer
-   * rides along — the window and scope are the answer just given, and a re-run of setup is the
-   * ordinary way here. It can throw a `LocalConsentRefusal` from that write, on the first-consent
-   * path's bounds.
+   * none may be — a second press is not a second becoming. That is a statement about the MAILBOX
+   * ROW, and never about `account_settings`: {@link requestOrganizerTakeover} (the button and
+   * setup flow) writes the window and scope when a `screening` answer rides along, and BOTH doors
+   * write the settings record itself where none is readable ({@link settingsRecordReadable}) —
+   * a consent whose record never existed is not a consent that has already been written down. A
+   * readable record is left alone on either door. It can throw a `LocalConsentRefusal` from the
+   * window write, on the first-consent path's bounds.
    */
   | "already_organizing"
   /** The mailbox was REMOVED from this install, which is not a stand-down. Nothing was written. */
@@ -145,6 +146,14 @@ export async function authorizeOrganizerTakeover(
     row.releaseRequestedAt === null
     && row.organizerRole !== "reader" && row.organizeConsentedAt !== null
   ) {
+    /* The same half the local door's arm was missing, on the door beside it — see
+     * {@link settingsRecordReadable}. This arm asks no window at all, so before this it returned
+     * having touched nothing whatever the account's settings looked like. */
+    if (!(await settingsRecordReadable(db, row.accountId))) {
+      await db.transaction(async (tx) => {
+        await writeConsentScreening(tx, dialect(db), { accountId: row.accountId, now: input.now });
+      });
+    }
     return { outcome: "already_organizing", previousReason: null, mailboxId: row.id };
   }
 
@@ -287,6 +296,28 @@ async function writeConsentScreening(
     });
 }
 
+/**
+ * IS THERE A SETTINGS RECORD TO MEASURE A WINDOW FROM — the question the `already_organizing`
+ * arms never asked.
+ *
+ * Those arms answer about the MAILBOX ROW, and both read "the row already says so" as "everything
+ * this press would write is already written". Measured on the 0.18.0 release candidate: a consented, organizing
+ * mailbox whose account had no `account_settings` row at all, so the cutline was measured from
+ * the moment of each later READ instead of from the agreement — no cutoff, and a row that reads
+ * healthy while nothing is filed where the person expects.
+ *
+ * A row with a NULL baseline is not readable for this purpose either: it is a record that cannot
+ * answer the question, which is the same damage under a row that exists.
+ */
+async function settingsRecordReadable(db: LocalDb, accountId: string): Promise<boolean> {
+  const [row] = await db
+    .select({ baseline: accountSettings.screeningBaselineAt })
+    .from(accountSettings)
+    .where(eq(accountSettings.accountId, accountId))
+    .limit(1);
+  return row !== undefined && row.baseline !== null;
+}
+
 export async function requestOrganizerTakeover(
   db: LocalDb,
   input: {
@@ -399,10 +430,22 @@ export async function requestOrganizerTakeover(
      * the answer just given and the whole reason the screen has a button, so the stamp stays refused
      * and the dials are written; the baseline cannot move (its upsert is a `coalesce`). Its own
      * transaction, because there is no mailbox write here to share one with. */
-    if (input.screening) {
+    /* ── AND THE RECORD ITSELF, WHEN THERE IS NONE TO BE ALREADY-WRITTEN ──────────────────
+     *
+     * `already_organizing` is about the MAILBOX ROW and has never been an argument about
+     * `account_settings` — the arm above already writes the dials for that reason. The half it
+     * missed is the record's EXISTENCE: a press over an account with no settings record answered
+     * "the row already says so" and left the account with no cutline for the life of the install.
+     *
+     * Only where none is readable, which is the narrow condition and deliberately not "stamp on
+     * every press": that was tried and is wrong, because a press that asks no window must not
+     * slide a LIVE account's cutline forward. Where there is no cutline there is nothing to
+     * slide, and `writeConsentScreening`'s own `coalesce` keeps the other direction safe. */
+    if (input.screening || !(await settingsRecordReadable(db, row.accountId))) {
       await db.transaction(async (tx) => {
         await writeConsentScreening(tx, dialect(db), {
-          accountId: row.accountId, now: input.now, dials: { days, scope },
+          accountId: row.accountId, now: input.now,
+          ...(input.screening ? { dials: { days, scope } } : {}),
         });
       });
     }
@@ -451,7 +494,10 @@ export const TAKEOVER_MESSAGES: Record<TakeoverAuthorizationOutcome, string> = {
   authorized:
     "Authorized. This machine organizes this mailbox on its next pass — no restart. " +
     "If another organizer is still active, it keeps the mailbox and this machine goes on reading it.",
-  already_organizing: "This machine already organizes that mailbox. Nothing to do.",
+  /* "Nothing to do" was the whole sentence, and it is no longer true on every press: a mailbox
+     whose account has no settings record gets one written here. Narrowed rather than dropped —
+     what a person needs from this line is that no takeover was authorized. */
+  already_organizing: "This machine already organizes that mailbox. No takeover was authorized.",
   removed: "That mailbox was removed from this machine. Add it again rather than authorizing a takeover.",
   no_mailbox: "This machine has no mailbox for that address.",
 };

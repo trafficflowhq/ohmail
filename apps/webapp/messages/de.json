@@ -2304,7 +2304,7 @@
     "desktopStateFirstOpen": "Wird zum ersten Mal geöffnet",
     "desktopStateCatchingUp": "Holt noch auf",
     "desktopStateUpToDate": "Aktuell",
-    "desktopOrganizeHere_already_organizing": "Dieser Rechner organisiert dieses Postfach bereits. Nichts zu tun.",
+    "desktopOrganizeHere_already_organizing": "Dieser Rechner organisiert dieses Postfach bereits. Es wurde keine Übernahme autorisiert.",
     "desktopOrganizeHere_removed": "Dieses Postfach wurde von diesem Rechner entfernt. Füge es stattdessen im Bereich „Desktop“ wieder hinzu.",
     "desktopOrganizeHere_no_mailbox": "Dieser Rechner hat kein Postfach für diese Adresse.",
     "desktopManageOnWeb": "Postfächer werden in ohmail im Web verwaltet",

@@ -1912,6 +1912,37 @@ export class MailboxService {
       });
   }
 
+  /**
+   * IS THERE A SETTINGS RECORD TO MEASURE A WINDOW FROM — the question `already_organizing` never
+   * asked. A row with a NULL baseline is not readable for this purpose either: it is a record
+   * that cannot answer the question, which is the same damage under a row that exists.
+   */
+  private async settingsRecordReadable(tx: Tx, accountId: string): Promise<boolean> {
+    const [row] = await tx
+      .select({ baseline: accountSettings.screeningBaselineAt })
+      .from(accountSettings)
+      .where(eq(accountSettings.accountId, accountId))
+      .limit(1);
+    return row !== undefined && row.baseline !== null;
+  }
+
+  /**
+   * THE BASELINE ALONE, for a consent that asked no window over an account with no settings
+   * record. No dials: the person answered no second question, so nothing here may store a choice
+   * they did not make — the `coalesce` keeps a racing consent to one baseline, as everywhere else.
+   */
+  private async writeConsentBaseline(tx: Tx, ctx: ServiceContext): Promise<void> {
+    await tx.insert(accountSettings)
+      .values({ accountId: ctx.accountId, screeningBaselineAt: ctx.now(), updatedAt: ctx.now() })
+      .onConflictDoUpdate({
+        target: accountSettings.accountId,
+        set: {
+          screeningBaselineAt: sql`coalesce(${accountSettings.screeningBaselineAt}, ${dialect(ctx.db).ts(ctx.now())})`,
+          updatedAt: ctx.now(),
+        },
+      });
+  }
+
   private async writeScreeningAnswer(
     tx: Tx, ctx: ServiceContext, screening: NonNullable<OrganizeHereInput["screening"]>,
   ): Promise<void> {
@@ -2063,11 +2094,22 @@ export class MailboxService {
          * the dials are still written; the baseline is untouched by construction — its upsert is
          * a `COALESCE`, so a re-run cannot slide a live account's cutline forward.
          */
-        /* NO BASELINE STAMP HERE, and it was tried. A press on this branch may have said nothing
-         * about the window, and a press that asks nothing must write nothing — the rule this
-         * branch is already held to. A mailbox this install already organizes and that carries no
-         * baseline is its own question, and not one to answer silently from here. */
+        /* NO BASELINE STAMP ON A PRESS THAT ASKS NOTHING — a press that asks nothing must not
+         * slide a LIVE account's cutline forward, which is the rule this branch is held to and
+         * the reason an unconditional stamp was tried and rejected.
+         *
+         * The question that note left open — "a mailbox this install already organizes and that
+         * carries no baseline" — has since been measured (the 0.18.0 release candidate): it is a
+         * consented, organizing mailbox whose cutline is computed from the moment of every later
+         * READ, so it has no cutoff at all and reads perfectly healthy while nothing is filed
+         * where the person expects. `already_organizing` is about the MAILBOX ROW, and answering
+         * it as "everything this press would write is already written" is what left the account
+         * with no record. So the record is written where NONE is readable, which is the state
+         * that has no cutline to slide; where one is readable this press still writes nothing. */
         if (input.screening) await this.writeScreeningAnswer(tx, ctx, input.screening);
+        else if (!(await this.settingsRecordReadable(tx, ctx.accountId))) {
+          await this.writeConsentBaseline(tx, ctx);
+        }
         return { outcome: "already_organizing" as const };
       }
 

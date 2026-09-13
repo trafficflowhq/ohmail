@@ -2304,7 +2304,7 @@
     "desktopStateFirstOpen": "Opening for the first time",
     "desktopStateCatchingUp": "Still catching up",
     "desktopStateUpToDate": "Up to date",
-    "desktopOrganizeHere_already_organizing": "This machine already organizes that mailbox. Nothing to do.",
+    "desktopOrganizeHere_already_organizing": "This machine already organizes that mailbox. No takeover was authorized.",
     "desktopOrganizeHere_removed": "That mailbox was removed from this machine. Add it again in the Desktop settings pane instead.",
     "desktopOrganizeHere_no_mailbox": "This machine has no mailbox for that address.",
     "desktopManageOnWeb": "Mailboxes are managed in ohmail on the web",
