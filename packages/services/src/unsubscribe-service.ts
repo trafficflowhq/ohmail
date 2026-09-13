@@ -191,7 +191,7 @@ export const UNSUB_SYNC_BUDGET_MS = 40_000;
  * thousands of pre-feature screen-outs and sweeping them would announce the address to the very
  * senders it was screened away from — and a scheduled pass has nobody to type a date. This is
  * that date, DERIVED rather than chosen: three of the drain's own cadences — one hour, the
- * cadence its production caller is scheduled at — so two missed runs still reach what the last
+ * cadence the worker's pass registry states for `unsubscribe_drain` — so two missed runs reach what the last
  * one deferred, plus a 24-hour envelope for an outage of the host that runs it. It reaches what a
  * RECENT request deferred and never the historical backlog. What makes a row eligible at all is
  * the COMMITTED decision: `folder_state.desired_folder` is written in the decision's own

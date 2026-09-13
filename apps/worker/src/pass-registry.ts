@@ -259,9 +259,9 @@ export const WORKER_PASSES: readonly WorkerPass[] = [
     name: "api_cron",
     module: `${W}/api-cron.ts`, entry: "startApiCron",
     triggers: ["interval"],
-    cadence: "per API_CRON_TARGETS: billing_reconcile 1 h, sessions_reap 24 h, smtp_size, scheduled_send ~1 min (+jitter)",
+    cadence: "per API_CRON_TARGETS: sessions_reap and smtp_size 24 h, unsubscribe_drain 1 h, scheduled_send / send_reconcile / away_responder ~1 min (+jitter), platform_signals 5 min",
     budget: "one authenticated HTTP poke per target per period, timeoutMs each",
-    owns: "the API-side internal passes (billing reconcile, session reap, scheduled sends, SMTP size probe) get their heartbeat",
+    owns: "the API-side internal passes (session reap, SMTP size probe, scheduled sends, send reconcile, away replies, platform signals, the screened-out unsubscribe drain) get their heartbeat — unsubscribe_drain's cadence is read here by UNSUB_DRAIN_WINDOW_MS, which derives its look-back from it",
     fence: "leader lock (one poker); the API routes hold their own idempotency",
   },
   {
