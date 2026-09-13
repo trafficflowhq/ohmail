@@ -116,8 +116,14 @@ const HOSTED_SUGGEST_MARKER = "SuggestRefused";
  * THE SHELL COMMANDS THIS BUNDLE CAN NAME. Both are armed from the window entry
  * (`src/main.tsx`); the served client's entry never arms them, and a phone page that could name
  * a shell command would be a page claiming a channel it does not have.
+ *
+ * `open_attachment` is NOT in this list any more, and the absence is the point rather than an
+ * oversight: every attachment verb this product offers says Download, so the window asks the shell
+ * to SAVE and nothing in it calls the open command. The shell still carries it — the day a surface
+ * offers an explicit Open verb it is the door that verb uses — but a marker for a command no
+ * bundle names would be a guard that can only be satisfied by keeping a caller alive for it.
  */
-const SHELL_COMMAND_MARKERS = ["open_external", "open_attachment"];
+const SHELL_COMMAND_MARKERS = ["open_external", "save_attachment"];
 
 /**
  * WHICH SYNC CLIENT IS IN THIS BUNDLE — the check that would have caught the blank window.

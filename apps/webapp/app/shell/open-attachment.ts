@@ -24,6 +24,19 @@
 export const OPEN_ATTACHMENT_COMMAND = "open_attachment";
 
 /**
+ * The shell command that saves one attachment into the PERSON'S Downloads folder.
+ *
+ * The download and the open are two different acts and this app had only the second: pressing an
+ * attachment wrote the file under the app's own directory and handed it to the platform viewer, so
+ * on a Mac an image opened in Preview, nothing arrived in `~/Downloads`, and "Download all" had no
+ * desktop meaning at all. This is the DOWNLOAD — the same thing `<a download>` does in a browser,
+ * performed by the shell because a webview with no download handler cancels the navigation.
+ * `engine.rs` still owns every part of the path, including the `name (2).ext` numbering that keeps
+ * a save from overwriting a file already sitting in that folder.
+ */
+export const SAVE_ATTACHMENT_COMMAND = "save_attachment";
+
+/**
  * Whether this window hands files to the operating system instead of downloading them.
  *
  * A module-level flag rather than a probe for `__TAURI_INTERNALS__`, for the reason
@@ -47,8 +60,10 @@ export function desktopAttachmentsEnabled(): boolean {
  * PDF only, for a specific reason: the renderer is aliased out of both desktop bundles because it
  * cannot start under this window's `worker-src 'none'` (`apps/desktop/src/no-pdfjs.ts`); images
  * and text are drawn from bytes the app already holds. `MessagePane` reads this to decide which
- * tiles are offered the in-app viewer: a `true` removes the small eye and leaves the tile's own
- * press, which opens the file in the program this computer uses for it. The type test is spelled
+ * tiles are offered the in-app viewer: a `true` removes the small eye, because an eye whose only
+ * outcome is a panel saying to download instead is a control that lies about what it does. The
+ * tile's own press then does what every attachment press does — it saves the file into this
+ * computer's Downloads folder, where the reader opens it in whatever they use. The type test is spelled
  * here rather than imported from `AttachmentPreview` (which imports this module's siblings — a
  * cycle); it is one string, and the suite pins the pair.
  */
@@ -62,7 +77,15 @@ interface TauriInternals {
 }
 
 /**
- * Ask the shell to write one attachment and open it, and say so if it will not. The bytes go up as an
+ * Ask the shell to write one attachment and open it, and say so if it will not.
+ *
+ * NO SURFACE CALLS THIS TODAY. Every attachment verb in the product says Download, and a Download
+ * that opens a file in a viewer instead of saving it is the defect {@link saveAttachmentToDownloads}
+ * exists to end. The door stays because the shell's half of it is whole and proven — it is what an
+ * explicit Open verb would use the day one is added — and until then the window bundle does not
+ * name the command at all (`scripts/scan-artifact.mjs` says so in its marker list).
+ *
+ * The bytes go up as an
  * array of numbers — the bridge's own wire: `offline-guard.ts` refuses the runtime's custom-scheme IPC,
  * so every command travels the JSON message channel, and the same attachment already came DOWN it this
  * way (`bridge-fetch.ts#asBytes`). The bound is the mail service's own single-fetch ceiling, enforced
@@ -82,4 +105,29 @@ export async function openAttachmentWithSystemViewer(blob: Blob, filename: strin
     console.error(`ohmail: the shell would not open ${filename}`, err);
   }
   return true;
+}
+
+/**
+ * Ask the shell to save one attachment into the user's Downloads folder. Answers whether it
+ * landed, which is what lets the caller say "Saved to Downloads" only when something was.
+ *
+ * The same wire as its neighbour above — bytes as an array of numbers over the JSON message
+ * channel, the same ceiling enforced at both ends — and the same refusal to swallow: a shell that
+ * would not save goes to the console, because this family of defects is silent by nature and a
+ * second silent failure inside the repair would be the first one wearing the fix. A `false` covers
+ * both "there is no shell here" and "the shell refused", and the caller treats them the same: it
+ * does not claim a file was saved.
+ */
+export async function saveAttachmentToDownloads(blob: Blob, filename: string): Promise<boolean> {
+  const host = globalThis as { __TAURI_INTERNALS__?: Partial<TauriInternals> };
+  const internals = host.__TAURI_INTERNALS__;
+  if (typeof internals?.invoke !== "function") return false;
+  try {
+    const bytes = Array.from(new Uint8Array(await blob.arrayBuffer()));
+    await (internals as TauriInternals).invoke(SAVE_ATTACHMENT_COMMAND, { filename, bytes });
+    return true;
+  } catch (err) {
+    console.error(`ohmail: the shell would not save ${filename}`, err);
+    return false;
+  }
 }

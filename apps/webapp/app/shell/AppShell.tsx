@@ -2752,6 +2752,13 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
    */
   const attachments = useMessageAttachments(engine, selectedOhbox?.id ?? null, {
     onDownloadAllFailed: () => toast(t("ohbox.toastDownloadAllFailed")),
+    /* THE DESKTOP'S ONE SENTENCE ABOUT A DOWNLOAD. A browser announces its own downloads and this
+       app cannot see that folder, so the seam speaks only for files the SHELL said it wrote — the
+       count is its answer, never the number of files that were asked for. The key sits beside its
+       twin `toastDownloadAllFailed` rather than in the `attachments` namespace: that namespace is
+       held key-for-key against the STRIP's own `COPY` table (`locale-shim-parity.test.ts`), and a
+       sentence only this file speaks would be a dead entry in it. */
+    onSavedToDownloads: (count) => toast(t("ohbox.toastSavedToDownloads", { count })),
   });
 
   /*

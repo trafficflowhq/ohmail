@@ -1050,6 +1050,14 @@ impl Drop for Engine {
 pub struct ShellPaths {
     /// The app's data directory. `config.json` sits in it and the per-mode mirrors under it.
     pub app_data: Option<PathBuf>,
+    /// THE USER'S OWN DOWNLOADS DIRECTORY — the one place in this struct the app does not own.
+    ///
+    /// Resolved from the framework (`app.path().download_dir()`) rather than composed from `$HOME`,
+    /// because the three platforms disagree about where it is and one of them lets the person move
+    /// it: Linux reads `XDG_DOWNLOAD_DIR`, Windows the `Downloads` known folder, macOS
+    /// `~/Downloads`. `None` where the platform names none — the save command then refuses by name
+    /// instead of inventing a path somewhere else.
+    pub downloads: Option<PathBuf>,
     /// The app's RESOURCE directory — where the engine and its Node runtime are looked for when
     /// nothing names them explicitly.
     ///
@@ -1203,7 +1211,7 @@ impl Shell {
     /// an injected poll, never through this.
     pub(crate) fn inert_for_tests() -> Shell {
         Shell {
-            paths: ShellPaths { app_data: None, resources: None },
+            paths: ShellPaths { app_data: None, resources: None, downloads: None },
             engine: Mutex::new(Arc::new(Engine::inert(EngineState::Stopped))),
             host_spawn: Mutex::new(None),
         }
@@ -1265,6 +1273,7 @@ impl Shell {
         ShellPaths {
             app_data: app.path().app_data_dir().ok().map(|d| without_verbatim_prefix(&d)),
             resources: resource_dir_of(app),
+            downloads: app.path().download_dir().ok().map(|d| without_verbatim_prefix(&d)),
         }
     }
 
@@ -4260,6 +4269,141 @@ fn write_attachment(root: &Path, name: &str, bytes: &[u8]) -> Result<PathBuf, St
     Ok(path)
 }
 
+/// Split a sanitised attachment name into its stem and its extension.
+///
+/// The same rule [`truncate_keeping_extension`] applies, and for the same reason: the extension is
+/// how every one of these platforms picks the program, and a name that is one long dotted string
+/// has no extension worth protecting. A leading dot is a stem (`.gitignore` is not an extension).
+#[cfg(feature = "local-engine")]
+fn split_attachment_extension(name: &str) -> (&str, &str) {
+    match name.rfind('.') {
+        Some(at) if at > 0 && name.len() - at <= 16 => (&name[..at], &name[at..]),
+        _ => (name, ""),
+    }
+}
+
+/// `Invoice.pdf` + 2 → `Invoice (2).pdf`. The browser's own answer, and the reader's.
+///
+/// The number goes on the STEM and never on the tail, so the extension survives, and the stem is
+/// trimmed on a char boundary first when the suffix would push the name over
+/// [`ATTACHMENT_NAME_MAX`] — slicing through a multi-byte character is a panic, not a wrong name.
+#[cfg(feature = "local-engine")]
+fn numbered_attachment_name(name: &str, n: u32) -> String {
+    let (stem, ext) = split_attachment_extension(name);
+    let suffix = format!(" ({n})");
+    let room = ATTACHMENT_NAME_MAX.saturating_sub(ext.len() + suffix.len());
+    let mut end = room.min(stem.len());
+    while end > 0 && !stem.is_char_boundary(end) {
+        end -= 1;
+    }
+    let kept = if end == 0 { ATTACHMENT_FALLBACK_NAME } else { &stem[..end] };
+    format!("{kept}{suffix}{ext}")
+}
+
+/// How many names are tried before a save gives up. Past this the directory holds a thousand files
+/// of one name and the person has a different problem than this command can solve.
+#[cfg(feature = "local-engine")]
+const DOWNLOAD_NAME_TRIES: u32 = 1000;
+
+/// Write `bytes` into `root` under `name`, numbering rather than overwriting, and answer the path.
+///
+/// ── WHY THIS IS NOT [`write_attachment`] ───────────────────────────────────────────────────
+///
+/// That one owns its whole directory, so it resolves a collision by giving each file a directory
+/// nobody else names. This one writes into a directory THE PERSON OWNS and shares with everything
+/// else they have downloaded, so a collision has exactly one acceptable answer: keep both, under
+/// the name the browser would have used. Overwriting is not available — the file already there may
+/// be the reader's own work.
+///
+/// `create_new(true)` is what makes the numbering correct rather than nearly correct: it is the
+/// filesystem that decides whether the name was taken, atomically, at the moment of the write.
+/// An `exists()` check before an open is a race with every other program on the machine, and the
+/// loser of that race silently truncates somebody's file.
+#[cfg(feature = "local-engine")]
+fn save_into_downloads(root: &Path, name: &str, bytes: &[u8]) -> Result<PathBuf, String> {
+    for n in 1..=DOWNLOAD_NAME_TRIES {
+        let candidate = if n == 1 { name.to_string() } else { numbered_attachment_name(name, n) };
+        let path = root.join(&candidate);
+        // THE SECOND RING. `attachment_file_name` has already reduced the sender's display name to
+        // a last segment with no separator in it, and this reads the path that is actually about to
+        // be written: it must sit DIRECTLY in the Downloads directory under the name we composed.
+        // A sanitiser is a function somebody can change; a composed path is the thing being asked
+        // about, and the two disagreeing is exactly the day this refusal is for.
+        if path.parent() != Some(root) || path.file_name() != Some(std::ffi::OsStr::new(&candidate)) {
+            return Err("ohmail: this file's name does not belong in your Downloads folder".to_string());
+        }
+        let mut options = OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            // The reader's own file in the reader's own folder — their umask, not this app's
+            // private mode: a download somebody cannot hand to another program is not a download.
+            options.mode(0o644);
+        }
+        match options.open(&path) {
+            Ok(mut file) => {
+                file.write_all(bytes)
+                    .map_err(|err| format!("ohmail: this file could not be saved ({err})"))?;
+                file.sync_all()
+                    .map_err(|err| format!("ohmail: this file could not be flushed to disk ({err})"))?;
+                return Ok(path);
+            }
+            Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(err) => return Err(format!("ohmail: this file could not be saved ({err})")),
+        }
+    }
+    Err(format!("ohmail: there are already {DOWNLOAD_NAME_TRIES} files called {name} in your Downloads folder"))
+}
+
+/// The user's Downloads directory, made if it is not there.
+///
+/// `create_dir_all` and not a bare existence check: a person can delete the folder, and the answer
+/// to that is to make it again rather than to refuse to save their mail. Nothing is tightened here
+/// — this directory belongs to the person, not to this app.
+#[cfg(feature = "local-engine")]
+fn downloads_root(downloads: Option<&Path>) -> Result<PathBuf, String> {
+    let Some(dir) = downloads else {
+        return Err("ohmail: this computer named no Downloads folder".to_string());
+    };
+    fs::create_dir_all(dir)
+        .map_err(|err| format!("ohmail: your Downloads folder could not be reached ({err})"))?;
+    Ok(dir.to_path_buf())
+}
+
+/// Save one attachment into the user's Downloads folder, and answer where it landed.
+///
+/// The web client answers a press with `<a download>`; a Tauri webview registers no download
+/// handler and CANCELS that navigation, which is why the desktop hands the bytes to the shell at
+/// all. Until now the shell's only answer was to write the file under the app's own directory and
+/// open it in the platform viewer — so on a Mac an image opened in Preview, nothing landed in
+/// `~/Downloads`, and "Download all" had no desktop meaning. This is the DOWNLOAD, and
+/// [`open_attachment`] stays what it always was: the OPEN.
+///
+/// Same bounds, same sanitiser, same rejected-promise-rather-than-silence rule as its neighbour.
+#[cfg(feature = "local-engine")]
+#[tauri::command(async)]
+fn save_attachment(
+    shell: tauri::State<'_, Arc<Shell>>,
+    filename: String,
+    bytes: Vec<u8>,
+) -> Result<String, String> {
+    if bytes.is_empty() {
+        return Err("ohmail: there are no bytes in this file to save".to_string());
+    }
+    if bytes.len() > ATTACHMENT_MAX_BYTES {
+        return Err(format!(
+            "ohmail: this file is {} MiB, over the {} MiB limit for saving one",
+            bytes.len() / (1024 * 1024),
+            ATTACHMENT_MAX_BYTES / (1024 * 1024),
+        ));
+    }
+
+    let root = downloads_root(shell.paths.downloads.as_deref())?;
+    let path = save_into_downloads(&root, &attachment_file_name(&filename), &bytes)?;
+    Ok(path.to_string_lossy().into_owned())
+}
+
 /// Open one attachment in whatever program this computer opens that kind of file with.
 ///
 /// The window sends the bytes it already fetched and the name the message gave them. Everything
@@ -4535,9 +4679,9 @@ fn announce_link<R: tauri::Runtime>(app: &tauri::AppHandle<R>, raw: &str) {
 #[cfg(feature = "local-engine")]
 const LOCAL_ENGINE_CAPABILITY: &str = r#"{
   "identifier": "local-engine",
-  "description": "The window may ask the shell about the local engine, send it one request at a time, choose which mailbox this install is for, sign out of it, post one notification, set the icon's badge, report its own startup and interaction timings as numbers the shell turns into a log line, open one of a fixed list of ohmail.app pages in the user's own browser (naming the page and, for the sign-in page alone, a 43-character commitment the shell validates and appends itself), hand the shell ONE http/https address a person clicked in a message for that same browser to open, hand it the BYTES of one attachment and a display name so the shell can write that file under its own directory and open it in this computer's usual viewer, and listen for the shell's own events — including the handoff code an ohmail:// activation carried. It may also drive HOST MODE, entirely through this shell's own commands: read its state, probe the user's own tailnet (tailscale status), arm or disarm publishing the engine's loopback door to that tailnet (tailscale serve — never funnel, pinned by test), read and set this install's start-at-login registration, and open Tailscale's download page — one more constant address the shell owns, the window still naming no URL. It may also CLAIM a mailto: activation the shell is holding (take-once, so a link seeds one compose form and never two), and ask about the OS's DEFAULT MAIL APP through two commands that name nothing: a read of the current handler's state, and a request that takes each platform's own sanctioned path — macOS's consent dialog, the Windows Settings page (one more constant address), xdg-settings on Linux — never a registry write. It may read the app's UPDATE state, press the same button the menu item is, and ask for the check the app makes at launch — a read of the installed version and of what the last check found, a press that checks or restarts into an already-verified payload, and a scheduled check that is silent unless it finds something (a press is a person asking and is answered out loud, which is right for a button and wrong once a day for ever); it may not name a feed, see a payload or install anything, and the request, the signature check and the version guard stay in the shell. It may ask for the DESKTOP'S OWN THEME through one read-only command: on an Omarchy system the shell answers the active theme's raw material (the theme's colors.toml, the system's font and gap facts — paths the SHELL names, never the window), and everywhere else it answers nothing. Nothing else: no filesystem path the window may name, no arbitrary shell command, no network, and no other Tauri core API.",
+  "description": "The window may ask the shell about the local engine, send it one request at a time, choose which mailbox this install is for, sign out of it, post one notification, set the icon's badge, report its own startup and interaction timings as numbers the shell turns into a log line, open one of a fixed list of ohmail.app pages in the user's own browser (naming the page and, for the sign-in page alone, a 43-character commitment the shell validates and appends itself), hand the shell ONE http/https address a person clicked in a message for that same browser to open, hand it the BYTES of one attachment and a display name so the shell can write that file under its own directory and open it in this computer's usual viewer, or save that same file into this computer's Downloads folder (the shell picks the folder and composes every part of the name; a name already taken is numbered, never overwritten), and listen for the shell's own events — including the handoff code an ohmail:// activation carried. It may also drive HOST MODE, entirely through this shell's own commands: read its state, probe the user's own tailnet (tailscale status), arm or disarm publishing the engine's loopback door to that tailnet (tailscale serve — never funnel, pinned by test), read and set this install's start-at-login registration, and open Tailscale's download page — one more constant address the shell owns, the window still naming no URL. It may also CLAIM a mailto: activation the shell is holding (take-once, so a link seeds one compose form and never two), and ask about the OS's DEFAULT MAIL APP through two commands that name nothing: a read of the current handler's state, and a request that takes each platform's own sanctioned path — macOS's consent dialog, the Windows Settings page (one more constant address), xdg-settings on Linux — never a registry write. It may read the app's UPDATE state, press the same button the menu item is, and ask for the check the app makes at launch — a read of the installed version and of what the last check found, a press that checks or restarts into an already-verified payload, and a scheduled check that is silent unless it finds something (a press is a person asking and is answered out loud, which is right for a button and wrong once a day for ever); it may not name a feed, see a payload or install anything, and the request, the signature check and the version guard stay in the shell. It may ask for the DESKTOP'S OWN THEME through one read-only command: on an Omarchy system the shell answers the active theme's raw material (the theme's colors.toml, the system's font and gap facts — paths the SHELL names, never the window), and everywhere else it answers nothing. Nothing else: no filesystem path the window may name, no arbitrary shell command, no network, and no other Tauri core API.",
   "windows": ["main"],
-  "permissions": ["allow-engine-status", "allow-engine-request", "allow-engine-configure", "allow-engine-logout", "allow-notify", "allow-set-badge", "allow-ui-vitals", "allow-open-link", "allow-open-external", "allow-open-attachment", "allow-host-state", "allow-tailscale-status", "allow-tailscale-serve-arm", "allow-tailscale-serve-disarm", "allow-autostart-get", "allow-autostart-set", "allow-open-tailscale-download", "allow-mailto-claim", "allow-default-mail-status", "allow-default-mail-request", "allow-omarchy-theme", "allow-update-state", "allow-update-press", "allow-update-poll", "core:event:allow-listen"]
+  "permissions": ["allow-engine-status", "allow-engine-request", "allow-engine-configure", "allow-engine-logout", "allow-notify", "allow-set-badge", "allow-ui-vitals", "allow-open-link", "allow-open-external", "allow-open-attachment", "allow-save-attachment", "allow-host-state", "allow-tailscale-status", "allow-tailscale-serve-arm", "allow-tailscale-serve-disarm", "allow-autostart-get", "allow-autostart-set", "allow-open-tailscale-download", "allow-mailto-claim", "allow-default-mail-status", "allow-default-mail-request", "allow-omarchy-theme", "allow-update-state", "allow-update-press", "allow-update-poll", "core:event:allow-listen"]
 }"#;
 
 /// The commands `build.rs` declared to the ACL manifest, baked in at compile time.
@@ -4667,6 +4811,10 @@ pub fn attach<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R
             open_link,
             open_external,
             open_attachment,
+            // …and the DOWNLOAD beside the OPEN: the same bytes into the person's own Downloads
+            // folder, which is what the web client's `<a download>` does and what a Tauri webview
+            // cancels. `save_attachment` owns the collision numbering and the path discipline.
+            save_attachment,
             // Host mode — the module carries the reasoning; every one of these is granted to the
             // window by LOCAL_ENGINE_CAPABILITY above and declared in build.rs like the rest.
             crate::host::host_state,

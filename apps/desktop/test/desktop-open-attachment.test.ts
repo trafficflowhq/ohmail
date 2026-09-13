@@ -4,11 +4,18 @@ import { resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 /**
- * ═══ AN ATTACHMENT OPENS IN THIS COMPUTER'S OWN VIEWER ═════════════════════════════════════
+ * ═══ AN ATTACHMENT REACHES THE PERSON'S DOWNLOADS FOLDER ═══════════════════════════════════
  *
  * The defect: pressing an attachment in the desktop app did NOTHING. No file, no error, no log
  * line — and a PDF was worse, because the reader got a panel telling them to download it above a
  * Download button that could not deliver a file either.
+ *
+ * The first repair ended the silence and answered a different question: it handed the bytes to the
+ * platform VIEWER, so on a Mac an image opened in Preview, nothing arrived in `~/Downloads`, and
+ * "Download all" had no desktop meaning at all. A button that says Download downloads. The desktop
+ * arm now asks the shell to SAVE into the person's own Downloads folder (`save_attachment`), which
+ * is the same act the browser's `<a download>` performs; `open_attachment` stays what it was, for
+ * an explicit Open verb, and no surface has one today.
  *
  * The mechanism, which is the link defect's twin rather than the same bug: the web client mints a
  * `blob:` URL and clicks a hidden `<a download>`. That attribute asks the webview to turn the
@@ -19,7 +26,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
  *
  * ── WHAT THIS FILE HOLDS DOWN ───────────────────────────────────────────────────────────────
  *
- *  1. armed, a press hands the shell the BYTES and the display name, and never an anchor;
+ *  1. armed, a press hands the shell the BYTES and the display name, and never an anchor — to
+ *     the SAVE command, once per file, "Download all" included;
  *  2. the window sends no path and no directory — the payload has exactly two fields, so there is
  *     no value a message could shape into a place on the disk;
  *  3. the WEB app is untouched: no command, and the anchor keeps the browser's own semantics;
@@ -34,9 +42,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
  *
  *  · make `deliverFile` fall back to `saveObjectUrl` when the       → the desktop delivery case
  *    desktop arm is armed                                             goes red;
+ *  · point the desktop arm back at `OPEN_ATTACHMENT_COMMAND`         → the command-name assertion
+ *                                                                     goes red;
+ *  · have `deliverAll` deliver only the first file on the desktop    → the Download-all case goes
+ *                                                                     red (it counts the calls);
  *  · make `deliverFile` take the desktop arm regardless of          → the web-app case goes red;
  *    `desktopAttachmentsEnabled()`
- *  · have `openAttachmentWithSystemViewer` send a third field       → the payload-shape case goes
+ *  · have `saveAttachmentToDownloads` send a third field            → the payload-shape case goes
  *    (a path, a directory)                                            red;
  *  · make `opensInSystemViewer` answer true without arming          → the web-app preview case
  *                                                                     goes red;
@@ -150,7 +162,10 @@ describe("the desktop window hands the file to the operating system", () => {
 
     expect(anchors, "the desktop arm clicked a download anchor, which this window cancels").toEqual([]);
     expect(invoked).toHaveLength(1);
-    expect(invoked[0]!.command).toBe(mod.OPEN_ATTACHMENT_COMMAND);
+    // THE SAVE, not the open. A press of a button labelled Download that opened the file in a
+    // viewer and left nothing in the person's Downloads folder is the defect above this one.
+    expect(invoked[0]!.command).toBe(mod.SAVE_ATTACHMENT_COMMAND);
+    expect(invoked[0]!.command).not.toBe(mod.OPEN_ATTACHMENT_COMMAND);
     expect(invoked[0]!.payload).toEqual({
       filename: "Quarterly report.pdf",
       // `%PDF` — the same four bytes the Blob was built from, unaltered on the way.
@@ -194,6 +209,40 @@ describe("the desktop window hands the file to the operating system", () => {
     expect(invoked, "a command was called with no bytes to send").toEqual([]);
     expect(anchors).toEqual([{ href: "blob:tauri://localhost/abc", download: "report.pdf" }]);
   });
+
+  /**
+   * "DOWNLOAD ALL" IS N SAVES, ONE PER FILE, IN ORDER — and it had no desktop meaning at all
+   * before this: it delivered through the same seam, so it opened N viewers.
+   *
+   * Sequential and awaited, which is the OPPOSITE of what the browser arm needs (see
+   * `deliverAll`'s header): the shell resolves a name collision against the filesystem at the
+   * moment of the write, so two presses racing for `Invoice.pdf` must not be in flight together.
+   * The count is asserted BY FILE NAME rather than by length alone — a loop that delivered the
+   * first file three times would satisfy a length check.
+   */
+  it("Download all is one save per file, in order, and no anchor", async () => {
+    const mod = await freshModule();
+    mod.enableDesktopAttachments();
+    const { deliverAll } = await freshSeam();
+
+    const saved = await deliverAll(
+      [
+        { blob: new Blob(["a"]), url: "blob:tauri://localhost/1", filename: "Invoice.pdf" },
+        { blob: new Blob(["bb"]), url: "blob:tauri://localhost/2", filename: "Photo.jpg" },
+        { blob: new Blob(["ccc"]), url: "blob:tauri://localhost/3", filename: "Notes.txt" },
+      ],
+      document,
+    );
+
+    expect(saved, "the seam claimed a different number of files than it saved").toBe(3);
+    expect(anchors, "Download all clicked an anchor in the window that cancels them").toEqual([]);
+    expect(invoked.map((i) => i.command)).toEqual([
+      mod.SAVE_ATTACHMENT_COMMAND,
+      mod.SAVE_ATTACHMENT_COMMAND,
+      mod.SAVE_ATTACHMENT_COMMAND,
+    ]);
+    expect(invoked.map((i) => i.payload!.filename)).toEqual(["Invoice.pdf", "Photo.jpg", "Notes.txt"]);
+  });
 });
 
 /* ─────────────────────────────────────────────────────────────────────────────────────────
@@ -211,6 +260,30 @@ describe("the web app is not touched", () => {
 
     expect(invoked, "the web app called a desktop shell command").toEqual([]);
     expect(anchors).toEqual([{ href: "blob:http://localhost/abc", download: "report.pdf" }]);
+  });
+
+  /* The web's own "Download all": N anchor clicks, no shell command, and the count it reports is
+     ZERO — the browser announces its own downloads, and a sentence from us about a folder this app
+     cannot see would be a claim we have no way to check. */
+  it("and Download all there is anchors, no command, and nothing claimed about a folder", async () => {
+    const mod = await freshModule();
+    expect(mod.desktopAttachmentsEnabled()).toBe(false);
+    const { deliverAll } = await freshSeam();
+
+    const saved = await deliverAll(
+      [
+        { blob: new Blob(["a"]), url: "blob:http://localhost/1", filename: "Invoice.pdf" },
+        { blob: new Blob(["bb"]), url: "blob:http://localhost/2", filename: "Photo.jpg" },
+      ],
+      document,
+    );
+
+    expect(saved, "the web arm claimed files reached a Downloads folder").toBe(0);
+    expect(invoked, "the web app called a desktop shell command").toEqual([]);
+    expect(anchors).toEqual([
+      { href: "blob:http://localhost/1", download: "Invoice.pdf" },
+      { href: "blob:http://localhost/2", download: "Photo.jpg" },
+    ]);
   });
 
   it("and a PDF keeps its in-app viewer there", async () => {
@@ -278,6 +351,55 @@ describe("the window is granted the command it calls", () => {
     // so a widening fails here too, the way the link slice's does.
     expect(grant.windows).toEqual(["main"]);
     expect(grant.permissions).not.toContain("core:event:allow-emit");
+  });
+
+  /**
+   * THE SAVE COMMAND'S THREE LISTS, AND THE ONE THAT KILLS THE APP WHEN IT DISAGREES.
+   *
+   * `build.rs#WINDOW_COMMANDS` declares the permission pair into the ACL manifest, the capability
+   * grants the `allow-` half, and the invoke handler registers the function. The failure when the
+   * first two disagree is NOT a refused command: tauri resolves a runtime capability with an
+   * internal `unwrap()`, and 0.9.7 shipped `allow-open-external`/`allow-open-attachment` granted
+   * and undeclared — every install aborted seconds after launch, before the updater could run, so
+   * the fleet could not be fixed by shipping again. `engine_tests.rs` holds the pair in Rust; this
+   * is its twin here, and it is the one that runs without a Rust toolchain.
+   *
+   * Asserted as a PROPERTY over the whole grant rather than for `save_attachment` alone — a rule
+   * written for one name is a rule the next command is added outside of.
+   */
+  it("every command the window is granted is declared by the build", () => {
+    const build = sourceOf("src-tauri/build.rs");
+    const cap = engine.match(/const LOCAL_ENGINE_CAPABILITY: &str = r#"([\s\S]*?)"#;/);
+    const grant = JSON.parse(cap![1]!) as { permissions: string[] };
+
+    const declared = [...build.matchAll(/^\s*"([a-z0-9_]+)",\s*$/gm)].map((m) => m[1]!);
+    expect(declared, "WINDOW_COMMANDS could not be read out of build.rs").toContain("open_attachment");
+
+    const undeclared = grant.permissions
+      .filter((p) => !p.includes(":"))
+      .map((p) => p.replace(/^(allow|deny)-/, "").replace(/-/g, "_"))
+      .filter((command) => !declared.includes(command));
+    expect(undeclared, `granted and never declared — this aborts every install at launch: ${undeclared.join(", ")}`)
+      .toEqual([]);
+
+    // …and the save door specifically, at all three of its ends.
+    expect(declared).toContain("save_attachment");
+    expect(grant.permissions).toContain("allow-save-attachment");
+    expect(engine, "save_attachment is not in the invoke handler")
+      .toMatch(/generate_handler!\[[^\]]*\bsave_attachment\b/s);
+  });
+
+  /**
+   * THE SAVE TAKES THE SAME TWO FIELDS AS THE OPEN — a name and bytes, and never a path.
+   *
+   * It writes into a directory the PERSON owns, which is the one place where a window-supplied
+   * path would be worth something to an attacker, so the argument that licensed the open command
+   * has to hold here too: the shell picks the folder (`app.path().download_dir()`), sanitises the
+   * name and numbers a collision, and the window names none of it.
+   */
+  it("the save command names a file and bytes, and no place on the disk", () => {
+    expect(engine).toMatch(/fn save_attachment\(\s*shell: tauri::State<'_, Arc<Shell>>,\s*filename: String,\s*bytes: Vec<u8>,\s*\)/);
+    expect(engine, "the Downloads folder is not the framework's").toMatch(/download_dir\(\)/);
   });
 
   it("the shell composes the path and takes no filesystem permission to do it", () => {

@@ -2867,6 +2867,90 @@ fn two_attachments_with_one_name_are_two_files() {
     }
 }
 
+/// A DOWNLOAD LANDS IN THE PERSON'S DOWNLOADS FOLDER — AND NOWHERE ELSE ON THE DISK.
+///
+/// `open_attachment` writes into a directory this app owns, so its whole path discipline is about
+/// keeping a stranger's display name from escaping that directory. `save_attachment` writes into a
+/// directory the PERSON owns and shares with everything else they have downloaded, so the same
+/// question is asked one ring further out: the path actually about to be written must sit DIRECTLY
+/// in that folder. The names below are the ones `attachment_file_name` would already have
+/// flattened — they are driven at `save_into_downloads` unsanitised ON PURPOSE, because the point
+/// of the second ring is that it holds when the first one is changed.
+///
+/// Mutations watched red:
+///  · drop the `path.parent() != Some(root)` half  → the `a/b` and `../` rows go red;
+///  · drop the `file_name()` half                  → the `..` and `.` rows go red;
+///  · take `create_new(false)`                     → the numbering test below goes red.
+#[test]
+fn a_saved_attachment_lands_in_downloads_and_never_outside_it() {
+    let fixture = Fixture::new("save-attachment");
+    let downloads = fixture.dir.join("Downloads");
+    let root = downloads_root(Some(&downloads)).expect("root");
+    assert!(root.exists(), "the Downloads folder was not made");
+
+    let saved = save_into_downloads(&root, "Quarterly report.pdf", b"bytes").expect("save");
+    assert_eq!(saved.parent(), Some(root.as_path()), "the file landed outside Downloads");
+    assert_eq!(saved.file_name().and_then(|n| n.to_str()), Some("Quarterly report.pdf"));
+    assert_eq!(fs::read(&saved).expect("read"), b"bytes");
+
+    for escape in ["../escaped.pdf", "a/b.pdf", r"..\escaped.pdf", "..", ".", "sub/dir/x.pdf"] {
+        let out = save_into_downloads(&root, escape, b"x");
+        assert!(out.is_err(), "save_into_downloads({escape:?}) wrote {out:?}");
+    }
+    // Nothing escaped: the folder holds exactly the one file the ordinary row wrote.
+    let listed: Vec<_> = fs::read_dir(&root).expect("list").flatten().collect();
+    assert_eq!(listed.len(), 1, "a refused name still put something in Downloads");
+
+    // A platform that names no Downloads folder is a refusal by name, never a path invented here.
+    assert!(downloads_root(None).is_err(), "a missing Downloads folder was invented");
+}
+
+/// TWO ATTACHMENTS WITH ONE NAME BECOME TWO FILES, NUMBERED THE WAY A BROWSER NUMBERS THEM.
+///
+/// `write_attachment`'s answer — a unique DIRECTORY per file — is unavailable here, because this
+/// directory belongs to the person and is shared with everything else they have saved. So the name
+/// is numbered, on the stem and never on the tail: the extension is the whole of how the platform
+/// picks the program, and `Invoice.pdf (2)` opens in nothing.
+///
+/// Overwriting is not on the table at any count. The file already there may be the reader's own
+/// work, and this command is a press in a mail client.
+#[test]
+fn two_downloads_with_one_name_are_numbered_and_never_overwritten() {
+    let fixture = Fixture::new("save-collision");
+    let root = downloads_root(Some(&fixture.dir.join("Downloads"))).expect("root");
+
+    let first = save_into_downloads(&root, "Invoice.pdf", b"first").expect("first");
+    let second = save_into_downloads(&root, "Invoice.pdf", b"second").expect("second");
+    let third = save_into_downloads(&root, "Invoice.pdf", b"third").expect("third");
+
+    assert_eq!(first.file_name().and_then(|n| n.to_str()), Some("Invoice.pdf"));
+    assert_eq!(second.file_name().and_then(|n| n.to_str()), Some("Invoice (2).pdf"));
+    assert_eq!(third.file_name().and_then(|n| n.to_str()), Some("Invoice (3).pdf"));
+
+    // The bytes of the first press are still the bytes of the first press.
+    assert_eq!(fs::read(&first).expect("read first"), b"first");
+    assert_eq!(fs::read(&second).expect("read second"), b"second");
+    assert_eq!(fs::read(&third).expect("read third"), b"third");
+
+    // ── the numbering keeps what opens the file ──────────────────────────────────────────────
+    assert_eq!(numbered_attachment_name("Invoice.pdf", 2), "Invoice (2).pdf");
+    assert_eq!(numbered_attachment_name("a.b.c.tar.gz", 2), "a.b.c.tar (2).gz");
+    // No extension worth protecting: the number still goes on the end, and nothing is invented.
+    assert_eq!(numbered_attachment_name("notes", 7), "notes (7)");
+    // A leading dot is a STEM, not an extension — `.gitignore (2)` and never ` (2).gitignore`.
+    assert_eq!(numbered_attachment_name(".gitignore", 2), ".gitignore (2)");
+    // A name already at the cap keeps its extension and comes back under the cap WITH the suffix.
+    let long = attachment_file_name(&format!("{}.pdf", "n".repeat(400)));
+    let numbered = numbered_attachment_name(&long, 12);
+    assert!(numbered.len() <= ATTACHMENT_NAME_MAX, "a {}-byte name survived", numbered.len());
+    assert!(numbered.ends_with(" (12).pdf"), "the numbering lost the extension: {numbered:?}");
+    // A multi-byte stem must not be sliced through the middle of a character.
+    let wide = attachment_file_name(&format!("{}.pdf", "é".repeat(200)));
+    let numbered_wide = numbered_attachment_name(&wide, 3);
+    assert!(numbered_wide.len() <= ATTACHMENT_NAME_MAX);
+    assert!(numbered_wide.ends_with(" (3).pdf"));
+}
+
 /// THE SWEEP READS ITS WINDOW, IN BOTH DIRECTIONS.
 ///
 /// The direction that matters is the second one: deleting a file out from under a viewer somebody

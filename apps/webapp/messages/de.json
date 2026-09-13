@@ -516,6 +516,7 @@
     "deleteFailedMany": "{count, plural, one {Das Löschen konnte nicht gespeichert werden — die Nachricht ist noch an ihrem Platz.} other {# dieser Löschvorgänge konnten nicht gespeichert werden — die Nachrichten sind noch an ihrem Platz.}}",
     "bulkDeleteAsk": "{count, plural, one {Diese Nachricht löschen?} other {# Nachrichten löschen?}}",
     "toastDownloadAllFailed": "Diese Dateien ließen sich nicht aus deinem Postfach holen. Versuch es einzeln.",
+    "toastSavedToDownloads": "{count, plural, one {In „Downloads“ gespeichert} other {# Dateien in „Downloads“ gespeichert}}",
     "doorbell": "{count, plural, =0 {<b>Alles klar</b>} one {<b>1</b> wartet} other {<b>#</b> warten}}",
     "doorbellAction": "Screener ›",
     "doorbellAria": "{count, plural, =0 {Alles klar, niemand wartet — Screener öffnen} one {1 Erstabsender wartet — Screener öffnen} other {# Erstabsender warten — Screener öffnen}}",

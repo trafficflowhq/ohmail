@@ -22,7 +22,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { threadOf, type OhmailEngine } from "@ohmail/client-engine";
 import { isAuthListFailure, type AttachmentItem, type AttachmentsView } from "../components/AttachmentStrip";
-import { desktopAttachmentsEnabled, openAttachmentWithSystemViewer } from "./open-attachment";
+import { desktopAttachmentsEnabled, saveAttachmentToDownloads } from "./open-attachment";
 import { probeSessionNow, subscribeSessionRevival } from "./session-truth";
 
 /**
@@ -120,27 +120,68 @@ export function saveObjectUrl(url: string, filename: string, doc: Document): voi
   a.remove();
 }
 
+/** How one file reached the person: into their Downloads folder, into the browser's, or not at all. */
+export type Delivery = "saved" | "downloaded" | "refused";
+
 /**
- * Deliver one file, by whichever route this window actually has. In a browser tab
- * {@link saveObjectUrl} is the whole answer; in the desktop window the `download` attribute asks the
- * webview to turn the navigation into a download, and a webview whose host registered no handler
- * cancels it silently — every attachment press did nothing. `open-attachment.ts` carries the
- * mechanism; this is the one place either route is chosen, and the desktop arm never falls back to
- * the anchor (there it is not a slower route, it is nothing at all). `blob` is the engine's retained
- * typed Blob, minted with the object URL so the two cannot diverge
- * ({@link OhmailEngine.attachmentBlobOf}); without bytes the anchor is all that is left.
+ * Deliver one file, by whichever route this window actually has — and the same act on both.
+ *
+ * In a browser tab {@link saveObjectUrl} is the whole answer. In the desktop window the `download`
+ * attribute asks the webview to turn the navigation into a download, and a webview whose host
+ * registered no handler cancels it silently — every attachment press did nothing. The first repair
+ * handed the bytes to the platform VIEWER instead, which ended the silence and answered a different
+ * question: a Download button that opened an image in Preview and left nothing in the person's
+ * Downloads folder. So the desktop arm now asks the shell to SAVE, which is what both surfaces'
+ * button has always said (`engine.rs#save_attachment` owns the folder, the name and the `name (2)`
+ * numbering). `open-attachment.ts` carries the mechanism; this is the one place either route is
+ * chosen, and the desktop arm never falls back to the anchor (there it is not a slower route, it is
+ * nothing at all). `blob` is the engine's retained typed Blob, minted with the object URL so the two
+ * cannot diverge ({@link OhmailEngine.attachmentBlobOf}); without bytes the anchor is all that is
+ * left.
  */
-export function deliverFile(
+export async function deliverFile(
   blob: Blob | undefined,
   url: string,
   filename: string,
   doc: Document,
-): void {
+): Promise<Delivery> {
   if (desktopAttachmentsEnabled() && blob) {
-    void openAttachmentWithSystemViewer(blob, filename);
-    return;
+    return (await saveAttachmentToDownloads(blob, filename)) ? "saved" : "refused";
   }
   saveObjectUrl(url, filename, doc);
+  return "downloaded";
+}
+
+/**
+ * Deliver a whole strip, and answer how many landed in the person's Downloads folder.
+ *
+ * ONE FUNCTION RATHER THAN A LOOP AT THE CALL SITE, because the two routes want opposite things
+ * and only one of them can be written as the other's loop:
+ *
+ *  · the BROWSER arm must be one synchronous run with no `await` between the anchor clicks —
+ *    browsers treat an unbroken run as one act and ask once, and spacing it across tasks drops
+ *    the later downloads;
+ *  · the DESKTOP arm must be sequential and awaited — each file is a host call that writes into a
+ *    directory shared with everything else the person has downloaded, and the collision numbering
+ *    is decided by the filesystem at the moment of the write, so two presses racing for
+ *    `Invoice.pdf` must not be in flight together.
+ *
+ * The count is what the strip's notice is allowed to claim: files the shell said it wrote, never
+ * files that were asked for.
+ */
+export async function deliverAll(
+  files: ReadonlyArray<{ blob: Blob | undefined; url: string; filename: string }>,
+  doc: Document,
+): Promise<number> {
+  if (!desktopAttachmentsEnabled()) {
+    for (const file of files) saveObjectUrl(file.url, file.filename, doc);
+    return 0;
+  }
+  let saved = 0;
+  for (const file of files) {
+    if ((await deliverFile(file.blob, file.url, file.filename, doc)) === "saved") saved += 1;
+  }
+  return saved;
 }
 
 /**
@@ -258,7 +299,16 @@ const EMPTY_IDS: ReadonlySet<string> = new Set();
 export function useMessageAttachments(
   engine: OhmailEngine,
   messageId: string | null,
-  opts: { onDownloadAllFailed: () => void },
+  opts: {
+    onDownloadAllFailed: () => void;
+    /**
+     * N FILES REACHED THE PERSON'S DOWNLOADS FOLDER — the desktop's one sentence, and it is only
+     * ever spoken about files the shell said it wrote. Absent on the web, where the browser
+     * announces its own downloads and a second sentence from us would be a claim about a folder
+     * this app cannot see.
+     */
+    onSavedToDownloads?: (count: number) => void;
+  },
 ): AttachmentsChrome | undefined {
   const available = engine.attachmentsAvailable();
   /**
@@ -276,6 +326,8 @@ export function useMessageAttachments(
    */
   const onFailed = useRef(opts.onDownloadAllFailed);
   onFailed.current = opts.onDownloadAllFailed;
+  const onSaved = useRef(opts.onSavedToDownloads);
+  onSaved.current = opts.onSavedToDownloads;
 
   /**
    * Every id whose list THIS selection asked for — the RELEASE SET. The selected message and
@@ -545,7 +597,15 @@ export function useMessageAttachments(
         // reason nothing over the fetch ceiling can reach the desktop's file write — such a part
         // never has bytes in the window, and the early return above refuses the press outright.
         if (after?.state === "ready" && after.objectUrl) {
-          deliverFile(engine.attachmentBlobOf(id, attachmentId), after.objectUrl, after.filename, document);
+          const how = await deliverFile(
+            engine.attachmentBlobOf(id, attachmentId),
+            after.objectUrl,
+            after.filename,
+            document,
+          );
+          // Only the desktop route has anything to announce: a browser download is announced by
+          // the browser, and a refusal already went to the console with the shell's own reason.
+          if (how === "saved") onSaved.current?.(1);
         }
       })();
     },
@@ -594,8 +654,8 @@ export function useMessageAttachments(
    * server could not fetch were named in an `_errors.txt` inside it, so the saved file looked complete
    * — per file, a failed part is a `failed` tile in the strip with the server's own sentence. The cost
    * is one IMAP fetch per file, affordable because the prefetch is sequential and an already-`ready`
-   * item is skipped. The saves are one synchronous loop, no `await` between anchor clicks: browsers
-   * treat the run as one act and ask once — spacing it across tasks drops the later downloads.
+   * item is skipped. How the files are then delivered is {@link deliverAll}'s: one synchronous run
+   * of anchor clicks in a browser, one awaited shell call per file on the desktop.
    */
   const downloadAll = useCallback(
     (id: string, opts: { includeInlineImages?: boolean } = {}): void => {
@@ -633,15 +693,22 @@ export function useMessageAttachments(
             ? after.items.filter((i) => i.state === "ready" && i.objectUrl)
             : [];
 
-          // ── the synchronous half. No `await` may appear inside this loop. ──
+          // ── the delivery half, and the two routes want opposite things ──
           //
-          // `deliverFile` keeps that property on both routes: the browser arm is the same
-          // synthetic click it always was, and the desktop arm hands each file to the shell
-          // without waiting for it — the shell answers each on its own thread, and a loop that
-          // awaited them would open the viewers one at a time over the length of the slowest.
-          for (const item of saved) {
-            deliverFile(engine.attachmentBlobOf(id, item.id), item.objectUrl!, item.filename, document);
-          }
+          // `deliverAll` owns that split and its header states it: the browser arm stays ONE
+          // synchronous run of anchor clicks (spacing them across tasks drops the later
+          // downloads), and the desktop arm is sequential and awaited, because each file is a
+          // write into a folder shared with everything else this person has downloaded and the
+          // collision numbering is settled by the filesystem at the moment of the write.
+          const intoDownloads = await deliverAll(
+            saved.map((item) => ({
+              blob: engine.attachmentBlobOf(id, item.id),
+              url: item.objectUrl!,
+              filename: item.filename,
+            })),
+            document,
+          );
+          if (intoDownloads > 0) onSaved.current?.(intoDownloads);
 
           // Reported only when NOTHING could be saved. A partial result needs no toast: every
           // file that could not be fetched is a `failed` tile carrying the server's own sentence,

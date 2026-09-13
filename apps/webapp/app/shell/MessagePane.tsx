@@ -1650,8 +1650,9 @@ export function MessagePane({
            * On the desktop a PDF is not one of them — `opensInSystemViewer` subtracts: that window cannot draw a PDF
            * (the renderer needs a worker, the policy is `worker-src 'none'`, both bundles alias the library away), so
            * the eye there was a viewer whose only outcome was a panel saying to download instead. Without the eye,
-           * the tile's press opens the PDF in the program this computer uses for PDFs; it answers false everywhere
-           * else, including the whole web app.
+           * the tile's press is the one it has always advertised: it saves the PDF into this computer's Downloads
+           * folder, where the reader opens it in whatever they read PDFs with. It answers false everywhere else,
+           * including the whole web app.
            */
           onPreview={(attachmentId) => chrome.openAttachmentPreview(message.id, attachmentId)}
           canPreview={(item) => isPreviewable(item.mimeType) && !opensInSystemViewer(item.mimeType)}
