@@ -6,6 +6,7 @@ import { folderNameError } from "@trafficflow/core/mail";
 import { assertOrganizerRole, claimIdempotencyKey, readIdempotencyKey, folderOps, folderState, mailboxFolders, mailboxes, messages, recordChange, type Tx } from "@trafficflow/db";
 import type { ServiceContext } from "./context.js";
 import { ServiceError, IdempotencyRaceLost } from "./errors.js";
+import { folderInventoryProbe, refuseOverFolderInventory } from "./read-bounds.js";
 import type { MoveIdempotency } from "./message-service.js";
 import { foldersEnabled, userFolderById, userFolderExclusion, type UserFolderRow } from "./folders.js";
 import { folderRowToDTO } from "./dto/materialize.js";
@@ -236,8 +237,17 @@ export class FolderOpsService {
     await this.requireFolders(ctx);
     const subject = await this.requireSubject(ctx, id);
     const db = ctx.db;
+    /* BOUNDED AT THE READ — see `read-bounds.ts`. This selected every folder row the mailbox
+     * has, which is a collection the user's own IMAP server sizes and nothing here ceilings; the
+     * array then became an `IN` list, so the failure at the driver's parameter limit was a 500 on
+     * this confirm screen. One row past the ceiling is read so the refusal can be told from an
+     * answer, and a refusal is what comes back — a COUNT answered from an arbitrary subset would
+     * be a wrong number presented as a right one. The exclusion stays in JS: it decides a
+     * user-facing number and moving it into SQL is a different change. */
     const all = await db.select({ folder: mailboxFolders.folder }).from(mailboxFolders)
-      .where(eq(mailboxFolders.mailboxId, subject.mailboxId));
+      .where(eq(mailboxFolders.mailboxId, subject.mailboxId))
+      .limit(folderInventoryProbe());
+    refuseOverFolderInventory(all, "this folder");
     const subtree = all
       .map((r) => r.folder)
       .filter((f) => (f === subject.folder || f.startsWith(subject.folder + "/")) && userFolderExclusion(f) === null);

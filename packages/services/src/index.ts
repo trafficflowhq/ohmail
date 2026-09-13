@@ -1,6 +1,12 @@
 export const SERVICES_VERSION = "0.0.0";
 
 export { ServiceError, IdempotencyRaceLost, OAuthCodeReplayed, SettleFailed, TransientDialRefusal } from "./errors.js";
+/* The read ceilings on STORED cardinality — the axis the input-bounds census cannot see, because
+ * the request that triggers one of these reads carries a single scalar. See `read-bounds.ts`. */
+export {
+  ReadBoundExceeded, FOLDER_INVENTORY_MAX, folderInventoryProbe, refuseOverFolderInventory,
+  type ReadBoundKind,
+} from "./read-bounds.js";
 export type { ServiceContext, Db } from "./context.js";
 // The fenced transaction door — every request-scoped write against a table Art. 17 erasure
 // empties opens here, so the fence cannot be forgotten. See `context.ts`.
