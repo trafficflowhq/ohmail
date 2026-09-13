@@ -748,6 +748,29 @@ export class MoveVerifyError extends Error {
 }
 
 /**
+ * The copy landed and the SOURCE did not go, so the move is half done and the mailbox holds the
+ * message twice. Deliberately not {@link MoveVerifyError}, which means the new UID could not be
+ * learned: this one knows exactly where the copy is and refuses to report a move as complete while
+ * the original is still there — `apps/worker/src/sync.ts` states the rule, "a move is complete when
+ * the source is GONE". The caller must not commit the returned locator; the next reconcile pass
+ * retries the whole move, and the destination pre-check makes that retry ADOPT the copy already
+ * made instead of adding another.
+ */
+export class MoveIncompleteError extends Error {
+  readonly code = "EMOVEINCOMPLETE";
+  constructor(
+    public locator: NativeLocator, public toFolder: string,
+    public because: "refused" | "survived",
+  ) {
+    super(
+      `the copy of ${locator.folder}#${locator.ref} reached ${toFolder} but the source was not `
+      + `expunged (${because}), so the message is in both folders`,
+    );
+    this.name = "MoveIncompleteError";
+  }
+}
+
+/**
  * The default ceiling {@link ImapAdapter.fetchRaw} refuses above.
  *
  * 8 MiB, which is above every message in the corpora this has been measured on and well below
@@ -3310,7 +3333,17 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
       const lock = await this.bounded(this.client.getMailboxLock(srcPath));
       try {
         assertEpoch(); // the expunge is the destructive half — never against a recycled UID
-        await this.client.messageDelete([uid], { uid: true }); // \Deleted + EXPUNGE on source
+        // imapflow NEVER rejects here: `messageDelete` is STORE-then-EXPUNGE, both command
+        // wrappers catch their own error and answer `false`, and it returns the EXPUNGE's verdict
+        // alone — so a refused STORE under an accepted EXPUNGE resolves `true` having removed
+        // nothing. Discarding that reported a half-done move as done and left the mailbox holding
+        // the message twice. A refusal is a failure exactly as a rejection is (the rule
+        // `makeLeaseIo#removeClaims` already applies), and a `true` is proved by CUSTODY: the uid
+        // must be gone. One extra fetch, on this branch only — an atomic MOVE never reaches it.
+        const expunged = await this.client.messageDelete([uid], { uid: true }); // \Deleted + EXPUNGE
+        if (expunged === false) throw new MoveIncompleteError(locator, toFolder, "refused");
+        const survivor = await this.client.fetchOne(String(uid), { uid: true }, { uid: true });
+        if (survivor) throw new MoveIncompleteError(locator, toFolder, "survived");
       } finally {
         lock.release();
       }
