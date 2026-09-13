@@ -455,7 +455,8 @@ export {
 } from "./providers.js";
 
 /**
- * WHAT THE CLIENT ENGINE COSTS THE WINDOW — the whole-mirror derivation's time and how many
+ * WHAT THE CLIENT ENGINE COSTS THE WINDOW — the whole-mirror derivation's time (the worst pass,
+ * and the median and p95 of the window beside it) and how many
  * version bumps asked for it, counted in `client-vitals.ts` and read once every five minutes by
  * the shell's `ui_vitals` report. Exported from the barrel rather than as a leaf: the only caller
  * is the shell, which already compiles this package.

@@ -502,6 +502,9 @@ fn the_ui_line_carries_the_service_event_and_the_whole_vocabulary() {
         "longFrames": 7,
         "longTasks": 1,
         "deriveMs": 196,
+        "deriveP50Ms": 41,
+        "deriveP95Ms": 98,
+        "deriveCount": 1_312,
         "notifiesPer5min": 2_000,
         "uptimeMin": 35,
     });
@@ -511,6 +514,11 @@ fn the_ui_line_carries_the_service_event_and_the_whole_vocabulary() {
     assert!(line.contains("\"service\":\"ui\""), "{line}");
     assert!(line.contains("\"event\":\"ui_vitals\""), "{line}");
     assert!(line.contains("\"deriveMs\":196"), "{line}");
+    // The derivation's four numbers all reach the line: the worst pass, what the window was
+    // usually like, and how many bumps paid for it.
+    assert!(line.contains("\"deriveP50Ms\":41"), "{line}");
+    assert!(line.contains("\"deriveP95Ms\":98"), "{line}");
+    assert!(line.contains("\"deriveCount\":1312"), "{line}");
     assert!(line.contains("\"notifiesPer5min\":2000"), "{line}");
     assert!(line.contains("\"longFrames\":7"), "{line}");
     let parsed: serde_json::Value = serde_json::from_str(&line).expect("valid JSON");
@@ -542,12 +550,29 @@ fn nothing_the_window_wrote_can_reach_the_log_as_text() {
 }
 
 #[test]
+fn a_derivation_field_the_vocabulary_does_not_carry_is_dropped() {
+    // THE NEGATIVE HALF of the derivation fields above. A window on a newer build reporting a
+    // percentile this shell has never heard of must not put the key into the log — the vocabulary
+    // is this file's, and a reader keys on it. `deriveP99Ms` is the sibling most likely to be
+    // added next, which is exactly why it is the one asked about.
+    let line = ui_vitals_line(&serde_json::json!({ "deriveP99Ms": 640, "deriveP95Ms": 98 }));
+
+    assert!(!line.contains("deriveP99Ms"), "an un-allowlisted sibling reached the line: {line}");
+    assert!(!line.contains("640"), "its VALUE reached the line: {line}");
+    assert!(line.contains("\"deriveP95Ms\":98"), "the allowlisted one still reads: {line}");
+}
+
+#[test]
 fn an_unreported_or_impossible_number_is_null_and_never_zero() {
-    let line = ui_vitals_line(&serde_json::json!({ "openP50Ms": -1, "openCount": 0 }));
+    let line = ui_vitals_line(&serde_json::json!({ "openP50Ms": -1, "openCount": 0, "deriveCount": 0 }));
 
     assert!(line.contains("\"shellPaintedMs\":null"), "not reported yet: {line}");
     assert!(line.contains("\"openP50Ms\":null"), "a negative duration is not a measurement: {line}");
     assert!(line.contains("\"openCount\":0"), "zero opens IS a measurement: {line}");
+    // And the same distinction on the derivation, which is the one a reader acts on: a window that
+    // derived nothing reports a count of 0 with null percentiles, never zero milliseconds.
+    assert!(line.contains("\"deriveCount\":0"), "zero derivations IS a measurement: {line}");
+    assert!(line.contains("\"deriveP95Ms\":null"), "no derivation means no milliseconds: {line}");
 }
 
 /// NO MEMORY FIGURE IS DERIVED FROM A PAGE-SIZE LITERAL.

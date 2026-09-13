@@ -365,9 +365,11 @@ pub fn budget_line(total_rss_kb: u64) -> String {
 /// same argument `renderer_vitals` rests on one function up.
 ///
 /// Three startup marks, three interaction pairs with their counts, the frame sampler's two
-/// counters, and the client engine's own cost (`deriveMs`, `notifiesPer5min`) — the derivation the
-/// renderer pays whenever the mirror's version moves, measured at 180–236 ms on a large
-/// mailbox, and how many of those it was asked for in the window.
+/// counters, and the client engine's own cost — the derivation the renderer pays whenever the
+/// mirror's version moves, measured at 180–236 ms on a large mailbox. Four fields for it, because
+/// one number cannot answer both questions a slow mailbox raises: `deriveMs` is the WORST pass of
+/// the window, `deriveP50Ms`/`deriveP95Ms` what the window was usually like, `deriveCount` how many
+/// bumps paid it, and `notifiesPer5min` how many the shell was told about.
 pub const UI_VITALS_FIELDS: &[&str] = &[
     "shellPaintedMs",
     "listUsableMs",
@@ -384,6 +386,9 @@ pub const UI_VITALS_FIELDS: &[&str] = &[
     "longFrames",
     "longTasks",
     "deriveMs",
+    "deriveP50Ms",
+    "deriveP95Ms",
+    "deriveCount",
     "notifiesPer5min",
     "uptimeMin",
 ];

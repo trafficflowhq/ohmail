@@ -373,6 +373,14 @@ export function takeUiVitals(): UiVitalsReport {
     // The WORST derivation in the window, not the mean: a mean over two thousand of them hides the
     // one that held the thread for a quarter of a second.
     deriveMs: engine.derives === 0 ? null : engine.deriveMsMax,
+    /* AND WHAT THE WINDOW IS USUALLY LIKE, beside what its worst moment was. The max alone cannot
+       say whether a mailbox is slow or had one bad pass, which is the question a reader asks of a
+       75k mailbox; the count says how many bumps paid it. `deriveCount` is a plain count — zero
+       derivations in five minutes is a real reading — while the three durations are `null` rather
+       than `0`, because a window that derived nothing measured no milliseconds. */
+    deriveP50Ms: engine.deriveMsP50,
+    deriveP95Ms: engine.deriveMsP95,
+    deriveCount: engine.derives,
     notifiesPer5min: engine.notifies,
     uptimeMin: at === null ? null : Math.floor(at / 60_000),
   };
