@@ -13,6 +13,15 @@ See [Status](README.md#status--read-this-first).
 
 ## [Unreleased]
 
+### Removing a mailbox waits for the mail it is still reading
+
+Removing a mailbox used to tombstone it and delete this machine's copy of its mail before waiting
+for the pass that was still reading the mailbox. That pass then wrote what it was carrying into a
+mailbox that had just been removed: the messages stayed on the machine, and the window was told
+they had arrived after it had been told the mailbox was gone. The removal waits for the pass first
+now — bounded, like every other stop — and a write into a removed mailbox is refused rather than
+committed behind the removal.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
