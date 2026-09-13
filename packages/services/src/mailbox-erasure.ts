@@ -4,7 +4,7 @@ import {
   folderState, mailboxCredentials, mailboxFolders, mailboxProfileMirror, messageBodies,
   messageFailures, messageInstances, messageStates, messageTags, messages, organizerRequests,
   outboundSendFingerprints, outboundSends, routingDecisions, trackerEvents, unsubscribeRecords,
-  recordChanges, type LedgerTx,
+  recordChanges, recordMailboxRemoved, type LedgerTx,
 } from "@trafficflow/db";
 import { rowsAffected as n } from "./rows-affected.js";
 
@@ -158,7 +158,27 @@ export async function sweepMailboxData(
   await drop("mailbox_credentials", tx.delete(mailboxCredentials)
     .where(eq(mailboxCredentials.mailboxId, mailboxId)));
 
-  return { deleted, draftsUnanchored, ...receipts };
+  /* ── 7. AND THE MAILBOX ITSELF, AS ONE RECEIPT ────────────────────────────────────────────
+   *
+   * The per-message and per-draft receipts in section 1 tell a mirror about the mail; nothing
+   * told it about the MAILBOX, so a client kept its folder rows, its cached bodies and its
+   * received count for a mailbox whose mail this sweep had just erased. One row closes all of
+   * them, and it is the same row the standalone install's `wipeLocalMirror` writes — one
+   * vocabulary for "this mailbox is gone", not two. LAST, so it carries the sweep's highest seq:
+   * a mirror that has waited for this one has seen every receipt above it.
+   *
+   * ONLY WHEN THIS SWEEP TOOK SOMETHING, which is this method's standing promise and not a
+   * special case: a repeat erase reports zero, deletes nothing and allocates no sequence
+   * (`mailbox-erasure.pg.test.ts`, "a second erase reports zero and the first receipt is not
+   * re-issued"). A second receipt would also say nothing a mirror does not know — it applied the
+   * first from the same durable log. Read from what the deletes above actually removed, never
+   * from the arguments.
+   */
+  const took = receipts.messagesErased > 0 || receipts.draftsErased > 0
+    || Object.values(deleted).some((n) => n > 0);
+  const seq = took ? await recordMailboxRemoved(tx, accountId, mailboxId) : receipts.seq;
+
+  return { deleted, draftsUnanchored, ...receipts, seq };
 }
 
 /**

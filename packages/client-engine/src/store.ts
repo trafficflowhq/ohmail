@@ -1,6 +1,6 @@
 import { applyToRecords, flattenResponse, maxSeqOf, recordKey, type MirrorRecord } from "./apply.js";
 import { beginDerive } from "./client-vitals.js";
-import { isCarriedLocalType, isProtectedMessage } from "./types.js";
+import { MAILBOX_TYPE, isCarriedLocalType, isProtectedMessage } from "./types.js";
 import type { Cursor, EngineMessage, SyncChange, SyncResponse } from "./types.js";
 
 /**
@@ -585,9 +585,86 @@ export abstract class BaseMirrorStore implements MirrorStore {
     return out;
   }
 
+  /**
+   * A MAILBOX THE SERVER NO LONGER HOLDS TAKES EVERYTHING KEYED BY IT — the receipt's cascade.
+   *
+   * The server emits ONE `mailbox` delete for a removal (`change-log.ts`, the `"mailbox"` member
+   * of `EntityType`): a per-message receipt for a mailbox tens of thousands deep is the same
+   * sentence written tens of thousands of times, and a client that only tombstoned the mailbox
+   * row itself would go on rendering its mail. Measured before this existed: a removal reported
+   * success while the window still held the removed mailbox's messages, their cached bodies and
+   * its unsent draft, and went on counting them.
+   *
+   * STRUCTURAL, NOT A LIST OF TYPES. Pass one takes every record whose entity names the removed
+   * mailbox in `mailboxId` — messages, drafts, folders, and anything later that is keyed the same
+   * way — so a new mailbox-keyed entity is covered by construction rather than by a list somebody
+   * has to remember. Pass two takes what hangs off those messages: a record whose entity names
+   * one in `messageId`, or whose own id IS one (`message_body` and `message_state` are keyed that
+   * way). Threads are deliberately NOT reachable by either: they are account-scoped and one
+   * conversation can hold a sibling mailbox's messages, which is exactly why the server's own
+   * wipe leaves them standing.
+   *
+   * TOMBSTONES, in the page's own dirty set, so the removal and the cursor become durable in ONE
+   * flush and no kill can leave a cursor past a removal the mirror has not applied. A record that
+   * came from the server keeps the HIGHER of its own seq and the receipt's — a removal is
+   * terminal, so no page arriving out of order may resurrect the mail — and a client-local record
+   * (seq 0, a cached body) stays at 0, which is where every client-local row lives.
+   *
+   * Two passes over the mirror, once per removal. That is the cost of not making every reader
+   * carry a mailbox predicate for the rest of the session.
+   */
+  private cascadeMailboxRemoval(applied: MirrorRecord[]): MirrorRecord[] {
+    /* ONLY A RECEIPT THAT WON THE SEQ GUARD — `applied` is `applyToRecords`' own dirty set, so a
+       replayed page whose delete was refused there cascades nothing. */
+    const removed = new Map<string, number>();
+    for (const r of applied) {
+      if (r.type === MAILBOX_TYPE && r.entity === null) removed.set(r.id, r.seq);
+    }
+    if (removed.size === 0) return [];
+
+    const out: MirrorRecord[] = [];
+    const goneMessages = new Set<string>();
+    const tombstone = (rec: MirrorRecord, seq: number): void => {
+      const next: MirrorRecord = {
+        type: rec.type, id: rec.id,
+        seq: rec.seq === 0 ? 0 : Math.max(rec.seq, seq),
+        entity: null,
+      };
+      this.records.set(recordKey(rec.type, rec.id), next);
+      out.push(next);
+    };
+
+    for (const rec of [...this.records.values()]) {
+      if (rec.entity === null) continue;
+      const owner = (rec.entity as { mailboxId?: unknown }).mailboxId;
+      if (typeof owner !== "string") continue;
+      const seq = removed.get(owner);
+      if (seq === undefined) continue;
+      if (rec.type === "message") goneMessages.add(rec.id);
+      tombstone(rec, seq);
+    }
+    if (goneMessages.size === 0) return out;
+
+    /* The seq every dependent is tombstoned at: the highest receipt in this page. A dependent
+       belongs to exactly one message, and that message belongs to exactly one removed mailbox, so
+       any receipt in the page dates it — taking the highest keeps the guard monotone. */
+    let at = 0;
+    for (const seq of removed.values()) if (seq > at) at = seq;
+    for (const rec of [...this.records.values()]) {
+      if (rec.entity === null || rec.type === "message") continue;
+      const named = (rec.entity as { messageId?: unknown }).messageId;
+      const owns = typeof named === "string" ? named : rec.id;
+      if (!goneMessages.has(owns)) continue;
+      tombstone(rec, at);
+    }
+    return out;
+  }
+
   async applyChanges(changes: SyncChange[]): Promise<void> {
     const applied = applyToRecords(this.records, changes);
-    const dirty = [...applied, ...this.cascadeLocalDeletes(changes, applied)];
+    const dirty = [
+      ...applied, ...this.cascadeLocalDeletes(changes, applied), ...this.cascadeMailboxRemoval(applied),
+    ];
     this.highSeq = Math.max(this.highSeq, maxSeqOf(changes));
     if (dirty.length > 0) {
       this.ver++;
@@ -664,7 +741,9 @@ export abstract class BaseMirrorStore implements MirrorStore {
     const changes = flattenResponse(resp);
     // The body cascade rides in this page's dirty set — see `cascadeLocalDeletes`.
     const applied = applyToRecords(this.records, changes);
-    const dirty = [...applied, ...this.cascadeLocalDeletes(changes, applied)];
+    const dirty = [
+      ...applied, ...this.cascadeLocalDeletes(changes, applied), ...this.cascadeMailboxRemoval(applied),
+    ];
     this.highSeq = Math.max(this.highSeq, maxSeqOf(changes));
     this.cursor = resp.cursor;
     /**

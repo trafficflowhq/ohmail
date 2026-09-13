@@ -79,7 +79,26 @@ export type EntityType =
    * scalars, but the AUTHORITY stays `GET /consent` — clients treat the change as "re-ask now",
    * not a second consent read, so the two doors cannot drift.
    */
-  | "settings";
+  | "settings"
+  /**
+   * A MAILBOX THIS ACCOUNT NO LONGER HOLDS — emitted with op `"delete"` and NOTHING ELSE, which
+   * is why it needs no materializer: `SyncService.getChanges` short-circuits a delete into the
+   * tombstone bucket before it materializes anything. The entity id is the MAILBOX's id and the
+   * row is the whole receipt; a client cascades its own dependents from it, exactly as
+   * `MessageService.delete`'s convention says.
+   *
+   * ONE ROW FOR A WHOLE MAILBOX, and that is the point. A mirror learns only from this log, so a
+   * removal that deletes the mail without appending here leaves every client rendering the mailbox
+   * it removed — messages, cached bodies, unsent drafts and the received count. Per-message
+   * receipts say the same thing in as many rows as the mailbox has mail.
+   *
+   * NOT WRITTEN BY AN ORDINARY DISCONNECT. `MailboxService.delete` without `erase` is a SOFT
+   * delete: the credentials go and the mail stays, deliberately, so a client that dropped its rows
+   * on it would hide history the server still holds. Only the two acts that actually take a
+   * mailbox's mail off the store emit it — the standalone install's `wipeLocalMirror` and the
+   * hosted erasure's `sweepMailboxData`.
+   */
+  | "mailbox";
 
 export type ChangeOp = "create" | "update" | "move" | "delete";
 
@@ -258,6 +277,23 @@ export async function recordRuleDelta(
   return recordChanges(tx, ruleIds.map((entityId) => ({
     accountId, entityType: "rule" as const, entityId, op, meta: null,
   })));
+}
+
+/**
+ * THE ONE DOOR FOR A MAILBOX WHOSE MAIL IS GONE — see the `"mailbox"` member of {@link
+ * EntityType} for what the row means and which two acts may write it.
+ *
+ * A door rather than an inline `recordChange`, for the reason `recordRuleDelta` is one: the two
+ * writers are in different packages (the standalone install's wipe and the hosted erasure's
+ * sweep) and a second spelling is a second place to get the op or the entity id wrong — and the
+ * op is the whole contract here, since only `"delete"` short-circuits before materialization.
+ */
+export async function recordMailboxRemoved(
+  tx: LedgerTx, accountId: string, mailboxId: string,
+): Promise<bigint> {
+  return recordChange(tx, {
+    accountId, entityType: "mailbox", entityId: mailboxId, op: "delete", meta: null,
+  });
 }
 
 /** Both ends of an account's retained change log. Both `null` ⇔ the log is empty. */

@@ -66,18 +66,32 @@ export type ChangeOp = "create" | "update" | "move" | "delete";
  */
 export type SyncEntityType =
   | "message" | "thread" | "routing_decision" | "approval"
-  | "draft" | "rule" | "message_state" | "folder" | "tag";
+  | "draft" | "rule" | "message_state" | "folder" | "tag"
+  /**
+   * A mailbox this account no longer holds, and it arrives ONLY as `op: "delete"` — the server
+   * emits nothing else under this type ({@link MAILBOX_TYPE}). The id is the mailbox's, and the
+   * mirror cascades from it: every row keyed by that mailbox goes, in the same apply.
+   */
+  | "mailbox";
+
+/**
+ * The `"mailbox"` row's own name, because three places have to agree on it — the store's cascade,
+ * the engine's count, and the fixture world that has always kept client-local `mailbox` rows
+ * under the same key. A literal typed three times is a literal that can disagree twice.
+ */
+export const MAILBOX_TYPE = "mailbox";
 
 /**
  * Everything the LOCAL mirror stores. Beyond the synced types, the engine keeps
  * client-local entities for the demo/fixture world (`screener_sender`,
- * `triage_item`, `mailbox`), view metadata (`view_meta`, e.g. the Reads
- * waterline) and hydrated message bodies (`message_body`).
+ * `triage_item`), view metadata (`view_meta`, e.g. the Reads waterline) and
+ * hydrated message bodies (`message_body`). `mailbox` rows are both: the demo
+ * world writes them locally and a real account receives the delete above.
  * Unknown strings are tolerated by design.
  */
 export type MirrorEntityType =
   | SyncEntityType
-  | "screener_sender" | "triage_item" | "mailbox" | "view_meta" | "message_body"
+  | "screener_sender" | "triage_item" | "view_meta" | "message_body"
   | "held_release_group"
   | (string & {});
 

@@ -17,7 +17,7 @@ import { mailbox, sync } from "./shared.js";
  * literal set rather than derived from `EntityType`: a union is erased at runtime, and the point
  * is to reject a token the reader has no materializer for.
  */
-const VALID_TYPES = new Set<EntityType>([
+const VALID_TYPE_LIST = ([
   "message", "thread", "routing_decision", "approval",
   "draft", "rule", "message_state", "folder", "tag",
   // The account's settings row — the consent doorbell (`change-log.ts`). `?types=` is a REQUEST
@@ -26,7 +26,31 @@ const VALID_TYPES = new Set<EntityType>([
   // arriving, which is exactly how the desktop's tag drought happened (`cloud-mirror.ts` tells
   // that story). The settings entity is where this list was found lagging the union.
   "settings",
-]);
+  /**
+   * A mailbox the account erased — the receipt the desktop's Cloud mirror names in its own
+   * `?types=` list (`cloud-mirror.ts#CLOUD_SYNC_TYPES`). Missing here it would be dropped by the
+   * filter above and the mirror would ask for a receipt it never receives: the mail of an erased
+   * mailbox stays in the mirror and on the screen, the tag drought's shape exactly.
+   */
+  "mailbox",
+] as const) satisfies readonly EntityType[];
+const VALID_TYPES = new Set<EntityType>(VALID_TYPE_LIST);
+
+/**
+ * AND EVERY `EntityType` IS IN IT — the compile-time half, because this set has now lagged the
+ * union twice and both times the symptom was silence: the filter drops an unknown token rather
+ * than refusing it, so a mirror that asks for the missing type is answered with the rest of its
+ * list and converges missing a whole kind of state. `tag` was the first (a desktop rail empty over
+ * an account with several tags), `settings` the second. `Exclude<…>` stops being `never` the
+ * moment a member is added to the union without being listed here, and the line below then fails
+ * to compile naming the type that was forgotten.
+ */
+type SyncTypeMissing = Exclude<EntityType, typeof VALID_TYPE_LIST[number]>;
+type SyncTypesAreComplete = [SyncTypeMissing] extends [never] ? true
+  : { "EntityType missing from VALID_TYPES — `?types=` would silently drop it": SyncTypeMissing };
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+const syncTypesAreComplete: SyncTypesAreComplete = true;
+void syncTypesAreComplete;
 
 /** Parse `?types=a,b,c` → EntityType[], silently ignoring unknown tokens. */
 function parseTypes(raw: string | null): EntityType[] | undefined {

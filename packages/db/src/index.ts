@@ -169,6 +169,7 @@ export {
 
 export {
   allocateSeq, allocateSeqRange, recordChange, recordChanges, recordRuleDelta, ruleDelta, minRetainedSeq, seqBounds,
+  recordMailboxRemoved,
   CHANGE_LOG_CHANNEL, changeWakePayload, parseChangeWake,
   // The guard that refuses a bare `PgDatabase` where a transaction handle is required. It lives
   // beside `LedgerTx` because that is the type it enforces at runtime; it used to reach callers

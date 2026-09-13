@@ -6544,7 +6544,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                 if (released === null) claimReleased = false;
                 else if (released > 0) log("organizer_claim_released", { mailboxId, claims: released });
                 try {
-                  await wipeLocalMirror(db, mailboxId);
+                  await wipeLocalMirror(db, { accountId: core.accountId, mailboxId });
                 } catch (err) {
                   log("local_mirror_wipe_failed", {
                     err,

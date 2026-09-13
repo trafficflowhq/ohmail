@@ -39,6 +39,7 @@ import type { SearchTier } from "@trafficflow/core/search-rank";
 import {
   CursorExpiredError,
   FOLDER_OF_VIEW,
+  MAILBOX_TYPE,
   MutationRejectedError,
   encodeSeqCursor,
   isProtectedMessage,
@@ -3160,6 +3161,23 @@ export class OhmailEngine {
    */
   private countReceived(changes: SyncChange[]): void {
     this.restoreReceivedCount();
+    /* A MAILBOX RECEIPT IS READ FIRST AND IT IS AUTHORITATIVE. One `mailbox` delete stands for
+       every message that mailbox had (`store.ts#cascadeMailboxRemoval`), so this number has to
+       move by all of them — left out, the window went on reporting the removed mailbox's mail as
+       received. Its own arm rather than a case in the loop below, because the loop counts per
+       CHANGE and this counts per ROW: the page names the mailbox, the mirror names the mail. */
+    const removedMailboxes = new Set<string>();
+    for (const ch of changes) {
+      if (ch.type === MAILBOX_TYPE && ch.op === "delete") removedMailboxes.add(ch.id);
+    }
+    const inRemoved = (id: string, ch: SyncChange): boolean => {
+      if (removedMailboxes.size === 0) return false;
+      const named = (ch.entity as { mailboxId?: unknown } | undefined)?.mailboxId;
+      const owner = typeof named === "string"
+        ? named
+        : this.store.get<EngineMessage>("message", id)?.mailboxId;
+      return typeof owner === "string" && removedMailboxes.has(owner);
+    };
     const last = new Map<string, SyncChange>();
     for (const ch of changes) {
       if (ch.type !== "message") continue;
@@ -3167,10 +3185,25 @@ export class OhmailEngine {
       if (prev === undefined || ch.seq >= prev.seq) last.set(ch.id, ch);
     }
     for (const [id, ch] of last) {
+      // A message of a mailbox this very page removes is neither added nor subtracted here: the
+      // arm below answers for every row it had, and counting the change too would double it.
+      if (inRemoved(id, ch)) continue;
       const live = this.store.get("message", id) !== undefined;
       if (ch.op === "delete") {
         if (live) this.receivedMessageRows -= 1;
       } else if (!live) this.receivedMessageRows += 1;
+    }
+    if (removedMailboxes.size === 0) return;
+    for (const m of this.store.list<EngineMessage>("message")) {
+      if (!removedMailboxes.has(m.mailboxId)) continue;
+      this.receivedMessageRows -= 1;
+      /* AND THE BODY SLOT GOES BACK, through the door that owns that statement: the cascade
+         tombstones the `message_body` records, so this id holds no mail and must not be counted
+         against {@link BODY_CACHE_MAX} — `holdBody`'s own argument for why a purge gives its slot
+         back, reached here by the one act that empties a whole mailbox at once. `trimBodyCache`
+         would also date a message-less body 0 and evict it first; this makes the removal say so
+         rather than leaving the bound to be corrected by the next trim. */
+      this.holdBody(m.id, false);
     }
   }
 

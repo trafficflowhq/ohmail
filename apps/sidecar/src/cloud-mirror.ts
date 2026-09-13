@@ -30,7 +30,7 @@ import type { LocalWorld } from "./identity.js";
 import type { CloudAuth } from "./cloud-auth.js";
 import { stampSynced } from "./sync-stamp.js";
 import { createFirstSyncReporter } from "./first-sync.js";
-import { mirroredMessageCount } from "./local-mirror.js";
+import { deleteMailboxRows, mirroredMessageCount } from "./local-mirror.js";
 import type { Diagnostic } from "./log.js";
 
 /**
@@ -66,6 +66,16 @@ export const CLOUD_SYNC_TYPES = [
    * nothing, because its next `GET /consent` answers from the account itself.
    */
   "settings",
+  /**
+   * A MAILBOX THE HOSTED ACCOUNT ERASED. One row, `op: "delete"` only, and it stands for every
+   * message, body, draft and folder that mailbox had (`change-log.ts`, the `"mailbox"` member of
+   * `EntityType`). Asked for here because the failure without it is this door's own version of
+   * the standalone one: the hosted store erases the mail, this mirror never hears, and the window
+   * goes on rendering a mailbox that is gone. `applyDelete` runs the same table walk the
+   * standalone removal runs (`local-mirror.ts#deleteMailboxRows`) and the loop re-emits the
+   * receipt on the LOCAL log, so the window's own mirror drops it by the same rule.
+   */
+  "mailbox",
 ] as const satisfies readonly EntityType[];
 
 /**
@@ -96,6 +106,11 @@ void cloudSyncTypesAreComplete;
  * the time the message carrying the assignment is applied.
  */
 const APPLY_ORDER: readonly EntityType[] = [
+  /* `mailbox` is FIRST so that in the REVERSED delete pass it is LAST: the mailbox receipt takes
+     everything keyed by that mailbox, and running it after the page's own per-row deletes leaves
+     them nothing to find rather than the other way round. It never appears as a non-delete — the
+     feed emits this type only as a delete — so its place in the upsert order is inert. */
+  "mailbox",
   "settings", "folder", "tag", "thread", "message", "message_state", "rule", "draft", "approval", "routing_decision",
 ];
 
@@ -1252,6 +1267,17 @@ async function recordDetached(tx: Tx, world: LocalWorld, detached: readonly Deta
 
 async function applyDelete(tx: Tx, ch: SyncChange, detached?: DetachedSurvivor[]): Promise<boolean> {
   switch (ch.type) {
+    case "mailbox": {
+      /* THE HOSTED ACCOUNT ERASED A MAILBOX. The same table walk the standalone removal runs, in
+         THIS page's transaction — one spelling of "what a mailbox's mail is", so a table added to
+         one door cannot be forgotten on the other. The local `mailboxes` row is left to
+         `makeMailboxRefresh`, which mirrors its status from the hosted row like every other
+         mailbox fact; this takes the MAIL. Unconditionally `true`: a receipt for a mailbox this
+         mirror never held deletes nothing and still has to be recorded on the local log, because
+         the window's mirror may hold rows this database no longer does. */
+      await deleteMailboxRows(tx, ch.id);
+      return true;
+    }
     case "message": {
       if (!(await messagePresent(tx, ch.id))) return false;
       const replying = await tx.select({ id: drafts.id }).from(drafts)
