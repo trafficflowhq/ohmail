@@ -2,7 +2,7 @@ import { and, asc, desc, eq, gt, inArray, isNull, lt, or, sql, type SQL } from "
 import { randomUUID } from "node:crypto";
 import {
   assertOrganizerRole,
-  mailboxes, mailboxFolders, messages, messageInstances, folderState, messageBodies, messageStates, claimIdempotencyKey,
+  mailboxes, mailboxFolders, messages, folderState, messageBodies, messageStates, claimIdempotencyKey,
   recordChange, upsertDesiredSeen, ringFilingDoorbell, type LedgerTx, type OrganizedBy, type Tx,
 } from "@trafficflow/db";
 import { dialect } from "@trafficflow/db/dialect";
@@ -1205,26 +1205,6 @@ export class MessageService {
          restore. */
       if (trash === null || !fs || fs.desiredFolder !== trash) {
         throw new ServiceError("not_in_trash", 409, "this message is not in Trash");
-      }
-      /* AND THERE IS STILL A COPY TO CARRY. A mail server empties its own Trash on its own
-         schedule, so the copy this restore would move can be gone — and queueing the move would
-         put the row back in the person's pile against a message no server holds.
-
-         THE PREDICATE IS `DrizzleRepo.primaryInstanceVanished`'s, to the letter, because a second
-         reading of "is it gone" is how the door and the organizer come to disagree: a locator we
-         once had AND no primary instance left. The first half is what stops a row that never had
-         an instance — a seeded backlog row, a fixture — from reading as a disappearance. */
-      const [copy] = await tx.select({
-        vanished: sql<boolean>`(${messages.nativeLocator} is not null) and not exists (
-          select 1 from ${messageInstances}
-           where ${messageInstances.messageId} = ${id} and ${messageInstances.isPrimary}
-        )`,
-      }).from(messages).where(eq(messages.id, id)).limit(1);
-      if (copy?.vanished === true) {
-        throw new ServiceError(
-          "message_gone", 410,
-          "no copy of this message is left on the mail server, so there is nothing to put back",
-        );
       }
 
       const target = await this.resolveRestoreTarget(ctx, msg.mailboxId, fs.trashedFrom);

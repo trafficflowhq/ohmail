@@ -919,7 +919,6 @@
     "toastRestoringTo": "Restoring to {place}\u2026",
     "toastRestoreUndone": "Kept in Trash.",
     "toastRestoreFailed": "Couldn't restore \u2014 it's still in Trash.",
-    "restoreGone": "That message is no longer in Trash \u2014 your mail server may have removed it.",
     "noErase": "ohmail never erases mail \u2014 to remove it for good, use your own mail client.",
     "restoring": "Restoring\u2026",
     "unavailable": "Trash is not available here.",
