@@ -80,7 +80,7 @@
           <li>ohmail builds as a Flatpak</li>
           <li>The desktop app reports what it costs and how it feels</li>
           <li>Stopping and starting again on a phone is one instruction</li>
-          <li>Every Linux build measures start time and memory</li>
+          <li>The Linux build measures start time and memory</li>
           <li>The Screener works out its list once per change</li>
           <li>A Screener decision that waited too long says so</li>
           <li>A phone never takes a mailbox your computer is organizing</li>
@@ -93,7 +93,10 @@
           <li>The reading screen's actions fit every phone width, in both languages</li>
           <li>The phone asks for the notification it organizes behind</li>
           <li>When a phone is organizing a mailbox, the app says so</li>
-          <li>How long a first import took, in full</li>
+          <li>How long a first import took</li>
+          <li>Links and buttons open your browser again on Linux</li>
+          <li>A slow credit check no longer reads as "AI unavailable"</li>
+          <li>Asking a phone to organize while your mail server is unreachable says so</li>
         </ul>
       </description>
     </release>
