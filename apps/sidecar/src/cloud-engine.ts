@@ -55,7 +55,7 @@ import { startEngineVitals } from "./vitals.js";
 export interface CloudSidecarConfig {
   /** Where the local mirror lives. Created if absent; locked while open. */
   dataDir: string;
-  /** The hosted API base, e.g. `https://api.ohmail.app`. */
+  /** The hosted API base — the managed service's public default origin. */
   cloudUrl: string;
   /**
    * THE ONE SERVER A BROWSER HAND-OFF MAY BE PERFORMED AGAINST. Absent ⇒ {@link MANAGED_CLOUD_BASE}.

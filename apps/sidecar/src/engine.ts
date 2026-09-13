@@ -1729,7 +1729,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
       ),
       // BEARER ONLY. There is no browser here, so there is no ambient cookie to abuse — and with
       // `via` structurally unable to be "cookie", `withCsrf` becomes a no-op by construction
-      // rather than by a check. Same posture as `api.ohmail.app`.
+      // rather than by a check. Same posture as the managed API base.
       allowCookieAuth: false,
       // SSE OFF, and this one is load-bearing for the transport rather than a preference: a frame
       // carries a COMPLETE response, and `GET /events` never completes. Disabled, it answers a
