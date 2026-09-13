@@ -157,6 +157,28 @@ export const API_CRON_TARGETS: readonly ApiCronTarget[] = [
     // alignment that keeps re-polls idempotent would be doing all the work.
     jitterMs: 30 * 1000,
   },
+  {
+    // WHAT THE SCREENER'S OWN FAN-OUT COULD NOT FINISH. A screen-out
+    // leaves the lists the reader said no to, inside the request; capping that is only honest if
+    // something finishes the rest, and until this entry existed there was nothing — the drain was
+    // built, tested, and poked by nobody, which is the failure this table's census exists for.
+    // It runs on the API host for the sibling reason above: the pass IS a service in
+    // `@trafficflow/services`, which may not enter this app's runtime dependency set.
+    //
+    // HOURLY, and the cadence is load-bearing rather than a taste: the drain's own look-back
+    // window is derived from it (three cadences plus a 24-hour outage envelope), so a change here
+    // changes how far back a run reaches and the constant says so. An unsubscribe is a courtesy
+    // rather than the product, and an idle hour costs one indexed read.
+    target: "unsubscribe_drain",
+    route: "/internal/unsubscribe/drain",
+    everyMs: 60 * 60 * 1000,
+    // Its own stagger, past the takeover window and distinct from every other target's, so a
+    // leader takeover does not land this on the same instant as a dialling one.
+    firstDelayMs: 9 * 60 * 1000,
+    // The service claims only what one invocation can deliver inside the platform's 60-second
+    // ceiling (its own clock is 45 s, under this); the caller's mirror of that ceiling, not a hope.
+    timeoutMs: 60 * 1000,
+  },
 ];
 
 /** Up to this much is added to every wait, uniformly — thundering-herd hygiene, never drift backwards. */

@@ -16,7 +16,7 @@ import type { SendAdapter } from "@trafficflow/core/mail";
 import { presentsSecret, secretRouteJson as json } from "../secret-auth.js";
 import { makeSendAdapter } from "../send-adapter.js";
 import { MAX_IMAP_PER_MAILBOX } from "../attachments-adapter.js";
-import { imapAdmission } from "./shared.js";
+import { imapAdmission, unsubscribes } from "./shared.js";
 import type { AlertsConfig } from "../deps-cloud.js";
 import type { AlertArmHealth, AlertSinkSummary, ApiDeps } from "../deps.js";
 import type {} from "../deps-cloud.js";
@@ -91,6 +91,16 @@ export const PLATFORM_SIGNALS_CRON_PATH = "/internal/platform-signals/run";
  * `@trafficflow/services` — while this host runs `SendService` on every manual send already.
  */
 export const SCHEDULED_SEND_CRON_PATH = "/internal/sends/scheduled/run";
+
+/**
+ * The path the screened-out unsubscribe drain is scheduled at — exported because the worker's
+ * `api-cron.ts` names it as a literal and a census asserts the two agree: a schedule whose path
+ * this router does not serve is a promise that silently never runs. The PASS runs here for the
+ * reason its siblings do — it is a service in `@trafficflow/services`, which the sync worker's
+ * runtime dependency set may not include — and it is what makes the Screener's own fan-out
+ * cappable: a request that stops at its ceiling is only honest if something finishes the rest.
+ */
+export const UNSUB_DRAIN_CRON_PATH = "/internal/unsubscribe/drain";
 
 /**
  * `GET /internal/sends/reconcile/run` — the reconciling pass for stranded send reservations. A
@@ -624,6 +634,74 @@ export const internalRoutes: Route[] = [
         // `raw` means no error envelope above this handler; it must never throw.
         log.error("sessions_reap_failed", { err });
         return json(503, { error: { code: "sessions_reap_failed" } });
+      }
+    },
+  },
+  {
+    /**
+     * `GET /internal/unsubscribe/drain` — what the Screener's own fan-out could not finish.
+     * A screen-out leaves the lists the reader said no to; doing all of them inside the request
+     * is what this route exists to bound, and a cap there is only honest with this behind
+     * it. The reaper's shape verbatim: GET, either secret, 404 unarmed — where the courtesy then
+     * does not run. The service owns every bound (accounts, targets, clock, window); this
+     * handler chooses none of them, so there is one place they can be read.
+     */
+    method: "GET",
+    pattern: UNSUB_DRAIN_CRON_PATH,
+    relay: false,  /* the hosted service's shared-secret intake */
+    cost: "unauthenticated",
+    options: { public: true, anonymous: true, raw: true },
+    handler: async (req, deps) => {
+      const log = (deps.logger ?? silentLogger).child({ route: UNSUB_DRAIN_CRON_PATH });
+      const cfg = deps.alerts;
+      if (!cfg || cfg.secret.trim().length === 0) {
+        return json(404, { error: { code: "not_found" } });
+      }
+      const cron = cfg.cronSecret?.trim();
+      const authorized = presentsSecret(req, cfg.secret)
+        || (cron !== undefined && cron.length > 0 && presentsSecret(req, cron));
+      if (!authorized) {
+        log.warn("unsubscribe_drain_unauthorized", {});
+        return json(401, { error: { code: "unauthorized" } });
+      }
+      // A deployment with no unsubscribe port configured has no drain to run, and that is a
+      // state rather than a fault — the same 503 `unsubscribe_unconfigured` every other route
+      // on this service answers, through the one accessor that knows how to say it.
+      let svc;
+      try {
+        svc = unsubscribes(deps);
+      } catch {
+        return json(503, { error: { code: "unsubscribe_unconfigured" } });
+      }
+      try {
+        const run = await svc.drainScreenedOut(deps.db, {
+          now: deps.now, requestId: deps.requestId,
+        });
+        // COUNTS AND NOTHING ELSE — no account, no sender, no URL. A log line naming which lists
+        // somebody left is a privacy leak with a long half-life, and this one is written every
+        // time the clock ticks.
+        if (run.sweep.considered > 0 || run.sweep.failed > 0) {
+          log.info("unsubscribe_drained", {
+            accounts: run.accounts,
+            considered: run.sweep.considered,
+            posted: run.sweep.posted,
+            skipped: run.sweep.skipped,
+            failed: run.sweep.failed,
+            remaining: run.remaining,
+          });
+        }
+        return json(200, {
+          now: deps.now().toISOString(),
+          accounts: run.accounts,
+          posted: run.sweep.posted,
+          skipped: run.sweep.skipped,
+          failed: run.sweep.failed,
+          remaining: run.remaining,
+        });
+      } catch (err) {
+        // `raw` means no error envelope above this handler; it must never throw.
+        log.error("unsubscribe_drain_failed", { err });
+        return json(503, { error: { code: "unsubscribe_drain_failed" } });
       }
     },
   },
