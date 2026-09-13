@@ -16,6 +16,13 @@ import { withAccountTx, type ServiceContext } from "./context.js";
 import { ServiceError } from "./errors.js";
 import { accountMailboxesProbe, refuseOverAccountMailboxes } from "./read-bounds.js";
 import { fenceErasedAccount } from "./erasure-fence.js";
+import { fenceSignedOutMailbox, type CredentialOrigin } from "./signed-out-fence.js";
+
+/**
+ * The origin of a credential written into a mailbox row this very transaction creates. A sign-out
+ * of a mailbox that did not exist cannot have overtaken it, so the fence has nothing to compare.
+ */
+const MINTED_HERE: CredentialOrigin = { row: "minted-here" };
 import { sweepMailboxData, type MailboxSweepResult } from "./mailbox-erasure.js";
 /* The DEFAULT policy is registered rather than imported, so the paid gate is not an import edge
  * out of a module the desktop engine bundles — this one is mounted by the local API too. The
@@ -1180,7 +1187,7 @@ export class MailboxService {
          */
         if (body.imap.smtpHost !== undefined) meta.smtpHost = body.imap.smtpHost;
         if (body.imap.smtpUnsettled !== undefined) meta.smtpUnsettled = body.imap.smtpUnsettled;
-        await this.upsertCredOn(tx, ctx, kp, row!.id, "imap", body.imap.pass, meta);
+        await this.upsertCredOn(tx, ctx, kp, row!.id, "imap", body.imap.pass, meta, MINTED_HERE);
       }
       if (body.smtp) {
         // A generic IMAP mailbox often shares creds with SMTP; fall back to the IMAP
@@ -1193,7 +1200,7 @@ export class MailboxService {
             port: provenSmtp?.port ?? body.smtp.port,
             secure: provenSmtp?.secure ?? body.smtp.secure,
             user: body.smtp.user ?? body.imap?.user,
-          }));
+          }), MINTED_HERE);
         }
       }
       // Per-mailbox onboarding state, in the SAME transaction as the row: a create that fails
@@ -1242,6 +1249,20 @@ export class MailboxService {
     // claim would prove a login the worker will never make. Same argument as `create`'s refusal to
     // substitute the address for a missing `user`, reached from the other side.
     const user = address;
+
+    /* The sign-out stamp before the probe dials. By ADDRESS, the way this door resolves its row
+       at all (the `id_token` claim, never a mailbox id); a reconnect of an address this install
+       has signed out of is the same window `update` carries. `null` when no row answers — the
+       create arm below mints one, which the fence reads as nothing to overtake. */
+    const signedOutBefore = (await asTx(ctx)
+      .select({ signedOutAt: mailboxes.signedOutAt })
+      .from(mailboxes)
+      .where(and(
+        eq(mailboxes.accountId, ctx.accountId),
+        sql`lower(${mailboxes.address}) = lower(${address})`,
+        sql`${mailboxes.status} <> 'disabled'`,
+      ))
+      .limit(1))[0]?.signedOutAt ?? null;
 
     const verdict = await opts.probe({
       accountId: ctx.accountId,
@@ -1316,7 +1337,8 @@ export class MailboxService {
           syncBlockedReason: null, syncBlockedSince: null,
         }).where(and(eq(mailboxes.id, row.id), eq(mailboxes.accountId, ctx.accountId)));
 
-        await this.upsertCredOn(tx, ctx, kp, row.id, "imap", o.refreshToken, meta);
+        await this.upsertCredOn(tx, ctx, kp, row.id, "imap", o.refreshToken, meta,
+          { row: "already-there", signedOutAt: signedOutBefore });
         /*
          * AND THE STALE PASSWORD SMTP ROW IS DROPPED, which is the one thing a naive reconnect gets
          * wrong. A mailbox that was previously connected with a password owns an `smtp` credential
@@ -1350,7 +1372,7 @@ export class MailboxService {
         organizerRole: "reader",
         organizeConsentedAt: null,
       }).returning();
-      await this.upsertCredOn(tx, ctx, kp, created!.id, "imap", o.refreshToken, meta);
+      await this.upsertCredOn(tx, ctx, kp, created!.id, "imap", o.refreshToken, meta, MINTED_HERE);
       // Same hook, same transaction, as `create` — an OAuth connect of a NEW address is a
       // create in every sense that matters here (a reconnect returned above and grants nothing).
       return { created: true, row: created as MailboxRow };
@@ -1396,6 +1418,13 @@ export class MailboxService {
      * transaction re-reads `FOR UPDATE`; a row that changes in between costs one wasted dial,
      * never a wrong write.
      */
+    /* THE SIGN-OUT STAMP AS THIS WRITE FOUND IT, read before anything dials. The probes below
+       spend seconds on somebody's mail server, and a sign-out can run to completion inside that
+       window; `upsertCredOn` re-reads this value under the row lock and refuses when it moved. */
+    const signedOutBefore = (patch.imap?.pass || patch.smtp?.pass)
+      ? (await this.signedOutAtOf(ctx, id)) ?? null
+      : null;
+
     const merged = patch.imap?.pass
       ? await this.probedImapMeta(ctx, id, patch, opts)
       : undefined;
@@ -1491,12 +1520,18 @@ export class MailboxService {
       // `merged`, NOT `metaOf(patch.imap)` — what is stored must be exactly what was dialled.
       // Passing the patch alone would store a config the probe never tried (and, before the
       // `upsertCredOn` fix below, would also erase the stored port/user/secure while doing it).
-      if (patch.imap?.pass) await this.upsertCredOn(tx, ctx, kp, id, "imap", patch.imap.pass, merged?.meta ?? {});
+      if (patch.imap?.pass) {
+        await this.upsertCredOn(tx, ctx, kp, id, "imap", patch.imap.pass, merged?.meta ?? {},
+          { row: "already-there", signedOutAt: signedOutBefore });
+      }
       // PROBED when the host injects `smtpProbe`, like `create` — the same vanity-CNAME shape
       // reaches this door via the edit form. `mergedSmtp` was dialled before this transaction
       // opened; where no prober is injected it is the plain merge, the pre-probe behaviour — and
       // that arm needs no staleness check, because it reads nothing to go stale.
-      if (patch.smtp?.pass) await this.upsertCredOn(tx, ctx, kp, id, "smtp", patch.smtp.pass, mergedSmtp?.meta ?? metaOf(patch.smtp));
+      if (patch.smtp?.pass) {
+        await this.upsertCredOn(tx, ctx, kp, id, "smtp", patch.smtp.pass, mergedSmtp?.meta ?? metaOf(patch.smtp),
+          { row: "already-there", signedOutAt: signedOutBefore });
+      }
 
       const [row] = await tx.select().from(mailboxes)
         .where(and(eq(mailboxes.id, id), eq(mailboxes.accountId, ctx.accountId))).limit(1);
@@ -1955,6 +1990,8 @@ export class MailboxService {
      * `store_unverified` is refused with the probe's own honest sentence. `create`'s policy is
      * untouched: a connect with no organizing attached can stay optimistic.
      */
+    /* The sign-out stamp before the probe dials — `update`'s note, same window on this door. */
+    const signedOutBefore = input.imap ? (await this.signedOutAtOf(ctx, id)) ?? null : null;
     const probed = input.imap
       ? await this.probedImapMeta(
         ctx, id, { imap: { pass: input.imap.pass } },
@@ -2072,7 +2109,8 @@ export class MailboxService {
       // an action that looks like it worked and leaves the mailbox quarantined.
       if (probed && input.imap) {
         await this.assertMergeCurrent(tx, id, "imap", { pass: input.imap.pass }, probed);
-        await this.upsertCredOn(tx, ctx, kp!, id, "imap", input.imap.pass, probed.meta);
+        await this.upsertCredOn(tx, ctx, kp!, id, "imap", input.imap.pass, probed.meta,
+          { row: "already-there", signedOutAt: signedOutBefore });
       }
 
       /**
@@ -2353,7 +2391,13 @@ export class MailboxService {
   private async upsertCredOn(
     tx: Tx, ctx: ServiceContext, kp: KeyProvider, mailboxId: string,
     transport: "imap" | "smtp" | "graph", pass: string, metaIn: Record<string, unknown>,
+    origin: CredentialOrigin,
   ): Promise<void> {
+    /* THE SIGN-OUT FENCE, and this is the ONE door into `mailbox_credentials` in this service, so
+       it is the one place the rule has to hold. Before the encrypt rather than after: a password
+       a sign-out has already overtaken is not brought into memory as ciphertext for a row that is
+       about to be refused. `signed-out-fence.ts` carries the argument. */
+    await fenceSignedOutMailbox(tx, dialect(ctx.db), mailboxId, origin);
     const { ciphertext, keyVersion } = await kp.encrypt(pass);
     const meta = Object.keys(metaIn).length > 0 ? metaIn : undefined;
     const now = ctx.now();
@@ -2386,6 +2430,19 @@ export class MailboxService {
       throw new ServiceError("internal", 500, "mailbox service not configured with a key provider");
     }
     return this.deps.keyProvider;
+  }
+
+  /**
+   * `mailboxes.signed_out_at` as it stands NOW, unlocked — what a credential write records before
+   * it dials so the fence can tell whether a sign-out landed while it was out. `undefined` for an
+   * id this account does not own; the 404 belongs to `ownedRow`, not here.
+   */
+  private async signedOutAtOf(ctx: ServiceContext, id: string): Promise<Date | null | undefined> {
+    const [row] = await asTx(ctx).select({ signedOutAt: mailboxes.signedOutAt })
+      .from(mailboxes)
+      .where(and(eq(mailboxes.id, id), eq(mailboxes.accountId, ctx.accountId)))
+      .limit(1);
+    return row?.signedOutAt;
   }
 
   /** Load a mailbox row scoped to the account, or 404. */

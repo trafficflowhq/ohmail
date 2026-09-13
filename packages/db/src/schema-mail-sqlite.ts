@@ -395,6 +395,8 @@ export const mailboxes = sqliteTable("mailboxes", {
   initialImportCompletedAt: integer("initial_import_completed_at", { mode: "timestamp_ms" }),
   // Mail 0098: the HTML signature beside the text one. Nullable, same as its twin.
   signatureHtml: text("signature_html"),
+  /** The sign-out fence's durable stamp — see the Postgres twin. An integer, as every timestamp here is. */
+  signedOutAt: integer("signed_out_at", { mode: "timestamp_ms" }),
 }, (t) => ({
   // ONE ACTIVE MAILBOX PER ADDRESS (mail 0021). PARTIAL, because `delete` is a soft delete to
   // `status='disabled'` and a plain unique would make reconnecting a disconnected address fail

@@ -45,6 +45,9 @@ import {
   triageService, workflowsService, ServiceError, type UnsubscribeService,
   type AuthConfig, type HostResolver, type MailboxAllowancePolicy, type OneClickPost,
   type PushService, type RemoteFetch,
+  // The sign-out fence's durable half — one module for both doors, so the engine and the shared
+  // mailbox service cannot hold two versions of the same rule (`signed-out-fence.ts`).
+  fenceSignedOutMailbox, signedOutMidWrite, type CredentialOrigin,
 } from "@trafficflow/services/mail";
 /* The session LIFECYCLE — the machinery half of the hosted auth service (establish, refresh
  * rotation with reuse detection, family revocation, devices, the paired-device mint), from the
@@ -1884,12 +1887,17 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
     const discardCredentialsFor = async (mailboxId: string): Promise<void> => {
       await db.delete(mailboxCredentials).where(eq(mailboxCredentials.mailboxId, mailboxId));
     };
-    /** The refusal a credential writer answers when a sign-out overtook it. */
-    const signedOutMidWrite = (): ServiceError => new ServiceError(
-      "signed_out", 409,
-      "you signed out while this password was being checked, so it was not kept. " +
-        "Sign in again to store it.",
-    );
+    /**
+     * `mailboxes.signed_out_at` as it stands NOW — what a credential write records before it dials
+     * so the fence can tell whether a sign-out landed while it was out (`signed-out-fence.ts`).
+     * `null` for a mailbox with no row: an absent mailbox is not a sign-out, and the caller's own
+     * refusal is what says so.
+     */
+    const signedOutAtOf = async (mailboxId: string): Promise<Date | null> => {
+      const [row] = await db.select({ signedOutAt: mailboxes.signedOutAt })
+        .from(mailboxes).where(eq(mailboxes.id, mailboxId)).limit(1);
+      return row?.signedOutAt ?? null;
+    };
     /**
      * The runtime the shell's SINGLE-MAILBOX surfaces answer for — `organizerState()`,
      * `credentialState()`, `forgetStoredLogin()` and the `adapter` this object exposes.
@@ -2273,10 +2281,10 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
          * `stored_login_cleared` and answered 200 without asking whether the row was gone — a delete that removed
          * nothing read the same from outside, and the shell, seeing 2xx, removed `config.json` with its refusal arm
          * never reached. So the row is deleted and read back in one transaction; a surviving row makes this THROW.
-         * What this does NOT fence: `FOR UPDATE` serializes a competing credential write, not its committing
-         * immediately after — a `PATCH` waiting on the row re-inserts the sealed password after the 200. Closing that
-         * needs a durable signed-out stamp every writer refuses on (`services/src/erasure-fence.ts` is the pattern) —
-         * a shared-service change, ledgered rather than half-done here.
+         * `FOR UPDATE` serializes a competing credential write and does not stop it COMMITTING immediately after —
+         * a `PATCH` that dialled before this ran re-inserts the sealed password after the 200. That is what the
+         * `signed_out_at` stamp below closes: every writer that seals a secret re-reads it under the mailbox's own
+         * row lock and refuses when it moved (`packages/services/src/signed-out-fence.ts`).
          */
         const had = await db.transaction(async (tx) => {
           const before = await dialect(tx).forUpdate(
@@ -2289,6 +2297,13 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
             eq(mailboxCredentials.mailboxId, mb.id),
             eq(mailboxCredentials.transport, "imap"),
           ));
+          /* AND THE DURABLE STAMP, in the same transaction as the delete. Every writer that seals
+             a secret re-reads this column under the mailbox's row lock and refuses when it has
+             moved, which is what closes the writer this transaction can serialize but not stop
+             committing right after it — the shared `PATCH /mailboxes/:id` a paired phone sends.
+             The epoch below is the same rule for this process; the column is the rule on disk. */
+          await tx.update(mailboxes).set({ signedOutAt: now() })
+            .where(eq(mailboxes.id, mb.id));
           const after = await tx.select({ mailboxId: mailboxCredentials.mailboxId }).from(mailboxCredentials)
             .where(and(
               eq(mailboxCredentials.mailboxId, mb.id),
@@ -2420,30 +2435,41 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
          gone. Discarded rather than merely refused: the insert may already have committed. */
       if (durableKey && envPass && !(await storedLogin())) {
         const bootSeal = fence.begin();
+        /* AND THE DURABLE STAMP, read BEFORE the encrypt — the await a sign-out lands inside. The
+           insert runs in a transaction that re-reads it under this mailbox's row lock, so a
+           password a sign-out overtook is never WRITTEN rather than written and removed again. A
+           launch that starts AFTER a sign-out reads the same value it commits against and is
+           admitted: signing out does not stop somebody signing back in. */
+        const sealOrigin: CredentialOrigin = {
+          row: "already-there", signedOutAt: await signedOutAtOf(mb.id),
+        };
         try {
           const sealed = await keyProvider.encrypt(envPass);
-          await db.insert(mailboxCredentials).values({
-            mailboxId: mb.id,
-            transport: "imap",
-            secretEnc: sealed.ciphertext,
-            keyVersion: sealed.keyVersion,
-            // The same non-secret shape the hosted worker writes, so one row shape serves both.
-            meta: {
-              host: mbImap.host, port: mbImap.port,
-              secure: mbImap.secure, user: mbImap.auth.user,
-              /**
-               * And the submission host this password is being sealed for — the outgoing half of the same record. One
-               * password covers both transports, and this is the only place that fact is written down. OMITTED, not
-               * empty, when this launch has no submission server configured — the one place that differs from the door,
-               * deliberately: an empty value states "no outgoing server is authorized", which the door can say because
-               * a door submit is a complete statement the person can make again. This seal is a bootstrap from an
-               * environment (the self-hosted path), where an operator may add the outgoing variable later with no door
-               * to re-save through — "none authorized" would refuse every later send with no recovery surface. Absent
-               * means "this row says nothing", the tolerance every older credential relies on.
-               */
-              ...(isSeed && config.imap.smtp?.host ? { smtpHost: config.imap.smtp.host } : {}),
-            },
-            updatedAt: now(),
+          await db.transaction(async (tx) => {
+            await fenceSignedOutMailbox(tx as never, dialect(db), mb.id, sealOrigin);
+            await tx.insert(mailboxCredentials).values({
+              mailboxId: mb.id,
+              transport: "imap",
+              secretEnc: sealed.ciphertext,
+              keyVersion: sealed.keyVersion,
+              // The same non-secret shape the hosted worker writes, so one row shape serves both.
+              meta: {
+                host: mbImap.host, port: mbImap.port,
+                secure: mbImap.secure, user: mbImap.auth.user,
+                /**
+                 * And the submission host this password is being sealed for — the outgoing half of the same record. One
+                 * password covers both transports, and this is the only place that fact is written down. OMITTED, not
+                 * empty, when this launch has no submission server configured — the one place that differs from the door,
+                 * deliberately: an empty value states "no outgoing server is authorized", which the door can say because
+                 * a door submit is a complete statement the person can make again. This seal is a bootstrap from an
+                 * environment (the self-hosted path), where an operator may add the outgoing variable later with no door
+                 * to re-save through — "none authorized" would refuse every later send with no recovery surface. Absent
+                 * means "this row says nothing", the tolerance every older credential relies on.
+                 */
+                ...(isSeed && config.imap.smtp?.host ? { smtpHost: config.imap.smtp.host } : {}),
+              },
+              updatedAt: now(),
+            });
           });
           if (bootSeal.stale()) {
             await discardCredentialsFor(mb.id);
@@ -2459,6 +2485,16 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                 "key; later launches read it back and need no password in the environment",
             });
           }
+        } catch (err) {
+          /* THE FENCE'S OWN REFUSAL IS NOT A FAILED LAUNCH — nothing was written, so there is
+             nothing to undo and the mailbox comes up with no stored password, which is what
+             signing out asked for. Any other fault still stops the attach. */
+          if ((err as { code?: string }).code !== "signed_out") throw err;
+          log("stored_login_seal_discarded", {
+            mailboxId: mb.id,
+            reason: "this install signed out while the launch was sealing its password, so the "
+              + "row it had just written was removed again and nothing dials on it",
+          });
         } finally {
           bootSeal.settle();
         }
@@ -5801,17 +5837,27 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         }
         if (smtp?.host) {
           if (imapRow && !hasSmtp) {
-            await db.insert(mailboxCredentials).values({
-              mailboxId: seedRow.id,
-              transport: "smtp",
-              // The SAME ciphertext under the SAME key version. See the note above.
-              secretEnc: imapRow.secretEnc,
-              keyVersion: imapRow.keyVersion,
-              meta: {
-                host: smtp.host, port: smtp.port, secure: smtp.secure,
-                user: config.imap.auth.user,
-              },
-              updatedAt: now(),
+            /* THE SIGN-OUT FENCE, because this copies a SECRET. The rows above were read before
+               this repair decided anything, so a sign-out landing in between would leave this
+               writing the removed password back as an `smtp` row — the same window the shared
+               PATCH carries, reached at boot instead of at a press. */
+            const copyOrigin: CredentialOrigin = {
+              row: "already-there", signedOutAt: await signedOutAtOf(seedRow.id),
+            };
+            await db.transaction(async (tx) => {
+              await fenceSignedOutMailbox(tx as never, dialect(db), seedRow.id, copyOrigin);
+              await tx.insert(mailboxCredentials).values({
+                mailboxId: seedRow.id,
+                transport: "smtp",
+                // The SAME ciphertext under the SAME key version. See the note above.
+                secretEnc: imapRow.secretEnc,
+                keyVersion: imapRow.keyVersion,
+                meta: {
+                  host: smtp.host, port: smtp.port, secure: smtp.secure,
+                  user: config.imap.auth.user,
+                },
+                updatedAt: now(),
+              });
             });
             log("seed_submission_login_copied", {
               mailboxId: seedRow.id,

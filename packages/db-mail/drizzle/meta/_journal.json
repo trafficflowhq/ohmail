@@ -757,6 +757,13 @@
       "when": 1791602600011,
       "tag": "0107_release_held_at",
       "breakpoints": true
+    },
+    {
+      "idx": 108,
+      "version": "7",
+      "when": 1791602600012,
+      "tag": "0108_mailbox_signed_out_at",
+      "breakpoints": true
     }
   ]
 }

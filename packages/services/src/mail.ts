@@ -107,6 +107,12 @@ export {
   // this package's own source and the engine's barrel rule refuses to that route.
   type OrganizeHereInput,
 } from "./mailbox-service.js";
+// The sign-out fence's durable half — the engine writes the stamp and seals credentials of its
+// own, so both halves of the rule live in one module rather than two implementations of it.
+export {
+  fenceSignedOutMailbox, readMailboxSignedOutAt, signedOutMidWrite,
+  type CredentialOrigin,
+} from "./signed-out-fence.js";
 // The plan-limit gate the mailbox write path runs inside its transaction.
 /* PUSH: the TYPES only, never the class or the singleton — and from the module that holds only
  * types, which is the part that changed. The implementation reads and writes a subscriptions
