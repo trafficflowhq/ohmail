@@ -666,6 +666,12 @@ export const MAIL_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // worker ahead of the migration fails every page and moves no mail at all — not just this
   // feature's. Deploy order migration → API → worker, 0034's reasoning exactly.
   ["rules", "release_held_at"],
+  // mail 0108_mailbox_signed_out_at — one nullable column: the sign-out's durable stamp, so a
+  // password cannot be sealed back over a sign-out that already reported success. Probed on the
+  // whole-row-select rule above — `MailboxService.list` selects whole rows, so an API deployed
+  // ahead of the migration 42703s the mailbox panel — and the credential writers read it to
+  // refuse a save that began before the sign-out, on this computer or a phone paired to it.
+  ["mailboxes", "signed_out_at"],
 ] as const;
 
 /**
@@ -942,7 +948,7 @@ export const MAIL_EXPECTED_MARKERS =
 // 0067/0068 (the device-sync alert's withdrawn SECURITY DEFINER carrier and its retirement)
 // add no column and get no marker: a function's absence is the ALERT RULE's own isolated,
 // tolerated state, not a schema fault a serving API should 503 over.
-export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0107_release_held_at";
+export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0108_mailbox_signed_out_at";
 
 
 /* `CLOUD_SCHEMA_MARKER_JOURNAL_TAG` moved to `./health-cloud.js`: it is the NAME of a cloud
