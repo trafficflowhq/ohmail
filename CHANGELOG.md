@@ -152,6 +152,27 @@ large mailbox that pass is a quarter of an hour of work — so the figure left o
 doing the most. A large first import read as thirty-four minutes where it had taken forty-seven. The
 import is unchanged; the line describing it is now the whole of it.
 
+### Links and buttons open your browser again on Linux
+
+On Linux a link or a button that should open your browser could do nothing at all, and nothing
+said so. The app now looks for the system opener where distributions keep it, waits to hear
+whether it worked, and puts the address on screen when nothing could open it. Attachments open by
+the same path.
+
+### A slow credit check no longer reads as "AI unavailable"
+
+The check that confirms your account can run a suggestion was given less time than it sometimes
+needs, so a slow moment was reported as AI being unavailable — with the credit already spent. It
+waits as long as it actually needs now, and a check that does run out of time is logged and
+counted instead of passing silently.
+
+### Asking a phone to organize while your mail server is unreachable says so
+
+The phone recorded your consent and reported that organizing had started even when it could not
+reach the mail server, and then showed an organizer notification over a mailbox nothing was
+organizing. It now says it could not check: your consent is kept, and the mailbox is taken on the
+next round.
+
 ## [0.17.0] — 2026-09-12
 
 ### A large mailbox no longer costs the desktop window the whole mailbox
