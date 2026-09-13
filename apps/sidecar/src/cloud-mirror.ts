@@ -2244,11 +2244,10 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
    * Three gates in cost order, each also a correctness statement: the cursor flag (never asked
    * twice); ZERO local tag rows AND a repair that never started (any tag means the type was
    * served — unless this repair's own first page put it there, which is how a run that failed on
-   * page 2 retired itself); and the hosted account HAS tags.
-   * A failed probe is NOT a failed pull — it swallows, leaves the flag unset and retries, or it
-   * would put the write-through proxy into `503 offline_read_only`. It drains the WHOLE snapshot
-   * (the tail carries tagged mail older than the window), sets the flag only on completion, and is
-   * an idempotent upsert, so a crash re-run converges.
+   * page 2 retired itself); and the hosted account HAS tags. A failed probe is NOT a failed pull
+   * — it swallows and retries, or the write-through proxy goes `503 offline_read_only`. It drains
+   * the WHOLE snapshot (the tail carries tagged mail older than the window), sets the flag only on
+   * completion, and is an idempotent upsert, so a crash re-run converges.
    */
   /**
    * THE FIRST SNAPSHOT PAGE, fetched at most once per pull across BOTH one-time repairs (tags,

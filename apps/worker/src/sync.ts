@@ -1330,12 +1330,11 @@ function classifyMoveRefusal(err: unknown): FilingRefusalClass {
  * Execute our intended moves, grouped by (source folder → destination) and filed in batches. Returns
  * whether the budget was reached with rows still pending, which the caller turns into a re-kick (see
  * {@link RECONCILE_MOVES_PER_CYCLE} and {@link MailboxAdapter.moveMany}). THE FALLBACK IS THE DESIGN,
- * not a safety net: `moveMany` answers `declined` for every group it cannot prove equivalent to moving
- * each member on its own, before writing anything, and that group goes through the untouched
- * per-message path. Its third answer, `moved_unmapped`, is the one shape the fallback must NOT take:
- * the mail moved and the server did not say where, so nothing is recorded and nothing is re-issued.
- * Never a half-filed group either way. A throw takes the per-message fallback: that is where a single
- * message earns its own verdict and its own `reconcile.move.failed` row.
+ * not a safety net: `moveMany` answers `declined` — before writing anything — for every group it
+ * cannot prove equivalent, and that group goes through the untouched per-message path. Its third
+ * answer, `moved_unmapped`, is the one shape the fallback must NOT take: the mail moved and the
+ * server did not say where, so nothing is recorded and nothing is re-issued. Never a half-filed
+ * group either way. A throw takes the per-message path, where a message earns its own verdict.
  */
 async function reconcileFolders(deps: SyncDeps): Promise<boolean> {
   const { repo, accountId, mailboxId } = deps;

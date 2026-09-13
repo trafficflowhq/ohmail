@@ -865,8 +865,7 @@ export interface MailboxAdapter {
    * means the server moved the mail and would not say where, so nothing was written and the
    * caller may NOT move it again. `gone` carries members whose UID the source no longer holds
    * ({@link MessageGoneError} reported, not thrown), so one vanished message does not cost the
-   * group; `changesSince` adopts what happened. The group must not exceed
-   * {@link FILING_BATCH_MAX}. Optional; fakes keep compiling.
+   * group. At most {@link FILING_BATCH_MAX}. Optional; fakes keep compiling.
    */
   moveMany?(locators: readonly NativeLocator[], toFolder: string): Promise<MoveManyResult>;
   /* ── The USER-COMMANDED folder verbs (FOLDERS-SPEC.md stage 2) — executed only by the
