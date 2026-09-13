@@ -949,7 +949,7 @@ function isFresh(heartbeat: Date, now: Date, staleAfterMs: number): boolean {
  * handle rather than to hope against. Readers coalesce; the writer cleans up the extras on its
  * next renew.
  */
-function coalesce(claims: readonly ClaimRecord[]): { valid: OrganizerClaim[]; malformed: MalformedClaim[] } {
+function coalesce(claims: readonly ClaimRecord[], now: Date): { valid: OrganizerClaim[]; malformed: MalformedClaim[] } {
   const malformed: MalformedClaim[] = [];
   const newest = new Map<string, OrganizerClaim>();
   for (const c of claims) {
@@ -967,7 +967,7 @@ function coalesce(claims: readonly ClaimRecord[]): { valid: OrganizerClaim[]; ma
     //
     // The nonce is a per-write random, so comparing it gives every reader the same answer from the
     // same set regardless of the order the server hands it over.
-    if (!prior || compareRecency(c, prior) < 0) newest.set(c.installId, c);
+    if (!prior || compareRecency(c, prior, now) < 0) newest.set(c.installId, c);
   }
   return { valid: [...newest.values()], malformed };
 }
@@ -976,17 +976,24 @@ function coalesce(claims: readonly ClaimRecord[]): { valid: OrganizerClaim[]; ma
  * Newest first, and the ONLY comparison in this module between two records of ONE INSTALL: which
  * of these did this machine write last.
  *
- * THE SERVER'S STAMP DECIDES FIRST. But INTERNALDATE has SECOND resolution, and a renew is
- * append-then-expunge — two appends inside one second, same stamp. Falling straight to the nonce
- * ordered our own two claims at RANDOM, the clone defence read the survivor as a live clone of us
- * and the gate answered `available` about a mailbox it had just renewed (one run in three against
- * a real server). So a tie falls to the WRITER's stamp: one clock cannot be wrong about ORDER.
+ * THE WRITER'S CLOCK DECIDES WHILE IT IS BELIEVABLE, and the server's decides otherwise. Between
+ * two INSTALLS the server's stamp is the only honest one; between two records of one install it
+ * answers a different question — INTERNALDATE records ARRIVAL, and a residue re-appended after the
+ * claim that superseded it arrives later than the record that replaced it, wins the fold, and
+ * reaches the clone defence as a stranger wearing our id. One clock cannot be wrong about the
+ * ORDER of its own writes — unless it JUMPED, which is what {@link isBelievableHeartbeat} reads:
+ * a stamp beyond the skew ceiling is not evidence about anything, so the arrival order decides
+ * instead. Absent writer stamps fall back to the (server-substituted) heartbeat, as before.
  */
-function compareRecency(a: OrganizerClaim, b: OrganizerClaim): number {
+function compareRecency(a: OrganizerClaim, b: OrganizerClaim, now: Date): number {
+  const wa = writerStampOf(a);
+  const wb = writerStampOf(b);
+  const believable = isBelievableHeartbeat(new Date(wa), now)
+    && isBelievableHeartbeat(new Date(wb), now);
+  if (believable && wb !== wa) return wb - wa;
   const d = b.heartbeat.getTime() - a.heartbeat.getTime();
   if (d !== 0) return d;
-  const w = writerStampOf(b) - writerStampOf(a);
-  if (w !== 0) return w;
+  if (wb !== wa) return wb - wa;
   return a.nonce < b.nonce ? -1 : a.nonce > b.nonce ? 1 : 0;
 }
 
@@ -1203,7 +1210,7 @@ function compareStrength(a: OrganizerClaim, b: OrganizerClaim): number {
 }
 
 function runElection(claims: readonly ClaimRecord[], now: Date, staleAfterMs: number): Election {
-  const { valid, malformed } = coalesce(claims);
+  const { valid, malformed } = coalesce(claims, now);
   const ceiling = now.getTime() + MAX_FUTURE_SKEW_MS;
   const plausiblePress = new Set<OrganizerClaim>();
   const candidates = valid.map((raw) => {
@@ -1517,7 +1524,7 @@ export function peekLease(input: PeekLeaseInput): LeasePeek {
      `LEASE-PREVIEW-BELIEVABILITY-BOUNDARY`: the preview offered a takeover the gate then refused,
      and the caller's stand-down path spent the person's one-shot press on it. */
   const claims = withServerClock(input.claims);
-  const { valid, malformed } = coalesce(claims);
+  const { valid, malformed } = coalesce(claims, input.now);
 
   /**
    * The preview sees what the gate sees, raw duplicates included. Rule 1/2 scans the RAW list: a
@@ -3292,7 +3299,7 @@ export async function runLeaseGate(input: LeaseGateInput): Promise<LeaseGateResu
        * and its residue are written in the same pass, stamped to the millisecond.
        */
       const newest = ours.reduce<{ ref: unknown; claim: OrganizerClaim } | null>(
-        (best, c) => (best === null || compareRecency(c.claim, best.claim) < 0 ? c : best),
+        (best, c) => (best === null || compareRecency(c.claim, best.claim, now) < 0 ? c : best),
         null);
       const residue = ours
         .filter((c) => c !== newest)
@@ -3459,7 +3466,7 @@ export async function runLeaseGate(input: LeaseGateInput): Promise<LeaseGateResu
    */
   const newestOwn = claims
     .filter((c): c is OrganizerClaim => !isMalformed(c) && c.installId === self.installId)
-    .sort(compareRecency)[0];
+    .sort((a, b) => compareRecency(a, b, now))[0];
   const authorizedAt = verdict.authorized
     ? (input.takeover?.authorizedAt ?? null)
     : (newestOwn?.authorizedAt ?? null);
