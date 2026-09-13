@@ -17,8 +17,24 @@ import { assertAttemptKey } from "./ledger-source.js";
  * reported by name with the offending field and then takes the fault path.
  */
 
-/** The ceiling on every call. Short, because `access` sits in front of mail reads. */
-export const ENTITLEMENTS_CALL_TIMEOUT_MS = 3_000;
+/**
+ * THE BUDGET ON EVERY CALL, AND ITS ORIGIN — a stated budget, not a ceiling somebody liked.
+ *
+ * Measured 2026-09-13 with the program beside its own database: `/v1/access` p50 0.34 s, max
+ * 0.39 s, and p95 291 ms in production. Five seconds is about twelve times that — the room a bad
+ * day needs, and no more, because `screener-service.ts` subtracts this from the admission window
+ * and every second here costs senders per request.
+ *
+ * The 3 000 ms it replaces was the program's OWN p50 while it ran an ocean from its database, and
+ * a budget equal to the far end's typical answer fails on every slow day: it fired on each spend,
+ * the verdict read `fault`, the route answered 503 — and the program completed that same spend
+ * seconds later and CHARGED for it. One number for every path, because no path is slow now.
+ */
+export const ENTITLEMENTS_CALL_BUDGET_MS = 5_000;
+
+/** The program's paths — a closed union, so `post` cannot be sent one nobody has priced. */
+export type EntitlementsPath =
+  | "/v1/access" | "/v1/spend" | "/v1/spend/release" | "/v1/manage-link" | "/v1/account/release";
 
 /** How long an `access` verdict is reused before it is re-read. */
 export const ACCESS_TTL_MS = 60_000;
@@ -39,6 +55,19 @@ export interface ContractFault {
   field: string;
 }
 
+/**
+ * A CALL THE PROGRAM DID NOT ANSWER 200 TO — the outage half, beside {@link ContractFault}'s
+ * drift half. `status` is null when nothing arrived inside the budget. Never a body, never an
+ * account: an outage is every account at once, and one more identifier in a log answers nothing.
+ */
+export interface CallFault {
+  path: string;
+  status: number | null;
+  elapsedMs: number;
+  /** What bounded it, so a reader can tell a slow program from a refusing one. */
+  budgetMs: number;
+}
+
 export interface EntitlementsClientConfig {
   /** `ENTITLEMENTS_URL` — the program's origin. A trailing slash is normalized. */
   baseUrl: string;
@@ -46,7 +75,8 @@ export interface EntitlementsClientConfig {
   secret: string;
   /** Production leaves this absent (global `fetch`); every test injects one. */
   fetchImpl?: EntitlementsFetch;
-  timeoutMs?: number;
+  /** Test-only, per path. Production states nothing and takes the measured budgets above. */
+  budgetsMs?: Partial<Record<EntitlementsPath, number>>;
   ttlMs?: number;
   now?: () => number;
   /**
@@ -54,6 +84,15 @@ export interface EntitlementsClientConfig {
    * nobody can debug when "metering stopped applying" arrives as a finance question.
    */
   onContractFault?: (f: ContractFault) => void;
+  /**
+   * Where an outage goes. Absent ⇒ `console.warn`. Until this existed the fault arm was SILENT:
+   * a program too slow to answer produced a 503 per press and not one line saying why.
+   *
+   * AWAITED, because a host that writes a row here is serverless and is killed the moment it
+   * answers — a floating promise would record nothing on the one platform the row exists for.
+   * It may not throw; if it does, the answer is unchanged and the report is dropped.
+   */
+  onCallFault?: (f: CallFault) => void | Promise<void>;
 }
 
 /** One completed exchange, or the fact that there was not one. */
@@ -159,7 +198,8 @@ export function makeEntitlementsClient(cfg: EntitlementsClientConfig): Entitleme
   }
 
   const base = raw.replace(/\/+$/, "");
-  const timeoutMs = cfg.timeoutMs ?? ENTITLEMENTS_CALL_TIMEOUT_MS;
+  const budgetFor = (p: EntitlementsPath): number =>
+    cfg.budgetsMs?.[p] ?? ENTITLEMENTS_CALL_BUDGET_MS;
   const ttlMs = cfg.ttlMs ?? ACCESS_TTL_MS;
   const clock = cfg.now ?? (() => Date.now());
   const fetchImpl: EntitlementsFetch =
@@ -171,9 +211,25 @@ export function makeEntitlementsClient(cfg: EntitlementsClientConfig): Entitleme
       + "took the fault path (last known verdict, else allow), so nothing is locked out and "
       + "nothing is metered on it.");
   });
+  const reportCall = cfg.onCallFault ?? ((f: CallFault) => {
+    console.warn(
+      `[entitlements] ${f.path} `
+      + (f.status === null ? "did not answer" : `answered ${String(f.status)}`)
+      + ` in ${String(f.elapsedMs)} ms of a ${String(f.budgetMs)} ms budget. The call took the `
+      + "fault path, so no verdict was read from it.");
+  });
   /** A reporter that throws must not replace the answer with its own failure. */
   const named = (path: string, status: number, field: string): void => {
     try { report({ path, status, field }); } catch { /* observability is never load-bearing */ }
+  };
+  const callFault = async (
+    path: EntitlementsPath, status: number | null, startedAt: number,
+  ): Promise<void> => {
+    try {
+      await reportCall({
+        path, status, elapsedMs: Date.now() - startedAt, budgetMs: budgetFor(path),
+      });
+    } catch { /* observability is never load-bearing */ }
   };
 
   /** Per-account verdicts. `freshUntil` bounds REUSE; the value itself is kept for the fault arm. */
@@ -184,9 +240,13 @@ export function makeEntitlementsClient(cfg: EntitlementsClientConfig): Entitleme
    * that answers headers and then stalls still returns at the ceiling. Never throws: every
    * caller here has a degrade arm and a rejection would only move the mapping outwards.
    */
-  const post = async (path: string, payload: unknown): Promise<Exchange | null> => {
+  const post = async (path: EntitlementsPath, payload: unknown): Promise<Exchange | null> => {
+    // `Date.now()`, not the injected clock: a frozen test clock would report every call as
+    // instant and switch the whole line off silently.
+    const startedAt = Date.now();
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(new Error(`entitlements call timed out: ${path}`)), timeoutMs);
+    const timer = setTimeout(
+      () => controller.abort(new Error(`entitlements call timed out: ${path}`)), budgetFor(path));
     (timer as unknown as { unref?: () => void }).unref?.();
     const aborted = new Promise<never>((_, reject) => {
       const fire = (): void => reject(controller.signal.reason ?? new Error("aborted"));
@@ -212,8 +272,10 @@ export function makeEntitlementsClient(cfg: EntitlementsClientConfig): Entitleme
       } catch {
         body = undefined;
       }
+      if (res.status !== 200) await callFault(path, res.status, startedAt);
       return { status: res.status, body, bodyIsJson };
     } catch {
+      await callFault(path, null, startedAt);
       return null;
     } finally {
       clearTimeout(timer);

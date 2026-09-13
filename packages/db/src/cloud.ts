@@ -128,7 +128,8 @@ export {
 /* The API's own 5xx record (cloud 0033). CLOUD-ONLY — `index.ts` does not carry it, because the
  * table does not exist in a local install and the recorder reaches it through a port. */
 export {
-  recordApiFault, apiFaultWindow, poolerRefusalsInWindow, pruneApiFaults, faultClassOf,
+  recordApiFault, entitlementsFaultRow, apiFaultWindow, poolerRefusalsInWindow,
+  pruneApiFaults, faultClassOf,
   API_FAULT_RETENTION_MS, POOLER_REFUSAL_ERROR_CLASS,
   type ApiFaultInput, type ApiFaultArm, type ApiFaultRouteCount,
 } from "./api-faults.js";
@@ -267,6 +268,6 @@ export {
  * lets a host with no such program name the member it fills with `UNMETERED`.
  */
 export {
-  makeEntitlementsClient, ENTITLEMENTS_CALL_TIMEOUT_MS, ACCESS_TTL_MS,
-  type EntitlementsClientConfig, type EntitlementsFetch,
+  makeEntitlementsClient, ENTITLEMENTS_CALL_BUDGET_MS, ACCESS_TTL_MS,
+  type EntitlementsClientConfig, type EntitlementsFetch, type CallFault, type EntitlementsPath,
 } from "./entitlements-client.js";

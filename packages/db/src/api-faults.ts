@@ -37,6 +37,42 @@ export interface ApiFaultInput {
   at: Date;
 }
 
+/**
+ * A CREDIT-CHECK CALL FAULT AS A ROW (cloud 0033) — the mapping, here beside the constraints it
+ * has to satisfy, so it has its own test instead of living inside a composition root.
+ *
+ * The route is SYNTHETIC and names the far end and its path. That is the whole point: the route
+ * whose request failed already writes its own 503 row, so a second row under that pattern would
+ * double the count every rule on this table reads. `entitlements:/v1/spend` is its own series.
+ *
+ * `arm` is a PARAMETER and not a literal, because the honest value is neither of the two this
+ * table admits — `api_faults_arm_check` is `("arm" IN ('api','worker'))`, measured refusing
+ * `entitlements` with 23514 — so the caller passes the arm it really is and a widened CHECK is a
+ * one-value change, not a rewrite.
+ *
+ * The status is CHECK-constrained to 500-599: nothing arriving reads 504, the program's own 5xx
+ * passes through, and anything else reads 502. A 4xx written here would be refused by the
+ * database and take the diagnosis with it.
+ */
+export function entitlementsFaultRow(
+  fault: { path: string; status: number | null }, arm: ApiFaultArm, at: Date,
+): ApiFaultInput {
+  const s = fault.status;
+  return {
+    route: `entitlements:${fault.path}`,
+    method: "POST",
+    status: s === null ? 504 : (s >= 500 && s <= 599 ? s : 502),
+    // A closed pair, not the status spelled into a name: every rule that groups on this column
+    // wants a small set, and the exact status is on the warn line the same call writes.
+    errorClass: s === null ? "EntitlementsCallTimeout" : "EntitlementsCallRefused",
+    // Our own request id is bound by the middleware, downstream of the client that dials. Null is
+    // the state the column names, not a value we could have had and dropped.
+    requestId: null,
+    arm,
+    at,
+  };
+}
+
 /** Ceilings from cloud 0033's `api_faults_len_check`, applied here so a write is refused by the
  *  application before the database refuses it — the row is diagnostic, and losing one to a
  *  constraint violation would take the diagnosis with it. */
