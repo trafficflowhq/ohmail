@@ -4085,30 +4085,17 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         const outcome = await readMailboxLease({ ...leaseArgs, now: gateAskedAt });
         if (outcome.organize) {
           leaseNonce = outcome.nonce;
-          // THE READ ABOVE IS THE PERMIT'S FIRST LOOK, adopted rather than repeated: the gate
-          // renews this install's claim, so a second run here is the same-millisecond
-          // self-stand-down `MIN_PERMIT_TTL_MS` refuses.
-          // No TTL knob: one value for the fleet (`DEFAULT_PERMIT_TTL_MS`). A configurable window
-          // beside a fixed believability cutoff is silently the smaller of the two.
-          leasePermit = await acquireLeasePermit({
-            ...leaseArgs, adopt: { outcome, at: gateAskedAt }, now,
-            /* ── A RENEWAL THIS INSTALL PERFORMED IS THIS INSTALL'S CLAIM ─────────────────
-             *
-             * The permit re-reads past its deadline or its write count, and a re-read RENEWS:
-             * new nonce in the folder, the old copy expunged. Held here, the old nonce made the
-             * next gate read our own claim as a restored clone — this install stood ITSELF down
-             * and left a live claim nobody was behind, refusing the next install for a staleness
-             * window — and made `releaseOwnClaim` address a claim that no longer exists, so
-             * "stop organizing here" released nothing. One writer owns the settled nonce.
-             */
-            onRenew: ({ nonce: renewed, at }) => { leaseNonce = renewed; lastLeaseRenewalAt = at; },
-          });
-          // The gate renewed this install's claim with `gateAskedAt` as its heartbeat — the fact
-          // the release's lapse bound reads. See `lastLeaseRenewalAt`.
-          lastLeaseRenewalAt = gateAskedAt;
-          // Reading the lease is what proves it: a resolved gate clears the unreadable mark.
-          organizer = { organizing: true, reason: null, heldBy: null, unreadableSince: null,
-            releaseRequestedAt: releaseStamp, claimed: true };
+          /* ══ THE ROW FOLLOWS THE CLAIM, WITH NOTHING BETWEEN THEM ══════════════════════════
+           *
+           * `readMailboxLease` has just said ORGANIZE, which means this install's claim stands in
+           * `ohmail/_meta` and has been verified there. From that instant to the row saying
+           * `organizer` nothing else may be awaited: measured at this line the promotion sat behind
+           * `acquireLeasePermit`'s `stampMeta`, an IMAP STATUS worth ~83 ms, and for that whole
+           * window the folder advertised this install as the organizer while its own row said
+           * `reader` — the row every write door consults. So the promotion is issued here and the
+           * permit is taken after it; the permit adopts this same read and needs nothing the row
+           * write produces.
+           */
           // THE MEMORY IS SPENT WITH THE STAMP. Reaching here past a remembered stand-down means a
           // human pressed the button and the lease agreed; leaving the memory set would make the
           // very next poll return false for an install that IS the organizer — it would drain as a
@@ -4199,15 +4186,45 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                 return false;
               }
             } catch (err) {
-              // The gate already said organize and the claim is already written. Failing to spend
-              // the stamp costs one more cycle in which it is still spendable, never correctness.
-              log("organizer_takeover_clear_failed", {
+              /* THE ROLE WENT WITH THE STAMP, so this is not "one more spendable cycle": the write
+               * that failed is the one that makes the row say `organizer`, and without it this
+               * install holds the claim while its row still says `reader` — the state the statement
+               * above exists to prevent, reported rather than left lying. `takeoverAuthorized` is
+               * deliberately NOT cleared here (the clear is inside the try, after the write
+               * resolved), so the stamp is still on the row and the next cycle promotes again. */
+              log("organizer_promotion_failed", {
                 err,
-                reason: "this install is organizing the mailbox; the one-shot authorization could " +
-                  "not be cleared and will be retried on the next cycle",
+                mailboxId: mb.id,
+                reason: "this install holds the organizer claim and its row could not be promoted, " +
+                  "so the row still says reader; the authorization stays on the row and the next " +
+                  "cycle writes it again",
               });
             }
           }
+          // THE READ ABOVE IS THE PERMIT'S FIRST LOOK, adopted rather than repeated: the gate
+          // renews this install's claim, so a second run here is the same-millisecond
+          // self-stand-down `MIN_PERMIT_TTL_MS` refuses.
+          // No TTL knob: one value for the fleet (`DEFAULT_PERMIT_TTL_MS`). A configurable window
+          // beside a fixed believability cutoff is silently the smaller of the two.
+          leasePermit = await acquireLeasePermit({
+            ...leaseArgs, adopt: { outcome, at: gateAskedAt }, now,
+            /* ── A RENEWAL THIS INSTALL PERFORMED IS THIS INSTALL'S CLAIM ─────────────────
+             *
+             * The permit re-reads past its deadline or its write count, and a re-read RENEWS:
+             * new nonce in the folder, the old copy expunged. Held here, the old nonce made the
+             * next gate read our own claim as a restored clone — this install stood ITSELF down
+             * and left a live claim nobody was behind, refusing the next install for a staleness
+             * window — and made `releaseOwnClaim` address a claim that no longer exists, so
+             * "stop organizing here" released nothing. One writer owns the settled nonce.
+             */
+            onRenew: ({ nonce: renewed, at }) => { leaseNonce = renewed; lastLeaseRenewalAt = at; },
+          });
+          // The gate renewed this install's claim with `gateAskedAt` as its heartbeat — the fact
+          // the release's lapse bound reads. See `lastLeaseRenewalAt`.
+          lastLeaseRenewalAt = gateAskedAt;
+          // Reading the lease is what proves it: a resolved gate clears the unreadable mark.
+          organizer = { organizing: true, reason: null, heldBy: null, unreadableSince: null,
+            releaseRequestedAt: releaseStamp, claimed: true };
           return true;
         }
 
