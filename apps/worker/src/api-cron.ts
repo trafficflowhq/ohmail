@@ -13,7 +13,7 @@ import { silentLogger, type Logger } from "@trafficflow/core";
 export interface ApiCronTarget {
   /** Closed name, stable across renames of the path — the key an operator greps for. */
   target: "sessions_reap" | "smtp_size" | "scheduled_send"
-    | "send_reconcile" | "away_responder" | "platform_signals";
+    | "send_reconcile" | "away_responder" | "platform_signals" | "unsubscribe_drain";
   /** The API route, poked as `GET {baseUrl}{route}` with the bearer secret. */
   route: string;
   /** The cadence. Jitter (up to {@link jitterMs}) is ADDED per wait, never subtracted. */
