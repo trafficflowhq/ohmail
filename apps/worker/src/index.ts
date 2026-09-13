@@ -1529,6 +1529,45 @@ export async function startWorkerWithLock(
 
       if (outcome.organize) {
         nonce.leaseNonce = outcome.nonce;
+        /* ── THE ROW FOLLOWS THE CLAIM, WITH NOTHING AWAITED BETWEEN THEM ────────────────
+         *
+         * `readMailboxLease` above appended this install's claim and verified it, so the mailbox is
+         * already ours to every reader of `ohmail/_meta`; `organizer_role` is the authority every
+         * write door consults (`assertOrganizerRole`), so a row still saying `reader` here is this
+         * process answering its own requests `409 organized_elsewhere`, naming itself. It sat AFTER
+         * `acquireLeasePermit`, whose `restamp()` is one IMAP STATUS — a measured 88 ms of exactly
+         * that state per becoming. The permit is a per-pass WRITE RECEIPT; the ROW is the record of
+         * who organizes the mailbox, and `engine.ts` made the same move for the same reason.
+         */
+        if (lease.takeoverAuthorizedAt || lease.disabledReason || lease.organizerRole === "reader") {
+          try {
+            /* ONE-SHOT: the authorization bought this becoming and no other, or a
+             * lapse-then-resubscribe would seize the mailbox back months later from whatever a
+             * human deliberately moved it to. And FENCED — `false` is a write that did not land
+             * (this instance no longer leads the shard, or the row is a tombstone), so the
+             * in-memory mirror may not say it did: flipping it regardless left this process
+             * believing it had promoted a row that still said `reader`, with the press spent.
+             */
+            const promoted = await clearOrganizerStandDown(db, mb.mailboxId, { fence });
+            if (promoted) {
+              lease.takeoverAuthorizedAt = null;
+              lease.disabledReason = null;
+              // The row now says `organizer`, so the next cycle issues no second UPDATE — the
+              // "no-op UPDATE every cycle" `clearOrganizerStandDown`'s header refuses to pay for.
+              lease.organizerRole = "organizer";
+            } else {
+              log.warn("organizer_promotion_fenced", {
+                mailboxId: mb.mailboxId, accountId: mb.accountId,
+                reason: "the row was not promoted — this instance no longer leads the shard, or "
+                  + "the mailbox is a tombstone; the press is unspent and the next cycle retries",
+              });
+            }
+          } catch (err) {
+            // The gate already said organize and our claim is already written. Failing to spend
+            // the stamp costs one more cycle of it being spendable, never correctness.
+            log.warn("organizer_promotion_failed", { mailboxId: mb.mailboxId, accountId: mb.accountId, err });
+          }
+        }
         // THE READ ABOVE IS THE PERMIT'S FIRST LOOK, adopted rather than repeated: the gate renews
         // our claim, so running it twice here is the same-millisecond self-stand-down
         // `MIN_PERMIT_TTL_MS` refuses. Every write in the cycle that follows asks this receipt.
@@ -1540,34 +1579,6 @@ export async function startWorkerWithLock(
              down, and leave a live claim with nobody behind it. See `LeasePermitInput.onRenew`. */
           onRenew: ({ nonce: renewed }) => { nonce.leaseNonce = renewed; },
         });
-        // ONE-SHOT. The authorization bought this becoming and no other; leaving it set would
-        // let a lapse-then-resubscribe seize the mailbox back months later from whatever a human
-        // deliberately moved it to. Written only when there IS something to clear, so the steady
-        // state is zero extra writes per cycle.
-        /* And the row's role is the third term, without which this wrote nothing. The two original
-         * terms were the whole of "there is a stand-down on this row" while a stand-down WAS
-         * `status='disabled'` plus a reason; 0083 moved that fact to `organizer_role` and left
-         * `disabled_reason` with no writer, so for the one shape needing no stamp — a CONSENTED reader
-         * whose foreign organizer released its claim, at which point `decideLease` says organize — both
-         * terms were null and this block was skipped: the lease said organizer, the pipeline ran as
-         * organizer, and the ROW went on saying `reader`. That is not cosmetic: `organizer_role` is the
-         * authority every write door consults (`assertOrganizerRole`), so the process moved mail on
-         * IMAP while its own API answered `409 organized_elsewhere`. `engine.ts` repaired the identical hole.
-         */
-        if (lease.takeoverAuthorizedAt || lease.disabledReason || lease.organizerRole === "reader") {
-          try {
-            await clearOrganizerStandDown(db, mb.mailboxId, { fence });
-            lease.takeoverAuthorizedAt = null;
-            lease.disabledReason = null;
-            // The row now says `organizer`, so the next cycle issues no second UPDATE — the
-            // "no-op UPDATE every cycle" `clearOrganizerStandDown`'s header refuses to pay for.
-            lease.organizerRole = "organizer";
-          } catch (err) {
-            // The gate already said organize and our claim is already written. Failing to spend
-            // the stamp costs one more cycle of it being spendable, never correctness.
-            log.warn("organizer_takeover_clear_failed", { mailboxId: mb.mailboxId, accountId: mb.accountId, err });
-          }
-        }
         return true;
       }
 
