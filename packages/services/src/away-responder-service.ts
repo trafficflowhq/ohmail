@@ -3,7 +3,8 @@ import { awayResponders } from "@trafficflow/db";
 import { createLogger } from "@trafficflow/core/mail";
 import {
   AWAY_ANSWERABLE_PILES, AWAY_PILES_DEFAULT, AWAY_SCREENER_FOLDER, awayScopeFitsAudience,
-  readAwayPiles, type AwayPile,
+  DRAFT_BODY_MAX_BYTES, draftBodyOverCeiling, readAwayPiles, utf8ByteLength,
+  type AwayPile,
 } from "@trafficflow/core/mail";
 import { AWAY_THROTTLES, type AwayThrottle } from "./away-responder-pass.js";
 import { withAccountTx, type ServiceContext } from "./context.js";
@@ -164,7 +165,7 @@ export class AwayResponderService {
   /** PUT /away-responder — full replace / upsert of the account's single row. */
   async put(ctx: ServiceContext, body: AwayResponderBody): Promise<AwayResponderPut> {
     const enabled = body.enabled ?? false;
-    const text = this.validNullableText(body.body, "body");
+    const text = this.validBody(body.body);
     const startsAt = this.validDate(body.startsAt, "startsAt");
     const endsAt = this.validDate(body.endsAt, "endsAt");
     const audience = this.validAudience(body.audience);
@@ -328,9 +329,32 @@ export class AwayResponderService {
     return v as AwayThrottle;
   }
 
-  private validNullableText(v: unknown, field: string): string | null {
+  /**
+   * THE NOTICE'S BODY, TYPE-CHECKED AND BOUNDED — the one field on this route whose size a caller
+   * chooses.
+   *
+   * It was type-checked and nothing else. The row is stored once and then placed in an
+   * `OutboundMessage` the worker sends over SMTP to every eligible correspondent for as long as
+   * the responder is on, so the request door's ceiling is a bound on ONE request and not on this
+   * value's life: a single PUT buys unbounded outbound bytes. That is the shape a `door:`
+   * disposition may not be used for, stated in the input-bounds census at the attachment door
+   * that learned it.
+   *
+   * {@link DRAFT_BODY_MAX_BYTES} rather than a number of its own, for the reason that constant's
+   * own docblock gives about the two draft halves: two ceilings on the same kind of value are a
+   * second number to keep true. This is the same kind of value — a plain body this product sends
+   * as mail — and 256 KiB is a tripwire rather than a working part, far past anything a person
+   * types into an away notice.
+   */
+  private validBody(v: unknown): string | null {
     if (v === undefined || v === null) return null;
-    if (typeof v !== "string") throw new ServiceError("validation_failed", 400, `${field} must be a string`);
+    if (typeof v !== "string") throw new ServiceError("validation_failed", 400, "body must be a string");
+    if (draftBodyOverCeiling(v)) {
+      throw new ServiceError(
+        "body_too_large", 413,
+        `this notice is ${utf8ByteLength(v)} bytes of text; the limit is ${DRAFT_BODY_MAX_BYTES}`,
+      );
+    }
     return v;
   }
 
