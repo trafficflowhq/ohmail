@@ -4,6 +4,7 @@ import { ImapAdapter, buildImapAuth, type CredMetaAuth } from "@trafficflow/core
 import { ServiceError, type OpenAdapter, type AttachmentAdapter } from "@trafficflow/services/mail";
 import type { ApiDeps } from "./deps.js";
 import { imapAdmission } from "./routes/shared.js";
+import { IMAP_OPERATION_DEADLINE_MS, raced } from "./imap-budget.js";
 
 /**
  * Build the API's `openAdapter` for on-demand attachment fetch. Mirrors the sync worker's creds
@@ -42,6 +43,13 @@ export const IMAP_SLOT_WAIT_MS = 2_000;
 export interface OpenAdapterOptions {
   maxPerMailbox?: number;
   waitMs?: number;
+  /**
+   * The PER-OPERATION clock, defaulting to {@link IMAP_OPERATION_DEADLINE_MS}. Injectable the way
+   * the door's own `budgetMs` is: a case drives the MECHANISM — a hung operation ends, the socket
+   * is destroyed, a later `close()` is a no-op — without waiting out the shipping ceiling, and a
+   * case beside it asserts the DEFAULT is that ceiling, so neither half is taken on trust.
+   */
+  operationBudgetMs?: number;
 }
 
 /**
@@ -169,17 +177,40 @@ export async function openMailboxImap(
 export function makeOpenAdapter(deps: ApiDeps, opts: OpenAdapterOptions = {}): OpenAdapter {
   const max = opts.maxPerMailbox ?? MAX_IMAP_PER_MAILBOX;
   const waitMs = opts.waitMs ?? IMAP_SLOT_WAIT_MS;
+  const operationMs = opts.operationBudgetMs ?? IMAP_OPERATION_DEADLINE_MS;
 
   return async (mailboxId: string): Promise<AttachmentAdapter> => {
     const opened = await openImapUnderCap(deps, mailboxId, max, waitMs);
+    /* ── ONE CLOCK PER OPERATION, AND THE SOCKET DIES ON A BREACH ──────────────────────────
+     *
+     * This door holds ONE adapter across a multi-part walk and closes it itself, so the door's
+     * own dial-and-read budget is the wrong unit in both directions: it would end an honest
+     * download making steady progress, and a walk of parts each just under it is a stall nothing
+     * sees. The unit is one operation — see {@link IMAP_OPERATION_DEADLINE_MS}.
+     *
+     * A breach DESTROYS the socket rather than leaving it for the caller's `close()`, for the
+     * reason `imap-door.ts` states: a graceful close is a LOGOUT the driver queues behind the
+     * command that is hanging, so the teardown would wait in the same queue as the read we just
+     * gave up on — and the mailbox's slot in the shared cap with it. `dead` latches so the
+     * caller's own `close()` afterwards is a no-op rather than that same queued LOGOUT.
+     */
+    let dead = false;
     return {
       // FORWARD `opts` — the ceiling is decided by the service and enforced inside the stream, so
       // dropping it here would leave `ATTACHMENT_MAX_FETCH_BYTES` looking enforced at every layer
       // that reads like it while the only code that can actually stop a 90 MB download never hears
       // the number. The pre-flight would still fire on honest metadata, which is precisely what
       // makes the omission invisible in a test that uses honest metadata.
-      fetchPart: (locator, partId, o) => opened.adapter.fetchPart(locator, partId, o),
-      close: () => opened.close(),
+      fetchPart: async (locator, partId, o) => {
+        try {
+          return await raced(opened.adapter.fetchPart(locator, partId, o), operationMs);
+        } catch (err) {
+          dead = true;
+          await opened.forceClose().catch(() => { /* already down; the slots are released */ });
+          throw err;
+        }
+      },
+      close: async () => { if (!dead) await opened.close(); },
     };
   };
 }
