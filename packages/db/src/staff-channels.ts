@@ -94,7 +94,7 @@ export const AUDIT_LOG_ACTIONS: readonly string[] = [
   "admin.mailbox.resync", "admin.account.suspend", "admin.account.resume", "admin.send.retry",
   "admin.credits.adjust", "admin.oauth.microsoft.save",
   // ── the routing pipeline (`packages/core/src/pipeline.ts`) ───────────────────────────────
-  "move", "move_deferred", "move_superseded", "adopt_external",
+  "move", "move_deferred", "move_superseded", "adopt_external", "adopt_superseded",
   // ── the worker's reconcile passes (`apps/worker/src/sync.ts`, `junk-*.ts`) ───────────────
   "reconcile.move", "reconcile.move.superseded", "reconcile.move.voided", "reconcile.move.failed",
   "reconcile.flags", "reconcile.flags.retired", "reconcile.flags.no_locator",
