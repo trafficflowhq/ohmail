@@ -4,11 +4,11 @@ import { ServiceError } from "./errors.js";
  * Ceilings on what STORED STATE may make a request read — the database twin of the adapter's
  * `imap-bounds.ts` and of the request door's input bounds, the axis neither can see: the input
  * bounds bound a REQUEST's size and the IMAP bounds what a SERVER sends, but a request carrying one
- * id can read a collection this account has filled for a year with no cardinality ceiling — an
- * `FR-ACCUMULATED-STATE-
- * UNBOUNDED` read, invisible to both censuses. The rule is the adapter's, for a database: bound the
- * READ, not the RESULT, so every bound here reads one row PAST its ceiling and refuses when it
- * arrives — a `LIMIT` with no refusal only answers a COUNT with an arbitrary subset, not a stated one.
+ * id can read a collection this account has filled for a year with no cardinality ceiling — a read
+ * of that shape is invisible to both censuses by construction, which is why the ceiling lives here.
+ * The rule is the adapter's, for a database: bound the READ, not the RESULT, so every bound here
+ * reads one row PAST its ceiling and refuses when it arrives — a `LIMIT` with no refusal only
+ * answers a COUNT with an arbitrary subset, not a stated one.
  */
 
 /**
