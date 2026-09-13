@@ -60,8 +60,13 @@ const asTx = (ctx: ServiceContext): Tx => ctx.db as unknown as Tx;
  * the list is shown BEFORE anything acts on it, and confirming it is the consent event. Three
  * narrowings: ADDRESS-LEVEL ONLY, never domain (writing to one person at a provider says nothing
  * about the rest; domain-wide consent stays an explicit user rule); TO AND CC both count (copying
- * somebody in is addressing them); NO RETRO — a seeded rule routes future mail and moves nothing
- * that exists: one confirmation must never turn into thousands of moves.
+ * somebody in is addressing them); NO RETRO — a seeded rule routes future mail and does not
+ * re-file mail that is already filed: one confirmation must never turn into thousands of moves.
+ *
+ * The one thing it DOES release is the mail this account's own gate is still holding from those
+ * people: rows whose desired and observed folder are both `ohmail/Screener`, and nothing else.
+ * That is not the past — it is mail waiting for the very decision being made. See
+ * {@link confirmSeed}, which carries the measurement.
  */
 
 /**
@@ -493,14 +498,28 @@ function chunked<T>(items: readonly T[], size: number): T[][] {
 /* ── the confirmation ─────────────────────────────────────────────────────────────────── */
 
 /**
- * Write the consent the user just gave. One transaction, no mail moved. The addresses are
- * INTERSECTED with a freshly computed review list, never trusted: the list is the offer, and a
- * confirmation can only be a subset of it. `retroRequestedAt` stays NULL and no `folder_state`
- * row is touched — a bulk import of consent must not become thousands of moves. One effect per
- * person is enforced by a ROW LOCK and a re-read (two concurrent submits used to both insert
- * duplicates): the transaction opens by locking `account_settings`, THEN asks which addresses
- * already carry a rule — a concurrent confirm's rules are visible and drop out. The stamp records
- * WHEN the review was last confirmed: re-running writes rules for whoever is new.
+ * Write the consent the user just gave. One transaction, NO `folder_state` row touched here: the
+ * addresses are INTERSECTED with a freshly computed review list, never trusted — the list is the
+ * offer and a confirmation can only be a subset of it. One effect per person is enforced by a ROW
+ * LOCK and a re-read (two concurrent submits used to both insert duplicates): the transaction
+ * opens by locking `account_settings`, THEN asks which addresses already carry a rule — a
+ * concurrent confirm's rules are visible and drop out. The stamp records WHEN the review was last
+ * confirmed: re-running writes rules for whoever is new.
+ *
+ * ── AND THE MAIL THIS ACCOUNT'S GATE IS ALREADY HOLDING FROM THESE PEOPLE ─────────────────
+ *
+ * The rules carry `release_held_at` EQUAL TO `retro_requested_at`, which is
+ * `rule-retro.ts#isReleaseRun`'s shape: that pass then walks ONLY rows whose desired AND observed
+ * folder are both the screening gate, for the senders these rules name. It is not a retroactive
+ * apply — "consent granted in bulk must not move the past" still holds for every row outside the
+ * gate, and the pass's own five user-intent exclusions still apply to the ones inside it.
+ *
+ * Written because the absence was MEASURED costing mail: a reported account confirmed its seed
+ * the day after its import, five of one correspondent's messages were still sitting at the gate
+ * from the day before, nothing was ever owed for them (a NULL `retro_requested_at` is not owed
+ * work), and months later the Screener was still calling a decade-long correspondent a first-time
+ * sender. The seed confirmation IS the press — a person naming somebody they write to is
+ * consenting to exactly this.
  */
 export async function confirmSeed(
   ctx: ServiceContext, addresses: readonly string[],
@@ -581,6 +600,11 @@ export async function confirmSeed(
     }
 
     let lastSeq: bigint | null = null;
+    /* ONE INSTANT, READ ONCE, FOR BOTH COLUMNS — and that is load-bearing rather than tidy.
+       `isReleaseRun` decides by `getTime()` EQUALITY, and `ctx.now()` in production is
+       `() => new Date()`: two calls a millisecond apart would write a pair that is never a
+       release run, and the gate would go on holding the mail with nothing to show for it. */
+    const releaseAt = ctx.now();
     for (const part of chunked(write, WRITE_CHUNK)) {
       const rows = await tx.insert(rules).values(part.map((c) => ({
         accountId: ctx.accountId,
@@ -590,8 +614,10 @@ export async function confirmSeed(
         priority: 0,
         enabled: true,
         provenance: "seeded-from-sent",
-        // NULL, always. See the note above: consent granted in bulk must not move the past.
-        retroRequestedAt: null,
+        // THE RELEASE SHAPE, equal by construction — see the note above. Not a retroactive apply:
+        // the pass's release arm walks only rows settled AT THE GATE, so the past stays put.
+        releaseHeldAt: releaseAt,
+        retroRequestedAt: releaseAt,
       }))).returning({ id: rules.id });
       const seqs = await recordRuleDelta(tx, ctx.accountId, rows.map((r) => r.id), "create");
       lastSeq = seqs[seqs.length - 1] ?? lastSeq;

@@ -886,7 +886,7 @@
       "machine-sent": "found in an automatic reply you sent",
       "own-address": "one of your own addresses"
     },
-    "willDo": "This adds a rule for the {count, plural, one {1 person} other {# people}} ticked. It doesn't move any mail — everything stays where your mail server has it.",
+    "willDo": "This adds a rule for the {count, plural, one {1 person} other {# people}} ticked. Anything of theirs waiting in the Screener moves to your Ohbox; the rest of your mail stays where your mail server has it.",
     "confirm": "Let {count, plural, one {1 person} other {# people}} through",
     "confirming": "Saving…",
     "later": "Not now",

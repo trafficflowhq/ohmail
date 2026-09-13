@@ -886,7 +886,7 @@
       "machine-sent": "in einer automatischen Antwort von dir gefunden",
       "own-address": "eine deiner eigenen Adressen"
     },
-    "willDo": "Das legt eine Regel für {count, plural, one {die 1 angehakte Person} other {die # angehakten Leute}} an. Es verschiebt keine Post — alles bleibt dort, wo dein Mailserver es hat.",
+    "willDo": "Das legt eine Regel für {count, plural, one {die 1 angehakte Person} other {die # angehakten Leute}} an. Was von ihnen im Screener wartet, wandert in deine Ohbox; der Rest deiner Post bleibt dort, wo dein Mailserver ihn hat.",
     "confirm": "{count, plural, one {1 Person} other {# Leute}} durchlassen",
     "confirming": "Wird gespeichert …",
     "later": "Nicht jetzt",
