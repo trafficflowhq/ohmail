@@ -190,24 +190,22 @@ export async function gateReleasePass(
       .orderBy(asc(rulesTbl.id))
       .limit(batch);
 
-    if (armable.length > 0) {
-      const ids = armable.map((r) => r.id);
-      for (const id of ids) {
-        /* THE RELEASE SHAPE, ONE INSTANT FOR BOTH COLUMNS — `isReleaseRun` compares `getTime()`,
-           so two clock reads a millisecond apart would write a pair that is never a release run
-           and the gate would go on holding the mail. `retro_moved` is reset with the cursor
-           because this re-opens the WALK. */
-        await tx.update(rulesTbl)
-          .set({
-            releaseHeldAt: now, retroRequestedAt: now,
-            retroDoneAt: null, retroCursor: null, retroMoved: 0, updatedAt: now,
-          })
-          .where(and(eq(rulesTbl.id, id), eq(rulesTbl.accountId, accountId)));
-      }
-      // One delta for the page: a client renders `release_held_at` and the retro cursor, so a
-      // mirror that never heard of this would show the rules as they stood until something else
-      // touched them.
-      await recordRuleDelta(tx as unknown as LedgerTx, accountId, ids, "update");
+    for (const r of armable) {
+      /* THE RELEASE SHAPE, ONE INSTANT FOR BOTH COLUMNS — `isReleaseRun` compares `getTime()`, so
+         two clock reads a millisecond apart would write a pair that is never a release run and the
+         gate would go on holding the mail. `retro_moved` is reset with the cursor because this
+         re-opens the WALK. */
+      await tx.update(rulesTbl)
+        .set({
+          releaseHeldAt: now, retroRequestedAt: now,
+          retroDoneAt: null, retroCursor: null, retroMoved: 0, updatedAt: now,
+        })
+        .where(and(eq(rulesTbl.id, r.id), eq(rulesTbl.accountId, accountId)));
+      // THE DELTA, IN THE SAME BLOCK AS THE WRITE — `releaseHeld` does it this way and
+      // `rule-state-delta-census.test.ts` refuses a rule write whose block has no door call. A
+      // client renders `release_held_at` and the retro cursor, so a mirror that never heard of
+      // this would show the rule as it stood until something else touched it.
+      await recordRuleDelta(tx as unknown as LedgerTx, accountId, [r.id], "update");
     }
 
     /* HALF TWO: THE SENDERS WHO ARE ONLY A CONTACT. No rule means nothing to arm, and
