@@ -150,6 +150,29 @@ Every path lands on the same stack, so every guide shares the same facts:
   means re-entering every connected mailbox. [BACKUP.md](./BACKUP.md) says
   where to keep it.
 
+## Checking the install
+
+Four readings, in order, and each one tells you which half is wrong:
+
+1. **Every service is healthy.** `docker compose ps` — `db`, `api`, `web`,
+   `organizer`, `minio` and `proxy` all `running`, and the ones that declare a
+   health check `(healthy)`. `api` only reports healthy after its boot
+   migrations verified the schema, so a healthy `api` is a migrated database.
+2. **The API answers as ohmail.** `curl -s https://mail.example.com/api/hello`
+   returns JSON naming `"product": "ohmail"` and a `"flavor"`. Anything else
+   answering there — a router page, a parked domain, a default nginx — returns
+   200 too, which is why the product name is the check.
+3. **The front door serves the app.** Open your origin in a browser. The sign-in
+   page is the proxy, the web container and the API all working together.
+4. **First mail arrives.** Connect one mailbox and watch the message count move.
+   Nothing else proves the organizer is polling.
+
+The full first-run ceremony — redeem the setup token, register, enroll an
+authenticator, connect two mailboxes, seed mail, push bytes through a staging
+upload — runs as this project's own control on every change. It is not part of
+an install: it builds images from a checkout and registers a throwaway account,
+so it belongs beside the source and not beside your stack.
+
 ## Screener suggestions and reply drafts
 
 Both are off until you configure a model, and both are optional: with no model
