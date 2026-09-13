@@ -57,6 +57,15 @@ export interface MailboxReach {
   reachable: boolean;
   /** The server answered and refused the sign-in — a different fact with a different remedy. */
   signInRefused: boolean;
+  /**
+   * THE STORED PASSWORD COULD NOT BE USED, so no server was dialled at all — `null` when it was.
+   *
+   * Its own fact, above `reachable` in the state ladder: "can't reach the mail server" would send
+   * somebody to look at a network that is working perfectly. `confirmed` is whether a second,
+   * fresh read agreed — the advice waits for it, because a store that was not ready yet is not a
+   * password anybody needs to re-type.
+   */
+  credentialBlocked: { state: "unreadable" | "foreign-host"; confirmed: boolean } | null;
   /** ISO instant of the FIRST observation of death in the current outage; null while reachable. */
   unreachableSince: string | null;
 }
@@ -278,6 +287,14 @@ export async function readMailboxReachVia(
   if (typeof body !== "object" || body === null || Array.isArray(body) || !Array.isArray(items)) {
     return faulted("not-a-roster", res.status);
   }
+  const credentialBlock = (raw: unknown): MailboxReach["credentialBlocked"] => {
+    if (typeof raw !== "object" || raw === null) return null;
+    const b = raw as { state?: unknown; confirmed?: unknown };
+    if (b.state !== "unreadable" && b.state !== "foreign-host") return null;
+    /* `confirmed` ABSENT READS AS `false`, which is the safe half: the row states the outage and
+       withholds the advice, rather than telling somebody to sign in again on one reading. */
+    return { state: b.state, confirmed: b.confirmed === true };
+  };
   /* ── ONE ELEMENT IS A FACT ABOUT ONE ROW, NEVER ABOUT THE WHOLE READ ───────────────────
    * `const it = raw as {…}` then `it.mailboxId` THREW on a `null` element, and the throw
    * left the whole function — `setReach` never ran, the slice on screen stayed whatever it
@@ -291,13 +308,15 @@ export async function readMailboxReachVia(
   for (const raw of items) {
     const it = (typeof raw === "object" && raw !== null ? raw : {}) as {
       mailboxId?: unknown; reachable?: unknown; unreachableSince?: unknown; signInRefused?: unknown;
+      credentialBlocked?: unknown;
     };
     /* NO ID, NOTHING TO SAY IT ABOUT. Dropped rather than faulted: marking the slice would let one
        unattributable entry speak for rows it never named. */
     if (typeof it.mailboxId !== "string" || it.mailboxId === "") continue;
     if (typeof it.reachable !== "boolean") {
       out[it.mailboxId] = {
-        answered: false, reachable: false, signInRefused: false, unreachableSince: null,
+        answered: false, reachable: false, signInRefused: false, credentialBlocked: null,
+        unreachableSince: null,
       };
       continue;
     }
@@ -309,6 +328,10 @@ export async function readMailboxReachVia(
          cannot have refused a sign-in, and the dangerous default is the other one — telling
          somebody their password was rejected because their app is out of date. */
       signInRefused: it.signInRefused === true,
+      /* READ AS A PAIR OR NOT AT ALL, on the rule above: an engine older than the field says
+         nothing, and half of this object is not a fact. A `state` outside the two the engine can
+         send is dropped rather than rendered — the sentence is chosen by it. */
+      credentialBlocked: credentialBlock(it.credentialBlocked),
     };
   }
   /* STAMPED WHERE THE ANSWER IS MADE, not where it is stored: the sequence guard discards a read
@@ -1148,6 +1171,20 @@ export function DesktopMailboxes(
        answer to the same question and the generic one would send somebody to check a network
        that is working perfectly. */
     if (r?.signInRefused) return say(t("desktopStateSignInRefused"));
+    /* ── THE PASSWORD ON THIS COMPUTER, NOT THE SERVER — and it outranks the outage arm below.
+     *
+     * No socket was opened at all: the stored password could not be read, or it was proved
+     * against a different server and withheld. "Can't reach the mail server" would send somebody
+     * to look at a network that is working, and "Up to date" — which is what this row said until
+     * the engine learned to record it — is a mailbox that stopped syncing wearing its healthy
+     * state. The ADVICE waits for `confirmed`: a store that was not ready on one reading is not a
+     * password anybody needs to re-type, and asking for work that is not theirs is the thing this
+     * pane's sentences exist to avoid. */
+    if (r?.credentialBlocked) {
+      const { state, confirmed } = r.credentialBlocked;
+      if (state === "foreign-host") return say(t("desktopStateCredentialForeign"));
+      return say(t(confirmed ? "desktopStateSignInAgain" : "desktopStateCredentialUnreadable"));
+    }
     /* ── THE ENGINE COULD NOT SAY, AND THAT IS ITS OWN SENTENCE ──────────────────────────
      * Only when the row has no answer of its own, and only when the absence is NEWS —
      * {@link reachUnknownForRow} owns that, because this arm used to read `reach.faulted`

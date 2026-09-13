@@ -176,7 +176,7 @@ import {
 // remove them. See that file's header for what is per mailbox and what is per install.
 import {
   LocalRoster,
-  type CredentialState, type LocalMailboxRuntime, type MailboxConnectionState,
+  type CredentialBlock, type CredentialState, type LocalMailboxRuntime, type MailboxConnectionState,
   type OrganizerState,
 } from "./roster.js";
 // Removing a mailbox takes this install's copy of its mail with it. See `local-mirror.ts` for why
@@ -214,7 +214,9 @@ export type SidecarImapConfig = Omit<ImapConfig, "auth"> & { auth: { user: strin
  * process was the same statement as the mailbox's while there was one mailbox; with several it
  * would be an answer about whichever one the shell happened to ask about last.
  */
-export type { CredentialState, FirstSyncState, MailboxConnectionState, OrganizerState } from "./roster.js";
+export type {
+  CredentialBlock, CredentialState, FirstSyncState, MailboxConnectionState, OrganizerState,
+} from "./roster.js";
 
 /**
  * WHAT THE ENGINE HANDS A DIAL — currently the one thing an adapter cannot report by throwing.
@@ -2514,7 +2516,11 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
       const dialUnder = fence.generation();
       /** Whether a sign-out has happened since this mailbox resolved its password. */
       const signedOutSinceDial = (): boolean => fence.generation() !== dialUnder;
-      const login = await resolveLogin();
+      /* `let`, and the one writer is {@link rereadCredential}. A launch that cannot open its
+         stored password is an outage this install can come out of without a restart — the person
+         re-enters it, the next poll's read opens the row, and this binding is what the dial then
+         uses. Nothing else reassigns it. */
+      let login = await resolveLogin();
       if (login.state === "absent") {
         log("stored_login_absent", {
           mailboxId: mb.id,
@@ -2574,7 +2580,10 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
        * when there is no password to derive from (an OAuth mailbox, or a login not yet resolved),
        * which is the honest degraded mode: no key means the claim advertises no `requests` and a
        * reader is refused at the door with the holder named. */
-      const requestKey = deriveRequestKey({ auth: imapConfig.auth, address: mb.address });
+      /* `let` for `imapConfig.auth`'s reason and not a second one: this key IS the credential
+         this mailbox dials with, so the two move together or the invariant above is broken by
+         whichever of them moved alone. */
+      let requestKey = deriveRequestKey({ auth: imapConfig.auth, address: mb.address });
 
       // The connection's own state — the fact the engine used to have no way to hold. A desktop
       // process outlives its sockets: a lid closed past the provider's idle timeout, a Wi-Fi
@@ -2621,6 +2630,16 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
        * the flag would have survived the very act that fixes it.
        */
       let signInRefused = false;
+      /**
+       * THE STORED PASSWORD THIS LAUNCH COULD NOT DIAL WITH — see {@link CredentialBlock}.
+       *
+       * Its own field and not a second meaning for `signInRefused`: nothing answered this launch,
+       * so the sentence about a server refusing a sign-in would be true of nothing that happened.
+       * Set from `start()`'s non-ready arm, which used to return in silence — `outageSince` stayed
+       * null over a mailbox that was not syncing, and Settings said "Up to date". Cleared only by
+       * a fresh read that opens the row; the credential itself is never discarded here.
+       */
+      let credentialBlock: CredentialBlock | null = null;
       /**
        * WHAT THIS MAILBOX'S FIRST SYNC HAS PRODUCED — the third answer the connection record
        * carries, derived from the drain's own stamps and the mirror's own rows. See
@@ -2701,6 +2720,95 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
        * instance is what gets closed (never the mutable binding, which a re-dial may already have
        * moved on) and the generation is what decides whether this death is still news.
        */
+      /**
+       * ONE STEP UP THE RE-DIAL LADDER — the ONE writer of the automatic wait.
+       *
+       * Extracted rather than written twice: a launch that cannot READ its password retries the
+       * READ on this same schedule, and a second copy of the jitter would be a second cadence
+       * nobody keeps in step with the first. Jittered so several mailboxes on one server do not
+       * knock in unison after an outage.
+       */
+      const climbTheLadder = (): void => {
+        redialAttempts += 1;
+        const step = redialStepMs(reconnect, redialAttempts);
+        redialNotBefore = Date.now() + Math.round(step * (0.8 + Math.random() * 0.4));
+      };
+
+      /**
+       * THE STORED PASSWORD COULD NOT BE USED, AND THAT IS AN OUTAGE — see {@link credentialBlock}.
+       *
+       * `start()` used to return here in silence: nothing dialled, no detector fired,
+       * `outageSince` stayed null and the connections route answered `reachable: true`, so
+       * Settings said "Up to date" over a mailbox that had stopped syncing. The clocks are the
+       * SAME two an unreachable server sets — `connectionDeadSince` is what arms the retry,
+       * `outageSince` is what a person is shown — and the schedule is the same ladder, because a
+       * password that opens on the next read is a mailbox that heals without a restart.
+       */
+      const noteLoginUnusable = (state: CredentialBlock["state"]): void => {
+        if (stopped) return;
+        credentialBlock = { state, confirmed: false };
+        if (connectionDeadSince === null) {
+          connectionDeadSince = now();
+          connectionDeadBy = "event";
+        }
+        outageSince ??= connectionDeadSince;
+        log("mailbox_login_unavailable", {
+          mailboxId: mb.id,
+          state,
+          verdict: "first-read",
+          reason: "this launch holds a stored password it could not dial with, so nothing was " +
+            "connected and this mailbox is not syncing. The row is untouched and is NOT thrown " +
+            "away; the next poll reads it again, and re-entering the password re-seals it",
+        });
+      };
+
+      /**
+       * READ THE STORED PASSWORD AGAIN, AND USE IT IF IT OPENS. Answers whether it did.
+       *
+       * No network and no login attempt: a mailbox with no usable password is waiting for a
+       * person, and dialling one repeatedly is how a wrong password becomes a locked account. On
+       * a read that opens, the connection config and the derived request key move TOGETHER —
+       * that key is HKDF over the password this mailbox dials with, so leaving it behind would
+       * make every request record refuse as a forgery. A failing read CONFIRMS the block: the
+       * advice a person is shown waits for a second, independent reading of the same fact.
+       */
+      const rereadCredential = async (): Promise<boolean> => {
+        const fresh = await resolveLogin();
+        if (fresh.state === "ready" && fresh.pass) {
+          login = fresh;
+          imapConfig.auth = { user: mbImap.auth.user, pass: fresh.pass };
+          requestKey = deriveRequestKey({ auth: imapConfig.auth, address: mb.address });
+          credentialBlock = null;
+          log("mailbox_login_restored", {
+            mailboxId: mb.id,
+            state: fresh.state,
+            attempt: redialAttempts,
+            reason: "the stored password opened on a later read, so this mailbox dials with it " +
+              "now rather than at the next launch",
+          });
+          return true;
+        }
+        /* A ROW THAT IS GONE IS NOT A BLOCK. Somebody signed out: nothing is stored, the shell
+           shows a password field, and claiming an unreadable credential would be a sentence about
+           a row that does not exist. The outage clocks are left as any sign-out mid-outage leaves
+           them — `noteCycleServed` is the one writer that clears them. */
+        if (fresh.state === "absent" || fresh.state === "ready") {
+          credentialBlock = null;
+          return false;
+        }
+        credentialBlock = { state: fresh.state, confirmed: true };
+        log("mailbox_login_unavailable", {
+          mailboxId: mb.id,
+          state: fresh.state,
+          verdict: "confirmed",
+          attempt: redialAttempts,
+          reason: "a second, fresh read of the stored password answered the same way, so this is " +
+            "not a store that was briefly unready and the person is told to sign in again. " +
+            "Nothing was deleted: re-entering the password re-seals the row under this key",
+        });
+        return false;
+      };
+
       const dialAdapter = (): MailboxAdapter => {
         const gen = ++generation;
         let self: MailboxAdapter | null = null;
@@ -4889,6 +4997,12 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
            half-open link reached the drain and hung inside it. Never throws. */
         await heartbeat();
         await redialIfDead({ force: opts.force === true });
+        /* AND NOTHING IS DRAINED OVER A CONNECTION THAT WAS NEVER OPENED. The poll is armed for a
+           mailbox whose stored password could not be used so the READ is retried on the ladder —
+           see `redialIfDead` — and a drain here would fail on every tick against an adapter that
+           has never connected, filing `sync_cycle_failed` for a state the connection record
+           already states. `0` is the honest count: nothing was served. */
+        if (credentialBlock !== null) return 0;
         try {
           const cycles = await drainPass(maxCycles);
           noteCycleServed();
@@ -5196,11 +5310,6 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
        */
       const redialIfDead = async ({ force = false }: { force?: boolean } = {}): Promise<void> => {
         if (stopped || connectionDeadSince === null || redialling) return;
-        /* THE SAME PRECONDITION `start()` KEEPS, and for the same reason: an empty password is a
-           login attempt the server will refuse, and a refused login counts toward a lockout on
-           some providers. A mailbox with no usable credential is not unreachable, it is waiting
-           for a person, and dialling it repeatedly would turn that into a locked account. */
-        if (login.state !== "ready" || !login.pass) return;
         /* ── A REFUSED SIGN-IN IS NOT RETRIED, AND A FAILING SERVER IS BACKED OFF ────────────
          *
          * Both are the same defect seen from two sides: a dial that cannot succeed being repeated
@@ -5210,8 +5319,22 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         if (signInRefused) return;
         /* THE PRESS SKIPS THE LADDER, AND THE FLOOR UNDER THE PRESS IS ITS OWN. See
            {@link forcedNotBefore}: a forced dial that failed a moment ago has not become worth
-           repeating because somebody pressed again. */
+           repeating because somebody pressed again. ABOVE the credential arm below, because the
+           READ is rationed by this same ladder: a store that answered a moment ago has not become
+           worth asking again either, and a read every poll would climb no ladder at all. */
         if (force ? Date.now() < forcedNotBefore : Date.now() < redialNotBefore) return;
+        /* THE SAME PRECONDITION `start()` KEEPS, and for the same reason: an empty password is a
+           login attempt the server will refuse, and a refused login counts toward a lockout on
+           some providers. A mailbox with no usable credential is not unreachable, it is waiting
+           for a person, and dialling it repeatedly would turn that into a locked account.
+           WHAT IS RETRIED IS THE READ, which touches no server: the row can open on a later read
+           — a person re-entered the password on a door that does not replace this runtime — and
+           without this the mailbox stayed dark until the app was quit. A read that does not open
+           climbs the ladder exactly as a failed dial does. */
+        if (login.state !== "ready" || !login.pass) {
+          if (!(await rereadCredential())) { climbTheLadder(); return; }
+          if (stopped) return;
+        }
           /* The re-dial joins `tail` so `detach()` waits FOR it, but is not put INTO it. It cannot
            * queue behind `tail` — `dialAndGate` takes the queue twice, so a queued re-dial waits
            * for itself (this lane's deadlock). But `detach()` awaits `tail` then closes the adapter,
@@ -5334,11 +5457,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                the press: the app's own next attempt then came later than it would have if
                nobody had pressed, so the one control the product offers for a slow heal made
                the heal slower, and six presses walked the wait to the five-minute cap. */
-            redialAttempts += 1;
-            const step = redialStepMs(reconnect, redialAttempts);
-            /* JITTERED, so several mailboxes on one server do not knock in unison after an
-               outage — the thundering herd every backoff without one produces. */
-            redialNotBefore = Date.now() + Math.round(step * (0.8 + Math.random() * 0.4));
+            climbTheLadder();
           }
           log("mailbox_reconnect_failed", {
             err, mailboxId: mb.id,
@@ -5401,6 +5520,10 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           return {
             reachable: outageSince === null,
             unreachableSince: outageSince,
+            /* AND WHY, WHEN THE REASON IS THIS INSTALL'S OWN STORE rather than the server. No
+               socket was opened at all here, so "can't reach the mail server" would send somebody
+               to look at a network that is working. See {@link CredentialBlock}. */
+            credentialBlocked: credentialBlock,
             /* THE DIAGNOSIS, not just the fact. "Can't reach the mail server" over a server that
                answered and said no is the wrong sentence: it sends somebody to look at their
                network when the answer is their password. */
@@ -5428,6 +5551,20 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           // and a mailbox whose key was replaced would be unrecoverable rather than one prompt
           // away. Deliberately BEFORE `connect()`: an empty password is a login attempt the
           // server will refuse, and a refused login on some providers counts toward a lockout.
+          //
+          // ── …BUT A PASSWORD THAT IS THERE AND CANNOT BE USED IS AN OUTAGE ─────────────────
+          //
+          // One line used to cover three different facts. `absent` is genuinely quiet: nothing is
+          // stored and a person is being asked for one. `unreadable` and `foreign-host` are the
+          // opposite — this install WAS syncing, the sealed row is intact, and this launch served
+          // nothing. Returning in silence left `outageSince` null with no retry armed, so Settings
+          // said "Up to date" over a mailbox that had stopped. It is recorded as the outage it is,
+          // on the same ladder an unreachable server gets; the credential is not discarded.
+          if (login.state === "unreadable" || login.state === "foreign-host") {
+            noteLoginUnusable(login.state);
+            schedule();
+            return;
+          }
           if (login.state !== "ready" || !login.pass) return;
           /* …AND NOT AFTER A SIGN-OUT. Same shape and same place as the line above, for the same
              reason: this is not a failed launch, it is an install with no password to use. The
@@ -6132,6 +6269,10 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
               reachable: r.connection.reachable,
               unreachableSince: r.connection.unreachableSince?.toISOString() ?? null,
               signInRefused: r.connection.signInRefused,
+              /* THE STORED-PASSWORD BLOCK, as the object it is — a state and whether a second
+                 read confirmed it. Two flat fields would admit "confirmed" with nothing to be
+                 confirmed about. No server name and no address, like every other field here. */
+              credentialBlocked: r.connection.credentialBlocked,
             }));
             /* One line where this route answers, so a question that never arrived can be told
                from an answer that was refused — from the log's side those are the same absence.

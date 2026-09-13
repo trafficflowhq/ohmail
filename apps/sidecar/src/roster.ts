@@ -46,6 +46,25 @@ export type CredentialState =
    */
   | "foreign-host";
 
+/**
+ * A STORED PASSWORD EXISTS AND THIS LAUNCH COULD NOT DIAL WITH IT — the outage nothing watched.
+ *
+ * `absent` is not one of these: nothing was stored, the mailbox never synced, and a person is
+ * being asked for a password rather than told about an outage. These two are the opposite — the
+ * mailbox WAS syncing, the row is intact, and this launch served nothing. One object rather than
+ * a pair of fields so `confirmed` cannot stand without a state to be confirmed about.
+ */
+export interface CredentialBlock {
+  /** Which non-ready state stopped the launch. */
+  state: Extract<CredentialState, "unreadable" | "foreign-host">;
+  /**
+   * A SECOND, FRESH READ AGREED, so the advice ("sign in again") may be shown. A first failure
+   * can be a provider that was not ready yet, and telling somebody to re-type a password that was
+   * never the problem is asking for work that is not theirs.
+   */
+  confirmed: boolean;
+}
+
   /**
    * Whether this install can reach one mailbox's server right now, and what its first sync
    * produced. Not on {@link OrganizerState}: "who organizes this mailbox" is a fact about the
@@ -75,6 +94,15 @@ export interface MailboxConnectionState {
    * and said no sends them to look in the wrong place.
    */
   signInRefused: boolean;
+  /**
+   * THE STORED PASSWORD COULD NOT BE USED — see {@link CredentialBlock}, `null` when it could.
+   *
+   * Beside `signInRefused` and not folded into it: no server has answered this launch at all, so
+   * "the mail server refused the sign-in" is a true sentence about the wrong thing. It rides the
+   * same record because a surface reads both in one pass, and because both are reasons a mailbox
+   * that looks connected is moving no mail.
+   */
+  credentialBlocked: CredentialBlock | null;
   /**
    * What this mailbox's first sync produced — see {@link FirstSyncState}. Derived from the
    * engine's own facts (the import stamp its drain writes, and whether the mirror holds anything

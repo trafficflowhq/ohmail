@@ -3624,3 +3624,93 @@ describe("a reader row says who organizes the mailbox and what to press", () => 
     ).toBe("Who organizes this mailbox");
   });
 });
+
+/**
+ * ══════════════════════════════════════════════════════════════════════════════════════════
+ *  THE PASSWORD ON THIS COMPUTER, NOT THE SERVER — and the advice waits for a second reading
+ * ══════════════════════════════════════════════════════════════════════════════════════════
+ *
+ * A previously synced install relaunches under a key that does not open its sealed password.
+ * Nothing is dialled, so nothing is learned about the person's mail server — and the row used to
+ * read "Up to date" over a mailbox that had stopped syncing. The engine now records it as the
+ * outage it is and says WHICH of the two it is; these are the sentences that carries.
+ *
+ * WATCH THEM FAIL: delete the `credentialBlocked` arm from `stateOf` and the first three cases
+ * redden — the first two on "Can't reach the mail server" (a claim about a server this install
+ * never dialled) and the third with them. Drop the `confirmed` term and the first case reddens
+ * with the sign-in advice on one reading.
+ */
+describe("a stored password this computer cannot use is an outage, and says which", () => {
+  const copy = (messages as unknown as { mailboxes: Record<string, string> }).mailboxes;
+
+  const reach = (over: Record<string, unknown>): Response => new Response(JSON.stringify({
+    items: [{ mailboxId: "mbx-1", reachable: false, unreachableSince: null, ...over }],
+  }), { status: 200, headers: { "content-type": "application/json" } });
+
+  it("states the fact on the first reading, and asks for nothing", async () => {
+    FACTS = [MAILBOX];
+    bridgeReply = () => reach({ credentialBlocked: { state: "unreadable", confirmed: false } });
+
+    const text = (await render("local")).textContent ?? "";
+    expect(text, "a mailbox that is not syncing read as one that is")
+      .not.toContain(copy.desktopStateUpToDate!);
+    expect(text, "a password this computer cannot open was reported as the server being down")
+      .not.toContain(copy.desktopStateUnreachable!);
+    expect(text).toContain(copy.desktopStateCredentialUnreadable!);
+    expect(text, "one reading was enough to send somebody to re-type their password")
+      .not.toContain(copy.desktopStateSignInAgain!);
+  });
+
+  it("asks for the password once a second read has agreed", async () => {
+    FACTS = [MAILBOX];
+    bridgeReply = () => reach({ credentialBlocked: { state: "unreadable", confirmed: true } });
+
+    const text = (await render("local")).textContent ?? "";
+    expect(text).toContain(copy.desktopStateSignInAgain!);
+    expect(text).not.toContain(copy.desktopStateUpToDate!);
+  });
+
+  it("names the other cause rather than blaming the network", async () => {
+    FACTS = [MAILBOX];
+    bridgeReply = () => reach({ credentialBlocked: { state: "foreign-host", confirmed: true } });
+
+    const text = (await render("local")).textContent ?? "";
+    expect(text).toContain(copy.desktopStateCredentialForeign!);
+    expect(text, "a password proved against another server read as an unreachable network")
+      .not.toContain(copy.desktopStateUnreachable!);
+    expect(text, "the wrong server's sentence carried the re-type advice with it")
+      .not.toContain(copy.desktopStateSignInAgain!);
+  });
+
+  it("POSITIVE CONTROL — an ordinary outage and an ordinary healthy row are unchanged", async () => {
+    FACTS = [MAILBOX];
+    /* An engine older than the field sends no `credentialBlocked` at all: the outage arm below is
+       still the right one, and half a fact must not invent a cause for it. */
+    bridgeReply = () => reach({ unreachableSince: new Date(Date.now() - 20 * 60_000).toISOString() });
+    let text = (await render("local")).textContent ?? "";
+    expect(text).toContain(copy.desktopStateUnreachable!);
+    expect(text).toContain("20 minutes ago");
+    expect(text).not.toContain(copy.desktopStateCredentialUnreadable!);
+    await act(async () => { root!.unmount(); });
+    root = null;
+
+    bridgeReply = () => reach({ reachable: true });
+    text = (await render("local")).textContent ?? "";
+    expect(text).toContain(copy.desktopStateUpToDate!);
+    expect(text).not.toContain(copy.desktopStateCredentialUnreadable!);
+  });
+
+  it("a block whose state is not one the engine can send is dropped, not rendered", async () => {
+    FACTS = [MAILBOX];
+    /* Half a fact is not a fact: an unknown cause must not become a sentence, and must not
+       silence the outage the same answer states. */
+    bridgeReply = () => reach({
+      unreachableSince: new Date(Date.now() - 20 * 60_000).toISOString(),
+      credentialBlocked: { state: "something-else", confirmed: true },
+    });
+    const text = (await render("local")).textContent ?? "";
+    expect(text).toContain(copy.desktopStateUnreachable!);
+    expect(text).not.toContain(copy.desktopStateSignInAgain!);
+    expect(text).not.toContain(copy.desktopStateCredentialUnreadable!);
+  });
+});
