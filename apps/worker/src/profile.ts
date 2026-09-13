@@ -282,17 +282,13 @@ export class OrganizerProfileSync {
 
   /**
    * WHAT THE MAILBOX ROW SHOULD SAY ABOUT THIS MAILBOX'S SETTINGS — `null` while they are being
-   * maintained, and the refusal's own name when they are not.
-   *
-   * The failure latch above ends a log line that repeated; this ends the SILENCE, which is the
-   * half a person feels. Measured on the 0.18.0 release candidate: `organizer_profile_write_failed`
-   * `op: list_profiles` `errorCode: profile_gap_too_deep` on every drain, reproduced at boot
-   * after a restart, and a row reading Organized · Up to date · Organizing throughout, with
-   * eight messages sitting in INBOX. Nobody reads a desktop log.
-   *
+   * maintained, the refusal's own name when they are not. The latch above ends a repeating log
+   * line; this ends the SILENCE, which is the half a person feels: measured at the 0.18.0 rc as
+   * `profile_gap_too_deep` on every drain, reproduced at boot, with the row reading Up to date
+   * and eight messages in INBOX. Nobody reads a desktop log.
    * TWO CONSECUTIVE, or ONE where nothing has ever worked — the `confirmed` rule the credential
-   * block already states, with the exception {@link everSucceeded} explains. Derived and never
-   * stored: the counter IS the state, and a second record would be a second clock.
+   * block states, with {@link everSucceeded}'s exception. Derived, never stored: the counter IS
+   * the state, and a second record would be a second clock.
    */
   profileBlock(): { code: string | null; confirmed: boolean } | null {
     if (this.consecutiveFailures === 0) return null;

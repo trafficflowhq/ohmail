@@ -298,16 +298,13 @@ async function writeConsentScreening(
 
 /**
  * IS THERE A SETTINGS RECORD TO MEASURE A WINDOW FROM — the question the `already_organizing`
- * arms never asked.
+ * arms never asked. Those arms answer about the MAILBOX ROW and read "the row already says so"
+ * as "everything this press would write is already written". Measured at the 0.18.0 rc: a
+ * consented mailbox whose account had no `account_settings` row, so the cutline was measured
+ * from each later READ instead of from the agreement — no cutoff, and a row reading healthy
+ * while nothing is filed where the person expects.
  *
- * Those arms answer about the MAILBOX ROW, and both read "the row already says so" as "everything
- * this press would write is already written". Measured on the 0.18.0 release candidate: a consented, organizing
- * mailbox whose account had no `account_settings` row at all, so the cutline was measured from
- * the moment of each later READ instead of from the agreement — no cutoff, and a row that reads
- * healthy while nothing is filed where the person expects.
- *
- * A row with a NULL baseline is not readable for this purpose either: it is a record that cannot
- * answer the question, which is the same damage under a row that exists.
+ * A NULL baseline is not readable for this either: a record that cannot answer the question.
  */
 async function settingsRecordReadable(db: LocalDb, accountId: string): Promise<boolean> {
   const [row] = await db
@@ -430,17 +427,14 @@ export async function requestOrganizerTakeover(
      * the answer just given and the whole reason the screen has a button, so the stamp stays refused
      * and the dials are written; the baseline cannot move (its upsert is a `coalesce`). Its own
      * transaction, because there is no mailbox write here to share one with. */
-    /* ── AND THE RECORD ITSELF, WHEN THERE IS NONE TO BE ALREADY-WRITTEN ──────────────────
-     *
-     * `already_organizing` is about the MAILBOX ROW and has never been an argument about
-     * `account_settings` — the arm above already writes the dials for that reason. The half it
-     * missed is the record's EXISTENCE: a press over an account with no settings record answered
-     * "the row already says so" and left the account with no cutline for the life of the install.
-     *
-     * Only where none is readable, which is the narrow condition and deliberately not "stamp on
-     * every press": that was tried and is wrong, because a press that asks no window must not
-     * slide a LIVE account's cutline forward. Where there is no cutline there is nothing to
-     * slide, and `writeConsentScreening`'s own `coalesce` keeps the other direction safe. */
+    /* AND THE RECORD ITSELF, WHEN THERE IS NONE TO BE ALREADY-WRITTEN. `already_organizing` is
+     * about the MAILBOX ROW, never an argument about `account_settings` — the arm above writes the
+     * dials for that reason. The half it missed is EXISTENCE: a press over an account with no
+     * settings record answered "the row already says so" and left it with no cutline for the life
+     * of the install. Only where none is readable, deliberately not "stamp on every press": that
+     * was tried and is wrong, because a press that asks no window must not slide a LIVE account's
+     * cutline forward. Where there is no cutline there is nothing to slide, and
+     * `writeConsentScreening`'s own `coalesce` keeps the other direction safe. */
     if (input.screening || !(await settingsRecordReadable(db, row.accountId))) {
       await db.transaction(async (tx) => {
         await writeConsentScreening(tx, dialect(db), {

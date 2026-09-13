@@ -1244,20 +1244,16 @@ export function DesktopMailboxes(
     if (r && reachStale(reach, now)) return say(t("desktopStateUnknown"));
     if (m.organizerRole === "reader") return say(t("stateReading"));
     if (m.syncBlockedSince) return say(t("desktopStatePaused"));
-    /* ── THE SETTINGS CANNOT BE READ, AND THAT IS NOT A PROGRESS STATE ────────────────────
+    /* THE SETTINGS CANNOT BE READ, AND THAT IS NOT A PROGRESS STATE. Above all three progress
+     * arms and below every socket arm, which is what the fact is: the server answers, mail comes
+     * down, and the document saying where it should GO refuses every read. Each arm below would be
+     * true and be the wrong sentence — Up to date most of all, which is what this row said at the
+     * 0.18.0 rc while `list_profiles` refused on every drain and eight messages sat in INBOX. The
+     * engine raises this only once settled (two drains, or one at boot), so a provider that was
+     * not ready on a single pass says nothing here.
      *
-     * ABOVE all three progress arms and below every socket arm, which is exactly what the fact
-     * is: the server is answering, mail is coming down, and the document that says where it
-     * should GO refuses every read. The three arms below would each be true and each be the
-     * wrong sentence — "Up to date" most of all, which is what this row said on the 0.18.0 release candidate
-     * while `ohmail/_meta` refused `list_profiles` on every drain for the life of the install
-     * and eight messages sat in INBOX. The engine raises this only once the condition is settled
-     * (two drains, or one at boot), so a provider that was not ready on a single pass says
-     * nothing here.
-     *
-     * A FACT AND A NAME, no advice: nothing the person can do fixes a folder read, the engine
-     * keeps trying on its own, and the code is what makes a support conversation about this one
-     * exchange instead of three. */
+     * A FACT AND A NAME, no advice: nothing a person does fixes a folder read, the engine keeps
+     * trying, and the code is what makes a support conversation one exchange instead of three. */
     if (r?.profileBlocked) {
       return say(t("desktopStateSettingsUnreadable", {
         code: r.profileBlocked.code ?? t("desktopUnknownCode"),

@@ -126,14 +126,12 @@ export interface MailboxConnectionState {
   credentialBlocked: CredentialBlock | null;
   /**
    * THIS MAILBOX'S SETTINGS DOCUMENT COULD NOT BE READ OR WRITTEN — see {@link ProfileBlock},
-   * `null` while it is being maintained.
-   *
-   * The same family as {@link credentialBlocked} and here for the same reason: it is a reason a
-   * mailbox that looks connected is not being organized the way its person asked. Measured on
-   * the 0.18.0 release candidate — a claimed mailbox whose `ohmail/_meta` refused every read, drains succeeding
-   * every sixteen seconds, and the row reading Up to date for the life of the install. The drain
-   * cannot see this: it answers "is mail coming down", and this answers "can this install read
-   * the rules it is supposed to apply".
+   * `null` while it is being maintained. Same family as {@link credentialBlocked} and here for
+   * the same reason: a mailbox that looks connected is not being organized the way its person
+   * asked. Measured at the 0.18.0 rc — a claimed mailbox whose `ohmail/_meta` refused every read,
+   * draining every sixteen seconds, the row reading Up to date for the install's life. The drain
+   * cannot see this: it answers "is mail coming down", this answers "can this install read the
+   * rules it is supposed to apply".
    */
   profileBlocked: ProfileBlock | null;
   /**

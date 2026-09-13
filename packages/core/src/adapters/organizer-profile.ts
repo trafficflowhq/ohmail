@@ -1157,25 +1157,16 @@ export function makeProfileIo(
               gapHi = lo - 1;
             }
           }
-          /* ── ABSENT IS AN ANSWER, AND ONLY A COMPLETE SEARCH MAY GIVE IT ───────────────────
-           *
-           * Two budgets have found nothing, and by the rule above that is still not "there is
-           * nothing" — something may lie below. What settles it is the other axis: the folder's
-           * MESSAGE COUNT. A search's cost scales with the messages it examines, not with the uid
-           * range it names, so a folder inside the fetch ceiling can be searched WHOLE for the
-           * price of one command however deep its uid space has grown — and `ohmail/_meta`'s uid
-           * space grows per lease heartbeat while the folder itself stays small, which is the
-           * shape every mailbox in this defect had.
-           *
-           * `1:*` because `*` is resolved by the SERVER to the highest uid the folder holds: the
-           * range is complete even if our UIDNEXT reading is stale, which a `1:<top>` written
-           * from that reading would not be. An empty answer to a complete search is a measured
-           * absence, and the writer may create the first document on it.
-           *
-           * Measured (the 0.18.0 release candidate, reproduced at 0.17.0): three claims, no document, UIDNEXT
-           * past 40 000 — a mailbox whose person had just authorized a takeover, whose every
-           * settings write refused `profile_gap_too_deep` for the rest of the install's life, and
-           * whose row read "Up to date" throughout. */
+          /* ABSENT IS AN ANSWER, AND ONLY A COMPLETE SEARCH MAY GIVE IT. Two budgets finding
+           * nothing is not "there is nothing" — something may lie below. The folder's MESSAGE
+           * COUNT settles it: a search costs what it examines, not what its uid range names, so a
+           * folder inside the fetch ceiling is searched whole for one command however deep its uid
+           * space has grown — and `ohmail/_meta` grows per heartbeat while staying small, the shape
+           * every mailbox in this defect had. `1:*` because the SERVER resolves `*` to the highest
+           * uid held, so the range is complete even against a stale UIDNEXT. An empty answer to a
+           * complete search is a measured absence, and the writer may create the first document.
+           * Measured at 0.18.0 rc, reproduced at 0.17.0: three claims, no document, uid past 40 000,
+           * every settings write refusing for the install's life while the row read Up to date. */
           if (count !== undefined && count <= PROFILE_MESSAGES_MAX_PER_FETCH) {
             const all = await c.search(
               { header: { [H.profile]: true }, uid: "1:*" }, { uid: true },

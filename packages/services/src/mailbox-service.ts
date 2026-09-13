@@ -2094,18 +2094,14 @@ export class MailboxService {
          * the dials are still written; the baseline is untouched by construction — its upsert is
          * a `COALESCE`, so a re-run cannot slide a live account's cutline forward.
          */
-        /* NO BASELINE STAMP ON A PRESS THAT ASKS NOTHING — a press that asks nothing must not
-         * slide a LIVE account's cutline forward, which is the rule this branch is held to and
-         * the reason an unconditional stamp was tried and rejected.
-         *
-         * The question that note left open — "a mailbox this install already organizes and that
-         * carries no baseline" — has since been measured (the 0.18.0 release candidate): it is a
-         * consented, organizing mailbox whose cutline is computed from the moment of every later
-         * READ, so it has no cutoff at all and reads perfectly healthy while nothing is filed
-         * where the person expects. `already_organizing` is about the MAILBOX ROW, and answering
-         * it as "everything this press would write is already written" is what left the account
-         * with no record. So the record is written where NONE is readable, which is the state
-         * that has no cutline to slide; where one is readable this press still writes nothing. */
+        /* NO BASELINE STAMP ON A PRESS THAT ASKS NOTHING — it must not slide a LIVE account's
+         * cutline forward, which is why an unconditional stamp was tried and rejected. The case
+         * that note left open is measured (0.18.0 rc): a consented, organizing mailbox with no
+         * baseline has its cutline computed from every later READ, so it has no cutoff at all and
+         * reads healthy while nothing is filed where the person expects. `already_organizing` is
+         * about the MAILBOX ROW, and reading it as "everything is already written" is what left
+         * the account with no record. So the record is written where NONE is readable — the state
+         * with no cutline to slide; where one is readable this press still writes nothing. */
         if (input.screening) await this.writeScreeningAnswer(tx, ctx, input.screening);
         else if (!(await this.settingsRecordReadable(tx, ctx.accountId))) {
           await this.writeConsentBaseline(tx, ctx);
