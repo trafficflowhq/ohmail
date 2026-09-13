@@ -34,6 +34,12 @@ export interface WorkflowDrainDeps {
   credits?: SpendPort;
   /** Scope the drain to ONE account — the worker loops its served accounts. Omitted ⇒ all accounts. */
   accountId?: string;
+  /**
+   * The wall clock this pass may spend claiming runs, defaulting to {@link
+   * WORKFLOW_DRAIN_PASS_DEADLINE_MS}. The caller passes its own `pollIntervalMs` where it has
+   * one; a deployment that polls every ten seconds should not run a sixty-second drain.
+   */
+  passDeadlineMs?: number;
 }
 
 const executor = new WorkflowExecutor();
@@ -50,6 +56,40 @@ const executor = new WorkflowExecutor();
  * something that should happen). */
 export const STALE_CLAIM_MS = 15 * 60_000;
 
+/**
+ * AT MOST THIS MANY RUNS PER PASS, OLDEST ENQUEUE FIRST — and the same ceiling on the reaper's
+ * read beside it.
+ *
+ * Both reads selected EVERY matching row: `pending` with no `LIMIT` and no order, `running` the
+ * same. `workflow_runs` is append-only state a caller adds to one `POST /workflows/:id/run` at a
+ * time, so one account with a backlog handed the shared pass a list of whatever length it had
+ * accumulated and the pass then ran each to completion — which is how one account pins the pass
+ * every other account's runs are waiting behind.
+ *
+ * The worker's own number for "one batch per poll" — the ingest batch's own per-cycle ceiling
+ * (`DEFAULT_SYNC_BATCH_MAX_MESSAGES`), which the two sibling drains took for the same reason:
+ * `REQUEST_DRAIN_MAX_PER_CYCLE`, `TOMBSTONE_MAX_PER_CYCLE`. Deferred, never dropped: the rows keep
+ * their status, the order is `created_at` so the next pass takes the next batch rather than the
+ * same one, and `pollIntervalMs` (60 s) brings the next pass.
+ */
+export const WORKFLOW_DRAIN_MAX_PER_PASS = 200;
+
+/**
+ * THE PASS STOPS CLAIMING NEW RUNS ONCE THE POLL THAT SCHEDULED IT HAS ELAPSED.
+ *
+ * A count ceiling bounds the LIST; it does not bound the WORK, because a run is not a message —
+ * it executes up to `MAX_WORKFLOW_STEPS` steps, and a step can call a model. Two hundred of those
+ * in one pass outlives any poll interval, and a drain that outlives its poll delays every pass in
+ * the cycle behind it.
+ *
+ * `pollIntervalMs` is the number this rests on: its default is 60 s (`config.ts`), and a
+ * deployment that tunes it passes its own through `deps.passDeadlineMs`. Nothing in flight is
+ * abandoned — the deadline is consulted BEFORE a claim, so a run either was never claimed (still
+ * `pending`, taken by the next pass) or runs to completion. Interrupting a run mid-step is the
+ * reaper's business and needs a per-step budget nobody has measured yet.
+ */
+export const WORKFLOW_DRAIN_PASS_DEADLINE_MS = 60_000;
+
 export async function workflowDrainPass(
   db: Tx, deps: WorkflowDrainDeps, now: Date = new Date(),
 ): Promise<{ drained: number; reaped: number }> {
@@ -58,13 +98,25 @@ export async function workflowDrainPass(
   const pendingFilter = deps.accountId
     ? and(eq(workflowRuns.status, "pending"), eq(workflowRuns.accountId, deps.accountId))
     : eq(workflowRuns.status, "pending");
+  /* BOUNDED AT THE READ, not after it: the ceiling is on the rows the driver transfers, and the
+   * order is what makes deferral fair — an unordered `LIMIT` can hand back the same rows every
+   * pass while the oldest never move. See {@link WORKFLOW_DRAIN_MAX_PER_PASS}. */
   const pending = await db.select({
     id: workflowRuns.id, accountId: workflowRuns.accountId,
     workflowId: workflowRuns.workflowId, stepCursor: workflowRuns.stepCursor,
-  }).from(workflowRuns).where(pendingFilter);
+  }).from(workflowRuns).where(pendingFilter)
+    .orderBy(workflowRuns.createdAt, workflowRuns.id)
+    .limit(WORKFLOW_DRAIN_MAX_PER_PASS);
 
+  /* THE REAL CLOCK, not `now`. `now` is the pass's STAMP — injected, fixed for every row the pass
+   * writes, and in a test a date years from today; a budget measured against it would be spent or
+   * infinite depending on which. Elapsed time is the one thing here that may not be injected. */
+  const endsAtMs = Date.now() + (deps.passDeadlineMs ?? WORKFLOW_DRAIN_PASS_DEADLINE_MS);
   let drained = 0;
   for (const row of pending) {
+    /* CONSULTED BEFORE THE CLAIM, so a pass out of time leaves the row `pending` for the next one
+     * rather than claiming work it will not finish. Nothing in flight is ever abandoned. */
+    if (Date.now() >= endsAtMs) break;
     // Guarded claim: re-assert status='pending' in the UPDATE — a concurrent drain that
     // already flipped it to 'running' makes this match 0 rows, so the loser skips. The
     // `claimedAt` stamp written here is the ONLY write of that column, and it is what makes the
@@ -116,8 +168,13 @@ async function reapStaleClaims(db: Tx, deps: WorkflowDrainDeps, now: Date): Prom
   // would let shard 0 requeue shard 1's runs — and hand them to shard 0's executor.
   if (deps.accountId) filters.push(eq(workflowRuns.accountId, deps.accountId));
 
+  /* The drain's ceiling, on the reaper's read for the drain's reason: `running` rows a dead
+   * worker left behind accumulate exactly as `pending` ones do, and requeueing is cheap but not
+   * free. Oldest claim first, so a deferred row is taken by the next pass and not re-deferred. */
   const stale = await db.select({ id: workflowRuns.id, claimedAt: workflowRuns.claimedAt })
-    .from(workflowRuns).where(and(...filters));
+    .from(workflowRuns).where(and(...filters))
+    .orderBy(workflowRuns.createdAt, workflowRuns.id)
+    .limit(WORKFLOW_DRAIN_MAX_PER_PASS);
 
   let reaped = 0;
   for (const row of stale) {

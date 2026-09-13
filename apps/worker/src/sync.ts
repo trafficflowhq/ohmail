@@ -1209,8 +1209,12 @@ export async function reconcileMailbox(deps: SyncDeps): Promise<{ owesMore: bool
    * lost: the ORGANIZER's own cycle adopts. `reconcileFlags` DOES run — `\Seen` is the one verb that
    * keeps a reader's mirror honest in both directions. */
   const owesMore = deps.role === "reader" ? false : await reconcileFolders(deps);
-  await reconcileFlags(deps);
-  return { owesMore };
+  /* The flag queue reports its own backlog, and a READER's counts: this pass runs for a reader by
+   * design (`\Seen` is the one verb that keeps its mirror honest), so a reader that has just been
+   * handed ten thousand read marks owes outbound intent exactly as an organizer does. The `false`
+   * above is about MOVES, which a reader may not make. */
+  const owesFlags = await reconcileFlags(deps);
+  return { owesMore: owesMore || owesFlags };
 }
 
 /**
@@ -1224,6 +1228,21 @@ export async function reconcileMailbox(deps: SyncDeps): Promise<{ owesMore: bool
  * caller re-kicks. 500 is the batched path's ten chunks — a few seconds of IMAP, short enough that no other mailbox waits, large enough that an ordinary day's filing finishes in one pass.
  */
 export const RECONCILE_MOVES_PER_CYCLE = 500;
+
+/**
+ * Pending `\Seen` writes ONE CYCLE MAY PUSH. `listPendingFlagStates` had no limit at all, and its
+ * own port doc said so — "this queue is unbounded" was written as a reason to filter the DUE rows,
+ * not as a state anybody wanted. Each row here is one IMAP STORE, the same per-message round trip
+ * that made the folder queue a 583-second monopoly on a serial cycle, so the queue that can be
+ * filled the fastest (a select-all-and-mark-read in another client, a retro pass) had no ceiling
+ * on the work it handed the worker.
+ *
+ * 500, the filing budget's number for the filing budget's reason — the same one the delete-evidence
+ * cap took: a few seconds of IMAP, short enough that no other mailbox waits, large enough that an
+ * ordinary day finishes in one pass. Nothing is dropped: the rows stay `pending`, the pass reports
+ * that it still owes work, and the caller re-kicks rather than waiting out `pollIntervalMs`.
+ */
+export const RECONCILE_FLAGS_PER_CYCLE = 500;
 
 /**
  * How many DISAPPEARANCES one cycle may record. Each is its own fenced write, and a bulk expunge in
@@ -1775,9 +1794,13 @@ async function retireLocatorlessFlag(deps: SyncDeps, p: PendingFlagState): Promi
  * `reconcileFolders` has just written the new one, so this reads the fresh value instead of a UID the
  * STORE would miss.
  */
-async function reconcileFlags(deps: SyncDeps): Promise<void> {
+async function reconcileFlags(deps: SyncDeps): Promise<boolean> {
   const { repo, adapter, accountId, mailboxId, log } = deps;
-  const pending = await repo.listPendingFlagStates(mailboxId);
+  /* ONE MORE THAN THE BUDGET — the folder pass's shape: the extra row is how "there is more" is
+   * known without a second COUNT, and it is never worked. See {@link RECONCILE_FLAGS_PER_CYCLE}. */
+  const due = await repo.listPendingFlagStates(mailboxId, RECONCILE_FLAGS_PER_CYCLE + 1);
+  const owesMore = due.length > RECONCILE_FLAGS_PER_CYCLE;
+  const pending = owesMore ? due.slice(0, RECONCILE_FLAGS_PER_CYCLE) : due;
   for (const p of pending) {
     if (p.lastSetBy !== "us") continue;                       // user-wins: never revert an external \Seen
     if (p.desiredSeen === p.observedSeen) {
@@ -1872,4 +1895,5 @@ async function reconcileFlags(deps: SyncDeps): Promise<void> {
       });
     }
   }
+  return owesMore;
 }

@@ -487,11 +487,13 @@ export interface WorkerRepo extends RepoPort, RoutingPort {
   /**
    * Read-state rows still owed an IMAP `\Seen` write (mail 0024), DUE ONES ONLY.
    *
-   * The due filter is {@link listPendingFolderStates}'s, for the reason that survives without a
-   * budget: this queue is unbounded, so a permanently refused STORE costs one IMAP round trip per
-   * cycle for the life of the account with nothing to show for it.
+   * The due filter is {@link listPendingFolderStates}'s, and so is `limit` — the same per-cycle
+   * budget, ordered oldest first, for the same reason: a `\Seen` write is one IMAP round trip per
+   * message exactly as a move is, so an unbounded queue here is the same monopoly on the worker's
+   * serial cycle that the folder budget was written to end. Absent means unbounded, which is what
+   * a caller reading the whole queue for a report wants and no caller doing IMAP work does.
    */
-  listPendingFlagStates(mailboxId: string): Promise<PendingFlagState[]>;
+  listPendingFlagStates(mailboxId: string, limit?: number): Promise<PendingFlagState[]>;
   upsertFlagState(messageId: string, s: FlagStateRow): Promise<void>;
   /**
    * Adopt an EXTERNAL `\Seen` change observed on the server — the inbound half of read-state reconciliation.
@@ -2520,8 +2522,8 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
     }));
   }
 
-  async listPendingFlagStates(mailboxId: string): Promise<PendingFlagState[]> {
-    const rows = await this.db.select({
+  async listPendingFlagStates(mailboxId: string, limit?: number): Promise<PendingFlagState[]> {
+    const base = this.db.select({
       messageId: flagState.messageId, desiredSeen: flagState.desiredSeen, observedSeen: flagState.observedSeen,
       lastSetBy: flagState.lastSetBy, nativeLocator: messages.nativeLocator,
       attempts: flagState.attempts,
@@ -2529,7 +2531,11 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
       .where(and(
         eq(messages.mailboxId, mailboxId), eq(flagState.reconcileStatus, "pending"),
         dueNow(flagState.nextAttemptAt),
-      ));
+      ))
+      // ORDERED WHETHER OR NOT IT IS LIMITED, and for the folder queue's reason: a LIMIT over
+      // physical row order is a queue that can starve, and the ordering costs nothing unlimited.
+      .orderBy(asc(flagState.updatedAt), asc(flagState.messageId));
+    const rows = await (limit != null ? base.limit(limit) : base);
     return rows.map((r) => ({
       messageId: r.messageId, desiredSeen: r.desiredSeen, observedSeen: r.observedSeen,
       lastSetBy: r.lastSetBy as FolderAttribution, nativeLocator: (r.nativeLocator as NativeLocator | null) ?? null,
