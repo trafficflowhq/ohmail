@@ -123,8 +123,8 @@ export async function ensureLocalWorld(db: LocalDb, input: EnsureLocalWorldInput
    * ({@link shouldSeedMailbox}) turns on whether ANY other mailbox is live — without which an install
    * whose seed was removed while a second remained would mint the seed again. The predicate is
    * UNCHANGED (`status <> 'disabled' or disabled_reason is not null`): a reader is live, a paused row
-   * is the same mailbox, a tombstone is excluded. Ordered active-first then oldest-first — the old
-   * tie-break, then the roster's `created_at` contract. */
+   * is the same mailbox, a tombstone is excluded. Ordered active-first, then by the roster's rule
+   * below — `created_at`, then `id`, which is not decoration here: see {@link loadLocalRoster}. */
   const nonTombstoned = await db
     .select({
       id: mailboxes.id,
@@ -252,7 +252,14 @@ export interface LocalRosterRow {
 }
 
 /**
- * Every mailbox this install runs, oldest first — the boot's one roster read. `status <> 'disabled'`
+ * Every mailbox this install runs, oldest first — and on a TIE, by `id`, which is not decoration.
+ * Nothing in this program writes `created_at`, so every row takes the store default, and the local
+ * store's clock resolves to a millisecond: two mailboxes added back to back share one stamp often
+ * enough to measure. `(created_at, id)` is then the whole order, and because `id` is unique it is
+ * TOTAL — the list cannot reorder between two reads. What it is not is MEANINGFUL on a tie: those
+ * rows come back in uuid order, which is stable and arbitrary, not the order they were added in.
+ * Both dialect twins have `id` and neither has a monotonic column, so this is the order both can
+ * keep. The boot's one roster read: `status <> 'disabled'`
  * and nothing else, narrower than {@link ensureLocalWorld}'s existence predicate: a paused row is
  * the same mailbox and must not be duplicated, but it is not RUNNING and gets no login, claim or
  * poll timer — being found and being attached are different questions. The old ≤0.13.x paused row
