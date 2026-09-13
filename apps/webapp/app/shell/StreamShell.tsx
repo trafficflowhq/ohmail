@@ -343,8 +343,7 @@ export const StreamShell = forwardRef<
    * ResizeObserver: measured, 27 height changes delivered THREE callbacks — `content-visibility: auto`
    * suppresses observations inside skipped subtrees; one rect per frame sees hydration, clamp fill and
    * re-measure, plus non-card changes. Suspended during a landing (`jumpRef`); `behavior: "instant"`;
-   * armed by change rather than by the clock — see the loop.
-   */
+   * armed by change rather than by the clock — see the loop. */
   const holdRef = useRef<{ sid: string; offset: number; scrollTop: number } | null>(null);
   const holdRafRef = useRef(0);
   /** Drift too small to be worth a `scrollTop` write yet — see the accumulator below. */
@@ -377,17 +376,14 @@ export const StreamShell = forwardRef<
     };
 
     /**
-     * THE LOOP NEEDS A REASON TO BE RUNNING, and re-arming every frame is not one.
-     *
-     * Re-armed unconditionally it is a 60 Hz forced layout for the life of a mounted stream —
-     * measured on the shipped shell with nobody touching the app: 60 callbacks and 240
-     * `getBoundingClientRect` calls a second, against ZERO DOM mutations. So it runs inside a
-     * window opened by anything that can move the content it holds and closed
+     * THE LOOP NEEDS A REASON TO BE RUNNING, and re-arming every frame is not one: unconditional,
+     * it is a 60 Hz forced layout for the life of a mounted stream (measured on the shipped shell,
+     * untouched: 60 callbacks and 240 rect reads a second against ZERO DOM mutations). It runs
+     * inside a window opened by anything that can move the content it holds, closed
      * {@link HOLD_QUIET_MS} after the last of them, and never while the document is hidden.
-     *
-     * THE ANCHOR SURVIVES THE STOP, and that is what keeps the hold correct: the loop stops
-     * because nothing moved, so the offset it remembers is still true, and a change arriving in
-     * the same frame as its own arm is measured against the position from BEFORE it.
+     * THE ANCHOR SURVIVES THE STOP, which is what keeps the hold correct: the loop stops because
+     * nothing moved, so the offset it remembers is still true, and a change arriving in the same
+     * frame as its own arm is measured against the position from BEFORE it.
      */
     let activeUntil = 0;
     const hidden = () => typeof document !== "undefined" && document.hidden;

@@ -86,11 +86,14 @@ const EMPTY_SNAPSHOT = JSON.stringify({
 function fakeShell(initial: EngineStatus): {
   set(status: EngineStatus): void;
   health(next: { signedIn?: boolean; sessionExpired?: boolean }): void;
+  /** Refuse `/health` with this status instead of answering. 200 answers normally. */
+  healthStatus(code: number): void;
   healthAsks(): number;
   signins(): number;
 } {
   let status = initial;
   let health: { signedIn?: boolean; sessionExpired?: boolean } = { signedIn: true };
+  let healthCode = 200;
   let healthAsks = 0;
   let signins = 0;
   const callbacks = new Map<number, (payload: unknown) => void>();
@@ -109,7 +112,7 @@ function fakeShell(initial: EngineStatus): {
         const url = String(payload?.url ?? "");
         if (url === "/health") {
           healthAsks++;
-          return encode(200, JSON.stringify(health));
+          return encode(healthCode, healthCode === 200 ? JSON.stringify(health) : "{}");
         }
         if (url === "/cloud/signin") {
           signins++;
@@ -126,6 +129,7 @@ function fakeShell(initial: EngineStatus): {
   return {
     set: (n) => { status = n; },
     health: (n) => { health = n; },
+    healthStatus: (code) => { healthCode = code; },
     healthAsks: () => healthAsks,
     signins: () => signins,
   };
@@ -346,5 +350,35 @@ describe("the auth key, pinned at the source", () => {
     // And no surface anywhere clears the stored answer WITHOUT re-keying — a bare clear is the
     // in-flight-probe race the round above closed.
     expect(src).not.toMatch(/setHostedAuth\(null\)/);
+  });
+
+  /**
+   * ═══ THE 400 ms FIRST-ANSWER PROBE ENDS WHEN THE ANSWER LANDS ════════════════════════════
+   *
+   * It is the fastest loop in the desktop window — two and a half local calls a second — and it
+   * is armed precisely while the auth state is unknown. Nothing had ever watched it STOP, and a
+   * fast loop that outlived its condition would be an idle cost for the life of the app. Both
+   * arms, because either alone passes for the other: a loop that never runs would satisfy the
+   * stop and measure nothing.
+   */
+  it("asks fast while the answer is unknown and stops asking the moment it lands", async () => {
+    const shell = fakeShell(CLOUD_SERVING);
+    shell.healthStatus(503); // the engine is up but cannot answer yet: the state stays unknown
+    const el = await render();
+    await settleThroughFastProbe();
+    const whileUnknown = shell.healthAsks();
+    await settleThroughFastProbe();
+    const stillUnknown = shell.healthAsks();
+    expect(stillUnknown - whileUnknown, "the probe asks again while the state is unknown")
+      .toBeGreaterThan(0);
+    expect(mounted(el), "and the app is withheld the whole time").toBe(false);
+
+    // The answer lands. The loop's condition is gone, and so is the loop.
+    shell.healthStatus(200);
+    await settleThroughFastProbe();
+    const atSettle = shell.healthAsks();
+    await settleThroughFastProbe();
+    expect(shell.healthAsks() - atSettle, "a settled state asks nothing more on the fast cadence")
+      .toBe(0);
   });
 });
