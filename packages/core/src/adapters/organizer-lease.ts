@@ -976,14 +976,11 @@ function coalesce(claims: readonly ClaimRecord[], now: Date): { valid: Organizer
  * Newest first, and the ONLY comparison in this module between two records of ONE INSTALL: which
  * of these did this machine write last.
  *
- * THE WRITER'S CLOCK DECIDES WHILE IT IS BELIEVABLE, and the server's decides otherwise. Between
- * two INSTALLS the server's stamp is the only honest one; between two records of one install it
- * answers a different question — INTERNALDATE records ARRIVAL, and a residue re-appended after the
- * claim that superseded it arrives later than the record that replaced it, wins the fold, and
- * reaches the clone defence as a stranger wearing our id. One clock cannot be wrong about the
- * ORDER of its own writes — unless it JUMPED, which is what {@link isBelievableHeartbeat} reads:
- * a stamp beyond the skew ceiling is not evidence about anything, so the arrival order decides
- * instead. Absent writer stamps fall back to the (server-substituted) heartbeat, as before.
+ * THE WRITER'S CLOCK DECIDES WHILE IT IS BELIEVABLE, arrival decides otherwise. Between INSTALLS
+ * the server's stamp is the only honest one; between one install's own records INTERNALDATE
+ * answers a different question — a residue re-appended after the claim that superseded it arrives
+ * LATER, and reaches the clone defence as a stranger wearing our id. One clock cannot be wrong
+ * about the order of its own writes unless it JUMPED ({@link isBelievableHeartbeat}).
  */
 function compareRecency(a: OrganizerClaim, b: OrganizerClaim, now: Date): number {
   const wa = writerStampOf(a);
