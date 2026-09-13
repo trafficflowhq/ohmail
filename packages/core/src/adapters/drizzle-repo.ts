@@ -754,14 +754,32 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
       eq(messageInstances.messageId, messageId), eq(messageInstances.isPrimary, true),
     )).returning({ id: messageInstances.id });
     if (moved.length > 0) return;
-    await this.db.insert(messageInstances).values({
+    const created = await this.db.insert(messageInstances).values({
       // The account and mailbox come from the MESSAGE, not from the caller: an instance is a
       // physical fact about a row that already exists, and a caller-supplied account id would be a
       // second place the account-isolation boundary could be got wrong.
       accountId: sql`(select account_id from ${messages} where id = ${messageId})`,
       mailboxId: sql`(select mailbox_id from ${messages} where id = ${messageId})`,
       messageId, folder: locator.folder, uidvalidity: uidValidity, uid, isPrimary: true,
-    }).onConflictDoNothing();
+    }).onConflictDoNothing().returning({ id: messageInstances.id });
+    if (created.length > 0) return;
+    // A SWALLOWED CONFLICT ANSWERS TWO QUESTIONS, and only a read tells them apart — the
+    // `completeFolderState` rule, one table over. Either a racing twin of this very call created
+    // the primary row (fine, and it must name this locator), or the tuple belongs to a DIFFERENT
+    // message, which is the anomaly the vacate above deliberately leaves alone. Returning quietly
+    // there left `messages.native_locator` — written by `updateLocator` in this same transaction —
+    // advertising a place with no instance row: invisible to `listKnownLocators`, so the body was
+    // re-fetched every cycle for ever. The UPDATE arm already fails loudly and lets the cycle
+    // retry; this arm now does the same rather than reporting a repoint that did not happen.
+    const [live] = await this.db.select({
+      folder: messageInstances.folder, uidvalidity: messageInstances.uidvalidity, uid: messageInstances.uid,
+    }).from(messageInstances).where(and(
+      eq(messageInstances.messageId, messageId), eq(messageInstances.isPrimary, true),
+    )).limit(1);
+    if (live && live.folder === locator.folder && live.uidvalidity === uidValidity && live.uid === uid) return;
+    throw new Error(
+      `setPrimaryInstance: ${locator.folder} already holds that uid for another message`,
+    );
   }
 
   /** See {@link RepoPort.recordInstance}. Never re-attributes a locator another message claims. */
@@ -1452,8 +1470,13 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
    * the live one.
    */
   async updateLocator(messageId: string, locator: NativeLocator): Promise<void> {
-    await this.db.update(messages).set({ nativeLocator: locator }).where(eq(messages.id, messageId));
+    // THE FACT FIRST, ITS MIRROR SECOND. `native_locator` mirrors the primary instance, so writing
+    // the mirror before the fact leaves the two disagreeing for as long as the second write does
+    // not happen — and it can refuse (the tuple belongs to another message). In this order a
+    // refusal leaves the message advertising the place it still occupies, with or without a
+    // transaction around the pair.
     await this.setPrimaryInstance(messageId, locator);
+    await this.db.update(messages).set({ nativeLocator: locator }).where(eq(messages.id, messageId));
   }
 
   /**

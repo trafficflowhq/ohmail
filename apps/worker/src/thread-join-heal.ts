@@ -266,7 +266,7 @@ export async function threadJoinHealPass(deps: ThreadJoinHealDeps): Promise<Thre
         continue;
       }
 
-      const mergeOnce = (): Promise<number> => db.transaction(async (tx) => {
+      const mergeOnce = (): Promise<number | null> => db.transaction(async (tx) => {
           // ── THE SURVIVOR'S NEW STATE COMES FROM ROWS LOCKED IN THIS TRANSACTION, ──────────
           // never from the facts the verdict was taken on. Between the facts read and this
           // write — and especially between a first attempt and its retry — an ingest can land
@@ -279,6 +279,13 @@ export async function threadJoinHealPass(deps: ThreadJoinHealDeps): Promise<Thre
           // both take it, so concurrent writers queue instead of deadlocking.
           const lockedRows = await dialect(db).forUpdate(tx.select({
             id: threads.id, participants: threads.participants, lastMessageAt: threads.lastMessageAt,
+            // THE PREMISE, re-read under the lock. The group was formed by grouping on `subject`
+            // before this transaction, and `subject` is mutable by two writers — a person
+            // renaming a thread and `thread-subject-heal` rewriting one — so a rename committed
+            // in the window leaves this merging two conversations on a fact that no longer holds,
+            // and the absorbed thread is DELETED. Read here rather than compared from `rows`,
+            // which is the pre-transaction read this exists to distrust.
+            subject: threads.subject,
           }).from(threads)
             .where(and(
               inArray(threads.id, [target.id, ...absorb.map((s) => s.id)]),
@@ -292,6 +299,11 @@ export async function threadJoinHealPass(deps: ThreadJoinHealDeps): Promise<Thre
           const lockedById = new Map(lockedRows.map((r) => [r.id, r]));
           const lockedTarget = lockedById.get(target.id);
           if (!lockedTarget) throw new Error("survivor thread vanished before the merge locked it");
+          // `null` rather than a throw: a rename is not a failure and must not spend the retry or
+          // land in `failed`. Nothing is written, the group is left exactly as it was, and the
+          // forward cursor brings it back around — re-grouped against whatever the subjects then
+          // are.
+          if (lockedRows.some((r) => r.subject !== group.subject)) return null;
 
           // EVERY message row moves — the FK demands the absorbed thread be empty before its
           // DELETE — but only LIVING rows are announced. A soft-deleted row's tombstone already
@@ -400,7 +412,7 @@ export async function threadJoinHealPass(deps: ThreadJoinHealDeps): Promise<Thre
       // persistent case: counted in `failed`, logged at error, and left for the next walk —
       // which the callers' forward cursor guarantees comes back around, so a poison group can
       // be seen in the log without ever pinning the walk to its page.
-      let moved = -1;
+      let moved: number | null = -1;
       try {
         if (deps.beforeMergeAttempt) await deps.beforeMergeAttempt();
         moved = await mergeOnce();
@@ -420,7 +432,16 @@ export async function threadJoinHealPass(deps: ThreadJoinHealDeps): Promise<Thre
           });
         }
       }
-      if (moved >= 0) {
+      // EXPLICIT, because `null >= 0` is TRUE in JavaScript: a skipped group read through the old
+      // comparison would have been counted as a merge of nothing.
+      if (moved === null) {
+        result.skipped += 1;
+        log.info("thread_join_heal_subject_changed", {
+          accountId: group.account_id, threadId: target.id,
+          reason: "the subject that grouped these threads changed while the merge was being " +
+            "taken, so nothing was merged; the next walk re-groups them as they now are",
+        });
+      } else if (moved >= 0) {
         result.merged += absorb.length;
         result.messagesMoved += moved;
         log.info("thread_join_heal_merged", {
