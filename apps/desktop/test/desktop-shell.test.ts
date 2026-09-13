@@ -199,8 +199,8 @@ describe("tauri.conf.json", () => {
 
     // The changelog needs a section for this release and a link reference that resolves to its
     // tag; the Unreleased comparison has to start from this release, not the one before it.
-    expect(changelog, `no changelog section for ${v}`).toContain(`## [${v}] — `);
-    expect(changelog, `no changelog link reference for ${v}`)
+    expect(changelog, `no changelog section for ${v} — the dated heading is written at the release freeze, so this case is red from the version bump until the changelog is folded. Do not add the heading early: the Flathub metainfo is derived from it.`).toContain(`## [${v}] — `);
+    expect(changelog, `no changelog link reference for ${v} — the dated heading is written at the release freeze, so this case is red from the version bump until the changelog is folded. Do not add the heading early: the Flathub metainfo is derived from it.`)
       .toContain(`[${v}]: https://github.com/trafficflowhq/ohmail/releases/tag/v${v}`);
     expect(changelog, "the Unreleased comparison does not start at this release")
       .toContain(`[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v${v}...HEAD`);
