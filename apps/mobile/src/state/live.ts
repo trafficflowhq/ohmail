@@ -133,6 +133,13 @@ export interface WorldView {
    */
   ownAddresses?: readonly string[];
   /**
+   * THE ACCOUNT'S MAILBOXES AS ROWS — the same `GET /mailboxes` read {@link WorldView.ownAddresses}
+   * is the address column of, kept whole so a message can be labelled with the one it arrived in
+   * ({@link WorldMail.mailboxLabel}). ABSENT ⇒ nothing is named, which is a phone that has not read
+   * yet and the standalone door: the same silence a one-mailbox account gets.
+   */
+  mailboxes?: readonly MailboxLabelRow[];
+  /**
    * THE ACCOUNT'S CUTLINE ANSWER AND WHETHER IT IS IN — {@link ScreeningPosture}, read by the
    * world layer on the folders flag's own cadence (`GET /consent`). It decides WHICH SENDERS ARE
    * STILL WORTH A DECISION, and the server answers that from `account_settings` while this client
@@ -141,6 +148,29 @@ export interface WorldView {
    * which is not the same thing as a read still in flight.
    */
   screening?: ScreeningPosture;
+}
+
+/** What labelling a delivery needs of a mailbox — `PhoneMailbox`'s three relevant fields. */
+export interface MailboxLabelRow {
+  id: string;
+  address: string;
+  displayName?: string | null;
+}
+
+/**
+ * WHICH OF THE ACCOUNT'S MAILBOXES A MESSAGE WAS DELIVERED TO, as a word — the phone's half of the
+ * browser's `mailbox-label.ts`, and the same two rules: the gate is INSIDE (one mailbox, or none
+ * read, is no question and answers nothing), and the face is the mailbox's own label with the bare
+ * address where it has none, so one mailbox reads the same on every surface.
+ */
+export function mailboxLabelOf(
+  rows: readonly MailboxLabelRow[] | undefined,
+  mailboxId: string,
+): string | undefined {
+  if (rows === undefined || rows.length <= 1) return undefined;
+  const row = rows.find((m) => m.id === mailboxId);
+  if (row === undefined) return undefined;
+  return row.displayName?.trim() || row.address;
 }
 
 /** The phone's own zone, once — `Intl` on Hermes; UTC where the runtime cannot say. */
@@ -259,6 +289,13 @@ export type WorldMail = Mail & {
    * could show one mailbox's signature and serialize under another's send.
    */
   mailboxId: string;
+  /**
+   * THAT MAILBOX AS A WORD, and only where the account holds more than one — what the Reads card
+   * and the message screen show so a person can tell which of their addresses was written to.
+   * Derived here rather than on the wire: the projection already has the id, and the world already
+   * holds the rows. Absent is the ordinary single-mailbox case, not a missing read.
+   */
+  mailboxLabel?: string;
   /** The pile the bar shows as pressed, or the resurface pin the Done slot answers to. */
   pile: WorldPileState;
   /**
@@ -341,6 +378,10 @@ function toMail(reader: EntityReader, m: EngineMessage, v: WorldView): WorldMail
     // wire; its `string` return is the DTO's optional field being untyped, not a new shape.)
     folder: physical as Folder,
     mailboxId: m.mailboxId,
+    ...(() => {
+      const label = mailboxLabelOf(v.mailboxes, m.mailboxId);
+      return label === undefined ? {} : { mailboxLabel: label };
+    })(),
     // The wire's `name` is nullable; the row shape's is not — a nameless sender reads as
     // their address, exactly as every list row already renders one.
     from: { name: m.from.name || m.from.address, address: m.from.address },

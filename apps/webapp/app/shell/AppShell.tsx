@@ -180,6 +180,7 @@ import {
 import { deleteKeyBindings, hideMessages, restoreDispatch, useDeleteIntentReplay, useDeleteUndo } from "./delete-undo";
 import { isModalOpen } from "./modal-gate";
 import { useStableCallback } from "./stable-callback";
+import { mailboxLabelKey, mailboxLabelResolver } from "./mailbox-label";
 /* The once-per-change line above the Ohbox, and the shape of the press that ends it. */
 import { OrganizerNotice, type OrganizerNoticeTransport } from "./OrganizerNotice";
 /* The OS-answer seam, threaded to `SettingsView` for the hosts that must inject one. */
@@ -757,9 +758,10 @@ export function AppShell({
    * "What state are this account's mailboxes in?", as a function the SHELL does not know how
    * to answer — the seventh injected prop, and the same seam as `resolveOwner` for the same
    * reason: `scripts/publish-desktop.mjs` DENYs `app/api-client`, so this shared shell may not
-   * call `GET /mailboxes`. The Cloud client supplies one from `(product)/mailbox/CloudShell`;
-   * Desktop and the demo supply nothing, and the sync strip then withholds every mailbox-keyed
-   * state rather than guessing one. See `MailStateProvider` — a probe MUST reject on failure,
+   * call `GET /mailboxes`. The Cloud client supplies one from `(product)/mailbox/CloudShell` and
+   * the desktop supplies its own (`DesktopGate`, over the local roster); the demo supplies
+   * nothing, and the sync strip then withholds every mailbox-keyed state rather than guessing
+   * one. See `MailStateProvider` — a probe MUST reject on failure,
    * because an empty array is a claim about the account.
    */
   mailboxFacts?: MailboxProbe;
@@ -1641,6 +1643,22 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
       ?.displayName?.trim();
     return label ? label : null;
   });
+  /**
+   * WHICH OF THE ACCOUNT'S MAILBOXES A MESSAGE WAS DELIVERED TO, for the surfaces that name it —
+   * `ownNameOf`'s sibling, off the same `GET /mailboxes` facts, and the ONLY derivation of it. The
+   * "more than one mailbox" gate lives inside `mailboxLabelResolver`, so no consumer re-derives it
+   * (the divergence `folderMailboxes`' count prop exists to prevent). Memoised on the labels and
+   * not on `facts`, for `ownAddresses`' reason: `pendingMoves` moves on every poll for hours on a
+   * fresh mailbox, and a label does not depend on it. Stable across that rebuild, so the reading
+   * pane's chrome is not a new object each time a mailbox row twitches.
+   */
+  const mailboxLabels = useMemo(
+    () => mailboxLabelResolver(facts),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [mailboxLabelKey(facts)],
+  );
+  const mailboxLabelOf = useStableCallback((mailboxId: string): string | null =>
+    mailboxLabels(mailboxId));
   /**
    * …AND THE ENGINE IS TOLD THE SAME CUTLINE THE PARTITION BELOW IS DRAWN WITH.
    *
@@ -6463,6 +6481,8 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
       // a compose; the Screener entry is the WIDENED openSenderMenu — the chip's address rides
       // as the override, so the sheet resolves the To/Cc person and not the message's sender.
       ownNameOf,
+      /* The reading pane's delivery line — the same resolver the Reads surfaces take as a prop. */
+      mailboxLabelOf,
       writeTo,
       screenAddress: (messageId: string, address: string, anchor: HTMLElement | null) =>
         openSenderMenu(messageId, anchor, address),
@@ -6484,7 +6504,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
       onReplySig, onReplySubject,
       consent.signatures, consent.signaturesHtml, consent.signaturesKnown,
       sendSurfaceMaxTotalBytes, replyBook,
-      openSenderMenu, ownNameOf, writeTo, openReply, openForward, openSubjectRule,
+      openSenderMenu, ownNameOf, mailboxLabelOf, writeTo, openReply, openForward, openSubjectRule,
       conversationOf, bodyOfMessage, hydrateBody, hydrateThread, attachments, remoteImages,
       consent.foldersEnabled, reader, barPanel],
   );
@@ -6921,6 +6941,9 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
             {effectiveView === "reads" ? (
               <ReadsView
                 threadParticipants={participantsOf}
+                /* Which address of yours a row arrived at, above one mailbox — see
+                   `mailbox-label.ts`; the view resolves one string per row. */
+                mailboxLabelOf={mailboxLabelOf}
                 absoluteTime={absoluteTime}
                 onToggleTime={toggleAbsoluteTime}
                 partition={partition}

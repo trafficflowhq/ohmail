@@ -68,6 +68,13 @@ export interface StreamCardMemoProps {
   failedLabel: string;
   /** The storage-cap sentence — terminal, honest, no retry implied. */
   withheldLabel: string;
+  /**
+   * THE MAILBOX THIS MESSAGE WAS DELIVERED TO, already resolved to a word by the view — absent on a
+   * one-mailbox account and wherever the shell has no mailbox facts. A STRING and not a resolver:
+   * `areEqual` below compares it, and a function or object here re-renders every mounted card on
+   * every apply, which is the defect this memo exists to prevent.
+   */
+  mailboxLabel?: string;
   /** Stable — a `useState` setter chain in the view. Called with the card id. */
   onSelect: (id: string) => void;
   /** Stable — records which card is open and hydrates it. Called with the card id + open state. */
@@ -79,7 +86,7 @@ export interface StreamCardMemoProps {
 function StreamCardMemoInner({
   m, now, current, expanded, unread,
   bodyText, bodyState, bodyHtml, bodyLoadedRemote, remoteImages, loadingLabel, failedLabel, withheldLabel,
-  onSelect, onToggle, onAction,
+  mailboxLabel, onSelect, onToggle, onAction,
 }: StreamCardMemoProps) {
   /* The card's two toggle words. `StreamCard` has none of its own — see `copy-census`. */
   const tm = useTranslations("message");
@@ -149,6 +156,11 @@ function StreamCardMemoInner({
       withheldLabel={withheldLabel}
       bodySlot={bodySlot}
       recipients={recipients}
+      /* Its own node beside the recipients block and NOT inside its gate: that block asks who else
+         was addressed, off the headers, and withholds itself below two recipients; this is a
+         delivery fact, true of a 1:1 message and exactly the one worth saying there. */
+      mailbox={mailboxLabel}
+      mailboxTitle={mailboxLabel ? tm("deliveredToTitle", { label: mailboxLabel }) : undefined}
       art={art}
       unread={unread}
       current={current}
@@ -191,6 +203,7 @@ function areEqual(a: StreamCardMemoProps, b: StreamCardMemoProps): boolean {
     a.loadingLabel === b.loadingLabel &&
     a.failedLabel === b.failedLabel &&
     a.withheldLabel === b.withheldLabel &&
+    a.mailboxLabel === b.mailboxLabel &&
     a.onSelect === b.onSelect &&
     a.onToggle === b.onToggle &&
     a.onAction === b.onAction

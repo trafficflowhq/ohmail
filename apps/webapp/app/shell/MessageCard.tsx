@@ -12,7 +12,7 @@
  */
 import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
-import { Avatar, Button, Icon } from "@ohmail/ui";
+import { Avatar, Badge, Button, Icon } from "@ohmail/ui";
 import { isProtectedMessage, type EngineMessage } from "@ohmail/client-engine";
 import { AwayMark } from "./AwayMark";
 import { isPreviewable } from "../components/AttachmentPreview";
@@ -69,6 +69,9 @@ export function MessageHeader({
   const tm = useTranslations("message");
   const tr = useTranslations("screening");
   const chrome = useMessageChrome();
+  /* Null on a one-mailbox account and wherever the shell has no mailbox facts — the gate is inside
+     the resolver, so this header asks for a label and takes silence for an answer. */
+  const deliveredTo = chrome.mailboxLabelOf?.(message.mailboxId) ?? null;
   /** The ⋯ disclosure. The trigger owns the keyboard's way back — see `closeMenu`. */
   const [menuOpen, setMenuOpen] = useState(false);
   const moreRef = useRef<HTMLButtonElement>(null);
@@ -239,6 +242,17 @@ export function MessageHeader({
       </div>
       {subjectLine}
       <MessageRecipients message={message} notice={notice} />
+      {/* WHICH ADDRESS OF YOURS THIS ARRIVED AT, above one mailbox. Its own node under the
+          recipients block rather than a row inside it: that block reads the To/Cc headers, which
+          are silent on a Bcc and name the list on list mail; this is the delivery mailbox
+          (`message.mailboxId`), and the sentence says so, so the two can never contradict. */}
+      {deliveredTo ? (
+        <div className="msg-delivered">
+          <Badge variant="place" title={tm("deliveredToTitle", { label: deliveredTo })}>
+            {deliveredTo}
+          </Badge>
+        </div>
+      ) : null}
       {/* "Answered by the away responder · <when>" — drawn iff the server stamped this
           message, immediately under the recipients. One mount, and it serves every panel
           this header wears: the focused message in the reading pane (`MessagePane`

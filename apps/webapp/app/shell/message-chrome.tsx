@@ -253,6 +253,14 @@ export interface MessageChrome {
    */
   ownNameOf?: (address: string) => string | null;
   /**
+   * WHICH OF THE ACCOUNT'S MAILBOXES A MESSAGE WAS DELIVERED TO, or null — `mailboxLabelResolver`
+   * over the same `GET /mailboxes` facts `ownNameOf` reads, resolved once in `AppShell` and riding
+   * the chrome for the same reason. The `> 1` gate is INSIDE the resolver, so a caller asks for a
+   * label and is answered null on a one-mailbox account. Optional, and absent is that same null:
+   * a surface with no mailbox facts (the desktop shell, a bare mount) names no mailbox.
+   */
+  mailboxLabelOf?: (mailboxId: string) => string | null;
+  /**
    * PREFILL A NEW MESSAGE to `address` — the contact popover's Write verb.
    *
    * Filled by `AppShell` (compose seeded with the recipient, then the route change), which is

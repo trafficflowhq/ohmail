@@ -4883,6 +4883,12 @@ input.set-tag-input {
   font-size:calc(11.5px + var(--type-up));
   color: var(--ink3);
 }
+/* The delivery mailbox, under the recipients and on their left edge — the prose's edge. Its own
+   line because it answers a different question from a different source: which address of yours
+   this arrived at, off the message's mailbox rather than its headers. */
+.msg-delivered {
+  margin: 6px 0 0;
+}
 .rcpt-row {
   display: flex;
   align-items: baseline;

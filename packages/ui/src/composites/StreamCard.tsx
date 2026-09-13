@@ -6,6 +6,7 @@ import {
   type ReactNode,
 } from "react";
 import { Icon } from "../icons.js";
+import { Badge } from "../primitives/Chip.js";
 import { estimateCardHeight } from "./stream-estimate.js";
 import "./stream.css";
 
@@ -105,6 +106,16 @@ export interface StreamCardProps {
    */
   recipients?: ReactNode;
   /**
+   * WHICH OF THE ACCOUNT'S MAILBOXES THE MESSAGE WAS DELIVERED TO — a face on the card's own line,
+   * drawn only where the host hands one over (it decides; a single-mailbox account gets none).
+   * A separate node from {@link StreamCardProps.recipients}, which answers a different question
+   * from a different source: who else was addressed, off the headers. {@link mailboxTitle} carries
+   * the sentence. Strings and not a slot, because the card's comparator keys on primitives.
+   */
+  mailbox?: string;
+  /** The delivery badge's whole phrase ("Delivered to Work") — its hover title. */
+  mailboxTitle?: string;
+  /**
    * THE MESSAGE'S VERBS, at the foot of the card.
    *
    * Optional and default-absent: a card with no bar is exactly the card that shipped before.
@@ -145,6 +156,8 @@ export function StreamCard({
   onSelect,
   onToggle,
   recipients,
+  mailbox,
+  mailboxTitle,
   actions,
 }: StreamCardProps) {
   const [open, setOpen] = useState(false);
@@ -333,6 +346,13 @@ export function StreamCard({
           <b>{from}</b>
           {address ? <span className="addr">{address}</span> : null}
           {amount ? <span className="amt num">{amount}</span> : null}
+          {/* The delivery mailbox, beside the sender it arrived from — the head's one place for
+              "whose mail is this", so the eye reads sender and recipient in one pass. */}
+          {mailbox ? (
+            <Badge variant="place" title={mailboxTitle}>
+              {mailbox}
+            </Badge>
+          ) : null}
           {/* Before the time, so the date keeps the corner the eye expects it in and the notice
               leads into it. `onClick` stops here: asking what the glyph means must not also select
               and open the card underneath it. */}

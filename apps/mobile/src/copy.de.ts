@@ -440,6 +440,7 @@ export const DE: Deck = {
     `${from}. ${subject}. ${time}.${unread ? " Ungelesen." : ""}`,
   senderRowAria: (name: string, address: string, held: number) =>
     `${name}, ${address}, ${held} zurückgehalten`,
+  deliveredTo: (label: string) => `Zugestellt an ${label}`,
   readsCollapse: "Zuklappen",
   readsReadInFull: "Ganz lesen",
   readsCardAria: (subject: string, open: boolean) =>

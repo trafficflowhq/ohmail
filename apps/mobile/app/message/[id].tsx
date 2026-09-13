@@ -123,6 +123,13 @@ function MessageBody() {
             ) : null}
             {m.trackerNote ? <Chip icon="shield">{m.trackerNote}</Chip> : null}
             {m.amount ? <Chip>{m.amount}</Chip> : null}
+            {/* The delivery mailbox, in the reader's own chip grammar. A DELIVERY claim off
+                `mailboxId`, never a To/Cc read — this screen shows no recipients at all. */}
+            {m.mailboxLabel ? (
+              <Chip icon="route" style={{ maxWidth: "100%" }}>
+                {Copy.deliveredTo(m.mailboxLabel)}
+              </Chip>
+            ) : null}
           </View>
 
           {m.protected ? <ProtectedBlock label={m.protected.label} policy={m.protected.policy} /> : null}

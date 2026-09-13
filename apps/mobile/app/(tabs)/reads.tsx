@@ -180,8 +180,11 @@ function StreamCard({ m, onExpand }: { m: WorldMail; onExpand: () => void }) {
             {clamped ? <FadeOut color={t.c.panel} /> : null}
           </View>
 
-          <View style={{ flexDirection: "row", gap: 6, marginTop: 14 }}>
+          <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: 14 }}>
             <Badge icon={open ? "chev" : "open"}>{open ? Copy.readsCollapse : Copy.readsReadInFull}</Badge>
+            {/* Which of your addresses this arrived at — set only above one mailbox, so a
+                single-mailbox account's cards are exactly the cards they were. */}
+            {m.mailboxLabel ? <Badge tone="place">{Copy.deliveredTo(m.mailboxLabel)}</Badge> : null}
           </View>
         </View>
       </TapRow>

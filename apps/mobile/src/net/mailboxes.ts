@@ -18,6 +18,12 @@ export interface PhoneMailbox {
   /** The mailbox's own address — what makes the reader recognisable in a To/Cc list. */
   address: string;
   /**
+   * The mailbox's user-facing label — `MailboxDTO.displayName`, nullable on the wire and ABSENT
+   * where an older server sent none. Read so that a mailbox this phone names is the one the
+   * browser names: both fall back to the address, so one mailbox has one face on every surface.
+   */
+  displayName?: string | null;
+  /**
    * WHO ORGANIZES IT, when it is not the server this phone is paired with — `null` when that
    * server organizes it itself, and `null` when nobody ever has.
    *
@@ -105,6 +111,9 @@ export async function readMailboxes(session: ConnectedSession): Promise<PhoneMai
       out.push({
         id: r.id,
         address: r.address,
+        ...(typeof r.displayName === "string" && r.displayName !== ""
+          ? { displayName: r.displayName }
+          : {}),
         organizedBy: holderOf(r.organizedBy),
         organizerState: stateOf(r.organizerState),
         status: typeof r.status === "string" && r.status !== "" ? r.status : null,

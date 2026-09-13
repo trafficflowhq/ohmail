@@ -134,16 +134,22 @@ export interface BadgeProps {
   variant?: BadgeVariant;
   icon?: IconName;
   className?: string;
+  /**
+   * The hover title — the sentence a bare capsule cannot say for itself. A badge face is one or
+   * two words by construction ("Work", an address), so the fact it stands for lives here. Data
+   * and not copy: the HOST hands over the whole phrase, as it does the face.
+   */
+  title?: string;
   children?: ReactNode;
 }
 
 /** Small in-row capsule (thread count, held count, protected, AI suggestion). */
-export function Badge({ variant = "default", icon, className, children }: BadgeProps) {
+export function Badge({ variant = "default", icon, className, title, children }: BadgeProps) {
   const cls = ["badge", variant !== "default" ? variant : null, "num", className]
     .filter(Boolean)
     .join(" ");
   return (
-    <span className={cls}>
+    <span className={cls} title={title}>
       {icon ? <Icon name={icon} size={10} /> : null}
       {children}
     </span>

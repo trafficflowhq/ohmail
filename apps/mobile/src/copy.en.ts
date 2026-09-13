@@ -710,6 +710,8 @@ const TABLE = {
   /** A Screener row, spoken — the only word in it is the one describing what is held. */
   senderRowAria: (name: string, address: string, held: number) =>
     `${name}, ${address}, ${held} held`,
+  /** Which of the account's addresses a message arrived at — drawn only above one mailbox. */
+  deliveredTo: (label: string) => `Delivered to ${label}`,
   /** The Reads card's expand affordance, as a badge and as a spoken label. */
   readsCollapse: "Collapse",
   readsReadInFull: "Read in full",

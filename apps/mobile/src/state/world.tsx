@@ -1026,6 +1026,9 @@ export function WorldProvider({ children }: { children: ReactNode }) {
       // Before the first read this is `[]`, which is `NO_OWN_ADDRESSES` — the posture this
       // client had for its whole life, and the right answer for a phone that has not asked yet.
       ownAddresses: addressesNow.current,
+      /* The rows behind those addresses, so a message can name the mailbox it arrived in. `?? []`
+         is "nothing read yet", which the label gate reads as nothing to disambiguate. */
+      mailboxes: mailboxes ?? [],
       // The SAME posture the partition below is taken under — the shelves read it for the marker.
       screening: posture,
     };
@@ -1177,7 +1180,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
          the reader in the audience of their own reply. */
       message: (id) => liveMessage(engine, id, {
         now: new Date(), zone, locale, foldersEnabled: foldersOn,
-        ownAddresses: addressesNow.current, screening: posture,
+        ownAddresses: addressesNow.current, mailboxes: mailboxes ?? [], screening: posture,
       }),
       sendOutcome: outcomeOf,
       actions,

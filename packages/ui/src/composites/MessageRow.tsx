@@ -153,6 +153,17 @@ export interface MessageRowProps {
   /** Cross-view badge naming the message's home (Tag view). */
   place?: string;
   /**
+   * WHICH OF THE ACCOUNT'S MAILBOXES THIS MESSAGE WAS DELIVERED TO — a face, drawn only where the
+   * account holds more than one (the host decides; this row draws whatever word it is handed).
+   *
+   * Its own prop and never {@link MessageRowProps.place}: `place` is where the message LIVES and a
+   * row can legitimately need both. {@link MessageRowProps.mailboxTitle} carries the sentence,
+   * because a bare address on a strip does not say what it is claiming.
+   */
+  mailbox?: string;
+  /** The delivery badge's whole phrase ("Delivered to Work") — its title, and what the row speaks. */
+  mailboxTitle?: string;
+  /**
    * A QUIET STATE NOTE on the badge strip — "Answer later", "Parked", "Back Tue 09:00".
    *
    * A message filed into a triage pile looked identical to its neighbours in the Ohbox, so
@@ -230,6 +241,8 @@ export function MessageRow(props: MessageRowProps) {
     hasAttachment,
     tags,
     place,
+    mailbox,
+    mailboxTitle,
     stateNote,
     avatarInitial,
     avatarHue,
@@ -292,6 +305,12 @@ export function MessageRow(props: MessageRowProps) {
     tail.push(
       <Badge key="place" variant="place">
         {place}
+      </Badge>,
+    );
+  if (mailbox)
+    tail.push(
+      <Badge key="mailbox" variant="place" title={mailboxTitle}>
+        {mailbox}
       </Badge>,
     );
   if (stateNote)
@@ -446,6 +465,9 @@ export function MessageRow(props: MessageRowProps) {
   if (heldCount !== undefined && heldCount > 1 && typeof heldLabel === "string") said.push(heldLabel);
   if (stateNote) said.push(stateNote);
   if (place) said.push(place);
+  /* The SENTENCE, not the face: "Work" alone in a list of capsules says nothing about what is
+     being claimed, and the badge's own title is the phrase the host already wrote. */
+  if (mailbox) said.push(mailboxTitle ?? mailbox);
   if (destination) said.push(destination);
   if (detection) said.push(detection);
   if (amount) said.push(amount);

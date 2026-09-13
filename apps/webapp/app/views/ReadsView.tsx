@@ -53,6 +53,7 @@ export function ReadsView({
   partition,
   tags,
   threadParticipants,
+  mailboxLabelOf,
   absoluteTime,
   onToggleTime,
   now,
@@ -82,6 +83,14 @@ export function ReadsView({
    * always did. Optional, so a view mounted without it (the demo, most tests) is unchanged.
    */
   threadParticipants?: (threadId: string) => { initials: string; hue: number }[];
+  /**
+   * WHICH OF THE ACCOUNT'S MAILBOXES A ROW WAS DELIVERED TO — `mailboxLabelResolver` over the
+   * shell's `GET /mailboxes` facts, which this view has none of. A resolver rather than the
+   * chrome, which no view reads: the row and the card both take the resolved STRING, so the card's
+   * comparator keeps comparing primitives. The `> 1` gate is inside it — a one-mailbox account is
+   * answered null here and neither surface draws anything. Optional: absent, nothing is named.
+   */
+  mailboxLabelOf?: (mailboxId: string) => string | null;
   /**
    * THE DATE STAMPS — which form they are in, and the press that flips them.
    *
@@ -162,6 +171,9 @@ export function ReadsView({
    */
   const ts = useTranslations("stream");
   const tb = useTranslations("body");
+  /* The delivery badge's sentence. `packages/ui` is copy-free, so the row and the card are handed
+     the face and the whole phrase — see `MessageRow.mailboxTitle`. */
+  const tm = useTranslations("message");
   const locale = useLocale();
   const streamRef = useRef<StreamHandle>(null);
   const listScrollerRef = useRef<HTMLDivElement>(null);
@@ -534,7 +546,9 @@ export function ReadsView({
      ARE the reading — so no reader zone is declared and → from the list stays inert. */
   useZoneNav({ list: { up: stepUp, down: stepDown, followId: current ?? null } });
 
-  const row = (m: EngineMessage) => (
+  const row = (m: EngineMessage) => {
+    const mailbox = mailboxLabelOf?.(m.mailboxId) ?? undefined;
+    return (
     <MessageRow
       spoken={rowBadge.spoken}
       key={m.id}
@@ -561,9 +575,14 @@ export function ReadsView({
       dotless
       selected={current === m.id}
       tags={tagsOfMessage(m, tags).map((tag) => ({ name: tag.name, hue: hueOf(tag) }))}
+      /* WHICH ADDRESS OF YOURS THIS ARRIVED AT, above one mailbox — the delivery mailbox
+         (`m.mailboxId`), never a To/Cc read, which is silent on a Bcc and on list mail. */
+      mailbox={mailbox}
+      mailboxTitle={mailbox ? tm("deliveredToTitle", { label: mailbox }) : undefined}
       onClick={() => jump(m.id)}
     />
-  );
+    );
+  };
 
   /* Expanding a card that holds only a snippet IS the request for the rest of it — and the retry
      after a failure, which is why the failed copy says to expand again. It is also what raises the
@@ -617,6 +636,9 @@ export function ReadsView({
         failedLabel={failedLabel}
         /* Per MARKER (`withheldCopyKey`): which policy emptied the body decides the sentence. */
         withheldLabel={tb(withheldCopyKey(body.withheld))}
+        /* The same fact the row above carries, resolved to a STRING here so the memo's comparator
+           keeps comparing primitives. */
+        mailboxLabel={mailboxLabelOf?.(m.mailboxId) ?? undefined}
         onSelect={onCur}
         onToggle={onToggle}
         onAction={onAction}

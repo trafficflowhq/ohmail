@@ -1496,7 +1496,9 @@
     "collapseCard": "Zuklappen",
     "awayAnswered": "Vom Abwesenheitsassistenten beantwortet",
     "awayAnsweredAt": "{label}<stamp> · {when}</stamp>",
-    "awayAnsweredAria": "Vom Abwesenheitsassistenten beantwortet {whenLong}"
+    "awayAnsweredAria": "Vom Abwesenheitsassistenten beantwortet {whenLong}",
+    "deliveredTo": "{label}",
+    "deliveredToTitle": "Zugestellt an {label}"
   },
   "nav": {
     "skip": "Zum Inhalt springen",
