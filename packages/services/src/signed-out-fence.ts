@@ -4,21 +4,14 @@ import type { Dialect, LockMode } from "@trafficflow/db/dialect";
 import { ServiceError } from "./errors.js";
 
 /**
- * THE SIGN-OUT FENCE, DURABLE HALF. Signing out of a mailbox on this install deletes the sealed
- * password; nothing that was already on its way may seal it back afterwards.
- *
- * A credential write DIALS first and commits seconds later, so a sign-out can run to completion
- * inside that window — prove the row gone, answer, and then watch the writer commit. `FOR UPDATE`
- * in the clear serializes such a writer, not its committing immediately after. The engine's own
- * epoch (`apps/sidecar/src/signout-fence.ts`) closes that for writers inside its process; it is in
- * MEMORY, and the shared `PATCH /mailboxes/:id` — what a paired phone sends — is another. So the
- * clear stamps `mailboxes.signed_out_at` in its own transaction, and a writer that MOVED past that
- * stamp refuses here.
+ * THE SIGN-OUT FENCE, DURABLE HALF. A credential write dials first and commits seconds later, so a
+ * sign-out can run to completion inside that window: prove the row gone, answer, and then watch the
+ * writer commit. `FOR UPDATE` in the clear serializes such a writer, not its committing right after,
+ * and the engine's epoch (`apps/sidecar/src/signout-fence.ts`) is in MEMORY — blind to the shared
+ * `PATCH /mailboxes/:id`, which is what a paired phone sends. So the clear stamps the column.
  *
  * COMPARE-AND-SET, not a clock comparison: the writer records the stamp as it stood when it began,
- * the fence re-reads it under the row lock, and a value that differs IS a sign-out in between. No
- * two clocks have to agree, and a sign-out landing in the same millisecond as a sign-in cannot be
- * read as no sign-out at all. It is `assertMergeCurrent`'s shape, over one more column.
+ * the fence re-reads it under the row lock, and a value that differs IS a sign-out in between.
  */
 
 /**

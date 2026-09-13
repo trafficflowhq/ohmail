@@ -363,15 +363,13 @@ export const mailboxes = pgTable("mailboxes", {
   // supported way to make the client speak "still importing" again.
   initialImportCompletedAt: timestamp("initial_import_completed_at", { withTimezone: true }),
   /**
-   * WHEN THIS INSTALL LAST SIGNED OUT OF THIS MAILBOX — the durable half of the sign-out fence.
+   * WHEN THIS INSTALL LAST SIGNED OUT OF THIS MAILBOX — the sign-out fence's durable half.
    *
-   * Written in the same transaction as the credential delete, and re-read by every writer that
-   * seals a password: a writer reads this value when it starts, the transaction that writes the
-   * secret re-reads it under the mailbox's own row lock, and a value that MOVED means a sign-out
-   * landed while the password was being checked. An in-memory epoch cannot say this — it belongs
-   * to one process and a credential is on disk. NULL is "nobody has signed out here", which is
-   * every row until somebody does. On the mailboxes row rather than the credential's, because the
-   * credential row is the thing the sign-out deletes.
+   * Written in the same transaction as the credential delete; every writer that seals a password
+   * records this value before it dials and re-reads it under this row's lock, so a value that
+   * MOVED means a sign-out landed while the password was being checked. An in-memory epoch cannot
+   * say that — it belongs to one process and a credential is on disk. NULL is "nobody has signed
+   * out here". On this row rather than the credential's, which is what a sign-out deletes.
    */
   signedOutAt: timestamp("signed_out_at", { withTimezone: true }),
 }, (t) => ({
