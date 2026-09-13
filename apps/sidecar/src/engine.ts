@@ -2722,16 +2722,6 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
       };
 
       /**
-       * BUILD ONE DIAL. Called once at attach and again for every re-dial, because an
-       * `ImapAdapter` that has been closed is not the thing to re-open — the worker's re-attach
-       * builds a fresh one for the same reason, and a fresh instance is the only shape in which
-       * "the factory was called a second time" is observable from outside.
-       *
-       * The callback closes over BOTH the generation and the adapter INSTANCE it belongs to. The
-       * instance is what gets closed (never the mutable binding, which a re-dial may already have
-       * moved on) and the generation is what decides whether this death is still news.
-       */
-      /**
        * ONE STEP UP THE RE-DIAL LADDER — the ONE writer of the automatic wait.
        *
        * Extracted rather than written twice: a launch that cannot READ its password retries the
@@ -2819,6 +2809,16 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         return false;
       };
 
+      /**
+       * BUILD ONE DIAL. Called once at attach and again for every re-dial, because an
+       * `ImapAdapter` that has been closed is not the thing to re-open — the worker's re-attach
+       * builds a fresh one for the same reason, and a fresh instance is the only shape in which
+       * "the factory was called a second time" is observable from outside.
+       *
+       * The callback closes over BOTH the generation and the adapter INSTANCE it belongs to. The
+       * instance is what gets closed (never the mutable binding, which a re-dial may already have
+       * moved on) and the generation is what decides whether this death is still news.
+       */
       const dialAdapter = (): MailboxAdapter => {
         const gen = ++generation;
         let self: MailboxAdapter | null = null;
