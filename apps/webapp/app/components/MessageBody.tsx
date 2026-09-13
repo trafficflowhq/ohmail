@@ -1875,22 +1875,61 @@ const RICH_INLINE = new Set(["br", "strong", "b", "em", "i", "u", "a", "span", "
   "sub", "sup", "time", "tt", "var", "wbr"]);
 
 /**
- * The block walk: accumulate inline content into a paragraph run, flush it at every block
- * boundary, and emit the structural kinds by name. A paragraph whose words trim to nothing
- * is dropped — that is the whitespace between a mail builder's `<div>`s, not content.
+ * The containers whose direct runs are PARAGRAPHS. Everything else — `div` above all, but also
+ * `body`, `blockquote`, `td`, `center`, `section` — contains LINES.
+ *
+ * A `<p>` is the sender saying "paragraph" in the only word the format has for it. A list item is
+ * here because the list's own sheet is what spaces items (`.msg-list .msg-p`), and taking that
+ * away would tighten every list to answer a question about divs.
+ */
+const RICH_PARAGRAPH_CONTAINERS = new Set(["p", "li"]);
+
+/**
+ * The block walk: accumulate inline content into a run, flush it at every block boundary, and emit
+ * the structural kinds by name.
+ *
+ * ── WHAT A RUN BECOMES, AND WHY IT IS NOT ALWAYS A PARAGRAPH ───────────────────────────────
+ *
+ * Every run used to become a paragraph with paragraph spacing. Apple Mail, Gmail and Outlook all
+ * compose a letter as one `<div>` per LINE — twelve lines is twelve divs, and a blank line the
+ * writer typed is `<div><br></div>` — so a message that reads as twelve consecutive lines in the
+ * client that sent it arrived here with a blank line between every one of them. The sender's own
+ * blank lines, meanwhile, were dropped: a run holding nothing but a `br` trims to no words, and
+ * "no words" was the rule for discarding the whitespace BETWEEN a mail builder's divs.
+ *
+ * So two rules, and each is the other's answer:
+ *
+ *  · the container decides the spacing ({@link RICH_PARAGRAPH_CONTAINERS}) — a div is a line;
+ *  · a wordless run is dropped ONLY when it is pure whitespace. One carrying a `br` is a blank
+ *    line somebody wrote, and it survives as exactly one empty line.
  */
 function blocksOf(container: Element, depth: number, b: RichBudget, nest: number): BodyNode[] {
   if (nest > MAX_WALK_DEPTH) { poison(b); return []; }
   const out: BodyNode[] = [];
   let run: InlineNode[] = [];
+  const spacing: RichParagraphNode["spacing"] =
+    RICH_PARAGRAPH_CONTAINERS.has(container.tagName.toLowerCase()) ? "paragraph" : "line";
   const flush = (): void => {
     if (run.length === 0) return;
     const children = run;
     run = [];
     const words = textOfInline(children).trim();
-    if (words.length === 0) return;
+    if (words.length === 0) {
+      // An empty line the sender wrote, and never the whitespace between two of a builder's divs:
+      // a `br` is the only thing in this run that a person put there. Spent from the budget like
+      // any other node, so `"<div><br></div>".repeat(100000)` is bounded by the same ceiling.
+      if (children.some((n) => n.kind === "break") && spend(b)) {
+        out.push({ kind: "rich", attribution: false, spacing: "line", children });
+      }
+      return;
+    }
     if (spend(b)) {
-      const para: RichParagraphNode = { kind: "rich", attribution: isAttribution(words), children };
+      const para: RichParagraphNode = {
+        kind: "rich",
+        attribution: isAttribution(words),
+        spacing,
+        children,
+      };
       out.push(para);
     }
   };
@@ -1946,7 +1985,9 @@ function blocksOf(container: Element, depth: number, b: RichBudget, nest: number
       }
     } else {
       // `p`, `div`, and every unhandled block container (`center`, `section`, an orphaned
-      // `td`): a block boundary whose content is walked in place.
+      // `td`): a block boundary whose content is walked in place. Which of them SPACES its
+      // content is the recursion's own question — `RICH_PARAGRAPH_CONTAINERS`, read from the
+      // element it is about to walk.
       out.push(...blocksOf(el, depth, b, nest + 1));
     }
   }

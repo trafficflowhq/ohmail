@@ -174,6 +174,12 @@
    paragraphs reads as one letter rather than a stack of separated blocks. */
 .msg-p{margin:0 0 10px;overflow-wrap:anywhere}
 .msg-p:last-child{margin-bottom:0}
+/* A LINE, which is what a `<div>` is. Apple Mail, Gmail and Outlook compose a letter as one div
+   per line and write a blank line as `<div><br></div>`; spacing each of those as a paragraph put
+   a blank line between every line the sender wrote and dropped the ones they meant. So: no margin
+   of its own, and an empty one (`<p class="msg-line"><br></p>`) is one line box, which is exactly
+   one blank line. Only a real `<p>` earns the rhythm above. */
+.msg-line{margin:0;overflow-wrap:anywhere}
 /* QUOTED REPLY CHAINS. One `.msg-quote` per quoted run per level, with deeper levels NESTED
    inside — so each level contributes exactly one quiet left rule and one 12px step of indent,
    and the rule runs unbroken down everything quoted at that level. It used to be one wrapper
@@ -185,6 +191,8 @@
 .msg-quote{border-inline-start:2px solid var(--hair);padding-inline-start:12px;margin:0 0 14px;color:var(--ink2)}
 .msg-quote .msg-p,.msg-quote .msg-attribution{color:inherit;margin-bottom:4px}
 .msg-quote .msg-p:last-child,.msg-quote .msg-attribution:last-child{margin-bottom:0}
+/* The quote's ink, and nothing else: a line inside a quote is still a line. */
+.msg-quote .msg-line{color:inherit}
 .msg-quote .msg-quote{margin:4px 0;color:var(--ink3)}
 .msg-quote .msg-quote:last-child{margin-bottom:0}
 /* The line that says who wrote the block below — never the sender's words, so it is set apart

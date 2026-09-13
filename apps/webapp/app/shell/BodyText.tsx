@@ -191,8 +191,25 @@ export interface LinkRun {
 }
 export type InlineNode = TextRun | LineBreak | StyledRun | LinkRun;
 
-/** A paragraph of rich inline content. `attribution` re-uses the plain path's role and style. */
-export interface RichParagraphNode { kind: "rich"; attribution: boolean; children: InlineNode[] }
+/**
+ * A run of rich inline content, and WHAT CONTAINED IT decides its spacing.
+ *
+ * `"paragraph"` is a real `<p>` (and a list item, which the list's own rule spaces): a block the
+ * sender meant as a paragraph, and it gets paragraph spacing. `"line"` is everything else, and
+ * `<div>` is the case that matters — Apple Mail, Gmail and Outlook all compose a letter as one
+ * `<div>` PER LINE with `<div><br></div>` where the writer pressed return twice. Spacing every one
+ * of those as a paragraph put a blank line between every line of every message those clients send,
+ * while the writer's own blank lines vanished, so the rendering was wrong in both directions at
+ * once. A line has no spacing of its own; the blank lines are the ones the sender wrote.
+ *
+ * `attribution` re-uses the plain path's role and style and outranks both.
+ */
+export interface RichParagraphNode {
+  kind: "rich";
+  attribution: boolean;
+  spacing: "paragraph" | "line";
+  children: InlineNode[];
+}
 /** `h1`–`h6`, rendered at the app's own scale — a mail heading is not a page heading. */
 export interface HeadingNode { kind: "heading"; level: 1 | 2 | 3 | 4 | 5 | 6; children: InlineNode[] }
 export interface RuleNode { kind: "rule" }
@@ -472,8 +489,17 @@ function renderNodes(nodes: BodyNode[], keyPrefix: string): ReactNode[] {
           </p>
         );
       case "rich":
+        /* A `p` element for both spellings — this is a run of prose either way, and the CLASS
+           carries the only difference there is: `.msg-p` has paragraph spacing, `.msg-line` has
+           none. An empty one is a `<p class="msg-line"><br></p>`, which is one line box and so
+           exactly one blank line: the shape `<div><br></div>` means everywhere it is written. */
         return (
-          <p className={node.attribution ? "msg-attribution" : "msg-p"} key={key}>
+          <p
+            className={
+              node.attribution ? "msg-attribution" : node.spacing === "line" ? "msg-line" : "msg-p"
+            }
+            key={key}
+          >
             {renderInline(node.children, key)}
           </p>
         );
