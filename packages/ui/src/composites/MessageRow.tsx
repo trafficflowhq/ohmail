@@ -181,8 +181,15 @@ export interface MessageRowProps {
   avatarInitial?: string;
   /** Deterministic per-sender hue for the circle; see `Avatar`. */
   avatarHue?: number;
-  /** Screener variant: AI suggestion chip ("→ Reads 0.88"). */
-  aiSuggestion?: { destLabel: string; confidence: number };
+  /**
+   * Screener variant: AI suggestion chip ("→ Reads 0.88"), and the fact that bounded it.
+   *
+   * `reason` is the sentence a DETERMINISTIC check produced — the sending address against the
+   * brand the mail names, one subject from a crowd of strangers, a failed authentication. It sits
+   * beside the chip rather than inside it because it is a different kind of claim: the chip is
+   * advice a model gave, this is something ohmail measured. The host writes the words.
+   */
+  aiSuggestion?: { destLabel: string; confidence: number; reason?: string };
   /** Screener variant: held-mail count chip. */
   heldCount?: number;
   /** The held chip's whole phrase ("2 held"), rendered only when `heldCount > 1`. */
@@ -379,6 +386,7 @@ export function MessageRow(props: MessageRowProps) {
         → {aiSuggestion.destLabel} <span className="num">{aiSuggestion.confidence.toFixed(2)}</span>
       </Badge>,
     );
+  if (aiSuggestion?.reason) chips.push(<Badge key="ai-why">{aiSuggestion.reason}</Badge>);
   /* The chip's whole phrase, from the host — the count is the host's to place, because "2 held"
      and "2 zurückgehalten" do not put the number in the same relation to the word everywhere.
      `heldCount` still decides WHETHER the chip appears; the words are not this file's. */
@@ -464,6 +472,9 @@ export function MessageRow(props: MessageRowProps) {
   if (typeof props.protectedLabel === "string") said.push(props.protectedLabel);
   if (heldCount !== undefined && heldCount > 1 && typeof heldLabel === "string") said.push(heldLabel);
   if (stateNote) said.push(stateNote);
+  // The row SAYS what ohmail checked, not only draws it: a chip nobody can hear is a fact
+  // withheld from the reader who most needs it.
+  if (aiSuggestion?.reason) said.push(aiSuggestion.reason);
   if (place) said.push(place);
   /* The SENTENCE, not the face: "Work" alone in a list of capsules says nothing about what is
      being claimed, and the badge's own title is the phrase the host already wrote. */

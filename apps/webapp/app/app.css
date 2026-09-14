@@ -1487,6 +1487,19 @@ input.tag-manage-input { /* by element: the row is the width, the field gives */
 .scn-why .why {
   color: var(--ink3);
 }
+/* Two claims, one under the other: what ohmail MEASURED about the sender, then what the model
+   ADVISED. The wrapper exists because `.scn-why` is a flex ROW built for one sentence beside the
+   glyph, and putting a second sentence in it laid them side by side. */
+.scn-why-lines {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.scn-why-checked {
+  color: var(--ink);
+  font-weight: 600;
+}
 /* The no-suggestion state: stated, not advertised. It carries no spark glyph — the icon
    means "a model said something" and there is no model. Quieter than the AI line because
    it is a standing condition, not a per-sender finding. */

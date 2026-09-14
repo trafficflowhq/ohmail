@@ -83,6 +83,19 @@ import { BlockNoticeGloss, type BlockNotice } from "../components/BlockNotice";
  * folder itself where there is not — a customer's rule may name a folder this product has no word
  * for, and a made-up one would be worse than the real path.
  */
+/**
+ * THE VALUES THE REASON SENTENCE INTERPOLATES, and every one is OHMAIL'S: `reasonBrand` is a word
+ * out of the curated dictionary and `reasonCount` a number the server measured over the page.
+ * Nothing the sender wrote reaches a catalogue string here — that is the whole reason the wire
+ * carries a code and two facts rather than a finished sentence.
+ */
+function reasonValues(ai: NonNullable<ScreenerSenderDTO["ai"]>): Record<string, string> {
+  return {
+    brand: ai.reasonBrand ?? "",
+    count: ai.reasonCount === undefined ? "" : String(ai.reasonCount),
+  };
+}
+
 function pileNameOfFolder(folder: string, t: (k: string, v?: Record<string, string>) => string): string {
   const key = PILE_KEY_OF_FOLDER[folder];
   return key ? t(key) : folder;
@@ -1138,6 +1151,13 @@ export function ScreenerView({
                       ? t("aiHoldChip")
                       : piles[w.ai.dest as DecisionDestination] ?? w.ai.dest,
                   confidence: w.ai.confidence,
+                  // WHAT OHMAIL CHECKED, said on the row itself. The chip's own words come from
+                  // the catalogue by CODE — the server sends a code and two facts of its own (a
+                  // brand out of our dictionary, a count we measured), never a sentence, so this
+                  // reads in the reader's language and can never print a stranger's text.
+                  ...(w.ai.reasonCode
+                    ? { reason: t(`aiReasonChip.${w.ai.reasonCode}`, reasonValues(w.ai)) }
+                    : {}),
                 }
               : undefined
           }
@@ -2165,6 +2185,17 @@ function WaitingPreview({
             {/* A sender the run could not answer for says WHY, and says it here rather than
                 leaving the row blank. There is no confidence and no rationale to print — nothing
                 was asked — so this branch is one sentence and stops. */}
+            {/* OHMAIL'S OWN SENTENCE COMES FIRST, and it is a different claim from the one
+                beside it: the model ADVISES, this was MEASURED — the sending address against
+                the brand the mail names, one subject from a crowd of strangers, a failed
+                authentication. A capped answer keeps the model's sentence only where it agreed,
+                so that half is often empty and this half is what the person reads. */}
+            <span className="scn-why-lines">
+            {sender.ai.reasonCode ? (
+              <span className="scn-why-checked" data-reason={sender.ai.reasonCode}>
+                {t(`aiReason.${sender.ai.reasonCode}`, reasonValues(sender.ai))}
+              </span>
+            ) : null}
             {sender.ai.noAnswer ? (
               <span>{t(`aiSkip.${sender.ai.noAnswer}`)}</span>
             ) : sender.ai.dest === "screener" ? (
@@ -2183,6 +2214,7 @@ function WaitingPreview({
                 <span className="why">{t("aiWhy", { why: sender.ai.rationale })}</span>
               </span>
             )}
+            </span>
           </div>
         ) : (
           /* NO ADVICE, AND WHY NOT — three states, one sentence each. "Yet" belongs to exactly one

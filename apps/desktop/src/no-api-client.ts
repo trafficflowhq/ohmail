@@ -699,6 +699,10 @@ export interface ScreenerWireItem {
         decision: "yes" | "no" | "hold";
         confidence: number;
         rationale: string;
+        /** Which fact ohmail checked decided this; the brand and the count it interpolates. */
+        reasonCode?: string;
+        reasonBrand?: string;
+        reasonCount?: number;
     } | null;
 }
 
@@ -730,6 +734,10 @@ export interface ScreenerSuggestWire {
         spam?: boolean;
         confidence: number;
         rationale: string;
+        /** Which fact ohmail checked decided this; the brand and the count it interpolates. */
+        reasonCode?: string;
+        reasonBrand?: string;
+        reasonCount?: number;
     }>;
     skipped: Array<{
         sender: string;

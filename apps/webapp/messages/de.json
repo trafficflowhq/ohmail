@@ -731,6 +731,18 @@
     "aiHolds": "Die KI hat diesen Absender nicht einsortiert — der gehört dir",
     "aiHoldChip": "Braucht dich",
     "aiNoAnswerChip": "Keine Antwort",
+    "aiReason": {
+      "impersonation": "Die Absenderadresse geh\u00f6rt nicht zu {brand}",
+      "campaign": "Dieselbe Mail kam von {count} fremden Absendern",
+      "auth_fail": "Diese Mail hat die Absender-Authentifizierung nicht bestanden",
+      "brand_mismatch": "Die Absenderadresse passt nicht zum Namen in dieser Mail"
+    },
+    "aiReasonChip": {
+      "impersonation": "Nicht {brand}",
+      "campaign": "{count} Fremde",
+      "auth_fail": "Authentifizierung fehlgeschlagen",
+      "brand_mismatch": "Name passt nicht"
+    },
     "aiSkip": {
       "out_of_credits": "Das KI-Budget war aufgebraucht, bevor dieser Absender dran war.",
       "spend_unavailable": "KI ist für dieses Konto abgeschaltet, dieser Absender wurde also nicht geprüft.",

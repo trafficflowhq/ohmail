@@ -7,7 +7,10 @@ import {
   screenerSuggestedSenderExists, hasScreenerSuggestionForSender, AI_ACTION_WEIGHTS,
   type SpendPort, type Tx,
 } from "@trafficflow/db";
-import { askScreeningQuestion, silentLogger, type ClassifierPort, type Logger } from "@trafficflow/core/mail";
+import {
+  askScreeningQuestion, capSuggestion, senderCheckAll, senderFacts, silentLogger,
+  type ClassifierPort, type Logger, type SenderSignals,
+} from "@trafficflow/core/mail";
 
 /** The sort floor for a message with no date — the same instant `to_timestamp(0)` named. */
 const EPOCH = new Date(0);
@@ -99,8 +102,11 @@ export interface ScreenerAutoSuggestResult {
 interface Candidate {
   messageId: string;
   fromAddress: string;
+  fromName: string | null;
   subject: string;
   snippet: string;
+  /** `messages.auth_verdict` — NULL on every row until the column is wired; permissive there. */
+  authVerdict: string | null;
 }
 
 const EMPTY = (): ScreenerAutoSuggestResult => ({
@@ -165,7 +171,22 @@ export async function screenerAutoSuggestPass(
     ...EMPTY(), ran: true, examined: candidates.length, capped: candidates.length >= batch,
   };
 
-  for (const c of candidates) {
+  // WHO THESE SENDERS REALLY ARE, BEFORE ANY OF THEM IS ASKED ABOUT. Deterministic, free, and
+  // over the WHOLE candidate set at once because `campaign` is a fact about the set: one subject
+  // arriving from unrelated strangers is invisible to a check that sees one message. The answer
+  // is used twice below — as facts in the request, and as the cap on what comes back.
+  const signals = senderCheckAll(candidates.map((c) => ({
+    fromAddress: c.fromAddress,
+    fromName: c.fromName,
+    subject: c.subject,
+    snippet: c.snippet,
+    authVerdict: c.authVerdict,
+  })));
+
+  for (const [index, c] of candidates.entries()) {
+    // The set-wide check above, for this candidate. Never undefined — `senderCheckAll` answers one
+    // per input, in order — and an empty one would silently disarm the cap, so it is asserted.
+    const checked: SenderSignals = signals[index] ?? { senderDomain: "", urgency: false };
     // THE MONEY QUESTION, BEFORE THE MODEL QUESTION. `spend`, not `tryDebit`: "out of credits", "AI
     // switched off" and "ledger unwell" decide whether the pass stops or is idle, and a boolean throws
     // that away. The source is the MESSAGE, which makes this free to retry and impossible to double-charge
@@ -275,11 +296,13 @@ export async function screenerAutoSuggestPass(
 
       let verdict;
       try {
+        const facts = senderFacts(checked);
         verdict = await askScreeningQuestion(classifier, {
           fromAddress: c.fromAddress,
           subject: c.subject,
           snippet: c.snippet,
           ...(deps.ohboxBar ? { ohboxBar: deps.ohboxBar } : {}),
+          ...(facts ? { senderFacts: facts } : {}),
         });
       } catch (err) {
         // STOP, where the user-pressed path CONTINUES — nobody is waiting here, and a model fault is almost
@@ -299,13 +322,24 @@ export async function screenerAutoSuggestPass(
         break;
       }
 
+      // THE FACTS CAP THE ANSWER, and the cap is what gets STORED — a forged sender, a crowd at
+      // one subject or a failed authentication is not a thing the model may overrule from the
+      // sender's own words. With no signal this returns the verdict object itself, so the stored
+      // row for every ordinary sender is byte-for-byte the row this pass always wrote.
+      const capped = capSuggestion(verdict, checked);
+      if (capped !== verdict) {
+        log.info("screener_auto_suggest_sender_check", {
+          accountId, messageId: c.messageId, reason: capped.reasonCode,
+          from: capped.destination === verdict.destination ? undefined : verdict.destination,
+        });
+      }
       await storeScreenerSuggestion(db, {
         accountId,
         messageId: c.messageId,
-        destination: verdict.destination,
-        confidence: verdict.confidence,
-        rationale: verdict.rationale,
-        spam: verdict.spam,
+        destination: capped.destination,
+        confidence: capped.confidence,
+        rationale: capped.rationale,
+        spam: capped.spam,
       });
       result.bought++;
     } finally {
@@ -364,6 +398,12 @@ async function selectCandidates(
   const reps = db.select({
     messageId: messages.id,
     fromAddress: messages.fromAddress,
+    // THE TWO THE SENDER CHECK READS BESIDE THE SUBJECT. `from_name` is the identity the sender
+    // asserted; `auth_verdict` is the one fact here nobody outside could write — NULL on every
+    // row until that column is wired, and NULL is permissive, so reading it changes nothing today
+    // and needs no second pass the day it is computed.
+    fromName: messages.fromName,
+    authVerdict: messages.authVerdict,
     subject: messages.subject,
     snippet: messages.snippet,
     createdAt: messages.createdAt,
@@ -386,6 +426,8 @@ async function selectCandidates(
   const rows = await db.select({
     messageId: reps.messageId,
     fromAddress: reps.fromAddress,
+    fromName: reps.fromName,
+    authVerdict: reps.authVerdict,
     subject: reps.subject,
     snippet: reps.snippet,
   }).from(reps)
@@ -431,6 +473,8 @@ async function selectCandidates(
   return rows.map((r) => ({
     messageId: r.messageId,
     fromAddress: r.fromAddress.toLowerCase(),
+    fromName: r.fromName,
+    authVerdict: r.authVerdict,
     subject: r.subject,
     snippet: r.snippet,
   }));

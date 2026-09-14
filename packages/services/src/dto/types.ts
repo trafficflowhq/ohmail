@@ -1,4 +1,4 @@
-import type { Destination, EmailAddress, UnsubscribeHeaderState, WorkflowStep, WorkflowTrigger, WorkflowPattern } from "@trafficflow/core/mail";
+import type { Destination, EmailAddress, SenderReasonCode, UnsubscribeHeaderState, WorkflowStep, WorkflowTrigger, WorkflowPattern } from "@trafficflow/core/mail";
 import type { EntityType, ChangeOp } from "@trafficflow/db";
 
 export type { EntityType, ChangeOp };
@@ -74,6 +74,22 @@ export interface ScreenerItem {
     spam: boolean;
     confidence: number;           // 0..1
     rationale: string;
+    /**
+     * WHICH FACT OHMAIL CHECKED DECIDED THIS — absent for every suggestion the model's own answer
+     * stands unchanged for, which is nearly all of them. A closed set (`SenderReasonCode`), so a
+     * surface renders ONE sentence per code out of its own catalogue rather than printing a
+     * server string: the reason is a fact about this message, and a fact is said in the reader's
+     * language. `rationale` stays the model's sentence and is unrelated — where a fact capped the
+     * answer and the model disagreed, `rationale` is empty and this names why.
+     */
+    reasonCode?: SenderReasonCode;
+    /**
+     * The brand the mail claimed to be, for `impersonation` — from OHMAIL's own dictionary, never
+     * a word the sender wrote, which is what makes it safe to render. Absent for every other code.
+     */
+    reasonBrand?: string;
+    /** How many unrelated senders carried this subject, for `campaign`. Absent otherwise. */
+    reasonCount?: number;
   } | null;                       // null while unclassified / when AI is unavailable
   updatedAt: ISODateTime;
 }

@@ -731,6 +731,18 @@
     "aiHolds": "AI did not place this sender — that one is yours",
     "aiHoldChip": "Needs you",
     "aiNoAnswerChip": "No answer",
+    "aiReason": {
+      "impersonation": "The sender's address is not {brand}'s",
+      "campaign": "The same mail came from {count} unrelated senders",
+      "auth_fail": "This mail failed the sender's own authentication",
+      "brand_mismatch": "The sender's address does not match the name this mail gives"
+    },
+    "aiReasonChip": {
+      "impersonation": "Not {brand}",
+      "campaign": "{count} strangers",
+      "auth_fail": "Failed authentication",
+      "brand_mismatch": "Name does not match"
+    },
     "aiSkip": {
       "out_of_credits": "The AI budget ran out before this sender was reached.",
       "spend_unavailable": "AI is switched off for this account, so this sender was not asked about.",

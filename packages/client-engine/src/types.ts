@@ -728,6 +728,17 @@ export interface ScreenerSenderDTO {
     confidence: number;
     rationale: string;
     noAnswer?: "out_of_credits" | "spend_unavailable" | "model_unavailable";
+    /**
+     * WHICH FACT OHMAIL CHECKED DECIDED THIS — a deterministic sender check the server ran before
+     * the model, which may bound what the model's answer is allowed to say. A closed set, so the
+     * row renders one sentence per code out of its own catalogue rather than a server string.
+     * Absent on every ordinary suggestion, on a fixture row, and from any server that predates it.
+     */
+    reasonCode?: "impersonation" | "campaign" | "auth_fail" | "brand_mismatch";
+    /** The brand named for `impersonation` — ohmail's own dictionary word, never the sender's. */
+    reasonBrand?: string;
+    /** How many unrelated senders carried this subject, for `campaign`. */
+    reasonCount?: number;
   } | null;
   /**
    * NO-COLLAPSE: every held message, in full, oldest first —

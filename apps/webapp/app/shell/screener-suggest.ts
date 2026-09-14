@@ -34,6 +34,19 @@ import type { SuggestStanding } from "./no-suggestion";
  * over a rationale asking for a human. A `screener` row is decidable by a PERSON, never a bulk:
  * applying it would move nothing and grant nothing.
  */
+/**
+ * WHICH FACT OHMAIL CHECKED DECIDED A SUGGESTION — the closed set, spelled here rather than
+ * imported. `@trafficflow/core/mail` is the server's copy (`SenderReasonCode` in
+ * `sender-check.ts`) and this graph may not load that barrel at all: it reaches mailparser and
+ * node:crypto, which is the wall every browser-side type in this file already lives behind — the
+ * same reason `SuggestSkipShown` is narrowed here instead of reusing the wire enum. One sentence
+ * per code lives in the catalogue under `screener.aiReason`, and
+ * `screener-sender-reason.test.tsx` pins this list, the catalogues and the renderer together so
+ * the three cannot drift.
+ */
+export const REASON_CODES = ["impersonation", "campaign", "auth_fail", "brand_mismatch"] as const;
+export type SenderReasonCode = (typeof REASON_CODES)[number];
+
 export interface SenderSuggestion {
   dest: "ohbox" | "reads" | "receipts" | "screened" | "spam" | "screener";
   confidence: number;
@@ -49,6 +62,17 @@ export interface SenderSuggestion {
    * something to say; absent ⇒ an ordinary suggestion.
    */
   noAnswer?: SuggestSkipShown;
+  /**
+   * WHICH FACT OHMAIL CHECKED DECIDED THIS — a closed set, so the row renders ONE sentence per
+   * code out of its own catalogue. The server sends it only where a deterministic check bounded
+   * the model's answer; absent on every ordinary sender, and an older server never sends it at
+   * all, which is why it is optional and why nothing here defaults it to a code.
+   */
+  reasonCode?: SenderReasonCode;
+  /** The brand named for `impersonation` — ohmail's dictionary word, never the sender's. */
+  reasonBrand?: string;
+  /** How many unrelated senders carried this subject, for `campaign`. */
+  reasonCount?: number;
 }
 
 /**
@@ -1103,11 +1127,24 @@ const VIEW_DEST: Record<string, SenderSuggestion["dest"]> = {
  */
 export function toSuggestion(a: {
   decision: "yes" | "no" | "hold"; destination?: string; confidence: number; rationale: string;
+  reasonCode?: string; reasonBrand?: string; reasonCount?: number;
 }): SenderSuggestion {
+  // The reason travels with the answer and is never invented here: an unknown code is dropped
+  // rather than rendered, so a server ahead of this client shows the suggestion without a
+  // sentence instead of a raw token.
+  const why = (REASON_CODES as readonly string[]).includes(a.reasonCode ?? "")
+    ? {
+        reasonCode: a.reasonCode as SenderReasonCode,
+        ...(a.reasonBrand ? { reasonBrand: a.reasonBrand } : {}),
+        ...(typeof a.reasonCount === "number" ? { reasonCount: a.reasonCount } : {}),
+      }
+    : {};
   // A `hold` is a non-answer whatever folder travels beside it, so it is read first and the
   // destination is never consulted. Letting a folder outrank the hold is how the surface would
   // start naming a pile for a sender the model explicitly declined to place.
-  if (a.decision === "hold") return { dest: "screener", confidence: a.confidence, rationale: a.rationale };
+  if (a.decision === "hold") {
+    return { dest: "screener", confidence: a.confidence, rationale: a.rationale, ...why };
+  }
 
   // THE SERVER'S OWN ANSWER, when it sends one. An older server does not, and the fallback below
   // is the two-way reading this function used to be — never a guessed folder. A client that filled
@@ -1115,7 +1152,7 @@ export function toSuggestion(a: {
   const named = a.destination ? VIEW_DEST[a.destination] : undefined;
   const dest: SenderSuggestion["dest"] = named
     ?? (a.decision === "yes" ? "ohbox" : "screened");
-  return { dest, confidence: a.confidence, rationale: a.rationale };
+  return { dest, confidence: a.confidence, rationale: a.rationale, ...why };
 }
 
 /**

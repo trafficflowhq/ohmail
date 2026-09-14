@@ -25,11 +25,14 @@ import {
  * compile in a deployment where no gate and no ledger exist. */
 import type { AiCreditGate, SpendPort } from "@trafficflow/db";
 import { carryDialect, dialect } from "@trafficflow/db/dialect";
-import type { AdapterPort, ClassifierPort, Destination, NativeLocator, OhboxPolicy } from "@trafficflow/core/mail";
+import type {
+  AdapterPort, ClassifierPort, Destination, NativeLocator, OhboxPolicy, SenderReasonCode,
+  SenderSignals,
+} from "@trafficflow/core/mail";
 import {
-  applyReconcileAction, askScreeningQuestion, CLASSIFY_DESTINATIONS, createLogger,
+  applyReconcileAction, askScreeningQuestion, capSuggestion, CLASSIFY_DESTINATIONS, createLogger,
   effectForDestination,
-  rationaleHoldsAtGate, resolveOhboxPolicy,
+  rationaleHoldsAtGate, resolveOhboxPolicy, senderCheckAll, senderFacts,
 } from "@trafficflow/core/mail";
 import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
 /* `capabilityForKind` — the ONE map from a request kind to the capability its holder must
@@ -472,6 +475,17 @@ export interface ScreenerSuggestion {
   spam: boolean;
   confidence: number;
   rationale: string;
+  /**
+   * WHICH FACT OHMAIL CHECKED DECIDED THIS — see `ScreenerItem.aiSuggestion.reasonCode`, the same
+   * closed set for the same reason. Absent wherever the model's own answer stands, which is
+   * nearly every sender; a client that ignores it behaves exactly as before.
+   */
+  reasonCode?: SenderReasonCode;
+  /** The brand the mail claimed to be, for `impersonation` — ohmail's dictionary word, not the
+   *  sender's. Absent for every other code. */
+  reasonBrand?: string;
+  /** How many unrelated senders carried this subject, for `campaign`. Absent otherwise. */
+  reasonCount?: number;
 }
 
 /**
@@ -644,6 +658,10 @@ interface ScreenerRow {
   messageId: string;
   threadId: string | null;
   fromAddress: string;
+  /** The display name the sender chose, when the mirror parsed one. Read by the sender check. */
+  fromName: string | null;
+  /** `messages.auth_verdict` — NULL until that column is wired, and NULL is permissive. */
+  authVerdict: string | null;
   subject: string;
   snippet: string;
   date: Date | null;
@@ -671,6 +689,12 @@ interface ScreenerRow {
  */
 const HELD_COLUMNS = {
   messageId: messages.id, threadId: messages.threadId, fromAddress: messages.fromAddress,
+  // THE TWO THE SENDER CHECK READS. `from_name` is the identity the sender asserted and
+  // `auth_verdict` the one fact on the row nobody outside could write; both are read by
+  // `sender-check.ts` so the reason this page RENDERS is derived from the same inputs the
+  // worker's pass capped the stored row with. Selecting fewer here would show a capped
+  // suggestion with no sentence under it.
+  fromName: messages.fromName, authVerdict: messages.authVerdict,
   subject: messages.subject, snippet: messages.snippet, date: messages.date,
   nativeLocator: messages.nativeLocator, observedFolder: folderState.observedFolder,
   updatedAt: messages.updatedAt, unread: messages.unread, mailboxId: messages.mailboxId,
@@ -680,12 +704,15 @@ function toScreenerRow(r: {
   messageId: string; threadId: string | null; fromAddress: string; subject: string;
   snippet: string; date: Date | null; nativeLocator: unknown; observedFolder: string;
   updatedAt: Date; unread: boolean; mailboxId: string;
+  fromName?: string | null; authVerdict?: string | null;
 }): ScreenerRow {
   return {
     mailboxId: r.mailboxId,
     messageId: r.messageId,
     threadId: r.threadId ?? null,
     fromAddress: r.fromAddress,
+    fromName: r.fromName ?? null,
+    authVerdict: r.authVerdict ?? null,
     subject: r.subject,
     snippet: r.snippet,
     date: r.date,
@@ -825,7 +852,13 @@ export class ScreenerReadService {
       ctx, pageRows.map((r) => r.fromAddress.toLowerCase()), posture,
     );
 
-    const items = pageRows.map((r) => toItem(r, stored.get(r.fromAddress.toLowerCase()) ?? null));
+    // WHO THESE SENDERS REALLY ARE, over the page the person is reading — see
+    // `senderSignalsByMessage`. Free (no query, no model) and applied to advice that is already
+    // on record, so a suggestion bought before this shipped says why it was wrong here too.
+    const checked = senderSignalsByMessage(pageRows);
+    const items = pageRows.map((r) => toItem(r, withSenderCheck(
+      stored.get(r.fromAddress.toLowerCase()) ?? null, checked.get(r.messageId), posture,
+    )));
 
     // The quote. A sender is priced when not already paid for (`!stored`) — the WHOLE rule; the
     // fact is in hand, so this costs no query. It used to also require `r.aiEligible`, and the
@@ -1661,6 +1694,10 @@ export class ScreenerService extends ScreenerReadService {
     const refusals: Array<{ refusal: "state" | "quantity" | "fault"; reason?: string } | undefined> =
       senders.map(() => undefined);
     const purchases: Purchase[] = [];
+    // The same check the always-on pass runs, over the senders THIS press named — the pressed
+    // path asks the same question about the same mail, so withholding the facts here would leave
+    // the defect standing on the path a person pays for.
+    const checked = senderSignalsByMessage([...rep.values()]);
 
     // ── PASS 1 — RESOLUTION ONLY ────────────────────────────────────────────────────────────
     senders.forEach((sender, index) => {
@@ -1835,11 +1872,13 @@ export class ScreenerService extends ScreenerReadService {
         // to send a credential or ask the wrong question. THIS IS THE ONLY AWAIT THAT OVERLAPS
         // BETWEEN LANES in any meaningful way, and it is the point: no connection, no lock, no
         // claim-blocking transaction, ~2 s long.
+        const facts = senderFacts(checked.get(r.messageId) ?? { senderDomain: "", urgency: false });
         result = await askScreeningQuestion(classifier, {
           fromAddress: r.fromAddress,
           subject: r.subject,
           snippet: r.snippet,
           ...(ohboxBar ? { ohboxBar } : {}),
+          ...(facts ? { senderFacts: facts } : {}),
         });
       } catch (err) {
         console.error(`[screener] AI suggestion failed for message ${r.messageId}:`, err);
@@ -1853,8 +1892,13 @@ export class ScreenerService extends ScreenerReadService {
         return;
       }
 
+      // THE FACTS CAP THE ANSWER, and the cap is what is stored and what is answered — the same
+      // `capSuggestion` the worker's pass and the read path call. No signal ⇒ `capped` IS
+      // `result`, so an ordinary sender's stored row is byte-for-byte the one this path always
+      // wrote.
+      const capped = capSuggestion(result, checked.get(r.messageId) ?? { senderDomain: "", urgency: false });
       // Persisted NOW, in its own transaction, before this lane takes another sender.
-      await this.store(ctx, r.messageId, result);
+      await this.store(ctx, r.messageId, capped);
       // …and only NOW is the claim free. See the block above the `try` for the window this
       // ordering closes. The work was DELIVERED, so the charge stands.
       chargedAttempt = null;
@@ -1862,9 +1906,12 @@ export class ScreenerService extends ScreenerReadService {
       answered[index] = {
         sender,
         messageId: r.messageId,
-        ...suggestionAdvice(result.destination, result.spam, result.rationale, ohboxPolicy),
-        confidence: result.confidence,
-        rationale: result.rationale,
+        ...suggestionAdvice(capped.destination, capped.spam, capped.rationale, ohboxPolicy),
+        confidence: capped.confidence,
+        rationale: capped.rationale,
+        ...(capped.reasonCode
+          ? { reasonCode: capped.reasonCode, ...reasonDetail(checked.get(r.messageId) as SenderSignals) }
+          : {}),
       };
     };
 
@@ -2087,6 +2134,61 @@ const SCREEN_DISPOSITION: Record<Destination, ScreenerSuggestion["decision"]> = 
  * `text` column a past version or a hand-run migration may have written. An unrecognised label
  * becomes the gate, which is `hold` — never a guess.
  */
+/**
+ * THE SENDER CHECK OVER A SET OF HELD ROWS, keyed by message. One call for the whole page or the
+ * whole purchase, because `campaign` — one subject arriving from unrelated strangers — is a fact
+ * about the SET and invisible to a check that sees one message at a time. The set is therefore
+ * what the caller is looking at: the page a person is reading, or the senders a press named.
+ */
+function senderSignalsByMessage(rows: readonly ScreenerRow[]): Map<string, SenderSignals> {
+  const signals = senderCheckAll(rows.map((r) => ({
+    fromAddress: r.fromAddress,
+    fromName: r.fromName,
+    subject: r.subject,
+    snippet: r.snippet,
+    authVerdict: r.authVerdict,
+  })));
+  return new Map(rows.map((r, i) => [r.messageId, signals[i] as SenderSignals]));
+}
+
+/**
+ * THE FACTS, APPLIED TO WHAT IS ON RECORD. The worker's pass caps the row it STORES; this caps
+ * what is SHOWN, and both call the same `capSuggestion`, so the two can never disagree about a
+ * verdict — the cap is idempotent, and running it here is what lets a suggestion bought before
+ * this shipped be corrected on the screen the person is looking at rather than re-bought. With no
+ * signal the advice object is returned UNTOUCHED, which is nearly every sender.
+ */
+/**
+ * THE REASON'S OWN WORDS — ohmail's, never the sender's: the brand comes out of the curated
+ * dictionary and the count out of the page we just measured, so a surface may render both.
+ * Built in one place because two paths emit them and a second spelling is a second answer.
+ */
+function reasonDetail(signals: SenderSignals): { reasonBrand?: string; reasonCount?: number } {
+  if (signals.reasonCode === "impersonation" && signals.impersonation) {
+    return { reasonBrand: signals.impersonation.brand };
+  }
+  if (signals.reasonCode === "campaign" && signals.campaign) {
+    return { reasonCount: signals.campaign.count };
+  }
+  return {};
+}
+
+function withSenderCheck(
+  advice: ScreenerItem["aiSuggestion"], signals: SenderSignals | undefined, ohboxPolicy: OhboxPolicy,
+): ScreenerItem["aiSuggestion"] {
+  if (!advice || !signals?.reasonCode) return advice;
+  const capped = capSuggestion({
+    destination: advice.destination, confidence: advice.confidence,
+    rationale: advice.rationale, spam: advice.spam,
+  }, signals);
+  return {
+    ...suggestionAdvice(capped.destination, capped.spam, capped.rationale, ohboxPolicy),
+    confidence: capped.confidence,
+    rationale: capped.rationale,
+    ...(capped.reasonCode ? { reasonCode: capped.reasonCode, ...reasonDetail(signals) } : {}),
+  };
+}
+
 function suggestionAdvice(
   destination: string, spam: boolean, rationale: string, ohboxPolicy: OhboxPolicy,
 ): Pick<ScreenerSuggestion, "decision" | "destination" | "spam"> {

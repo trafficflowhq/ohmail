@@ -2254,7 +2254,15 @@ export interface ScreenerWireItem {
   subject: string;
   snippet: string;
   receivedAt: string;
-  aiSuggestion: { decision: "yes" | "no" | "hold"; confidence: number; rationale: string } | null;
+  aiSuggestion: {
+    decision: "yes" | "no" | "hold"; confidence: number; rationale: string;
+    /** Which fact ohmail checked decided this — see `screener-suggest.ts#REASON_CODES`. */
+    reasonCode?: string;
+    /** The brand named for `impersonation`, from ohmail's dictionary — never the sender's words. */
+    reasonBrand?: string;
+    /** How many unrelated senders carried this subject, for `campaign`. */
+    reasonCount?: number;
+  } | null;
 }
 
 export interface ScreenerWirePage {
@@ -2342,6 +2350,10 @@ export interface ScreenerSuggestWire {
     spam?: boolean;
     confidence: number;
     rationale: string;
+    /** Which fact ohmail checked decided this. Optional for the same deploy-skew reason. */
+    reasonCode?: string;
+    reasonBrand?: string;
+    reasonCount?: number;
   }>;
   skipped: Array<{ sender: string; reason: ScreenerSkipReason }>;
 }
