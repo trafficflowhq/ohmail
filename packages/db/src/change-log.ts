@@ -160,15 +160,14 @@ export async function allocateSeq(tx: LedgerTx, accountId: string): Promise<bigi
 }
 
 /**
- * Allocate `count` CONSECUTIVE sequence numbers in one statement, oldest first. One round trip
- * instead of `count`, and one row-lock acquisition instead of `count`: a caller writing hundreds
- * of change-log rows in one transaction (the sent-mail seed confirms one rule per correspondent,
- * and real mailboxes carry thousands) otherwise pays three statements per row — on a serverless
- * host the difference between answering and being killed at the deadline. Reserved by the same
- * UPDATE {@link allocateSeq} uses, so the guarantees are identical: strictly monotonic, gap-free,
- * serialized by the row lock. `count` must be positive; a caller with nothing to record must not
- * take the lock at all. `mustBeLive` is the ingest's removal fence riding along for free — see
- * {@link MailboxMustBeLive}; absent, this sends the statement it has always sent.
+ * Allocate `count` CONSECUTIVE sequence numbers in one statement, oldest first. One round trip and
+ * one row-lock acquisition instead of `count`: a caller writing hundreds of change-log rows in one
+ * transaction otherwise pays three statements per row — on a serverless host the difference between
+ * answering and being killed at the deadline. Reserved by the same UPDATE {@link allocateSeq} uses,
+ * so the guarantees are identical: strictly monotonic, gap-free, serialized by the row lock.
+ * `count` must be positive; a caller with nothing to record must not take the lock at all.
+ * `mustBeLive` is the ingest's removal fence riding along for free — see {@link MailboxMustBeLive};
+ * absent, this sends the statement it has always sent.
  */
 export async function allocateSeqRange(
   tx: LedgerTx, accountId: string, count: number, mustBeLive?: MailboxMustBeLive,

@@ -430,11 +430,9 @@ export interface RepoPort {
   recordChange(input: RepoChangeInput): Promise<bigint>;
   /**
    * The same append for MANY changes at once, in the order given — one counter allocation, one
-   * INSERT and one wake for the whole list instead of four statements per change. A caller that
-   * knows all of an operation's deltas before it commits uses this: the singular form is three
-   * statements plus a wake EACH, and ingest paid that three times for every message. Seqs come
-   * back positionally, so the k-th change keeps the k-th seq and the relative order the singular
-   * calls produced is the order here. An empty list writes nothing and takes no lock.
+   * INSERT and one wake for the whole list instead of four statements per change. Seqs come back
+   * positionally, so the k-th change keeps the k-th seq and the order the singular calls produced
+   * is the order here. An empty list writes nothing and takes no lock.
    *
    * `mustBeLive` rides INTO the allocating statement — see {@link MailboxMustBeLive}: the ingest's
    * removal fence asked for free rather than as a round trip of its own. An empty list asks
