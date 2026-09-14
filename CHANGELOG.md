@@ -305,6 +305,41 @@ reach the mail server, and then showed an organizer notification over a mailbox 
 organizing. It now says it could not check: your consent is kept, and the mailbox is taken on the
 next round.
 
+### Deleting your account closes every door behind it
+
+A request that was already running when you deleted your account can no longer put a row back
+after the sweep. Every write the server makes on your behalf is refused once the deletion has
+started.
+
+### Deleting your account clears the address you signed up with
+
+The invitation and sign-up records are kept against your email address, and the sweep did not
+reach them. It does now.
+
+### Signing out removes every stored mailbox password
+
+Signing out of a self-hosted mailbox removes every stored password, including one that was still
+being saved when you pressed it. A sign-out that cannot account for a save says so instead of
+reporting success.
+
+### Removing a two-factor method signs out your other sessions
+
+Removing an authenticator signs out every other session on the account, on every device, and
+cancels the tokens that would renew them. The session you remove it from stays signed in.
+
+### A server fault while renewing your session no longer signs you out
+
+Renewing a session had two ways to fail and answered both the same way: a busy database or a fault
+on the way told the browser the session was over and cleared its cookies. A fault is answered as a
+fault now, with nothing cleared.
+
+### A message is never acted on under an id your mail server cannot vouch for
+
+Moving, flagging, deleting or fetching a message goes ahead only under the folder identity your
+mail server vouches for. Where the server names none, ohmail holds the mail and asks again rather
+than acting on a guess, and mail still sitting on the server is no longer written off as gone.
+
+
 ## [0.17.0] — 2026-09-12
 
 ### A large mailbox no longer costs the desktop window the whole mailbox

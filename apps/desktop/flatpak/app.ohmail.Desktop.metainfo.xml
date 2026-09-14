@@ -123,6 +123,12 @@
           <li>Links and buttons open your browser again on Linux</li>
           <li>A slow credit check no longer reads as "AI unavailable"</li>
           <li>Asking a phone to organize while your mail server is unreachable says so</li>
+          <li>Deleting your account closes every door behind it</li>
+          <li>Deleting your account clears the address you signed up with</li>
+          <li>Signing out removes every stored mailbox password</li>
+          <li>Removing a two-factor method signs out your other sessions</li>
+          <li>A server fault while renewing your session no longer signs you out</li>
+          <li>A message is never acted on under an id your mail server cannot vouch for</li>
         </ul>
       </description>
     </release>
