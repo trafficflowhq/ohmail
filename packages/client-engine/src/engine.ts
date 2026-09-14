@@ -2175,17 +2175,12 @@ export class OhmailEngine {
       // delta that arrived before the protect cascade shipped) for a message that is protected in
       // the mirror this load just read must not survive. See {@link purgeProtectedBodies}.
       .then(() => this.purgeProtectedBodies())
-      .then(async () => {
+      .then(() => {
         // The durable outbox re-arms with the same load that revives the mirror, so the first
         // publish below already carries every un-sent verb's optimistic effect — the boot
         // render is continuous with the killed session. See {@link OhmailEngine.restoreOutbox}.
         this.storeLoaded = true;
         this.restoreOutbox();
-        // The bodies the load restored are bodies this session holds, and the bound is theirs to
-        // pay too — count them, then trim ONCE, before anybody is told. See {@link
-        // OhmailEngine.countRestoredBodies}.
-        this.countRestoredBodies();
-        await this.trimBodyCache();
         this.notify();
       })
       .finally(() => {
@@ -4196,21 +4191,6 @@ export class OhmailEngine {
   private holdBody(messageId: string, ready: boolean): void {
     if (ready) this.heldBodies.add(messageId);
     else this.heldBodies.delete(messageId);
-  }
-
-  /**
-   * COUNT WHAT THE LOAD RESTORED — {@link holdBody} for the bodies this session did not fetch.
-   *
-   * `store.load()` brings every persisted `message_body` back into the mirror and nothing used to
-   * add their ids to {@link heldBodies}, so the trim saw only this session's own fetches: one
-   * session persisted up to {@link BODY_CACHE_MAX}, the next restored them uncounted and filled
-   * the bound again, and the persisted set grew by a bound per restart. A read of the ids already
-   * in memory, never of the mail; only a `ready` record occupies a slot, as after any write.
-   */
-  private countRestoredBodies(): void {
-    for (const { id, entity } of this.store.entries<MessageBodyRecord>("message_body")) {
-      this.holdBody(id, entity.state === "ready");
-    }
   }
 
   /**

@@ -24,7 +24,8 @@
     "./search-rank": "./src/search-rank.ts",
     "./pair-link": "./src/pair-link.ts",
     "./sender-headers": "./src/sender-headers.ts",
-    "./outbound-text": "./src/outbound-text.ts"
+    "./outbound-text": "./src/outbound-text.ts",
+    "./transport-frame": "./src/transport-frame.ts"
   },
   "dependencies": {
     "drizzle-orm": "0.36.4",

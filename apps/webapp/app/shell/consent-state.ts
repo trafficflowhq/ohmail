@@ -74,7 +74,6 @@ export interface ConsentTransport {
   ) => Promise<{
     signatures: Record<string, string>;
     signaturesHtml?: Record<string, string>;
-    signatureSources?: Record<string, "organizer" | "local">;
   }>;
   /**
    * The account-wide appearance face (mail 0082) — OPTIONAL, unlike every method above, because
@@ -235,13 +234,6 @@ export interface ConsentState {
    */
   signaturesHtml: Record<string, string>;
   /**
-   * WHOSE signature each mailbox is showing — `"organizer"` only where the organizing install has
-   * published a document, `"local"` everywhere else. A mailbox missing from this map reads LOCAL:
-   * the read-only report renders on a positive fact, so an older server cannot lock an editor.
-   * Gated by {@link signaturesKnown} with the other two — all three arrive in one response.
-   */
-  signatureSources: Record<string, "organizer" | "local">;
-  /**
    * Did {@link signatures} come from the LIVE wire (or a write's echo)? `folderMailboxesKnown`'s
    * rule for the same reason: the boot cache carries no signatures, so a pane gated on `known`
    * alone would render empty editors over stored text until the live read lands — and a compose
@@ -375,8 +367,6 @@ const RESTING: ConsentState = {
   signatures: {},
   // NO MARKUP AT REST, on `signatures`' reasoning and gated by the same flag.
   signaturesHtml: {},
-  // NOTHING KNOWN ABOUT WHOSE THEY ARE, which reads as local everywhere — see the field.
-  signatureSources: {},
   signaturesKnown: false,
   // NOTHING FROM AN ACCOUNT. Unlike `blockRemoteImages` above, resting null is not a safe
   // *position* — it is the absence of one, and it leaves the language this device remembered in
@@ -674,9 +664,6 @@ export function useConsentState(
           // Absent (an API before mail 0098) reads as "no signature has formatting" — again the
           // picture that server serves, since nothing on it can store markup.
           signaturesHtml: wire.signaturesHtml ?? {},
-          // Absent (an API before this field) reads as local everywhere, which is what the
-          // editor did before the organizer's signature could reach a reader at all.
-          signatureSources: wire.signatureSources ?? {},
           signaturesKnown: true,
           // NORMALISED, not trusted. The column's CHECK and `consentSettings` both close the set,
           // so an unsupported string cannot arrive from a current server — and this is the boot
@@ -985,11 +972,7 @@ export function useConsentState(
       // and every open composer rendering a stale half.
       const htmlMap = res.signaturesHtml ?? {};
       applyEcho(at, (prev) => ({
-        ...prev, signatures: map, signaturesHtml: htmlMap,
-        // A local write does not change whose signature is in force: the echo carries the same
-        // sources the read did, and an echo without them leaves what was already known.
-        signatureSources: res.signatureSources ?? prev.signatureSources,
-        signaturesKnown: true,
+        ...prev, signatures: map, signaturesHtml: htmlMap, signaturesKnown: true,
       }));
       return map;
     }, [applyEcho]);

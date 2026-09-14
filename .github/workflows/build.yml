@@ -2880,22 +2880,15 @@ jobs:
       # checkout. What --sandbox would have enforced — that no module carries
       # `build-args` to open a network — is asserted offline in
       # test/flatpak-manifest.test.ts instead.
-      # THE VARIABLE IS PASSED INTO THE SANDBOX, not just exported. `GITHUB_ENV` sets it for the
-      # step's own shell, and `flatpak run` starts a NEW sandbox that does not inherit it — so the
-      # nested flatpak-builder looked for the SDK in its own XDG_DATA_HOME, found none, and died
-      # `Failed to init: Unable to find sdk org.gnome.Sdk version 50` before a single source was
-      # resolved. Every release since this job was added failed there.
       - name: Resolve every declared source
         run: |
-          flatpak run --env=FLATPAK_USER_DIR="$HOME/.local/share/flatpak" \
-            --command=flatpak-builder org.flatpak.Builder \
+          flatpak run --command=flatpak-builder org.flatpak.Builder \
             --user --force-clean --download-only \
             flatpak-build apps/desktop/flatpak/app.ohmail.Desktop.yml
 
       - name: Build the Flatpak, with nothing left to fetch
         run: |
-          flatpak run --env=FLATPAK_USER_DIR="$HOME/.local/share/flatpak" \
-            --command=flatpak-builder org.flatpak.Builder \
+          flatpak run --command=flatpak-builder org.flatpak.Builder \
             --user --force-clean --disable-download \
             --repo=flatpak-repo \
             flatpak-build apps/desktop/flatpak/app.ohmail.Desktop.yml

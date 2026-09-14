@@ -86,7 +86,7 @@ describe("the desktop's refusing api-client stub", () => {
     MailboxDTO: ["organizedByThisInstall", "releaseRequestedAt", "takeoverAuthorizedAt"],
     ConsentStateWire: [
       "folderMailboxesOff", "foldersEnabledAt", "loadTrackingPixelsAt", "onboardingCompletedAt",
-      "screeningScope", "signatures", "signaturesHtml", "signatureSources", "themeFace",
+      "screeningScope", "signatures", "signaturesHtml", "themeFace",
     ],
     ScreenerWirePage: ["pendingDecisions"],
   };

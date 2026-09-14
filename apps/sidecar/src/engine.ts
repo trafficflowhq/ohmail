@@ -5076,13 +5076,6 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
 
       const schedule = (): void => {
         if (stopped) return;
-        /* EXACTLY ONE POLL TIMER PER RUNTIME, at any moment. Every armed timer re-arms itself in
-           the `.finally` below, so arming a second one does not move the next poll — it starts a
-           second loop that runs for the life of the runtime, and two gated cycles then race each
-           other on the lease. A caller that arms while one is armed MOVES the next poll instead.
-           `dialAndGate` says the same about itself ("two would give the mailbox two overlapping
-           drains"); the enforcement belongs here, where the timer is. `stopped` returns first. */
-        if (timer) clearTimeout(timer);
         timer = setTimeout(() => {
           void syncUntilQuiet()
             .catch((err: unknown) => {
@@ -5907,15 +5900,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
          */
         async resume() {
           handedBack = false;
-          const served = await syncUntilQuiet(undefined, { force: true });
-          /* THE CALLER ARMS THE TIMER. `syncUntilQuiet` deliberately does not — its own tail says
-             so — and `handBack` cleared it, so without this line the docblock above was false: a
-             phone backgrounded and brought forward drained ONCE and then went quiet, holding the
-             row as organizer with nothing polling. Every other caller of `syncUntilQuiet` already
-             calls `schedule()`; this one did not. `schedule()` returns at `stopped`, so a runtime
-             told to stop is not re-armed by a resume that raced it. */
-          schedule();
-          return served;
+          return syncUntilQuiet(undefined, { force: true });
         },
         /* THE SAME LOOK THE POLL MAKES, THROUGH THE SAME ADAPTER — read at call time, because a
            re-dial replaces the binding and a captured one would peek down a dead socket. A stopped

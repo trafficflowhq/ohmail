@@ -7568,7 +7568,6 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
                       mailboxes={facts}
                       signatures={consent.signatures}
                       signaturesHtml={consent.signaturesHtml}
-                      signatureSources={consent.signatureSources}
                       setMailboxSignature={consent.setMailboxSignature}
                     />
                   )

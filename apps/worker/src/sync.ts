@@ -1,12 +1,12 @@
 import {
   planChange, commitChange, isOrganizedFolder, MAX_RAW_MESSAGE_BYTES,
-  type Change, type ClassifierPort, type CreditGate, type Logger, type OhboxPolicy,
-  type StorageCap,
+  type Change, type ChangePlan, type ClassifierPort, type CommitDeps, type CreditGate,
+  type Logger, type OhboxPolicy, type StorageCap,
 } from "@trafficflow/core/mail";
 import {
   WATCHED_FOLDERS, MessageGoneError, parseRef, FILING_BATCH_MAX,
   epochOf, epochVerdict, sameEpoch, UNKNOWN_EPOCH, type Epoch,
-  type ImapCursor, type MailboxAdapter, type PersistedFolderCursor,
+  type ImapCursor, type KnownEntry, type MailboxAdapter, type PersistedFolderCursor,
 } from "@trafficflow/core/adapters/imap";
 import { LeaseUnavailableError } from "@trafficflow/core/adapters/organizer-lease";
 // The role vocabulary lives in `@trafficflow/db` (mail 0083) because both the worker and the
@@ -33,7 +33,7 @@ import {
 import { junkRestorePass } from "./junk-restore.js";
 import { folderOpsPass } from "./folder-ops.js";
 import {
-  assertMayWriteToMailbox,
+  assertMayWriteToMailbox, OrganizerStandDownError,
   type MailboxWriteAuthority, type OrganizerWriteAuthority,
 } from "./lease.js";
 
@@ -183,6 +183,12 @@ export interface SyncDeps {
    */
   knownSet?: KnownSetCache;
   /**
+   * WHAT THIS CYCLE DID, counted — see {@link CycleCensus}. ABSENT ⇒ nothing is counted and every
+   * path runs as it did before this field; present ⇒ the caller folds the totals into its own
+   * drain line. A measurement seam, never a behaviour one: nothing in this file reads it back.
+   */
+  census?: CycleCensus;
+  /**
    * WHICH BUILD is running — the second arm of the durable ledger's due predicate.
    *
    * Absent ⇒ resolved from the environment by {@link buildVersionOf}, the same three sources
@@ -202,15 +208,16 @@ export interface SyncDeps {
    */
   fence?: SyncWriteFence;
   /**
-   * THE ORGANIZER LEASE THIS CYCLE WRITES UNDER — a permit, or the named reason there is none.
-   *
-   * The fence above answers worker-to-worker; this answers install-to-install, and only this one
-   * can stop a process writing to a mailbox its owner has moved to another machine. Both
-   * composition roots supply it (`apps/worker/src/index.ts`, `apps/sidecar/src/engine.ts`) and
-   * `lease-write-permit-census.test.ts` refuses a root that does not. ABSENT is a fixture, and
-   * reads as `not_supplied` at the write boundary rather than as silence.
+   * THE ORGANIZER LEASE THIS CYCLE WRITES UNDER — a permit, or the named reason there is none. The
+   * fence above answers worker-to-worker; this answers install-to-install, and only this one can
+   * stop a process writing to a mailbox its owner has moved to another machine. REQUIRED, on
+   * `role`'s exact argument one field down: while it was optional the hosted cycle received none,
+   * every boundary inside it read `not_supplied` — which `assertMayWriteToMailbox` ADMITS — and a
+   * handover mid-scan left both installs moving one person's mail. A composition that holds no lease
+   * types the reason; `lease-write-permit-census.test.ts` refuses a production `runSyncCycle(` call
+   * whose own argument list does not name this field.
    */
-  writeAuthority?: OrganizerWriteAuthority;
+  writeAuthority: OrganizerWriteAuthority;
   /** Structured log sink. Absent ⇒ a skip is still recorded in `audit_log`, just not logged. */
   log?: Logger;
   /**
@@ -297,47 +304,140 @@ export interface JunkSweepCommandPort {
  * the server epoch that issued it, and reducing locators to `{uid, messageId}` discarded that — a
  * reused UID under a new epoch looked already-known and its body was never fetched. So the cursor's `uidValidity` is the epoch its remembered UIDs belong to, and only those entries are handed over.
  */
+/**
+ * WHAT ONE CYCLE ACTUALLY DID. Measurement, not behaviour: absent ⇒ nothing is counted and every
+ * path is unchanged. `cursorBuilds` counts {@link buildCursor} calls, `locatorReads` the ones that
+ * went to the store for the whole projection and `locatorRows` the rows those returned — the
+ * QUERIES and the ROWS TOUCHED; `cursorFolders` the per-folder arrays rebuilt, the DERIVATIONS;
+ * `observed` what the adapter handed over. A tick over a mailbox where nothing changed reads zero,
+ * touches zero rows, derives nothing and observes nothing. Anything else is a mailbox that moved,
+ * or a gate that stopped working.
+ */
+export interface CycleCensus {
+  cursorBuilds: number;
+  locatorReads: number;
+  locatorRows: number;
+  cursorFolders: number;
+  observed: number;
+}
+
+/** A zeroed {@link CycleCensus} — one per drain, folded into the caller's own log line. */
+export function newCycleCensus(): CycleCensus {
+  return { cursorBuilds: 0, locatorReads: 0, locatorRows: 0, cursorFolders: 0, observed: 0 };
+}
+
 export async function buildCursor(
-  repo: WorkerRepo, mailboxId: string, deadLetters?: DeadLetterLedger,
+  repo: WorkerRepo, mailboxId: string, deadLetters?: DeadLetterLedger, census?: CycleCensus,
+  memo?: KnownSetCache,
 ): Promise<ImapCursor> {
   const folderRows = await repo.getMailboxFolders(mailboxId);
-  const known = await repo.listKnownLocators(mailboxId);
-  const knownByFolder = new Map<string, Array<{ uid: number; uidValidity: string; messageId: string | null; seen: boolean | null }>>();
-  for (const k of known) {
-    const arr = knownByFolder.get(k.folder) ?? [];
-    arr.push({ uid: k.uid, uidValidity: k.uidValidity, messageId: k.messageId, seen: k.seen });
-    knownByFolder.set(k.folder, arr);
-  }
   const names = new Set<string>(WATCHED_FOLDERS);
   for (const r of folderRows) names.add(r.folder);
+  if (census !== undefined) census.cursorBuilds += 1;
+
+  /**
+   * THE PROJECTION IS READ ONLY WHEN THE ANSWER IS NOT ALREADY DERIVED. Grouping the whole
+   * projection by folder and filtering each group to its folder's epoch is proportional to the
+   * MAILBOX, and it ran every cycle to produce, for a settled mailbox, the arrays it produced last
+   * time. {@link KnownSetCache} holds them against the generation of the set they came from. The
+   * precondition is narrow: every folder's ROW EPOCH must match what it was, because that is the
+   * input the resolution was taken from. Anything else takes the read — what this function did on
+   * every cycle before there was a memo, and what every caller without one still does.
+   */
+  const derived = memo?.derivedFolders() ?? null;
+  const epochs = new Map<string, string>();
+  const rowEpochs = new Map<string, string | null>();
+  for (const f of names) {
+    const e = epochOf(folderRows.find((r) => r.folder === f)?.uidValidity);
+    rowEpochs.set(f, e.known ? e.value : null);
+  }
+  let readOwed = true;
+  if (derived !== null && derived.rowEpochs.size === rowEpochs.size) {
+    readOwed = false;
+    for (const [f, cur] of rowEpochs) {
+      // The row epoch is the INPUT the resolution was taken from — equal inputs over a locator set
+      // that has not moved give the same answer, and anything else is a read. A folder whose row
+      // names NO epoch is included by this: its answer was derived from the entries, and the same
+      // entries derive it again.
+      if (derived.rowEpochs.get(f) !== cur) { readOwed = true; break; }
+      const was = derived.resolved.get(f);
+      if (was === undefined) { readOwed = true; break; }
+      epochs.set(f, was);
+    }
+  }
+
+  const knownByFolder = new Map<string, Array<{ uid: number; uidValidity: string; messageId: string | null; seen: boolean | null }>>();
+  if (readOwed) {
+    epochs.clear();
+    /* WARM IS READ BEFORE THE READ, not after it: the read is what makes it warm, so asking
+       afterwards answers "yes" every time and the counter says nothing. */
+    const servedFromMemory = memo?.warm === true;
+    const known = await repo.listKnownLocators(mailboxId);
+    if (census !== undefined) {
+      if (!servedFromMemory) census.locatorReads += 1;
+      census.locatorRows += known.length;
+    }
+    for (const k of known) {
+      const arr = knownByFolder.get(k.folder) ?? [];
+      arr.push({ uid: k.uid, uidValidity: k.uidValidity, messageId: k.messageId, seen: k.seen });
+      knownByFolder.set(k.folder, arr);
+    }
+    for (const f of names) {
+      epochs.set(f, rowEpochs.get(f) ?? soleEpochOf(knownByFolder.get(f) ?? []));
+    }
+  }
+
+  const fresh = new Map<string, KnownEntry[]>();
   const folders: ImapCursor["folders"] = {};
   for (const f of names) {
     const row = folderRows.find((r) => r.folder === f);
-    const entries = knownByFolder.get(f) ?? [];
-    const rowEpoch = epochOf(row?.uidValidity);
-    const epoch = rowEpoch.known ? rowEpoch.value : soleEpochOf(entries);
+    const epoch = epochs.get(f) ?? "0";
     folders[f] = {
       uidValidity: epoch,
       uidNext: row?.uidNext ?? 0,
       highestModseq: row?.highestModseq ?? "0",
-      // An UNNAMED epoch means nothing remembered may be presented as known — the adapter would
-      // read a bare number as belonging to whatever epoch it is looking at. `!== "0"` missed the
-      // `String(undefined)` a silent server persists, so those UIDs were handed over as facts.
-      known: !epochOf(epoch).known ? [] : [
-        // `seen` rides along as the flag baseline the no-CONDSTORE fallback diffs against
-        // (`KnownEntry.seen`). Dead-letter entries below carry none, which is correct: nothing
-        // was ever ingested for them, so no baseline can be stated and none may be diffed.
-        ...entries.filter((e) => sameEpoch(epochOf(e.uidValidity), epochOf(epoch)))
-          .map((e) => ({ uid: e.uid, messageId: e.messageId, seen: e.seen })),
-        // The UIDs this process has written off. They are "known" in the only sense the adapter
-        // uses the word — do not fetch this again — and leaving them out is what made one poison
-        // message cost a full body fetch on every cycle for ever. Epoch-matched for the same
-        // reason the real locators are. See `DeadLetterLedger`.
-        ...(deadLetters?.knownFor(f, epoch) ?? []),
-      ],
+      known: knownFor(f, epoch, knownByFolder.get(f) ?? [], derived?.byFolder ?? null, fresh, deadLetters, census),
     };
   }
+  // A derivation is remembered only when it was built from a READ — a pass that reused the last
+  // one has nothing new to say, and rewriting it would stamp old arrays with a new generation.
+  if (readOwed) memo?.rememberFolders(fresh, rowEpochs, epochs);
   return { folders };
+}
+
+/**
+ * One folder's known list: the epoch-matched locators, then the UIDs this process has written off.
+ *
+ * `seen` rides along as the flag baseline the no-CONDSTORE fallback diffs against
+ * (`KnownEntry.seen`). Dead-letter entries carry none, which is correct: nothing was ever ingested
+ * for them, so no baseline can be stated and none may be diffed. Leaving them out is what made one
+ * poison message cost a full body fetch on every cycle for ever; they are epoch-matched for the
+ * same reason the real locators are. See `DeadLetterLedger`.
+ */
+function knownFor(
+  folder: string, epoch: string,
+  entries: ReadonlyArray<{ uid: number; uidValidity: string; messageId: string | null; seen: boolean | null }>,
+  derived: Map<string, KnownEntry[]> | null,
+  fresh: Map<string, KnownEntry[]>,
+  deadLetters?: DeadLetterLedger,
+  census?: CycleCensus,
+): KnownEntry[] {
+  // An UNNAMED epoch means nothing remembered may be presented as known — the adapter would read a
+  // bare number as belonging to whatever epoch it is looking at. `!== "0"` missed the
+  // `String(undefined)` a silent server persists, so those UIDs were handed over as facts.
+  if (!epochOf(epoch).known) return [];
+  const key = `${folder}\u0000${epoch}`;
+  const reused = derived?.get(key);
+  if (reused === undefined && census !== undefined) census.cursorFolders += 1;
+  const locators = reused
+    ?? entries.filter((e) => sameEpoch(epochOf(e.uidValidity), epochOf(epoch)))
+      .map((e) => ({ uid: e.uid, messageId: e.messageId, seen: e.seen }));
+  fresh.set(key, locators);
+  const dead = deadLetters?.knownFor(folder, epoch) ?? [];
+  // Handed over AS IT STANDS when there is nothing to append — the adapter treats the cursor as
+  // read-only, and a copy per folder per cycle is the very cost this derivation was memoized to
+  // stop paying.
+  return dead.length === 0 ? locators : [...locators, ...dead];
 }
 
 /**
@@ -369,14 +469,8 @@ function siteOf(ch: Change): { folder: string; uidValidity: string; uid: number 
 
 type FenceScope = Pick<SyncDeps, "repo" | "fence" | "knownSet">;
 
-/**
- * Route one bare write through the fence when there is one; unfenced callers run it directly on
- * the repo — no transaction wrapper, so their statement shape is exactly what it always was.
- */
-async function fencedWrite<T>(deps: FenceScope, fn: (repo: WorkerRepo) => Promise<T>): Promise<T> {
-  if (!deps.fence) return fn(deps.repo);
-  return underFence(deps, fn);
-}
+/** {@link FenceScope} plus the mailbox the removal fence asks about — see {@link fencedLiveGroup}. */
+type LiveScope = FenceScope & Pick<SyncDeps, "mailboxId">;
 
 /**
  * `repo.transaction`, fenced: the ingest and flag transactions run INSIDE the fence's own
@@ -388,14 +482,14 @@ async function fencedIngest<T>(deps: FenceScope, fn: (repo: DrizzleRepo) => Prom
 }
 
 /**
- * A group of writes that must not tear — transactional whether or not there is a fence. {@link
- * fencedWrite} routes ONE statement, deliberately not transactional when unfenced. The bookkeeping
- * after an IMAP mutation is not one statement (the new locator's two writes, then `folder_state`, then
- * the audit row); unfenced (the reconcile cron, and every LOCAL install) they were three top-level
- * awaits, and a crash between any two left a state that is neither before nor after — a `folder_state`
- * that still says pending while `native_locator` names the destination (the next pass asks the server
- * to move a message from the folder it is in), or a move with no audit row (no undo, no record it left).
- * So a group commits or it does not exist. IMAP leads, the database records what was observed: the mailbox on the user's server is master, so a crash between the MOVE and the group converges (the next `changesSince` adopts). The opposite order shows the user a message in a folder it is not in, for ever.
+ * A group of writes that must not tear — transactional whether or not there is a fence, and reached only
+ * through {@link fencedLiveGroup} now. A second helper beside this one routed a SINGLE write with no
+ * transaction when unfenced, and a bare statement cannot carry the removal fence: a status read outside
+ * the write's own transaction proves nothing about it. The bookkeeping after an IMAP mutation is not one
+ * statement, and unfenced those were separate top-level awaits — a crash between two left a
+ * `folder_state` still pending while the locator named the destination, or a move with no audit row. So
+ * a group commits or it does not exist. IMAP leads and the database records what was observed; the
+ * opposite order shows a message in a folder it is not in, for ever.
  */
 async function fencedGroup<T>(deps: FenceScope, fn: (repo: WorkerRepo) => Promise<T>): Promise<T> {
   if (!deps.fence) return deps.repo.transaction(fn);
@@ -450,16 +544,65 @@ function writeAuthorityOf(deps: Pick<SyncDeps, "fence" | "writeAuthority">): Mai
   const { fence } = deps;
   return {
     ...(fence ? { fence: (): Promise<void> => fenceImapMutation({ fence }) } : {}),
+    // The field is REQUIRED, so this coalesce is reached only by a FIXTURE — the same reading
+    // `role`'s omission gets, and named rather than silent. A production root that omitted it is
+    // refused by `lease-write-permit-census.test.ts`, not by this line.
     lease: deps.writeAuthority ?? { noLease: "not_supplied" },
   };
 }
 
+/** The passes a cycle writes in — the vocabulary its stand-down verdict names a place with. */
+export type CyclePass = "folder_ops" | "junk_sweep" | "filing" | "flags";
+
 /**
- * Rethrow a fence refusal out of a catch arm that would otherwise swallow it or read it as a
- * message fault. A refusal is proof of lost leadership and must reach the caller unreclassified.
+ * WHERE THIS CYCLE WAS WHEN IT LAST ASKED THE LEASE — one mutable cursor per cycle, advanced at the
+ * head of every page of writes and read once, by the cycle's own stand-down catch.
+ *
+ * A PAGE is the unit the permit is re-asked at: for filing one `moveMany` group (or one message of a
+ * group that fell back to the per-message path), for flags one `\Seen` STORE. The two user-commanded
+ * passes ask inside themselves and report as ONE page each, the slice they run per cycle. That is the
+ * whole bound this carries: no write in a cycle is more than one page past a lease that has gone.
  */
-function rethrowFenced(err: unknown): void {
-  if (err instanceof LeaderFencedError) throw err;
+export interface CyclePageCursor {
+  /** The pass whose page is open, or `null` before the cycle's first page of writes. */
+  pass: CyclePass | null;
+  /** The 1-based page within that pass; 0 before the first page opens. */
+  page: number;
+}
+
+/** A cursor for one cycle. A caller that runs `reconcileMailbox` alone gets its own. */
+export const freshCyclePages = (): CyclePageCursor => ({ pass: null, page: 0 });
+
+/**
+ * Open the next page of a pass. Called IMMEDIATELY BEFORE the write predicate at every boundary and
+ * never through a wrapper around it: `lease-write-permit-census.test.ts` asserts the predicate has
+ * exactly one spelling and reads its call inside each writing function, so a helper that asked it on
+ * their behalf would satisfy that census by proxy. Two lines, in this order, so a refusal names the
+ * page it refused rather than the last one it admitted.
+ */
+function openPage(at: CyclePageCursor, pass: CyclePass): void {
+  at.page = at.pass === pass ? at.page + 1 : 1;
+  at.pass = pass;
+}
+
+/**
+ * Rethrow a REFUSAL out of a catch arm that would otherwise swallow it or read it as a message fault.
+ * Four classes the arms cannot tell from an ordinary failure: `LeaderFencedError` is proof this process
+ * no longer leads the shard, `MailboxRemovedError` that the mailbox is gone, and the permit's own two —
+ * `OrganizerStandDownError` (another install holds this mailbox now) and `LeaseUnavailableError` (the
+ * lease could not be read, which is not a stand-down and equally not evidence about a message). None is
+ * evidence about the message or the pass, all four mean every later write in this cycle would be
+ * illegitimate, and all are terminal for it — `index.ts` and `reconcile-cron.ts` read them as a skip,
+ * not a failing mailbox. ONE PLACE DECIDES, because the swallowing arms are many: three reconcile groups
+ * logged a removal as bookkeeping that "did not commit" and carried on writing into a mailbox that had
+ * gone, and `fileOne`/`reconcileFlags` recorded a stand-down as the MESSAGE's refusal — a deferral, an
+ * audit row blaming the mail server, and the pass filing every row behind it on somebody else's mailbox.
+ */
+function rethrowRefusal(err: unknown): void {
+  if (
+    err instanceof LeaderFencedError || err instanceof MailboxRemovedError
+    || err instanceof OrganizerStandDownError || err instanceof LeaseUnavailableError
+  ) throw err;
 }
 
 /**
@@ -472,13 +615,65 @@ function rethrowFenced(err: unknown): void {
  * cannot currently REACH the mailbox, the ordinary state a recovering cycle commits from, and
  * refusing there would turn a transient outage into mail this pass never writes.
  */
-async function assertMailboxStillHere(repo: DrizzleRepo, mailboxId: string): Promise<void> {
-  const status = await repo.mailboxStatusForWrite(mailboxId);
+async function assertMailboxStillHere(repo: WorkerRepo, mailboxId: string): Promise<void> {
+  refuseRemovedMailbox(await repo.mailboxStatusForWrite(mailboxId));
+}
+
+/**
+ * THE ONE PLACE THAT DECIDES what a status means for a write — the read above and the folded
+ * read inside the change-log allocation both end here, so the two cannot drift into two answers.
+ */
+function refuseRemovedMailbox(status: string | null): void {
   if (status !== null && status !== "disabled") return;
   throw new MailboxRemovedError(
     `this mailbox is ${status === null ? "gone" : status} — the write is refused rather than `
     + "committed into a mailbox that has been removed",
   );
+}
+
+/**
+ * ONE PLANNED MESSAGE, COMMITTED BEHIND THE FENCE — the only door the ingest commits through. A
+ * `new` message FOLDS the fence into the change-log allocation the branch already sends, so it pays
+ * no round trip for it. Sound THERE AND ONLY THERE: that branch's first write is the `messages`
+ * INSERT, whose foreign key takes the mailbox row before anything else in the transaction, so
+ * asking at the allocation cannot invert the lock order against `MailboxService.delete`. Every
+ * other shape asks FIRST — a repair holds a `messages` row well before the allocation, and an
+ * erasing removal waiting on it would deadlock (measured: 40P01, the erasure as victim). A lost
+ * upsert is asked afterwards all the same, so every commit asks exactly once.
+ */
+async function commitFenced(plan: ChangePlan, txRepo: DrizzleRepo, deps: CommitDeps): Promise<void> {
+  const mailboxId = deps.mailboxId;
+  if (plan.outcome !== "new") {
+    await assertMailboxStillHere(txRepo, mailboxId);
+    await commitChange(plan, deps);
+    return;
+  }
+  let asked: string | null | undefined;
+  await commitChange(plan, {
+    ...deps,
+    mailboxMustBeLive: {
+      mailboxId,
+      answer: (status) => { asked = status; refuseRemovedMailbox(status); },
+    },
+  });
+  if (asked === undefined) await assertMailboxStillHere(txRepo, mailboxId);
+}
+
+/**
+ * EVERY OTHER WRITE THE CYCLE MAKES, BEHIND THE SAME FENCE — {@link commitFenced} is the door for a
+ * PLANNED message and this is the door for everything else: junk restores, locators, `folder_state`,
+ * `flag_state`, audit rows, delete evidence, cursors, failure records. Two passes used to write without
+ * asking, planning from reads taken outside every transaction, so a removal in that gap committed into a
+ * mailbox just removed; a check at the head of the cycle would not close it, which is why the question
+ * belongs INSIDE the writing transaction. ASKED FIRST IS THE LOCK ORDER: `MailboxService.delete` takes
+ * the mailbox row `FOR UPDATE` first, so a writer holding a message row and then asking would be its
+ * deadlock partner (40P01), not its refusal. ONE READ PER TRANSACTION, not per row.
+ */
+async function fencedLiveGroup<T>(deps: LiveScope, fn: (repo: WorkerRepo) => Promise<T>): Promise<T> {
+  return fencedGroup(deps, async (repo) => {
+    await assertMailboxStillHere(repo, deps.mailboxId);
+    return fn(repo);
+  });
 }
 
 /**
@@ -492,13 +687,43 @@ async function assertMailboxStillHere(repo: DrizzleRepo, mailboxId: string): Pro
  * `stampInitialImportComplete` fires on `!hasBacklog`, and a filing queue holding the flag high would read a mid-triage mailbox as permanently partial for a reason that has nothing to do with importing.
  */
 export async function runSyncCycle(input: SyncDeps): Promise<{ hasBacklog: boolean; owesFiling: boolean }> {
+  const at = freshCyclePages();
+  try {
+    return await cycleWithKnownSet(input, at);
+  } catch (err) {
+    // ── THE CYCLE'S VERDICT WHEN THE MAILBOX CHANGED HANDS UNDER IT ────────────────────────────
+    //
+    // Once, here, and then rethrown: both callers already read this class as a stand-down rather
+    // than a failing mailbox, and a line per refusing boundary would be one per message. The moves
+    // this cycle had already applied stand — each was made under a lease this install held at the
+    // page it was made on — and the new organizer's own cycle takes it from there, which is what
+    // "leave anytime" promises. Closed-set fields only: no address, and no count of anybody's mail.
+    if (err instanceof OrganizerStandDownError) {
+      input.log?.info("stood_down_mid_cycle", {
+        mailboxId: input.mailboxId, accountId: input.accountId,
+        // `phase` and `page` are WHERE, `disabledReason` and `state` are the lease's own verdict as
+        // the throw carried it. Not `heldBy`: the winning claim's display name is a name somebody
+        // gave their own machine, and this line has no need of it.
+        phase: at.pass, page: at.page, disabledReason: err.reason, state: err.state,
+        reason: "another install holds this mailbox now — the cycle stopped at this page and "
+          + "issued no further move, flag or folder write",
+      });
+    }
+    throw err;
+  }
+}
+
+/** {@link runSyncCycle}'s body, with the known-set memo's cycle bracket around it. */
+async function cycleWithKnownSet(
+  input: SyncDeps, at: CyclePageCursor,
+): Promise<{ hasBacklog: boolean; owesFiling: boolean }> {
   const cache = input.knownSet;
   // NO CACHE ⇒ NOT ONE LINE OF THIS RUNS. The loop below is reached with the caller's own repo and
   // reads `listKnownLocators` exactly as it always did.
-  if (!cache) return syncCycleWithin(input);
+  if (!cache) return syncCycleWithin(input, at);
   cache.beginCycle();
   try {
-    const out = await syncCycleWithin({ ...input, repo: watchKnownSet(input.repo, cache) });
+    const out = await syncCycleWithin({ ...input, repo: watchKnownSet(input.repo, cache) }, at);
     const census = cache.census();
     // Logged only on a cycle that actually went to the database, which is the cycle where the memo
     // cost something. An idle cycle is SILENT: a host serving many mailboxes at a short poll
@@ -509,10 +734,15 @@ export async function runSyncCycle(input: SyncDeps): Promise<{ hasBacklog: boole
         mailboxId: input.mailboxId, accountId: input.accountId,
         rows: census.rows, bytes: census.bytes, bytesSaved: census.bytesSaved,
         droppedBy: census.droppedBy,
+        retainedBytes: census.retainedBytes,
+        processRetainedBytes: census.processRetainedBytes,
+        processBudgetBytes: census.processBudgetBytes,
         reason: "the in-memory known-set was cold or had been dropped, so this cycle re-read it " +
           "from the database. `droppedBy` names the repo write (or the leadership event) that " +
-          "dropped it; `bytesSaved` is the estimated wire bytes this attachment has not read " +
-          "since it began",
+          "dropped it, and reads `evicted` when the process's shared locator budget needed the " +
+          "room for another mailbox; `bytesSaved` is the estimated wire bytes this attachment has " +
+          "not read since it began; `processRetainedBytes` against `processBudgetBytes` is how " +
+          "close every memo in this process together is to that budget",
       });
     }
     return out;
@@ -526,7 +756,9 @@ export async function runSyncCycle(input: SyncDeps): Promise<{ hasBacklog: boole
   }
 }
 
-async function syncCycleWithin(deps: SyncDeps): Promise<{ hasBacklog: boolean; owesFiling: boolean }> {
+async function syncCycleWithin(
+  deps: SyncDeps, at: CyclePageCursor,
+): Promise<{ hasBacklog: boolean; owesFiling: boolean }> {
   const { repo, adapter, accountId, mailboxId, classifier, credits, trustedAuthservIds, ohboxPolicy, ohboxBar, screeningCutoff, importDecisionOpen, storageCap, log } = deps;
   /**
    * THE ONE DERIVATION. See {@link SyncDeps.role}.
@@ -572,10 +804,13 @@ async function syncCycleWithin(deps: SyncDeps): Promise<{ hasBacklog: boolean; o
    * the rows stand and the organizer's own cycle serves them, like `reconcileFolders`. */
   if (!readerMode) {
   try {
+    // ONE SLICE, ONE PAGE. The pass asks the lease before every mutation it issues; what the cursor
+    // records is that a refusal inside it belongs to the folder-ops page of this cycle.
+    openPage(at, "folder_ops");
     const opsOut = await folderOpsPass({
       repo, adapter, accountId, mailboxId,
       ...(log !== undefined ? { log } : {}),
-      write: (fn) => fencedGroup(deps, fn),
+      write: (fn) => fencedLiveGroup(deps, fn),
       // The check before EVERY IMAP mutation the pass issues — the same fresh leadership read
       // every other mutation site in this file takes (see the fence block up top). The fenced
       // `write` covers only the database half; without this a stale worker could CREATE or
@@ -587,7 +822,7 @@ async function syncCycleWithin(deps: SyncDeps): Promise<{ hasBacklog: boolean; o
     // of the queue instead of monopolizing it or waiting out a poll interval.
     folderOpsOweMore = opsOut.owesMore;
   } catch (err) {
-    rethrowFenced(err);
+    rethrowRefusal(err);
     log?.warn("folder_ops_pass_failed", { mailboxId, accountId, err });
   }
   }
@@ -609,9 +844,11 @@ async function syncCycleWithin(deps: SyncDeps): Promise<{ hasBacklog: boolean; o
     try {
       const observed = await deps.junkSweep.requested();
       if (observed !== null) {
+        // The sweep's one bounded window is this cycle's junk_sweep page — see the folder-ops note.
+        openPage(at, "junk_sweep");
         const res = await deps.junkSweep.run({
           writeAuthority: writeAuthorityOf(deps),
-          write: (fn) => fencedGroup(deps, fn),
+          write: (fn) => fencedLiveGroup(deps, fn),
           // The press this slice belongs to — see the port's own note. The same token the clear
           // below compares, so a press that lands mid-sweep is served by the next cycle with its
           // own fresh scan state rather than inheriting this one's.
@@ -660,13 +897,17 @@ async function syncCycleWithin(deps: SyncDeps): Promise<{ hasBacklog: boolean; o
         });
       }
     } catch (err) {
-      rethrowFenced(err);
+      rethrowRefusal(err);
       log?.warn("junk_sweep_command_failed", { mailboxId, accountId, err });
     }
   }
 
-  const cursor = await buildCursor(repo, mailboxId, deadLetters);
+  const cursor = await buildCursor(repo, mailboxId, deadLetters, deps.census, deps.knownSet);
   const batch = await adapter.changesSince(cursor);
+  if (deps.census !== undefined) {
+    deps.census.observed += batch.creates.length + batch.moves.length
+      + batch.flagChanges.length + batch.deletes.length;
+  }
   // A folder whose STORED cursor this build could not read was scanned from cold — the adapter has
   // no logger and reports the names instead, and a re-bootstrap that nobody records is the
   // silent state the row is about. One line per folder, labelled: a folder a person made carries
@@ -708,16 +949,13 @@ async function syncCycleWithin(deps: SyncDeps): Promise<{ hasBacklog: boolean; o
     try {
       await run();
     } catch (err) {
-      // `MailboxRemovedError` joins the two: it is not evidence about the message either, and
-      // counting an attempt against it — or writing a `message_failures` row — would leave a
-      // record of somebody's mail behind in a mailbox they removed, which is the defect one table
-      // along. Terminal for the cycle, like the fence.
-      if (err instanceof ClassifierFaultError || err instanceof LeaseUnavailableError
-        || err instanceof MailboxRemovedError) throw err;
-      // A fence refusal is proof of lost leadership, never evidence about the message: counting
-      // an attempt against it — let alone writing it off — would spend a customer's mail on our
-      // own handover.
-      rethrowFenced(err);
+      if (err instanceof ClassifierFaultError || err instanceof LeaseUnavailableError) throw err;
+      // The two REFUSALS leave here too, and `MailboxRemovedError` is one of them: counting an
+      // attempt against a lost lease would spend a customer's mail on our own handover, and
+      // writing a `message_failures` row for a removed mailbox would leave a record of somebody's
+      // mail behind in a mailbox they removed. Through {@link rethrowRefusal} rather than the
+      // list above, so the class is decided in ONE place for every arm in this file.
+      rethrowRefusal(err);
       const fault = classifyIngestFault(err);
       if (fault.domain === "infrastructure") {
         // Ours, not the message's. Fail the cycle the way a bare throw did before this boundary: no
@@ -753,7 +991,7 @@ async function syncCycleWithin(deps: SyncDeps): Promise<{ hasBacklog: boolean; o
       // epoch, UID, closed-set code, and nothing a sender chose.
       let attempts: number;
       try {
-        attempts = await fencedWrite(deps, (r) => r.recordMessageFailure(mailboxId, {
+        attempts = await fencedLiveGroup(deps, (r) => r.recordMessageFailure(mailboxId, {
           accountId, folder: site.folder, uidValidity: site.uidValidity, uid: site.uid,
           code: fault.code, version,
           nextAttemptAt: nextAttemptAfter(fault.code, 1, new Date()),
@@ -762,7 +1000,7 @@ async function syncCycleWithin(deps: SyncDeps): Promise<{ hasBacklog: boolean; o
         deadLetters.revoke(ch.locator);
         // Revoked FIRST, then the fence refusal propagates: the in-memory terminal decision must
         // not outlive a durable record that was refused, whoever refused it.
-        rethrowFenced(writeErr);
+        rethrowRefusal(writeErr);
         deferred.add(site.folder);
         if (firstDeferredError === null) firstDeferredError = writeErr;
         log?.error("sync_message_skip_unrecordable", {
@@ -785,7 +1023,7 @@ async function syncCycleWithin(deps: SyncDeps): Promise<{ hasBacklog: boolean; o
       // and unlike the row above this one carries no recovery, so a bookkeeping failure here must not
       // resurrect the wedge the skip decision exists to end.
       try {
-        await fencedWrite(deps, (r) => r.recordAudit(
+        await fencedLiveGroup(deps, (r) => r.recordAudit(
           accountId, "sync.message_skipped",
           {
             mailboxId, folder: site.folder, uidValidity: site.uidValidity, uid: site.uid,
@@ -794,7 +1032,7 @@ async function syncCycleWithin(deps: SyncDeps): Promise<{ hasBacklog: boolean; o
           null,
         ));
       } catch (auditErr) {
-        rethrowFenced(auditErr);
+        rethrowRefusal(auditErr);
         log?.warn("sync_message_skip_audit_failed", {
           mailboxId, accountId, folder: site.folder, uid: site.uid, err: auditErr,
         });
@@ -822,7 +1060,7 @@ async function syncCycleWithin(deps: SyncDeps): Promise<{ hasBacklog: boolean; o
     // cycle BELIEVES, not over everything the adapter reported: a UIDVALIDITY reset's prior-epoch
     // refs are skipped above and must not spend a budget meant for real disappearances.
     if (deletesRecorded >= DELETE_EVIDENCE_PER_CYCLE) { deletesCapped = true; break; }
-    await fencedWrite(deps, (r) => r.forgetInstanceAt(mailboxId, ch.locator));
+    await fencedLiveGroup(deps, (r) => r.forgetInstanceAt(mailboxId, ch.locator));
     deletesRecorded++;
   }
   if (deletesCapped) {
@@ -844,7 +1082,7 @@ async function syncCycleWithin(deps: SyncDeps): Promise<{ hasBacklog: boolean; o
   // path (`clearDeletedOnAdopt` + the move change) — the client contract's "a LATER create resurrects"
   // end to end. Junk-parked rows are excluded in the query; optional-guarded so every fake repo works.
   if (typeof repo.tombstoneInstanceless === "function") {
-    const reaped = await fencedGroup(deps, (r) =>
+    const reaped = await fencedLiveGroup(deps, (r) =>
       typeof r.tombstoneInstanceless === "function"
         ? r.tombstoneInstanceless(accountId, mailboxId, TOMBSTONE_MAX_PER_CYCLE)
         : Promise.resolve(0));
@@ -867,11 +1105,13 @@ async function syncCycleWithin(deps: SyncDeps): Promise<{ hasBacklog: boolean; o
     await attempt(ch, async () => {
       const plan = await planChange(ch, { repo, accountId, mailboxId, classifier, credits, routing: repo, trustedAuthservIds, ohboxPolicy, ohboxBar, screeningCutoff, importDecisionOpen, readerMode });
       await fencedIngest(deps, async (txRepo) => {
-        // The row is taken FIRST and inside this transaction: `planChange` above ran outside any
-        // transaction and may have spent a classifier call there, which is exactly the gap a
-        // removal lands in. See {@link assertMailboxStillHere}.
-        await assertMailboxStillHere(txRepo, mailboxId);
-        await commitChange(plan, { repo: txRepo, routing: txRepo, accountId, mailboxId, storageCap });
+        // The mailbox is asked about INSIDE this transaction, never before it: `planChange` above
+        // ran outside any transaction and may have spent a classifier call there, which is exactly
+        // the gap a removal lands in. See {@link commitFenced} for which statement carries the
+        // question and {@link assertMailboxStillHere} for what it is.
+        await commitFenced(plan, txRepo, {
+          repo: txRepo, routing: txRepo, accountId, mailboxId, storageCap,
+        });
       });
     });
   }
@@ -913,7 +1153,7 @@ async function syncCycleWithin(deps: SyncDeps): Promise<{ hasBacklog: boolean; o
   // ingest: a row that cannot be written DEFERS the folder, or losing the write while advancing the watermark is mail loss.
   for (const site of batch.unanswered ?? []) {
     try {
-      const attempts = await fencedWrite(deps, (r) => r.recordMessageFailure(mailboxId, {
+      const attempts = await fencedLiveGroup(deps, (r) => r.recordMessageFailure(mailboxId, {
         accountId, folder: site.folder, uidValidity: site.uidValidity, uid: site.uid,
         code: "unclassified", version,
         nextAttemptAt: nextAttemptAfter("unclassified", 1, new Date()),
@@ -926,7 +1166,7 @@ async function syncCycleWithin(deps: SyncDeps): Promise<{ hasBacklog: boolean; o
           "cross it and the targeted retry keeps re-reading it",
       });
     } catch (writeErr) {
-      rethrowFenced(writeErr);
+      rethrowRefusal(writeErr);
       deferred.add(site.folder);
       if (firstDeferredError === null) firstDeferredError = writeErr;
       log?.error("sync_uid_unanswered_unrecordable", {
@@ -950,7 +1190,7 @@ async function syncCycleWithin(deps: SyncDeps): Promise<{ hasBacklog: boolean; o
   // advances over the UID, and only this row keeps it enumerable (the targeted retry) at all.
   for (const site of batch.oversize ?? []) {
     try {
-      const attempts = await fencedWrite(deps, (r) => r.recordMessageFailure(mailboxId, {
+      const attempts = await fencedLiveGroup(deps, (r) => r.recordMessageFailure(mailboxId, {
         accountId, folder: site.folder, uidValidity: site.uidValidity, uid: site.uid,
         code: "mime_too_large", version,
         nextAttemptAt: nextAttemptAfter("mime_too_large", 1, new Date()),
@@ -963,7 +1203,7 @@ async function syncCycleWithin(deps: SyncDeps): Promise<{ hasBacklog: boolean; o
           "recovers it via the targeted retry",
       });
     } catch (writeErr) {
-      rethrowFenced(writeErr);
+      rethrowRefusal(writeErr);
       deferred.add(site.folder);
       if (firstDeferredError === null) firstDeferredError = writeErr;
       log?.error("sync_uid_oversize_unrecordable", {
@@ -986,7 +1226,7 @@ async function syncCycleWithin(deps: SyncDeps): Promise<{ hasBacklog: boolean; o
   // declared consumed, and a cursor written across that is an acknowledgement of work still owed.
   for (const [folder, fc] of Object.entries(batch.newCursor.folders)) {
     if (deferred.has(folder)) continue;
-    await fencedWrite(deps, (r) => r.upsertMailboxFolder(mailboxId, folder, epochAware(fc, observedEpochs.get(folder))));
+    await fencedLiveGroup(deps, (r) => r.upsertMailboxFolder(mailboxId, folder, epochAware(fc, observedEpochs.get(folder))));
   }
 
   // AFTER the cursor writes, and skipped entirely when anything is deferred — see
@@ -1004,15 +1244,44 @@ async function syncCycleWithin(deps: SyncDeps): Promise<{ hasBacklog: boolean; o
       await junkRestorePass({
         repo, adapter, accountId, mailboxId, storageCap,
         ...(log !== undefined ? { log } : {}),
-        write: (fn) => fencedGroup(deps, fn),
+        write: (fn) => fencedLiveGroup(deps, fn),
       });
     } catch (err) {
-      rethrowFenced(err);
+      // NAMED BEFORE IT IS RETHROWN. The pass's `write` is the fenced live group, so a removal
+      // landing between `listJunkFiledHusks` and a rewrite refuses here — and reported as
+      // `junk_restore_pass_failed` it would read as a pass that broke, on a mailbox that is
+      // simply gone. Once per pass: the first refusal leaves the pass, so there is no second.
+      if (err instanceof MailboxRemovedError) {
+        log?.info("junk_restore_mailbox_removed", {
+          mailboxId, accountId,
+          reason: "the mailbox was removed while this pass was reading it, so the husk rewrite "
+            + "was refused rather than committed into a mailbox that is gone",
+        });
+        throw err;
+      }
+      rethrowRefusal(err);
       log?.warn("junk_restore_pass_failed", { mailboxId, accountId, err });
     }
   }
 
-  const { owesMore } = await reconcileMailbox(deps);
+  // The reconciler's own refusal gets the pass's name for the junk restore's reason — its arms
+  // otherwise report a removal as bookkeeping that "did not commit", which is a sentence about
+  // our database when the fact is that the mailbox has gone. Rethrown: terminal for the cycle,
+  // like every other refusal, and both production callers read it as a skip.
+  let owesMore: boolean;
+  try {
+    ({ owesMore } = await reconcileMailbox(deps, at));
+  } catch (err) {
+    if (err instanceof MailboxRemovedError) {
+      log?.info("reconcile_mailbox_removed", {
+        mailboxId, accountId,
+        reason: "the mailbox was removed while the reconcile pass was reading it, so its moves, "
+          + "folder_state, flag_state and audit writes were refused rather than committed into a "
+          + "mailbox that is gone; the mail is wherever the server put it",
+      });
+    }
+    throw err;
+  }
   if (firstDeferredError !== null) throw firstDeferredError;
   return {
     hasBacklog: (batch.hasBacklog ?? false) || deletesCapped,
@@ -1021,14 +1290,14 @@ async function syncCycleWithin(deps: SyncDeps): Promise<{ hasBacklog: boolean; o
 }
 
 /**
- * The targeted retry — re-read written-off UIDs BY UID, never by rescanning a folder. The half of mail
- * 0041 that turns a durable record into recovered mail: a written-off UID is behind the Sent
- * watermark and inside every folder's known-set, so nothing in the ordinary batch offers it again, so
- * this asks by name. Inside the cycle, not on a cron (a cron needs its own IMAP connection, colliding
- * with the one-organizer lease, and `reconcile-cron.ts` runs only when no worker leads). After the
- * cursor writes (a retry must never hold a watermark). Skipped when anything is deferred (live mail
- * failed; the cycle is about to fail). It never throws — every failure is recorded and swallowed,
- * because this is mail already declared consumed. The claim is a conditional UPDATE (`claimMessageFailures`), so two workers mid-handover do not double the IMAP traffic, and it is idempotent either way.
+ * The targeted retry — re-read written-off UIDs BY UID, never by rescanning a folder. Such a UID is
+ * behind the Sent watermark and inside every folder's known-set, so nothing in the ordinary batch
+ * offers it again and this asks by name. Inside the cycle, not on a cron (a cron needs its own IMAP
+ * connection, colliding with the one-organizer lease). After the cursor writes, since a retry must
+ * never hold a watermark, and skipped when anything is deferred. Every failure ABOUT THE MESSAGE is
+ * recorded and swallowed — this is mail already declared consumed — and exactly two refusals leave
+ * it unreclassified, neither about the message: a lost lease, and a mailbox removed under the
+ * re-read, both meaning every later write in the cycle would be illegitimate.
  */
 async function retryFailedMessages(
   deps: SyncDeps, deadLetters: DeadLetterLedger, version: string,
@@ -1044,7 +1313,7 @@ async function retryFailedMessages(
   const now = new Date();
   let claimed: Awaited<ReturnType<WorkerRepo["claimMessageFailures"]>>;
   try {
-    claimed = await fencedWrite(deps, (r) => r.claimMessageFailures(mailboxId, {
+    claimed = await fencedLiveGroup(deps, (r) => r.claimMessageFailures(mailboxId, {
       version, now, limit: MAX_MESSAGE_RETRIES_PER_CYCLE,
       // The NEXT clock instant is written by the claim, so a process that dies mid-fetch does not
       // leave the row due on every subsequent cycle. `null` for the deterministic codes: their next
@@ -1057,7 +1326,7 @@ async function retryFailedMessages(
       holdScheduleForCodes: DETERMINISTIC_MESSAGE_FAILURE_CODES,
     }));
   } catch (err) {
-    rethrowFenced(err);
+    rethrowRefusal(err);
     log?.warn("message_retry_claim_failed", { mailboxId, accountId, err });
     return;
   }
@@ -1088,7 +1357,7 @@ async function retryFailedMessages(
     }
 
     const close = async (row: { uidValidity: string; uid: number }, why: string): Promise<void> => {
-      await fencedWrite(deps, (r) => r.resolveMessageFailure(mailboxId, { folder, uidValidity: row.uidValidity, uid: row.uid }));
+      await fencedLiveGroup(deps, (r) => r.resolveMessageFailure(mailboxId, { folder, uidValidity: row.uidValidity, uid: row.uid }));
       deadLetters.forget(folder, row.uidValidity, row.uid);
       log?.info("message_retry_closed", {
         mailboxId, accountId, folder, uidValidity: row.uidValidity, uid: row.uid, reason: why,
@@ -1115,7 +1384,7 @@ async function retryFailedMessages(
       }
       if (verdict === "stale") {
         try { await close(row, "uidvalidity_changed"); }
-        catch (err) { rethrowFenced(err); log?.warn("message_retry_close_failed", { mailboxId, folder, uid: row.uid, err }); }
+        catch (err) { rethrowRefusal(err); log?.warn("message_retry_close_failed", { mailboxId, folder, uid: row.uid, err }); }
         continue;
       }
 
@@ -1123,7 +1392,7 @@ async function retryFailedMessages(
         // Expunged, or moved by the user out of this folder. There is no message here to lose, and
         // a move surfaces through the ordinary enumeration of wherever it went.
         try { await close(row, "gone_from_server"); }
-        catch (err) { rethrowFenced(err); log?.warn("message_retry_close_failed", { mailboxId, folder, uid: row.uid, err }); }
+        catch (err) { rethrowRefusal(err); log?.warn("message_retry_close_failed", { mailboxId, folder, uid: row.uid, err }); }
         continue;
       }
 
@@ -1150,13 +1419,37 @@ async function retryFailedMessages(
       // `own_copy` for a Sent twin of mail we hold.
       try {
         const plan = await planChange(change, { repo, accountId, mailboxId, classifier, credits, routing: repo, trustedAuthservIds, ohboxPolicy, ohboxBar, screeningCutoff, importDecisionOpen, readerMode });
+        // THROUGH THE INGEST'S OWN COMMIT DOOR, and never a second fence. `planChange` above ran
+        // outside every transaction exactly as the ordinary path's does, so a removal lands in the
+        // same gap and this commit needs the same question asked inside the same transaction —
+        // {@link commitFenced} puts it on whichever statement this plan's shape already sends.
         await fencedIngest(deps, (txRepo) =>
-          commitChange(plan, { repo: txRepo, routing: txRepo, accountId, mailboxId, storageCap }),
+          commitFenced(plan, txRepo, { repo: txRepo, routing: txRepo, accountId, mailboxId, storageCap }),
         );
       } catch (err) {
-        // Lost leadership is not evidence about the message and not an outage to wait out —
-        // the whole cycle must stop, so this one arm rethrows where the two below return.
-        rethrowFenced(err);
+        // BOTH REFUSALS STOP THE CYCLE where the two arms below return, and the removal is NAMED
+        // before it leaves — which is why it is read here rather than left to `rethrowRefusal`,
+        // whose job is the arms that have nothing to say about the class.
+        if (err instanceof MailboxRemovedError) {
+          /* THE MAILBOX WENT WHILE THIS MESSAGE WAS BEING RE-READ — terminal for the cycle, as it
+             is where the ingest raises it, and NOT the outage arm below. Two passes still to come
+             in this cycle write to the mailbox and neither asks this question (the junk restore's
+             rewrites, `reconcileMailbox`'s moves and flag writes), so swallowing the refusal would
+             shut one door and leave two open on a mailbox that is gone. Nothing is recorded
+             against the message either: it is fine, and a `message_failures` row rewritten now is
+             somebody's mail left behind one table along. Both callers already read this class as a
+             benign skip rather than a failing mailbox. */
+          log?.info("message_retry_mailbox_removed", {
+            mailboxId, accountId, folder, uidValidity: row.uidValidity, uid: row.uid,
+            reason: "this mailbox was removed while a written-off message was being re-read, so " +
+              "the commit was refused rather than written into a mailbox that is gone — the " +
+              "record stays owed and the cycle stops here",
+          });
+          throw err;
+        }
+        // And the other refusal, which has no sentence of its own to add here: lost leadership is
+        // not evidence about the message and not an outage to wait out — the whole cycle stops.
+        rethrowRefusal(err);
         if (err instanceof ClassifierFaultError || err instanceof LeaseUnavailableError) {
           // Not evidence about the message. Leave the row exactly as the claim left it and stop —
           // continuing would spend the rest of this cycle's retries against the same outage.
@@ -1172,13 +1465,13 @@ async function retryFailedMessages(
         // into `mime_unparseable`), so the code is re-recorded. `recordMessageFailure` does not
         // touch `attempts` — the claim already counted this one.
         try {
-          await fencedWrite(deps, (r) => r.recordMessageFailure(mailboxId, {
+          await fencedLiveGroup(deps, (r) => r.recordMessageFailure(mailboxId, {
             accountId, folder, uidValidity: row.uidValidity, uid: row.uid,
             code: fault.code, version,
             nextAttemptAt: nextAttemptAfter(fault.code, row.attempts, new Date()),
           }));
         } catch (writeErr) {
-          rethrowFenced(writeErr);
+          rethrowRefusal(writeErr);
           log?.warn("message_retry_rerecord_failed", { mailboxId, folder, uid: row.uid, err: writeErr });
         }
         log?.error("message_retry_failed", {
@@ -1194,7 +1487,7 @@ async function retryFailedMessages(
 
       try { await close(row, "ingested"); }
       catch (err) {
-        rethrowFenced(err);
+        rethrowRefusal(err);
         // The message IS committed. A failed resolve leaves the row owed, the next cycle re-reads
         // the same UID, and `planChange` answers `duplicate` — so the replay converges rather than
         // writing a second message.
@@ -1246,7 +1539,9 @@ function epochAware(fc: PersistedFolderCursor, observed: string | undefined): Pe
  * if the message already left its expected source (a prior run moved it before crashing), we
  * defer to the next changesSince, which adopts the completed move.
  */
-export async function reconcileMailbox(deps: SyncDeps): Promise<{ owesMore: boolean }> {
+export async function reconcileMailbox(
+  deps: SyncDeps, at: CyclePageCursor = freshCyclePages(),
+): Promise<{ owesMore: boolean }> {
   /* A reader reconciles flags and nothing else. See {@link SyncDeps.role}. The two halves of this
    * function are the two halves of the reader's entitlement: `reconcileFolders` carries OUR intended
    * MOVES to the server, and a reader has none — `planChange`'s reader arm writes every row
@@ -1257,12 +1552,12 @@ export async function reconcileMailbox(deps: SyncDeps): Promise<{ owesMore: bool
    * somebody else's mailbox after the handover, the seize-back the lease forbids. Those rows are not
    * lost: the ORGANIZER's own cycle adopts. `reconcileFlags` DOES run — `\Seen` is the one verb that
    * keeps a reader's mirror honest in both directions. */
-  const owesMore = deps.role === "reader" ? false : await reconcileFolders(deps);
+  const owesMore = deps.role === "reader" ? false : await reconcileFolders(deps, at);
   /* The flag queue reports its own backlog, and a READER's counts: this pass runs for a reader by
    * design (`\Seen` is the one verb that keeps its mirror honest), so a reader that has just been
    * handed ten thousand read marks owes outbound intent exactly as an organizer does. The `false`
    * above is about MOVES, which a reader may not make. */
-  const owesFlags = await reconcileFlags(deps);
+  const owesFlags = await reconcileFlags(deps, at);
   return { owesMore: owesMore || owesFlags };
 }
 
@@ -1385,7 +1680,7 @@ function classifyMoveRefusal(err: unknown): FilingRefusalClass {
  * server did not say where, so nothing is recorded and nothing is re-issued. Never a half-filed
  * group either way. A throw takes the per-message path, where a message earns its own verdict.
  */
-async function reconcileFolders(deps: SyncDeps): Promise<boolean> {
+async function reconcileFolders(deps: SyncDeps, at: CyclePageCursor): Promise<boolean> {
   const { repo, accountId, mailboxId } = deps;
   // One row over the budget, so "there is more" is a fact about the queue rather than a guess
   // from a full page.
@@ -1434,7 +1729,7 @@ async function reconcileFolders(deps: SyncDeps): Promise<boolean> {
       // doc gives — this write is derived from a row read before the pass's network work, so it
       // may not put `p.desiredFolder` back over a decision committed since. Nothing is written
       // when the desire moved on; the row is then genuinely pending and the next loop files it.
-      await fencedWrite(deps, (r) => r.completeFolderState(p.messageId, {
+      await fencedLiveGroup(deps, (r) => r.completeFolderState(p.messageId, {
         expectDesiredFolder: p.desiredFolder, observedFolder: p.desiredFolder, lastSetBy: "us",
       }));
       continue;
@@ -1464,9 +1759,9 @@ async function reconcileFolders(deps: SyncDeps): Promise<boolean> {
   for (const group of groups.values()) {
     for (let i = 0; i < group.length; i += FILING_BATCH_MAX) {
       const chunk = group.slice(i, i + FILING_BATCH_MAX);
-      const batched = await fileChunk(deps, chunk, special);
+      const batched = await fileChunk(deps, chunk, special, at);
       if (batched !== null) { reopened = reopened || batched.reopened; continue; }
-      for (const p of chunk) reopened = (await fileOne(deps, p, special)) || reopened;
+      for (const p of chunk) reopened = (await fileOne(deps, p, special, at)) || reopened;
     }
   }
   return owesMore || reopened;
@@ -1506,7 +1801,7 @@ async function sentFolderOf(deps: SyncDeps): Promise<{ sentFolder?: string | nul
  * branch), which the caller owes to the scheduler.
  */
 async function fileChunk(
-  deps: SyncDeps, chunk: PendingPhysical[], special: SpecialFolderMap,
+  deps: SyncDeps, chunk: PendingPhysical[], special: SpecialFolderMap, at: CyclePageCursor,
 ): Promise<{ reopened: boolean } | null> {
   const { adapter, accountId, mailboxId, log } = deps;
   if (typeof adapter.moveMany !== "function") return null;
@@ -1525,8 +1820,9 @@ async function fileChunk(
   const refs = new Set(chunk.map((p) => p.nativeLocator!.ref));
   if (refs.size !== chunk.length) return null;
 
-  // BEFORE the IMAP command — the whole batch is one mutation. Outside the `try` below
-  // deliberately: its refusal must abort the cycle, never degrade to the per-message path.
+  // BEFORE the IMAP command — the whole batch is one mutation, and one filing page. Outside the
+  // `try` below deliberately: its refusal must abort the cycle, never degrade to the per-message path.
+  openPage(at, "filing");
   await assertMayWriteToMailbox(writeAuthorityOf(deps));
   let result;
   try {
@@ -1561,7 +1857,7 @@ async function fileChunk(
   let reopened = false;
   let landed = 0;
   try {
-    await fencedGroup(deps, async (r) => {
+    await fencedLiveGroup(deps, async (r) => {
       const audits: Array<{ action: string; payload: unknown; inverse: unknown }> = [];
       for (const p of chunk) {
         const ref = p.nativeLocator!.ref;
@@ -1596,7 +1892,7 @@ async function fileChunk(
       if (audits.length > 0) await recordAudits(r, accountId, audits);
     });
   } catch (err) {
-    rethrowFenced(err);
+    rethrowRefusal(err);
     log?.error("reconcile_move_batch_uncommitted", {
       mailboxId, accountId, size: chunk.length, to: toFolder, err,
       reason: "the batched IMAP move succeeded and its bookkeeping did not commit; every row " +
@@ -1712,7 +2008,9 @@ async function voidGoneFiling(
  * folder it is not in) — so this is never deferred, the row is left pending and DUE, and the next cycle
  * converges the documented way. Folding them together produced a `reconcile.move.failed` row asserting a move that HAD succeeded was refused, and put the correction to sleep behind it.
  */
-async function fileOne(deps: SyncDeps, p: PendingPhysical, special: SpecialFolderMap): Promise<boolean> {
+async function fileOne(
+  deps: SyncDeps, p: PendingPhysical, special: SpecialFolderMap, at: CyclePageCursor,
+): Promise<boolean> {
   const { adapter, accountId, mailboxId, log } = deps;
   // Mail 0065: the physical destination was decided when the row was grouped — a spam verdict
   // files into the provider's native Junk when the mailbox has one and the placement was not
@@ -1723,16 +2021,19 @@ async function fileOne(deps: SyncDeps, p: PendingPhysical, special: SpecialFolde
   // import block's note on what naming the bare barrel here would drag into the desktop engine.
   let newLoc: Awaited<ReturnType<MailboxAdapter["move"]>>;
   try {
+    openPage(at, "filing");
     await assertMayWriteToMailbox(writeAuthorityOf(deps));
     newLoc = await adapter.move(p.nativeLocator!, physical);
   } catch (err) {
-    // A fence refusal must not be recorded as this message's failure — it is the process's.
-    rethrowFenced(err);
+    // A refusal must not be recorded as this message's failure — it is the process's, or the
+    // mailbox's new organizer's. A stand-down taken here used to fall through to the deferral
+    // below: an audit row blaming the mail server, and the pass filing the rest of the page.
+    rethrowRefusal(err);
     if (err instanceof MessageGoneError) {
       // Already moved (crash between IMAP move and DB update) → leave pending; the next
       // changesSince adopts it. Expunged outright → nothing will ever adopt it; see
       // voidGoneFiling for how the two are told apart.
-      await fencedGroup(deps, (r) => voidGoneFiling(r, accountId, p, special));
+      await fencedLiveGroup(deps, (r) => voidGoneFiling(r, accountId, p, special));
       return false;
     }
     if (isTransportFailure(err)) {
@@ -1766,7 +2067,7 @@ async function fileOne(deps: SyncDeps, p: PendingPhysical, special: SpecialFolde
     // deferFolderReconcile` for why it is an argument to the deferral rather than a write of its
     // own. A class without its schedule is a reason for nothing.
     const errorClass = classifyMoveRefusal(err);
-    await fencedGroup(deps, async (r) => {
+    await fencedLiveGroup(deps, async (r) => {
       await r.recordAudit(
         accountId,
         "reconcile.move.failed",
@@ -1792,7 +2093,7 @@ async function fileOne(deps: SyncDeps, p: PendingPhysical, special: SpecialFolde
   // in the seam a transaction cannot cover (the server's, always).
   let reopened = false;
   try {
-    await fencedGroup(deps, async (r) => {
+    await fencedLiveGroup(deps, async (r) => {
       // Mail 0065: the shared completion writer — see junk-filing.ts and fileChunk's note. The
       // claim ("this message is in Junk") is written only here, after the move returned.
       reopened = await completeFiling(r, accountId, mailboxId, p, newLoc, special);
@@ -1811,7 +2112,7 @@ async function fileOne(deps: SyncDeps, p: PendingPhysical, special: SpecialFolde
       );
     });
   } catch (err) {
-    rethrowFenced(err);
+    rethrowRefusal(err);
     // The mail moved and we failed to write that down. Nothing was written (the group is a
     // transaction), the row is left pending and DUE — not deferred — and the next cycle converges
     // it: the source copy is gone, so the retry raises `MessageGoneError` and `changesSince`
@@ -1843,7 +2144,7 @@ async function retireLocatorlessFlag(deps: SyncDeps, p: PendingFlagState): Promi
   const { accountId, mailboxId, log } = deps;
   const attempts = (p.attempts ?? 0) + 1;
   const spent = attempts >= RECONCILE_BACKOFF_MINUTES.length;
-  await fencedGroup(deps, async (r) => {
+  await fencedLiveGroup(deps, async (r) => {
     await r.recordAudit(
       accountId,
       spent ? "reconcile.flags.retired" : "reconcile.flags.no_locator",
@@ -1861,9 +2162,12 @@ async function retireLocatorlessFlag(deps: SyncDeps, p: PendingFlagState): Promi
     );
     if (spent) {
       // The ONLY write that takes this row out of `pending` through this port. Paired with the
-      // audit row above, and never issued without it — see the header.
-      await r.upsertFlagState(p.messageId, {
-        desiredSeen: p.desiredSeen, observedSeen: p.desiredSeen, lastSetBy: "us",
+      // audit row above, and never issued without it — see the header. CONDITIONAL, and with no
+      // physical fact to carry: `p` was read at the top of the cycle, so a mark-read pressed since
+      // must not be retired by a deferral earned against the older one. A miss writes nothing and
+      // the next cycle re-derives from the fresh desire.
+      await r.completeFlagState(p.messageId, {
+        expectDesiredSeen: p.desiredSeen, observedSeen: p.desiredSeen, lastSetBy: "us",
       });
     } else {
       await r.deferFlagReconcile(p.messageId, {
@@ -1889,7 +2193,7 @@ async function retireLocatorlessFlag(deps: SyncDeps, p: PendingFlagState): Promi
  * `reconcileFolders` has just written the new one, so this reads the fresh value instead of a UID the
  * STORE would miss.
  */
-async function reconcileFlags(deps: SyncDeps): Promise<boolean> {
+async function reconcileFlags(deps: SyncDeps, at: CyclePageCursor): Promise<boolean> {
   const { repo, adapter, accountId, mailboxId, log } = deps;
   /* ONE MORE THAN THE BUDGET — the folder pass's shape: the extra row is how "there is more" is
    * known without a second COUNT, and it is never worked. See {@link RECONCILE_FLAGS_PER_CYCLE}. */
@@ -1899,7 +2203,7 @@ async function reconcileFlags(deps: SyncDeps): Promise<boolean> {
   for (const p of pending) {
     if (p.lastSetBy !== "us") continue;                       // user-wins: never revert an external \Seen
     if (p.desiredSeen === p.observedSeen) {
-      await fencedWrite(deps, (r) => r.upsertFlagState(p.messageId, { desiredSeen: p.desiredSeen, observedSeen: p.desiredSeen, lastSetBy: "us" }));
+      await fencedLiveGroup(deps, (r) => r.completeFlagState(p.messageId, { expectDesiredSeen: p.desiredSeen, observedSeen: p.desiredSeen, lastSetBy: "us" }));
       continue;
     }
     if (!p.nativeLocator) { await retireLocatorlessFlag(deps, p); continue; }
@@ -1907,20 +2211,21 @@ async function reconcileFlags(deps: SyncDeps): Promise<boolean> {
       // A READER pushes `\Seen` too and holds no lease, so its authority admits here by naming
       // itself — see `OrganizerWriteAuthority`. An ORGANIZER's `\Seen` is permit-checked like any
       // other write, which it was not before.
+      openPage(at, "flags");
       await assertMayWriteToMailbox(writeAuthorityOf(deps));
       await adapter.setFlags(p.nativeLocator, { seen: p.desiredSeen });
     } catch (err) {
-      // A fence refusal is proof of lost leadership, never evidence about this message. It is the
-      // ONE throw that still leaves this loop, and it must leave it unreclassified.
-      rethrowFenced(err);
+      // A lost lease — this shard's or this mailbox's — is never evidence about this message. Those
+      // are the throws that still leave this loop, and they must leave it unreclassified.
+      rethrowRefusal(err);
       if (err instanceof MessageGoneError) {
         // The message left this locator between the DB read and the STORE. Mid-move, the next
         // changesSince refreshes the locator and this retries. Expunged outright, no refresh is
         // ever coming — voidGoneFiling's argument, one flag over — so the intent is voided the
         // same way rather than re-STOREd (one IMAP round trip per cycle) for ever.
-        await fencedGroup(deps, async (r) => {
+        await fencedLiveGroup(deps, async (r) => {
           if (!(await r.primaryInstanceVanished(p.messageId))) return;
-          await r.upsertFlagState(p.messageId, { desiredSeen: p.desiredSeen, observedSeen: p.desiredSeen, lastSetBy: "us" });
+          await r.completeFlagState(p.messageId, { expectDesiredSeen: p.desiredSeen, observedSeen: p.desiredSeen, lastSetBy: "us" });
           await r.recordAudit(
             accountId, "reconcile.flags.voided",
             { messageId: p.messageId, locator: p.nativeLocator, seen: p.desiredSeen },
@@ -1949,7 +2254,7 @@ async function reconcileFlags(deps: SyncDeps): Promise<boolean> {
       // intent survives (`desired_seen` untouched), so a host that starts accepting the STORE converges then.
       const attempts = (p.attempts ?? 0) + 1;
       const nextAttemptAt = nextReconcileAttemptAfter(attempts, new Date());
-      await fencedGroup(deps, async (r) => {
+      await fencedLiveGroup(deps, async (r) => {
         await r.recordAudit(
           accountId,
           "reconcile.flags.failed",
@@ -1973,16 +2278,36 @@ async function reconcileFlags(deps: SyncDeps): Promise<boolean> {
     // convergence is the inbound mirror: the server's `\Seen` is what the next `changesSince`
     // reports, and `applyExternalFlag` adopts it.
     try {
-      await fencedGroup(deps, async (r) => {
-        await r.upsertFlagState(p.messageId, { desiredSeen: p.desiredSeen, observedSeen: p.desiredSeen, lastSetBy: "us" });
+      await fencedLiveGroup(deps, async (r) => {
+        /* CONDITIONAL on the desire this STORE was computed against, compared in the statement that
+           writes — `completeFlagState`, never `upsertFlagState`. `p.desiredSeen` is minutes old on a
+           slow host and every mark-read/mark-unread press writes `desired_seen`, so writing it back
+           here erased the person's last press: read, then unread over one slow STORE, and the row
+           came back `read` on both sides with nothing left pending to correct it. The observation is
+           written on a miss too (`physicalObservation`) — the server really does hold this flag now,
+           and that is what leaves the row PENDING against the newer desire for the next cycle to
+           STORE. Nothing is re-issued here: a completion that re-sent would be this same race one
+           level up, and a STORE that then fails is the deferral arm's, above. */
+        const matched = await r.completeFlagState(p.messageId, {
+          expectDesiredSeen: p.desiredSeen, observedSeen: p.desiredSeen,
+          lastSetBy: "us", physicalObservation: true,
+        });
         await r.recordAudit(
           accountId, "reconcile.flags",
           { messageId: p.messageId, locator: p.nativeLocator, seen: p.desiredSeen },
           { action: "setFlags", locator: p.nativeLocator, seen: !p.desiredSeen },
         );
+        if (!matched) {
+          log?.info("reconcile_flag_superseded", {
+            mailboxId, accountId, messageId: p.messageId, seen: p.desiredSeen,
+            reason: "the read-state was pressed again while this STORE was on the wire; what the " +
+              "server now holds is recorded and the newer press keeps the row pending, so the next " +
+              "cycle writes the person's last word to the server",
+          });
+        }
       });
     } catch (err) {
-      rethrowFenced(err);
+      rethrowRefusal(err);
       log?.error("reconcile_flag_uncommitted", {
         mailboxId, accountId, messageId: p.messageId, seen: p.desiredSeen, err,
         reason: "the IMAP STORE succeeded and its bookkeeping did not commit; the row stays " +

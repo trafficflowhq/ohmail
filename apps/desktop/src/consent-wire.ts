@@ -105,10 +105,6 @@ export function consentVia(
       patch<{
         signatures: Record<string, string>;
         signaturesHtml?: Record<string, string>;
-        // Whose signature each mailbox shows. A standalone install organizes what it holds, so
-        // its own rows answer `local` here by construction — the map is the route's, not a
-        // second opinion composed at this door.
-        signatureSources?: Record<string, "organizer" | "local">;
       }>(signatureHtml !== undefined
         ? { signaturesHtml: { [mailboxId]: signatureHtml } }
         : { signatures: { [mailboxId]: signature } }),
