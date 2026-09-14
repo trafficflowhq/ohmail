@@ -39,6 +39,13 @@ export type {
   StorageVerdict,
   ThemePersistence,
 } from "./theme/ThemeProvider.js";
+/* The scheme crossfade — the ONE helper the provider's stamp and the desktop's live theme feed
+   both go through, so nothing else animates the scheme. */
+export {
+  armSchemeTransitions,
+  resetSchemeTransitionsForTests,
+  withSchemeTransition,
+} from "./theme/scheme-transition.js";
 
 /* icons */
 export { Icon, ICON_PATHS } from "./icons.js";

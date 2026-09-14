@@ -29,6 +29,10 @@
  */
 
 import { mapOmarchyThemePair, type OmarchyThemeRaw } from "../../../packages/tokens/omarchy/map.js";
+/* The ONE scheme crossfade, shared with `ThemeProvider`'s stamp — a second animation of the
+   same change would be two fades over one paint. Reached by path for the same reason the
+   mapping is: `@ohmail/ui` publishes one entry and this module wants one function from it. */
+import { withSchemeTransition } from "../../../packages/ui/src/theme/scheme-transition.js";
 
 /** The event the shell emits when the desktop theme changed and went quiet. */
 export const OMARCHY_THEME_EVENT = "omarchy:theme";
@@ -186,7 +190,13 @@ export function applyOmarchyTokens(
     style.id = STYLE_ID;
     doc.head.appendChild(style);
   }
-  style.textContent = omarchyRuleText(tokens, mode, counterpart);
+  /* The style write goes INSIDE the transition: this is the other thing that repaints every
+     token at once — the first pull re-skins from the static defaults to the live theme, and
+     `omarchy theme set` restages the whole palette. Both were hard cuts. */
+  const el = style;
+  withSchemeTransition(() => {
+    el.textContent = omarchyRuleText(tokens, mode, counterpart);
+  });
   doc.documentElement.setAttribute(OMARCHY_LIVE_ATTRIBUTE, "live");
 }
 

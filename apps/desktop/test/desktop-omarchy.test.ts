@@ -26,6 +26,11 @@ import {
   startOmarchyFeed,
   themeRawOfPayload,
 } from "../src/omarchy.js";
+/* The SAME module instance the feed reaches — the crossfade is one helper or it is two. */
+import {
+  armSchemeTransitions,
+  resetSchemeTransitionsForTests,
+} from "../../../packages/ui/src/theme/scheme-transition.js";
 
 /* The active theme the shell would read on a stock install — tokyo-night's real palette,
    inline so this suite (which the public mirror runs) carries its own ground truth. */
@@ -112,7 +117,9 @@ const rawFixture = (slug: string): string => {
 
 afterEach(() => {
   resetOmarchyFeedForTests();
+  resetSchemeTransitionsForTests();
   delete (globalThis as Record<string, unknown>).__TAURI_INTERNALS__;
+  delete (document as unknown as Record<string, unknown>).startViewTransition;
 });
 
 describe("the feed's start", () => {
@@ -287,6 +294,40 @@ describe("the push — omarchy theme set, heard live", () => {
     expect(rule).toContain("--gap-edge: 10px !important;");
     expect(rule).toContain("--focus-w: 3px !important;");
     expect(rule).toContain("--lift-3: 0 0 0 3px #7aa2f7 !important;");
+  });
+});
+
+/**
+ * THE RESTAGE FADES (control 7). The feed's style write is the other change that repaints every
+ * token at once — the first pull re-skins from the static defaults to the live theme, and
+ * `omarchy theme set` restages the whole palette — and both were hard cuts. The write has to be
+ * INSIDE the helper's callback: that callback is what the document is snapshotted around, so a
+ * write beside it fades nothing and the cut comes back.
+ */
+describe("the live theme restages through the one crossfade", () => {
+  it("the style is rewritten inside the transition's callback, not beside it", async () => {
+    const { pushes } = installShell({ colorsToml: TOKYO_NIGHT });
+    await startOmarchyFeed();
+    const before = styleText()!;
+    expect(before).toContain("#1a1b26");
+
+    /* A view-transition API that HOLDS the callback, which is the only way to see which side
+       of it the write is on. */
+    let held: (() => void) | null = null;
+    let calls = 0;
+    (document as unknown as Record<string, unknown>).startViewTransition = (cb: () => void) => {
+      calls += 1;
+      held = cb;
+      return { finished: Promise.resolve(), ready: Promise.resolve() };
+    };
+    armSchemeTransitions();
+
+    pushes.get(OMARCHY_THEME_EVENT)!({ payload: { colorsToml: NORD_MINIMAL } });
+    expect(calls, "the restage did not go through the crossfade").toBe(1);
+    expect(styleText(), "the style was written OUTSIDE the transition").toBe(before);
+
+    held!();
+    expect(styleText()).toContain("#2e3440");
   });
 });
 

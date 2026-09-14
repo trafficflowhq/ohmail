@@ -50,6 +50,20 @@ svg.ic{width:15px;height:15px;flex:none;stroke:currentColor;fill:none;stroke-wid
 
 @keyframes rise{from{transform:translateY(8px) scale(.985);opacity:0}to{transform:none;opacity:1}}
 
+/* THE SCHEME CHANGES BY FADING. `startViewTransition` crossfades the whole document as one
+   composited pair of snapshots, so the cost does not grow with the row count and every token
+   moves together; 280ms on the face's own curve (`--swift` — the face moves the curve, never
+   the length). `scheme-transition.ts` decides WHEN, including the runtimes without the API. */
+::view-transition-old(root),
+::view-transition-new(root){animation-duration:280ms;animation-timing-function:var(--swift)}
+/* The fallback, for a webview with no view transitions: colour properties only, for one change.
+   `box-shadow` is deliberately absent — paper's four-layer lifts on hundreds of rows are the one
+   expensive property here, and a shadow snapping under fading colour reads fine. Never layout. */
+html.scheme-shift,html.scheme-shift *,html.scheme-shift *::before,html.scheme-shift *::after{
+  transition:background-color 280ms var(--swift),color 280ms var(--swift),
+    border-color 280ms var(--swift),fill 280ms var(--swift),stroke 280ms var(--swift),
+    outline-color 280ms var(--swift)}
+
 /* Reduced motion is not optional: state changes become instant, nothing
    is merely slowed down. Verbatim policy from the prototype. */
 @media (prefers-reduced-motion: reduce){

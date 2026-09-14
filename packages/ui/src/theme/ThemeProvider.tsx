@@ -21,6 +21,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { armSchemeTransitions, withSchemeTransition } from "./scheme-transition.js";
 
 /** Did the value reach the jar — the answer `@ohmail/client-engine`'s door already returns. */
 export type StorageVerdict = "stored" | "lost";
@@ -372,12 +373,31 @@ export function ThemeProvider({
   useEffect(() => {
     if (stored === null) return;
     const root = document.documentElement;
-    if (stored === "system") delete root.dataset.theme;
-    else root.dataset.theme = stored;
+    /* The STAMP goes inside the crossfade and the storage write stays outside it: the helper's
+       callback is what the document is snapshotted around, and a jar write is not a paint. The
+       adoption stamp below runs before the arming effect's frame, so it is instant — the window
+       does not fade into existence. */
+    withSchemeTransition(() => {
+      if (stored === "system") delete root.dataset.theme;
+      else root.dataset.theme = stored;
+    });
     // The door answers "lost" for a blocked jar and raises the host's own notice; the in-memory
     // preference still applies, which is what makes the degradation honest rather than silent.
     if (storageKey) doorRef.current.set(storageKey, stored);
   }, [stored, storageKey]);
+
+  /* ARM THE CROSSFADE ONE FRAME AFTER MOUNT — declared AFTER the stamp effect and deferred to
+     the next frame, so both boot stamps (the pre-paint init script and the adoption above) have
+     already landed instantly. `requestAnimationFrame` is the definition of "after first paint";
+     a timeout is the fallback for a runtime without one. */
+  useEffect(() => {
+    if (typeof requestAnimationFrame === "function") {
+      const id = requestAnimationFrame(() => armSchemeTransitions());
+      return () => cancelAnimationFrame(id);
+    }
+    const id = setTimeout(() => armSchemeTransitions(), 0);
+    return () => clearTimeout(id);
+  }, []);
 
   // Track the OS preference while in system mode.
   useEffect(() => {
