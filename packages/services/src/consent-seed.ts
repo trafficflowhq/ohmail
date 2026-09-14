@@ -1139,19 +1139,14 @@ export async function mailboxSignatureHtmls(
 }
 
 /**
- * THE SIGNATURE MAPS AS COMPOSE MUST SEE THEM — `{ mailboxId: text }` and `{ mailboxId: html }`,
- * with the ORGANIZER'S published signature winning on every mailbox this install only READS: on
- * those, `mailboxes.signature` is a dead local copy and the live value is the organizer's
- * document, cached by the reader's cycle in `mailbox_profile_mirror` (mail 0094). A DOCUMENT WINS
- * WHOLE — the fallback is "there is no document", never "the document has no signature in it",
- * because a cached `signature: null` is somebody's decision to sign with nothing and the importer
- * already honours it that way. A reader with NO document keeps its own row. An absent key stays
- * absent in both maps: inventing an empty string would render a blank tail in compose.
- *
- * `signatureSources` says WHICH of the two answered, per mailbox, for every row — including rows
- * with no signature at all, because the editor asks the question even when the value is empty.
- * `"organizer"` is a POSITIVE fact: a document exists. Everything else is `"local"`, and a caller
- * that has no map at all must read local everywhere, never organizer.
+ * THE SIGNATURE MAPS AS COMPOSE MUST SEE THEM. On a mailbox this install only READS,
+ * `mailboxes.signature` is a dead local copy and the live value is the organizer's document,
+ * cached in `mailbox_profile_mirror` (mail 0094) — the mirror is read for a reader and for
+ * nobody else. A DOCUMENT WINS WHOLE: the fallback is "there is no document", never "the
+ * document has no signature in it", because a cached `signature: null` is a decision to sign
+ * with nothing. A reader with NO document keeps its own row, and an absent key stays absent in
+ * both maps. `signatureSources` says which of the two answered, per mailbox, for every row:
+ * `"organizer"` is the positive fact that a document exists, everything else is `"local"`.
  */
 export async function effectiveMailboxSignatures(
   db: ServiceContext["db"], accountId: string,
