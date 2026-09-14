@@ -4093,7 +4093,8 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
            * `acquireLeasePermit`'s `stampMeta`, an IMAP STATUS worth ~83 ms, and for that window
            * the folder advertised this install as organizer while its own row — the one every
            * write door consults — still said `reader`. The promotion is issued here and the permit
-           * taken after it; the permit adopts this same read.
+           * taken after it; the permit adopts this same read, AND the folder reading that read
+           * already took — a take-over landing in this gap must not reach the permit's baseline.
            */
           // THE MEMORY IS SPENT WITH THE STAMP. Reaching here past a remembered stand-down means a
           // human pressed the button and the lease agreed; leaving the memory set would make the

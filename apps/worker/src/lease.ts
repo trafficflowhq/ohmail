@@ -153,7 +153,21 @@ export type LeaseOccupancyState = "held" | "stopped";
  * "I do not know", and `organized_elsewhere:unknown` is the honest name for that case anyway.
  */
 export type MailboxLeaseOutcome =
-  | { organize: true; nonce: string | null; by: null; uidValidity: number | bigint | null }
+  | {
+    organize: true; nonce: string | null; by: null; uidValidity: number | bigint | null;
+    /**
+     * THE FOLDER'S COUNTERS AS THIS CLAIM WAS VERIFIED — issued here, awaited by whoever needs it.
+     *
+     * A permit's baseline and the claim it rides have to be ONE READING. Taken later, a take-over
+     * landing in between is baked into the baseline, and every write boundary then reads "nothing
+     * moved" while somebody else moves the folder — for a whole TTL or a hundred writes. So the
+     * STATUS goes out the instant the gate's last write lands, before any gap exists. NOT awaited
+     * here: the row that follows the claim is written next by both adopt callers, with nothing
+     * awaited in front of it, and an 83 ms STATUS there is the window they exist to close.
+     * `null` for every way of not knowing; {@link LeaseIo.stampMeta} never throws.
+     */
+    stamp: Promise<MetaFolderStamp | null>;
+  }
   | {
     organize: false;
     reason: MailboxDisabledReason;
@@ -225,8 +239,12 @@ export async function readMailboxLease(input: MailboxLeaseInput): Promise<Mailbo
       caller(event, { mailboxId: input.mailboxId, ...detail });
     };
 
+  /* ONE HANDLE for the gate and for the reading taken the moment its last write lands: a second
+     one would re-resolve the folder's path, and the reading has to be the next thing on this
+     connection after the renew. */
+  const io = adapter.leaseIo({ installId: self.installId, mailboxId: input.mailboxId });
   const result = await runLeaseGate({
-    io: adapter.leaseIo({ installId: self.installId, mailboxId: input.mailboxId }),
+    io,
     self,
     now,
     capabilities: organizerCapabilitiesFor({ hasRequestKey: input.hasRequestKey }),
@@ -236,7 +254,13 @@ export async function readMailboxLease(input: MailboxLeaseInput): Promise<Mailbo
   });
 
   if (result.verdict.verdict === "organize") {
-    return { organize: true, nonce: result.nonce, by: null, uidValidity: result.uidValidity };
+    return {
+      organize: true, nonce: result.nonce, by: null, uidValidity: result.uidValidity,
+      // ISSUED, NEVER AWAITED HERE — see {@link MailboxLeaseOutcome}. The `catch` is belt: the
+      // contract says `null` rather than a throw, and an unhandled rejection on a promise a caller
+      // is entitled to ignore would be this function's fault rather than the connection's.
+      stamp: io.stampMeta === undefined ? Promise.resolve(null) : io.stampMeta().catch(() => null),
+    };
   }
   return {
     organize: false,
@@ -646,13 +670,14 @@ export interface LeasePermitInput extends Omit<MailboxLeaseInput, "now"> {
    */
   onRenew?: (renewal: { nonce: string | null; at: Date }) => void;
   /**
-   * THE ROW FOLLOWS THE CLAIM — the caller's record of this becoming, run in front of the probe.
+   * THE ROW FOLLOWS THE CLAIM — the caller's record of this becoming, with nothing awaited first.
    *
    * `readMailboxLease` appends and verifies this install's claim, so the mailbox is already ours to
-   * every reader of `ohmail/_meta`. A caller that wrote its row AFTER this call spent `restamp()`'s
-   * IMAP STATUS — 83 ms, measured — with its own doors refusing its own requests by name; one with
-   * no `adopt` cannot move that write itself, because the claim, the verify and the probe all happen
-   * in here. ONCE per permit, never on a renewal, and a hook that throws is logged
+   * every reader of `ohmail/_meta`. A caller that wrote its row behind an IMAP STATUS — 83 ms,
+   * measured — spent it with its own doors refusing its own requests by name; one with no `adopt`
+   * cannot move that write itself, because the claim and the verify both happen in here. The
+   * baseline reading is ISSUED before this hook and AWAITED after it, so it costs the row nothing.
+   * ONCE per permit, never on a renewal, and a hook that throws is logged
    * (`lease_permit_claim_held_failed`) rather than swallowed — the lease is held either way.
    */
   onClaimHeld?: (held: { nonce: string | null; at: Date }) => void | Promise<void>;
@@ -716,12 +741,22 @@ export async function acquireLeasePermit(input: LeasePermitInput): Promise<Lease
   let stamp: MetaFolderStamp | null = null;
   let unstampedSaid = false;
   /**
+   * THE BASELINE IS THE CLAIM'S OWN READING, AND NEVER A LATER ONE — the invariant, in one line.
+   *
+   * This used to take its own STATUS here, after the caller's row write: a take-over landing in
+   * that gap was baked into the baseline, so every boundary read "nothing moved" while somebody
+   * else moved the folder, for a whole TTL or a hundred writes. The reading now comes from
+   * {@link MailboxLeaseOutcome.stamp}, issued the instant the gate's last write landed — so the
+   * two are one reading by construction and anything that lands afterwards is OUTSIDE the
+   * baseline, which is what makes the first write boundary probe it. No extra round trip: the same
+   * one STATUS per read, moved to the instant that makes it mean something.
+   *
    * SAID ONCE PER PERMIT. A connection that cannot stamp keeps exactly the bound it had — the
-   * clock and the write count — and that degraded mode is named where somebody can read it rather
-   * than being the silence it was before. Once, because the alternative is a line per write.
+   * clock and the write count — named rather than silent. Once, because the alternative is a line
+   * per write.
    */
-  const restamp = async (): Promise<void> => {
-    stamp = stampIo?.stampMeta !== undefined ? await stampIo.stampMeta() : null;
+  const takeBaseline = async (reading: Promise<MetaFolderStamp | null>): Promise<void> => {
+    stamp = await reading;
     if (stamp === null && !unstampedSaid) {
       unstampedSaid = true;
       input.log?.("lease_permit_unstamped", { mailboxId: input.mailboxId });
@@ -733,8 +768,8 @@ export async function acquireLeasePermit(input: LeasePermitInput): Promise<Lease
    *
    * A stamp that ANSWERED before and cannot now is read as movement: we were proving the claim
    * still stood and can no longer prove it, so the honest act is to look properly. That costs at
-   * most one extra gate run, because the read's own restamp then leaves `stamp` null and every
-   * later boundary falls back to the clock.
+   * most one extra gate run, because the read's own baseline then comes back null and every later
+   * boundary falls back to the clock.
    */
   const movedSince = async (): Promise<boolean> => {
     if (stamp === null || stampIo?.stampMeta === undefined) return false;
@@ -797,13 +832,10 @@ export async function acquireLeasePermit(input: LeasePermitInput): Promise<Lease
     // verified claim and the probe, with nothing awaited in front of it. See
     // {@link LeasePermitInput.onClaimHeld}.
     await announceHeld({ nonce: outcome.nonce, at });
-    // AFTER the renew, never before it: the gate's own APPEND and EXPUNGE move the folder, so a
-    // baseline taken in front of them describes a folder that no longer exists and every later
-    // boundary would read our own write as somebody else's. The hook above is the only thing that
-    // sits in the gap — a local write, measured at 5 ms against a 60 s TTL — and a folder that
-    // moved inside it is baked into the baseline, which is the same gap the `adopt` arm below
-    // already takes and is bounded by the clock and the write count either way.
-    await restamp();
+    // THE READING WAS TAKEN WITH THE CLAIM, and it is only awaited here — so the hook above still
+    // has nothing awaited in front of it, and nothing that lands during it can reach the baseline.
+    // See {@link MailboxLeaseOutcome.stamp} and `takeBaseline`.
+    await takeBaseline(outcome.stamp);
     // The claim in the folder is now this one — see {@link LeasePermitInput.onRenew}. Last, so a
     // caller is never told about a renewal this permit has not finished recording.
     input.onRenew?.({ nonce: outcome.nonce, at });
@@ -818,9 +850,10 @@ export async function acquireLeasePermit(input: LeasePermitInput): Promise<Lease
     // decision — no later than this permit's first await, which is what the invariant needs, and
     // never silently dropped, which is what a hook the adopt path ignored would be.
     await announceHeld({ nonce: input.adopt.outcome.nonce, at: input.adopt.at });
-    // The adopted read was the CALLER's, so the baseline is taken here instead — a gap of one
-    // resolution, against the whole TTL this receipt would otherwise be believed for.
-    await restamp();
+    // AND THE BASELINE IS ADOPTED TOO. Taken here it would sit a whole round trip and a row write
+    // after the claim it is meant to be one reading with — the widest form of the gap, because the
+    // adopted read is the caller's. It comes with the outcome instead.
+    await takeBaseline(input.adopt.outcome.stamp);
   } else {
     await read();
   }

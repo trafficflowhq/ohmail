@@ -1535,8 +1535,9 @@ export async function startWorkerWithLock(
          * already ours to every reader of `ohmail/_meta`; `organizer_role` is the authority every
          * write door consults (`assertOrganizerRole`), so a row still saying `reader` here is this
          * process answering its own requests `409 organized_elsewhere`, naming itself. It sat AFTER
-         * `acquireLeasePermit`, whose `restamp()` is one IMAP STATUS — a measured 88 ms of exactly
-         * that state per becoming. The permit is a per-pass WRITE RECEIPT; the ROW is the record of
+         * `acquireLeasePermit`, behind one IMAP STATUS — a measured 88 ms of exactly that state
+         * per becoming; the permit's baseline reading is now issued with the claim and awaited
+         * after this write, so it costs this row nothing. The permit is a per-pass WRITE RECEIPT; the ROW is the record of
          * who organizes the mailbox, and `engine.ts` made the same move for the same reason.
          */
         if (lease.takeoverAuthorizedAt || lease.disabledReason || lease.organizerRole === "reader") {
