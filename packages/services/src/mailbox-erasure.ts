@@ -1,11 +1,10 @@
-import { and, asc, eq, gt, inArray, isNotNull, isNull, ne } from "drizzle-orm";
+import { and, asc, eq, exists, gt, inArray, isNotNull, isNull, ne, notExists, sql } from "drizzle-orm";
 import {
   approvals, attachments, awayReplies, awayResponderSent, drafts, flagState, folderOps,
   folderState, mailboxCredentials, mailboxFolders, mailboxProfileMirror, messageBodies,
   messageFailures, messageInstances, messageStates, messageTags, messages, organizerRequests,
-  mailboxes, outboundSendFingerprints, outboundSends, routingDecisions, trackerEvents,
-  unsubscribeRecords,
-  recordChanges, recordMailboxRemoved, type LedgerTx,
+  mailboxes, outboundSendFingerprints, outboundSends, recordChanges, recordMailboxRemoved,
+  routingDecisions, threadNotes, threads, trackerEvents, unsubscribeRecords, type LedgerTx,
 } from "@trafficflow/db";
 import { rowsAffected as n } from "./rows-affected.js";
 
@@ -17,6 +16,14 @@ import { rowsAffected as n } from "./rows-affected.js";
  * and not a statement bound.
  */
 export const ERASE_RECEIPT_PAGE = 2_000;
+
+/**
+ * How many exclusive threads one page of the thread sweep takes. The receipts page for MEMORY;
+ * this one pages because its ids reach a bind list — three statements per page, each carrying
+ * the page's ids. 500 keeps a mailbox with a hundred thousand conversations inside the same
+ * per-statement bound the rest of this file works to.
+ */
+export const ERASE_THREAD_PAGE = 500;
 
 /** What one mailbox erasure removed, for the receipt the route returns. */
 export interface MailboxSweepResult {
@@ -147,13 +154,26 @@ export async function sweepMailboxData(
     .where(inArray(outboundSends.draftId, ownDraftIds)));
   await drop("drafts", tx.delete(drafts).where(eq(drafts.mailboxId, mailboxId)));
 
-  // ── 5. THE MESSAGES ──────────────────────────────────────────────────────────────────────
+  // ── 5. THE THREADS AND NOTES THIS MAILBOX ALONE HELD ──────────────────────────────────────
   //
-  // `threads` are account-scoped and a thread can hold messages from a sibling mailbox, so they
-  // are deliberately left: erasing one would delete another mailbox's mail structure.
+  // A thread carries the SUBJECT and the PARTICIPANTS, and a thread note carries what the
+  // person wrote about the conversation. Deleting the messages and leaving those is a mailbox
+  // that reads as erased and still answers with its own mail: both endpoints kept serving it.
+  // A thread is ACCOUNT-scoped and may hold a sibling mailbox's messages, so exclusivity is
+  // asked per thread — a shared thread survives and loses only this mailbox's messages below.
+  // `contact_notes` is the deliberate survivor: a note on a contact card belongs to the
+  // account's address book, which outlives one mailbox exactly as `contacts` itself does.
+  const threadSweep = await sweepExclusiveThreads(tx, accountId, mailboxId);
+  deleted["thread_notes"] = threadSweep.notes;
+  deleted["threads"] = threadSweep.threads;
+
+  // ── 6. THE MESSAGES ───────────────────────────────────────────────────────────────────────
+  //
+  // What is left of them. The sweep above already unhooked this mailbox's messages from the
+  // threads it removed; a SHARED thread's row stays, carrying the sibling mailbox's messages.
   await drop("messages", tx.delete(messages).where(eq(messages.mailboxId, mailboxId)));
 
-  // ── 6. THE MAILBOX'S OWN STATE ───────────────────────────────────────────────────────────
+  // ── 7. THE MAILBOX'S OWN STATE ───────────────────────────────────────────────────────────
   //
   // `mailbox_folders` holds the person's folder NAMES and `folder_ops` a rename in their own
   // words; `mailbox_profile_mirror.doc` is the whole published profile (screener addresses, rule
@@ -174,7 +194,7 @@ export async function sweepMailboxData(
   await drop("mailbox_credentials", tx.delete(mailboxCredentials)
     .where(eq(mailboxCredentials.mailboxId, mailboxId)));
 
-  /* ── 7. AND THE MAILBOX ITSELF, AS ONE RECEIPT ──
+  /* ── 8. AND THE MAILBOX ITSELF, AS ONE RECEIPT ──
    * Section 1's per-message and per-draft receipts tell a mirror about the mail; nothing told it
    * about the MAILBOX, so a client kept its folder rows, cached bodies and received count for a
    * mailbox this sweep had just erased. One row closes all of them — the same row the standalone
@@ -189,6 +209,49 @@ export async function sweepMailboxData(
   const seq = took ? await recordMailboxRemoved(tx, accountId, mailboxId) : receipts.seq;
 
   return { deleted, draftsUnanchored, ...receipts, seq };
+}
+
+/**
+ * Delete every thread this mailbox ALONE held, and the notes pinned to those threads.
+ *
+ * Exclusive means: the thread carries at least one message of this mailbox and none of any other.
+ * Two `EXISTS` rather than a `GROUP BY`, so the predicate stops at the first sibling message.
+ *
+ * ORDER inside a page is forced by the two foreign keys into `threads` that outlive this erasure.
+ * `drafts.thread_id` can point here from a SIBLING mailbox — the person's unsent words in a
+ * mailbox they did not erase, so it is cleared and not deleted, the same answer section 2 gives
+ * the reply anchor. `messages.thread_id` still points here because section 6 has not run yet, and
+ * by exclusivity every one of those messages is about to go with the mailbox; clearing it first is
+ * what lets the thread row go now, while the predicate that names it is still readable.
+ *
+ * Paged, and the page is re-selected rather than walked by cursor: each pass deletes the rows it
+ * read, so the next selection starts at what is left and the loop ends when nothing is exclusive.
+ */
+async function sweepExclusiveThreads(
+  tx: LedgerTx, accountId: string, mailboxId: string,
+): Promise<{ threads: number; notes: number }> {
+  let notes = 0;
+  let removed = 0;
+  for (;;) {
+    const page = await tx.select({ id: threads.id }).from(threads)
+      .where(and(
+        eq(threads.accountId, accountId),
+        exists(tx.select({ one: sql`1` }).from(messages)
+          .where(and(eq(messages.threadId, threads.id), eq(messages.mailboxId, mailboxId)))),
+        notExists(tx.select({ one: sql`1` }).from(messages)
+          .where(and(eq(messages.threadId, threads.id), ne(messages.mailboxId, mailboxId)))),
+      ))
+      .orderBy(asc(threads.id))
+      .limit(ERASE_THREAD_PAGE);
+    if (page.length === 0) return { threads: removed, notes };
+    const ids = page.map((r) => r.id);
+    notes += n(await tx.delete(threadNotes).where(inArray(threadNotes.threadId, ids)));
+    await tx.update(drafts).set({ threadId: null })
+      .where(and(eq(drafts.accountId, accountId), inArray(drafts.threadId, ids)));
+    await tx.update(messages).set({ threadId: null })
+      .where(and(eq(messages.mailboxId, mailboxId), inArray(messages.threadId, ids)));
+    removed += n(await tx.delete(threads).where(inArray(threads.id, ids)));
+  }
 }
 
 /**
