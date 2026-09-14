@@ -504,15 +504,12 @@ function ActionBar({
   };
   useEffect(() => setDateOpen(false), [message.id, panel]);
   /**
-   * THE HOUR THE CHOOSER IS ASKING ABOUT — the strip's own `<input type="time">` value, seeded
-   * from the account's stored default and RESET to it every time the strip opens or the message
-   * changes. Seeded rather than bound straight to the chrome so a half-typed hour cannot become
-   * a pending write, and reset rather than sticky because a time typed and then abandoned is not
-   * an answer; the account's value is what persists, and only a pressed horizon moves it.
-   *
-   * `resurfaceClock` resolves `null`, an unreadable stored value and an API too old to carry the
-   * field to the product's 09:00, so this always holds a real `'HH:MM'` — which is what makes the
-   * time VISIBLE before anybody decides, which is the whole of the feature.
+   * THE HOUR THE CHOOSER IS ASKING ABOUT — the strip's `<input type="time">` value, seeded from
+   * the account's stored default and RESET to it every time the strip opens. Seeded rather than
+   * bound to the chrome so a half-typed hour is never a pending write; reset rather than sticky
+   * because a time typed and then abandoned is not an answer. `resurfaceClock` resolves a null,
+   * an unreadable value and an API too old to carry the field to 09:00, so this always holds a
+   * real `'HH:MM'` — which is what makes the time visible before anybody decides.
    */
   const storedClock = resurfaceClock(chrome.resurfaceTime);
   const storedHhmm = `${pad2(storedClock.hour)}:${pad2(storedClock.minute)}`;
