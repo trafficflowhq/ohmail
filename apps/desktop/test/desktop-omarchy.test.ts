@@ -20,8 +20,10 @@ import {
   OMARCHY_THEME_EVENT,
   applyOmarchyTokens,
   fencedTokens,
+  OMARCHY_PALETTE_KEY,
   omarchyRuleText,
   omarchySchemeSource,
+  paintCachedOmarchyPalette,
   resetOmarchyFeedForTests,
   startOmarchyFeed,
   themeRawOfPayload,
@@ -118,6 +120,7 @@ const rawFixture = (slug: string): string => {
 afterEach(() => {
   resetOmarchyFeedForTests();
   resetSchemeTransitionsForTests();
+  window.localStorage.clear();
   delete (globalThis as Record<string, unknown>).__TAURI_INTERNALS__;
   delete (document as unknown as Record<string, unknown>).startViewTransition;
 });
@@ -328,6 +331,65 @@ describe("the live theme restages through the one crossfade", () => {
 
     held!();
     expect(styleText()).toContain("#2e3440");
+  });
+});
+
+/**
+ * THE LAUNCH WEARS THE THEME, NOT THE STATIC FACE. The feed's answer is a round trip to the
+ * shell, so the first frames of every launch wore `ohmarchy.css`'s static block — whose light
+ * side is flexoki-light's warm cream `#f2efe4`, measured as the pale flash on a dark desktop
+ * (`scripts/desktop-launch-frames.mjs`, 24 of 24 frames off before this row existed, 1 after).
+ * The cache is written by the feed and read by the window's pre-paint block.
+ */
+describe("the palette kept for the next launch", () => {
+  it("a mapped theme is cached, and the next launch paints it before the feed answers", async () => {
+    installShell({ colorsToml: TOKYO_NIGHT });
+    await startOmarchyFeed();
+    const live = styleText()!;
+    expect(window.localStorage.getItem(OMARCHY_PALETTE_KEY)).not.toBeNull();
+
+    /* The next launch: no shell yet, only the jar. */
+    resetOmarchyFeedForTests();
+    expect(styleText()).toBeNull();
+    paintCachedOmarchyPalette();
+    expect(styleText(), "the cached launch does not paint what the live one did").toBe(live);
+  });
+
+  it("a cached row this bundle cannot read paints nothing — the static face stands", () => {
+    for (const row of [
+      "not json",
+      JSON.stringify({ v: 99, mode: "dark", native: { "--panel": "#111111" } }),
+      JSON.stringify({ v: 1, mode: "sepia", native: { "--panel": "#111111" } }),
+      JSON.stringify({ v: 1, mode: "dark", native: "#111111" }),
+    ]) {
+      window.localStorage.setItem(OMARCHY_PALETTE_KEY, row);
+      paintCachedOmarchyPalette();
+      expect(styleText(), row).toBeNull();
+    }
+    /* The positive control: the same call with a readable row DOES paint, so the four refusals
+       above are the row being refused and not the function doing nothing. */
+    window.localStorage.setItem(
+      OMARCHY_PALETTE_KEY,
+      JSON.stringify({ v: 1, mode: "dark", native: { "--panel": "#111111" }, counterpart: null }),
+    );
+    paintCachedOmarchyPalette();
+    expect(styleText()).toContain("--panel: #111111 !important;");
+  });
+
+  it("the cached values meet the same fence the live ones do", () => {
+    window.localStorage.setItem(
+      OMARCHY_PALETTE_KEY,
+      JSON.stringify({
+        v: 1,
+        mode: "dark",
+        native: { "--panel": "#111111", "--lift-2": "0 0 0 2px #fff} :root{background:hotpink}" },
+        counterpart: null,
+      }),
+    );
+    paintCachedOmarchyPalette();
+    const rule = styleText()!;
+    expect(rule).toContain("--panel: #111111 !important;");
+    expect(rule).not.toContain("hotpink");
   });
 });
 

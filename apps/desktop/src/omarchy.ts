@@ -54,6 +54,28 @@ export const OMARCHY_LIVE_ATTRIBUTE = "data-omarchy";
 /** The one style element the feed owns. */
 const STYLE_ID = "ohmail-omarchy-live";
 
+/**
+ * THE LAST GOOD PALETTE, KEPT FOR THE NEXT LAUNCH — beside `ohmail.face`, which is what the
+ * pre-paint stamp already reads. The feed cannot answer before the window paints: the command
+ * is a round trip to the shell, so the first frames wore the STATIC face block, whose light
+ * side is flexoki-light's warm cream `#f2efe4`. On a dark desktop that is a pale flash before
+ * the theme lands, and it is the whole of the reported flicker. Writing this row makes the
+ * theme's own canvas available BEFORE the first paint; the pull then fades whatever changed.
+ */
+export const OMARCHY_PALETTE_KEY = "ohmail.omarchy.palette";
+/** `v` is the record's shape, so a version this bundle does not know is ignored, not guessed. */
+const PALETTE_VERSION = 1;
+
+interface CachedPalette {
+  v: number;
+  mode: "light" | "dark";
+  native: Record<string, string>;
+  counterpart: Record<string, string> | null;
+}
+
+const isTokenBag = (v: unknown): v is Record<string, string> =>
+  v !== null && typeof v === "object" && !Array.isArray(v);
+
 /** A token name: a custom property, or the one standard property the mapping emits. */
 const TOKEN_NAME = /^(--[a-z0-9-]{1,64}|color-scheme)$/;
 /** Characters that could restructure a stylesheet - close the block, open a rule, start
@@ -224,6 +246,47 @@ export const omarchySchemeSource = {
   },
 };
 
+/**
+ * Keep the mapped palette for the next launch. Best effort in both directions: a blocked jar
+ * costs the next launch its pre-paint theme and nothing else, which is exactly the state every
+ * launch was in before this row existed.
+ */
+function cacheOmarchyPalette(payload: CachedPalette): void {
+  try {
+    localStorage.setItem(OMARCHY_PALETTE_KEY, JSON.stringify(payload));
+  } catch {
+    /* no jar — the next launch wears the static face for a frame, as it always did */
+  }
+}
+
+/**
+ * PAINT THE CACHED THEME BEFORE THE FIRST FRAME. Called by the window's pre-paint block, beside
+ * the face stamp it depends on, and instant by construction: the crossfade is not armed until a
+ * frame after the provider mounts. The cached values go through `applyOmarchyTokens`, so they
+ * meet the SAME fence the live ones do — a row somebody edited in the jar cannot restructure the
+ * stylesheet — and the selector forms have one writer.
+ */
+export function paintCachedOmarchyPalette(): void {
+  let raw: string | null = null;
+  try {
+    raw = localStorage.getItem(OMARCHY_PALETTE_KEY);
+  } catch {
+    return; // blocked jar: the static face stands, as before
+  }
+  if (raw === null) return;
+  let cached: CachedPalette;
+  try {
+    cached = JSON.parse(raw) as CachedPalette;
+  } catch {
+    return;
+  }
+  if (cached?.v !== PALETTE_VERSION) return;
+  if (cached.mode !== "light" && cached.mode !== "dark") return;
+  if (!isTokenBag(cached.native)) return;
+  const counterpart = isTokenBag(cached.counterpart) ? cached.counterpart : null;
+  applyOmarchyTokens(cached.native, cached.mode, counterpart);
+}
+
 /** Handle one payload — from the pull or the push. Every failure keeps the standing set. */
 function handlePayload(payload: unknown): void {
   const raw = themeRawOfPayload(payload);
@@ -231,6 +294,12 @@ function handlePayload(payload: unknown): void {
   const mapped = mapOmarchyThemePair(raw);
   if (mapped === null) return;
   applyOmarchyTokens(mapped.native.tokens, mapped.mode, mapped.counterpart?.tokens ?? null);
+  cacheOmarchyPalette({
+    v: PALETTE_VERSION,
+    mode: mapped.mode,
+    native: mapped.native.tokens,
+    counterpart: mapped.counterpart?.tokens ?? null,
+  });
   liveMode = mapped.mode;
   for (const watcher of modeWatchers) watcher();
 }

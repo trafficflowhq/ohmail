@@ -24,7 +24,7 @@ import "../../webapp/app/app.css";
 import "../../webapp/app/zero-layout.css";
 
 import { bridgeAvailable, connectLocalEngine } from "./bridge-fetch.js";
-import { omarchySchemeSource, startOmarchyFeed } from "./omarchy.js";
+import { omarchySchemeSource, paintCachedOmarchyPalette, startOmarchyFeed } from "./omarchy.js";
 import { startUpdateCadence } from "./update-cadence.js";
 import { DesktopGate } from "./DesktopGate.js";
 import { DOOR_COPY } from "./door-copy.js";
@@ -144,6 +144,12 @@ try {
       ? "ohmarchy" : "paper";
   }
   if (face === "ohmarchy") document.documentElement.dataset.face = "ohmarchy";
+  /* …and the THEME ITSELF, from the last launch. The feed cannot answer before the window
+     paints — its command is a round trip to the shell — so without this the first frames wear
+     the static face block, whose light side is a warm cream, and a dark desktop opens on a pale
+     flash. The cached set carries all three scheme states, so the stamp above decides which one
+     shows, and the feed's first pull then fades whatever actually changed. */
+  if (face === "ohmarchy") paintCachedOmarchyPalette();
   let layout: string | null = null;
   try { layout = localStorage.getItem("ohmail.layout"); } catch { /* blocked */ }
   if (layout === "zero") document.documentElement.dataset.layout = "zero";
