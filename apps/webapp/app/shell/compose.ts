@@ -356,6 +356,51 @@ export function clearComposeDraft(owner: string | null = storageOwner()): void {
 }
 
 /**
+ * WHICH MESSAGE A COMPOSE OPERATION IS FOR — the two names a compose surface answers to, taken at
+ * the moment the operation began rather than read back when it ends. The row is the durable name;
+ * the session is the only name a message has before autosave gives it one.
+ */
+export interface ComposeHeld {
+  /** The row the operation was for; `null` = it carried none (a press before the first save). */
+  draftId: string | null;
+  /**
+   * The compose session it was minted under. `null` is NOT "a different message": it is an
+   * operation that cannot name a session at all — a lane that never had one, a build that did
+   * not write one, a browser that refuses this app its storage. Absent and different are
+   * separate statements and the predicate below keeps them apart, because collapsing them makes
+   * every unnameable settlement refuse and leaves delivered text sitting in the composer.
+   */
+  session: string | null;
+}
+
+/**
+ * IS THE COMPOSE SURFACE STILL HOLDING THE MESSAGE THIS OPERATION WAS FOR?
+ *
+ * Every settlement and every adoption asks this before it touches the form, and it is the whole
+ * of the one-composer-per-draft rule: a send that lands while the person is writing something
+ * else must act on the message it was for or on nothing. It used to act on whatever was open —
+ * "the current scratch" — so finishing one message emptied the draft beside it and deleted its
+ * row. The surface's own names are the answer: {@link composeRowKey} is the one place that says
+ * which draft this composer owns, so a second owner is refused by asking it rather than by a
+ * registry beside it.
+ */
+export function composeStillHolds(
+  held: ComposeHeld, owner: string | null = storageOwner(),
+): boolean {
+  // A ROW NAMES ITSELF. The send carried one, so the question is whether the composer still has
+  // that one — a different row, or none, is a different message.
+  if (held.draftId !== null) return readComposeRow(owner) === held.draftId;
+  /* NO ROW: the press beat the first autosave, so the session is the message's only name. Every
+     door that replaces the form drops it ({@link clearComposeDraft}) and the next read mints a
+     fresh one, which is exactly what makes this comparison the door's own signature. */
+  // …and an operation that can name NEITHER is admitted — see {@link ComposeHeld.session}. It
+  // has said nothing about which message it is for, which is not evidence that it is a
+  // different one, and refusing on it would leave a delivered message in the composer.
+  if (held.session === null) return true;
+  return composeSessionId(owner) === held.session;
+}
+
+/**
  * IS THIS AN ADDRESS? — checked HERE, before Send lights up, and not by the SMTP server. "An SMTP rejection after the
  * fact is a bad way to learn about a typo": the send path is two requests and a reservation, and a 550 arrives as
  * `unverified` — the one outcome the product cannot resolve for the user. A local check costs nothing and turns "we

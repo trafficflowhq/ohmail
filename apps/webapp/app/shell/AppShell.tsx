@@ -3194,7 +3194,9 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
    */
   const [replyDone, setReplyDone] = useState<OhboxReplyDone | null>(null);
 
-  const onSendSettled = useStableCallback((key: string, m: MailSendMutation) => {
+  const onSendSettled = useStableCallback((
+    key: string, m: MailSendMutation, aboutThisCompose: boolean,
+  ) => {
     if (key === COMPOSE_SEND_KEY) {
       /* Invariant T(b), and this is the one implementation of it: the live
          confirmed path and the reload path both call `settleCompose` now
@@ -3207,6 +3209,11 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
          half — emptying the form, arriving at the list — is `onCleared`. */
       settleComposeRef.current({
         kind: "sentByMirror", rowId: m.draftId ?? null, toList: m.sendAt ? "drafts" : "ohbox",
+        /* WHETHER THIS SETTLEMENT IS ABOUT THE MESSAGE ON SCREEN, carried from the press — see
+           `useMailSend`'s `sentFor`. Without it this arm acts on whatever compose is open, and
+           the person watches the draft they are writing lose its row and its text because an
+           unrelated send finished. */
+        aboutThisCompose,
       });
       /**
        * And the message is sent, so the compose is over. It used to stay on screen after a

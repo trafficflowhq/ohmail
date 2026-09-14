@@ -122,7 +122,20 @@ export type ComposeFate =
    * The mirror shows the bound row `sent`. The server's terminal word, arriving on a mount that
    * did not issue the send — the tab that owned the answer died before it could clear anything.
    */
-  | { kind: "sentByMirror"; rowId: string | null; toList?: "ohbox" | "drafts" }
+  | {
+    kind: "sentByMirror";
+    rowId: string | null;
+    toList?: "ohbox" | "drafts";
+    /**
+     * IS THIS SETTLEMENT ABOUT THE MESSAGE THIS COMPOSER IS HOLDING? Decided by the road that
+     * carries it, where the surface's names are still readable — the live path asks
+     * {@link composeStillHolds} at the confirmation, before the clear that spends the session;
+     * the reload path reads the row it is settling straight out of storage. Required rather than
+     * optional: "nobody asked" and "no" are different statements, and reading the first as the
+     * second is what let this arm clear a surface it was never about.
+     */
+    aboutThisCompose: boolean;
+  }
   /**
    * A discard of the bound row was refused: the server answered 409 `send_recorded` and KEPT it.
    * The binding was never really gone, so it is restored rather than re-made.
@@ -251,8 +264,25 @@ export function useComposeAutosave(opts: {
     savedMailbox.current = f.fromMailboxId;
   }, []);
 
+  /**
+   * THE STANDING ADOPTION'S TEARDOWN, held so {@link release} can end it. The adoption below can
+   * WAIT — on a reload the mirror is empty and the answer arrives with a notification — and that
+   * wait used to outlive the composer that started it: released the row, opened another message,
+   * and when the mirror finally spoke the old id was adopted into the new editor, whose next
+   * autosave wrote its text over the old message.
+   */
+  const adoptOff = useRef<(() => void) | null>(null);
+
   const release = useCallback(() => {
     epoch.current += 1;
+    /* A RELEASED COMPOSER SUBSCRIBES TO NOTHING — see {@link adoptOff}. Ended here rather than
+       only in the effect's cleanup, which runs on unmount and says nothing about a composer that
+       let go of its row while staying on screen. `adopted` is set with it: the question this
+       surface was waiting on has an answer now, and the answer is that there is nobody to adopt
+       into. */
+    adoptOff.current?.();
+    adoptOff.current = null;
+    adopted.current = true;
     setDraftId(null);
     writeComposeRow(null);
     saved.current = null;
@@ -285,6 +315,19 @@ export function useComposeAutosave(opts: {
     }
     /** `true` = the question is answered, whichever way; `false` = the mirror cannot say yet. */
     const settle = (): boolean => {
+      /**
+       * ── ONE ADOPTER PER DRAFT ROW, AND THE REGISTRY IS `composeRowKey` ITSELF ─────────────
+       *
+       * `held` was read when the wait began. If this composer has since taken another row — or
+       * let go of the one it had — then the id in hand belongs to a message nobody here is
+       * holding, and adopting it would point every later save and every Discard at that message
+       * while showing somebody else's text. Dropped BY NAME rather than retried: the question is
+       * answered, and the answer is that this surface is not the one to answer it.
+       */
+      if (readComposeRow() !== held) {
+        adopted.current = true;
+        return true;
+      }
       /* A message we are still waiting on is neither adopted nor dropped:
          the row is kept written down and the question left open. Dropping it
          let the next pause mint a second row for this one message (the
@@ -311,7 +354,14 @@ export function useComposeAutosave(opts: {
            the next ordinary press minted a second Idempotency-Key for a message the mirror says
            was already sent. It is the live confirmed path's ending now, from the same function. */
         adopted.current = true;
-        settleComposeRef.current({ kind: "sentByMirror", rowId: held });
+        /* THE ROW THIS MOUNT IS HOLDING IS THE MESSAGE — it was read out of storage a moment ago
+           and the refusal above proves it is still written there, so the identity is exact. */
+        settleComposeRef.current({
+          kind: "sentByMirror", rowId: held,
+          /* THE ROW THIS MOUNT IS HOLDING IS THE MESSAGE: it was read out of storage a moment ago
+             and the one-adopter refusal above proves it is still written there. */
+          aboutThisCompose: true,
+        });
         return true;
       }
       if (hold.kind !== "free") return false;
@@ -327,11 +377,19 @@ export function useComposeAutosave(opts: {
       if (settle()) {
         off?.();
         off = null;
+        adoptOff.current = null;
       }
     });
+    /* HANDED TO `release` — see {@link adoptOff}. Assigned after the subscription rather than
+       inside it so there is never a moment where the wait exists and nothing can end it. */
+    adoptOff.current = () => {
+      off?.();
+      off = null;
+    };
     return () => {
       off?.();
       off = null;
+      adoptOff.current = null;
     };
   }, [engine]);
 
@@ -381,6 +439,28 @@ export function useComposeAutosave(opts: {
          has nothing here to restore. */
       if (draftId !== null && draftId !== fate.rowId) return;
       adopt(fate.rowId, fieldsRef.current);
+      return;
+    }
+    /**
+     * ── WHICH MESSAGE THIS SETTLEMENT IS ABOUT, BEFORE ANYTHING IS DONE ABOUT IT ─────────────
+     *
+     * Everything below acts on the composer: it judges the row, drops the held row, clears the
+     * scratch buffer and empties the form. All of it is right for the message that was sent and
+     * all of it is destruction for any other — the phantom-copy judgement worst of all, which
+     * DELETES the row it decides against. A send confirming while somebody is writing the next
+     * message therefore threw that message away: its row off the account, its text out of the
+     * buffer, the form emptied under the cursor.
+     *
+     * So the surface is asked first, by name, and a settlement about a message it no longer
+     * holds is left alone. The record still stands, so that message is recognised if it comes
+     * back; the sentence is the same one the reload path's own guard prints, because it is the
+     * same question asked at the other end of the same road.
+     */
+    if (!fate.aboutThisCompose) {
+      console.warn(
+        "ohmail: send_settled_unbound — a send settled for a compose this surface no longer "
+        + "holds; the message on screen is a different one and was left alone",
+      );
       return;
     }
     /* ── sentByMirror: THE LIVE CONFIRMED PATH, and `onSendSettled` calls this same code ──────

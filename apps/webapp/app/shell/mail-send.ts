@@ -38,8 +38,9 @@ import { OUTBOX_TYPE } from "@ohmail/client-engine";
 import type { EngineMessage, EntityReader, MutationResult, OhmailEngine } from "@ohmail/client-engine";
 import type { ToastFn } from "@ohmail/ui";
 import {
-  clearComposeDraft, composePlan, composeSessionId, readComposeDraft, readComposeRow,
-  type MailSend,
+  clearComposeDraft, composePlan, composeSessionId, composeStillHolds, readComposeDraft,
+  readComposeRow,
+  type ComposeHeld, type MailSend,
 } from "./compose";
 import { durableRemove, durableSet } from "./durable";
 import {
@@ -495,12 +496,26 @@ export function writeReplyMeta(lane: string, meta: ReplyEditorMeta): void {
  * single key says so rather than leaving the pair half-dropped — the body and its meta are one lane's scratch and
  * clear together.
  */
-export function clearLaneScratch(key: string, m: MailSend, owner: string | null): void {
+export function clearLaneScratch(
+  key: string, m: MailSend, owner: string | null, aboutThisCompose: boolean,
+): void {
   if (m.inReplyTo === null) {
     if (key === COMPOSE_SEND_KEY) {
-      clearComposeDraft(owner);
-      // The delivered message's row is spent, and so is the block state keyed to it.
+      // The delivered message's row is spent, and so is the block state keyed to it. Unguarded
+      // because it is already keyed BY DRAFT ID: it can only ever name the message that went.
       if (m.draftId) durableRemove(replyMetaKey(`draft:${m.draftId}`), "reply.meta");
+      /**
+       * AND THE SCRATCH ONLY IF THE COMPOSER IS STILL HOLDING THIS MESSAGE. There is one compose
+       * buffer per account, so "clear the scratch" used to mean "clear whatever is open" — and a
+       * confirmation arriving while somebody was writing the next message emptied that message
+       * instead. The answer is DECIDED BY THE CALLER and handed in, because the clear below spends
+       * the compose session, which is one of the two names the question is asked by: asked again
+       * afterwards it would answer no about the very settlement that had just removed the name.
+       * Nothing is left behind by refusing — every door that puts another message in the composer
+       * clears the buffer itself before seeding the new one, so the text this send delivered is
+       * already gone by the time this declines to remove it (see `composeStillHolds`).
+       */
+      if (aboutThisCompose) clearComposeDraft(owner);
       return;
     }
     // The INLINE forward — the lane doubles as the scratch suffix, so the note clears here
@@ -919,8 +934,13 @@ export function useMailSend(
    * MUTATION rides along because the shell's draft bookkeeping needs its `draftId`: a compose
    * send that carried no row id made its own row, and the row autosave adopted in the meantime
    * is then a phantom copy of a delivered message (`compose-autosave.ts` → `settled`).
+   *
+   * `aboutThisCompose` is whether the compose surface is still holding the message that settled,
+   * decided where the names are still readable (see `settle`). The shell hands it on, and
+   * `settleCompose` acts only when it is true: the phantom-copy judgement is only true of the
+   * message that was sent, and applied to the draft now open it DELETES that draft's row.
    */
-  onSettled: (key: string, m: MailSend) => void,
+  onSettled: (key: string, m: MailSend, aboutThisCompose: boolean) => void,
 ): MailSendApi {
   const t = useTranslations();
   const [states, setStates] = useState<Record<string, SendState>>({});
@@ -953,6 +973,18 @@ export function useMailSend(
    * for the same reason.
    */
   const accepted = useRef(new Set<string>());
+  /**
+   * WHICH MESSAGE EACH LANE'S LIVE SEND IS FOR — the composer's two names, taken at the press and
+   * not re-derived at the settlement. A settlement can arrive minutes later, by which time the
+   * surface may be holding a different draft entirely; reading the names then is reading about
+   * that other draft, which is how finishing one message emptied the one beside it. Compose only:
+   * a reply and a forward are named by the message they answer and no door can rename them.
+   *
+   * Spent by {@link settle}. A lane whose send failed keeps its entry until the next press
+   * overwrites it — one entry per lane, and a stale one can only be read by a settlement that
+   * cannot happen (the lane's key is gone).
+   */
+  const sentFor = useRef(new Map<string, ComposeHeld>());
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const attempt = useRef(0);
   const settledRef = useRef(onSettled);
@@ -1002,7 +1034,18 @@ export function useMailSend(
    */
   const settle = useCallback(
     (key: string, m: MailSend) => {
-      clearLaneScratch(key, m, owner.current);
+      /* THE IDENTITY THE PRESS RECORDED — see {@link sentFor}. The fallback is the mutation's own
+         row and no session, which is the most this can know about a settlement no press on this
+         mount produced; an unnameable one admits, which is the rule everywhere else here. */
+      const held = sentFor.current.get(key) ?? { draftId: m.draftId ?? null, session: null };
+      sentFor.current.delete(key);
+      /* ── IS THIS SETTLEMENT ABOUT THE MESSAGE THE COMPOSER IS HOLDING? ONE DECISION ─────────
+         Taken here, before anything is spent, and carried to both stages: the clear below drops
+         the compose session, and the close on the beat would then be asking about a surface whose
+         name this very call had removed. A reply and a forward are named by the message they
+         answer, which no door can rename, so the question is the compose surface's alone. */
+      const aboutThisCompose = key !== COMPOSE_SEND_KEY || composeStillHolds(held, owner.current);
+      clearLaneScratch(key, m, owner.current, aboutThisCompose);
       if (m.inReplyTo !== null) {
         // ── the reply IS the evidence the message was answered ─────────────────────────
         //
@@ -1047,7 +1090,7 @@ export function useMailSend(
       setPhase(key, m.sendAt ? { phase: "sent", scheduled: true } : { phase: "sent" });
       beat(key, () => {
         setPhase(key, IDLE);
-        settledRef.current(key, m);
+        settledRef.current(key, m, aboutThisCompose);
       });
       // Each lane's own sentence — keyed on the LANE, not the mutation shape, for the same
       // reason the cleanup above is. A forward is not a reply, and a toast that said "Reply
@@ -1417,7 +1460,13 @@ export function useMailSend(
           }
           settledRef.current(record.lane, {
             kind: "mail_send", draftId: res.entityId ?? record.draftId ?? null,
-          } as unknown as MailSend);
+          } as unknown as MailSend,
+          /* THIS PASS'S OWN VERDICT, WHICH IS THE SAME QUESTION — `speaksForScreen` above is
+             `composeStillHolds` read off the record instead of off a press, and a settlement
+             that failed it never reaches this line. The record's `draftId` is deliberately not
+             consulted: it is a diagnostic (`attachSendLockDraft`) that can name the row the
+             ADAPTER made for a press carrying none, which this surface never adopted. */
+          true);
           continue;
         }
         if (res.error?.code === "send_unverified") {
@@ -1651,6 +1700,12 @@ export function useMailSend(
        */
       const now = Date.now();
       const session = sessionOf(key);
+      /* WHICH MESSAGE THIS IS, RECORDED NOW — see {@link sentFor}. Taken before the wire for the
+         same reason the durable claim is: what is written down has to describe the message that
+         went, not the surface as it stands when the answer comes back. */
+      if (key === COMPOSE_SEND_KEY) {
+        sentFor.current.set(key, { draftId: m.draftId ?? readComposeRow(owner.current), session });
+      }
       // ONE ASSEMBLY, because `sendFingerprint` hashes every attachment's contents and the resume
       // and the claim both need it — see `sendIdentity`.
       const id = sendIdentity(m, session);
