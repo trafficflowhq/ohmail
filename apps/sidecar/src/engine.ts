@@ -6413,6 +6413,42 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
        launch — see `first-sync.ts`. Built here rather than inside the drain, which runs per pass. */
     const firstSyncLog = createFirstSyncReporter(log);
 
+    /**
+     * ══ A WRITE CAME IN THROUGH A DOOR — the idle ladder's third reset ══
+     *
+     * The window and a paired device file their moves through the API, and the engine's next drain
+     * is what puts them on the mail server. A ladder that slept through that would leave a move the
+     * person watched happen up to a ceiling away from IMAP, so every answered non-GET asks ONE
+     * question — has the account's change log moved since the last time a door write was noticed —
+     * and forces a drain on every runtime if it has. A request that WROTE NOTHING moves no seq and
+     * rings nothing, which is what stops a chatty door pinning the cadence at its base.
+     */
+    let lastDoorMark: string | null = null;
+    let doorKickInFlight = false;
+    const noteDoorWrite = (req: Request, res: Response): void => {
+      if (req.method === "GET" || req.method === "HEAD" || res.status >= 400) return;
+      if (doorKickInFlight) return;
+      doorKickInFlight = true;
+      void (async () => {
+        try {
+          const { max } = await seqBounds(db as unknown as Tx, world.accountId);
+          const mark = max === null ? "empty" : max.toString();
+          if (mark === lastDoorMark) return;
+          lastDoorMark = mark;
+          /* `force` is the existing press path — it returns the ladder to base AND drains now, and
+             `serialize` keeps it behind whatever is already running. Failures are the drain's own
+             to report; a door's response must never depend on one. */
+          for (const rt of runtimes.all()) {
+            void rt.syncUntilQuiet(undefined, { force: true }).catch(() => { /* the drain reports */ });
+          }
+        } catch {
+          /* An unreadable change log rings nothing. The poll is still the floor. */
+        } finally {
+          doorKickInFlight = false;
+        }
+      })();
+    };
+
     return {
       app,
       db,
@@ -7308,7 +7344,9 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
             },
           );
         }
-        return app.handle(req, depsFor());
+        const answered = await app.handle(req, depsFor());
+        noteDoorWrite(req, answered);
+        return answered;
       },
       // The desktop-host door, present IFF armed — see {@link Sidecar.handleHost}. Spread so a
       // disarmed sidecar genuinely lacks the member rather than carrying one that refuses.
@@ -7334,7 +7372,11 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
               ? {
                   handleLan: async (req: Request): Promise<Response> => {
                     const match = matchRoute(desktopHostRoutes, req.method, new URL(req.url).pathname);
-                    if (match.matched || match.methodNotAllowed) return hostApp.handle(req, depsForHost());
+                    if (match.matched || match.methodNotAllowed) {
+                      const answered = await hostApp.handle(req, depsForHost());
+                      noteDoorWrite(req, answered);
+                      return answered;
+                    }
                     return serveLanFallback(req);
                   },
                 }
