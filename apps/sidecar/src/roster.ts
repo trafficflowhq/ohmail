@@ -304,6 +304,16 @@ export interface LocalMailboxRuntime {
    * with no poll timer, reporting itself reachable.
    */
   unquiesce(): void;
+  /**
+   * SOMETHING WROTE THROUGH A DOOR — put the idle ladder back at its base interval.
+   *
+   * It does NOT drain, and that restraint is the whole design: the window writes on a person's
+   * rhythm (a draft autosaves while they type), so forcing a pass per write would drain far more
+   * often than the fixed cadence it replaced. What it promises is the cadence this engine had
+   * before it learned to rest — the next drain within one base interval — so a move made in the
+   * window reaches the mail server no later than it used to.
+   */
+  noteWorldMoved(): void;
   /** Stop this mailbox's timer, wait for the in-flight cycle and close its login. Leaves the
    *  store alone — the store is the install's, not this row's. */
   detach(): Promise<void>;

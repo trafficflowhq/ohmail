@@ -3245,6 +3245,10 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
       /** A kick is armed and has not fired: collapses a burst of arrivals into ONE drain, and
        *  keeps an in-flight drain's own re-arm from cancelling the kick (see {@link schedule}). */
       let wakePending = false;
+      /** WHEN THE ARMED TIMER IS DUE, so a reset can tell "sooner" from "later" rather than
+       *  re-arming blind: re-arming a timer that has already waited 100 s of its 120 pushes the
+       *  drain FURTHER away, which is the opposite of what every caller of it wants. */
+      let timerDueAt = 0;
       /**
        * THE HEARTBEAT'S OWN TIMER, AND WHY IT IS NOT THE POLL'S.
        *
@@ -5262,6 +5266,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
             })
             .finally(schedule);
         }, delayMs ?? idlePollMs);
+        timerDueAt = Date.now() + (delayMs ?? idlePollMs);
         timer.unref?.();
       };
 
@@ -5277,6 +5282,19 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         if (wakePending) return;
         wakePending = true;
         schedule(0);
+      };
+
+      /**
+       * A DOOR WROTE SOMETHING — see {@link LocalMailboxRuntime.noteWorldMoved}. The ladder goes
+       * back to base, and the armed timer is pulled in ONLY if that lands sooner than what is
+       * already due. No drain is forced: the guarantee is "within one base interval", which is
+       * exactly the cadence this engine had before it learned to rest.
+       */
+      const noteWorldMoved = (): void => {
+        if (stopped || handedBack) return;
+        idlePollMs = pollIntervalMs;
+        if (wakePending) return;
+        if (timerDueAt - Date.now() > pollIntervalMs) schedule(pollIntervalMs);
       };
 
       /**
@@ -5954,6 +5972,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
          * launch, while Settings went on reporting it reachable — the false-state class, reached
          * through a failure of the very act that is supposed to leave nothing behind.
          */
+        noteWorldMoved,
         unquiesce() {
           if (!heldForRemoval) return;
           heldForRemoval = false;
@@ -6435,12 +6454,12 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           const mark = max === null ? "empty" : max.toString();
           if (mark === lastDoorMark) return;
           lastDoorMark = mark;
-          /* `force` is the existing press path — it returns the ladder to base AND drains now, and
-             `serialize` keeps it behind whatever is already running. Failures are the drain's own
-             to report; a door's response must never depend on one. */
-          for (const rt of runtimes.all()) {
-            void rt.syncUntilQuiet(undefined, { force: true }).catch(() => { /* the drain reports */ });
-          }
+          /* THE LADDER, NOT A DRAIN — and the restraint is the point. Forcing a pass per write
+             would drain on the person's typing rhythm (a draft autosaves as they compose), far
+             more often than the fixed cadence this replaced. `noteWorldMoved` promises the next
+             drain within ONE BASE INTERVAL, which is the cadence the engine had before it rested,
+             so nothing a door writes reaches the mail server later than it used to. */
+          for (const rt of runtimes.all()) rt.noteWorldMoved();
         } catch {
           /* An unreadable change log rings nothing. The poll is still the floor. */
         } finally {
