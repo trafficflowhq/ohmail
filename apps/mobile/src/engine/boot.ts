@@ -11,6 +11,7 @@
 import {
   HttpAdapter,
   OhmailEngine,
+  SYNC_ENTITY_TYPES,
   SqlMirrorStore,
   flattenResponse,
   mirrorDbName,
@@ -306,17 +307,21 @@ export const MOBILE_WINDOW: StorePolicy = { mode: "windowed", days: 90, minRows:
 
 /**
  * The `?types=` filter every mobile drain carries — the cellular rule, stated as this client's
- * complete vocabulary. It is the whole of `SyncEntityType`, written out, and that is the point
- * on both edges: the request is bounded to categories this client can apply (a server that
- * grows new types cannot flood a phone with vocabulary it has no reader for), and nothing the
- * screens render is missing — the precedent to fear is the filter that omitted `tag` and
- * shipped a client whose tags silently never arrived. Prune deliberately, beside the screen
- * change that stops reading a type — never here alone.
+ * complete vocabulary. READ FROM THE DECLARATION rather than written out again: it used to be a
+ * hand-copied list, and the copy went stale in the one direction that matters. `mailbox` joined
+ * `SyncEntityType` and never joined this list, so the phone never asked for the receipt a
+ * removal emits — a mailbox removed on the paired desktop kept its messages, its drafts and its
+ * cached bodies on the phone, and a reconnect added them again beside the originals. The engine
+ * has always known how to sweep them (`store.ts#cascadeMailboxRemoval`); nothing ever told it to.
+ *
+ * The bound the copy existed for is unchanged and is now structural: the request carries exactly
+ * the categories this client can apply, so a server that grows a new type cannot flood a phone
+ * with vocabulary it has no reader for — it has to join the declaration first, which is where
+ * the store's own handling is written. The precedent behind the rule is the filter that omitted
+ * `tag` and shipped a client whose tags silently never arrived; `mailbox` was the same fault a
+ * second time, which is why the list is no longer a place anything can be forgotten.
  */
-export const MOBILE_SYNC_TYPES: string[] = [
-  "message", "thread", "routing_decision", "approval",
-  "draft", "rule", "message_state", "folder", "tag",
-];
+export const MOBILE_SYNC_TYPES: string[] = [...SYNC_ENTITY_TYPES];
 
 /**
  * Ask the server whose bearer this is, where the composition has a route to ask. The typed

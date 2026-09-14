@@ -66,15 +66,28 @@ export type ChangeOp = "create" | "update" | "move" | "delete";
  * entity (`MessageDTO.labels`), so a client can never hold an assignment
  * naming a tag it has not received.
  */
-export type SyncEntityType =
-  | "message" | "thread" | "routing_decision" | "approval"
-  | "draft" | "rule" | "message_state" | "folder" | "tag"
+/**
+ * THE SAME SET AS A VALUE, AND THE UNION IS DERIVED FROM IT — one declaration, not two.
+ *
+ * A client's `?types=` filter is a list at run time, so a hand-written union goes stale silently:
+ * the phone's list predated `mailbox`, so it never asked for the receipt, never ran the cascade,
+ * and a mailbox removed on the paired desktop stayed on the phone with its mail. Deriving the
+ * union makes such a filter complete. NOT the server's whole `EntityType`, which also carries
+ * `settings`: that rings the wake channel and its authority is `GET /consent`, so no mirror
+ * stores one.
+ */
+export const SYNC_ENTITY_TYPES = [
+  "message", "thread", "routing_decision", "approval",
+  "draft", "rule", "message_state", "folder", "tag",
   /**
    * A mailbox this account no longer holds, and it arrives ONLY as `op: "delete"` — the server
    * emits nothing else under this type ({@link MAILBOX_TYPE}). The id is the mailbox's, and the
    * mirror cascades from it: every row keyed by that mailbox goes, in the same apply.
    */
-  | "mailbox";
+  "mailbox",
+] as const;
+
+export type SyncEntityType = (typeof SYNC_ENTITY_TYPES)[number];
 
 /**
  * The `"mailbox"` row's own name, because three places have to agree on it — the store's cascade,
@@ -603,14 +616,15 @@ export interface EngineDraft {
   body: string | null;
   /**
    * Why {@link body} is `null`, when the page that dropped it said so. `over_ceiling` is a stored
-   * body past `DRAFT_BODY_MAX_BYTES`; `sent` is a draft that has already gone, whose text is
-   * history this mirror does not hold (`html` goes with it) and which `readDraftBody` fetches.
+   * body past `DRAFT_BODY_MAX_BYTES`; `sent` is a draft already gone, whose text this mirror does
+   * not hold (`html` goes with it) and which `readDraftBody` fetches; `over_page_budget` is a
+   * whole row too heavy for the transport that carries the page, `html` and `rationale` withheld.
+   *
+   * Optional, and it changes NO decision: {@link draftBodyKnown} is the one predicate, and a body
+   * is unknown whether or not a reason arrived — an older server sends none, a newer one may send
+   * a reason this build has never heard of.
    */
-  /**
-   * It changes NO decision — {@link draftBodyKnown} is still the one predicate. It is here so
-   * "this page left it out" and "this body is too large" are not one state.
-   */
-  bodyOmitted?: "over_ceiling" | "sent";
+  bodyOmitted?: "over_ceiling" | "sent" | "over_page_budget";
   to: EmailAddress[];
   cc: EmailAddress[];
   /** Blind-carbon recipients. Delivered on the envelope only; never a header on the sent mail. */

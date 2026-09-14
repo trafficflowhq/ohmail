@@ -132,6 +132,7 @@ export {
   type ScreenerSenderDTO,
   type SensitivityFlags,
   type SyncChange,
+  SYNC_ENTITY_TYPES,
   type SyncEntityType,
   type SyncResponse,
   type SyncSnapshotPage,
