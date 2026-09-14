@@ -460,13 +460,12 @@ export const waitlist = pgTable("waitlist", {
 
 /**
  * Staff identity for the admin console (cloud 0007). One operator, no RBAC. NOT a row in `users`:
- * `users` is the CUSTOMER identity, reachable from the product's whole auth surface, and a
- * `role='staff'` column there would make one over-broad `OR` a cross-account escalation; a table
- * the product's auth never queries has no code path that can promote anybody. The console's
- * sign-in cannot reuse `AuthService` for the same reason. The blind role sees NOTHING of it:
- * `ohmail_admin` is granted column by column and this table is not on the allowlist. The TOTP
- * secret is sealed; `totp_activated` is separate from "a secret exists", so an abandoned
- * enrolment leaves a row nobody can sign in with, not a locked-out operator.
+ * `users` is the CUSTOMER identity, and a `role='staff'` column there would make one over-broad
+ * `OR` a cross-account escalation; a table the product's auth never queries has no code path that
+ * can promote anybody. The console's sign-in cannot reuse `AuthService` for the same reason. The
+ * blind role sees NOTHING of it: `ohmail_admin` is granted column by column and this table is not
+ * on the allowlist. The TOTP secret is sealed, and an enrolment in progress lives in the
+ * `totp_pending_*` pair (cloud 0036), so beginning one never touches the authenticator in use.
  */
 export const staffUsers = pgTable("staff_users", {
   id: uuid("id").defaultRandom().primaryKey(),
@@ -474,11 +473,17 @@ export const staffUsers = pgTable("staff_users", {
   email: text("email").notNull(),
   /** scrypt, via `scryptHasher` — the same hasher the product's own credentials use. */
   passwordHash: text("password_hash").notNull(),
-  /** Envelope-encrypted TOTP secret. Null until the first enrolment begins. */
+  /** Envelope-encrypted TOTP secret — the ACTIVE one. Null until the first enrolment confirms. */
   totpSecretEnc: text("totp_secret_enc"),
   /** KeyProvider KEK version for `totp_secret_enc`. Null iff the secret is null. */
   totpKeyVersion: integer("totp_key_version"),
-  /** False while an enrolment is pending; true once a code from the secret has verified. */
+  /** Cloud 0036 — the enrolment IN PROGRESS. Sealed together with its version by a CHECK. */
+  totpPendingSecretEnc: text("totp_pending_secret_enc"),
+  /** KEK version for `totp_pending_secret_enc`. Null iff the pending secret is null. */
+  totpPendingKeyVersion: integer("totp_pending_key_version"),
+  /** When the pending enrolment began — a confirm arriving long after it is refused. */
+  totpPendingStartedAt: timestamp("totp_pending_started_at", { withTimezone: true }),
+  /** False until a code from the pending secret has verified; set as that secret is promoted. */
   totpActivated: boolean("totp_activated").notNull().default(false),
   /** TOTP single-use per timestep. */
   totpLastConsumedStep: bigint("totp_last_consumed_step", { mode: "bigint" }),
@@ -504,11 +509,40 @@ export const staffSessions = pgTable("staff_sessions", {
   tokenHash: text("token_hash").notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  /**
+   * Cloud 0036 — when the holder last proved a second factor. Stamped at mint (a staff session
+   * is only ever minted behind the TOTP wall) and re-stamped by `POST /admin/staff/step-up`. A
+   * staff WRITE asks for it to be recent; `expires_at` is untouched by a step-up, so the
+   * twelve-hour cap on a stolen cookie is unchanged.
+   */
+  lastTwofaAt: timestamp("last_twofa_at", { withTimezone: true }).notNull(),
   /** Set by an explicit sign-out. A revoked session is dead before its expiry. */
   revokedAt: timestamp("revoked_at", { withTimezone: true }),
 }, (t) => ({
   uqToken: unique("staff_sessions_token_hash_unique").on(t.tokenHash),
   ixUser: index("staff_sessions_user_idx").on(t.staffUserId),
+}));
+
+/**
+ * What an operator did to a staff account, append-only (cloud 0036). One writer: the second-factor
+ * recovery an operator runs against the API with the deployment secret after a lost authenticator.
+ *
+ * Not `audit_log`: that table's `account_id` is NOT NULL and this is an act about a PERSON, not
+ * about a customer's account. Nothing in the console reads or writes it — the recovery is
+ * deliberately an operator command and not a second door into the staff surface.
+ */
+export const staffAuditLog = pgTable("staff_audit_log", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  staffUserId: uuid("staff_user_id").notNull().references(() => staffUsers.id),
+  /** `staff.totp.reset` today; the closed vocabulary of the operator commands. */
+  action: text("action").notNull(),
+  /** Who is answerable. No staff session is presented here, so it names the command's operator. */
+  actor: text("actor").notNull(),
+  /** Why, in the operator's own words — required by the command, like every admin write's note. */
+  note: text("note").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+}, (t) => ({
+  ixStaffAt: index("staff_audit_log_staff_at_idx").on(t.staffUserId, t.createdAt),
 }));
 
 /**
@@ -712,7 +746,7 @@ export const cloudSchema = {
   credentials, webauthnCredentials, webauthnChallenges, totpSecrets, recoveryCodes, loginTokens,
   oauthAuthCodes, authEvents, authThrottle, pushSubscriptions,
   workerHeartbeats, alertState, alertPassRuns, platformSignals, apiFaults,
-  waitlist, staffUsers, staffSessions,
+  waitlist, staffUsers, staffSessions, staffAuditLog,
   mailboxOauthCeremonies, mailboxOauthDeviceCeremonies,
   oauthProviderConfig, attachmentStaging, invites,
 };

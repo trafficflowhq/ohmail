@@ -873,10 +873,23 @@ export const ADMIN_WRITES_UNAVAILABLE =
   "writes that record an actor; this action's target subsystem does not exist yet (filed as a " +
   "gap), so wiring it would be a control that reports success it cannot achieve.";
 
+/**
+ * HOW RECENT A STAFF SECOND FACTOR HAS TO BE FOR A WRITE, in seconds — the ONE place.
+ *
+ * `packages/api/src/staff-step-up.ts` enforces it on every staff write route; this module puts it
+ * on the wire (`ActionCatalog.stepUpWindowSeconds`) and composes the sentence below from it, and
+ * the console renders both. The copy states what the handler enforces, never the other way round:
+ * the Actions page promised a five-minute step-up for a year while the writes accepted the
+ * ordinary twelve-hour session, which is a security control being absent rather than a guard gap.
+ */
+export const STAFF_STEP_UP_WINDOW_SECONDS = 5 * 60;
+
 export const ADMIN_ACTIONS_PRECONDITION =
   "Mailbox release is LIVE: it requires a staff session (past the TOTP wall), not the console " +
-  "gate alone, and writes one audit_log row naming the operator. The stuck-send retry is " +
-  "designed and not wired — its target subsystem does not exist yet — and says so on its card.";
+  `gate alone, and a second factor proved in the last ${Math.round(STAFF_STEP_UP_WINDOW_SECONDS / 60)} ` +
+  "minutes — a session older than that is refused before the write runs. Every write leaves one " +
+  "audit_log row naming the operator. The stuck-send retry is designed and not wired — its target " +
+  "subsystem does not exist yet — and says so on its card.";
 
 export async function adminActions(db: AdminDb, now: Date): Promise<ActionCatalog> {
   const accountRows = await db.select({ id: accounts.id, name: accounts.name }).from(accounts).limit(ADMIN_OPTIONS_LIMIT);
@@ -974,6 +987,7 @@ export async function adminActions(db: AdminDb, now: Date): Promise<ActionCatalo
   return {
     now: now.toISOString(),
     precondition: ADMIN_ACTIONS_PRECONDITION,
+    stepUpWindowSeconds: STAFF_STEP_UP_WINDOW_SECONDS,
     actions,
     recent: await loadAudit(db, null),
   };

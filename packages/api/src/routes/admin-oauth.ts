@@ -269,11 +269,19 @@ async function saveConfig(
  * body, and a token in a header or query parameter puts a live credential into access logs.
  */
 const OPTIONS = { public: true, anonymous: true, raw: true } as const;
+/**
+ * The SAVE additionally carries `staffStepUp`: it is a write, and a write asks for a second factor
+ * proved inside `STAFF_STEP_UP_WINDOW_SECONDS` (`packages/api/src/staff-step-up.ts`). The READ
+ * does not, deliberately — it is a read over a POST transport because the session token has to
+ * ride in a body, and asking an operator for a code to LOOK at the registration would train them
+ * to type codes at prompts that are not writes.
+ */
+const WRITE_OPTIONS = { ...OPTIONS, staffStepUp: true } as const;
 const COST = "unauthenticated" as const;
 
 /* `relay: false` throughout: the hosted console's own surface, never forwarded by a Cloud-mode
  * install's relay. Declared per route because the field has no default. */
 export const adminOAuthRoutes: Route[] = [
   { method: "POST", pattern: "/admin/oauth/microsoft", relay: false, cost: COST, options: OPTIONS, handler: staffConfigRoute("microsoft", readConfig) },
-  { method: "POST", pattern: "/admin/oauth/microsoft/save", relay: false, cost: COST, options: OPTIONS, handler: staffConfigRoute("microsoft/save", saveConfig) },
+  { method: "POST", pattern: "/admin/oauth/microsoft/save", relay: false, cost: COST, options: WRITE_OPTIONS, handler: staffConfigRoute("microsoft/save", saveConfig) },
 ];

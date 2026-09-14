@@ -91,6 +91,17 @@ export const WRAPPED_SECRET_SITES: readonly WrappedSecretSite[] = [
     key: ["id"], keyIsSecret: false,
   },
   {
+    // The enrolment IN PROGRESS (cloud 0036). Same row, different pair, and it is here for the
+    // PKCE row's reason: a pending enrolment lives about fifteen minutes, and "it expires soon"
+    // is not a retirement criterion for a key you are trying to prove nothing references. Skipping
+    // it would let a rotation retire a KEK while somebody is mid-enrolment, and that presents as
+    // a confirmation that simply never works.
+    site: "staff_users.totp_pending_secret_enc",
+    table: staffUsers,
+    ciphertext: "totpPendingSecretEnc", keyVersion: "totpPendingKeyVersion",
+    key: ["id"], keyIsSecret: false,
+  },
+  {
     // Short-lived PKCE rows. Included deliberately: they are as decryptable by a leaked old key
     // as anything else while they live, and "it expires soon" is not a retirement criterion for
     // a key you are trying to prove nothing references.

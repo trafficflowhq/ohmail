@@ -174,12 +174,14 @@ async function resync(
 
 
 /**
- * All FOUR writes are `public + anonymous + raw`, exactly as the reads and the staff sign-in
- * routes, and for the same reason: ANONYMOUS_PIPELINE resolves no customer session, so there is no
- * `users` row whose state could be confused with the target account's. The authority is the shared
- * secret plus, inside the handler, a live `staff_sessions` row.
+ * `public + anonymous + raw`, exactly as the reads and the staff sign-in routes, and for the same
+ * reason: ANONYMOUS_PIPELINE resolves no customer session, so there is no `users` row whose state
+ * could be confused with the target account's. The authority is the shared secret plus, inside the
+ * handler, a live `staff_sessions` row — and `staffStepUp`, which adds the third thing this write
+ * asks for: that the person holding that session proved a second factor in the last few minutes.
+ * The window is `STAFF_STEP_UP_WINDOW_SECONDS` and `withStaffStepUp` is where it is enforced.
  */
-const OPTIONS = { public: true, anonymous: true, raw: true } as const;
+const OPTIONS = { public: true, anonymous: true, raw: true, staffStepUp: true } as const;
 const COST = "unauthenticated" as const;
 
 /* `relay: false` throughout: the hosted console's own surface, never forwarded by a Cloud-mode

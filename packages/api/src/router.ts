@@ -105,6 +105,17 @@ export interface RouteOptions {
   /** Requires a recent 2FA (`withStepUp`); else 403 step_up_required. */
   stepUp?: boolean;
   /**
+   * A STAFF write: requires the staff session in the body to have proved a second factor inside
+   * `STAFF_STEP_UP_WINDOW_SECONDS` (`withStaffStepUp`); else 403 step_up_required.
+   *
+   * Separate from {@link stepUp} because it judges a different credential: these routes are
+   * `anonymous`, carry no customer session, and their identity is a `staff_sessions` row. Both
+   * flags are read by middleware present in all three pipelines, so a route cannot declare one
+   * into a chain that would not enforce it, and `admin-step-up-census.test.ts` requires this flag
+   * on every `/admin/*` route classified as a write.
+   */
+  staffStepUp?: boolean;
+  /**
    * The route is part of the 2FA-ENROLLMENT surface, so an enrollment-scoped session
    * is admitted. Absent — the default, and the default for every route in the
    * table — an enrollment session is rejected with 403 `enrollment_incomplete` on a

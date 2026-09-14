@@ -436,6 +436,12 @@ export interface ActionSpec {
 export interface ActionCatalog {
   now: string;
   precondition: string;
+  /**
+   * How recent a staff second factor has to be for a WRITE to run, in seconds. On the wire
+   * because the console renders its own sentence from it: the surface states what the handler
+   * enforces (`STAFF_STEP_UP_WINDOW_SECONDS`), and never the other way round.
+   */
+  stepUpWindowSeconds: number;
   actions: ActionSpec[];
   recent: AuditEntry[];
 }

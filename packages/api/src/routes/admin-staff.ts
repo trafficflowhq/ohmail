@@ -1,8 +1,9 @@
 import { and, eq, isNull, sql } from "drizzle-orm";
-import { staffSessions, staffUsers, authThrottle } from "@trafficflow/db/cloud";
+import { staffSessions, staffUsers, staffAuditLog, authThrottle } from "@trafficflow/db/cloud";
 import {
   scryptHasher, generateToken, hashToken,
   newTotpSecret, totpUri, verifyTotp,
+  STAFF_STEP_UP_WINDOW_SECONDS,
 } from "@trafficflow/services";
 import { presentsSecret, secretRouteJson as json } from "../secret-auth.js";
 import type { ApiDeps } from "../deps.js";
@@ -44,6 +45,12 @@ const SESSION_TTL_SECONDS = 12 * 60 * 60;
 const ENROLL_TTL_SECONDS = 10 * 60;
 /** TOTP skew tolerance, in 30s steps. One step each way is the standard, and enough. */
 const TOTP_WINDOW = 1;
+/**
+ * How long a BEGUN enrolment stays confirmable (cloud 0036). Long enough to photograph a QR and
+ * type six digits; short enough that a pending secret from last month is not a credential this
+ * deployment still offers to promote.
+ */
+const PENDING_ENROLLMENT_TTL_SECONDS = 15 * 60;
 
 /** Failures allowed inside the window before the key locks. */
 const THROTTLE_MAX_FAILURES = 5;
@@ -271,13 +278,20 @@ async function mintSession(
 ): Promise<{ token: string; expiresAt: Date }> {
   const token = generateToken(32);
   const expiresAt = new Date(now.getTime() + SESSION_TTL_SECONDS * 1000);
+  // `lastTwofaAt: now` and not a default: every path that reaches here has just verified a TOTP
+  // code, so the stamp is a fact this call knows rather than one the column guesses.
   await db.insert(staffSessions).values({
-    staffUserId: staffId, tokenHash: hashToken(token), expiresAt, createdAt: now,
+    staffUserId: staffId, tokenHash: hashToken(token), expiresAt, createdAt: now, lastTwofaAt: now,
   });
   return { token, expiresAt };
 }
 
-export interface StaffIdentity { staffId: string; email: string }
+export interface StaffIdentity {
+  staffId: string;
+  email: string;
+  /** When this session's holder last proved a second factor — `staff_sessions.last_twofa_at`. */
+  lastTwofaAt: Date;
+}
 
 /**
  * Resolve a presented session token to the person it names, or null. `expires_at` is checked
@@ -292,14 +306,17 @@ export async function resolveStaffSession(
 ): Promise<StaffIdentity | null> {
   if (!token || token.length < 16) return null;
   const [row] = await db
-    .select({ id: staffUsers.id, email: staffUsers.email, expiresAt: staffSessions.expiresAt })
+    .select({
+      id: staffUsers.id, email: staffUsers.email,
+      expiresAt: staffSessions.expiresAt, lastTwofaAt: staffSessions.lastTwofaAt,
+    })
     .from(staffSessions)
     .innerJoin(staffUsers, eq(staffUsers.id, staffSessions.staffUserId))
     .where(and(eq(staffSessions.tokenHash, hashToken(token)), isNull(staffSessions.revokedAt)))
     .limit(1);
   if (!row) return null;
   if (row.expiresAt.getTime() <= now.getTime()) return null;
-  return { staffId: row.id, email: row.email };
+  return { staffId: row.id, email: row.email, lastTwofaAt: row.lastTwofaAt };
 }
 
 /* ── the routes ────────────────────────────────────────────────────────────────────────── */
@@ -472,13 +489,14 @@ async function authorizeEnrollment(
 }
 
 /**
- * `POST /admin/staff/totp/begin` — show the secret, once. Authorised by either a live enrolment
- * token (first sign-in) or a live staff session plus the password (re-enrolment); the second arm
- * is the whole reason this route takes a session at all — without it a lost phone is a lost
- * console with no recovery but SQL. See {@link authorizeEnrollment} for why the password is not
- * optional. Beginning an enrolment replaces any pending secret and always leaves `totp_activated`
- * alone, so an abandoned enrolment cannot lock anybody out: the previously activated secret keeps
- * working until a code from the new one is confirmed.
+ * `POST /admin/staff/totp/begin` — show the secret, once. Authorised by a live enrolment token
+ * (first sign-in) or a live staff session plus the password (re-enrolment); see {@link
+ * authorizeEnrollment} for why the password is not optional.
+ *
+ * IT WRITES THE PENDING PAIR AND NEVER THE LIVE ONE (cloud 0036). Writing `totp_secret_enc`
+ * directly left `totp_activated` true over a secret nobody held whenever a second tab's begin
+ * landed after a confirm and its response was lost. A second begin supersedes the pending pair
+ * only; the authenticator in use keeps working until {@link totpConfirm} promotes a new one.
  */
 async function totpBegin(
   body: Record<string, unknown>, deps: ApiDeps,
@@ -494,7 +512,10 @@ async function totpBegin(
   const totpSecret = newTotpSecret();
   const { ciphertext, keyVersion } = await deps.keyProvider.encrypt(totpSecret);
   await deps.db.update(staffUsers)
-    .set({ totpSecretEnc: ciphertext, totpKeyVersion: keyVersion, updatedAt: now })
+    .set({
+      totpPendingSecretEnc: ciphertext, totpPendingKeyVersion: keyVersion,
+      totpPendingStartedAt: now, updatedAt: now,
+    })
     .where(eq(staffUsers.id, staffId));
 
   return {
@@ -507,13 +528,14 @@ async function totpBegin(
 }
 
 /**
- * `POST /admin/staff/totp/confirm` — a code from the new secret, then it counts. Activation and
- * the first consumed step are set together. A session is minted in the same call only on the
- * enrolment-token arm: an operator who just turned a password into a working authenticator holds
- * no session yet. A session-authorised confirmation mints nothing — the second half of the
- * stolen-cookie fix: re-minting would reset the 12-hour clock from the credential being
- * presented, letting a thief keep a stolen cookie alive indefinitely by re-enrolling. Answering
- * `reenrolled` leaves the presented session's expiry where it was, so theft still runs out.
+ * `POST /admin/staff/totp/confirm` — a code from the PENDING secret, then it counts. The
+ * promotion is ONE statement (pending pair, activation and first consumed step together), and its
+ * `where` pins the ciphertext this call verified, so a `begin` that superseded it makes the
+ * promotion a no-op (409) instead of activating a secret this operator never saw.
+ *
+ * A session is minted only on the enrolment-token arm, where the operator holds none. A
+ * session-authorised confirmation mints nothing: that would reset the 12-hour clock from the
+ * credential presented, which is how a thief keeps a stolen cookie alive by re-enrolling.
  */
 async function totpConfirm(
   body: Record<string, unknown>, deps: ApiDeps, req: Request,
@@ -533,23 +555,33 @@ async function totpConfirm(
   }
 
   const [user] = await deps.db.select().from(staffUsers).where(eq(staffUsers.id, staffId)).limit(1);
-  if (!user?.totpSecretEnc || user.totpKeyVersion === null) {
+  const pending = user?.totpPendingSecretEnc;
+  const pendingFresh = user?.totpPendingStartedAt != null
+    && now.getTime() - user.totpPendingStartedAt.getTime() <= PENDING_ENROLLMENT_TTL_SECONDS * 1000;
+  if (!user || !pending || user.totpPendingKeyVersion === null || !pendingFresh) {
     return { status: 409, body: { error: { code: "no_enrollment" } } };
   }
 
-  const totpSecret = await deps.keyProvider.decrypt(user.totpSecretEnc, user.totpKeyVersion);
+  const totpSecret = await deps.keyProvider.decrypt(pending, user.totpPendingKeyVersion);
   const v = verifyTotp({ secret: totpSecret, token: code, now, window: TOTP_WINDOW, afterStep: null });
   if (!v.valid) {
     await throttleFail(deps.db, ip, now);
     return { status: 401, body: { ok: false, status: "invalid" } };
   }
 
-  await deps.db.update(staffUsers)
+  // THE PROMOTION. One statement, and its `where` is the compare-and-swap described above.
+  const promoted = await deps.db.update(staffUsers)
     .set({
+      totpSecretEnc: pending, totpKeyVersion: user.totpPendingKeyVersion,
+      totpPendingSecretEnc: null, totpPendingKeyVersion: null, totpPendingStartedAt: null,
       totpActivated: true, totpLastConsumedStep: BigInt(v.timeStep!),
       lastLoginAt: now, updatedAt: now,
     })
-    .where(eq(staffUsers.id, staffId));
+    .where(and(eq(staffUsers.id, staffId), eq(staffUsers.totpPendingSecretEnc, pending)))
+    .returning();
+  if (promoted.length === 0) {
+    return { status: 409, body: { error: { code: "enrollment_superseded" } } };
+  }
   await throttleClear(deps.db, ip);
   await throttleClear(deps.db, emailKey(user.email));
 
@@ -576,10 +608,156 @@ async function totpConfirm(
 async function whoami(
   body: Record<string, unknown>, deps: ApiDeps,
 ): Promise<{ status: number; body: unknown }> {
-  const who = await resolveStaffSession(deps.db, str(body.token) || undefined, deps.now());
+  const now = deps.now();
+  const who = await resolveStaffSession(deps.db, str(body.token) || undefined, now);
+  // `stepUpWindowSeconds` travels with the identity so the console's sentences render from the
+  // value the API enforces. It is a policy number and names nobody, so it is safe on a refusal
+  // too — and the sign-in screen needs it before it holds a session.
   return who
-    ? { status: 200, body: { ok: true, email: who.email } }
-    : { status: 401, body: { ok: false } };
+    ? {
+      status: 200,
+      body: {
+        ok: true,
+        email: who.email,
+        stepUpWindowSeconds: STAFF_STEP_UP_WINDOW_SECONDS,
+        stepUpFresh: now.getTime() - who.lastTwofaAt.getTime() <= STAFF_STEP_UP_WINDOW_SECONDS * 1000,
+      },
+    }
+    : { status: 401, body: { ok: false, stepUpWindowSeconds: STAFF_STEP_UP_WINDOW_SECONDS } };
+}
+
+/**
+ * `POST /admin/staff/step-up` — prove the second factor again, without minting anything.
+ *
+ * A staff WRITE asks for a factor proved in the last {@link STAFF_STEP_UP_WINDOW_SECONDS}
+ * seconds; this is the route that supplies one. It re-stamps `last_twofa_at` and touches nothing
+ * else — no new token, `expires_at` untouched — so stepping up cannot extend a stolen cookie past
+ * the twelve-hour cap. The code is single-use per timestep by the same compare-and-swap `signIn`
+ * uses, the failure is throttled on the hashed IP, and nothing here can turn a session that is
+ * not live into one.
+ */
+async function stepUp(
+  body: Record<string, unknown>, deps: ApiDeps, req: Request,
+): Promise<{ status: number; body: unknown }> {
+  const now = deps.now();
+  const token = str(body.token) || undefined;
+  const code = str(body.code).replace(/\s+/g, "");
+  const session = await resolveStaffSession(deps.db, token, now);
+  if (!session) return { status: 401, body: { ok: false, status: "signed_out" } };
+
+  const ip = ipKey(req);
+  const verdict = await throttleReserve(deps.db, ip, now);
+  if (verdict.locked) {
+    return { status: 429, body: { ok: false, status: "throttled", retryAfterSeconds: verdict.retryAfterSeconds } };
+  }
+
+  const [user] = await deps.db.select().from(staffUsers).where(eq(staffUsers.id, session.staffId)).limit(1);
+  if (!user?.totpActivated || !user.totpSecretEnc || user.totpKeyVersion === null) {
+    return { status: 409, body: { error: { code: "no_enrollment" } } };
+  }
+
+  const totpSecret = await deps.keyProvider.decrypt(user.totpSecretEnc, user.totpKeyVersion);
+  const v = verifyTotp({
+    secret: totpSecret, token: code, now, window: TOTP_WINDOW,
+    afterStep: user.totpLastConsumedStep === null ? null : Number(user.totpLastConsumedStep),
+  });
+  if (!v.valid) {
+    await throttleFail(deps.db, ip, now);
+    return { status: 401, body: { ok: false, status: "invalid" } };
+  }
+
+  const advanced = await deps.db.update(staffUsers)
+    .set({ totpLastConsumedStep: BigInt(v.timeStep!), updatedAt: now })
+    .where(and(
+      eq(staffUsers.id, user.id),
+      user.totpLastConsumedStep === null
+        ? isNull(staffUsers.totpLastConsumedStep)
+        : eq(staffUsers.totpLastConsumedStep, user.totpLastConsumedStep),
+    ))
+    .returning();
+  if (advanced.length === 0) {
+    await throttleFail(deps.db, ip, now);
+    return { status: 401, body: { ok: false, status: "invalid" } };
+  }
+
+  await deps.db.update(staffSessions)
+    .set({ lastTwofaAt: now })
+    .where(and(eq(staffSessions.tokenHash, hashToken(token!)), isNull(staffSessions.revokedAt)));
+  await throttleClear(deps.db, ip);
+
+  return {
+    status: 200,
+    body: {
+      ok: true,
+      status: "stepped_up",
+      email: user.email,
+      stepUpWindowSeconds: STAFF_STEP_UP_WINDOW_SECONDS,
+      freshUntil: new Date(now.getTime() + STAFF_STEP_UP_WINDOW_SECONDS * 1000).toISOString(),
+    },
+  };
+}
+
+/** A note or an operator name shorter than this is refused — the admin writes' own floor. */
+const MIN_RESET_FIELD = 8;
+
+/**
+ * `POST /admin/staff/totp/reset` — THE RECOVERY, an operator command and deliberately not a
+ * console button: a "disable 2FA" control would be a second door into the staff surface.
+ *
+ * Somebody whose authenticator is gone and whose session has expired cannot enrol a new one, and
+ * the only way back used to be a database console. Its authority is the deployment's shared admin
+ * secret and it grants no access: the account returns to "not enrolled", so signing in still
+ * costs the password and then a fresh enrolment. Live sessions are revoked in the same breath and
+ * every run leaves a `staff_audit_log` row. The deployment's staff TOTP reset script is the
+ * command.
+ */
+async function totpReset(
+  body: Record<string, unknown>, deps: ApiDeps,
+): Promise<{ status: number; body: unknown }> {
+  const now = deps.now();
+  const email = normalizeEmail(body.email);
+  const operator = str(body.operator).trim();
+  const note = str(body.note).trim();
+  // A typed confirmation, because this is a destructive act run from a shell with the deployment
+  // secret in the environment: a mis-fired command must not be able to clear anybody's factor.
+  if (str(body.confirm).trim() !== "reset-second-factor") {
+    return { status: 400, body: { error: { code: "confirm_required" } } };
+  }
+  if (operator.length < MIN_RESET_FIELD) return { status: 400, body: { error: { code: "operator_required" } } };
+  if (note.length < MIN_RESET_FIELD) return { status: 400, body: { error: { code: "note_required" } } };
+  if (!email) return { status: 400, body: { error: { code: "email_required" } } };
+
+  const [user] = await deps.db.select().from(staffUsers).where(eq(staffUsers.email, email)).limit(1);
+  // An address that matches no row is the operator's mistake, not a no-op: a 200 over a typo
+  // reads as "done" and leaves the person still locked out.
+  if (!user) return { status: 404, body: { error: { code: "staff_not_found" } } };
+
+  await deps.db.update(staffUsers)
+    .set({
+      totpSecretEnc: null, totpKeyVersion: null,
+      totpPendingSecretEnc: null, totpPendingKeyVersion: null, totpPendingStartedAt: null,
+      totpActivated: false, totpLastConsumedStep: null,
+      updatedAt: now,
+    })
+    .where(eq(staffUsers.id, user.id));
+  const revoked = await deps.db.update(staffSessions)
+    .set({ revokedAt: now })
+    .where(and(eq(staffSessions.staffUserId, user.id), isNull(staffSessions.revokedAt)))
+    .returning();
+  await deps.db.insert(staffAuditLog).values({
+    staffUserId: user.id, action: "staff.totp.reset", actor: operator, note, createdAt: now,
+  });
+
+  return {
+    status: 200,
+    body: {
+      ok: true,
+      action: "staff.totp.reset",
+      email: user.email,
+      sessionsRevoked: revoked.length,
+      at: now.toISOString(),
+    },
+  };
 }
 
 /** `POST /admin/staff/sign-out` — revoke now, not at expiry. Idempotent. */
@@ -596,10 +774,14 @@ async function signOut(
 }
 
 /**
- * All five are `public + anonymous + raw`, exactly as the six reads are, and for the same
+ * All seven are `public + anonymous + raw`, exactly as the six reads are, and for the same
  * reason: `ANONYMOUS_PIPELINE` resolves no customer session, so there is no `users` row whose
  * state could be confused with a staff one. The authority is the shared secret plus, inside the
  * handler, `staff_users`.
+ *
+ * NONE of them carries `staffStepUp`, and that is the point: this group IS the second factor.
+ * `admin-step-up-census.test.ts` classifies every `/admin/*` route as identity, read or write and
+ * requires the flag on exactly the writes, so neither list can drift in silence.
  */
 const OPTIONS = { public: true, anonymous: true, raw: true } as const;
 const COST = "unauthenticated" as const;
@@ -610,6 +792,8 @@ export const adminStaffRoutes: Route[] = [
   { method: "POST", pattern: "/admin/staff/session", relay: false, cost: COST, options: OPTIONS, handler: staffRoute("session", signIn) },
   { method: "POST", pattern: "/admin/staff/totp/begin", relay: false, cost: COST, options: OPTIONS, handler: staffRoute("totp/begin", totpBegin) },
   { method: "POST", pattern: "/admin/staff/totp/confirm", relay: false, cost: COST, options: OPTIONS, handler: staffRoute("totp/confirm", totpConfirm) },
+  { method: "POST", pattern: "/admin/staff/step-up", relay: false, cost: COST, options: OPTIONS, handler: staffRoute("step-up", stepUp) },
+  { method: "POST", pattern: "/admin/staff/totp/reset", relay: false, cost: COST, options: OPTIONS, handler: staffRoute("totp/reset", totpReset) },
   { method: "POST", pattern: "/admin/staff/whoami", relay: false, cost: COST, options: OPTIONS, handler: staffRoute("whoami", whoami) },
   { method: "POST", pattern: "/admin/staff/sign-out", relay: false, cost: COST, options: OPTIONS, handler: staffRoute("sign-out", signOut) },
 ];

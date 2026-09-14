@@ -337,7 +337,7 @@ export {
   adminAlerts, adminAlertDrivers, adminPlatformSignals, adminActions, adminAttentionRank,
   ADMIN_LIST_LIMIT, ADMIN_DEFAULT_PAGE_SIZE, ADMIN_MAX_PAGE_SIZE, ADMIN_OPTIONS_LIMIT,
   ADMIN_ROSTER_LIMIT,
-  ADMIN_WRITES_UNAVAILABLE, ADMIN_ACTIONS_PRECONDITION,
+  ADMIN_WRITES_UNAVAILABLE, ADMIN_ACTIONS_PRECONDITION, STAFF_STEP_UP_WINDOW_SECONDS,
   // The branded, content-blind handle every one of those reads takes. Exported so
   // `packages/api` can type `ApiDeps.adminDb` with it and make `deps.db` a compile error.
   type AdminDb,

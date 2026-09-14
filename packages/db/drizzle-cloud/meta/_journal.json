@@ -148,6 +148,13 @@
       "when": 1791328224218,
       "tag": "0035_webauthn_open_ceremony_idx",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1791328224219,
+      "tag": "0036_staff_step_up_and_pending_totp",
+      "breakpoints": true
     }
   ]
 }
