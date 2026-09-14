@@ -13,6 +13,8 @@ import { AwsClient } from "aws4fetch";
 import { and, eq, gt, inArray, lte, sql } from "drizzle-orm";
 import { attachmentStaging } from "./schema-cloud.js";
 import { assertLedgerTx, type LedgerTx, type Tx } from "./change-log.js";
+import { fenceErased } from "./erasure-fence.js";
+import { dialect } from "./dialect/index.js";
 
 /**
  * How long staged bytes live: 24 hours, and it is a PROMISE rather than a tuning knob — the
@@ -86,6 +88,12 @@ export interface StagingTicket {
  * in `@trafficflow/services`; the reason is here because both halves it composes are here.
  */
 export async function createStagingTicket(tx: Tx, i: StagingTicketInput): Promise<StagingTicket> {
+  /* THE FENCE, FIRST. The ticket carries the person's filename and grants a FRESH 24-hour upload
+     window, and `accounts` survives erasure, so the key on it accepts a ticket minted after the
+     sweep: an upload request that read its mailbox before the erasure was minting a live grant
+     against an account that no longer exists. Refusing here costs the caller an error on a
+     request whose account is gone. */
+  await fenceErased(tx, dialect(tx), { accountId: i.accountId });
   const [row] = await tx.insert(attachmentStaging).values({
     id: i.id,
     accountId: i.accountId,

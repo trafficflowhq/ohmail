@@ -1,6 +1,8 @@
 import { and, asc, eq, gt, inArray, lt, or } from "drizzle-orm";
 import { organizerRequests } from "./schema-mail.js";
 import type { Tx } from "./change-log.js";
+import { fenceErased } from "./erasure-fence.js";
+import { dialect } from "./dialect/index.js";
 
 /**
  * `organizer_requests` — the READER'S OWN bookkeeping. The mailbox itself (`ohmail/_meta`, via
@@ -69,6 +71,13 @@ function toRow(r: {
 export async function insertOrganizerRequest(tx: Tx, input: {
   id: string; accountId: string; mailboxId: string; kind: string; payload: unknown; decidedAt: Date;
 }): Promise<OrganizerRequestRow> {
+  /* THE FENCE, WITH THE MAILBOX IN IT. `reader-request.ts` already fenced before calling here and
+     the row still landed: the fence was account-only while the erasure was of a MAILBOX, whose row
+     SURVIVES its sweep as a tombstone. Both scopes, at the primitive, so the granularity is the
+     writer's property and not something each caller has to remember. */
+  await fenceErased(tx, dialect(tx), {
+    accountId: input.accountId, mailboxId: input.mailboxId,
+  });
   const [row] = await tx.insert(organizerRequests).values({
     id: input.id, accountId: input.accountId, mailboxId: input.mailboxId, kind: input.kind,
     payload: input.payload, decidedAt: input.decidedAt, state: "pending",

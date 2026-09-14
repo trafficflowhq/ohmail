@@ -2,6 +2,8 @@ import { and, eq, lte } from "drizzle-orm";
 /* The mail half directly — see the note in `change-log.ts`. `idempotency_keys` is a mail table. */
 import { idempotencyKeys } from "./schema-mail.js";
 import type { Tx } from "./change-log.js";
+import { fenceErased } from "./erasure-fence.js";
+import { dialect } from "./dialect/index.js";
 
 /**
  * The `idempotency_keys` WRITE primitive, in `packages/db` because six services need it and
@@ -44,6 +46,13 @@ export interface IdempotencyClaimInput {
  * treated as a conflict.
  */
 export async function claimIdempotencyKey(tx: Tx, i: IdempotencyClaimInput): Promise<boolean> {
+  /* THE FENCE, HERE AND NOT AT NINETEEN CALL SITES. `idempotency_keys` is a table the Art. 17
+     sweep empties, and a claim is written by a request that was valid when it started: the
+     screener's suggest run reads a balance and awaits a model between its session check and this
+     claim, and an erasure landing in that window left the claim behind. Local, so a twentieth
+     caller inherits it; a second FOR SHARE read inside an already-fenced transaction re-takes a
+     lock this transaction holds and costs one indexed row. */
+  await fenceErased(tx, dialect(tx), { accountId: i.accountId });
   const row = {
     accountId: i.accountId,
     key: i.key,
