@@ -528,9 +528,9 @@ export async function openPhoneStore(
     dataDir: "",
     pgDataDir: "",
     timings: { pgliteOpenMs: 0, adoptBaselineMs: 0, migrateMs: 0, compactMs: 0 },
-    // A write-ahead checkpoint is a PGlite concept the engine calls after a drain. On this store the
-    // journal is the platform's and there is nothing for a caller to reclaim, so this answers zero
-    // rather than pretending to have flushed something.
+    // A write-ahead checkpoint is a PGlite concept the engine calls per cycle and behind the drain.
+    // On this store the journal is the platform's and there is nothing for a caller to reclaim, so
+    // this answers zero rather than pretending to have flushed something.
     checkpoint: async () => 0,
     // THE CONTRACT'S DEFINED ANSWER FOR A RUNTIME WITH NO STORE HEAP, not a made-up figure:
     // `OpenLocalDb.storeBytes` documents `0` as exactly that. The desktop's number is the WASM
