@@ -369,10 +369,14 @@ export function planSubjectRule(
   }];
 
   const mutations: EngineMutation[] = [...ruleMutations];
-  // Newest first (the context is sorted), so the slice is the mail the user is looking at.
-  // An `already` press keeps its moves — "File these to …" files the visible matching mail the
-  // standing rule names; only an INVALID term moves nothing, because there is no rule behind it.
-  if (!invalid) {
+  /* Newest first (the context is sorted), so the slice is the mail the user is looking at — and
+     the past-mail switch is its GATE, as it is in `sender-screening.ts#planScreeningChange`. It
+     used to ride the rule alone while these moves went out regardless, which made "Also move the
+     mail already in your mailbox" false on the one sheet it was rendered in twice. An INVALID term
+     moves nothing (no rule stands behind it); an `already` press keeps its moves — "File these
+     to …" files the visible matching mail the standing rule names, and the sheet offers no switch
+     there precisely because that press is not the rule reaching back. */
+  if (!invalid && (applyRetro || already)) {
     for (const m of misplaced.slice(0, RETRO_VISIBLE_MOVES)) {
       mutations.push({ kind: "move", messageId: m.id, folder: wanted });
     }

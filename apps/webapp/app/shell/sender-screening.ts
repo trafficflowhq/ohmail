@@ -7,8 +7,8 @@
  * mail moves with `move` and the rule is written with `rule_create` (the old composed `move`s raced
  * `decide` and produced promoted rules pointing at INBOX). `scope: "domain"` widens both halves.
  * Making the rule is the DEFAULT; move-only is the opt-out. "Apply to all previous" belongs to the
- * server (`applyRetro` → the worker's resumable `ruleRetroPass`); the client still moves what the
- * user can SEE. Pure: reads the mirror, returns mutations.
+ * server (`applyRetro` → the worker's resumable `ruleRetroPass`); the client moves what the user
+ * can SEE, and only when they asked for it. Pure: reads the mirror, returns mutations.
  */
 import {
   FOLDER_OF_VIEW,
@@ -424,16 +424,20 @@ export function planScreeningChange(
   }
 
   /**
-   * The fan-out is capped, and it used to be unbounded. Every entry becomes its own `POST
-   * /messages/:id/move`, each taking the account's write lock: uncapped, a domain scope on a shared
-   * provider fired thousands of fire-and-forget requests from a browser tab, serializing the
-   * account's write path and abandoning the remainder if the tab closed. `messages` is sorted
-   * newest-first, so the slice is the mail the user is looking at. The rest is not dropped: with
-   * `applyRetro` on, the server pass owns it and is resumable; with it off, the user asked for a
-   * move and the cap is a genuine limit — the toast counts what it actually moved.
+   * THE PAST-MAIL HALF, AND THE SWITCH IS ITS GATE. "Also move the mail already in your mailbox"
+   * off used to change the sentence and the rule's flag while this fan-out dispatched up to fifty
+   * moves anyway — mail a person had filed by hand undone by the control that said not to. The
+   * answer is read HERE, in the one place every branch above passes through. Off: the rule is
+   * written and nothing already here is touched. On: the cap stays, because each entry is its own
+   * `POST /messages/:id/move` taking the account's write lock — uncapped, a domain scope on a
+   * shared provider fired thousands from a browser tab — `messages` is newest-first so the slice
+   * is the mail on screen, and the server's resumable pass owns the rest. With NO rule (`none`:
+   * the bulk path and the rule opt-out) the move IS the instruction, which is why the sheet
+   * withdraws the switch there instead of gating on it.
    */
+  const movesPastMail = applyRetro || ruleState === "none";
   const outOfPlace = subject.messages.filter((m) => m.folder !== wanted && !movedByDecide.has(m.id));
-  const toMove = outOfPlace.slice(0, RETRO_VISIBLE_MOVES);
+  const toMove = movesPastMail ? outOfPlace.slice(0, RETRO_VISIBLE_MOVES) : [];
   for (const m of toMove) mutations.push({ kind: "move", messageId: m.id, folder: wanted });
 
   // Every state that leaves a rule in force can now be asked for the backlog: `created` and
@@ -468,7 +472,7 @@ export function planScreeningChange(
  */
 export type ScreeningToastKey =
   | "toastRuled" | "toastRetargeted" | "toastAlreadyRuled" | "toastAlreadyRuledRetro"
-  | "toastRuleQueued" | "toastRuleOrganizer" | "toastRuleFailed" | "toastMoved";
+  | "toastRuledFuture" | "toastRuleQueued" | "toastRuleFailed" | "toastMoved" | "toastRuleOrganizer";
 
 export function screeningToast(
   plan: ScreeningPlan,
@@ -498,6 +502,12 @@ export function screeningToast(
       // them files there too" would be a claim about a rule that does not exist yet.
       if (ruleStatus === "awaiting_organizer") return "toastRuleOrganizer";
       if (ruleStatus === "queued") return "toastRuleQueued";
+      // THE BACKLOG DECLINED IS ITS OWN SENTENCE. With the past-mail switch off nothing moves, so
+      // every count here is zero — and the `=0` arm of the sentences below reads "their mail is
+      // already there", which is false of a sender whose mail the person asked us to leave alone.
+      // One sentence for both `created` and `retargeted`: what differs is the row that was
+      // written, what the reader needs is the outcome, and the outcome is the same.
+      if (!plan.retro) return "toastRuledFuture";
       return plan.ruleState === "retargeted" ? "toastRetargeted" : "toastRuled";
   }
 }
