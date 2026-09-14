@@ -855,7 +855,7 @@ export const DE: Deck = {
    *  standing over the sheet's first row and over the half-hour list it opens. */
   resurfaceTime: "Uhrzeit",
   resurfaceSkipNote: (horizon: string, booked: string, asked: string) =>
-    `${horizon} landet um ${booked} — die Uhren überspringen ${asked} in dieser Nacht.`,
+    `${horizon}: ${booked} — die Uhren überspringen ${asked} in dieser Nacht.`,
 
   /*
    * "verschieben nach" sits directly above the destination rows (`→ Belege`, `→ Ohbox`), which

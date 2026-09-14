@@ -486,7 +486,7 @@
     "resurfacePick": "Datum wählen",
     "resurfaceTime": "Uhrzeit",
     "resurfaceHorizonAt": "{horizon}, {time}",
-    "resurfaceSkipNote": "{horizon} landet um {booked} — die Uhren überspringen {asked} in dieser Nacht.",
+    "resurfaceSkipNote": "{horizon}: {booked} — die Uhren überspringen {asked} in dieser Nacht.",
     "datePrevMonth": "Vormonat",
     "dateNextMonth": "Nächster Monat",
     "actionMove": "Verschieben",
