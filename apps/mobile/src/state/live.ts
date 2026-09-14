@@ -2173,8 +2173,8 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
    * term-free rule of the same kind already at the destination writes no new rule and is re-armed
    * for the backlog when that answer is yes; (3) rules pointing elsewhere — every one — are
    * retargeted; (4) otherwise one is written. The moves are the optimistic half, capped at
-   * `RETRO_VISIBLE_MOVES` (50); the rule is awaited and reported, the moves roll their own rows
-   * back. Raw mirror reads.
+   * `RETRO_VISIBLE_MOVES` (50) and GATED ON `applyRetro` — see {@link movePastMail}; the rule is
+   * awaited and reported, the moves roll their own rows back. Raw mirror reads.
    */
   const screenSender = async (
     messageId: string, dest: Destination, scope: Scope, applyRetro = true,
@@ -2194,6 +2194,23 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
         : x.from.address.trim().toLowerCase() === match;
     const subject = raw.list<EngineMessage>("message").filter(ofSubject);
 
+    /**
+     * THE PAST-MAIL HALF, AND THE SWITCH IS ITS GATE. "Also move the mail already in your
+     * mailbox" off used to change only the sentence while BOTH branches below still dispatched
+     * up to 50 moves — a person's own filing undone by a control that said not to. The answer is
+     * read HERE, in the one place both branches move through, so the gate cannot be half-applied.
+     * Off: the rule is written and nothing already here is touched. On: the bound stays (the
+     * server's resumable pass owns the rest) and the moves are unawaited, each rolling its own
+     * row back.
+     */
+    const movePastMail = (already: (x: EngineMessage) => boolean): void => {
+      if (!applyRetro) return;
+      subject
+        .filter(already)
+        .slice(0, 50)
+        .forEach((x) => void engine.mutate({ kind: "move", messageId: x.id, folder: wanted }));
+    };
+
     const waiting = subject
       .filter((x) => physicalFolderOf(x) === FOLDER_OF_VIEW.screener)
       .sort((a, b) => (b.date ?? "").localeCompare(a.date ?? ""))[0];
@@ -2210,13 +2227,10 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
         }),
       );
       // The decide relocates the HELD rows and promotes the rule — it does not touch the
-      // subject's mail that already left the gate. Those rows move beside it (the webapp's
-      // `planScreeningChange` shape: moves cover what the decide does not), capped and
-      // unawaited like every optimistic move.
-      subject
-        .filter((x) => physicalFolderOf(x) !== FOLDER_OF_VIEW.screener && x.folder !== wanted)
-        .slice(0, 50)
-        .forEach((x) => void engine.mutate({ kind: "move", messageId: x.id, folder: wanted }));
+      // subject's mail that already left the gate. Those rows are the past-mail half (the
+      // webapp's `planScreeningChange` shape: moves cover what the decide does not), so they
+      // move only when the person asked for it.
+      movePastMail((x) => physicalFolderOf(x) !== FOLDER_OF_VIEW.screener && x.folder !== wanted);
     } else {
       const standing = rulesList(raw).filter(
         (r) =>
@@ -2244,10 +2258,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
           : [...retargets, ...rearms];
       ruled = Promise.all(writes.map((w) => watched(engine.mutate(w)))).then((rs) => rs.every(Boolean));
       // The optimistic half: what the reader can see moves now; the server's pass does the rest.
-      subject
-        .filter((x) => x.folder !== wanted)
-        .slice(0, 50)
-        .forEach((x) => void engine.mutate({ kind: "move", messageId: x.id, folder: wanted }));
+      movePastMail((x) => x.folder !== wanted);
     }
     toast(refuse("liveDecided", destDone(dest), target));
     const ok = await ruled;

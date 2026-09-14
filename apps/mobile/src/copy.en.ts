@@ -1669,15 +1669,16 @@ const TABLE = {
 
   /**
    * The two sentences the screening sheet can truthfully say, one per answer to the past-mail
-   * switch. The old single sentence promised that "what is already here moves", which the pass
-   * does not do: it re-evaluates each message through the rules and skips anything the person has
-   * already replied to, filed by hand or set aside — so the verb is "applies the rule to", and the
-   * mail it reaches is the mail ohmail itself filed, never a folder of the person's own.
+   * switch — and the switch now gates the dispatch, so the OFF one is a statement about the code
+   * rather than about the label above it. The verb in the ON one is "applies the rule to": the
+   * server's pass re-evaluates each message through the rules and skips anything replied to,
+   * filed by hand or set aside, and reaches only the mail ohmail itself filed. The bound is named
+   * because the phone moves those first 50 ITSELF, without that narrowing.
    */
   screeningNote: (target: string) =>
     `Becomes a rule — future mail from ${target} files there automatically. Mail already here stays where it is.`,
   screeningNoteRetro: (target: string) =>
-    `Becomes a rule — future mail from ${target} files there automatically, and ohmail applies the rule to the mail it has already filed for you. Messages you have replied to, filed yourself or set aside are left alone.`,
+    `Becomes a rule — future mail from ${target} files there automatically. Up to 50 messages move now; for the rest, ohmail applies the rule to the mail it has already filed for you, leaving anything you replied to, filed yourself or set aside alone.`,
   screeningRetroToggle: "Also move the mail already in your mailbox",
 };
 
