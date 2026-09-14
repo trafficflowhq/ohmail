@@ -34,7 +34,7 @@ export default function RootLayout() {
   return (
     <SafeAreaProvider>
       <LocaleProvider kv={kv}>
-      <PrefsProvider>
+      <PrefsProvider kv={kv}>
         {/* The connection layer sits at the root so a live session survives every screen.
             The world layer above the screens renders its mirror; with nothing connected
             the tabs gate hands the screen to the connect flow instead. */}

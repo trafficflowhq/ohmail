@@ -1030,11 +1030,12 @@ const TABLE = {
 
   settings: "Settings",
   theme: "Appearance",
-  themeNote: "Follows the system unless set.",
+  themeNote: "Auto follows the system. Kept on this phone.",
   /* The three segments of the appearance control. They were literals in `app/settings.tsx` — the
      only words on that screen that were not already deck strings — and a control whose options are
-     English on a German phone is the most visible untranslated thing an app can have. */
-  themeSystem: "System",
+     English on a German phone is the most visible untranslated thing an app can have. "Auto" is
+     the same word every other ohmail surface uses for this state. */
+  themeAuto: "Auto",
   themeLight: "Light",
   themeDark: "Dark",
 

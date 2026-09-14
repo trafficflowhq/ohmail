@@ -675,8 +675,8 @@ export const DE: Deck = {
 
   settings: "Einstellungen",
   theme: "Erscheinungsbild",
-  themeNote: "Folgt dem System, solange du nichts wählst.",
-  themeSystem: "System",
+  themeNote: "Automatisch folgt dem System. Bleibt auf diesem Telefon.",
+  themeAuto: "Automatisch",
   themeLight: "Hell",
   themeDark: "Dunkel",
 

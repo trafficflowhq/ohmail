@@ -172,7 +172,7 @@ function SettingsBody() {
               value={themePref}
               onChange={setTheme}
               segments={[
-                { value: "system", label: Copy.themeSystem },
+                { value: "system", label: Copy.themeAuto },
                 { value: "light", label: Copy.themeLight },
                 { value: "dark", label: Copy.themeDark },
               ]}

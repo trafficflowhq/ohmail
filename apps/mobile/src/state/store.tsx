@@ -1,16 +1,19 @@
 /**
  * App-local preferences — the one piece of client state that is not the mirror: the light/dark
- * preference and the face pin (paper / ohmarchy, "only this device"). Both are held in memory: a
- * relaunch returns the scheme to "system" and drops the pin, after which the account's face
- * governs again (it arrives on every boot's `GET /consent`). Persisting either is a later,
- * deliberate change — and it must be both, since persisting one while the other resets is an
- * incoherence somebody would report. A phone also has no pre-paint stamp to protect (React
- * Native has no paint before JS), so a store here would buy nothing but a second copy of an
- * answer the server already gives.
+ * preference and the face pin (paper / ohmarchy, "only this device"). Both are DEVICE-LOCAL and
+ * both are kept across relaunches now, in one record, because persisting one while the other
+ * reset is an incoherence somebody would report. The scheme stays device-only for the reason
+ * the face does not: a face is a taste that follows the person, a scheme belongs to the machine
+ * in front of you — its screen and its room.
+ *
+ * The ordering and the keystore live in `appearance-store.ts`; this component is the wiring.
+ * With no `kv` nothing is persisted and the choice holds for the session.
  */
-import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import type { FaceName } from "../theme/face";
 import type { ThemePref } from "./model";
+import type { SecureKV } from "./servers";
+import { appearanceStore, DEFAULT_APPEARANCE, type StoredAppearance } from "./appearance-store";
 
 export interface Prefs {
   themePref: ThemePref;
@@ -33,15 +36,25 @@ export function usePrefs(): Prefs {
   return prefs;
 }
 
-export function PrefsProvider({ children }: { children: ReactNode }) {
-  const [themePref, setTheme] = useState<ThemePref>("system");
-  const [facePin, setFacePinState] = useState<FaceName | null>(null);
+export function PrefsProvider({ kv, children }: { kv?: SecureKV; children: ReactNode }) {
+  const [state, setState] = useState<StoredAppearance>(DEFAULT_APPEARANCE);
+  /* Built once per mount, like the locale provider's sequencer, so a caller passing a fresh
+     keystore binding each render does not rebuild it. */
+  const store = useMemo(() => appearanceStore(kv, setState), []);
+
+  useEffect(() => {
+    void store.boot();
+    return () => { store.dispose(); };
+  }, [store]);
+
+  const setTheme = useCallback((pref: ThemePref) => store.setTheme(pref), [store]);
   /* Stable identity: the face scope machine in the world layer closes over this to drop the pin
      after a confirmed account write, and it is rebuilt per SESSION, not per render. */
-  const setFacePin = useCallback((face: FaceName | null) => setFacePinState(face), []);
+  const setFacePin = useCallback((face: FaceName | null) => store.setFacePin(face), [store]);
+
   const value = useMemo<Prefs>(
-    () => ({ themePref, setTheme, facePin, setFacePin }),
-    [themePref, facePin, setFacePin],
+    () => ({ themePref: state.themePref, setTheme, facePin: state.facePin, setFacePin }),
+    [state, setTheme, setFacePin],
   );
   return <PrefsContext.Provider value={value}>{children}</PrefsContext.Provider>;
 }
