@@ -572,10 +572,22 @@ export const withIdempotency: Middleware = (next, route) => async (req, deps, pa
     `${req.method}\n${url.pathname}\n${canonicalQuery(url)}\n${rawBody}`,
   ).toString("hex");
 
-  const replay = (found: StoredIdempotent): Response =>
-    found.requestHash !== requestHash
-      ? errorResponse("idempotency_replay", 409, "idempotency key reused with a different request")
-      : storedResponse(found);
+  const replay = (found: StoredIdempotent): Response => {
+    if (found.requestHash !== requestHash) {
+      return errorResponse("idempotency_replay", 409, "idempotency key reused with a different request");
+    }
+    /* THE FENCE, BEFORE A STORED RESPONSE IS SERVED.
+     *
+     * The stored response is a verbatim copy of what the mutation answered with, and for a draft
+     * that is the body and the recipients. An erasure blanks it and stamps the row, and the
+     * honest answer to a retry then is not the copy and not a fresh attempt: the thing this key
+     * describes was erased. 410, the same code every other erased door answers with. */
+    if (found.erasedAt !== null) {
+      return errorResponse("erased", 410,
+        "this request's result has been erased; it cannot be replayed");
+    }
+    return storedResponse(found);
+  };
 
   const found = await lookupIdempotent(deps.db, accountId, key, deps.now());
   if (found) return replay(found);

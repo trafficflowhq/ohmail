@@ -182,7 +182,7 @@ export {
   type MailboxMustBeLive,
 } from "./change-log.js";
 export {
-  claimIdempotencyKey, readIdempotencyKey, pruneIdempotencyKeys,
+  claimIdempotencyKey, readIdempotencyKey, pruneIdempotencyKeys, eraseIdempotentResponses,
   idempotencyExpiry, IDEMPOTENCY_TTL_MS,
   type IdempotencyClaimInput,
 } from "./idempotency.js";

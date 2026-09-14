@@ -3,8 +3,9 @@ import {
   approvals, attachments, awayReplies, awayResponderSent, drafts, flagState, folderOps,
   folderState, mailboxCredentials, mailboxFolders, mailboxProfileMirror, messageBodies,
   messageFailures, messageInstances, messageStates, messageTags, messages, organizerRequests,
-  mailboxes, outboundSendFingerprints, outboundSends, recordChanges, recordMailboxRemoved,
-  routingDecisions, threadNotes, threads, trackerEvents, unsubscribeRecords, type LedgerTx,
+  eraseIdempotentResponses, mailboxes, outboundSendFingerprints, outboundSends, recordChanges,
+  recordMailboxRemoved, routingDecisions, threadNotes, threads, trackerEvents,
+  unsubscribeRecords, type LedgerTx,
 } from "@trafficflow/db";
 import { rowsAffected as n } from "./rows-affected.js";
 
@@ -193,6 +194,14 @@ export async function sweepMailboxData(
   // row, and a re-run of the erasure finds nothing here.
   await drop("mailbox_credentials", tx.delete(mailboxCredentials)
     .where(eq(mailboxCredentials.mailboxId, mailboxId)));
+  /* AND THE RESPONSE CACHE, WHICH IS A SECOND COPY OF THE MAIL.
+   *
+   * `idempotency_keys.response_json` holds the whole DTO a mutation answered with — a draft's
+   * body and its recipients, kept for 24 hours so a retry after a lost response is idempotent.
+   * Nothing treated that as message content, so the sweep above removed the draft and the retry
+   * served it back as a 201 describing a draft that no longer existed. Replaced rather than
+   * deleted, and account-wide rather than per-mailbox: the primitive's own header argues both. */
+  deleted["idempotency_keys"] = await eraseIdempotentResponses(tx, accountId, now);
 
   /* ── 8. AND THE MAILBOX ITSELF, AS ONE RECEIPT ──
    * Section 1's per-message and per-draft receipts tell a mirror about the mail; nothing told it

@@ -1,4 +1,4 @@
-import { and, eq, lte } from "drizzle-orm";
+import { and, eq, isNull, lte } from "drizzle-orm";
 /* The mail half directly — see the note in `change-log.ts`. `idempotency_keys` is a mail table. */
 import { idempotencyKeys } from "./schema-mail.js";
 import type { Tx } from "./change-log.js";
@@ -97,13 +97,24 @@ export async function pruneIdempotencyKeys(tx: Tx, now: Date): Promise<number> {
   return gone.length;
 }
 
-/** Read a stored idempotent response for `(accountId, key)` that has NOT expired. */
+/**
+ * Read a stored idempotent response for `(accountId, key)` that has NOT expired.
+ *
+ * `erasedAt` travels with it rather than being filtered out here: an erased row is not absent —
+ * absent means "replay the mutation", and this row exists precisely to say that the mutation
+ * already happened and its answer is gone. The caller turns the stamp into a 410.
+ */
 export async function readIdempotencyKey(
   tx: Tx,
   accountId: string,
   key: string,
   now: Date,
-): Promise<{ requestHash: string; responseStatus: number; responseJson: unknown; seq: number | null } | null> {
+): Promise<
+  {
+    requestHash: string; responseStatus: number; responseJson: unknown; seq: number | null;
+    erasedAt: Date | null;
+  } | null
+> {
   const rows = await tx
     .select({
       requestHash: idempotencyKeys.requestHash,
@@ -111,6 +122,7 @@ export async function readIdempotencyKey(
       responseJson: idempotencyKeys.responseJson,
       seq: idempotencyKeys.seq,
       expiresAt: idempotencyKeys.expiresAt,
+      erasedAt: idempotencyKeys.erasedAt,
     })
     .from(idempotencyKeys)
     .where(and(eq(idempotencyKeys.accountId, accountId), eq(idempotencyKeys.key, key)))
@@ -124,5 +136,36 @@ export async function readIdempotencyKey(
     responseStatus: row.responseStatus,
     responseJson: row.responseJson,
     seq: row.seq ?? null,
+    erasedAt: row.erasedAt ?? null,
   };
+}
+
+/**
+ * BLANK THE CONTENT OF EVERY IDEMPOTENCY ROW THIS ACCOUNT HOLDS, and stamp what was done.
+ *
+ * `response_json` holds a verbatim copy of what a mutation answered with — for a draft, the body
+ * and the recipients — and nothing treated that as message content, so an erasure swept the mail
+ * and left a 24-hour copy of it behind a retry. Run inside the erasure's own transaction.
+ *
+ * WHY THE WHOLE ACCOUNT on a MAILBOX erasure: a stored response carries no mailbox, so there is
+ * no narrower question to ask. The cost of the wide answer is bounded — a retry of a surviving
+ * mailbox's lost request gets 410 instead of its response, and its mutation still does not run
+ * twice, which is the promise the key exists to keep. An already-stamped row is left alone so a
+ * retried erasure keeps the first stamp.
+ */
+export const IDEMPOTENT_ERASED_BODY = "erased";
+
+export async function eraseIdempotentResponses(
+  tx: Tx, accountId: string, now: Date,
+): Promise<number> {
+  const gone = await tx
+    .update(idempotencyKeys)
+    // A JSON STRING, not `null`. The column is `not null`, and drizzle writes a JS `null` as SQL
+    // NULL on both dialects, which the constraint refuses — measured, as a 500 on the erase route.
+    // `"erased"` is a value both stores accept and reads as what it is; `erased_at` is the record
+    // that decides, and the replay never serves this either way.
+    .set({ responseJson: IDEMPOTENT_ERASED_BODY, erasedAt: now })
+    .where(and(eq(idempotencyKeys.accountId, accountId), isNull(idempotencyKeys.erasedAt)))
+    .returning({ key: idempotencyKeys.key });
+  return gone.length;
 }

@@ -13,6 +13,12 @@ export interface StoredIdempotent {
   responseStatus: number;
   responseJson: unknown;
   seq: number | null;
+  /**
+   * When an erasure blanked this row's stored response. NULL for every ordinary row. A stamped
+   * row is NOT absent: absent means "run the mutation", and this one says the mutation already
+   * happened and its answer has been erased — `withIdempotency` turns that into a 410.
+   */
+  erasedAt: Date | null;
 }
 
 export interface RecordIdempotentInput {

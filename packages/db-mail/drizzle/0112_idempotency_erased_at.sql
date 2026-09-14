@@ -1,0 +1,23 @@
+-- WHEN AN IDEMPOTENCY ROW'S CONTENT WAS ERASED — one nullable column on `idempotency_keys`.
+--
+-- The row holds a COMPLETE COPY of the response a mutation returned: a draft's body and its
+-- recipients, verbatim, for 24 hours. A mailbox erasure deleted the draft and did not reach the
+-- copy, so a retry after the erasure replayed it as a 201 describing a draft that no longer
+-- exists. The erasure now replaces `response_json` with a marker and stamps this column, and
+-- the replay answers 410 instead of the body.
+--
+-- A STAMP RATHER THAN A DELETE, because deleting the row would break the promise the key exists
+-- for: a retry would find nothing and RE-APPLY the mutation. A stamped row still refuses the
+-- second application — it just refuses to describe the first one.
+--
+-- Additive, `IF NOT EXISTS`, no default and no backfill: every existing row holds NULL, which is
+-- "not erased", and a desktop engine replaying this journal at every launch applies it
+-- repeatedly without effect. ROLLBACK is
+-- `ALTER TABLE idempotency_keys DROP COLUMN erased_at`: replays serve stored responses again.
+--
+-- 0111 IS MAX+1 AT THIS LANE'S BASE, and the erasure fence's `mailboxes.erased_at`
+-- is the same number at the same base — the journal's idx has to be contiguous, so there is no
+-- other number either lane could take. Whichever lands second is renumbered against the journal it
+-- lands onto; they are the same theme and land together.
+
+ALTER TABLE "idempotency_keys" ADD COLUMN IF NOT EXISTS "erased_at" timestamp with time zone;

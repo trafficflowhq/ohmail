@@ -200,5 +200,11 @@ export const SQLITE_JOURNAL: readonly SqliteJournalEntry[] = [
     "statements": [
       "ALTER TABLE \"account_settings\" ADD COLUMN \"resurface_time\" text;"
     ]
+  },
+  {
+    "name": "0112_idempotency_erased_at.sql",
+    "statements": [
+      "ALTER TABLE \"idempotency_keys\" ADD COLUMN \"erased_at\" integer;"
+    ]
   }
 ] as const;
