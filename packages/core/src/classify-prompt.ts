@@ -141,6 +141,17 @@ export const SCREENING_PREFIX = [
   "",
   "Set \"spam\" true only for ohmail/Quarantine, and false for every other destination.",
   "",
+  // GENERIC and CONDITIONAL, like the bar below it — the VALUE is per-message and lives in the
+  // user turn. Told to the model because the defect was not that it reasoned badly: it was asked
+  // to spot a forged sender with every fact about the sender withheld, so it answered from the
+  // sender's own words and called a forged hosting notice a service notification. These lines are
+  // ours, not the sender's, and they are the only lines in the request that are.
+  "If the user turn carries a \"senderFacts\" field, those are facts ohmail checked about this",
+  "message — not claims from the mail. Weigh them above anything the message says about itself,",
+  "and do not re-derive them. A mail naming a company while coming from an address that is not",
+  "that company's, the same mail arriving from unrelated strangers, or a failed authentication of",
+  "the claimed author is ohmail/Quarantine.",
+  "",
   // GENERIC and CONDITIONAL — never the value, which is per-account and lives in the user turn.
   "If the user turn carries an \"ohboxBar\" field, it is this person's own written statement of who",
   "belongs in their Ohbox. Treat it as the binding criteria for this decision: a sender who meets",
@@ -242,6 +253,12 @@ export interface ClassifyUserPayload {
    * words onto another's request. Absent ⇒ the field is omitted from the serialised turn entirely.
    */
   ohboxBar?: string;
+  /**
+   * The facts ohmail checked about this sender. Present only where a signal fired, so a request
+   * about an ordinary sender serialises exactly the fields it always did — see
+   * {@link ClassifierInput.senderFacts}.
+   */
+  senderFacts?: string;
 }
 
 /**
@@ -264,6 +281,8 @@ export interface ScreeningAsk {
   snippet: string;
   /** The account's own "who belongs in my Ohbox" words. Absent ⇒ omitted from the request. */
   ohboxBar?: string;
+  /** What ohmail checked about this sender — `senderFacts(senderCheck(...))`. Absent ⇒ omitted. */
+  senderFacts?: string;
 }
 
 /**
@@ -289,6 +308,7 @@ export async function askScreeningQuestion(
     fewShot: [],
     outbound: "prescreened" as const,
     ...(ask.ohboxBar ? { ohboxBar: ask.ohboxBar } : {}),
+    ...(ask.senderFacts ? { senderFacts: ask.senderFacts } : {}),
   });
 }
 
@@ -300,6 +320,9 @@ export function classifyUserPayload(input: ClassifierInput): ClassifyUserPayload
   // A blank or whitespace-only bar carries no instruction, so it is dropped rather than serialised
   // as an empty field the model would have to reason about. `undefined` ⇒ the key is omitted.
   const bar = input.ohboxBar?.trim();
+  // Same rule as the bar: a blank block carries no fact, so the key is omitted rather than
+  // serialised as an empty field the model would have to reason about.
+  const facts = input.senderFacts?.trim();
   return {
     from: input.from.address,
     subject: input.subject,
@@ -307,6 +330,7 @@ export function classifyUserPayload(input: ClassifierInput): ClassifyUserPayload
     headersDigest: input.headersDigest,
     fewShot: input.fewShot ?? [],
     ...(bar ? { ohboxBar: bar } : {}),
+    ...(facts ? { senderFacts: facts } : {}),
   };
 }
 

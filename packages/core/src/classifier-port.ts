@@ -24,6 +24,15 @@ export interface ClassifierInput {
    */
   ohboxBar?: string;
   /**
+   * THE FACTS OHMAIL CHECKED ABOUT THE SENDER, as a labelled block — `senderFacts` in
+   * `sender-check.ts`. OPTIONAL, and it reaches the USER turn only. It carries no account words:
+   * every line is a fact about THIS message the model cannot derive from the sender-written text
+   * beside it (the sending domain against the brand the mail claims, the same subject from
+   * unrelated strangers, the authentication verdict). Absent ⇒ the request is byte-for-byte the
+   * one it always was, which is every message no signal fired on.
+   */
+  senderFacts?: string;
+  /**
    * Who screened these bytes, and therefore what the sink does if they still look sensitive.
    * Absent (the default) means `"refuse"`: the outbound screen throws on credential material —
    * the automatic path, unchanged. `"prescreened"` means the CALLER already ran `redactForModel`

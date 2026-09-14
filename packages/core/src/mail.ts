@@ -55,6 +55,14 @@ export type { OAuthTokenProvider } from "./adapters/imap-auth.js";
  * construct a client.
  */
 export * from "./classify-prompt.js";
+// WHO THE MAIL IS REALLY FROM — the deterministic sender check that runs before the model and
+// bounds what its answer may say, plus the curated brand dictionary it compares against.
+// Mail-half by the same test as `pipeline.js`: it names no model, reads no store and no clock,
+// and imports nothing but this package's own types. It belongs BESIDE the prompt because the
+// question and the facts the question is asked WITH are one contract: a deployment asking the
+// screening question without them is the state this file exists to end.
+export * from "./sender-check.js";
+export * from "./brands.js";
 export * from "./draft-prompt.js";
 // The WORKFLOW SHAPES and their validators — the step/trigger grammar plus the two validators the
 // rules engine checks a stored workflow against. `workflow-shapes.js` is a LEAF outside `ai/` on
