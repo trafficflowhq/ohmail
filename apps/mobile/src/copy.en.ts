@@ -988,6 +988,7 @@ const TABLE = {
   folderErrExists: "A folder with that name already exists.",
   folderErrGone: "That folder no longer exists on your mail server.",
   folderErrNoTrash: "This mailbox has no Trash folder, and ohmail never erases mail — delete the folder in your own mail client instead.",
+  folderErrGotMail: "This folder received new mail while it was being emptied — it was not deleted. Delete it again to empty it once more.",
   folderNameEmpty: "Give the folder a name.",
   folderNameSpaces: "The name can’t begin or end with a space.",
   folderNameChars: "The name can’t contain % or *.",

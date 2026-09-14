@@ -75,6 +75,7 @@ import {
   type FetchRawOptions, type NetTimeouts, type FetchByUidOptions, type TargetedFetch,
   type ImapAuth, type ImapOAuthAuth, type ResolvedImapAuth,
   FILING_BATCH_MAX, type MoveManyResult,
+  type FolderSweepFence, type FolderSweepResult, type FolderDeleteOutcome,
   JUNK_BY_NAME, TRASH_BY_NAME, type SpecialFolders,
 } from "./imap-types.js";
 // The SSRF gate's other half. `pinned-fetch.ts` owns it because a pin and a gate are one
@@ -1429,23 +1430,78 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
   }
 
   /**
-   * DELETE — of a verified-empty folder only, the last line of the never-expunge rule: RFC 3501's
-   * DELETE takes a folder's messages with it, so the guard refuses (`"not_empty"`) rather than
-   * trusting the caller's sweep, and FAILS CLOSED (`"unverified"`) when the server will not
-   * answer STATUS — deleting on an unknown count would be the expunge this rule forbids. A
-   * missing folder is `"already"`. The residual, stated: a message delivered between the
-   * zero-count STATUS and the DELETE is taken by the server — a one-round-trip window IMAP offers
-   * no primitive to close, the same one every mail client's folder delete carries.
+   * WHAT THE FOLDER LOOKS LIKE RIGHT NOW — one EXAMINE, and the reading comes out of that
+   * command's own reply. Three things make this the only honest way to ask:
+   *
+   *  · STATUS is what this used to ask, and RFC 3501 §6.3.10 says not to ask it about the
+   *    CURRENTLY SELECTED mailbox — which is exactly the mailbox the sweep has just left
+   *    selected. A server may answer it from the state it has already reported.
+   *  · `client.mailbox` is a MEMORY: imapflow's mailbox-lock fast path hands back an already-open
+   *    mailbox with no new SELECT, so a count read there can predate the arrival being looked for.
+   *  · EXAMINE and not SELECT, because imapflow's DELETE closes a selected mailbox first
+   *    (`commands/delete.js`) and CLOSE on a read-write mailbox EXPUNGES. Never-expunge is the
+   *    product rule.
+   *
+   * Null is "no reading" — the caller fails closed on it. The caller holds the mailbox lock.
    */
-  async deleteFolder(canonical: string): Promise<"deleted" | "already" | "not_empty" | "unverified"> {
+  private async folderFence(serverPath: string): Promise<FolderSweepFence | null> {
+    let mb: MailboxObject | undefined;
+    try {
+      mb = await this.bounded(
+        this.client.mailboxOpen(serverPath, { readOnly: true }), serverPath,
+      ) as MailboxObject | undefined;
+    } catch (err) {
+      if (err instanceof ImapBoundExceeded) throw err;
+      return null;
+    }
+    if (!mb || typeof mb.exists !== "number") return null;
+    return {
+      exists: mb.exists,
+      modseq: typeof mb.highestModseq === "bigint" ? String(mb.highestModseq) : null,
+    };
+  }
+
+  /**
+   * DELETE — of a folder verified empty SINCE THE SWEEP, the last line of the never-expunge rule:
+   * RFC 3501's DELETE takes a folder's messages with it, so a message another client files into
+   * the folder while it is being emptied would go with it, and the mailbox is the master — there
+   * is nothing to restore it from. So the emptiness is re-read in the narrowest window the
+   * protocol allows (one EXAMINE, under the lock, with the DELETE issued before the lock is
+   * released) and compared with `fence`, what {@link moveAll} left. Anything but an unchanged,
+   * empty reading refuses: `"not_empty"` (mail is in there now), `"changed"` (empty, but the
+   * modseq moved, so mail passed through since the sweep), `"unverified"` (no fence, or the
+   * server would not answer — a DELETE on a guess is the expunge this rule forbids).
+   *
+   * The residual, stated: a message delivered between the EXAMINE and the DELETE is still taken
+   * by the server. IMAP offers no primitive that closes that, so it is one round trip wide
+   * instead of a whole sweep-and-tombstone pass, and the fence catches everything before it.
+   */
+  async deleteFolder(canonical: string, fence: FolderSweepFence | null): Promise<FolderDeleteOutcome> {
     const path = this.toServerPath(canonical);
     const list = await this.listBounded();
     if (!list.some((f) => f.path === path)) return "already";
-    const st = await this.bounded(this.client.status(path, { messages: true })).catch(() => null);
-    if (!st || typeof st.messages !== "number") return "unverified";
-    if (st.messages > 0) return "not_empty";
-    await this.client.mailboxDelete(path);
-    return "deleted";
+    if (fence === null) return "unverified";
+    let lock: { release(): void };
+    try {
+      lock = await this.bounded(this.client.getMailboxLock(path, { readOnly: true }));
+    } catch (err) {
+      // A ceiling breach is not "this folder will not open" — see `moveAll` for the argument.
+      if (err instanceof ImapBoundExceeded) throw err;
+      return "unverified";
+    }
+    try {
+      const now = await this.folderFence(path);
+      if (now === null) return "unverified";
+      if (now.exists > 0) return "not_empty";
+      // Empty NOW is not enough. The sweep left it empty and unchanged, or something happened in
+      // between that this delete was never authorized for.
+      if (fence.exists !== 0) return "changed";
+      if (fence.modseq !== null && now.modseq !== null && fence.modseq !== now.modseq) return "changed";
+      await this.client.mailboxDelete(path);
+      return "deleted";
+    } finally {
+      lock.release();
+    }
   }
 
   /**
@@ -1456,8 +1512,12 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
    * imapflow's own fallback (COPY + \Deleted + EXPUNGE) covers servers without MOVE — the
    * standard move mechanics, not an expunge of mail (the copy lands first). Returns how many
    * messages the sweep found; a source that no longer exists is 0 — nothing to move.
+   *
+   * It also returns the FENCE: one EXAMINE inside the sweep's own lock, so what it reports is
+   * the folder as the sweep left it and nothing can have slipped between the last write and the
+   * reading. {@link deleteFolder} is authorized against that and nothing else.
    */
-  async moveAll(folder: string, toFolder: string): Promise<number> {
+  async moveAll(folder: string, toFolder: string): Promise<FolderSweepResult> {
     const src = this.toServerPath(folder);
     const dst = this.toServerPath(toFolder);
     let lock: { release(): void };
@@ -1470,14 +1530,15 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
       // stopped answering as an empty result, which is the silent degrade this whole file exists
       // to replace with a refusal. See `imap-bounds.ts`.
       if (err instanceof ImapBoundExceeded) throw err;
-      return 0;
+      return { moved: 0, fence: null };
     }
     try {
       const mb = this.client.mailbox as MailboxObject | false;
       const count = mb && typeof mb.exists === "number" ? mb.exists : 0;
-      if (count === 0) return 0;
-      await this.client.messageMove("1:*", dst);
-      return count;
+      // A folder the lock reports empty still gets its fence read: "empty" off the lock is a
+      // memory (the fast path), and the DELETE may only follow a reading.
+      if (count > 0) await this.client.messageMove("1:*", dst);
+      return { moved: count, fence: await this.folderFence(src) };
     } finally {
       lock.release();
     }

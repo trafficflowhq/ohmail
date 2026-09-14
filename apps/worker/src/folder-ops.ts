@@ -212,30 +212,32 @@ async function runDelete(
   const subtree = await repo.listFolderSubtree(mailboxId, op.folder);
   for (const f of subtree) {
     // Phase 1 — the server sweep. Folder-level, not per known message: the mailbox may hold
-    // mail the mirror never ingested, and every message must reach Trash before DELETE.
+    // mail the mirror never ingested, and every message must reach Trash before DELETE. The
+    // sweep hands back the FENCE: the folder as it left it, which is the only state the DELETE
+    // is authorized against.
     await assertMayWriteToMailbox(deps.writeAuthority);
-    await adapter.moveAll!(f.folder, trash);
+    const sweep = await adapter.moveAll!(f.folder, trash);
     // Phase 2 — the mirror consequences, chunked (one tx per chunk, idempotent re-entry).
     if (!(await tombstoneWithin(f.folder))) return "paused";
-    // Phase 3 — the folder itself. `not_empty` means mail landed between sweep and DELETE;
-    // one more sweep covers the race, and a folder that STILL will not empty fails the command
-    // with everything consistent: swept mail is honestly in Trash, the folder stands.
-    // `unverified` — the server would not answer STATUS — is a transient, not a verdict:
-    // deleting on an unverified count is the expunge this ceremony exists to forbid.
+    // Phase 3 — the folder itself, re-read against the fence. `unverified` — no reading at all —
+    // is a transient, not a verdict: deleting on an unverified count is the expunge this
+    // ceremony exists to forbid.
     await assertMayWriteToMailbox(deps.writeAuthority);
-    let res = await adapter.deleteFolder!(f.folder);
-    if (res === "not_empty") {
-      await assertMayWriteToMailbox(deps.writeAuthority);
-      await adapter.moveAll!(f.folder, trash);
-      if (!(await tombstoneWithin(f.folder))) return "paused";
-      await assertMayWriteToMailbox(deps.writeAuthority);
-      res = await adapter.deleteFolder!(f.folder);
-    }
+    const res = await adapter.deleteFolder!(f.folder, sweep.fence);
     if (res === "unverified") {
-      throw new Error(`folder ${f.folder}: the server did not answer STATUS — emptiness unverified, retrying`);
+      throw new Error(`folder ${f.folder}: the server did not answer the re-reading — emptiness unverified, retrying`);
     }
-    if (res === "not_empty") {
-      await deps.write((r) => r.failFolderOp(op, "refused"));
+    // MAIL ARRIVED WHILE THE FOLDER WAS BEING EMPTIED, and the command stops there. It used to
+    // sweep again by itself, which files a stranger's brand-new message into Trash on the
+    // strength of a press made before it existed — and leaves the same race open for the next
+    // one. The person is told instead; pressing Delete again is a new command, which sweeps
+    // once more and deletes if the folder is empty by then. Everything stays consistent: swept
+    // mail is honestly in Trash, the folder stands with whatever landed in it.
+    if (res === "not_empty" || res === "changed") {
+      await deps.write((r) => r.failFolderOp(op, "received_mail"));
+      deps.log?.info("folder_delete_refused", {
+        mailboxId, accountId, folderId: op.folderId, folder: f.folder, why: res,
+      });
       return "failed";
     }
     // "deleted" — or "already" (a crash re-entry, or another client got there first).

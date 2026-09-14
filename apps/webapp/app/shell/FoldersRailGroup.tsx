@@ -353,7 +353,7 @@ export function FoldersRailGroup({
     if (f.op.error !== undefined) {
       const key = ({
         bad_name: "folderErrBadName", exists: "folderErrExists", gone: "folderErrGone",
-        no_trash_folder: "folderErrNoTrash",
+        no_trash_folder: "folderErrNoTrash", received_mail: "folderErrGotMail",
       } as Record<string, string>)[f.op.error] ?? "folderErrRefused";
       return t(key);
     }

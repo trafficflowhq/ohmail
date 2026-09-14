@@ -566,6 +566,43 @@ export interface MoveManyResult {
 }
 
 /**
+ * THE STATE A FOLDER DELETE IS AUTHORIZED AGAINST — read by EXAMINE at the end of the sweep and
+ * again immediately before the DELETE. Emptiness read at one moment and acted on at another is
+ * how a message that arrived in between went into the server's DELETE with the folder; this is
+ * the fence between the two moments.
+ *
+ * `modseq` is HIGHESTMODSEQ as a decimal string, or null on a server with no CONDSTORE (GreenMail
+ * has none). Where it exists it is the stronger half: nothing can move an emptied folder's modseq
+ * without a message having arrived in it first — an APPEND, a STORE and an EXPUNGE all need one.
+ */
+export interface FolderSweepFence {
+  /** EXISTS as the server reported it. 0 is the only count a DELETE may follow. */
+  exists: number;
+  /** HIGHESTMODSEQ, decimal, or null where the server offers none. */
+  modseq: string | null;
+}
+
+/** What {@link MailboxAdapter.moveAll} answers: how much it filed, and what it left behind. */
+export interface FolderSweepResult {
+  /** Messages the sweep found and filed. A source that no longer exists is 0. */
+  moved: number;
+  /** The fence for the DELETE. Null ⇒ no reading was had, and the DELETE fails closed. */
+  fence: FolderSweepFence | null;
+}
+
+export type FolderDeleteOutcome =
+  /** The folder was empty, unchanged since the sweep, and is gone. */
+  | "deleted"
+  /** Not there — another client removed it, or a crashed run already did. */
+  | "already"
+  /** The re-reading found messages: mail arrived while the folder was being emptied. */
+  | "not_empty"
+  /** Empty, but not the folder the sweep left: the modseq moved, so mail passed through it. */
+  | "changed"
+  /** No fence, or the server would not answer — fails closed, never a DELETE on a guess. */
+  | "unverified";
+
+/**
  * How many Sent messages the connect-time kickstart reads, newest first.
  *
  * ENVELOPE ONLY — no `source: true` — so this is a metadata fetch and not the memory hazard
@@ -889,13 +926,15 @@ export interface MailboxAdapter {
    */
   renameFolder?(from: string, to: string): Promise<"renamed" | "already" | "conflict" | "gone">;
   /**
-   * IMAP DELETE of a VERIFIED-EMPTY folder only — the adapter re-verifies emptiness because
-   * RFC 3501's DELETE takes messages with it, and never-expunge is the product rule, not a
-   * convention. `"unverified"` fails closed when the server will not answer STATUS.
+   * IMAP DELETE of a folder VERIFIED EMPTY SINCE THE SWEEP — `fence` is what {@link moveAll}
+   * left behind, and the delete re-reads the folder immediately before issuing. RFC 3501's
+   * DELETE takes messages with it, and never-expunge is the product rule, not a convention, so
+   * everything but an unchanged, empty reading refuses. `"unverified"` fails closed (no fence,
+   * or a server that will not answer); `"already"` is a folder somebody else removed.
    */
-  deleteFolder?(canonical: string): Promise<"deleted" | "already" | "not_empty" | "unverified">;
+  deleteFolder?(canonical: string, fence: FolderSweepFence | null): Promise<FolderDeleteOutcome>;
   /** The folder delete's sweep: move EVERYTHING in `folder` to `toFolder` (native \Trash). */
-  moveAll?(folder: string, toFolder: string): Promise<number>;
+  moveAll?(folder: string, toFolder: string): Promise<FolderSweepResult>;
   /**
    * Write the `\Seen` flag on one message — the other half of organize-in-place; without it
    * read-state never reached the mailbox in either direction. Called only by the worker's

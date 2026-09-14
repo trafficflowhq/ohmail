@@ -219,6 +219,7 @@ export function FoldersGroup({
         exists: Copy.folderErrExists,
         gone: Copy.folderErrGone,
         no_trash_folder: Copy.folderErrNoTrash,
+        received_mail: Copy.folderErrGotMail,
       } as Record<string, string>)[f.op.error] ?? Copy.folderErrRefused;
     }
     if (f.op.kind === "create") return Copy.folderCreating;
