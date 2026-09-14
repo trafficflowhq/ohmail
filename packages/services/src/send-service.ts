@@ -1162,19 +1162,14 @@ export class SendService {
       if (stagedFault) throw stagedFault;
 
       /**
-       * THE ROW IS STILL THE ONE THIS PRESS WAS COMPOSED AGAINST — the send-what-you-see gate.
+       * THE ROW IS STILL THE ONE THIS PRESS WAS COMPOSED AGAINST. A second window's delayed
+       * autosave can commit between the final save and this request, and everything below reads
+       * the ROW — so the press delivered that window's words to its recipients and reported
+       * success. Refused, never sent with a warning: the author reviews it and presses again.
        *
-       * Two windows hold one draft: the second one's delayed autosave commits between the final
-       * save and this request, and everything below reads the ROW — its recipients, its words —
-       * so the press delivered somebody else's message to somebody else's address and reported
-       * success for it. Refused, never sent-with-a-warning: the author reviews the row and
-       * presses again, and that second press carries the revision its own save returned.
-       *
-       * ABOVE every other new-reservation precondition, because each of those is computed FROM
-       * the row: judged on a row the caller never saw they answer about somebody else's content.
-       * BELOW the insert for the reason the checks around it give — the CONFLICT branch has
-       * already returned, so an idempotent replay of a settled send is never told this instead of
-       * its stored outcome.
+       * ABOVE the other new-reservation preconditions, which are all computed FROM the row and
+       * would otherwise answer about content the caller never saw. BELOW the insert, so an
+       * idempotent replay of a settled send gets its stored outcome rather than this.
        */
       if (input.ifContentRevision && input.ifContentRevision !== draftContentRevision(d)) {
         throw new ServiceError(

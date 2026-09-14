@@ -2,18 +2,14 @@ import { createHash } from "node:crypto";
 import type { EmailAddress } from "@trafficflow/core/mail";
 
 /**
- * WHICH VERSION OF A DRAFT A CLIENT IS LOOKING AT — the token a send names to say which row it
- * was composed against (`SendInput.ifContentRevision`).
+ * WHICH VERSION OF A DRAFT A CLIENT IS LOOKING AT — the token a send names to say which row it was
+ * composed against (`SendInput.ifContentRevision`).
  *
- * Derived from the row rather than stored, and the derivation is why: `updated_at` moves when an
- * identical buffer is written back, which is what two windows autosaving one draft do all day —
- * refusing on that would be a false alarm about a message nobody changed. A digest over the
- * SENDABLE content moves only when something the author would see moves. Server-minted and opaque
- * to clients: they carry back what the row's DTO gave them, so no second implementation of this
- * canonicalization can drift into false refusals.
- *
- * `threadId` is excluded — a thread merge repoints the row without the author touching anything.
- * `rationale` and the schedule are excluded because neither is delivered.
+ * Derived, not stored: `updated_at` moves when an identical buffer is written back, which is what
+ * two windows autosaving one draft do all day, and refusing there is a false alarm about a message
+ * nobody changed. Server-minted and opaque — a client carries back what the DTO gave it, so no
+ * second implementation can drift into refusing every send. `threadId` is out (a merge repoints
+ * the row under the author); `rationale` and the schedule are out, being undelivered.
  */
 export function draftContentRevision(row: {
   mailboxId: string;
