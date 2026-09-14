@@ -4141,10 +4141,30 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
       toast(t("ohbox.moveGone"));
       return;
     }
-    /* SENDER SCOPE AND NO RETRO: the person pressed Move on one message, not on a domain, and did
-       not ask for the server to walk the backlog. The plan still files the out-of-place mail it can
-       already see — its own contract, and the number the sentence states. */
-    const plan = planScreeningChange(sender, view as ScreeningDest, "sender", true, false);
+    /* SENDER SCOPE AND NO RETRO: the press is about one message, not a domain, and nobody asked
+       the server to walk the backlog. */
+    const planned = planScreeningChange(sender, view as ScreeningDest, "sender", true, false);
+    /**
+     * AND IT MOVES THE MESSAGE IT WAS PRESSED ON, not the sender's whole visible backlog.
+     *
+     * `planScreeningChange` files every out-of-place message of the subject it can see (up to its
+     * cap) — right for the Screener's sheet, which SHOWS that count before the click, and wrong
+     * for a press on one row: dragging one newsletter onto Reads would file the two beside it with
+     * nothing having said so. The rule half is kept whole, because that IS the routing; the
+     * `screener_decide` is kept whole too, because it re-files the mail it holds itself and
+     * dropping it would leave a gate press writing nothing.
+     */
+    const kept = new Set<EngineMutation>([
+      ...planned.ruleMutations,
+      ...planned.mutations.filter((x) => x.kind === "screener_decide"),
+    ]);
+    const mutations = planned.mutations.filter((x) =>
+      kept.has(x) || (x.kind === "move" && x.messageId === m.id));
+    /* The decide's own count is the plan's to state; otherwise it is what is left here — 1 or 0. */
+    const moved = planned.mutations.some((x) => x.kind === "screener_decide")
+      ? planned.moved
+      : mutations.filter((x) => x.kind === "move").length;
+    const plan = { ...planned, mutations, moved };
     const place = PLACE_LABEL[view] ?? view;
     /* The NAME on the row, and the address only when the row carries no name. */
     const who = sender.name && sender.name.trim() ? sender.name.trim() : displayAddress(sender.address);
