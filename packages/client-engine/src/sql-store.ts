@@ -1,6 +1,6 @@
 import type { MirrorRecord } from "./apply.js";
 import { mirrorDbName } from "./idb.js";
-import { BaseMirrorStore } from "./store.js";
+import { BaseMirrorStore, keyMayCarry, wipeKeepUnion } from "./store.js";
 import type { Cursor } from "./types.js";
 
 /**
@@ -306,13 +306,16 @@ export class SqlMirrorStore extends BaseMirrorStore {
 
   /**
    * `keep` rides through the clear, in the SAME batch — see the IndexedDB twin for the argument.
+   * What rides is read off this database and unioned with what the caller holds, for the reason
+   * the twin gives: the keep set is a fact about the mirror, not a memory of one.
    */
   protected async wipe(keep: MirrorRecord[] = []): Promise<void> {
     const db = await this.open();
+    const onDisk = await this.carriedOnDisk(db);
     const statements: SqlStatement[] = [
       { sql: "DELETE FROM entities" },
       // Straight back in, before this batch commits.
-      ...keep.map((rec) => ({
+      ...wipeKeepUnion(onDisk, keep).map((rec) => ({
         sql: UPSERT_ENTITY,
         params: [`${rec.type}:${rec.id}`, JSON.stringify(rec)],
       })),
@@ -325,6 +328,25 @@ export class SqlMirrorStore extends BaseMirrorStore {
     // A successful wipe puts disk exactly where `resetForBootstrap` just put memory (empty,
     // cursor "0"), so a standing torn flag is healed — the re-bootstrap IS the recovery.
     this.torn = false;
+  }
+
+  /**
+   * {@link wipeKeepUnion}'s disk half. Read before the batch rather than inside it: the
+   * executor's unit of atomicity is the batch and a batch takes no read-back. Nothing is lost by
+   * that here — the batch is the only writer of this file, and `resetForBootstrap` and
+   * `commitLocal` share one write chain — and no window opens either way, since a kill before the
+   * batch leaves the database untouched. Keys first; see the IndexedDB twin.
+   */
+  private async carriedOnDisk(db: SqlExecutor): Promise<MirrorRecord[]> {
+    const keys = (await db.all("SELECT key FROM entities"))
+      .map((row) => String(row.key)).filter(keyMayCarry);
+    const out: MirrorRecord[] = [];
+    for (const key of keys) {
+      const rows = await db.all("SELECT record FROM entities WHERE key = ?", [key]);
+      const raw = rows[0]?.record;
+      if (typeof raw === "string") out.push(JSON.parse(raw) as MirrorRecord);
+    }
+    return out;
   }
 
   close(): void {

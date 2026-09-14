@@ -5,7 +5,7 @@ import {
   durableSet,
   type DurableWrite,
 } from "./durable.js";
-import { BaseMirrorStore, MirrorGenerationChanged } from "./store.js";
+import { BaseMirrorStore, MirrorGenerationChanged, keyMayCarry, wipeKeepUnion } from "./store.js";
 import type { Cursor } from "./types.js";
 
 /**
@@ -96,6 +96,24 @@ function txDone(tx: IDBTransaction): Promise<void> {
 async function commitWrite(tx: IDBTransaction): Promise<void> {
   if (await durableIdbCommit(tx, MIRROR_STORE) === "stored") return;
   throw tx.error ?? new Error("IndexedDB transaction aborted");
+}
+
+/**
+ * The carried rows THIS DATABASE holds — {@link wipeKeepUnion}'s disk half, read on the caller's
+ * open transaction so the answer belongs to the same serialized moment as the clear. Keys first
+ * and then only the rows whose key could carry ({@link keyMayCarry}): a `getAll` here would
+ * materialise a whole mailbox — a second copy of one that is already in memory — to rescue an
+ * outbox of a handful of rows.
+ */
+async function carriedOnDisk(entities: IDBObjectStore): Promise<MirrorRecord[]> {
+  const keys = await requestDone(entities.getAllKeys());
+  const out: MirrorRecord[] = [];
+  for (const key of keys) {
+    if (typeof key !== "string" || !keyMayCarry(key)) continue;
+    const rec = await requestDone<MirrorRecord | undefined>(entities.get(key));
+    if (rec) out.push(rec);
+  }
+  return out;
 }
 
 export interface IndexedDbMirrorStoreOptions {
@@ -749,6 +767,13 @@ export class IndexedDbMirrorStore extends BaseMirrorStore {
    * and the re-put are the same transaction, so either the wipe happened with the rows intact or
    * it did not happen at all.
    */
+
+  /**
+   * WHAT rides is read HERE, not remembered by a caller. This database is the account's, shared
+   * with every other tab, so the carried rows on it are read inside this same transaction and
+   * unioned with what the caller holds ({@link wipeKeepUnion}) — the transaction that empties the
+   * store is the only place the tabs are serialized, and therefore the only honest reader.
+   */
   protected async wipe(keep: MirrorRecord[] = []): Promise<void> {
     const db = await this.open();
     const tx = db.transaction([ENTITIES, META], "readwrite");
@@ -756,9 +781,10 @@ export class IndexedDbMirrorStore extends BaseMirrorStore {
     // Read before the clear takes it — see `bindOwner` for why the counter must not reset.
     const gen = generationOf(await requestDone(meta.get(GEN_KEY)));
     const entities = tx.objectStore(ENTITIES);
+    const onDisk = await carriedOnDisk(entities);
     entities.clear();
     // Straight back in, before this transaction commits.
-    for (const rec of keep) entities.put(rec, `${rec.type}:${rec.id}`);
+    for (const rec of wipeKeepUnion(onDisk, keep)) entities.put(rec, `${rec.type}:${rec.id}`);
     meta.clear();
     // Clearing META drops the stamp too. Re-write it in the SAME transaction: a database
     // that is empty and unowned would be silently claimable by the next account to open

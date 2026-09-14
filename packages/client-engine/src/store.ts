@@ -20,6 +20,44 @@ export class MirrorGenerationChanged extends Error {
 }
 
 /**
+ * THE ONE CLASSIFIER FOR WHAT RIDES THROUGH A WIPE, imported by every store rather than spelled
+ * twice. A 410 is a statement about the CURSOR, never about the user's queued intents: everything
+ * with a seq comes back from the server, and so do most seq-0 rows (a body is re-fetched). The
+ * outbox rows derive from nothing a re-bootstrap can return. A tombstone is not an intent —
+ * memory put that row down, and a wipe may not pick it back up.
+ */
+export function isCarried(rec: MirrorRecord): boolean {
+  return rec.seq === 0 && rec.entity !== null && isCarriedLocalType(rec.type);
+}
+
+/**
+ * Could a `type:id` key name a row {@link isCarried} admits? The read-side narrowing and nothing
+ * else: a store loads the few rows whose key carries a carried type instead of materialising a
+ * mailbox to save an outbox, and `isCarried` still decides. The prefix IS `rec.type` — that is
+ * how every put spells the key.
+ */
+export function keyMayCarry(key: string): boolean {
+  const sep = key.indexOf(":");
+  return sep > 0 && isCarriedLocalType(key.slice(0, sep));
+}
+
+/**
+ * THE KEEP SET A WIPE RE-PUTS — the carried rows already ON DISK, unioned with the caller's
+ * in-memory set. The mirror is per ACCOUNT, so a send another tab queued after this store loaded
+ * is on disk and in nobody's memory here; deriving `keep` from memory alone erased it, and the
+ * person's mail never went. The caller's set stays the authority for the keys it names, since
+ * that is the state its own reader is showing — the disk read only ADDS keys.
+ */
+export function wipeKeepUnion(
+  onDisk: readonly MirrorRecord[], keep: readonly MirrorRecord[],
+): MirrorRecord[] {
+  const union = new Map<string, MirrorRecord>();
+  for (const rec of onDisk) if (isCarried(rec)) union.set(recordKey(rec.type, rec.id), rec);
+  for (const rec of keep) union.set(recordKey(rec.type, rec.id), rec);
+  return [...union.values()];
+}
+
+/**
  * Synchronous, read-only access to the mirror — what selectors and the search
  * index consume. Both the stores and the engine's optimistic overlay implement
  * it, so every view computes with zero network AND zero await in the hot path
@@ -868,13 +906,12 @@ export abstract class BaseMirrorStore implements MirrorStore {
      * and it made the engine a second writer of a rule the store already owns for the cross-tab case
      * (`adoptWipedBaseline` partitions exactly this way). The partition happens here now, and `wipe` puts them back
      * inside its own transaction, so there is no window at all. Computed at call time from `records`, so a `wipeOwed`
-     * retry carries them too.
+     * retry carries them too — and it is memory's HALF: the wipe unions it with the carried rows it finds on its own
+     * disk ({@link wipeKeepUnion}), because a send another tab queued is in neither this memory nor this retry.
      */
-    const carried = (r: MirrorRecord): boolean =>
-      r.seq === 0 && r.entity !== null && isCarriedLocalType(r.type);
-    this.wipeKeep = [...this.records.values()].filter(carried);
+    this.wipeKeep = [...this.records.values()].filter(isCarried);
     for (const [k, v] of [...this.records]) {
-      if (!carried(v)) this.records.delete(k);
+      if (!isCarried(v)) this.records.delete(k);
     }
     this.meta.clear();
     this.cursor = "0";
