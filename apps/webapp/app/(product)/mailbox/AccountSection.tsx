@@ -51,7 +51,7 @@ import {
   type ErasureResult,
   type TwofaChallenge,
 } from "../../api-client";
-import { useManageLink } from "./SubscriptionSection";
+import { useManageOffer } from "./SubscriptionSection";
 
 type Stage = "facts" | "password" | "factor" | "erasing" | "done";
 type Factor = "webauthn" | "totp" | "recovery_code";
@@ -73,14 +73,14 @@ export function AccountSection() {
    */
   const [sessionFailed, setSessionFailed] = useState<string | null>(null);
   /**
-   * Where this account manages its subscription, or `null` for "nowhere".
+   * Whether this account has a subscription to speak of at all.
    *
-   * Read to decide whether the confirmation says anything about a subscription at all — a
-   * self-hosted or unmetered account has none, and a bullet about cancelling one would be a
-   * sentence about somebody else's deployment. The URL itself is not rendered here: this screen
-   * is the erasure ceremony, and its one control must stay the destructive one.
+   * Read to decide whether the confirmation says anything about one — a self-hosted or unmetered
+   * account has none, and a bullet about cancelling one would be a sentence about somebody else's
+   * deployment. The OFFER and not the address: this screen is the erasure ceremony, it renders no
+   * link, and a mount that minted one was minting it for a page nobody here can reach.
    */
-  const manageUrl = useManageLink(false);
+  const { manageOffered } = useManageOffer(false);
   const [stage, setStage] = useState<Stage>("facts");
   const [typed, setTyped] = useState("");
   const [password, setPassword] = useState("");
@@ -470,7 +470,7 @@ export function AccountSection() {
                 is being told is that the money stops with the account, which is true of every
                 plan. `releaseAccount` is what makes it true, and the response's own three words
                 are what the result screen reports. */}
-            {manageUrl ? <li>{t("keptSub")}</li> : null}
+            {manageOffered ? <li>{t("keptSub")}</li> : null}
           </ul>
           {/* The retention SENTENCE is true on every deployment and stays; only the pointer is
               deployment-specific. `/privacy` describes the hosted service and is not served at

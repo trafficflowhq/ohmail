@@ -22,7 +22,7 @@ import { InvitesSection, useUserInvites } from "./InvitesSection";
 import { SecuritySection } from "./SecuritySection";
 import { AccountSection } from "./AccountSection";
 import { MailboxSection } from "./MailboxSection";
-import { SubscriptionSection, useManageLink } from "./SubscriptionSection";
+import { SubscriptionSection, useManageOffer } from "./SubscriptionSection";
 import { beginOAuthReturn } from "./oauth-return";
 import { useCloudFirstRun } from "./useCloudFirstRun";
 
@@ -100,13 +100,15 @@ export function CloudShell({ demo }: { demo: boolean }) {
   const userInvites = useUserInvites();
 
   /**
-   * WHERE THIS ACCOUNT MANAGES ITS SUBSCRIPTION — `null` on every install that has nowhere.
+   * DOES THIS DEPLOYMENT OPERATE A SUBSCRIPTION PAGE — `false` on every install that has nowhere.
    *
-   * The same absence rule as `userInvites` and `devicePairing`: a node is built only when the
-   * answer is known to be a place, so a self-hosted or unmetered deployment structurally cannot
-   * grow a Subscription entry rather than growing one that opens an empty pane.
+   * The same absence rule as `userInvites` and `devicePairing`: a node is built only when there is
+   * known to be a place, so a self-hosted or unmetered deployment structurally cannot grow a
+   * Subscription entry rather than growing one that opens an empty pane. The ADDRESS is not read
+   * here and not at mount at all — the pane mints it when somebody presses; see
+   * {@link useManageOffer}.
    */
-  const manageUrl = useManageLink(demo);
+  const { manageOffered, withdrawManage } = useManageOffer(demo);
 
   /**
    * Does this server pair devices? ONE gate, the server's runtime `features.pairing` word —
@@ -223,9 +225,10 @@ export function CloudShell({ demo }: { demo: boolean }) {
            the model bill themselves. `AppShell` withholds it on the demo. */
         aiSection={<AiSection />}
         /* ONE GENERIC ROW, and only where the service supplies a page for it. This app holds no
-           plan, no balance and no payment method, so it states none of them; the row is a link
-           out. Same absence rule as `invitesSection` below — see `manageUrl`. */
-        billingSection={manageUrl ? <SubscriptionSection url={manageUrl} /> : undefined}
+           plan, no balance and no payment method, so it states none of them; the row is a door
+           out. Same absence rule as `invitesSection` below — see `manageOffered`. `withdrawManage`
+           is the press's other answer: a mint with nowhere to go takes the entry away. */
+        billingSection={manageOffered ? <SubscriptionSection onNowhere={withdrawManage} /> : undefined}
         /* SELF-HOST ONLY — see `userInvites` above. `undefined` (managed, an old server, the
            answer still pending) means no nav entry, never an empty pane. */
         invitesSection={userInvites ? <InvitesSection /> : undefined}

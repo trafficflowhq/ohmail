@@ -1,32 +1,66 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { SettingsRow, SettingsSection } from "@ohmail/ui";
 import { account, apiConfigured } from "../../api-client";
 
 /**
- * The subscription pane — a link, and nothing else. Whoever operates this service holds the plan,
- * the balance and the payment method; this app holds none of them and therefore states none of
- * them. What it can do is take the customer to the page that does, which is what the entitlements
- * port answers with. The `settings` namespace and not one of its own: whole namespaces travel into
- * the desktop binary (`SHELL_MESSAGE_NAMESPACES`), so a pane's copy lives where the rest of the
- * desktop's settings copy lives — `DesktopSubscription` reads the same two keys.
+ * The subscription pane — one control, and nothing else. Whoever operates this service holds the
+ * plan, the balance and the payment method; this app holds none of them and therefore states none
+ * of them. What it can do is take the customer to the page that does.
+ *
+ * THE ADDRESS IS MINTED BY THE PRESS. It used to be minted by the MOUNT, and the pane was offered
+ * only once one had come back — so every shell mount and every settings visit minted a link for an
+ * account that was reading its mail (one signed-in account, one link roughly every ninety seconds,
+ * nobody pressing anything). {@link useManageOffer} answers whether to offer the pane; the address
+ * is asked for here, when somebody asks to go there.
+ *
+ * `settings` keys and not a namespace of its own: whole namespaces travel into the desktop binary
+ * (`SHELL_MESSAGE_NAMESPACES`), so a pane's copy lives where the rest of the desktop's settings
+ * copy lives — `DesktopSubscription` reads the same two keys.
  */
-export function SubscriptionSection({ url }: { url: string }) {
+export function SubscriptionSection({ onNowhere }: { onNowhere: () => void }) {
   const t = useTranslations("settings");
+  const [busy, setBusy] = useState(false);
+  const [failed, setFailed] = useState(false);
+  /** The pane can be left mid-press; nothing may set state after that. */
+  const alive = useRef(true);
+  useEffect(() => () => { alive.current = false; }, []);
+
+  const press = useCallback(async () => {
+    setBusy(true);
+    setFailed(false);
+    try {
+      const link = await account.manageLink();
+      const url = link?.url;
+      // A URL is a non-empty STRING or it is nothing. `{ url: "" }`, a 200 with no `url` at all
+      // and the `null` of a 404 say the same thing — there is no page — and the answer to that is
+      // to take the pane away, never to leave a control standing that goes nowhere.
+      if (typeof url === "string" && url.length > 0) { leaveFor(url); return; }
+      onNowhere();
+    } catch {
+      // A refused mint — an unverified address, a server that did not answer. On a MOUNT that was
+      // nothing a person could act on and was swallowed; on a PRESS it is the one thing they are
+      // owed, because they asked and something has to be said.
+      if (alive.current) setFailed(true);
+    } finally {
+      if (alive.current) setBusy(false);
+    }
+  }, [onNowhere]);
+
   return (
     <SettingsSection>
+      {failed ? <p className="acct-warn" role="alert">{t("subscriptionManageFailed")}</p> : null}
       <SettingsRow
         label={t("subscription")}
         control={
-          /* `noreferrer` beside `noopener`: the address is minted for this account, and the
-             referrer would otherwise carry this app's own URL to whoever serves that page.
-             In the desktop window `shell/open-external.ts` intercepts the click and hands the
-             address to the platform's opener, so this is one anchor for both surfaces. */
-          <a className="btn" href={url} target="_blank" rel="noopener noreferrer">
+          /* A BUTTON, not the anchor this row used to be: there is no address until the press has
+             been answered, and an anchor with nowhere to point is the control this pane exists to
+             avoid. */
+          <button type="button" className="btn" disabled={busy} onClick={() => { void press(); }}>
             {t("subscriptionManage")}
-          </a>
+          </button>
         }
       />
     </SettingsSection>
@@ -34,31 +68,48 @@ export function SubscriptionSection({ url }: { url: string }) {
 }
 
 /**
- * Where this account manages its subscription, or `null` for "nowhere". `null` is the answer for
- * a self-hosted or unmetered install, an unverified address, a server too old to know the route,
- * and the moment before the first answer arrives — all four mean DO NOT OFFER THE PANE, and
- * collapsing them is deliberate: the alternative is a nav entry above an empty pane, the shape
- * `invitesSection` and `devicesSection` are written to avoid. It never sets an error: a manage link
- * nobody could fetch is not a failure a person can act on from a settings screen, and the refusal
- * they would actually meet — the lock screen — comes from the port through a different door.
+ * Leave for the address the mint answered.
+ *
+ * SAME TAB, where the old anchor opened a new one: a mint is a round trip, and `window.open`
+ * after it is what a popup blocker eats — silently, which is the outcome this pane may not have.
+ * A detached anchor and not `location.assign` so the referrer stays off: `rel="noreferrer"` is the
+ * only way to say it for a scripted navigation, and the address is minted for one account.
  */
-export function useManageLink(demo: boolean): string | null {
-  const [url, setUrl] = useState<string | null>(null);
+function leaveFor(url: string): void {
+  const a = document.createElement("a");
+  a.href = url;
+  a.rel = "noreferrer";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+}
+
+/**
+ * DOES THIS DEPLOYMENT OPERATE A SUBSCRIPTION PAGE FOR THIS ACCOUNT — the offer, and not the
+ * address. `false` for a self-hosted or unmetered install, for a demo, and for the moment before
+ * the first answer: all mean DO NOT OFFER THE PANE, and collapsing them is deliberate — the
+ * alternative is a nav entry above an empty pane, the shape `invitesSection` and `devicesSection`
+ * are written to avoid.
+ *
+ * Read from `GET /account/access`, which mints nothing: `metered: false` is a host that runs no
+ * such program, and is exactly the condition the mint route answers 404 on. `/hello` cannot be
+ * asked instead — its wire shape is frozen and says nothing about this — and the shell fetches no
+ * other answer that carries it. `withdraw` is the press's other outcome: a mint that came back
+ * with nowhere to go takes the pane with it for the rest of this session.
+ */
+export function useManageOffer(demo: boolean): { manageOffered: boolean; withdrawManage: () => void } {
+  const [offered, setOffered] = useState(false);
   useEffect(() => {
     // The landing page's mailbox reaches no server and has no account to ask about.
     if (demo || !apiConfigured()) return;
     let alive = true;
-    void account.manageLink()
-      // A URL is a non-empty STRING or it is nothing. `{ url: "" }` and a 200 with no `url` at
-      // all are both "we were not told", and neither may become a control on a settings pane.
-      .then((link) => {
-        const u = link?.url;
-        if (alive) setUrl(typeof u === "string" && u.length > 0 ? u : null);
-      })
-      // A refused ask (unverified address, dead server) is not evidence a page exists. The 404
-      // arm answers `null` above; this arm is every other failure, and it says the same thing.
+    void account.access()
+      .then((a) => { if (alive) setOffered(a.metered); })
+      // A read that failed is not evidence a page exists, and a settings pane is not where
+      // somebody acts on it.
       .catch(() => { /* nowhere to send them */ });
     return () => { alive = false; };
   }, [demo]);
-  return url;
+  const withdrawManage = useCallback(() => { setOffered(false); }, []);
+  return { manageOffered: offered, withdrawManage };
 }
