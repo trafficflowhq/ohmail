@@ -10,7 +10,8 @@ import {
   resolveOAuthProviderConfig, webRedirectUri, MICROSOFT_PROVIDER,
   type ResolvedOAuthConfig,
 } from "@trafficflow/db/cloud";
-import { defaultOrigin, ServiceError } from "@trafficflow/services/mail";
+import type { Tx } from "@trafficflow/db";
+import { defaultOrigin, ServiceError, withAccountTx } from "@trafficflow/services/mail";
 import { serviceContext } from "../context.js";
 import type { ApiDeps } from "../deps.js";
 import { makeImapProbe } from "../imap-probe.js";
@@ -303,14 +304,27 @@ export const mailboxOAuthRoutes: Route[] = [
       const enc = await deps.keyProvider.encrypt(pkce.verifier);
       const returnTo = safeReturnPath(body.returnTo, appOrigin(deps));
 
-      await createOAuthCeremony(deps.db, {
-        state,
-        accountId: ctx.accountId,
-        provider: MICROSOFT_PROVIDER,
-        codeVerifierEnc: enc.ciphertext,
-        codeVerifierKeyVersion: enc.keyVersion,
-        returnTo,
-        now: deps.now(),
+      /*
+       * THROUGH THE FENCED DOOR, for the device ceremony's reason next door: the row is
+       * account-owned and the Art. 17 sweep deletes it, while `accounts` SURVIVES erasure — so
+       * nothing structural refuses an insert that lands after the sweep, and what it would put
+       * back is sealed PKCE ceremony state, a live way into a mailbox on an erased account. The
+       * window here is narrower than the device flow's (no wait on a person reading a code) and
+       * narrower is not closed: the config resolve, the hint read and the encrypt above all sit
+       * between the session check and this write. `withAccountTx` reads `accounts.erased_at
+       * FOR SHARE` first and refuses 410. The encrypt stays outside it — no key work in a
+       * transaction, and a sealed buffer nobody writes costs nothing.
+       */
+      await withAccountTx(ctx, async (tx) => {
+        await createOAuthCeremony(tx as unknown as Tx, {
+          state,
+          accountId: ctx.accountId,
+          provider: MICROSOFT_PROVIDER,
+          codeVerifierEnc: enc.ciphertext,
+          codeVerifierKeyVersion: enc.keyVersion,
+          returnTo,
+          now: deps.now(),
+        });
       });
 
       /* OPPORTUNISTIC PRUNE, and its failure is swallowed on purpose: a ceremonies table that grew
