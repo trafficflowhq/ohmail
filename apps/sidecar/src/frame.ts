@@ -1,4 +1,5 @@
 import type { Writable } from "node:stream";
+import { TRANSPORT_FRAME_MAX_BODY_BYTES } from "@trafficflow/core/transport-frame";
 
 /**
  * The stdio frame codec. The LOCAL engine is a Node sidecar reached over the shell's stdin/stdout —
@@ -21,13 +22,15 @@ export const PREAMBLE_BYTES = 8;
 export const MAX_HEADER_BYTES = 64 * 1024;
 
 /**
- * The largest body accepted in one frame.
+ * The largest body accepted in one frame — the codec's name for
+ * {@link TRANSPORT_FRAME_MAX_BODY_BYTES}, which is where the number lives.
  *
- * Sized against what the API actually returns rather than "big enough": a `/sync` page and an
- * on-demand attachment fetch are the two large ones, and `DEFAULT_SYNC_BATCH_MAX_BYTES` in the
- * IMAP adapter is 32 MB. Match it and stop.
+ * It is not a literal here any more because the page BUILDER has to bound itself by the same
+ * value: `/sync` pages were built to a row limit that said nothing about bytes, and one inside
+ * every documented limit weighed 34 854 075 bytes against this cap. Two literals in two packages
+ * cannot be held equal by anything but a comment, and this one was.
  */
-export const MAX_BODY_BYTES = 32 * 1024 * 1024;
+export const MAX_BODY_BYTES = TRANSPORT_FRAME_MAX_BODY_BYTES;
 
 const EMPTY_BODY = new Uint8Array(0);
 

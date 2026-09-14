@@ -55,16 +55,18 @@ const MAX_BIGSERIAL = 9_223_372_036_854_775_807n;
  */
 const MAX_EMITTED = 10_000_000;
 import {
-  approvalRowToDTO, draftRowToSnapshotDTO, folderRowToDTO, materialize, materializeApprovals,
+  approvalRowToDTO, draftRowToSnapshotDTO, draftRowWithheldDTO, folderRowToDTO, materialize,
+  materializeApprovals,
   materializeDrafts, materializeMessageChildren, materializeMessages,
   materializeMessagesInOrder, materializeMessageStates, materializeRoutingDecisions,
   materializeRules, materializeSettings,
   materializeTags, materializeThreads,
-  ruleRowToDTO, tagRowToDTO,
+  ruleRowToDTO, tagRowToDTO, type MessageChildChange,
 } from "./dto/materialize.js";
 import { foldersEnabled, listUserFolders, userFoldersByIds, type UserFolderRow } from "./folders.js";
+import { DRAFT_ROW_MAX_BYTES, PageByteBudget, weighChange } from "./sync-page-byte-budget.js";
 import type {
-  ChangeOp, Folder, SnapshotResponse, SnapshotWindow, SyncChange, SyncResponse,
+  ChangeOp, DraftDTO, Folder, SnapshotResponse, SnapshotWindow, SyncChange, SyncResponse,
 } from "./dto/types.js";
 
 const DEFAULT_LIMIT = 500;
@@ -626,8 +628,22 @@ export class SyncService {
     const seq = Number(asOfSeq);
 
     const changes: SyncChange[] = [];
+    /**
+     * ONE BUDGET FOR THE WHOLE PAGE, IN THE UNIT THE TRANSPORT REFUSES ON. Rows were the only
+     * bound and the encoder counts bytes, so a page correct by every row rule could not be
+     * delivered at all — the frame is refused, the stdio host answers `sidecar_failed`, and the
+     * bootstrap never completes. Every emission below is charged, and the two PAGED phases stop
+     * on it. See `sync-page-byte-budget.ts` for where the number comes from.
+     */
+    const budget = new PageByteBudget();
+    const changeOf = (type: EntityType, id: string, entity: unknown, updatedAt: string): SyncChange =>
+      ({ type, op: "create", id, seq, updatedAt, entity });
+    /** Emit and charge. Page-1 live state and a message's own children go through here: they are
+     *  mandatory, so they are counted rather than refused. */
     const emit = (type: EntityType, id: string, entity: unknown, updatedAt: string): void => {
-      changes.push({ type, op: "create", id, seq, updatedAt, entity });
+      const change = changeOf(type, id, entity, updatedAt);
+      budget.charge(weighChange(change));
+      changes.push(change);
     };
 
     if (cursor === null && !tailOnly) {
@@ -691,7 +707,16 @@ export class SyncService {
     const draftResume = cursor === null ? undefined : cursor.draft;
     const draftsDone = cursor !== null && cursor.draft === undefined;
     let draftNext: DraftKeyset | undefined;
-    if (!draftsDone) {
+    /**
+     * Read the next drafts and emit what this page has room for, newest first.
+     *
+     * Runs LAST on a message page — after the walk, which stops a draft's width early so the
+     * first row here always has somewhere to go. Two bounds, not one: the COUNT
+     * (`SNAPSHOT_DRAFT_PAGE`) and the BYTES, and the walk stops at whichever it reaches first,
+     * reporting the keyset it actually reached rather than the one it read.
+     */
+    const emitDrafts = async (): Promise<void> => {
+      if (draftsDone) return;
       const draftKeyset = draftResume === undefined
         ? undefined
         : or(
@@ -705,18 +730,40 @@ export class SyncService {
       // AND NOT EVERY DRAFT'S BYTES: a stored body past `DRAFT_BODY_MAX_BYTES` arrives as `null`
       // with its reason and the client asks for it by id. The page bounds the COUNT; this bounds
       // what one row weighs, and the two ceilings are independent.
-      for (const d of draftRows) emit("draft", d.id, draftRowToSnapshotDTO(d), d.updatedAt.toISOString());
-      const lastDraft = draftRows[draftRows.length - 1];
+      let lastDraft: (typeof draftRows)[number] | undefined;
+      for (const d of draftRows) {
+        let change = changeOf("draft", d.id, draftRowToSnapshotDTO(d), d.updatedAt.toISOString());
+        let bytes = weighChange(change);
+        // A ROW NO PAGE COULD EVER CARRY IS WITHHELD, NOT DROPPED AND NOT LEFT TO WEDGE THE WALK.
+        // `body` has a ceiling and `html` a database CHECK; `rationale` and the recipient lists
+        // have neither, so this is reachable while every documented limit holds. The withheld row
+        // still lists, and `GET /drafts/:id` opens it.
+        if (bytes > DRAFT_ROW_MAX_BYTES) {
+          change = changeOf("draft", d.id, draftRowWithheldDTO(change.entity as DraftDTO), change.updatedAt);
+          bytes = weighChange(change);
+        }
+        // THE FIRST DRAFT OF A PAGE ALWAYS RIDES — that is what makes the walk advance, and what
+        // lets the keyset below always name a row. It cannot overshoot: the message phase held
+        // `DRAFT_ROW_MAX_BYTES` back, and anything heavier than that was withheld one line up.
+        if (lastDraft !== undefined && !budget.admits(bytes)) break;
+        budget.charge(bytes);
+        changes.push(change);
+        lastDraft = d;
+      }
       // A SHORT PAGE IS THE END. A full one may or may not be, and asking again for an empty page
-      // is the price of not paying for a count on every page of every bootstrap.
-      if (draftRows.length === SNAPSHOT_DRAFT_PAGE && lastDraft !== undefined) {
+      // is the price of not paying for a count on every page of every bootstrap. A page the BYTES
+      // ended is never the end, however few rows it carried.
+      const readThemAll = lastDraft !== undefined && lastDraft === draftRows[draftRows.length - 1];
+      if (lastDraft !== undefined && (!readThemAll || draftRows.length === SNAPSHOT_DRAFT_PAGE)) {
         draftNext = { updatedAt: lastDraft.updatedAt.getTime(), id: lastDraft.id };
       }
-    }
+    };
 
     if (cursor !== null && cursor.phase === "drafts") {
       // THE THIRD PHASE: the message walk and its tail are both finished and drafts are not. This
-      // page carries drafts and nothing else — there is no message keyset left to walk.
+      // page carries drafts and nothing else — there is no message keyset left to walk, so the
+      // whole budget is theirs.
+      await emitDrafts();
       return {
         asOfSeq: seq,
         changes,
@@ -813,7 +860,6 @@ export class SyncService {
       .limit(limit);
 
     const pageMessages = await materializeMessagesInOrder(db, accountId, rows.map((r) => r.id));
-    for (const dto of pageMessages) emit("message", dto.id, dto, dto.updatedAt);
 
     // THREADS RIDE WITH THE PAGE THAT REFERENCES THEM — not the thread table: a thread whose
     // every message is outside the window would be a header over mail the client does not have,
@@ -827,9 +873,7 @@ export class SyncService {
     const threadIds = [...new Set(
       pageMessages.map((m) => m.threadId).filter((id): id is string => id != null),
     )];
-    for (const dto of (await materializeThreads(db, accountId, threadIds)).values()) {
-      emit("thread", dto.id, dto, dto.updatedAt);
-    }
+    const threadsById = await materializeThreads(db, accountId, threadIds);
 
     // A MESSAGE'S CHILD STATE RIDES WITH THE MESSAGE, NEVER WITH THE ACCOUNT. `message_state`, a
     // pending `routing_decision` and an `approval` are keyed to a message, and reading them per
@@ -840,13 +884,58 @@ export class SyncService {
     // row. On `pageMessages` and NOT the keyset `rows`: `materializeMessagesInOrder` re-applies
     // the living-view filter, so a message tombstoned between the reads is in `rows` and absent
     // from the page — keying on `rows` would emit its children with no parent.
+    const childrenOf = new Map<string, MessageChildChange[]>();
     for (const c of await materializeMessageChildren(db, accountId, pageMessages.map((m) => m.id))) {
-      emit(c.type, c.id, c.entity, c.updatedAt);
+      const parent = c.entity.messageId;
+      if (parent === null) continue;   // unreachable: every child read above named a message
+      const bucket = childrenOf.get(parent);
+      if (bucket) bucket.push(c); else childrenOf.set(parent, [c]);
     }
 
-    const emitted = (cursor?.emitted ?? 0) + rows.length;
-    const last = rows[rows.length - 1];
-    const fullPage = rows.length === limit && last !== undefined;
+    // ── THE PAGE STOPS AT WHICHEVER BOUND IT REACHES FIRST: the row limit above, or these bytes.
+    //
+    // A message is weighed WITH its thread and its children, because a page may not be cut
+    // between them — a child with no parent is the unreachable-row defect the block above exists
+    // to prevent, and a thread is the header its messages are drawn under. The first group of a
+    // page always rides, so the keyset below always names a row and the walk always advances;
+    // only the live state of page 1 sits ahead of it, and that is bounded by what a person typed.
+    // `DRAFT_ROW_MAX_BYTES` is held back for the draft phase, which runs after this one.
+    const seenThread = new Set<string>();
+    let stoppedAt = rows.length;
+    let emittedMessages = 0;
+    for (const [at, row] of rows.entries()) {
+      const dto = pageMessages.find((m) => m.id === row.id);
+      // Tombstoned between the keyset read and the materialize: it costs nothing and the walk
+      // must still step past it, exactly as it did before there was a byte bound.
+      if (dto === undefined) continue;
+      const group: SyncChange[] = [changeOf("message", dto.id, dto, dto.updatedAt)];
+      const thread = dto.threadId !== null && !seenThread.has(dto.threadId)
+        ? threadsById.get(dto.threadId) : undefined;
+      if (thread) group.push(changeOf("thread", thread.id, thread, thread.updatedAt));
+      for (const c of childrenOf.get(dto.id) ?? []) {
+        group.push(changeOf(c.type, c.id, c.entity, c.updatedAt));
+      }
+      const bytes = group.reduce((n, c) => n + weighChange(c), 0);
+      if (emittedMessages > 0 && !budget.admits(bytes, DRAFT_ROW_MAX_BYTES)) {
+        stoppedAt = at;
+        break;
+      }
+      budget.charge(bytes);
+      changes.push(...group);
+      if (thread) seenThread.add(thread.id);
+      emittedMessages += 1;
+    }
+    // The keyset this page COMMITS to is the part of the read it actually delivered.
+    const walked = stoppedAt === rows.length ? rows : rows.slice(0, stoppedAt);
+
+    // The drafts come last so the walk above could hold room for them; `draftNext` has to be
+    // known before `keysetOf` reads it, and it is.
+    await emitDrafts();
+
+    const emitted = (cursor?.emitted ?? 0) + walked.length;
+    const last = walked[walked.length - 1];
+    // A page the BYTES ended has more at this very keyset, so it continues like a full one.
+    const fullPage = (walked.length === limit || stoppedAt < rows.length) && last !== undefined;
     const keysetOf = (phase?: "tail"): string => this.encodeSnapshotCursor({
       asOfSeq,
       date: last!.date ? last!.date.getTime() : null,

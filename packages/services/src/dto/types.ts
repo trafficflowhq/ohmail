@@ -917,12 +917,12 @@ export interface DraftDTO {
    * knows only "no body" cannot tell a page that omitted it from a server that never sends one,
    * so the pairing is held in both directions by a test beside the snapshot writer.
    *
-   * `over_ceiling` is a stored body past `DRAFT_BODY_MAX_BYTES`. `sent` is a draft that has
-   * already gone: its text is history the mirror does not need to hold, re-readable by id, and
-   * carrying it made a reload download every reply the person has ever written. `sent` takes
-   * {@link html} with it — the two are one message in two encodings.
+   * `over_ceiling` is a stored body past `DRAFT_BODY_MAX_BYTES`; `sent` is a draft already gone,
+   * its text history the mirror need not hold; `over_page_budget` is a WHOLE ROW too heavy for
+   * the transport carrying the page. Each takes {@link html} with it, `over_page_budget` also
+   * {@link rationale} — the row is still LISTED, and `GET /drafts/:id` is how it is opened.
    */
-  bodyOmitted?: "over_ceiling" | "sent";
+  bodyOmitted?: "over_ceiling" | "sent" | "over_page_budget";
   /** The rich body, sanitized. `null` for a plain-text draft — the ordinary case. */
   html: string | null;
   to: EmailAddress[];
