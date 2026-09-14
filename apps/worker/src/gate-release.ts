@@ -2,6 +2,7 @@ import { and, asc, eq, isNotNull, isNull, or, sql } from "drizzle-orm";
 import {
   accountSettings, approvals, autoReplyByUsWhere, contacts, drafts, folderState, mailboxes,
   messageStates, messages, recordChange, recordRuleDelta, rules as rulesTbl,
+  AccountErasedError, readAccountErasedAt,
   CUTLINE_ALLOW_DESTINATIONS, type LedgerTx, type Tx,
 } from "@trafficflow/db";
 import { silentLogger, type Destination, type Logger } from "@trafficflow/core";
@@ -288,13 +289,36 @@ export async function gateReleasePass(
      rather than inside the page transaction for the same reason: the sweep is resumable, and a
      page that committed its work is work done whether or not the account is finished. */
   if (page.armed < batch && page.released < batch) {
-    await db.insert(accountSettings)
-      .values({ accountId, gateReleaseDoneAt: now })
-      .onConflictDoUpdate({
-        target: accountSettings.accountId,
-        set: { gateReleaseDoneAt: now, updatedAt: now },
+    /* ── THE ERASURE FENCE, AND THE REASON THIS UPSERT NEEDS ONE ─────────────────────────────
+     * An UPSERT, so it CREATES: an account that never confirmed a seed has no settings row, and
+     * `account_settings` is a table the Art. 17 sweep empties. This pass reads its subject pages
+     * earlier and stamps here — minutes later on a large account — so an erasure landing in
+     * between leaves the stamp recreating the one row the sweep deleted. The fence reads
+     * `accounts.erased_at FOR SHARE` as the first statement of its own transaction, against
+     * `deleteAccount`'s first statement. Refusing is the RIGHT ending: an erased account has no
+     * gate left to release, so there is nothing to resume and nothing to retry.
+     */
+    try {
+      await (db as unknown as Tx).transaction(async (tx) => {
+        const erasedAt = await readAccountErasedAt(tx, dialect(tx as unknown as Tx), accountId);
+        if (erasedAt != null) throw new AccountErasedError(accountId);
+        await tx.insert(accountSettings)
+          .values({ accountId, gateReleaseDoneAt: now })
+          .onConflictDoUpdate({
+            target: accountSettings.accountId,
+            set: { gateReleaseDoneAt: now, updatedAt: now },
+          });
       });
-    out.completed = true;
+      out.completed = true;
+    } catch (err) {
+      /* AN OUTCOME, NEVER A RETRY. `completed` stays false because nothing was stamped, and that
+         is honest — but the account is gone, so no later cycle will select it either. */
+      if (!(err instanceof AccountErasedError)) throw err;
+      log.info("gate_release_refused_erased", {
+        accountId,
+        reason: "the account was erased while this sweep ran; the completion stamp is not written",
+      });
+    }
   }
 
   if (out.rulesArmed > 0 || out.contactRowsReleased > 0) {

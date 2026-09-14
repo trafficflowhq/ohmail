@@ -4569,7 +4569,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
               accounts: r.accounts, examined: r.examined, sent: r.sent,
               unverified: r.unverified, throttled: r.throttled, suppressed: r.suppressed,
               deferredAccounts: r.deferredAccounts, deferredCandidates: r.deferredCandidates,
-              capped: r.capped,
+              capped: r.capped, refusedErased: r.refusedErased,
             });
           }
         } catch (err) {

@@ -1,6 +1,7 @@
 import { and, asc, eq, exists, gt, gte, inArray, isNotNull, isNull, ne, or, sql } from "drizzle-orm";
 import {
   awayReplies, awayResponders, awaySenderState, folderState, mailboxes, messageBodies, messages,
+  AccountErasedError, readAccountErasedAt,
   type Tx,
 } from "@trafficflow/db";
 import {
@@ -162,6 +163,17 @@ export interface AwayResponderPassResult {
    * responders that were LIVE, and this one is the number that just stopped being.
    */
   expired: number;
+  /**
+   * CANDIDATES the erasure fence refused — the account was erased after the candidate was read.
+   *
+   * Its own counter and not folded into `suppressed` or `throttled`, on this interface's standing
+   * rule: those two say a rule about MAIL held, and this one says the account the mail belonged to
+   * no longer exists. It is also the only counter here with no ledger row behind it — every table
+   * this pass writes is one Art. 17 erasure empties, so recording the refusal in the database
+   * would recreate exactly what the refusal exists to prevent. A non-zero value is not an error:
+   * it is an erasure that landed while a pass was in flight, working as designed.
+   */
+  refusedErased: number;
 }
 
 /** One live responder, as the probe reads it. */
@@ -217,7 +229,7 @@ export async function runAwayResponderPass(
   const result: AwayResponderPassResult = {
     accounts: 0, examined: 0, sent: 0, unverified: 0, throttled: 0, suppressed: 0,
     deferredAccounts: 0, deferredCandidates: 0, capped: false, undeliverableMarked: 0,
-    expired: 0,
+    expired: 0, refusedErased: 0,
   };
 
   /* NONE MEANS NONE, decided before a single row is read. See the field's own note. */
@@ -750,7 +762,21 @@ async function answerOne(
   }, responder.audience, ownAddresses, responder.piles);
 
   if (suppression !== null) {
-    await recordDecision(db, responder, candidate, sender, "suppressed", suppression, textHash, now());
+    try {
+      await recordDecision(db, responder, candidate, sender, "suppressed", suppression, textHash, now());
+    } catch (err) {
+      // Same fence, same ending as the reservation's: the ledger row carries this correspondent's
+      // address and the sweep has taken the table, so the refusal is recorded in the counter and
+      // the log rather than in a row that would put the address back.
+      if (!(err instanceof AccountErasedError)) throw err;
+      result.refusedErased += 1;
+      log.warn("away_reply_refused_erased", {
+        accountId: responder.accountId, mailboxId: candidate.mailboxId, messageId: candidate.id,
+        reason: "the account was erased before this suppressed candidate's ledger row was " +
+          "written; no row is recorded and nothing was sent",
+      });
+      return;
+    }
     result.examined += 1;
     result.suppressed += 1;
     return;
@@ -771,7 +797,27 @@ async function answerOne(
   // ── 3. THE RESERVATION AND THE ATOMIC THROTTLE ───────────────────────────────────────────
   const at = now();
   const minted = mintMessageId(domainOf(candidate.ownAddress));
-  const reservation = await reserve(db, responder, candidate, sender, textHash, minted, at);
+  let reservation: Awaited<ReturnType<typeof reserve>>;
+  try {
+    reservation = await reserve(db, responder, candidate, sender, textHash, minted, at);
+  } catch (err) {
+    /* THE ACCOUNT WAS ERASED WHILE THIS CANDIDATE WAS IN FLIGHT. The fence rolled the reservation
+       back, so no ledger row and no sender-state row carrying this correspondent's address
+       survives — which is the whole point: the sweep had already taken both, and a reservation
+       committing behind it would have put them back. Nothing is recorded in the DATABASE here,
+       deliberately: every table this pass writes is one erasure empties, so a row explaining the
+       refusal would be the recreated row. The counter and this line are the record. */
+    if (err instanceof AccountErasedError) {
+      result.refusedErased += 1;
+      log.warn("away_reply_refused_erased", {
+        accountId: responder.accountId, mailboxId: candidate.mailboxId, messageId: candidate.id,
+        reason: "the account was erased after this candidate was read; no reply is sent and no " +
+          "row is written — the reservation rolled back with the fence",
+      });
+      return;
+    }
+    throw err;
+  }
 
   if (reservation === "owned_elsewhere") {
     // Another runner holds this message's only reservation. It writes the ledger row and sends (or
@@ -781,6 +827,24 @@ async function answerOne(
   result.examined += 1;
   if (reservation === "throttled") {
     result.throttled += 1;
+    return;
+  }
+
+  /* ── 3b. THE PRE-DIAL RE-READ, as late as the fence can be asked ─────────────────────────
+   * The reservation COMMITTED, and erasure can still land between that commit and this dial. A
+   * send is irreversible — there is no rolling back mail that reached somebody — so the fence is
+   * asked once more immediately before the dial rather than trusting the reservation's answer.
+   * This read is a NARROWING, not an interlock: outside a transaction the share lock releases at
+   * once, so the residual window is the dial itself, and `changes/` states it. A refusal writes
+   * nothing — the sweep has already taken the `pending` row this pass reserved.
+   */
+  if (await readAccountErasedAt(db as unknown as Tx, dialect(db), responder.accountId) != null) {
+    result.refusedErased += 1;
+    log.warn("away_reply_refused_erased", {
+      accountId: responder.accountId, mailboxId: candidate.mailboxId, messageId: candidate.id,
+      reason: "the account was erased between the reservation and the dial; nothing was sent and " +
+        "the reserved row went with the sweep",
+    });
     return;
   }
 
@@ -854,6 +918,17 @@ async function reserve(
   textHash: string, minted: string, at: Date,
 ): Promise<"reserved" | "throttled" | "owned_elsewhere"> {
   return (db as unknown as Tx).transaction(async (tx) => {
+    /* ── THE ERASURE FENCE, THE FIRST STATEMENT ──────────────────────────────────────────────
+     * Both rows this transaction writes carry the CORRESPONDENT'S ADDRESS, and both are tables
+     * the Art. 17 sweep empties (`account_settings.ts`'s delete list names them). The candidate
+     * and the responder were read before the sweep; without this, a reservation committing after
+     * it recreates exactly what the person was told had gone — and the pass then SENDS. First
+     * because `deleteAccount` stamps `accounts` as ITS first statement: whichever side wins, the
+     * other waits and sees a settled answer. `AccountErasedError` is an outcome, never a retry.
+     */
+    const erasedAt = await readAccountErasedAt(tx, dialect(db), responder.accountId);
+    if (erasedAt != null) throw new AccountErasedError(responder.accountId);
+
     const claim = await tx.insert(awayReplies).values({
       accountId: responder.accountId,
       mailboxId: candidate.mailboxId,
@@ -951,8 +1026,12 @@ async function finalize(
 }
 
 /**
- * A DECIDED-AND-NOT-SENT candidate's ledger row, written outside any transaction because there is
- * nothing to make atomic with it: no reservation is taken and no sender state moves.
+ * A DECIDED-AND-NOT-SENT candidate's ledger row. It takes a transaction now — not to make it
+ * atomic with anything, but because the ERASURE FENCE needs one: this row carries the
+ * correspondent's address into a table the Art. 17 sweep empties, and a suppressed candidate's
+ * ledger row recreates it just as surely as a reservation does. The header used to read "outside
+ * any transaction because there is nothing to make atomic with it", which was true about the
+ * throttle and silent about the sweep.
  *
  * `ON CONFLICT DO NOTHING` because a concurrent runner may have reserved this message between the
  * candidate read and here. Its decision is the one that counts — it holds the reservation.
@@ -961,18 +1040,22 @@ async function recordDecision(
   db: Db, responder: LiveResponder, candidate: Candidate, sender: string,
   outcome: "suppressed", reason: AwaySuppression, textHash: string, at: Date,
 ): Promise<void> {
-  await (db as unknown as Tx).insert(awayReplies).values({
-    accountId: responder.accountId,
-    mailboxId: candidate.mailboxId,
-    messageId: candidate.id,
-    sender,
-    outcome,
-    reason,
-    textHash,
-    mintedMessageId: null,
-    decidedAt: at,
-    sentAt: null,
-  }).onConflictDoNothing({ target: [awayReplies.accountId, awayReplies.messageId] });
+  await (db as unknown as Tx).transaction(async (tx) => {
+    const erasedAt = await readAccountErasedAt(tx, dialect(db), responder.accountId);
+    if (erasedAt != null) throw new AccountErasedError(responder.accountId);
+    await tx.insert(awayReplies).values({
+      accountId: responder.accountId,
+      mailboxId: candidate.mailboxId,
+      messageId: candidate.id,
+      sender,
+      outcome,
+      reason,
+      textHash,
+      mintedMessageId: null,
+      decidedAt: at,
+      sentAt: null,
+    }).onConflictDoNothing({ target: [awayReplies.accountId, awayReplies.messageId] });
+  });
 }
 
 /**

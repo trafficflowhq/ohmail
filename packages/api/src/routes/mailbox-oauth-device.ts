@@ -12,7 +12,8 @@ import {
   noteDeviceCeremonySlowDown, claimDeviceCeremony, pruneDeviceCeremonies,
   MICROSOFT_PROVIDER,
 } from "@trafficflow/db/cloud";
-import { ServiceError } from "@trafficflow/services/mail";
+import type { Tx } from "@trafficflow/db";
+import { ServiceError, withAccountTx } from "@trafficflow/services/mail";
 import { serviceContext } from "../context.js";
 import type { ApiDeps } from "../deps.js";
 import { makeImapProbe } from "../imap-probe.js";
@@ -176,17 +177,29 @@ export const mailboxDeviceOAuthRoutes: Route[] = [
       const state = oauthState(randomBytes);
       const sealed = await deps.keyProvider.encrypt(grant.deviceCode);
 
-      await createDeviceCeremony(deps.db, {
-        state,
-        accountId: ctx.accountId,
-        provider: MICROSOFT_PROVIDER,
-        deviceCodeEnc: sealed.ciphertext,
-        deviceCodeKeyVersion: sealed.keyVersion,
-        userCode: grant.userCode,
-        verificationUri: grant.verificationUri,
-        pollIntervalMs: grant.intervalMs,
-        grantExpiresAt: new Date(grant.expiresAtMs),
-        now: deps.now(),
+      /*
+       * THROUGH THE FENCED DOOR. The ceremony row is account-owned and the Art. 17 sweep deletes
+       * it, but `accounts` SURVIVES erasure, so nothing structural refuses this insert: the
+       * session was valid when the ceremony started, Microsoft takes as long as a person takes,
+       * and a `createDeviceCeremony` landing after the sweep recreates encrypted ceremony state —
+       * a live path back into a mailbox — for an account that has been erased. `withAccountTx`
+       * reads `accounts.erased_at FOR SHARE` as the first statement of this transaction and
+       * refuses 410. The ENCRYPT stays outside: no key work inside a transaction, and a sealed
+       * buffer nobody writes costs nothing.
+       */
+      await withAccountTx(ctx, async (tx) => {
+        await createDeviceCeremony(tx as unknown as Tx, {
+          state,
+          accountId: ctx.accountId,
+          provider: MICROSOFT_PROVIDER,
+          deviceCodeEnc: sealed.ciphertext,
+          deviceCodeKeyVersion: sealed.keyVersion,
+          userCode: grant.userCode,
+          verificationUri: grant.verificationUri,
+          pollIntervalMs: grant.intervalMs,
+          grantExpiresAt: new Date(grant.expiresAtMs),
+          now: deps.now(),
+        });
       });
 
       /* OPPORTUNISTIC PRUNE, failure swallowed: a ceremonies table that grew by one row is not a

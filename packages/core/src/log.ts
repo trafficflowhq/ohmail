@@ -353,6 +353,12 @@ export const ALLOWED_FIELDS: readonly string[] = [
   // the pass itself stamped: structurally an integer, and it can carry no mail.
   // (`expired`, the sixth, is already on this list as the request drain's own counter.)
   "undeliverableMarked",
+  // `refusedErased` is the same pass's seventh number, added WITH its call sites: candidates the
+  // erasure fence refused because the account was erased after they were read. Its own name on
+  // this pass's own rule — `throttled` and `suppressed` say a rule about MAIL held, and this says
+  // the account is gone — and it is the one away counter with NO ledger row behind it, because
+  // every table the pass writes is one the Art. 17 sweep empties. A `++` integer carrying no mail.
+  "refusedErased",
   // `mirrorDraining` is the OTHER half of the same `shutdown` line, and it is here because
   // `inFlight` alone was misleading rather than merely incomplete: the Cloud mirror's pull is not a
   // stdio request, so `inFlight` reads 0 in exactly the case where the mirror is what the quit is
