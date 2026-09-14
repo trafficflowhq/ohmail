@@ -2200,19 +2200,13 @@ export interface LeaseImapClient extends MetaFolderClient {
   ): AsyncIterableIterator<{ uid: number; seq?: number; headers?: Buffer; internalDate?: Date }>;
   append(path: string, content: string | Buffer, flags?: string[]): Promise<unknown>;
   /**
-   * COPY messages into a folder — used in exactly one place, to copy `ohmail/_meta` INTO ITSELF so
-   * the records it holds get fresh uids at the top of its space ({@link
-   * RequestOrganizerIo.compactMeta}).
+   * COPY `ohmail/_meta` INTO ITSELF, so its records get fresh uids at the top of its uid space —
+   * one caller, {@link RequestOrganizerIo.compactMeta}.
    *
-   * A copy and not a re-APPEND of the bytes: RFC 3501 has the server keep the message's flags and
-   * its INTERNALDATE, so the record that lands is the SAME record with a new number. Re-appending
-   * would restamp it — a stale claim would read as freshly live and stand a running install down,
-   * an acknowledgement's age would reset and the sweep would never remove it. Measured on
-   * GreenMail 2.1.3: `UIDPLUS` advertised, a self-copy accepted, `COPYUID` returned, INTERNALDATE
-   * and `\Seen` identical on both copies.
-   *
-   * `uidMap` is UIDPLUS's `COPYUID` — old uid to new. Optional on the reply and on the client:
-   * without it nothing may be expunged, because the read-back is the only proof a copy landed.
+   * A copy and not a re-APPEND of the bytes: the server keeps the message's flags and its
+   * INTERNALDATE, so what lands is the SAME record with a new number. A re-append restamps, and a
+   * restamped claim reads as freshly live. `uidMap` is UIDPLUS's `COPYUID`, old uid to new, and it
+   * is the only proof a copy landed — without it nothing may be expunged.
    */
   messageCopy?(
     range: number[], destination: string, options?: { uid?: boolean },
@@ -2830,20 +2824,12 @@ async function searchDescending(
   const floor = Math.max(bottom, hi + 1);
   /* ── A WALK THAT PASSED BENEATH THE FOLDER'S OWN BOTTOM COVERED THE FOLDER ────────────────
    *
-   * `ohmail/_meta` gains a uid per renewal and loses none, so at roughly 240 renewals an hour its
-   * uid space passes this walk's ten thousand in about two days while the folder itself stays
-   * small. From then on the walk can never reach uid 1, every claim read refuses, and the mailbox
-   * is organized by nobody — with no manual way out, because the thing that would shrink the
-   * folder sits behind the read that refuses.
+   * A uid per renewal and none returned: the space passes this walk's ten thousand in about two
+   * days while the folder stays small, and from then on the walk never reaches uid 1.
    *
-   * THIS IS NOT A BOUND ON THE WALK, and the difference is the whole of it. A bound taken at OUR
-   * OWN uid would start the read above a live foreign claim appended before our last renewal and
-   * elect without seeing it — a second organizer, refused. The folder's own bottom is the lowest
-   * uid it HOLDS: passing beneath it is passing beneath everything there is, so nothing is
-   * skipped. It is asked for LAZILY, here, so an ordinary walk pays nothing for it, and it errs
-   * only downward — an expunge between this read and the windows above raises the true bottom,
-   * which leaves this floor too LOW and the next walk looking at more than it needs to.
-   */
+   * NOT A BOUND ON THE WALK. A bound at OUR OWN uid starts the read above a live foreign claim
+   * appended before our last renewal. The folder's own bottom is the lowest uid it HOLDS, so
+   * passing beneath it skips nothing, and it errs only downward. */
   const bottomUid = await folderBottomUid(client, budget);
   if (bottomUid !== null && bottomUid >= floor) return { kind: "covered", uids: out };
   /* The budget ran out with folder still unexamined. That is not an answer, and reporting it as
@@ -2854,16 +2840,13 @@ async function searchDescending(
 }
 
 /**
- * THE LOWEST UID THE FOLDER HOLDS — sequence 1, whose uid is by definition the smallest, because
- * uids ascend with sequence numbers inside a generation.
+ * THE LOWEST UID THE FOLDER HOLDS — sequence 1, whose uid is the smallest because uids ascend with
+ * sequence numbers inside a generation. One row over the wire, asked of the server.
  *
- * One row over the wire, asked of the server, and `null` for every way of not knowing (no reply,
- * an empty folder, a client that cannot say). A caller reads `null` as "the bottom is unknown",
- * never as "the folder is empty": this decides whether a short walk may be called complete, and
- * the only safe unknown is the one that keeps refusing.
- *
- * Why this is a FETCH and not a SEARCH: `UID SEARCH ALL` answers with every uid in the folder,
- * which is the unbounded reply the descending windows exist to avoid. One message is one row.
+ * `null` is every way of not knowing, and a caller reads it as "the bottom is unknown" rather than
+ * "the folder is empty": it decides whether a short walk may be called complete, so the only safe
+ * unknown is the one that keeps refusing. A FETCH and not a SEARCH because `UID SEARCH ALL` answers
+ * with every uid in the folder — the unbounded reply the windows exist to avoid.
  */
 async function folderBottomUid(
   client: Pick<LeaseImapClient, "fetch">,
@@ -5058,24 +5041,14 @@ export interface RequestOrganizerIo extends MetaRecordsIo {
    */
   sweepStaleAcks?(before: Date): Promise<number>;
   /**
-   * MOVE THE FOLDER'S RECORDS BACK INSIDE THE WALK — the other half of keeping `ohmail/_meta`
-   * readable, and the one the sweep cannot do.
+   * MOVE THE FOLDER'S RECORDS BACK INSIDE THE WALK — what the sweep cannot do. The sweep makes
+   * `ohmail/_meta` SMALLER; nothing made it SHALLOWER, so the span between its lowest record and
+   * the top of its uid space passes {@link SEARCH_WALK_SPAN} and every gate refuses.
    *
-   * The sweep makes the folder SMALLER; nothing made it SHALLOWER. A uid is spent per renewal and
-   * never returned, so at roughly 240 renewals an hour the span between the folder's lowest record
-   * and the top of its uid space passes {@link SEARCH_WALK_SPAN} in about two days — and a claim
-   * read cannot see to the bottom of a folder deeper than that. Every gate then refuses, and the
-   * mailbox is organized by nobody with no manual way out.
-   *
-   * So the organizer copies its old records into the same folder, where they are given uids at the
-   * top, and expunges the originals: same bytes, same flags, same INTERNALDATE, new number. It
-   * runs UNDER THE LEASE — a live claim of this install's, read from the folder in the same lock —
-   * and refuses if the folder's generation moves between the read and the write. Nothing is ever
-   * expunged that was not read back by `COPYUID` first.
-   *
-   * Optional: a connection that cannot copy does not compact, and says so rather than deleting
-   * anything. Returns how many records were moved; 0 when the folder is already inside the walk,
-   * which is the ordinary answer and costs one probe.
+   * The organizer copies its old records into the same folder, where they get uids at the top, and
+   * expunges the originals: same bytes, flags and INTERNALDATE, new number. UNDER THE LEASE — a
+   * live claim of ours, read in the same lock — refusing on a generation that moved, never
+   * expunging what `COPYUID` did not name. 0 is the ordinary answer and costs one probe.
    */
   compactMeta?(now: Date): Promise<number>;
 }
@@ -5519,8 +5492,14 @@ export function makeRequestOrganizerIo(
               { op: "compact_meta" },
             );
           }
-          const after = reply?.uidValidity ?? generationOf(client);
-          if (epochVerdict(epochOf(generation), epochOf(after)) === "stale") {
+          /* BOTH READINGS, because they are about two different moments and the expunge is the
+             later one: `COPYUID`'s generation is the folder the copies landed in, and the live one
+             is the folder this command is about to delete from. A renumbering between them takes
+             the copies with it and leaves these uids describing whatever now sits at them. */
+          const copiedUnder = reply?.uidValidity ?? generation;
+          const atExpunge = generationOf(client);
+          if (epochVerdict(epochOf(generation), epochOf(copiedUnder)) === "stale"
+            || epochVerdict(epochOf(generation), epochOf(atExpunge)) === "stale") {
             throw new RequestUnavailableError(
               `${META_FOLDER} was renumbered while its records were being moved, so the uids this `
               + "pass holds describe a folder that no longer exists and nothing was removed",
