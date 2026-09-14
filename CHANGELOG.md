@@ -20,6 +20,12 @@ Signed installers — a real Apple Developer ID and an Authenticode certificate.
 
 ## [0.19.0] — 2026-09-14
 
+### A change you make on one computer reaches the one that organizes the mailbox
+
+Moving a message, editing a rule, setting a signature or changing your away reply on a computer that
+does not organize the mailbox was stored and shown as waiting for the machine that does — and never
+sent to it. Only Screener decisions travelled. All of them travel now, each carrying its own change.
+
 ### Search answers while you type
 
 Searching a large mailbox used to freeze the window. Senders, subjects and previews now match as
