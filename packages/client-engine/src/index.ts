@@ -442,6 +442,16 @@ export {
   type WakeSignalSource,
 } from "./engine.js";
 
+/* THE MIRROR'S BOUNDS TABLE — total over every entity type, so a type added without an answer
+   fails this package's build. Exported so a census outside the package can drive its claims. */
+export {
+  MIRROR_ENTITY_TYPES,
+  MIRROR_BOUNDS,
+  CASCADE_TYPES,
+  type KnownMirrorEntityType,
+  type MirrorBound,
+} from "./mirror-bounds.js";
+
 /* The provider presets every connect surface reads. A leaf that imports nothing — see its header
    for why the phone is the reason it lives here. */
 export {

@@ -1,6 +1,6 @@
 import { closeSync, fsyncSync, openSync, readFileSync, rmSync, writeFileSync, writeSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { and, asc, desc, eq, gt, inArray, isNull, ne, notInArray, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, isNull, ne, notInArray, sql } from "drizzle-orm";
 import { recordChange, recordChanges, accountSettings, CAPABILITY_REQUESTS,
 } from "@trafficflow/db";
 import {
@@ -23,7 +23,7 @@ import {
 import type {
   ApprovalDTO, ChangeOp, DraftDTO, EntityType, MailboxDTO, MessageBodyBatchItem, MessageDTO,
   MessageStateDTO, Page, RoutingDecisionDTO, RuleDTO, SnapshotResponse, SyncChange, SyncResponse,
-  TagDTO, ThreadDTO, WithheldMarker,
+  TagDTO, ThreadDTO,
 } from "@trafficflow/services/mail";
 import type { LocalDb } from "./db.js";
 import type { LocalWorld } from "./identity.js";
@@ -131,20 +131,6 @@ const BODIES_CATCHUP_MAX = 10 * BODIES_IDS_MAX;
  * `backfillBodies` for why this runs beside the walk rather than reordering it.
  */
 export const NEWEST_BODIES_FIRST = 5 * BODIES_IDS_MAX;
-
-/**
- * The withheld markers the HOSTED side refills on its own: a `junk_filed` husk once its message is
- * alive in watched space again (`worker/junk-restore.ts`), an `expunged` one from a later arrival's
- * bytes. Unlike `storage_cap`, which stands until the person frees space, these are transient — and
- * a body is not a `/sync` entity, so nothing announces the refill. See {@link applyPage}, which
- * re-owes them when the message's own change arrives.
- */
-const REFILLABLE_WITHHELD = ["junk_filed", "expunged"] as const;
-
-/** Every marker this mirror stores, whitelisted: a value the wire invents must not become one. */
-const MIRRORED_WITHHELD: readonly WithheldMarker[] = ["storage_cap", ...REFILLABLE_WITHHELD];
-const mirroredWithheld = (w: WithheldMarker | undefined): WithheldMarker | null =>
-  w !== undefined && MIRRORED_WITHHELD.includes(w) ? w : null;
 
 /**
  * THE ON-DISK MARKER FOR A FINISHED BODY WALK. Written into the cursor file's `bodies` field, where
@@ -332,15 +318,6 @@ export interface CloudMirrorConfig {
 export interface CloudMirror {
   /** Drain `/sync` to the horizon, then backfill bodies. Returns the number of applied entities. */
   pullOnce(): Promise<number>;
-  /**
-   * HOW MANY TIMES THIS MIRROR HAS ASKED THE STORE WHICH MESSAGES HAVE NO BODY.
-   *
-   * That question is an anti-join over every message the account holds, and it used to be asked on
-   * every poll of a mirror with nothing missing. It is a COUNTER and not a log line because the
-   * reading is a difference between two polls, which no single line can carry; a guard reads it,
-   * nothing in the product does.
-   */
-  bodyGapReads(): number;
   /**
    * A WAKE: something committed on the hosted account — pull now, without disturbing the poll.
    *
@@ -1436,26 +1413,9 @@ async function applyPage(
   changes.sort((a, b) => a.seq - b.seq);   // rule 1: ascending seq
   const nonDeletes = changes.filter((c) => c.op !== "delete");
   const deletes = changes.filter((c) => c.op === "delete");
-  /* A DELETE LOSES TO A LATER CHANGE IN ITS OWN PAGE. The apply is grouped by KIND — every create
-     in APPLY_ORDER, then every delete in reverse — because a delete's detached survivors are
-     batched per kind. That grouping decided which of two changes to ONE entity won: delete a
-     message on another device and restore it, both between two polls, and one page carries both;
-     the restore applied in the first loop, the delete in the second, and the message was gone
-     with the cursor advanced past the only copy of the event. So a delete applies only when
-     nothing LATER in the same page names its `type:id` — the grouping and APPLY_ORDER stand. */
-  const latestSeq = new Map<string, number>();
-  for (const c of changes) {
-    const key = `${c.type}:${c.id}`;
-    const seen = latestSeq.get(key);
-    if (seen === undefined || c.seq > seen) latestSeq.set(key, c.seq);
-  }
-  const supersededInPage = (ch: SyncChange): boolean =>
-    (latestSeq.get(`${ch.type}:${ch.id}`) ?? ch.seq) > ch.seq;
 
   return db.transaction(async (tx) => {
     let applied = 0;
-    /** The messages this page changed upstream — the bodies it re-owes; see the sweep below. */
-    const touchedMessages: string[] = [];
     const record = async (type: EntityType, id: string, op: ChangeOp, move?: SyncChange["move"]): Promise<void> => {
       await recordChange(tx, {
         accountId: world.accountId,
@@ -1482,7 +1442,6 @@ async function applyPage(
           // enough to record and count, but it is NOT the entity's full state — the ledger
           // must leave the replay's own copy free to heal it once the parent lands.
           if (outcome !== "partial") appliedKeys?.add(`${ch.type}:${ch.id}`);
-          if (ch.type === "message") touchedMessages.push(ch.id);
           applied++;
         }
       }
@@ -1490,7 +1449,6 @@ async function applyPage(
     for (const type of [...APPLY_ORDER].reverse()) {
       for (const ch of deletes) {
         if (ch.type !== type) continue;
-        if (supersededInPage(ch)) continue;
         const detached: DetachedSurvivor[] = [];
         if (await applyDelete(tx, ch, detached)) {
           await record(type, ch.id, "delete");
@@ -1503,20 +1461,6 @@ async function applyPage(
           applied++;
         }
       }
-    }
-    /* A MESSAGE THAT CHANGED UPSTREAM RE-OWES A REFILLABLE HUSK OF ITS BODY. The hosted side
-       refills a `junk_filed`/`expunged` husk on its own and records THAT message change; a body is
-       not a `/sync` entity, so the change is the only word this mirror gets. Without this the husk
-       row stood, {@link fetchMissingBodies} offers only ABSENT rows, and a message restored from
-       Junk on another device opened blank here for ever. Dropping the row marks the body owed, and
-       the same pull's body pass fetches it. A husk whose message did not change is never re-asked,
-       and `storage_cap` is not refillable ({@link REFILLABLE_WITHHELD}) so its row stands. Chunked
-       for the reason the detached batch is — PGlite's bind-parameter cap. */
-    for (let i = 0; i < touchedMessages.length; i += DETACHED_BATCH_MAX) {
-      await tx.delete(messageBodies).where(and(
-        inArray(messageBodies.messageId, touchedMessages.slice(i, i + DETACHED_BATCH_MAX)),
-        inArray(messageBodies.withheldReason, [...REFILLABLE_WITHHELD]),
-      ));
     }
     // A page that moved the folder inventory also settles the local flag it is read behind —
     // same transaction, so the local /sync can never see rows the flag disowns or vice versa.
@@ -2495,13 +2439,11 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
           html: item.html ?? null,
           loadedRemoteContent: !!item.loadedRemoteContent,
           // The hosted store's withheld marker, mirrored verbatim (mail 0062 — the local journal
-          // has the column too). Without it a withheld body lands here as an empty COMPLETE one
-          // and the desktop tells the lie the marker exists to end; with it, the same honest
-          // state renders on every tier. ALL THREE markers, not the cap alone: a `junk_filed`
-          // husk stored as an ordinarily empty row opened blank for ever, because the marker is
-          // the only thing that tells {@link applyPage} which row to re-owe once its message
-          // changes. The mirror's own counter is untouched — this store copies the hosted one.
-          withheldReason: mirroredWithheld(item.withheld),
+          // has the column too). Without it a cap-withheld body lands here as an empty COMPLETE
+          // one and the desktop tells the lie the marker exists to end; with it, the same honest
+          // state renders on every tier. The mirror's own counter is deliberately untouched —
+          // this store copies the hosted one, whose counter is the hosted counter.
+          withheldReason: item.withheld === "storage_cap" ? ("storage_cap" as const) : null,
         };
         await tx.insert(messageBodies).values({ messageId: item.messageId, ...row })
           .onConflictDoUpdate({ target: messageBodies.messageId, set: row });
@@ -2621,25 +2563,7 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
    */
   const NEWEST_FIRST = [sql`${messages.date} desc nulls last`, desc(messages.id)];
 
-  /**
-   * HOW MANY BODY-LESS MESSAGES THE LAST ASK FOUND TO WANT, after the `unanswered` filter. Read by
-   * one consumer, the rest latch below; `-1` is "no ask has been made".
-   */
-  let lastGapWanted = -1;
-  /** See {@link CloudMirror.bodyGapReads}. */
-  let gapReads = 0;
-  /**
-   * THE BODY GAP IS KNOWN EMPTY — a settled mirror's poll then costs a comparison instead of an
-   * anti-join over every message the account has. It latches shut only on an ask over the WHOLE
-   * gap that found nothing to want, and it is cleared by anything that could open one: a drain
-   * that applied rows, a bootstrap, the cap-marker repair. FALSE by default and on every path this
-   * file does not name, which is the direction an omission must fail in — an unasked question is
-   * never "there is nothing to ask".
-   */
-  let bodyGapKnownEmpty = false;
-
   const fetchMissingBodies = async (limit: number = BODIES_CATCHUP_MAX): Promise<number> => {
-    gapReads += 1;
     const rows = await cfg.db.select({ id: messages.id })
       .from(messages)
       .leftJoin(messageBodies, eq(messageBodies.messageId, messages.id))
@@ -2647,7 +2571,6 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
       .orderBy(...NEWEST_FIRST)
       .limit(limit);
     const wanted = rows.map((r) => r.id).filter((id) => !unanswered.has(id));
-    lastGapWanted = wanted.length;
     if (wanted.length === 0) return 0;
     return askForIds(wanted);
   };
@@ -2741,16 +2664,7 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
       if (aborted) return newest;
       return newest + await walkAllBodies();
     }
-    /* AND A COMPLETED WALK ASKS ONLY WHEN THE GAP COULD HAVE OPENED. The query below is an
-       anti-join over every message the account holds, and on a settled mirror it returned nothing
-       on every poll for ever. The set it reads grows in exactly one way — a message arriving
-       without its body — and the drain above says whether any arrived. So an ask that finds
-       nothing to want latches, an applied row unlatches, and a mirror nobody is writing to pays a
-       boolean. `-1` from a limited ask cannot latch: only the whole-gap ask below writes it. */
-    if (bodyGapKnownEmpty) return 0;
-    const filled = await fetchMissingBodies();
-    if (lastGapWanted === 0) bodyGapKnownEmpty = true;
-    return filled;
+    return fetchMissingBodies();
   };
 
   const runPull = async (): Promise<number> => {
@@ -2770,10 +2684,6 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
       snapshotPage1 = undefined;
       await refreshMailboxes();
       const { applied, sweep, cut } = await drainSync();
-      /* A ROW THAT LANDED MAY HAVE LANDED WITHOUT ITS BODY, so the gap is open again — see
-         {@link bodyGapKnownEmpty}. Here rather than inside the drain: this is the one place that
-         knows a whole pull's applied count, and the latch is about the pull. */
-      if (applied > 0) bodyGapKnownEmpty = false;
       // REACHABLE MEANS REACHABLE. The drain came back, so Cloud demonstrably answers — flip the
       // flag here, not only at the end of the whole pull. It used to flip only after the sweep,
       // the tag repair and the body walk all completed, so an install part-way through a long
@@ -2962,7 +2872,6 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
 
   return {
     pullOnce,
-    bodyGapReads: () => gapReads,
     kick,
     draining: () => inflight !== null,
     online: () => reachable,

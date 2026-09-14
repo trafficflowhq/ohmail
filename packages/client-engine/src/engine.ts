@@ -24,6 +24,7 @@ import {
 } from "./search.js";
 import { oneSourceReader, sendingMailboxId, winningStates } from "./selectors.js";
 import { flattenResponse } from "./apply.js";
+import { CASCADE_TYPES } from "./mirror-bounds.js";
 import { countNotify } from "./client-vitals.js";
 import { MemoryMirrorStore, type EntityReader, type MirrorStore } from "./store.js";
 // THE SHARED DRAIN POLICY — the staleness threshold, the dense-page limit and the two
@@ -3392,8 +3393,57 @@ export class OhmailEngine {
       victims.push({ type: "message", id: row.id });
     }
     if (victims.length === 0) return false;
+    // EVERY ROW THAT NAMED AN EVICTED MESSAGE GOES WITH IT. See {@link cascadeVictims}.
+    victims.push(...this.cascadeVictims(victims, graceAbove));
     await this.store.prune(victims); // hard delete + the `message_body` cascade
     return true;
+  }
+
+  /**
+   * THE CHILD ROWS OF THE MESSAGES THIS PASS IS EVICTING — threads, parks, settled routing
+   * decisions and settled approvals.
+   *
+   * The advertised window did not bound total retention: evicting a message left its thread, its
+   * `message_state` and its settled decisions behind, each a row that renders nothing and that
+   * nothing else will ever remove. Nothing is LOST — `MirrorStore.prune` deletes rather than
+   * tombstones, and a /sync change carries the FULL DTO, so the row that matters comes back with
+   * the message that matters.
+   *
+   * Only the RESTING rows can be reached at all: a park that is not `none`, a `pending_approval`
+   * decision and a `pending` approval each PIN their message, so a child worth keeping keeps its
+   * parent and is never in this set. An approval with no message is page-1 live state and is
+   * skipped by the same read that finds the others — the cascade follows a NAMED message, never
+   * the absence of one.
+   */
+  private cascadeVictims(
+    messageVictims: ReadonlyArray<{ type: string; id: string }>,
+    graceAbove?: number,
+  ): Array<{ type: string; id: string }> {
+    const evicted = new Set(messageVictims.map((v) => v.id));
+    // THE SURVIVORS' THREADS, read from the rows that are staying. Derived from what is kept
+    // rather than from what goes: a thread named by one survivor and forty victims stays.
+    const keptThreads = new Set<string>();
+    for (const { id, entity } of this.store.entries<EngineMessage>("message")) {
+      if (evicted.has(id)) continue;
+      if (typeof entity.threadId === "string" && entity.threadId !== "") keptThreads.add(entity.threadId);
+    }
+    const out: Array<{ type: string; id: string }> = [];
+    for (const { type, via } of CASCADE_TYPES) {
+      for (const row of this.store.entries<{ messageId?: string | null }>(type)) {
+        // THE ONE-PAGE GRACE, the same one the message loop takes and for the same reason: a
+        // child can arrive a page ahead of the message it names, and evicting it here would drop
+        // a row the next page is about to justify.
+        if (graceAbove !== undefined && row.seq > graceAbove) continue;
+        if (via === "message.threadId") {
+          if (!keptThreads.has(row.id)) out.push({ type, id: row.id });
+          continue;
+        }
+        const named = row.entity?.messageId;
+        // Not a string ⇒ this row names no message (the page-1 approval) and is not ours to take.
+        if (typeof named === "string" && evicted.has(named)) out.push({ type, id: row.id });
+      }
+    }
+    return out;
   }
 
   /**

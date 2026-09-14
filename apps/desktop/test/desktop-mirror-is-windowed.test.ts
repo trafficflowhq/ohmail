@@ -3,10 +3,12 @@ import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  DEFAULT_STORE_POLICY,
   MemoryMirrorStore,
   OhmailEngine,
   type EngineMessage,
   type MutationOutcome,
+  type StorePolicy,
   type SyncChange,
   type SyncResponse,
 } from "@ohmail/client-engine";
@@ -55,7 +57,7 @@ function msg(id: string, i: number, daysOld?: number): EngineMessage {
 /** Drain `n` messages through an engine built the way the desktop window builds its own. */
 async function mirrorAfterImport(
   n: number,
-  policy: typeof DESKTOP_WINDOW | undefined,
+  policy: StorePolicy,
   opts: { daysOld?: number } = {},
 ) {
   let seq = 0;
@@ -83,7 +85,7 @@ async function mirrorAfterImport(
     adapter,
     store: new MemoryMirrorStore(),
     now: () => NOW,
-    ...(policy ? { storePolicy: policy } : {}),
+    storePolicy: policy,
   });
   await engine.start();
   while (served < n) await engine.syncOnce();
@@ -100,12 +102,27 @@ describe("the desktop renderer's mirror is bounded by its window", () => {
 
   /**
    * THE CONTROL FOR THE BOUND ITSELF. Without it the assertion above passes for a mailbox that
-   * simply never exceeded the window, and the defect — the missing option — would read as green.
+   * simply never exceeded the window, and a mirror that evicts nothing would read as green.
+   *
+   * `{ mode: "full" }` is now the only way to ask for an unbounded mirror: an engine handed no
+   * policy at all gets a window. That ordering is the fix for the defect this file was written
+   * for — a client whose window is missing is bounded rather than unlimited, and a client that
+   * means "this mirror is the mailbox" says so.
    */
-  it("holds the whole mailbox when no policy is passed, which is what the defect was", async () => {
-    const held = await mirrorAfterImport(10_000, undefined);
+  it("holds the whole mailbox under an explicit { mode: 'full' }, and only then", async () => {
+    const held = await mirrorAfterImport(10_000, { mode: "full" });
     expect(held).toBe(10_000);
     expect(held).toBeGreaterThan(DESKTOP_WINDOW.minRows);
+  });
+
+  /**
+   * AND A CLIENT THAT PASSES NOTHING IS STILL BOUNDED. The same import with no policy at all
+   * settles at the engine's own default, which is a window rather than the mailbox.
+   */
+  it("bounds an engine that was handed no policy at all", async () => {
+    const held = await mirrorAfterImport(10_000, DEFAULT_STORE_POLICY);
+    expect(held).toBeLessThan(10_000);
+    expect(DEFAULT_STORE_POLICY.mode).toBe("windowed");
   });
 
   /**
@@ -117,6 +134,23 @@ describe("the desktop renderer's mirror is bounded by its window", () => {
     const call = src.slice(src.indexOf("export function createLocalEngine"));
     const body = call.slice(0, call.indexOf("\n}"));
     expect(body).toContain("storePolicy: DESKTOP_WINDOW");
+  });
+
+  /**
+   * THE OTHER DOOR, WHICH DID NOT. The gate for a paired device built its engine with no policy,
+   * so a phone or a second computer reading this mailbox held every row and every hydrated body
+   * for the life of the page. In memory is the reason to bound it, not the reason not to: the
+   * page is rebuilt on every load, so what it holds is what it holds until somebody closes it.
+   *
+   * The same source-shaped reading as the guard above, and for the same reason: the two drains
+   * either side of it would pass with the option never handed over, which is precisely the shape
+   * of both defects.
+   */
+  it("the paired-device gate hands the window to the engine it builds", () => {
+    const src = readFileSync(resolve(HERE, "../src/host-client/HostGate.tsx"), "utf8");
+    const at = src.indexOf("new OhmailEngine(");
+    expect(at, "the gate builds an engine").toBeGreaterThan(-1);
+    expect(src.slice(at, at + 600)).toContain("storePolicy: DESKTOP_WINDOW");
   });
 
   /**

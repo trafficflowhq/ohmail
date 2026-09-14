@@ -52,6 +52,8 @@ export type Folder =
   | "ohmail/Screened"
   | "ohmail/Quarantine";
 
+import type { KnownMirrorEntityType } from "./mirror-bounds.js";
+
 export type ChangeOp = "create" | "update" | "move" | "delete";
 
 /**
@@ -90,10 +92,19 @@ export const MAILBOX_TYPE = "mailbox";
  * Unknown strings are tolerated by design.
  */
 export type MirrorEntityType =
-  | SyncEntityType
-  | "screener_sender" | "triage_item" | "view_meta" | "message_body"
-  | "held_release_group"
+  | KnownMirrorEntityType
   | (string & {});
+
+/**
+ * THE CLOSED HALF IS THE BOUNDS TABLE'S OWN LIST, so the two cannot drift: a `/sync` type this
+ * package learns must be added to {@link MIRROR_ENTITY_TYPES} — where `MIRROR_BOUNDS` then
+ * refuses it without an answer — rather than only here, where nothing would ask what bounds it.
+ * The assertion is a type, evaluated by `tsc -b`, and it is the direction the `Record` cannot
+ * cover on its own.
+ */
+type SyncTypesAreKnown = SyncEntityType extends KnownMirrorEntityType ? true : never;
+const _syncTypesAreKnown: SyncTypesAreKnown = true;
+void _syncTypesAreKnown;
 
 // ── /sync wire shapes (contract §3.1) ──────────────────────────────────────
 
