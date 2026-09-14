@@ -83,11 +83,12 @@ smaller than it was. The record is written when the claim is confirmed now, and 
 it is named and retried at the next check. This is older than it looks: it predates the phone build
 that shipped in 0.18.0.
 
-### Choosing another computer to organize a mailbox stops the previous one at its next write
+### Choosing another computer to organize a mailbox stops the previous one sooner
 
 The previous install could keep filing for up to a minute after it lost the mailbox, because it was
-trusting a receipt rather than asking the mailbox. Every destructive write asks the mailbox first
-now, and the install that lost it stops at its very next one.
+trusting a dated receipt rather than asking. Every destructive write asks the mailbox first now. One
+window remains: a take-over that lands while the previous install is taking its own reading is
+admitted until that reading runs out.
 
 ### Taking a mailbox back works from the mailbox page
 
@@ -128,8 +129,9 @@ errored; the mail simply ended up where the older decision said.
 
 ### A page you did not ask for
 
-An empty, zero or negative page size answered with exactly one message and a cursor, which is an
-almost-empty mailbox reporting itself healthy. Those are refused by name now.
+A zero or negative page size answered with exactly one message and a cursor, which is an
+almost-empty mailbox reporting itself healthy. Those are refused by name now, and a blank one means
+you did not ask, so it gets the ordinary page.
 
 ### Removing a mailbox waits for the mail it is still reading
 
