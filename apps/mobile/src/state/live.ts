@@ -1867,13 +1867,46 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     return ok;
   };
 
+  /**
+   * MOVE — and the PLACE a pile shows is the sender's routing, not a folder the mail sits in.
+   *
+   * The web's arm carried this defect and was reported on the 0.19.0 desktop: a newsletter
+   * presented in Reads is physically in the INBOX, so "Move → Ohbox" dispatched a bare INBOX to
+   * INBOX move, which is the engine's local 404 with nothing sent — `release` above names the same
+   * shape — and the surface said "Moved" over it. This arm is the web's, in the phone's words:
+   * retarget the rules that hold this sender at the place it is presented in, move the message
+   * only when it really is filed somewhere else, and speak from the answer.
+   */
   const move = async (messageId: string, dest: MoveTarget): Promise<boolean> => {
-    const m = messageOf(messageId);
+    const presented = messageOf(messageId);
+    // The RAW mirror for the location, exactly as `release` reads it: a projection would answer
+    // with a presentation, and a move is about where the mail actually is.
+    const raw = engine.read();
+    const m = raw.get<EngineMessage>("message", messageId);
     const folder = FOLDER_OF_VIEW[dest];
-    if (!m || !folder || folder === m.folder) return false;
-    toast(refuse("toastMoved", moveTargetLabel(dest)));
-    const ok = await watched(engine.mutate({ kind: "move", messageId, folder }));
-    if (!ok) toast(refuse("liveSaveFailed"));
+    if (!m || !presented || !folder) {
+      toast(refuse("liveSaveFailed"));
+      return false;
+    }
+    const retargets: EngineMutation[] = presented.folder === folder
+      ? []
+      : holdingRules(raw, m.from.address, presented.folder as Folder).map((r) => ({
+        kind: "rule_update",
+        ruleId: r.id,
+        destination: folder,
+      }));
+    const parts = retargets.map((mu) => watched(engine.mutate(mu)));
+    if (m.folder !== folder) {
+      parts.push(watched(engine.mutate({ kind: "move", messageId, folder })));
+    }
+    // Nothing to dispatch means the mail is already in the place it was asked for, rules and all.
+    // Said rather than swallowed: a press that returns in silence is the defect this arm had.
+    if (parts.length === 0) {
+      toast(refuse("toastMoveAlready", moveTargetLabel(dest)));
+      return false;
+    }
+    const ok = (await Promise.all(parts)).every(Boolean);
+    toast(refuse(ok ? "toastMoved" : "liveSaveFailed", ...(ok ? [moveTargetLabel(dest)] : [])));
     return ok;
   };
 

@@ -1384,6 +1384,12 @@ const TABLE = {
   toastResurfaceNow: "Back at the top",
   toastResurfaceDone: "Done — filed under Earlier",
   toastMoved: (place: string) => `Moved to ${place}.`,
+  /**
+   * Said when a Move press has nothing to do — the mail is already in that place and no rule
+   * sends it anywhere else. The press used to return in silence, which is how "Move → Ohbox did
+   * nothing" was reported on the desktop.
+   */
+  toastMoveAlready: (place: string) => `Already in ${place}.`,
   /** The reply / forward composer (`reply.*`). */
   replyTo: (name: string) => `Reply to ${name}`,
   replyToAll: (names: string) => `Reply to ${names}`,

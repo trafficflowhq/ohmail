@@ -893,6 +893,7 @@ export const DE: Deck = {
    * reads for every destination. The web client's twin is filed to be fixed the same way.
    */
   toastMoved: (place: string) => `Verschoben: ${place}.`,
+  toastMoveAlready: (place: string) => `Schon in ${place}.`,
 
   replyTo: (name: string) => `Antwort an ${name}`,
   replyToAll: (names: string) => `Antwort an ${names}`,
