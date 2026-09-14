@@ -2023,6 +2023,11 @@ export const accountSettings = sqliteTable("account_settings", {
   // the declaration because `ALTER TABLE … ADD COLUMN` appends, and `sqlite-baseline.test.ts`
   // compares the store's PRAGMA order with this one.
   gateReleaseDoneAt: integer("gate_release_done_at", { mode: "timestamp_ms" }),
+  // The wall clock resurfaced mail comes back at (mail 0110) — the twin of the server column,
+  // TEXT on both stores because it holds `'HH:MM'` and not an instant. NULL is the built-in
+  // 09:00. LAST in the declaration because `ALTER TABLE … ADD COLUMN` appends, and
+  // `sqlite-baseline.test.ts` compares the store's PRAGMA order with this one.
+  resurfaceTime: text("resurface_time"),
 });
 
 /**

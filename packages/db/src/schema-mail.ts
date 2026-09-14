@@ -2171,6 +2171,17 @@ export const accountSettings = pgTable("account_settings", {
    * `ADD COLUMN` appends and `schema-twin-parity.test.ts` compares this order with the twin's.
    */
   gateReleaseDoneAt: timestamp("gate_release_done_at", { withTimezone: true }),
+  /**
+   * THE WALL CLOCK RESURFACED MAIL COMES BACK AT — `'HH:MM'`, 24-hour, in the reader's own zone
+   * (mail 0110). NOT an instant: the product's horizons have always minted a wall clock through
+   * `zonedInstant`, and this is that hour and minute made choosable. NULL, an absent row and an
+   * unparseable value all mean the built-in 09:00 — the behaviour every account had before the
+   * column, and what the chooser shows before anybody presses anything. No CHECK: the route
+   * closes the format, and unlike `locale` a wrong value here is visible in the control rather
+   * than silent. LAST in the declaration because `ADD COLUMN` appends and
+   * `schema-twin-parity.test.ts` compares this order with the twin's.
+   */
+  resurfaceTime: text("resurface_time"),
 });
 
 /**
