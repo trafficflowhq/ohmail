@@ -426,14 +426,12 @@ export function planScreeningChange(
   /**
    * THE PAST-MAIL HALF, AND THE SWITCH IS ITS GATE. "Also move the mail already in your mailbox"
    * off used to change the sentence and the rule's flag while this fan-out dispatched up to fifty
-   * moves anyway — mail a person had filed by hand undone by the control that said not to. The
-   * answer is read HERE, in the one place every branch above passes through. Off: the rule is
-   * written and nothing already here is touched. On: the cap stays, because each entry is its own
-   * `POST /messages/:id/move` taking the account's write lock — uncapped, a domain scope on a
-   * shared provider fired thousands from a browser tab — `messages` is newest-first so the slice
-   * is the mail on screen, and the server's resumable pass owns the rest. With NO rule (`none`:
-   * the bulk path and the rule opt-out) the move IS the instruction, which is why the sheet
-   * withdraws the switch there instead of gating on it.
+   * moves anyway. The answer is read HERE, the one place every branch above passes through: off
+   * writes the rule and touches nothing already here. The cap stays because each entry is its own
+   * `POST /messages/:id/move` taking the account's write lock (uncapped, a domain scope on a big
+   * provider fired thousands from a tab); `messages` is newest-first, so the slice is the mail on
+   * screen and the server's resumable pass owns the rest. With NO rule (`none`) the move IS the
+   * instruction, which is why the sheet withdraws the switch there rather than gating on it.
    */
   const movesPastMail = applyRetro || ruleState === "none";
   const outOfPlace = subject.messages.filter((m) => m.folder !== wanted && !movedByDecide.has(m.id));
