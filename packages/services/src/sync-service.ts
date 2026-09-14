@@ -901,10 +901,13 @@ export class SyncService {
     // only the live state of page 1 sits ahead of it, and that is bounded by what a person typed.
     // `DRAFT_ROW_MAX_BYTES` is held back for the draft phase, which runs after this one.
     const seenThread = new Set<string>();
+    // Keyed, not scanned: `limit` reaches 2000 and a scan per row is four million comparisons on
+    // the page this walk exists to make cheap.
+    const liveById = new Map(pageMessages.map((m) => [m.id, m]));
     let stoppedAt = rows.length;
     let emittedMessages = 0;
     for (const [at, row] of rows.entries()) {
-      const dto = pageMessages.find((m) => m.id === row.id);
+      const dto = liveById.get(row.id);
       // Tombstoned between the keyset read and the materialize: it costs nothing and the walk
       // must still step past it, exactly as it did before there was a byte bound.
       if (dto === undefined) continue;
