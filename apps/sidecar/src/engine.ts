@@ -44,10 +44,10 @@ import {
   scheduleService, tagsService,
   makeApprovalService, makeAuthConfig, makeMailboxService, makePrivacyService,
   makeScreenerService, makeUnsubscribeService, messageService, nodeHostResolver,
-  nodeOneClickPost, notifyRulesService, resolveSession,
+  nodeOneClickPost, nodeRemoteFetch, notifyRulesService, resolveSession,
   rulesService, searchService, sendService, snippetsService, syncService, threadService,
   triageService, workflowsService, ServiceError, type UnsubscribeService,
-  type AuthConfig, type HostResolver, type MailboxAllowancePolicy, type OneClickPost,
+  type AuthConfig, type MailboxAllowancePolicy, type OneClickPost,
   type PushService, type RemoteFetch,
   // The sign-out fence's durable half — one module for both doors, so the engine and the shared
   // mailbox service cannot hold two versions of the same rule (`signed-out-fence.ts`).
@@ -327,6 +327,13 @@ export interface SidecarConfig {
    * probe, this URL is the sender's choice, never the user's own server.
    */
   oneClickPost?: OneClickPost;
+  /**
+   * Test seam for the IMAGE PROXY's fetch — the third non-mailbox egress, beside
+   * {@link oneClickPost} and the model endpoint, and here for the same reason they are: a test
+   * can count what left the machine, and drive the gate's refusals without a network. Production
+   * passes nothing and gets `nodeRemoteFetch`.
+   */
+  imageFetch?: RemoteFetch;
   /**
    * TEST SEAM for the ONE thing in this process that reaches a network other than the mailbox:
    * the model endpoint its owner configured. Production passes nothing and the platform's own
@@ -663,33 +670,24 @@ export function refusingKeyProvider(): KeyProvider {
 }
 
 /**
- * The image proxy's egress, refused. The spy-pixel blocker exists so remote content is fetched
- * only when the user asks. On Cloud the fetch goes out from our server; on desktop it would go
- * out from the user's own machine, where every socket this process opens is meant to sit behind
- * an allow-list — their IMAP/SMTP server, their own AI endpoint, nothing else — so a message can
- * never make the machine it is read on talk to a host of the sender's choosing. That allow-list
- * is not built yet, so the honest default is refusal: a blocked pixel is the product working, an
- * un-allow-listed request is not.
+ * THE IMAGE PROXY'S EGRESS, ARMED — the third of this process's non-mailbox egresses, and the
+ * one whose trade the reader has to be told about.
+ *
+ * It was refused until now, for want of an allow-list of hosts this machine may talk to. The
+ * product loads pictures, so the refusal moved rather than the protection: the
+ * SSRF gate still resolves every url and refuses loopback, private, link-local and CGNAT
+ * addresses before a socket is opened, and the fetch is PINNED to the addresses that resolution
+ * returned, so a message can still never make this machine talk to something on its own network.
+ *
+ * What an allow-list would have bought, and what the reader now pays: on Cloud the fetch leaves
+ * our server, so the sender learns nothing about the reader. Here it leaves the reader's own
+ * machine, so a loaded picture tells the sender's server that the message was opened and from
+ * which network. That is the whole cost of the switch, it is stated in Settings, and it is why
+ * tracking pixels stay refused in both positions — a beacon is all cost and no picture.
+ *
+ * Same shape as the one-click unsubscribe egress below: a sender-chosen url, the real resolver,
+ * the gate doing the work.
  */
-const REFUSING_REMOTE_FETCH: RemoteFetch = {
-  async fetch() {
-    return { status: 502, contentType: null, body: new Uint8Array(0) };
-  },
-};
-
-/**
- * The SSRF gate resolves a hostname itself so it can refuse a name that points at
- * a private or loopback address, so a resolver is REQUIRED rather than optional.
- * This host has no egress to spend on the lookup, so it answers "nothing", which
- * the gate treats as "did not resolve" — a refusal one step earlier than
- * {@link REFUSING_REMOTE_FETCH}. Both stay: the allow-list replaces them together,
- * and until then a blocked pixel is the product working.
- */
-const REFUSING_RESOLVER: HostResolver = {
-  async resolve() {
-    return [];
-  },
-};
 
 /**
  * The LOCAL service bag. Present: the mail domain. Absent, each absence meaning something:
@@ -829,6 +827,12 @@ function localServices(
   openSendAdapter: OpenSendAdapter,
   unsubscribe: UnsubscribeService,
   /**
+   * THE IMAGE PROXY'S FETCH — passed in rather than imported here for the reason `unsubscribe`
+   * is: both are egresses, and a composition that builds its own could not be handed a counting
+   * double. The call sites resolve it from the config seam.
+   */
+  imageFetch: RemoteFetch,
+  /**
    * WHAT THIS COMPOSITION CLAIMS AS — and here it decides one thing only: whether the send-later
    * verbs may MINT an appointment. The kind rather than a boolean, so this function reads
    * `composition-passes.ts` itself and there is one answer to "does this install keep
@@ -922,7 +926,11 @@ function localServices(
     approval: makeApprovalService({}),
     triage: triageService,
     search: searchService,
-    privacy: makePrivacyService({ remote: REFUSING_REMOTE_FETCH, resolver: REFUSING_RESOLVER }),
+    /* `imageFetch` is the test seam `oneClickPost` is, and for the same stated reason: both exist
+       so a test can count what left the machine. Production passes nothing and gets the pinned,
+       redirect-manual client the hosted door uses — one implementation, so the two doors cannot
+       classify a beacon or resolve a host two ways. */
+    privacy: makePrivacyService({ remote: imageFetch, resolver: nodeHostResolver }),
     // The MANUAL verb only: `POST /messages/:id/unsubscribe`, which `localRoutes` has mounted
     // (answering 503 `unsubscribe_unconfigured`) since the record table landed, now performs the
     // request on this door. A manual unsubscribe is the user's own explicit act on mail in front
@@ -1658,7 +1666,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
      * every per-request bag for the MANUAL verb alone (`POST /messages/:id/unsubscribe`); the screener's automatic
      * pass deliberately does not receive it (see `localServices`'s `screener:` entry). Three deps: `post` — {@link
      * nodeOneClickPost}, the pinned redirect-refusing client (the second of the process's two non-mailbox egresses);
-     * `resolver` — the REAL `node:dns`, not `REFUSING_RESOLVER`: the SSRF gate protects the user's own home network
+     * `resolver` — the REAL `node:dns`, as the image proxy above now also uses: the SSRF gate protects the user's own home network
      * from a `List-Unsubscribe` header naming a private address, and this URL is only POSTed after a screen-out the
      * user performed; `trustedAuthservIdsFor` — `providerAuthservIds` over the same host string the sync loop
      * resolves, so the two paths cannot disagree.
@@ -1767,7 +1775,8 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
       // `localServices`. `openLocalSend` (below) is the send transport, resolving the sealed
       // credential fresh per send.
       services: localServices(
-        authConfig, keyProvider, world.accountId, openLocalSend, unsubscribe, organizerKind, ai,
+        authConfig, keyProvider, world.accountId, openLocalSend, unsubscribe,
+        config.imageFetch ?? nodeRemoteFetch, organizerKind, ai,
       ),
       // BEARER ONLY. There is no browser here, so there is no ambient cookie to abuse — and with
       // `via` structurally unable to be "cookie", `withCsrf` becomes a no-op by construction
@@ -2165,8 +2174,8 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
       authConfig: hostAuthConfig,
       services: {
         ...localServices(
-          hostAuthConfig, keyProvider, world.accountId, openLocalSend, unsubscribe, organizerKind,
-          ai,
+          hostAuthConfig, keyProvider, world.accountId, openLocalSend, unsubscribe,
+          config.imageFetch ?? nodeRemoteFetch, organizerKind, ai,
         ),
         sendSurfaceMaxTotalBytes: HOST_SEND_MAX_TOTAL_BYTES,
       },
