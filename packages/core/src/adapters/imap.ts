@@ -104,7 +104,9 @@ import {
 import type { MetaIdentity } from "./meta-memo.js";
 // THE EPOCH REPRESENTATION. A UIDVALIDITY is a named epoch or nothing; `0`, an absent field and
 // `String(undefined)` are all the same state, and this module is the only place that says so.
-import { epochOf, epochOfRef, epochVerdict, sameEpoch, UNKNOWN_EPOCH } from "../epoch.js";
+import {
+  epochOf, epochOfRef, epochVerdict, sameEpoch, uidRefsAtEpoch, UNKNOWN_EPOCH,
+} from "../epoch.js";
 
 // Re-export the adapter types + folder constants so consumers can import them from this entrypoint.
 export * from "./imap-types.js";
@@ -173,10 +175,10 @@ export interface FolderSearchPage {
 
 /**
  * The slice of imapflow's `StatusObject` the passive skip reads — see
- * {@link ImapAdapter.unchangedPassive}. Named locally so a test fake can supply three numbers
+ * {@link ImapAdapter.unchangedPassive}. Named locally so a test fake can supply the four fields
  * without constructing the library's whole response shape.
  */
-type FolderStatus = Pick<StatusObject, "messages" | "uidNext" | "highestModseq">;
+type FolderStatus = Pick<StatusObject, "messages" | "uidNext" | "highestModseq" | "uidValidity">;
 
 /** Sent-folder names, for servers that do not advertise SPECIAL-USE. Canonical paths only. */
 const SENT_BY_NAME = /^(inbox\/)?sent( items| messages| mail)?$/i;
@@ -1109,7 +1111,11 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
    * load-bearing work on this particular read.
    */
   private async listBounded(
-    opts?: { statusQuery: { messages: boolean; uidNext: boolean; highestModseq: boolean } },
+    opts?: {
+      statusQuery: {
+        messages: boolean; uidNext: boolean; highestModseq: boolean; uidValidity: boolean;
+      };
+    },
   ): Promise<ListResponse[]> {
     const list = await this.bounded(
       opts === undefined ? this.client.list() : this.client.list(opts),
@@ -2395,7 +2401,11 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
       try {
         this.learnPassiveFolders(await this.listBounded(
           wantStatus
-            ? { statusQuery: { messages: true, uidNext: true, highestModseq: true } }
+            ? {
+              statusQuery: {
+                messages: true, uidNext: true, highestModseq: true, uidValidity: true,
+              },
+            }
             : undefined,
         ));
       } catch (err) {
@@ -2426,14 +2436,21 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
   }
 
   /**
-   * Is this PASSIVE folder provably unchanged — may the pass skip the SELECT? Three equalities,
-   * all needed, failing CLOSED (any missing field reads normally): `highestModseq` — no flag
+   * Is this PASSIVE folder provably unchanged — may the pass skip the SELECT? An agreeing EPOCH
+   * and three equalities, all needed, failing CLOSED (any missing field reads normally; the epoch
+   * has its own paragraph below): `highestModseq` — no flag
    * change, no arrival (RFC 7162 §3.1); `uidNext` — no arrival, redundant on a correct server and
    * kept because iCloud's CHANGEDSINCE is inert; `messages` (EXISTS) — the expunge half the
    * others cannot cover, since CONDSTORE does not raise HIGHESTMODSEQ for an EXPUNGE. A folder
    * holding a permanently-unknown UID never satisfies the third and is read every cycle — the
    * safe direction. Passive folders only: INBOX and the organized five are where the product
    * happens.
+   *
+   * AND ALL THREE ARE COUNTERS INSIDE AN EPOCH. A folder deleted and recreated — a customer
+   * refiling an archive, a restore, a migration tool — can match every one of them while holding
+   * different mail, and the skip then serves the old contents for ever, because every later cycle
+   * takes the same shortcut. So the cursor's UIDVALIDITY must agree with the one the server states
+   * NOW, read back from this STATUS and never derived; anything short of agreement reads normally.
    */
   private unchangedPassive(
     status: FolderStatus | undefined, prev: FolderCursor | undefined, condstore: boolean,
@@ -2442,6 +2459,12 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
     if (prev.highestModseq === "0" || prev.uidNext === 0) return false;
     if (status.highestModseq === undefined || status.uidNext === undefined) return false;
     if (status.messages === undefined) return false;
+    // `uidNext` IS a remembered uid — the next number this folder will issue — so the cursor's
+    // whole known-set stands or falls with it. Fail-closed: only a proved agreement skips.
+    const epochs = uidRefsAtEpoch(
+      [{ epoch: epochOf(prev.uidValidity), uid: prev.uidNext }], epochOf(status.uidValidity),
+    );
+    if (epochs !== "usable") return false;
     return String(status.highestModseq) === prev.highestModseq
       && Number(status.uidNext) === prev.uidNext
       && Number(status.messages) === prev.known.length;
@@ -2557,8 +2580,8 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
       const serverPath = this.toServerPath(folder);
       const prev = stored.get(folder);
       // PROVABLY UNCHANGED PASSIVE FOLDER — not even a SELECT. See {@link unchangedPassive} for the
-      // three equalities and why each is required. This is what keeps a mailbox with a hundred
-      // customer folders costing one LIST per cycle instead of a hundred SELECTs.
+      // epoch and the three equalities, and why each is required. This is what keeps a mailbox
+      // with a hundred customer folders costing one LIST per cycle instead of a hundred SELECTs.
       if (isPassive && this.unchangedPassive(listStatus.get(folder), prev, caps.condstore)) {
         newFolders[folder] = {
           uidValidity: prev!.uidValidity, uidNext: prev!.uidNext, highestModseq: prev!.highestModseq,

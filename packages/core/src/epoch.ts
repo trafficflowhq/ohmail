@@ -70,3 +70,43 @@ export function epochVerdict(ref: Epoch, reported: Epoch): "usable" | "stale" | 
   if (!ref.known || !reported.known) return "unknown";
   return ref.value === reported.value ? "usable" : "stale";
 }
+
+/**
+ * A remembered uid and the epoch that issued it. The pair travels together or the uid is not a
+ * fact: a folder deleted and recreated re-issues the same small integers to different messages,
+ * so a bare number names whatever sits at it now.
+ */
+export interface UidRef {
+  readonly epoch: Epoch;
+  readonly uid: number;
+}
+
+/** Pair each uid with the epoch of the read that named it. */
+export function uidRefsAt(epoch: Epoch, uids: readonly number[]): UidRef[] {
+  return uids.map((uid) => ({ epoch, uid }));
+}
+
+/**
+ * THE ONE GUARD BEHIND EVERY REMEMBERED-UID DECISION — the passive folder skip and all three
+ * `ohmail/_meta` cleanups. `reported` is what the server states NOW, read back at the moment of
+ * use and never derived. A batch is `stale` as soon as one ref contradicts it, `unknown` when
+ * nothing contradicts and some epoch was never named, `usable` only when every ref agrees; an
+ * empty batch remembers nothing, so it proves nothing.
+ *
+ * What a caller does with `unknown` is the caller's policy, and the two policies here are both
+ * right: a cleanup PROCEEDS, because refusing would strand every mailbox on a connection that
+ * states no UIDVALIDITY and the custody read-back is the backstop; the passive skip REFUSES,
+ * because its fallback is one SELECT and being wrong costs somebody's mail.
+ */
+export function uidRefsAtEpoch(
+  refs: readonly UidRef[], reported: Epoch,
+): "usable" | "stale" | "unknown" {
+  if (refs.length === 0) return "unknown";
+  let unknown = false;
+  for (const ref of refs) {
+    const verdict = epochVerdict(ref.epoch, reported);
+    if (verdict === "stale") return "stale";
+    if (verdict === "unknown") unknown = true;
+  }
+  return unknown ? "unknown" : "usable";
+}

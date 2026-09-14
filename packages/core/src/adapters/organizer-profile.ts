@@ -6,6 +6,7 @@ import {
   assertMetaIdentity, readMemo, writeMemo, forgetMemo,
   type MetaIdentity, type Generation,
 } from "./meta-memo.js";
+import { epochOf, uidRefsAtEpoch } from "../epoch.js";
 
 /**
  * The portable organizer profile — how a mailbox carries its own organizer configuration. The
@@ -969,6 +970,15 @@ export function makeProfileIo(
   // second spelling of where that folder is would put the settings document and the lease in
   // different places on exactly the servers where it matters.
   const meta = makeMetaFolderRef(client, toServerPath);
+  /**
+   * THE GENERATION OF THE READ THAT NAMED THE REFS `removeProfiles` IS GIVEN — `null` until one
+   * has been read. `RawProfileMessage` has carried this per message since mail 0094, and the
+   * cleanup threw it away: `writeOrganizerProfile` maps the records to bare refs, so the one path
+   * that already had the epoch in hand was the one that could not check it. Held beside the
+   * connection rather than passed through the interface, so every existing caller and fake keeps
+   * working and the pairing cannot be got wrong by a caller that forgets it.
+   */
+  let generationAtLastRead: Generation = null;
 
   const io: ProfileIo = {
     async ensureMetaFolder(): Promise<void> {
@@ -1014,6 +1024,7 @@ export function makeProfileIo(
          * The same `generationOf(client)` the memo read below already uses, so a document's
          * locator and the anchor written from it can never disagree about the epoch. */
         const generation = generationOf(client);
+        generationAtLastRead = generation;
         /**
          * A NOOP cannot prove a refresh, so nothing here rests on one. imapflow discards the
          * command's own result, so a REFUSED noop resolves exactly like an accepted one, and
@@ -1439,6 +1450,26 @@ export function makeProfileIo(
       if (uids.length === 0) return;
       const lock = await client.getMailboxLock(await meta.path());
       try {
+        /**
+         * THESE REFS CAME OUT OF A READ, AND A UID IS A FACT ONLY UNDER THE NUMBERING IT WAS READ
+         * UNDER. `ohmail/_meta` can be replaced between that read and this lock, and the numbers
+         * then name whatever sits at them now — another install's settings document, a live claim.
+         * The one guard, and the fail-open arm the other two cleanups decided: only a PROVEN
+         * mismatch refuses, because a connection that never states a UIDVALIDITY would otherwise
+         * never be able to prune its own older copies, and the custody read-back below is the
+         * backstop. `writeOrganizerProfile` logs a refusal here and keeps the write, which is
+         * right: the new document is in the folder either way.
+         */
+        const refEpoch = epochOf(generationAtLastRead);
+        const nowEpoch = epochOf(generationOf(client));
+        if (uidRefsAtEpoch(uids.map((uid) => ({ epoch: refEpoch, uid })), nowEpoch) === "stale") {
+          throw new ProfileUnavailableError(
+            `${META_FOLDER} was renumbered between the read that named these ${uids.length} `
+            + "settings message(s) and the delete, so the refs cannot be trusted and nothing was "
+            + "expunged",
+            { op: "remove_profiles" },
+          );
+        }
         /* THE RESULT IS READ, AND THEN CHECKED AGAINST THE FOLDER. `messageDelete` resolves
          * `false` when the server refuses — it does not reject — and this discarded that, so a
          * refused cleanup was reported as a completed one and every prior document stayed. Worse,

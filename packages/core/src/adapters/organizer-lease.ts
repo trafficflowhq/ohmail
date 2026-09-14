@@ -8,7 +8,7 @@ import {
   boundListResponse, boundedFetch, ImapDeadline, isImapBoundExceeded,
   IMAP_META_BYTES_MAX, IMAP_META_DEADLINE_MS,
 } from "./imap-bounds.js";
-import { epochOf, epochVerdict } from "../epoch.js";
+import { epochOf, epochVerdict, uidRefsAtEpoch } from "../epoch.js";
 import {
   assertMetaIdentity, readMemo, writeMemo, forgetMemo,
   type MetaIdentity, type Generation,
@@ -3301,7 +3301,8 @@ export function makeLeaseIo(
          * contradiction, which would refuse every cleanup this mailbox ever needs.
          */
         const gen = currentGeneration();
-        if (epochVerdict(epochOf(generationAtLastRead), epochOf(gen)) === "stale") {
+        const refEpoch = epochOf(generationAtLastRead);
+        if (uidRefsAtEpoch(uids.map((uid) => ({ epoch: refEpoch, uid })), epochOf(gen)) === "stale") {
           throw new ClaimReleaseError(
             "renumbered",
             `${META_FOLDER} was renumbered between the read that named these ${uids.length} `
@@ -5290,6 +5291,25 @@ export function makeRequestOrganizerIo(
       try {
         const lock = await client.getMailboxLock(await meta.path());
         try {
+          /**
+           * THE REFS CAME OUT OF A READ, AND A UID IS A FACT ONLY UNDER THE NUMBERING IT WAS READ
+           * UNDER. `ohmail/_meta` can be replaced between the drain's read and this lock — the
+           * customer clearing it, a restore, a migration — and these numbers then name whatever
+           * sits at them now: a reader on another computer appends a request, it lands at uid 1,
+           * and the stale list expunges it. Nobody is told; the press simply never happens.
+           * The one guard, and the fail-open arm `removeClaims` decided: only a PROVEN mismatch
+           * refuses, because a connection that never states a UIDVALIDITY would otherwise be
+           * unable to drain this folder at all, and the custody read-back below is the backstop.
+           */
+          const refEpoch = epochOf(metaGeneration);
+          const nowEpoch = epochOf(generationOf(client));
+          if (uidRefsAtEpoch(uids.map((uid) => ({ epoch: refEpoch, uid })), nowEpoch) === "stale") {
+            throw new RequestUnavailableError(
+              `${META_FOLDER} was renumbered between the read that named these ${uids.length} `
+              + "record(s) and the delete, so the refs cannot be trusted and nothing was expunged",
+              { op: "remove_requests" },
+            );
+          }
           // See `makeLeaseIo.removeClaims` for why a `false` resolve is treated as a failure
           // rather than swallowed: a refused expunge here is exactly what the idempotency key at
           // `meta-request:<id>` exists to make safe to retry, and swallowing it would leave a
@@ -5313,6 +5333,10 @@ export function makeRequestOrganizerIo(
           lock.release();
         }
       } catch (err) {
+        // A refusal this method MADE is not relabelled: the renumbering refusal above names what
+        // happened and what was not done, and wrapping it as "could not be removed" would send an
+        // operator looking at the server. Everything else is a failure of the commands below it.
+        if (err instanceof RequestUnavailableError) throw err;
         throw new RequestUnavailableError(
           `${uids.length} message(s) in ${META_FOLDER} could not be removed`,
           { op: "remove_requests", cause: err },
