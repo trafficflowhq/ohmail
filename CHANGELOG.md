@@ -61,7 +61,8 @@ spacing, and a blank line is one blank line.
 
 Including a desktop that only reads a mailbox the managed service organizes: that desktop shows the
 signature the organizing install published, with its formatting, and says where it was set instead
-of offering an editor that changes nothing.
+of offering an editor that changes nothing. Until the organizing install has published one, the
+signature set on the reading desktop stays in force and stays editable there.
 
 ### Mail from someone you had already written to no longer waits in the Screener
 
