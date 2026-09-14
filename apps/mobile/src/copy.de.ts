@@ -192,6 +192,10 @@ export const DE: Deck = {
     "ohmail konnte nicht prüfen, ob ein anderer Computer dieses Postfach hat — vielleicht verbindet es sich noch. Es wurde nichts gespeichert; versuch es gleich noch einmal.",
   organizeHereRefused: (status: number) =>
     `Das Organisieren dieses Postfachs wurde abgelehnt (${status}). Vielleicht hält es eine andere Maschine — sieh in den Einstellungen nach, was es organisiert.`,
+  organizeStartFailed: (detail: string) =>
+    `Das Organisieren hat nicht begonnen: ${detail}. Dieses Telefon hat das Postfach zurückgegeben, `
+    + "ein anderer Computer kann es also übernehmen, und es versucht es beim nächsten Öffnen von "
+    + "ohmail erneut.",
 
   /* --------------------------------------------------- servers & pairing */
 

@@ -8,7 +8,7 @@
  * organizing); {@link stopOrganizerSession} runs from "Stop organizing here", where the claim
  * is already released — a standing notification would say "Organizing" over a reader.
  */
-import type { Refusal } from "../refusal";
+import { faultDetail, refuse, type Refusal } from "../refusal";
 import type { ClaimHereOutcome, StandaloneEngine, StopOrganizingOutcome } from "./standalone-door";
 import {
   createBackgroundOrganizing,
@@ -642,6 +642,13 @@ export function startOrganizerSession(generation: number, deps: OrganizerSession
     /* THE OTHER CAUSE, ITS OWN RECORD — see {@link notificationsOff}. The background half meets
        this on every Android 13+ install whose notification permission was never granted. */
     announceNotificationsOff: sayNotificationsOff,
+    /* A START THAT DID NOT FINISH STARTING, onto the panel that names this phone — the surface
+       `organizeRefused` already owns, because a person asking "is my mail being filed?" is looking
+       there. A VALUE and not a sentence: worded at render, so a language change turns it over with
+       everything else. `null` clears it, which is what a resume that worked hands in. */
+    sayStartFailed: (detail: unknown) => {
+      sayOrganizeRefused(detail === null ? null : refuse("organizeStartFailed", faultDetail(detail)));
+    },
     /* THE SESSION'S CUE TO THE SCREEN. `pokeOrganizerState` and not `notifyOrganizerState`: the
        claim watch fires on a timer whether anything moved or not, and an unconditional bump would
        re-render an open Settings panel once a minute for ever. */

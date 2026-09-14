@@ -317,6 +317,13 @@ const TABLE = {
     "ohmail could not check whether another computer has this mailbox — it may still be connecting. Nothing was recorded; try again in a moment.",
   organizeHereRefused: (status: number) =>
     `Organizing this mailbox was refused (${status}). Another machine may hold it — check what organizes it in Settings.`,
+  /* A START THAT DID NOT FINISH STARTING, said as the state it leaves. The phone claimed the
+     mailbox, could not finish, gave the claim back and tried again; past that the honest sentence
+     names what stopped it, says the mailbox is free — so somebody's other computer can take it —
+     and says when this phone asks again. It never claims the phone is organizing, because it is not. */
+  organizeStartFailed: (detail: string) =>
+    `Organizing did not start: ${detail}. This phone gave the mailbox back, so another computer can `
+    + "take it, and it tries again the next time you open ohmail.",
 
   /* --------------------------------------------------- servers & pairing */
 

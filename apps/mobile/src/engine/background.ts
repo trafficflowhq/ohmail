@@ -162,6 +162,17 @@ export interface BackgroundDeps {
    */
   readonly announceNotificationsOff: () => void;
   /**
+   * AND THE ONE THAT IS NOT A DECLINE AT ALL — a start that did not finish starting.
+   *
+   * The engine claims the mailbox and then fails before anything is polling or renewing; it gives
+   * the claim back and tries again, and past its own bound it refuses. A silent refusal here is a
+   * person watching a mailbox that says nothing and never changes, so the reason travels to the
+   * panel as a value ({@link Refusal}) and is worded at render. Called on the FINAL refusal only —
+   * the engine's own attempts are not the person's business — and cleared by a resume that works,
+   * so a sentence cannot outlive the thing it was about.
+   */
+  readonly sayStartFailed: (detail: unknown) => void;
+  /**
    * How often the service asks the engine whether it still organizes anything — armed with
    * the service and cleared with it, never otherwise. The claim can be lost while the app is
    * backgrounded and nothing in JS chose it: somebody presses "Organize here" on their desktop
@@ -635,12 +646,18 @@ export function createBackgroundOrganizing(deps: BackgroundDeps): BackgroundOrga
     handedBack = false;
     try {
       await deps.engine.resume();
+      /* AND A START THAT WORKED CLEARS THE SENTENCE the last one left, so a refusal cannot outlive
+         the thing it was about — `announceRestricted`'s rule, one fact over. */
+      deps.sayStartFailed(null);
     } catch (err) {
       /* The claim was NOT taken back. `handedBack` returns to true so nothing renders
          "Organizing" over a mailbox this install does not hold — the resume is retried by the
-         engine's own poll and by the next time the app is opened. */
+         engine's own poll and by the next time the app is opened. AND IT IS SAID: the engine has
+         already spent its own attempts by the time this rejects, so this is the final answer and
+         a silent one leaves a person looking at a mailbox that never changes. */
       handedBack = true;
       log("organizer_resume_failed", { err });
+      deps.sayStartFailed(err);
     }
     /* THE GATE HAS SPOKEN, whichever way. A resume that stands this install down against a holder
        is the case the panel used to miss: it is the moment a screen already open must stop saying

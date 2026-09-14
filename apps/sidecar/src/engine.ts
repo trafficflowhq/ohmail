@@ -747,6 +747,20 @@ const LOCAL_IMAP_ADMISSION = {
  * the callers handle (`null`; a number = how many of ours were removed — `0` is an answer). The shape is the
  * worker's own; success is logged by each caller in its own sentence.
  */
+/**
+ * HOW MANY TIMES A RESUME MAY TRY TO TAKE THE MAILBOX BACK, and how long it waits between.
+ *
+ * Three, because the fault a resume meets is a busy store or a connection that has just come back
+ * — a passing condition — and one attempt makes a person's mailbox the cost of a bad half-second.
+ * Bounded rather than open, because a retry loop over a fault that is NOT passing is an install
+ * claiming and releasing the mailbox for ever, which is worse than saying so once. Each attempt
+ * claims afresh: the claim is given back on the way out of a failed one, so nothing is held across
+ * the wait. The wait grows with the attempt and is short enough that a person watching the screen
+ * sees an answer rather than a spinner.
+ */
+const RESUME_ATTEMPTS = 3;
+const RESUME_BACKOFF_MS = 200;
+
 async function releaseOwnClaim(
   adapter: MailboxAdapter,
   installId: string,
@@ -5815,6 +5829,30 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         }
       };
 
+      /**
+       * A RESUME THAT FAILED GIVES THE CLAIM BACK, and leaves this runtime in the state a hand-back
+       * leaves it in: no timer, nothing claimed, `handedBack` standing so no poll can wander back in
+       * over a mailbox this install is not organizing. The claim is the part that costs somebody
+       * else their mailbox, so it goes first and it goes through the door every other giving-up path
+       * uses. Never throws — it runs on a failure path, and a cleanup must not replace the refusal
+       * the caller is carrying out.
+       */
+      const standDownAfterFailedResume = async (): Promise<void> => {
+        if (timer) { clearTimeout(timer); timer = null; }
+        handedBack = true;
+        if (leaseNonce !== null || leasePendingNonce !== null) {
+          await releaseOwnClaim(
+            adapter, installId, mb.id, { current: leaseNonce, pending: leasePendingNonce }, log,
+            "this install could not finish starting and gives the claim back; if it could not be "
+              + "removed it ages out of ohmail/_meta on its own and another install takes the "
+              + "mailbox then",
+          );
+        }
+        leaseNonce = null;
+        leasePendingNonce = null;
+        organizer = { ...organizer, organizing: false, claimed: false };
+      };
+
       const rt: LocalMailboxRuntime = {
         mailboxId: mb.id,
         address: mb.address,
@@ -5829,7 +5867,23 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         set stopped(v) { stopped = v; },
         get priorStandDown() { return priorStandDown; },
         set priorStandDown(v) { priorStandDown = v; },
-        get organizer() { return organizer; },
+        /**
+         * ORGANIZING IS THE MECHANISM, NOT THE INTENT — derived on the way out, and this getter is
+         * where the three facts meet: a claim this install holds, a poll timer armed (which on this
+         * tier is also the RENEWAL, since the gate runs at the top of every cycle), and neither a
+         * hand-back nor a stop standing. A claim taken by a start that has not armed its timer yet
+         * is `starting` — {@link OrganizerState.claimed} true with `organizing` false, the third
+         * state this record already names — and it must not be reported as organizing: that is
+         * precisely the state a failed resume used to leave behind, with a person told their
+         * mailbox was being organized by an install running nothing.
+         *
+         * Asymmetric with the setter on purpose: what a pass WRITES is its intent, and what a
+         * caller READS is what exists.
+         */
+        get organizer() {
+          const running = organizer.claimed && timer !== null && !handedBack && !stopped;
+          return organizer.organizing === running ? organizer : { ...organizer, organizing: running };
+        },
         set organizer(v) { organizer = v; },
         get takeoverAuthorized() { return takeoverAuthorized; },
         set takeoverAuthorized(v) { takeoverAuthorized = v; },
@@ -6180,16 +6234,60 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
          * cleared; `0` cycles means it could not be served, so the caller must not report it taken.
          */
         async resume() {
-          handedBack = false;
-          const served = await syncUntilQuiet(undefined, { force: true });
-          /* THE CALLER ARMS THE TIMER. `syncUntilQuiet` deliberately does not — its own tail says
-             so — and `handBack` cleared it, so without this line the docblock above was false: a
-             phone backgrounded and brought forward drained ONCE and then went quiet, holding the
-             row as organizer with nothing polling. Every other caller of `syncUntilQuiet` already
-             calls `schedule()`; this one did not. `schedule()` returns at `stopped`, so a runtime
-             told to stop is not re-armed by a resume that raced it. */
-          schedule();
-          return served;
+          /**
+           * A START THAT DID NOT FINISH STARTING IS NOT A START.
+           *
+           * The cycle below CLAIMS the mailbox and the timer is armed after it. A failure between
+           * the two used to leave this install holding the claim with nothing polling and nothing
+           * renewing, while the surface said "organizing" — and the refusal was swallowed by the
+           * install-wide `allSettled`, so nothing said so either. The same lesson as the refused
+           * launch under `allSettled`: a start whose refusals are swallowed reports ok.
+           *
+           * So: every refusal is PROPAGATED, a failure after the claim gives the claim BACK, and
+           * the whole resume is tried again under a small bound. Three attempts, each claiming
+           * afresh, because the fault this meets is a busy store rather than a lost mailbox; past
+           * the bound the hand-back stands, the claim is gone, and the caller is told.
+           */
+          for (let attempt = 1; ; attempt++) {
+            handedBack = false;
+            try {
+              const served = await syncUntilQuiet(undefined, { force: true });
+              /* THE CALLER ARMS THE TIMER. `syncUntilQuiet` deliberately does not — its own tail
+                 says so — and `handBack` cleared it, so without this line the docblock above was
+                 false: a phone backgrounded and brought forward drained ONCE and then went quiet,
+                 holding the row as organizer with nothing polling. Every other caller of
+                 `syncUntilQuiet` already calls `schedule()`; this one did not. `schedule()` returns
+                 at `stopped`, so a runtime told to stop is not re-armed by a resume that raced it. */
+              schedule();
+              return served;
+            } catch (err) {
+              /* THE CLAIM GOES BACK BEFORE ANYTHING ELSE. A claim held by an install that is not
+                 polling is the state that costs somebody else their mailbox, and it is the state
+                 this arm exists to make unreachable — cleaner than holding it across a retry, and
+                 the invariant's preference. `releaseOwnClaim` is the same door every other giving-up
+                 path uses and it never throws. */
+              await standDownAfterFailedResume();
+              if (stopped || attempt >= RESUME_ATTEMPTS) {
+                log("organizer_resume_failed", {
+                  mailboxId: mb.id,
+                  attempts: attempt,
+                  err,
+                  reason: "this install could not start organizing this mailbox: the claim it took "
+                    + "was given back, nothing is polling or renewing here, and the mailbox is free "
+                    + "for another install. The surface says so and the next foreground asks again",
+                });
+                throw err;
+              }
+              log("organizer_resume_retry", {
+                mailboxId: mb.id,
+                attempt,
+                err,
+                reason: "the claim was given back and this install will try to take the mailbox "
+                  + "again shortly; a passing fault must not cost somebody their organizer",
+              });
+              await new Promise((r) => { setTimeout(r, RESUME_BACKOFF_MS * attempt).unref?.(); });
+            }
+          }
         },
         /* THE SAME LOOK THE POLL MAKES, THROUGH THE SAME ADAPTER — read at call time, because a
            re-dial replaces the binding and a captured one would peek down a dead socket. A stopped
@@ -7531,11 +7629,35 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           released: r.status === "fulfilled" ? r.value : null,
         }));
       },
-      /* Every mailbox, settled, and the results dropped: each cycle logs its own failure and the
-         caller's next read of `organizerStates()` is the answer that matters. A refusal here must
-         not stop the other mailboxes resuming. */
+      /**
+       * EVERY MAILBOX IS TRIED, AND EVERY REFUSAL IS CARRIED OUT — which is where this differs from
+       * `wake`, and the difference is the whole of the defect it closes.
+       *
+       * The results used to be dropped on `wake`'s reasoning ("the caller's next read of
+       * `organizerStates()` is the answer that matters"), and that reasoning was false here: a
+       * resume can fail AFTER it has claimed the mailbox, and the state it left behind said
+       * organizing. The catch beside the one caller that has one could not fire, measured as zero
+       * lines on the arm that reproduces it. So the refusals are collected — one mailbox's failure
+       * still must not stop the others starting — and then thrown, because a start that did not
+       * finish starting is not a start and the caller renders a sentence about it.
+       */
       resume: async (): Promise<void> => {
-        await Promise.allSettled(runtimes.all().map((rt) => rt.resume()));
+        const runs = runtimes.all();
+        const settled = await Promise.allSettled(runs.map((rt) => rt.resume()));
+        const refused = settled.flatMap((r, i) => (r.status === "rejected"
+          ? [{ mailboxId: runs[i]!.mailboxId, reason: r.reason as unknown }]
+          : []));
+        if (refused.length === 0) return;
+        /* THE FIRST REFUSAL IS THE ONE THROWN, and the rest ride on it: a caller renders one
+           sentence, and an aggregate of one is a worse sentence than the failure itself. The others
+           are named on the error so a diagnosis is not one mailbox wide. */
+        const first = refused[0]!;
+        const err = first.reason instanceof Error
+          ? first.reason
+          : new Error(String(first.reason));
+        (err as Error & { resumeRefused?: readonly string[] }).resumeRefused =
+          refused.map((r) => r.mailboxId);
+        throw err;
       },
       /* ONE MAILBOX, NAMED. A mailbox this install does not run answers `unreadable` rather than
          throwing: the caller is a door with a press in its hand, and an id it does not recognise
