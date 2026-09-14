@@ -737,6 +737,56 @@ export const invites = pgTable("invites", {
 }));
 
 /**
+ * A SPEND THAT BOUGHT NOTHING, AS A ROW THAT OUTLIVES THE REQUEST (cloud 0036).
+ *
+ * The refund used to be a call and nothing else: AI drafting charged, the drafter failed, the
+ * reversal was attempted, the entitlements program was unreachable, and the debt existed nowhere.
+ * The person had paid for a draft they never got. This table is the memory — written by the
+ * transaction that OBSERVES the failure, before any reversal is tried, so a crash between the two
+ * leaves the obligation standing rather than nothing.
+ *
+ * `UNIQUE (account_id, attempt)` is the whole idempotency story on this side: one charged attempt
+ * owes at most one reversal, so recording the same failure twice is one row and a drain that
+ * replays cannot pay twice. The far side holds the other half — the program's own
+ * `refund:<attempt>` uniqueness — which is what makes it safe to re-send a release whose answer
+ * was lost.
+ *
+ * NOTHING OF THE PROGRAM'S INTERNALS IS HERE. The columns are the release this server would make:
+ * the action, the bare attempt key, the attempt id the program itself returned, and the same
+ * `meta` the spend carried. No balance, no price, no ledger row id — this server does not know
+ * what a credit is worth and this table must not imply that it does.
+ */
+export const creditRefundObligations = pgTable("credit_refund_obligations", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  accountId: uuid("account_id").notNull().references(() => accounts.id, { onDelete: "cascade" }),
+  /** The `SpendAction` the charge was taken under — what the reversal must name. */
+  action: text("action").notNull(),
+  /** The BARE attempt key, never a composed ledger source: the port composes it on the way out. */
+  attemptKey: text("attempt_key").notNull(),
+  /** What `spend` answered as `attempt` for a `charged: true` verdict. The reversal's identity. */
+  attempt: text("attempt").notNull(),
+  /** The spend's own provenance, carried through unchanged — ids we minted and counts. */
+  meta: jsonb("meta"),
+  /** Why this spend bought nothing. A closed set, with a CHECK behind it. */
+  reason: text("reason").notNull(),
+  owedAt: timestamp("owed_at", { withTimezone: true }).defaultNow().notNull(),
+  /** When the program took the reversal. NULL is the debt; it is the only pending marker. */
+  settledAt: timestamp("settled_at", { withTimezone: true }),
+  /** How many times the drain has tried. Diagnostic, and the ordering a stuck row falls behind. */
+  tries: integer("tries").notNull().default(0),
+  /** A drain's lease, so two drains cannot dial for one row. NULL or past ⇒ claimable. */
+  claimedUntil: timestamp("claimed_until", { withTimezone: true }),
+  /**
+   * The LAST attempt's fault, as one of this repository's own words — never a body and never a
+   * message. `api_faults.error_class`' rule: a driver's message can quote a connection string.
+   */
+  lastFault: text("last_fault"),
+}, (t) => ({
+  uqAttempt: unique("credit_refund_obligations_attempt_unique").on(t.accountId, t.attempt),
+  ixPending: index("credit_refund_obligations_pending_idx").on(t.settledAt, t.owedAt),
+}));
+
+/**
  * The Cloud-only half as one object, for `drizzle(client, { schema })`.
  *
  * Spread into `schema` by `./schema.js` for every consumer that wants both halves. A local
@@ -749,4 +799,5 @@ export const cloudSchema = {
   waitlist, staffUsers, staffSessions, staffAuditLog,
   mailboxOauthCeremonies, mailboxOauthDeviceCeremonies,
   oauthProviderConfig, attachmentStaging, invites,
+  creditRefundObligations,
 };

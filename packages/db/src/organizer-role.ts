@@ -421,6 +421,23 @@ export interface RequestEligibility {
   status: string;
 }
 
+/**
+ * COULD A DECISION HERE EVER LAND — the one predicate, at both of its callers.
+ *
+ * It is the question that decides whether buying the model's advice about this mailbox is worth
+ * anything: a mailbox whose organizer has stopped, whose holder is an older build, or that is a
+ * tombstone will never apply what the advice says. The manual purchase route has read it since
+ * 0.14.1; the AUTOMATIC pass did not, so stopping the sole organizer left Cloud buying advice
+ * nobody could act on and charging for it every cycle.
+ *
+ * A FUNCTION rather than three clauses repeated, because the two callers spend the same money on
+ * the same question and a copy is how one of them silently stops asking it. `null` — no such
+ * mailbox for this account — is FALSE here: a decision cannot land on a row that is not there.
+ */
+export function decisionCanBeApplied(e: RequestEligibility | null): boolean {
+  return e !== null && e.capable && e.status !== "disabled";
+}
+
 export async function readRequestEligibility(
   tx: Tx, accountId: string, mailboxId: string,
   /**

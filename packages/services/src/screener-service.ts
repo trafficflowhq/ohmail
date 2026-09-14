@@ -14,7 +14,8 @@ import {
   // `@trafficflow/db` for why the transactional core and the eligibility read live there.
   resolveCutline, senderIsActiveSql, senderIsDecidedSql, type ResolvedCutline,
   heldRowById, applyScreenerDecision, AccountErasedError, readAccountErasedAt, domainOf,
-  readRequestEligibility, readOrganizerRole, insertOrganizerRequest, listOutstandingForAccount,
+  readRequestEligibility, decisionCanBeApplied,
+  readOrganizerRole, insertOrganizerRequest, listOutstandingForAccount,
   OrganizedElsewhereError, MailboxNotFoundError, ringFilingDoorbell,
   type AppliedScreenerRow, type RequestEligibility, type OrganizedBy,
   type Tx,
@@ -1659,7 +1660,9 @@ export class ScreenerService extends ScreenerReadService {
     let ineligibleAt: { mailboxId: string; eligibility: RequestEligibility | null } | null = null;
     for (const [sender, row] of [...rep.entries()]) {
       const e = eligibilityByMailbox.get(row.mailboxId) ?? null;
-      if (e && e.capable && e.status !== "disabled") continue;
+      // THE ONE PREDICATE, and the reason it is a call: the worker's automatic pass spends on the
+      // same question, and the day this was three clauses here it was zero clauses there.
+      if (decisionCanBeApplied(e)) continue;
       ineligibleAt ??= { mailboxId: row.mailboxId, eligibility: e };
       rep.delete(sender);
     }

@@ -5,8 +5,10 @@ import {
   resolveCutline, senderIsActiveSql, senderIsDecidedSql, type ResolvedCutline,
   screenerAttemptKey, storeScreenerSuggestion,
   screenerSuggestedSenderExists, hasScreenerSuggestionForSender, AI_ACTION_WEIGHTS,
-  type SpendPort, type Tx,
+  decisionCanBeApplied, readRequestEligibility,
+  type RefundObligationPort, type SpendPort, type Tx,
 } from "@trafficflow/db";
+import { capabilityForKind } from "@trafficflow/core/adapters/organizer-lease";
 import {
   askScreeningQuestion, capSuggestion, senderCheckAll, senderFacts, silentLogger,
   type ClassifierPort, type Logger, type SenderSignals,
@@ -70,6 +72,17 @@ export interface ScreenerAutoSuggestDeps {
    * ever; here the same mistake does nothing, which is visible. A test pins both directions.
    */
   unmetered?: true;
+  /**
+   * WHERE A REFUND THIS PASS OWES IS REMEMBERED. Composed beside {@link credits} by any host with
+   * an entitlements program; absent on an unmetered one, which owes nothing.
+   *
+   * A refund here is a `release` like any other and can be lost like any other, and a lost one is
+   * a person charged for advice they never got. The obligation is written BEFORE the reversal is
+   * tried, so the debt survives the call. With a gate and no port the shortfall is LOGGED by name
+   * rather than passed over; `screener-auto-suggest-composition.test.ts` is what keeps the hosted
+   * worker from reaching that line at all.
+   */
+  obligations?: RefundObligationPort;
   /** The account's own "who belongs in my Ohbox" words, so a bought suggestion asks the same
    *  question a user-pressed one does. Absent ⇒ omitted from the request. */
   ohboxBar?: string;
@@ -101,6 +114,9 @@ export interface ScreenerAutoSuggestResult {
 /** One candidate: the sender's representative held message, and what the question needs. */
 interface Candidate {
   messageId: string;
+  /** WHICH MAILBOX — the unit `decisionCanBeApplied` is asked about, exactly as the manual route
+   *  asks it: two mailboxes on one account can have different organizers. */
+  mailboxId: string;
   fromAddress: string;
   fromName: string | null;
   subject: string;
@@ -166,9 +182,40 @@ export async function screenerAutoSuggestPass(
     scope: settings?.screeningScope ?? null,
     now: deps.now?.() ?? new Date(),
   });
-  const candidates = await selectCandidates(db, { accountId, watermark, limit: batch, cutline });
+  const page = await selectCandidates(db, { accountId, watermark, limit: batch, cutline });
+
+  /* ── NO ORGANIZER, NO SPEND ────────────────────────────────────────────────────────────────
+   *
+   * The gate the MANUAL purchase route has had since 0.14.1, applied at the automatic caller
+   * through the SAME function. Stop the sole organizer and Cloud keeps the connected reader in
+   * its served list: this pass went on buying the model's advice about held senders every cycle,
+   * advice whose only use is a decision that mailbox may no longer make. Nobody pressed anything,
+   * so nobody was told — the charge just kept happening.
+   *
+   * ONE READ PER DISTINCT MAILBOX, not per sender: forty senders in one mailbox ask once. Asked
+   * BEFORE the loop, so an ineligible mailbox costs one indexed PK read per cycle and no spend at
+   * all; asked AGAIN inside the exclusive region below, because a stand-down landing between this
+   * read and the claim is the race this filter cannot see, and that charge is refunded.
+   */
+  const appliable = new Map<string, boolean>();
+  for (const mailboxId of new Set(page.map((c) => c.mailboxId))) {
+    appliable.set(mailboxId, decisionCanBeApplied(await readRequestEligibility(
+      db, accountId, mailboxId, capabilityForKind("screener.decide"),
+    )));
+  }
+  const candidates = page.filter((c) => appliable.get(c.mailboxId) === true);
+  if (candidates.length < page.length) {
+    log.info("screener_auto_suggest_no_organizer", {
+      accountId, dropped: page.length - candidates.length,
+      reason: "no install can apply a Screener decision on these mailboxes, so their advice is " +
+        "not bought — the condition the manual purchase route refuses",
+    });
+  }
+
   const result: ScreenerAutoSuggestResult = {
-    ...EMPTY(), ran: true, examined: candidates.length, capped: candidates.length >= batch,
+    // `capped` reads the PAGE, which is what the query answered; `examined` reads the eligible
+    // set, which is what this field has always meant.
+    ...EMPTY(), ran: true, examined: candidates.length, capped: page.length >= batch,
   };
 
   // WHO THESE SENDERS REALLY ARE, BEFORE ANY OF THEM IS ASKED ABOUT. Deterministic, free, and
@@ -224,14 +271,40 @@ export async function screenerAutoSuggestPass(
      * cycle over the same message and that is the claim this pass's caller already makes.
      */
     let refundOnRelease = false;
-    /** Give the claim back, once; reverse the charge only when told to. */
+    /**
+     * Give the claim back, once; reverse the charge only when told to.
+     *
+     * A REVERSAL IS OWED BEFORE IT IS TRIED. The obligation is written first, so a release the
+     * program never receives leaves a debt the drain settles instead of a charge nobody remembers;
+     * the receipt is what closes it. `owe` is idempotent per (account, attempt), so a pass that
+     * dies after writing and before releasing owes the same one debt next cycle.
+     */
     const releaseClaim = async (refund: boolean): Promise<void> => {
       if (!gate || !claimed || released) return;
       released = true;
       const meta = { messageId: c.messageId };
-      await gate.release(accountId, refund && chargedAttempt !== undefined
-        ? { action: "screener", attemptKey, refund: true, attempt: chargedAttempt, meta }
+      const reverses = refund && chargedAttempt !== undefined;
+      if (reverses && deps.obligations) {
+        await deps.obligations.owe({
+          accountId, action: "screener", attemptKey, attempt: chargedAttempt!,
+          reason: "no_organizer", meta,
+        });
+      } else if (reverses) {
+        // A metered host with no memory for what it owes. Named rather than passed over: the
+        // hosted worker composes both (`screener-auto-suggest-composition.test.ts`), so reaching
+        // this line at all is a wiring fault and not a state to design around.
+        log.warn("screener_auto_suggest_refund_unrecorded", {
+          accountId, messageId: c.messageId,
+          reason: "a refund is owed and no obligation port was composed beside the gate, so a " +
+            "lost release would leave this charge with nothing to reverse it",
+        });
+      }
+      const receipt = await gate.release(accountId, reverses
+        ? { action: "screener", attemptKey, refund: true, attempt: chargedAttempt!, meta }
         : { action: "screener", attemptKey, refund: false, meta });
+      if (reverses && receipt === "settled" && deps.obligations) {
+        await deps.obligations.settle(accountId, chargedAttempt!);
+      }
     };
     try {
       if (gate) {
@@ -266,6 +339,23 @@ export async function screenerAutoSuggestPass(
         // Recorded, not yet counted: `result.charged` is added to below, once this candidate is past
         // the entitlement re-check, because a charge that is handed straight back moved nothing.
         if (outcome.verdict === "ok") chargedAttempt = outcome.attempt;
+      }
+
+      // THE ORGANIZER, RE-ASKED INSIDE THE EXCLUSIVE REGION. The filter above ran once for the
+      // whole page; a stand-down, a removal or a takeover by an older build landing between that
+      // read and this claim leaves a charge for advice that can no longer be applied. Asked again
+      // where it sees every earlier commit, and the charge comes back through the obligation row
+      // rather than being written off — this is the same "a spend that bought nothing" class as a
+      // drafter that threw, and the same door reverses it.
+      if (!decisionCanBeApplied(await readRequestEligibility(
+        db, accountId, c.mailboxId, capabilityForKind("screener.decide"),
+      ))) {
+        log.info("screener_auto_suggest_organizer_left", {
+          accountId, messageId: c.messageId,
+          ...(chargedAttempt !== undefined ? { refunding: chargedAttempt } : {}),
+        });
+        refundOnRelease = true;
+        continue;
       }
 
       // THE ENTITLEMENT, RE-ASKED INSIDE THE EXCLUSIVE REGION (SEC3-MONEY-1, SEC3-MONEY-3). `selectCandidates`
@@ -397,6 +487,7 @@ async function selectCandidates(
   // `account_id` LEADS the predicate rather than filtering a cross-account result.
   const reps = db.select({
     messageId: messages.id,
+    mailboxId: messages.mailboxId,
     fromAddress: messages.fromAddress,
     // THE TWO THE SENDER CHECK READS BESIDE THE SUBJECT. `from_name` is the identity the sender
     // asserted; `auth_verdict` is the one fact here nobody outside could write — NULL on every
@@ -425,6 +516,7 @@ async function selectCandidates(
 
   const rows = await db.select({
     messageId: reps.messageId,
+    mailboxId: reps.mailboxId,
     fromAddress: reps.fromAddress,
     fromName: reps.fromName,
     authVerdict: reps.authVerdict,
@@ -472,6 +564,7 @@ async function selectCandidates(
 
   return rows.map((r) => ({
     messageId: r.messageId,
+    mailboxId: r.mailboxId,
     fromAddress: r.fromAddress.toLowerCase(),
     fromName: r.fromName,
     authVerdict: r.authVerdict,

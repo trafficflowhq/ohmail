@@ -134,6 +134,16 @@ export {
   type ApiFaultInput, type ApiFaultArm, type ApiFaultRouteCount,
 } from "./api-faults.js";
 
+/* A spend that bought nothing, as a durable obligation (cloud 0036). CLOUD-ONLY, and the writers
+ * reach it through `RefundObligationPort` for the reason `api_faults` does: the table does not
+ * exist in a local install and the drafting path is inside the desktop engine's import closure. */
+export {
+  recordRefundObligation, settleRefundObligation, claimRefundObligations,
+  noteRefundObligationFault, pendingRefundObligations, refundObligationsOn,
+  REFUND_OBLIGATION_LEASE_MS, REFUND_OBLIGATION_BATCH,
+  type ClaimedRefundObligation,
+} from "./refund-obligations.js";
+
 /* The passkey ceremony table's retention (cloud 0034) — the bounded, opportunistic prune the
  * three ceremony START doors call. CLOUD-ONLY, like the table itself. */
 export {

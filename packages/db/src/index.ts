@@ -138,7 +138,7 @@ export {
   // each family of request it has an applier for, so a reader is refused at its own door rather
   // than queueing a record the holder will never take.
   CAPABILITY_REQUESTS, CAPABILITY_MOVES, CAPABILITY_RULES, CAPABILITY_PROFILE,
-  capabilitiesColumn, hasCapability, readRequestEligibility,
+  capabilitiesColumn, hasCapability, readRequestEligibility, decisionCanBeApplied,
   type OrganizerRole, type OrganizerKind, type OrganizerState, type OrganizerIntent,
   type OrganizedBy, type OrganizerRoleRow, type RequestEligibility, type RequestRefusalReason,
 } from "./organizer-role.js";
@@ -376,4 +376,6 @@ export {
   type SpendPort, type SpendComposition, type SpendMeta, type AccessPort,
   type AccessVerdict, type AccessLimits, type AccessRefusal,
   type SpendOutcome, type SpendAction, type SpendRelease, type ReleaseOutcome,
+  type ReleaseReceipt, type RefundObligation, type RefundObligationPort,
+  type RefundObligationReason,
 } from "./entitlements-port.js";

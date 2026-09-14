@@ -1,7 +1,8 @@
 import {
   UNMETERED_ACCESS,
   type AccessRefusal, type AccessVerdict, type EntitlementsPort,
-  type ReleaseOutcome, type SpendAction, type SpendMeta, type SpendOutcome, type SpendRelease,
+  type ReleaseOutcome, type ReleaseReceipt, type SpendAction, type SpendMeta, type SpendOutcome,
+  type SpendRelease,
 } from "./entitlements-port.js";
 import { isAiRefusalReason } from "./ai-gate-port.js";
 import { assertAttemptKey } from "./ledger-source.js";
@@ -321,12 +322,14 @@ export function makeEntitlementsClient(cfg: EntitlementsClientConfig): Entitleme
       return read;
     },
 
-    async release(accountId: string, r: SpendRelease): Promise<void> {
+    async release(accountId: string, r: SpendRelease): Promise<ReleaseReceipt> {
       // A lost release leaves the attempt OPEN, so its retry is free — losing one costs the
       // customer nothing, which is why this swallows rather than retries. A lost REFUND is the
       // dearer half and the ledger is what makes reissuing it safe, so the caller may repeat it.
+      // It is REPORTED rather than swallowed: the receipt is what lets a caller that owes money
+      // back record the debt instead of dropping it.
       assertAttemptKey(r.action, r.attemptKey);
-      await post("/v1/spend/release", {
+      const res = await post("/v1/spend/release", {
         accountId, action: r.action, attemptKey: r.attemptKey, refund: r.refund,
         // Named only when there is a charge to reverse. The program defaults a missing `attempt`
         // to the bare source, which is attempt 1 — so sending one on a non-refund call would put
@@ -334,6 +337,10 @@ export function makeEntitlementsClient(cfg: EntitlementsClientConfig): Entitleme
         ...(r.refund ? { attempt: r.attempt } : {}),
         ...(r.meta ? { meta: r.meta } : {}),
       });
+      // A 200 AND NOTHING ELSE. `post` already reported the outage or the refusing status through
+      // `onCallFault`; a non-200 is not a release the program took, and reading one as `settled`
+      // would be the swallow wearing a return type.
+      return res?.status === 200 ? "settled" : "unreachable";
     },
 
     async manageLink(accountId: string): Promise<{ url: string } | null> {

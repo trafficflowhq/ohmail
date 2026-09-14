@@ -94,6 +94,21 @@ export type SpendRelease = {
 );
 
 /**
+ * DID THE PROGRAM TAKE THIS RELEASE — the answer that makes a lost refund writable.
+ *
+ * `release` answered `void`, so a reversal the program never received and one it applied were the
+ * same value at every call site. A spend that bought nothing then had no way to become an
+ * obligation and no way to tell the person which of the two happened to their credits. Two
+ * members, never an optional field: "we do not know" is `unreachable` here, because a refund we
+ * cannot confirm is a debt until something confirms it.
+ */
+export type ReleaseReceipt =
+  /** The program answered 200. The claim is back, and a refund named here is reversed. */
+  | "settled"
+  /** Nothing answered, or the answer was not a 200. Whatever this release owed is still owed. */
+  | "unreachable";
+
+/**
  * PROVENANCE FOR THE LEDGER ROW, and the reason it is not free-form in practice.
  *
  * It is a `jsonb` column and indexes nothing, which is why identifiers too long or too variable
@@ -102,6 +117,41 @@ export type SpendRelease = {
  * and counts, and nothing a sender chose.
  */
 export type SpendMeta = Record<string, unknown>;
+
+/** Why a spend bought nothing. The `credit_refund_obligations_reason_check` set, as words. */
+export type RefundObligationReason =
+  /** The model call this spend paid for threw. Nothing was produced and nothing was stored. */
+  | "drafter_failed"
+  /** Advice was bought for a mailbox no organizer can apply it to — bought, then unusable. */
+  | "no_organizer";
+
+/** One debt: everything the reversal needs, and nothing about what a credit is worth. */
+export interface RefundObligation {
+  accountId: string;
+  action: SpendAction;
+  /** The BARE attempt key. The port composes the ledger source; storing a composed one
+   *  double-prefixes it on the drain's release. */
+  attemptKey: string;
+  /** What {@link SpendOutcome} answered as `attempt` for a `charged: true` verdict. */
+  attempt: string;
+  reason: RefundObligationReason;
+  meta?: SpendMeta;
+}
+
+/**
+ * WHERE A SPEND THAT BOUGHT NOTHING IS REMEMBERED — a port, for the reason `ApiFaultLogPort` is
+ * one: the table is Cloud's and this file is on the mail barrel, which the desktop engine
+ * compiles. A local install composes none of this and has nothing to owe.
+ *
+ * `owe` runs BEFORE the reversal is attempted, so a crash between the two leaves the debt
+ * standing; it is idempotent per (account, attempt), so observing one failure twice is one debt.
+ * `settle` is what a receipt of `settled` earns. Neither may throw for anything but a real write
+ * failure: a lost obligation is the defect this port exists to close, so it is never swallowed.
+ */
+export interface RefundObligationPort {
+  owe(o: RefundObligation): Promise<void>;
+  settle(accountId: string, attempt: string): Promise<void>;
+}
 
 /**
  * What erasure learned when it stopped the money — the erasure response's own three values, so
@@ -133,8 +183,13 @@ export interface EntitlementsPort {
   spend(
     accountId: string, action: SpendAction, attemptKey: string, meta?: SpendMeta,
   ): Promise<SpendOutcome>;
-  /** The work is over, whichever way it ended. Never throws; replay-safe. */
-  release(accountId: string, r: SpendRelease): Promise<void>;
+  /**
+   * The work is over, whichever way it ended. Never throws; replay-safe, and it ANSWERS — see
+   * {@link ReleaseReceipt}. A caller reversing a charge reads the receipt and records what the
+   * program did not take; a caller merely handing a claim back may ignore it, because a lost
+   * release costs the customer nothing (the attempt stays open, so the retry is free).
+   */
+  release(accountId: string, r: SpendRelease): Promise<ReleaseReceipt>;
   /**
    * The one customer-facing door the managed service has: plan choice for an account with no
    * subscription, and plan status for one that has. A KNOWN account always gets a URL, so this is
