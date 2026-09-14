@@ -14,7 +14,8 @@
  */
 
 import "./mapping.js";
-import { parseColorsToml } from "./colors-toml.js";
+import { parseColorsToml, type OmarchyPalette } from "./colors-toml.js";
+import { counterpartPalette } from "./counterpart.js";
 import { applySettings, parseSystem, type OmarchySystemRaw } from "./settings.js";
 import type { OhmarchyMap, OhmarchyMapResult } from "./mapping.js";
 
@@ -40,7 +41,7 @@ export interface OmarchyThemeRaw extends OmarchySystemRaw {
  *  every step "helped" and none sufficed. All 22 stock themes clear these; the palette that
  *  fails them is user-authored and unreadable-by-contrast, and the honest answer for it is
  *  the same as for one that does not parse: keep the last good theme. */
-function clearsFloors(map: OhmarchyMap, t: Record<string, string>): boolean {
+export function clearsFloors(map: OhmarchyMap, t: Record<string, string>): boolean {
   const panel = t["--panel"];
   const floors: [string, string, number][] = [
     ["--ink", panel, 4.5],
@@ -82,4 +83,62 @@ export function mapOmarchyTheme(raw: OmarchyThemeRaw): OhmarchyMapResult | null 
   }
   if (!clearsFloors(map, mapped.tokens)) return null;
   return { ...mapped, tokens: applySettings(mapped.tokens, parseSystem(raw)) };
+}
+
+/**
+ * The counterpart's one ADDED floor: a tile must read as a tile. The law's own floors are all
+ * about text and accents on the panel and say nothing about the panel against the canvas —
+ * true of every stock theme, which authors both, and NOT true by construction of a derived
+ * pair whose two surfaces are mixes of one colour toward one pole.
+ */
+export function clearsCounterpartFloors(map: OhmarchyMap, t: Record<string, string>): boolean {
+  if (!clearsFloors(map, t)) return false;
+  try {
+    return map.contrast(t["--canvas"], t["--panel"]) >= 1.06;
+  } catch {
+    return false;
+  }
+}
+
+/** Both schemes of one live theme: the one it states, and the one it does not. */
+export interface OmarchyThemeMapping {
+  /** The theme's own scheme — exactly what `mapOmarchyTheme` answers. */
+  native: OhmarchyMapResult;
+  /**
+   * The scheme the theme does not have, or `null` when the derivation missed a floor. Null is
+   * "keep what you have" again: the caller emits nothing for that scheme and the static
+   * `ohmarchy.css` block stands, which is readable and on-brand — never a half-mapped set.
+   */
+  counterpart: OhmarchyMapResult | null;
+  /** The theme's own mode, so a caller knows which scheme `native` belongs to. */
+  mode: "light" | "dark";
+  /** The parsed palette, for a caller that wants the counterpart's own material. */
+  palette: OmarchyPalette;
+}
+
+/**
+ * Map one live theme into BOTH schemes. `null` has the same meaning as `mapOmarchyTheme`'s —
+ * the material is not a theme, or the law could not save it — and a null `counterpart` inside
+ * a non-null answer is the narrower refusal: this theme's own scheme maps, its other one does
+ * not, and only the other one falls back.
+ */
+export function mapOmarchyThemePair(raw: OmarchyThemeRaw): OmarchyThemeMapping | null {
+  const palette = parseColorsToml(raw.colorsToml);
+  if (palette === null) return null;
+  const native = mapOmarchyTheme(raw);
+  if (native === null) return null;
+  const map = omarchyMap();
+  const other = counterpartPalette(palette);
+  let counterpart: OhmarchyMapResult | null = null;
+  if (other !== null) {
+    try {
+      const mapped = map.mapTheme(other);
+      if (clearsCounterpartFloors(map, mapped.tokens)) {
+        counterpart = { ...mapped, tokens: applySettings(mapped.tokens, parseSystem(raw)) };
+      }
+    } catch {
+      counterpart = null;
+    }
+  }
+  return { native, counterpart, mode: palette.mode, palette };
 }

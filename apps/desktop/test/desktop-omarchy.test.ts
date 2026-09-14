@@ -9,6 +9,8 @@
  * REAL shapes: a literal Omarchy 4.0.2 colors.toml and the VM's literal tool answers, not
  * strings shaped like them.
  */
+import { existsSync, readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
@@ -18,6 +20,7 @@ import {
   OMARCHY_THEME_EVENT,
   applyOmarchyTokens,
   fencedTokens,
+  omarchyRuleText,
   resetOmarchyFeedForTests,
   startOmarchyFeed,
   themeRawOfPayload,
@@ -121,6 +124,73 @@ describe("the feed's start", () => {
     expect(document.documentElement.getAttribute(OMARCHY_LIVE_ATTRIBUTE)).toBe("live");
   });
 
+  /**
+   * THE SCHEME AXIS SURVIVES THE FEED (control 1). Before this the live set was ONE unscoped
+   * `:root[data-face="ohmarchy"]` rule, which outranks both static scheme blocks: the rail's
+   * control moved `data-theme` and nothing on screen changed colour. The five forms below are
+   * `packages/tokens/src/ohmarchy.css`'s own, so live and static agree by construction. The
+   * COMPUTED values are not readable here — jsdom does not cascade custom properties out of
+   * stylesheets — and are read in `scripts/scheme-under-ohmarchy-render.mjs`.
+   */
+  it("carries the five selector forms: its own scheme under auto and its own pair, the counterpart under the other", async () => {
+    installShell({ slug: "tokyo-night", colorsToml: TOKYO_NIGHT });
+    await startOmarchyFeed();
+    const rule = styleText()!;
+    const FACE = `:root[${OMARCHY_FACE_ATTRIBUTE}="${OMARCHY_FACE_VALUE}"]`;
+
+    const forms = rule.split("\n").filter((l) => l.includes(FACE));
+    expect(forms).toEqual([
+      `${FACE}:not([data-theme="light"]):not([data-theme="dark"]) {`,
+      `${FACE}[data-theme="dark"],`,
+      `${FACE} [data-theme="dark"] {`,
+      `${FACE}[data-theme="light"],`,
+      `${FACE} [data-theme="light"] {`,
+    ]);
+
+    /* Each block carries its own `color-scheme`, and the counterpart's panel is a near-white
+       derived from tokyo-night's own foreground — not flexoki-light's #FFFCF0, which is what
+       the static block would have supplied. */
+    const blocks = rule.split("}\n");
+    expect(blocks).toHaveLength(3);
+    expect(blocks[0]).toContain("color-scheme: dark !important;");
+    expect(blocks[1]).toContain("--panel: #1a1b26 !important;");
+    expect(blocks[2]).toContain("color-scheme: light !important;");
+    expect(blocks[2]).toContain("--panel: #f8f9fc !important;");
+    expect(blocks[2]).toContain("--ink: #1a1b26 !important;");
+  });
+
+  /** A theme whose counterpart misses a floor emits nothing for the other scheme, and the
+   *  static face block for it stands — "keep what you have", never half-mapped. */
+  it("no counterpart, no block — the static face keeps the other scheme", () => {
+    const withCounterpart = omarchyRuleText({ "--panel": "#2e3440" }, "dark", {
+      "--panel": "#fafafa",
+    });
+    const without = omarchyRuleText({ "--panel": "#2e3440" }, "dark", null);
+    const schemeForms = (text: string): string[] =>
+      text.split("\n").filter((l) => /^:root\[data-face="ohmarchy"\][ []/.test(l));
+    expect(schemeForms(withCounterpart)).toHaveLength(4);
+    expect(schemeForms(without)).toHaveLength(2);
+    expect(schemeForms(without).join("\n")).not.toContain(`[data-theme="light"]`);
+    expect(without.split("}\n")).toHaveLength(2);
+  });
+
+  /**
+   * ONE PROVIDER OWNS THE STAMPS (control 9, OHMARCHY-CONTRACT.md). The feed writes CSS and
+   * never an attribute: a `documentElement.dataset.theme = mode` here would be a second writer
+   * racing `ThemeProvider`. `data-theme` appears in this module only inside selector text.
+   */
+  it("the feed writes no scheme attribute — selector text only", () => {
+    /* From the repo root under the root vitest config, from the package under its own. */
+    const fromRoot = resolve(process.cwd(), "apps/desktop/src/omarchy.ts");
+    const path = existsSync(fromRoot) ? fromRoot : resolve(process.cwd(), "src/omarchy.ts");
+    const src = readFileSync(path, "utf8");
+    expect(src).not.toMatch(/dataset\s*\.\s*theme/);
+    expect(src).not.toMatch(/(set|remove|toggle)Attribute\(\s*["'`]data-theme/);
+    /* The positive control that the needle above can fire at all: the module DOES write the
+       live marker attribute, by exactly the spelling the scan looks for. */
+    expect(src).toMatch(/setAttribute\(OMARCHY_LIVE_ATTRIBUTE/);
+  });
+
   it("off-Omarchy — a null answer — applies nothing and marks nothing", async () => {
     installShell(null);
     await startOmarchyFeed();
@@ -216,9 +286,14 @@ describe("the fence", () => {
     // The static follow-the-system dark block is (0,3,0) against this rule's (0,2,0); without
     // importance a dark desktop keeps the static values for every slot both define, and the
     // feed silently does nothing in the commonest configuration.
-    applyOmarchyTokens({ "--panel": "#2e3440", "color-scheme": "dark" });
+    applyOmarchyTokens({ "--panel": "#2e3440", "color-scheme": "dark" }, "dark", {
+      "--panel": "#fafafa",
+      "color-scheme": "light",
+    });
     const rule = styleText()!;
-    for (const line of rule.split("\n").slice(1, -1)) {
+    const declarations = rule.split("\n").filter((l) => l.startsWith("  "));
+    expect(declarations).toHaveLength(6);
+    for (const line of declarations) {
       expect(line.endsWith(" !important;"), line).toBe(true);
     }
   });

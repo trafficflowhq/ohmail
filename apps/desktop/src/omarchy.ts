@@ -5,8 +5,16 @@
  * at start (an event emitted before this bundle's scripts run is an event nobody hears); PUSH
  * is the `omarchy:theme` event over the one receive-only `core:event:allow-listen` grant
  * (`native.ts` carries the asymmetry's reasoning). Raw text down, nothing up. The mapped
- * values land in ONE <style> rule scoped to `:root[data-face="ohmarchy"]` — inline properties
- * on <html> would repaint every face; the attribute's name is this module's exported constant.
+ * values land in ONE <style> element scoped to `:root[data-face="ohmarchy"]` — inline
+ * properties on <html> would repaint every face; the attribute's name is this module's
+ * exported constant.
+ *
+ * SCHEME × FACE STAYS ORTHOGONAL (OHMARCHY-CONTRACT.md). The element carries the SAME FIVE
+ * SELECTOR FORMS `packages/tokens/src/ohmarchy.css` uses, so the live theme and the static
+ * face agree by construction: the theme's own scheme under the no-explicit-theme form and
+ * under its own `[data-theme]` pair, the derived counterpart under the other pair. Without the
+ * axis one unscoped `!important` rule outranked both static scheme blocks and the rail's
+ * scheme control moved the attribute while nothing on screen changed colour.
  */
 
 /*
@@ -20,7 +28,7 @@
  * write arbitrary rules — so names must match the token grammar; a failing pair is dropped.
  */
 
-import { mapOmarchyTheme, type OmarchyThemeRaw } from "../../../packages/tokens/omarchy/map.js";
+import { mapOmarchyThemePair, type OmarchyThemeRaw } from "../../../packages/tokens/omarchy/map.js";
 
 /** The event the shell emits when the desktop theme changed and went quiet. */
 export const OMARCHY_THEME_EVENT = "omarchy:theme";
@@ -125,9 +133,51 @@ export function fencedTokens(tokens: Record<string, string>): [string, string][]
   return out;
 }
 
-/** Write the token set as the one scoped rule. Exported for the feed and the tests; the
- *  style element is created on first use and reused for the window's life. */
-export function applyOmarchyTokens(tokens: Record<string, string>): void {
+/** The face, as every form below starts. `:root` because the feed writes on <html> alone. */
+const FACE = `:root[${OMARCHY_FACE_ATTRIBUTE}="${OMARCHY_FACE_VALUE}"]`;
+/**
+ * The scheme forms, `ohmarchy.css`'s own. The no-explicit-theme form is written with the two
+ * `:not()`s rather than `:not([data-theme])` so it matches the static stylesheet's arity and
+ * import order keeps deciding exactly as it did before this axis existed. The DESCENDANT form
+ * is what lets a subtree be forced light inside a dark page (the dark reader's per-message
+ * light rendering) — dropping it would leave those subtrees on the static palette.
+ */
+const AUTO_FORM = `${FACE}:not([data-theme="light"]):not([data-theme="dark"])`;
+const schemeForms = (scheme: "light" | "dark"): string =>
+  `${FACE}[data-theme="${scheme}"],\n${FACE} [data-theme="${scheme}"]`;
+
+const OTHER: Record<"light" | "dark", "light" | "dark"> = { light: "dark", dark: "light" };
+
+/** One block: the fenced set as `!important` declarations under the given selector list. */
+function block(selector: string, tokens: Record<string, string>): string {
+  // `!important` per declaration — the module header carries the cascade argument.
+  const lines = fencedTokens(tokens).map(([name, value]) => `  ${name}: ${value} !important;`);
+  return `${selector} {\n${lines.join("\n")}\n}`;
+}
+
+/**
+ * THE ONE WRITER OF THE SELECTOR FORMS. Pure text, so the headless render rig
+ * (`scripts/scheme-under-ohmarchy-render.mjs`) reads what the window writes rather than a
+ * second copy of the rule. A null counterpart emits nothing for the other scheme, and the
+ * static face block for it stands.
+ */
+export function omarchyRuleText(
+  native: Record<string, string>,
+  mode: "light" | "dark",
+  counterpart: Record<string, string> | null,
+): string {
+  const blocks = [block(AUTO_FORM, native), block(schemeForms(mode), native)];
+  if (counterpart !== null) blocks.push(block(schemeForms(OTHER[mode]), counterpart));
+  return blocks.join("\n");
+}
+
+/** Write the token sets as the scoped rules. Exported for the feed and the tests; the style
+ *  element is created on first use and reused for the window's life. */
+export function applyOmarchyTokens(
+  tokens: Record<string, string>,
+  mode: "light" | "dark" = "dark",
+  counterpart: Record<string, string> | null = null,
+): void {
   const doc = typeof document === "undefined" ? null : document;
   if (!doc) return;
   let style = doc.getElementById(STYLE_ID) as HTMLStyleElement | null;
@@ -136,10 +186,7 @@ export function applyOmarchyTokens(tokens: Record<string, string>): void {
     style.id = STYLE_ID;
     doc.head.appendChild(style);
   }
-  // `!important` per declaration — the module header carries the cascade argument.
-  const lines = fencedTokens(tokens).map(([name, value]) => `  ${name}: ${value} !important;`);
-  style.textContent =
-    `:root[${OMARCHY_FACE_ATTRIBUTE}="${OMARCHY_FACE_VALUE}"] {\n${lines.join("\n")}\n}`;
+  style.textContent = omarchyRuleText(tokens, mode, counterpart);
   doc.documentElement.setAttribute(OMARCHY_LIVE_ATTRIBUTE, "live");
 }
 
@@ -152,9 +199,9 @@ let feedStarted = false;
 function handlePayload(payload: unknown): void {
   const raw = themeRawOfPayload(payload);
   if (raw === null) return;
-  const mapped = mapOmarchyTheme(raw);
+  const mapped = mapOmarchyThemePair(raw);
   if (mapped === null) return;
-  applyOmarchyTokens(mapped.tokens);
+  applyOmarchyTokens(mapped.native.tokens, mapped.mode, mapped.counterpart?.tokens ?? null);
 }
 
 /**
