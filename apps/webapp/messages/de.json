@@ -1116,6 +1116,7 @@
     "cancelWhatLocal": "Das löscht, was du geschrieben hast. Es ist nicht wiederherstellbar.",
     "cancelConfirm": "Nachricht verwerfen",
     "cancelKeep": "Weiterschreiben",
+    "cancelAlreadySent": "Schon gesendet. Zu spät zum Abbrechen.",
     "keyLeave": "Schreiben verlassen",
     "keyCloseConfirm": "Weiterschreiben",
     "keySend": "Nachricht senden",

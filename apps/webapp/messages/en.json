@@ -1116,6 +1116,7 @@
     "cancelWhatLocal": "This deletes what you've written. It isn't recoverable.",
     "cancelConfirm": "Discard message",
     "cancelKeep": "Keep writing",
+    "cancelAlreadySent": "Already sent. Too late to cancel.",
     "keyLeave": "Leave Compose",
     "keyCloseConfirm": "Keep writing",
     "keySend": "Send the message",

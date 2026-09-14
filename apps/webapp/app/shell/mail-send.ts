@@ -35,6 +35,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { OUTBOX_TYPE } from "@ohmail/client-engine";
+import { OUTBOX_WITHDRAWN_CODE } from "@ohmail/client-engine";
 import type { EngineMessage, EntityReader, MutationResult, OhmailEngine } from "@ohmail/client-engine";
 import type { ToastFn } from "@ohmail/ui";
 import {
@@ -167,7 +168,24 @@ export interface MailSendApi {
    * about `null` and got `free` while the row a previous press left sat unconfirmed.
    */
   send: (m: MailSend, opts?: { surface?: "inline"; heldRow?: string | null }) => void;
+  /**
+   * CANCEL CANCELS — withdraw this lane's QUEUED send, if it has one.
+   *
+   * A queued send is an intent standing on the engine's outbox: nothing is on the wire, and the
+   * reconnect flush (or a later boot, from the durable row) will deliver it. Closing the composer
+   * over one used to leave it standing, so a message somebody cancelled still went — once, never
+   * twice, which is why it read as ordinary rather than as a defect. Nothing queued answers
+   * `close`: there is nothing to withdraw and the caller carries on.
+   *
+   * `already_sent` is the one answer that withdraws nothing: the request has left this device and
+   * only the server knows what it did with it. The caller says so rather than closing silently
+   * over a delivery it cannot take back.
+   */
+  withdraw: (lane: string) => Promise<CancelSaid>;
 }
+
+/** What Cancel does with the engine's answer — see {@link MailSendApi.withdraw}. */
+export type CancelSaid = "close" | "already_sent";
 
 const IDLE: SendState = { phase: "idle" };
 
@@ -1155,6 +1173,21 @@ export function useMailSend(
 
   const absorb = useCallback(
     (key: string, m: MailSend, res: MutationResult) => {
+      /**
+       * A WITHDRAWN VERB OWES NO SENTENCE. Cancel took this send off the queue and {@link
+       * MailSendApi.withdraw} already ended the lane; a flush that was carrying it answers with
+       * the rollback it made of it, and "Send failed" over a send the person themselves cancelled
+       * is the wrong sentence with no right one behind it. Read before the phase is derived,
+       * because every derivation below would give it one.
+       */
+      if (res.error?.code === OUTBOX_WITHDRAWN_CODE) {
+        queued.current.delete(res.key);
+        inFlight.current.delete(res.key);
+        locked.current.delete(key);
+        accepted.current.delete(key);
+        setPhase(key, IDLE);
+        return;
+      }
       let next = phaseFor(res);
       if (res.status === "queued") {
         // Remember the server's 202 the one time it is said, and re-apply it to every later
@@ -1771,6 +1804,46 @@ export function useMailSend(
     [engine, stateFor, setPhase, absorb, arm, sessionOf],
   );
 
+  /**
+   * ── CANCEL CANCELS ────────────────────────────────────────────────────────────────────────
+   *
+   * See {@link MailSendApi.withdraw}. The lane's Idempotency-Key is the handle: {@link queued}
+   * holds it from the moment the engine answered `queued`, and the lock refuses a second press,
+   * so a lane has at most one. The engine marks the key in memory and the outbox row on disk
+   * ({@link OhmailEngine.withdrawQueued}), which is what stops this session's flush AND a later
+   * boot from delivering it — a mark only in this tab would be undone by the next start.
+   *
+   * Everything this lane was holding goes with the intent: the lock, the key, the frozen
+   * mutation, the accepted flag, the identity the press recorded, the durable claim and the
+   * phase. The claim is released BY FINGERPRINT, so an unresolved record for a different message
+   * on the same lane is untouched — the same rule the confirmed path uses.
+   */
+  const withdraw = useCallback(async (lane: string): Promise<CancelSaid> => {
+    let key: string | null = null;
+    for (const [k, l] of queued.current) {
+      if (l === lane) { key = k; break; }
+    }
+    // Nothing queued on this lane: there is nothing to withdraw and the caller carries on. Not a
+    // refusal — a compose with no send out is the ordinary case for Cancel.
+    if (key === null) return "close";
+    const outcome = await engine.withdrawQueued(key);
+    /* THE REQUEST HAS LEFT AND THIS DEVICE CANNOT UN-SEND IT. Nothing is released: the send is
+       still owed an answer and the lane must stay locked until it has one. */
+    if (outcome === "on_the_wire") return "already_sent";
+    /* `withdrawn` is the cancellation; `gone` is a key the queue no longer holds, which the
+       engine has already settled elsewhere — either way nothing will be delivered under it, and
+       the withdrawal mark refuses it at the wire if a flush is mid-lift. */
+    const m = inFlight.current.get(key);
+    queued.current.delete(key);
+    inFlight.current.delete(key);
+    locked.current.delete(lane);
+    accepted.current.delete(lane);
+    sentFor.current.delete(lane);
+    if (m !== undefined) releaseSendLock(lane, sendFingerprint(m), owner.current);
+    setPhase(lane, IDLE);
+    return "close";
+  }, [engine, setPhase]);
+
   return useMemo(
     () => ({
       /**
@@ -1785,6 +1858,7 @@ export function useMailSend(
        */
       stateOf: stateFor,
       send,
+      withdraw,
       /** See {@link sendUnsettledFromLastSession} — the mount's own keys are what it excludes. */
       /** See {@link sendUnsettledFromLastSession} — the identity latched at mount is the key. */
       restoredPending: (lane: string) => lane === COMPOSE_SEND_KEY
@@ -1793,6 +1867,6 @@ export function useMailSend(
           sendPendingInDurableOutbox(engine, lane), owner.current,
         ),
     }),
-    [stateFor, send],
+    [stateFor, send, withdraw],
   );
 }

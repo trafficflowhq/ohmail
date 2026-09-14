@@ -535,6 +535,15 @@ export function ComposeView({
   const sendBlocked = !canSend(send, plan.mutation) || held !== null;
   const inFlight = send.phase === "sending" || send.phase === "queued" || held !== null;
   /**
+   * CANCEL IS NOT AN INPUT, AND A QUEUED SEND IS NOT ON THE WIRE. Cancel rode `inFlight` with the
+   * fields, which locked it for exactly the state in which cancelling is the thing somebody wants:
+   * a send sitting on the outbox waiting for a connection. The person closed the composer some
+   * other way, the intent stayed standing, and the message they had cancelled went out on the next
+   * reconnect. `sending` stays locked — the request has left and this device cannot un-send it —
+   * and so does a HELD message, whose send is owed an answer nobody has.
+   */
+  const cancelBlocked = send.phase === "sending" || held !== null;
+  /**
    * The state as it applies to THE MESSAGE ON SCREEN. An unresolved send parks the message it
    * belongs to and nothing else, so its warn sentence must not stand above a different one — see
    * `sendStateFor`. The lock above reads the unnarrowed state on purpose: it is the same rule,
@@ -982,13 +991,14 @@ export function ComposeView({
                 {t("sendLater")}
               </Button>
               {/* BESIDE SEND, because the two are the ways this message can end and a reader
-                  deciding between them should not have to look in two places. Disabled in
-                  flight for the reason every other input is: a message that is on its way to
-                  somebody is not a message to delete the row of. */}
+                  deciding between them should not have to look in two places. Disabled while the
+                  request is actually out — see `cancelBlocked`, which is deliberately NOT the
+                  same question as `inFlight`: a queued send has not left this device and Cancel
+                  withdraws it. */}
               <Button
                 variant="ghost"
                 className="compose-cancel"
-                disabled={inFlight}
+                disabled={cancelBlocked}
                 aria-expanded={confirmCancel}
                 onClick={cancel}
               >
