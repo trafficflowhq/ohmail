@@ -413,6 +413,10 @@ export {
   type EngineOptions,
   type MutationResult,
   type MutationStatus,
+  // Cancel's vocabulary: what a withdrawal found, and the refusal code a withdrawn verb settles
+  // with — a surface reads the code to say nothing rather than "it failed".
+  type WithdrawOutcome,
+  OUTBOX_WITHDRAWN_CODE,
   // The two structural capabilities an adapter WRAPPER has to forward by hand. Exported so a
   // wrapper can name the types rather than re-derive them — see `SnapshotCapableAdapter` and
   // `ListMessagesCapableAdapter` in engine.ts.

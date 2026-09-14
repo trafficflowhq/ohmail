@@ -49,6 +49,7 @@ import { BAR, PILL } from "./action-bar-layout";
 import { Button, Rule, Tap, Txt } from "./base";
 import { Icon, type IconName } from "./Icon";
 import { sendLaterOffered } from "./standalone-form";
+import { afterWithdraw, cancelAct } from "./send-cancel";
 import { Segmented } from "./Segmented";
 import { CancelRow, Sheet, SheetRow } from "./Sheet";
 
@@ -519,6 +520,11 @@ function ComposeSheet({
   /** The queued send's Idempotency-Key — what the settle effect follows through the ledger. */
   const [queuedKey, setQueuedKey] = useState<string | null>(null);
   /**
+   * TRUE once a Cancel was answered "too late": the request had left and this device cannot
+   * un-send it. The sentence stands in place and the next press dismisses — see `closeComposer`.
+   */
+  const [alreadySent, setAlreadySent] = useState(false);
+  /**
    * THE SIGNATURE BLOCK'S STATE (`signature.ts`, shared with the webapp composer): `following`
    * until the user speaks, then their edit or their strike stands for THIS message. The sheet
    * is mounted per compose and unmounts on close, so the state's lifetime IS the message's —
@@ -562,6 +568,9 @@ function ComposeSheet({
       // The queued copy is gone with the rollback — a fresh Send cannot double-deliver.
       setQueuedKey(null);
       setPhase("idle");
+      // …and the send did NOT go after all, so the too-late sentence may not stand over a
+      // re-armed Send. Cleared with the phase that raised it.
+      setAlreadySent(false);
     }
     else if (settled === "unverified") setPhase("unverified");
     // `unverified` stays locked: the server could not say whether the message left, so the
@@ -635,6 +644,25 @@ function ComposeSheet({
     void send(at.toISOString());
   };
 
+  /**
+   * EVERY ROAD OUT OF THIS SHEET — the button, the scrim, the back gesture. Over a queued send
+   * the close IS the cancellation: the intent is withdrawn before the sheet goes, so the
+   * reconnect flush has nothing left to deliver and a second composer cannot mint a second copy.
+   * A withdrawal the engine refuses because the request has already left says so and STAYS, and
+   * the press after that dismisses (`cancelAct`'s `alreadySent` arm).
+   */
+  const closeComposer = () => {
+    if (cancelAct({ phase, key: queuedKey, alreadySent }) === "close") {
+      onClose();
+      return;
+    }
+    void (async () => {
+      const said = afterWithdraw(await w.actions.withdrawSend(queuedKey!));
+      if (said === "close") onClose();
+      else setAlreadySent(true);
+    })();
+  };
+
   const send = async (sendAt: string | null = null) => {
     // The picker closes the moment ANY send is dispatched — a panel left standing over a
     // message that is already on its way offers rows for an act that may no longer happen.
@@ -659,12 +687,12 @@ function ComposeSheet({
   };
 
   return (
-    <Modal transparent animationType={t.reduceMotion ? "none" : "slide"} visible onRequestClose={onClose}>
+    <Modal transparent animationType={t.reduceMotion ? "none" : "slide"} visible onRequestClose={closeComposer}>
       <KeyboardAvoidingView
         behavior={Platform.OS === "ios" ? "padding" : undefined}
         style={{ flex: 1, justifyContent: "flex-end" }}
       >
-        <Pressable style={{ flex: 1 }} accessibilityLabel={Copy.replyCancel} onPress={onClose} />
+        <Pressable style={{ flex: 1 }} accessibilityLabel={Copy.replyCancel} onPress={closeComposer} />
         <View
           style={[
             {
@@ -801,6 +829,13 @@ function ComposeSheet({
               {phase === "queued" ? Copy.replyQueued : Copy.replyUnverified}
             </Txt>
           ) : null}
+          {/* THE REFUSED CANCEL, SAID IN PLACE — a Cancel that did nothing and rendered nothing
+              is a person watching a button not work. An alert, because it answers a press. */}
+          {alreadySent ? (
+            <Txt variant="caption" tone="ink2" accessibilityRole="alert">
+              {Copy.replyAlreadySent}
+            </Txt>
+          ) : null}
           {/* ── SEND LATER: the picker, above the button row (see the state block above) ──── */}
           {later !== null ? (
             <View
@@ -911,7 +946,7 @@ function ComposeSheet({
             </Txt>
           ) : null}
           <View style={{ flexDirection: "row", justifyContent: "flex-end", gap: 8 }}>
-            <Button label={Copy.replyCancel} variant="quiet" onPress={onClose} />
+            <Button label={Copy.replyCancel} variant="quiet" onPress={closeComposer} />
             {/* SEND LATER stands beside Send because it is the same act on a different clock,
                 under the SAME lock: a message that may not be sent now may not be scheduled
                 either, and one predicate owns both buttons. A forward is never offered it —

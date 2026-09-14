@@ -86,6 +86,20 @@ const withheldMarkerOf = (w: unknown): WithheldMarker | null =>
 
 export type MutationStatus = "confirmed" | "queued" | "rolled_back";
 
+/**
+ * WHAT A WITHDRAWAL FOUND — {@link OhmailEngine.withdrawQueued}'s answer. `withdrawn` is the
+ * cancellation: nothing was on the wire and nothing will be. `on_the_wire` withdraws nothing —
+ * the request has gone and only the server knows what it did with it. `gone` is neither: the
+ * queue no longer holds the key, so whatever became of it has already been settled elsewhere.
+ */
+export type WithdrawOutcome = "withdrawn" | "on_the_wire" | "gone";
+
+/**
+ * The `code` on the refusal a withdrawn verb settles with. A surface reads it to say NOTHING: a
+ * verb the person cancelled owes no sentence, and "it failed" would be the wrong one.
+ */
+export const OUTBOX_WITHDRAWN_CODE = "withdrawn";
+
 export interface MutationResult {
   id: string;
   /** The Idempotency-Key used on the wire — stable across retries. */
@@ -329,6 +343,13 @@ interface PersistedOutboxEntry {
    * offering itself after every press is a silent no-op is worse than no control.
    */
   retryRefused?: string;
+  /**
+   * TRUE once this row was WITHDRAWN — see {@link OhmailEngine.withdrawQueued}. The row survives
+   * the restart carrying the mark and {@link OhmailEngine.restoreOutbox} drops it rather than
+   * queueing it: a send the person cancelled may not be delivered by a later boot. Added in
+   * place, so an older record without it reads as not withdrawn, which is what it was.
+   */
+  withdrawn?: boolean;
 }
 
 /**
@@ -1909,6 +1930,14 @@ export class OhmailEngine {
   private readonly autoReplayOn: boolean;
   /** Session-monotonic outbox tiebreak; seeded past every restored entry's `n`. */
   private outboxSeq = 0;
+
+  /**
+   * Idempotency-Keys WITHDRAWN in this session — read at the moment of sending. A durable mark
+   * alone cannot stop a row a flush has already lifted out of the queue, because that row is in
+   * no collection this call can reach; the key is. Cleared in {@link OhmailEngine.mutate}: a
+   * fresh expression of intent under a reused key is not withdrawn.
+   */
+  private readonly withdrawnKeys = new Set<string>();
   private readonly listeners = new Set<() => void>();
   private readonly readerView: OverlayReader;
   /** {@link oneSourceReader} over the overlay — what {@link OhmailEngine.read} hands out. */
@@ -2506,6 +2535,15 @@ export class OhmailEngine {
     let restored = false;
     for (const e of rows) {
       this.outboxSeq = Math.max(this.outboxSeq, e.n + 1);
+      /**
+       * A WITHDRAWN ROW IS NEVER REPLAYED. Cancel marked it before the composer closed, the mark
+       * is what survives the restart, and this boot drops the row rather than queueing it — the
+       * person cancelled that send, so no later session may deliver it.
+       */
+      if (e.withdrawn === true) {
+        void this.dropOutbox(e.id);
+        continue;
+      }
       /**
        * AN ENTRY THIS SESSION IS ALREADY HANDLING IS NOT A RESTART'S ENTRY. The latch does not guarantee this method
        * runs before the first mutation: an engine driven without ever hydrating reaches here through its first drive,
@@ -4463,6 +4501,9 @@ export class OhmailEngine {
     const enriched = this.enrich(m);
     const id = this.uuid();
     const key = opts.key ?? this.uuid();
+    // A key the caller owns can be re-expressed after a withdrawal (the send path reuses one
+    // intent's key). The mark belongs to the row that was cancelled, never to the key for ever.
+    this.withdrawnKeys.delete(key);
 
     // THE EFFECTS ARE COMPUTED BEFORE SUPERSESSION, deliberately: they must be read over the
     // superseded verbs' overlays. A reversal is the case that breaks the other order — a
@@ -5547,6 +5588,26 @@ export class OhmailEngine {
     p: PendingMutation,
     opts: { deferReconcile?: boolean; onReconcileDeferred?: (mode: "await" | "background") => void } = {},
   ): Promise<MutationResult> {
+    /**
+     * THE WITHDRAWAL IS READ HERE, the line before the wire, because this is the only place every
+     * road passes and the only moment at which "is this still wanted?" is a true question. A row
+     * a flush lifted out of the queue a millisecond before Cancel is in no collection the
+     * withdrawal can reach — it is in that batch — and reaches the wire unless it is stopped
+     * here. Terminal: the overlay and the durable row go, and the refusal names itself so the
+     * ledger above says nothing about mail nobody sent.
+     */
+    if (this.withdrawnKeys.has(p.key)) {
+      this.overlays.delete(p.id);
+      this.overlayRev++;
+      this.notify();
+      await this.dropOutbox(p.id);
+      return {
+        id: p.id, key: p.key, status: "rolled_back", seq: null,
+        error: new MutationRejectedError("withdrawn before it was sent", {
+          code: OUTBOX_WITHDRAWN_CODE, retryable: false,
+        }),
+      };
+    }
     try {
       const outcome = await this.adapter.mutate(p.mutation, {
         idempotencyKey: p.key,
@@ -6034,6 +6095,42 @@ export class OhmailEngine {
 
   pendingMutations(): ReadonlyArray<{ id: string; key: string; mutation: EngineMutation }> {
     return [...this.queue];
+  }
+
+  /**
+   * CANCEL CANCELS — withdraw the queued verbs carrying this Idempotency-Key, each by its own
+   * outbox row id. The key is marked in memory (read at the moment of sending, see {@link
+   * dispatch}) and each row is marked on disk, so neither this session's flush nor a later boot
+   * can deliver it. `on_the_wire` is the one answer that withdraws nothing: the request has gone
+   * and this device cannot un-send it — the caller says so rather than promising a cancellation.
+   */
+  async withdrawQueued(key: string): Promise<WithdrawOutcome> {
+    for (const p of this.inFlight.values()) if (p.key === key) return "on_the_wire";
+    const rows = this.queue.filter((p) => p.key === key);
+    this.withdrawnKeys.add(key);
+    for (const p of rows) {
+      const at = this.queue.indexOf(p);
+      if (at >= 0) this.queue.splice(at, 1);
+      this.overlays.delete(p.id);
+      await this.markWithdrawn(p);
+    }
+    if (rows.length === 0) return "gone";
+    this.overlayRev++;
+    this.notify();
+    return "withdrawn";
+  }
+
+  /**
+   * The withdrawal on disk — the row kept, marked, and read back as withdrawn by the next boot.
+   * A refused mark falls back to the hard delete: either one keeps a restart from replaying the
+   * row, and the in-memory key already keeps this session from sending it.
+   */
+  private async markWithdrawn(p: PendingMutation): Promise<void> {
+    try {
+      await this.store.commitLocal(
+        [{ type: OUTBOX_TYPE, id: p.id, entity: { ...outboxEntryOf(p), withdrawn: true } }], [],
+      );
+    } catch { await this.dropOutbox(p.id); }
   }
 
   /**

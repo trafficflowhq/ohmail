@@ -36,6 +36,7 @@ import {
   triagePiles,
   winningStates,
   withSignature,
+  OUTBOX_WITHDRAWN_CODE,
   SIG_FOLLOWING,
   effectiveSignature,
   folderNameError,
@@ -57,6 +58,7 @@ import {
   type ScreenerSenderDTO,
   type TagDTO,
   type WallClockVerdict,
+  type WithdrawOutcome,
 } from "@ohmail/client-engine";
 import { Copy } from "../copy";
 import { refuse, type RefusalArg } from "../refusal";
@@ -1273,6 +1275,20 @@ export interface SendResult {
   key?: string;
 }
 
+/**
+ * WHAT A SEND IS ABOUT — the phone's half of the webapp lane rule (`mail-send.ts#sendKeyOf`).
+ *
+ * One intent, one Idempotency-Key: a reply and a forward each belong to the message they answer,
+ * not to the composer that happened to be on screen. `null` is a send this app cannot name that
+ * way, which mints a fresh key rather than guessing a shared one.
+ */
+export function sendIntentOf(m: EngineMutation): string | null {
+  if (m.kind !== "mail_send") return null;
+  if (m.forwardOf) return `fwd:${m.forwardOf}`;
+  if (m.inReplyTo) return `reply:${m.inReplyTo}`;
+  return null;
+}
+
 /** One settled entry of {@link flushQueued}'s ledger: what happened, to which KIND of intent. */
 export interface FlushedOutcome {
   status: "confirmed" | "rolled_back" | "unverified";
@@ -1315,6 +1331,12 @@ export async function flushQueued(engine: OhmailEngine): Promise<Map<string, Flu
   const results = await engine.flushPending().catch(() => []);
   for (const r of results) {
     if (r.status === "queued") continue;
+    /**
+     * A WITHDRAWN INTENT OWES NO SENTENCE. Cancel took this verb off the queue, and the flush
+     * that was already carrying it reports the rollback it made of it — "Reply failed." over a
+     * send the person themselves cancelled is the wrong sentence, and there is no right one.
+     */
+    if (r.error?.code === OUTBOX_WITHDRAWN_CODE) continue;
     const meta = kinds.get(r.key) ?? { kind: "mark_seen" as const, forward: false, sendAt: null };
     const status =
       r.status === "confirmed" ? ("confirmed" as const)
@@ -1452,6 +1474,12 @@ export interface LiveWorldActions {
    * the body it is handed, so the block sits above the quoted history (`signature.ts`).
    */
   sendForward(messageId: string, to: EmailAddress[], body: string, sig?: string | null): Promise<SendResult>;
+  /**
+   * WITHDRAW A QUEUED SEND — Cancel, on the intent. `withdrawn` is the cancellation;
+   * `on_the_wire` withdrew nothing and the surface says so; `gone` is a key the queue no longer
+   * holds. See {@link OhmailEngine.withdrawQueued}.
+   */
+  withdrawSend(key: string): Promise<WithdrawOutcome>;
   /**
    * TAKE THE APPOINTMENT OFF A SCHEDULED SEND — `draft_schedule_cancel`, the Scheduled
    * screen's one verb. See {@link LiveWorldActions.cancelSchedule}'s implementation for why
@@ -1958,6 +1986,31 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     return { outcome, ...(outcome === "queued" && first ? { key: first.key } : {}) };
   };
 
+  /**
+   * ONE INTENT, ONE KEY, FOR AS LONG AS IT IS RETRYABLE. A send still standing on the queue for
+   * this intent — a tunnel, or a killed app whose durable row this session restored — already
+   * carries the key it was expressed under, so a second press RESUMES it instead of minting a
+   * fresh one: same key, same request, and the server's own same-key branch decides whether that
+   * mail has gone. A fresh key there is a second copy in somebody's inbox, which is the whole
+   * defect. Nothing standing ⇒ `mutate` mints, and persists it with the outbox row.
+   */
+  const dispatchSend = (m: EngineMutation): Promise<MutationResult> => {
+    const intent = sendIntentOf(m);
+    const standing = intent === null
+      ? undefined
+      : engine.pendingMutations().find((p) => sendIntentOf(p.mutation) === intent)?.key;
+    return engine.mutate(m, standing === undefined ? {} : { key: standing });
+  };
+
+  /**
+   * CANCEL CANCELS — the composer's press, on the intent rather than on the screen. The engine
+   * marks the queued row withdrawn (durably, and by the key at the moment of sending), so
+   * neither the reconnect flush nor a later boot delivers it. `on_the_wire` withdraws nothing
+   * and the caller says so; this arm says no sentence of its own, because the surface that
+   * pressed Cancel is the one that knows what to render.
+   */
+  const withdrawSend = (key: string): Promise<WithdrawOutcome> => engine.withdrawQueued(key);
+
   const sendReply = async (
     messageId: string,
     body: string,
@@ -1976,7 +2029,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
        construction — see {@link LiveDeps.ownAddresses}. */
     const env = all ? replyAllRecipients(m, deps.ownAddresses?.() ?? NO_OWN_ADDRESSES) : null;
     return sent(
-      engine.mutate(withSignature({
+      dispatchSend(withSignature({
         kind: "mail_send" as const,
         inReplyTo: messageId,
         body: text,
@@ -2032,7 +2085,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     // offers the verb on such a message, and this arm refuses it too rather than trusting the UI.
     if (!m || to.length === 0 || m.sensitivity?.no_forward) return { outcome: "failed" };
     return sent(
-      engine.mutate(withSignature({
+      dispatchSend(withSignature({
         kind: "mail_send" as const,
         inReplyTo: null,
         forwardOf: messageId,
@@ -2197,7 +2250,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     },
     openMessage, hydrateMessage, hydrateHeld, sweepFeed, leaveFeed, decide, release, setPile,
     pileToggle, resurfaceToggle, resurfaceAt, resurfaceNow, resurfaceDone, markSeen, move,
-    deleteMessage, sendReply, sendForward, cancelSchedule, tagToggle, tagCreate, screenSender,
+    deleteMessage, sendReply, sendForward, withdrawSend, cancelSchedule, tagToggle, tagCreate, screenSender,
     folderCreate, folderRename, folderDelete, folderDismiss,
   };
 }
@@ -2252,6 +2305,8 @@ export interface WorldActions {
     sendAt?: string | null,
   ): Promise<SendResult>;
   sendForward(messageId: string, to: EmailAddress[], body: string, sig?: string | null): Promise<SendResult>;
+  /** Withdraw a queued send — Cancel. See {@link LiveWorldActions.withdrawSend}. */
+  withdrawSend(key: string): Promise<WithdrawOutcome>;
   /** Cancel a scheduled send — resolves `true` only on the server's CONFIRMED cancellation. */
   cancelSchedule(draftId: string): Promise<boolean>;
   /** What became of a queued send's key — how a locked composer settles. See `World.sendOutcome`. */
@@ -2299,6 +2354,7 @@ export function stableActions(current: () => WorldActions): WorldActions {
     deleteMessage: (id) => void current().deleteMessage(id),
     sendReply: (id, body, all, sig, sendAt) => current().sendReply(id, body, all, sig, sendAt),
     sendForward: (id, to, body, sig) => current().sendForward(id, to, body, sig),
+    withdrawSend: (key) => current().withdrawSend(key),
     cancelSchedule: (draftId) => current().cancelSchedule(draftId),
     sendOutcome: (key) => current().sendOutcome(key),
     tagToggle: (id, tag, assigned) => void current().tagToggle(id, tag, assigned),

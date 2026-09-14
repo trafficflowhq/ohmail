@@ -404,6 +404,8 @@ const NO_ACTIONS: WorldActions = {
   // The empty world cannot send; the composer treats `failed` as the refusal it is.
   sendReply: () => Promise.resolve({ outcome: "failed" as const }),
   sendForward: () => Promise.resolve({ outcome: "failed" as const }),
+  // Nothing is connected, so nothing is queued: there is no send here to withdraw.
+  withdrawSend: () => Promise.resolve("gone" as const),
   // Nor cancel: `false` is "not confirmed", which is exactly what nothing-connected means.
   cancelSchedule: () => Promise.resolve(false),
   sendOutcome: () => "unknown",
@@ -1026,6 +1028,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
           deleteMessage: (id) => void acts.deleteMessage(id),
           sendReply: (id, body, all, sig, sendAt) => acts.sendReply(id, body, all, sig, sendAt),
           sendForward: (id, to, body, sig) => acts.sendForward(id, to, body, sig),
+          withdrawSend: (key) => acts.withdrawSend(key),
           cancelSchedule: (draftId) => acts.cancelSchedule(draftId),
           sendOutcome: (key) => outcomeOf(key),
           tagToggle: (id, tag, assigned) => void acts.tagToggle(id, tag, assigned),

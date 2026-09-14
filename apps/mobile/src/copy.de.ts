@@ -929,6 +929,7 @@ export const DE: Deck = {
   replySent: "Antwort gesendet.",
   replyQueued: "Noch nicht gesendet. ohmail versucht es weiter.",
   replyUnverified: "Wir konnten diesen Versand nicht bestätigen. Schau in deinen Gesendet-Ordner, bevor du nochmal sendest.",
+  replyAlreadySent: "Zu spät zum Abbrechen. Diese Nachricht wurde bereits gesendet.",
   replyFailed: "Senden hat nicht geklappt. Versuch es nochmal.",
   forwardHead: "Weiterleiten — du wählst, wer sie bekommt",
   forwardTo: "An",
