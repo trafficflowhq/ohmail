@@ -370,7 +370,7 @@ export {
 export {
   UNMETERED, UNMETERED_ACCESS, accessOf, isMetered, isSpendMetered,
   type EntitlementsPort, type EntitlementsComposition,
-  type SpendPort, type SpendComposition, type SpendMeta,
+  type SpendPort, type SpendComposition, type SpendMeta, type AccessPort,
   type AccessVerdict, type AccessLimits, type AccessRefusal,
   type SpendOutcome, type SpendAction, type SpendRelease, type ReleaseOutcome,
 } from "./entitlements-port.js";

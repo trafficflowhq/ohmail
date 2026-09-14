@@ -6,13 +6,14 @@ import { messages, draftAttemptKey, type IdempotencyKey } from "@trafficflow/db"
 /* The PORT, from the root barrel — not `@trafficflow/db/cloud`, which is the half that
  * answers. This service names a gate it may be handed; it never builds one, and it must
  * compile in a deployment where no gate and no ledger exist. */
-import type { SpendPort } from "@trafficflow/db";
+import type { AccessPort, SpendPort } from "@trafficflow/db";
 import {
   plainTextToOutboundBody, screenModelInput, MODEL_SINK_REFUSAL_SENTENCE,
   type DraftInput, type DraftPort,
 } from "@trafficflow/core/mail";
 import type { ServiceContext } from "./context.js";
 import { ServiceError } from "./errors.js";
+import { refuseAiSpend } from "./ai-refusal.js";
 import { DraftsService, type DraftCreateIdempotency } from "./drafts-service.js";
 import { KbService } from "./kb-service.js";
 import { SEARCH_QUERY_MAX_CHARS } from "./search-service.js";
@@ -46,6 +47,15 @@ export interface DraftFromMessageDeps {
    * action must carry the client's own statement of intent.
    */
   credits?: SpendPort;
+  /**
+   * THE ACCESS HALF, READ ONLY WHEN THE GATE HAS ALREADY REFUSED — never on the way in.
+   *
+   * The Screener's twin dep, for the twin rule: a `state` refusal is cross-checked against a
+   * fresh read of this account's access, and one that says AI is available answers 503 rather
+   * than demanding money. ABSENT is a host that wired no such reader, and then a refusal answers
+   * what it always answered.
+   */
+  access?: AccessPort;
   /**
    * The request's `Idempotency-Key`, branded by `clientIdempotencyKey` at the HTTP edge.
    *
@@ -183,9 +193,16 @@ export class DraftingService {
       if (outcome.verdict === "fault") {
         // A SERVER fault. 503, never 402 — we do not bill someone for our own outage, and we
         // do not tell them to buy credits they already have. Retryable, and the gate has
-        // already reported the underlying error through `onError`.
-        throw new ServiceError(
-          "ai_unavailable", 503, "AI drafting is temporarily unavailable; please retry",
+        // already reported the underlying error through `onError`. Through the shared refusal so
+        // this one is on the record too: "the gate faulted" and "the subscription refused" were
+        // indistinguishable in the logs, which is to say invisible.
+        await refuseAiSpend(
+          { refusal: "fault", verdict: outcome.verdict },
+          {
+            event: "draft_refused",
+            accountId: ctx.accountId,
+            unavailable: "AI drafting is temporarily unavailable; please retry",
+          },
         );
       }
       if (outcome.verdict === "inflight") {
@@ -198,33 +215,35 @@ export class DraftingService {
         // person waiting on a draft, and that answer deserves designing. This branch exists so
         // the day it IS switched on is not also the day a concurrency overlap starts answering
         // 402.
-        throw new ServiceError(
-          "ai_unavailable", 503, "AI drafting is temporarily unavailable; please retry",
-        );
-      }
-      // BY REASON AND NOT BY VERDICT, which is how this line has always read. The switch arrives
-      // as `refused` from both implementations; accepting it under `insufficient` too is the
-      // fail-safe against the one drift that matters here — a state refusal folded into an
-      // out-of-credits answer bills a fully funded account for a setting it chose.
-      if ((outcome.verdict === "refused" || outcome.verdict === "insufficient")
-        && outcome.reason === "ai_disabled") {
-        // THE ACCOUNT'S OWN OFF SWITCH — 409, never 402. 402 means "pay us", and it would be the
-        // wrong sentence three times over: this account is fully funded, nothing it could buy
-        // would change the answer, and the state was chosen deliberately by the person now
-        // being asked for money. 409 says what is true — the request conflicts with a setting
-        // on this account — and the `reason` tells the client which setting to offer to change.
-        throw new ServiceError(
-          "ai_disabled", 409, "managed AI is switched off for this account",
-          { reason: outcome.reason },
+        await refuseAiSpend(
+          { refusal: "fault", verdict: outcome.verdict },
+          {
+            event: "draft_refused",
+            accountId: ctx.accountId,
+            unavailable: "AI drafting is temporarily unavailable; please retry",
+          },
         );
       }
       if (outcome.verdict === "refused" || outcome.verdict === "insufficient") {
-        // A machine-readable WHY, so the client can tell "buy more" from "fix your
-        // subscription" instead of guessing. It comes from the decision the gate already made
-        // rather than from a second read of the same subscription.
-        throw new ServiceError(
-          "insufficient_credits", 402, "no AI actions remain on this account",
-          { reason: outcome.reason },
+        // ONE PLACE DECIDES, for this call site and the Screener's — see `ai-refusal.ts`. It
+        // writes the line naming the verdict and the reason, answers 409 for the account's own
+        // off switch BY REASON rather than by verdict (the switch arrives as `refused` from one
+        // implementation and `insufficient` from the other), and refuses to turn a `state`
+        // refusal this account's own access view contradicts into a payment demand. The
+        // machine-readable `reason` still rides on the 402 so a client can tell "buy more" from
+        // "fix your subscription".
+        await refuseAiSpend(
+          {
+            refusal: outcome.verdict === "insufficient" ? "quantity" : "state",
+            verdict: outcome.verdict,
+            reason: outcome.reason,
+          },
+          {
+            event: "draft_refused",
+            accountId: ctx.accountId,
+            ...(deps.access ? { access: deps.access } : {}),
+            unavailable: "AI drafting is temporarily unavailable; please retry",
+          },
         );
       }
     }

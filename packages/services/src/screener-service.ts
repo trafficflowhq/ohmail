@@ -23,7 +23,7 @@ import {
 /* The PORT, from the root barrel — not `@trafficflow/db/cloud`, which is the half that
  * answers. This service names a gate it may be handed; it never builds one, and it must
  * compile in a deployment where no gate and no ledger exist. */
-import type { AiCreditGate, SpendPort } from "@trafficflow/db";
+import type { AccessPort, AiCreditGate, AiRefusalReason, SpendPort } from "@trafficflow/db";
 import { carryDialect, dialect } from "@trafficflow/db/dialect";
 import type {
   AdapterPort, ClassifierPort, Destination, NativeLocator, OhboxPolicy, SenderReasonCode,
@@ -42,10 +42,21 @@ import { capabilityForKind } from "@trafficflow/core/adapters/organizer-lease";
 import { writeReaderRequest } from "./reader-request.js";
 import type { ServiceContext } from "./context.js";
 import { ServiceError, IdempotencyRaceLost } from "./errors.js";
+import { refuseAiSpend, type AiRefusalClass } from "./ai-refusal.js";
 import { getScreeningPreference } from "./screening-preference.js";
 import { LearningService } from "./learning-service.js";
 import { clampLimit, decodeKeysetCursor, encodeListCursor } from "./pagination.js";
 import type { Folder, Page, ScreenerItem } from "./dto/types.js";
+
+/**
+ * ONE SENDER'S REFUSAL, KEPT WHOLE UNTIL THE STATUS IS DECIDED.
+ *
+ * `verdict` is the gate's own word — or this service's, for the two refusals it makes before the
+ * gate is asked (`no_slot`, `inflight`) — and it exists because the log line is the only record
+ * of WHY: a refusal nobody logged is a refusal nobody can attribute, which is what left an
+ * account's "no AI actions remain" unexplainable on a four-figure balance.
+ */
+type GateRefusal = { refusal: AiRefusalClass; verdict: string; reason?: AiRefusalReason };
 
 /** The sort floor for a message with no date — the same instant `to_timestamp(0)` named. */
 const EPOCH = new Date(0);
@@ -126,6 +137,16 @@ export interface ScreenerSuggestDeps extends ScreenerDeps {
    * together.
    */
   credits?: SpendPort;
+  /**
+   * THE ACCESS HALF, READ ONLY WHEN THE GATE HAS ALREADY REFUSED — never on the way in.
+   *
+   * It is what makes a 402 corroborated: a `state` refusal is cross-checked against a fresh read
+   * of this account's access, and one that says AI is available answers 503 instead of demanding
+   * money (`ai-refusal.ts` holds the rule for this call site and the drafting one). ABSENT is a
+   * host that wired no such reader, and then a `state` refusal answers exactly what it always
+   * answered — the cross-check narrows a payment demand, it never widens one.
+   */
+  access?: AccessPort;
   /**
    * THE WALL-CLOCK CEILING THIS HOST KILLS A REQUEST AT — declared by the composition root,
    * ABSENT for a host that has none. `suggest` admits lanes only while there is time left for the
@@ -1507,16 +1528,19 @@ export class ScreenerService extends ScreenerReadService {
    */
   private readonly classifier?: ClassifierPort;
   private readonly credits?: SpendPort;
+  /** The access half for the refusal cross-check. See {@link ScreenerSuggestDeps.access}. */
+  private readonly access?: AccessPort;
   /** The balance READ. Destructured out for the same reason as the two above. */
   private readonly remaining?: (db: Tx, accountId: string) => Promise<number>;
   /** This host's own invocation ceiling, or absent. See {@link ScreenerSuggestDeps}. */
   private readonly invocationBudgetMs?: number;
 
   constructor(deps: ScreenerSuggestDeps) {
-    const { classifier, credits, remaining, invocationBudgetMs, ...readOnly } = deps;
+    const { classifier, credits, access, remaining, invocationBudgetMs, ...readOnly } = deps;
     super(readOnly);
     this.classifier = classifier;
     this.credits = credits;
+    this.access = access;
     this.remaining = remaining;
     this.invocationBudgetMs = invocationBudgetMs;
   }
@@ -1675,7 +1699,7 @@ export class ScreenerService extends ScreenerReadService {
     let charged = 0;
     let stopped: ScreenerSuggestResult["stopped"];
     /** WHY the gate refused, kept undiminished for the status decision below the loop. */
-    let refusal: { refusal: "state" | "quantity" | "fault"; reason?: string } | undefined;
+    let refusal: GateRefusal | undefined;
 
     /**
      * TWO PASSES; THE SPLIT MAKES THE SECOND SAFE TO RUN CONCURRENTLY. PASS 1 resolves everything
@@ -1691,8 +1715,7 @@ export class ScreenerService extends ScreenerReadService {
     const answered: Array<ScreenerSuggestion | undefined> = senders.map(() => undefined);
     const refused: Array<ScreenerSuggestResult["skipped"][number] | undefined> = senders.map(() => undefined);
     const stops: Array<ScreenerSuggestResult["stopped"] | undefined> = senders.map(() => undefined);
-    const refusals: Array<{ refusal: "state" | "quantity" | "fault"; reason?: string } | undefined> =
-      senders.map(() => undefined);
+    const refusals: Array<GateRefusal | undefined> = senders.map(() => undefined);
     const purchases: Purchase[] = [];
     // The same check the always-on pass runs, over the senders THIS press named — the pressed
     // path asks the same question about the same mail, so withholding the facts here would leave
@@ -1751,7 +1774,7 @@ export class ScreenerService extends ScreenerReadService {
       if (!(await laneGate.acquire(laneDeadline))) {
         refused[index] = { sender, reason: "spend_unavailable" };
         stops[index] = "spend_unavailable";
-        refusals[index] = { refusal: "fault" };
+        refusals[index] = { refusal: "fault", verdict: "no_slot" };
         return;
       }
       try {
@@ -1811,7 +1834,7 @@ export class ScreenerService extends ScreenerReadService {
           stops[index] = "spend_unavailable";
           // `fault`, so a run that produced nothing at all answers 503 "temporarily unavailable;
           // please retry" rather than 402. Refusing to demand money for this is the point.
-          refusals[index] = { refusal: "fault" };
+          refusals[index] = { refusal: "fault", verdict: "inflight" };
           return;
         }
 
@@ -1823,9 +1846,10 @@ export class ScreenerService extends ScreenerReadService {
           // an empty balance, `state` for a subscription (or the account's switch) that may not
           // spend, `fault` for "we do not know" — which is never a payment demand.
           refusals[index] = outcome.verdict === "fault"
-            ? { refusal: "fault" }
+            ? { refusal: "fault", verdict: outcome.verdict }
             : {
                 refusal: outcome.verdict === "insufficient" ? "quantity" : "state",
+                verdict: outcome.verdict,
                 reason: outcome.reason,
               };
           return;
@@ -1986,22 +2010,18 @@ export class ScreenerService extends ScreenerReadService {
     // eight senders were served and two ran out of credit is a 200 that says where it stopped,
     // because throwing there would discard eight results the account has already paid for.
     if (refusal && suggestions.length === 0) {
-      if (refusal.refusal === "fault") {
-        throw new ServiceError(
-          "ai_unavailable", 503, "AI suggestions are temporarily unavailable; please retry",
-        );
-      }
-      if (refusal.reason === "ai_disabled") {
-        // The ACCOUNT'S OWN off switch. 402 would demand money from a fully funded account for a
-        // state they chose; 409 says the request conflicts with a setting, and names it.
-        throw new ServiceError(
-          "ai_disabled", 409, "managed AI is switched off for this account",
-          { reason: refusal.reason },
-        );
-      }
-      throw new ServiceError(
-        "insufficient_credits", 402, "no AI actions remain on this account",
-        { reason: refusal.reason },
+      // ONE PLACE DECIDES, for this call site and the drafting one — see `ai-refusal.ts`. It
+      // writes the line naming the verdict and the reason (neither was logged anywhere before,
+      // so a refusal could not be attributed at all), and it refuses to turn a `state` refusal
+      // the account's own access view contradicts into a payment demand.
+      await refuseAiSpend(
+        { refusal: refusal.refusal, verdict: refusal.verdict, reason: refusal.reason },
+        {
+          event: "screener_suggest_refused",
+          accountId: ctx.accountId,
+          ...(this.access ? { access: this.access } : {}),
+          unavailable: "AI suggestions are temporarily unavailable; please retry",
+        },
       );
     }
 

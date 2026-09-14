@@ -115,8 +115,14 @@ export interface EntitlementsPort {
    * account — or, with none, `ok: true` and unbounded limits. An entitlements outage must not lock
    * a paying customer out of their mail. It is also why implementations cache: a per-request dial
    * on the mail path is refused at review.
+   *
+   * `fresh: true` skips the held verdict and asks again. It is for the ONE caller that must not
+   * read a cached refusal — the cross-check that decides whether an AI spend refusal may be
+   * turned into a payment demand — because a held refusal outlives the condition that produced
+   * it and would bill a funded account for a minute of somebody else's outage. Never on the mail
+   * path: a per-request dial there is the thing the cache exists to prevent.
    */
-  access(accountId: string): Promise<AccessVerdict>;
+  access(accountId: string, opts?: { fresh?: boolean }): Promise<AccessVerdict>;
   /**
    * Charge one AI action against `attemptKey`, which names the unit of WORK so retries are free.
    * `attemptKey` is the BARE key — the message, `<messageId>:<hashed client key>`, the run id —
@@ -165,6 +171,15 @@ export type EntitlementsComposition = EntitlementsPort | typeof UNMETERED;
  * means the ten of them name one type, and a test double is two methods rather than five.
  */
 export type SpendPort = Pick<EntitlementsPort, "spend" | "release">;
+
+/**
+ * THE ACCESS HALF ALONE — what a call site is handed when it must ask "may this account use AI
+ * at all", and nothing else.
+ *
+ * Narrow for {@link SpendPort}'s reason and one of its own: the sites that read it are refusal
+ * paths, and a refusal path holding `spend` could charge while explaining why it will not.
+ */
+export type AccessPort = Pick<EntitlementsPort, "access">;
 
 /** A call site either reaches an entitlements program or is told this host meters nothing. */
 export type SpendComposition = SpendPort | typeof UNMETERED;

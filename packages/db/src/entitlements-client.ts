@@ -279,10 +279,14 @@ export function makeEntitlementsClient(cfg: EntitlementsClientConfig): Entitleme
   };
 
   return {
-    async access(accountId: string): Promise<AccessVerdict> {
+    async access(accountId: string, opts?: { fresh?: boolean }): Promise<AccessVerdict> {
       const at = clock();
       const held = cache.get(accountId);
-      if (held && held.freshUntil > at) return held.verdict;
+      // `fresh` SKIPS THE REUSE AND NOTHING ELSE: the held verdict is still what the fault arm
+      // below answers with, because "we could not ask again" is not evidence that the last
+      // answer is wrong. Bypassing the read is the whole point — a cached refusal asked about a
+      // minute after the program recovered is how a funded account gets a payment demand.
+      if (!opts?.fresh && held && held.freshUntil > at) return held.verdict;
 
       const res = await post("/v1/access", { accountId });
       // A 200 is the only answer. 400/401/503 are not verdicts about this account (the contract's

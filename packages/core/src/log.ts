@@ -86,6 +86,13 @@ export const ALLOWED_FIELDS: readonly string[] = [
   // logged nowhere.
   "reserveMs", "assembleMs", "openMs", "submitMs", "finalizeMs", "projectMs", "sendId",
   "reason", "detail", "kind", "severity", "phase", "state", "verdict", "configVar",
+  // `refusal` is the CLASS of an AI spend refusal — `quantity`, `state` or `fault`, the three
+  // words the wire already carries — beside the `verdict` the gate answered and the `reason` it
+  // named. Added WITH the two lines that emit it (`screener_suggest_refused`, `draft_refused`),
+  // because a refusal nobody logged is a refusal nobody can attribute: an account was shown "no
+  // AI actions remain" while its balance was four figures, and the server had written nothing at
+  // all about why. Three fixed words, never a sentence and never an account's own text.
+  "refusal",
   // The `SIZE` back-fill pass's counts and its two per-mailbox facts, added WITH the lines that
   // emit them — this census has silently swallowed instrumentation before, and suites cannot see
   // it: a test that injects a fake logger asserts what a call site HANDS OVER, never what this
