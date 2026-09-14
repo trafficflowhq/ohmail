@@ -83,3 +83,91 @@ describe("the desktop reading pane and the picture it cannot show", () => {
       "the tracking pixel rode the proxy").toBe(false);
   });
 });
+
+/**
+ * ── THE SEAM THAT MAKES A PICTURE ARRIVE ON A DOOR WITH NO ORIGIN ────────────────────────
+ *
+ * The desktop's engine is reached over a pipe, not a port — `bridge-fetch.ts` says why, and the
+ * posture stands: nothing listens, so no `<img src>` can name it. The bytes therefore travel the
+ * way a `cid:` part's already do, through the same image proxy, and arrive as a `data:` URI. What
+ * is asserted here is that the policy did not have to move an inch to allow it.
+ */
+const RESOLVED = "data:image/png;base64,iVBORw0KGgo=";
+
+describe("a picture the desktop already holds the bytes of", () => {
+  /**
+   * CONTROL (a). Mutation: drop the `resolved` branch from the sanitizer's img arm. Real failure
+   * text: "the resolved picture did not reach the frame: expected [] to contain '<data uri>'".
+   */
+  it("renders the picture, and still refuses the tracker beside it", () => {
+    const out = sanitizeMailHtml(HTML, {
+      imageProxy: null,
+      resolvedRemoteImages: new Map([[PICTURE, RESOLVED]]),
+    });
+    const doc = new DOMParser().parseFromString(out.html, "text/html");
+    const srcs = [...doc.querySelectorAll("img")].map((n) => n.getAttribute("src") ?? "");
+    expect(srcs, "the resolved picture did not reach the frame").toContain(RESOLVED);
+    /* The beacon is still the transparent placeholder and still MARKED, which is the fact the
+       caption is drawn from — a resolved map must not be a way round the pixel rule. */
+    const beacon = [...doc.querySelectorAll("img")].find(
+      (n) => n.getAttribute("data-ohmail-pixel") === "1",
+    );
+    expect(beacon, "the 1x1 lost its pixel marking").toBeTruthy();
+    expect(beacon!.getAttribute("src"), "the tracker was served real bytes").not.toBe(RESOLVED);
+  });
+
+  /**
+   * AND A MAP THAT CARRIES THE BEACON ANYWAY. The map is built by this app, so this is a
+   * defence against our own future bug rather than against a sender — which is exactly the
+   * class of thing that is worth making unrepresentable in the one place it is decided.
+   *
+   * Mutation: drop the `!pixel` term from the `resolved` line. Real failure text:
+   * "a beacon was served from the resolved map: expected 'data:image/png;base64,…' not to be …".
+   */
+  it("refuses a beacon even when the resolved map names one", () => {
+    const out = sanitizeMailHtml(HTML, {
+      imageProxy: null,
+      resolvedRemoteImages: new Map([[PICTURE, RESOLVED], [BEACON, RESOLVED]]),
+    });
+    const doc = new DOMParser().parseFromString(out.html, "text/html");
+    const beacon = [...doc.querySelectorAll("img")].find(
+      (n) => n.getAttribute("data-ohmail-pixel") === "1",
+    );
+    expect(beacon!.getAttribute("src"), "a beacon was served from the resolved map")
+      .not.toBe(RESOLVED);
+  });
+
+  /**
+   * CONTROL (e), and it is a byte comparison rather than a reading of the policy's parts: the
+   * whole argument for `data:` over a door origin is that the frame's policy does not move, and
+   * "img-src still mentions data:" would stay green through a widening that added a source
+   * beside it.
+   */
+  it("leaves the frame's policy byte-identical", () => {
+    expect(
+      frameCsp(null),
+      "the desktop's frame policy moved to let a resolved picture in",
+    ).toBe(
+      "default-src 'none'; img-src data:; style-src 'unsafe-inline'; font-src data:; "
+      + "script-src 'none'; object-src 'none'; frame-src 'none'; form-action 'none'; "
+      + "base-uri 'none'",
+    );
+  });
+
+  /**
+   * A PICTURE THAT IS NOT IN THE MAP IS THE BLANKED BOX — which is what "over the ceiling"
+   * looks like from here, and also what "not fetched yet" and "the fetch failed" look like.
+   * One rendering for all three is the point: the frame never shows a broken-image icon, which
+   * would be a claim about the mail rather than about this app's budget.
+   *
+   * The CEILING ITSELF is asserted where it is spent, against the constant the embedded
+   * pictures already use — a number restated here would be a second budget, which is the thing
+   * this design exists not to create.
+   */
+  it("leaves an unresolved picture as the blanked box", () => {
+    const out = sanitizeMailHtml(HTML, { imageProxy: null, resolvedRemoteImages: new Map() });
+    const doc = new DOMParser().parseFromString(out.html, "text/html");
+    const blanked = [...doc.querySelectorAll("img[data-ohmail-blocked]")];
+    expect(blanked.length, "an unresolved picture was not left as a blanked box").toBe(2);
+  });
+});

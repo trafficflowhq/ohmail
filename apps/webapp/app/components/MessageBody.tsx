@@ -2059,6 +2059,19 @@ export interface SanitizeOptions {
    */
   cidImages?: ReadonlyMap<string, string> | null;
   /**
+   * REMOTE PICTURES ALREADY FETCHED, as `data:` URIs keyed by the sender's own url.
+   *
+   * The door that has no ORIGIN — the desktop, whose engine is reached over a pipe and not a
+   * port — cannot be named in an `<img src>`, so its pictures arrive the way `cid:` parts
+   * already do: fetched through the same image proxy (server-side, SSRF-gated, pixel-refusing)
+   * and handed here as bytes. `img-src data:` has always been in the frame's policy, so this
+   * adds NO source to it; {@link imageProxy} stays null there and the policy is byte-identical.
+   *
+   * It does not lift the pixel override: a classified beacon is never fetched, so it is never
+   * in this map, and a map that somehow carried one would still lose to `pixel` below.
+   */
+  resolvedRemoteImages?: ReadonlyMap<string, string> | null;
+  /**
    * MAY A TRACKING PIXEL TAKE THE PROXY TOO? `false` — the default, and the only value this file
    * ever assumed until the account switch existed (mail 0072) — keeps `pixel` overriding `proxy`:
    * a beacon is blanked whatever else loads. `true` hands a classified pixel to {@link imageProxy}
@@ -2175,6 +2188,7 @@ export function sanitizeMailHtml(html: string, opts: SanitizeOptions = {}): Sani
   const sheets: string[] = [];
   const proxy = opts.imageProxy ?? null;
   const cidImages = opts.cidImages ?? null;
+  const resolvedRemote = opts.resolvedRemoteImages ?? null;
   // Strictly `=== true`: an absent option, `undefined` and anything else all mean BLOCK.
   const loadPixels = opts.loadPixels === true;
   // The unresolved `cid:` references — distinct, in document order. See {@link SanitizedMail.cids}.
@@ -2311,7 +2325,14 @@ export function sanitizeMailHtml(html: string, opts: SanitizeOptions = {}): Sani
         // it lifts exactly this override: a classified beacon then takes the proxy like any picture. It cannot widen
         // anything else — with no proxy it is inert, and the CSP still admits only the proxy's own path, so a beacon
         // that reached the document by another route fetches nothing.
-        if (proxy && (!pixel || loadPixels)) {
+        /* A PICTURE THIS CLIENT ALREADY HOLDS THE BYTES OF. Checked before the proxy because on
+           the pipe-door there IS no proxy, and after `pixel` for the reason the whole paragraph
+           above gives: a beacon is never fetched, so it is never resolved, and the `!pixel` term
+           here says so rather than trusting the map to be well-formed. */
+        const resolved = !pixel || loadPixels ? resolvedRemote?.get(src) : undefined;
+        if (resolved) {
+          node.setAttribute("src", resolved);
+        } else if (proxy && (!pixel || loadPixels)) {
           node.setAttribute("src", proxy(src));
         } else {
           node.setAttribute("src", BLANK_GIF);
