@@ -20,6 +20,12 @@ Signed installers — a real Apple Developer ID and an Authenticode certificate.
 
 ## [0.19.0] — 2026-09-14
 
+### Reopening the app no longer grows its cache of mail
+
+Mail bodies restored from the on-disk cache when the app reopens now count toward the memory
+window, so the cache no longer grows with every restart. What is kept is unchanged: the newest mail
+stays and the oldest gives way.
+
 ### A change you make on one computer reaches the one that organizes the mailbox
 
 Moving a message, editing a rule, setting a signature or changing your away reply on a computer that
