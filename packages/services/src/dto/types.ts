@@ -916,8 +916,13 @@ export interface DraftDTO {
    * Why {@link body} is `null` — present exactly when it is, absent otherwise. A reader that
    * knows only "no body" cannot tell a page that omitted it from a server that never sends one,
    * so the pairing is held in both directions by a test beside the snapshot writer.
+   *
+   * `over_ceiling` is a stored body past `DRAFT_BODY_MAX_BYTES`. `sent` is a draft that has
+   * already gone: its text is history the mirror does not need to hold, re-readable by id, and
+   * carrying it made a reload download every reply the person has ever written. `sent` takes
+   * {@link html} with it — the two are one message in two encodings.
    */
-  bodyOmitted?: "over_ceiling";
+  bodyOmitted?: "over_ceiling" | "sent";
   /** The rich body, sanitized. `null` for a plain-text draft — the ordinary case. */
   html: string | null;
   to: EmailAddress[];

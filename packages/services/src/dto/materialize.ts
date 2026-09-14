@@ -121,6 +121,17 @@ export function draftRowToDTO(d: typeof drafts.$inferSelect): DraftDTO {
  */
 export function draftRowToSnapshotDTO(d: typeof drafts.$inferSelect): DraftDTO {
   const dto = draftRowToDTO(d);
+  /**
+   * A DRAFT THAT HAS ALREADY GONE CARRIES NO TEXT ONTO A BOOTSTRAP. Both encodings, because a
+   * `multipart/alternative` is one message: leaving the `html` would carry the same words at the
+   * same size under another key. The ROW stays whole — the sent list is a surface a person reads
+   * offline and the address book learns its recipients from these rows — and the text is one
+   * `GET /drafts/:id` away, exactly as a message body is.
+   *
+   * First, so it wins over the ceiling arm: both answer `null` and this reason is the more
+   * specific one. A sent draft over the ceiling is a sent draft.
+   */
+  if (d.status === "sent") return { ...dto, body: null, html: null, bodyOmitted: "sent" };
   if (dto.body === null || !draftBodyOverCeiling(dto.body)) return dto;
   return { ...dto, body: null, bodyOmitted: "over_ceiling" };
 }

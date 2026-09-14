@@ -859,6 +859,26 @@ export type StorePolicy =
   | { mode: "windowed"; days: number; minRows: number; maxRows?: number };
 
 /**
+ * WHAT A HOST THAT CONFIGURES NOTHING GETS — and it is a WINDOW, not the mailbox.
+ *
+ * The absent branch used to be `full`, on the argument that a host which forgets must not
+ * quietly truncate a desktop mailbox. The measurement went the other way: the shipped LAN host
+ * client forgot, and an unbounded mirror by default is the shape that already cost this product
+ * a 4.1 GB renderer and an owner-machine OOM. Both failures are silent, and only one of them is
+ * recoverable — a pruned row is one `/sync` change or one re-snapshot away, because
+ * {@link MirrorStore.prune} deletes rather than tombstones, while memory the app never gives
+ * back is a machine somebody has to restart.
+ *
+ * So `{ mode: "full" }` is still there and still means exactly what it meant; it is now
+ * something a host SAYS rather than something it gets for saying nothing. The numbers are the
+ * shipped windows' own (`apps/webapp/app/shell/store-windows.ts`), held equal by the census
+ * beside them, so an unconfigured host is bounded the way every configured one is rather than
+ * by a second number nobody measured.
+ */
+export const DEFAULT_STORE_POLICY: StorePolicy =
+  { mode: "windowed", days: 90, minRows: 5000, maxRows: 10000 };
+
+/**
  * The two `/sync` entity types the pin set reads, narrowed to the ONE field each that decides whether the user still
  * owes it an answer. Declared here rather than in `types.ts` for the same reason {@link SnapshotCapableAdapter} is:
  * this is the only code in the package that looks at either type, and mirroring the server's whole
@@ -1405,6 +1425,7 @@ export interface EngineOptions {
    * How much of the mailbox to keep locally. ABSENT ⇒ `{ mode: "full" }` — see
    * {@link StorePolicy}. Enforced by one pass at the end of each successful drain.
    */
+  /** Absent ⇒ {@link DEFAULT_STORE_POLICY}, a window. `{ mode: "full" }` is said, never assumed. */
   storePolicy?: StorePolicy;
   /** Optional `?types=` filter for /sync. */
   types?: string[];
@@ -2116,9 +2137,9 @@ export class OhmailEngine {
     // And a fourth time, same rule: bound ONCE here so `hydrateThread` cannot decide it has a
     // batch route and then call something else.
     this.fetchBodiesFn = (opts.adapter as FetchBodiesCapableAdapter).fetchBodies?.bind(opts.adapter) ?? null;
-    // THE ABSENT BRANCH IS `full`. See {@link StorePolicy} — a host that configures nothing gets
-    // today's behaviour, and no mirror is ever pruned by omission.
-    this.storePolicy = opts.storePolicy ?? { mode: "full" };
+    // NO UNLIMITED DEFAULT. See {@link DEFAULT_STORE_POLICY}: a host that configures nothing gets
+    // a window, and `{ mode: "full" }` is a thing a host says rather than one it gets by silence.
+    this.storePolicy = opts.storePolicy ?? DEFAULT_STORE_POLICY;
     // A ceiling under the floor is a misconfiguration, not a narrower window: the eviction loop
     // starts at `minRows`, so it would read as "the floor won" and the window it names would never
     // be the window it keeps. Refused here rather than clamped — a silent reorder is the shape
@@ -3136,6 +3157,35 @@ export class OhmailEngine {
     if (prior !== asOfSeq) await this.resetReceived();
   }
 
+  /**
+   * A SENT DRAFT'S TEXT NEVER ENTERS THE COLD MIRROR — the client's half of a bound both sides
+   * keep. The bootstrap reader already omits it, and this is what makes the class unrepresentable
+   * rather than agreed: an older server, a sidecar mirror or a page replayed across a deploy can
+   * still hand this walk a sent draft carrying its body, and the `draft` type is one no eviction
+   * pass takes back. Measured: 1 500 sent-draft bodies survived a ten-message window.
+   *
+   * `sent` ONLY. A `draft`, a `scheduled` send, a `sending` row and an `unverified` one are all
+   * messages somebody still owns, and compose seeds its editor from exactly that body — stripping
+   * one would cost mail rather than save memory.
+   */
+  private static withoutSentDraftText(changes: SyncChange[]): SyncChange[] {
+    return changes.map((ch) => {
+      if (ch.type !== "draft" || ch.entity === undefined) return ch;
+      /**
+       * `html` is read STRUCTURALLY and not off {@link EngineDraft}, which does not declare it:
+       * `applyToRecords` stores the server's DTO verbatim, so the rich half of every draft has
+       * always been in the mirror under a key no client type names. A strip written against the
+       * declared type would have taken the plain body and left the same words beside it.
+       */
+      const d = ch.entity as EngineDraft & { html?: string | null };
+      if (d.status !== "sent") return ch;
+      if (d.body === null && (d.html ?? null) === null) return ch;
+      // The rest of the row is untouched: the sent list renders from it and the address book
+      // learns its recipients from it. `html` goes with `body` — one message, two encodings.
+      return { ...ch, entity: { ...d, body: null, html: null, bodyOmitted: "sent" } };
+    });
+  }
+
   private async runSnapshot(): Promise<void> {
     const snapshot = this.snapshotFn;
     if (!snapshot || this.snapshotUnavailable) return;
@@ -3151,6 +3201,9 @@ export class OhmailEngine {
         return; // nothing was written; `since=0` takes over
       }
       if (!applied) await this.claimSnapshotPrefix(page.asOfSeq);
+      // Before the count and before the apply, so neither the received count nor the store ever
+      // sees the bytes. See {@link OhmailEngine.withoutSentDraftText}.
+      page = { ...page, changes: OhmailEngine.withoutSentDraftText(page.changes) };
       const last = page.nextCursor == null || page.nextCursor === "";
       if (last) {
         // Rows + cursor in ONE flush. The buckets are a formality: `flattenResponse` concatenates

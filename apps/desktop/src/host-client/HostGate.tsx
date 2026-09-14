@@ -15,7 +15,13 @@
  * own tailnet, a LAN hop; a persistent IndexedDB mirror needs a server-confirmed owner id
  * (the shared client's cross-account lesson), and this door's surface has no session read to
  * confirm one with — if reload cost ever proves real, that is the named follow-up. No
- * `storePolicy`: the absent branch is `full`, correct for an in-memory mirror.
+ * `storePolicy: DESKTOP_WINDOW` — IN MEMORY IS THE REASON TO BOUND IT, not the reason not to.
+ * This door shipped passing none, whose absent branch was `full`: the phone or laptop reading
+ * a paired mailbox held every row and every hydrated body of it for the life of the page,
+ * which is the 4.1 GB renderer's own shape on a smaller machine. The window is the DESKTOP's
+ * rather than a number of its own (this page renders the SAME `AppShell` over the same
+ * mailbox), and the mail it evicts is a LAN hop away, which is less than the browser's
+ * window pays for the same eviction.
  * `sendSurfaceMaxTotalBytes` IS passed ({@link HOST_SEND_MAX_TOTAL_BYTES}): a send here rides
  * the host door's adapter and the door declares exactly this ceiling on its service bag
  */
@@ -34,6 +40,9 @@ import { REPLY_DRAFT_PREFIX, REPLY_META_PREFIX } from "../../../webapp/app/shell
 import { SCREENER_INTENTS_PREFIX } from "../../../webapp/app/shell/screener-intents";
 import { SEND_LOCKS_PREFIX } from "../../../webapp/app/shell/send-lock";
 import { setStorageOwner } from "../../../webapp/app/shell/storage-owner";
+/* A type-only leaf (see `store-windows.ts`'s header): importing the constant costs this bundle
+   nothing and cannot convey the engine door the host-client scan refuses. */
+import { DESKTOP_WINDOW } from "../../../webapp/app/shell/store-windows";
 import { BearerManager } from "./bearer.js";
 import { PairScreen } from "./PairScreen.js";
 import {
@@ -142,6 +151,7 @@ export function HostGate({ bearer }: { bearer: BearerManager }) {
               headers: () => bearer.headers(),
               fetch: bearer.fetch,
             }),
+            storePolicy: DESKTOP_WINDOW,
           })
         : null,
     // `scope` is the dependency that matters on a RE-PAIR: a fresh redeem mints a new one, so the

@@ -137,10 +137,12 @@ export function createEngine(
   // effect from the old `!demo && apiBase` ordering; spelled as an early return because the
   // branch below now throws, and "the demo is decided before anything can fail" has to stay
   // obvious.
-  // No `storePolicy` here either, and that is not an oversight: the absent branch is `full`, the
-  // demo has no persistent mirror to prune, and a window over a hand-made fixture world could
-  // only ever delete part of the story Mila is being shown.
-  if (demo) return new OhmailEngine({ adapter: new FixturesAdapter() });
+  // `{ mode: "full" }`, SAID rather than inherited. The demo world's rows are client-local
+  // fixtures with no server behind them, so an evicted one can never come back — a window here
+  // could only delete part of the story Mila is being shown. It is spelled out because the
+  // absent branch is now a window: this is the one client that genuinely wants no bound, and
+  // it is also the only mirror small enough for that to be true.
+  if (demo) return new OhmailEngine({ adapter: new FixturesAdapter(), storePolicy: { mode: "full" } });
 
   // FIXTURES ARE NOT A FALLBACK. See {@link EngineUnarmedError}: reaching here without a
   // base used to return the demo world to a real signed-in account, silently.

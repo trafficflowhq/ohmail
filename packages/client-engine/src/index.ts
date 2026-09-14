@@ -438,6 +438,7 @@ export {
   type ServerSearchOpts,
   type SnapshotFn,
   type StorePolicy,
+  DEFAULT_STORE_POLICY,
   type WakeSignalSource,
 } from "./engine.js";
 
