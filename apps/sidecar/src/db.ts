@@ -474,25 +474,14 @@ async function migratedThrough(client: PGlite, migrationsSchema: string): Promis
 }
 
 /**
- * Bring the schema up to date, one migration per transaction, saying so as it goes.
+ * Bring the schema up to date, ONE MIGRATION PER TRANSACTION, saying so as it goes.
  *
- * WHY ONE AT A TIME. `PgDialect.migrate` wraps the whole pending set in a single transaction, so
- * nothing outside it can be told which migration is running or what it cost — and on the store
- * that made this necessary (1.2 GB, twelve migrations, 3 min 58 s) the window said one motionless
- * sentence for four minutes and the log named the pass, not the payer. Per migration, the pending
- * set is still drizzle's (`created_at > watermark`, its own rule, read once before the first one),
- * every statement and every ledger row is still drizzle's own code, and the ORDER is the journal's.
- * What changes is the commit boundary: a launch killed mid-upgrade now keeps the migrations that
- * finished and resumes at the next one, where before it repeated the whole wait.
- *
- * AND WHY NOT ON A FIRST LAUNCH. One commit per migration costs one flush per migration —
- * measured on this journal at 329 ms for the whole pass against 1 465 ms one at a time, all of
- * the difference in the flushes ({@link INGEST_SYNCHRONOUS_COMMIT} is not touched here: the
- * migrator keeps Postgres' default). On a database with no ledger row at all that buys nothing —
- * every migration runs against an empty store, nobody is waiting on a number, and `creating_store`
- * has already said what is happening. So the whole-pass call stays exactly what a first launch
- * takes, and the counting belongs to the case it was written for: a migration rewriting a mailbox
- * somebody already has.
+ * `PgDialect.migrate` wraps the whole pending set in one transaction, so nothing outside it can be
+ * told which migration is running or what it cost — and the store behind this spent 3 min 58 s in
+ * there behind a motionless sentence. The pending set, the statements and the ledger row stay
+ * drizzle's; only the commit boundary moves, so a killed upgrade resumes at the next migration.
+ * NOT on a first launch: with nothing in the ledger every migration runs against an empty store
+ * and the flushes are pure cost (329 ms whole-pass against 1 465 ms stepwise, measured).
  */
 async function applyMigrations(
   db: LocalDb,
