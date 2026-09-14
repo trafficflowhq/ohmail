@@ -1058,8 +1058,8 @@ set an out-of-office and no out-of-office would ever be sent.
   **Another computer**, which takes the pairing link the first machine hands out under Settings →
   Devices; your mail stays organized in one place, on hardware you own.
 - A pairing link works once and is checked before it is used, so a link that is not one, a plain
-  unencrypted address, a changed key, something that is not ohmail and a spent link are refused
-  before the setup is touched.
+  unencrypted address, a changed key and something that is not ohmail are refused before the setup
+  is touched. A link already used is refused when it is redeemed, a moment later.
 - When that computer is not answering, the app says so and keeps saying so: the mail on screen is
   real and readable, nothing can be changed until it is back, and the line cannot be dismissed.
 - An install with no mailbox connected can finish the "Your own server" door: it points itself at
