@@ -482,8 +482,17 @@ async function migratedThrough(client: PGlite, migrationsSchema: string): Promis
  * sentence for four minutes and the log named the pass, not the payer. Per migration, the pending
  * set is still drizzle's (`created_at > watermark`, its own rule, read once before the first one),
  * every statement and every ledger row is still drizzle's own code, and the ORDER is the journal's.
- * What changes is the commit boundary: a launch killed mid-pass now keeps the migrations that
+ * What changes is the commit boundary: a launch killed mid-upgrade now keeps the migrations that
  * finished and resumes at the next one, where before it repeated the whole wait.
+ *
+ * AND WHY NOT ON A FIRST LAUNCH. One commit per migration costs one flush per migration —
+ * measured on this journal at 329 ms for the whole pass against 1 465 ms one at a time, all of
+ * the difference in the flushes ({@link INGEST_SYNCHRONOUS_COMMIT} is not touched here: the
+ * migrator keeps Postgres' default). On a database with no ledger row at all that buys nothing —
+ * every migration runs against an empty store, nobody is waiting on a number, and `creating_store`
+ * has already said what is happening. So the whole-pass call stays exactly what a first launch
+ * takes, and the counting belongs to the case it was written for: a migration rewriting a mailbox
+ * somebody already has.
  */
 async function applyMigrations(
   db: LocalDb,
@@ -496,10 +505,10 @@ async function applyMigrations(
   const stepwise = db as unknown as StepwiseMigrator;
   const step = stepwise.dialect?.migrate;
 
-  // The ordinary launch (nothing pending) and the launch a drizzle upgrade left us unable to
-  // narrate take the SAME call this file always made — including the schema and ledger table an
-  // empty pass still creates on a first launch.
-  if (pending.length === 0 || typeof step !== "function") {
+  // The ordinary launch (nothing pending), the FIRST launch (nothing recorded — see above) and
+  // the launch a drizzle upgrade left us unable to narrate take the SAME call this file always
+  // made, including the schema and ledger table an empty pass still creates.
+  if (through === null || pending.length === 0 || typeof step !== "function") {
     opts.onPhase?.("migrating");
     await migrate(db, MAIL_MIGRATION_CONFIG);
     return { pending: pending.length, applied: pending.length, slowest: null };
