@@ -142,6 +142,7 @@ async function applyConsentSettings(
   blockAutoUnsubscribeAt?: string | null; foldersEnabledAt?: string | null;
   folderMailboxesOff?: Record<string, string>; signatures?: Record<string, string>;
   signaturesHtml?: Record<string, string>;
+  signatureSources?: Record<string, "organizer" | "local">;
   locale?: string | null; themeFace?: string | null; onboardingCompletedAt?: string;
 }> {
   const hasAuto = "autoSuggest" in body;
@@ -465,6 +466,7 @@ async function applyConsentSettings(
     blockAutoUnsubscribeAt?: string | null; foldersEnabledAt?: string | null;
     folderMailboxesOff?: Record<string, string>; signatures?: Record<string, string>;
   signaturesHtml?: Record<string, string>;
+  signatureSources?: Record<string, "organizer" | "local">;
     locale?: string | null; themeFace?: string | null; onboardingCompletedAt?: string;
   } = {};
   await (ctx.db as unknown as Tx).transaction(async (tx) => {
@@ -537,6 +539,9 @@ async function applyConsentSettings(
       const echoed = await effectiveMailboxSignatures(txCtx.db, txCtx.accountId);
       out.signatures = echoed.signatures;
       out.signaturesHtml = echoed.signaturesHtml;
+      // The THIRD map travels with them for the same reason: a write does not change whose
+      // signature is in force, and an echo without it would leave the row guessing.
+      out.signatureSources = echoed.signatureSources;
     }
     if (hasLocale) {
       out.locale = (await setLocale(txCtx, locale as string | null)).locale;
@@ -681,6 +686,12 @@ export const consentRoutes: Route[] = [
         // `signatures`' reason — a client can tell this server having read the rows from one
         // too old to carry the field, and both pictures render the same.
         signaturesHtml: effectiveSignatures.signaturesHtml,
+        // WHOSE SIGNATURE EACH MAILBOX IS SHOWING — `"organizer"` only when a published document
+        // exists, `"local"` otherwise, one entry per mailbox including those with no signature.
+        // The editor reads it to decide whether its row is a report or a control; an older server
+        // omits the field and every mailbox then reads local, which is 0.18.0's behaviour and the
+        // safe direction — a positive fact locks the editor, never an absence.
+        signatureSources: effectiveSignatures.signatureSources,
         // THE INTERFACE LANGUAGE — `'de'`, or `null` for "this account has no preference". Sent as
         // `null` rather than omitted, and normalised to the default rather than to a string, for
         // the same reason `blockRemoteImagesAt` is: the client has to be able to tell "this server

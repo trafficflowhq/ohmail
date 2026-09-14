@@ -1147,10 +1147,19 @@ export async function mailboxSignatureHtmls(
  * because a cached `signature: null` is somebody's decision to sign with nothing and the importer
  * already honours it that way. A reader with NO document keeps its own row. An absent key stays
  * absent in both maps: inventing an empty string would render a blank tail in compose.
+ *
+ * `signatureSources` says WHICH of the two answered, per mailbox, for every row — including rows
+ * with no signature at all, because the editor asks the question even when the value is empty.
+ * `"organizer"` is a POSITIVE fact: a document exists. Everything else is `"local"`, and a caller
+ * that has no map at all must read local everywhere, never organizer.
  */
 export async function effectiveMailboxSignatures(
   db: ServiceContext["db"], accountId: string,
-): Promise<{ signatures: Record<string, string>; signaturesHtml: Record<string, string> }> {
+): Promise<{
+  signatures: Record<string, string>;
+  signaturesHtml: Record<string, string>;
+  signatureSources: Record<string, "organizer" | "local">;
+}> {
   const rows = await db
     .select({
       id: mailboxes.id,
@@ -1172,6 +1181,7 @@ export async function effectiveMailboxSignatures(
 
   const signatures: Record<string, string> = {};
   const signaturesHtml: Record<string, string> = {};
+  const signatureSources: Record<string, "organizer" | "local"> = {};
   for (const r of rows) {
     /* THE MIRROR IS READ FOR A READER AND FOR NOBODY ELSE. An organizer's own rows ARE the
        configuration, and a stale document left from before this install took the mailbox over
@@ -1189,8 +1199,11 @@ export async function effectiveMailboxSignatures(
     const html = mirrored !== null ? mirrored.signatureHtml : r.signatureHtml;
     if (text !== null && text !== undefined) signatures[r.id] = text;
     if (html !== null && html !== undefined) signaturesHtml[r.id] = html;
+    /* EVERY row gets a source, signature or not: the row that renders the editor needs to know
+       whose signature it is showing before it knows whether there is one. */
+    signatureSources[r.id] = mirrored !== null ? "organizer" : "local";
   }
-  return { signatures, signaturesHtml };
+  return { signatures, signaturesHtml, signatureSources };
 }
 
 /**

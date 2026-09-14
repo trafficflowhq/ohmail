@@ -1791,6 +1791,13 @@ export interface ConsentStateWire {
    */
   signaturesHtml?: Record<string, string>;
   /**
+   * WHOSE signature each mailbox is showing — `"organizer"` only where a published document
+   * exists, `"local"` otherwise. Optional like the two maps above: a host too old to answer it
+   * omits it, and every mailbox then reads LOCAL, which is what the editor did before a reader
+   * could be shown somebody else's sign-off at all. The report renders on a positive fact.
+   */
+  signatureSources?: Record<string, "organizer" | "local">;
+  /**
    * WHEN this account turned OFF auto-unsubscribe on screen-out, or null for the product default — which is that
    * screening a sender out, or marking them spam, also sends the sender's one-click unsubscribe request. Optional,
    * and here `null` and `undefined` ARE the same answer, unlike {@link blockRemoteImagesAt} one field up. Both mean
@@ -1982,6 +1989,7 @@ export const consent = {
     api<{
       signatures: Record<string, string>;
       signaturesHtml?: Record<string, string>;
+      signatureSources?: Record<string, "organizer" | "local">;
     }>("/consent/settings", {
       method: "PATCH",
       body: signatureHtml !== undefined

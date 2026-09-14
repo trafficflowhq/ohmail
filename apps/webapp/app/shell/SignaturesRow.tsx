@@ -46,6 +46,7 @@ export function SignaturesRow({
   mailboxes,
   signatures,
   signaturesHtml,
+  signatureSources,
   setMailboxSignature,
 }: {
   /**
@@ -70,6 +71,14 @@ export function SignaturesRow({
    * map above answers that, and the two are read together).
    */
   signaturesHtml: Readonly<Record<string, string>>;
+  /**
+   * WHOSE signature each mailbox is showing — `"organizer"` only where the organizing install has
+   * PUBLISHED one. A mailbox missing from this map reads LOCAL, so the read-only report below
+   * renders on a positive fact and never on an absence: a server too old to answer it, or an
+   * organizer that has not published yet, leaves the editor a control over the row this install
+   * actually sends with.
+   */
+  signatureSources: Readonly<Record<string, "organizer" | "local">>;
   /** `useConsentState().setMailboxSignature` — one writer, the value every composer reads. */
   setMailboxSignature: (
     mailboxId: string, signature: string | null, signatureHtml?: string | null,
@@ -152,7 +161,11 @@ export function SignaturesRow({
          * default: a roster too old to carry the field must not lock the editors on an install
          * that owns its mailbox.
          */
-        const reading = mb.organizerRole === "reader";
+        /* BOTH FACTS, because either alone is false somewhere: a reader whose organizer has
+           published nothing still sends its OWN row, so locking that editor would report a
+           signature nobody set and remove the only control over the one that goes out. */
+        const reading = mb.organizerRole === "reader"
+          && signatureSources[mb.id] === "organizer";
         return (
           <div className="sig-settings" key={mb.id}>
             <div className="lab">
