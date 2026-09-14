@@ -2317,13 +2317,12 @@ export const RESURFACE_HOURS: readonly string[] = Array.from({ length: 33 }, (_,
 /*
  * ═══ THE RESURFACE HORIZONS ═══════════════════════════════════════════════════════════════
  *
- * The chosen wall clock is what is fixed; the instant is what varies. Two nights a year the
- * chosen time is not simply writable onto the day — the clocks skip it, or it happens twice —
- * and `Date`'s local setters answer those without saying so, which is how a sheet showing 02:30
- * booked 03:30. Every horizon here is `composeZonedWallClock`, the SAME function the webapp's
- * `format.ts` composes with, and each carries the wall clock it actually booked so the row can
- * state it. The zone is the device's, injectable for the suite. (Send later's presets sit below
- * on whole hours the world's transitions do not cross, and keep the platform's own arithmetic.)
+ * The chosen wall clock is fixed; the instant varies. Two nights a year that clock cannot simply
+ * be written onto the day — it is skipped, or it happens twice — and `Date`'s local setters
+ * answer both without saying so, which is how a sheet showing 02:30 booked 03:30. Every horizon
+ * here is `composeZonedWallClock`, the SAME function the webapp's `format.ts` uses, and carries
+ * the clock it booked. The zone is the device's, injectable for the suite; send later's presets
+ * below sit on whole hours no transition crosses and keep the platform's own arithmetic.
  */
 
 /** A HORIZON: the instant booked, the wall clock it READS as, and which rule produced it. */

@@ -743,15 +743,13 @@ function ActionBar({
   if (panel === "resurface") {
     /**
      * THE HORIZON CHOOSER — three ways to say when, feeding a concrete instant into the action. Tomorrow and next
-     * week are composed from `now` AT THE TIME THE STRIP IS SHOWING, in the reader's zone, and each carries the wall
-     * clock it actually booked: on the night the clocks skip the chosen hour the label states the hour that was
-     * booked and says why, because a booking an hour off the one asked for is not a detail. "Pick a date" opens the
-     * product's own `DatePicker` (below), floored at tomorrow through its `min` so no horizon in the past can be
-     * chosen. Each choice closes the panel and dispatches `resurface:<iso>`; the shell mutates and states the day it
-     * reads back off that instant. FOUR NOW, and the fourth is first because it is the only one that costs nothing to
-     * change your mind about. "Now" dispatches `resurface_now` — a state, not a date; see {@link MessageAction}. It
-     * is separated from the three horizons by nothing but order: the question the strip asks is still "when?", and
-     * "now" is an answer to it.
+     * week are composed from `now` at the time the strip is showing, in the reader's zone, and each carries the wall
+     * clock it BOOKED: on the night the clocks skip the chosen hour the label states that hour and says why. "Pick a
+     * date" opens the product's own `DatePicker` (below), floored at tomorrow through its `min`. Each choice closes
+     * the panel and dispatches `resurface:<iso>`; the shell mutates and states the day it reads back off the instant.
+     * FOUR NOW, and the fourth is first because it is the only one that costs nothing to change your mind about.
+     * "Now" dispatches `resurface_now` — a state, not a date; see {@link MessageAction}, and it is separated from the
+     * three horizons by nothing but order: the question the strip asks is still "when?".
      */
     const tomorrow = tomorrowAt(now, resurfaceAt);
     const nextWeek = nextWeekAt(now, resurfaceAt);
