@@ -1,6 +1,6 @@
 import { and, asc, desc, eq, inArray, isNull, lte, or, sql, type SQL, type SQLWrapper } from "drizzle-orm";
 import type { AnyPgColumn } from "drizzle-orm/pg-core";
-import { accountStorage, changeLog, messages, messageInstances, messageFailures, folderOps, folderState, flagState, mailboxes, mailboxCredentials, mailboxFolders, threads, rules as rulesTbl, contacts as contactsTbl, auditLog, messageBodies, attachments as attachmentsTbl, routingDecisions, approvals, graduations, recordRouteOverride, routeOverrideActionId, awayReplies, awaySenderState, recordChange as recordChangeTx, recordChanges as recordChangesTx, bodyBytesOf, reserveBodyBytes, reserveBodyBytesEvicting, releaseBodyBytes, type ChangeInput, type LedgerTx, type Tx, type EntityType, auditAction, ACCOUNT_THREAD_STRUCTURE_LOCK_CLASS, dueNow as sharedDueNow, type FilingRefusalClass } from "@trafficflow/db";
+import { accountStorage, changeLog, messages, messageInstances, messageFailures, folderOps, folderState, flagState, mailboxes, mailboxCredentials, mailboxFolders, threads, rules as rulesTbl, contacts as contactsTbl, auditLog, messageBodies, attachments as attachmentsTbl, routingDecisions, approvals, graduations, recordRouteOverride, routeOverrideActionId, awayReplies, awaySenderState, recordChange as recordChangeTx, recordChanges as recordChangesTx, type MailboxMustBeLive, bodyBytesOf, reserveBodyBytes, reserveBodyBytesEvicting, releaseBodyBytes, type ChangeInput, type LedgerTx, type Tx, type EntityType, auditAction, ACCOUNT_THREAD_STRUCTURE_LOCK_CLASS, dueNow as sharedDueNow, type FilingRefusalClass } from "@trafficflow/db";
 import type {
   RepoPort, RoutingPort, ExternalOverrideInput, ExternalOverrideOutcome,
   StoredMessage, InsertedMessage, InsertMessageInput, FolderStateRow, FlagStateRow,
@@ -1612,7 +1612,9 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
    * chokepoint. `recordChangeTx` is itself a one-element `recordChangesTx`, so the singular and
    * the batch cannot drift: one counter allocation, one INSERT, one wake, seqs positional.
    */
-  async recordChanges(inputs: readonly RepoChangeInput[]): Promise<bigint[]> {
+  async recordChanges(
+    inputs: readonly RepoChangeInput[], mustBeLive?: MailboxMustBeLive,
+  ): Promise<bigint[]> {
     if (inputs.length === 0) return [];
     return recordChangesTx(this.db as LedgerTx, inputs.map((input) => ({
       accountId: input.accountId,
@@ -1620,7 +1622,7 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
       entityId: input.entityId,
       op: input.op,
       meta: input.meta ?? null,
-    })));
+    })), mustBeLive);
   }
 
   // ── Threading (mail 0026) ──

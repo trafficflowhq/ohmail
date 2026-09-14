@@ -1,9 +1,9 @@
-import { eq, sql } from "drizzle-orm";
+import { eq, sql, type SQL } from "drizzle-orm";
 import type { PgDatabase, PgTransaction } from "drizzle-orm/pg-core";
 /* THE MAIL HALF DIRECTLY, never `./schema.js`. `schema.ts` re-exports both halves, so naming it
  * here would put every Cloud table into the root barrel's closure — and the root barrel is what
  * the desktop engine's bundle follows. Both tables below are mail-domain. */
-import { accountSyncState, changeLog } from "./schema-mail.js";
+import { accountSyncState, changeLog, mailboxes } from "./schema-mail.js";
 import { dialect } from "./dialect/index.js";
 
 /**
@@ -130,6 +130,21 @@ export function parseChangeWake(payload: string): { accountId: string; seq: bigi
 }
 
 /**
+ * THE MAILBOX A WRITER IS COMMITTING INTO, asked BY the allocating statement.
+ *
+ * The ingest's removal fence is a locked read of `mailboxes.status` inside the commit's own
+ * transaction — one round trip per message on a hosted store. Handed here it costs none: the
+ * allocation already runs in that transaction and already takes a row lock, so the status rides
+ * in the same statement. {@link answer} is the CALLER's decider: this module refuses nothing and
+ * knows nothing about what a status means — it passes the value and lets whatever the caller
+ * throws abort the transaction with nothing committed. `null` ⇔ no such mailbox row.
+ */
+export interface MailboxMustBeLive {
+  readonly mailboxId: string;
+  answer(status: string | null): void;
+}
+
+/**
  * Allocate the next per-account, gap-free, strictly-monotonic sequence number. The UPDATE's
  * implicit ROW LOCK is the serialization: a concurrent allocator blocks on the row until this
  * transaction commits — not an advisory lock, not a bigserial (both leak gaps). A guard INSERT
@@ -152,29 +167,86 @@ export async function allocateSeq(tx: LedgerTx, accountId: string): Promise<bigi
  * host the difference between answering and being killed at the deadline. Reserved by the same
  * UPDATE {@link allocateSeq} uses, so the guarantees are identical: strictly monotonic, gap-free,
  * serialized by the row lock. `count` must be positive; a caller with nothing to record must not
- * take the lock at all.
+ * take the lock at all. `mustBeLive` is the ingest's removal fence riding along for free — see
+ * {@link MailboxMustBeLive}; absent, this sends the statement it has always sent.
  */
-export async function allocateSeqRange(tx: LedgerTx, accountId: string, count: number): Promise<bigint[]> {
+export async function allocateSeqRange(
+  tx: LedgerTx, accountId: string, count: number, mustBeLive?: MailboxMustBeLive,
+): Promise<bigint[]> {
   if (!Number.isInteger(count) || count < 1) {
     throw new Error(`allocateSeqRange: count must be a positive integer, got ${String(count)}`);
   }
   assertLedgerTx(tx, "allocateSeqRange");
   await tx.insert(accountSyncState).values({ accountId }).onConflictDoNothing();
+  const d = dialect(tx);
+  const bump = sql`${d.greatest(
+    accountSyncState.nextSeq,
+    sql`coalesce((select max(${changeLog.seq}) from ${changeLog} where ${changeLog.accountId} = ${accountId}), 0)`,
+  )} + ${count}`;
+  // THE FOLDED FORM, and only for a writer that asked: a data-modifying CTE is a PostgreSQL
+  // shape, so the device store answers the same question from its own read below. A writer that
+  // passes nothing reaches the ordinary UPDATE with the statement it has always sent.
+  if (mustBeLive && d.name !== "sqlite") {
+    return blockEndingAt(await allocateBesideTheFence(tx, d, accountId, bump, mustBeLive), count);
+  }
+  if (mustBeLive) {
+    const read = await d.exec(tx, sql`select ${mailboxes.status} as status from ${mailboxes}
+      where ${mailboxes.id} = ${mustBeLive.mailboxId} ${d.lockClause({ mode: "share" })}`);
+    mustBeLive.answer(statusOf(read[0]?.[0]));
+  }
   const rows = await tx
     .update(accountSyncState)
-    .set({
-      nextSeq: sql`${dialect(tx).greatest(
-        accountSyncState.nextSeq,
-        sql`coalesce((select max(${changeLog.seq}) from ${changeLog} where ${changeLog.accountId} = ${accountId}), 0)`,
-      )} + ${count}`,
-    })
+    .set({ nextSeq: bump })
     .where(eq(accountSyncState.accountId, accountId))
     .returning({ nextSeq: accountSyncState.nextSeq });
-  // `next_seq` now names the LAST seq of the block; the block is the `count` values ending there.
-  const last = rows[0]!.nextSeq;
+  return blockEndingAt(rows[0]!.nextSeq, count);
+}
+
+/** `next_seq` names the LAST seq of the block; the block is the `count` values ending there. */
+function blockEndingAt(last: bigint, count: number): bigint[] {
   const out: bigint[] = [];
   for (let i = BigInt(count) - 1n; i >= 0n; i--) out.push(last - i);
   return out;
+}
+
+/** The status column as the driver handed it back — no row, or no status, is `null`. */
+function statusOf(value: unknown): string | null {
+  return value == null ? null : String(value);
+}
+
+/**
+ * THE ALLOCATION AND THE FENCE IN ONE STATEMENT.
+ *
+ * `fence` takes the mailbox row at `share` — the same strength and the same lock the standing
+ * read takes — and the UPDATE names it, so the row is held before the counter moves and no seq
+ * is spent on a mailbox that is already gone. The status comes back beside `next_seq`, which is
+ * what makes the fence free: one round trip for a question that cost one of its own.
+ */
+async function allocateBesideTheFence(
+  tx: LedgerTx, d: ReturnType<typeof dialect>, accountId: string,
+  bump: SQL, mustBeLive: MailboxMustBeLive,
+): Promise<bigint> {
+  const [row] = await d.exec(tx, sql`
+    with fence as (
+      select ${mailboxes.status} as status from ${mailboxes}
+       where ${mailboxes.id} = ${mustBeLive.mailboxId} ${d.lockClause({ mode: "share" })}
+    ), allocated as (
+      update ${accountSyncState} set ${sql.identifier(accountSyncState.nextSeq.name)} = ${bump}
+       where ${accountSyncState.accountId} = ${accountId} and exists (select 1 from fence)
+      returning ${accountSyncState.nextSeq} as next_seq
+    )
+    select (select next_seq from allocated) as next_seq, (select status from fence) as status`);
+  // The caller's decider, BEFORE the seqs are believed: on a refusal it throws out of here and
+  // the transaction this statement ran in commits nothing.
+  mustBeLive.answer(statusOf(row?.[1]));
+  const last = row?.[0];
+  if (last == null) {
+    throw new Error(
+      "allocateSeqRange: the account's counter row disappeared between the guard insert and the "
+      + "allocation — no sequence was reserved",
+    );
+  }
+  return BigInt(String(last));
 }
 
 /**
@@ -204,7 +276,9 @@ export async function recordChange(tx: LedgerTx, c: ChangeInput): Promise<bigint
  */
 const CHANGE_INSERT_CHUNK = 5_000;
 
-export async function recordChanges(tx: LedgerTx, changes: readonly ChangeInput[]): Promise<bigint[]> {
+export async function recordChanges(
+  tx: LedgerTx, changes: readonly ChangeInput[], mustBeLive?: MailboxMustBeLive,
+): Promise<bigint[]> {
   if (changes.length === 0) return [];
   const accountId = changes[0]!.accountId;
   // One account per call: the seqs come from ONE counter, so a mixed list would silently
@@ -212,7 +286,7 @@ export async function recordChanges(tx: LedgerTx, changes: readonly ChangeInput[
   for (const c of changes) {
     if (c.accountId !== accountId) throw new Error("recordChanges: every change must name the same account");
   }
-  const seqs = await allocateSeqRange(tx, accountId, changes.length);
+  const seqs = await allocateSeqRange(tx, accountId, changes.length, mustBeLive);
   const rows = changes.map((c, i) => ({
     accountId,
     seq: seqs[i]!,

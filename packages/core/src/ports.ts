@@ -1,4 +1,4 @@
-import type { SpendOutcome, SpendPort } from "@trafficflow/db";
+import type { MailboxMustBeLive, SpendOutcome, SpendPort } from "@trafficflow/db";
 import type { NormalizedMessage, Destination, AttachmentMeta, EmailAddress } from "./types.js";
 import type { AuthVerdict, Rule } from "./rules.js";
 import type { ClassifierPort } from "./classifier-port.js";
@@ -435,8 +435,12 @@ export interface RepoPort {
    * statements plus a wake EACH, and ingest paid that three times for every message. Seqs come
    * back positionally, so the k-th change keeps the k-th seq and the relative order the singular
    * calls produced is the order here. An empty list writes nothing and takes no lock.
+   *
+   * `mustBeLive` rides INTO the allocating statement — see {@link MailboxMustBeLive}: the ingest's
+   * removal fence asked for free rather than as a round trip of its own. An empty list asks
+   * nothing, so a caller that passes one settles the fence itself.
    */
-  recordChanges(inputs: readonly RepoChangeInput[]): Promise<bigint[]>;
+  recordChanges(inputs: readonly RepoChangeInput[], mustBeLive?: MailboxMustBeLive): Promise<bigint[]>;
 
   // ── Threading. All three run inside the caller's transaction. ──
 

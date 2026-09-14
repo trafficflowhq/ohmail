@@ -31,6 +31,7 @@ import { resolveThread } from "./threading.js";
 // the hosted half for as long as the barrel happened not to reach it. Naming the leaf itself is
 // what makes that a property instead of a coincidence.
 import { classifyAttemptKey } from "@trafficflow/db/ledger-source";
+import type { MailboxMustBeLive } from "@trafficflow/db";
 import { aiSpendPermitted } from "./ports.js";
 import type {
   Change, CreditGate, MoveEvidence, PipelineDeps, RepoPort, RepoChangeInput, RoutingPort, FolderStateRow,
@@ -534,6 +535,17 @@ export interface CommitDeps {
    * IMAP server is the master and never suffers.
    */
   storageCap: StorageCap;
+  /**
+   * THE REMOVAL FENCE, FOLDED INTO THE ONE STATEMENT THAT CAN CARRY IT.
+   *
+   * A removal can land between `planChange` and this commit, and the fence that refuses it is a
+   * locked read of `mailboxes.status` inside this transaction — a round trip per message on a
+   * hosted store. Passed here it rides in the change-log allocation instead (see {@link
+   * MailboxMustBeLive}), which this branch already sends and already takes a row lock for.
+   * ASKED BY THE `new` BRANCH ALONE: the caller settles every other shape itself, because the
+   * fold is sound only where the message INSERT's foreign key has already taken the mailbox row.
+   */
+  mailboxMustBeLive?: MailboxMustBeLive;
 }
 
 /**
@@ -1350,8 +1362,10 @@ export async function commitChange(plan: ChangePlan, deps: CommitDeps): Promise<
     // it names nor arrives before them. LAST, deliberately: the counter row is the account's one
     // serialization point, and taking it after every other lock this branch wants holds it for
     // the insert and the commit alone — the rule the threading block above states, now covering
-    // every lock in the branch rather than the `threads` ones.
-    await repo.recordChanges(deltas);
+    // every lock in the branch rather than the `threads` ones. The fence rides in this same
+    // statement, which is free of that rule rather than an exception to it: `insertMessage` above
+    // already holds the mailbox row through its foreign key, so nothing here is a new lock.
+    await repo.recordChanges(deltas, deps.mailboxMustBeLive);
 
     const action: ReconcileAction =
       p.desired === p.arrivalLocator.folder ? { type: "none" } : { type: "move", to: p.desired };

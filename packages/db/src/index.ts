@@ -176,6 +176,7 @@ export {
   // through the hosted barrel, which put a mail-side guard behind a hosted import.
   NotInTransactionError, assertLedgerTx,
   type Tx, type LedgerTx, type EntityType, type ChangeOp, type ChangeInput, type SeqBounds,
+  type MailboxMustBeLive,
 } from "./change-log.js";
 export {
   claimIdempotencyKey, readIdempotencyKey, pruneIdempotencyKeys,
