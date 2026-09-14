@@ -21,6 +21,9 @@ export {
   STALE_COALESCE_SPAN, COALESCE_SCAN_WINDOW,
   type GetChangesOptions, type GetSnapshotOptions,
 } from "./sync-service.js";
+/* The byte bound a `/sync` page is built to, and the row floor the walk holds back for the draft
+ * phase. Exported because the transport arm measures them against the codec's own cap. */
+export { DRAFT_ROW_MAX_BYTES, PageByteBudget, weighChange } from "./sync-page-byte-budget.js";
 export * from "./dto/types.js";
 export {
   materialize,
