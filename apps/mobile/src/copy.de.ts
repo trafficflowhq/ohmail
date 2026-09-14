@@ -850,6 +850,9 @@ export const DE: Deck = {
   resurfaceTomorrow: "Morgen",
   resurfaceNextWeek: "Nächste Woche",
   resurfacePick: "Datum wählen",
+  /** The hour the three dated answers land at (mail 0110) — the webapp strip's own word,
+   *  standing over the sheet's first row and over the half-hour list it opens. */
+  resurfaceTime: "Uhrzeit",
 
   /*
    * "verschieben nach" sits directly above the destination rows (`→ Belege`, `→ Ohbox`), which

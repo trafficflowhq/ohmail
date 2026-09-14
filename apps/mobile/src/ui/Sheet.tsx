@@ -76,11 +76,19 @@ export function Sheet({
 /** One verb, one row. `on` draws the check — the tag sheet's assigned mark. */
 export function SheetRow({
   label,
+  detail,
   icon,
   on,
   onPress,
 }: {
   label: string;
+  /**
+   * The row's VALUE, right-aligned — the platform's settings-row idiom ("Tomorrow    14:30").
+   * Deliberately not folded into {@link label}: the label is the row's accessible name and the
+   * verb parity guard reads it, so a composed string would rename the verb to say a value. The
+   * detail joins the accessible name as a second string, so a screen reader hears both.
+   */
+  detail?: string;
   icon?: IconName;
   on?: boolean;
   onPress: () => void;
@@ -90,7 +98,7 @@ export function SheetRow({
     <Tap
       onPress={onPress}
       accessibilityRole="button"
-      accessibilityLabel={label}
+      accessibilityLabel={detail === undefined ? label : Copy.ariaLabelDetail(label, detail)}
       style={({ pressed }) => ({
         flexDirection: "row",
         alignItems: "center",
@@ -105,6 +113,11 @@ export function SheetRow({
         {label}
       </Txt>
       <View style={{ flex: 1 }} />
+      {detail === undefined ? null : (
+        <Txt variant="note" tone="ink2">
+          {detail}
+        </Txt>
+      )}
       {on ? <Icon name="check" size={14} color={t.c.accentInk} /> : null}
     </Tap>
   );

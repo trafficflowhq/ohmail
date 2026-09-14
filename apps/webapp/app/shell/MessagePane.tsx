@@ -782,12 +782,11 @@ function ActionBar({
               `<input type="time">`: keyboard-first, localised by the platform, no dependency. It
               stands OUTSIDE the horizon buttons because it is not an answer to "when?" — it
               qualifies the three that are, and "Now" ignores it. */}
-          <label className="abar-lab abar-at" htmlFor={`${panelId}-at`}>{t("resurfaceAt")}</label>
+          <label className="abar-lab abar-at" htmlFor={`${panelId}-at`}>{t("resurfaceTime")}</label>
           <input
             id={`${panelId}-at`}
             type="time"
             className="abar-time"
-            aria-label={t("resurfaceTime")}
             value={resurfaceAt}
             onChange={(e) => {
               /* The native control clears to "" when a person deletes the field mid-edit. That is

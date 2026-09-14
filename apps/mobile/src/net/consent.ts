@@ -69,6 +69,23 @@ export interface FoldersConsent {
    * same, because a server that cannot store a face has none to report.
    */
   themeFace: FaceName | null;
+  /**
+   * THE WALL CLOCK RESURFACED MAIL COMES BACK AT — `'HH:MM'` where the reader is, or `null` for
+   * "this account has never chosen one" (mail 0110). Rides this read for the signatures'
+   * reason: one `GET /consent` per boot and per drain already exists, so a time chosen in the
+   * webapp reaches an open phone with no new mechanism. ONE null, like `themeFace`: a value
+   * outside `'HH:MM'` is filtered to it here, and every reader resolves it to the product's
+   * 09:00 — the hour this app's horizons minted before the setting existed.
+   */
+  resurfaceTime: string | null;
+}
+
+/** `'HH:MM'`, 24-hour — the server's own shape (`RESURFACE_TIME_RE`), shared by value. */
+const RESURFACE_TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
+
+/** The wire's time, kept only if it really is one — a malformed field reads as "never chosen". */
+function resurfaceTimeOf(raw: unknown): string | null {
+  return typeof raw === "string" && RESURFACE_TIME_RE.test(raw) ? raw : null;
 }
 
 /** The wire map, kept only if it is really `{ string: string }` — a malformed field reads as absent. */
@@ -121,6 +138,10 @@ export async function readFoldersEnabled(session: ConnectedSession): Promise<Fol
       // preference" rather than throwing the whole read away: the other two fields on this
       // answer are unaffected by a face nobody here can draw.
       themeFace: faceOf(body.themeFace),
+      // A value this build cannot use (a malformed field, a server too old to carry it) reads as
+      // "never chosen" rather than throwing the whole read away — the face's rule, and here the
+      // fallback is what every build did before the setting existed.
+      resurfaceTime: resurfaceTimeOf(body.resurfaceTime),
     };
   } catch {
     return null;
@@ -162,6 +183,26 @@ export async function writeFoldersEnabled(session: ConnectedSession, enabled: bo
  * from "did not" — the discipline every consent knob keeps. Rejects on refusal or transport
  * failure, which the Settings pane shows as its one failure sentence.
  */
+/**
+ * REMEMBER THE RESURFACE TIME — one `PATCH /consent/settings {resurfaceTime}`, `writeThemeFace`'s
+ * shape and its one-axis rule: an omitted key is "leave this alone", so this control cannot
+ * overwrite a setting somebody changed in a browser tab a moment ago. Resolves to what the
+ * account STORED, never to the argument. Rejects on refusal or transport failure, which the
+ * caller swallows: the resurface it follows has already been dispatched.
+ */
+export async function writeResurfaceTime(
+  session: ConnectedSession, resurfaceTime: string,
+): Promise<string | null> {
+  const res = await session.fetch(`${session.profile.origin}/consent/settings`, {
+    method: "PATCH",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ resurfaceTime }),
+  });
+  if (res.status !== 200) throw new Error(`consent write refused (${res.status})`);
+  const body = (await res.json()) as { resurfaceTime?: unknown };
+  return resurfaceTimeOf(body.resurfaceTime);
+}
+
 export async function writeThemeFace(
   session: ConnectedSession, face: FaceName,
 ): Promise<FaceName | null> {

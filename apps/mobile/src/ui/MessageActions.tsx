@@ -19,19 +19,25 @@ import { useTheme } from "../theme";
 import { destLabel, DESTINATIONS, domainOf, type Destination, type Scope } from "../state/model";
 import {
   DAY_OFFSETS,
+  dayAt,
   dayAtHour,
   dayNine,
   effectiveSignature,
   moveTargetsFor,
   moveTargetLabel,
+  nextWeekAt,
   nextWeekNine,
   parseRecipients,
   readerZone,
+  resurfaceClock,
+  resurfaceTimeLabel,
+  RESURFACE_HOURS,
   scheduleLabel,
   SEND_LATER_MIN_LEAD_MS,
   SIG_FOLLOWING,
   usableHours,
   todayEvening,
+  tomorrowAt,
   tomorrowNine,
   type SignatureState,
   type WorldMail,
@@ -51,6 +57,7 @@ type Open =
   | "more"
   | "resurface"
   | "pick"
+  | "time"
   | "move"
   | "tag"
   | "screening"
@@ -84,6 +91,29 @@ export function MessageActions({
 
   const a = w.actions;
   const close = () => setOpen(null);
+  /**
+   * THE HOUR THE CHOOSER IS ASKING ABOUT (mail 0110) — the account's stored time, or the
+   * product's 09:00 when there is none, as a `'HH:MM'` that is always real. A local override
+   * stands only while the sheet is up: a time picked and then abandoned is not an answer, so it
+   * is dropped on close and only a pressed horizon writes the account's default.
+   */
+  const storedClock = resurfaceClock(w.resurfaceTime);
+  const storedHhmm = resurfaceTimeLabel(storedClock.hour, storedClock.minute);
+  const [pickedTime, setPickedTime] = useState<string | null>(null);
+  const resurfaceTime = pickedTime ?? storedHhmm;
+  /**
+   * A DATED ANSWER — dispatch it, then remember the hour it was given at, in that order: the
+   * message was the ask and the default is a courtesy, so a refused write leaves a correctly
+   * scheduled message behind. Nothing is written when the hour is the one already stored, and
+   * "Now" never reaches here — it is a state, not a date, and no time can apply to it.
+   */
+  const pickResurface = (when: Date): void => {
+    const chosen = resurfaceTime;
+    close();
+    setPickedTime(null);
+    void a.resurfaceAt(m.id, when.toISOString());
+    if (chosen !== storedHhmm) void w.remember(chosen).catch(() => undefined);
+  };
 
   return (
     <>
@@ -217,23 +247,56 @@ export function MessageActions({
       ) : null}
 
       {/* ── Resurface: the horizon chooser — Now / Tomorrow / Next week / Pick a date ────── */}
-      <Sheet open={open === "resurface" || open === "pick"} onClose={close} label={Copy.resurfaceWhen}>
+      <Sheet
+        open={open === "resurface" || open === "pick" || open === "time"}
+        onClose={close}
+        label={open === "time" ? Copy.resurfaceTime : Copy.resurfaceWhen}
+      >
         <Txt variant="sectionLabel" tone="ink3" style={{ paddingHorizontal: 14, paddingBottom: 6 }}>
-          {Copy.resurfaceWhen}
+          {open === "time" ? Copy.resurfaceTime : Copy.resurfaceWhen}
         </Txt>
         {open === "resurface" ? (
           <>
-            <SheetRow label={Copy.resurfaceNow} onPress={() => { close(); a.resurfaceNow(m.id); }} />
+            {/* THE TIME, FIRST AND BEFORE ANY CHOICE — the webapp strip's time control in the
+                phone's idiom. It states the hour the three dated answers land at rather than
+                leaving it implied, and it opens a second-level list because this app installs
+                no datetime-picker native module. It stands ABOVE "Now" because it is not an
+                answer to "when?" — it qualifies the three that are. */}
+            <SheetRow
+              icon="chev"
+              label={Copy.resurfaceTime}
+              detail={resurfaceTime}
+              onPress={() => setOpen("time")}
+            />
+            <Rule inset={14} />
+            <SheetRow label={Copy.resurfaceNow} onPress={() => { close(); setPickedTime(null); a.resurfaceNow(m.id); }} />
             <SheetRow
               label={Copy.resurfaceTomorrow}
-              onPress={() => { close(); a.resurfaceAt(m.id, tomorrowNine(new Date()).toISOString()); }}
+              detail={resurfaceTime}
+              onPress={() => pickResurface(tomorrowAt(new Date(), resurfaceTime))}
             />
             <SheetRow
               label={Copy.resurfaceNextWeek}
-              onPress={() => { close(); a.resurfaceAt(m.id, nextWeekNine(new Date()).toISOString()); }}
+              detail={resurfaceTime}
+              onPress={() => pickResurface(nextWeekAt(new Date(), resurfaceTime))}
             />
             <SheetRow icon="chev" label={Copy.resurfacePick} onPress={() => setOpen("pick")} />
           </>
+        ) : open === "time" ? (
+          // EVERY HALF HOUR FROM 06:00 TO 22:00 — the phone's idiom for the webapp's time input,
+          // the 90-day list's shape one axis over. The current value is checked; a stored value
+          // outside this range still SHOWS and still applies (the rows are bounded, the account's
+          // hour is not), so a time set on a computer is never silently rounded here.
+          <ScrollView style={{ maxHeight: 320 }}>
+            {RESURFACE_HOURS.map((hhmm) => (
+              <SheetRow
+                key={hhmm}
+                label={hhmm}
+                on={hhmm === resurfaceTime}
+                onPress={() => { setPickedTime(hhmm); setOpen("resurface"); }}
+              />
+            ))}
+          </ScrollView>
         ) : (
           // The picked day, as rows — the native idiom for the webapp's date input, floored at
           // tomorrow so the chooser cannot name a horizon in the past.
@@ -242,18 +305,19 @@ export function MessageActions({
                 the phone's idiom, and a quarter ahead covers the horizons people actually
                 book. A fortnight did not, and was an exclusion nothing on screen admitted. */}
             {Array.from({ length: 90 }, (_, i) => {
-              const day = dayNine(new Date(), i + 1);
+              const day = dayAt(new Date(), i + 1, resurfaceTime);
               return (
                 <SheetRow
                   key={day.toISOString()}
                   label={dayLabel(day, locale)}
-                  onPress={() => { close(); a.resurfaceAt(m.id, day.toISOString()); }}
+                  detail={resurfaceTime}
+                  onPress={() => pickResurface(day)}
                 />
               );
             })}
           </ScrollView>
         )}
-        <CancelRow onPress={close} />
+        <CancelRow onPress={() => { close(); setPickedTime(null); }} />
       </Sheet>
 
       {/* ── Move: this message, relocated — every place except where it is ───────────────── */}

@@ -1357,6 +1357,9 @@ const TABLE = {
   resurfaceTomorrow: "Tomorrow",
   resurfaceNextWeek: "Next week",
   resurfacePick: "Pick a date",
+  /** The hour the three dated answers land at (mail 0110) — the webapp strip's own word,
+   *  standing over the sheet's first row and over the half-hour list it opens. */
+  resurfaceTime: "Time",
   /** The move panel (`ohbox.moveLabel` / `ohbox.moveCancel`); destinations are `place*`. */
   moveLabel: "move to",
   moveCancel: "Cancel",

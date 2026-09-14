@@ -1351,6 +1351,15 @@ export interface LiveDeps {
    * of the app already had.
    */
   ownAddresses?: () => readonly string[];
+  /**
+   * THE ACCOUNT'S RESURFACE TIME — `'HH:MM'`, or `null` for "never chosen" (mail 0110), as a
+   * GETTER for `ownAddresses`' reason exactly: this facade is identity-stable by design while
+   * the consent read that carries the time lands asynchronously after it is built, so a value
+   * captured at construction would be `null` for the life of the session and the horizon-less
+   * verbs would keep minting 09:00 over an account that chose 14:30. Absent ⇒ the product's
+   * 09:00, which is what every build did before the setting existed.
+   */
+  resurfaceTime?: () => string | null;
 }
 
 /**
@@ -1478,6 +1487,8 @@ export interface LiveWorldActions {
 export function liveActions(deps: LiveDeps): LiveWorldActions {
   const { engine, toast } = deps;
   const now = deps.now ?? (() => new Date());
+  /** Read at every use, never captured — see {@link LiveDeps.resurfaceTime}. */
+  const resurfaceAtClock = (): string | null => deps.resurfaceTime?.() ?? null;
   /**
    * Everything swept per stream DURING THE CURRENT VISIT — the leave commit's anchor pool.
    * CONSUMED by {@link leaveFeed}: a visit's sweep may not leak into the next one, or a
@@ -1765,7 +1776,9 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
         kind: "triage_set",
         messageId,
         state,
-        ...(kind === "resurface" ? { bubbleUpAt: nextMorning(now()).toISOString() } : {}),
+        ...(kind === "resurface"
+          ? { bubbleUpAt: nextMorning(now(), resurfaceAtClock()).toISOString() }
+          : {}),
       }),
     );
     toast(ok ? refuse("livePileAdded", pileTitle(kind)) : refuse("livePileFailed", pileTitle(kind)));
@@ -1820,7 +1833,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     // A message already scheduled: the horizon-less verb CLEARS the booking rather than
     // silently re-dating it — the webapp's `resurface` arm, verbatim in intent.
     if (triageStateOf(engine.read(), m) === "bubbled_up") return triage(messageId, "none", refuse("toastResurfaceCleared"));
-    return resurfaceAt(messageId, tomorrowNine(now()).toISOString());
+    return resurfaceAt(messageId, tomorrowAt(now(), resurfaceAtClock()).toISOString());
   };
 
   const resurfaceNow = (messageId: string): Promise<boolean> =>
@@ -2259,11 +2272,50 @@ export function stableActions(current: () => WorldActions): WorldActions {
   };
 }
 
-/** Resurface's one offered horizon on the phone: tomorrow, 09:00 local. */
-function nextMorning(from: Date): Date {
+/**
+ * THE PRODUCT'S HOUR when nobody has chosen one — 09:00, the hour every horizon below minted
+ * before the setting existed. Mirrors the server's `DEFAULT_RESURFACE_TIME` by value: this app
+ * cannot import the services package, and the webapp's `format.ts` carries the same constant.
+ */
+export const DEFAULT_RESURFACE_TIME = "09:00";
+
+/** `'HH:MM'`, 24-hour — the server's shape (`RESURFACE_TIME_RE`), shared by value. */
+const RESURFACE_TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
+
+/**
+ * A stored `'HH:MM'` as hour and minute, falling back to 09:00 for anything else — `null`
+ * ("never chosen"), a server too old to carry the field, or a value a hand-run UPDATE left in
+ * the column. ONE fallback, here, so the sheet's first row and the horizons under it cannot
+ * disagree about what an unreadable preference means.
+ */
+export function resurfaceClock(hhmm: string | null | undefined): { hour: number; minute: number } {
+  const use = hhmm != null && RESURFACE_TIME_RE.test(hhmm) ? hhmm : DEFAULT_RESURFACE_TIME;
+  return { hour: Number(use.slice(0, 2)), minute: Number(use.slice(3, 5)) };
+}
+
+/** `'HH:MM'` from hour and minute — the sheet's rows and the value it writes back. */
+export function resurfaceTimeLabel(hour: number, minute: number): string {
+  return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
+}
+
+/**
+ * THE HOURS THE SHEET OFFERS — every half hour from 06:00 to 22:00, 33 rows. A list rather than
+ * a wheel because this app installs no datetime-picker native module (the patch and prebuild
+ * traps), and the 90-day list beside it is already the phone's idiom for the webapp's inputs.
+ * Half hours rather than whole ones because "half past two" is a thing people say; outside
+ * 06:00–22:00 a resurface is a notification in the night, and the row list stays readable.
+ * A stored value OUTSIDE this list still shows and still applies — the sheet reads the account's
+ * hour, never this array, and only the ROWS are bounded.
+ */
+export const RESURFACE_HOURS: readonly string[] = Array.from({ length: 33 }, (_, i) =>
+  resurfaceTimeLabel(6 + Math.floor(i / 2), (i % 2) * 30));
+
+/** Resurface's one offered horizon on the phone: tomorrow, at the account's time. */
+function nextMorning(from: Date, at: string | null | undefined): Date {
   const d = new Date(from);
   d.setDate(d.getDate() + 1);
-  d.setHours(9, 0, 0, 0);
+  const { hour, minute } = resurfaceClock(at);
+  d.setHours(hour, minute, 0, 0);
   return d;
 }
 
@@ -2276,26 +2328,43 @@ function nextMorning(from: Date): Date {
  * asks the platform what 09:00 local means on that calendar day, DST included.
  */
 
-/** Tomorrow, 09:00 where the reader is — the chooser's first dated preset and the `b`-key default. */
-export function tomorrowNine(from: Date): Date {
-  return nextMorning(from);
+/** Tomorrow, at the account's resurface time where the reader is — the chooser's first preset. */
+export function tomorrowAt(from: Date, at: string | null | undefined): Date {
+  return nextMorning(from, at);
 }
 
-/** The coming Monday, 09:00 — and never "later today": a Monday resolves to the next one. */
-export function nextWeekNine(from: Date): Date {
+/** The coming Monday at that time — and never "later today": a Monday resolves to the next one. */
+export function nextWeekAt(from: Date, at: string | null | undefined): Date {
   const d = new Date(from);
   const diff = (1 - d.getDay() + 7) % 7 || 7;
   d.setDate(d.getDate() + diff);
-  d.setHours(9, 0, 0, 0);
+  const { hour, minute } = resurfaceClock(at);
+  d.setHours(hour, minute, 0, 0);
   return d;
 }
 
-/** A calendar day `n` days ahead, 09:00 local — the phone's "Pick a date" rows. */
-export function dayNine(from: Date, daysAhead: number): Date {
+/** A calendar day `n` days ahead at that time — the phone's "Pick a date" rows. */
+export function dayAt(from: Date, daysAhead: number, at: string | null | undefined): Date {
   const d = new Date(from);
   d.setDate(d.getDate() + daysAhead);
-  d.setHours(9, 0, 0, 0);
+  const { hour, minute } = resurfaceClock(at);
+  d.setHours(hour, minute, 0, 0);
   return d;
+}
+
+/** Tomorrow, 09:00 where the reader is — {@link tomorrowAt} at the product's hour. */
+export function tomorrowNine(from: Date): Date {
+  return tomorrowAt(from, null);
+}
+
+/** The coming Monday, 09:00 — {@link nextWeekAt} at the product's hour. */
+export function nextWeekNine(from: Date): Date {
+  return nextWeekAt(from, null);
+}
+
+/** A calendar day `n` days ahead, 09:00 local — {@link dayAt} at the product's hour. */
+export function dayNine(from: Date, daysAhead: number): Date {
+  return dayAt(from, daysAhead, null);
 }
 
 /*

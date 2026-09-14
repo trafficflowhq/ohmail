@@ -27,6 +27,7 @@ import { useConnection } from "../net/connection";
 import {
   readFoldersEnabled,
   writeFoldersEnabled,
+  writeResurfaceTime,
   writeThemeFace,
   type FoldersConsent,
 } from "../net/consent";
@@ -300,6 +301,17 @@ export interface World {
    */
   signatures: Readonly<Record<string, string>> | null;
   /**
+   * THE RESURFACE TIME — the account's `'HH:MM'`, or `null` for "never chosen" (mail 0110).
+   * Rides the signatures' cadence off the same `GET /consent`, so a time set in the webapp
+   * reaches an open phone. NO `known` twin, unlike the face beside it: null here is a usable
+   * position rather than the absence of one — every reader resolves it to the product's 09:00,
+   * which is the hour this app's horizons already minted — and nothing is gated on having read
+   * it. `remember` is the write the resurface sheet makes after it has dispatched; it resolves
+   * to what the account STORED, `null` where there was no session to ask.
+   */
+  resurfaceTime: string | null;
+  remember(resurfaceTime: string): Promise<string | null>;
+  /**
    * THE APPEARANCE FACE'S ACCOUNT SCOPE (OHMARCHY-PLAN.md §3a). The DEVICE scope is not here —
    * it is `usePrefs().facePin`, which needs no session and works with the radio off; this half
    * is the account's synced answer and the one press that writes it.
@@ -457,6 +469,10 @@ function emptyWorld(actions: WorldActions): World {
       junkSaid: null,
     },
     signatures: null,
+    // No account, so nothing has chosen a time and nothing can store one. The sheet still
+    // chooses — on the product's 09:00, which is what `null` means everywhere.
+    resurfaceTime: null,
+    remember: () => Promise.resolve(null),
     // No account, so no account face, nothing that could have been read, and nothing to write one
     // to. `false` is "not confirmed", which is exactly what nothing-connected means.
     face: { account: null, known: false, pending: false, applyAll: () => Promise.resolve(false) },
@@ -552,6 +568,16 @@ export function WorldProvider({ children }: { children: ReactNode }) {
    * issue order.
    */
   const [signatures, setSignatures] = useState<Readonly<Record<string, string>> | null>(null);
+  /**
+   * The account's resurface time, or `null` for "never chosen" — the signatures' cadence and
+   * their freshest-successful-read-wins rule, without their `known` gate: null is a usable
+   * answer here (the product's 09:00) rather than a value nothing may be drawn from.
+   */
+  const [resurfaceTime, setResurfaceTime] = useState<string | null>(null);
+  /* …and the same value as a ref, for the identity-stable actions facade to read at every use
+     (`live.ts#LiveDeps.resurfaceTime`). Written on every render, so the getter is never stale. */
+  const resurfaceTimeNow = useRef<string | null>(null);
+  resurfaceTimeNow.current = resurfaceTime;
   /**
    * THE ACCOUNT'S CUTLINE ANSWER AND WHETHER IT IS IN — {@link ScreeningPosture}, riding the
    * signatures' read and their exact rule (freshest-successful-read-wins, identity-gated).
@@ -677,6 +703,8 @@ export function WorldProvider({ children }: { children: ReactNode }) {
     const sigRead = freshestRead<FoldersConsent>((ans) => {
       if (current.current !== m) return;
       setSignatures(ans.signatures);
+      // The resurface time off the SAME answer and the same rule — one read, every fact on it.
+      setResurfaceTime(ans.resurfaceTime);
       /* The cutline half of the SAME answer — see `screening` above. A read that landed with no
          cutline fields is `unsupplied`, NOT still-waiting: nothing further is coming from this
          server, so the piles stop being withheld and stand at "retire nobody". */
@@ -743,6 +771,9 @@ export function WorldProvider({ children }: { children: ReactNode }) {
     // (account A's signature must never dress account B's composer); the tracker itself is
     // rebuilt with the machine, so its tally starts over with it.
     setSignatures(null);
+    // …and the time, for the signatures' reason: account A's chosen hour must not decide when
+    // account B's mail comes back. Back to `null`, which reads as the product's 09:00.
+    setResurfaceTime(null);
     // …and the cutline answer, for the same reason: a window read off account A must never
     // decide which of account B's senders are worth a decision. Back to `unanswered`, the state
     // a session that has asked nothing yet is actually in.
@@ -780,6 +811,28 @@ export function WorldProvider({ children }: { children: ReactNode }) {
     // `machine` is the dependency rather than `faceCurrent`: the two are built together, so this
     // callback's identity moves exactly when the session's machines are rebuilt.
     [machine],
+  );
+  /**
+   * REMEMBER THE RESURFACE TIME — the account write the sheet makes after it has dispatched.
+   *
+   * No pending flag and no gate, unlike the face above: the sheet has already closed by the time
+   * this runs, there is no control to disable, and a refusal leaves a correctly scheduled
+   * message behind. It is applied OPTIMISTICALLY from the echo so a second resurface in the same
+   * session opens on the hour just chosen rather than waiting for the next drain's read — and
+   * only the echo, never the argument, so a server that stored something else wins.
+   */
+  const rememberResurfaceTime = useCallback(
+    async (hhmm: string): Promise<string | null> => {
+      if (!session) return null;
+      // The live machine AT CALL TIME, so the applier below is identity-gated exactly as the
+      // reads are: a superseded session's late answer must not decide when THIS account's mail
+      // comes back. `current` always names the live one (see its docblock).
+      const m = current.current;
+      const stored = await writeResurfaceTime(session, hhmm);
+      if (current.current === m) setResurfaceTime(stored);
+      return stored;
+    },
+    [session],
   );
   /*
    * THE FLAG IS RE-READ AFTER EVERY COMPLETED DRAIN — the flush effect's own signal
@@ -840,6 +893,10 @@ export function WorldProvider({ children }: { children: ReactNode }) {
       ? liveActions({
         engine, toast: showToast, uuid: () => Crypto.randomUUID(), zone,
         ownAddresses: () => addressesNow.current,
+        // A GETTER, like the addresses beside it and for the same reason: this facade is
+        // identity-stable while the consent read that carries the time lands later, so the
+        // horizon-less verbs must ask at every use rather than capture a boot-time null.
+        resurfaceTime: () => resurfaceTimeNow.current,
       })
       : null),
     [engine, showToast, zone],
@@ -1167,6 +1224,8 @@ export function WorldProvider({ children }: { children: ReactNode }) {
         };
       })(),
       signatures,
+      resurfaceTime,
+      remember: rememberResurfaceTime,
       face: {
         account: accountFace,
         known: accountFaceKnown,
@@ -1193,7 +1252,8 @@ export function WorldProvider({ children }: { children: ReactNode }) {
     // failure sentence is part of what an unsettled screen renders.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [engine, session, scopes, zone, locale, actions, version, outcomeSeq, outcomeOf, freshBeat,
-    foldersOn, foldersPending, foldersStorable, setFoldersEnabled, signatures, screening, screenerServer, conn.syncing,
+    foldersOn, foldersPending, foldersStorable, setFoldersEnabled, signatures,
+    resurfaceTime, rememberResurfaceTime, screening, screenerServer, conn.syncing,
     conn.syncError, accountFace, accountFaceKnown, facePending, applyFaceAllDevices]);
 
   /**
