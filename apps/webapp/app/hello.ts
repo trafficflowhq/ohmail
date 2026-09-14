@@ -52,7 +52,18 @@ export interface ServerHello {
    * on the type because a server that predates it simply does not send it, and that absence is
    * the negotiation working rather than a parse failure.
    */
-  features: { staging: boolean; ai: boolean; pairing: boolean; accountHeader?: boolean };
+  /**
+   * `remoteImages` says the door's image proxy will actually FETCH — it has an egress and a
+   * resolver behind it. Optional, and read as `=== true` for `accountHeader`'s reason: a door
+   * that predates the word does not send it, and an absent word is the door declining rather
+   * than a parse failure. The safe direction is the same one the stored opt-out takes — a door
+   * that has not said it can serve a picture is treated as one that cannot, so the pane offers
+   * no pictures and Settings draws no switch, rather than offering a control over nothing.
+   */
+  features: {
+    staging: boolean; ai: boolean; pairing: boolean;
+    accountHeader?: boolean; remoteImages?: boolean;
+  };
 }
 
 /**

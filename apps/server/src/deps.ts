@@ -541,6 +541,10 @@ export function buildDeps(req: Request, rt: ServerRuntime): ApiDeps {
         // OBLIGATION 2: the pairing routes are mounted on this table and this table only, so
         // this descriptor is the one that says true.
         pairing: true,
+        // True for the same reason `pairing` is: this composition wires the image proxy's real
+        // egress a few lines down (`makePrivacyService({ remote: nodeRemoteFetch, … })`), so
+        // `GET /img` here fetches rather than refusing.
+        remoteImages: true,
       },
     },
     logger: rt.logger,

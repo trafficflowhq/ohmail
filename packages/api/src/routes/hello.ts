@@ -58,6 +58,7 @@ export const helloRoutes: Route[] = [
           staging: hello.features.staging,
           ai: hello.features.ai,
           pairing: hello.features.pairing,
+          remoteImages: hello.features.remoteImages,
           // Not `hello.features.accountHeader` — see the header. This composition sets the
           // account header because `createApp.handle` does, and that is not the host's to choose.
           accountHeader: true,

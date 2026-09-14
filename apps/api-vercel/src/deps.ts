@@ -658,6 +658,12 @@ export function buildDeps(req: Request, cfg: HostConfig): ApiDeps {
         // this bag wires no `services.inviteRedeem`, so both invite arms refuse; the descriptor
         // still says `true` because the capability the picker gates on IS device pairing.
         pairing: true,
+        // A CONSTANT for `pairing`'s reason: this bag wires the image proxy's real egress
+        // unconditionally (`privacy` above — `nodeRemoteFetch` with the gate's own resolver),
+        // with no environment arm to read. This is the door the hosted webapp has always been
+        // able to load a picture through; it says so now instead of the client inferring it
+        // from its own build.
+        remoteImages: true,
       },
     },
     // `withRequestId` binds `requestId` onto this, so every line downstream carries the

@@ -1843,6 +1843,11 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           // are pinned — disarmed in the sidecar's hello suite, armed in its host-mode suite —
           // so neither composition can lie about the ceremony.
           pairing: hostMode,
+          /* This door's image proxy FETCHES: the composition wires `nodeRemoteFetch` and the
+             real resolver (see `localServices`'s `privacy:` entry), so a reading pane may offer
+             pictures here and Settings may draw the switch. It was `false` in effect for as long
+             as the egress was a refusal, and the route being mounted never said otherwise. */
+          remoteImages: true,
         },
       },
     });
@@ -2185,7 +2190,11 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         // device becomes a session through the pairing redeem, never through a setup page.
         needsSetup: false,
         auth: { password: false, totp: false, webauthn: false, publicSignup: false },
-        features: { sse: false, staging: false, ai: ai.drafter() !== undefined, pairing: true },
+        features: {
+          sse: false, staging: false, ai: ai.drafter() !== undefined, pairing: true,
+          // Same composition, same armed egress as the window's own door above.
+          remoteImages: true,
+        },
       },
     });
 

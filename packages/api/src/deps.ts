@@ -564,6 +564,17 @@ export interface HelloConfig {
     ai: boolean;
     /** The pairing-token ceremony (`/pair*`) is mounted here. */
     pairing: boolean;
+    /**
+     * `GET /img` will actually FETCH — the image proxy has an egress and a resolver behind it.
+     *
+     * Not "the route is mounted": every composition mounts it, and the local door mounted it for
+     * a year while its fetch was a refusal, so a client that read the route table learned nothing.
+     * This is the door saying it can serve a picture, which is the only form of the question a
+     * reading pane can act on — it decides whether the pane offers pictures at all and whether
+     * Settings draws the switch. A door that answers `false` gets no switch, because a control
+     * over a capability nothing can serve is worse than no control.
+     */
+    remoteImages: boolean;
   };
 }
 
