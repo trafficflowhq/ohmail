@@ -27,7 +27,10 @@ import type { EntityReader, EngineMessage } from "@ohmail/client-engine";
 import type { ToastFn } from "@ohmail/ui";
 import type { DisabledReason, KeyBinding } from "./keymap";
 import { isModalOpen } from "./modal-gate";
-import { armDeleteIntent, disarmDeleteIntent, takeDeleteIntents, type HeldVerb } from "./delete-intents";
+import {
+  armDeleteIntent, disarmDeleteIntent, takeDeleteIntents,
+  type DeleteIntent, type HeldVerb,
+} from "./delete-intents";
 import { UNDO_MS } from "./screener-state";
 
 export { UNDO_MS };
@@ -118,7 +121,18 @@ export type HeldDispatch = (
    * Every existing dispatch ignores it, which is what keeps the delete's call sites unchanged.
    */
   pressId: string,
-) => Promise<{ status: string }>;
+) => Promise<HeldOutcome>;
+
+/**
+ * What one dispatch answered. `status` is the vocabulary both verbs share and the window's own
+ * comparison; `error` is the engine's refusal when there is one — `MutationResult` already
+ * carries it, and the boot replay reads its CODE rather than guessing what an absent row meant.
+ * Structural, so `restoreDispatch`'s two-word answer and a whole `MutationResult` both fit.
+ */
+export interface HeldOutcome {
+  status: string;
+  error?: { code?: string | null } | undefined;
+}
 
 export interface DeleteUndoDeps {
   /**
@@ -325,14 +339,104 @@ export function createDeleteUndo(deps: DeleteUndoDeps): DeleteUndo {
 }
 
 /**
- * REPLAY WHAT A KILLED TAB LEFT BEHIND — every stranded intent, dispatched once. Called at mount, with the engine's
- * own clock. It does NOT go through the queue: there is no window to reopen and nothing to undo, because the person
- * expressed this before the page went away and the toast that offered to take it back is long gone. The row is
- * already absent from the mirror by then or will be on the next drain; either way the honest act is to finish the
- * request rather than to re-ask a question nobody is looking at. A refusal is silent here, deliberately: a toast
- * about a message the person deleted in a previous session, raised on a screen they have just opened, explains
- * nothing and interrupts something else. The intent is cleared either way, so a delete this account may no longer
- * make (the mailbox changed hands while the tab was closed) is dropped rather than retried for ever.
+ * The two sentences the boot replay may raise, resolved by the caller so the catalogue is read
+ * once. Both take the VERB: one journal holds deletes and restores, and a refused restore told
+ * in the delete's words would name the opposite of the action the person took.
+ */
+export interface ReplayCopy {
+  /** Kept, and being tried again inside this launch. */
+  retrying: (verb: HeldVerb, count: number) => string;
+  /** The attempts are spent. The record stands; the next launch will try again. */
+  failed: (verb: HeldVerb, count: number) => string;
+}
+
+/**
+ * WHAT THE REPLAY NEEDS BEFORE IT MAY DECIDE ANYTHING. `hydrated` is the mirror's own fact —
+ * `engine.hydrate()`, single-flight, so awaiting it here coalesces with the boot's own read and
+ * starts nothing second. NEVER A TIMER: an interval is a guess about a read whose length is the
+ * size of somebody's mailbox, and the guess is wrong on exactly the machines that need it.
+ */
+export interface ReplayEnv {
+  hydrated: () => PromiseLike<unknown>;
+  /** Raise a sentence. Reached only by a refusal this file cannot classify. */
+  tell: (sentence: string) => void;
+  copy: ReplayCopy;
+  /** Tries per press, the first included; the wait between them. Injected for the tests. */
+  attempts?: number;
+  retryMs?: number;
+  wait?: (ms: number) => Promise<void>;
+}
+
+/** Three tries, two seconds apart — enough for a blip, short enough to still be this launch. */
+export const REPLAY_ATTEMPTS = 3;
+export const REPLAY_RETRY_MS = 2_000;
+
+/** The code the engine and the server both use for a row that is not there. */
+const ROW_ABSENT = "not_found";
+
+/**
+ * ONE MESSAGE, ONE ATTEMPT, CLASSIFIED. Anything but `rolled_back` is settled — a queued verb is
+ * in the engine's durable outbox and is its problem now. A row that is NOT THERE means the delete
+ * already happened once the mirror is hydrated (a delete tombstones the row), and means nothing
+ * at all before that: a replay that cannot see the mailbox may not decide the mailbox agrees with
+ * it, which is the whole of the defect this file was carrying. Everything else is still owed.
+ */
+async function attemptOne(
+  fn: HeldDispatch, messageId: string, pressId: string, hydrated: boolean,
+): Promise<boolean> {
+  let res: HeldOutcome;
+  try {
+    res = await fn(messageId, pressId);
+  } catch {
+    return false;
+  }
+  if (res.status !== "rolled_back") return true;
+  if ((res.error?.code ?? null) === ROW_ABSENT) return hydrated;
+  return false;
+}
+
+/**
+ * ONE PRESS, CARRIED UNTIL THE WORLD CONFIRMS IT. The wait comes first and the refused read is
+ * not a licence to act: a hydration that rejects dispatches nothing and leaves the record whole
+ * for the next launch. Then rounds over the messages still owed — bounded, so an unreadable
+ * refusal ends in a sentence rather than a loop, and the record stands either way.
+ */
+async function settlePress(
+  fn: HeldDispatch, intent: DeleteIntent, env: ReplayEnv | undefined,
+): Promise<boolean> {
+  let hydrated = false;
+  if (env) {
+    try { await env.hydrated(); hydrated = true; } catch { return false; }
+  }
+  /* WITHOUT AN ENV THERE IS NO FACT AND NOBODY TO TELL: one try, silent, and an ambiguous
+     refusal keeps the record rather than consuming it. */
+  const attempts = env ? Math.max(1, env.attempts ?? REPLAY_ATTEMPTS) : 1;
+  const pause = env?.wait ?? ((ms: number) => new Promise<void>((r) => { setTimeout(r, ms); }));
+  const verb = intent.kind ?? "delete";
+  let owed = intent.messageIds.slice();
+  for (let attempt = 1; ; attempt++) {
+    /* THE JOURNALLED PRESS ID TRAVELS WITH EVERY ATTEMPT, and it is the whole of the restore's
+       idempotency: this is the request whose first response was lost, so it arrives under the
+       key the first attempt used rather than as a second press. */
+    const settled = await Promise.all(owed.map((id) => attemptOne(fn, id, intent.id, hydrated)));
+    owed = owed.filter((_, i) => !settled[i]);
+    if (owed.length === 0) return true;
+    if (attempt >= attempts) {
+      if (env) env.tell(env.copy.failed(verb, owed.length));
+      return false;
+    }
+    if (env) env.tell(env.copy.retrying(verb, owed.length));
+    await pause(env?.retryMs ?? REPLAY_RETRY_MS);
+  }
+}
+
+/**
+ * REPLAY WHAT A KILLED TAB LEFT BEHIND — every stranded intent, finished or kept. Called at mount,
+ * with the engine's own clock. It does NOT go through the queue: there is no window to reopen and
+ * nothing to undo, because the person expressed this before the page went away and the toast that
+ * offered to take it back is long gone. An intent is removed by its COMPLETION and never by an
+ * attempt that could not run — the replay used to clear the journal on whatever came back, which
+ * abandoned a delete the product had already reported done whenever the mirror was still loading.
  */
 export function replayDeleteIntents(
   mutate: HeldDispatch,
@@ -347,6 +451,12 @@ export function replayDeleteIntents(
    * it.
    */
   restore?: HeldDispatch,
+  /**
+   * The mirror's hydration fact and the sentences. ABSENT is a real surface — a caller with no
+   * engine to ask — and it is the conservative half: one attempt, nothing said, and a refusal
+   * that could mean "not there yet" keeps the record instead of consuming it.
+   */
+  env?: ReplayEnv,
 ): number {
   const intents = takeDeleteIntents(nowMs);
   for (const intent of intents) {
@@ -355,23 +465,20 @@ export function replayDeleteIntents(
     const kind = intent.kind ?? "delete";
     const fn = kind === "restore" ? restore : mutate;
     if (fn === undefined) {
-      /* A held restore with nowhere to send it. Cleared, silently, for the reason a refusal is
-         silent here: the person expressed this in a previous session and the toast that offered
-         to take it back is long gone. Retrying it for ever would be a journal that only grows,
-         and replaying it as a DELETE would be the product doing the opposite of what was asked. */
+      /* A held restore with nowhere to send it — and no later launch can give it one, so this is
+         the one row that is dropped rather than carried. Retrying it for ever would be a journal
+         that only grows, and replaying it as a DELETE would be the product doing the opposite of
+         what was asked. */
       disarmDeleteIntent(intent.id);
       continue;
     }
     /* THE ENTRY IS CLEARED WHEN THE WHOLE PRESS HAS SETTLED, not per message: a press is the unit
        it was recorded in, and clearing it early would drop the record of the messages still in
-       flight. `Promise.allSettled` rather than `all`, because one refusal must not strand the
-       rest of the press in the journal for ever. */
-    void Promise.allSettled(
-      /* THE JOURNALLED PRESS ID TRAVELS WITH THE REPLAY, and it is the whole of the restore's
-         idempotency: this is the request whose first response was lost, so it must arrive under
-         the key the first attempt used rather than as a second press. */
-      intent.messageIds.map((messageId) => fn(messageId, intent.id)),
-    ).then(() => disarmDeleteIntent(intent.id));
+       flight. A press with anything still owed stays written down whole — the messages that did
+       settle answer `not_found` on the next launch and settle again, which costs nothing. */
+    void settlePress(fn, intent, env).then((settled) => {
+      if (settled) disarmDeleteIntent(intent.id);
+    });
   }
   return intents.length;
 }
@@ -559,22 +666,38 @@ export function useDeleteUndo(deps: Omit<DeleteUndoDeps, "onHeld">): {
  * step that finishes what a killed tab started, and a caller that wants the verb without the
  * replay (a surface with no engine to dispatch on) should be able to say so by not calling it.
  */
-export function useDeleteIntentReplay(
-  mutate: HeldDispatch,
-  now: () => number,
-  enabled = true,
+export interface DeleteIntentReplayOptions extends ReplayEnv {
+  mutate: HeldDispatch;
+  now: () => number;
+  /** `false` on a surface with no server to carry a delete to — the demo. */
+  enabled?: boolean;
   /**
    * The restore dispatch, when this shell has one. Omitted, a stranded restore is dropped
    * rather than sent — see {@link replayDeleteIntents}, where the reason it is a separate
    * parameter is written out: falling through to `mutate` would delete the message.
    */
-  restore?: HeldDispatch,
-): void {
+  restore?: HeldDispatch | undefined;
+}
+
+export function useDeleteIntentReplay(opts: DeleteIntentReplayOptions): void {
+  /* THE DEPS ARE READ THROUGH A REF for `useDeleteUndo`'s reason: the sentences are raised
+     seconds after the effect ran, and `copy` and `tell` change identity on most renders. */
+  const latest = useRef(opts);
+  latest.current = opts;
   const ran = useRef(false);
+  const enabled = opts.enabled ?? true;
   useEffect(() => {
     if (!enabled || ran.current) return;
     ran.current = true;
-    replayDeleteIntents(mutate, now(), restore);
+    const at = latest.current;
+    replayDeleteIntents(at.mutate, at.now(), at.restore, {
+      hydrated: () => latest.current.hydrated(),
+      tell: (sentence) => latest.current.tell(sentence),
+      get copy() { return latest.current.copy; },
+      ...(at.attempts !== undefined ? { attempts: at.attempts } : {}),
+      ...(at.retryMs !== undefined ? { retryMs: at.retryMs } : {}),
+      ...(at.wait ? { wait: at.wait } : {}),
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [enabled]);
 }

@@ -1397,22 +1397,40 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
    * it, which is a durable record of nothing. Demo excluded: the fixture world has no server to
    * carry a delete to, and replaying one there would mutate a demo somebody is looking at.
    */
-  useDeleteIntentReplay(
+  useDeleteIntentReplay({
     /* THROUGH `fileAndRefresh`, LIKE EVERY OTHER FILING DISPATCH — and this line is a fix rather
        than a transcription. The replay used to read `(m) => engine.mutate(m)`, which carried no
        `kind:` literal, so `filing-refresh-on-decision.test.tsx`'s census could not SEE it: a
        filing dispatch invisible to the guard that exists to find exactly that. Naming the verb
        here made the census name it, and the census was right — a replayed delete moves mail, so
        the count the filing strip renders is stale until the facts are re-read. */
-    (messageId) => fileAndRefresh(engine.mutate({ kind: "message_delete", messageId })),
-    () => Date.now(),
-    !demo,
+    mutate: (messageId) => fileAndRefresh(engine.mutate({ kind: "message_delete", messageId })),
+    now: () => Date.now(),
+    enabled: !demo,
+    /* THE MIRROR'S OWN FACT, AWAITED BEFORE ANYTHING IS DISPATCHED. `hydrate()` is single-flight,
+       so this coalesces with the sync scheduler's own call and starts no second read; what it
+       buys is that a delete replayed at mount is no longer refused by an empty mirror and then
+       struck off the journal. Never an interval — see `ReplayEnv.hydrated`. */
+    hydrated: () => engine.hydrate(),
+    tell: toast,
+    /* THE SENTENCE IS RESOLVED FROM THE ROW'S OWN VERB: one journal holds both, and a refused
+       restore told in the delete's words would name the opposite of what the person did. */
+    copy: {
+      retrying: (verb, count) => t(
+        verb === "restore" ? "trash.restoreReplayRetrying" : "ohbox.deleteReplayRetrying",
+        { count },
+      ),
+      failed: (verb, count) => t(
+        verb === "restore" ? "trash.restoreReplayFailed" : "ohbox.deleteReplayFailed",
+        { count },
+      ),
+    },
     /* THE RESTORE'S REPLAY, wired only where the transport exists. Omitted, `delete-undo.ts`
        DROPS a stranded restore rather than sending it — never falling through to the delete,
        which would delete the message somebody asked to put back. `trashAvailable()` is the same
        answer the palette row and the chord read, so the surface cannot offer a verb whose
        replay would be dropped. */
-    engine.trashAvailable()
+    restore: engine.trashAvailable()
       ? (messageId, pressId) => fileAndRefresh(
           /* THE PRESS ID IS THE REPLAY'S WHOLE POINT HERE: this dispatch runs at the next launch
              for a press whose response was lost, so it goes out under that press's own key and
@@ -1420,7 +1438,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
           restoreDispatch((id, opts) => engine.restoreFromTrash(id, opts))(messageId, pressId),
         )
       : undefined,
-  );
+  });
   const refusalCopy = useMemo(
     () => ({
       named: (name: string) => t("screener.readerMoveRefused", { name }),
