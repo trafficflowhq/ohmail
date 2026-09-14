@@ -1718,7 +1718,14 @@ export class ScreenerService extends ScreenerReadService {
       // this has the answer to.
       const already = stored.get(r.messageId);
       if (already) {
-        answered[index] = { sender, messageId: r.messageId, ...already };
+        // THROUGH THE CHECK LIKE EVERY OTHER ANSWER. A verdict served from the store is still an
+        // answer this request hands back, so it carries the reason for the same cap the write
+        // path applied — otherwise pressing Suggest on an already-advised sender would REPLACE
+        // the sentence on their row with silence, which is the surface losing a fact it had.
+        answered[index] = {
+          sender, messageId: r.messageId,
+          ...withSenderCheck(already, checked.get(r.messageId), ohboxPolicy)!,
+        };
         return;
       }
       quoted++;
@@ -1789,7 +1796,10 @@ export class ScreenerService extends ScreenerReadService {
           if (settled) {
             // Charged NOTHING and asked NOTHING, and the sender is answered. `quoted` stays as it
             // was: this request priced the sender honestly and then did not have to pay.
-            answered[index] = { sender, messageId: r.messageId, ...settled };
+            answered[index] = {
+              sender, messageId: r.messageId,
+              ...withSenderCheck(settled, checked.get(r.messageId), ohboxPolicy)!,
+            };
             return;
           }
           // The holder is slower than the budget, or died mid-call and its claim has not expired
@@ -1845,7 +1855,10 @@ export class ScreenerService extends ScreenerReadService {
         if (outcome.verdict === "duplicate") {
           const settled = (await this.storedSuggestions(ctx, [r.messageId], ohboxPolicy)).get(r.messageId);
           if (settled) {
-            answered[index] = { sender, messageId: r.messageId, ...settled };
+            answered[index] = {
+              sender, messageId: r.messageId,
+              ...withSenderCheck(settled, checked.get(r.messageId), ohboxPolicy)!,
+            };
             await releaseClaim();
             return;
           }
