@@ -123,7 +123,10 @@ export type RefundObligationReason =
   /** The model call this spend paid for threw. Nothing was produced and nothing was stored. */
   | "drafter_failed"
   /** Advice was bought for a mailbox no organizer can apply it to — bought, then unusable. */
-  | "no_organizer";
+  | "no_organizer"
+  /** The sender was advised between the candidate query and the claim: the spend bought a second
+   *  copy of an answer that already exists. */
+  | "already_advised";
 
 /** One debt: everything the reversal needs, and nothing about what a credit is worth. */
 export interface RefundObligation {

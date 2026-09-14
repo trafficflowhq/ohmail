@@ -67,14 +67,16 @@ ALTER TABLE "credit_refund_obligations"
 ALTER TABLE "credit_refund_obligations"
   ADD CONSTRAINT "credit_refund_obligations_attempt_unique" UNIQUE ("account_id", "attempt");
 --> statement-breakpoint
--- The closed set of reasons. A third is a deliberate change here and in whatever reads it,
--- because a reason nobody renders is a debt nobody can explain to the person who is owed it.
+-- The closed set of reasons, and it is CLOSED on purpose: a fourth is a deliberate change here
+-- and in whatever reads it, because a reason nobody renders is a debt nobody can explain to the
+-- person who is owed it. The three are the three ways a spend can buy nothing — the model call it
+-- paid for threw, the advice cannot be applied by anybody, and the answer already existed.
 ALTER TABLE "credit_refund_obligations"
   DROP CONSTRAINT IF EXISTS "credit_refund_obligations_reason_check";
 --> statement-breakpoint
 ALTER TABLE "credit_refund_obligations"
   ADD CONSTRAINT "credit_refund_obligations_reason_check"
-  CHECK ("reason" IN ('drafter_failed', 'no_organizer'));
+  CHECK ("reason" IN ('drafter_failed', 'no_organizer', 'already_advised'));
 --> statement-breakpoint
 -- Length ceilings on the four text columns, `api_faults_len_check`'s rule: the values are ours,
 -- so this is not validation — it is the bound that stops one looping caller growing the table by

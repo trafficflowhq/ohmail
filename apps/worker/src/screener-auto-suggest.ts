@@ -6,7 +6,7 @@ import {
   screenerAttemptKey, storeScreenerSuggestion,
   screenerSuggestedSenderExists, hasScreenerSuggestionForSender, AI_ACTION_WEIGHTS,
   decisionCanBeApplied, readRequestEligibility,
-  type RefundObligationPort, type SpendPort, type Tx,
+  type RefundObligationPort, type RefundObligationReason, type SpendPort, type Tx,
 } from "@trafficflow/db";
 import { capabilityForKind } from "@trafficflow/core/adapters/organizer-lease";
 import {
@@ -197,12 +197,7 @@ export async function screenerAutoSuggestPass(
    * all; asked AGAIN inside the exclusive region below, because a stand-down landing between this
    * read and the claim is the race this filter cannot see, and that charge is refunded.
    */
-  const appliable = new Map<string, boolean>();
-  for (const mailboxId of new Set(page.map((c) => c.mailboxId))) {
-    appliable.set(mailboxId, decisionCanBeApplied(await readRequestEligibility(
-      db, accountId, mailboxId, capabilityForKind("screener.decide"),
-    )));
-  }
+  const appliable = await appliableMailboxes(db, accountId, page);
   const candidates = page.filter((c) => appliable.get(c.mailboxId) === true);
   if (candidates.length < page.length) {
     log.info("screener_auto_suggest_no_organizer", {
@@ -270,7 +265,7 @@ export async function screenerAutoSuggestPass(
      * query and the claim is refunded; a fault is not, because the charge buys a free retry next
      * cycle over the same message and that is the claim this pass's caller already makes.
      */
-    let refundOnRelease = false;
+    let refundOnRelease: RefundObligationReason | null = null;
     /**
      * Give the claim back, once; reverse the charge only when told to.
      *
@@ -279,15 +274,15 @@ export async function screenerAutoSuggestPass(
      * the receipt is what closes it. `owe` is idempotent per (account, attempt), so a pass that
      * dies after writing and before releasing owes the same one debt next cycle.
      */
-    const releaseClaim = async (refund: boolean): Promise<void> => {
+    const releaseClaim = async (reason: RefundObligationReason | null): Promise<void> => {
       if (!gate || !claimed || released) return;
       released = true;
       const meta = { messageId: c.messageId };
-      const reverses = refund && chargedAttempt !== undefined;
+      const reverses = reason !== null && chargedAttempt !== undefined;
       if (reverses && deps.obligations) {
         await deps.obligations.owe({
           accountId, action: "screener", attemptKey, attempt: chargedAttempt!,
-          reason: "no_organizer", meta,
+          reason: reason!, meta,
         });
       } else if (reverses) {
         // A metered host with no memory for what it owes. Named rather than passed over: the
@@ -354,7 +349,7 @@ export async function screenerAutoSuggestPass(
           accountId, messageId: c.messageId,
           ...(chargedAttempt !== undefined ? { refunding: chargedAttempt } : {}),
         });
-        refundOnRelease = true;
+        refundOnRelease = "no_organizer";
         continue;
       }
 
@@ -375,7 +370,7 @@ export async function screenerAutoSuggestPass(
         // THE ONE EXIT THAT REVERSES THE CHARGE. The door below names the attempt this pass was
         // told it charged, which is the stronger claim than any in-process marker: exactly-once is
         // the ledger's, so a retry cannot pay twice.
-        refundOnRelease = true;
+        refundOnRelease = "already_advised";
         continue;
       }
       // `+= the weight` and not `++`: the field is credits, and `spend()` moves that many per
@@ -458,6 +453,25 @@ export async function screenerAutoSuggestPass(
     });
   }
   return result;
+}
+
+/**
+ * WHICH OF THIS PAGE'S MAILBOXES COULD APPLY A DECISION — one read per DISTINCT mailbox.
+ *
+ * Its own function rather than a loop in the pass, and not only for length: the pass's candidate
+ * loop is held to ONE DOOR by a census that reads its body, and a second `for` beside it is a
+ * second thing that census has to tell apart from the one it means.
+ */
+async function appliableMailboxes(
+  db: Tx, accountId: string, page: readonly Candidate[],
+): Promise<Map<string, boolean>> {
+  const appliable = new Map<string, boolean>();
+  for (const mailboxId of new Set(page.map((c) => c.mailboxId))) {
+    appliable.set(mailboxId, decisionCanBeApplied(await readRequestEligibility(
+      db, accountId, mailboxId, capabilityForKind("screener.decide"),
+    )));
+  }
+  return appliable;
 }
 
 /**
