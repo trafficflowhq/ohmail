@@ -478,17 +478,17 @@ export interface CyclePageCursor {
 /** A cursor for one cycle. A caller that runs `reconcileMailbox` alone gets its own. */
 export const freshCyclePages = (): CyclePageCursor => ({ pass: null, page: 0 });
 
+/**
+ * Open the next page of a pass. Called IMMEDIATELY BEFORE the write predicate at every boundary and
+ * never through a wrapper around it: `lease-write-permit-census.test.ts` asserts the predicate has
+ * exactly one spelling and reads its call inside each writing function, so a helper that asked it on
+ * their behalf would satisfy that census by proxy. Two lines, in this order, so a refusal names the
+ * page it refused rather than the last one it admitted.
+ */
 function openPage(at: CyclePageCursor, pass: CyclePass): void {
   at.page = at.pass === pass ? at.page + 1 : 1;
   at.pass = pass;
 }
-
-/**
- * The page is opened IMMEDIATELY BEFORE the predicate at every boundary and never through a wrapper
- * around it: `lease-write-permit-census.test.ts` asserts the predicate has exactly one spelling and
- * reads the call inside each writing function, and a helper that asked it for them would satisfy that
- * census by proxy. Two lines, in this order, so a refusal names the page it refused.
- */
 
 /**
  * Rethrow a REFUSAL out of a catch arm that would otherwise swallow it or read it as a message fault.
