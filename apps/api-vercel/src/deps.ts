@@ -4,7 +4,7 @@ import {
 } from "@trafficflow/db";
 import {
   API_MAX_DURATION_MS, makePooledDb, recordApiFault, entitlementsFaultRow,
-  makeEntitlementsClient,
+  makeEntitlementsClient, refundObligationsOn,
 } from "@trafficflow/db/cloud";
 import { adminDbFor, attestStaffDbFault, resetAdminDbs, webhookAlertSink, telegramAlertSink, acquireImapSlot, releaseImapSlot, resolveOAuthProviderConfig, rotateMailboxOAuthSecret, MICROSOFT_PROVIDER, // The staging BUCKET client. It sits beside the `attachment_staging` rows rather than with the
   // send path, because the retention sweep's caller is the worker, which may not depend on
@@ -697,6 +697,21 @@ export function buildDeps(req: Request, cfg: HostConfig): ApiDeps {
         );
       },
     },
+    /**
+     * WHERE A SPEND THAT BOUGHT NOTHING IS REMEMBERED (cloud 0036) — composed exactly where the
+     * entitlements program is, and absent exactly where it is: a host with no meter can owe
+     * nothing, and a host with one can always lose a refund.
+     *
+     * THE REQUEST'S OWN HANDLE, unlike the fault recorder one block up, and the difference is what
+     * each write is for: a fault row records something that already went wrong, so it takes a
+     * fresh handle rather than the one that just refused; this row is the reason a person gets
+     * their money back, and it has to be written by the request that observed the charge buying
+     * nothing. It is deliberately NOT inside the drafting transaction — that transaction is the
+     * one that failed.
+     */
+    ...(cfg.entitlements
+      ? { refundObligations: refundObligationsOn(db as unknown as Tx) }
+      : {}),
     cronSecret: cfg.cronSecret,
     alerts: cfg.alerts
       ? {

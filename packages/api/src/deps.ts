@@ -33,7 +33,7 @@ import type { SmtpLoginProof } from "@trafficflow/core/adapters/imap";
 import type { ProbeHostGuard } from "./imap-probe.js";
 /* The spend gate's PORT, from the root barrel. `@trafficflow/db/cloud` is the half that answers,
  * and a route table must be able to say it may be handed a gate without depending on the ledger. */
-import type { EntitlementsComposition } from "@trafficflow/db";
+import type { EntitlementsComposition, RefundObligationPort } from "@trafficflow/db";
 
 /**
  * How a host admits an IMAP connection, as a port rather than an import.
@@ -715,6 +715,16 @@ export interface ApiDeps {
   logger?: Logger;
   /** See {@link ApiFaultLogPort}. */
   faultLog?: ApiFaultLogPort;
+  /**
+   * WHERE A SPEND THAT BOUGHT NOTHING IS REMEMBERED — a port for {@link ApiFaultLogPort}'s reason:
+   * this file ships inside the desktop engine and may never name a Cloud table.
+   *
+   * ABSENT is a local install, which meters nothing and can owe nothing. A METERED host that
+   * leaves it absent is a wiring fault, and the drafting path refuses by name on the first paid
+   * press rather than discovering it at the one moment a refund is owed
+   * (a composition suite is what holds the hosted pair together).
+   */
+  refundObligations?: RefundObligationPort;
 }
 
 /**

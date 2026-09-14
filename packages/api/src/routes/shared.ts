@@ -13,7 +13,7 @@ import type { DraftPort } from "@trafficflow/core/mail";
 import {
   accessOf, isMetered,
   type AccessPort, type AccessVerdict, type EntitlementsComposition, type EntitlementsPort,
-  type SpendPort,
+  type RefundObligationPort, type SpendPort,
 } from "@trafficflow/db";
 import type { ImapAdmissionPort, ApiDeps } from "../deps.js";
 
@@ -58,6 +58,19 @@ export function entitlementsPort(deps: ApiDeps): EntitlementsPort | null {
 export function spendOf(deps: ApiDeps): SpendPort | undefined {
   const e = entitlementsOf(deps);
   return e !== null && isMetered(e) ? e : undefined;
+}
+
+/**
+ * WHERE A SPEND THAT BOUGHT NOTHING IS REMEMBERED, or nobody — the store beside {@link spendOf}.
+ *
+ * READ FROM THE SAME DEPS AND NOT DERIVED FROM `spendOf`, because the two are different facts: one
+ * is who charges, the other is where this server writes down what it owes when a charge bought
+ * nothing. They must be composed TOGETHER, which is a property of the hosted composition rather
+ * than of this accessor — `refund-obligation-composition.test.ts` is what asserts it, and the
+ * drafting path refuses by name if it is ever false.
+ */
+export function refundObligationsOf(deps: ApiDeps): RefundObligationPort | undefined {
+  return deps.refundObligations;
 }
 
 /**

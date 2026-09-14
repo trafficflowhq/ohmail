@@ -8,7 +8,7 @@ import {
   type StandDownExport,
 } from "@trafficflow/db";
 import {
-  makeEntitlementsClient, makeOwnedDb, makeChangeWakeHub, type OwnedDb, type ChangeWakeFanout } from "@trafficflow/db/cloud";
+  makeEntitlementsClient, refundObligationsOn, makeOwnedDb, makeChangeWakeHub, type OwnedDb, type ChangeWakeFanout } from "@trafficflow/db/cloud";
 import {
   runAlertPass,
   webhookAlertSink,
@@ -92,6 +92,7 @@ import { apiFaultPrunePass } from "./api-fault-prune.js";
 import { ohboxTidyPass } from "./ohbox-tidy.js";
 import { screenerAutoApplyPass } from "./screener-auto.js";
 import { screenerAutoSuggestPass } from "./screener-auto-suggest.js";
+import { refundObligationDrainPass } from "./refund-obligation-drain.js";
 import { syncKickPass } from "./sync-kick.js";
 import { sensitiveBackfillPass } from "./sensitive-backfill.js";
 import { storageEvictPass } from "./storage-evict.js";
@@ -1081,6 +1082,14 @@ export async function startWorkerWithLock(
       : UNMETERED;
     /** The spend half the call sites take — `undefined` where nothing meters. */
     const spend = isMetered(entitlements) ? entitlements : undefined;
+    /**
+     * WHERE A SPEND THAT BOUGHT NOTHING IS REMEMBERED (cloud 0036) — composed on exactly the
+     * condition `spend` is, because the two are halves of one fact: a host that can charge can
+     * lose a refund, and a host that cannot charge owes nothing. Derived from `spend` rather than
+     * from `config` a second time, so the pair cannot drift
+     * (`refund-obligation-composition.test.ts`).
+     */
+    const obligations = spend ? refundObligationsOn(db as unknown as Tx) : undefined;
 
     // The LIVE classifier, behind a per-process circuit breaker. ONE circuit for the process, because
     // the failure domain is the shared API key and endpoint — per-mailbox circuits would each burn
@@ -4326,6 +4335,7 @@ export async function startWorkerWithLock(
               accountId, log,
               classifier: classifierCircuit?.port(),
               ...(spend ? { credits: spend } : {}),
+              ...(obligations ? { obligations } : {}),
               ...(screening.ohboxBar ? { ohboxBar: screening.ohboxBar } : {}),
             },
           );
@@ -4359,6 +4369,21 @@ export async function startWorkerWithLock(
         } catch (err) {
           log.error("idempotency_prune_failed", { err });
         }
+        // ── WHAT WE OWE PEOPLE WHOSE SPEND BOUGHT NOTHING ─────────────────────────────────
+        //
+        // The obligation rows cloud 0036 holds, turned back into credits. It rides the
+        // maintenance cadence rather than the per-account loop because a debt belongs to an
+        // ACCOUNT and not to a mailbox, and because the claim statement reads the whole table
+        // once: a per-account version would be one query per served account per cycle to find,
+        // almost always, nothing. Leader-only, like its neighbours, and the row's own lease is
+        // what makes that a performance property rather than a correctness one.
+        //
+        // NEVER THROWS by contract, so no try/catch would earn its place here — but the pass
+        // itself is the thing that must not take down a worker that is syncing mail, and that is
+        // stated where it is implemented.
+        await refundObligationDrainPass(db as unknown as Tx, {
+          ...(spend ? { credits: spend } : {}), log,
+        });
         // ── SPENT SEND-CONTENT CLAIMS ──────────────────────────────────────────────────
         //
         // HYGIENE, and it is worth saying plainly because the neighbouring sweep above is not:

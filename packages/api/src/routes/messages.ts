@@ -7,7 +7,9 @@ import {
 import { serviceContext } from "../context.js";
 import { jsonResponse } from "../responses.js";
 import type { Route } from "../router.js";
-import { message, drafting, drafter, readBody, spendOf, accessPortOf } from "./shared.js";
+import {
+  message, drafting, drafter, readBody, spendOf, accessPortOf, refundObligationsOf,
+} from "./shared.js";
 import { pagingNumber } from "../query-bounds.js";
 
 /**
@@ -155,6 +157,9 @@ export const messageRoutes: Route[] = [
       const { draftId, seq } = await drafting(deps).draftFromMessage(ctx, params.id!, {
         drafter: drafter(deps),
         credits,
+        // The memory for a refund this request may owe. Composed by the same host that composes
+        // `credits`; the service refuses a metered press that arrives without one.
+        ...(refundObligationsOf(deps) ? { obligations: refundObligationsOf(deps)! } : {}),
         // Read ONLY when the gate has already refused: a `state` refusal this account's own
         // access view contradicts is answered 503 rather than billed (`ai-refusal.ts`).
         ...(accessPortOf(deps) ? { access: accessPortOf(deps)! } : {}),

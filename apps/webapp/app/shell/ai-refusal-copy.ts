@@ -43,3 +43,25 @@ export function clearedByAccess(err: unknown): boolean {
   const key = aiRefusalKey(err);
   return key === "aiUnavailable" || key === "aiDisabled";
 }
+
+/**
+ * A DRAFT THAT FAILED AFTER THE CHARGE, AND WHICH OF THE TWO THINGS HAPPENED TO THE CREDITS.
+ *
+ * TWO STATES, TWO SENTENCES, and neither is the absence of the other: `returned` is money already
+ * back, `owed` is money a pass will return. It is read from `details.credits` rather than guessed
+ * from the status, because only the request that made the reversal knows whether the entitlements
+ * program took it — and a client that guessed would tell somebody their credits were back on the
+ * exact outage where they are not.
+ *
+ * `null` means this is not that refusal, or the server sent a word this build has no sentence
+ * for; the caller then says what it says for any other fault. It is deliberately NOT folded into
+ * {@link aiRefusalKey}: that maps a code to one sentence, and this refusal has two.
+ */
+export function draftFailureKey(err: unknown): "creditsReturned" | "creditsOwed" | null {
+  const e = err as { code?: unknown; details?: { credits?: unknown } } | null | undefined;
+  if (e?.code !== "ai_draft_failed") return null;
+  const credits = e.details?.credits;
+  if (credits === "returned") return "creditsReturned";
+  if (credits === "owed") return "creditsOwed";
+  return null;
+}

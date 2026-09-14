@@ -6,7 +6,7 @@ import { messages, draftAttemptKey, type IdempotencyKey } from "@trafficflow/db"
 /* The PORT, from the root barrel — not `@trafficflow/db/cloud`, which is the half that
  * answers. This service names a gate it may be handed; it never builds one, and it must
  * compile in a deployment where no gate and no ledger exist. */
-import type { AccessPort, SpendPort } from "@trafficflow/db";
+import type { AccessPort, RefundObligationPort, SpendPort } from "@trafficflow/db";
 import {
   plainTextToOutboundBody, screenModelInput, MODEL_SINK_REFUSAL_SENTENCE,
   type DraftInput, type DraftPort,
@@ -47,6 +47,20 @@ export interface DraftFromMessageDeps {
    * action must carry the client's own statement of intent.
    */
   credits?: SpendPort;
+  /**
+   * WHERE A SPEND THAT BOUGHT NOTHING IS REMEMBERED — REQUIRED whenever {@link credits} is, and
+   * refused by name when it is not.
+   *
+   * The sequence this closes: the charge lands, the drafter throws, the reversal is attempted, the
+   * entitlements program is unreachable, `release` reports `unreachable` — and without a place to
+   * write it down that debt exists nowhere. The person has paid for a draft they never got.
+   *
+   * REQUIRED rather than optional-and-skipped because the two states are not a caller's choice: a
+   * host that meters can always lose a refund, so a metered composition with no memory for one is
+   * a wiring fault, and the honest moment to say so is the first paid press rather than the first
+   * outage. `spend-port-fake.ts`' twin in the API composes both from one place.
+   */
+  obligations?: RefundObligationPort;
   /**
    * THE ACCESS HALF, READ ONLY WHEN THE GATE HAS ALREADY REFUSED — never on the way in.
    *
@@ -183,6 +197,15 @@ export class DraftingService {
     // unreachable" are three different answers, and collapsing them into a boolean is what made a
     // funded customer receive 402 for a dropped connection. The BARE key — the ledger source is
     // composed by whoever answers, so this path cannot double-prefix it.
+    // A METERED PATH WITH NO MEMORY FOR WHAT IT OWES IS REFUSED HERE, before a single credit
+    // moves. The alternative is charging and then discovering, at the one moment it matters, that
+    // the debt has nowhere to go — see {@link DraftFromMessageDeps.obligations}.
+    if (deps.credits && !deps.obligations) {
+      throw new ServiceError(
+        "internal", 500,
+        "AI drafting is metered on this deployment but no refund-obligation store was composed",
+      );
+    }
     const attemptKey = deps.credits ? this.debitKey(target.id, deps) : null;
     /** The attempt THIS request charged, or null. The port's `attempt` is the refund memory. */
     let chargedAttempt: string | null = null;
@@ -267,9 +290,39 @@ export class DraftingService {
       // failed would hand back a charge for a draft the customer already has.
       if (deps.credits && attemptKey) {
         const meta = { messageId: target.id };
-        await deps.credits.release(ctx.accountId, chargedAttempt === null
-          ? { action: "draft", attemptKey, refund: false, meta }
-          : { action: "draft", attemptKey, refund: true, attempt: chargedAttempt, meta });
+        if (chargedAttempt === null) {
+          // Nothing moved, so nothing is owed: the claim goes back and the caller's own error
+          // stands. A lost release here costs the customer nothing — the attempt stays open and
+          // the retry is free.
+          await deps.credits.release(ctx.accountId, { action: "draft", attemptKey, refund: false, meta });
+          throw err;
+        }
+        // THE DEBT IS WRITTEN BEFORE THE REVERSAL IS TRIED. That order is the whole fix: a refund
+        // attempted as a best-effort side effect leaves nothing behind when the program is
+        // unreachable, and this request is the only thing that ever knew a charge bought nothing.
+        // Idempotent per (account, attempt), so a same-key retry that fails again owes one debt.
+        await deps.obligations!.owe({
+          accountId: ctx.accountId, action: "draft", attemptKey,
+          attempt: chargedAttempt, reason: "drafter_failed", meta,
+        });
+        const receipt = await deps.credits.release(
+          ctx.accountId,
+          { action: "draft", attemptKey, refund: true, attempt: chargedAttempt, meta },
+        );
+        if (receipt === "settled") await deps.obligations!.settle(ctx.accountId, chargedAttempt);
+        // AND THE PERSON IS TOLD WHICH OF THE TWO HAPPENED. Two states, two sentences, never one
+        // optional field: `returned` is money already back, `owed` is money a pass will return.
+        // The underlying error rides as `cause` — it is what the fault record and the log want —
+        // but it may not be what reaches the person, because a 500 renders as "internal error"
+        // and the one thing they need to know about their credits would be lost with it.
+        throw new ServiceError(
+          "ai_draft_failed", 503,
+          receipt === "settled"
+            ? "the draft could not be written; your credits are back"
+            : "the draft could not be written; your credits will be returned",
+          { credits: receipt === "settled" ? "returned" : "owed" },
+          true,
+        );
       }
       throw err;
     }

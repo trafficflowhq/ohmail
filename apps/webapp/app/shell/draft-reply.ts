@@ -20,7 +20,7 @@ import { useCallback, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { ApiError, api, apiConfigured } from "../api-client";
 import type { RichValue } from "./rich-text";
-import { aiRefusalKey } from "./ai-refusal-copy";
+import { aiRefusalKey, draftFailureKey } from "./ai-refusal-copy";
 
 /**
  * `closed` — the verb is idle.
@@ -158,10 +158,17 @@ export function useDraftReply(opts: {
         // — the twin of the Screener's rule, for the same reason: the server's `message` is
         // English written for a log, and a German reader was being shown it. Everything else
         // still passes through verbatim, which is what the paragraph above is about.
+        // THE CHARGED-AND-FAILED PAIR FIRST, because it is the only refusal on this path that
+        // says something about the person's MONEY, and the generic arms below say the opposite:
+        // `failedOpaqueEarly` ends "Nothing was charged", which is exactly false here — the spend
+        // landed and the drafter is what failed.
+        const paid = draftFailureKey(err);
         const key = aiRefusalKey(err);
-        setNotice(key === null
-          ? messageFor(err, t("failed"), bought ? t("failedOpaque") : t("failedOpaqueEarly"))
-          : tAi(key));
+        setNotice(paid !== null
+          ? t(paid)
+          : key === null
+            ? messageFor(err, t("failed"), bought ? t("failedOpaque") : t("failedOpaqueEarly"))
+            : tAi(key));
       }
     })();
   }, [messageId, phase, onDraft, t, tAi]);

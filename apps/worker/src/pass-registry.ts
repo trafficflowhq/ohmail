@@ -265,6 +265,15 @@ export const WORKER_PASSES: readonly WorkerPass[] = [
     fence: "leader lock (it rides the alert pass, which holds it)",
   },
   {
+    name: "refund_obligation_drain",
+    module: `${W}/refund-obligation-drain.ts`, entry: "refundObligationDrainPass",
+    triggers: ["interval"],
+    cadence: "on the maintenance cadence (MAINTENANCE_EVERY_MS, ~hourly), leader-only",
+    budget: "one claim statement on credit_refund_obligations_pending_idx plus at most REFUND_OBLIGATION_BATCH releases, and both are empty when nothing is owed",
+    owns: "a spend that bought nothing is refunded — the obligation rows cloud 0036 holds are turned back into credits, exactly once",
+    fence: "leader lock, and the row's own lease (claimed_until) so two workers never dial for one debt",
+  },
+  {
     name: "api_cron",
     module: `${W}/api-cron.ts`, entry: "startApiCron",
     triggers: ["interval"],

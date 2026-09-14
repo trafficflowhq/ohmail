@@ -1182,7 +1182,9 @@
     "replace": "Ersetzen",
     "append": "Darunter einfügen",
     "failedOpaque": "Der Entwurf wurde geschrieben, lie\u00df sich aber nicht laden. Erneutes Dr\u00fccken holt denselben \u2014 es wird kein zweiter gekauft.",
-    "failedOpaqueEarly": "Auf dem Server ist etwas schiefgegangen, es wurde kein Entwurf erstellt. Es wurde nichts berechnet."
+    "failedOpaqueEarly": "Auf dem Server ist etwas schiefgegangen, es wurde kein Entwurf erstellt. Es wurde nichts berechnet.",
+    "creditsReturned": "Das hat nicht geklappt. Deine Punkte sind zur\u00fcck.",
+    "creditsOwed": "Das hat nicht geklappt. Deine Punkte kommen zur\u00fcck."
   },
   "settings": {
     "title": "Einstellungen",

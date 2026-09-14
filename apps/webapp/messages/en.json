@@ -1182,7 +1182,9 @@
     "replace": "Replace",
     "append": "Add below",
     "failedOpaque": "The draft was written but could not be loaded. Pressing again fetches the same one — it does not buy a second.",
-    "failedOpaqueEarly": "Something went wrong on the server and no draft was made. Nothing was charged."
+    "failedOpaqueEarly": "Something went wrong on the server and no draft was made. Nothing was charged.",
+    "creditsReturned": "This did not work. Your credits are back.",
+    "creditsOwed": "This did not work. Your credits will be returned."
   },
   "settings": {
     "title": "Settings",

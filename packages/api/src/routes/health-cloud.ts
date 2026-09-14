@@ -156,6 +156,17 @@ export const CLOUD_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   ["staff_users", "totp_pending_started_at"],
   ["staff_sessions", "last_twofa_at"],
   ["staff_audit_log", "action"],
+  // cloud 0037_refund_obligations — `last_fault` is the table's LAST column, on the rule the two
+  // entries above state: only the last column's presence implies every object over it, so the
+  // index and all four constraints are covered by this one probe. A statement appended after it
+  // means moving this entry with it.
+  //
+  // The loudness is the DEAR kind. The drafting path REFUSES a metered press that cannot record
+  // what it owes, so an API deployed ahead of this migration would answer every paid draft 500
+  // rather than charging for one it could not refund — which is the right failure and the wrong
+  // way to find out. With the marker the deployment says `503 schema_incomplete` and names the
+  // migration instead, before a single person presses Draft.
+  ["credit_refund_obligations", "last_fault"],
 ] as const;
 
 /**
@@ -254,7 +265,7 @@ export const CLOUD_TIER_MARKERS = SCHEMA_MARKERS;
  * migration is probed by its INDEX marker alone; a CHECK on a new object takes nothing extra. The
  * tag asserts reconciliation against the newest entry.
  */
-export const CLOUD_SCHEMA_MARKER_JOURNAL_TAG = "0036_staff_step_up_and_pending_totp";
+export const CLOUD_SCHEMA_MARKER_JOURNAL_TAG = "0037_refund_obligations";
 
 /** The journal entries {@link SCHEMA_MARKERS} was last reconciled against (asserted by a test). */
 export const SCHEMA_MARKER_JOURNAL_TAG =
