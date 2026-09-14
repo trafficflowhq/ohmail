@@ -4703,6 +4703,17 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           cycles++;
           if (!hasBacklog) inboundDrained = true;
           if (!hasBacklog && !owesFiling) { drained = true; break; }
+          /* AND FOLD THE LOG IN PER CYCLE, NOT ONLY WHEN THE DRAIN ENDS. A first import is ONE
+             drain of up to a hundred cycles, so the checkpoint below it bounded nothing while that
+             ran: the log grows WITH the import — 14.8 KiB a message, linear, about a gigabyte over
+             a large mailbox — and a kill in that window takes all of it. Reached only when there
+             is MORE backlog, so a settled mailbox takes exactly the one checkpoint it always did.
+             It does not cost, it PAYS: inside the ingest's relaxed transaction the checkpoint is
+             the only flush there is, so an unfolded log leaves the buffer pool wholly dirty and
+             every eviction writes a page and flushes ahead of it — 22.2 ms a message against 33.5
+             and a peak of 8 MiB against 58, two reps in opposite orders
+             (`test/rigs/checkpoint-churn-rig.mjs`). */
+          await opened.checkpoint();
           // Yield, so a backlog drain cannot starve the request handler sharing this event loop.
           await new Promise((r) => setTimeout(r, 0));
         }
@@ -4809,11 +4820,11 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
              renders must not be able to disagree with the line a log carries about one pass. */
           firstSync.noteStamps(stamps);
         }
-        /* Checkpoint behind every drain that wrote, so the WAL never holds more than one drain.
-           The periodic checkpointer (`db.ts`) bounds the log to five minutes of churn, and five
-           minutes of a first import is gigabytes — the exposure is a quit in that window, whose
-           next launch replays it as ten-plus seconds of "Opening your mailbox". AWAITED: the next
-           drain cannot start until this one's log folds in, and `checkpoint()` never throws
+        /* And behind the drain, for the tail above — the suggestions, the name repair, the join
+           heal and the stamps all write AFTER the last cycle's fold. The periodic checkpointer
+           (`db.ts`) bounds the log to five minutes of churn and nothing narrower, which is why the
+           cycle takes its own; what is left here is one drain's tail. AWAITED: the next drain
+           cannot start until this one's log folds in, and `checkpoint()` never throws
            (`checkpointWal`). A zero-cycle drain wrote nothing and skips it. */
         if (cycles > 0) await opened.checkpoint();
         return cycles;
