@@ -1678,7 +1678,7 @@ const TABLE = {
   screeningNote: (target: string) =>
     `Becomes a rule — future mail from ${target} files there automatically. Mail already here stays where it is.`,
   screeningNoteRetro: (target: string) =>
-    `Becomes a rule — future mail from ${target} files there automatically. Up to 50 messages move now; for the rest, ohmail applies the rule to the mail it has already filed for you, leaving anything you replied to, filed yourself or set aside alone.`,
+    `Becomes a rule — future mail from ${target} files there automatically. Up to 50 messages move now; for the rest, ohmail applies the rule to the mail it has already filed for you. Messages you have replied to, filed yourself or set aside are left alone.`,
   screeningRetroToggle: "Also move the mail already in your mailbox",
 };
 

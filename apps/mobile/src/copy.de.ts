@@ -1063,6 +1063,6 @@ export const DE: Deck = {
   screeningNote: (target: string) =>
     `Wird zur Regel — künftige Post von ${target} wird automatisch dorthin einsortiert. Post, die schon hier ist, bleibt, wo sie ist.`,
   screeningNoteRetro: (target: string) =>
-    `Wird zur Regel — künftige Post von ${target} wird automatisch dorthin einsortiert. Bis zu 50 Nachrichten werden sofort verschoben; für den Rest wendet ohmail die Regel auf die Post an, die es schon für dich einsortiert hat — Nachrichten, die du beantwortet, selbst einsortiert oder geparkt hast, bleiben unberührt.`,
+    `Wird zur Regel — künftige Post von ${target} wird automatisch dorthin einsortiert. Bis zu 50 Nachrichten werden sofort verschoben; für den Rest wendet ohmail die Regel auf die Post an, die es schon für dich einsortiert hat. Nachrichten, die du beantwortet, selbst einsortiert oder geparkt hast, bleiben unberührt.`,
   screeningRetroToggle: "Auch die Post verschieben, die schon im Postfach liegt",
 };
