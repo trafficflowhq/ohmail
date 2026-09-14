@@ -81,10 +81,11 @@ export {
 
 // Consent: the sent-mail seed, the dormancy cutline, and putting an account back to unscreened.
 export {
+  DEFAULT_RESURFACE_TIME, RESURFACE_TIME_RE,
   SEED_MAX_ADDRESSES, SEED_SCAN_LIMIT, SUPPORTED_LOCALES, SUPPORTED_THEME_FACES,
   buildSeedReview, confirmSeed, consentSettings, setAutoSuggest, setBlockAutoUnsubscribe,
   setBlockRemoteImages, setBlockTrackingPixels, setDormancyDays, setFoldersEnabled,
-  setLocale, setMailboxFoldersEnabled, setMailboxSignature, setThemeFace,
+  setLocale, setMailboxFoldersEnabled, setMailboxSignature, setResurfaceTime, setThemeFace,
   setOnboardingCompleted,
   mailboxSignatures, mailboxSignatureHtmls, effectiveMailboxSignatures, MAILBOX_SIGNATURE_MAX_CHARS,
   isMachineSent, isRobotAddress, parseAddressList,

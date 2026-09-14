@@ -654,6 +654,14 @@ export async function consentSettings(
   locale: string | null;
   themeFace: string | null;
   /**
+   * mail 0110 — the wall clock this account's resurfaced mail comes back at, `'HH:MM'` in the
+   * reader's own zone, or `null` for "never chosen", which every client renders as the built-in
+   * 09:00. A wall clock and not an instant: the horizons have always minted 09:00 through the
+   * client's `zonedInstant`, and this makes the hour and minute choosable without moving where
+   * the arithmetic happens.
+   */
+  resurfaceTime: string | null;
+  /**
    * mail 0083 — WHEN the first-run flow was last left, by finishing it or by cancelling it.
    *
    * It is the LAST of the onboarding truth-conditions and the only one the flow writes about
@@ -730,6 +738,12 @@ export async function consentSettings(
     // restore) sending it on would stamp a face nothing renders onto every boot. Null means
     // "no account-wide choice" and each device resolves its own default (consent-state.ts).
     themeFace: SUPPORTED_THEME_FACES.includes(row?.themeFace ?? "") ? row!.themeFace : null,
+    // NULL, an absent row and a MALFORMED value all answer null — `locale`'s rule, and here the
+    // third case is reachable by a hand-run UPDATE alone (the column has no CHECK; the write door
+    // closes the format). Null means "never chosen", which every client renders as
+    // {@link DEFAULT_RESURFACE_TIME} — and unlike a language nobody can load, that fallback is
+    // drawn in the chooser's own control before any press, so a wrong stored value is visible.
+    resurfaceTime: RESURFACE_TIME_RE.test(row?.resurfaceTime ?? "") ? row!.resurfaceTime : null,
     // NULL and an absent row both mean "this account has never left the first-run flow", which is
     // the state that OPENS it. That is the safe direction here in the sense that matters: the
     // worst case of a wrongly-null read is a flow that offers itself again to somebody who has
@@ -1552,6 +1566,53 @@ export async function setThemeFace(
     await recordSettingsChange(tx, ctx.accountId); // AFTER the settings row — the global lock order
   });
   return { themeFace };
+}
+
+/**
+ * THE SHAPE A RESURFACE TIME MUST HAVE — `'HH:MM'`, 24-hour, zero-padded (mail 0110). Shared by
+ * the writer below and the read above, so the one server-side definition of "a time" cannot
+ * disagree with itself; the wire validation in `PATCH /consent/settings` refuses the same shape
+ * by name, and the clients test against their own copy of it before they offer to store anything.
+ */
+export const RESURFACE_TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
+
+/**
+ * THE TIME RESURFACED MAIL COMES BACK AT WHEN NOBODY HAS CHOSEN ONE — 09:00, never stored.
+ * It is the hour every resurface horizon has minted since the feature existed, so an account
+ * with no stored value behaves exactly as it did before the column; storing it instead would
+ * turn "has not chosen" into "chose 09:00" and take away the product's ability to move it.
+ */
+export const DEFAULT_RESURFACE_TIME = "09:00";
+
+/**
+ * Set the account's resurface time — `setThemeFace`'s twin, a wall clock instead of a face.
+ * `null` clears it back to {@link DEFAULT_RESURFACE_TIME}: "use whatever the product's hour is",
+ * a real answer and the pre-feature state. Anything that is not `'HH:MM'` is a 400 and never
+ * coerced — a garbled body must not silently move the hour somebody's mail comes back at, which
+ * is the one thing this setting decides. Column-scoped upsert in the same lock order as every
+ * settings writer; returns the STORED value, so a caller renders the row and not its argument.
+ */
+export async function setResurfaceTime(
+  ctx: ServiceContext, resurfaceTime: string | null,
+): Promise<{ resurfaceTime: string | null }> {
+  if (resurfaceTime !== null && !RESURFACE_TIME_RE.test(resurfaceTime)) {
+    throw new ServiceError(
+      "validation_failed", 400, "resurfaceTime must be 'HH:MM' (24-hour), or null",
+    );
+  }
+  await (ctx.db as unknown as Tx).transaction(async (tx) => {
+    // Erasure fence FIRST — the single lock chain (accounts → settings → sequence row) that
+    // every settings writer keeps; `erasure-fence.ts` carries the two-sided argument.
+    await fenceErasedAccount(tx, dialect(ctx.db), ctx.accountId);
+    await tx.insert(accountSettings)
+      .values({ accountId: ctx.accountId, resurfaceTime, updatedAt: ctx.now() })
+      .onConflictDoUpdate({
+        target: accountSettings.accountId,
+        set: { resurfaceTime, updatedAt: ctx.now() },
+      });
+    await recordSettingsChange(tx, ctx.accountId); // AFTER the settings row — the global lock order
+  });
+  return { resurfaceTime };
 }
 
 /**

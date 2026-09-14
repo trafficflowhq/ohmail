@@ -4,9 +4,10 @@ import {
   resetScreeningState, setAutoSuggest, setBlockAutoUnsubscribe, setBlockRemoteImages,
   setBlockTrackingPixels,
   setDormancyDays, setFoldersEnabled, setLocale, setMailboxFoldersEnabled, setMailboxSignature,
-  setOnboardingCompleted, setThemeFace,
+  setOnboardingCompleted, setResurfaceTime, setThemeFace,
   unmovedReport,
-  DEFAULT_DORMANCY_DAYS, SEED_MAX_ADDRESSES, SUPPORTED_LOCALES, SUPPORTED_THEME_FACES,
+  DEFAULT_DORMANCY_DAYS, RESURFACE_TIME_RE, SEED_MAX_ADDRESSES, SUPPORTED_LOCALES,
+  SUPPORTED_THEME_FACES,
   ServiceError,
 } from "@trafficflow/services/mail";
 import { carryDialect } from "@trafficflow/db/dialect";
@@ -117,6 +118,11 @@ interface ConsentSettingsBody {
   locale?: unknown;
   themeFace?: unknown;
   /**
+   * The wall clock resurfaced mail comes back at (mail 0110) — `'HH:MM'`, 24-hour, in the
+   * reader's own zone; `null` clears it back to the product's 09:00. Nothing else is accepted.
+   */
+  resurfaceTime?: unknown;
+  /**
    * `true` — the first-run flow has been LEFT, by finishing it or by cancelling it (mail 0083).
    * The only accepted value is `true`: there is no "un-complete onboarding" instruction, and a
    * `false` that silently did nothing would be a control that lies about having acted.
@@ -143,7 +149,8 @@ async function applyConsentSettings(
   folderMailboxesOff?: Record<string, string>; signatures?: Record<string, string>;
   signaturesHtml?: Record<string, string>;
   signatureSources?: Record<string, "organizer" | "local">;
-  locale?: string | null; themeFace?: string | null; onboardingCompletedAt?: string;
+  locale?: string | null; themeFace?: string | null; resurfaceTime?: string | null;
+  onboardingCompletedAt?: string;
 }> {
   const hasAuto = "autoSuggest" in body;
   const hasDormancy = "dormancyDays" in body;
@@ -157,17 +164,18 @@ async function applyConsentSettings(
   const hasSignaturesHtml = "signaturesHtml" in body;
   const hasLocale = "locale" in body;
   const hasThemeFace = "themeFace" in body;
+  const hasResurfaceTime = "resurfaceTime" in body;
   const hasOnboarding = "onboardingCompleted" in body;
   if (!hasAuto && !hasDormancy && !hasScope && !hasImages && !hasPixels && !hasAutoUnsub
       && !hasFolders && !hasFolderMailboxes && !hasSignatures && !hasSignaturesHtml
-      && !hasLocale && !hasThemeFace
+      && !hasLocale && !hasThemeFace && !hasResurfaceTime
       && !hasOnboarding) {
     throw new ServiceError(
       "validation_failed", 400,
       "at least one of autoSuggest, dormancyDays, screeningScope, blockRemoteImages, " +
       "blockTrackingPixels, blockAutoUnsubscribe, foldersEnabled, folderMailboxes, signatures, " +
       "signaturesHtml, " +
-      "locale, themeFace or onboardingCompleted is required",
+      "locale, themeFace, resurfaceTime or onboardingCompleted is required",
     );
   }
 
@@ -444,6 +452,25 @@ async function applyConsentSettings(
     }
     themeFace = f;
   }
+  /**
+   * THE WALL CLOCK, on `themeFace`'s wire discipline with a FORMAT in place of a closed set.
+   *
+   * `null` is sendable and means "back to the product's 09:00" — a real answer, `dormancyDays`'
+   * null rather than `screeningScope`'s. Nothing coerces: a number, a `'9:00'` or an empty string
+   * is a 400 naming the shape, never rounded into a time, because the value decides the hour
+   * somebody's mail returns at and a garbled body must not move it. The regex is the SERVICE's
+   * one (`RESURFACE_TIME_RE`), re-tested there where the value is stored.
+   */
+  let resurfaceTime: string | null | undefined;
+  if (hasResurfaceTime) {
+    const r = body.resurfaceTime;
+    if (r !== null && (typeof r !== "string" || !RESURFACE_TIME_RE.test(r))) {
+      throw new ServiceError(
+        "validation_failed", 400, "resurfaceTime must be 'HH:MM' (24-hour), or null",
+      );
+    }
+    resurfaceTime = r;
+  }
 
   /**
    * THE ONE-VALUE KNOB — `true` and nothing else, not even `false`.
@@ -467,7 +494,8 @@ async function applyConsentSettings(
     folderMailboxesOff?: Record<string, string>; signatures?: Record<string, string>;
   signaturesHtml?: Record<string, string>;
   signatureSources?: Record<string, "organizer" | "local">;
-    locale?: string | null; themeFace?: string | null; onboardingCompletedAt?: string;
+    locale?: string | null; themeFace?: string | null; resurfaceTime?: string | null;
+    onboardingCompletedAt?: string;
   } = {};
   await (ctx.db as unknown as Tx).transaction(async (tx) => {
     // The transaction arrives BRANDED: `brandDialect` wraps a handle's `transaction` so the
@@ -548,6 +576,10 @@ async function applyConsentSettings(
     }
     if (hasThemeFace) {
       out.themeFace = (await setThemeFace(txCtx, themeFace as string | null)).themeFace;
+    }
+    if (hasResurfaceTime) {
+      out.resurfaceTime =
+        (await setResurfaceTime(txCtx, resurfaceTime as string | null)).resurfaceTime;
     }
     if (hasOnboarding) {
       // Inside the SHARED transaction like every knob above it, which is what makes the flow's
@@ -705,6 +737,13 @@ export const consentRoutes: Route[] = [
         // null defers to the DEVICE, whose default is not a constant (a Linux device resolves
         // it to ohmarchy — the Option B detection the client owns).
         themeFace: settings.themeFace,
+        // THE WALL CLOCK RESURFACED MAIL COMES BACK AT — `'HH:MM'` where the reader is, or `null`
+        // for "this account has never chosen one" (mail 0110). Sent as `null` rather than omitted
+        // for `locale`'s reason, and its null is `locale`'s kind too: not a switch position but a
+        // deferral to the client, which draws the product's 09:00 in the chooser's own control.
+        // Deliberately not filled in here — the DEFAULT is a client-side constant, and a server
+        // that answered "09:00" would make "never chosen" unsayable on the wire.
+        resurfaceTime: settings.resurfaceTime,
         // WHEN THE FIRST-RUN FLOW WAS LAST LEFT, or `null` for "never" (mail 0083). It rides THIS
         // response rather than a route of its own for `dormancyDays`'s reason: the flow's step is
         // DERIVED from truth-conditions and a client that had to ask two endpoints to place
