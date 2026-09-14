@@ -455,6 +455,27 @@
   padding-right: 2px;
   white-space: nowrap;
 }
+/* THE RESURFACE STRIP'S TIME (mail 0110) — the hour the three dated answers land at, shown
+   before any of them is pressed. It reads as a VALUE the strip states rather than as a fourth
+   answer: the label is the panel's own `.abar-lab`, and the field wears the bar's capsule with
+   no lift, so it sits at rest beside the three buttons that do lift on hover. `field-sizing`
+   where the browser has it, a `ch` fallback where it does not — a time input left at its
+   default width takes a third of a narrow panel and pushes "Pick a date" onto a second row. */
+.abar-at { padding-right: 0; }
+.abar-time {
+  font: inherit;
+  font-size:calc(11px + var(--type-up));
+  color: var(--ink);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius:var(--r-pill);
+  padding: 3px 8px;
+  width: 8.5ch;
+  field-sizing: content;
+  min-width: 0;
+}
+.abar-time:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
 /* The delete confirm's sentence — the ceremony's honest half ("It moves to the Trash folder on
    your own mail server…"). It WRAPS: the panel is flex-wrap for exactly this, and a nowrap here
    would clip the one line the ask depends on. Flexible width so the two buttons keep their size. */

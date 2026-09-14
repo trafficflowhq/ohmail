@@ -152,9 +152,43 @@ export function resurfaceLabel(when: string): string {
  * stays in calendar fields (`day + diff`, normalized by `Date.UTC`) — nothing counts 86 400 000 ms.
  */
 
+/**
+ * THE PRODUCT'S HOUR when nobody has chosen one — 09:00, the hour every horizon below has minted
+ * since resurfacing existed. Mirrors the server's `DEFAULT_RESURFACE_TIME`, shared by value
+ * because the shell may not import the services package.
+ */
+export const DEFAULT_RESURFACE_TIME = "09:00";
+
+/** `'HH:MM'`, 24-hour — the shape a stored resurface time has, the server's own (mail 0110). */
+const RESURFACE_TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
+
+/**
+ * A stored or typed `'HH:MM'` as calendar fields, falling back to 09:00 for anything else —
+ * `null` ("this account has never chosen"), an older API's absent field, or a value a hand-run
+ * UPDATE put in the column. ONE fallback, here, so the strip, the horizons and the day rows
+ * cannot disagree about what an unreadable preference means.
+ */
+export function resurfaceClock(hhmm: string | null | undefined): { hour: number; minute: number } {
+  const use = hhmm != null && RESURFACE_TIME_RE.test(hhmm) ? hhmm : DEFAULT_RESURFACE_TIME;
+  return { hour: Number(use.slice(0, 2)), minute: Number(use.slice(3, 5)) };
+}
+
+/**
+ * A calendar day in the reader's zone AT A CHOSEN WALL CLOCK, as the UTC instant that is — the
+ * one place the hour enters the arithmetic. It was a literal `hour: 9` here, and every horizon
+ * below reads its hour from this signature now, so a chooser that shows 14:30 and a horizon that
+ * mints 09:00 is not a state this module can be in.
+ */
+function clockOn(
+  zone: string, year: number, month: number, day: number, at: string | null | undefined,
+): string {
+  const { hour, minute } = resurfaceClock(at);
+  return zonedInstant({ year, month, day, hour, minute }, zone).toISOString();
+}
+
 /** 09:00 on a calendar day in the reader's zone, as the UTC instant that is. */
 function nineOn(zone: string, year: number, month: number, day: number): string {
-  return zonedInstant({ year, month, day, hour: 9 }, zone).toISOString();
+  return clockOn(zone, year, month, day, null);
 }
 
 /** How many days forward from `base` the coming `weekday` is — never 0, so today is next week's. */
@@ -170,18 +204,31 @@ export function nextFridayNine(base: Date): string {
   return nineOn(zone, f.year, f.month, f.day + daysUntil(base, zone, 5));
 }
 
-/** Tomorrow, 09:00 where the reader is. */
-export function tomorrowNine(base: Date): string {
+/**
+ * Tomorrow, at the account's resurface time where the reader is (mail 0110). `at` is the stored
+ * `'HH:MM'`, or `null`/an unreadable value for the product's 09:00 — see {@link resurfaceClock}.
+ */
+export function tomorrowAt(base: Date, at: string | null | undefined): string {
   const zone = activeFormatZone();
   const f = zonedFields(base, zone);
-  return nineOn(zone, f.year, f.month, f.day + 1);
+  return clockOn(zone, f.year, f.month, f.day + 1, at);
 }
 
-/** The coming Monday, 09:00 — and never "later today": a Monday resolves to the next one. */
-export function nextWeekNine(base: Date): string {
+/** The coming Monday at that time — and never "later today": a Monday resolves to the next one. */
+export function nextWeekAt(base: Date, at: string | null | undefined): string {
   const zone = activeFormatZone();
   const f = zonedFields(base, zone);
-  return nineOn(zone, f.year, f.month, f.day + daysUntil(base, zone, 1));
+  return clockOn(zone, f.year, f.month, f.day + daysUntil(base, zone, 1), at);
+}
+
+/** Tomorrow, 09:00 where the reader is — {@link tomorrowAt} at the product's hour. */
+export function tomorrowNine(base: Date): string {
+  return tomorrowAt(base, null);
+}
+
+/** The coming Monday, 09:00 — {@link nextWeekAt} at the product's hour. */
+export function nextWeekNine(base: Date): string {
+  return nextWeekAt(base, null);
 }
 
 /* ═══ THE SEND-LATER HORIZONS (mail 0077) ══════════════════════════════════════════════════
@@ -243,8 +290,11 @@ export function instantOfLocalInput(value: string): string | null {
   }, activeFormatZone()).toISOString();
 }
 
-/** A picked calendar day ("YYYY-MM-DD" from an `<input type="date">`) at 09:00 where the reader is. */
-export function dayNine(day: string): string {
+/**
+ * A picked calendar day ("YYYY-MM-DD" from an `<input type="date">`) at the account's resurface
+ * time where the reader is — 09:00 when nothing is stored ({@link resurfaceClock}).
+ */
+export function dayAt(day: string, at: string | null | undefined): string {
   const zone = activeFormatZone();
   const picked = /^(\d{4})-(\d{2})-(\d{2})/.exec(day);
   /* The input's own format is the fast path and it is already a CALENDAR day — parsing it through
@@ -254,7 +304,12 @@ export function dayNine(day: string): string {
   const f = picked
     ? { year: Number(picked[1]), month: Number(picked[2]), day: Number(picked[3]) }
     : zonedFields(new Date(day), zone);
-  return nineOn(zone, f.year, f.month, f.day);
+  return clockOn(zone, f.year, f.month, f.day, at);
+}
+
+/** A picked calendar day at 09:00 where the reader is — {@link dayAt} at the product's hour. */
+export function dayNine(day: string): string {
+  return dayAt(day, null);
 }
 
 /**

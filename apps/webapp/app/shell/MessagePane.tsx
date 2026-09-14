@@ -16,7 +16,7 @@ import { MessageBody } from "../components/MessageBody";
 import { ConversationPanels } from "./Conversation";
 import { MessageHeader } from "./MessageCard";
 import type { BlockNotice } from "../components/BlockNotice";
-import { PLACE_LABEL, dayNine, dayValue, hueOf, nextWeekNine, tagsOfMessage, tomorrowNine, withheldCopyKey } from "./format";
+import { PLACE_LABEL, dayAt, dayValue, hueOf, nextWeekAt, resurfaceClock, tagsOfMessage, tomorrowAt, withheldCopyKey } from "./format";
 import { activeFormatLocale } from "./locale";
 import { replyAllRecipients } from "./compose-from";
 import { useBarDensity } from "./bar-density";
@@ -210,6 +210,9 @@ function useBarPanel(messageId: string): [BarPanel | null, (next: BarPanel | nul
  * from growing two notions of a keycap; the phone rule that hides them is one CSS rule over `.abar kbd`, so it covers
  * both by construction.
  */
+/** Two digits, for the `<input type="time">` value the strip holds and the a11y names it builds. */
+const pad2 = (n: number): string => String(n).padStart(2, "0");
+
 export function Key({ chord }: { chord: string }) {
   const binding = useBinding(chord);
   const mod = useModGlyph();
@@ -337,6 +340,10 @@ function ActionBar({
   /** The delete confirm's focus target (Cancel — the safe answer) and its described note. */
   const deleteCancelRef = useRef<HTMLButtonElement>(null);
   const deleteNoteId = useId();
+  /* The resurface strip's time input and its visible `at` label. A generated id, because the
+     bar is mounted TWICE while the reader is open and two `for="resurface-at"` labels would
+     both point the reader's click at whichever input the document holds first. */
+  const panelId = useId();
   useEffect(() => {
     if (panel === "delete") deleteCancelRef.current?.focus();
   }, [panel]);
@@ -496,6 +503,21 @@ function ActionBar({
     dateRef.current?.focus();
   };
   useEffect(() => setDateOpen(false), [message.id, panel]);
+  /**
+   * THE HOUR THE CHOOSER IS ASKING ABOUT — the strip's own `<input type="time">` value, seeded
+   * from the account's stored default and RESET to it every time the strip opens or the message
+   * changes. Seeded rather than bound straight to the chrome so a half-typed hour cannot become
+   * a pending write, and reset rather than sticky because a time typed and then abandoned is not
+   * an answer; the account's value is what persists, and only a pressed horizon moves it.
+   *
+   * `resurfaceClock` resolves `null`, an unreadable stored value and an API too old to carry the
+   * field to the product's 09:00, so this always holds a real `'HH:MM'` — which is what makes the
+   * time VISIBLE before anybody decides, which is the whole of the feature.
+   */
+  const storedClock = resurfaceClock(chrome.resurfaceTime);
+  const storedHhmm = `${pad2(storedClock.hour)}:${pad2(storedClock.minute)}`;
+  const [resurfaceAt, setResurfaceAt] = useState(storedHhmm);
+  useEffect(() => setResurfaceAt(storedHhmm), [message.id, panel, storedHhmm]);
   /** The floor's one concession is in force: the read switch stands without its words. */
   const compact = density.admit?.split(" ").includes("compact") ?? false;
 
@@ -732,16 +754,49 @@ function ActionBar({
      * is separated from the three horizons by nothing but order: the question the strip asks is still "when?", and
      * "now" is an answer to it.
      */
-    const tomorrow = tomorrowNine(now);
-    const nextWeek = nextWeekNine(now);
+    const tomorrow = tomorrowAt(now, resurfaceAt);
+    const nextWeek = nextWeekAt(now, resurfaceAt);
+    /**
+     * A DATED ANSWER — dispatch it, then remember the hour it was given at. The order is the
+     * argument: the message was the ask and the default is a courtesy, so the resurface is on
+     * its way before anything is written about preferences, and a refused write leaves a
+     * correctly scheduled message behind (`AppShell` swallows it with a log). Nothing is written
+     * when the hour is the one already stored — an unchanged control is not a decision — and
+     * "Now" never reaches here at all: it is a state, not a date, and the time cannot apply.
+     */
     const pick = (iso: string) => {
       answerPanel();
       onAction(`resurface:${iso}`);
+      if (resurfaceAt !== storedHhmm) chrome.onResurfaceTime?.(resurfaceAt);
     };
+    /** "Tomorrow, 14:30" — so a screen reader hears the hour a sighted person can read. */
+    const withTime = (horizon: string): string =>
+      t("resurfaceHorizonAt", { horizon, time: resurfaceAt });
     return (
       <div className="abar">
         <div className="abar-panel">
           <span className="abar-lab">{t("resurfaceWhen")}</span>
+          {/* THE TIME, VISIBLE BEFORE ANY CHOICE — the whole ask in one control. It carries the
+              account's stored hour, or the product's 09:00 when nothing is stored, so the strip
+              always states what "Tomorrow" will mean rather than leaving it implied. A native
+              `<input type="time">`: keyboard-first, localised by the platform, no dependency. It
+              stands OUTSIDE the horizon buttons because it is not an answer to "when?" — it
+              qualifies the three that are, and "Now" ignores it. */}
+          <label className="abar-lab abar-at" htmlFor={`${panelId}-at`}>{t("resurfaceAt")}</label>
+          <input
+            id={`${panelId}-at`}
+            type="time"
+            className="abar-time"
+            aria-label={t("resurfaceTime")}
+            value={resurfaceAt}
+            onChange={(e) => {
+              /* The native control clears to "" when a person deletes the field mid-edit. That is
+                 not a time, and letting it through would mint an instant from a fallback the
+                 strip is no longer showing — so the last real value stands until another one is
+                 typed, and the control never disagrees with the horizons beside it. */
+              if (e.target.value !== "") setResurfaceAt(e.target.value);
+            }}
+          />
           <button
             ref={resurfaceFirstRef}
             type="button"
@@ -753,10 +808,20 @@ function ActionBar({
           >
             {t("resurfaceNow")}
           </button>
-          <button type="button" className="abar-b abar-solo" onClick={() => pick(tomorrow)}>
+          <button
+            type="button"
+            className="abar-b abar-solo"
+            aria-label={withTime(t("resurfaceTomorrow"))}
+            onClick={() => pick(tomorrow)}
+          >
             {t("resurfaceTomorrow")}
           </button>
-          <button type="button" className="abar-b abar-solo" onClick={() => pick(nextWeek)}>
+          <button
+            type="button"
+            className="abar-b abar-solo"
+            aria-label={withTime(t("resurfaceNextWeek"))}
+            onClick={() => pick(nextWeek)}
+          >
             {t("resurfaceNextWeek")}
           </button>
           <button
@@ -765,6 +830,7 @@ function ActionBar({
             className="abar-b abar-solo abar-date-trigger"
             aria-haspopup="dialog"
             aria-expanded={dateOpen}
+            aria-label={withTime(t("resurfacePick"))}
             onClick={() => setDateOpen((open) => !open)}
           >
             {t("resurfacePick")}
@@ -783,7 +849,7 @@ function ActionBar({
               }}
               onPick={(day) => {
                 setDateOpen(false);
-                pick(dayNine(day));
+                pick(dayAt(day, resurfaceAt));
               }}
               onClose={closeDate}
             />

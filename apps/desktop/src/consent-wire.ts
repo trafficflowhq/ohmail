@@ -122,5 +122,12 @@ export function consentVia(
      * to NULL (`setThemeFace`): "no preference" and "asked for paper" differ.
      */
     setThemeFace: (themeFace) => patch<{ themeFace: string | null }>({ themeFace }),
+    /**
+     * THE RESURFACE TIME (mail 0110) — the same one-axis PATCH, so remembering a chosen hour
+     * cannot overwrite a window set moments ago in a browser tab. `null` clears back to the
+     * product's 09:00; the echo is what the shell applies.
+     */
+    setResurfaceTime: (resurfaceTime) =>
+      patch<{ resurfaceTime: string | null }>({ resurfaceTime }),
   };
 }

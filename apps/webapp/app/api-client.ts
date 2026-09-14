@@ -1839,6 +1839,13 @@ export interface ConsentStateWire {
    */
   themeFace?: string | null;
   /**
+   * THE WALL CLOCK RESURFACED MAIL COMES BACK AT — `'HH:MM'` where the reader is, or `null` for
+   * "this account has never chosen one" (mail 0110). Optional with `locale`'s collapse: an API
+   * too old to carry the field and an account that never chose leave the reader in the same
+   * place — the product's 09:00, which is the hour every horizon minted before this existed.
+   */
+  resurfaceTime?: string | null;
+  /**
    * WHEN THE FIRST-RUN FLOW WAS LAST LEFT — finished or cancelled — or `null` for "never" (mail 0083). The last of
    * the onboarding truth-conditions, and the only one about the flow itself rather than about the mailbox. Optional,
    * and `null` and `undefined` collapse to the SAME branch — open the flow — which is the correct direction rather
@@ -2074,6 +2081,17 @@ export const consent = {
       method: "PATCH",
       body: { themeFace },
     }).then((r) => r.themeFace),
+  /**
+   * SET THE ACCOUNT'S RESURFACE TIME — the same route and the same echo rule as
+   * {@link setThemeFace}. `'HH:MM'` stores it; `null` clears it back to the product's 09:00, and
+   * is a legal argument rather than the same thing as omitting the field. The echo is what the
+   * caller applies: a refused write must not leave a chooser showing an hour nothing stored.
+   */
+  setResurfaceTime: (resurfaceTime: string | null) =>
+    api<{ resurfaceTime: string | null }>("/consent/settings", {
+      method: "PATCH",
+      body: { resurfaceTime },
+    }).then((r) => r.resurfaceTime),
   /** The review list. Reads, and writes nothing — the list is an offer. */
   seedReview: () => api<SeedReviewWire>("/consent/seed"),
   /**

@@ -355,6 +355,23 @@ export interface MessageChrome {
    * rendered frame routes through the proxy.
    */
   remoteImages?: RemoteImagesChrome;
+  /**
+   * THE ACCOUNT'S RESURFACE TIME — `'HH:MM'` where the reader is, or absent/null for "never
+   * chosen", which the strip draws as the product's 09:00 (mail 0110). It rides the chrome for
+   * the reply draft's reason: the action bar renders in the reading column AND the reader sheet
+   * at once, and two copies of "what hour did this account choose" is how one strip shows 14:30
+   * and the other 09:00 over the same message. Absent is a complete answer, not a wait — the
+   * fallback is what every build did before the setting existed.
+   */
+  resurfaceTime?: string | null;
+  /**
+   * REMEMBER THIS TIME FOR NEXT TIME, called only when a horizon was chosen at an hour that is
+   * not the stored one. ABSENT where nothing can store it (the standalone window, a bare mount),
+   * and the strip then simply does not persist — it never withholds the chooser, because the
+   * time is what the person is deciding with and the default is a courtesy. Fire-and-forget by
+   * contract: the resurface is already dispatched by the time this runs.
+   */
+  onResurfaceTime?: (hhmm: string) => void;
 }
 
 const noop = (): void => {};

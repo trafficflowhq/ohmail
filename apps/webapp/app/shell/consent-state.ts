@@ -84,6 +84,13 @@ export interface ConsentTransport {
    * collapsed to null; see the api-client note.
    */
   setThemeFace?: (themeFace: string | null) => Promise<{ themeFace: string | null }>;
+  /**
+   * The account's resurface time (mail 0110) — OPTIONAL for `setThemeFace`'s reason: a door
+   * built before it must keep compiling, and one that cannot store a time simply never persists
+   * the chooser's pick. The write is a courtesy either way: the resurface itself has already
+   * been dispatched by the time this is called.
+   */
+  setResurfaceTime?: (resurfaceTime: string | null) => Promise<{ resurfaceTime: string | null }>;
 }
 
 /** The hosted transport — the browser talking to the API this app was written against. */
@@ -112,6 +119,8 @@ const CLOUD_CONSENT: ConsentTransport = {
     consentApi.setMailboxSignature(mailboxId, signature),
   setThemeFace: (themeFace) =>
     consentApi.setThemeFace(themeFace).then((stored) => ({ themeFace: stored })),
+  setResurfaceTime: (resurfaceTime) =>
+    consentApi.setResurfaceTime(resurfaceTime).then((stored) => ({ resurfaceTime: stored })),
 };
 
 export interface ConsentState {
@@ -278,6 +287,16 @@ export interface ConsentState {
    * chose paper, before the live read lands. False means "not yet known", never "none".
    */
   themeFaceKnown: boolean;
+  /**
+   * THE WALL CLOCK RESURFACED MAIL COMES BACK AT — `'HH:MM'` where the reader is, or `null` for
+   * "this account has never chosen one" (mail 0110). Null is NOT a missing answer the chooser
+   * has to wait for: it resolves to the product's 09:00, which is the hour every horizon minted
+   * before the setting existed, so the strip can show a time from its first paint — a failed
+   * fetch, an old API, standalone and a fresh account all land on the same visible 09:00. That
+   * is why this has no `Known` twin: unlike a face, there is no write gate armed on it, and the
+   * fallback is the pre-feature behaviour rather than a guess about what the account holds.
+   */
+  resurfaceTime: string | null;
   /** False until the first answer lands — an onboarding step must not flash before then. */
   known: boolean;
   /**
@@ -386,6 +405,9 @@ const RESTING: ConsentState = {
   // and leaves the device's own resolution in charge.
   themeFace: null,
   themeFaceKnown: false,
+  // NEVER CHOSEN, at rest — and unlike `themeFace` this resting null is a usable position, not
+  // the absence of one: every reader resolves it to the product's 09:00.
+  resurfaceTime: null,
   known: false,
   standalone: false,
   cloudClient: false,
@@ -482,6 +504,13 @@ export function useConsentState(
    * control that cannot control. Rethrows on refusal, like every sibling.
    */
   setThemeFace: ((themeFace: "paper" | "ohmarchy" | null) => Promise<"paper" | "ohmarchy" | null>) | null;
+  /**
+   * REMEMBER THIS TIME FOR NEXT TIME — the account's resurface default (mail 0110). NULL when
+   * the transport cannot store one, so a caller withholds the write rather than pretending. It
+   * runs AFTER the resurface it belongs to has been dispatched and its failure is swallowed by
+   * the caller: the message was the ask, the default is a courtesy.
+   */
+  setResurfaceTime: ((resurfaceTime: string | null) => Promise<string | null>) | null;
   /**
    * Flip auto-suggest and keep the local answer in step with the stored one.
    *
@@ -690,6 +719,14 @@ export function useConsentState(
             ? wire.themeFace
             : null,
           themeFaceKnown: true,
+          // NORMALISED, not trusted — `themeFace`'s rule with a FORMAT in place of a set. The
+          // route closes the shape and `consentSettings` filters the column, so a value that is
+          // not `'HH:MM'` cannot come from a current server; anything else collapses to "never
+          // chosen", which is the 09:00 every reader already draws.
+          resurfaceTime: typeof wire.resurfaceTime === "string"
+            && /^([01]\d|2[0-3]):[0-5]\d$/.test(wire.resurfaceTime)
+            ? wire.resurfaceTime
+            : null,
           // Absent and null are ONE answer: an API from before mail 0083 cannot say, and a
           // server that read the row and found no stamp says the same thing about the account —
           // nobody has finished or cancelled setup. Both leave the flow eligible to open, which
@@ -851,6 +888,33 @@ export function useConsentState(
   // appearance choice a machine with no account row can make.
   const setThemeFace =
     typeof (transport ?? CLOUD_CONSENT).setThemeFace === "function" ? writeThemeFace : null;
+
+  /**
+   * THE RESURFACE DEFAULT — `writeThemeFace`'s shape: read the method off `link` at call time,
+   * bump the write epoch so a read in flight cannot land over it, apply the ECHO and not the
+   * argument. The one difference is where it is called from: after a resurface has already been
+   * dispatched, so a rejection here leaves a message correctly scheduled and a default unmoved.
+   */
+  const writeResurfaceTime = useCallback(
+    async (resurfaceTime: string | null): Promise<string | null> => {
+      const write = link.current.setResurfaceTime;
+      if (!write) throw new Error("this transport cannot store a resurface time");
+      writeEpoch.current += 1;
+      const at = era.current;
+      const res = await write(resurfaceTime);
+      const stored = typeof res.resurfaceTime === "string"
+        && /^([01]\d|2[0-3]):[0-5]\d$/.test(res.resurfaceTime)
+        ? res.resurfaceTime
+        : null;
+      applyEcho(at, (prev) => ({ ...prev, resurfaceTime: stored }));
+      return stored;
+    },
+    [applyEcho],
+  );
+  // Null when the transport cannot store one — the standalone desktop window passes no transport
+  // at all, and a chooser there keeps working on the product's 09:00 with nothing to persist.
+  const setResurfaceTime =
+    typeof (transport ?? CLOUD_CONSENT).setResurfaceTime === "function" ? writeResurfaceTime : null;
 
   const setAutoSuggest = useCallback(async (enabled: boolean): Promise<boolean> => {
     // The user's act outranks every read in flight — see `writeEpoch`. Bumped BEFORE the
@@ -1033,6 +1097,7 @@ export function useConsentState(
        talking to would be a second answer to a question that has none. */
     foldersStorable: reachable && link.current.foldersStorable,
     setThemeFace,
+    setResurfaceTime,
     setAutoSuggest,
     setDormancyDays,
     setBlockRemoteImages,

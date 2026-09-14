@@ -85,7 +85,7 @@ import {
 } from "./engine";
 import { PullNewMail, usePullNewMail } from "./PullNewMail";
 import { useOlderMail } from "./older-mail";
-import { PLACE_LABEL, avatarHue, hueOf, initialsOf, placeLabel, resurfaceLabel, tomorrowNine } from "./format";
+import { PLACE_LABEL, avatarHue, hueOf, initialsOf, placeLabel, resurfaceLabel, tomorrowAt } from "./format";
 import { activeFormatLocale, activeFormatZone } from "./locale";
 import { displayAddress, displayDomain } from "./idn";
 import { MessagePane, type BulkAction, type MessageAction } from "./MessagePane";
@@ -1559,6 +1559,15 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
    */
   const applyFaceAllDevices: ApplyFaceAllDevices | null =
     !demo && themeFaceKnown && consent.setThemeFace !== null ? consent.setThemeFace : null;
+  /**
+   * REMEMBER THE RESURFACE TIME (mail 0110) — the account write the horizon chooser makes after
+   * it has dispatched, folded to one nullable callback. Null on the demo (no session) and on a
+   * transport that cannot store one (the STANDALONE window, which passes none), and in both
+   * cases the chooser keeps working on the product's 09:00 with nothing to persist. NOT gated on
+   * a `known` flag, unlike the face above: nothing here writes over an unknown stance, because
+   * this write only ever happens when a person has just picked an hour and pressed a horizon.
+   */
+  const rememberResurfaceTime = !demo ? consent.setResurfaceTime : null;
   /* The Option B offer's gates (Linux default active, nothing chosen, dismissal) live in the
      hook — see OhmarchyOffer.tsx. */
   const faceOffer = useOhmarchyOffer(applyFaceAllDevices);
@@ -4447,11 +4456,14 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
             break;
           }
           // The horizon-less default — the keyboard's `b` and the palette. The popover on the
-          // bar dispatches `resurface:<iso>` instead, handled in `default` below. TOMORROW at
-          // 09:00, the picker's own first dated preset — it was next Friday, a horizon the
-          // picker never offers, so the key's outcome could not be reproduced (or predicted)
-          // from the control that documents the verb.
-          const when = tomorrowNine(now);
+          // bar dispatches `resurface:<iso>` instead, handled in `default` below. TOMORROW at the
+          // account's resurface time, the picker's own first dated preset — it was next Friday,
+          // a horizon the picker never offers, so the key's outcome could not be reproduced (or
+          // predicted) from the control that documents the verb. The HOUR comes from the same
+          // place the strip's control shows (mail 0110): a key that kept minting 09:00 after
+          // somebody set 14:30 would be the one resurface in the product that ignored the
+          // default, and nothing on screen would say so.
+          const when = tomorrowAt(now, consent.resurfaceTime);
           void engine.mutate({
             kind: "triage_set",
             messageId: m.id,
@@ -4667,8 +4679,9 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
       }
       if (action === "later" || action === "aside" || action === "resurface") {
         const state = action === "later" ? "reply_later" : action === "aside" ? "set_aside" : "bubbled_up";
-        // The same default the single-message verb uses — the picker's first dated preset.
-        const when = action === "resurface" ? tomorrowNine(now) : null;
+        // The same default the single-message verb uses — the picker's first dated preset, at
+        // the account's own hour (mail 0110).
+        const when = action === "resurface" ? tomorrowAt(now, consent.resurfaceTime) : null;
         for (const messageId of ids) {
           void engine.mutate({
             kind: "triage_set",
@@ -6512,6 +6525,19 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
       // reply draft is (a strip opened by key in the column must be the strip the sheet
       // shows). Keyed by message id in the value itself; cleared on focus moves below.
       barPanel, setBarPanel,
+      /* THE RESURFACE TIME AND ITS WRITER (mail 0110). The value is the account's, so the strip
+         shows the same hour in the reading column and the reader sheet; the writer is the
+         consent hook's own, NULL wherever no transport can store one, and it is handed over as
+         fire-and-forget because the strip calls it after the resurface has already been
+         dispatched — the message was the ask. A refusal is logged and the horizon stands. */
+      resurfaceTime: consent.resurfaceTime,
+      onResurfaceTime: rememberResurfaceTime === null
+        ? undefined
+        : (hhmm: string) => {
+          void rememberResurfaceTime(hhmm).catch((err: unknown) => {
+            console.warn("[consent] the resurface time was not stored", err);
+          });
+        },
     }),
     [ownAddresses, absoluteTime, toggleAbsoluteTime, replyTo, replyAll, replyMode, replyBody, onReplyBody, closeReply, sendReply, mailSend, draftReplyChrome,
       replyEnvelope, replyFromId, replyAttachments, replySig, replySubjectEdit,
@@ -6520,7 +6546,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
       sendSurfaceMaxTotalBytes, replyBook,
       openSenderMenu, ownNameOf, mailboxLabelOf, writeTo, openReply, openForward, openSubjectRule,
       conversationOf, bodyOfMessage, hydrateBody, hydrateThread, attachments, remoteImages,
-      consent.foldersEnabled, reader, barPanel],
+      consent.foldersEnabled, consent.resurfaceTime, rememberResurfaceTime, reader, barPanel],
   );
 
   // Resolved here rather than inside the popover so a sender whose last message has just
