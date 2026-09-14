@@ -33,6 +33,10 @@ import {
   // types and one literal, and the halves that answer it stay on `@trafficflow/db/cloud`.
   UNMETERED, UNMETERED_ACCESS,
   type MailboxDisabledReason, type OrganizerRole, type Tx,
+  // The change log's horizons, for the ONE question the idle scheduler asks: did this drain
+  // produce anything the window could see? Nothing else on this door writes to the window's
+  // mirror, so an unmoved `max` IS "nothing happened" — see `changeLogMark`.
+  seqBounds,
 } from "@trafficflow/db";
 import {
   attachmentsService, awayResponderService, contactsService, draftingService, draftsService,
@@ -246,6 +250,12 @@ export interface SidecarConfig {
   displayName?: string;
   /** How long to wait between cycles when the mailbox is quiet. */
   pollIntervalMs?: number;
+  /**
+   * The ceiling the idle ladder climbs to — a TEST SEAM. Production takes
+   * {@link IDLE_POLL_CEILING_MS}; a cell that wants to watch the ladder reach its top inside a
+   * second sets a small one. Below {@link pollIntervalMs} it simply means "never rest".
+   */
+  idlePollCeilingMs?: number;
   /**
    * How long a connection has to answer an IMAP NOOP before it is treated as dead. Absent means
    * {@link DEFAULT_HEARTBEAT_TIMEOUT_MS}; a value that is not a positive number refuses the boot.
@@ -946,6 +956,29 @@ function localServices(
 export const DEFAULT_POLL_INTERVAL_MS = 15_000;
 
 /**
+ * ══ THE CEILING AN IDLE MAILBOX RESTS AT ══
+ *
+ * Two minutes. It is an eighth of `DEFAULT_STALE_AFTER_MS` (10 min), which is the bound that
+ * decides when another install may take a mailbox whose organizer stopped renewing — so a claim
+ * renewed once a ceiling still has four missed renewals of room. It is the same order as the
+ * shell's own belt behind its wake stream (`WAKE_SAFETY_POLL_MS`, 90 s). Freshness is not what
+ * this trades: the rest is taken ONLY while the mailbox's own IDLE is carrying arrivals.
+ */
+export const IDLE_POLL_CEILING_MS = 120_000;
+
+/**
+ * The next delay after a drain that found nothing — geometric, clamped, and a pure function so
+ * the ladder can be watched on a fake clock. `base` floors it (a configured poll interval above
+ * the ceiling is honoured rather than shortened), and doubling from `current` means the ladder
+ * climbs 15 → 30 → 60 → 120 and then stays.
+ */
+export function nextIdlePollMs(current: number, base: number, ceiling: number): number {
+  const floor = Math.max(1, base);
+  const cap = Math.max(floor, ceiling);
+  return Math.min(Math.max(current, floor) * 2, cap);
+}
+
+/**
  * The dial context for a connection nobody keeps — a probe and a send. Both open a login, do one
  * thing and close it inside the call that made them: no poll timer, no runtime to mark, so "the
  * connection died between calls" describes nothing — either the call is in flight and the
@@ -1420,6 +1453,8 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
      answers to one question. Two readers: the poll timer, and the bound on how long a stop waits
      for the cycle that timer started (`detach`). */
   const pollIntervalMs = config.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
+  /* Resolved ONCE beside the interval it bounds, for that line's own reason. */
+  const idlePollCeilingMs = config.idlePollCeilingMs ?? IDLE_POLL_CEILING_MS;
   /**
    * HOW LONG A STOP WAITS FOR THE IN-FLIGHT CYCLE — one drain interval, and then the socket goes.
    *
@@ -3191,6 +3226,26 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
       let stopped = false;
       let timer: ReturnType<typeof setTimeout> | null = null;
       /**
+       * ══ THE IDLE LADDER — WHAT THE NEXT POLL IS ARMED AT ══
+       *
+       * `pollIntervalMs` while anything is happening; doubled towards {@link IDLE_POLL_CEILING_MS}
+       * by each drain that produced nothing, and only while {@link restMayBeTaken}. Reset to base
+       * by every event that can change the answer: an INBOX arrival, a press, a resume, a drain
+       * that did something, a drain that failed.
+       */
+      let idlePollMs = pollIntervalMs;
+      /**
+       * May this mailbox rest at all — its INBOX watch is armed AND the server advertises IDLE, so
+       * an arrival RINGS rather than waits for the next poll. False is the pre-0.19.1 behaviour
+       * exactly: the ladder never leaves the base interval. Measured, never assumed.
+       */
+      let restMayBeTaken = false;
+      /** The INBOX watch's detach, per DIAL — a re-dial builds a new adapter and re-arms. */
+      let unwatch: (() => Promise<void>) | null = null;
+      /** A kick is armed and has not fired: collapses a burst of arrivals into ONE drain, and
+       *  keeps an in-flight drain's own re-arm from cancelling the kick (see {@link schedule}). */
+      let wakePending = false;
+      /**
        * THE HEARTBEAT'S OWN TIMER, AND WHY IT IS NOT THE POLL'S.
        *
        * The probe used to run only as the drain's preflight, and the drain re-armed itself from
@@ -4845,6 +4900,22 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
            cannot start until this one's log folds in, and `checkpoint()` never throws
            (`checkpointWal`). A zero-cycle drain wrote nothing and skips it. */
         if (cycles > 0) await opened.checkpoint();
+        /* PUT THE IDLE BACK ON INBOX. The cycles above re-SELECT other folders, after which an
+           INBOX arrival emits nothing — a dead push channel that looks exactly like a slow one
+           (the worker measured p50 194 s that way, which is why `rearmWatch` exists). It also
+           rings the bell itself for growth that landed in the blind window. A belt, so a failure
+           is logged and never turned into a failed drain; the next poll still comes. */
+        if (restMayBeTaken && typeof conn.rearmWatch === "function") {
+          try {
+            await conn.rearmWatch();
+          } catch (err) {
+            log("local_wake_rearm_failed", {
+              err,
+              reason: "the INBOX watch could not be re-armed after this drain, so arrivals may " +
+                "wait for the poll until the connection is re-dialled",
+            });
+          }
+        }
         return cycles;
       };
 
@@ -5059,6 +5130,40 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
        * `serialize`, so the accounting sees the drain's OUTCOME and a direct caller ("sync now",
        * `syncMailbox`) feeds the same bound the poll timer does.
        */
+      /**
+       * DID THIS DRAIN PRODUCE ANYTHING ANYONE COULD SEE? The window runs its own mirror and learns
+       * what exists ONLY from the change log it drains (`local-mirror.ts`), so the log's top seq is
+       * exactly that question: one indexed aggregate over the `(account_id, seq)` primary key.
+       * `"empty"` is a log with no rows — a real, quiet state, kept apart from `null`, which is a
+       * log we could not read and which {@link noteIdleOutcome} treats as NOT quiet. The fail-safe
+       * direction is the fast cadence.
+       */
+      const changeLogMark = async (): Promise<string | null> => {
+        try {
+          const { max } = await seqBounds(db as unknown as Tx, world.accountId);
+          return max === null ? "empty" : max.toString();
+        } catch {
+          return null;
+        }
+      };
+
+      /**
+       * One step of the ladder, taken after a drain that came back. A drain that changed nothing
+       * climbs towards the ceiling; one that changed something falls back to base. The climb needs
+       * {@link restMayBeTaken} — resting behind a doorbell nobody wired would be trading freshness
+       * for CPU, which is the fix this lane was told not to make.
+       */
+      const noteIdleOutcome = async (before: string | null): Promise<void> => {
+        const after = await changeLogMark();
+        const quiet = before !== null && after !== null && before === after;
+        if (!quiet) { idlePollMs = pollIntervalMs; return; }
+        if (!restMayBeTaken) return;
+        const next = nextIdlePollMs(idlePollMs, pollIntervalMs, idlePollCeilingMs);
+        if (next === idlePollMs) return;
+        idlePollMs = next;
+        log("sync_idle_backoff", { nextPollMs: next, ceilingMs: idlePollCeilingMs });
+      };
+
       const syncUntilQuiet = async (
         maxCycles = 100,
         opts: { force?: boolean } = {},
@@ -5079,11 +5184,23 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
            has never connected, filing `sync_cycle_failed` for a state the connection record
            already states. `0` is the honest count: nothing was served. */
         if (credentialBlock !== null) return 0;
+        /* A PRESS IS ATTENTION. A forced drain — the resync button, a foreground resume, a
+           promotion — returns the ladder to base on the way in and takes no rest on the way out,
+           however little it finds: somebody is at the screen. */
+        if (opts.force === true) idlePollMs = pollIntervalMs;
+        const markBefore = await changeLogMark();
         try {
           const cycles = await drainPass(maxCycles);
           noteCycleServed();
+          if (opts.force !== true) await noteIdleOutcome(markBefore);
           return cycles;
         } catch (err) {
+          /* A FAILED DRAIN IS NOT A QUIET ONE, and the bound this protects is one the app states
+             in plain words: a connection is dead after 120 s OR after 8 consecutive cycles that
+             could not read the lease, whichever comes first (see `LOCAL_CONNECTION_DEAD_AFTER_MS`
+             and its cycle twin). Climbing the ladder here would stretch those eight cycles across
+             sixteen minutes. */
+          idlePollMs = pollIntervalMs;
           noteCycleFailed(err);
           /* AND THE REFUSAL IS NAMED, once per settled attempt. `noteCycleFailed` already exempts
              it correctly — a tagged `NO` is not a connection failure and never advanced the bound
@@ -5103,8 +5220,14 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         }
       };
 
-      const schedule = (): void => {
+      const schedule = (delayMs?: number): void => {
         if (stopped) return;
+        /* A KICK OUTRANKS AN ORDINARY RE-ARM, and that is a correctness rule rather than a
+           preference. `delayMs === undefined` is the tail of a drain; a drain settling just after
+           an arrival rang would otherwise clear the kick's timer, put that mail behind a full
+           interval, and leave `wakePending` set for ever so no later arrival could ring either.
+           The kick's own callback clears the flag. */
+        if (delayMs === undefined && wakePending) return;
         /* EXACTLY ONE POLL TIMER PER RUNTIME, at any moment. Every armed timer re-arms itself in
            the `.finally` below, so arming a second one does not move the next poll — it starts a
            second loop that runs for the life of the runtime, and two gated cycles then race each
@@ -5113,6 +5236,11 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
            drains"); the enforcement belongs here, where the timer is. `stopped` returns first. */
         if (timer) clearTimeout(timer);
         timer = setTimeout(() => {
+          /* SPENT THE MOMENT IT FIRES, before anything can await. Left standing, the guard above
+             refuses every later re-arm and the mailbox stops polling altogether after its first
+             arrival — which is how this line came to exist (the reset case went red on a poll loop
+             that had silently ended). */
+          wakePending = false;
           void syncUntilQuiet()
             .catch((err: unknown) => {
               // A failed cycle is a bad network or a sleeping laptop, not a reason to stop being a
@@ -5133,8 +5261,59 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
               log("sync_cycle_failed", { err });
             })
             .finally(schedule);
-        }, pollIntervalMs);
+        }, delayMs ?? idlePollMs);
         timer.unref?.();
+      };
+
+      /**
+       * THE DOORBELL RANG — INBOX grew. Two acts and no more: the ladder returns to base (the
+       * mailbox is active again) and one drain is armed for now. Synchronous and throw-free by
+       * construction: it runs inside imapflow's `exists` handler, where a raising listener is the
+       * uncaught exception the connection's own listeners exist to prevent.
+       */
+      const onMailboxSignal = (): void => {
+        if (stopped || handedBack) return;
+        idlePollMs = pollIntervalMs;
+        if (wakePending) return;
+        wakePending = true;
+        schedule(0);
+      };
+
+      /**
+       * ══ ARM THE DOORBELL — the channel this door has always had and never used ══
+       *
+       * `watch` is required of every `MailboxAdapter` and the hosted worker has run on it since
+       * 0.13; here it is what LETS the poll rest, so it is measured rather than assumed — the rest
+       * is taken only when the listener is registered AND the server advertises IDLE. Best-effort
+       * by construction: a refusal leaves `restMayBeTaken` false and this mailbox on its old base
+       * cadence, which is a slower app and never a wrong one. Per DIAL — a re-dial re-arms.
+       */
+      const armWake = async (conn: MailboxAdapter): Promise<void> => {
+        /* EXACTLY ONE LISTENER PER RUNTIME, the poll timer's own rule applied to the doorbell: the
+           previous one is detached before a new one is registered, so a re-dial cannot leave two
+           subscriptions ringing one mailbox. */
+        const previous = unwatch;
+        restMayBeTaken = false;
+        unwatch = null;
+        if (previous) await previous().catch(() => { /* that connection is already gone */ });
+        try {
+          const caps = await conn.capabilities();
+          if (!caps.idle) {
+            log("local_wake_unarmed", {
+              reason: "this server does not advertise IMAP IDLE, so there is no channel to rest " +
+                "behind; the poll keeps its base interval and carries every arrival itself",
+            });
+            return;
+          }
+          unwatch = await conn.watch(onMailboxSignal);
+          restMayBeTaken = true;
+        } catch (err) {
+          log("local_wake_unarmed", {
+            err,
+            reason: "the INBOX watch could not be armed on this connection, so the poll keeps " +
+              "its base interval and carries every arrival itself",
+          });
+        }
       };
 
       /**
@@ -5350,6 +5529,12 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
             if (!fetchRefused(err)) throw err;
             noteFetchRefused(err);
           }
+          /* THE DOORBELL, AFTER THE LAUNCH DRAIN AND BEFORE THE CALLER ARMS THE TIMER. After the
+             drain so a first import is not interrupted by its own arrivals, and here rather than
+             in `start()` so a RE-DIAL re-arms on the new connection — the watch belongs to the
+             socket, and a mailbox that came back from an outage must not rest behind a doorbell
+             that died with the old one. */
+          await armWake(conn);
           // (the poll timer is armed by the caller — see the header)
           return { leaseRead: true };
         } catch (err) {

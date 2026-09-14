@@ -192,6 +192,13 @@ export const ALLOWED_FIELDS: readonly string[] = [
   // `count`, on this file's own rule: `totalMs` and `slowestMs` are different quantities and one
   // `count` meaning either is not a claim a reviewer can check. (`drained` is already above.)
   "cycles", "totalMs", "slowestMs",
+  // ── The local engine's idle ladder (`sync_idle_backoff`), added WITH the call site ──
+  //
+  // `nextPollMs` is the delay the next poll was armed at and `ceilingMs` the constant it climbs
+  // towards — both milliseconds, one derived from the other by doubling, neither carrying anything
+  // about a mailbox, a folder or a message. NAMED rather than folded into `count` on this file's
+  // own rule: a delay and a ceiling are different quantities.
+  "nextPollMs", "ceilingMs",
   // The three cron-pass counts, added WITH the call sites: `generated` (proposals stored),
   // `flipped` (bubble-ups resurfaced) and `drained` (workflow runs executed) are return values
   // accumulated by `+=` from a `.length` or a local counter — structurally integers, no content.
