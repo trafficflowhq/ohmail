@@ -20,6 +20,117 @@ Signed installers — a real Apple Developer ID and an Authenticode certificate.
 
 ## [0.19.0] — 2026-09-14
 
+### Search answers while you type
+
+Searching a large mailbox used to freeze the window. Senders, subjects and previews now match as
+you type; the full text of your mail is searched in the archive, which answers a moment later.
+
+### Attachments land in your Downloads folder
+
+Attachments download to your Downloads folder on the desktop, including Download all. Pressing one wrote the file under the app's own directory and handed it to
+the platform viewer, so nothing arrived in Downloads and Download all opened one viewer per file. A
+button that says Download downloads: the files go to the folder your system names, a name that
+collides is numbered rather than overwritten, and the strip says "Saved to Downloads" once.
+
+### The attachment loader no longer spins
+
+The strip and the preview overlay each drew their own rotating ring. Under the ohmarchy theme that
+shape is a square, and a rotating square reads as a spinning box rather than as waiting. Both use
+the mark the rest of the app uses now.
+
+### Mail written as one line per block no longer arrives double-spaced
+
+Apple Mail and Gmail write a letter as one `<div>` per line. Every such line was rendered as a
+paragraph, so a twelve-line message arrived with a gap between every line while the blank lines the
+writer actually typed rendered as nothing. A line gets line spacing now, a paragraph gets paragraph
+spacing, and a blank line is one blank line.
+
+### A signature you set on one device now shows up when you write from another
+
+Including a desktop that only reads a mailbox the managed service organizes: that desktop shows the
+signature the organizing install published, with its formatting, and says where it was set instead
+of offering an editor that changes nothing.
+
+### Mail from someone you had already written to no longer waits in the Screener
+
+A person you have corresponded with for years could appear in the Screener as a first-time sender,
+because mail imported before you confirmed the people you write to never left the screening folder.
+Those senders are no longer listed and their held mail is released to where your decision sends it.
+Mail from a sender you said no to is unchanged.
+
+### Reads names which of your addresses a message came to
+
+Where you have more than one address, a Reads row, its card and the reading pane say which of your
+own addresses the message was delivered to. Below two mailboxes nothing is drawn.
+
+### Applying a new rule to past mail is its own choice
+
+Filing a sender's future mail and moving the mail already in your mailbox were one switch, so the
+only way to leave old mail where it was turned the rule off as well. They are two choices now, both
+on by default, and the footer says what each one will do.
+
+### Every screen that says another install organizes a mailbox says what to press
+
+The screens that name a holder are the ones somebody is stuck on, and they named no way out. Each
+ends with the press that screen actually offers now, and you can tell ohmail you are reading along
+here on purpose, so it stops offering to take the mailbox back.
+
+### Organizing a mailbox is recorded the moment it is claimed
+
+Agreeing to organize claimed the mailbox on the mail server a fraction of a second before this
+device recorded that it holds it, and a failure to write that record was reported as something
+smaller than it was. The record is written when the claim is confirmed now, and a failure to write
+it is named and retried at the next check. This is older than it looks: it predates the phone build
+that shipped in 0.18.0.
+
+### Choosing another computer to organize a mailbox stops the previous one at its next write
+
+The previous install could keep filing for up to a minute after it lost the mailbox, because it was
+trusting a receipt rather than asking the mailbox. Every destructive write asks the mailbox first
+now, and the install that lost it stops at its very next one.
+
+### Taking a mailbox back works from the mailbox page
+
+A mailbox another install had taken over could not be taken back: the page reported it as
+disconnected and offered to reconnect something that was never disconnected, and the only move left
+was connecting the address a second time. Taking it back works from the mailbox page.
+
+### A mailbox whose settings ohmail could not read is no longer stuck
+
+ohmail keeps a mailbox's organizing settings in a message in the mailbox itself. Reading that
+message walks back through a folder, and on a mailbox organized for a long time the walk could run
+out of room before reaching the bottom — which answered "I could not look", and on a folder holding
+no settings message at all that answer was permanent. A folder small enough to search whole is
+searched whole now, so "there are none" is an answer, and agreeing to organize such a mailbox
+writes the first copy. Where the settings genuinely cannot be read, the mailbox row says so with
+the reason instead of reading Up to date.
+
+### A mailbox whose saved password this computer cannot open says so
+
+It read as up to date while nothing was being read at all.
+
+### Signing out holds even when a password was being saved
+
+Signing out deletes the mailbox password stored on this computer, and a save already under way when
+you press it — including one sent from a paired phone — is refused rather than written back.
+Signing in again afterwards is unchanged.
+
+### A filing whose copy landed and whose delete was refused is no longer recorded as finished
+
+The message stayed in two folders. The delete's answer is read and confirmed now, and the retry
+adopts the copy it already made.
+
+### A decision you made while a pass was running is no longer overwritten by it
+
+A pass that put a command on the wire and then wrote what it had decided before the reply came back
+could write a value minutes old — including over a destination you had chosen meanwhile. Nothing
+errored; the mail simply ended up where the older decision said.
+
+### A page you did not ask for
+
+An empty, zero or negative page size answered with exactly one message and a cursor, which is an
+almost-empty mailbox reporting itself healthy. Those are refused by name now.
+
 ### Removing a mailbox waits for the mail it is still reading
 
 Removing a mailbox used to tombstone it and delete this machine's copy of its mail before waiting
