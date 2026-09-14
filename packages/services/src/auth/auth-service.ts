@@ -2431,7 +2431,7 @@ export class AuthService extends SessionLifecycle {
        under the account they had erased. An attempt with NO user is the throttle's shape: it must
        keep being recorded for an address that has no account at all, which is exactly the caller
        this trail exists to describe, so it is written unfenced as it always was. */
-    if (user !== null) {
+    if (user != null) {
       const erasedAt = await readAccountErasedAt(db, dialect(db), user.accountId);
       if (erasedAt != null) return;
     }

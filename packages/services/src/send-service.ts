@@ -17,6 +17,7 @@ import type { WorkerRepo } from "@trafficflow/core/adapters/drizzle-repo";
 type SentTxRepo = RepoPort & RoutingPort & Pick<WorkerRepo, "completeFolderState">;
 import { withAccountTx, type ServiceContext } from "./context.js";
 import { draftContentRevision } from "./draft-revision.js";
+import { fenceErasedScope } from "./erasure-fence.js";
 import type { AttachmentAdapter, OpenAdapter } from "./attachments-service.js";
 import { ServiceError, SettleFailed, TransientDialRefusal } from "./errors.js";
 import { sanitizeOutboundHtml } from "./outbound-html.js";
@@ -1423,6 +1424,14 @@ export class SendService {
           // before this digest is computed. `stagedManifest` is still collected for the size cap,
           // which is a different question and does not pretend to be an identity.
         ],
+      });
+      /* THE MAILBOX SCOPE, asked here because only the draft says which mailbox this is — the
+         row is read `FOR UPDATE` above, inside this transaction, so the door could not be told at
+         the top. `outbound_send_fingerprints` is keyed on the mailbox and the mailbox sweep
+         empties it while LEAVING the `mailboxes` row, so nothing else refuses a claim written
+         against a mailbox erased under this request — and a send does not stop at a row. */
+      await fenceErasedScope(tx as unknown as Tx, dialect(ctx.db), {
+        accountId: ctx.accountId, mailboxId: d.mailboxId,
       });
       const claimNow = ctx.now();
       const claimed = await tx.insert(outboundSendFingerprints).values({
