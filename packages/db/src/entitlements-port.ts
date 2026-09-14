@@ -111,15 +111,13 @@ export type ReleaseOutcome = "none" | "cancelled" | "cancel_failed";
 
 export interface EntitlementsPort {
   /**
-   * NEVER THROWS, and a transport fault answers with the last verdict this process saw for the
-   * account — or, with none, `ok: true` and unbounded limits. An entitlements outage must not lock
-   * a paying customer out of their mail. It is also why implementations cache: a per-request dial
-   * on the mail path is refused at review.
+   * NEVER THROWS: a transport fault answers with the last verdict this process saw for the
+   * account, or with none `ok: true` and unbounded limits. An entitlements outage must not lock
+   * a paying customer out of their mail, which is also why implementations cache.
    *
-   * `fresh: true` skips the held verdict and asks again. It is for the ONE caller that must not
-   * read a cached refusal — the cross-check that decides whether an AI spend refusal may be
-   * turned into a payment demand — because a held refusal outlives the condition that produced
-   * it and would bill a funded account for a minute of somebody else's outage. Never on the mail
+   * `fresh: true` skips the held verdict and asks again — for the ONE caller that must not read
+   * a cached refusal, the cross-check deciding whether an AI spend refusal may become a payment
+   * demand, because a held refusal outlives the condition that produced it. Never on the mail
    * path: a per-request dial there is the thing the cache exists to prevent.
    */
   access(accountId: string, opts?: { fresh?: boolean }): Promise<AccessVerdict>;

@@ -630,17 +630,13 @@ export function useScreenerSuggestions(opts: {
 
   /**
    * NO STICKY FALSE STATE — a refusal line comes down when the account says AI is available.
+   * A sentence about an account is re-asked against the account; it used to stand until the
+   * next press, which a person does not necessarily make.
    *
-   * The card kept its sentence until the next press, and a press is not something a person makes
-   * on the way past: one account was shown "no AI actions remain" at nine in the evening and was
-   * still being shown it at a quarter to nine the next morning, having spent credits in between.
-   * A sentence about an account has to be re-asked against the account.
-   *
-   * NOT A POLL, and deliberately: it asks once when the line goes up, and again when the tab
-   * comes back to the foreground — which is the moment the person in the case above returned to
-   * it. While no refusal is standing this registers a listener and asks nothing; a transport with
-   * no `aiAvailable` asks nothing at all. `insufficient_credits` never arms it, because no access
-   * read describes a balance (`clearedByAccess`).
+   * NOT A POLL: it asks once when the line goes up and again when the tab returns to the
+   * foreground. While no refusal stands it registers a listener and asks nothing, a transport
+   * with no `aiAvailable` asks nothing at all, and `insufficient_credits` never arms it — no
+   * access read describes a balance (`clearedByAccess`).
    */
   useEffect(() => {
     if (!refused) return;

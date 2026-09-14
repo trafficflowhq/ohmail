@@ -7,13 +7,12 @@ import { ServiceError } from "./errors.js";
 /**
  * ONE ANSWER FOR AN AI SPEND REFUSAL, FOR BOTH CALL SITES THAT MAKE ONE.
  *
- * A payment demand is the one answer that cannot be taken back — the person goes and buys
- * something — so it is the one that has to be corroborated. `quantity` (an empty balance) is its
- * own corroboration and is unchanged. A `state` refusal is cross-checked against a FRESH read of
- * the account's access: a read saying AI is available there means the two halves of the credit
- * check disagree, which is a fault — 503, never a bill. Both sites collapsed every `state` reason
- * into 402 and neither logged the reason, so a funded account was told to buy credits it held and
- * nothing recorded why.
+ * A payment demand cannot be taken back — the person goes and buys something — so it is the one
+ * answer that has to be corroborated. `quantity` (an empty balance) corroborates itself and is
+ * unchanged. A `state` refusal is cross-checked against a FRESH read of the account's access: a
+ * read saying AI is available means the two halves of the credit check disagree, which is a
+ * fault — 503, never a bill. Both sites collapsed every `state` reason into 402 and logged none,
+ * so a funded account was told to buy credits it held.
  */
 
 /** The class of refusal the wire already carries. `fault` is never a payment demand. */
