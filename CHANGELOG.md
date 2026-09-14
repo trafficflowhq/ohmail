@@ -13,6 +13,13 @@ See [Status](README.md#status--read-this-first).
 
 ## [Unreleased]
 
+### Still to come
+
+Signed installers — a real Apple Developer ID and an Authenticode certificate. See
+[Roadmap](README.md#roadmap).
+
+## [0.19.0] — 2026-09-14
+
 ### Removing a mailbox waits for the mail it is still reading
 
 Removing a mailbox used to tombstone it and delete this machine's copy of its mail before waiting
@@ -21,11 +28,6 @@ mailbox that had just been removed: the messages stayed on the machine, and the 
 they had arrived after it had been told the mailbox was gone. The removal waits for the pass first
 now — bounded, like every other stop — and a write into a removed mailbox is refused rather than
 committed behind the removal.
-
-### Still to come
-
-Signed installers — a real Apple Developer ID and an Authenticode certificate. See
-[Roadmap](README.md#roadmap).
 
 ## [0.18.0] — 2026-09-13
 
@@ -6217,7 +6219,8 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.18.0...HEAD
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.19.0...HEAD
+[0.19.0]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.19.0
 [0.18.0]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.18.0
 [0.17.0]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.17.0
 [0.16.2]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.16.2
