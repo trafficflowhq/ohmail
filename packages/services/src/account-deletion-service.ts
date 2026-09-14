@@ -58,6 +58,7 @@ import {
 import {
   attachmentStaging,
   authEvents,
+  creditRefundObligations,
   authThrottle,
   credentials,
   invites,
@@ -364,6 +365,25 @@ export async function deleteAccount(ctx: ServiceContext): Promise<DeleteAccountR
     const stagingTicketsExpired = n(await tx.update(attachmentStaging)
       .set({ expiresAt: ctx.now() })
       .where(and(eq(attachmentStaging.accountId, accountId), gt(attachmentStaging.expiresAt, ctx.now()))));
+
+    // WHAT WE STILL OWED THIS ACCOUNT (cloud 0036). DELETED, and the deletion is not academic:
+    // `accounts` is the one row erasure KEEPS, so this table's `ON DELETE CASCADE` never fires
+    // here — rows naming an erased account would simply stay, carrying its id and the attempt ids
+    // of its spends, for the life of the deployment.
+    //
+    // What happens to the money is the entitlements program's, and `releaseAccount` — which this
+    // service calls — is the one call that ends this account's standing there. Our row is only a
+    // reminder to dial that program again; once the account is erased there is nothing left here
+    // to dial about, and a reminder that outlives its subject is exactly what Art. 17 forbids.
+    //
+    // WHAT THIS DOES NOT DO, stated because it is a real gap and not an oversight: a debt still
+    // PENDING at erasure is dropped rather than drained first. Draining it means a network call to
+    // the program from inside this transaction, which erasure may not be made to wait on
+    // (Art. 17 is not withheld because a payment processor is unreachable). The drain runs hourly,
+    // so the window is small and bounded; closing it properly is a ruling for the side that holds
+    // the ledger — filed as PENDING-REFUND-IS-DROPPED-AT-ERASURE.
+    await drop("credit_refund_obligations",
+      tx.delete(creditRefundObligations).where(eq(creditRefundObligations.accountId, accountId)));
 
     // ── 7. Sessions, devices, and every credential the user holds ───────────────
     await drop("refresh_tokens", tx.delete(refreshTokens).where(eq(refreshTokens.accountId, accountId)));

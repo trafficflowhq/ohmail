@@ -1,5 +1,7 @@
 import { and, asc, eq, isNull, lt, or, sql } from "drizzle-orm";
 import { creditRefundObligations } from "./schema-cloud.js";
+import { dialect } from "./dialect/index.js";
+import { readAccountErasedAt } from "./erasure-fence.js";
 import type { Tx } from "./change-log.js";
 import type {
   RefundObligation, RefundObligationPort, RefundObligationReason, SpendAction, SpendMeta,
@@ -48,6 +50,20 @@ export interface ClaimedRefundObligation {
 export async function recordRefundObligation(
   tx: Tx, o: RefundObligation, now: Date = new Date(),
 ): Promise<void> {
+  // THIS WRITER FENCES ITSELF, and it is the one db-layer primitive that has to.
+  //
+  // Every other one writes inside the CALLER's transaction, so the door that opened it holds the
+  // Art. 17 fence. This one deliberately does not: the debt has to survive the transaction that
+  // FAILED, which is the whole reason it exists — so it inherits nobody's fence and would happily
+  // write a row naming an account the sweep erased a moment earlier. That row would then STAY:
+  // `accounts` is the row erasure KEEPS, so this table's `ON DELETE CASCADE` never fires for it.
+  //
+  // An erased account is owed nothing HERE in any case — `releaseAccount` is what ends its
+  // standing with the entitlements program, and this row is only a reminder to dial that program
+  // about an account that no longer exists. SHARE, the default: it is ordered against the
+  // sweep's exclusive lock and against nothing else.
+  const erasedAt = await readAccountErasedAt(tx, dialect(tx), o.accountId);
+  if (erasedAt !== null && erasedAt !== undefined) return;
   await tx.insert(creditRefundObligations).values({
     accountId: o.accountId,
     action: o.action,
