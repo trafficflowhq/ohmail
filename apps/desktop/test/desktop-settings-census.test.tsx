@@ -7,7 +7,7 @@ import { ThemeProvider, ToastHost } from "@ohmail/ui";
 
 import { DesktopGate } from "../src/DesktopGate.js";
 import { ACCOUNT_AI_PATH } from "../src/DesktopAiAccount.js";
-import { MANAGE_LINK_PATH } from "../src/DesktopSubscription.js";
+import { ACCOUNT_ACCESS_PATH, MANAGE_LINK_PATH } from "../src/DesktopSubscription.js";
 import { desktopPaneLabel } from "../src/DesktopSettings.js";
 import messages from "../../webapp/messages/en.json";
 import { PANE_IDS, type PaneId } from "../../webapp/app/shell/routing";
@@ -279,15 +279,17 @@ const MATRIX: Record<PaneId, Record<Door, Cell>> = {
     desktopCloud: {
       state: "present",
       why:
-        "`DesktopSubscription` over the forwarded `POST /account/manage-link`; the click leaves " +
-        "for the platform's browser through the interceptor every external link uses",
+        "`DesktopSubscription`, offered on the forwarded `GET /account/access` and minting its " +
+        "address on the press; the click leaves for the platform's browser through the " +
+        "interceptor every external link uses",
     },
     desktopSelfHost: {
       state: "absent",
       why:
-        "the same 404 the browser tab gets, through the proxy. This door could never tell itself " +
-        "from the managed one — `{ mode: \"cloud\" }` is both — and it no longer has to: the " +
-        "route's own answer decides, so the previously inert pane is simply not drawn",
+        "the same `metered: false` the browser tab reads, through the proxy — a host running no " +
+        "such program, which is the condition the mint answers 404 on. This door could never " +
+        "tell itself from the managed one — `{ mode: \"cloud\" }` is both — and it no longer has " +
+        "to: the route's own answer decides, so the previously inert pane is simply not drawn",
     },
     desktopStandalone: {
       state: "absent",
@@ -512,10 +514,17 @@ const AWAY = JSON.stringify({
 });
 
 /**
- * What `POST /account/manage-link` answers for the next mount: a URL, or `null` for the 404 a
+ * What `POST /account/manage-link` answers for the next PRESS: a URL, or `null` for the 404 a
  * deployment with no such page gives. Reassigned per case, never captured by the stub.
  */
 let manageLink: string | null = "https://account.example/manage?t=abc";
+
+/**
+ * What `GET /account/access` answers, which is what the pane is OFFERED on. A host with no such
+ * program answers `metered: false` and 404s the mint; the two move together here because they
+ * move together on a deployment. `desktop-manage-link-press.test.tsx` drives the press.
+ */
+let metered = true;
 
 /**
  * EVERY `engine_request` PATH THE MOUNT PUT ON THE BRIDGE, in order. The nav cannot answer a
@@ -545,6 +554,11 @@ function fakeShell(status: EngineStatus, signedIn: boolean): void {
         // The AI pane's read. A boolean either way; the pane draws regardless, because the
         // account HAS the flag — only an unread value makes the switch unpressable.
         if (url === ACCOUNT_AI_PATH) return encode(200, JSON.stringify({ aiEnabled: true }));
+        if (url === ACCOUNT_ACCESS_PATH) {
+          return encode(200, JSON.stringify(
+            metered ? { metered: true, canAddMailbox: true, mailboxes: 1 } : { metered: false },
+          ));
+        }
         if (url === MANAGE_LINK_PATH) {
           return manageLink === null
             ? encode(404, JSON.stringify({ error: { code: "no_manage_surface" } }))
@@ -589,6 +603,7 @@ async function navFor(status: EngineStatus, signedIn: boolean): Promise<string[]
 
 afterEach(async () => {
   manageLink = "https://account.example/manage?t=abc";
+  metered = true;
   enginePaths.length = 0;
   if (root) await act(async () => { root!.unmount(); });
   mountPoint?.remove();
@@ -810,6 +825,9 @@ describe("SET-C — the desktop's two doors draw exactly what the census says", 
    * Same engine, same session, one answer different, so nothing else can explain the difference.
    */
   it("a door whose server serves no manage page draws no Subscription entry", async () => {
+    // Both answers, because a deployment gives both: no program means `metered: false` from the
+    // read the pane is offered on AND a 404 from the mint. Setting one would be a fixture.
+    metered = false;
     manageLink = null;
     const nav = await navFor(CLOUD_SERVING, true);
     expect(nav, "the entry survived a 404").not.toContain(label("billing"));
@@ -825,12 +843,14 @@ describe("SET-C — the desktop's two doors draw exactly what the census says", 
    * It asked. The hook fired on mount for every door, so a standalone install put
    * `POST /account/manage-link` on the bridge at every launch — a route belonging to whoever
    * operates the managed service, with no account behind this door and no server to answer it.
+   * BOTH routes are named now: the mint moved to the press, and the read that replaced it on the
+   * mount would be the same trespass one status code quieter.
    */
   it("the standalone door asks for no manage page, because there is no account to ask about", async () => {
     await navFor(LOCAL_SERVING, true);
     expect(
-      enginePaths.filter((p) => p === MANAGE_LINK_PATH),
-      "a standalone install asked where to manage a subscription it has no account for",
+      enginePaths.filter((p) => p === MANAGE_LINK_PATH || p === ACCOUNT_ACCESS_PATH),
+      "a standalone install asked about a subscription it has no account for",
     ).toEqual([]);
   });
 
@@ -844,7 +864,13 @@ describe("SET-C — the desktop's two doors draw exactly what the census says", 
     expect(
       enginePaths,
       "the account door stopped asking, so the Subscription row can only be absent",
-    ).toContain(MANAGE_LINK_PATH);
+    ).toContain(ACCOUNT_ACCESS_PATH);
+    // …and asks for no ADDRESS while doing it. The row is drawn from a read; the mint belongs to
+    // the press, and `desktop-manage-link-press.test.tsx` counts it there.
+    expect(
+      enginePaths.filter((p) => p === MANAGE_LINK_PATH),
+      "the mount minted a management link nobody pressed for",
+    ).toEqual([]);
   });
 
   /**

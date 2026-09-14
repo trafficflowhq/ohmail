@@ -46,7 +46,7 @@ import { GateNotice } from "./GateNotice.js";
 import { DOOR_COPY, machineWord } from "./door-copy.js";
 import { desktopPaneLabel, DesktopSettings } from "./DesktopSettings.js";
 import { DesktopAiAccount } from "./DesktopAiAccount.js";
-import { DesktopSubscription, useDesktopManageLink } from "./DesktopSubscription.js";
+import { DesktopSubscription, useDesktopManageOffer } from "./DesktopSubscription.js";
 import { DesktopWebSection } from "./DesktopWebSection.js";
 import {
   accountDoorFor, awayDoorFor, consentDoorFor, firstRunDoorFor, gateFor, hostLabelOf,
@@ -327,15 +327,16 @@ export function DesktopGate() {
     accountDoorFor(shell?.kind === "status" ? shell.status : null, hostedSession) === "cloud";
 
   /**
-   * WHERE THIS ACCOUNT MANAGES ITS SUBSCRIPTION — `null` where no page is served. Read in the
-   * GATE, not inside the pane: `SettingsView` grows the nav entry from the prop's presence,
-   * so withholding the entry means withholding the node. UP HERE with the unconditional
-   * hooks — everything below the mount switch sits behind an early return, and a hook below
-   * one renders on some paths only ("Rendered more hooks than during the previous render").
-   * `accountDoor` gates the ask as well as the mount: a door with no hosted account has no
-   * manage page and no server to ask.
+   * WHETHER THIS ACCOUNT'S DOOR SERVES A SUBSCRIPTION PAGE — `false` where none is. The OFFER
+   * and not the address: the address is minted when somebody presses Manage, which is what
+   * stopped every launch asking for a link nobody was going to follow. Read in the GATE, not
+   * inside the pane: `SettingsView` grows the nav entry from the prop's presence, so
+   * withholding the entry means withholding the node. UP HERE with the unconditional hooks —
+   * everything below the mount switch sits behind an early return, and a hook below one renders
+   * on some paths only ("Rendered more hooks than during the previous render"). `accountDoor`
+   * gates the ask as well as the mount: a door with no hosted account has nothing to ask.
    */
-  const manageUrl = useDesktopManageLink(accountDoor);
+  const { manageOffered, withdrawManage } = useDesktopManageOffer(accountDoor);
   useEffect(() => {
     // A new key is a new engine (or no cloud engine at all): the expiry flow's held step is
     // about an answer that no longer exists. The stored answer itself needs no reset — a stale
@@ -1084,14 +1085,14 @@ export function DesktopGate() {
            All three are doors and nothing else: every control behind Security and Account is
            step-up gated and nothing this app can do asserts a second factor; Subscription is
            the service operator's own page, whose state this program does not hold. See
-           `DesktopWebSection` and `DesktopSubscription` — the latter renders nothing where no
-           such page is served, so the nav entry follows the page. */
+           `DesktopWebSection` and `DesktopSubscription` — the latter is handed in only where a
+           page is served, so the nav entry follows the page. */
         /* THE ACCOUNT'S AI SWITCH — behind `accountDoor` like the three panes below, and
            unconditional within it: the flag exists for every hosted account. The standalone door
            has no account and keeps its own local-model form on the Desktop pane instead. */
         {...(accountDoor ? { aiSection: <DesktopAiAccount /> } : {})}
-        {...(accountDoor && manageUrl
-          ? { billingSection: <DesktopSubscription url={manageUrl} /> }
+        {...(accountDoor && manageOffered
+          ? { billingSection: <DesktopSubscription onNowhere={withdrawManage} /> }
           : {})}
         {...(accountDoor
           ? {

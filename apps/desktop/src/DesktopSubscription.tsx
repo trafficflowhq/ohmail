@@ -5,11 +5,16 @@
  * serves its own page, and the entitlements port answers where that page is. A pane and not
  * an omission, for `DesktopWebSection`'s reason: an absent entry reads as "this product does
  * not have that", and the site says otherwise. Absent when there is no page to link to — see
- * {@link useDesktopManageLink} for why that decision is the GATE's. `settings` keys, shared
+ * {@link useDesktopManageOffer} for why that decision is the GATE's. `settings` keys, shared
  * with the web pane, because whole namespaces travel into this binary.
+ *
+ * THE ADDRESS IS MINTED BY THE PRESS. It used to be minted by the MOUNT — every launch and
+ * every change of the account door asked for a link nobody had asked to follow — and the pane
+ * was offered only once one had come back. The two questions are apart now: the offer is read
+ * without minting anything, the address is asked for when somebody asks to go there.
  */
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { SettingsRow, SettingsSection } from "@ohmail/ui";
 
@@ -25,55 +30,142 @@ import { bridgeFetch } from "./bridge-fetch.js";
 export const MANAGE_LINK_PATH = "/account/manage-link";
 
 /**
- * WHERE THIS ACCOUNT MANAGES ITS SUBSCRIPTION, or `null` for "nowhere". A HOOK THE GATE
- * CALLS, not a `return null` inside the pane, because the two are not the same:
+ * The read the OFFER is made of — forwarded on the same door, and it mints nothing.
+ *
+ * `metered: false` is a host that operates no such program, which is exactly the condition
+ * {@link MANAGE_LINK_PATH} answers 404 on. Nothing this window already holds answers it: the
+ * status frame carries the door's KIND (`flavor`), and a server somebody runs themselves can
+ * operate a program while a managed door whose program is absent answers `metered: false`; the
+ * engine's own `/health` is about the session; `/hello`'s wire shape is frozen.
+ */
+export const ACCOUNT_ACCESS_PATH = "/account/access";
+
+/** What the entitlements lock answers a refused account. See {@link useDesktopManageOffer}. */
+const ACCESS_REFUSED = 402;
+
+/** What the mint answers where no such page is served, or for an account nobody knows. */
+const NO_MANAGE_SURFACE = 404;
+
+export interface ManageOffer {
+  /** Whether to build the pane at all — the GATE reads this and hands in the node. */
+  manageOffered: boolean;
+  /** Take the pane away for the rest of this session: the press found nowhere to go. */
+  withdrawManage: () => void;
+}
+
+/**
+ * DOES THIS ACCOUNT'S DOOR SERVE A SUBSCRIPTION PAGE — the offer, and not the address. A HOOK
+ * THE GATE CALLS, not a `return null` inside the pane, because the two are not the same:
  * `SettingsView` grows the nav entry from the PROP being present, so a node that renders
  * nothing still puts "Subscription" in the nav and opens an empty pane. Only withholding the
  * node withholds the entry — `invitesSection` and `devicesSection`'s rule; the desktop census
- * asserts the entry is gone on a 404. `null` covers every "nowhere": no hosted account, an
- * offline install, a server without the route, an unverified address, and the moment before
- * the first answer.
+ * asserts the entry is gone where no page is served.
+ *
+ * `false` covers every "nowhere": no hosted account, an offline install, a server without the
+ * route, a read that refused, and the moment before the first answer. A 402 is the one non-2xx
+ * that means YES: the program refused this account, so a program exists — and the mint is the
+ * one route the lock leaves open, because the way back to paying may not be behind it.
  */
-export function useDesktopManageLink(accountDoor: boolean): string | null {
-  const [url, setUrl] = useState<string | null>(null);
+export function useDesktopManageOffer(accountDoor: boolean): ManageOffer {
+  const [offered, setOffered] = useState(false);
   useEffect(() => {
     /* NO ACCOUNT DOOR, NO ASK. A standalone install and one paired to another computer have no
        hosted account and no server holding this state, so asking would put a route on the wire
-       that nothing behind this door serves. Any URL an earlier door answered goes with it. */
+       that nothing behind this door serves. Any offer an earlier door made goes with it. */
     if (!accountDoor) {
-      setUrl(null);
+      setOffered(false);
       return;
     }
     let cancelled = false;
     void (async () => {
       try {
-        const res = await bridgeFetch(MANAGE_LINK_PATH, { method: "POST" });
-        if (cancelled || !res.ok) return;
-        const body = (await res.json()) as { url?: unknown };
-        // A URL is a non-empty STRING or it is nothing.
-        if (!cancelled && typeof body.url === "string" && body.url.length > 0) setUrl(body.url);
+        const res = await bridgeFetch(ACCOUNT_ACCESS_PATH);
+        if (cancelled) return;
+        if (res.status === ACCESS_REFUSED) {
+          setOffered(true);
+          return;
+        }
+        if (!res.ok) return;
+        const body = (await res.json()) as { metered?: unknown };
+        if (!cancelled) setOffered(body.metered === true);
       } catch {
-        /* Nowhere to send them, and none of these is something a person can act on here. */
+        /* A read that failed is not evidence a page exists, and settings is not where somebody
+           acts on it. */
       }
     })();
     return () => { cancelled = true; };
   }, [accountDoor]);
-  return url;
+  const withdrawManage = useCallback(() => { setOffered(false); }, []);
+  return { manageOffered: offered, withdrawManage };
 }
 
-export function DesktopSubscription({ url }: { url: string }) {
+/**
+ * Leave for the address the mint answered — the same exit the anchor this replaces had.
+ *
+ * An anchor IN the document and clicked, not `window.open` and not a navigation: the desktop's
+ * link interceptor is one capture-phase listener on the document, and it hands an http address
+ * to the platform's opener — the browser where the person is already signed in. The attributes
+ * are the ones the rendered anchor carried, so the build without that interceptor (the preview,
+ * which is granted no command) does what it did before: nothing, rather than taking the app's
+ * own window to a page it cannot come back from.
+ */
+function leaveFor(url: string): void {
+  const a = document.createElement("a");
+  a.href = url;
+  a.target = "_blank";
+  a.rel = "noopener noreferrer";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+}
+
+export function DesktopSubscription({ onNowhere }: { onNowhere: () => void }) {
   const t = useTranslations("settings");
+  const [busy, setBusy] = useState(false);
+  const [failed, setFailed] = useState(false);
+  /** The pane can be left mid-press; nothing may set state after that. */
+  const alive = useRef(true);
+  useEffect(() => () => { alive.current = false; }, []);
+
+  const press = useCallback(async () => {
+    setBusy(true);
+    setFailed(false);
+    try {
+      const res = await bridgeFetch(MANAGE_LINK_PATH, { method: "POST" });
+      // A 404 is the one refusal that is an ANSWER: there is no such page, so the pane goes.
+      // Everything else — the proxy's offline 503, a server that broke, a refused mint — is a
+      // sentence, because the page may well exist and the person asked for it.
+      if (!res.ok) {
+        if (!alive.current) return;
+        if (res.status === NO_MANAGE_SURFACE) onNowhere();
+        else setFailed(true);
+        return;
+      }
+      const body = (await res.json()) as { url?: unknown };
+      // A URL is a non-empty STRING or it is nothing, and nothing is the 404 by another route.
+      if (typeof body.url === "string" && body.url.length > 0) { leaveFor(body.url); return; }
+      if (alive.current) onNowhere();
+    } catch {
+      // On a MOUNT this was nothing a person could act on and was swallowed; on a PRESS it is
+      // the one thing they are owed, because they asked and something has to be said.
+      if (alive.current) setFailed(true);
+    } finally {
+      if (alive.current) setBusy(false);
+    }
+  }, [onNowhere]);
+
   return (
     <SettingsSection>
+      {failed ? <p className="acct-warn" role="alert">{t("subscriptionManageFailed")}</p> : null}
       <SettingsRow
         label={t("subscription")}
         control={
-          /* An ordinary anchor: `enableExternalLinks` is armed in this build, so the click is
-             intercepted and the address goes to the platform's own browser — where the person is
-             already signed in — rather than navigating this window. */
-          <a className="btn" href={url} target="_blank" rel="noopener noreferrer">
+          /* A BUTTON, not the anchor this row used to be: there is no address until the press
+             has been answered, and an anchor with nowhere to point is the control this pane
+             exists to avoid. `leaveFor` makes the anchor once there is somewhere to go. */
+          <button type="button" className="btn" disabled={busy} onClick={() => { void press(); }}>
             {t("subscriptionManage")}
-          </a>
+          </button>
         }
       />
     </SettingsSection>
