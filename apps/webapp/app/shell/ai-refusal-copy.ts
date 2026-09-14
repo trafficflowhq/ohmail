@@ -1,17 +1,12 @@
 /**
  * THE THREE AI REFUSALS, SAID IN THE READER'S LANGUAGE.
  *
- * The server's `message` is English, written for an operator reading a log. It was being
- * rendered verbatim: a German account saw "no AI actions remain on this account" on an otherwise
- * German screen, for a refusal that was not even true of it. What the client can act on is the
- * `code` — three of them, each a different, actionable fact — so the code selects the sentence
- * and the catalogue holds it.
- *
- * WHY ONLY THREE. Every other refusal keeps the server's own words, and that is not an oversight:
- * `suggest_unconfigured` ("this deployment has no AI classifier connected") is a fact about a
- * host, and re-deriving a taxonomy for it here is how somebody with an empty balance gets told
- * the model is down. These three are the ones every deployment can produce and every reader can
- * act on.
+ * The server's `message` is English written for a log and was being rendered verbatim — a German
+ * account read an English sentence about its own standing. The `code` is the actionable fact, so
+ * it selects the sentence and the catalogue holds it. Only three, because every other refusal
+ * keeps the server's own words: "this deployment has no AI classifier connected" is a fact about
+ * a host, and re-deriving a taxonomy for it is how somebody with an empty balance is told the
+ * model is down.
  */
 
 /** `error.code` → the key under the `aiRefusal` namespace. The whole mapping, as data. */
@@ -39,16 +34,10 @@ export function aiRefusalKey(err: unknown): string | null {
 /**
  * True for a refusal an ACCESS READ can lift — and false for the one it cannot.
  *
- * A card that said "no AI actions remain" at nine in the evening was still saying it at a
- * quarter to nine the next morning, on an account that had spent credits in between. What clears
- * a line has to be evidence about the same thing the line claims:
- *
- *  · `ai_unavailable` — a fault. Access saying AI is available on this account IS the evidence
- *    it has passed.
- *  · `ai_disabled` — the account's own switch. `aiEnabled: true` is that switch, read back.
- *  · `insufficient_credits` — an empty BALANCE, which no access read describes: the plan may
- *    permit AI while the balance is nil, so clearing on `aiEnabled: true` would erase a sentence
- *    that is still true. It clears on the next press, which is evidence about the balance.
+ * What clears a line must be evidence about the thing the line claims. `ai_unavailable` is a
+ * fault and `ai_disabled` is the account's switch: an access read describes both. An empty
+ * BALANCE it does not describe — a plan may permit AI while the balance is nil — so clearing
+ * that one on `aiEnabled: true` would erase a sentence still true. It clears on the next press.
  */
 export function clearedByAccess(err: unknown): boolean {
   const key = aiRefusalKey(err);
