@@ -1906,7 +1906,9 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
       return false;
     }
     const ok = (await Promise.all(parts)).every(Boolean);
-    toast(refuse(ok ? "toastMoved" : "liveSaveFailed", ...(ok ? [moveTargetLabel(dest)] : [])));
+    /* Two calls rather than one with a spread: each sentence is passed exactly its own arguments,
+       which is what `refusal.test.ts` reads out of this file's source. */
+    toast(ok ? refuse("toastMoved", moveTargetLabel(dest)) : refuse("liveSaveFailed"));
     return ok;
   };
 
