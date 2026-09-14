@@ -1,4 +1,4 @@
-import { and, asc, eq, gt, inArray, isNotNull, ne, sql } from "drizzle-orm";
+import { and, asc, eq, gt, inArray, isNotNull, isNull, ne } from "drizzle-orm";
 import {
   approvals, attachments, awayReplies, awayResponderSent, drafts, flagState, folderOps,
   folderState, mailboxCredentials, mailboxFolders, mailboxProfileMirror, messageBodies,
@@ -56,13 +56,17 @@ export async function sweepMailboxData(
   /* ── THE STAMP, FIRST ─────────────────────────────────────────────────────────────────────
    * `mailboxes.erased_at` before a single row goes, `deleteAccount`'s order one scope down: the
    * row SURVIVES this sweep as a tombstone, so it is the only thing a late writer can be refused
-   * by. `coalesce` keeps the first stamp on a retried erasure. Whichever side wins the row lock,
+   * by. `isNull` in the WHERE keeps the FIRST stamp on a retried erasure, and it is there rather
+   * than a `coalesce` cast because this file is loaded by the phone bundle, whose store has no
+   * `::timestamptz` — the dialect census refuses one. Whichever side wins the row lock,
    * a writer fencing on it either waits and sees the stamp, or holds its share and has its rows
    * taken by the deletes below.
    */
   await tx.update(mailboxes)
-    .set({ erasedAt: sql`coalesce(${mailboxes.erasedAt}, ${now.toISOString()}::timestamptz)` })
-    .where(and(eq(mailboxes.id, mailboxId), eq(mailboxes.accountId, accountId)));
+    .set({ erasedAt: now })
+    .where(and(
+      eq(mailboxes.id, mailboxId), eq(mailboxes.accountId, accountId), isNull(mailboxes.erasedAt),
+    ));
 
   // Subqueries, never materialized id lists: `account-deletion-service.ts` records what an id
   // list per message costs — one bind parameter per row against a collection with no ceiling, so
