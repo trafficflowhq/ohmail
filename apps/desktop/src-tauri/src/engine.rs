@@ -809,6 +809,12 @@ struct Shared {
     /// states so the window can name the wait ("replaying the log") instead of guessing at it.
     /// An identifier the UI maps to a sentence, never prose rendered as-is.
     boot_phase: Option<String>,
+    /// How far the phase above has got — `(applied, pending)`, as the engine announced it with the
+    /// phase, or `None` for a phase that counts nothing (every one but the schema upgrade) and for
+    /// an engine built before the frame carried numbers. Belongs to the phase it arrived with:
+    /// written and cleared on exactly the lines `boot_phase` is, so a count can never outlive the
+    /// sentence it qualifies.
+    boot_progress: Option<(u64, u64)>,
     /// How the last run ended, as the operating system reported it. An exit status exists only
     /// for a process that has terminated and been reaped, which makes this the one piece of
     /// evidence about a dead engine that does not come from this file's own bookkeeping.
@@ -894,6 +900,7 @@ fn new_shared(state: EngineState, finished: bool) -> Shared {
         pid: None,
         ready: None,
         boot_phase: None,
+        boot_progress: None,
         last_exit: None,
         fault: None,
         first_error: None,
@@ -1739,6 +1746,7 @@ fn supervise(inner: Arc<Inner>, launch: Launch) {
             s.pid = Some(child.id());
             s.ready = None;
             s.boot_phase = None;
+            s.boot_progress = None;
             s.fault = None;
             // A host signal belongs to one run — a restart must not report the last child's
             // listener as this one's. The LAN slot follows the same rule, and so does the error
@@ -2135,7 +2143,21 @@ fn accept_header(header: &[u8], inner: &Arc<Inner>) -> Result<Answer, String> {
                 && phase.len() <= 64
                 && phase.bytes().all(|b| b.is_ascii_lowercase() || b == b'_')
             {
-                inner.shared.lock().expect("engine state").boot_phase = Some(phase.to_string());
+                // The COUNT the phase came with, held to the same rule as the phase itself: two
+                // whole numbers the window renders as "(3 of 12)", or nothing. A pair that does
+                // not describe a pass in progress (no total, or more done than there are) is a
+                // frame from an engine this shell does not know, so the phase stands alone rather
+                // than captioned with a number nobody can act on.
+                let whole = |name: &str| parsed.get(name).and_then(serde_json::Value::as_u64);
+                let progress = match (whole("applied"), whole("pending")) {
+                    (Some(applied), Some(pending)) if pending > 0 && applied <= pending => {
+                        Some((applied, pending))
+                    }
+                    _ => None,
+                };
+                let mut s = inner.shared.lock().expect("engine state");
+                s.boot_phase = Some(phase.to_string());
+                s.boot_progress = progress;
             }
         }
         return Ok(Answer::None);
@@ -2175,6 +2197,7 @@ fn accept_header(header: &[u8], inner: &Arc<Inner>) -> Result<Answer, String> {
         // The boot is over, so its narration is too — a stale phase surviving into a later
         // `restarting` would name a wait that is not the one happening.
         s.boot_phase = None;
+        s.boot_progress = None;
     }
     // The mailbox id, and nothing else. Not the token, and not the data directory: a directory
     // under the user's home carries their account name, and the shell that set it already knows.
@@ -3230,9 +3253,9 @@ fn install_key(app_data: Option<&Path>) -> Result<String, String> {
 /// states and matching on prose is how a translated string becomes load-bearing.
 #[cfg(feature = "local-engine")]
 fn status_json(engine: &Engine) -> serde_json::Value {
-    let (state, ready, boot_phase) = {
+    let (state, ready, boot_phase, boot_progress) = {
         let s = engine.inner.shared.lock().expect("engine state");
-        (s.state.clone(), s.ready.clone(), s.boot_phase.clone())
+        (s.state.clone(), s.ready.clone(), s.boot_phase.clone(), s.boot_progress)
     };
     let mut out = match &state {
         EngineState::Absent { looked_for } => {
@@ -3260,6 +3283,12 @@ fn status_json(engine: &Engine) -> serde_json::Value {
     if matches!(state, EngineState::Starting { .. } | EngineState::Restarting { .. }) {
         if let (Some(phase), Some(object)) = (boot_phase, out.as_object_mut()) {
             object.insert("bootPhase".into(), phase.into());
+            // Inside the phase's own guard, because the count is half of one sentence: a window
+            // that read "3 of 12" without the phase it belongs to would caption the wrong wait.
+            if let Some((applied, pending)) = boot_progress {
+                object.insert("bootApplied".into(), applied.into());
+                object.insert("bootPending".into(), pending.into());
+            }
         }
     }
     if let (Some(ready), Some(object)) = (ready, out.as_object_mut()) {

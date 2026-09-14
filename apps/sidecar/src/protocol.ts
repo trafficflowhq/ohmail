@@ -115,6 +115,14 @@ export interface PhaseHeader extends Record<string, unknown> {
   v: number;
   t: "phase";
   phase: string;
+  /**
+   * How far a countable phase has got — `migrating` and only it, absent everywhere else and on
+   * every engine built before this existed. Two numbers rather than a word, because the window
+   * renders "(3 of 12)" and a shell that does not know them renders the same sentence it always
+   * did; `applied` may equal `pending`, which is the pass finishing.
+   */
+  applied?: number;
+  pending?: number;
 }
 
 export type AnyHeader = RequestHeader | ResponseHeader | ErrorHeader | ReadyHeader | PhaseHeader;

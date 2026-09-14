@@ -3378,6 +3378,8 @@
     "bootOpeningStore": "Dein lokaler Postspeicher wird geöffnet…",
     "bootReplayingWal": "Letzte Änderungen werden nachgezogen…",
     "bootMigrating": "Dein lokaler Postspeicher wird aktualisiert…",
+    "bootMigratingOf": "Dein lokaler Postspeicher wird aktualisiert… ({applied} von {total})",
+    "bootMigratingSlow": "Bei einem großen Postfach kann das einige Minuten dauern.",
     "bootCompacting": "Dein lokaler Postspeicher wird verdichtet — einmalige Wartung…",
     "errorUnknown": "Etwas ist schiefgegangen und hat nicht gesagt, was.",
     "errorRefused": "Die Anfrage wurde abgelehnt ({status}).",

@@ -74,9 +74,15 @@ export function claimStdout(): Writable {
  * would corrupt the stream. The emitter is handed only to the constructors, which return before the
  * host is built. Best-effort both ways — a write failure means the parent is gone, an old shell skips it.
  */
-export function bootPhaseEmitter(stdout: Writable): (phase: string) => void {
-  return (phase: string): void => {
-    const header: PhaseHeader = { v: PROTOCOL_VERSION, t: "phase", phase };
+export function bootPhaseEmitter(
+  stdout: Writable,
+): (phase: string, progress?: { applied: number; pending: number }) => void {
+  return (phase: string, progress?: { applied: number; pending: number }): void => {
+    // The counts ride the frame only when the phase has them (`migrating`), so an ordinary
+    // phase's bytes are what they were and a shell that skips them loses nothing.
+    const header: PhaseHeader = progress
+      ? { v: PROTOCOL_VERSION, t: "phase", phase, applied: progress.applied, pending: progress.pending }
+      : { v: PROTOCOL_VERSION, t: "phase", phase };
     try {
       stdout.write(encodeFrame(header));
     } catch {

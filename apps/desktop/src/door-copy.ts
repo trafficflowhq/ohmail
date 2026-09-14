@@ -566,6 +566,16 @@ const EN = {
   bootOpeningStore: "Opening your local mail store…",
   bootReplayingWal: "Replaying recent changes…",
   bootMigrating: "Updating your local mail store…",
+  /* THE SAME SENTENCE, COUNTING. The engine names each migration as it starts it, so the window
+     can say how far along the upgrade is — and the number is the difference between a wait a
+     person can sit through and a still card they take for a hang (measured: 3 min 58 s behind the
+     line above, reported as "stuck"). Only where there is more than one to count; one migration
+     has nothing to say that the sentence does not. */
+  bootMigratingOf: (applied: number, total: number) =>
+    `Updating your local mail store… (${applied} of ${total})`,
+  /* Said UNDER the line, and only once the wait has proved itself (five seconds in the phase).
+     Saying it immediately would promise a long wait to every launch that has none. */
+  bootMigratingSlow: "This can take several minutes on a large mailbox.",
   bootCompacting: "Compacting your local mail store — one-time maintenance…",
   errorUnknown: "Something went wrong and said nothing about what.",
   errorRefused: (status: string) => `The request was refused (${status}).`,
@@ -637,6 +647,10 @@ export const DOOR_COPY: typeof EN = liveCopy("desktopDoor", EN, {
   installSignOutWhy: ["machine"],
   errorRefused: ["status"],
   notifyNewMail: ["count"],
+  /* TWO VALUES, in the ARGUMENT order of the formatter above — the same rule as `connStaleWhy`
+     and the takeover lines: a translation may put the total first and this list is what keeps
+     each number attached to its own hole. */
+  bootMigratingOf: ["applied", "total"],
 });
 
 /**

@@ -5,7 +5,9 @@ import {
   resolveSession, syncService, ServiceError,
   type EntityType, type ServiceContext,
 } from "@trafficflow/services/mail";
-import { openLocalDb, type LocalDb, type LocalDbOpenPhase, type OpenLocalDb } from "./db.js";
+import {
+  openLocalDb, type LocalDb, type LocalDbOpenPhase, type MigrationProgress, type OpenLocalDb,
+} from "./db.js";
 import { ensureLocalWorld, mintLaunchSession, type LocalWorld } from "./identity.js";
 import {
   createCloudAuth, loadSealedTokens, sealTokens, type CloudAuth, type CloudTokens,
@@ -100,7 +102,7 @@ export interface CloudSidecarConfig {
    * Told what the boot is about to spend its time on — the same narration, and the same consumer
    * (`main.ts` turning it into `phase` frames), as the local engine's. See `SidecarConfig.onPhase`.
    */
-  onPhase?: (phase: CloudBootPhase) => void;
+  onPhase?: (phase: CloudBootPhase, progress?: MigrationProgress) => void;
 }
 
 /** The cloud door's boot phases. Identical to the local door's: the two share `openLocalDb`. */
@@ -1681,6 +1683,12 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
       adoptBaselineMs: opened.timings.adoptBaselineMs,
       migrateMs: opened.timings.migrateMs,
       compactMs: opened.timings.compactMs,
+      // The same four the local door carries, for the reason the line itself is on both doors:
+      // this door opens the same store, and the upgrade it waits for is the same upgrade.
+      migrationsPending: opened.migrations?.pending ?? null,
+      migrationsApplied: opened.migrations?.applied ?? null,
+      slowestMigration: opened.migrations?.slowest?.migration ?? null,
+      slowestMs: opened.migrations?.slowest?.ms ?? null,
       worldMs,
       totalReadyMs: Date.now() - tBoot,
     });

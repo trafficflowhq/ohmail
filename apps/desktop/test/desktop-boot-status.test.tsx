@@ -7,7 +7,7 @@ import { ThemeProvider, ToastHost } from "@ohmail/ui";
 
 import messages from "../../webapp/messages/en.json";
 import { DesktopGate } from "../src/DesktopGate.js";
-import { bootSentence } from "../src/BootStatus.js";
+import { bootSentence, LONG_PHASE_MS } from "../src/BootStatus.js";
 import type { EngineStatus } from "../src/bridge-fetch.js";
 
 /**
@@ -182,5 +182,53 @@ describe("what the boot line says — the engine's phase, mapped, never echoed",
     for (const stranger of [undefined, null, "", "preparing", "nonsense", "REPLAYING_WAL"]) {
       expect(bootSentence(stranger), `phase ${String(stranger)}`).toBe("Opening your mailbox…");
     }
+  });
+});
+
+/**
+ * ══ A WAIT WITH A NUMBER ON IT ════════════════════════════════════════════════════════════════
+ *
+ * The launch this pins: a 1.2 GB store spent 3 min 58 s applying twelve migrations behind
+ * "Updating your local mail store…", still, and was reported as stuck. The engine now says which
+ * migration it is on and how many there are, and the window counts — and, once the wait has
+ * proved itself, says out loud that it can take minutes.
+ */
+describe("the store upgrade counts, and says when it may take minutes", () => {
+  it("counts once there is more than one, and never invents a number", () => {
+    expect(bootSentence("migrating", { applied: 3, pending: 12 }))
+      .toBe("Updating your local mail store… (3 of 12)");
+    expect(bootSentence("migrating", { applied: 0, pending: 12 }))
+      .toBe("Updating your local mail store… (0 of 12)");
+    // One migration has nothing to say that the sentence does not, and a count of one reads as a
+    // stall; an engine that sent no numbers gets the sentence this window has always shown.
+    expect(bootSentence("migrating", { applied: 0, pending: 1 })).toBe("Updating your local mail store…");
+    expect(bootSentence("migrating", {})).toBe("Updating your local mail store…");
+    expect(bootSentence("migrating")).toBe("Updating your local mail store…");
+    // The count belongs to the one phase that has one.
+    expect(bootSentence("opening_store", { applied: 3, pending: 12 }))
+      .toBe("Opening your local mail store…");
+  });
+
+  it("the count reaches the window from the engine's own status", async () => {
+    shell({ ...STARTING, bootPhase: "migrating", bootApplied: 3, bootPending: 12 });
+    await render();
+    expect(mountPoint!.textContent).toContain("Updating your local mail store… (3 of 12)");
+  });
+
+  it("the several-minutes sentence arrives only once the wait has, and belongs to this phase", async () => {
+    shell({ ...STARTING, bootPhase: "migrating", bootApplied: 1, bootPending: 12 });
+    await render();
+    expect(mountPoint!.textContent, "promised a long wait before there was one")
+      .not.toContain("This can take several minutes on a large mailbox.");
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(LONG_PHASE_MS); });
+    expect(mountPoint!.textContent).toContain("This can take several minutes on a large mailbox.");
+  });
+
+  it("a phase that is not the upgrade never says it, however long it lasts", async () => {
+    shell({ ...STARTING, bootPhase: "opening_store" });
+    await render();
+    await act(async () => { await vi.advanceTimersByTimeAsync(LONG_PHASE_MS * 4); });
+    expect(mountPoint!.textContent).not.toContain("several minutes");
   });
 });

@@ -310,6 +310,13 @@ export interface EngineStatus {
    * which is why every consumer needs a wording for "no phase yet".
    */
   bootPhase?: string;
+  /**
+   * How far a countable boot phase has got — the schema upgrade's `applied` of `pending`, as the
+   * engine announced it. Absent on every other phase, on an engine built before it existed, and
+   * on a shell that could not read the numbers; the boot line then says what it always said.
+   */
+  bootApplied?: number;
+  bootPending?: number;
   reason?: string;
   missing?: string[];
   lookedFor?: string;

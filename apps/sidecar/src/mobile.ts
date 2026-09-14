@@ -528,6 +528,10 @@ export async function openPhoneStore(
     dataDir: "",
     pgDataDir: "",
     timings: { pgliteOpenMs: 0, adoptBaselineMs: 0, migrateMs: 0, compactMs: 0 },
+    /* NO MIGRATOR RAN HERE, said rather than answered with zeros. The desktop's census counts the
+       journal entries this open applied; the phone's schema is the platform's, brought up to date
+       outside this handle, so a `0` here would be a reading nobody took. See `OpenLocalDb`. */
+    migrations: null,
     // A write-ahead checkpoint is a PGlite concept the engine calls per cycle and behind the drain.
     // On this store the journal is the platform's and there is nothing for a caller to reclaim, so
     // this answers zero rather than pretending to have flushed something.

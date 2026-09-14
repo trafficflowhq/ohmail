@@ -155,7 +155,9 @@ import { createLocalAi, type LocalAi } from "./ai-provider.js";
 import { localAiRoutes } from "./ai-routes.js";
 import { localAutoSuggestRoutes } from "./auto-suggest-routes.js";
 import { dialect, dialectOf } from "@trafficflow/db/dialect";
-import { openLocalDb, type LocalDb, type LocalDbOpenPhase, type OpenLocalDb } from "./db.js";
+import {
+  openLocalDb, type LocalDb, type LocalDbOpenPhase, type MigrationProgress, type OpenLocalDb,
+} from "./db.js";
 import { inStoreLane } from "./store-lanes.js";
 
 /**
@@ -164,7 +166,7 @@ import { inStoreLane } from "./store-lanes.js";
  */
 export type OpenLocalDbFn = (
   dataDir: string,
-  opts: { log?: Diagnostic; onPhase?: (phase: LocalDbOpenPhase) => void },
+  opts: { log?: Diagnostic; onPhase?: (phase: LocalDbOpenPhase, progress?: MigrationProgress) => void },
 ) => Promise<OpenLocalDb>;
 import {
   endLegacyOrganizerPauses, ensureLocalWorld, loadLocalRoster, loadUnattachedLocalRoster,
@@ -387,7 +389,7 @@ export interface SidecarConfig {
    * Best-effort and never awaited: a boot must not be able to fail, or slow, because somebody is
    * watching it.
    */
-  onPhase?: (phase: BootPhase) => void;
+  onPhase?: (phase: BootPhase, progress?: MigrationProgress) => void;
   /**
    * Host mode — this install serves its owner's other devices (Phase 3). Armed, three things
    * exist that otherwise do not: the stdio door gains the window-only pairing mint
@@ -6177,6 +6179,14 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
       adoptBaselineMs: opened.timings.adoptBaselineMs,
       migrateMs: opened.timings.migrateMs,
       compactMs: opened.timings.compactMs,
+      /* WHICH MIGRATION PAID, beside the pass it cost. `migrateMs` alone said 237 834 on a 1.2 GB
+         store and named nothing inside it. `null` — not `0` — where the store did not migrate here
+         at all (the phone's, whose schema is the platform's): "none pending" and "not this open's
+         business" are different answers and a reader must be able to tell them apart. */
+      migrationsPending: opened.migrations?.pending ?? null,
+      migrationsApplied: opened.migrations?.applied ?? null,
+      slowestMigration: opened.migrations?.slowest?.migration ?? null,
+      slowestMs: opened.migrations?.slowest?.ms ?? null,
       worldMs,
       totalReadyMs: Date.now() - tBoot,
     });

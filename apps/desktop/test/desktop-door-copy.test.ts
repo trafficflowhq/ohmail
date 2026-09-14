@@ -125,9 +125,14 @@ describe("with a German catalogue set, the standalone window answers German", ()
     expect(DOOR_COPY.notifyNewMail(1)).toBe("Eine neue Nachricht für dich.");
     expect(DOOR_COPY.notifyNewMail(4)).toBe("4 neue Nachrichten für dich.");
     expect(DOOR_COPY.errorRefused("503")).toBe("Die Anfrage wurde abgelehnt (503).");
+    /* TWO VALUES, and the order is the FORMATTER's — a German sentence free to reorder them is
+       exactly what the `params` list defends, so both numbers are asserted in their own holes. */
+    expect(DOOR_COPY.bootMigratingOf(3, 12))
+      .toBe("Dein lokaler Postspeicher wird aktualisiert… (3 von 12)");
   });
 
   it("the same ICU messages render in English when no catalogue is set", () => {
+    expect(DOOR_COPY.bootMigratingOf(3, 12)).toBe("Updating your local mail store… (3 of 12)");
     expect(DOOR_COPY.doorLocalName("PC")).toBe("On this PC");
     expect(DOOR_COPY.notifyNewMail(1)).toBe("One new message for you.");
     expect(DOOR_COPY.notifyNewMail(4)).toBe("4 new messages for you.");

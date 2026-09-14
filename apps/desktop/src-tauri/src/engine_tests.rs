@@ -129,6 +129,16 @@ if (mode === "phased") {
   frame({ v: 1, t: "phase", phase: "NOT_A_PHASE!" });
   frame({ v: 1, t: "phase", phase: "replaying_wal" });
   setTimeout(ready, 150);
+} else if (mode === "counted" || mode === "counted-bad") {
+  // THE SCHEMA UPGRADE'S OWN COUNT, which the window renders as "(3 of 12)" instead of a still
+  // sentence. `counted-bad` is the same frame with a pair that describes no pass in progress —
+  // the shell must keep the phase and drop the numbers. `ready` is far enough out that the status
+  // under test is stable for the whole of it: a test that has to catch a state before the next
+  // frame replaces it is a test about scheduling. The stdin-EOF contract ends the process.
+  frame(mode === "counted"
+    ? { v: 1, t: "phase", phase: "migrating", applied: 3, pending: 12 }
+    : { v: 1, t: "phase", phase: "migrating", applied: 13, pending: 12 });
+  setTimeout(ready, 30_000);
 } else {
   ready();
 }
@@ -1565,6 +1575,39 @@ fn a_starting_engine_names_its_phase_and_a_serving_one_carries_none() {
     assert!(!after.contains("bootPhase"), "the narration outlived the boot: {after}");
 
     engine.stop();
+}
+
+#[test]
+fn the_schema_upgrade_carries_its_count_and_a_pair_that_says_nothing_carries_none() {
+    // The launch behind this: a large store spent minutes applying migrations behind one
+    // motionless sentence. The engine now says how far it has got with the phase, and the window
+    // renders "(3 of 12)" — so the two numbers have to reach `engine_status` beside the phase they
+    // qualify, and a pair that cannot describe a pass in progress must reach nothing at all: it
+    // came off a pipe, it ends up in a status object the webview renders from, and a count is only
+    // worth showing when it is one.
+    let f = Fixture::new("counted");
+    let engine = Engine::spawn_with(f.launch("counted"), quick());
+    wait_for(
+        || status_json(&engine).to_string().contains("\"bootApplied\":3"),
+        Duration::from_secs(10),
+        "the migration count to reach the status of a starting engine",
+    );
+    let printed = status_json(&engine).to_string();
+    assert!(printed.contains("\"bootPhase\":\"migrating\""), "{printed}");
+    assert!(printed.contains("\"bootPending\":12"), "{printed}");
+    engine.stop();
+
+    let g = Fixture::new("counted-bad");
+    let refused = Engine::spawn_with(g.launch("counted-bad"), quick());
+    wait_for(
+        || status_json(&refused).to_string().contains("\"bootPhase\":\"migrating\""),
+        Duration::from_secs(10),
+        "the phase of the engine whose count says nothing",
+    );
+    let after = status_json(&refused).to_string();
+    assert!(!after.contains("bootApplied"), "a count larger than its own total crossed: {after}");
+    assert!(!after.contains("bootPending"), "{after}");
+    refused.stop();
 }
 
 #[test]

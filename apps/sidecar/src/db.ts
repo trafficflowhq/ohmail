@@ -4,8 +4,9 @@ import { uptime as osUptime } from "node:os";
 import { PGlite, type Transaction as PgliteTransaction } from "@electric-sql/pglite";
 import { drizzle, type PgliteDatabase } from "drizzle-orm/pglite";
 import { migrate } from "drizzle-orm/pglite/migrator";
+import { readMigrationFiles, type MigrationConfig, type MigrationMeta } from "drizzle-orm/migrator";
 import { mailSchema } from "@trafficflow/db/mail";
-import { MAIL_JOURNAL, adoptBaseline, adoptReissuedOriginals } from "@trafficflow/db/journal";
+import { MAIL_JOURNAL, adoptBaseline, adoptReissuedOriginals, readJournalOf } from "@trafficflow/db/journal";
 import { brandDialect } from "@trafficflow/db/dialect";
 import { createStoreScheduler, currentStoreLane, scheduleStoreLanes, type StoreLaneCensus } from "./store-lanes.js";
 import type { Diagnostic } from "./log.js";
@@ -104,6 +105,15 @@ export interface OpenLocalDb {
   /** What this open cost, by phase. See {@link OpenTimings}. */
   timings: OpenTimings;
   /**
+   * What the schema upgrade was — how many ran, and which one paid. See {@link MigrationCensus}.
+   *
+   * `null` — and REQUIRED rather than optional, exactly as {@link laneCensus} is — for a store
+   * this build does not migrate (the phone's, whose SQLite schema is the platform's). "Nothing was
+   * pending" and "no migrator ran here" are different facts, and a boot line reading `0` for the
+   * second would be a measurement nobody took.
+   */
+  migrations: MigrationCensus | null;
+  /**
    * Take a write-ahead-log checkpoint now, returning how many segments it reclaimed. Runs on its own
    * interval while the database is open; exposed because a periodic side effect nothing can call is
    * a periodic side effect nothing can check. See {@link checkpointWal}.
@@ -174,6 +184,42 @@ export type LocalDbOpenPhase =
  */
 export const REPLAY_PHASE_BYTES = 256 * 1024 * 1024;
 
+/**
+ * How far the `migrating` phase has got — the second argument of {@link OpenLocalDbOptions.onPhase},
+ * and the only phase that carries one.
+ *
+ * A SECOND ARGUMENT rather than a phase object, because the phase is a wire token with a
+ * hand-written map at the far end (`BootStatus.tsx`) and four callers pass the narration
+ * straight through: a function that ignores the extra value still satisfies the type, so the
+ * shells that do not want it did not have to change.
+ */
+export interface MigrationProgress {
+  /** Migrations finished. `0` before the first one, `pending` after the last. */
+  applied: number;
+  /** How many this open has to apply. Fixed before the first one runs, so it is a real total. */
+  pending: number;
+}
+
+/** What the migrator did, for the boot line. See {@link SLOW_MIGRATION_MS}. */
+export interface MigrationCensus {
+  /** How many the journal owed this store when it opened. `0` on an ordinary launch. */
+  pending: number;
+  /** How many ran. Equal to `pending` unless the open threw. */
+  applied: number;
+  /** The one that cost the most, named — `null` when none ran. */
+  slowest: { migration: string; ms: number } | null;
+}
+
+/**
+ * A migration at least this slow earns a line of its own (`migration_applied`, naming its journal
+ * tag and what it cost).
+ *
+ * An ordinary upgrade's whole pass is 25–43 ms, so the floor keeps the log at zero lines there and
+ * only speaks where a person waited — a 1.2 GB store spent 3 min 58 s in one pass and the log
+ * could name the pass, not the migration inside it.
+ */
+export const SLOW_MIGRATION_MS = 1_000;
+
 /** Everything optional about opening the local database. */
 export interface OpenLocalDbOptions {
   log?: Diagnostic;
@@ -181,9 +227,13 @@ export interface OpenLocalDbOptions {
   checkpointIntervalMs?: number;
   /**
    * Told which {@link LocalDbOpenPhase} the open is entering, just before it does. Best-effort
-   * narration for a window that is waiting; never awaited and never load-bearing.
+   * narration for a window that is waiting; never awaited and never load-bearing. `migrating`
+   * arrives once per migration with its {@link MigrationProgress}, which is what lets the window
+   * count instead of spin; every other phase arrives once with none.
    */
-  onPhase?: (phase: LocalDbOpenPhase) => void;
+  onPhase?: (phase: LocalDbOpenPhase, progress?: MigrationProgress) => void;
+  /** The {@link SLOW_MIGRATION_MS} floor, injectable so a test can drive both sides of it. */
+  slowMigrationFloorMs?: number;
 }
 
 /**
@@ -377,6 +427,113 @@ export function openPhaseFor(dataDir: string): Exclude<LocalDbOpenPhase, "migrat
   if (!existsSync(join(pgDataDir, "PG_VERSION"))) return "creating_store";
   if (walBytes(pgDataDir) >= REPLAY_PHASE_BYTES) return "replaying_wal";
   return "opening_store";
+}
+
+/** The migrator config both paths below take — the mail journal's folder and its pinned table. */
+const MAIL_MIGRATION_CONFIG = {
+  migrationsFolder: MAIL_JOURNAL.dir,
+  migrationsSchema: MAIL_JOURNAL.migrationsSchema,
+};
+
+/**
+ * The migrator, reachable ONE MIGRATION AT A TIME — `drizzle-orm/pglite/migrator`'s own `migrate`
+ * is `dialect.migrate(readMigrationFiles(config), session, config)`, and the pair it reads off the
+ * database object is marked `@internal` in the published types rather than absent. Named here, and
+ * ABSENCE IS A SUPPORTED STATE: a drizzle upgrade that moves it takes the narration away
+ * ({@link applyMigrations} falls back to the whole-pass call), never the boot.
+ */
+interface StepwiseMigrator {
+  dialect?: {
+    migrate?: (
+      migrations: MigrationMeta[],
+      session: unknown,
+      config: MigrationConfig,
+    ) => Promise<void>;
+  };
+  session?: unknown;
+}
+
+/**
+ * The watermark drizzle itself migrates against: the highest `created_at` in the journal's own
+ * ledger, or `null` when the table does not exist yet (a first launch). Read with PGlite directly
+ * — the same route {@link reclaimBodyBloat} takes — because this runs before anything has the
+ * handle and a `select` is not worth a schema import.
+ */
+async function migratedThrough(client: PGlite, migrationsSchema: string): Promise<number | null> {
+  const present = await client.query<{ present: boolean }>(
+    `SELECT to_regclass($1) IS NOT NULL AS present`,
+    [`${migrationsSchema}.__drizzle_migrations`],
+  );
+  if (present.rows[0]?.present !== true) return null;
+  // The identifier is this module's own pinned constant (`journal-specs.ts`), never user input.
+  const last = await client.query<{ last: string | null }>(
+    `SELECT max(created_at)::text AS last FROM "${migrationsSchema}"."__drizzle_migrations"`,
+  );
+  const raw = last.rows[0]?.last;
+  return raw == null ? null : Number(raw);
+}
+
+/**
+ * Bring the schema up to date, one migration per transaction, saying so as it goes.
+ *
+ * WHY ONE AT A TIME. `PgDialect.migrate` wraps the whole pending set in a single transaction, so
+ * nothing outside it can be told which migration is running or what it cost — and on the store
+ * that made this necessary (1.2 GB, twelve migrations, 3 min 58 s) the window said one motionless
+ * sentence for four minutes and the log named the pass, not the payer. Per migration, the pending
+ * set is still drizzle's (`created_at > watermark`, its own rule, read once before the first one),
+ * every statement and every ledger row is still drizzle's own code, and the ORDER is the journal's.
+ * What changes is the commit boundary: a launch killed mid-pass now keeps the migrations that
+ * finished and resumes at the next one, where before it repeated the whole wait.
+ */
+async function applyMigrations(
+  db: LocalDb,
+  client: PGlite,
+  opts: Pick<OpenLocalDbOptions, "log" | "onPhase" | "slowMigrationFloorMs">,
+): Promise<MigrationCensus> {
+  const entries = readJournalOf(MAIL_JOURNAL);
+  const through = await migratedThrough(client, MAIL_JOURNAL.migrationsSchema);
+  const pending = entries.filter((e) => through === null || e.when > through);
+  const stepwise = db as unknown as StepwiseMigrator;
+  const step = stepwise.dialect?.migrate;
+
+  // The ordinary launch (nothing pending) and the launch a drizzle upgrade left us unable to
+  // narrate take the SAME call this file always made — including the schema and ledger table an
+  // empty pass still creates on a first launch.
+  if (pending.length === 0 || typeof step !== "function") {
+    opts.onPhase?.("migrating");
+    await migrate(db, MAIL_MIGRATION_CONFIG);
+    return { pending: pending.length, applied: pending.length, slowest: null };
+  }
+
+  const metas = new Map(readMigrationFiles(MAIL_MIGRATION_CONFIG).map((m) => [m.folderMillis, m]));
+  const floorMs = opts.slowMigrationFloorMs ?? SLOW_MIGRATION_MS;
+  let slowest: MigrationCensus["slowest"] = null;
+  let applied = 0;
+  for (const entry of pending) {
+    const meta = metas.get(entry.when);
+    // A journal entry whose file the migrator did not read is not a case to route around: hand
+    // the whole pass back to drizzle, which throws the message that names the missing file.
+    if (!meta) {
+      opts.onPhase?.("migrating");
+      await migrate(db, MAIL_MIGRATION_CONFIG);
+      return { pending: pending.length, applied: pending.length, slowest };
+    }
+    opts.onPhase?.("migrating", { applied, pending: pending.length });
+    const began = Date.now();
+    await step.call(stepwise.dialect, [meta], stepwise.session, MAIL_MIGRATION_CONFIG);
+    const ms = Date.now() - began;
+    applied += 1;
+    if (slowest === null || ms > slowest.ms) slowest = { migration: entry.tag, ms };
+    if (ms >= floorMs) {
+      opts.log?.("migration_applied", {
+        migration: entry.tag,
+        totalMs: ms,
+        reason: "a schema upgrade a person waited for, named so the next slow launch can be read",
+      });
+    }
+  }
+  opts.onPhase?.("migrating", { applied, pending: pending.length });
+  return { pending: pending.length, applied, slowest };
 }
 
 /**
@@ -716,12 +873,10 @@ export async function openLocalDb(dataDir: string, opts: OpenLocalDbOptions = {}
     const tAdopt = Date.now();
     await adoptBaseline(db, MAIL_JOURNAL);
     const adoptBaselineMs = Date.now() - tAdopt;
-    opts.onPhase?.("migrating");
     const tMigrate = Date.now();
-    await migrate(db, {
-      migrationsFolder: MAIL_JOURNAL.dir,
-      migrationsSchema: MAIL_JOURNAL.migrationsSchema,
-    });
+    // The phase — and, per migration, how far it has got — is announced from inside, because only
+    // there is the pending set known. See {@link applyMigrations}.
+    const migrations = await applyMigrations(db, client, opts);
     // AFTER the pass, exactly as the server runner orders it: a journal entry that exists
     // twice (an original plus its reissue) owes the original's bookkeeping row wherever only
     // the reissue could run — a local mirror that migrated in the skip window is that
@@ -759,6 +914,7 @@ export async function openLocalDb(dataDir: string, opts: OpenLocalDbOptions = {}
       dataDir,
       pgDataDir,
       timings: { pgliteOpenMs, adoptBaselineMs, migrateMs, compactMs },
+      migrations,
       checkpoint,
       storeBytes: () => storeHeapBytes(client),
       laneCensus: () => lanes.census(),

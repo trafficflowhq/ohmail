@@ -3378,6 +3378,8 @@
     "bootOpeningStore": "Opening your local mail store…",
     "bootReplayingWal": "Replaying recent changes…",
     "bootMigrating": "Updating your local mail store…",
+    "bootMigratingOf": "Updating your local mail store… ({applied} of {total})",
+    "bootMigratingSlow": "This can take several minutes on a large mailbox.",
     "bootCompacting": "Compacting your local mail store — one-time maintenance…",
     "errorUnknown": "Something went wrong and said nothing about what.",
     "errorRefused": "The request was refused ({status}).",

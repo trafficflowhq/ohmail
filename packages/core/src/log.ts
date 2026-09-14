@@ -207,6 +207,12 @@ export const ALLOWED_FIELDS: readonly string[] = [
   // …and `compactMs` rides `boot_phases` beside the other phase timings — a `Date.now()` delta
   // over the same pass, named for the same reason the attach-phase timings are.
   "compactMs",
+  // The local store's schema upgrade, named. `migrateMs` above says the pass took four minutes;
+  // these say how many migrations that was and WHICH one paid — `migration` and
+  // `slowestMigration` carry a journal TAG (`0091_…`, this repository's own filename), never a
+  // mailbox, an address or a row. Without them the only honest answer to "why was the launch
+  // four minutes" is the total, which names nothing. NOT `tag`, which redacts on an exact match.
+  "migrationsPending", "migrationsApplied", "slowestMigration", "migration",
   // The sender-name/recipients backfill's three counters, added WITH the call sites: `scanned`
   // (candidate rows read), `fillable` (rows whose stored headers can supply a value) and
   // `written` (rows the guarded UPDATE took) — integers accumulated from local counters,

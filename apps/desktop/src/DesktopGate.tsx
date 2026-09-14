@@ -638,7 +638,7 @@ export function DesktopGate() {
     return (
       <div className="gate gate-boot">
         <BootSkeleton active rail />
-        <BootStatus phase={status?.bootPhase} />
+        <BootStatus phase={status?.bootPhase} applied={status?.bootApplied} pending={status?.bootPending} />
       </div>
     );
   }
@@ -806,7 +806,7 @@ export function DesktopGate() {
     return (
       <div className="gate gate-boot">
         <BootSkeleton active rail />
-        <BootStatus phase={status?.bootPhase} />
+        <BootStatus phase={status?.bootPhase} applied={status?.bootApplied} pending={status?.bootPending} />
       </div>
     );
   }
