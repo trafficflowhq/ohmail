@@ -5834,14 +5834,17 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
       const standDownAfterFailedResume = async (): Promise<void> => {
         if (timer) { clearTimeout(timer); timer = null; }
         handedBack = true;
-        if (leaseNonce !== null || leasePendingNonce !== null) {
-          await releaseOwnClaim(
-            adapter, installId, mb.id, { current: leaseNonce, pending: leasePendingNonce }, log,
-            "this install could not finish starting and gives the claim back; if it could not be "
-              + "removed it ages out of ohmail/_meta on its own and another install takes the "
-              + "mailbox then",
-          );
-        }
+        /* AND IT GIVES UP ONLY WHAT IT TOOK. A resume that failed before the gate armed a nonce
+           wrote no claim, so there is nothing to release and `claimed` — the person's INSTRUCTION,
+           set from consent and the row — is not this failure's to clear. Clearing it would spend a
+           consent on a cycle that never reached the mail server. */
+        if (leaseNonce === null && leasePendingNonce === null) return;
+        await releaseOwnClaim(
+          adapter, installId, mb.id, { current: leaseNonce, pending: leasePendingNonce }, log,
+          "this install could not finish starting and gives the claim back; if it could not be "
+            + "removed it ages out of ohmail/_meta on its own and another install takes the "
+            + "mailbox then",
+        );
         leaseNonce = null;
         leasePendingNonce = null;
         organizer = { ...organizer, organizing: false, claimed: false };
@@ -5870,7 +5873,13 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
          * with the setter on purpose: a pass WRITES its intent, a caller READS what exists.
          */
         get organizer() {
-          const running = organizer.claimed && timer !== null && !handedBack && !stopped;
+          /* A MASK, NEVER A SOURCE. The mechanism can only WITHHOLD what the pass declared — it may
+             not grant it: `claimed` is the INSTRUCTION, set at attach from the row, so a launch
+             whose lease could not be read has it true with no pass behind it, and deriving from the
+             mechanism alone would report that mailbox as organized. Measured by
+             `connection-release.e2e.test.ts`'s unreadable-lease-at-launch case. */
+          const running = organizer.organizing
+            && organizer.claimed && timer !== null && !handedBack && !stopped;
           return organizer.organizing === running ? organizer : { ...organizer, organizing: running };
         },
         set organizer(v) { organizer = v; },
