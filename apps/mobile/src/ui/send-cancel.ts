@@ -7,7 +7,13 @@
  * (`test/fourth-door.test.ts` records it), so the decision lives here and is driven directly;
  * `MessageActions.tsx` is read to prove it is the decision the sheet actually takes.
  */
-import type { WithdrawOutcome } from "@ohmail/client-engine";
+/**
+ * The engine's three withdrawal answers, RESTATED rather than imported. `src/ui` sits outside the
+ * engine seam and `test/privacy.test.ts` confines that package to a named allow-list — widening a
+ * confinement for a three-word union is the wrong trade, so the two are pinned mutually assignable
+ * in `test/send-once-through-cancel.test.ts` instead, where a drift is a compile error.
+ */
+export type WithdrawAnswer = "withdrawn" | "on_the_wire" | "gone";
 
 /** The compose sheet's send phase — `MessageActions.tsx`'s own union. */
 export type ComposerPhase = "idle" | "sending" | "queued" | "unverified";
@@ -39,6 +45,6 @@ export type CancelSaid = "close" | "already_sent";
  * nothing to add and the sheet goes too. `on_the_wire` withdrew NOTHING: the request has left and
  * this device cannot un-send it, which is a sentence the person is owed rather than a silent close.
  */
-export function afterWithdraw(outcome: WithdrawOutcome): CancelSaid {
+export function afterWithdraw(outcome: WithdrawAnswer): CancelSaid {
   return outcome === "on_the_wire" ? "already_sent" : "close";
 }
