@@ -1,12 +1,12 @@
 import { and, eq } from "drizzle-orm";
 import {
-  graduations, rules as rulesTbl, type LedgerTx, type Tx,
+  graduations, rules as rulesTbl, fenceErased, type LedgerTx, type Tx,
   recordLearningSignal, patternKeyFor, parsePatternKey, demoteGraduatedRoute, recordRuleDelta,
   GRADUATION_THRESHOLD, DEMOTION_THRESHOLD,
   type LearningSignalInput, type LearningKind, type LearningLabel, type ParsedPattern,
 } from "@trafficflow/db";
 import { dialect, type Dialect } from "@trafficflow/db/dialect";
-import type { ServiceContext } from "./context.js";
+import { withAccountTx, type ServiceContext } from "./context.js";
 
 const asTx = (ctx: ServiceContext): Tx => ctx.db as unknown as Tx;
 
@@ -98,7 +98,10 @@ export class LearningService {
      * Dialect is resolved from `tx`, not from the outer handle: the brand is inherited by
      * transactions, and the two writes below belong to one decision.
      */
-    await outer.transaction(async (tx) => {
+    /* THROUGH THE SEAM. `rules` is a table the Art. 17 sweep empties and the approval that leads
+       here is read before this transaction opens: an erasure committing in between met a
+       promotion that inserted the rule and its change-log row into an account that was gone. */
+    await withAccountTx(ctx, async (tx) => {
       const d = dialect(tx);
       if (promote) {
         await this.ensurePromotedRule(tx, d, ctx.accountId, parsed);
@@ -117,6 +120,10 @@ export class LearningService {
   private async ensurePromotedRule(
     tx: LedgerTx, d: Dialect, accountId: string, p: ParsedPattern,
   ): Promise<void> {
+    // Locally, rather than as a claim about the one caller: this method inserts into `rules` and
+    // a second caller opening its own transaction would leave the promotion unfenced while the
+    // door above still read as covering it.
+    await fenceErased(tx, d, { accountId });
     const existing = await tx
       .select({ id: rulesTbl.id })
       .from(rulesTbl)

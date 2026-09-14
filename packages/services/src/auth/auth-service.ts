@@ -2,7 +2,10 @@ import { randomInt, randomUUID } from "node:crypto";
 // `lt` is imported UNDER AN ALIAS: `lt` is the local name every 2FA verify uses for its
 // login-token row, and the shadowing turns a comparison into "call an object".
 import { and, count, desc, eq, gt, inArray, isNull, lt as lessThan, or, sql } from "drizzle-orm";
-import { accounts, users, devices, sessions, type Tx } from "@trafficflow/db";
+import {
+  accounts, users, devices, sessions, readAccountErasedAt, type Tx,
+} from "@trafficflow/db";
+import { dialect } from "@trafficflow/db/dialect";
 import {
   credentials,
   webauthnCredentials,
@@ -2422,6 +2425,16 @@ export class AuthService extends SessionLifecycle {
     event: AuthAuditEvent["event"], method: AuthAuditEvent["method"] | undefined, ctx: ServiceContext,
     detail?: string,
   ): Promise<void> {
+    /* THE FENCE, AND ONLY ON THE HALF THAT HAS AN ACCOUNT. `auth_events` carries an IP and a
+       device per attempt, and the sweep deletes every row bearing this account id — so a login
+       that began before the deletion and finished after it wrote the person's IP and device back
+       under the account they had erased. An attempt with NO user is the throttle's shape: it must
+       keep being recorded for an address that has no account at all, which is exactly the caller
+       this trail exists to describe, so it is written unfenced as it always was. */
+    if (user !== null) {
+      const erasedAt = await readAccountErasedAt(db, dialect(db), user.accountId);
+      if (erasedAt != null) return;
+    }
     await db.insert(authEvents).values({
       accountId: user?.accountId ?? null, userId: user?.id ?? null,
       // `detail` displaces the user agent when the writer has something sharper for this slot

@@ -7,7 +7,7 @@ import { dialect } from "@trafficflow/db/dialect";
 import {
   DRAFT_BODY_MAX_BYTES, createLogger, draftBodyOverCeiling, utf8ByteLength, type EmailAddress,
 } from "@trafficflow/core/mail";
-import type { ServiceContext } from "./context.js";
+import { withAccountTx, type ServiceContext } from "./context.js";
 import { IdempotencyRaceLost, ServiceError } from "./errors.js";
 import { materializeDraft } from "./dto/materialize.js";
 import type { DraftDTO } from "./dto/types.js";
@@ -251,7 +251,11 @@ export class DraftsService {
     const rationale = body.rationale ?? null;
     const now = ctx.now();
 
-    const { id, seq, stored } = await asTx(ctx).transaction(async (tx) => {
+    /* THROUGH THE SEAM, WITH THE MAILBOX. `validMailbox` above ran before this transaction — a
+       second tab can erase that mailbox in between, and `drafts.mailbox_id` keys to a row the
+       mailbox sweep LEAVES standing, so the key accepts the insert and the draft's body and
+       recipients come back under a mailbox the person removed. */
+    const { id, seq, stored } = await withAccountTx(ctx, async (tx) => {
       // Same order and same ownership rule as `update`: the reply-target thread is read
       // (key-share) BEFORE the draft row exists, and another account's thread id is a 404.
       if (body.threadId) {
@@ -304,7 +308,7 @@ export class DraftsService {
         if (!claimed) throw new IdempotencyRaceLost(ctx.accountId, opts.idempotency.key);
       }
       return { id: row!.id, seq: s, stored: inTx };
-    });
+    }, { mailboxId });
 
     // The idempotent path answers with the SNAPSHOT IT STORED â first response ≡ every replay.
     if (stored) return { draft: stored, seq: Number(seq) };
