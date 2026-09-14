@@ -173,8 +173,11 @@ describe("the Linux renderer-vitals rule, replayed over the guest's own process 
    */
   it("gives the line no measured flag to be handed wrongly, and names the absence", () => {
     expect(src, "vitals_line takes a measured flag again").toMatch(
-      /pub fn vitals_line\(children: &\[Child\], uptime_min: u64\) -> String/,
+      /pub fn vitals_line\(children: &\[Child\], blind: Option<Blind>, uptime_min: u64\) -> String/,
     );
+    // The property rather than the spelling: no argument can say a pass was measured. `blind`
+    // narrows the WORD for an empty pass, and the census below holds the reason to its enum.
+    expect(src, "vitals_line takes a measured flag again").not.toMatch(/measured: bool/);
     expect(src).toMatch(/Some\("no_children_classified"\)/);
     expect(src).toMatch(/Some\("no_figures"\)/);
     expect(src, "the line no longer carries a reason").toMatch(/\\"reason\\":\{\}/);

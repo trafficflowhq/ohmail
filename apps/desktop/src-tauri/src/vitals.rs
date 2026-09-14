@@ -177,6 +177,10 @@ pub fn same_scope(mine: Option<&str>, theirs: Option<&str>) -> bool {
 pub struct ProcRow {
     pub pid: u32,
     pub name: String,
+    /// WHOSE PROCESS THIS IS, in the platform's own answer: the parent on Linux and Windows, the
+    /// RESPONSIBLE process on macOS. A WebKit helper there is an XPC service launchd started, so
+    /// its parent is pid 1 on every install and descent answers nothing; responsibility is the
+    /// relation that platform keys its own sandbox and consent prompts on.
     pub ppid: u32,
     /// Already in kB — every reader converts at the point where the platform's unit is known.
     pub rss_kb: Option<u64>,
@@ -220,8 +224,8 @@ pub fn kb_of_bytes(bytes: u64) -> u64 {
 pub enum Reading {
     /// At least one of the webview's processes answered with a figure.
     Measured,
-    /// None were found. On Linux that is a window not yet open or a rule that stopped matching;
-    /// on macOS it is the XPC case named further down.
+    /// None were found — a window not yet open, a rule that stopped matching, or a step of the
+    /// platform's that answered nothing. [`Blind`] narrows that last case into which step it was.
     NoChildrenClassified,
     /// They were found and not one of them gave a figure.
     NoFigures,
@@ -258,10 +262,68 @@ pub fn measured_of(children: &[Child]) -> bool {
     reading_of(children).measured()
 }
 
+/// WHICH STEP ANSWERED NOTHING, when a pass classified no webview process.
+///
+/// `no_children_classified` is honest and says nothing a reader can act on. These four name the
+/// step, so a machine reporting no renderer says whether the process table, the webview, the
+/// platform's answer about ownership or this app's share of it was what came back empty.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Blind {
+    /// The platform would not list its processes.
+    NoProcessTable,
+    /// It listed them and not one is a webview process — no window is open yet.
+    NoWebviewProcess,
+    /// Webview processes were listed and the platform would not say whose any of them are.
+    NoOwnerAnswer,
+    /// It said, and every one of them belongs to another application.
+    NoHelperOfOurs,
+}
+
+impl Blind {
+    /// The word the log carries. From this enum, never from a caller.
+    pub fn reason(self) -> &'static str {
+        match self {
+            Blind::NoProcessTable => "no_process_table",
+            Blind::NoWebviewProcess => "no_webview_process",
+            Blind::NoOwnerAnswer => "no_owner_answer",
+            Blind::NoHelperOfOurs => "no_helper_of_ours",
+        }
+    }
+}
+
+/// Which of the four it was, from three counts: how many processes a pass listed, how many of
+/// those are the webview's by name, and how many of THOSE the platform attributed to anybody.
+///
+/// Counts and not a platform, so the arm where the ownership call refuses is driven by a table on
+/// every CI rather than only on the machine it happens on. It narrows a REASON and nothing else.
+pub fn blind_of(listed: usize, named: usize, attributed: usize) -> Blind {
+    if listed == 0 {
+        Blind::NoProcessTable
+    } else if named == 0 {
+        Blind::NoWebviewProcess
+    } else if attributed == 0 {
+        Blind::NoOwnerAnswer
+    } else {
+        Blind::NoHelperOfOurs
+    }
+}
+
+/// ONE PASS'S ANSWER: the webview processes it classified, and — only where it classified none —
+/// which step was silent.
+///
+/// `blind` cannot make a figure appear. [`vitals_line`] still derives `measured` from the children
+/// and takes this for the WORD alone, so a narrower name for an absence is not a second way to
+/// claim a measurement.
+pub struct Pass {
+    pub children: Vec<Child>,
+    pub blind: Option<Blind>,
+}
+
 /// The webview's processes in a process table, by descent from `root`.
 ///
 /// `whole_tree` is the difference between the two non-Linux platforms and is not a preference.
-/// macOS starts each helper as its own service, so the app's own children are the whole family.
+/// macOS hands this rule the RESPONSIBLE pid as each row's owner, and responsibility is already
+/// transitive — every helper of the app names the app, so one step is the whole family there.
 /// WebView2 starts ONE browser process as a child and that process starts the renderer, GPU and
 /// utility processes — which is where the memory is — so a direct-children walk there would report
 /// the one process that holds none of it. The descent is a bounded fixpoint rather than recursion:
@@ -318,8 +380,9 @@ pub fn crossed_budget(previous_kb: Option<u64>, now_kb: u64, budget_kb: u64) -> 
 /// figure at all reports `measured:false` with a `null` total — a zero here would say the renderer
 /// costs nothing, which is the one reading that must never be inventable. THE CALLER CANNOT SAY
 /// `measured`: it is derived from the children, so `measured:true, children:[]` is not a line this
-/// function can produce. `reason` names which of the two absent states this is.
-pub fn vitals_line(children: &[Child], uptime_min: u64) -> String {
+/// function can produce. `reason` names WHICH absence this is — the reading's own word, or the
+/// narrower one a platform's reader supplies for a pass that classified nothing.
+pub fn vitals_line(children: &[Child], blind: Option<Blind>, uptime_min: u64) -> String {
     let mut parts = String::new();
     for (i, c) in children.iter().enumerate() {
         if i > 0 {
@@ -340,8 +403,14 @@ pub fn vitals_line(children: &[Child], uptime_min: u64) -> String {
         None
     };
     let total_s = total.map_or("null".to_string(), |t| t.to_string());
-    // The word is the enum's, so nothing a caller holds can become text in this line.
-    let reason = reading.reason().map_or("null".to_string(), |r| format!("\"{r}\""));
+    // The word is an enum's — the reading's, or the platform's narrower one for the empty case —
+    // so nothing a caller holds can become text in this line. `blind` narrows the WORD only:
+    // `measured` and the total come from the children above and no argument here can move them.
+    let word = match (reading, blind) {
+        (Reading::NoChildrenClassified, Some(b)) => Some(b.reason()),
+        _ => reading.reason(),
+    };
+    let reason = word.map_or("null".to_string(), |r| format!("\"{r}\""));
     format!(
         "{{\"service\":\"shell\",\"event\":\"renderer_vitals\",\"measured\":{},\"reason\":{},\"totalRssKb\":{},\"budgetKb\":{},\"uptimeMin\":{},\"children\":[{}]}}",
         reading.measured(), reason, total_s, RENDERER_BUDGET_KB, uptime_min, parts
@@ -530,48 +599,52 @@ const PROC: &str = "/proc";
 
 /// The webview's processes and what each is charged, on Linux.
 #[cfg(target_os = "linux")]
-fn renderer_children(me: u32) -> Vec<Child> {
-    webkit_children_in(Path::new(PROC), me)
+fn renderer_children(me: u32) -> Pass {
+    Pass { children: webkit_children_in(Path::new(PROC), me), blind: None }
 }
 
 /// The webview's processes and what each is charged, on macOS.
 #[cfg(target_os = "macos")]
-fn renderer_children(me: u32) -> Vec<Child> {
+fn renderer_children(me: u32) -> Pass {
     mac::renderer_children(me)
 }
 
 /// The webview's processes and what each is charged, on Windows.
 #[cfg(target_os = "windows")]
-fn renderer_children(me: u32) -> Vec<Child> {
-    win::renderer_children(me)
+fn renderer_children(me: u32) -> Pass {
+    Pass { children: win::renderer_children(me), blind: None }
 }
 
 /// Nowhere else is built, and a platform that appears later reports itself unmeasured rather than
 /// reporting zeroes — [`measured_of`] turns an empty answer into `"measured":false`.
 #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
-fn renderer_children(_me: u32) -> Vec<Child> {
-    Vec::new()
+fn renderer_children(_me: u32) -> Pass {
+    Pass { children: Vec::new(), blind: None }
 }
 
-/// macOS: the app's own helper processes, through three libproc symbols.
+/// macOS: the webview processes this app is responsible for, through four libSystem symbols.
 ///
-/// libproc lives in libSystem, which every binary on this platform already links, so this adds no
-/// third-party code to the manifest that is published and licence-audited — the same trade
-/// `security_ffi` in `engine.rs` and the Launch Services probes in `default_mail.rs` make, and the
-/// reason no crate is added for six declarations.
+/// libproc and the responsibility call are both declared in libSystem, which every binary on this
+/// platform already links, so this adds no third-party code to the manifest that is published and
+/// licence-audited — the same trade `security_ffi` in `engine.rs` and the Launch Services probes
+/// in `default_mail.rs` make, and the reason no crate is added for seven declarations.
 ///
-/// WHAT THIS CANNOT SEE, said plainly: WebKit starts its content processes as XPC services, and a
-/// service launchd started is not this process's child. Where that is what happens the enumeration
-/// finds no helper, the line reads `"measured":false`, and the figure is absent rather than wrong.
-/// That is the state to check first if a macOS run reports nothing.
+/// DESCENT ANSWERS NOTHING HERE, AND THAT WAS MEASURED. WebKit starts its content processes as XPC
+/// services, so every helper's parent is launchd; an app started the ordinary way is re-parented to
+/// launchd too, so a child walk finds the engine and no webview at all, and this build wrote
+/// `"measured":false` on every launch. The platform's own answer to "whose process is this" is the
+/// RESPONSIBLE pid — unprivileged for another process of the same user — so that is what the rule
+/// above is handed as each row's owner, and the enumeration is the whole process table rather than
+/// a family.
 #[cfg(target_os = "macos")]
 mod mac {
-    use super::{is_macos_webkit_helper, kb_of_bytes, Child, ProcRow};
+    use super::{blind_of, is_macos_webkit_helper, kb_of_bytes, Pass, ProcRow};
 
     extern "C" {
-        fn proc_listchildpids(ppid: i32, buffer: *mut i32, buffersize: i32) -> i32;
+        fn proc_listallpids(buffer: *mut i32, buffersize: i32) -> i32;
         fn proc_name(pid: i32, buffer: *mut u8, buffersize: u32) -> i32;
         fn proc_pid_rusage(pid: i32, flavor: i32, buffer: *mut RUsageInfoV0) -> i32;
+        fn responsibility_get_pid_responsible_for_pid(pid: i32) -> i32;
     }
 
     /// `rusage_info_v0` — the oldest flavour, and the one that already carries the figure this
@@ -599,41 +672,89 @@ mod mac {
     /// buffer is comfortably that; nothing here reads a name for more than its prefix.
     const NAME_BYTES: usize = 64;
 
-    pub fn renderer_children(me: u32) -> Vec<Child> {
-        super::helpers_of(&process_table(me), me, is_macos_webkit_helper, false)
+    /// What one enumeration answered, for each of the three steps that can come back empty.
+    struct Scan {
+        rows: Vec<ProcRow>,
+        listed: usize,
+        named: usize,
+        attributed: usize,
     }
 
-    /// This app's direct children, named and charged.
-    fn process_table(me: u32) -> Vec<ProcRow> {
-        let mut out = Vec::new();
-        let parent = me as i32;
-        // ASK FOR THE SIZE FIRST. A fixed buffer would truncate silently on an install with more
-        // children than somebody guessed, and a truncated process table reads as a smaller
-        // renderer rather than as a failure.
-        let bytes = unsafe { proc_listchildpids(parent, std::ptr::null_mut(), 0) };
-        if bytes <= 0 {
-            return out;
-        }
-        let slot = std::mem::size_of::<i32>();
-        // Headroom for a process started between the two calls.
-        let count = (bytes as usize / slot) + 8;
-        let mut pids = vec![0i32; count];
-        let written =
-            unsafe { proc_listchildpids(parent, pids.as_mut_ptr(), (count * slot) as i32) };
-        if written <= 0 {
-            return out;
-        }
-        for &pid in pids.iter().take((written as usize / slot).min(count)) {
-            if pid <= 0 {
+    pub fn renderer_children(me: u32) -> Pass {
+        // THE ROOT IS THE PID THIS PROCESS IS ITSELF ATTRIBUTED TO — the app on an ordinary
+        // launch, the terminal that started it on a developer machine. The helpers carry whichever
+        // one it is, so asking rather than assuming `me` makes both installs read.
+        let root = responsible_for(me as i32).unwrap_or(me);
+        let scan = scan_webview_processes(me);
+        let children = super::helpers_of(&scan.rows, root, is_macos_webkit_helper, false);
+        // A pass that classified nothing names WHICH step was silent, and still reports no figure.
+        let blind = if children.is_empty() {
+            Some(blind_of(scan.listed, scan.named, scan.attributed))
+        } else {
+            None
+        };
+        Pass { children, blind }
+    }
+
+    /// Every webview process on the machine, with the pid the platform holds responsible for it.
+    ///
+    /// The name is read for every pid because that is the cheap question; only a webview process's
+    /// owner and footprint are asked for, since charging every process on the machine would be
+    /// hundreds of calls for figures nothing reads. Which of them are OURS is not decided here.
+    fn scan_webview_processes(me: u32) -> Scan {
+        let mut out = Scan { rows: Vec::new(), listed: 0, named: 0, attributed: 0 };
+        let pids = all_pids();
+        out.listed = pids.len();
+        for pid in pids {
+            if pid <= 0 || pid as u32 == me {
                 continue;
             }
             let name = match name_of(pid) {
                 Some(name) => name,
                 None => continue, // it exited between the listing and the read
             };
-            out.push(ProcRow { pid: pid as u32, name, ppid: me, rss_kb: footprint_kb(pid) });
+            if !is_macos_webkit_helper(&name) {
+                continue;
+            }
+            out.named += 1;
+            let owner = match responsible_for(pid) {
+                Some(owner) => owner,
+                None => continue, // the platform would not say, and the rule may not guess
+            };
+            out.attributed += 1;
+            out.rows.push(ProcRow { pid: pid as u32, name, ppid: owner, rss_kb: footprint_kb(pid) });
         }
         out
+    }
+
+    /// Every pid on the machine.
+    ///
+    /// THE CALL ANSWERS A COUNT OF PIDS AND TAKES A SIZE IN BYTES — the two are not the same unit,
+    /// and reading the answer as bytes was measured on a Mac: a machine running 674 processes read
+    /// as 168, the walk covered 57 of them, and the three helpers this exists to find were all
+    /// above that line. A truncated process table reads as a smaller renderer rather than as a
+    /// failure, so a buffer that comes back EXACTLY full is asked again with room, and a second
+    /// exact fill is reported as no table at all rather than as a short one.
+    fn all_pids() -> Vec<i32> {
+        let slot = std::mem::size_of::<i32>();
+        let count = unsafe { proc_listallpids(std::ptr::null_mut(), 0) };
+        if count <= 0 {
+            return Vec::new();
+        }
+        for headroom in [64usize, count as usize + 64] {
+            let cap = count as usize + headroom;
+            let mut pids = vec![0i32; cap];
+            let written = unsafe { proc_listallpids(pids.as_mut_ptr(), (cap * slot) as i32) };
+            if written <= 0 {
+                return Vec::new();
+            }
+            let written = written as usize;
+            if written < cap {
+                pids.truncate(written);
+                return pids;
+            }
+        }
+        Vec::new()
     }
 
     fn name_of(pid: i32) -> Option<String> {
@@ -645,6 +766,18 @@ mod mac {
         let len = (written as usize).min(NAME_BYTES);
         let text = std::str::from_utf8(&buf[..len]).ok()?;
         Some(text.trim_end_matches('\0').to_string())
+    }
+
+    /// The pid this platform holds responsible for `pid`, or `None` where it refuses.
+    ///
+    /// A refusal is a step that answered nothing and is reported as one — never a process of
+    /// nobody's, which would be counted as another application's and drop a real renderer.
+    fn responsible_for(pid: i32) -> Option<u32> {
+        let owner = unsafe { responsibility_get_pid_responsible_for_pid(pid) };
+        if owner <= 0 {
+            return None;
+        }
+        Some(owner as u32)
     }
 
     /// `ri_phys_footprint` and not `ri_resident_size`: the footprint is the figure this platform
@@ -807,7 +940,7 @@ pub fn start() {
         loop {
             // The webview's processes come and go with the window, so the set is re-read every
             // pass rather than captured once at boot — at which point there is no renderer yet.
-            let children = renderer_children(me);
+            let Pass { children, blind } = renderer_children(me);
 
             #[cfg(target_os = "linux")]
             for c in &children {
@@ -826,7 +959,7 @@ pub fn start() {
             }
 
             let uptime_min = started.elapsed().as_secs() / 60;
-            crate::engine::log_json_line(&vitals_line(&children, uptime_min));
+            crate::engine::log_json_line(&vitals_line(&children, blind, uptime_min));
 
             // Only a measured pass moves the comparison: a pass that found no renderer would
             // otherwise read as "back under budget" and re-arm the crossing.

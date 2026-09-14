@@ -228,7 +228,7 @@ fn a_child_with_no_figure_is_unmeasured_and_not_zero() {
     assert_eq!(found.len(), 1);
     assert_eq!(found[0].rss_kb, None);
 
-    let line = vitals_line(&found, 5);
+    let line = vitals_line(&found, None, 5);
     assert!(line.contains("\"rssKb\":null"), "{line}");
     // A child with no figure is a DIFFERENT absent state from no children at all, and says so.
     assert!(line.contains("\"reason\":\"no_figures\""), "{line}");
@@ -241,7 +241,7 @@ fn the_line_carries_the_service_event_and_a_total() {
         Child { pid: 10, name: "WebKitWebProcess".into(), rss_kb: Some(900_000) },
         Child { pid: 11, name: "WebKitNetworkProcess".into(), rss_kb: Some(20_000) },
     ];
-    let line = vitals_line(&children, 10);
+    let line = vitals_line(&children, None, 10);
 
     assert!(line.contains("\"service\":\"shell\""), "{line}");
     assert!(line.contains("\"measured\":true"), "{line}");
@@ -258,7 +258,7 @@ fn the_line_carries_the_service_event_and_a_total() {
 #[test]
 fn an_unmeasured_platform_says_so_rather_than_reporting_nothing() {
     // macOS and Windows have no `/proc`: the total is null, not 0.
-    let line = vitals_line(&[], 5);
+    let line = vitals_line(&[], None, 5);
     assert!(line.contains("\"measured\":false"), "{line}");
     assert!(line.contains("\"totalRssKb\":null"), "{line}");
 }
@@ -271,7 +271,7 @@ fn an_unmeasured_platform_says_so_rather_than_reporting_nothing() {
 /// caller can get wrong: the state is derived, and the three readings are told apart by name.
 #[test]
 fn a_pass_that_classified_no_children_names_that_and_is_never_measured() {
-    let line = vitals_line(&[], 5);
+    let line = vitals_line(&[], None, 5);
     assert!(line.contains("\"measured\":false"), "{line}");
     assert!(line.contains("\"reason\":\"no_children_classified\""), "{line}");
     assert!(line.contains("\"totalRssKb\":null"), "{line}");
@@ -295,7 +295,7 @@ fn a_pass_that_classified_no_children_names_that_and_is_never_measured() {
     // Every line this function can produce parses, whichever reading it carries.
     for children in [&[][..], &no_figures[..], &measured[..]] {
         let _: serde_json::Value =
-            serde_json::from_str(&vitals_line(children, 5)).expect("valid JSON");
+            serde_json::from_str(&vitals_line(children, None, 5)).expect("valid JSON");
     }
 }
 
@@ -408,19 +408,122 @@ fn macos_takes_this_apps_helpers_and_leaves_every_other_process() {
     assert!(measured_of(&found));
 }
 
+/// A HELPER ANOTHER APPLICATION IS RESPONSIBLE FOR IS NOT OURS, and one nobody owns is not either.
+///
+/// On this platform the row's owner is the RESPONSIBLE pid rather than the parent: every WebKit
+/// helper is an XPC service whose parent is launchd, so a rule that read descent classified none
+/// of them and the log said so on every launch. Ownership answers; a wrong owner still refuses.
 #[test]
-fn a_macos_app_whose_helpers_are_not_its_children_reports_unmeasured() {
-    // WebKit starts its content processes as XPC services on this platform, and a service launchd
-    // started has launchd as its parent. The reading is then ABSENT, never zero.
-    let table = vec![row(10, "com.apple.WebKit.WebContent", 1, Some(944_128))];
+fn a_macos_helper_another_app_is_responsible_for_is_not_ours() {
+    let table = vec![
+        row(10, "com.apple.WebKit.WebContent", 500, Some(944_128)), // another application's
+        row(11, "com.apple.WebKit.Networking", 1, Some(21_504)),    // attributed to nobody
+    ];
 
     let found = helpers_of(&table, 99, is_macos_webkit_helper, false);
 
     assert!(found.is_empty(), "{found:?}");
     assert!(!measured_of(&found));
-    let line = vitals_line(&found, 5);
+    let line = vitals_line(&found, Some(Blind::NoHelperOfOurs), 5);
     assert!(line.contains("\"measured\":false"), "{line}");
     assert!(line.contains("\"totalRssKb\":null"), "{line}");
+    assert!(line.contains("\"reason\":\"no_helper_of_ours\""), "{line}");
+}
+
+/// THE MACHINE'S OWN READING, AS A TABLE — the control this fix was written against.
+///
+/// A live macOS read of a running app answered with eighteen webview processes: three the platform
+/// holds this app responsible for, fifteen belonging to five other applications. The rule must
+/// admit exactly the three and refuse the fifteen. The three figures below are the fixture's; their
+/// SUM is the figure an independent sampler read for the app's webview group in the same minute,
+/// against a log line that said it had measured nothing at all.
+#[test]
+fn macos_takes_the_helpers_this_app_is_responsible_for_and_no_others() {
+    const ME: u32 = 48_539;
+    let mut table = vec![
+        row(48_541, "com.apple.WebKit.WebContent", ME, Some(402_128)),
+        row(48_542, "com.apple.WebKit.Networking", ME, Some(21_504)),
+        row(48_543, "com.apple.WebKit.GPU", ME, Some(142_208)),
+    ];
+    let mut pid = 60_000u32;
+    for owner in [994u32, 1_008, 2_096, 20_460, 86_474] {
+        for role in
+            ["com.apple.WebKit.WebContent", "com.apple.WebKit.Networking", "com.apple.WebKit.GPU"]
+        {
+            pid += 1;
+            table.push(row(pid, role, owner, Some(500_000)));
+        }
+    }
+    assert_eq!(table.len(), 18, "the machine's own eighteen");
+
+    let found = helpers_of(&table, ME, is_macos_webkit_helper, false);
+
+    assert_eq!(found.iter().map(|c| c.pid).collect::<Vec<_>>(), vec![48_541, 48_542, 48_543]);
+    assert_eq!(found.iter().filter_map(|c| c.rss_kb).sum::<u64>(), 565_840);
+    let line = vitals_line(&found, None, 12);
+    assert!(line.contains("\"measured\":true"), "{line}");
+    assert!(line.contains("\"totalRssKb\":565840"), "{line}");
+    assert!(line.contains("\"reason\":null"), "{line}");
+    // The negative is in the same reading: not one of the other five applications' fifteen is in
+    // the line, and the total is the app's own group rather than every webview on the machine.
+    for other in table.iter().filter(|r| r.ppid != ME) {
+        assert!(!line.contains(&format!("\"pid\":{}", other.pid)), "{line}");
+    }
+}
+
+/// A PASS THAT CLASSIFIED NOTHING NAMES THE STEP THAT WAS SILENT — and naming it invents nothing.
+///
+/// The ownership call can refuse (`-1`), which is the one new way this reader can come back empty.
+/// A reader that turned that into a total of zero would say the renderer costs nothing, which is
+/// the reading this module exists to make unrepresentable.
+#[test]
+fn a_pass_that_classified_nothing_names_which_step_was_silent() {
+    assert_eq!(blind_of(0, 0, 0), Blind::NoProcessTable);
+    assert_eq!(blind_of(612, 0, 0), Blind::NoWebviewProcess);
+    assert_eq!(blind_of(612, 18, 0), Blind::NoOwnerAnswer);
+    assert_eq!(blind_of(612, 18, 18), Blind::NoHelperOfOurs);
+
+    for blind in [
+        Blind::NoProcessTable,
+        Blind::NoWebviewProcess,
+        Blind::NoOwnerAnswer,
+        Blind::NoHelperOfOurs,
+    ] {
+        let line = vitals_line(&[], Some(blind), 5);
+        assert!(line.contains(&format!("\"reason\":\"{}\"", blind.reason())), "{line}");
+        assert!(line.contains("\"measured\":false"), "{line}");
+        assert!(line.contains("\"totalRssKb\":null"), "{line}");
+        assert!(!line.contains("\"totalRssKb\":0"), "{line}");
+        let _: serde_json::Value = serde_json::from_str(&line).expect("valid JSON");
+    }
+
+    // And the word cannot reach a pass that DID classify something: `measured` and the total are
+    // derived from the children, so this argument has no way to the figure.
+    let measured = vec![Child { pid: 10, name: "com.apple.WebKit.GPU".into(), rss_kb: Some(10) }];
+    let line = vitals_line(&measured, Some(Blind::NoOwnerAnswer), 5);
+    assert!(line.contains("\"measured\":true"), "{line}");
+    assert!(line.contains("\"reason\":null"), "{line}");
+    assert!(line.contains("\"totalRssKb\":10"), "{line}");
+}
+
+/// THE ONE READING A FIXTURE TABLE CANNOT GIVE — run by hand on a machine, against a live app.
+///
+/// `OHMAIL_VITALS_PID=<pid> cargo test --features local-engine --bin ohmail \
+/// vitals::tests::reads_a_live_apps_webview_group -- --ignored --nocapture` prints the exact
+/// `renderer_vitals` line that app would write, so the reader can be checked against an
+/// independent process-table sum of the same pids in the same minute. Ignored: nothing schedules
+/// it, and it asserts only that a pid was given.
+#[cfg(target_os = "macos")]
+#[test]
+#[ignore]
+fn reads_a_live_apps_webview_group() {
+    let pid: u32 = std::env::var("OHMAIL_VITALS_PID")
+        .expect("OHMAIL_VITALS_PID=<the app's pid>")
+        .trim()
+        .parse()
+        .expect("a pid");
+    let pass = renderer_children(pid);
+    println!("{}", vitals_line(&pass.children, pass.blind, 0));
 }
 
 #[test]
@@ -628,7 +731,9 @@ fn no_rule_compares_a_comm_against_a_name_longer_than_a_comm() {
     assert!(code.contains("TASK_COMM_LEN - 1"), "the fallback no longer reads the kernel's cap");
     // And the line derives `measured` rather than taking it.
     assert!(
-        code.contains("fn vitals_line(children: &[Child], uptime_min: u64)"),
-        "vitals_line takes a measured flag again, which is the state that must not be passable"
+        code.contains("fn vitals_line(children: &[Child], blind: Option<Blind>, uptime_min: u64)"),
+        "vitals_line's shape moved; check it still takes no measured flag"
     );
+    // The property, and not the spelling: nothing a caller passes can say a pass was measured.
+    assert!(!code.contains("measured: bool"), "vitals_line takes a measured flag again");
 }
