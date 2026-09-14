@@ -77,6 +77,8 @@
     <release version="0.19.0" date="2026-09-14">
       <description>
         <ul>
+          <li>Reopening the app no longer grows its cache of mail</li>
+          <li>A change you make on one computer reaches the one that organizes the mailbox</li>
           <li>Search answers while you type</li>
           <li>Attachments land in your Downloads folder</li>
           <li>The attachment loader no longer spins</li>
@@ -87,7 +89,7 @@
           <li>Applying a new rule to past mail is its own choice</li>
           <li>Every screen that says another install organizes a mailbox says what to press</li>
           <li>Organizing a mailbox is recorded the moment it is claimed</li>
-          <li>Choosing another computer to organize a mailbox stops the previous one at its next write</li>
+          <li>Choosing another computer to organize a mailbox stops the previous one sooner</li>
           <li>Taking a mailbox back works from the mailbox page</li>
           <li>A mailbox whose settings ohmail could not read is no longer stuck</li>
           <li>A mailbox whose saved password this computer cannot open says so</li>
@@ -122,6 +124,12 @@
           <li>Links and buttons open your browser again on Linux</li>
           <li>A slow credit check no longer reads as "AI unavailable"</li>
           <li>Asking a phone to organize while your mail server is unreachable says so</li>
+          <li>Deleting your account closes every door behind it</li>
+          <li>Deleting your account clears the address you signed up with</li>
+          <li>Signing out removes every stored mailbox password</li>
+          <li>Removing a two-factor method signs out your other sessions</li>
+          <li>A server fault while renewing your session no longer signs you out</li>
+          <li>A message is never acted on under an id your mail server cannot vouch for</li>
         </ul>
       </description>
     </release>

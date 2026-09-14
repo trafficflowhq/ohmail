@@ -11,7 +11,7 @@ import {
 } from "@trafficflow/db";
 import { carryDialect, dialect } from "@trafficflow/db/dialect";
 import {
-  parseRequestEnvelope, isMalformedRequest, formatRequest, formatAck, canonicalRequest,
+  parseRequestEnvelope, isMalformedRequest, formatRequest, formatAck, canonicalRequest, isRequestKind,
   requestEnvelopesIn, acksIn, verifyRequestEnvelope, decodeRequestPayload,
   REQUEST_PROTOCOL, MetaFolderTruncatedError, META_RECORDS_MAX_PER_FETCH, metaPageBounds,
   readMemo, writeMemo, forgetMemo, peekMemo, type Generation,
@@ -848,9 +848,9 @@ export async function applyMetaRequests(
      * for N of them and keeps the property the `if` had: a kind this build has no entry for LEAVES THE
      * RECORD STANDING rather than refusing or expunging it — a decision a person made, written by a
      * newer install on the same account, applicable the moment this organizer updates.
-     * `rule.create|update|delete` and `profile.update` are deliberately ABSENT in this slice, so they
-     * take that path: in `REQUEST_KINDS` and admitted by the database because the widening migration
-     * ships ahead of the writer — being representable and being appliable are different facts. */
+     * Every kind in `REQUEST_KINDS` has an entry here now, and the reader appends all of them; a
+     * kind with no entry is a NEWER install's, and leaving its record standing is what lets this
+     * organizer apply it after an update rather than refusing a decision a person made. */
     const handler = KIND_HANDLERS[e.kind];
     if (!handler) {
       standing++;
@@ -1331,10 +1331,14 @@ export async function driveOutstandingRequests(
 
   let sentCount = 0;
   for (const req of appendable) {
-    // Only `screener.decide` has an appender today. A row of an unrecognised kind is left
-    // `pending` rather than appended malformed — it is THIS install's own insert, so an
-    // unrecognised kind here is a build mismatch to investigate, not evidence to act on.
-    if (req.kind !== "screener.decide") {
+    // EVERY KIND THE VOCABULARY ADMITS IS APPENDED. This read `req.kind !== "screener.decide"`
+    // while the organizer's own apply table already carried `rule.*`, `message.move` and
+    // `profile.update`, so a move, a rule edit, a signature or an away setting made on a reader was
+    // written to the database, reported to the person as waiting for the organizing machine, and
+    // appended nowhere that machine reads. A row of a kind this build does not know is still left
+    // `pending` — it is THIS install's own insert, so an unknown kind is a build mismatch to
+    // investigate, not evidence to act on.
+    if (!isRequestKind(req.kind)) {
       log("outstanding_request_kind_unappendable", {
         mailboxId: rt.mailboxId, accountId: rt.accountId, requestId: req.id, kind: req.kind,
       });
@@ -1366,7 +1370,7 @@ export async function driveOutstandingRequests(
     try {
       const raw = formatRequest({
         requestId: req.id,
-        kind: "screener.decide",
+        kind: req.kind,
         mailboxId: rt.mailboxId,
         installId: self.installId,
         organizerKind: self.kind,

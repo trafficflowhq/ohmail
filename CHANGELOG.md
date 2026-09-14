@@ -20,6 +20,18 @@ Signed installers — a real Apple Developer ID and an Authenticode certificate.
 
 ## [0.19.0] — 2026-09-14
 
+### Reopening the app no longer grows its cache of mail
+
+Mail bodies restored from the on-disk cache when the app reopens now count toward the memory
+window, so the cache no longer grows with every restart. What is kept is unchanged: the newest mail
+stays and the oldest gives way.
+
+### A change you make on one computer reaches the one that organizes the mailbox
+
+Moving a message, editing a rule, setting a signature or changing your away reply on a computer that
+does not organize the mailbox was stored and shown as waiting for the machine that does — and never
+sent to it. Only Screener decisions travelled. All of them travel now, each carrying its own change.
+
 ### Search answers while you type
 
 Searching a large mailbox used to freeze the window. Senders, subjects and previews now match as
@@ -83,11 +95,12 @@ smaller than it was. The record is written when the claim is confirmed now, and 
 it is named and retried at the next check. This is older than it looks: it predates the phone build
 that shipped in 0.18.0.
 
-### Choosing another computer to organize a mailbox stops the previous one at its next write
+### Choosing another computer to organize a mailbox stops the previous one sooner
 
 The previous install could keep filing for up to a minute after it lost the mailbox, because it was
-trusting a receipt rather than asking the mailbox. Every destructive write asks the mailbox first
-now, and the install that lost it stops at its very next one.
+trusting a dated receipt rather than asking. Every destructive write asks the mailbox first now. One
+window remains: a take-over that lands while the previous install is taking its own reading is
+admitted until that reading runs out.
 
 ### Taking a mailbox back works from the mailbox page
 
@@ -128,8 +141,9 @@ errored; the mail simply ended up where the older decision said.
 
 ### A page you did not ask for
 
-An empty, zero or negative page size answered with exactly one message and a cursor, which is an
-almost-empty mailbox reporting itself healthy. Those are refused by name now.
+A zero or negative page size answered with exactly one message and a cursor, which is an
+almost-empty mailbox reporting itself healthy. Those are refused by name now, and a blank one means
+you did not ask, so it gets the ordinary page.
 
 ### Removing a mailbox waits for the mail it is still reading
 
@@ -296,6 +310,41 @@ The phone recorded your consent and reported that organizing had started even wh
 reach the mail server, and then showed an organizer notification over a mailbox nothing was
 organizing. It now says it could not check: your consent is kept, and the mailbox is taken on the
 next round.
+
+### Deleting your account closes every door behind it
+
+A request that was already running when you deleted your account can no longer put a row back
+after the sweep. Every write the server makes on your behalf is refused once the deletion has
+started.
+
+### Deleting your account clears the address you signed up with
+
+The invitation and sign-up records are kept against your email address, and the sweep did not
+reach them. It does now.
+
+### Signing out removes every stored mailbox password
+
+Signing out of a self-hosted mailbox removes every stored password, including one that was still
+being saved when you pressed it. A sign-out that cannot account for a save says so instead of
+reporting success.
+
+### Removing a two-factor method signs out your other sessions
+
+Removing an authenticator signs out every other session on the account, on every device, and
+cancels the tokens that would renew them. The session you remove it from stays signed in.
+
+### A server fault while renewing your session no longer signs you out
+
+Renewing a session had two ways to fail and answered both the same way: a busy database or a fault
+on the way told the browser the session was over and cleared its cookies. A fault is answered as a
+fault now, with nothing cleared.
+
+### A message is never acted on under an id your mail server cannot vouch for
+
+Moving, flagging, deleting or fetching a message goes ahead only under the folder identity your
+mail server vouches for. Where the server names none, ohmail holds the mail and asks again rather
+than acting on a guess, and mail still sitting on the server is no longer written off as gone.
+
 
 ## [0.17.0] — 2026-09-12
 
@@ -1056,8 +1105,8 @@ set an out-of-office and no out-of-office would ever be sent.
   **Another computer**, which takes the pairing link the first machine hands out under Settings →
   Devices; your mail stays organized in one place, on hardware you own.
 - A pairing link works once and is checked before it is used, so a link that is not one, a plain
-  unencrypted address, a changed key, something that is not ohmail and a spent link are refused
-  before the setup is touched.
+  unencrypted address, a changed key and something that is not ohmail are refused before the setup
+  is touched. A link already used is refused when it is redeemed, a moment later.
 - When that computer is not answering, the app says so and keeps saying so: the mail on screen is
   real and readable, nothing can be changed until it is back, and the line cannot be dismissed.
 - An install with no mailbox connected can finish the "Your own server" door: it points itself at
