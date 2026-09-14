@@ -1034,6 +1034,78 @@ describe("the desktop mailbox pane on the standalone door", () => {
       .not.toBeNull();
   });
 
+  /**
+   * ── THE ONE REFUSAL THIS PANE SAYS IN ITS OWN WORDS ─────────────────────────────────────
+   *
+   * The engine refuses a removal whose local wipe could not run: nothing was removed, the mailbox
+   * keeps its runtime and its row, and the only remedy is the same press again. The engine's own
+   * sentence cannot say that — the retry is a button only this surface knows about — so this is
+   * the refusal the pane renders from the catalogue, keyed on the CODE and not on the words.
+   *
+   * The confirmation staying open is the retry: it is already showing "Remove mailbox".
+   */
+  it("A WIPE THAT COULD NOT RUN is said in the catalogue's words, with the retry still on screen", async () => {
+    bridgeReply = () => new Response(
+      JSON.stringify({
+        error: {
+          code: "local_mirror_not_cleared",
+          message: "this mailbox's mail could not be cleared from this computer",
+        },
+      }),
+      { status: 503, headers: { "content-type": "application/json" } },
+    );
+    const el = await render("local");
+    await act(async () => { buttonExactly(el, "Remove")!.click(); });
+    await act(async () => {
+      buttonExactly(el, "Remove mailbox")!.click();
+      for (let i = 0; i < 12; i++) await Promise.resolve();
+    });
+
+    const said = el.querySelector("p.join-error")?.textContent ?? "";
+    expect(said, "the pane did not say the removal was refused").toBe(
+      messages.mailboxes.desktopRemovedNotCleared,
+    );
+    /* AND IT SAYS THE THING THE ENGINE CANNOT: that the mailbox is still here and the press is
+       the way out. A pane echoing the engine's sentence would name neither. */
+    expect(said).toContain("Remove it again to retry");
+
+    /* THE RETRY IS ON SCREEN, which is what makes that sentence true. */
+    expect(el.querySelector('[role="alertdialog"]'), "the confirmation vanished on a refusal")
+      .not.toBeNull();
+    expect(buttonExactly(el, "Remove mailbox"), "the retry the sentence names is not pressable")
+      .not.toBeNull();
+
+    /* AND NOTHING ELSE HAPPENED. The mailbox is still this install's, so signing the door out
+       would take away a mailbox the person still has. */
+    expect(loggedOutCount(), "a refused removal signed the install out").toBe(0);
+    expect(published, "a refused removal was reported to the gate as a new engine state")
+      .toEqual([]);
+  });
+
+  /**
+   * CONTROL: every OTHER refusal keeps the engine's own sentence. Without this the case above is
+   * satisfied by a pane that answers one sentence to everything — which would render "remove it
+   * again to retry" over an offline install, where removing it again is not the remedy.
+   */
+  it("CONTROL: a refusal with another code still says the engine's own sentence", async () => {
+    bridgeReply = () => new Response(
+      JSON.stringify({
+        error: { code: "engine_offline", message: "this install is offline, so writes are paused" },
+      }),
+      { status: 503, headers: { "content-type": "application/json" } },
+    );
+    const el = await render("local");
+    await act(async () => { buttonExactly(el, "Remove")!.click(); });
+    await act(async () => {
+      buttonExactly(el, "Remove mailbox")!.click();
+      for (let i = 0; i < 12; i++) await Promise.resolve();
+    });
+    const said = el.querySelector("p.join-error")?.textContent ?? "";
+    expect(said).toBe("this install is offline, so writes are paused");
+    expect(said, "a refusal that is not the wipe's was told to remove it again")
+      .not.toContain("Remove it again to retry");
+  });
+
   it("KEEP IT closes the confirmation and removes nothing", async () => {
     const el = await render("local");
     await act(async () => { buttonExactly(el, "Remove")!.click(); });

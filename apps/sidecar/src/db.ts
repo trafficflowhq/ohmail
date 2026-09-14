@@ -1,4 +1,4 @@
-import { closeSync, existsSync, fstatSync, mkdirSync, openSync, readFileSync, readdirSync, rmSync, statSync, writeSync } from "node:fs";
+import { closeSync, existsSync, fstatSync, linkSync, mkdirSync, openSync, readFileSync, readdirSync, rmSync, statSync, writeSync } from "node:fs";
 import { join } from "node:path";
 import { uptime as osUptime } from "node:os";
 import { PGlite, type Transaction as PgliteTransaction } from "@electric-sql/pglite";
@@ -248,17 +248,36 @@ export const PGDATA_SUBDIR = "pgdata";
 
 /** Raised when another process already holds this data directory. */
 export class DataDirLockedError extends Error {
-  constructor(readonly dataDir: string, readonly holder: string) {
+  /**
+   * `remedy` REPLACES the default way out, and one refusal needs its own: a lock file that is
+   * empty because another launch is a syscall away from writing its record clears by itself,
+   * so telling that person to delete a file would be telling them to delete a live lock.
+   * NOT a `readonly` field — `log.test.ts` holds this class to the two enumerable own
+   * properties the redaction was written against.
+   */
+  constructor(readonly dataDir: string, readonly holder: string, remedy?: string) {
     super(
       `the ohmail local database at ${dataDir} is already open by ${holder}. PGlite has no ` +
-        "cross-process locking of its own, so two engines on one directory corrupt it. Close the " +
-        "other instance, or delete the .lock file if that process is definitely gone.",
+        "cross-process locking of its own, so two engines on one directory corrupt it. " +
+        (remedy ?? "Close the other instance, or delete the .lock file if that process is "
+          + "definitely gone."),
     );
     this.name = "DataDirLockedError";
   }
 }
 
 export const LOCK_FILE = "sidecar.lock";
+
+/**
+ * HOW OLD AN EMPTY LOCK FILE HAS TO BE before it is read as a crash rather than as a launch.
+ *
+ * A build that created the lock and wrote its record a statement later could be killed between
+ * the two, and the empty file it left refuses every launch after it for ever. That window is two
+ * adjacent syscalls; a minute is six orders of magnitude past it, so an empty lock this old is
+ * not a launch in progress. It is also the wait the refusal below asks a person for, which is why
+ * the number is the same one in both places.
+ */
+export const EMPTY_LOCK_STALE_AFTER_MS = 60_000;
 
 /**
  * HOW OFTEN TO CHECKPOINT WHILE THE APP IS OPEN. See {@link checkpointWal} for why anything has to.
@@ -725,6 +744,12 @@ interface HeldLock {
   raw: string;
   dev: bigint;
   ino: bigint;
+  /**
+   * When these bytes were last written, read through the SAME descriptor they came from — so the
+   * age and the content describe one file. Only {@link EMPTY_LOCK_STALE_AFTER_MS} reads it, and a
+   * clock that has moved backwards makes the age negative, which refuses: the safe direction.
+   */
+  mtimeMs: number;
 }
 
 /**
@@ -739,7 +764,9 @@ function readLockFile(path: string): HeldLock | null {
   try {
     fd = openSync(path, "r");
     const st = fstatSync(fd, { bigint: true });
-    return { raw: readFileSync(fd, "utf8").trim(), dev: st.dev, ino: st.ino };
+    return {
+      raw: readFileSync(fd, "utf8").trim(), dev: st.dev, ino: st.ino, mtimeMs: Number(st.mtimeMs),
+    };
   } catch {
     return null;
   } finally {
@@ -769,14 +796,44 @@ function removeIfUnchanged(path: string, judged: HeldLock): boolean {
 }
 
 /**
- * Take an exclusive lock on the data directory, or refuse. `wx` is `O_CREAT|O_EXCL`, atomic — two
- * processes racing cannot both win. A lock left by a crash names a pid, and a pid that is gone
- * releases it (the alternative, a lock outliving the crash, means a laptop that lost power cannot
- * open its mail). And a pid that is BACK releases it too, the half that was missing: after a reboot
- * the pid counter starts again and some unrelated process is issued the dead engine's number, so
- * `kill(pid, 0)` answers "alive" and the lock was held by a process that never heard of this mailbox
- * — permanently, until a file was deleted. {@link LockRecord} records WHICH process, and a live pid
- * whose identity does not match the record is taken over.
+ * ── THE FILE AND ITS RECORD ARE ONE ACT ──────────────────────────────────────────────────────
+ *
+ * Create the lock file WITH ITS OWNER ALREADY IN IT, or throw `EEXIST` because somebody holds it.
+ * `openSync(path, "wx")` and then a write is two steps where the file system offers one: killed
+ * between them, a build left an EMPTY lock naming nobody, and the rule below — no record is not
+ * evidence a process is gone — then refused every later launch. So the record goes to a temp file
+ * in the same directory and is `link`ed into place: `link` fails `EEXIST` when the name is taken,
+ * exactly as `wx` did, and the name appears only once the bytes are behind it. The temp name is
+ * dropped on every exit, including the refused one.
+ */
+function claimLockFile(path: string): void {
+  const tmp = `${path}.${process.pid}.${Math.random().toString(36).slice(2, 10)}.tmp`;
+  try {
+    const fd = openSync(tmp, "wx");
+    try {
+      // A TRAILING NEWLINE, as before: `cat`ing this file in a terminal is how somebody debugs it.
+      writeSync(fd, `${JSON.stringify(selfLockRecord())}\n`);
+    } finally {
+      closeSync(fd);
+    }
+    linkSync(tmp, path);
+  } finally {
+    /* The link made the inode reachable under `path`; this only drops the second name. On the
+       refused path it drops the only one, so nothing of this attempt survives. */
+    rmSync(tmp, { force: true });
+  }
+}
+
+/**
+ * Take an exclusive lock on the data directory, or refuse. {@link claimLockFile} is atomic — two
+ * processes racing cannot both win, and the winner's file names it from the instant it exists. A
+ * lock left by a crash names a pid, and a pid that is gone releases it (the alternative, a lock
+ * outliving the crash, means a laptop that lost power cannot open its mail). And a pid that is
+ * BACK releases it too, the half that was missing: after a reboot the pid counter starts again and
+ * some unrelated process is issued the dead engine's number, so `kill(pid, 0)` answers "alive" and
+ * the lock was held by a process that never heard of this mailbox — permanently, until a file was
+ * deleted. {@link LockRecord} records WHICH process, and a live pid whose identity does not match
+ * the record is taken over.
  */
 export function lockDataDir(dataDir: string): () => void {
   const path = join(dataDir, LOCK_FILE);
@@ -785,10 +842,7 @@ export function lockDataDir(dataDir: string): () => void {
      still needs one of its own. */
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
-      const fd = openSync(path, "wx");
-      // A TRAILING NEWLINE, as before: `cat`ing this file in a terminal is how somebody debugs it.
-      writeSync(fd, `${JSON.stringify(selfLockRecord())}\n`);
-      closeSync(fd);
+      claimLockFile(path);
       return () => rmSync(path, { force: true });
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
@@ -805,8 +859,30 @@ export function lockDataDir(dataDir: string): () => void {
        * PGlite instances on one directory, which is the one thing this function exists to stop.
        * Truncated and unreadable bytes take the same answer, and the refusal already tells the
        * person the way out: delete the file if that process is definitely gone.
+       *
+       * ── EXCEPT ONE SHAPE, DECIDED BY ITS AGE AND NOTHING ELSE ─────────────────────────────
+       *
+       * {@link claimLockFile} cannot produce an empty lock, so the only ones left are a pre-fix
+       * install's crash residue — which the rule above made permanent. The window it reasons
+       * about is two adjacent syscalls, so an EMPTY file older than
+       * {@link EMPTY_LOCK_STALE_AFTER_MS} is not a launch in progress: replaced once, then raced
+       * for. A FRESH one is exactly what that rule says it is and is refused with the wait rather
+       * than with a file to delete, because it clears itself. Unreadable BYTES are not this
+       * shape: something wrote them.
        */
       if (rec === null) {
+        if (held.raw === "" && Date.now() - held.mtimeMs >= EMPTY_LOCK_STALE_AFTER_MS) {
+          // Removed only while the path still names THE FILE THAT WAS JUDGED, on the stale
+          // record's rule below; either way the next pass judges whatever it then finds.
+          removeIfUnchanged(path, held);
+          continue;
+        }
+        if (held.raw === "") {
+          throw new DataDirLockedError(
+            dataDir, "a launch that is still taking it",
+            `The lock is ${path}. Wait a minute and open ohmail again.`,
+          );
+        }
         throw new DataDirLockedError(dataDir, "a lock file this build cannot read");
       }
       if (alive(rec.pid) && lockStillOurs(rec, bootIdentity())) {

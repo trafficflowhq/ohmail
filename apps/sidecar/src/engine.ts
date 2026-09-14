@@ -7138,8 +7138,10 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                 * installs down, and a mirror that made a re-added address serve every message twice.
                 * ORDER: quiesce (above), release, wipe, then stop — the release needs the login the
                 * stop closes, the wipe needs the pass already finished. `assertMailboxStillHere`
-                * refuses any commit that finishes into the removed mailbox. BEST EFFORT: the
-                * removal has happened for the person. */
+                * refuses any commit that finishes into the removed mailbox. The RELEASE is best
+                * effort and reported (`claimReleased`); the WIPE is not — a removal that left the
+                * mail here is refused, because "it is gone" would be a false statement about the
+                * only copy the person can see. */
                /* "If the roster holds it", not "if it is the one mailbox". This read
                 * `if (mailboxId === world.mailboxId)`, the same statement while an install ran one
                 * mailbox and a silent hole the moment it runs two: removing the SECOND matched
@@ -7167,15 +7169,27 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                 );
                 if (released === null) claimReleased = false;
                 else if (released > 0) log("organizer_claim_released", { mailboxId, claims: released });
+                /* ── A WIPE THAT DID NOT WIPE FAILS THE REMOVAL, AND THE RUNTIME STAYS ──────
+                 * This used to be caught and logged: the person was told the mailbox was gone
+                 * while its mail was still on this disk, and the log's own remedy — remove it
+                 * again — could not run, because the removal had already dropped the runtime the
+                 * wipe needs. Thrown instead, so `detach()` and the roster delete below are never
+                 * reached and a second press comes back through this same wipe. The row is a
+                 * tombstone by now and `MailboxService.delete` is idempotent over one
+                 * (`ownedRowOn` reads by id, not by status), so the retry is the ordinary press. */
                 try {
                   await wipeLocalMirror(db, { accountId: core.accountId, mailboxId });
                 } catch (err) {
                   log("local_mirror_wipe_failed", {
                     err,
-                    reason: "this install still holds the removed mailbox's mail; removing the "
-                      + "mailbox again clears it, and until then a re-add of the same address "
-                      + "shows every message twice",
+                    reason: "this install still holds the removed mailbox's mail, so the removal "
+                      + "is refused rather than reported done; the mailbox keeps its runtime and "
+                      + "its place on this install's roster, and removing it again runs this wipe",
                   });
+                  throw Object.assign(
+                    new Error("this mailbox's mail could not be cleared from this computer"),
+                    { code: "local_mirror_not_cleared", httpStatus: 503 },
+                  );
                 }
                 /* THE TIMER AND THE LOGIN — release, wipe, then stop, and the order is the whole
                    implementation: the release needs the login the stop closes, and the wipe needs

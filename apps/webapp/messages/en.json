@@ -2313,6 +2313,7 @@
     "desktopUnknownCode": "unknown",
     "desktopStateError": "Not connecting ({code})",
     "desktopRemovedClaimLeftBehind": "The mailbox is removed from this computer, but the mail server would not let go of this computer's hold on it. Another device that tries to organize this mailbox will wait for that hold to lapse on its own. Nothing was deleted from the mailbox itself.",
+    "desktopRemovedNotCleared": "This mailbox could not be cleared from this computer yet, so it has not been removed. Nothing was deleted from the mailbox itself. Remove it again to retry.",
     "desktopStateHandedOver": "Handed over to another install",
     "desktopStateDisconnected": "Disconnected",
     "desktopStateSignInRefused": "The mail server refused the sign-in.",

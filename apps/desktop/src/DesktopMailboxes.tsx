@@ -396,13 +396,27 @@ export async function readMirrorFreshness(): Promise<{
  * offline is told their mailbox is broken.
  */
 async function reasonOf(res: Response): Promise<string> {
+  return (await refusalOf(res)).message;
+}
+
+/**
+ * A refusal's CODE beside its sentence — one read of the body, because there is only one.
+ *
+ * Every caller but the removal wants the engine's own words, which is what {@link reasonOf}
+ * still hands them. The removal needs the code as well: one refusal it has a truer sentence for
+ * than the engine can write, since only this pane knows the retry is the press the confirmation
+ * panel is still showing.
+ */
+async function refusalOf(res: Response): Promise<{ code?: string; message: string }> {
   try {
-    const wire = (await res.json()) as { error?: { message?: string } };
-    if (wire.error?.message) return wire.error.message;
+    const wire = (await res.json()) as { error?: { code?: string; message?: string } };
+    if (wire.error?.message) {
+      return { ...(wire.error.code ? { code: wire.error.code } : {}), message: wire.error.message };
+    }
   } catch {
     /* Not JSON. The status is all there is to say, and saying it beats inventing a reason. */
   }
-  return `the mail engine answered ${res.status}`;
+  return { message: `the mail engine answered ${res.status}` };
 }
 
 /** A timestamp as something a person reads, or the em dash when there is none. */
@@ -942,7 +956,20 @@ export function DesktopMailboxes(
         const res = await bridgeFetch(`/local/mailboxes/${encodeURIComponent(m.id)}`, {
           method: "DELETE",
         });
-        if (!res.ok) throw new Error(await reasonOf(res));
+        if (!res.ok) {
+          /* ── THE ONE REFUSAL THIS PANE SAYS IN ITS OWN WORDS ──────────────────────────────
+           * The engine refuses when it could not take this computer's copy of the mailbox's
+           * mail off the disk. Nothing was removed: the mailbox keeps its runtime and its row,
+           * and the remedy is this same press again — which the confirmation panel below is
+           * still showing, because the catch leaves it open. Every other refusal keeps the
+           * engine's own sentence, which is the honest one for it. */
+          const refusal = await refusalOf(res);
+          throw new Error(
+            refusal.code === "local_mirror_not_cleared"
+              ? t("desktopRemovedNotCleared")
+              : refusal.message,
+          );
+        }
         /* ── THE MAILBOX IS GONE; ITS CLAIM ON THE MAIL SERVER MAY NOT BE ─────────────────
          * The route releases this install's organizer claim out of `ohmail/_meta` before it
          * stops the runtime, and that release can fail on its own — the mail server can
