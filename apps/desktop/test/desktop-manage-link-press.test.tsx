@@ -157,12 +157,19 @@ async function open(status: EngineStatus): Promise<void> {
   document.body.appendChild(mountPoint);
   root = createRoot(mountPoint);
   await act(async () => {
+    /* The children go in the PROPS rather than as trailing arguments: both providers declare
+       `children` as a required prop, and `createElement`'s variadic overload does not satisfy a
+       required one — the census file beside this carries that as two pinned type errors. */
     root!.render(
-      h(
-        NextIntlClientProvider,
-        { locale: "en", messages: messages as never, timeZone: "UTC" },
-        h(ThemeProvider, { storageKey: "ohmail.theme" }, h(ToastHost, null, h(DesktopGate, null))),
-      ),
+      h(NextIntlClientProvider, {
+        locale: "en",
+        messages: messages as never,
+        timeZone: "UTC",
+        children: h(ThemeProvider, {
+          storageKey: "ohmail.theme",
+          children: h(ToastHost, null, h(DesktopGate, null)),
+        }),
+      }),
     );
   });
   await settle();
