@@ -505,6 +505,28 @@ export async function applyMetaRequests(
     }
   }
 
+  /* And the other half of keeping the folder readable, immediately after it and for the same
+   * reason. The sweep makes `ohmail/_meta` smaller; nothing made it SHALLOWER, and a uid is spent
+   * per renewal and never returned — so a folder holding a handful of records ends up with its
+   * records ten thousand uids below the top of its space, where no bounded read reaches them.
+   * Every gate then refuses and the mailbox is organized by nobody. The organizer moves them back
+   * up; the ordinary answer is 0 and costs one probe. Failure is logged and swallowed exactly as
+   * the sweep's is: a compaction that could not run leaves the folder as it was, and must not stop
+   * a drain that might still succeed. */
+  if (typeof io.compactMeta === "function") {
+    try {
+      const moved = await io.compactMeta(now);
+      if (moved > 0) {
+        log("meta_compacted", { mailboxId: rt.mailboxId, accountId: rt.accountId, moved });
+      }
+    } catch (err) {
+      log("meta_compact_failed", {
+        mailboxId: rt.mailboxId, accountId: rt.accountId,
+        err: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
   /* Where the walk would resume if this pass finishes the page it settles on. Applied after the
    * per-cycle slice below, which is the first point at which "finished" means anything.
    *

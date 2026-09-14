@@ -1955,7 +1955,9 @@ export type LeaseOp =
    * customer's mailbox over a folder that is not its fault. */
   | "meta_folder_full"
   /** STORE `\Deleted` + EXPUNGE the acknowledgements past their life — see {@link RequestOp}. */
-  | "sweep_acks";
+  | "sweep_acks"
+  /** COPY + EXPUNGE the records that fell out of the claim read's reach — see {@link RequestOp}. */
+  | "compact_meta";
 
 export class LeaseUnavailableError extends Error {
   /**
@@ -2197,6 +2199,24 @@ export interface LeaseImapClient extends MetaFolderClient {
     options?: { uid?: boolean },
   ): AsyncIterableIterator<{ uid: number; seq?: number; headers?: Buffer; internalDate?: Date }>;
   append(path: string, content: string | Buffer, flags?: string[]): Promise<unknown>;
+  /**
+   * COPY messages into a folder — used in exactly one place, to copy `ohmail/_meta` INTO ITSELF so
+   * the records it holds get fresh uids at the top of its space ({@link
+   * RequestOrganizerIo.compactMeta}).
+   *
+   * A copy and not a re-APPEND of the bytes: RFC 3501 has the server keep the message's flags and
+   * its INTERNALDATE, so the record that lands is the SAME record with a new number. Re-appending
+   * would restamp it — a stale claim would read as freshly live and stand a running install down,
+   * an acknowledgement's age would reset and the sweep would never remove it. Measured on
+   * GreenMail 2.1.3: `UIDPLUS` advertised, a self-copy accepted, `COPYUID` returned, INTERNALDATE
+   * and `\Seen` identical on both copies.
+   *
+   * `uidMap` is UIDPLUS's `COPYUID` — old uid to new. Optional on the reply and on the client:
+   * without it nothing may be expunged, because the read-back is the only proof a copy landed.
+   */
+  messageCopy?(
+    range: number[], destination: string, options?: { uid?: boolean },
+  ): Promise<{ uidValidity?: number | bigint; uidMap?: Map<number, number> } | boolean | undefined>;
   messageDelete(range: number[], options?: { uid?: boolean }): Promise<unknown>;
 }
 
@@ -2645,6 +2665,17 @@ const SEARCH_UID_WINDOW = 500;
 const SEARCH_WINDOW_BUDGET = 20;
 
 /**
+ * HOW DEEP A UID SPACE ONE CLAIM READ CAN SEE TO THE BOTTOM OF — the window times the budget, and
+ * the number the folder's shape has to stay inside.
+ *
+ * Derived rather than written down, because the two constants above are what actually decide it
+ * and a third literal is how they come to disagree. It is the invariant's one number: every live
+ * record in `ohmail/_meta` sits within this many uids of the top, the compaction is what keeps it
+ * so ({@link RequestOrganizerIo.compactMeta}), and the gate's refusal names it.
+ */
+export const SEARCH_WALK_SPAN = SEARCH_UID_WINDOW * SEARCH_WINDOW_BUDGET;
+
+/**
  * How many uids one EXPUNGE of the ack sweep carries. Two hundred, for the same reason the fetch
  * batch is a hundred: the command line stays a fixed size whatever the folder did, and a refusal
  * costs one batch rather than the whole compaction.
@@ -2661,6 +2692,14 @@ const SWEEP_DELETE_BATCH = 200;
  */
 const SWEEP_BATCHES_MAX_PER_CYCLE = 5;
 const SWEEP_SEARCH_WINDOW_BUDGET = 12;
+
+/**
+ * How many uid windows one compaction pass may move. The sweep's budget and its reasoning: moving
+ * records is durable progress — a folder half compacted is shallower than it was and the next pass
+ * carries on from the new bottom — so a pass may be small, and a pass that is not bounded at all is
+ * a cycle whose cost the folder chooses.
+ */
+const COMPACT_WINDOWS_MAX_PER_CYCLE = 5;
 
 /**
  * The cutoff the ack sweep actually deletes by — floored to the start of its UTC day. Exported
@@ -2729,7 +2768,7 @@ export class ClaimReleaseError extends Error {
  * no `uidNext` to ask for, the single unbounded search remains, kept deliberately.
  */
 async function searchDescending(
-  client: Pick<LeaseImapClient, "search" | "mailbox" | "status">,
+  client: Pick<LeaseImapClient, "search" | "mailbox" | "status" | "fetch">,
   path: string,
   query: { header: Record<string, string | boolean>; before?: Date },
   max: number,
@@ -2788,11 +2827,68 @@ async function searchDescending(
     if (out.length > max) return { kind: "covered", uids: out };  // the caller's ceiling decides
     hi = lo - 1;
   }
+  const floor = Math.max(bottom, hi + 1);
+  /* ── A WALK THAT PASSED BENEATH THE FOLDER'S OWN BOTTOM COVERED THE FOLDER ────────────────
+   *
+   * `ohmail/_meta` gains a uid per renewal and loses none, so at roughly 240 renewals an hour its
+   * uid space passes this walk's ten thousand in about two days while the folder itself stays
+   * small. From then on the walk can never reach uid 1, every claim read refuses, and the mailbox
+   * is organized by nobody — with no manual way out, because the thing that would shrink the
+   * folder sits behind the read that refuses.
+   *
+   * THIS IS NOT A BOUND ON THE WALK, and the difference is the whole of it. A bound taken at OUR
+   * OWN uid would start the read above a live foreign claim appended before our last renewal and
+   * elect without seeing it — a second organizer, refused. The folder's own bottom is the lowest
+   * uid it HOLDS: passing beneath it is passing beneath everything there is, so nothing is
+   * skipped. It is asked for LAZILY, here, so an ordinary walk pays nothing for it, and it errs
+   * only downward — an expunge between this read and the windows above raises the true bottom,
+   * which leaves this floor too LOW and the next walk looking at more than it needs to.
+   */
+  const bottomUid = await folderBottomUid(client, budget);
+  if (bottomUid !== null && bottomUid >= floor) return { kind: "covered", uids: out };
   /* The budget ran out with folder still unexamined. That is not an answer, and reporting it as
    * one would be the "could not look" / "there are none" confusion this module refuses everywhere
    * else — but WHERE it ran out is a fact the caller can act on, so it comes back too. Everything
    * at or above `floor` was covered; nothing below it was looked at. */
-  return { kind: "short", uids: out, floor: Math.max(bottom, hi + 1) };
+  return { kind: "short", uids: out, floor, ...(bottomUid === null ? {} : { bottomUid }) };
+}
+
+/**
+ * THE LOWEST UID THE FOLDER HOLDS — sequence 1, whose uid is by definition the smallest, because
+ * uids ascend with sequence numbers inside a generation.
+ *
+ * One row over the wire, asked of the server, and `null` for every way of not knowing (no reply,
+ * an empty folder, a client that cannot say). A caller reads `null` as "the bottom is unknown",
+ * never as "the folder is empty": this decides whether a short walk may be called complete, and
+ * the only safe unknown is the one that keeps refusing.
+ *
+ * Why this is a FETCH and not a SEARCH: `UID SEARCH ALL` answers with every uid in the folder,
+ * which is the unbounded reply the descending windows exist to avoid. One message is one row.
+ */
+async function folderBottomUid(
+  client: Pick<LeaseImapClient, "fetch">,
+  /** The read's clock, where the caller entered one — see {@link metaReadBudget}. */
+  budget?: ImapDeadline,
+): Promise<number | null> {
+  if (typeof client.fetch !== "function") return null;
+  try {
+    /* By SEQUENCE, which is the point: sequence 1 is the oldest message the folder holds, and its
+       uid is the floor beneath which nothing in this generation can be. */
+    const page = await boundedFetch(client.fetch("1", { uid: true }, { uid: false }), {
+      max: 1,
+      ...(budget === undefined ? {} : { deadline: budget }),
+      onOverflow: "stop",
+      bound: "page_rows",
+      map: (m): number | null => (typeof m.uid === "number" && m.uid > 0 ? m.uid : null),
+    });
+    const first = page.items.find((u): u is number => u !== null);
+    return first ?? null;
+  } catch (err) {
+    // `highestUid`'s rule and for its reason: a spent clock is the read's refusal and must not be
+    // swallowed into "I could not tell", which reads here as a folder that may still be compacted.
+    if (isImapBoundExceeded(err)) throw err;
+    return null;
+  }
 }
 
 /**
@@ -2865,17 +2961,35 @@ function generationOf(client: { readonly mailbox?: { uidValidity?: number | bigi
  * person can look at.
  */
 export interface ClaimReadFact {
-  /** `lease_gap_too_deep`, `lease_walk_short`, or `lease_own_record_absent`. */
+  /**
+   * `lease_compaction_owed`, `lease_gap_too_deep`, `lease_walk_short`, or
+   * `lease_own_record_absent`.
+   */
   readonly fact: string;
   /** How many uids lie between our own record and where the read stopped. */
   readonly depth: number;
   readonly floor: number;
   readonly ownUid: number | null;
+  /**
+   * THE FOLDER'S LIVE RECORDS LIE OUTSIDE THE WALK, AND ONLY ITS ORGANIZER CAN MOVE THEM.
+   *
+   * Set when the walk stopped above the folder's own lowest uid: the records beneath the floor are
+   * really there and no bounded read reaches them. That is a fact about the FOLDER'S SHAPE rather
+   * than about who holds the mailbox, and the refusal has to say so — "another organizer holds it"
+   * would send a person looking for an install that does not exist. The remedy is the organizer's
+   * compaction ({@link RequestOrganizerIo.compactMeta}), which is why the sentence names it.
+   */
+  readonly compactionOwed: boolean;
 }
 
 type DescendingWalk =
   | { kind: "covered"; uids: number[] }
-  | { kind: "short"; uids: number[]; floor: number }
+  /**
+   * `bottomUid` is the folder's own lowest uid where the server answered for it — present exactly
+   * when the walk stopped ABOVE it, which is the one shape a compaction can fix. Absent means the
+   * bottom could not be read, and a caller may conclude nothing from that.
+   */
+  | { kind: "short"; uids: number[]; floor: number; bottomUid?: number }
   | { kind: "refused" };
 
 async function searchHeaders(
@@ -2888,7 +3002,11 @@ async function searchHeaders(
     /** The caller's own record, when it knows it — the floor for the gap read described below. */
     gapDownTo?: number | null;
     /** Named so a permanent stall is visible rather than silent. */
-    onShortfall?: (fact: { floor: number; ownUid: number | null; closed: boolean }) => void;
+    onShortfall?: (fact: {
+      floor: number; ownUid: number | null; closed: boolean;
+      /** The walk stopped ABOVE records the folder really holds — see {@link ClaimReadFact}. */
+      compactionOwed: boolean;
+    }) => void;
     /** Fired when the anchor actually bounded a read, so a caller can tell what rested on it. */
     onGapRead?: () => void;
     /**
@@ -2916,7 +3034,10 @@ async function searchHeaders(
     /* Nothing to narrow: either the caller keeps no uid of its own, or its record sits inside the
      * part the walk already covered — in which case a short walk means the folder genuinely
      * extends below anything this read can account for. */
-    opts?.onShortfall?.({ floor: walk.floor, ownUid: gap ?? null, closed: false });
+    opts?.onShortfall?.({
+      floor: walk.floor, ownUid: gap ?? null, closed: false,
+      compactionOwed: walk.bottomUid !== undefined,
+    });
     return null;
   } else {
     /**
@@ -2936,7 +3057,10 @@ async function searchHeaders(
     if (below.kind === "short") {
       /* Even the gap is deeper than one cycle may read. Fail closed exactly as before — but say
        * so, because a stall that looks like a quiet mailbox is a stall nobody fixes. */
-      opts?.onShortfall?.({ floor: below.floor, ownUid: gap, closed: true });
+      opts?.onShortfall?.({
+        floor: below.floor, ownUid: gap, closed: true,
+        compactionOwed: below.bottomUid !== undefined,
+      });
       return null;
     }
     found = [...walk.uids, ...below.uids];
@@ -3233,7 +3357,9 @@ export function makeLeaseIo(
           /* The folder was replaced under us. Nothing remembered about the old numbering may bound
            * this read — a uid from it can sit above every record now present, including a rival's,
            * and the search would come back short while looking complete. */
-          lastClaimReadFact = { fact: "lease_memo_invalidated", depth: 0, floor: 0, ownUid: null };
+          lastClaimReadFact = {
+            fact: "lease_memo_invalidated", depth: 0, floor: 0, ownUid: null, compactionOwed: false,
+          };
         }
         const invalidated = lastClaimReadFact;
         let gapWasRead = false;
@@ -3247,10 +3373,13 @@ export function makeLeaseIo(
              * reason is the one an operator can act on. The cause keeps precedence. */
             if (invalidated !== null) return;
             lastClaimReadFact = {
-              fact: fact.closed ? "lease_gap_too_deep" : "lease_walk_short",
+              fact: fact.compactionOwed
+                ? "lease_compaction_owed"
+                : fact.closed ? "lease_gap_too_deep" : "lease_walk_short",
               depth: Math.max(0, fact.floor - (fact.ownUid ?? fact.floor)),
               floor: fact.floor,
               ownUid: fact.ownUid,
+              compactionOwed: fact.compactionOwed,
             };
           },
         });
@@ -3266,7 +3395,9 @@ export function makeLeaseIo(
          * entitled to see. Either way the memory stops being trusted the moment it disagrees. */
         if (ownUid !== null && !set.some((m) => m.ref === ownUid)) {
           forgetMemo(identity, "claimUid");
-          lastClaimReadFact = { fact: "lease_own_record_absent", depth: 0, floor: 0, ownUid };
+          lastClaimReadFact = {
+            fact: "lease_own_record_absent", depth: 0, floor: 0, ownUid, compactionOwed: false,
+          };
           /* ── AND IF THAT NUMBER BOUNDED THE READ, THE READ IS NOT AN ANSWER ────────────────
            *
            * Where the walk covered the folder on its own, our claim being gone is a real answer
@@ -3479,7 +3610,26 @@ export async function runLeaseGate(input: LeaseGateInput): Promise<LeaseGateResu
       if (why) {
         log("lease_claim_read_refused", {
           fact: why.fact, depth: why.depth, floor: why.floor, ownUid: why.ownUid,
+          compactionOwed: why.compactionOwed,
         });
+      }
+      /**
+       * A FOLDER SHAPE IS NOT A RIVAL, AND THE REFUSAL MAY NOT SOUND LIKE ONE.
+       *
+       * The records this read could not reach are really there and really below the walk: the uid
+       * space grew past it, one renewal at a time. Nobody else is holding the mailbox — the
+       * organizer's compaction is simply owed, and it is the organizer reading this sentence. The
+       * general refusal beneath says the folder is full, which is the other cause and the wrong
+       * thing to tell someone whose folder holds a handful of records.
+       */
+      if (why?.compactionOwed === true) {
+        throw new LeaseUnavailableError(
+          `${META_FOLDER} keeps its records more than ${SEARCH_WALK_SPAN} uids below the top of its `
+          + "uid space, which is further than one bounded read of it reaches — this install cannot "
+          + "prove no other organizer holds this mailbox until the folder is compacted, which its "
+          + "organizer does on its next pass",
+          { op: "meta_folder_full" },
+        );
       }
       throw new LeaseUnavailableError(
         `${META_FOLDER} holds more records than one read may take, and the claims in it could not `
@@ -4812,6 +4962,13 @@ export type RequestOp =
    * worth naming on its own.
    */
   | "sweep_acks"
+  /**
+   * COPY + EXPUNGE the records that have fallen out of the claim read's reach. Its own op beside
+   * {@link sweep_acks} because the two answer different questions about the same folder — one is
+   * "is it too big", the other "is it too deep" — and only the second is fixed by moving records
+   * nobody wants removed.
+   */
+  | "compact_meta"
   | "no_request_io";
 
 export class RequestUnavailableError extends Error {
@@ -4900,6 +5057,27 @@ export interface RequestOrganizerIo extends MetaRecordsIo {
    * does not sweep. Returns how many were removed.
    */
   sweepStaleAcks?(before: Date): Promise<number>;
+  /**
+   * MOVE THE FOLDER'S RECORDS BACK INSIDE THE WALK — the other half of keeping `ohmail/_meta`
+   * readable, and the one the sweep cannot do.
+   *
+   * The sweep makes the folder SMALLER; nothing made it SHALLOWER. A uid is spent per renewal and
+   * never returned, so at roughly 240 renewals an hour the span between the folder's lowest record
+   * and the top of its uid space passes {@link SEARCH_WALK_SPAN} in about two days — and a claim
+   * read cannot see to the bottom of a folder deeper than that. Every gate then refuses, and the
+   * mailbox is organized by nobody with no manual way out.
+   *
+   * So the organizer copies its old records into the same folder, where they are given uids at the
+   * top, and expunges the originals: same bytes, same flags, same INTERNALDATE, new number. It
+   * runs UNDER THE LEASE — a live claim of this install's, read from the folder in the same lock —
+   * and refuses if the folder's generation moves between the read and the write. Nothing is ever
+   * expunged that was not read back by `COPYUID` first.
+   *
+   * Optional: a connection that cannot copy does not compact, and says so rather than deleting
+   * anything. Returns how many records were moved; 0 when the folder is already inside the walk,
+   * which is the ordinary answer and costs one probe.
+   */
+  compactMeta?(now: Date): Promise<number>;
 }
 
 /**
@@ -5258,6 +5436,159 @@ export function makeRequestOrganizerIo(
          * progress looks like. A throw anywhere above leaves the mark exactly where it was. */
         if (swept >= found.length) markProgress();
         return swept;
+      } finally {
+        lock.release();
+      }
+    },
+
+    /** See {@link RequestOrganizerIo.compactMeta}. */
+    async compactMeta(now: Date): Promise<number> {
+      const metaPath = await meta.path();
+      const lock = await client.getMailboxLock(metaPath);
+      try {
+        /* ── IS ANYTHING OWED? ONE PROBE, AND USUALLY THE WHOLE ANSWER ─────────────────────
+         *
+         * The span is the top of the uid space less the lowest record the folder still holds, and
+         * both come from the SERVER. An honest folder answers `0` here for its whole life: this
+         * costs a STATUS and a one-row FETCH per drain and does nothing. */
+        const top = await highestUid(client, metaPath);
+        const bottom = await folderBottomUid(client);
+        if (top === null || bottom === null) return 0;
+        if (top - bottom < SEARCH_WALK_SPAN) return 0;
+
+        /* ── UNDER THE LEASE, PROVED FROM THE FOLDER AND NOT FROM THE CALLER ───────────────
+         *
+         * This io is the organizer's half and the drain only builds it on the organizing arm, and
+         * neither of those is a fact about the folder. A live claim of ours, read in the same lock
+         * as the copy, is: an install that lost the mailbox between its gate and here holds none,
+         * and it may not move another organizer's records around underneath it. The newest window
+         * is the right read even when the folder is over the ceiling — our claim is the newest
+         * thing in it, because we renewed seconds ago. */
+        const window = await readMetaFolderWindow(client, metaPath);
+        /* Our OWN heartbeat against our OWN clock, which is the one comparison in this module a
+           reader's clock may make: the stamp was written by this install, so both sides come from
+           the same clock and the answer is this install's tenure, not a ranking of anybody. A
+           heartbeat in the future means the clock moved under us and the answer is NO, which
+           leaves the folder alone — the safe direction for something that expunges. */
+        const ourLiveClaim = window.records
+          .map((m) => parseClaim(m.raw, m.ref, m.internalDate ?? null))
+          .some((c): boolean => {
+            if (c === null || isMalformed(c) || c.installId !== identity.installId) return false;
+            const age = now.getTime() - c.heartbeat.getTime();
+            return age >= 0 && age < DEFAULT_STALE_AFTER_MS;
+          });
+        if (!ourLiveClaim) {
+          throw new RequestUnavailableError(
+            `${META_FOLDER} is deeper than one read of it reaches, and this install holds no live `
+            + "claim in it — the records were left where they are, because compacting a folder is "
+            + "the organizer's act and this install is not organizing this mailbox",
+            { op: "compact_meta" },
+          );
+        }
+        if (typeof client.messageCopy !== "function") {
+          throw new RequestUnavailableError(
+            `${META_FOLDER} is deeper than one read of it reaches and this connection cannot copy `
+            + "messages, so its records could not be moved and nothing was removed",
+            { op: "compact_meta" },
+          );
+        }
+
+        /* The generation this whole pass is about. Every uid below is a fact under it and under
+         * nothing else — see the epoch check before each expunge. */
+        const generation = generationOf(client);
+
+        /**
+         * COPY, READ BACK, THEN EXPUNGE — in that order, and the order is the safety.
+         *
+         * `COPYUID` names every uid the server actually copied. Only those are expunged, so a
+         * record the server declined to copy stays exactly where it is: the folder holds a copy of
+         * everything at every instant, and the worst a failure here leaves is a duplicate — which
+         * coalesces for a claim, is swept for an acknowledgement, and is refused by its own
+         * idempotency key for a request. A generation that moved makes every uid in hand a number
+         * about a different folder, so nothing is removed.
+         */
+        const moveToTop = async (batch: number[], lo: number, hi: number): Promise<number> => {
+          const copy = await client.messageCopy?.(batch, metaPath, { uid: true });
+          const reply = typeof copy === "object" && copy !== null ? copy : null;
+          const map = reply?.uidMap;
+          if (map === undefined) {
+            throw new RequestUnavailableError(
+              `the server copied the ${batch.length} record(s) between uid ${lo} and ${hi} in `
+              + `${META_FOLDER} without saying where they landed, so none of the originals were `
+              + "removed",
+              { op: "compact_meta" },
+            );
+          }
+          const after = reply?.uidValidity ?? generationOf(client);
+          if (epochVerdict(epochOf(generation), epochOf(after)) === "stale") {
+            throw new RequestUnavailableError(
+              `${META_FOLDER} was renumbered while its records were being moved, so the uids this `
+              + "pass holds describe a folder that no longer exists and nothing was removed",
+              { op: "compact_meta" },
+            );
+          }
+          /* A copy that landed BELOW where it started is not a move, and an absent entry is a
+             record the server did not copy: neither may be expunged. */
+          const landed = batch.filter((u) => {
+            const to = map.get(u);
+            return typeof to === "number" && to > u;
+          });
+          if (landed.length === 0) return 0;
+          const done = await client.messageDelete(landed, { uid: true });
+          if (done === false) {
+            throw new RequestUnavailableError(
+              `the server refused to expunge ${landed.length} moved record(s) from ${META_FOLDER}; `
+              + "their copies stand at the top of the folder",
+              { op: "compact_meta" },
+            );
+          }
+          await proveGone(client, landed, "moved record(s)", "compact_meta");
+          return landed.length;
+        };
+
+        let moved = 0;
+        /** The lowest uid this pass has not dealt with yet. */
+        let cursor = bottom;
+        for (let w = 0; w < COMPACT_WINDOWS_MAX_PER_CYCLE; w++) {
+          /* UPWARD from the bottom, one bounded window at a time. The records that have to move
+           * are the OLDEST ones, so the work starts where they are; a window is a uid RANGE, so
+           * the enumeration and the copy's reply are bounded by its width however dense the folder
+           * is beneath it. */
+          const lo = cursor;
+          const hi = lo + SEARCH_UID_WINDOW - 1;
+          const inWindow = await searchDescending(
+            client, metaPath, { header: {} }, SEARCH_UIDS_MAX, { from: hi, downTo: lo },
+          );
+          if (inWindow.kind === "refused") {
+            throw new RequestUnavailableError(
+              `the records in ${META_FOLDER} between uid ${lo} and ${hi} could not be enumerated, `
+              + `so they were not moved (${moved} already moved on this pass)`,
+              { op: "compact_meta" },
+            );
+          }
+          const batch = [...inWindow.uids].sort((a, b) => a - b);
+          if (batch.length > 0) moved += await moveToTop(batch, lo, hi);
+          /* THE LINE MOVES UP WITH EVERY COPY — each one spends uids of its own — so it is read
+           * again rather than remembered, and so is the bottom, which jumps over whatever stretch
+           * of the space holds nothing. Done when the folder's lowest record is inside the walk; a
+           * folder too sparse to finish in one cycle finishes in the next and is shallower either
+           * way, which is the sweep's rule and for its reason. */
+          const nowTop = await highestUid(client, metaPath);
+          const nowBottom = await folderBottomUid(client);
+          if (nowTop === null || nowBottom === null) break;
+          if (nowTop - nowBottom < SEARCH_WALK_SPAN) break;
+          cursor = Math.max(hi + 1, nowBottom);
+        }
+        if (moved > 0) {
+          /* EVERY POSITION THIS PROCESS REMEMBERS IN THIS FOLDER IS NOW WRONG. The records kept
+           * their identity and lost their numbers, so an anchor, a sweep cursor or a drain cursor
+           * left standing would bound a later read at a uid that means nothing. Dropped rather
+           * than rewritten: each is a hint whose only job is to save a walk. */
+          forgetMemo(identity, "claimUid");
+          forgetMemo(identity, "sweepCursor");
+          forgetMemo(identity, "drainCursor");
+        }
+        return moved;
       } finally {
         lock.release();
       }
