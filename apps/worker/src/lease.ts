@@ -156,15 +156,14 @@ export type MailboxLeaseOutcome =
   | {
     organize: true; nonce: string | null; by: null; uidValidity: number | bigint | null;
     /**
-     * THE FOLDER'S COUNTERS AS THIS CLAIM WAS VERIFIED — issued here, awaited by whoever needs it.
-     *
-     * A permit's baseline and the claim it rides have to be ONE READING. Taken later, a take-over
-     * landing in between is baked into the baseline, and every write boundary then reads "nothing
-     * moved" while somebody else moves the folder — for a whole TTL or a hundred writes. So the
-     * STATUS goes out the instant the gate's last write lands, before any gap exists. NOT awaited
-     * here: the row that follows the claim is written next by both adopt callers, with nothing
-     * awaited in front of it, and an 83 ms STATUS there is the window they exist to close.
-     * `null` for every way of not knowing; {@link LeaseIo.stampMeta} never throws.
+     * THE FOLDER'S COUNTERS AS THIS CLAIM WAS VERIFIED — issued here, awaited by whoever needs it. A
+     * permit's baseline and the claim it rides have to be ONE READING: taken later, a take-over landing
+     * in between is baked into the baseline, and every write boundary then reads "nothing moved" while
+     * somebody else moves the folder, for a whole TTL or a hundred writes. So the STATUS goes out the
+     * instant the gate's last write lands, before any gap exists. NOT awaited here: the row that follows
+     * the claim is written next by both adopt callers with nothing awaited in front of it, and an 83 ms
+     * STATUS there is the window they exist to close. `null` for every way of not knowing; {@link
+     * LeaseIo.stampMeta} never throws.
      */
     stamp: Promise<MetaFolderStamp | null>;
   }
@@ -671,14 +670,12 @@ export interface LeasePermitInput extends Omit<MailboxLeaseInput, "now"> {
   onRenew?: (renewal: { nonce: string | null; at: Date }) => void;
   /**
    * THE ROW FOLLOWS THE CLAIM — the caller's record of this becoming, with nothing awaited first.
-   *
    * `readMailboxLease` appends and verifies this install's claim, so the mailbox is already ours to
-   * every reader of `ohmail/_meta`. A caller that wrote its row behind an IMAP STATUS — 83 ms,
-   * measured — spent it with its own doors refusing its own requests by name; one with no `adopt`
-   * cannot move that write itself, because the claim and the verify both happen in here. The
-   * baseline reading is ISSUED before this hook and AWAITED after it, so it costs the row nothing.
-   * ONCE per permit, never on a renewal, and a hook that throws is logged
-   * (`lease_permit_claim_held_failed`) rather than swallowed — the lease is held either way.
+   * every reader of `ohmail/_meta`. A caller that wrote its row behind an IMAP STATUS — 83 ms, measured
+   * — spent it with its own doors refusing its own requests by name, and one with no `adopt` cannot move
+   * that write itself because the claim and the verify both happen in here. The baseline reading is
+   * ISSUED before this hook and AWAITED after it, so it costs the row nothing. ONCE per permit, never on
+   * a renewal; a hook that throws is logged rather than swallowed, since the lease is held either way.
    */
   onClaimHeld?: (held: { nonce: string | null; at: Date }) => void | Promise<void>;
 }
@@ -741,19 +738,14 @@ export async function acquireLeasePermit(input: LeasePermitInput): Promise<Lease
   let stamp: MetaFolderStamp | null = null;
   let unstampedSaid = false;
   /**
-   * THE BASELINE IS THE CLAIM'S OWN READING, AND NEVER A LATER ONE — the invariant, in one line.
-   *
-   * This used to take its own STATUS here, after the caller's row write: a take-over landing in
-   * that gap was baked into the baseline, so every boundary read "nothing moved" while somebody
-   * else moved the folder, for a whole TTL or a hundred writes. The reading now comes from
-   * {@link MailboxLeaseOutcome.stamp}, issued the instant the gate's last write landed — so the
-   * two are one reading by construction and anything that lands afterwards is OUTSIDE the
-   * baseline, which is what makes the first write boundary probe it. No extra round trip: the same
-   * one STATUS per read, moved to the instant that makes it mean something.
-   *
-   * SAID ONCE PER PERMIT. A connection that cannot stamp keeps exactly the bound it had — the
-   * clock and the write count — named rather than silent. Once, because the alternative is a line
-   * per write.
+   * THE BASELINE IS THE CLAIM'S OWN READING, AND NEVER A LATER ONE. This used to take its own STATUS
+   * here, after the caller's row write: a take-over landing in that gap was baked into the baseline, so
+   * every boundary read "nothing moved" while somebody else moved the folder, for a whole TTL or a
+   * hundred writes. The reading now comes from {@link MailboxLeaseOutcome.stamp}, issued the instant the
+   * gate's last write landed, so the two are one reading by construction and anything later is OUTSIDE
+   * the baseline — which is what makes the first write boundary probe it. No extra round trip: the same
+   * one STATUS, moved to the instant that makes it mean something. SAID ONCE PER PERMIT; a connection
+   * that cannot stamp keeps exactly the bound it had, named rather than silent.
    */
   const takeBaseline = async (reading: Promise<MetaFolderStamp | null>): Promise<void> => {
     stamp = await reading;

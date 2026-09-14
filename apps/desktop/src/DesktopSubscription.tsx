@@ -1,17 +1,12 @@
 /**
- * THE SUBSCRIPTION PANE ON THE CLOUD DOOR — the same one row the browser tab shows. This
- * window used to render the plan, the renewal date, a storage meter and a managed-AI switch;
- * none of that is this program's business: whoever operates the service holds that state and
- * serves its own page, and the entitlements port answers where that page is. A pane and not
- * an omission, for `DesktopWebSection`'s reason: an absent entry reads as "this product does
- * not have that", and the site says otherwise. Absent when there is no page to link to — see
- * {@link useDesktopManageOffer} for why that decision is the GATE's. `settings` keys, shared
- * with the web pane, because whole namespaces travel into this binary.
- *
- * THE ADDRESS IS MINTED BY THE PRESS. It used to be minted by the MOUNT — every launch and
- * every change of the account door asked for a link nobody had asked to follow — and the pane
- * was offered only once one had come back. The two questions are apart now: the offer is read
- * without minting anything, the address is asked for when somebody asks to go there.
+ * THE SUBSCRIPTION PANE ON THE CLOUD DOOR — the same one row the browser tab shows. This window used to
+ * render the plan, the renewal date, a storage meter and a managed-AI switch; none of that is this
+ * program's business, and the entitlements port answers where the operator's own page is. A pane and not
+ * an omission, for `DesktopWebSection`'s reason: an absent entry reads as "this product does not have
+ * that". Absent when there is no page to link to — see {@link useDesktopManageOffer} for why that
+ * decision is the GATE's. THE ADDRESS IS MINTED BY THE PRESS: it used to be minted by the MOUNT, so
+ * every launch asked for a link nobody had asked to follow. The offer is read without minting; the
+ * address is asked for on the press.
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -54,17 +49,14 @@ export interface ManageOffer {
 }
 
 /**
- * DOES THIS ACCOUNT'S DOOR SERVE A SUBSCRIPTION PAGE — the offer, and not the address. A HOOK
- * THE GATE CALLS, not a `return null` inside the pane, because the two are not the same:
- * `SettingsView` grows the nav entry from the PROP being present, so a node that renders
- * nothing still puts "Subscription" in the nav and opens an empty pane. Only withholding the
- * node withholds the entry — `invitesSection` and `devicesSection`'s rule; the desktop census
- * asserts the entry is gone where no page is served.
- *
- * `false` covers every "nowhere": no hosted account, an offline install, a server without the
- * route, a read that refused, and the moment before the first answer. A 402 is the one non-2xx
- * that means YES: the program refused this account, so a program exists — and the mint is the
- * one route the lock leaves open, because the way back to paying may not be behind it.
+ * DOES THIS ACCOUNT'S DOOR SERVE A SUBSCRIPTION PAGE — the offer, not the address, and A HOOK THE GATE
+ * CALLS rather than a `return null` inside the pane: `SettingsView` grows the nav entry from the PROP
+ * being present, so a node that renders nothing still puts "Subscription" in the nav above an empty
+ * pane. Only withholding the node withholds the entry, which is `invitesSection`'s rule, and the desktop
+ * census asserts the entry is gone where no page is served. `false` covers every "nowhere": no hosted
+ * account, an offline install, a server without the route, a refused read, the moment before the first
+ * answer. A 402 is the one non-2xx meaning YES — a program exists and refused this account, and the mint
+ * is the route the lock leaves open.
  */
 export function useDesktopManageOffer(accountDoor: boolean): ManageOffer {
   const [offered, setOffered] = useState(false);

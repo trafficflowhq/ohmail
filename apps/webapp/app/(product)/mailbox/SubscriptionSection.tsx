@@ -6,19 +6,13 @@ import { SettingsRow, SettingsSection } from "@ohmail/ui";
 import { account, apiConfigured } from "../../api-client";
 
 /**
- * The subscription pane — one control, and nothing else. Whoever operates this service holds the
- * plan, the balance and the payment method; this app holds none of them and therefore states none
- * of them. What it can do is take the customer to the page that does.
- *
- * THE ADDRESS IS MINTED BY THE PRESS. It used to be minted by the MOUNT, and the pane was offered
- * only once one had come back — so every shell mount and every settings visit minted a link for an
- * account that was reading its mail (one signed-in account, one link roughly every ninety seconds,
- * nobody pressing anything). {@link useManageOffer} answers whether to offer the pane; the address
- * is asked for here, when somebody asks to go there.
- *
- * `settings` keys and not a namespace of its own: whole namespaces travel into the desktop binary
- * (`SHELL_MESSAGE_NAMESPACES`), so a pane's copy lives where the rest of the desktop's settings
- * copy lives — `DesktopSubscription` reads the same two keys.
+ * The subscription pane — one control, and nothing else. Whoever operates this service holds the plan,
+ * the balance and the payment method; this app holds none of them and states none of them. What it can
+ * do is take the customer to the page that does. THE ADDRESS IS MINTED BY THE PRESS: it used to be
+ * minted by the MOUNT, so every shell mount and every settings visit minted a link for an account that
+ * was only reading its mail. {@link useManageOffer} answers whether to offer the pane; the address is
+ * asked for here, when somebody asks to go there. `settings` keys and not a namespace of its own,
+ * because whole namespaces travel into the desktop binary and `DesktopSubscription` reads the same two.
  */
 export function SubscriptionSection({ onNowhere }: { onNowhere: () => void }) {
   const t = useTranslations("settings");
@@ -85,17 +79,13 @@ function leaveFor(url: string): void {
 }
 
 /**
- * DOES THIS DEPLOYMENT OPERATE A SUBSCRIPTION PAGE FOR THIS ACCOUNT — the offer, and not the
- * address. `false` for a self-hosted or unmetered install, for a demo, and for the moment before
- * the first answer: all mean DO NOT OFFER THE PANE, and collapsing them is deliberate — the
- * alternative is a nav entry above an empty pane, the shape `invitesSection` and `devicesSection`
- * are written to avoid.
- *
- * Read from `GET /account/access`, which mints nothing: `metered: false` is a host that runs no
- * such program, and is exactly the condition the mint route answers 404 on. `/hello` cannot be
- * asked instead — its wire shape is frozen and says nothing about this — and the shell fetches no
- * other answer that carries it. `withdraw` is the press's other outcome: a mint that came back
- * with nowhere to go takes the pane with it for the rest of this session.
+ * DOES THIS DEPLOYMENT OPERATE A SUBSCRIPTION PAGE FOR THIS ACCOUNT — the offer, not the address.
+ * `false` for a self-hosted or unmetered install, for a demo, and for the moment before the first
+ * answer: all mean DO NOT OFFER THE PANE, and collapsing them is deliberate, since the alternative is a
+ * nav entry above an empty pane. Read from `GET /account/access`, which mints nothing — `metered: false`
+ * is a host running no such program, exactly what the mint route answers 404 on. `/hello` cannot be
+ * asked instead: its wire shape is frozen and says nothing about this. `withdraw` is the press's other
+ * outcome — a mint that came back with nowhere to go takes the pane with it for the session.
  */
 export function useManageOffer(demo: boolean): { manageOffered: boolean; withdrawManage: () => void } {
   const [offered, setOffered] = useState(false);

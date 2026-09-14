@@ -4085,16 +4085,15 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         const outcome = await readMailboxLease({ ...leaseArgs, now: gateAskedAt });
         if (outcome.organize) {
           leaseNonce = outcome.nonce;
-          /* ══ THE ROW FOLLOWS THE CLAIM, WITH NOTHING BETWEEN THEM ══════════════════════════
-           *
-           * `readMailboxLease` has just said ORGANIZE, so this install's claim stands in
-           * `ohmail/_meta` and is verified there. From that instant to the row saying `organizer`
-           * nothing else may be awaited: measured here, the promotion sat behind
-           * `acquireLeasePermit`'s `stampMeta`, an IMAP STATUS worth ~83 ms, and for that window
-           * the folder advertised this install as organizer while its own row — the one every
-           * write door consults — still said `reader`. The promotion is issued here and the permit
-           * taken after it; the permit adopts this same read, AND the folder reading that read
-           * already took — a take-over landing in this gap must not reach the permit's baseline.
+          /*
+           * THE ROW FOLLOWS THE CLAIM, WITH NOTHING BETWEEN THEM. `readMailboxLease` has just said
+           * ORGANIZE, so this install's claim stands in `ohmail/_meta` and is verified there. From that
+           * instant to the row saying `organizer` nothing else may be awaited: measured here, the
+           * promotion sat behind `acquireLeasePermit`'s `stampMeta`, an IMAP STATUS worth ~83 ms, and
+           * for that window the folder advertised this install as organizer while its own row — the one
+           * every write door consults — still said `reader`. The promotion is issued here and the permit
+           * taken after it; the permit adopts this same read, and the folder reading it already took, so
+           * a take-over landing in this gap cannot reach the permit's baseline.
            */
           // THE MEMORY IS SPENT WITH THE STAMP. Reaching here past a remembered stand-down means a
           // human pressed the button and the lease agreed; leaving the memory set would make the

@@ -1529,16 +1529,15 @@ export async function startWorkerWithLock(
 
       if (outcome.organize) {
         nonce.leaseNonce = outcome.nonce;
-        /* ── THE ROW FOLLOWS THE CLAIM, WITH NOTHING AWAITED BETWEEN THEM ────────────────
-         *
-         * `readMailboxLease` above appended this install's claim and verified it, so the mailbox is
-         * already ours to every reader of `ohmail/_meta`; `organizer_role` is the authority every
-         * write door consults (`assertOrganizerRole`), so a row still saying `reader` here is this
-         * process answering its own requests `409 organized_elsewhere`, naming itself. It sat AFTER
-         * `acquireLeasePermit`, behind one IMAP STATUS — a measured 88 ms of exactly that state
-         * per becoming; the permit's baseline reading is now issued with the claim and awaited
-         * after this write, so it costs this row nothing. The permit is a per-pass WRITE RECEIPT; the ROW is the record of
-         * who organizes the mailbox, and `engine.ts` made the same move for the same reason.
+        /*
+         * THE ROW FOLLOWS THE CLAIM, WITH NOTHING AWAITED BETWEEN THEM. `readMailboxLease` above
+         * appended this install's claim and verified it, so the mailbox is already ours to every reader
+         * of `ohmail/_meta`; `organizer_role` is the authority every write door consults, so a row still
+         * saying `reader` here is this process answering its own requests `409 organized_elsewhere`,
+         * naming itself. It sat AFTER `acquireLeasePermit`, behind one IMAP STATUS — a measured 88 ms of
+         * exactly that state per becoming. The permit's baseline is now issued with the claim and
+         * awaited after this write, so it costs this row nothing. The permit is a per-pass WRITE
+         * RECEIPT; the ROW records who organizes the mailbox.
          */
         if (lease.takeoverAuthorizedAt || lease.disabledReason || lease.organizerRole === "reader") {
           try {
