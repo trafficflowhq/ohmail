@@ -6,6 +6,7 @@ import {
 } from "@trafficflow/db";
 import {
   authVerdictFromHeaders, oneClickUnsubscribeUri, unsubscribeHeaderState,
+  UNSUB_DRAIN_CLOSE_RESERVE_MS, UNSUB_DRAIN_RUN_BUDGET_MS,
   type AuthVerdict, type Destination, type UnsubscribeHeaderState,
 } from "@trafficflow/core/mail";
 import type { Db, ServiceContext } from "./context.js";
@@ -39,7 +40,13 @@ const ONE_CLICK_TIMEOUT_MS = 8_000;
  * refuses one, and the absence of any SMTP dependency is the structural half.
  */
 export interface OneClickPost {
-  post(url: string, pin: readonly string[]): Promise<{ status: number }>;
+  /**
+   * `timeoutMs`, when given, is what is LEFT of the caller's budget and never more than the
+   * implementation's own ceiling. It is a deadline and not a channel: the signature still admits
+   * nothing about the user, the message or the account, which is what the paragraph above is
+   * about. Optional because the interactive path has its own fixed ceiling and nothing to thread.
+   */
+  post(url: string, pin: readonly string[], timeoutMs?: number): Promise<{ status: number }>;
 }
 
 /**
@@ -53,11 +60,15 @@ export interface OneClickPost {
  * process.
  */
 export function makeNodeOneClickPost(opts: { timeoutMs?: number } = {}): OneClickPost {
-  const timeoutMs = opts.timeoutMs ?? ONE_CLICK_TIMEOUT_MS;
+  const ceiling = opts.timeoutMs ?? ONE_CLICK_TIMEOUT_MS;
   return {
-    async post(url: string, pin: readonly string[]) {
+    async post(url: string, pin: readonly string[], timeoutMs?: number) {
+      // The SMALLER of the two, never the caller's alone: a caller with seconds to spare may not
+      // hold a socket open past this port's own ceiling, and one with milliseconds left may not
+      // spend eight seconds it does not have.
+      const budget = timeoutMs === undefined ? ceiling : Math.max(1, Math.min(ceiling, timeoutMs));
       const ac = new AbortController();
-      const timer = setTimeout(() => ac.abort(), timeoutMs);
+      const timer = setTimeout(() => ac.abort(), budget);
       try {
         const res = await pinnedHttpRequest(url, {
           method: "POST",
@@ -167,6 +178,27 @@ export interface UnsubscribeSweep {
 }
 
 /**
+ * ONE DRAIN RUN'S ANSWER. `remaining` is a COUNT taken at the end, not a flag assembled from what
+ * the run happened to notice: an operator reading a cron table needs to know whether the pass is
+ * keeping up, and "something may be owed" cannot say that. `elapsedMs` is the other half — a run
+ * that returns 0 in 24 s and a run that returns 0 in 300 ms are different deployments.
+ */
+export interface DrainRun {
+  /** Accounts this run actually entered. */
+  accounts: number;
+  sweep: UnsubscribeSweep;
+  /**
+   * Candidates the window still holds after this run, counted — what the NEXT run will look at.
+   * Not a count of unsubscribes owed: a second message from a list this mailbox has already left
+   * has no record row of its own (the row is keyed by mailbox and list) and stays in the window
+   * until it ages out, looked at each run and posted to never. The question this number answers
+   * is whether the pass is keeping up, so what matters about it is whether it GROWS.
+   */
+  remaining: number;
+  elapsedMs: number;
+}
+
+/**
  * HOW MANY TARGETS ONE REQUEST MAY POST TO, and how long it may spend doing it.
  *
  * One post is bounded at {@link ONE_CLICK_TIMEOUT_MS} — 8 s — against a 60-second invocation, so
@@ -199,7 +231,55 @@ export const UNSUB_DRAIN_WINDOW_MS = 3 * 60 * 60 * 1000 + 24 * 60 * 60 * 1000;
  */
 export const UNSUB_DRAIN_ACCOUNTS_PER_RUN = 20;
 export const UNSUB_DRAIN_TARGETS_PER_ACCOUNT = 10;
-export const UNSUB_DRAIN_BUDGET_MS = 45_000;
+/** The shared number, not a second copy of it — see `@trafficflow/core/mail`. */
+export const UNSUB_DRAIN_BUDGET_MS = UNSUB_DRAIN_RUN_BUDGET_MS;
+
+/**
+ * HOW MANY SCREENED-OUT ROWS ONE RUN MAY LOOK AT BEFORE IT FILTERS THEM, and it is the bound the
+ * whole defect was missing. The selective fact is `folder_state` — a reject destination inside
+ * the window, an indexed read — and the expensive one is the per-message header probe. Asked as
+ * one flat join the planner estimates a single row, drives from `messages` and probes the body of
+ * every message a deployment holds, which on a large one costs most of a minute before anything
+ * bounded has started. The page is a FENCE: the window's rows, oldest first, capped here, and
+ * everything else joins what it returns. A page that comes back FULL means there may be more
+ * behind it, which is `remaining`'s job to say.
+ */
+export const UNSUB_DRAIN_SCAN_PAGE = 2_000;
+
+/**
+ * The least budget one item is worth starting with. Below it the item is `remaining` — left for
+ * the next tick — rather than begun: a POST cut off on the wire is recorded `failed` and never
+ * retried, so starting one the clock cannot pay for spends the at-most-once claim on an outcome
+ * nobody chose. Above the measured worst case of everything before the POST, under the POST's own
+ * {@link ONE_CLICK_TIMEOUT_MS}.
+ */
+export const UNSUB_ITEM_MIN_MS = 2_000;
+
+/**
+ * ONE BUDGET, ENTERED ONCE AND THREADED THROUGH EVERY SEGMENT — the candidate reads, each
+ * account, each item, each outbound POST and the closing count. A per-segment ceiling is no
+ * ceiling: four segments of twenty seconds each is eighty, and a clock checked only BEFORE a
+ * post lets the last one start at the wire and run its full timeout past it.
+ */
+export interface DrainBudget {
+  /** Milliseconds left, floored at zero. */
+  leftMs(): number;
+  /** Milliseconds left before the closing reserve — what the POSTING phase may spend. */
+  postingLeftMs(): number;
+  elapsedMs(): number;
+}
+
+export function startDrainBudget(
+  totalMs: number, reserveMs = UNSUB_DRAIN_CLOSE_RESERVE_MS, clock: () => number = Date.now,
+): DrainBudget {
+  const startedAt = clock();
+  const left = (): number => Math.max(0, totalMs - (clock() - startedAt));
+  return {
+    leftMs: left,
+    postingLeftMs: () => Math.max(0, left() - reserveMs),
+    elapsedMs: () => clock() - startedAt,
+  };
+}
 
 /**
  * WHICH MESSAGES MAY BE UNSUBSCRIBED FROM: REJECT DESTINATIONS ONLY, NEVER KEEP DESTINATIONS.
@@ -319,6 +399,7 @@ export class UnsubscribeService {
    */
   private async run(
     ctx: ServiceContext, messageId: string, mode: "manual" | "automatic",
+    budget?: DrainBudget,
   ): Promise<UnsubscribeResult> {
     const row = await this.load(ctx, messageId);
 
@@ -435,7 +516,10 @@ export class UnsubscribeService {
 
     let status: number;
     try {
-      ({ status } = await this.deps.post.post(url!, pin));
+      // THE LAST SEGMENT THE BUDGET REACHES, and the one it used to miss: the clock was read
+      // before the post and never bound the post itself, so the last item of a 45 s run could
+      // start at 44.9 s and hold the invocation for eight more.
+      ({ status } = await this.deps.post.post(url!, pin, budget?.postingLeftMs()));
     } catch (err) {
       // The transport itself raised — DNS, TLS, a timeout. Recorded as `failed` and NOT retried:
       // we cannot tell whether the sender received it, and at-most-once resolves that ambiguity
@@ -458,7 +542,10 @@ export class UnsubscribeService {
    */
   async onScreenOut(ctx: ServiceContext, messageIds: readonly string[]): Promise<UnsubscribeSweep> {
     return this.postEach(ctx, messageIds, {
-      count: UNSUB_SYNC_MAX, budgetMs: UNSUB_SYNC_BUDGET_MS,
+      count: UNSUB_SYNC_MAX,
+      // Its OWN budget, entered here: this one is a request's share of its invocation, and it
+      // owes no closing count, so there is no reserve to hold back.
+      budget: startDrainBudget(UNSUB_SYNC_BUDGET_MS, 0),
     });
   }
 
@@ -473,7 +560,7 @@ export class UnsubscribeService {
    */
   private async postEach(
     ctx: ServiceContext, messageIds: readonly string[],
-    ceiling: { count: number; budgetMs: number },
+    ceiling: { count: number; budget: DrainBudget },
   ): Promise<UnsubscribeSweep> {
     const sweep: UnsubscribeSweep = {
       considered: 0, posted: 0, skipped: 0, failed: 0, remaining: 0,
@@ -489,15 +576,14 @@ export class UnsubscribeService {
     // the honest return: `considered` counts what the pass LOOKED at, and it looked at nothing.
     if (await this.blocked(ctx)) return sweep;
 
-    // The clock starts at the first post, not at the ceiling's declaration: the switch read above
-    // is the caller's cost, not this budget's.
-    const startedAt = Date.now();
     for (const id of messageIds) {
-      // BOTH AXES, CHECKED BEFORE THE POST AND NEVER AFTER IT. A count-only ceiling leaves five
+      // BOTH AXES, CHECKED BEFORE THE ITEM AND NEVER AFTER IT. A count-only ceiling leaves five
       // eight-second posts inside a request that has twenty seconds left; a clock-only one lets a
       // mailbox whose targets all refuse instantly walk the whole list. Whatever is left when
-      // either fires is `remaining`, which is a promise the drain keeps.
-      if (sweep.considered >= ceiling.count || Date.now() - startedAt >= ceiling.budgetMs) {
+      // either fires is `remaining`, which is a promise the drain keeps. An item is STARTED only
+      // where the budget can pay for it: a post begun with nothing left is aborted on the wire
+      // and lands as `failed`, which spends the at-most-once claim on an outcome nobody chose.
+      if (sweep.considered >= ceiling.count || ceiling.budget.postingLeftMs() < UNSUB_ITEM_MIN_MS) {
         sweep.remaining += 1;
         continue;
       }
@@ -505,7 +591,7 @@ export class UnsubscribeService {
       try {
         // `"automatic"`, which is what turns on the identity gate above. The button calls
         // `unsubscribe()` and does not get it.
-        const result = await this.run(ctx, id, "automatic");
+        const result = await this.run(ctx, id, "automatic", ceiling.budget);
         if (result.posted) sweep.posted += 1;
         else sweep.skipped += 1;
       } catch (err) {
@@ -534,7 +620,8 @@ export class UnsubscribeService {
    * the date. `limit` is required for the same reason at smaller scale.
    */
   async sweepScreenedOut(
-    ctx: ServiceContext, opts: { since: Date; limit: number; budgetMs?: number },
+    ctx: ServiceContext,
+    opts: { since: Date; limit: number; budgetMs?: number; budget?: DrainBudget },
   ): Promise<UnsubscribeSweep> {
     if (!(opts.since instanceof Date) || Number.isNaN(opts.since.getTime())) {
       throw new ServiceError("unsubscribe_no_cutoff", 400,
@@ -553,17 +640,14 @@ export class UnsubscribeService {
     // it stays a candidate for ever — and most screened-out mail publishes no route at all. KEY
     // EXISTENCE only, never a second copy of the grammar; the malformed shape (a `-Post` over
     // `mailto:` alone) survives a pass, and the window is what bounds that.
-    const candidates = await asTx(ctx).select({ id: messages.id })
-      .from(messages)
-      .innerJoin(folderState, eq(folderState.messageId, messages.id))
+    const page = this.scanPage(asTx(ctx), opts.since, ctx.accountId);
+    const candidates = await asTx(ctx).select({ id: page.messageId })
+      .from(page)
       // INNER, not LEFT: the headers live on the body row, and a message with no body row has no
       // headers, so it can never be actionable. Its absence is a filter, not a missing value.
-      .innerJoin(messageBodies, eq(messageBodies.messageId, messages.id))
-      .leftJoin(unsubscribeRecords, eq(unsubscribeRecords.messageId, messages.id))
+      .innerJoin(messageBodies, eq(messageBodies.messageId, page.messageId))
+      .leftJoin(unsubscribeRecords, eq(unsubscribeRecords.messageId, page.messageId))
       .where(and(
-        eq(messages.accountId, ctx.accountId),
-        inArray(folderState.desiredFolder, REJECT_DESTINATIONS as string[]),
-        gte(folderState.updatedAt, opts.since),
         isNull(unsubscribeRecords.id),
         sql`jsonb_exists(${messageBodies.headers}, 'list-unsubscribe')`,
         sql`jsonb_exists(${messageBodies.headers}, 'list-unsubscribe-post')`,
@@ -571,12 +655,39 @@ export class UnsubscribeService {
       // OLDEST FIRST. An unordered LIMIT is a sample, and a sample can hand back the same rows
       // for ever while the oldest never move — here that would mean the rows closest to falling
       // out of the drain's window are the ones it never reaches.
-      .orderBy(asc(folderState.updatedAt), asc(messages.id))
+      .orderBy(asc(page.at), asc(page.messageId))
       .limit(opts.limit);
 
     return this.postEach(ctx, candidates.map((c) => c.id), {
-      count: opts.limit, budgetMs: opts.budgetMs ?? UNSUB_DRAIN_BUDGET_MS,
+      count: opts.limit,
+      budget: opts.budget ?? startDrainBudget(opts.budgetMs ?? UNSUB_DRAIN_BUDGET_MS, 0),
     });
+  }
+
+  /**
+   * THE FENCE THE CANDIDATE READS DRIVE FROM. `folder_state` holds the selective fact — a reject
+   * destination inside the window — and the per-message header probe is the expensive one. Asked
+   * as one flat join the planner estimates a single row and drives from `messages`, probing every
+   * body a deployment holds to find the few this pass wants. A subquery carrying its own LIMIT is
+   * not reordered into the join, so the shape holds whatever the planner believes, and
+   * {@link UNSUB_DRAIN_SCAN_PAGE} is what everything else joins against.
+   */
+  private scanPage(tx: Tx, since: Date, accountId: string | null) {
+    return tx.select({
+      messageId: folderState.messageId,
+      at: folderState.updatedAt,
+      accountId: messages.accountId,
+    })
+      .from(folderState)
+      .innerJoin(messages, eq(messages.id, folderState.messageId))
+      .where(and(
+        inArray(folderState.desiredFolder, REJECT_DESTINATIONS as string[]),
+        gte(folderState.updatedAt, since),
+        accountId === null ? undefined : eq(messages.accountId, accountId),
+      ))
+      .orderBy(asc(folderState.updatedAt), asc(folderState.messageId))
+      .limit(UNSUB_DRAIN_SCAN_PAGE)
+      .as("scan_page");
   }
 
   /**
@@ -593,12 +704,15 @@ export class UnsubscribeService {
     db: Db,
     opts: {
       now: () => Date; requestId: string;
-      accounts?: number; perAccount?: number; budgetMs?: number;
+      accounts?: number; perAccount?: number; budgetMs?: number; budget?: DrainBudget;
     },
-  ): Promise<{ accounts: number; sweep: UnsubscribeSweep; remaining: boolean }> {
+  ): Promise<DrainRun> {
     const accounts = opts.accounts ?? UNSUB_DRAIN_ACCOUNTS_PER_RUN;
     const perAccount = opts.perAccount ?? UNSUB_DRAIN_TARGETS_PER_ACCOUNT;
-    const budgetMs = opts.budgetMs ?? UNSUB_DRAIN_BUDGET_MS;
+    // ONE BUDGET, ENTERED HERE — before the first read, which is exactly where the old clock was
+    // not: it started AFTER the account census, so everything that census cost was charged to
+    // nothing and the run met the platform's kill with its own ceiling still unspent.
+    const budget = opts.budget ?? startDrainBudget(opts.budgetMs ?? UNSUB_DRAIN_BUDGET_MS);
     const since = new Date(opts.now().getTime() - UNSUB_DRAIN_WINDOW_MS);
     const tx = db as unknown as Tx;
 
@@ -612,38 +726,35 @@ export class UnsubscribeService {
     // does for an interactive screen-out. Without it a blocked account's candidates would hold a
     // place in every run until they aged out of the window, which is starvation with a bound
     // rather than none — the bound is not the argument for leaving it.
-    const oldest = sql<string>`min(${folderState.updatedAt})`;
-    const owed = await tx.select({ accountId: messages.accountId })
-      .from(messages)
-      .innerJoin(folderState, eq(folderState.messageId, messages.id))
-      .innerJoin(messageBodies, eq(messageBodies.messageId, messages.id))
-      .leftJoin(unsubscribeRecords, eq(unsubscribeRecords.messageId, messages.id))
-      .leftJoin(accountSettings, eq(accountSettings.accountId, messages.accountId))
+    const page = this.scanPage(tx, since, null);
+    const oldest = sql<string>`min(${page.at})`;
+    const owed = await tx.select({ accountId: page.accountId })
+      .from(page)
+      .innerJoin(messageBodies, eq(messageBodies.messageId, page.messageId))
+      .leftJoin(unsubscribeRecords, eq(unsubscribeRecords.messageId, page.messageId))
+      .leftJoin(accountSettings, eq(accountSettings.accountId, page.accountId))
       .where(and(
-        inArray(folderState.desiredFolder, REJECT_DESTINATIONS as string[]),
-        gte(folderState.updatedAt, since),
         isNull(unsubscribeRecords.id),
         isNull(accountSettings.blockAutoUnsubscribeAt),
         sql`jsonb_exists(${messageBodies.headers}, 'list-unsubscribe')`,
         sql`jsonb_exists(${messageBodies.headers}, 'list-unsubscribe-post')`,
       ))
-      .groupBy(messages.accountId)
+      .groupBy(page.accountId)
       .orderBy(asc(oldest))
       .limit(accounts);
 
     const sweep: UnsubscribeSweep = {
       considered: 0, posted: 0, skipped: 0, failed: 0, remaining: 0,
     };
-    const startedAt = Date.now();
     let visited = 0;
-    let cutShort = false;
     for (const row of owed) {
-      const spent = Date.now() - startedAt;
-      if (spent >= budgetMs) { cutShort = true; break; }
+      // The SAME budget every segment reads, not a slice handed down: an account entered with
+      // less than one item's worth left is the next tick's, not this one's half-run.
+      if (budget.postingLeftMs() < UNSUB_ITEM_MIN_MS) break;
       visited += 1;
       const one = await this.sweepScreenedOut(
         { db, accountId: row.accountId, userId: null, now: opts.now, requestId: opts.requestId },
-        { since, limit: perAccount, budgetMs: budgetMs - spent },
+        { since, limit: perAccount, budget },
       );
       sweep.considered += one.considered;
       sweep.posted += one.posted;
@@ -652,14 +763,30 @@ export class UnsubscribeService {
       sweep.remaining += one.remaining;
     }
 
-    // WHETHER ANYTHING IS STILL OWED, stated rather than inferred by the caller: the clock cut
-    // this run short, an account's own ceiling left targets behind, or the account list came back
-    // full and there may be another behind it. The next run picks up where this one stopped.
-    return {
-      accounts: visited,
-      sweep,
-      remaining: cutShort || sweep.remaining > 0 || owed.length >= accounts,
-    };
+    // WHAT IS STILL OWED, COUNTED RATHER THAN INFERRED — the reserve this budget holds back exists
+    // for this one read. The old answer was a boolean assembled from three guesses (the clock cut
+    // us short, an account left targets, the account list came back full), which cannot tell an
+    // operator whether a pass is keeping up; this is the number the health row carries.
+    const remaining = await this.owedCount(tx, since);
+
+    return { accounts: visited, sweep, remaining, elapsedMs: budget.elapsedMs() };
+  }
+
+  /** How many candidates the window still holds for anyone — the closing read, one page-fenced scan. */
+  private async owedCount(tx: Tx, since: Date): Promise<number> {
+    const page = this.scanPage(tx, since, null);
+    const [row] = await tx.select({ n: sql<number>`count(*)::int` })
+      .from(page)
+      .innerJoin(messageBodies, eq(messageBodies.messageId, page.messageId))
+      .leftJoin(unsubscribeRecords, eq(unsubscribeRecords.messageId, page.messageId))
+      .leftJoin(accountSettings, eq(accountSettings.accountId, page.accountId))
+      .where(and(
+        isNull(unsubscribeRecords.id),
+        isNull(accountSettings.blockAutoUnsubscribeAt),
+        sql`jsonb_exists(${messageBodies.headers}, 'list-unsubscribe')`,
+        sql`jsonb_exists(${messageBodies.headers}, 'list-unsubscribe-post')`,
+      ));
+    return Number(row?.n ?? 0);
   }
 
   /**

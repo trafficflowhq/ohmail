@@ -190,9 +190,9 @@ export {
   ONE_CLICK_BODY, unsubscribeListKey,
   UNSUB_SYNC_MAX, UNSUB_SYNC_BUDGET_MS,
   UNSUB_DRAIN_WINDOW_MS, UNSUB_DRAIN_ACCOUNTS_PER_RUN, UNSUB_DRAIN_TARGETS_PER_ACCOUNT,
-  UNSUB_DRAIN_BUDGET_MS,
+  UNSUB_DRAIN_BUDGET_MS, UNSUB_DRAIN_SCAN_PAGE, UNSUB_ITEM_MIN_MS, startDrainBudget,
   type UnsubscribeDeps, type OneClickPost, type UnsubscribeResult, type UnsubscribeRefusal,
-  type UnsubscribeSweep,
+  type UnsubscribeSweep, type DrainRun, type DrainBudget,
 } from "./unsubscribe-service.js";
 export {
   ContactsService, contactsService, CONTACTS_QUERY_MAX_CHARS,

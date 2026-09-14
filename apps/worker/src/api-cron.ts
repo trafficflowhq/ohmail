@@ -1,4 +1,5 @@
 import { silentLogger, type Logger } from "@trafficflow/core";
+import { UNSUB_DRAIN_CEILING_MS } from "@trafficflow/core/mail";
 
 /**
  * THE SCHEDULE FOR THE API HOST'S INTERNAL PASSES — driven from HERE, the always-on process, because
@@ -30,6 +31,12 @@ export interface ApiCronTarget {
    * default exists for still applies, scaled to the cadence.
    */
   jitterMs?: number;
+  /**
+   * This target's 2xx body carries a `remaining` count, and the health row carries it forward.
+   * Opt-in per target: the body is drained and dropped everywhere else, and a pass that has no
+   * backlog to report would answer `null` for ever, which reads as a number nobody wrote.
+   */
+  readsRemaining?: true;
 }
 
 /**
@@ -172,9 +179,13 @@ export const API_CRON_TARGETS: readonly ApiCronTarget[] = [
     // Its own stagger, past the takeover window and distinct from every other target's, so a
     // leader takeover does not land this on the same instant as a dialling one.
     firstDelayMs: 9 * 60 * 1000,
-    // The service claims only what one invocation can deliver inside the platform's 60-second
-    // ceiling (its own clock is 45 s, under this); the caller's mirror of that ceiling, not a hope.
-    timeoutMs: 60 * 1000,
+    // THE SAME CONSTANT THE ROUTE BUDGETS AGAINST, imported rather than restated: this pair used
+    // to be 60 s here and 45 s there, and nothing could see them disagree. The route's budget is
+    // well under this; what this bound is for is the invocation that never answers at all.
+    timeoutMs: UNSUB_DRAIN_CEILING_MS,
+    // Its body says how many screened-out unsubscribes the window still holds. Carried onto the
+    // health row: a flat `ok` cannot tell a pass that is keeping up from one falling behind.
+    readsRemaining: true,
   },
 ];
 
@@ -206,6 +217,12 @@ export interface ApiCronTargetHealth {
   attempts: number;
   lastOkAt: string | null;
   lastAttemptAt: string | null;
+  /**
+   * What the target's last SUCCESSFUL run said is still owed, for a target that reports one —
+   * `null` on every other target and on one that has not answered yet. The two states are named
+   * apart on purpose: `0` is "nothing left", `null` is "this pass does not say".
+   */
+  remaining: number | null;
 }
 
 export interface ApiCronDeps {
@@ -236,9 +253,27 @@ interface TargetState {
   attempts: number;
   lastOkAt: Date | null;
   lastAttemptAt: Date | null;
+  remaining: number | null;
   inFlight: boolean;
   timer: ReturnType<typeof setTimeout> | null;
   controller: AbortController | null;
+}
+
+/**
+ * The one field this side reads out of a pass's own answer, validated rather than believed. A
+ * body that is not JSON, is not an object, or whose `remaining` is absent, negative, fractional
+ * or not a number at all answers `null` — which leaves the previous reading standing rather than
+ * writing a number nobody sent. Bounded by the same 32 KiB the rest of this file assumes of our
+ * own routes: a body larger than that is not one of ours and is not parsed.
+ */
+export function readRemaining(body: string): number | null {
+  if (body.length > 32 * 1024) return null;
+  let parsed: unknown;
+  try { parsed = JSON.parse(body); } catch { return null; }
+  if (typeof parsed !== "object" || parsed === null) return null;
+  const n = (parsed as { remaining?: unknown }).remaining;
+  if (typeof n !== "number" || !Number.isInteger(n) || n < 0) return null;
+  return n;
 }
 
 export function startApiCron(deps: ApiCronDeps): ApiCronHandle {
@@ -256,7 +291,8 @@ export function startApiCron(deps: ApiCronDeps): ApiCronHandle {
   for (const t of targets) {
     states.set(t.target, {
       outcome: null, consecutiveFailures: 0, attempts: 0,
-      lastOkAt: null, lastAttemptAt: null, inFlight: false, timer: null, controller: null,
+      lastOkAt: null, lastAttemptAt: null, remaining: null,
+      inFlight: false, timer: null, controller: null,
     });
   }
 
@@ -295,9 +331,18 @@ export function startApiCron(deps: ApiCronDeps): ApiCronHandle {
         signal: controller.signal,
       });
       status = res.status;
-      // The body is DRAINED and dropped: keep-alive hygiene, and nothing from it is logged —
-      // the API host logs its own passes, and closed codes are all this side keeps.
-      try { await res.arrayBuffer(); } catch { /* the status already answered */ }
+      // The body is DRAINED either way — keep-alive hygiene — and for every target but the one
+      // that declares it, DROPPED: the API host logs its own passes and closed codes are all
+      // this side keeps. The exception takes ONE number and validates it here rather than
+      // trusting the shape: a body that is not JSON, or whose `remaining` is not a whole
+      // non-negative number, leaves the row's previous answer alone rather than writing a lie.
+      try {
+        const text = await res.text();
+        if (res.ok && t.readsRemaining === true) {
+          const n = readRemaining(text);
+          if (n !== null) state.remaining = n;
+        }
+      } catch { /* the status already answered */ }
       outcome = res.ok ? "ok"
         : res.status === 401 ? "http_401"
         : res.status === 404 ? "http_404"
@@ -353,6 +398,7 @@ export function startApiCron(deps: ApiCronDeps): ApiCronHandle {
           attempts: s.attempts,
           lastOkAt: s.lastOkAt ? s.lastOkAt.toISOString() : null,
           lastAttemptAt: s.lastAttemptAt ? s.lastAttemptAt.toISOString() : null,
+          remaining: s.remaining,
         };
       });
     },

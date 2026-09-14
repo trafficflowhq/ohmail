@@ -10,9 +10,10 @@ import {
   runAwayResponderPass,
   reapStaleWebSessions, runPlatformSignalPass,
   runScheduledSendPass, runSendReconcilePass, SEND_RECONCILE_NET_TIMEOUTS,
+  startDrainBudget,
   TransientDialRefusal, type AdminDb,
 } from "@trafficflow/services";
-import type { SendAdapter } from "@trafficflow/core/mail";
+import { UNSUB_DRAIN_RUN_BUDGET_MS, type SendAdapter } from "@trafficflow/core/mail";
 import { presentsSecret, secretRouteJson as json } from "../secret-auth.js";
 import { makeSendAdapter } from "../send-adapter.js";
 import { MAX_IMAP_PER_MAILBOX } from "../attachments-adapter.js";
@@ -664,6 +665,10 @@ export const internalRoutes: Route[] = [
         log.warn("unsubscribe_drain_unauthorized", {});
         return json(401, { error: { code: "unauthorized" } });
       }
+      // ONE BUDGET, ENTERED AT THE TOP OF THE ROUTE and threaded through every segment below it.
+      // The invocation ceiling is the platform's kill, not a suggestion: two production runs
+      // spent it in the candidate read alone and were killed with nothing to report.
+      const budget = startDrainBudget(UNSUB_DRAIN_RUN_BUDGET_MS);
       // A deployment with no unsubscribe port configured has no drain to run, and that is a
       // state rather than a fault — the same 503 `unsubscribe_unconfigured` every other route
       // on this service answers, through the one accessor that knows how to say it.
@@ -675,28 +680,34 @@ export const internalRoutes: Route[] = [
       }
       try {
         const run = await svc.drainScreenedOut(deps.db, {
-          now: deps.now, requestId: deps.requestId,
+          now: deps.now, requestId: deps.requestId, budget,
         });
         // COUNTS AND NOTHING ELSE — no account, no sender, no URL. A log line naming which lists
         // somebody left is a privacy leak with a long half-life, and this one is written every
         // time the clock ticks.
-        if (run.sweep.considered > 0 || run.sweep.failed > 0) {
+        if (run.sweep.considered > 0 || run.sweep.failed > 0 || run.remaining > 0) {
           log.info("unsubscribe_drained", {
             accounts: run.accounts,
-            considered: run.sweep.considered,
-            posted: run.sweep.posted,
+            claimed: run.sweep.considered,
+            delivered: run.sweep.posted,
             skipped: run.sweep.skipped,
             failed: run.sweep.failed,
             remaining: run.remaining,
+            elapsedMs: run.elapsedMs,
           });
         }
+        // WHAT THE RUN DID AND WHAT IS LEFT. `remaining` is a count and the caller's health row
+        // carries it: a pass that answers a flat outcome cannot tell "delivered one and was
+        // killed" from "did nothing", which is the state this route shipped in.
         return json(200, {
           now: deps.now().toISOString(),
           accounts: run.accounts,
-          posted: run.sweep.posted,
+          claimed: run.sweep.considered,
+          delivered: run.sweep.posted,
           skipped: run.sweep.skipped,
           failed: run.sweep.failed,
           remaining: run.remaining,
+          elapsedMs: run.elapsedMs,
         });
       } catch (err) {
         // `raw` means no error envelope above this handler; it must never throw.
