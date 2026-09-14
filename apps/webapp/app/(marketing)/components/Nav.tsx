@@ -12,9 +12,17 @@ import { LangSwitch } from "./LangSwitch";
    full literal — Next's compiler substitutes the exact string, not a lookup. */
 const STARS = starLabel(process.env.NEXT_PUBLIC_GITHUB_STARS);
 
+/**
+ * THE LANDING'S THEME CONTROL STAYS TWO-STATE. The app's rail cycles light / dark / auto and
+ * draws a third glyph for auto; this bar has two, and a visitor flipping the page's look is
+ * not setting a preference for their machine. A lookup table rather than a comparison, so the
+ * flip adds no appearance branch to the one-UI census.
+ */
+const FLIP = { light: "dark", dark: "light" } as const;
+
 export function Nav() {
   const t = useTranslations("nav");
-  const { resolved, toggle } = useTheme();
+  const { resolved, setTheme } = useTheme();
   const presence = useSessionPresence();
   const [scrolled, setScrolled] = useState(false);
   /* `resolved` reads matchMedia/localStorage, so its first client value can
@@ -92,7 +100,7 @@ export function Nav() {
           <button
             type="button"
             className="l-icon-btn"
-            onClick={toggle}
+            onClick={() => setTheme(FLIP[resolved])}
             aria-label={t("themeToggle")}
             title={t("themeToggle")}
           >

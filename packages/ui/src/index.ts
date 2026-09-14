@@ -21,10 +21,14 @@ export {
   useOptionalTheme,
   themeInitScript,
   linuxDesktopDevice,
+  nextSchemePreference,
 } from "./theme/ThemeProvider.js";
 export type {
   ThemePreference,
   ResolvedTheme,
+  /* What "the system" is, when the host knows better than the media query — the desktop's
+     Omarchy feed answers this, and every other host omits it. */
+  SystemSchemeSource,
   FaceName,
   LayoutName,
   ThemeContextValue,

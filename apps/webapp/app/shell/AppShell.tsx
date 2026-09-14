@@ -70,8 +70,11 @@ import {
   useTheme,
   useToast,
   type Command,
+  type IconName,
   type RailGroup,
   type RailNavProps,
+  type ResolvedTheme,
+  type ThemePreference,
 } from "@ohmail/ui";
 import {
   EngineProvider,
@@ -152,6 +155,28 @@ import {
 import { useDraftReply, type DraftedReply } from "./draft-reply";
 import { RichEditor } from "./RichEditor";
 import { TagPicker, placePicker, type TagPickerState } from "./TagPicker";
+/**
+ * THE SCHEME CONTROL'S THREE STATES, as LOOKUP TABLES rather than comparisons. Light, dark and
+ * auto are appearance vocabulary, and a `preference === "system"` here would be a new
+ * appearance branch for the one-UI census to disposition; a table keyed on the preference is
+ * the same answer with nothing to argue. `dock.themeAuto` is the only one that takes an
+ * argument — "Auto (dark)" — and the other two ignore it.
+ */
+const SCHEME_GLYPH: Record<ThemePreference, IconName> = {
+  light: "sun",
+  dark: "moon",
+  system: "auto",
+};
+const SCHEME_STATE_KEY: Record<ThemePreference, string> = {
+  light: "dock.themeLight",
+  dark: "dock.themeDark",
+  system: "dock.themeAuto",
+};
+const SCHEME_WORD_KEY: Record<ResolvedTheme, string> = {
+  light: "dock.schemeLight",
+  dark: "dock.schemeDark",
+};
+
 import { KeymapProvider, useCursorPlacer, useKeyBindings, useModGlyph, type KeyBinding } from "./keymap";
 /* THE ONE CURSOR PLACER — the mechanism every list view shares; this shell is the `global`
    claimant, answering for the three views whose cursor it holds. See `cursor-placer.ts`. */
@@ -6030,7 +6055,11 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
         run: () => goTag(tag.id),
       });
     }
-    list.push({ id: "theme", label: t("palette.toggleTheme"), run: () => theme.toggle() });
+    /* Three direct entries, not one cycling verb: "Toggle light / dark" would lie with three
+       states, and a palette entry is where somebody goes to reach a state by name. */
+    list.push({ id: "theme-light", label: t("palette.themeLight"), run: () => theme.setTheme("light") });
+    list.push({ id: "theme-dark", label: t("palette.themeDark"), run: () => theme.setTheme("dark") });
+    list.push({ id: "theme-auto", label: t("palette.themeAuto"), run: () => theme.setTheme("system") });
     /* The demo's own ruling for layout controls: "palette and hotkeys only" — no rail
        button, no Settings row (named in the 3b close-out). */
     list.push({ id: "layout", label: t("palette.cycleLayout"), keys: ["w"], run: cycleLayout });
@@ -6636,15 +6665,20 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
    * stacked rows spent a second line on a control worth a single glyph.
    */
 
+  /* What the live region says after a press — empty at mount, so boot announces nothing. */
+  const [schemeSaid, setSchemeSaid] = useState("");
   /**
-   * The theme button is the one thing here without visible text, so it carries its name twice:
+   * The scheme control is the one thing here without visible text, so it carries its name twice:
    * `aria-label` for assistive tech and the palette-less keyboard path, `title` for the pointer
-   * user identifying a lone glyph — dropping either leaves a button whose only description is a
-   * sun. The palette still carries the same action by name ("Toggle light / dark"), so nothing
-   * about switching the theme is reachable only by icon. On a phone these ride the navigation
-   * drawer, the same rail; see `touch-keys.css` for why the keycap goes away there and the
-   * Command label does not.
+   * user identifying a lone glyph. The name states the STATE and the PRESS — "Theme: Auto (dark).
+   * Press for Light" — because one glyph cycling three states is otherwise a button whose only
+   * description is its current picture; the `role="status"` span below says the new state after a
+   * press and nothing at mount. The palette carries all three states by name, so no scheme is
+   * reachable only by icon, and Settings → General keeps the explicit picker. On a phone these
+   * ride the navigation drawer, the same rail; see `touch-keys.css` for the keycap.
    */
+  const schemeLabel = (preference: ThemePreference, resolved: ResolvedTheme): string =>
+    t(SCHEME_STATE_KEY[preference], { resolved: t(SCHEME_WORD_KEY[resolved]) });
   const railDock = (
     <>
       <button type="button" className="ritem dock-cmd" onClick={palette.openPalette}>
@@ -6656,12 +6690,26 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
       <button
         type="button"
         className="ritem dock-theme"
-        onClick={theme.toggle}
-        aria-label={t("dock.theme")}
-        title={t("dock.theme")}
+        onClick={() => {
+          theme.cycle();
+          setSchemeSaid(t("dock.themeNow", { state: schemeLabel(theme.next, theme.nextResolved) }));
+        }}
+        aria-label={t("dock.theme", {
+          state: schemeLabel(theme.preference, theme.resolved),
+          next: schemeLabel(theme.next, theme.nextResolved),
+        })}
+        title={t("dock.theme", {
+          state: schemeLabel(theme.preference, theme.resolved),
+          next: schemeLabel(theme.next, theme.nextResolved),
+        })}
       >
-        <Icon name="sun" />
+        <Icon key={theme.preference} name={SCHEME_GLYPH[theme.preference]} className="scheme-glyph" />
       </button>
+      {/* Empty at mount, so nothing is announced at boot; `sync-say` is the shell's own
+          visually-hidden live region class. */}
+      <span className="sync-say" role="status" aria-live="polite">
+        {schemeSaid}
+      </span>
     </>
   );
 

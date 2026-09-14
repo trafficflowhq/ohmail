@@ -1192,9 +1192,9 @@
       "de": "Deutsch"
     },
     "theme": "Erscheinungsbild",
-    "themeHint": "Folgt dem System, solange du nichts wählst",
+    "themeHint": "Automatisch folgt dem System — unter Omarchy dem aktiven Theme.",
     "themeLight": "Hell",
-    "themeSystem": "System",
+    "themeAuto": "Automatisch",
     "themeDark": "Dunkel",
     "themeAria": "Erscheinungsbild",
     "face": "Look",
@@ -1436,7 +1436,9 @@
     "openSettings": "Einstellungen öffnen",
     "tagToggle": "Tag: {name} …",
     "goTag": "Zum Tag: {name}",
-    "toggleTheme": "Hell / dunkel wechseln",
+    "themeLight": "Erscheinungsbild: Hell",
+    "themeDark": "Erscheinungsbild: Dunkel",
+    "themeAuto": "Erscheinungsbild: Automatisch",
     "cycleLayout": "Anordnung wechseln (Zero / klassisch)",
     "resurfaceSel": "Auswahl wieder auftauchen lassen",
     "footNavigate": "bewegen",
@@ -1446,7 +1448,13 @@
   },
   "dock": {
     "command": "Befehl",
-    "theme": "Erscheinungsbild wechseln"
+    "theme": "Erscheinungsbild: {state}. Drücken für {next}",
+    "themeNow": "Erscheinungsbild: {state}",
+    "themeLight": "Hell",
+    "themeDark": "Dunkel",
+    "themeAuto": "Automatisch ({resolved})",
+    "schemeLight": "hell",
+    "schemeDark": "dunkel"
   },
   "about": {
     "p1": "Ein Demo-Postfach, dafür erfunden — niemand echt, nichts echt. Jede Taste und jeder Klick funktioniert, und nichts davon verlässt diesen Tab: hier gibt es überhaupt kein Netzwerk.",

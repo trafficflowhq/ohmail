@@ -47,6 +47,18 @@ export const ICON_PATHS: Record<string, ReactElement> = {
       <path d="M8 1.8v1.6M8 12.6v1.6M1.8 8h1.6M12.6 8h1.6M3.6 3.6l1.1 1.1M11.3 11.3l1.1 1.1M12.4 3.6l-1.1 1.1M4.7 11.3l-1.1 1.1" />
     </>
   ),
+  /** Dark, in the sun's grammar: one stroked crescent on the same 16 grid. */
+  moon: <path d="M13.2 9.6A5.4 5.4 0 0 1 6.4 2.8a5.4 5.4 0 1 0 6.8 6.8z" />,
+  /**
+   * Auto — a disc with its right half filled. `svg.ic` sets `fill:none`, so the explicit
+   * `fill` here is the only filled shape in the set and the half reads as half.
+   */
+  auto: (
+    <>
+      <circle cx="8" cy="8" r="5.6" />
+      <path d="M8 2.4a5.6 5.6 0 0 1 0 11.2z" fill="currentColor" />
+    </>
+  ),
   info: (
     <>
       <circle cx="8" cy="8" r="5.8" />

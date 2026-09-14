@@ -24,7 +24,7 @@ import "../../webapp/app/app.css";
 import "../../webapp/app/zero-layout.css";
 
 import { bridgeAvailable, connectLocalEngine } from "./bridge-fetch.js";
-import { startOmarchyFeed } from "./omarchy.js";
+import { omarchySchemeSource, startOmarchyFeed } from "./omarchy.js";
 import { startUpdateCadence } from "./update-cadence.js";
 import { DesktopGate } from "./DesktopGate.js";
 import { DOOR_COPY } from "./door-copy.js";
@@ -188,7 +188,15 @@ const paint = (bootFailure: unknown): void =>
           standalone install has no account — and it is read before the first paint, so a
           German window opens in German rather than flipping. */}
       <DesktopLocale>
-        <ThemeProvider storageKey="ohmail.theme" faces storage={THEME_DOOR}>
+        {/* `systemScheme`: on Omarchy "the system" is the ACTIVE DESKTOP THEME's mode, which
+            `prefers-color-scheme` learns only through the GTK portal. The feed answers it; off
+            Omarchy the source says null and the media query answers, exactly as before. */}
+        <ThemeProvider
+          storageKey="ohmail.theme"
+          faces
+          storage={THEME_DOOR}
+          systemScheme={omarchySchemeSource}
+        >
           <ToastHost>
             {/* THE BOUNDARY IS OUTSIDE THE GATE, and it has to be: a component cannot catch its
                 own render, and the throw this exists for comes from `DesktopGate` building the

@@ -21,6 +21,7 @@ import {
   applyOmarchyTokens,
   fencedTokens,
   omarchyRuleText,
+  omarchySchemeSource,
   resetOmarchyFeedForTests,
   startOmarchyFeed,
   themeRawOfPayload,
@@ -101,6 +102,13 @@ function installShell(themeAnswer: unknown): { asked: Asked[]; pushes: Map<strin
 }
 
 const styleText = () => document.getElementById("ohmail-omarchy-live")?.textContent ?? null;
+
+/** One of the 22 real themes, by slug — for the arm that needs a LIGHT one. */
+const rawFixture = (slug: string): string => {
+  const fromRoot = resolve(process.cwd(), "packages/tokens/omarchy/fixtures/raw");
+  const dir = existsSync(fromRoot) ? fromRoot : resolve(process.cwd(), "../../packages/tokens/omarchy/fixtures/raw");
+  return readFileSync(resolve(dir, `${slug}.colors.toml`), "utf8");
+};
 
 afterEach(() => {
   resetOmarchyFeedForTests();
@@ -201,6 +209,42 @@ describe("the feed's start", () => {
   it("outside the shell it is silence, not an error", async () => {
     await startOmarchyFeed();
     expect(styleText()).toBeNull();
+  });
+});
+
+/**
+ * WHAT "THE SYSTEM" IS ON THIS DESKTOP. Under the auto state the PAINT comes from the face's
+ * no-explicit-theme rule, so this source changes no pixel — it exists so the scheme control's
+ * sentence is true ("Auto (dark)") and so a press knows what it would hand back to.
+ * `prefers-color-scheme` learns Omarchy's mode only through the GTK portal, and may not.
+ */
+describe("the scheme source the provider reads", () => {
+  it("says nothing before the first payload, then the live theme's own mode, and notifies", async () => {
+    expect(omarchySchemeSource.get()).toBeNull();
+    const heard: (string | null)[] = [];
+    const stop = omarchySchemeSource.subscribe(() => heard.push(omarchySchemeSource.get()));
+
+    const { pushes } = installShell({ colorsToml: TOKYO_NIGHT });
+    await startOmarchyFeed();
+    expect(omarchySchemeSource.get()).toBe("dark");
+    expect(heard).toEqual(["dark"]);
+
+    /* `omarchy theme set` to a light theme while the window runs. */
+    pushes.get(OMARCHY_THEME_EVENT)!({ payload: { colorsToml: rawFixture("catppuccin-latte") } });
+    expect(omarchySchemeSource.get()).toBe("light");
+    expect(heard).toEqual(["dark", "light"]);
+
+    /* An unmappable payload keeps the standing answer, exactly as it keeps the standing set. */
+    pushes.get(OMARCHY_THEME_EVENT)!({ payload: { colorsToml: "not a theme" } });
+    expect(omarchySchemeSource.get()).toBe("light");
+    expect(heard).toHaveLength(2);
+    stop();
+  });
+
+  it("off-Omarchy it says nothing, and the provider falls back to the media query", async () => {
+    installShell(null);
+    await startOmarchyFeed();
+    expect(omarchySchemeSource.get()).toBeNull();
   });
 });
 

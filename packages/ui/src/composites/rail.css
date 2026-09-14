@@ -127,6 +127,11 @@ input.ritem-new-input{flex:1 1 auto;min-width:0;
    because all three are theme tokens rather than fixed colours. */
 .rail-dock .dock-theme{flex:0 0 auto;padding:6px 7px;justify-content:center;color:var(--ink3)}
 .rail-dock .dock-theme:hover{color:var(--ink)}
+/* The glyph CHANGES on every press (sun / moon / auto), so it crossfades rather than snapping
+   — 180ms, the face's own curve. Reduced motion is handled by base.css's global policy, which
+   collapses every animation to instant rather than merely slowing it. */
+.rail-dock .dock-theme .scheme-glyph{animation:scheme-glyph-in 180ms var(--swift)}
+@keyframes scheme-glyph-in{from{opacity:0}to{opacity:1}}
 .rail-dock + .rail-mail{margin-top:0}
 .rail-mail{margin-top:auto;padding:14px 8px 0;font-size:calc(10.5px + var(--type-up));color:var(--ink3)}
 

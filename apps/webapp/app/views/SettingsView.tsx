@@ -998,7 +998,7 @@ export function SettingsView({
                     className="theme-seg"
                     options={[
                       { id: "light", label: t("themeLight") },
-                      { id: "system", label: t("themeSystem") },
+                      { id: "system", label: t("themeAuto") },
                       { id: "dark", label: t("themeDark") },
                     ]}
                   />

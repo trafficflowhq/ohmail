@@ -7,6 +7,9 @@
  * The face is a second dimension: `data-face="ohmarchy"`, absent = paper,
  * resolved device preference over synced account face over Linux-only
  * detection. The account face write lives in the host, not here.
+ * "System" is whatever the host's optional `systemScheme` source says, and
+ * `prefers-color-scheme` when it wired none — on Omarchy the desktop theme's
+ * own mode, which the media query only learns through the GTK portal.
  */
 import {
   createContext,
@@ -48,6 +51,42 @@ export type ThemePersistence = "door" | "unpersisted";
 
 export type ThemePreference = "light" | "dark" | "system";
 export type ResolvedTheme = "light" | "dark";
+
+/**
+ * WHAT "THE SYSTEM" IS, when the host knows better than `prefers-color-scheme`.
+ *
+ * Declared here and implemented by the host, the {@link StorageDoor} idiom. On Omarchy with
+ * the theme feed live, the system's scheme is the ACTIVE DESKTOP THEME's mode, which
+ * `prefers-color-scheme` only learns through the GTK portal and may not learn at all. The
+ * PAINT never needs this — under `system` the face's no-explicit-theme rule already carries
+ * the live theme's own set — but the label has to be true and the cycle has to know what a
+ * press would change. `null` means "this source cannot say", and matchMedia answers instead.
+ */
+export interface SystemSchemeSource {
+  get(): ResolvedTheme | null;
+  subscribe(onChange: () => void): () => void;
+}
+
+/**
+ * THE CYCLE, as one pure rule both the press and the label read.
+ *
+ *  · from auto → the explicit OPPOSITE of what is rendered, so the first press always shows;
+ *  · from an explicit scheme the system does not share → the other explicit scheme;
+ *  · from an explicit scheme the system DOES share → auto, which leaves the canvas alone by
+ *    construction and is the one press where the glyph and the sentence carry the whole
+ *    change — the hand-back.
+ *
+ * Three presses return home. A fixed ring light → dark → auto was rejected: on a light system
+ * the first press out of auto changes nothing, which is the defect this lane exists to fix.
+ */
+export function nextSchemePreference(
+  preference: ThemePreference,
+  systemScheme: ResolvedTheme,
+): ThemePreference {
+  if (preference === "system") return systemScheme === "dark" ? "light" : "dark";
+  if (preference === systemScheme) return "system";
+  return preference === "dark" ? "light" : "dark";
+}
 /** The appearance face — `paper` is today's look, `ohmarchy` the tiling one. */
 export type FaceName = "paper" | "ohmarchy";
 /** The layout arrangement — `classic` is today's, `zero` the tiling one (3b builds it). */
@@ -59,8 +98,15 @@ export interface ThemeContextValue {
   /** What is actually rendered right now. */
   resolved: ResolvedTheme;
   setTheme: (preference: ThemePreference) => void;
-  /** Flip the effective theme, like the rail's sun row. */
-  toggle: () => void;
+  /**
+   * One press of the rail's scheme control — {@link nextSchemePreference}, read at PRESS time
+   * so a desktop theme that changed between two presses is obeyed rather than remembered.
+   */
+  cycle: () => void;
+  /** What a press would select, for a control that states its own next step. */
+  next: ThemePreference;
+  /** What that next state would RENDER, so the label can say "Auto (dark)" truthfully. */
+  nextResolved: ResolvedTheme;
   /** The face actually rendered right now (preference ?? account ?? detection). */
   face: FaceName;
   /** This device's explicit face choice, or null when it never made one. */
@@ -204,6 +250,12 @@ export interface ThemeProviderProps {
   /** Device key for the layout; `storageKey === null` turns it off with the rest. */
   layoutStorageKey?: string;
   /**
+   * What the SYSTEM's scheme is on this host, when the host knows better than the media query
+   * — see {@link SystemSchemeSource}. Omitted (the webapp, the served host client) ⇒
+   * `prefers-color-scheme`, exactly as before.
+   */
+  systemScheme?: SystemSchemeSource;
+  /**
    * Activate the FACE and LAYOUT axes on this host. OPT-IN, default false (review-caught):
    * the provider is mounted by every surface — landing, admin — but only a host whose UI
    * wired the face controls may detect/stamp it, or a Linux visitor's landing flips to a
@@ -239,6 +291,7 @@ export function ThemeProvider({
   layoutStorageKey = "ohmail.layout",
   faces = false,
   storage,
+  systemScheme,
 }: ThemeProviderProps) {
   /**
    * PERSISTENCE IS DECIDED ONCE, HERE. `storage` absent = the host wired no door;
@@ -265,6 +318,12 @@ export function ThemeProvider({
   // stored preference has been adopted post-mount.
   const [stored, setStored] = useState<ThemePreference | null>(null);
   const [system, setSystem] = useState<ResolvedTheme>("light");
+  /* What the host's source says, or null for "it cannot say" — which is also the pre-adoption
+     state, so the first client render still matches the server's. A ref beside the state
+     because `cycle` reads the source at PRESS time, not at the render that wired the handler. */
+  const [sourceScheme, setSourceScheme] = useState<ResolvedTheme | null>(null);
+  const sourceRef = useRef<SystemSchemeSource | undefined>(undefined);
+  sourceRef.current = systemScheme;
   // undefined = not yet hydrated (the same contract as `stored === null` above; the face
   // needs a third state because null is meaningful — "adopted, and no pin exists").
   const [devicePin, setDevicePin] = useState<FaceName | null | undefined>(undefined);
@@ -329,7 +388,21 @@ export function ThemeProvider({
     return () => mq.removeEventListener?.("change", onChange);
   }, []);
 
-  const resolved: ResolvedTheme = preference === "system" ? system : preference;
+  // …and the host's own answer, when it wired one. Post-mount like every other adoption.
+  useEffect(() => {
+    if (!systemScheme) {
+      setSourceScheme(null);
+      return;
+    }
+    const read = () => setSourceScheme(systemScheme.get());
+    read();
+    return systemScheme.subscribe(read);
+  }, [systemScheme]);
+
+  const systemNow: ResolvedTheme = sourceScheme ?? system;
+  const resolved: ResolvedTheme = preference === "system" ? systemNow : preference;
+  const next = nextSchemePreference(preference, systemNow);
+  const nextResolved: ResolvedTheme = next === "system" ? systemNow : next;
   const face: FaceName =
     devicePin ?? accountFace ?? (linux ? "ohmarchy" : "paper");
   const layout: LayoutName = layoutPin ?? "classic";
@@ -353,12 +426,10 @@ export function ThemeProvider({
   }, [faces, layoutPin, layout]);
 
   const setTheme = useCallback((p: ThemePreference) => setStored(p), []);
-  const toggle = useCallback(() => {
-    setStored((prev) => {
-      const current = prev ?? defaultPreference;
-      const effective = current === "system" ? systemTheme() : current;
-      return effective === "dark" ? "light" : "dark";
-    });
+  const cycle = useCallback(() => {
+    setStored((prev) =>
+      nextSchemePreference(prev ?? defaultPreference, sourceRef.current?.get() ?? systemTheme()),
+    );
   }, [defaultPreference]);
 
   const setFace = useCallback(
@@ -396,7 +467,9 @@ export function ThemeProvider({
       preference,
       resolved,
       setTheme,
-      toggle,
+      cycle,
+      next,
+      nextResolved,
       face,
       facePreference: devicePin ?? null,
       accountFace,
@@ -408,7 +481,7 @@ export function ThemeProvider({
       adoptAccountFace,
       persistence,
     }),
-    [preference, resolved, setTheme, toggle, face, devicePin, accountFace, linux, setFace, layout, setLayout, teach, adoptAccountFace, persistence],
+    [preference, resolved, setTheme, cycle, next, nextResolved, face, devicePin, accountFace, linux, setFace, layout, setLayout, teach, adoptAccountFace, persistence],
   );
   return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>;
 }

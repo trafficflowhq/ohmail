@@ -1192,9 +1192,9 @@
       "de": "Deutsch"
     },
     "theme": "Theme",
-    "themeHint": "Follows the system unless set",
+    "themeHint": "Auto follows the system \u2014 on Omarchy, the active theme.",
     "themeLight": "Light",
-    "themeSystem": "System",
+    "themeAuto": "Auto",
     "themeDark": "Dark",
     "themeAria": "Theme",
     "face": "Look",
@@ -1436,7 +1436,9 @@
     "openSettings": "Open Settings",
     "tagToggle": "Tag: {name}…",
     "goTag": "Go to tag: {name}",
-    "toggleTheme": "Toggle light / dark",
+    "themeLight": "Theme: Light",
+    "themeDark": "Theme: Dark",
+    "themeAuto": "Theme: Auto",
     "cycleLayout": "Switch layout (Zero / classic)",
     "resurfaceSel": "Resurface selection",
     "footNavigate": "navigate",
@@ -1446,7 +1448,13 @@
   },
   "dock": {
     "command": "Command",
-    "theme": "Toggle theme"
+    "theme": "Theme: {state}. Press for {next}",
+    "themeNow": "Theme: {state}",
+    "themeLight": "Light",
+    "themeDark": "Dark",
+    "themeAuto": "Auto ({resolved})",
+    "schemeLight": "light",
+    "schemeDark": "dark"
   },
   "about": {
     "p1": "A demo mailbox, invented for it — nobody real, nothing real. Every key and every click works, and none of it leaves this tab: there is no network here at all.",

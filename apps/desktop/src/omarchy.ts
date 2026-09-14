@@ -195,6 +195,25 @@ export function applyOmarchyTokens(
    simply does not touch. */
 let feedStarted = false;
 
+/**
+ * WHAT "THE SYSTEM" IS ON THIS DESKTOP — the last mapped theme's own mode, or null before the
+ * first payload and on every system that is not an Omarchy one, where `prefers-color-scheme`
+ * answers instead. The PAINT never reads this: under the auto state the face's
+ * no-explicit-theme rule already carries the live set. It exists so the scheme control's
+ * sentence is true and so a press knows what a hand-back to auto would render.
+ */
+let liveMode: "light" | "dark" | null = null;
+const modeWatchers = new Set<() => void>();
+
+/** `SystemSchemeSource` for `ThemeProvider` — declared in @ohmail/ui, implemented here. */
+export const omarchySchemeSource = {
+  get: (): "light" | "dark" | null => liveMode,
+  subscribe: (onChange: () => void): (() => void) => {
+    modeWatchers.add(onChange);
+    return () => modeWatchers.delete(onChange);
+  },
+};
+
 /** Handle one payload — from the pull or the push. Every failure keeps the standing set. */
 function handlePayload(payload: unknown): void {
   const raw = themeRawOfPayload(payload);
@@ -202,6 +221,8 @@ function handlePayload(payload: unknown): void {
   const mapped = mapOmarchyThemePair(raw);
   if (mapped === null) return;
   applyOmarchyTokens(mapped.native.tokens, mapped.mode, mapped.counterpart?.tokens ?? null);
+  liveMode = mapped.mode;
+  for (const watcher of modeWatchers) watcher();
 }
 
 /**
@@ -233,6 +254,8 @@ export async function startOmarchyFeed(): Promise<void> {
 /** Tests only: forget the started flag so each test drives a fresh feed. */
 export function resetOmarchyFeedForTests(): void {
   feedStarted = false;
+  liveMode = null;
+  modeWatchers.clear();
   const style = typeof document === "undefined" ? null : document.getElementById(STYLE_ID);
   style?.remove();
   if (typeof document !== "undefined") {
