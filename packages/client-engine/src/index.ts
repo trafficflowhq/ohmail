@@ -206,10 +206,13 @@ export {
 // `selectors.ts` bands stamps with it and `apps/webapp/app/shell/format.ts` mints its resurface
 // horizons with it, rather than each keeping a copy that drifts on a DST edge.
 export {
+  composeZonedWallClock,
   zonedDayNumber,
   zonedFields,
   zonedInstant,
   zonedWeekday,
+  type WallClockVerdict,
+  type ZonedComposition,
   type ZonedFields,
   type ZonedWallClock,
 } from "./zone.js";

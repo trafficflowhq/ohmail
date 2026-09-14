@@ -16,7 +16,7 @@ import { MessageBody } from "../components/MessageBody";
 import { ConversationPanels } from "./Conversation";
 import { MessageHeader } from "./MessageCard";
 import type { BlockNotice } from "../components/BlockNotice";
-import { PLACE_LABEL, dayAt, dayValue, hueOf, nextWeekAt, resurfaceClock, tagsOfMessage, tomorrowAt, withheldCopyKey } from "./format";
+import { PLACE_LABEL, dayAt, dayValue, hueOf, nextWeekAt, resurfaceClock, tagsOfMessage, tomorrowAt, withheldCopyKey, type ResurfaceHorizon } from "./format";
 import { activeFormatLocale } from "./locale";
 import { replyAllRecipients } from "./compose-from";
 import { useBarDensity } from "./bar-density";
@@ -743,16 +743,25 @@ function ActionBar({
   if (panel === "resurface") {
     /**
      * THE HORIZON CHOOSER — three ways to say when, feeding a concrete instant into the action. Tomorrow and next
-     * week are computed from `now` at 09:00 UTC (the hour every stored `bubbleUpAt` uses, so the label reads back the
-     * same). "Pick a date" opens the product's own `DatePicker` (below), floored at tomorrow through its `min` so no
-     * horizon in the past can be chosen. Each choice closes the panel and dispatches `resurface:<iso>`; the shell
-     * mutates and states the day. FOUR NOW, and the fourth is first because it is the only one that costs nothing to
+     * week are composed from `now` AT THE TIME THE STRIP IS SHOWING, in the reader's zone, and each carries the wall
+     * clock it actually booked: on the night the clocks skip the chosen hour the label states the hour that was
+     * booked and says why, because a booking an hour off the one asked for is not a detail. "Pick a date" opens the
+     * product's own `DatePicker` (below), floored at tomorrow through its `min` so no horizon in the past can be
+     * chosen. Each choice closes the panel and dispatches `resurface:<iso>`; the shell mutates and states the day it
+     * reads back off that instant. FOUR NOW, and the fourth is first because it is the only one that costs nothing to
      * change your mind about. "Now" dispatches `resurface_now` — a state, not a date; see {@link MessageAction}. It
      * is separated from the three horizons by nothing but order: the question the strip asks is still "when?", and
      * "now" is an answer to it.
      */
     const tomorrow = tomorrowAt(now, resurfaceAt);
     const nextWeek = nextWeekAt(now, resurfaceAt);
+    /** The horizon whose night skips the chosen hour, where there is one — the strip's own sentence
+     *  about it is rendered below, before anything is pressed. Only a booking that DIFFERS from the
+     *  request earns one: the repeated-hour night books the time that was asked for. */
+    const skipped = [
+      { name: t("resurfaceTomorrow"), horizon: tomorrow },
+      { name: t("resurfaceNextWeek"), horizon: nextWeek },
+    ].find((x) => x.horizon.verdict === "shifted_forward");
     /**
      * A DATED ANSWER — dispatch it, then remember the hour it was given at. The order is the
      * argument: the message was the ask and the default is a courtesy, so the resurface is on
@@ -761,14 +770,15 @@ function ActionBar({
      * when the hour is the one already stored — an unchanged control is not a decision — and
      * "Now" never reaches here at all: it is a state, not a date, and the time cannot apply.
      */
-    const pick = (iso: string) => {
+    const pick = (horizon: ResurfaceHorizon) => {
       answerPanel();
-      onAction(`resurface:${iso}`);
+      onAction(`resurface:${horizon.iso}`);
       if (resurfaceAt !== storedHhmm) chrome.onResurfaceTime?.(resurfaceAt);
     };
-    /** "Tomorrow, 14:30" — so a screen reader hears the hour a sighted person can read. */
-    const withTime = (horizon: string): string =>
-      t("resurfaceHorizonAt", { horizon, time: resurfaceAt });
+    /** "Tomorrow, 14:30" — so a screen reader hears the hour a sighted person can read. The time is
+     *  the horizon's own, read back off the instant, never the digits in the field. */
+    const withTime = (horizon: string, time: string): string =>
+      t("resurfaceHorizonAt", { horizon, time });
     return (
       <div className="abar">
         <div className="abar-panel">
@@ -807,7 +817,7 @@ function ActionBar({
           <button
             type="button"
             className="abar-b abar-solo"
-            aria-label={withTime(t("resurfaceTomorrow"))}
+            aria-label={withTime(t("resurfaceTomorrow"), tomorrow.time)}
             onClick={() => pick(tomorrow)}
           >
             {t("resurfaceTomorrow")}
@@ -815,7 +825,7 @@ function ActionBar({
           <button
             type="button"
             className="abar-b abar-solo"
-            aria-label={withTime(t("resurfaceNextWeek"))}
+            aria-label={withTime(t("resurfaceNextWeek"), nextWeek.time)}
             onClick={() => pick(nextWeek)}
           >
             {t("resurfaceNextWeek")}
@@ -826,7 +836,7 @@ function ActionBar({
             className="abar-b abar-solo abar-date-trigger"
             aria-haspopup="dialog"
             aria-expanded={dateOpen}
-            aria-label={withTime(t("resurfacePick"))}
+            aria-label={withTime(t("resurfacePick"), resurfaceAt)}
             onClick={() => setDateOpen((open) => !open)}
           >
             {t("resurfacePick")}
@@ -835,7 +845,7 @@ function ActionBar({
             <DatePicker
               locale={activeFormatLocale()}
               today={dayValue(now.toISOString())}
-              min={dayValue(tomorrow)}
+              min={dayValue(tomorrow.iso)}
               anchor={dateRef.current}
               labels={{
                 dialog: t("resurfacePick"),
@@ -849,6 +859,15 @@ function ActionBar({
               }}
               onClose={closeDate}
             />
+          ) : null}
+          {/* THE NIGHT THE HOUR IS MISSING, SAID OUT LOUD — one sentence, on screen before the
+              press, naming the horizon and the time it will actually book. */}
+          {skipped ? (
+            <span className="abar-note">
+              {t("resurfaceSkipNote", {
+                horizon: skipped.name, booked: skipped.horizon.time, asked: resurfaceAt,
+              })}
+            </span>
           ) : null}
           <button type="button" className="abar-b" onClick={cancelPanel}>
             {t("moveCancel")}

@@ -854,6 +854,8 @@ export const DE: Deck = {
   /** The hour the three dated answers land at (mail 0110) — the webapp strip's own word,
    *  standing over the sheet's first row and over the half-hour list it opens. */
   resurfaceTime: "Uhrzeit",
+  resurfaceSkipNote: (horizon: string, booked: string, asked: string) =>
+    `${horizon} landet um ${booked} — die Uhren überspringen ${asked} in dieser Nacht.`,
 
   /*
    * "verschieben nach" sits directly above the destination rows (`→ Belege`, `→ Ohbox`), which

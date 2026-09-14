@@ -3,10 +3,10 @@
  * dates stay UTC instants; a stamp on screen is read in the reader's zone:
  * the wall clock there ({@link zonedFields}), the calendar day there
  * ({@link zonedDayNumber}, {@link zonedWeekday}), and the inverse — what
- * UTC instant is 09:00 there ({@link zonedInstant}). The inverse is not
- * `utc + offset`: the offset depends on the instant being minted, so
- * zonedInstant guesses at the naive offset, re-reads at the guess, corrects
- * — two passes settle every real zone. Intl: the platform ships IANA.
+ * UTC instant is 09:00 there ({@link zonedInstant}, {@link composeZonedWallClock}).
+ * The inverse is not `utc + offset`: the offset depends on the instant being
+ * minted, and on two nights a year a wall clock names no instant or two of
+ * them, so the candidates are bracketed and read back. Intl ships IANA.
  */
 
 /** An instant's wall-clock fields in some zone. `month` is 1-12; `hour` is 0-23. */
@@ -117,19 +117,88 @@ export interface ZonedWallClock {
   second?: number;
 }
 
+/** The day either side of a wall clock — the bracket every transition near it falls inside. */
+const DAY_MS = 86_400_000;
+
+/** Every instant that can read as one wall clock: the earlier, the later where the hour repeats,
+ *  and whether the wall clock exists at all. */
+interface WallClockInstants {
+  /** The earliest instant reading as the requested wall clock — or, where none does, the instant
+   *  the clock jumps to (the wall clock plus the hour that was skipped). */
+  instant: Date;
+  /** The second occurrence, on a night the wall clock happens twice; `null` otherwise. */
+  later: Date | null;
+  /** False when that wall clock does not exist in `zone` — a spring-forward morning. */
+  exists: boolean;
+}
+
 /**
- * The UTC instant at which `zone` reads the given wall clock — the inverse
- * of {@link zonedFields}, and what every resurface preset is built on
- * ("09:00 tomorrow" is a wall clock; the instant is what gets stored). A
- * wall clock that does not exist (02:30 on a spring-forward morning) answers
- * the instant the clock jumps to; one that happens twice answers the second,
- * standard-time occurrence. Neither is reachable from this product's
- * presets; both are pinned in `test/zone.test.ts` so they stay decisions.
+ * The instants a wall clock can name in `zone`.
+ *
+ * The offsets a day either side bracket any transition near it, so those two readings give every
+ * candidate; the ones that read BACK as the request are the real occurrences — none on a
+ * spring-forward morning, two on an autumn one. This is the whole of the zone arithmetic: the two
+ * exported doors below differ only in which occurrence they answer with.
  */
-export function zonedInstant(wall: ZonedWallClock, zone: string): Date {
+function wallClockInstants(wall: ZonedWallClock, zone: string): WallClockInstants {
   const naive = Date.UTC(
     wall.year, wall.month - 1, wall.day, wall.hour ?? 0, wall.minute ?? 0, wall.second ?? 0,
   );
-  const firstPass = naive - offsetAt(naive, zone);
-  return new Date(naive - offsetAt(firstPass, zone));
+  const readsAsRequested = (t: number): boolean => {
+    const f = zonedFields(new Date(t), zone);
+    return Date.UTC(f.year, f.month - 1, f.day, f.hour, f.minute, f.second) === naive;
+  };
+  /* The pre-transition offset first: on a missing wall clock it is the one that lands AFTER the
+     gap, which is the instant the clock jumps to. */
+  const fromBefore = naive - offsetAt(naive - DAY_MS, zone);
+  const fromAfter = naive - offsetAt(naive + DAY_MS, zone);
+  const real = [...new Set([fromBefore, fromAfter])].sort((a, b) => a - b).filter(readsAsRequested);
+  if (real.length === 0) return { instant: new Date(fromBefore), later: null, exists: false };
+  return {
+    instant: new Date(real[0]),
+    later: real.length > 1 ? new Date(real[real.length - 1]) : null,
+    exists: true,
+  };
+}
+
+/**
+ * The UTC instant at which `zone` reads the given wall clock — the inverse of {@link zonedFields}.
+ * Where the wall clock happens twice this answers the LAST occurrence, which is what an instant
+ * closing a window wants (`dayEnd`'s 23:59:59 ends the day it names, not an hour into it), and
+ * where it does not happen at all it answers the instant the clock jumps to. A wall clock a PERSON
+ * chose goes through {@link composeZonedWallClock} instead: it answers the first of two and says
+ * which of the three cases it was, so the surface can state the time it booked.
+ */
+export function zonedInstant(wall: ZonedWallClock, zone: string): Date {
+  const { instant, later } = wallClockInstants(wall, zone);
+  return later ?? instant;
+}
+
+/** Which rule produced an instant — `exact`, or the boundary the wall clock landed on. */
+export type WallClockVerdict = "exact" | "shifted_forward" | "first_of_two";
+
+/** A composed wall clock: the instant to store, the rule that produced it, and the clock it READS
+ *  as in the zone — equal to the request only when the verdict is `exact`. */
+export interface ZonedComposition {
+  instant: Date;
+  verdict: WallClockVerdict;
+  hour: number;
+  minute: number;
+}
+
+/**
+ * A wall clock somebody CHOSE, as the instant to book — the one composition the horizons use.
+ *
+ * Three deterministic answers: the instant itself; `shifted_forward` where that wall clock does not
+ * exist, which books the first instant after the skipped hour (02:30 on a spring morning books
+ * 03:30); and `first_of_two` where it happens twice, which books the earlier occurrence — a chosen
+ * time comes round when the reader's clock FIRST reads it. `hour`/`minute` are read back off the
+ * instant, so a caller labelling its horizon from them cannot show a time it did not book.
+ */
+export function composeZonedWallClock(wall: ZonedWallClock, zone: string): ZonedComposition {
+  const { instant, later, exists } = wallClockInstants(wall, zone);
+  const verdict: WallClockVerdict =
+    !exists ? "shifted_forward" : later === null ? "exact" : "first_of_two";
+  const f = zonedFields(instant, zone);
+  return { instant, verdict, hour: f.hour, minute: f.minute };
 }

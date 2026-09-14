@@ -5,6 +5,7 @@
  */
 import {
   clock,
+  composeZonedWallClock,
   dateClock,
   folderLeaf,
   isOwnSent,
@@ -16,6 +17,7 @@ import {
   zonedInstant,
   zonedWeekday,
   type EmailAddress,
+  type WallClockVerdict,
   type EngineMessage,
   type TagDTO,
   type WithheldMarker,
@@ -142,14 +144,13 @@ export function resurfaceLabel(when: string): string {
 }
 
 /**
- * The resurface horizons. The action carries a chosen instant, so the presets are computed here; all
- * four land at 09:00 IN THE READER'S ZONE and `resurfaceLabel` reads them back the same way. They
- * used to mint 09:00 UTC — self-consistent while every stamp was read in UTC, but once display reads
- * the reader's zone, a 09:00Z instant renders as "11:00" in Zurich summer: the wall clock is what
- * is fixed and the instant varies (07:00Z in CEST, 08:00Z in CET). Storage is unchanged —
- * `bubbleUpAt` stays a UTC instant and the worker compares instants. The arithmetic is
- * `zonedInstant`, not an offset: "add two hours" is right for half the year, and the day arithmetic
- * stays in calendar fields (`day + diff`, normalized by `Date.UTC`) — nothing counts 86 400 000 ms.
+ * The resurface horizons. The action carries a chosen instant, so the presets are computed here.
+ * THE INVARIANT: a horizon lands at the chosen wall clock IN THE READER'S ZONE, and the value it
+ * hands back says which wall clock that turned out to be — the two nights a year when a chosen
+ * time is missing or doubled are resolved by {@link clockOn}, never silently. Storage is unchanged:
+ * `bubbleUpAt` stays a UTC instant and the worker compares instants. The arithmetic is zonal, not
+ * an offset ("add two hours" is right for half the year), and the day arithmetic stays in calendar
+ * fields (`day + diff`, normalized by `Date.UTC`) — nothing counts 86 400 000 ms.
  */
 
 /**
@@ -174,21 +175,40 @@ export function resurfaceClock(hhmm: string | null | undefined): { hour: number;
 }
 
 /**
- * A calendar day in the reader's zone AT A CHOSEN WALL CLOCK, as the UTC instant that is — the
- * one place the hour enters the arithmetic. It was a literal `hour: 9` here, and every horizon
- * below reads its hour from this signature now, so a chooser that shows 14:30 and a horizon that
- * mints 09:00 is not a state this module can be in.
+ * A HORIZON: the instant a resurface was booked for, and the wall clock it READS as. `time` comes
+ * off the instant, never off the digits that were typed, so a surface labelled from it states the
+ * booking; `verdict` says whether the two could differ — see {@link composeZonedWallClock}.
+ */
+export interface ResurfaceHorizon {
+  /** The instant to dispatch, as the UTC ISO string every `bubbleUpAt` is stored as. */
+  iso: string;
+  /** `'HH:MM'` where the reader is — what the chooser says, read back off `iso`. */
+  time: string;
+  verdict: WallClockVerdict;
+}
+
+/**
+ * A calendar day in the reader's zone AT A CHOSEN WALL CLOCK — the one place the hour enters the
+ * arithmetic, and the one place a horizon is composed. Two nights a year the chosen wall clock is
+ * not simply writable onto the day: it is missing (the clocks skip it) or it happens twice, and
+ * the composition answers with a stated rule rather than an hour nobody asked for. Every horizon
+ * below is this function; none of them mints an instant of its own.
  */
 function clockOn(
   zone: string, year: number, month: number, day: number, at: string | null | undefined,
-): string {
+): ResurfaceHorizon {
   const { hour, minute } = resurfaceClock(at);
-  return zonedInstant({ year, month, day, hour, minute }, zone).toISOString();
+  const booked = composeZonedWallClock({ year, month, day, hour, minute }, zone);
+  return {
+    iso: booked.instant.toISOString(),
+    time: `${pad(booked.hour)}:${pad(booked.minute)}`,
+    verdict: booked.verdict,
+  };
 }
 
 /** 09:00 on a calendar day in the reader's zone, as the UTC instant that is. */
 function nineOn(zone: string, year: number, month: number, day: number): string {
-  return clockOn(zone, year, month, day, null);
+  return clockOn(zone, year, month, day, null).iso;
 }
 
 /** How many days forward from `base` the coming `weekday` is — never 0, so today is next week's. */
@@ -207,15 +227,17 @@ export function nextFridayNine(base: Date): string {
 /**
  * Tomorrow, at the account's resurface time where the reader is (mail 0110). `at` is the stored
  * `'HH:MM'`, or `null`/an unreadable value for the product's 09:00 — see {@link resurfaceClock}.
+ * A {@link ResurfaceHorizon}, not a bare instant: the caller labels the button from the same
+ * value it dispatches.
  */
-export function tomorrowAt(base: Date, at: string | null | undefined): string {
+export function tomorrowAt(base: Date, at: string | null | undefined): ResurfaceHorizon {
   const zone = activeFormatZone();
   const f = zonedFields(base, zone);
   return clockOn(zone, f.year, f.month, f.day + 1, at);
 }
 
 /** The coming Monday at that time — and never "later today": a Monday resolves to the next one. */
-export function nextWeekAt(base: Date, at: string | null | undefined): string {
+export function nextWeekAt(base: Date, at: string | null | undefined): ResurfaceHorizon {
   const zone = activeFormatZone();
   const f = zonedFields(base, zone);
   return clockOn(zone, f.year, f.month, f.day + daysUntil(base, zone, 1), at);
@@ -223,12 +245,12 @@ export function nextWeekAt(base: Date, at: string | null | undefined): string {
 
 /** Tomorrow, 09:00 where the reader is — {@link tomorrowAt} at the product's hour. */
 export function tomorrowNine(base: Date): string {
-  return tomorrowAt(base, null);
+  return tomorrowAt(base, null).iso;
 }
 
 /** The coming Monday, 09:00 — {@link nextWeekAt} at the product's hour. */
 export function nextWeekNine(base: Date): string {
-  return nextWeekAt(base, null);
+  return nextWeekAt(base, null).iso;
 }
 
 /* ═══ THE SEND-LATER HORIZONS (mail 0077) ══════════════════════════════════════════════════
@@ -294,7 +316,7 @@ export function instantOfLocalInput(value: string): string | null {
  * A picked calendar day ("YYYY-MM-DD" from an `<input type="date">`) at the account's resurface
  * time where the reader is — 09:00 when nothing is stored ({@link resurfaceClock}).
  */
-export function dayAt(day: string, at: string | null | undefined): string {
+export function dayAt(day: string, at: string | null | undefined): ResurfaceHorizon {
   const zone = activeFormatZone();
   const picked = /^(\d{4})-(\d{2})-(\d{2})/.exec(day);
   /* The input's own format is the fast path and it is already a CALENDAR day — parsing it through
@@ -309,7 +331,7 @@ export function dayAt(day: string, at: string | null | undefined): string {
 
 /** A picked calendar day at 09:00 where the reader is — {@link dayAt} at the product's hour. */
 export function dayNine(day: string): string {
-  return dayAt(day, null);
+  return dayAt(day, null).iso;
 }
 
 /**

@@ -18,6 +18,9 @@ import {
   dateClock,
   messageDisplayTime,
   weekdayClock,
+  composeZonedWallClock,
+  zonedFields,
+  zonedWeekday,
   feedPartition,
   ohboxView,
   physicalFolderOf,
@@ -53,6 +56,7 @@ import {
   type ScreenDest,
   type ScreenerSenderDTO,
   type TagDTO,
+  type WallClockVerdict,
 } from "@ohmail/client-engine";
 import { Copy } from "../copy";
 import { refuse, type RefusalArg } from "../refusal";
@@ -1777,7 +1781,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
         messageId,
         state,
         ...(kind === "resurface"
-          ? { bubbleUpAt: nextMorning(now(), resurfaceAtClock()).toISOString() }
+          ? { bubbleUpAt: tomorrowAt(now(), resurfaceAtClock(), zone).at.toISOString() }
           : {}),
       }),
     );
@@ -1833,7 +1837,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     // A message already scheduled: the horizon-less verb CLEARS the booking rather than
     // silently re-dating it — the webapp's `resurface` arm, verbatim in intent.
     if (triageStateOf(engine.read(), m) === "bubbled_up") return triage(messageId, "none", refuse("toastResurfaceCleared"));
-    return resurfaceAt(messageId, tomorrowAt(now(), resurfaceAtClock()).toISOString());
+    return resurfaceAt(messageId, tomorrowAt(now(), resurfaceAtClock(), zone).at.toISOString());
   };
 
   const resurfaceNow = (messageId: string): Promise<boolean> =>
@@ -2310,61 +2314,76 @@ export function resurfaceTimeLabel(hour: number, minute: number): string {
 export const RESURFACE_HOURS: readonly string[] = Array.from({ length: 33 }, (_, i) =>
   resurfaceTimeLabel(6 + Math.floor(i / 2), (i % 2) * 30));
 
-/** Resurface's one offered horizon on the phone: tomorrow, at the account's time. */
-function nextMorning(from: Date, at: string | null | undefined): Date {
-  const d = new Date(from);
-  d.setDate(d.getDate() + 1);
-  const { hour, minute } = resurfaceClock(at);
-  d.setHours(hour, minute, 0, 0);
-  return d;
-}
-
 /*
  * ═══ THE RESURFACE HORIZONS ═══════════════════════════════════════════════════════════════
  *
- * The webapp's presets (format.ts): all land at 09:00 IN THE READER'S ZONE — the wall clock is
- * what is fixed, the instant is what varies. On the phone the reader's zone IS the device's
- * zone, so `Date`'s local setters are that arithmetic without a zone library: `setHours(9)`
- * asks the platform what 09:00 local means on that calendar day, DST included.
+ * The chosen wall clock is what is fixed; the instant is what varies. Two nights a year the
+ * chosen time is not simply writable onto the day — the clocks skip it, or it happens twice —
+ * and `Date`'s local setters answer those without saying so, which is how a sheet showing 02:30
+ * booked 03:30. Every horizon here is `composeZonedWallClock`, the SAME function the webapp's
+ * `format.ts` composes with, and each carries the wall clock it actually booked so the row can
+ * state it. The zone is the device's, injectable for the suite. (Send later's presets sit below
+ * on whole hours the world's transitions do not cross, and keep the platform's own arithmetic.)
  */
 
+/** A HORIZON: the instant booked, the wall clock it READS as, and which rule produced it. */
+export interface ResurfaceHorizon {
+  at: Date;
+  /** `'HH:MM'` where the reader is, read back off `at` — never the digits that were chosen. */
+  time: string;
+  verdict: WallClockVerdict;
+}
+
+/** A calendar day `daysAhead` from `from`, at a chosen wall clock — the phone's one composition. */
+function horizonOn(
+  from: Date, daysAhead: number, at: string | null | undefined, zone: string,
+): ResurfaceHorizon {
+  const f = zonedFields(from, zone);
+  const { hour, minute } = resurfaceClock(at);
+  const booked = composeZonedWallClock(
+    { year: f.year, month: f.month, day: f.day + daysAhead, hour, minute }, zone,
+  );
+  return {
+    at: booked.instant,
+    time: resurfaceTimeLabel(booked.hour, booked.minute),
+    verdict: booked.verdict,
+  };
+}
+
 /** Tomorrow, at the account's resurface time where the reader is — the chooser's first preset. */
-export function tomorrowAt(from: Date, at: string | null | undefined): Date {
-  return nextMorning(from, at);
+export function tomorrowAt(
+  from: Date, at: string | null | undefined, zone: string = readerZone(),
+): ResurfaceHorizon {
+  return horizonOn(from, 1, at, zone);
 }
 
 /** The coming Monday at that time — and never "later today": a Monday resolves to the next one. */
-export function nextWeekAt(from: Date, at: string | null | undefined): Date {
-  const d = new Date(from);
-  const diff = (1 - d.getDay() + 7) % 7 || 7;
-  d.setDate(d.getDate() + diff);
-  const { hour, minute } = resurfaceClock(at);
-  d.setHours(hour, minute, 0, 0);
-  return d;
+export function nextWeekAt(
+  from: Date, at: string | null | undefined, zone: string = readerZone(),
+): ResurfaceHorizon {
+  return horizonOn(from, (1 - zonedWeekday(from, zone) + 7) % 7 || 7, at, zone);
 }
 
 /** A calendar day `n` days ahead at that time — the phone's "Pick a date" rows. */
-export function dayAt(from: Date, daysAhead: number, at: string | null | undefined): Date {
-  const d = new Date(from);
-  d.setDate(d.getDate() + daysAhead);
-  const { hour, minute } = resurfaceClock(at);
-  d.setHours(hour, minute, 0, 0);
-  return d;
+export function dayAt(
+  from: Date, daysAhead: number, at: string | null | undefined, zone: string = readerZone(),
+): ResurfaceHorizon {
+  return horizonOn(from, daysAhead, at, zone);
 }
 
 /** Tomorrow, 09:00 where the reader is — {@link tomorrowAt} at the product's hour. */
 export function tomorrowNine(from: Date): Date {
-  return tomorrowAt(from, null);
+  return tomorrowAt(from, null).at;
 }
 
 /** The coming Monday, 09:00 — {@link nextWeekAt} at the product's hour. */
 export function nextWeekNine(from: Date): Date {
-  return nextWeekAt(from, null);
+  return nextWeekAt(from, null).at;
 }
 
 /** A calendar day `n` days ahead, 09:00 local — {@link dayAt} at the product's hour. */
 export function dayNine(from: Date, daysAhead: number): Date {
-  return dayAt(from, daysAhead, null);
+  return dayAt(from, daysAhead, null).at;
 }
 
 /*

@@ -486,6 +486,7 @@
     "resurfacePick": "Pick a date",
     "resurfaceTime": "Time",
     "resurfaceHorizonAt": "{horizon}, {time}",
+    "resurfaceSkipNote": "{horizon} lands at {booked} — the clocks skip {asked} that night.",
     "datePrevMonth": "Previous month",
     "dateNextMonth": "Next month",
     "actionMove": "Move",

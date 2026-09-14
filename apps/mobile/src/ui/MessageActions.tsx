@@ -8,7 +8,7 @@
  * envelope, Forward never on `no_forward`, the read slot holds one of its three faces. The AI
  * drafter is not here — no engine verb, so an absent control, never a dead one.
  */
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import {
   Keyboard, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, TextInput, View,
 } from "react-native";
@@ -39,6 +39,7 @@ import {
   todayEvening,
   tomorrowAt,
   tomorrowNine,
+  type ResurfaceHorizon,
   type SignatureState,
   type WorldMail,
   type WorldTag,
@@ -107,13 +108,21 @@ export function MessageActions({
    * scheduled message behind. Nothing is written when the hour is the one already stored, and
    * "Now" never reaches here — it is a state, not a date, and no time can apply to it.
    */
-  const pickResurface = (when: Date): void => {
+  const pickResurface = (when: ResurfaceHorizon): void => {
     const chosen = resurfaceTime;
     close();
     setPickedTime(null);
-    void a.resurfaceAt(m.id, when.toISOString());
+    void a.resurfaceAt(m.id, when.at.toISOString());
     if (chosen !== storedHhmm) void w.remember(chosen).catch(() => undefined);
   };
+  /**
+   * THE TWO DATED HORIZONS, composed where the rows can read them: each carries the wall clock it
+   * will actually book, so a row states 03:30 on the night the clocks skip the chosen 02:30 —
+   * and {@link SkipNote} says why, before the press. The repeated-hour night books the time that
+   * was asked for (the earlier of the two), so it earns no sentence.
+   */
+  const tomorrow = tomorrowAt(new Date(), resurfaceTime);
+  const nextWeek = nextWeekAt(new Date(), resurfaceTime);
 
   return (
     <>
@@ -272,14 +281,16 @@ export function MessageActions({
             <SheetRow label={Copy.resurfaceNow} onPress={() => { close(); setPickedTime(null); a.resurfaceNow(m.id); }} />
             <SheetRow
               label={Copy.resurfaceTomorrow}
-              detail={resurfaceTime}
-              onPress={() => pickResurface(tomorrowAt(new Date(), resurfaceTime))}
+              detail={tomorrow.time}
+              onPress={() => pickResurface(tomorrow)}
             />
+            <SkipNote horizon={tomorrow} label={Copy.resurfaceTomorrow} asked={resurfaceTime} />
             <SheetRow
               label={Copy.resurfaceNextWeek}
-              detail={resurfaceTime}
-              onPress={() => pickResurface(nextWeekAt(new Date(), resurfaceTime))}
+              detail={nextWeek.time}
+              onPress={() => pickResurface(nextWeek)}
             />
+            <SkipNote horizon={nextWeek} label={Copy.resurfaceNextWeek} asked={resurfaceTime} />
             <SheetRow icon="chev" label={Copy.resurfacePick} onPress={() => setOpen("pick")} />
           </>
         ) : open === "time" ? (
@@ -307,12 +318,14 @@ export function MessageActions({
             {Array.from({ length: 90 }, (_, i) => {
               const day = dayAt(new Date(), i + 1, resurfaceTime);
               return (
-                <SheetRow
-                  key={day.toISOString()}
-                  label={dayLabel(day, locale)}
-                  detail={resurfaceTime}
-                  onPress={() => pickResurface(day)}
-                />
+                <Fragment key={day.at.toISOString()}>
+                  <SheetRow
+                    label={dayLabel(day.at, locale)}
+                    detail={day.time}
+                    onPress={() => pickResurface(day)}
+                  />
+                  <SkipNote horizon={day} label={dayLabel(day.at, locale)} asked={resurfaceTime} />
+                </Fragment>
               );
             })}
           </ScrollView>
@@ -971,6 +984,22 @@ function BarToggle({
         {label}
       </Txt>
     </Tap>
+  );
+}
+
+/**
+ * THE NIGHT THE CHOSEN HOUR IS MISSING, SAID OUT LOUD — one sentence under the row it is about,
+ * naming the time that will be booked instead. Nothing at all on the other two verdicts: an exact
+ * booking needs no sentence, and the repeated hour books what was asked for.
+ */
+function SkipNote(
+  { horizon, label, asked }: { horizon: ResurfaceHorizon; label: string; asked: string },
+) {
+  if (horizon.verdict !== "shifted_forward") return null;
+  return (
+    <Txt variant="note" tone="ink2" style={{ paddingHorizontal: 16, paddingBottom: 10 }}>
+      {Copy.resurfaceSkipNote(label, horizon.time, asked)}
+    </Txt>
   );
 }
 

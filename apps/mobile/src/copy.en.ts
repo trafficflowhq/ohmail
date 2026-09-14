@@ -1361,6 +1361,10 @@ const TABLE = {
   /** The hour the three dated answers land at (mail 0110) — the webapp strip's own word,
    *  standing over the sheet's first row and over the half-hour list it opens. */
   resurfaceTime: "Time",
+  /** The night the clocks skip the chosen hour: the row books the next one that exists, and says
+   *  so before the press. The webapp strip's `ohbox.resurfaceSkipNote`, word for word. */
+  resurfaceSkipNote: (horizon: string, booked: string, asked: string) =>
+    `${horizon} lands at ${booked} — the clocks skip ${asked} that night.`,
   /** The move panel (`ohbox.moveLabel` / `ohbox.moveCancel`); destinations are `place*`. */
   moveLabel: "move to",
   moveCancel: "Cancel",

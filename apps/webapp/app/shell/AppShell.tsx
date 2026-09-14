@@ -4463,7 +4463,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
           // place the strip's control shows (mail 0110): a key that kept minting 09:00 after
           // somebody set 14:30 would be the one resurface in the product that ignored the
           // default, and nothing on screen would say so.
-          const when = tomorrowAt(now, consent.resurfaceTime);
+          const when = tomorrowAt(now, consent.resurfaceTime).iso;
           void engine.mutate({
             kind: "triage_set",
             messageId: m.id,
@@ -4681,7 +4681,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
         const state = action === "later" ? "reply_later" : action === "aside" ? "set_aside" : "bubbled_up";
         // The same default the single-message verb uses — the picker's first dated preset, at
         // the account's own hour (mail 0110).
-        const when = action === "resurface" ? tomorrowAt(now, consent.resurfaceTime) : null;
+        const when = action === "resurface" ? tomorrowAt(now, consent.resurfaceTime).iso : null;
         for (const messageId of ids) {
           void engine.mutate({
             kind: "triage_set",
