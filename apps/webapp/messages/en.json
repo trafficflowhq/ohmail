@@ -509,6 +509,7 @@
     "moveLabel": "move to",
     "moveCancel": "Cancel",
     "toastMoved": "Moved to {place}.",
+    "moveGone": "Nothing moved — that message is no longer here.",
     "actionDelete": "Delete",
     "deleteAsk": "Delete this message?",
     "deleteNote": "It moves to the Trash folder on your own mail server — ohmail never erases mail. Your mail server's Trash rules apply from there.",

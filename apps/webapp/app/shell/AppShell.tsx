@@ -4120,6 +4120,45 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
   });
 
   /**
+   * MOVE, TO A PLACE THE ROUTER OWNS — and all five of the Move strip's destinations are.
+   *
+   * Reported on the 0.19.0 desktop: Move → Ohbox on a newsletter in Reads did nothing, twice. Reads
+   * is not a folder that mail sits in — `consentPartition` PRESENTS a message at the place the
+   * sender's rule names, so that newsletter was physically in the INBOX all along. The strip
+   * offered Ohbox against the presented place, the arm dispatched a folder move INBOX→INBOX, the
+   * engine computed no effects and rejected the verb before the wire, and the shell said "Moved to
+   * Ohbox." over an answer it had thrown away.
+   *
+   * So the press writes the ROUTING, which is the fact that decides the place, and the row moves
+   * with it — on a mailbox organized in place, without a byte on the wire about folders. The plan
+   * and the sentence are the Screener's own (`sender-screening.ts`): one writer, and the sentence
+   * is chosen from what the server answered rather than from what the press hoped.
+   */
+  const moveToPlace = useStableCallback((m: EngineMessage, view: OhmailView) => {
+    const sender = senderScreening(reader, m.id);
+    /* No sender to route means no place to route them to — said, never swallowed. */
+    if (!sender) {
+      toast(t("ohbox.moveGone"));
+      return;
+    }
+    /* SENDER SCOPE AND NO RETRO: the person pressed Move on one message, not on a domain, and did
+       not ask for the server to walk the backlog. The plan still files the out-of-place mail it can
+       already see — its own contract, and the number the sentence states. */
+    const plan = planScreeningChange(sender, view as ScreeningDest, "sender", true, false);
+    const place = PLACE_LABEL[view] ?? view;
+    /* The NAME on the row, and the address only when the row carries no name. */
+    const who = sender.name && sender.name.trim() ? sender.name.trim() : displayAddress(sender.address);
+    /* NO EMPTY-PLAN SHORTCUT, deliberately: a plan with nothing in it dispatches nothing and
+       `screeningToast` answers `toastAlreadyRuled` off `ruleState` alone, so the one path already
+       speaks for the press that changes nothing. A branch here would be a second sentence on a
+       state the strip's own filter makes all but unreachable — unwatchable, and the shape this
+       arm shipped with. */
+    void dispatchScreeningChange(plan, (mu) => fileAndRefresh(engine.mutate(mu))).then((key) => {
+      toast(t(`screening.${key}`, { sender: who, place, count: plan.moved }));
+    });
+  });
+
+  /**
    * Open the detail view for whichever scope the sheet was showing.
    *
    * The rows are attributed HERE, at open time, rather than inside the panel: the panel then
@@ -4579,8 +4618,12 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
           // this the whole branch was a toast reading "Demo — Move isn't wired yet.",
           // rendered on live accounts; the mutation was already on the wire.
           const view = action.slice("move:".length) as OhmailView;
-          const folder = FOLDER_OF_VIEW[view];
-          if (!folder || folder === m.folder) break;
+          /* The destination has to BE one — an unknown view is the only thing this cannot act on,
+             and `moveToPlace` says so for every other outcome including "nothing needed moving".
+             The old second clause (`folder === m.folder`) compared the destination against the
+             PRESENTED place and broke out in silence when they matched; that comparison is now the
+             plan's, over the mirror, where a folder is a fact. */
+          if (!FOLDER_OF_VIEW[view]) break;
           /**
            * A READER MOVES NOTHING, AND HEARS SO BEFORE ANYTHING LEAVES. This arm used to dispatch and let the server
            * refuse: the row left the list, the request was declined, the engine rolled the optimistic overlay back,
@@ -4599,8 +4642,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
             toast(refusedMove);
             break;
           }
-          void fileAndRefresh(engine.mutate({ kind: "move", messageId: m.id, folder }));
-          toast(t("ohbox.toastMoved", { place: PLACE_LABEL[view] ?? view }));
+          moveToPlace(m, view);
           break;
         }
       }

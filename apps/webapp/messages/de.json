@@ -509,6 +509,7 @@
     "moveLabel": "verschieben nach",
     "moveCancel": "Abbrechen",
     "toastMoved": "Verschoben: {place}.",
+    "moveGone": "Nichts verschoben — diese Nachricht ist nicht mehr da.",
     "actionDelete": "Löschen",
     "deleteAsk": "Diese Nachricht löschen?",
     "deleteNote": "Sie wandert in den Papierkorb-Ordner auf deinem eigenen Mailserver — ohmail löscht nie unwiderruflich. Ab dort gelten die Papierkorb-Regeln deines Mailservers.",
