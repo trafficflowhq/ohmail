@@ -857,8 +857,8 @@ export function lockDataDir(dataDir: string): () => void {
        * launcher is HALFWAY THROUGH TAKING — the file is created `O_EXCL` and the record written a
        * statement later — so reading empty as stale deleted a live lock on no evidence and put two
        * PGlite instances on one directory, which is the one thing this function exists to stop.
-       * Truncated and unreadable bytes take the same answer, and the refusal already tells the
-       * person the way out: delete the file if that process is definitely gone.
+       * Truncated and unreadable bytes take the same answer, and THEIR refusal tells the person
+       * the way out: delete the file if that process is definitely gone.
        *
        * ── EXCEPT ONE SHAPE, DECIDED BY ITS AGE AND NOTHING ELSE ─────────────────────────────
        *
