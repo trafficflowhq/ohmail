@@ -2133,6 +2133,7 @@
     "useRecovery": "Use a recovery code instead",
     "erasing": "Erasing…",
     "mismatch": "Those credentials belong to a different account, so nothing was deleted. Sign in as the account you want to delete and try again.",
+    "cancelledNothingErased": "Nothing was erased. You cancelled before the check finished.",
     "doneTitle": "Your account is erased",
     "doneBody": "It is gone from our live systems and you are signed out on every device. Your mailbox is untouched — open it in any mail app and the ohmail folders are still there.",
     "doneSubCancelled": "Your subscription was cancelled.",

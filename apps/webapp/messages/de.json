@@ -2133,6 +2133,7 @@
     "useRecovery": "Stattdessen einen Wiederherstellungscode verwenden",
     "erasing": "Wird gelöscht …",
     "mismatch": "Diese Zugangsdaten gehören zu einem anderen Konto, es wurde also nichts gelöscht. Melde dich mit dem Konto an, das du löschen willst, und versuch es nochmal.",
+    "cancelledNothingErased": "Es wurde nichts gelöscht. Du hast abgebrochen, bevor die Prüfung fertig war.",
     "doneTitle": "Dein Konto ist gelöscht",
     "doneBody": "Es ist aus unseren laufenden Systemen verschwunden, und du bist auf jedem Gerät abgemeldet. Dein Postfach ist unberührt — öffne es in einem beliebigen Mailprogramm, und die ohmail-Ordner sind noch da.",
     "doneSubCancelled": "Dein Abo wurde gekündigt.",

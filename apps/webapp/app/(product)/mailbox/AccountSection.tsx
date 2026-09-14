@@ -107,6 +107,18 @@ export function AccountSection() {
   useEffect(() => () => { alive.current = false; }, []);
 
   /**
+   * THE CEREMONY'S GENERATION — what makes Cancel mean it. The erase used to hang off the verify
+   * promise's resolution rather than off the ceremony's state, so pressing Cancel cleared the
+   * screen while the closure that already held the challenge went on and erased the account.
+   * Each factor path captures this counter before its first `await`; Cancel bumps it before it
+   * clears anything, and `verified` — the one door both paths pass through — compares. Unmount is
+   * NOT the gate: the pane need not go away for the ceremony to be over.
+   */
+  const ceremony = useRef(0);
+  /** A verify landed after the person had cancelled and was discarded. Said, never swallowed. */
+  const [cancelled, setCancelled] = useState(false);
+
+  /**
    * Sign out of THIS browser. Not step-up gated, deliberately: it destroys nothing the user cannot
    * get back by signing in again, and a password prompt in front of "get me off this machine" is
    * exactly backwards on the shared computer this exists for. The failure path matters more:
@@ -203,6 +215,8 @@ export function AccountSection() {
   }, []);
 
   const fail = (err: unknown): void => {
+    // A failed ceremony is over: bump, so a response landing later cannot act on it either.
+    ceremony.current += 1;
     setError(messageOf(err));
     // The five-minute window closing mid-ceremony is the one refusal with a specific remedy,
     // and it is the same branch `JoinScreen` takes: start the confirmation again.
@@ -256,8 +270,20 @@ export function AccountSection() {
     }
   }, []);
 
-  /** Shared tail of all three second factors: check the account, then erase. */
-  const verified = async (accountId: string): Promise<void> => {
+  /**
+   * Shared tail of all three second factors, and THE ONE DOOR the generation is read at — one
+   * comparison rather than one per caller, so a fourth factor path inherits the gate instead of
+   * the defect. A cancelled ceremony performs nothing and SAYS so: a silent discard leaves a
+   * person who cannot tell whether their account still exists.
+   */
+  const verified = async (accountId: string, gen: number): Promise<void> => {
+    if (gen !== ceremony.current) {
+      setCancelled(true);
+      setBusy(false);
+      return;
+    }
+    // Spent the moment it authorises the act, so a late second response cannot act either.
+    ceremony.current += 1;
     if (!who || accountId !== who.accountId) {
       setError(t("mismatch"));
       setStage("facts");
@@ -301,12 +327,16 @@ export function AccountSection() {
     if (!challenge) return;
     setBusy(true);
     setError(null);
+    setCancelled(false);
+    // BEFORE the first await: this closure's identity is the ceremony it started in, never
+    // whichever one is current when its response happens to land.
+    const gen = ceremony.current;
     void (async () => {
       try {
         const { options } = await auth.webauthnAssertOptions({ loginToken: challenge.loginToken });
         const credential = await assertPasskey(options);
         const s = await auth.webauthnAssertVerify({ loginToken: challenge.loginToken, credential });
-        await verified(s.user.accountId);
+        await verified(s.user.accountId, gen);
       } catch (err) {
         fail(err);
       }
@@ -318,13 +348,17 @@ export function AccountSection() {
     if (!challenge) return;
     setBusy(true);
     setError(null);
+    setCancelled(false);
+    // Same capture as the passkey path, for the same reason — and it is a SEPARATE path, so a
+    // fix to one of them would be half-applied by construction.
+    const gen = ceremony.current;
     void (async () => {
       try {
         const s = method === "recovery_code"
           ? await auth.recoveryVerify({ loginToken: challenge.loginToken, code: code.trim() })
           : await auth.totpVerify({ loginToken: challenge.loginToken, code: code.trim() });
         setCode("");
-        await verified(s.user.accountId);
+        await verified(s.user.accountId, gen);
       } catch (err) {
         fail(err);
       }
@@ -445,6 +479,10 @@ export function AccountSection() {
       <p className="acct-lead">{t("lead")}</p>
 
       {error ? <p className="acct-warn" role="alert">{error}</p> : null}
+      {/* Not an error — the person got what they asked for. It is here because after a cancel
+          the pane is back at the facts, which on their own look exactly like a pane that erased
+          nothing because nothing was ever started. */}
+      {cancelled ? <p className="acct-warn" role="status">{t("cancelledNothingErased")}</p> : null}
 
       {/* Said once, first, and not repeated: it is the product's central promise and the
           reason erasure can be as blunt as it is. */}
@@ -488,7 +526,7 @@ export function AccountSection() {
       {stage === "facts" ? (
         <form
           className="acct-confirm"
-          onSubmit={(e) => { e.preventDefault(); setError(null); setStage("password"); }}
+          onSubmit={(e) => { e.preventDefault(); setError(null); setCancelled(false); setStage("password"); }}
         >
           <label className="join-label" htmlFor="acct-typed">
             {t("typeLabel", { email: who.email })}
@@ -590,7 +628,15 @@ export function AccountSection() {
                 fresh password step, not a retry against a token that may be spent. */}
             <button
               type="button" className="join-alt"
-              onClick={() => { setChallenge(null); setCode(""); setError(null); setStage("facts"); setTyped(""); }}
+              onClick={() => {
+                // THE BUMP COMES FIRST — it is what makes a verify already in flight discard its
+                // result; everything after it is housekeeping, and housekeeping alone is what this
+                // used to be. `busy` is released here too, or a ceremony cancelled mid-verify
+                // leaves the next Continue disabled with nothing left to re-enable it.
+                ceremony.current += 1;
+                setChallenge(null); setCode(""); setError(null); setBusy(false);
+                setStage("facts"); setTyped("");
+              }}
             >
               {t("cancel")}
             </button>
