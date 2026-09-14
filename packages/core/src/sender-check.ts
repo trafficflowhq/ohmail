@@ -59,7 +59,11 @@ export interface SenderSignals {
   urgency: boolean;
   /** The authentication verdict, when the column carries one. */
   auth?: SenderAuthVerdict;
-  /** Set ⇒ {@link capSuggestion} will bound the answer, and this is the sentence the row renders. */
+  /**
+ * Set ⇒ {@link capSuggestion} will bound the answer, and this is the sentence the row renders.
+ * Only these four values ever leave this module towards a surface or a model — with the brand
+ * (ours) and the count (ours) beside them. Nothing the sender wrote travels as a "fact".
+ */
   reasonCode?: SenderReasonCode;
 }
 
@@ -373,8 +377,11 @@ export function senderFacts(s: SenderSignals): string | undefined {
     lines.push(`- the mail names ${s.impersonation.brand}, whose own addresses are at `
       + `${s.impersonation.brandDomains.join(", ")}`);
   } else if (s.brandMismatch) {
-    lines.push(`- the mail presents itself as ${s.brandMismatch.claimed}, which we cannot match `
-      + `to the sending domain`);
+    // THE MISMATCH, NEVER THE SENDER'S OWN WORDS. `claimed` is a fragment of the RAW subject, and
+    // the subject the model receives has been through `redactForModel` — quoting it here would
+    // carry unredacted sender text past that sink. The model already has the subject; the fact it
+    // cannot derive is that nothing in the name matches the address, so that is what is stated.
+    lines.push("- the name this mail leads with does not match the sending domain");
   }
   if (s.campaign) {
     lines.push(`- the same subject arrived from ${s.campaign.count} unrelated first-time senders`);
