@@ -18,7 +18,7 @@ import { drafts, schedules, sends, readBody } from "./shared.js";
  * `stagedAttachmentIds` names upload tickets already in object storage — the transport that lifts
  * the serverless body limit. Either or both; the service concatenates (inline first) and applies
  * one cap whose surface term depends on the shapes present (`sendSurfaceFor`). Neither is
- * persisted. An ordinary send sends no body at all.
+ * persisted — `ifContentRevision`, the draft version this press saw, included.
  */
 interface SendAttachmentWire { filename?: string; contentType?: string; contentBase64?: string }
 interface SendRequestBody {
