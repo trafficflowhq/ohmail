@@ -259,6 +259,9 @@ export interface LocalMailboxRuntime {
   /** In memory only — the clone defence. Forgetting it on restart is what makes own-role
    *  resumption work. */
   leaseNonce: string | null;
+  /** The nonce a renewal minted and never got an answer about, so a claim this install wrote and
+   *  was never told about is still its own. Read-only: only the write path can know it. */
+  readonly leasePendingNonce: string | null;
   /** The portable organizer profile's write-behind, per mailbox because the document lives in
    *  that mailbox's own `ohmail/_meta`. */
   profileSync: OrganizerProfileSync;

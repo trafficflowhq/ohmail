@@ -336,6 +336,16 @@ interface MailboxRuntime {
    */
   leaseNonce: string | null;
   /**
+   * THE NONCE A RENEWAL MINTED AND NEVER GOT AN ANSWER ABOUT — beside {@link leaseNonce}, in memory
+   * and per mailbox for the same two reasons.
+   *
+   * A renewal that COMMITS and loses its response leaves the folder carrying a claim this worker
+   * wrote and was never told about; with only the acknowledged nonce remembered, the next gate read
+   * it as a restored clone and stood the running worker down over its own write. `LeaseSelf`
+   * carries the rule; this is where the worker keeps its half.
+   */
+  leasePendingNonce: string | null;
+  /**
    * WHAT THIS MAILBOX'S WRITES RIDE ON — the permit the last gate took, or the named reason there
    * is none. Written by `mayOrganize` on both arms and handed to `runSyncCycle`, so every
    * destructive write inside the cycle asks the lease again instead of resting on the cycle's
@@ -1131,12 +1141,15 @@ export async function startWorkerWithLock(
     const organizerDisplayName = config.organizer?.displayName ?? CLOUD_DISPLAY_NAME;
     const organizerStaleAfterMs = config.organizer?.staleAfterMs;
 
-    function leaseSelfFor(rt: { leaseNonce: string | null }): LeaseSelf {
+    function leaseSelfFor(rt: { leaseNonce: string | null; leasePendingNonce: string | null }): LeaseSelf {
       return {
         installId: organizerInstallId,
         kind: "cloud",
         displayName: organizerDisplayName,
         lastNonce: rt.leaseNonce,
+        /* BOTH VALUES, because an install recognises its own claim whatever happened to the
+           response — see {@link LeaseSelf.pendingNonce}. */
+        pendingNonce: rt.leasePendingNonce,
       };
     }
 
@@ -1274,7 +1287,11 @@ export async function startWorkerWithLock(
         /** Mail 0088 — "stop organizing this mailbox, keep my mail", honoured before anything. */
         releaseRequestedAt: Date | null;
       },
-      nonce: { leaseNonce: string | null; leasePermit: OrganizerWriteAuthority },
+      nonce: {
+        leaseNonce: string | null;
+        leasePendingNonce: string | null;
+        leasePermit: OrganizerWriteAuthority;
+      },
       adapter: MailboxAdapter,
       phase: "attach" | "cycle",
       /**
@@ -1300,7 +1317,13 @@ export async function startWorkerWithLock(
           // The nonce this gate's carrier holds. On the ATTACH path no gate has run yet, so it is
           // `null` and the release refuses rather than deleting by id — the request stands and the
           // lapse bound below records it once the claim stops being renewed.
-          { mailboxId: mb.mailboxId, accountId: mb.accountId, adapter, leaseNonce: nonce.leaseNonce },
+          {
+            mailboxId: mb.mailboxId, accountId: mb.accountId, adapter,
+            leaseNonce: nonce.leaseNonce,
+            /* AND THE ONE A LOST ANSWER LEFT. A stop that cleared every claim except the record
+               actually holding the mailbox is the shape this closes. */
+            leasePendingNonce: nonce.leasePendingNonce,
+          },
           "the person asked this install to stop organizing this mailbox and keep reading it",
         );
         /* Zero claims removed is not a release. The release is authorized from the row as it stood
@@ -1530,10 +1553,16 @@ export async function startWorkerWithLock(
           log.info(event, { ...detail, mailboxId: mb.mailboxId, accountId: mb.accountId });
         },
       };
-      const outcome = await readMailboxLease({ ...leaseArgs, now: gateAskedAt });
+      const outcome = await readMailboxLease({
+        ...leaseArgs, now: gateAskedAt,
+        onNonceMinted: (minted: string) => { nonce.leasePendingNonce = minted; },
+      });
 
       if (outcome.organize) {
         nonce.leaseNonce = outcome.nonce;
+        /* THE ANSWER ARRIVED, so nothing is pending — the widening is one value and it is dropped
+           the moment the write it covers is acknowledged. */
+        nonce.leasePendingNonce = null;
         /*
          * THE ROW FOLLOWS THE CLAIM, WITH NOTHING AWAITED BETWEEN THEM. `readMailboxLease` above
          * appended this install's claim and verified it, so the mailbox is already ours to every reader
@@ -1586,7 +1615,13 @@ export async function startWorkerWithLock(
              the write count writes a new claim and expunges the old one; holding the old nonce
              made the next cycle's gate read this worker's own claim as a restored clone, stand it
              down, and leave a live claim with nobody behind it. See `LeasePermitInput.onRenew`. */
-          onRenew: ({ nonce: renewed }) => { nonce.leaseNonce = renewed; },
+          onRenew: ({ nonce: renewed }) => {
+            nonce.leaseNonce = renewed;
+            nonce.leasePendingNonce = null;
+          },
+          /* AND WHAT IT MINTED, before the append that carries it — so a renewal inside the permit
+             whose answer is lost leaves this runtime able to name the claim it wrote. */
+          onNonceMinted: (minted: string) => { nonce.leasePendingNonce = minted; },
         });
         return true;
       }
@@ -1774,6 +1809,8 @@ export async function startWorkerWithLock(
         mailboxId: string; accountId: string; adapter: MailboxAdapter;
         /** The nonce of the claim being given up — a release is addressed by (install, nonce). */
         leaseNonce: string | null;
+        /** And the one a lost response left standing, which is ours too. See {@link MailboxRuntime}. */
+        leasePendingNonce?: string | null;
       },
       why: string,
     ): Promise<number | null> {
@@ -1792,8 +1829,11 @@ export async function startWorkerWithLock(
            the lapse bound above records the release when the claim stops being renewed. */
         const released = await releaseMailboxClaim(
           rt.adapter, organizerInstallId, rt.mailboxId, rt.leaseNonce,
-          // The CONFIGURED window, so the stale term and every other reader of this folder agree.
-          ...(organizerStaleAfterMs !== undefined ? [{ staleAfterMs: organizerStaleAfterMs }] : []),
+          {
+            // The CONFIGURED window, so the stale term and every other reader of this folder agree.
+            ...(organizerStaleAfterMs !== undefined ? { staleAfterMs: organizerStaleAfterMs } : {}),
+            ...(rt.leasePendingNonce != null ? { pendingNonce: rt.leasePendingNonce } : {}),
+          },
         );
         if (released > 0) {
           log.info("organizer_claim_released", {
@@ -2125,6 +2165,7 @@ export async function startWorkerWithLock(
         // the clone defence's memory, and a discarded nonce re-arms that defence every cycle.
         const leaseState = {
           leaseNonce: null as string | null,
+          leasePendingNonce: null as string | null,
           // Until the gate runs there is no permit; the attach's own gate call replaces this.
           leasePermit: { noLease: "not_supplied" } as OrganizerWriteAuthority,
         };
@@ -2383,6 +2424,7 @@ export async function startWorkerWithLock(
           accountId: mb.accountId, mailboxId: mb.mailboxId, adapter, deps, unwatch: null,
           requestKey: deriveRequestKey({ auth: creds.imap.auth, address: mb.address }),
           failures: 0, lastSuccessAt: null, leaseNonce: leaseState.leaseNonce,
+          leasePendingNonce: leaseState.leasePendingNonce,
           leasePermit: leaseState.leasePermit,
           lease: leaseRow,
           // Mail 0083. Mutable, and re-read by every cycle — see the fields.

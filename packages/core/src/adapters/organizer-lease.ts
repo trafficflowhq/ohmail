@@ -530,7 +530,36 @@ export interface LeaseSelf {
   displayName: string;
   /** The nonce of our last write this process, or `null` on a fresh start. */
   lastNonce: string | null;
+  /**
+   * THE NONCE THIS PROCESS MINTED FOR A WRITE WHOSE OUTCOME IT NEVER LEARNED — the send path's rule,
+   * here.
+   *
+   * A renewal APPENDs and the answer is lost. The write committed, so the FOLDER's idea of this
+   * install moved; {@link lastNonce} is only ever updated by an answer, so the CALLER's did not. The
+   * next gate then read a live claim wearing our id under a nonce we could not account for — the
+   * clone defence's exact trigger, aimed at ourselves: the running install was stood down and the
+   * orphan it had written stood over the mailbox until it aged out.
+   *
+   * So the nonce is recorded HERE before the append is issued, and a claim bearing either value is
+   * ours ({@link bearsOurNonce}). Memory-only exactly as `lastNonce` is, and for the same reason: a
+   * fresh process trusts any claim wearing its id exactly once, which is what keeps own-role
+   * resumption working after a crash. Nothing is persisted and no row gains a column.
+   */
+  pendingNonce?: string | null;
   protocol?: number;
+}
+
+/**
+ * IS THIS CLAIM'S NONCE ONE OF OURS? — the one resolver, because three predicates asked it and a
+ * fourth spelling is how they come to disagree about a single record.
+ *
+ * `lastNonce === null` is "trust anything wearing my id", the fresh-process arm, unchanged. With a
+ * nonce armed it is the current one OR the pending one and NOTHING else: an unrecognised nonce is
+ * never ours by default, which is the invariant inverted and would admit a real second organizer.
+ */
+export function bearsOurNonce(self: LeaseSelf, nonce: string): boolean {
+  if (self.lastNonce === null) return true;
+  return nonce === self.lastNonce || (self.pendingNonce != null && nonce === self.pendingNonce);
 }
 
 export type StandDownReason =
@@ -1339,10 +1368,7 @@ export function decideLease(input: DecideLeaseInput): LeaseVerdict {
    */
   const isOurs = (c: OrganizerClaim): boolean => {
     if (c.installId !== self.installId) return false;
-    const clonedUs =
-      self.lastNonce !== null &&
-      c.nonce !== self.lastNonce &&
-      election.live.includes(c);
+    const clonedUs = !bearsOurNonce(self, c.nonce) && election.live.includes(c);
     return !clonedUs;
   };
 
@@ -1360,7 +1386,7 @@ export function decideLease(input: DecideLeaseInput): LeaseVerdict {
     isClaimLive(c, election.clock, staleAfterMs);
   /** Unambiguously this process's current claim, by VALUE — the raw list's `isOurs`. */
   const rawOurs = (c: OrganizerClaim): boolean =>
-    c.installId === self.installId && (self.lastNonce === null || c.nonce === self.lastNonce);
+    c.installId === self.installId && bearsOurNonce(self, c.nonce);
 
   // 1 / 2 — a live peer we cannot rank. Checked first, no authorization overrides them, and
   // checked over the RAW list: coalesce keeps the newest record per install, so an unrankable
@@ -1450,7 +1476,7 @@ export function decideLease(input: DecideLeaseInput): LeaseVerdict {
     const displaced = claims
       .filter((c) => (isMalformed(c)
         ? true
-        : !(c.installId === self.installId && (self.lastNonce === null || c.nonce === self.lastNonce))
+        : !(c.installId === self.installId && bearsOurNonce(self, c.nonce))
           && !((c.protocol > ourProtocol || c.kind === "unknown") && rawIsLive(c))))
       .map((c) => c.ref)
       .filter((r): r is unknown => r !== undefined);
@@ -3466,6 +3492,18 @@ export interface LeaseGateInput {
   capabilities: readonly string[];
   /** Injected for tests; production uses `randomUUID` from `node:crypto`. */
   newNonce?: () => string;
+  /**
+   * THE NONCE THIS CYCLE IS ABOUT TO WRITE, HANDED OVER BEFORE THE WRITE IS ISSUED.
+   *
+   * The caller's memory of its own identity has to move with the WRITE and not with the ANSWER: a
+   * renewal that commits and loses its response leaves this gate throwing and the caller holding
+   * its previous nonce, which the next gate reads as a stranger's ({@link LeaseSelf.pendingNonce}).
+   * Called synchronously, immediately before the APPEND, so there is no arrangement of failures in
+   * which the folder carries a nonce the caller was never told about. Synchronous and returning
+   * nothing on purpose: a hook that could reject or delay would be a second thing to go wrong in
+   * front of the write it exists to precede.
+   */
+  onNonceMinted?: (nonce: string) => void;
   log?: (event: string, detail: Record<string, unknown>) => void;
 }
 
@@ -3867,6 +3905,9 @@ export async function runLeaseGate(input: LeaseGateInput): Promise<LeaseGateResu
     : (newestOwn?.intent ?? "takeover");
 
   const nonce = newNonce();
+  /* RECORDED BEFORE IT IS WRITTEN — see {@link LeaseGateInput.onNonceMinted}. Nothing between this
+     line and the APPEND, so a caller can always prove from what it wrote which claim is its own. */
+  input.onNonceMinted?.(nonce);
   try {
     await io.appendClaim(
       formatClaim({
