@@ -576,6 +576,24 @@ export function sendVerb(
   return { key: "send" };
 }
 
+/**
+ * MAY THIS COMPOSE BE CANCELLED RIGHT NOW? — one predicate, both consumers, for the same reason
+ * {@link canSend} is one.
+ *
+ * Cancel used to ride the same lock as the fields, which locked it for exactly the state in which
+ * cancelling means something: a QUEUED send is an intent standing on the outbox with nothing on
+ * the wire, and withdrawing it is the whole of what Cancel is for. The person abandoned the
+ * composer some other way, the intent stayed standing, and the next reconnect delivered a message
+ * they had cancelled.
+ *
+ * `sending` stays refused — the request has left and this device cannot un-send it — and so does a
+ * HELD message, whose send is owed an answer nobody has: `unverified` may already have delivered,
+ * and Cancel there would delete the account's only record that it happened.
+ */
+export function canCancel(state: SendState, held: boolean): boolean {
+  return !held && state.phase !== "sending";
+}
+
 /* ── the one rule ─────────────────────────────────────────────────────────────────────── */
 
 /**
@@ -1180,7 +1198,9 @@ export function useMailSend(
        * is the wrong sentence with no right one behind it. Read before the phase is derived,
        * because every derivation below would give it one.
        */
-      if (res.error?.code === OUTBOX_WITHDRAWN_CODE) {
+      // `res.error !== undefined` first and not `res.error?.code`: an answer with no error reads
+      // `undefined` there, and `undefined` equals anything a missing constant resolves to.
+      if (res.error !== undefined && res.error.code === OUTBOX_WITHDRAWN_CODE) {
         queued.current.delete(res.key);
         inFlight.current.delete(res.key);
         locked.current.delete(key);

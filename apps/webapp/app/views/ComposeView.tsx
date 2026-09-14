@@ -20,7 +20,7 @@ import { DRAFT_BODY_MAX_BYTES } from "@trafficflow/core/outbound-text";
 import { chordKeys, useBinding, useKeyBindings, useModGlyph, useWritingSurface } from "../shell/keymap";
 import { go } from "../shell/routing";
 import { displayAddress } from "../shell/idn";
-import { canSend, sendStateFor, sendVerb, type SendState } from "../shell/mail-send";
+import { canCancel, canSend, sendStateFor, sendVerb, type SendState } from "../shell/mail-send";
 import { RichEditor } from "../shell/RichEditor";
 import { SendStatus } from "../shell/SendStatus";
 import { HeldSendResolve } from "../components/HeldSendResolve";
@@ -534,15 +534,9 @@ export function ComposeView({
   const held = locked ?? null;
   const sendBlocked = !canSend(send, plan.mutation) || held !== null;
   const inFlight = send.phase === "sending" || send.phase === "queued" || held !== null;
-  /**
-   * CANCEL IS NOT AN INPUT, AND A QUEUED SEND IS NOT ON THE WIRE. Cancel rode `inFlight` with the
-   * fields, which locked it for exactly the state in which cancelling is the thing somebody wants:
-   * a send sitting on the outbox waiting for a connection. The person closed the composer some
-   * other way, the intent stayed standing, and the message they had cancelled went out on the next
-   * reconnect. `sending` stays locked — the request has left and this device cannot un-send it —
-   * and so does a HELD message, whose send is owed an answer nobody has.
-   */
-  const cancelBlocked = send.phase === "sending" || held !== null;
+  /* CANCEL IS NOT AN INPUT, and a queued send is not on the wire — see `canCancel`, which is
+     deliberately NOT the same question as `inFlight`. */
+  const cancelBlocked = !canCancel(send, held !== null);
   /**
    * The state as it applies to THE MESSAGE ON SCREEN. An unresolved send parks the message it
    * belongs to and nothing else, so its warn sentence must not stand above a different one — see
