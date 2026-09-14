@@ -4186,6 +4186,22 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                 }
                 return false;
               }
+              /*
+               * THE PROMOTION SAYS SO, AND IT SAYS SO HERE — ahead of `acquireLeasePermit` below.
+               *
+               * The failure half has had a line since it existed; without this one the ORDER that
+               * paragraph above is about could only be read off a test fixture, and the fixture the
+               * guard used measured the permit's `stampMeta` invocation, which the baseline move put
+               * ahead of the row on purpose. Two product lines — this one and `lease_permit_granted`
+               * — are the order itself. `state` and a constant sentence rather than `from`/`to`:
+               * those two are address-shaped names this repository's logger does not admit.
+               */
+              log("organizer_row_promoted", {
+                mailboxId: mb.id,
+                state: "organizer",
+                reason: "the lease said organize and this install's claim stands in the folder, so " +
+                  "the row moved from reader to organizer before the permit was taken",
+              });
             } catch (err) {
               /* THE ROLE WENT WITH THE STAMP, so this is not "one more spendable cycle": the write
                * that failed is the one that makes the row say `organizer`, and without it this

@@ -747,8 +747,10 @@ export async function acquireLeasePermit(input: LeasePermitInput): Promise<Lease
    * one STATUS, moved to the instant that makes it mean something. SAID ONCE PER PERMIT; a connection
    * that cannot stamp keeps exactly the bound it had, named rather than silent.
    */
+  let baselineStamped = false;
   const takeBaseline = async (reading: Promise<MetaFolderStamp | null>): Promise<void> => {
     stamp = await reading;
+    baselineStamped = stamp !== null;
     if (stamp === null && !unstampedSaid) {
       unstampedSaid = true;
       input.log?.("lease_permit_unstamped", { mailboxId: input.mailboxId });
@@ -849,6 +851,17 @@ export async function acquireLeasePermit(input: LeasePermitInput): Promise<Lease
   } else {
     await read();
   }
+  /*
+   * THE PERMIT IS GRANTED HERE, AND THE LINE IS WHERE THE ORDER IS READ FROM.
+   *
+   * Nothing may be written to the mailbox before this point, so a caller's own record of the
+   * becoming — the row that says `organizer` — has to be in the log ahead of it. This line is what
+   * lets that be MEASURED rather than argued: `phone-stop-then-start.test.ts` reads the two events'
+   * positions instead of a fixture's invocation, which the baseline move put ahead of the row on
+   * purpose. `stamped` and not `baselineTaken` because the hardened logger drops any field name off
+   * `ALLOWED_FIELDS`, and a dropped field is a line that says nothing.
+   */
+  input.log?.("lease_permit_granted", { mailboxId: input.mailboxId, stamped: baselineStamped });
   issuedAt = verifiedAt!;
 
   return {
