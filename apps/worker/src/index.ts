@@ -4,7 +4,7 @@ import {
   pruneIdempotencyKeys, pruneSendFingerprints, noticeSinkFor, setNoticeSink, accountSettings, mailboxCredentials, mailboxes,
   messages, folderState, junkSweepCandidateWhere, closeStoodDownAppointments,
   RELEASED_ORGANIZER_SEND_SENTENCE, capabilitiesColumn, exportPendingMovesOnStandDown,
-  UNMETERED, isMetered, type EntitlementsComposition,
+  UNMETERED, isMetered, AccountErasedError, type EntitlementsComposition,
   type StandDownExport,
 } from "@trafficflow/db";
 import {
@@ -102,7 +102,7 @@ import { driverWriteRaceReason } from "./driver-write-race.js";
 import { recordSmtpMaxSize, smtpSizeDial } from "./smtp-size.js";
 import type { Tx, OrganizerRole, OrganizerState } from "@trafficflow/db";
 import {
-  loadEnabledMailboxes, loadMailboxCreds, loadMailboxById, bootstrapEnvCreds,
+  loadEnabledMailboxes, loadMailboxCreds, loadMailboxById, bootstrapEnvCreds, BootstrapRefusedError,
   markMailboxFailed, markMailboxReadLimited, markMailboxConnected, markMailboxStoodDown,
   clearOrganizerStandDown,
   markMailboxReleased, refreshOrganizerHolder,
@@ -618,9 +618,25 @@ export async function startWorkerWithLock(
           `(it belongs to account ${row.accountId}); refusing to bootstrap credentials`,
         );
       }
-      await bootstrapEnvCreds(db, keyProvider, {
-        mailboxId: config.mailboxId, imap: config.imap, smtp: config.smtp,
-      });
+      try {
+        await bootstrapEnvCreds(db, keyProvider, {
+          mailboxId: config.mailboxId, imap: config.imap, smtp: config.smtp,
+        });
+      } catch (err) {
+        // A REFUSAL IS NOT A FAULT, AND IT IS NOT SILENT EITHER. The mailbox this deployment is
+        // configured for has been removed, or its account erased; recreating its sealed
+        // credentials is the one thing a restart must not do, and taking the whole worker down
+        // over it would stop every other mailbox this process serves. So: one named line, and
+        // the run continues with the removal standing.
+        if (!(err instanceof BootstrapRefusedError) && !(err instanceof AccountErasedError)) throw err;
+        (config.logger ?? silentLogger).warn("env_creds_bootstrap_refused", {
+          mailboxId: config.mailboxId,
+          reason: err instanceof BootstrapRefusedError
+            ? "this mailbox has been removed; its credentials were deleted with it and env will "
+              + "not put them back"
+            : "this mailbox's account has been erased; nothing may be written against it",
+        });
+      }
     }
 
     const shards = config.shards ?? DEFAULT_SHARDS;

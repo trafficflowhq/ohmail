@@ -2,7 +2,7 @@ import { and, asc, desc, eq, inArray, isNotNull, isNull, ne, sql, type SQL } fro
 import type { AnyPgColumn } from "drizzle-orm/pg-core";
 import {
   mailboxes, mailboxCredentials, isOrganizerRole, organizerDisplayName, capabilitiesColumn, type Tx,
-  organizerKindColumn, closedSetValue,
+  organizerKindColumn, closedSetValue, readAccountErasedAt, AccountErasedError,
   type OrganizerRole, type OrganizerKind, type OrganizerState,
   rules,
 } from "@trafficflow/db";
@@ -16,7 +16,7 @@ import { makeDrizzleRepo, type DrizzleRepo } from "@trafficflow/core/adapters/dr
 import type { OrganizerIntent } from "@trafficflow/core/adapters/organizer-lease";
 import { asDatabaseFault, markDatabaseFaults } from "./db-fault.js";
 import type { SyncWriteFence } from "./sync.js";
-import { carryDialect } from "@trafficflow/db/dialect";
+import { carryDialect, dialect } from "@trafficflow/db/dialect";
 
 // The always-on worker reads its per-mailbox credentials from `mailbox_credentials`
 // (envelope-encrypted at rest) instead of a single env mailbox. This module is
@@ -469,37 +469,78 @@ export interface BootstrapInput {
  * (+ smtp when present) rows. If an imap row already exists, DO NOTHING — env
  * NEVER overwrites DB creds. The gate is the imap row alone (the single leader
  * lock guarantees no concurrent bootstrap, so a check-then-insert is safe).
+ *
+ * IT REFUSES A TOMBSTONE. A removed mailbox and an erased account are both states a restart
+ * must not undo — see the refusal inside.
  */
+export class BootstrapRefusedError extends Error {
+  constructor(readonly mailboxId: string, readonly why: "mailbox_erased" | "account_erased") {
+    super(`mailbox ${mailboxId} has been removed; env credentials will not be recreated for it`);
+    this.name = "BootstrapRefusedError";
+  }
+}
+
 export async function bootstrapEnvCreds(
   db: WorkerDb, keyProvider: KeyProvider, input: BootstrapInput,
 ): Promise<void> {
-  const existing = await db
-    .select({ transport: mailboxCredentials.transport })
-    .from(mailboxCredentials)
-    .where(and(eq(mailboxCredentials.mailboxId, input.mailboxId), eq(mailboxCredentials.transport, "imap")))
-    .limit(1);
-  if (existing.length > 0) return; // RC3: a DB row wins — never overwrite it with env
+  const d = dialect(db as unknown as Tx);
+  await (db as unknown as {
+    transaction: <R>(f: (t: unknown) => Promise<R>) => Promise<R>;
+  }).transaction(async (raw) => {
+    const tx = carryDialect(db as unknown as Tx, raw as object) as unknown as Tx;
 
-  const now = new Date();
-  const imapEnc = await keyProvider.encrypt(input.imap.pass);
-  await db.insert(mailboxCredentials).values({
-    mailboxId: input.mailboxId, transport: "imap",
-    secretEnc: imapEnc.ciphertext, keyVersion: imapEnc.keyVersion,
-    meta: { host: input.imap.host, port: input.imap.port, secure: input.imap.secure, user: input.imap.user },
-    updatedAt: now,
-  });
+    /* A TOMBSTONE IS NOT A TEMPLATE.
+     *
+     * A removal leaves the `mailboxes` row standing and deletes the credentials, so an
+     * environment-bootstrap deployment that restarts after one reads a row it is configured for
+     * and puts the person's IMAP and SMTP passwords back on the deployment they took them off.
+     * `disabled` is the status BOTH removals write — plain disconnect and erase — and it is the
+     * only one that means somebody removed this mailbox: an `error` row is a live mailbox whose
+     * last cycle failed. FIRST, and inside the transaction that writes, so a removal committing
+     * mid-bootstrap loses the race rather than the person losing the erasure.
+     *
+     * When the erasure fence's `fencedAccountWrite`/`readMailboxErasedAt` land,
+     * these two reads become that one call — the account half is already spelled the way
+     * `request-drain.ts` spells it.
+     */
+    const [row] = await tx.select({
+      accountId: mailboxes.accountId, status: mailboxes.status,
+    }).from(mailboxes).where(eq(mailboxes.id, input.mailboxId)).limit(1);
+    if (!row) return;
+    const erasedAt = await readAccountErasedAt(tx, d, row.accountId);
+    if (erasedAt != null) throw new AccountErasedError(row.accountId);
+    if (row.status === "disabled") {
+      throw new BootstrapRefusedError(input.mailboxId, "mailbox_erased");
+    }
 
-  if (input.smtp) {
-    // A generic IMAP mailbox usually shares its password/user with SMTP.
-    const smtpPass = input.smtp.pass ?? input.imap.pass;
-    const smtpEnc = await keyProvider.encrypt(smtpPass);
-    await db.insert(mailboxCredentials).values({
-      mailboxId: input.mailboxId, transport: "smtp",
-      secretEnc: smtpEnc.ciphertext, keyVersion: smtpEnc.keyVersion,
-      meta: { host: input.smtp.host, port: input.smtp.port, secure: input.smtp.secure, user: input.smtp.user ?? input.imap.user },
+    const existing = await tx
+      .select({ transport: mailboxCredentials.transport })
+      .from(mailboxCredentials)
+      .where(and(eq(mailboxCredentials.mailboxId, input.mailboxId), eq(mailboxCredentials.transport, "imap")))
+      .limit(1);
+    if (existing.length > 0) return; // RC3: a DB row wins — never overwrite it with env
+
+    const now = new Date();
+    const imapEnc = await keyProvider.encrypt(input.imap.pass);
+    await tx.insert(mailboxCredentials).values({
+      mailboxId: input.mailboxId, transport: "imap",
+      secretEnc: imapEnc.ciphertext, keyVersion: imapEnc.keyVersion,
+      meta: { host: input.imap.host, port: input.imap.port, secure: input.imap.secure, user: input.imap.user },
       updatedAt: now,
     });
-  }
+
+    if (input.smtp) {
+      // A generic IMAP mailbox usually shares its password/user with SMTP.
+      const smtpPass = input.smtp.pass ?? input.imap.pass;
+      const smtpEnc = await keyProvider.encrypt(smtpPass);
+      await tx.insert(mailboxCredentials).values({
+        mailboxId: input.mailboxId, transport: "smtp",
+        secretEnc: smtpEnc.ciphertext, keyVersion: smtpEnc.keyVersion,
+        meta: { host: input.smtp.host, port: input.smtp.port, secure: input.smtp.secure, user: input.smtp.user ?? input.imap.user },
+        updatedAt: now,
+      });
+    }
+  });
 }
 
 /* Why a mailbox failed (mail 0023). `status` used to be the ENTIRE record of a failure. In one
