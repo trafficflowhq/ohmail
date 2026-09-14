@@ -13,6 +13,26 @@ See [Status](README.md#status--read-this-first).
 
 ## [Unreleased]
 
+### Reopening the app no longer holds the text of every reply you have sent
+
+Opening the app fetched every draft your account has ever held, with its full text — and most
+drafts are replies you already sent. On a mailbox with thousands of them that is a large amount of
+text downloaded and kept in memory for as long as the window is open. Your sent replies are still
+listed, and the addresses you write to are still learned from them; their text is no longer carried
+along for the ride.
+
+### Mail the app lets go of takes its leftovers with it
+
+The app keeps a window of your mailbox in memory and reaches past it when you ask for older mail.
+Letting a message go used to leave its conversation and its side records behind, so the window
+bounded the mail and not everything attached to it. Those go with the message now.
+
+### A phone or second computer paired to this one keeps less of the mailbox
+
+A device you pair reads this computer's mailbox over your own network. It kept every message and
+every message body it had ever seen for as long as the page stayed open. It now keeps the same
+window this app does, and reaches back over the same connection for the rest.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See

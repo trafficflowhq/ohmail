@@ -1,24 +1,21 @@
 /**
- * ═══ WHAT BOUNDS EACH ENTITY TYPE IN THE MIRROR ═════════════════════════════════════════════
+ * ═══ WHAT BOUNDS EACH ENTITY TYPE IN THE MIRROR ═══════════════════════════════════════════
  *
- * The window is over the MIRROR, not over one entity type. That sentence was not true: the
- * eviction pass reached `message` and cascaded to `message_body`, and every other type was
- * outside it — not exempted, just never asked about. `draft` was the expensive one (a reload
- * held the text of every reply ever sent), and it was found by a review rather than by anything
- * in this repository, because nothing here could say which types had a bound and which had one
- * by accident.
- *
- * So the answer is a TABLE OVER EVERY TYPE, and the table is TOTAL by construction: it is a
- * `Record` over {@link KnownMirrorEntityType}, so a type added to the mirror without a bound
- * fails `tsc -b` in this package rather than being noticed in a year. `test/mirror-bounds.test.ts`
- * is the other half — it DRIVES the mechanical arms through a real engine, because a table
- * asserting what the code does is a claim and not a measurement.
- *
- * A stated reason is admitted where it is a reason. "The set is what a person typed" is one, and
- * the server's own bootstrap reader relies on it (it serves rules, tags and folders unpaged for
- * exactly that reason). "Nobody thought about it" is not, which is why every non-mechanical arm
- * carries `growsWith` — the thing the row count is a function of — and why the table below is
- * the place a new type's answer has to be written down.
+ * The window is over the MIRROR, not over one entity type — and that was not true. The pass
+ * reached `message` and cascaded to `message_body`; every other type was outside it, not
+ * exempted but never asked about. `draft` was the expensive one, holding the text of every reply
+ * ever sent, and nothing here could say which types had a bound and which had one by accident.
+ */
+/**
+ * So the answer is a TABLE OVER EVERY TYPE, total by construction: a `Record` over {@link
+ * KnownMirrorEntityType}, so a type added without a bound fails `tsc -b` here. The census beside
+ * it DRIVES the mechanical arms through a real engine — a table asserting what the code does is
+ * a claim, not a measurement.
+ */
+/**
+ * A stated reason is admitted where it IS one: "the set is what a person typed" is a reason the
+ * bootstrap reader itself relies on. "Nobody thought about it" is not, so every non-mechanical
+ * arm carries `growsWith` — the thing the row count is a function of.
  */
 
 /**

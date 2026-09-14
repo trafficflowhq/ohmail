@@ -862,19 +862,15 @@ export type StorePolicy =
 /**
  * WHAT A HOST THAT CONFIGURES NOTHING GETS — and it is a WINDOW, not the mailbox.
  *
- * The absent branch used to be `full`, on the argument that a host which forgets must not
- * quietly truncate a desktop mailbox. The measurement went the other way: the shipped LAN host
- * client forgot, and an unbounded mirror by default is the shape that already cost this product
- * a 4.1 GB renderer and an owner-machine OOM. Both failures are silent, and only one of them is
- * recoverable — a pruned row is one `/sync` change or one re-snapshot away, because
- * {@link MirrorStore.prune} deletes rather than tombstones, while memory the app never gives
+ * The absent branch was `full`, so a host that forgot kept everything. Both failures are silent
+ * and only one is recoverable: a pruned row is one `/sync` change or one re-snapshot away
+ * ({@link MirrorStore.prune} deletes rather than tombstones), while memory the app never gives
  * back is a machine somebody has to restart.
- *
- * So `{ mode: "full" }` is still there and still means exactly what it meant; it is now
- * something a host SAYS rather than something it gets for saying nothing. The numbers are the
- * shipped windows' own (`apps/webapp/app/shell/store-windows.ts`), held equal by the census
- * beside them, so an unconfigured host is bounded the way every configured one is rather than
- * by a second number nobody measured.
+ */
+/**
+ * `{ mode: "full" }` still means what it meant — it is now SAID rather than inherited. The
+ * numbers are the shipped windows' own (`apps/webapp/app/shell/store-windows.ts`), held equal by
+ * the census beside them, so an unconfigured host is bounded the way a configured one is.
  */
 export const DEFAULT_STORE_POLICY: StorePolicy =
   { mode: "windowed", days: 90, minRows: 5000, maxRows: 10000 };
@@ -3160,14 +3156,12 @@ export class OhmailEngine {
 
   /**
    * A SENT DRAFT'S TEXT NEVER ENTERS THE COLD MIRROR — the client's half of a bound both sides
-   * keep. The bootstrap reader already omits it, and this is what makes the class unrepresentable
-   * rather than agreed: an older server, a sidecar mirror or a page replayed across a deploy can
-   * still hand this walk a sent draft carrying its body, and the `draft` type is one no eviction
-   * pass takes back. Measured: 1 500 sent-draft bodies survived a ten-message window.
-   *
-   * `sent` ONLY. A `draft`, a `scheduled` send, a `sending` row and an `unverified` one are all
-   * messages somebody still owns, and compose seeds its editor from exactly that body — stripping
-   * one would cost mail rather than save memory.
+   * keep. An older server or a page replayed across a deploy can still hand this walk a sent
+   * draft carrying its body, and no eviction pass takes a `draft` row back.
+   */
+  /**
+   * `sent` ONLY: a `draft`, a `scheduled`, a `sending` and an `unverified` row are messages
+   * somebody still owns, and compose seeds its editor from exactly that body.
    */
   private static withoutSentDraftText(changes: SyncChange[]): SyncChange[] {
     return changes.map((ch) => {
@@ -3401,18 +3395,14 @@ export class OhmailEngine {
 
   /**
    * THE CHILD ROWS OF THE MESSAGES THIS PASS IS EVICTING — threads, parks, settled routing
-   * decisions and settled approvals.
-   *
-   * The advertised window did not bound total retention: evicting a message left its thread, its
-   * `message_state` and its settled decisions behind, each a row that renders nothing and that
-   * nothing else will ever remove. Nothing is LOST — `MirrorStore.prune` deletes rather than
-   * tombstones, and a /sync change carries the FULL DTO, so the row that matters comes back with
-   * the message that matters.
-   *
-   * Only the RESTING rows can be reached at all: a park that is not `none`, a `pending_approval`
-   * decision and a `pending` approval each PIN their message, so a child worth keeping keeps its
-   * parent and is never in this set. An approval with no message is page-1 live state and is
-   * skipped by the same read that finds the others — the cascade follows a NAMED message, never
+   * decisions and settled approvals. Evicting a message left each of them behind, so the
+   * advertised window bounded the mail and not what hangs off it. Nothing is lost: `prune`
+   * deletes rather than tombstones and a /sync change carries the FULL DTO.
+   */
+  /**
+   * Only RESTING rows are reachable: a park that is not `none`, a `pending_approval` decision and
+   * a `pending` approval each PIN their message, so a child worth keeping keeps its parent. An
+   * approval with NO message is page-1 live state — the cascade follows a NAMED message, never
    * the absence of one.
    */
   private cascadeVictims(

@@ -595,15 +595,13 @@ export interface EngineDraft {
    */
   body: string | null;
   /**
-   * Why {@link body} is `null`, when the page that dropped it said so — `over_ceiling` is a
-   * stored body past `DRAFT_BODY_MAX_BYTES`, which `/sync/snapshot` will not carry; `sent` is a
-   * draft that has already gone, whose text is history this mirror does not hold (`html` goes
-   * with it) and which `readDraftBody` fetches by id if a surface ever wants it back.
-   *
-   * Optional, and it changes NO decision: {@link draftBodyKnown} is still the one predicate, and
-   * a body is unknown whether or not a reason arrived (an older server sends none). It is here so
-   * "this page left it out" and "this body is too large for a page" are not one state — a
-   * distinction a support answer needs and a truncation would have destroyed.
+   * Why {@link body} is `null`, when the page that dropped it said so. `over_ceiling` is a stored
+   * body past `DRAFT_BODY_MAX_BYTES`; `sent` is a draft that has already gone, whose text is
+   * history this mirror does not hold (`html` goes with it) and which `readDraftBody` fetches.
+   */
+  /**
+   * It changes NO decision — {@link draftBodyKnown} is still the one predicate. It is here so
+   * "this page left it out" and "this body is too large" are not one state.
    */
   bodyOmitted?: "over_ceiling" | "sent";
   to: EmailAddress[];
