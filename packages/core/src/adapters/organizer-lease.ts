@@ -531,19 +531,14 @@ export interface LeaseSelf {
   /** The nonce of our last write this process, or `null` on a fresh start. */
   lastNonce: string | null;
   /**
-   * THE NONCE THIS PROCESS MINTED FOR A WRITE WHOSE OUTCOME IT NEVER LEARNED — the send path's rule,
-   * here.
+   * THE NONCE THIS PROCESS MINTED FOR A WRITE WHOSE OUTCOME IT NEVER LEARNED.
    *
-   * A renewal APPENDs and the answer is lost. The write committed, so the FOLDER's idea of this
-   * install moved; {@link lastNonce} is only ever updated by an answer, so the CALLER's did not. The
-   * next gate then read a live claim wearing our id under a nonce we could not account for — the
-   * clone defence's exact trigger, aimed at ourselves: the running install was stood down and the
-   * orphan it had written stood over the mailbox until it aged out.
-   *
-   * So the nonce is recorded HERE before the append is issued, and a claim bearing either value is
-   * ours ({@link bearsOurNonce}). Memory-only exactly as `lastNonce` is, and for the same reason: a
-   * fresh process trusts any claim wearing its id exactly once, which is what keeps own-role
-   * resumption working after a crash. Nothing is persisted and no row gains a column.
+   * A renewal APPENDs and the answer is lost: the write committed, so the FOLDER's idea of this
+   * install moved while {@link lastNonce}, which only an answer updates, did not — and the next
+   * gate read our own claim as a clone's and stood the running install down. Recorded before the
+   * append, so a claim bearing either value is ours ({@link bearsOurNonce}). Memory-only exactly as
+   * `lastNonce` is and for its reason: a fresh process trusts its own id once, which is what keeps
+   * own-role resumption working. Nothing is persisted and no row gains a column.
    */
   pendingNonce?: string | null;
   protocol?: number;
@@ -909,15 +904,13 @@ export function ownClockSkewMs(
 }
 
 /**
- * The same measurement, WITH THE RECORD IT CAME FROM — because a discrepancy is only evidence
- * about the clock this install has NOW if this process is the one that wrote the record.
+ * The same measurement, WITH THE RECORD IT CAME FROM — a discrepancy is evidence about the clock
+ * this install has NOW only if this process wrote the record.
  *
- * Both stamps on a message are immutable. Correcting a computer's clock does not reach back and
- * change them, so a record written with a wrong clock refuses every later cycle by itself — and
- * the refusal precedes the append, so no record measurable under the CORRECTED clock can ever be
- * written. A person who fixed their clock was refused for ever, by a sentence blaming the clock
- * they had just fixed. The nonce is what tells the two cases apart: see the gate's use of
- * {@link writtenByThisProcess}.
+ * Both stamps on a message are immutable, and the refusal precedes the append: a record written
+ * with a wrong clock refuses every later cycle by itself, so no record measurable under a
+ * CORRECTED clock can ever be written and the person is refused for ever by the clock they fixed.
+ * The nonce tells the two cases apart — see {@link writtenByThisProcess}.
  */
 export function ownClockReading(
   records: readonly RawClaimMessage[], installId: string,
@@ -3526,13 +3519,11 @@ export interface LeaseGateInput {
   /**
    * THE NONCE THIS CYCLE IS ABOUT TO WRITE, HANDED OVER BEFORE THE WRITE IS ISSUED.
    *
-   * The caller's memory of its own identity has to move with the WRITE and not with the ANSWER: a
-   * renewal that commits and loses its response leaves this gate throwing and the caller holding
-   * its previous nonce, which the next gate reads as a stranger's ({@link LeaseSelf.pendingNonce}).
-   * Called synchronously, immediately before the APPEND, so there is no arrangement of failures in
-   * which the folder carries a nonce the caller was never told about. Synchronous and returning
-   * nothing on purpose: a hook that could reject or delay would be a second thing to go wrong in
-   * front of the write it exists to precede.
+   * A caller's memory of its own identity moves with the WRITE, never with the ANSWER: a renewal
+   * that commits and loses its response leaves this gate throwing and the caller on its previous
+   * nonce, which the next gate reads as a stranger's ({@link LeaseSelf.pendingNonce}). Called
+   * synchronously immediately before the APPEND, and returning nothing, so no arrangement of
+   * failures leaves the folder carrying a nonce the caller was never told about.
    */
   onNonceMinted?: (nonce: string) => void;
   log?: (event: string, detail: Record<string, unknown>) => void;
@@ -3565,15 +3556,11 @@ export interface LeaseGateResult {
  * WHAT THE FOLDER LOOKED LIKE AT THE INSTANT THIS CLAIM WAS PROVED TO STAND — a baseline and the
  * custody question, answered together because either alone is worthless.
  *
- * The counters are the cheap half of "is my claim still there" ({@link MetaFolderStamp}). They are
- * only a BASELINE if our claim stood when they were read, and that is the half that used to be
- * missing: the counters were taken by a separate round trip after the gate returned, so a takeover
- * landing before the server answered was already inside them — and every later boundary then read
- * "nothing moved" against a reading that already held the rival's write. So the gate asks for the
- * counters and then re-proves custody by nonce, in that order: a takeover landing before the
- * counters, or between them and the proof, leaves our claim missing from the proof; one landing
- * after moves the counters away from the baseline. Three answers and not two, because "I could not
- * look" is not "somebody took it" — the module's rule everywhere else.
+ * Counters are the cheap half of "is my claim still there" ({@link MetaFolderStamp}), and a
+ * BASELINE only if our claim stood when they were read. Taken by a separate round trip after the
+ * gate returned, a takeover landing before the server answered was already inside them. So the gate
+ * asks for the counters and re-proves custody by nonce BEHIND them. Three answers and not two:
+ * "I could not look" is not "somebody took it", this module's rule everywhere else.
  */
 export type MetaBaselineReading =
   /** Our claim stood when these counters were read. `stamp: null` — no counters, so no baseline. */
@@ -3817,17 +3804,12 @@ export async function runLeaseGate(input: LeaseGateInput): Promise<LeaseGateResu
   /**
    * A DISCREPANCY ON A RECORD THIS PROCESS DID NOT WRITE COSTS ONE RENEWAL, NOT THE MAILBOX.
    *
-   * Both stamps on a claim are immutable, so a record written with a wrong clock goes on refusing
-   * for ever — and because the refusal precedes the append, no record measurable under a CORRECTED
-   * clock can ever be written. A person who set their clock was told, every cycle, that the clock
-   * they had just fixed was wrong, and their mail stopped. So a record from before this process's
-   * memory is admitted once: the renewal it licenses writes a claim under the clock this install
-   * has NOW, and every cycle after it measures THAT one and refuses if it is still wrong.
-   *
-   * THE RESIDUAL, STATED: a process that keeps running across a correction goes on measuring the
-   * record it wrote with the wrong clock until it is next launched. The protection is unchanged in
-   * the direction that matters — an install whose clock is wrong writes one claim per launch and
-   * then stops — and nothing here widens the bound.
+   * Both stamps are immutable and the refusal precedes the append, so a claim written with a wrong
+   * clock refused for ever and told the person, every cycle, that the clock they had just fixed was
+   * wrong. A record from before this process's memory is admitted once; the renewal it licenses
+   * writes a claim under the clock this install has NOW, and every later cycle measures THAT one.
+   * RESIDUAL: a process running across a correction clears only at its next launch. An install
+   * whose clock is wrong still writes one claim per launch and then stops.
    */
   const staleReading = clockReading !== null && !writtenByThisProcess(self, clockReading.nonce);
   const skew = staleReading ? null : clockSkewRefusal({
@@ -4314,17 +4296,12 @@ export async function runLeaseGate(input: LeaseGateInput): Promise<LeaseGateResu
   /**
    * THE BASELINE, AND THE PROOF THAT IT IS ONE — the gate's last act, issued and never awaited.
    *
-   * ORDER IS THE WHOLE MECHANISM. The counters are asked for FIRST and custody is re-proved by
-   * nonce after them: a takeover landing before the counters, or between them and the proof, leaves
-   * our claim missing from the proof and answers `lost`; one landing after the proof moves the
-   * counters away from the baseline, which is what the permit's next boundary is for. Asked the
-   * other way round — proof, then counters — a takeover landing between the two would be inside the
-   * baseline, and that is the defect this closes.
-   *
-   * NOT AWAITED HERE, and that is not thrift: the caller's row write follows the verified claim with
-   * nothing awaited in front of it ({@link LeaseGateResult.stamp}), and two round trips awaited here
-   * would sit in front of it. The permit awaits this before it grants, so no write boundary is ever
-   * reached while custody is unsettled.
+   * ORDER IS THE WHOLE MECHANISM: counters FIRST, custody re-proved by nonce behind them. A takeover
+   * landing before the counters or between them and the proof leaves our claim missing from the
+   * proof; one landing after moves the counters off the baseline, which is what the permit's next
+   * boundary is for. Proof-then-counters would put a takeover between the two INSIDE the baseline.
+   * Not awaited: the caller's row write follows the verified claim with nothing in front of it
+   * ({@link LeaseGateResult.stamp}), and the permit awaits this before it grants.
    */
   const proveAndStamp = async (): Promise<MetaBaselineReading> => {
     const stamp = io.stampMeta === undefined ? null : await io.stampMeta().catch(() => null);

@@ -157,15 +157,14 @@ export type MailboxLeaseOutcome =
   | {
     organize: true; nonce: string | null; by: null; uidValidity: number | bigint | null;
     /**
-     * THE FOLDER'S COUNTERS AS THIS CLAIM WAS VERIFIED, AND THE PROOF THAT THEY ARE ITS OWN — issued
-     * by the gate, awaited by whoever needs it. A permit's baseline and the claim it rides have to be
-     * ONE ACT: taken later, a take-over landing in between is baked into the baseline, and every write
-     * boundary then reads "nothing moved" while somebody else moves the folder, for a whole TTL or a
-     * hundred writes. A STATUS issued here, after the gate returned, was still a separate round trip
-     * and still had that gap in front of it — so the gate takes the counters itself and re-proves
-     * custody by nonce behind them ({@link MetaBaselineReading}). NOT awaited by the gate: the row that
-     * follows the claim is written next by both adopt callers with nothing awaited in front of it, and
-     * that window is what they exist to close.
+     * THE FOLDER'S COUNTERS AS THIS CLAIM WAS VERIFIED, AND THE PROOF THAT THEY ARE ITS OWN.
+     *
+     * A permit's baseline and the claim it rides are ONE ACT: taken later, a take-over landing in
+     * between is baked in, and every write boundary then reads "nothing moved" for a whole TTL or a
+     * hundred writes. A STATUS issued here, after the gate returned, was a separate round trip with
+     * that gap in front of it — so the gate takes the counters and re-proves custody by nonce behind
+     * them ({@link MetaBaselineReading}). Not awaited by the gate: the row that follows the claim is
+     * written next with nothing in front of it.
      */
     stamp: Promise<MetaBaselineReading>;
   }
@@ -775,18 +774,13 @@ export async function acquireLeasePermit(input: LeasePermitInput): Promise<Lease
   let stamp: MetaFolderStamp | null = null;
   let unstampedSaid = false;
   /**
-   * THE BASELINE IS THE CLAIM'S OWN READING, AND NEVER A LATER ONE. This used to take its own STATUS
-   * here, after the caller's row write: a take-over landing in that gap was baked into the baseline, so
-   * every boundary read "nothing moved" while somebody else moved the folder, for a whole TTL or a
-   * hundred writes. The reading comes from {@link MailboxLeaseOutcome.stamp} — the GATE's, taken in the
-   * same act as the verdict that admitted the claim and proved against it by nonce — so anything later
-   * is OUTSIDE the baseline, which is what makes the first write boundary probe it. SAID ONCE PER
-   * PERMIT; a connection that cannot stamp keeps exactly the bound it had, named rather than silent.
-   *
-   * AND A LOST CUSTODY IS A STAND-DOWN HERE, not a bound to ride out. The gate discovered the takeover
-   * while recording the baseline; the permit is revoked before it is ever granted and no write boundary
-   * is reached, so the mailbox is left as the winner wrote it. The TTL and the write count stay what
-   * they always were — a backstop behind this, never the thing that ends the overlap.
+   * THE BASELINE IS THE CLAIM'S OWN READING, AND NEVER A LATER ONE. It comes from {@link
+   * MailboxLeaseOutcome.stamp} — the GATE's, taken in the act that admitted the claim and proved
+   * against it by nonce — so anything later is OUTSIDE the baseline, which is what makes the first
+   * write boundary probe it. Said once per permit; a connection that cannot stamp keeps the bound
+   * it had, named rather than silent. A LOST CUSTODY IS A STAND-DOWN HERE, not a bound to ride out:
+   * the permit is revoked before it is granted and no write boundary is reached, so the mailbox is
+   * left as the winner wrote it. The TTL and the write count stay a backstop behind this.
    */
   let baselineStamped = false;
   const takeBaseline = async (reading: Promise<MetaBaselineReading>): Promise<void> => {
