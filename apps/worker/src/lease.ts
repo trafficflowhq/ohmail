@@ -645,6 +645,22 @@ export interface LeasePermitInput extends Omit<MailboxLeaseInput, "now"> {
    * here. `at` is the instant of the read, for callers whose lapse bound is measured from it.
    */
   onRenew?: (renewal: { nonce: string | null; at: Date }) => void;
+  /**
+   * THE ROW FOLLOWS THE CLAIM — the caller's durable record of this becoming, run in front of the
+   * probe rather than after the receipt.
+   *
+   * `readMailboxLease` appends this install's claim and verifies it, so from the instant it answers
+   * `organize` the mailbox is ours to every reader of `ohmail/_meta`. The row is what every write
+   * door consults, and a caller that wrote it AFTER this call spent `restamp()`'s IMAP STATUS —
+   * measured at 83 ms against a real server — with its own claim standing over a row still saying
+   * `reader`, refusing its own requests `409 organized_elsewhere` and naming itself. The phone and
+   * the always-on worker each moved that write to their own call site; a caller with no `adopt`
+   * cannot, because the claim, the verify and the probe all happen in here. Hence the hook: ONCE
+   * per permit, never on a renewal, and a hook that THROWS does not break the receipt — the lease
+   * is held either way, so the throw is logged (`lease_permit_claim_held_failed`) and the permit
+   * still returns.
+   */
+  onClaimHeld?: (held: { nonce: string | null; at: Date }) => void | Promise<void>;
 }
 
 /**
@@ -678,6 +694,7 @@ export async function acquireLeasePermit(input: LeasePermitInput): Promise<Lease
   delete (base as Partial<LeasePermitInput>).writesPerRecheck;
   delete (base as Partial<LeasePermitInput>).adopt;
   delete (base as Partial<LeasePermitInput>).onRenew;
+  delete (base as Partial<LeasePermitInput>).onClaimHeld;
 
   // The nonce this permit has written, threaded into every later read — see the docblock.
   let lastNonce: string | null = input.self.lastNonce;
@@ -731,6 +748,24 @@ export async function acquireLeasePermit(input: LeasePermitInput): Promise<Lease
     return now === null || !sameMetaStamp(now, stamp);
   };
 
+  /**
+   * ONE BECOMING PER PERMIT. `read()` runs again at every renewal, and what a caller records here
+   * is one-shot — a press spent, a role flipped — so firing it per renewal would be the "no-op
+   * UPDATE every cycle" the promotion's own header refuses to pay for. See
+   * {@link LeasePermitInput.onClaimHeld} for why the throw is logged rather than propagated.
+   */
+  let claimHeldOwed = input.onClaimHeld;
+  const announceHeld = async (held: { nonce: string | null; at: Date }): Promise<void> => {
+    const hook = claimHeldOwed;
+    if (hook === undefined) return;
+    claimHeldOwed = undefined;
+    try {
+      await hook(held);
+    } catch (err) {
+      input.log?.("lease_permit_claim_held_failed", { mailboxId: input.mailboxId, err });
+    }
+  };
+
   const read = async (): Promise<void> => {
     const at = clock();
     reads++;
@@ -763,9 +798,16 @@ export async function acquireLeasePermit(input: LeasePermitInput): Promise<Lease
     lastNonce = outcome.nonce;
     verifiedAt = at;
     writesSinceRead = 0;
+    // THE ROW FOLLOWS THE CLAIM: the caller's record of this becoming is issued between the
+    // verified claim and the probe, with nothing awaited in front of it. See
+    // {@link LeasePermitInput.onClaimHeld}.
+    await announceHeld({ nonce: outcome.nonce, at });
     // AFTER the renew, never before it: the gate's own APPEND and EXPUNGE move the folder, so a
     // baseline taken in front of them describes a folder that no longer exists and every later
-    // boundary would read our own write as somebody else's.
+    // boundary would read our own write as somebody else's. The hook above is the only thing that
+    // sits in the gap — a local write, measured at 5 ms against a 60 s TTL — and a folder that
+    // moved inside it is baked into the baseline, which is the same gap the `adopt` arm below
+    // already takes and is bounded by the clock and the write count either way.
     await restamp();
     // The claim in the folder is now this one — see {@link LeasePermitInput.onRenew}. Last, so a
     // caller is never told about a renewal this permit has not finished recording.
@@ -777,6 +819,10 @@ export async function acquireLeasePermit(input: LeasePermitInput): Promise<Lease
     lastNonce = input.adopt.outcome.nonce;
     verifiedAt = input.adopt.at;
     reads = 1;
+    // An ADOPT caller decided before it called, so its hook runs at entry rather than at the
+    // decision — no later than this permit's first await, which is what the invariant needs, and
+    // never silently dropped, which is what a hook the adopt path ignored would be.
+    await announceHeld({ nonce: input.adopt.outcome.nonce, at: input.adopt.at });
     // The adopted read was the CALLER's, so the baseline is taken here instead — a gap of one
     // resolution, against the whole TTL this receipt would otherwise be believed for.
     await restamp();

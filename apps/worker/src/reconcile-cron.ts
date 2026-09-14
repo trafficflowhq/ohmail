@@ -269,6 +269,34 @@ export async function runReconcileCron(
       return { ran: false, reason: "stood-down" };
     };
 
+    /* ── THE ROW FOLLOWS THE CLAIM, WITH NOTHING AWAITED BETWEEN THEM ───────────────────────
+     *
+     * ONE-SHOT, as at `index.ts#mayOrganize`: the authorization bought this becoming and no other,
+     * or a lapse-then-resubscribe would seize the mailbox back months later from whatever a human
+     * deliberately moved it to. It rides {@link LeasePermitInput.onClaimHeld} rather than sitting
+     * after the acquisition, because this call site passes no `adopt` — the claim's append, its
+     * verify and the probe all happen INSIDE `acquireLeasePermit`, so no reordering out here could
+     * reach the window the phone and the always-on worker each closed at their own call sites.
+     * FENCED, and the answer is READ: `false` is a write that did not land (this process no longer
+     * leads the shard, or the row is a tombstone), so the press stays spendable for the next sweep
+     * and the line says so rather than leaving the row lying silently.
+     */
+    const promote = async (): Promise<void> => {
+      try {
+        const promoted = await clearOrganizerStandDown(db, mailboxId, { fence });
+        if (promoted) return;
+        log.warn(cronEvent("reconcile", "organizer_promotion_fenced"), {
+          mailboxId, accountId: row.accountId,
+          reason: "the row was not promoted — this process no longer leads the shard, or the "
+            + "mailbox is a tombstone; the press is unspent and the next sweep retries",
+        });
+      } catch (err) {
+        log.warn(cronEvent("reconcile", "organizer_promotion_failed"), {
+          mailboxId, accountId: row.accountId, err,
+        });
+      }
+    };
+
     let permit: LeasePermit;
     try {
       permit = await acquireLeasePermit({
@@ -301,6 +329,10 @@ export async function runReconcileCron(
         takeover: row.takeoverAuthorizedAt
           ? { authorizedAt: row.takeoverAuthorizedAt, intent: row.takeoverIntent }
           : null,
+        // Only where there is a becoming to record: a row already saying `organizer` with no press
+        // and no stand-down needs no write, which is the steady state of every ordinary sweep.
+        ...(row.takeoverAuthorizedAt !== null || row.disabledReason !== null
+          ? { onClaimHeld: promote } : {}),
         ...(config.organizer?.staleAfterMs !== undefined ? { staleAfterMs: config.organizer.staleAfterMs } : {}),
         log: (event, detail) => { log.info(event, { ...detail, mailboxId, accountId: row.accountId }); },
       });
@@ -313,21 +345,6 @@ export async function runReconcileCron(
           "an unreadable lease is not a stand-down and is not the mailbox's fault",
       });
       return { ran: false, reason: "lease-unreadable" };
-    }
-
-    // ONE-SHOT, as at `index.ts#mayOrganize`. The authorization bought this becoming and no
-    // other; leaving it set would let a lapse-then-resubscribe seize the mailbox back months
-    // later from whatever a human deliberately moved it to. Best-effort: the gate already said
-    // organize and the claim is already written, so failing to spend the stamp costs one more
-    // run of it being spendable, never correctness.
-    if (row.takeoverAuthorizedAt || row.disabledReason) {
-      try {
-        await clearOrganizerStandDown(db, mailboxId, { fence });
-      } catch (err) {
-        log.warn(cronEvent("reconcile", "takeover_clear_failed"), {
-          mailboxId, accountId: row.accountId, err,
-        });
-      }
     }
 
     // EVERY WRITE BOUNDARY THIS PASS OWNS, RE-ASKED. It used to read the lease ONCE and write for a whole
