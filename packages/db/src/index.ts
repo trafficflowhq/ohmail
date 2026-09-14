@@ -56,7 +56,10 @@ export {
 // decision stamps `account_settings.screening_baseline_at`, an `account_settings` writer, and
 // every such writer fences first. `packages/services/src/erasure-fence.ts#fenceErasedAccount` now
 // calls this and converts the answer to a `ServiceError`.
-export { readAccountErasedAt } from "./erasure-fence.js";
+export {
+  readAccountErasedAt, readMailboxErasedAt, fenceErased, fencedAccountWrite,
+  AccountErasedError, MailboxErasedError, type FenceScope,
+} from "./erasure-fence.js";
 
 // THE SCREENER DECISION'S APPLY — the reason for all three exports above it, and the biggest
 // single move: `ScreenerService.applyDecision`'s whole transactional core, reachable by the
@@ -67,7 +70,7 @@ export { readAccountErasedAt } from "./erasure-fence.js";
 export {
   SCREENER_FOLDER, DECIDABLE_FOLDERS, admitsDestination, domainOf,
   heldRowById, heldRowsForSender, heldRowsForDomain,
-  applyScreenerDecision, AccountErasedError, validateRequestPayload,
+  applyScreenerDecision, validateRequestPayload,
   type AppliedScreenerRow, type ApplyScreenerDecisionInput, type ApplyScreenerDecisionResult,
   type ValidatedRequestPayload,
 } from "./screener-apply.js";

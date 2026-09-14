@@ -2,7 +2,7 @@ import { and, desc, eq, isNull, sql, type SQL } from "drizzle-orm";
 import { accountSettings, contacts, folderState, messages, rules as rulesTbl } from "./schema-mail.js";
 import { recordChange, recordRuleDelta, type LedgerTx, type Tx } from "./change-log.js";
 import { dialect } from "./dialect/index.js";
-import { readAccountErasedAt } from "./erasure-fence.js";
+import { AccountErasedError, readAccountErasedAt } from "./erasure-fence.js";
 import { recordLearningSignal } from "./learning-signal.js";
 import { upsertDesiredSeen } from "./flag-intent.js";
 
@@ -240,14 +240,6 @@ export async function heldRowsForDomain(
     ${at} > 0
     and ${d.substr(address, sql`${at} + 1`)} = ${domain}
   `, mailboxId);
-}
-
-/** Thrown by {@link applyScreenerDecision} on an erased account. See `erasure-fence.ts`'s own header. */
-export class AccountErasedError extends Error {
-  constructor(readonly accountId: string) {
-    super(`account ${accountId} has been deleted; its settings cannot be changed`);
-    this.name = "AccountErasedError";
-  }
 }
 
 export interface ApplyScreenerDecisionInput {

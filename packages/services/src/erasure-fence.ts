@@ -1,4 +1,6 @@
-import { readAccountErasedAt, type Tx } from "@trafficflow/db";
+import {
+  AccountErasedError, MailboxErasedError, fenceErased, type FenceScope, type Tx,
+} from "@trafficflow/db";
 import type { Dialect, LockMode } from "@trafficflow/db/dialect";
 import { ServiceError } from "./errors.js";
 
@@ -15,21 +17,35 @@ import { ServiceError } from "./errors.js";
 export async function fenceErasedAccount(
   tx: Tx, d: Dialect, accountId: string, mode: LockMode = "share",
 ): Promise<void> {
-  // `readAccountErasedAt` is `@trafficflow/db`'s primitive — see its own header for why the read
-  // moved and why this function is not a second implementation of it.
-  const erasedAt = await readAccountErasedAt(tx, d, accountId, mode);
-  if (erasedAt === undefined) {
-    // No accounts row is PROOF the account was never erased, not a suspicious absence: erasure
-    // KEEPS the row (the pseudonymous billing subject) and stamps it — a deleted row is the one
-    // thing `deleteAccount` cannot produce. So the fence has nothing to say and stays out of the
-    // way. Refusing here was tried and is wrong twice over: `account_settings.account_id`
-    // carries no FK to `accounts`, so a bare-id write is legal at the schema level, and half the
-    // service suites exercise writers against minted ids with no accounts row — a 404 here turns
-    // the fence into a general existence check nobody asked for.
-    return;
+  await fenceErasedScope(tx, d, { accountId, lock: mode });
+}
+
+/**
+ * The same fence with the MAILBOX scope available — `fenceErased` from `@trafficflow/db` with the
+ * HTTP error shape put on at the edge. A mailbox-keyed writer passes `mailboxId`: a mailbox
+ * removal leaves its row standing, so the account's stamp says nothing about it.
+ */
+export async function fenceErasedScope(tx: Tx, d: Dialect, scope: FenceScope): Promise<void> {
+  try {
+    await fenceErased(tx, d, scope);
+  } catch (err) {
+    throw asServiceRefusal(err);
   }
-  if (erasedAt !== null) {
-    throw new ServiceError("account_erased", 410,
+}
+
+/**
+ * The seam's refusals in the shape an HTTP caller answers with, in ONE place because two copies
+ * of a mapping is one mapping and one drift. 410 and not 404: the resource existed and the person
+ * is the reason it does not. Anything else travels untouched.
+ */
+export function asServiceRefusal(err: unknown): unknown {
+  if (err instanceof AccountErasedError) {
+    return new ServiceError("account_erased", 410,
       "this account has been deleted; its settings cannot be changed");
   }
+  if (err instanceof MailboxErasedError) {
+    return new ServiceError("mailbox_erased", 410,
+      "this mailbox has been erased; nothing more can be written against it");
+  }
+  return err;
 }

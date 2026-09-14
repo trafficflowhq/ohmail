@@ -1666,7 +1666,9 @@ export class MailboxService {
       /* The sweep runs LAST and inside this transaction: the tombstone above has to be visible to
        * it, and both halves commit together — a mailbox whose mail is gone while its credentials
        * remain is worse than an erasure that failed and can be retried. */
-      const erased = await sweepMailboxData(tx, { accountId: ctx.accountId, mailboxId: id });
+      const erased = await sweepMailboxData(tx, {
+        accountId: ctx.accountId, mailboxId: id, now: ctx.now(),
+      });
       /* The sweep's seq wins where it allocated one: it is the LATER change and the per-account
        * seq is gap-free, so a mirror that waits for it has seen the appointment closures too. */
       return { seq: erased.seq ?? seq, erased };

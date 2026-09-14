@@ -1,8 +1,8 @@
 import type { PgliteDatabase } from "drizzle-orm/pglite";
 import type { mailSchema } from "@trafficflow/db/mail";
-import { carryDialect, dialect, type LockMode } from "@trafficflow/db/dialect";
-import type { LedgerTx, Tx } from "@trafficflow/db";
-import { fenceErasedAccount } from "./erasure-fence.js";
+import { carryDialect, type LockMode } from "@trafficflow/db/dialect";
+import { fencedAccountWrite, type LedgerTx, type Tx } from "@trafficflow/db";
+import { asServiceRefusal } from "./erasure-fence.js";
 
 /**
  * The database-handle registry — an interface, so a deployment can add its own member. A local
@@ -85,24 +85,32 @@ export async function runInTransaction<T>(
 
 /**
  * THE ONE DOOR for a request-scoped write against a table Art. 17 erasure empties. `accounts`
- * SURVIVES erasure, so nothing structural refuses a writer that arrives late: a request valid
- * when it started can commit after the sweep and recreate erased state. The fence runs FIRST
- * here, keyed by the account the context carries — the head of the global lock order
- * (`erasure-fence.ts` holds the argument). `lock` raises its strength for a body that will take
- * `accounts FOR UPDATE` later; `db` names the handle for a caller that holds one directly (the
- * API layer's `deps.db`, which `serviceContext` also puts on `ctx`). The census reddens a door
- * that is neither fenced, fenced by construction, nor allow-listed.
+ * SURVIVES erasure and a removed mailbox survives its own sweep as a tombstone, so nothing
+ * structural refuses a writer that arrives late: a request valid when it started can commit after
+ * the sweep and recreate erased state. This is `fencedAccountWrite` — the db package's seam —
+ * with the HTTP error shape put on at the edge; it is not a second fence, and there is no other.
+ * `mailboxId` fences the MAILBOX too, for a write that belongs to one. `lock` raises the
+ * strength for a body that will take `accounts FOR UPDATE` later; `db` names the handle for a
+ * caller that holds one directly. The census reddens a door that is neither fenced, fenced by
+ * construction, nor allow-listed.
  */
 export async function withAccountTx<T>(
   ctx: ServiceContext, fn: (tx: LedgerTx) => Promise<T>,
-  opts: { readonly lock?: LockMode; readonly db?: ServiceContext["db"] } = {},
+  opts: {
+    readonly lock?: LockMode;
+    readonly db?: ServiceContext["db"];
+    readonly mailboxId?: string;
+  } = {},
 ): Promise<T> {
   const db = opts.db ?? ctx.db;
-  const handle = db as unknown as {
-    transaction: <R>(f: (t: LedgerTx) => Promise<R>) => Promise<R>;
-  };
-  return handle.transaction(async (tx) => {
-    await fenceErasedAccount(tx as unknown as Tx, dialect(db), ctx.accountId, opts.lock);
-    return fn(tx);
-  });
+  try {
+    return await fencedAccountWrite(
+      db as unknown as Tx,
+      { accountId: ctx.accountId, mailboxId: opts.mailboxId, lock: opts.lock },
+      async (tx) => fn(tx as unknown as LedgerTx),
+    );
+  } catch (err) {
+    throw asServiceRefusal(err);
+  }
 }
+

@@ -1,18 +1,36 @@
 import { eq } from "drizzle-orm";
-import type { Dialect, LockMode } from "./dialect/index.js";
-import { accounts } from "./schema-mail.js";
+import { carryDialect, dialect, type Dialect, type LockMode } from "./dialect/index.js";
+import { accounts, mailboxes } from "./schema-mail.js";
 import type { Tx } from "./change-log.js";
 
 /**
- * The erasure fence's primitive. `packages/services/src/erasure-fence.ts#fenceErasedAccount` is
- * the ORIGINAL and remains what every HTTP writer of `account_settings` calls — its header holds
- * the full argument. This file holds the SQL that decision rests on, so a second caller can reach
- * it without importing `@trafficflow/services`: the organizer's request drain applies a reader's
- * screener decision — a settings writer too — and the worker may not import the services package
- * at runtime; `learning-signal.ts` makes the identical move. The services module now calls THIS
- * function and translates the answer into a `ServiceError` — one implementation of the read, two
- * error shapes for two runtimes.
+ * THE ERASURE FENCE, AND THE SEAM EVERY ACCOUNT-SCOPED WRITER GOES THROUGH.
+ *
+ * `accounts` SURVIVES Art. 17 erasure (the pseudonymous billing subject) and a removed mailbox
+ * SURVIVES its own sweep as a tombstone, so nothing structural refuses a writer that arrives
+ * late: a read that began before the erasure can commit after it and put the person's data back.
+ * That was found twelve times at twelve call sites, which is what {@link fencedAccountWrite}
+ * exists to stop being possible — one door, asked FOR SHARE, with the write in the same
+ * transaction. `packages/services/src/erasure-fence.ts#fenceErasedAccount` is the HTTP half: it
+ * calls this file's read and translates the answer into a `ServiceError`, one implementation of
+ * the read and two error shapes for two runtimes.
  */
+
+/** Thrown when the account was erased before the write could land. */
+export class AccountErasedError extends Error {
+  constructor(readonly accountId: string) {
+    super(`account ${accountId} has been deleted; its settings cannot be changed`);
+    this.name = "AccountErasedError";
+  }
+}
+
+/** Thrown when the MAILBOX was erased before the write could land. */
+export class MailboxErasedError extends Error {
+  constructor(readonly mailboxId: string) {
+    super(`mailbox ${mailboxId} has been erased; nothing may be written against it`);
+    this.name = "MailboxErasedError";
+  }
+}
 
 /**
  * `accounts.erased_at`, read `FOR SHARE` — the interlock's own half. `undefined` when no row
@@ -39,4 +57,74 @@ export async function readAccountErasedAt(
     { mode });
   if (row === undefined) return undefined;
   return row.erasedAt;
+}
+
+/**
+ * `mailboxes.erased_at`, read `FOR SHARE` — the same read one scope down, and the reason the
+ * fence needed a second one: a mailbox erasure leaves its row standing, so the account's stamp
+ * says nothing about it. `undefined` when no row exists (the sweep never deletes one, so an
+ * absent row means the id was never real), `null` when live, a `Date` when erased.
+ *
+ * Taken AFTER the account's read and never before it: `sweepMailboxData`'s caller takes the
+ * account row first too, and crossing the two orders is the deadlock this ordering closes.
+ */
+export async function readMailboxErasedAt(
+  tx: Tx, d: Dialect, mailboxId: string, mode: LockMode = "share",
+): Promise<Date | null | undefined> {
+  const [row] = await d.forUpdate(
+    tx.select({ erasedAt: mailboxes.erasedAt })
+      .from(mailboxes)
+      .where(eq(mailboxes.id, mailboxId))
+      .limit(1),
+    { mode });
+  if (row === undefined) return undefined;
+  return row.erasedAt;
+}
+
+/** What a fenced write is scoped to. `mailboxId` is supplied when the write is mailbox-keyed. */
+export interface FenceScope {
+  readonly accountId: string;
+  /** Present when the row being written belongs to ONE mailbox — then the mailbox is fenced too. */
+  readonly mailboxId?: string | undefined;
+  /** `"update"` for a caller whose transaction will later take `accounts FOR UPDATE`. */
+  readonly lock?: LockMode | undefined;
+}
+
+/**
+ * THE FENCE, for a writer already inside the caller's transaction — the first statement it runs.
+ *
+ * Account first, then the mailbox: one lock order, held by every caller, which is what keeps this
+ * off `deleteAccount`'s and `sweepMailboxData`'s deadlock diagonal. An absent row is not a
+ * refusal — neither sweep deletes one, so an id with no row was never real and belongs to
+ * whatever existence check the caller already ran.
+ */
+export async function fenceErased(tx: Tx, d: Dialect, scope: FenceScope): Promise<void> {
+  const erasedAt = await readAccountErasedAt(tx, d, scope.accountId, scope.lock);
+  if (erasedAt != null) throw new AccountErasedError(scope.accountId);
+  if (scope.mailboxId === undefined) return;
+  const mailboxErasedAt = await readMailboxErasedAt(tx, d, scope.mailboxId, scope.lock);
+  if (mailboxErasedAt != null) throw new MailboxErasedError(scope.mailboxId);
+}
+
+/**
+ * THE SEAM. Opens a transaction, fences it, and runs the write inside it — the one door every
+ * account-scoped writer in the open server goes through, so that remembering the call is not what
+ * the person's erasure rests on.
+ *
+ * The write MUST happen on the `tx` handed in: a write on the outer handle commits on its own
+ * connection and the fence's share lock protects nothing. The dialect brand does not travel to a
+ * transaction object, so it is carried from the handle this was opened on.
+ */
+export async function fencedAccountWrite<T>(
+  db: Tx, scope: FenceScope, fn: (tx: Tx) => Promise<T>,
+): Promise<T> {
+  const d = dialect(db);
+  const handle = db as unknown as {
+    transaction: <R>(f: (t: unknown) => Promise<R>) => Promise<R>;
+  };
+  return handle.transaction(async (raw) => {
+    const tx = carryDialect(db, raw as object) as unknown as Tx;
+    await fenceErased(tx, d, scope);
+    return fn(tx);
+  });
 }
