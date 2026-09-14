@@ -218,6 +218,8 @@ export async function runReconcileCron(
         // claim this verdict was reached from is the claim the row should name.
         const written = await markMailboxStoodDown(db, mailboxId, err.reason, {
           fence,
+          // The one-shots as this sweep read them — see `spendOneShot`.
+          asRead: row,
           by: {
             kind: err.by?.kind ?? null,
             displayName: err.by?.displayName ?? null,
@@ -281,7 +283,9 @@ export async function runReconcileCron(
      */
     const promote = async (): Promise<void> => {
       try {
-        const promoted = await clearOrganizerStandDown(db, mailboxId, { fence });
+        // The one-shots as this sweep read them, at `loadMailboxById` — the same rule the
+        // always-on gate keeps, and the same function. See `spendOneShot`.
+        const promoted = await clearOrganizerStandDown(db, mailboxId, { fence, asRead: row });
         if (promoted) return;
         log.warn(cronEvent("reconcile", "organizer_promotion_fenced"), {
           mailboxId, accountId: row.accountId,

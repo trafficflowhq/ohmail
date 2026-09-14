@@ -1548,7 +1548,11 @@ export async function startWorkerWithLock(
              * in-memory mirror may not say it did: flipping it regardless left this process
              * believing it had promoted a row that still said `reader`, with the press spent.
              */
-            const promoted = await clearOrganizerStandDown(db, mb.mailboxId, { fence });
+            /* AND THE ONE-SHOTS AS THIS GATE READ THEM. The release arm above ran on the values
+             * in `lease`, and the IMAP round trip since is a window a person can press a button
+             * in: an unconditional clear here erased a Stop pressed during it, and the mailbox
+             * organized on for ever. See `spendOneShot`. */
+            const promoted = await clearOrganizerStandDown(db, mb.mailboxId, { fence, asRead: lease });
             if (promoted) {
               lease.takeoverAuthorizedAt = null;
               lease.disabledReason = null;
@@ -1626,6 +1630,8 @@ export async function startWorkerWithLock(
         // reads the row precisely so no client has to dial IMAP to render one.
         const written = await markMailboxStoodDown(db, mb.mailboxId, outcome.reason, {
           fence,
+          // The one-shots as this gate read them, on the promotion's rule — see `spendOneShot`.
+          asRead: lease,
           ...(wasOrganizer
             ? {
               also: async (tx: typeof db): Promise<void> => {

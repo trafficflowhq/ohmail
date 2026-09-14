@@ -1,4 +1,5 @@
 import { and, asc, desc, eq, inArray, isNotNull, isNull, ne, sql, type SQL } from "drizzle-orm";
+import type { AnyPgColumn } from "drizzle-orm/pg-core";
 import {
   mailboxes, mailboxCredentials, isOrganizerRole, organizerDisplayName, capabilitiesColumn, type Tx,
   organizerKindColumn, closedSetValue,
@@ -883,6 +884,33 @@ import { type MailboxDisabledReason, isMailboxDisabledReason } from "@trafficflo
 export type { MailboxDisabledReason };
 
 /**
+ * The one-shot asks AS THE DECISION READ THEM at its start. A role change happens at the END of a
+ * gate that began by reading this row, and the person can press a button during it.
+ */
+export interface OneShotsAsRead {
+  /** `release_requested_at` when this decision began. `undefined` ⇒ the caller named no reading. */
+  releaseRequestedAt?: Date | null;
+  /** `takeover_authorized_at` when this decision began. Same rule, same reason. */
+  takeoverAuthorizedAt?: Date | null;
+}
+
+/**
+ * SPEND A ONE-SHOT ONLY WHERE THE DECISION SPENDING IT ACTUALLY SAW IT.
+ *
+ * A one-shot is spent by the event that CAUSED it, never by a later event passing through: an
+ * unconditional `null` cannot tell the ask the gate read from one pressed while the gate ran, so
+ * the second press — the person's latest word — was erased by a promotion that predates it.
+ * `asRead` is the value at the decision's START, so `<=` keeps anything newer and clears exactly
+ * what the decision judged. `null` read ⇒ clear nothing (nothing standing now is ours to spend).
+ * `undefined` ⇒ no reading named, the unconditional clear, as `fence` treats its own absence.
+ */
+function spendOneShot(column: AnyPgColumn, asRead: Date | null | undefined): SQL | null {
+  if (asRead === undefined) return null;
+  if (asRead === null) return sql`${column}`;
+  return sql`case when ${column} <= ${asRead.toISOString()}::timestamptz then null else ${column} end`;
+}
+
+/**
  * Stand a mailbox down: `organizer_role='reader'` plus the holder columns, atomically. Returns false
  * when FENCED OUT. This used to write `disabled` with the lease reason; mail 0083 moved the decision
  * onto the role and left `disabled_reason` with no writer here. An unrecognised reason is COERCED,
@@ -924,6 +952,8 @@ export async function markMailboxStoodDown(
   db: WorkerDb, mailboxId: string, reason: MailboxDisabledReason,
   opts: {
     fence?: LeaderFence; by?: StandDownHolder; now?: Date;
+    /** The one-shots as this decision read them at its start. See {@link OneShotsAsRead}. */
+    asRead?: OneShotsAsRead;
     /**
      * A CONSEQUENCE OF THE DEMOTION, IN THE SAME TRANSACTION — {@link applyFenced}'s `also`,
      * exposed here for the one caller that has one: the stand-down's HANDOVER of pending local
@@ -969,8 +999,10 @@ export async function markMailboxStoodDown(
      * one install's request while another organizes the mailbox. The read side already refuses to
      * treat the stamp as an authority on who organizes, so nothing false renders today; the write
      * side still let the two disagree, which a later reader can only be right about by accident.
-     * Every writer that makes the statement untrue clears it in the same statement. */
-    releaseRequestedAt: null,
+     * Every writer that makes the statement untrue clears it in the same statement — the one it
+     * READ, and not one pressed while this gate ran, which is the person's latest word and outlives
+     * a demotion decided before it. Literally the same function as the promotion's. */
+    releaseRequestedAt: spendOneShot(mailboxes.releaseRequestedAt, opts.asRead?.releaseRequestedAt),
     organizedByKind: kind,
     // Mail 0092 — WHICH install, beside WHAT kind. See `StandDownHolder.installId`.
     organizedByInstallId: opts.by?.installId ?? null,
@@ -1000,8 +1032,11 @@ export async function markMailboxStoodDown(
     // Cloud would find it parked behind a wait that was never about them.
     retryAfter: null,
     // The authorization is spent by definition: we are no longer the organizer, so becoming one
-    // again is a new BECOMING and needs a new explicit action (§4, "No seize-back").
-    takeoverAuthorizedAt: null,
+    // again is a new BECOMING and needs a new explicit action (§4, "No seize-back"). The one this
+    // gate READ, on the promotion's rule: "Organize here", pressed while the gate was losing the
+    // election, asks for a becoming this demotion never weighed, and clearing it would spend a
+    // press on its own refusal — the same defect wearing the other column's name.
+    takeoverAuthorizedAt: spendOneShot(mailboxes.takeoverAuthorizedAt, opts.asRead?.takeoverAuthorizedAt),
     // Mail 0088 — and BEING BEATEN IS NOT RELEASING. A row that carried both would report the
     // quieter of the two events to a person whose mailbox somebody else has just taken, and the
     // claim-back screen would name no previous holder on the one occasion there is one.
@@ -1171,7 +1206,8 @@ export async function clearMailboxSyncBlock(
  * minute for nothing, so the caller only invokes this when there is something to clear.
  */
 export async function clearOrganizerStandDown(
-  db: WorkerDb, mailboxId: string, opts: { fence?: LeaderFence; now?: Date } = {},
+  db: WorkerDb, mailboxId: string,
+  opts: { fence?: LeaderFence; now?: Date; asRead?: OneShotsAsRead } = {},
 ): Promise<boolean> {
   return applyFenced(db, mailboxId, opts.fence, (w) => w.update(mailboxes)
     .set({
@@ -1197,14 +1233,18 @@ export async function clearOrganizerStandDown(
       // an install that is no longer organizing this mailbox.
       organizedByCapabilities: null,
       disabledReason: null,
-      // The authorization is spent by this one becoming. See the header.
-      takeoverAuthorizedAt: null,
+      // The authorization is spent by this one becoming. See the header — and only the one this
+      // gate READ: a press that arrived while the gate ran authorises a becoming this promotion
+      // is not, and spending it would make the next press pay for the last one.
+      takeoverAuthorizedAt: spendOneShot(mailboxes.takeoverAuthorizedAt, opts.asRead?.takeoverAuthorizedAt),
       /* And the OTHER one-shot: a promotion must not inherit a stop somebody asked of the role
-         this row used to hold. Same rule as the demotion's — see `markMailboxStoodDown`. */
-      releaseRequestedAt: null,
-      // Mail 0088 — a mailbox organized here again is not a released one. The marker describes the
-      // CURRENT state, so the promotion is what ends it; left standing it would make the next
-      // claim-back report "you stopped organizing this" about a mailbox this install is organizing.
+         this row used to hold — but it must not erase one asked DURING it either. Same rule as
+         the demotion's, and literally the same function — see `markMailboxStoodDown`. */
+      releaseRequestedAt: spendOneShot(mailboxes.releaseRequestedAt, opts.asRead?.releaseRequestedAt),
+      // Mail 0088 — a mailbox organized here again is not a released one. NOT a one-shot ask: a
+      // marker of the CURRENT state, which the flip in this statement makes untrue outright, so it
+      // is cleared unconditionally. Left standing it would make the next claim-back report "you
+      // stopped organizing this" about a mailbox this install is organizing.
       organizerReleasedAt: null,
       // Mail 0088 — the second writer of the (role, state, holder) triple. A PROMOTION is an event
       // in exactly the sense the notice means: the person is entitled to be told once that this
