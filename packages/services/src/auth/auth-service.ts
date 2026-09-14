@@ -390,6 +390,16 @@ class AddressAlreadyRegistered extends Error {
 }
 
 /**
+ * The burn lost its race — another presentation of the same recovery code took the row between
+ * the SELECT and the UPDATE. Thrown from inside the spend's transaction so the whole spend
+ * unwinds; the counted 2FA failure is written OUTSIDE it, where a rollback cannot take it. A
+ * private sentinel: `spendRecoveryCode` is the only thrower, `recoveryVerify` the only catcher.
+ */
+class RecoveryCodeAlreadySpent extends Error {
+  constructor() { super("recovery code already spent"); }
+}
+
+/**
  * Is this a Postgres unique-violation on `constraint`?
  *
  * SQLSTATE `23505`, matched on the driver's own `code`/`constraint` fields rather than on
@@ -1631,19 +1641,47 @@ export class AuthService extends SessionLifecycle {
       await this.twofaFail(db, user, ctx);
       throw new ServiceError("unauthorized", 401, "two-factor verification failed");
     }
+    // ONE TRANSACTION, and that single call is the whole fix. The burn used to autocommit and
+    // the session to follow in a commit of its own, so an outage between the two spent a
+    // person's LAST recovery code and left them no session — nothing left to try, ever. A
+    // one-shot credential is bought by its outcome: either everything below commits or the
+    // code is exactly as it was found. The `used_at IS NULL` race guard is unchanged.
+    let spent: { est: SessionEstablished; remaining: number };
+    try {
+      spent = await this.inTransaction(ctx, (txCtx) =>
+        this.spendRecoveryCode(txCtx, user, { codeId: row.id, loginTokenId: lt.id, batchId }));
+    } catch (e) {
+      // The counted failure has to SURVIVE, so it is written out here rather than inside a
+      // transaction that has just rolled back.
+      if (!(e instanceof RecoveryCodeAlreadySpent)) throw e;
+      await this.twofaFail(db, user, ctx);
+      throw new ServiceError("unauthorized", 401, "two-factor verification failed");
+    }
+    return { ...spent.est, remainingCodes: spent.remaining };
+  }
+
+  /**
+   * The spend — burn, login token, audit, session — as one body, so the transaction boundary in
+   * {@link recoveryVerify} is a single call. Nothing in here may land without the rest: the
+   * session is what the code bought, and a code spent without one is a person locked out for
+   * good. Losers unwind rather than return, which buys a second thing: `consumeLoginToken`'s
+   * 401 now rolls the burn back too, so the loser of that race keeps their code.
+   */
+  private async spendRecoveryCode(
+    ctx: ServiceContext, user: typeof users.$inferSelect,
+    o: { codeId: string; loginTokenId: string; batchId: string },
+  ): Promise<{ est: SessionEstablished; remaining: number }> {
+    const db = asTx(ctx);
     // Single-use — and the predicate is what makes it so. The SELECT above already
     // filtered on `used_at IS NULL`; without repeating it here, two presentations of one
     // recovery code race to the same row and both are honoured. These are the break-glass
     // credentials a user keeps on paper, so "used once" has to mean once.
     const burned = await db.update(recoveryCodes)
       .set({ usedAt: ctx.now() })
-      .where(and(eq(recoveryCodes.id, row.id), isNull(recoveryCodes.usedAt)))
+      .where(and(eq(recoveryCodes.id, o.codeId), isNull(recoveryCodes.usedAt)))
       .returning({ id: recoveryCodes.id });
-    if (burned.length === 0) {
-      await this.twofaFail(db, user, ctx);
-      throw new ServiceError("unauthorized", 401, "two-factor verification failed");
-    }
-    await this.consumeLoginToken(db, lt.id, ctx.now());
+    if (burned.length === 0) throw new RecoveryCodeAlreadySpent();
+    await this.consumeLoginToken(db, o.loginTokenId, ctx.now());
     await this.audit(db, user, "recovery_used", "recovery_code", ctx);
 
     // The SAME batch scope the match used, so the number the user is shown counts codes that
@@ -1651,12 +1689,12 @@ export class AuthService extends SessionLifecycle {
     const remaining = (await db.select({ id: recoveryCodes.id }).from(recoveryCodes)
       .where(and(
         eq(recoveryCodes.userId, user.id),
-        eq(recoveryCodes.batchId, batchId),
+        eq(recoveryCodes.batchId, o.batchId),
         isNull(recoveryCodes.usedAt),
       ))).length;
     // A recovery code was just burned, here — a real second factor. `now` is its real time.
     const est = await this.establish(ctx, user, { method: "recovery_code", kind: "web", twofaAt: ctx.now() });
-    return { ...est, remainingCodes: remaining };
+    return { est, remaining };
   }
 
   // ── Native OAuth2 (Authorization-Code + PKCE) ───────────────────────────────
