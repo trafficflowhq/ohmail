@@ -6,14 +6,12 @@ import type { Tx } from "./change-log.js";
 /**
  * THE ERASURE FENCE, AND THE SEAM EVERY ACCOUNT-SCOPED WRITER GOES THROUGH.
  *
- * `accounts` SURVIVES Art. 17 erasure (the pseudonymous billing subject) and a removed mailbox
- * SURVIVES its own sweep as a tombstone, so nothing structural refuses a writer that arrives
- * late: a read that began before the erasure can commit after it and put the person's data back.
- * That was found twelve times at twelve call sites, which is what {@link fencedAccountWrite}
- * exists to stop being possible — one door, asked FOR SHARE, with the write in the same
- * transaction. `packages/services/src/erasure-fence.ts#fenceErasedAccount` is the HTTP half: it
- * calls this file's read and translates the answer into a `ServiceError`, one implementation of
- * the read and two error shapes for two runtimes.
+ * `accounts` SURVIVES Art. 17 erasure and a removed mailbox SURVIVES its own sweep as a tombstone,
+ * so nothing structural refuses a late writer: a read begun before the erasure can commit after it
+ * and put the person's data back. That was found at twelve call sites, which is what
+ * {@link fencedAccountWrite} exists to stop being possible — one door, asked FOR SHARE, with the
+ * write in the same transaction. `services/src/erasure-fence.ts` is the HTTP half: it calls this
+ * file's read and puts a `ServiceError` on the answer.
  */
 
 /** Thrown when the account was erased before the write could land. */

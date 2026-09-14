@@ -84,15 +84,13 @@ export async function runInTransaction<T>(
 }
 
 /**
- * THE ONE DOOR for a request-scoped write against a table Art. 17 erasure empties. `accounts`
- * SURVIVES erasure and a removed mailbox survives its own sweep as a tombstone, so nothing
- * structural refuses a writer that arrives late: a request valid when it started can commit after
- * the sweep and recreate erased state. This is `fencedAccountWrite` — the db package's seam —
- * with the HTTP error shape put on at the edge; it is not a second fence, and there is no other.
- * `mailboxId` fences the MAILBOX too, for a write that belongs to one. `lock` raises the
- * strength for a body that will take `accounts FOR UPDATE` later; `db` names the handle for a
- * caller that holds one directly. The census reddens a door that is neither fenced, fenced by
- * construction, nor allow-listed.
+ * THE ONE DOOR for a request-scoped write against a table Art. 17 erasure empties: a request valid
+ * when it started can otherwise commit after the sweep and recreate erased state. This IS
+ * `fencedAccountWrite` — the db package's seam — with the HTTP error shape put on at the edge; it
+ * is not a second fence, and there is no other. `mailboxId` fences the MAILBOX too, for a write
+ * that belongs to one; `lock` raises the strength for a body that will take `accounts FOR UPDATE`
+ * later; `db` names the handle for a caller that holds one directly. The census reddens a door
+ * that is neither fenced, fenced by construction, nor allow-listed.
  */
 export async function withAccountTx<T>(
   ctx: ServiceContext, fn: (tx: LedgerTx) => Promise<T>,
