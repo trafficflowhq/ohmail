@@ -1672,9 +1672,9 @@ export class AuthService extends SessionLifecycle {
     o: { codeId: string; loginTokenId: string; batchId: string },
   ): Promise<{ est: SessionEstablished; remaining: number }> {
     const db = asTx(ctx);
-    // Single-use — and the predicate is what makes it so. The SELECT above already
-    // filtered on `used_at IS NULL`; without repeating it here, two presentations of one
-    // recovery code race to the same row and both are honoured. These are the break-glass
+    // Single-use — and the predicate is what makes it so. {@link recoveryVerify}'s SELECT
+    // already filtered on `used_at IS NULL`; without repeating it here, two presentations of
+    // one recovery code race to the same row and both are honoured. These are the break-glass
     // credentials a user keeps on paper, so "used once" has to mean once.
     const burned = await db.update(recoveryCodes)
       .set({ usedAt: ctx.now() })
