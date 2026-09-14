@@ -2,16 +2,11 @@
  * `@trafficflow/core/transport-frame` — THE BYTE THE TRANSPORT REFUSES ON, in one place.
  *
  * The local engine is reached over a length-prefixed stdio frame codec (`apps/sidecar/src/
- * frame.ts`): a body longer than {@link TRANSPORT_FRAME_MAX_BODY_BYTES} is refused before a byte
- * is allocated, and the refusal is fatal — the stream has no resync point. The number lives HERE
- * and not beside the codec because the thing that BUILDS a response has to know it too. A page
- * correct by every row rule is still undeliverable if its bytes do not fit, and two literals in
- * two packages is exactly how that stayed invisible: 100 stored drafts inside the documented row
- * limit made a 34 854 075-byte page against a 33 554 432-byte cap, and the bootstrap never
- * completed.
- *
- * Constants only, and no imports: this leaf is read by the codec, by the page builder and by a
- * census, and anything else it reached would travel with it into all three.
+ * frame.ts`), whose cap is fatal: the stream has no resync point. The number lives HERE because
+ * the thing that BUILDS a response has to know it too — a page correct by every row rule is still
+ * undeliverable if its bytes do not fit, and two literals in two packages is how that stayed
+ * invisible for a release. Constants only and no imports: three graphs read this leaf, and
+ * anything it reached would travel into all three.
  */
 
 /**

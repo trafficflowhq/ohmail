@@ -918,9 +918,9 @@ export interface DraftDTO {
    * so the pairing is held in both directions by a test beside the snapshot writer.
    *
    * `over_ceiling` is a stored body past `DRAFT_BODY_MAX_BYTES`; `sent` is a draft already gone,
-   * its text history the mirror need not hold; `over_page_budget` is a WHOLE ROW too heavy for
-   * the transport carrying the page. Each takes {@link html} with it, `over_page_budget` also
-   * {@link rationale} — the row is still LISTED, and `GET /drafts/:id` is how it is opened.
+   * whose text the mirror need not hold; `over_page_budget` is a whole ROW too heavy for the
+   * transport, which takes {@link html} and {@link rationale} with it so the row can still be
+   * listed. `GET /drafts/:id` is how any of them is opened.
    */
   bodyOmitted?: "over_ceiling" | "sent" | "over_page_budget";
   /** The rich body, sanitized. `null` for a plain-text draft — the ordinary case. */

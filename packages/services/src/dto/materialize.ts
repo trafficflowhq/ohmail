@@ -145,16 +145,12 @@ export function draftRowToSnapshotDTO(d: typeof drafts.$inferSelect): DraftDTO {
 /**
  * The draft as a page carries it when the ROW ITSELF outweighs the transport.
  *
- * `body` has a ceiling and `html` has a database CHECK; `rationale` and the three recipient lists
- * have neither, so a stored row can weigh more than one frame while every documented limit holds
- * — and the page it rides refuses whole, which is a bootstrap that never completes rather than a
- * draft that arrives late. Withheld rather than dropped: the row still LISTS with its subject and
- * its dates, `draftBodyKnown` reads it as a body this mirror does not hold, and the client fetches
- * it by id exactly as it does an `over_ceiling` one.
- *
- * All three free-text fields go together. Leaving `html` would carry the same words at the same
- * size under another key, and leaving `rationale` would leave the very bytes that made the row
- * too heavy.
+ * `body` has a ceiling and `html` a database CHECK; `rationale` and the recipient lists have
+ * neither, so a stored row can outweigh one frame while every documented limit holds — and the
+ * page it rides then refuses whole. Withheld, not dropped: the row still LISTS with its subject
+ * and dates, and the client fetches the text by id as it does for `over_ceiling`. All three
+ * free-text fields go together, because leaving `html` carries the same words under another key
+ * and leaving `rationale` leaves the very bytes that made the row too heavy.
  */
 export function draftRowWithheldDTO(dto: DraftDTO): DraftDTO {
   return { ...dto, body: null, html: null, rationale: null, bodyOmitted: "over_page_budget" };
