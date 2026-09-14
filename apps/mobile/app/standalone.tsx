@@ -148,9 +148,7 @@ function Credentials() {
           /* THE NATIVE HALF IS REQUIRED BEHIND A PLATFORM GATE, never imported at module scope: the
              expo packages are Flow-typed JavaScript and a static import makes this whole route
              unloadable by the node-side suite — the rule `servers-native.ts` established. */
-          const native = (await import("../src/engine/local-engine-native")) as {
-            nativeEnginePlatform: () => Promise<{ exec: unknown; keks: Record<number, string> }>;
-          };
+          const native = await import("../src/engine/local-engine-native");
           return native.nativeEnginePlatform();
         },
         machineName: () => PHONE_CLAIM_NAME,

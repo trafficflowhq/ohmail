@@ -209,9 +209,7 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
               /* BEHIND A DYNAMIC IMPORT, never at module scope: the expo packages are Flow-typed
                  JavaScript and a static import makes this whole module unloadable by the node-side
                  suite — `servers-native.ts`'s rule. */
-              const native = (await import("../engine/local-engine-native")) as {
-                nativeEnginePlatform: () => Promise<{ exec: unknown; keks: Record<number, string> }>;
-              };
+              const native = await import("../engine/local-engine-native");
               return native.nativeEnginePlatform();
             },
             machineName: () => PHONE_CLAIM_NAME,
@@ -223,6 +221,15 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
                this is the only place a dial that comes up and then files nothing can be read. */
             logSink: consoleEngineLogSink(),
           }),
+          /* AND THE TAKE-BACK'S ENGINE HALF. Behind the same dynamic import the platform is:
+             `local-engine-native` reaches expo-sqlite and the keystore, neither loadable by the
+             node suite, and the removal is where the store and its key actually go. */
+          removeEngine: async () => {
+            const native = (await import("../engine/local-engine-native")) as {
+              nativeRemoveStandaloneEngine: () => Promise<void>;
+            };
+            await native.nativeRemoveStandaloneEngine();
+          },
         },
       };
     },

@@ -181,6 +181,12 @@ export const DE: Deck = {
   standaloneAlreadyOpen:
     "Dieses Telefon hat schon ein Postfach geöffnet. Entferne es unter Server, bevor du ein "
     + "anderes öffnest.",
+  /* Die zwei des Entfernungsgurts. Keine nennt das entfernte Postfach — der Vermerk trägt nur eine Kennung. */
+  standaloneMailboxRemoved:
+    "Dieses Postfach wurde von diesem Telefon entfernt, und der Rest davon wurde soeben gelöscht. Öffne wieder ein Postfach, um zu beginnen.",
+  standaloneRemovalUnfinished: (detail: string) =>
+    `Ein von dir entferntes Postfach ist noch teilweise auf diesem Telefon (${detail}), deshalb `
+    + "öffnet ohmail kein anderes darüber. Starte ohmail neu, um die Löschung abzuschließen.",
   /* Der Einwilligungs-Aufruf. Keine dieser Zeilen behauptet, das Telefon organisiere gerade. */
   organizeHereUnreachable: (detail: string) =>
     `ohmail konnte nicht darum bitten, dieses Postfach zu organisieren: ${detail}`,
@@ -384,6 +390,10 @@ export const DE: Deck = {
   forgetMailRemains: (detail: string) =>
     "Die Kopplung ist entfernt, aber die Post, die dieses Telefon kopiert hatte, ließ sich nicht "
     + `löschen (${detail}). ohmail versucht es beim nächsten Start erneut.`,
+  forgetEngineRemains: (detail: string) =>
+    "Das Postfach auf diesem Telefon ließ sich nicht entfernen: seine Post oder der Schlüssel zu "
+    + `seinem gespeicherten Passwort ist noch hier (${detail}). Sonst wurde nichts angerührt — `
+    + "starte ohmail neu, das schließt die Löschung ab, bevor es etwas öffnet.",
   forgetServerUnreachable:
     "Die Kopplung und die Post, die dieses Telefon kopiert hatte, sind weg. Der Server war nicht "
     + "erreichbar, um die Sitzung zu beenden, und zählt dieses Telefon womöglich noch als "
@@ -580,6 +590,16 @@ export const DE: Deck = {
       case "account_mismatch":
         return "dieser Server synchronisiert ein anderes Konto als das, auf das diese Kopplung lautet";
       case "index_not_removed": return "der Schlüsselspeicher wollte die Kopplungsliste nicht entfernen";
+      /* Das Entfernen des Postfachs auf diesem Telefon. Jede benennt, welcher Speicher nicht
+         losgelassen hat — der nächste Schritt hängt davon ab. */
+      case "engine_removal_not_recorded":
+        return "dieses Telefon konnte nicht vermerken, dass das Postfach auf ihm entfernt wird";
+      case "engine_removal_still_recorded":
+        return "dieses Telefon vermerkt noch eine unabgeschlossene Entfernung des Postfachs auf ihm";
+      case "engine_store_not_deleted":
+        return "dieses Telefon konnte die Post und das gespeicherte Passwort des Postfachs auf ihm nicht löschen";
+      case "engine_key_not_removed":
+        return "der Schlüsselspeicher wollte den Schlüssel nicht entfernen, der das gespeicherte Passwort dieses Postfachs öffnet";
       default: return code;
     }
   },

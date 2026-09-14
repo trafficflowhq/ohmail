@@ -301,6 +301,13 @@ const TABLE = {
     + "nothing was kept — try Connect once more.",
   standaloneAlreadyOpen:
     "This phone already has a mailbox open. Forget it in Servers before opening another one.",
+  /* The removal belt's two. A removal that was interrupted is finished before anything opens,
+     and neither sentence names the mailbox that was removed — the record carries an id only. */
+  standaloneMailboxRemoved:
+    "That mailbox was removed from this phone, and the last of it has just been deleted. Open a mailbox again to start.",
+  standaloneRemovalUnfinished: (detail: string) =>
+    `A mailbox you removed is still partly on this phone (${detail}), so ohmail will not open `
+    + "another one over it. Restart ohmail to finish the deletion.",
   /* The consent press (`net/mailboxes.ts#organizeHere`). Each one names what the mailbox answered;
      none of them claims the phone is organizing, because on these arms it is not. */
   organizeHereUnreachable: (detail: string) =>
@@ -642,6 +649,10 @@ const TABLE = {
   forgetMailRemains: (detail: string) =>
     "The pairing is removed, but the mail this phone had copied could not be deleted "
     + `(${detail}). ohmail will try again the next time it starts.`,
+  forgetEngineRemains: (detail: string) =>
+    "The mailbox on this phone could not be removed: its mail, or the key to its stored password, "
+    + `is still here (${detail}). Nothing else was touched — restart ohmail, which finishes the `
+    + "deletion before it opens anything.",
   forgetServerUnreachable:
     "The pairing and the mail this phone had copied are gone. The server could not be reached to "
     + "end the session, so it may still count this phone as connected — revoke this device from its "
@@ -889,6 +900,16 @@ const TABLE = {
       case "account_mismatch":
         return "that server is syncing a different account than the one this pairing names";
       case "index_not_removed": return "the keystore would not remove the list of pairings";
+      /* Removing the mailbox on this phone. Each one names WHICH store would not let go — the
+         person's next act differs by store, and "the removal failed" would name none of them. */
+      case "engine_removal_not_recorded":
+        return "this phone could not record that the mailbox on it is being removed";
+      case "engine_removal_still_recorded":
+        return "this phone still records an unfinished removal of the mailbox on it";
+      case "engine_store_not_deleted":
+        return "this phone could not delete the mail and the stored password of the mailbox on it";
+      case "engine_key_not_removed":
+        return "the keystore would not remove the key that opens this mailbox's stored password";
       /* A code this build does not know is a newer store talking to an older deck. Saying the code
          is better than saying nothing, and it is the one arm that can reach a screen unworded. */
       default: return code;

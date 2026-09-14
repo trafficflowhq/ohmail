@@ -210,12 +210,29 @@ export type StartPhoneEngineFromSealed = (deps: {
   { kind: "started"; engine: StandaloneEngine } | { kind: "no-credential" }
 >;
 
+/**
+ * WHAT OPENING THE PLATFORM ANSWERED, AS THIS DOOR TAKES IT — the verdict, never the ready half.
+ *
+ * `openLocalEnginePlatform` has always returned both arms, and this seam was typed as the pair
+ * alone while the app's dynamic import cast the module to that shape. So a platform that REFUSED
+ * — an unreadable key ring, a removal still owed on the store — handed back `exec: undefined`,
+ * the engine threw on it, and a refusal already carrying a deck key reached the screen as
+ * "opening the mailbox stopped" followed by a driver's words. A refusal is only as real as the
+ * pipeline it runs through.
+ *
+ * `exec` stays `unknown` here: the engine is a pre-bundled artifact and this module names none
+ * of its types — the wider store type is assignable to it, so the composition still fits.
+ */
+export type StandalonePlatform =
+  | { kind: "ready"; exec: unknown; keks: Record<number, string> }
+  | { kind: "refused"; reason: Refusal };
+
 /** What this module needs of the app. Each one is a seam the suite drives directly. */
 export interface StandaloneDeps {
   /** The artifact's composition root, or `null` where this build carries no engine. */
   startEngine: StartPhoneEngine | null;
-  /** The engine's own store and key ring — `openLocalEnginePlatform`'s answer. */
-  platform: () => Promise<{ exec: unknown; keks: Record<number, string> }>;
+  /** The engine's own store and key ring — `openLocalEnginePlatform`'s answer. {@link StandalonePlatform}. */
+  platform: () => Promise<StandalonePlatform>;
   /** How this phone names itself in the claim. The holder line on somebody's desktop reads it. */
   machineName: () => string;
   /** This install's durable id, from the app's install marker. Never the store's account id. */
@@ -353,6 +370,9 @@ export async function openStandaloneMailbox(
   }
   try {
     const platform = await deps.platform();
+    /* ITS OWN REASON, PASSED THROUGH. See {@link StandaloneDeps.platform}: the alternative is a
+       keyed refusal rewritten as a driver's exception on an undefined store handle. */
+    if (platform.kind === "refused") return { ok: false, reason: platform.reason };
     const engine = await start({
       exec: platform.exec,
       imap,
@@ -393,8 +413,8 @@ export async function openStandaloneMailbox(
 export interface ReopenDeps {
   /** The artifact's relaunch entry, or `null` where this build carries no engine. */
   startFromSealed: StartPhoneEngineFromSealed | null;
-  /** The engine's own store and key ring — `openLocalEnginePlatform`'s answer. */
-  platform: () => Promise<{ exec: unknown; keks: Record<number, string> }>;
+  /** The engine's own store and key ring — `openLocalEnginePlatform`'s answer. {@link StandalonePlatform}. */
+  platform: () => Promise<StandalonePlatform>;
   machineName: () => string;
   /** This install's durable id, from the app's install marker. Never the store's account id. */
   installId: () => Promise<string>;
@@ -419,6 +439,8 @@ export async function reopenStandaloneMailbox(deps: ReopenDeps): Promise<ReopenO
   if (start === null) return { ok: false, reason: refuse("standaloneNoEngine") };
   try {
     const platform = await deps.platform();
+    // Same pass-through as the door press — a relaunch has no screen to ask again, so it needs it more.
+    if (platform.kind === "refused") return { ok: false, reason: platform.reason };
     const started = await start({
       exec: platform.exec,
       machineName: deps.machineName(),

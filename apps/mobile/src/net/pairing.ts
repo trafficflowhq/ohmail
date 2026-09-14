@@ -399,6 +399,15 @@ export interface PairingEnv {
     door: () => StandaloneEngine | null;
     /** Open it again from what it sealed for itself. `reopenStandaloneMailbox` in the app. */
     reopen: () => Promise<ReopenOutcome>;
+    /**
+     * TAKE THE ENGINE'S OWN STORE AND ITS KEY — the third member, and required rather than
+     * optional for `MobileEngineDeps.deleteDatabase`'s reason: a build that can open a mailbox
+     * on this phone and cannot remove one is not complete, and that gap is exactly what shipped
+     * (the removal deleted the client mirror and left the engine store, its account, its mailbox
+     * row, its mail and the sealed password — so the next mailbox's bootstrap attached both).
+     * `removeStandaloneEngine` in the app; the suite drives it against a real store.
+     */
+    removeEngine: () => Promise<void>;
   };
 }
 
@@ -894,6 +903,42 @@ export async function forgetProfile(
     : row !== null ? await revokeProfile(env, row)
     : true;
 
+  /* ── THE MAILBOX ON THIS PHONE HAS A FOURTH STORE, AND IT IS THE AUTHORITY ────────────────
+   *
+   * A pairing's forget spans three stores. A standalone install adds the engine's own —
+   * `ohmail-engine.db`, holding the account the next bootstrap reuses, the mailbox row the
+   * roster attaches, the mail, and the password sealed under the keystore's key ring. None of
+   * it was in this ceremony, so "Stop and remove" left every byte of it and connecting a
+   * DIFFERENT mailbox afterwards served the removed one's mail under the new one's session.
+   *
+   * ORDER: record, key, store, identity. The record is durable and goes FIRST, so a kill
+   * anywhere below is finished by the engine's own bootstrap before it attaches anything; the
+   * key goes before the store, so an interruption leaves a store nothing can open rather than
+   * the key to mail that is still here; the identity row goes last, because while it stands the
+   * launch refuses it (`buildSession`) and the person can press remove again.
+   *
+   * A failure here is a PARTIAL take-back and nothing below it runs: the row stays, the record
+   * stays, and the sentence says the mail is still on the phone — which is the honest state. */
+  if (localOnly && env.standalone) {
+    try {
+      /* The ACCOUNT ID, which is the identity the bootstrap would otherwise reuse — never the
+         address. A durable note of which mailbox somebody had is what a removal exists to end.
+         Read off the OWNER KEY, not the row: a second press on a row the first already removed
+         arrives here with the row gone and the owed entry standing, and an empty value would
+         write a record `engineRemoval()` reads as no record at all — the belt disarmed on the
+         one path that needs it most. `localOnly` is only true where the key is one of ours. */
+      await env.profiles.markEngineRemoval((ownerKey ?? "").slice(`${LOCAL_ENGINE_ORIGIN}::`.length));
+    } catch (err) {
+      /* NOTHING HAS BEEN TOUCHED YET — `forgetCannotStart`'s argument exactly, one store over. */
+      return { kind: "partial", reason: refuse("forgetCannotStart", faultDetail(err)) };
+    }
+    try {
+      await env.standalone.removeEngine();
+    } catch (err) {
+      return { kind: "partial", reason: refuse("forgetEngineRemains", faultDetail(err)) };
+    }
+  }
+
   // ── AND IT RUNS BEFORE THE CREDENTIAL IS DESTROYED, WHICH IS THE ORDER THAT SURVIVES A KILL ──
   //
   // This used to remove the keystore row first. A kill in the window that opened — after the
@@ -939,6 +984,10 @@ export async function forgetProfile(
     // after a re-pair, is the mailbox the person just re-authorized. Reporting a completed
     // forget over a debt that is still recorded would arm exactly that.
     await env.profiles.clearPendingWipe(ownerKey);
+    /* AND THE REMOVAL RECORD LAST OF ALL, once every store has read back empty. Its own read-back
+       is in the store: a record that survived being cleared would make the engine's bootstrap
+       refuse the NEXT mailbox the person opens, for ever. */
+    if (localOnly && env.standalone) await env.profiles.clearEngineRemoval();
   } catch (err) {
     // HONEST. The pairing and its credential are gone — that half is done, and it is the half
     // that could still open the mailbox — but the mail is still here and the wipe is still owed.

@@ -27,7 +27,11 @@ export type StoreFaultCode =
   | "index_unreadable" | "purge_refused" | "index_not_removed"
   /* The engine's own failures. They used to be bare `Error`s with English messages, and
      `faultDetail` embedded those frozen sentences in German refusals — see `engine/boot.ts`. */
-  | "mirror_not_deleted" | "sync_held_pre_identity" | "account_mismatch";
+  | "mirror_not_deleted" | "sync_held_pre_identity" | "account_mismatch"
+  /* The removal of the mailbox on this phone — its store, its key, and the durable record that
+     says the removal started. See {@link ServerProfileStore.markEngineRemoval}. */
+  | "engine_removal_not_recorded" | "engine_removal_still_recorded"
+  | "engine_store_not_deleted" | "engine_key_not_removed";
 
 export class StoreFault extends Error {
   constructor(readonly code: StoreFaultCode, message: string) {
@@ -152,6 +156,26 @@ const WAKE_DROPS_KEY = `${PREFIX}.wakes`;
 
 /** Sized for its own 2 KB value, not the index's. ~60 bytes per entry. */
 const MAX_PENDING_WAKE_DROPS = 24;
+
+/**
+ * THE REMOVAL OF THE MAILBOX ON THIS PHONE, RECORDED BEFORE ANYTHING IS DELETED.
+ *
+ * "Stop and remove" deletes three things a standalone install has and a pairing does not: the
+ * engine's own store, the key ring that opens the password sealed inside it, and the row naming
+ * the mailbox. A kill anywhere in that sequence used to leave the store — with the account the
+ * next bootstrap reuses, the mailbox row it attaches, and the mail — standing under a person who
+ * had pressed remove. So the intent is written FIRST and cleared LAST, and the engine's bootstrap
+ * reads it: a recorded removal is finished and refused before any mailbox is attached.
+ *
+ * The value is the engine's ACCOUNT ID and nothing else — the identity the bootstrap would
+ * otherwise reuse. Never an address: a durable record of which mailbox somebody had is exactly
+ * what a removal is supposed to end.
+ *
+ * Its own keystore value rather than an index field, for {@link PendingWakeDrop}'s reason and
+ * more so: this record must never fail to be written because an unrelated index write is near
+ * iOS's 2 KB warning, and it is the one record whose absence leaves mail on the phone.
+ */
+const ENGINE_REMOVAL_KEY = `${PREFIX}.engine-removal`;
 
 /** What {@link ServerProfileStore.markPendingWakeDrop} throws when that queue is full. */
 export const WAKE_QUEUE_FULL =
@@ -618,6 +642,46 @@ export class ServerProfileStore {
     });
   }
 
+  /* ── the removal of the mailbox on this phone (see {@link ENGINE_REMOVAL_KEY}) ─────────── */
+
+  /**
+   * Record that this phone's own mailbox is being removed — the FIRST act, before the key, the
+   * store or the row is touched. Read back, on {@link markPendingWipe}'s rule: a `set` that
+   * resolves without storing would leave the engine's bootstrap with nothing to refuse on, and
+   * the caller refuses the whole removal on this throw, with everything still in place.
+   */
+  markEngineRemoval(accountId: string): Promise<void> {
+    return this.enqueue(async () => {
+      await this.kv.set(ENGINE_REMOVAL_KEY, accountId);
+      if ((await this.kv.get(ENGINE_REMOVAL_KEY)) !== accountId) {
+        throw new StoreFault("engine_removal_not_recorded",
+          "this phone could not record that the mailbox on it is being removed");
+      }
+    });
+  }
+
+  /** The account whose removal is recorded and unfinished, or `null`. The engine's bootstrap reads it. */
+  async engineRemoval(): Promise<string | null> {
+    const held = await this.kv.get(ENGINE_REMOVAL_KEY);
+    return held === null || held.trim() === "" ? null : held.trim();
+  }
+
+  /**
+   * The removal landed at every store and was read back at each — the LAST act, so a kill
+   * anywhere before it leaves the record standing and the next bootstrap finishes the deletion.
+   * Read back for {@link clearPendingWipe}'s reason: a record that survives being cleared would
+   * refuse every later launch of a door the person has already taken again.
+   */
+  clearEngineRemoval(): Promise<void> {
+    return this.enqueue(async () => {
+      await this.kv.remove(ENGINE_REMOVAL_KEY);
+      if ((await this.kv.get(ENGINE_REMOVAL_KEY)) !== null) {
+        throw new StoreFault("engine_removal_still_recorded",
+          "this phone still records an unfinished removal of the mailbox on it");
+      }
+    });
+  }
+
   /**
    * Remove every pairing this phone holds — the first-launch purge (`install-marker.ts`). iOS
    * Keychain items survive an app delete and are readable again by the same bundle id, so a
@@ -662,6 +726,14 @@ export class ServerProfileStore {
         await this.kv.remove(WAKE_DROPS_KEY);
       } catch {
         /* the index below is what makes the purge real; this is tidying */
+      }
+      /* AND THE UNFINISHED REMOVAL. This runs when the app CONTAINER is new, which is where the
+         engine store lived — so the removal it records has been completed by the uninstall, and a
+         record kept past that would refuse the first mailbox of a fresh install for ever. */
+      try {
+        await this.kv.remove(ENGINE_REMOVAL_KEY);
+      } catch {
+        /* same: tidying, and a fresh install has no store for it to describe */
       }
       await this.kv.remove(PREFIX);
       if ((await this.kv.get(PREFIX)) !== null) {

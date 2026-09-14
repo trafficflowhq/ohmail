@@ -10,10 +10,12 @@
  */
 import * as Crypto from "expo-crypto";
 import * as SQLite from "expo-sqlite";
-import { secureKV } from "../state/servers-native";
+import { nativeServerProfiles, secureKV } from "../state/servers-native";
 import {
   ENGINE_DB_FILE,
   openLocalEnginePlatform,
+  removeStandaloneEngine,
+  type EngineRemovalRecord,
   type EngineStoreDatabase,
   type LocalEnginePlatformVerdict,
 } from "./local-engine";
@@ -28,11 +30,51 @@ export async function openEngineDatabase(name: string = ENGINE_DB_FILE): Promise
   return (await SQLite.openDatabaseAsync(name)) as unknown as EngineStoreDatabase;
 }
 
+/**
+ * REMOVE that same file — the deleter named against the OPENER above, and the pairing is the
+ * whole of whether a removal removes anything. The mirror's deleter wraps its argument in
+ * `dbFileName` because the mirror's opener does; this file is opened by its own bare name, so
+ * wrapping it here would delete `ohmail-engine.db.db` — a database nothing ever wrote to — and
+ * report a completed removal over a mailbox still on the phone. `test/forget.test.ts` reads this
+ * module as text and refuses the pair drifting.
+ *
+ * Swallowed, on `nativeEngineDeps().deleteDatabase`'s rule: `deleteDatabaseAsync` rejects on a
+ * name that is not there, and the caller's own read-back is the only thing that decides whether
+ * the removal landed — a deleter that silently did nothing is caught by the probe, not by a catch.
+ */
+export async function deleteEngineDatabase(name: string = ENGINE_DB_FILE): Promise<void> {
+  try {
+    await SQLite.deleteDatabaseAsync(name);
+  } catch {
+    /* absent, or held: the caller's read-back is the judge */
+  }
+}
+
+/** The durable removal record, as the bootstrap's port. One store for the app's lifetime. */
+function engineRemovalRecord(): EngineRemovalRecord {
+  const profiles = nativeServerProfiles();
+  return {
+    recorded: () => profiles.engineRemoval(),
+    clear: () => profiles.clearEngineRemoval(),
+  };
+}
+
 /** What the connect screen hands to the engine factory it loaded from the bundle. */
 export function nativeEnginePlatform(): Promise<LocalEnginePlatformVerdict> {
   return openLocalEnginePlatform({
     openDatabase: openEngineDatabase,
+    deleteDatabase: deleteEngineDatabase,
     kv: secureKV(),
     randomKekHex: expoRandomKekHex,
+    removal: engineRemovalRecord(),
+  });
+}
+
+/** The take-back's engine half, bound to this platform — `PairingEnv.standalone.removeEngine`. */
+export function nativeRemoveStandaloneEngine(): Promise<void> {
+  return removeStandaloneEngine({
+    openDatabase: openEngineDatabase,
+    deleteDatabase: deleteEngineDatabase,
+    kv: secureKV(),
   });
 }

@@ -8,9 +8,9 @@
  * organizing" the same destructive act. It does not import the engine: the engine arrives
  * pre-bundled; importing its source would re-resolve the graph the census prevents.
  */
-import { ensureKek, kekRing, type RandomKekHex } from "./kek";
-import type { Refusal } from "../refusal";
-import type { SecureKV } from "../state/servers";
+import { ensureKek, forgetKek, kekRing, type RandomKekHex } from "./kek";
+import { faultDetail, refuse, type Refusal } from "../refusal";
+import { StoreFault, type SecureKV } from "../state/servers";
 
 /**
  * The engine store's own file. Named apart from the mirror's databases so the two can never be
@@ -135,6 +135,95 @@ export type LocalEnginePlatformVerdict =
   | { kind: "refused"; reason: Refusal };
 
 /**
+ * ── WHAT A REMOVAL TAKES, AND THE ORDER IT TAKES IT IN ──────────────────────────────────────
+ *
+ * The four tables that make the store a mailbox rather than a file: the ACCOUNT the next
+ * bootstrap reuses, the MAILBOX row the roster attaches, the SEALED CREDENTIAL that dials, and
+ * the MAIL. The read-back below asks the store's own catalog for these by name, because
+ * awaiting a deleter proves only that a function returned — which is the evidence the defect
+ * this closes already had.
+ */
+export const ENGINE_STORE_TABLES = ["accounts", "mailbox_credentials", "mailboxes", "messages"];
+
+/** What removing this phone's mailbox needs of the platform: the store's two verbs, and the keystore. */
+export interface EngineStoreSeams {
+  /** The engine's own file — the SAME name the opener opens, never a mirror's. */
+  openDatabase: (name: string) => Promise<EngineStoreDatabase>;
+  /**
+   * Remove that file. REQUIRED, on `MobileEngineDeps.deleteDatabase`'s argument: a platform half
+   * that can only create a mailbox is not complete. It must name the file the opener names —
+   * the mirror's deleter wraps its argument and this one may not, or the removal deletes a
+   * database nothing ever wrote to and the read-back is the only thing that notices.
+   */
+  deleteDatabase: (name: string) => Promise<void>;
+  kv: SecureKV;
+}
+
+/** Which of {@link ENGINE_STORE_TABLES} the store still holds. Creates nothing it does not drop. */
+async function engineStoreSurvivors(deps: EngineStoreSeams): Promise<string[]> {
+  const probe = expoEngineExecutor(await deps.openDatabase(ENGINE_DB_FILE));
+  try {
+    const held = await probe.all(
+      `SELECT name FROM sqlite_master WHERE type = 'table' AND name IN (${
+        ENGINE_STORE_TABLES.map(() => "?").join(", ")})`,
+      ENGINE_STORE_TABLES,
+    );
+    return held.rows.map((row) => String(row[0])).sort();
+  } finally {
+    await probe.close().catch(() => undefined);
+  }
+}
+
+/**
+ * ── REMOVING THE MAILBOX ON THIS PHONE: THE KEY, THEN THE STORE, EACH READ BACK ─────────────
+ *
+ * "Stop and remove" used to delete the client mirror and stop — the engine's own store and the
+ * key ring that opens the password sealed in it both outlived it, so connecting a DIFFERENT
+ * mailbox afterwards booted an engine over the survivor, `ensureLocalWorld` found the existing
+ * account, and the removed mailbox was attached beside the new one. A person who removed a
+ * mailbox read its mail under the next one's session.
+ *
+ * KEY FIRST. A kill between the two leaves a store whose sealed password nothing can open,
+ * where the other order leaves the key to mail that is still here. Neither is meant to survive:
+ * the caller records the removal before this runs, and {@link openLocalEnginePlatform} finishes
+ * whatever this did not on the next launch.
+ *
+ * The probe's second delete is its own litter — opening a deleted name creates it, and leaving
+ * that stub would make the next launch read an empty file as a store. It runs ONLY where the
+ * probe found nothing, and that condition is not tidiness: unconditional, it deletes the store
+ * on the very path where the first delete did not, so either call alone satisfies this function
+ * and neither can be watched fail. A guard nobody has watched fail is not evidence, and a second
+ * mechanism covering the first measures the pair.
+ */
+export async function removeStandaloneEngine(deps: EngineStoreSeams): Promise<void> {
+  await forgetKek(deps.kv);
+  await deps.deleteDatabase(ENGINE_DB_FILE);
+  const survivors = await engineStoreSurvivors(deps);
+  if (survivors.length === 0) await deps.deleteDatabase(ENGINE_DB_FILE).catch(() => undefined);
+  if (survivors.length > 0) {
+    /* A CODE, never a sentence: `forgetProfile` hands this to `faultDetail`, which words our own
+       failures and quotes everybody else's — an English message here would freeze inside a
+       German refusal. Table names, never an address. */
+    throw new StoreFault(
+      "engine_store_not_deleted",
+      `this phone still holds the removed mailbox's own store — "${ENGINE_DB_FILE}" survived ` +
+        `being deleted (${survivors.join(", ")})`,
+    );
+  }
+}
+
+/**
+ * THE DURABLE RECORD OF A REMOVAL IN FLIGHT — written before the first deletion, cleared after
+ * the last. `ServerProfileStore` owns it; this is the two calls the bootstrap makes on it, as a
+ * port, so this module keeps importing nothing but a type from the keystore layer.
+ */
+export interface EngineRemovalRecord {
+  /** The account whose removal is recorded and unfinished, or `null`. */
+  recorded(): Promise<string | null>;
+  clear(): Promise<void>;
+}
+
+/**
  * Open the engine's store and resolve its key — the two things that must both succeed.
  * Ordered store-then-key on purpose: the key's failure is the one that must not leave a
  * half-built install behind, so an unreadable key closes the store again before the refusal
@@ -142,13 +231,32 @@ export type LocalEnginePlatformVerdict =
  * random source and keystore arrive through seams so the node suite drives this without a
  * native module; production binds the app's existing `secureKV()` — one keystore seam, not a
  * second one for the engine.
+ *
+ * ── AND BEFORE EITHER, THE REMOVAL BELT ────────────────────────────────────────────────────
+ *
+ * This is the ONE gate in front of the engine's store: the door press and the relaunch both
+ * arrive here. A removal that was interrupted — killed after the record was written and before
+ * the deletions landed — leaves a store holding the removed mailbox, and opening it is exactly
+ * the attach the removal existed to prevent. So a recorded removal is FINISHED here and the
+ * launch is refused by name; the next press opens a store that no longer exists, which is a
+ * fresh one. A deletion that still cannot land leaves the record standing and refuses again.
  */
-export async function openLocalEnginePlatform(deps: {
-  /** REQUIRED: the platform's own opener. See the banner — nothing native is imported here. */
-  openDatabase: (name: string) => Promise<EngineStoreDatabase>;
-  kv: SecureKV;
+export async function openLocalEnginePlatform(deps: EngineStoreSeams & {
   randomKekHex: RandomKekHex;
+  /** REQUIRED: without it this gate cannot tell a removed mailbox from a held one. */
+  removal: EngineRemovalRecord;
 }): Promise<LocalEnginePlatformVerdict> {
+  if ((await deps.removal.recorded()) !== null) {
+    try {
+      await removeStandaloneEngine(deps);
+      /* LAST, and its own read-back is in the store: a record that survives being cleared would
+         refuse every later launch of a door the person has already taken again. */
+      await deps.removal.clear();
+    } catch (err) {
+      return { kind: "refused", reason: refuse("standaloneRemovalUnfinished", faultDetail(err)) };
+    }
+    return { kind: "refused", reason: refuse("standaloneMailboxRemoved") };
+  }
   const exec = expoEngineExecutor(await deps.openDatabase(ENGINE_DB_FILE));
   try {
     const kek = await ensureKek(deps.kv, deps.randomKekHex);

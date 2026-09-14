@@ -9,7 +9,7 @@
  * loser's key — hence the chain). Never logged, errors included (`kek-store.test.ts`). Seams, not imports; the ring shape keeps v2 a map entry.
  */
 import { refuse, type Refusal } from "../refusal";
-import type { SecureKV } from "../state/servers";
+import { StoreFault, type SecureKV } from "../state/servers";
 
 /**
  * Where the key lives in the keystore. Versioned in the NAME as well as in the ring, so a future
@@ -121,17 +121,24 @@ export function kekRing(hex: string): Record<number, string> {
 }
 
 /**
- * Remove this install's engine key — the other half of the standalone door's take-back:
- * switching the door away deletes the engine database, and the key that opened it has no
- * reason to outlive it. A primitive here rather than performed here, because the take-back is
- * a sequence the door owns — store first, then key, so a kill between them leaves a key that
- * opens nothing rather than a database nothing can open. Note: this key is in the keystore,
- * which on iOS survives deleting the app (`install-marker.ts` states the asymmetry). A
- * surviving key is not a credential leak — the sealed rows go with the container — but it is
- * still removed when the door is switched, because "I turned this off" is believed.
+ * Remove this install's engine key — the FIRST deletion of the standalone door's take-back, and
+ * the order is ruled rather than chosen. Key, then store: a kill between them leaves a store
+ * whose sealed password nothing can open, where store-then-key leaves the key to a mailbox
+ * whose bytes are still on the phone. Neither residue is meant to survive, which is what the
+ * removal record in `state/servers.ts` is for — it is written before this runs and the engine's
+ * bootstrap finishes whatever this sequence did not. Note: this key is in the keystore, which on
+ * iOS survives deleting the app (`install-marker.ts` states the asymmetry), so the removal is
+ * the only thing that takes it.
+ *
+ * READ BACK, on `ensureKek`'s rule: a keystore `remove` that resolves without removing would
+ * leave the sealed credential openable while the person was told the mailbox had gone.
  */
 export async function forgetKek(kv: SecureKV): Promise<void> {
   return serialize(async () => {
     await kv.remove(KEK_KEY);
+    if ((await kv.get(KEK_KEY)) !== null) {
+      throw new StoreFault("engine_key_not_removed",
+        "the key that opens this mailbox's stored password is still on this phone");
+    }
   });
 }
