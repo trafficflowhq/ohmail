@@ -286,7 +286,12 @@ interface MailboxRuntime {
    * derive, and every consumer treats that as "this mailbox has no request channel".
    */
   requestKey: string | null;
-  deps: SyncDeps;
+  /**
+   * The cycle's deps AS THE ATTACH BUILT THEM — everything whose lifetime is the attachment. The
+   * PERMIT is not among them and the type says so: it is `rt.leasePermit`, written by the gate at
+   * every cycle, and an attach-time copy of it would be a receipt from before the last handover.
+   */
+  deps: Omit<SyncDeps, "writeAuthority">;
   unwatch: (() => Promise<void>) | null;
   /** Consecutive runtime sync failures; at `maxSyncFailures` the mailbox is detached. */
   failures: number;
@@ -2209,7 +2214,7 @@ export async function startWorkerWithLock(
         const attachedAdapter: MailboxAdapter = adapter;
         /** The sweep's scan state for THIS attachment — see the `junkSweep.run` note below. */
         let sweepScan: SweepScanState = SWEEP_SCAN_START;
-        const deps: SyncDeps = {
+        const deps: Omit<SyncDeps, "writeAuthority"> = {
           repo, adapter, accountId: mb.accountId, mailboxId: mb.mailboxId,
           // Mail 0083. THE ATTACH-TIME ROLE, and it is the field's floor rather than its whole
           // story: `cycle()` re-verifies the lease before every pass and spreads `role: rt.role`
@@ -3270,6 +3275,13 @@ export async function startWorkerWithLock(
             // after the spread deliberately: it must win over `rt.deps.role`, which is only ever
             // the value the attach saw.
             role: rt.role,
+            /* AND THE PERMIT THE SAME GATE JUST TOOK, threaded INTO the cycle rather than left at
+             * its edge. Until this line the cycle received none, so every write boundary inside it
+             * read `not_supplied` and was admitted: a person moving organization to their own
+             * install mid-scan had Cloud applying moves beside it for the rest of the cycle. Beside
+             * `role` and for its reason — written by `mayOrganize` on both arms at THIS cycle's
+             * gate, so it is the current receipt and never the attach-time one on `rt.deps`. */
+            writeAuthority: rt.leasePermit,
             // The cap is refreshed per cycle like the screening posture beside it, so an
             // upgrade's headroom (or a downgrade's new ceiling) applies without a re-attach.
             storageCap: await storageCapFor(rt.accountId),

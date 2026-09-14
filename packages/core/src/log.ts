@@ -105,6 +105,12 @@ export const ALLOWED_FIELDS: readonly string[] = [
   // stays unstamped and due.
   "considered", "learned", "silent", "skipped", "failed", "announcedBytes", "stamped",
   "disabledReason", "stoppedBy", "heldBy",
+  // `page` is the sync cycle's own page counter — which page of which pass was open when the
+  // organizer lease went (`stood_down_mid_cycle`). An integer this module counted itself, with
+  // nothing of anybody's mail in it, and the whole content of that verdict: without it the line
+  // says a handover happened and not where the loser stopped. Added WITH the line that emits it,
+  // and `permit-through-the-cycle.test.ts` drives the REAL logger for it.
+  "page",
   // ── THE PHONE'S BACKGROUND MACHINE, added WITH the call sites that emit them ──────────────
   //
   // `apps/mobile/src/engine/background.ts` decides what happens to the mailbox at every app-state

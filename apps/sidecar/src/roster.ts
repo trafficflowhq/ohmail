@@ -186,15 +186,18 @@ export interface OrganizerState {
 /**
  * The parts of `SyncDeps` a runtime OWNS for the life of its attachment.
  *
- * The six omitted fields are the ones resolved fresh at every cycle edge and must never be frozen
- * here: the ROLE (the gate's answer this pass), the CLASSIFIER (withheld after faults), the three
- * SCREENING inputs (read once per drain, so an edit in Settings takes effect on the next poll) and
- * the import-decision hold (evaluated from the folder each cycle). Anything cached here would be
- * a per-launch answer to a per-cycle question.
+ * The seven omitted fields are the ones resolved fresh at every cycle edge and must never be frozen
+ * here: the ROLE (the gate's answer this pass), the WRITE AUTHORITY (the permit that gate took, or
+ * the named reason a reader holds none), the CLASSIFIER (withheld after faults), the three SCREENING
+ * inputs (read once per drain, so an edit in Settings takes effect on the next poll) and the
+ * import-decision hold (evaluated from the folder each cycle). Anything cached here would be a
+ * per-launch answer to a per-cycle question — and for the permit that is a receipt from before the
+ * last handover, which is the one thing a write boundary may not be served.
  */
 export type RuntimeSyncDeps = Omit<
   SyncDeps,
-  "role" | "classifier" | "importDecisionOpen" | "ohboxPolicy" | "ohboxBar" | "screeningCutoff"
+  "role" | "writeAuthority" | "classifier" | "importDecisionOpen"
+  | "ohboxPolicy" | "ohboxBar" | "screeningCutoff"
 >;
 
 /**

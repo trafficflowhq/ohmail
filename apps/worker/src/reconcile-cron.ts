@@ -354,11 +354,10 @@ export async function runReconcileCron(
     // problem: "one sweep" is `ensureFolders()` plus TWO full `runSyncCycle` calls, and a takeover inside
     // it was unobserved until exit; the shard lock is invisible to the desktop install this pass would be
     // writing beside. So the lease read carries a deadline (`LeasePermit`) asked at each boundary — here,
-    // before `ensureFolders()`, and before each cycle — inside the TTL a comparison, past it one
-    // `runLeaseGate` (which RENEWS). What it does NOT bound: writes INSIDE a `runSyncCycle`, gated by that
-    // cycle's leader fence, so the residual is one cycle not one sweep (closing it means threading the
-    // lease through `SyncDeps`). This call needs its own arm — it sits above the `runSyncCycle` try that
-    // routes a stand-down to `standDown`, and would otherwise propagate.
+    // before `ensureFolders()`, and at every page INSIDE each cycle, which is what `SyncDeps.writeAuthority`
+    // below carries: inside the TTL a comparison, past it one `runLeaseGate` (which RENEWS). The bound is
+    // now one PAGE, not one cycle and not one sweep. This call needs its own arm — it sits above the
+    // `runSyncCycle` try that routes a stand-down to `standDown`, and would otherwise propagate.
     try {
       await permit.check();
     } catch (err) {
@@ -389,7 +388,9 @@ export async function runReconcileCron(
       },
     });
     await profileSync.armHoldFromFolder();
-    const deps: SyncDeps = {
+    /* WITHOUT THE PERMIT, and the type says so: this object is the sweep's two cycles' shared
+       facts, and the receipt every page inside a cycle asks is named at each call below. */
+    const deps: Omit<SyncDeps, "writeAuthority"> = {
       repo: makeDrizzleRepo(db), adapter, accountId, mailboxId,
       // ORGANIZER, always, and typed rather than derived . This pass reached here only
       // by passing the reader refusal above AND the lease permit, so the role is a fact about the
@@ -433,12 +434,20 @@ export async function runReconcileCron(
       // cron executes authorized takeovers) is seen by the evaluation, marker or no marker. A
       // faulted read costs one stale cycle, retried at the second pass.
       await permit.check();
-      await runSyncCycle({ ...deps, importDecisionOpen: await profileSync.importDecisionOpenNow() });
+      await runSyncCycle({
+        ...deps, writeAuthority: permit,
+        importDecisionOpen: await profileSync.importDecisionOpenNow(),
+      });
       // The second cycle is where the once-per-run read was weakest: the FIRST cycle has just spent
       // however long it took draining a mailbox, so this is the ask most likely to find the lease
       // actually gone rather than to be served from the receipt.
       await permit.check();
-      await runSyncCycle({ ...deps, importDecisionOpen: await profileSync.importDecisionOpenNow() });
+      await runSyncCycle({
+        // THE SAME RECEIPT, and it is named at the call rather than folded into `deps` above: the
+        // permit is what every page inside the cycle asks, and the census reads this argument list.
+        ...deps, writeAuthority: permit,
+        importDecisionOpen: await profileSync.importDecisionOpenNow(),
+      });
     } catch (err) {
       cycleError = err;
     }

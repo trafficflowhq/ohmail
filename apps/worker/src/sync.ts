@@ -6,7 +6,7 @@ import {
 import {
   WATCHED_FOLDERS, MessageGoneError, parseRef, FILING_BATCH_MAX,
   epochOf, epochVerdict, sameEpoch, UNKNOWN_EPOCH, type Epoch,
-  type ImapCursor, type KnownEntry, type MailboxAdapter, type PersistedFolderCursor,
+  type ImapCursor, type MailboxAdapter, type PersistedFolderCursor,
 } from "@trafficflow/core/adapters/imap";
 import { LeaseUnavailableError } from "@trafficflow/core/adapters/organizer-lease";
 // The role vocabulary lives in `@trafficflow/db` (mail 0083) because both the worker and the
@@ -183,12 +183,6 @@ export interface SyncDeps {
    */
   knownSet?: KnownSetCache;
   /**
-   * WHAT THIS CYCLE DID, counted — see {@link CycleCensus}. ABSENT ⇒ nothing is counted and every
-   * path runs as it did before this field; present ⇒ the caller folds the totals into its own
-   * drain line. A measurement seam, never a behaviour one: nothing in this file reads it back.
-   */
-  census?: CycleCensus;
-  /**
    * WHICH BUILD is running — the second arm of the durable ledger's due predicate.
    *
    * Absent ⇒ resolved from the environment by {@link buildVersionOf}, the same three sources
@@ -208,14 +202,18 @@ export interface SyncDeps {
    */
   fence?: SyncWriteFence;
   /**
-   * THE ORGANIZER LEASE THIS CYCLE WRITES UNDER — a permit, or the named reason there is none. The
-   * fence above answers worker-to-worker; this answers install-to-install, and only this one can
-   * stop a process writing to a mailbox its owner has moved to another machine. REQUIRED, on
-   * `role`'s exact argument one field down: while it was optional the hosted cycle received none,
-   * every boundary inside it read `not_supplied` — which `assertMayWriteToMailbox` ADMITS — and a
-   * handover mid-scan left both installs moving one person's mail. A composition that holds no lease
-   * types the reason; `lease-write-permit-census.test.ts` refuses a production `runSyncCycle(` call
-   * whose own argument list does not name this field.
+   * THE ORGANIZER LEASE THIS CYCLE WRITES UNDER — a permit, or the named reason there is none.
+   *
+   * The fence above answers worker-to-worker; this answers install-to-install, and only this one
+   * can stop a process writing to a mailbox its owner has moved to another machine.
+   *
+   * REQUIRED, on `role`'s exact argument one field down: while it was optional the hosted cycle
+   * received none, so every boundary inside it read `not_supplied` — which `assertMayWriteToMailbox`
+   * ADMITS — and a handover mid-scan left both installs moving one person's mail for the rest of the
+   * cycle. An omitted authority defaulting to permission is the shape that produced that, so a
+   * composition that genuinely holds no lease types the reason (`reader`, `not_supplied`); a fixture
+   * that omits it still reads as `not_supplied`, and `lease-write-permit-census.test.ts` is what
+   * refuses a production `runSyncCycle(` call whose own argument list does not name this field.
    */
   writeAuthority: OrganizerWriteAuthority;
   /** Structured log sink. Absent ⇒ a skip is still recorded in `audit_log`, just not logged. */
@@ -304,140 +302,47 @@ export interface JunkSweepCommandPort {
  * the server epoch that issued it, and reducing locators to `{uid, messageId}` discarded that — a
  * reused UID under a new epoch looked already-known and its body was never fetched. So the cursor's `uidValidity` is the epoch its remembered UIDs belong to, and only those entries are handed over.
  */
-/**
- * WHAT ONE CYCLE ACTUALLY DID. Measurement, not behaviour: absent ⇒ nothing is counted and every
- * path is unchanged. `cursorBuilds` counts {@link buildCursor} calls, `locatorReads` the ones that
- * went to the store for the whole projection and `locatorRows` the rows those returned — the
- * QUERIES and the ROWS TOUCHED; `cursorFolders` the per-folder arrays rebuilt, the DERIVATIONS;
- * `observed` what the adapter handed over. A tick over a mailbox where nothing changed reads zero,
- * touches zero rows, derives nothing and observes nothing. Anything else is a mailbox that moved,
- * or a gate that stopped working.
- */
-export interface CycleCensus {
-  cursorBuilds: number;
-  locatorReads: number;
-  locatorRows: number;
-  cursorFolders: number;
-  observed: number;
-}
-
-/** A zeroed {@link CycleCensus} — one per drain, folded into the caller's own log line. */
-export function newCycleCensus(): CycleCensus {
-  return { cursorBuilds: 0, locatorReads: 0, locatorRows: 0, cursorFolders: 0, observed: 0 };
-}
-
 export async function buildCursor(
-  repo: WorkerRepo, mailboxId: string, deadLetters?: DeadLetterLedger, census?: CycleCensus,
-  memo?: KnownSetCache,
+  repo: WorkerRepo, mailboxId: string, deadLetters?: DeadLetterLedger,
 ): Promise<ImapCursor> {
   const folderRows = await repo.getMailboxFolders(mailboxId);
+  const known = await repo.listKnownLocators(mailboxId);
+  const knownByFolder = new Map<string, Array<{ uid: number; uidValidity: string; messageId: string | null; seen: boolean | null }>>();
+  for (const k of known) {
+    const arr = knownByFolder.get(k.folder) ?? [];
+    arr.push({ uid: k.uid, uidValidity: k.uidValidity, messageId: k.messageId, seen: k.seen });
+    knownByFolder.set(k.folder, arr);
+  }
   const names = new Set<string>(WATCHED_FOLDERS);
   for (const r of folderRows) names.add(r.folder);
-  if (census !== undefined) census.cursorBuilds += 1;
-
-  /**
-   * THE PROJECTION IS READ ONLY WHEN THE ANSWER IS NOT ALREADY DERIVED. Grouping the whole
-   * projection by folder and filtering each group to its folder's epoch is proportional to the
-   * MAILBOX, and it ran every cycle to produce, for a settled mailbox, the arrays it produced last
-   * time. {@link KnownSetCache} holds them against the generation of the set they came from. The
-   * precondition is narrow: every folder's ROW EPOCH must match what it was, because that is the
-   * input the resolution was taken from. Anything else takes the read — what this function did on
-   * every cycle before there was a memo, and what every caller without one still does.
-   */
-  const derived = memo?.derivedFolders() ?? null;
-  const epochs = new Map<string, string>();
-  const rowEpochs = new Map<string, string | null>();
-  for (const f of names) {
-    const e = epochOf(folderRows.find((r) => r.folder === f)?.uidValidity);
-    rowEpochs.set(f, e.known ? e.value : null);
-  }
-  let readOwed = true;
-  if (derived !== null && derived.rowEpochs.size === rowEpochs.size) {
-    readOwed = false;
-    for (const [f, cur] of rowEpochs) {
-      // The row epoch is the INPUT the resolution was taken from — equal inputs over a locator set
-      // that has not moved give the same answer, and anything else is a read. A folder whose row
-      // names NO epoch is included by this: its answer was derived from the entries, and the same
-      // entries derive it again.
-      if (derived.rowEpochs.get(f) !== cur) { readOwed = true; break; }
-      const was = derived.resolved.get(f);
-      if (was === undefined) { readOwed = true; break; }
-      epochs.set(f, was);
-    }
-  }
-
-  const knownByFolder = new Map<string, Array<{ uid: number; uidValidity: string; messageId: string | null; seen: boolean | null }>>();
-  if (readOwed) {
-    epochs.clear();
-    /* WARM IS READ BEFORE THE READ, not after it: the read is what makes it warm, so asking
-       afterwards answers "yes" every time and the counter says nothing. */
-    const servedFromMemory = memo?.warm === true;
-    const known = await repo.listKnownLocators(mailboxId);
-    if (census !== undefined) {
-      if (!servedFromMemory) census.locatorReads += 1;
-      census.locatorRows += known.length;
-    }
-    for (const k of known) {
-      const arr = knownByFolder.get(k.folder) ?? [];
-      arr.push({ uid: k.uid, uidValidity: k.uidValidity, messageId: k.messageId, seen: k.seen });
-      knownByFolder.set(k.folder, arr);
-    }
-    for (const f of names) {
-      epochs.set(f, rowEpochs.get(f) ?? soleEpochOf(knownByFolder.get(f) ?? []));
-    }
-  }
-
-  const fresh = new Map<string, KnownEntry[]>();
   const folders: ImapCursor["folders"] = {};
   for (const f of names) {
     const row = folderRows.find((r) => r.folder === f);
-    const epoch = epochs.get(f) ?? "0";
+    const entries = knownByFolder.get(f) ?? [];
+    const rowEpoch = epochOf(row?.uidValidity);
+    const epoch = rowEpoch.known ? rowEpoch.value : soleEpochOf(entries);
     folders[f] = {
       uidValidity: epoch,
       uidNext: row?.uidNext ?? 0,
       highestModseq: row?.highestModseq ?? "0",
-      known: knownFor(f, epoch, knownByFolder.get(f) ?? [], derived?.byFolder ?? null, fresh, deadLetters, census),
+      // An UNNAMED epoch means nothing remembered may be presented as known — the adapter would
+      // read a bare number as belonging to whatever epoch it is looking at. `!== "0"` missed the
+      // `String(undefined)` a silent server persists, so those UIDs were handed over as facts.
+      known: !epochOf(epoch).known ? [] : [
+        // `seen` rides along as the flag baseline the no-CONDSTORE fallback diffs against
+        // (`KnownEntry.seen`). Dead-letter entries below carry none, which is correct: nothing
+        // was ever ingested for them, so no baseline can be stated and none may be diffed.
+        ...entries.filter((e) => sameEpoch(epochOf(e.uidValidity), epochOf(epoch)))
+          .map((e) => ({ uid: e.uid, messageId: e.messageId, seen: e.seen })),
+        // The UIDs this process has written off. They are "known" in the only sense the adapter
+        // uses the word — do not fetch this again — and leaving them out is what made one poison
+        // message cost a full body fetch on every cycle for ever. Epoch-matched for the same
+        // reason the real locators are. See `DeadLetterLedger`.
+        ...(deadLetters?.knownFor(f, epoch) ?? []),
+      ],
     };
   }
-  // A derivation is remembered only when it was built from a READ — a pass that reused the last
-  // one has nothing new to say, and rewriting it would stamp old arrays with a new generation.
-  if (readOwed) memo?.rememberFolders(fresh, rowEpochs, epochs);
   return { folders };
-}
-
-/**
- * One folder's known list: the epoch-matched locators, then the UIDs this process has written off.
- *
- * `seen` rides along as the flag baseline the no-CONDSTORE fallback diffs against
- * (`KnownEntry.seen`). Dead-letter entries carry none, which is correct: nothing was ever ingested
- * for them, so no baseline can be stated and none may be diffed. Leaving them out is what made one
- * poison message cost a full body fetch on every cycle for ever; they are epoch-matched for the
- * same reason the real locators are. See `DeadLetterLedger`.
- */
-function knownFor(
-  folder: string, epoch: string,
-  entries: ReadonlyArray<{ uid: number; uidValidity: string; messageId: string | null; seen: boolean | null }>,
-  derived: Map<string, KnownEntry[]> | null,
-  fresh: Map<string, KnownEntry[]>,
-  deadLetters?: DeadLetterLedger,
-  census?: CycleCensus,
-): KnownEntry[] {
-  // An UNNAMED epoch means nothing remembered may be presented as known — the adapter would read a
-  // bare number as belonging to whatever epoch it is looking at. `!== "0"` missed the
-  // `String(undefined)` a silent server persists, so those UIDs were handed over as facts.
-  if (!epochOf(epoch).known) return [];
-  const key = `${folder}\u0000${epoch}`;
-  const reused = derived?.get(key);
-  if (reused === undefined && census !== undefined) census.cursorFolders += 1;
-  const locators = reused
-    ?? entries.filter((e) => sameEpoch(epochOf(e.uidValidity), epochOf(epoch)))
-      .map((e) => ({ uid: e.uid, messageId: e.messageId, seen: e.seen }));
-  fresh.set(key, locators);
-  const dead = deadLetters?.knownFor(folder, epoch) ?? [];
-  // Handed over AS IT STANDS when there is nothing to append — the adapter treats the cursor as
-  // read-only, and a copy per folder per cycle is the very cost this derivation was memoized to
-  // stop paying.
-  return dead.length === 0 ? locators : [...locators, ...dead];
 }
 
 /**
@@ -573,17 +478,17 @@ export interface CyclePageCursor {
 /** A cursor for one cycle. A caller that runs `reconcileMailbox` alone gets its own. */
 export const freshCyclePages = (): CyclePageCursor => ({ pass: null, page: 0 });
 
-/**
- * Open the next page of a pass. Called IMMEDIATELY BEFORE the write predicate at every boundary and
- * never through a wrapper around it: `lease-write-permit-census.test.ts` asserts the predicate has
- * exactly one spelling and reads its call inside each writing function, so a helper that asked it on
- * their behalf would satisfy that census by proxy. Two lines, in this order, so a refusal names the
- * page it refused rather than the last one it admitted.
- */
 function openPage(at: CyclePageCursor, pass: CyclePass): void {
   at.page = at.pass === pass ? at.page + 1 : 1;
   at.pass = pass;
 }
+
+/**
+ * The page is opened IMMEDIATELY BEFORE the predicate at every boundary and never through a wrapper
+ * around it: `lease-write-permit-census.test.ts` asserts the predicate has exactly one spelling and
+ * reads the call inside each writing function, and a helper that asked it for them would satisfy that
+ * census by proxy. Two lines, in this order, so a refusal names the page it refused.
+ */
 
 /**
  * Rethrow a REFUSAL out of a catch arm that would otherwise swallow it or read it as a message fault.
@@ -734,15 +639,10 @@ async function cycleWithKnownSet(
         mailboxId: input.mailboxId, accountId: input.accountId,
         rows: census.rows, bytes: census.bytes, bytesSaved: census.bytesSaved,
         droppedBy: census.droppedBy,
-        retainedBytes: census.retainedBytes,
-        processRetainedBytes: census.processRetainedBytes,
-        processBudgetBytes: census.processBudgetBytes,
         reason: "the in-memory known-set was cold or had been dropped, so this cycle re-read it " +
           "from the database. `droppedBy` names the repo write (or the leadership event) that " +
-          "dropped it, and reads `evicted` when the process's shared locator budget needed the " +
-          "room for another mailbox; `bytesSaved` is the estimated wire bytes this attachment has " +
-          "not read since it began; `processRetainedBytes` against `processBudgetBytes` is how " +
-          "close every memo in this process together is to that budget",
+          "dropped it; `bytesSaved` is the estimated wire bytes this attachment has not read " +
+          "since it began",
       });
     }
     return out;
@@ -902,12 +802,8 @@ async function syncCycleWithin(
     }
   }
 
-  const cursor = await buildCursor(repo, mailboxId, deadLetters, deps.census, deps.knownSet);
+  const cursor = await buildCursor(repo, mailboxId, deadLetters);
   const batch = await adapter.changesSince(cursor);
-  if (deps.census !== undefined) {
-    deps.census.observed += batch.creates.length + batch.moves.length
-      + batch.flagChanges.length + batch.deletes.length;
-  }
   // A folder whose STORED cursor this build could not read was scanned from cold — the adapter has
   // no logger and reports the names instead, and a re-bootstrap that nobody records is the
   // silent state the row is about. One line per folder, labelled: a folder a person made carries
@@ -2162,12 +2058,9 @@ async function retireLocatorlessFlag(deps: SyncDeps, p: PendingFlagState): Promi
     );
     if (spent) {
       // The ONLY write that takes this row out of `pending` through this port. Paired with the
-      // audit row above, and never issued without it — see the header. CONDITIONAL, and with no
-      // physical fact to carry: `p` was read at the top of the cycle, so a mark-read pressed since
-      // must not be retired by a deferral earned against the older one. A miss writes nothing and
-      // the next cycle re-derives from the fresh desire.
-      await r.completeFlagState(p.messageId, {
-        expectDesiredSeen: p.desiredSeen, observedSeen: p.desiredSeen, lastSetBy: "us",
+      // audit row above, and never issued without it — see the header.
+      await r.upsertFlagState(p.messageId, {
+        desiredSeen: p.desiredSeen, observedSeen: p.desiredSeen, lastSetBy: "us",
       });
     } else {
       await r.deferFlagReconcile(p.messageId, {
@@ -2203,7 +2096,7 @@ async function reconcileFlags(deps: SyncDeps, at: CyclePageCursor): Promise<bool
   for (const p of pending) {
     if (p.lastSetBy !== "us") continue;                       // user-wins: never revert an external \Seen
     if (p.desiredSeen === p.observedSeen) {
-      await fencedLiveGroup(deps, (r) => r.completeFlagState(p.messageId, { expectDesiredSeen: p.desiredSeen, observedSeen: p.desiredSeen, lastSetBy: "us" }));
+      await fencedLiveGroup(deps, (r) => r.upsertFlagState(p.messageId, { desiredSeen: p.desiredSeen, observedSeen: p.desiredSeen, lastSetBy: "us" }));
       continue;
     }
     if (!p.nativeLocator) { await retireLocatorlessFlag(deps, p); continue; }
@@ -2225,7 +2118,7 @@ async function reconcileFlags(deps: SyncDeps, at: CyclePageCursor): Promise<bool
         // same way rather than re-STOREd (one IMAP round trip per cycle) for ever.
         await fencedLiveGroup(deps, async (r) => {
           if (!(await r.primaryInstanceVanished(p.messageId))) return;
-          await r.completeFlagState(p.messageId, { expectDesiredSeen: p.desiredSeen, observedSeen: p.desiredSeen, lastSetBy: "us" });
+          await r.upsertFlagState(p.messageId, { desiredSeen: p.desiredSeen, observedSeen: p.desiredSeen, lastSetBy: "us" });
           await r.recordAudit(
             accountId, "reconcile.flags.voided",
             { messageId: p.messageId, locator: p.nativeLocator, seen: p.desiredSeen },
@@ -2279,32 +2172,12 @@ async function reconcileFlags(deps: SyncDeps, at: CyclePageCursor): Promise<bool
     // reports, and `applyExternalFlag` adopts it.
     try {
       await fencedLiveGroup(deps, async (r) => {
-        /* CONDITIONAL on the desire this STORE was computed against, compared in the statement that
-           writes — `completeFlagState`, never `upsertFlagState`. `p.desiredSeen` is minutes old on a
-           slow host and every mark-read/mark-unread press writes `desired_seen`, so writing it back
-           here erased the person's last press: read, then unread over one slow STORE, and the row
-           came back `read` on both sides with nothing left pending to correct it. The observation is
-           written on a miss too (`physicalObservation`) — the server really does hold this flag now,
-           and that is what leaves the row PENDING against the newer desire for the next cycle to
-           STORE. Nothing is re-issued here: a completion that re-sent would be this same race one
-           level up, and a STORE that then fails is the deferral arm's, above. */
-        const matched = await r.completeFlagState(p.messageId, {
-          expectDesiredSeen: p.desiredSeen, observedSeen: p.desiredSeen,
-          lastSetBy: "us", physicalObservation: true,
-        });
+        await r.upsertFlagState(p.messageId, { desiredSeen: p.desiredSeen, observedSeen: p.desiredSeen, lastSetBy: "us" });
         await r.recordAudit(
           accountId, "reconcile.flags",
           { messageId: p.messageId, locator: p.nativeLocator, seen: p.desiredSeen },
           { action: "setFlags", locator: p.nativeLocator, seen: !p.desiredSeen },
         );
-        if (!matched) {
-          log?.info("reconcile_flag_superseded", {
-            mailboxId, accountId, messageId: p.messageId, seen: p.desiredSeen,
-            reason: "the read-state was pressed again while this STORE was on the wire; what the " +
-              "server now holds is recorded and the newer press keeps the row pending, so the next " +
-              "cycle writes the person's last word to the server",
-          });
-        }
       });
     } catch (err) {
       rethrowRefusal(err);
