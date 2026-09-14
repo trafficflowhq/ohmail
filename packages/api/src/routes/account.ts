@@ -100,12 +100,18 @@ export const accountRoutes: Route[] = [
         // Unreachable through this route's own pipeline (see above). Answered rather than
         // thrown so that a caller which somehow arrives here reads "no, and nowhere to go"
         // instead of a 500 — the arm is watched by driving the rule through the middleware.
-        return json({ metered: true, canAddMailbox: false, mailboxes: 0 }, 200);
+        return json({ metered: true, canAddMailbox: false, mailboxes: 0, aiEnabled: false }, 200);
       }
       return json({
         metered: true,
         canAddMailbox: verdict.limits.canAddMailbox,
         mailboxes: verdict.limits.mailboxes,
+        // `aiEnabled` IS THE VERDICT'S OWN FIELD and was being read and dropped. It is what a
+        // surface holding a stale "no AI actions remain" asks about: a refusal the person was
+        // shown yesterday must not still be on their screen once this answers true. Not derivable
+        // from the two above — an account may hold every mailbox it is entitled to and have AI
+        // off, or the other way round.
+        aiEnabled: verdict.limits.aiEnabled,
       }, 200);
     },
   },

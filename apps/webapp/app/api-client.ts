@@ -1658,7 +1658,17 @@ export const profileImport = {
  */
 export type AccountAccess =
   | { metered: false }
-  | { metered: true; canAddMailbox: boolean; mailboxes: number | null };
+  | {
+      metered: true;
+      canAddMailbox: boolean;
+      mailboxes: number | null;
+      /**
+       * May this account use AI at all. OPTIONAL, because an older server does not say — and
+       * "did not say" is not "no": a caller that reads an absent field as `false` would put an
+       * AI-off sentence in front of an account whose AI is on.
+       */
+      aiEnabled?: boolean;
+    };
 
 /** What `DELETE /account` answers. Every field is stated on the confirmation screen. */
 export interface ErasureResult {

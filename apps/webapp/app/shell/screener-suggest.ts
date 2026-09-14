@@ -16,13 +16,14 @@ import { useTranslations } from "next-intl";
 import { senderKey } from "@ohmail/client-engine";
 import type { ToastFn } from "@ohmail/ui";
 import {
-  ApiError, apiConfigured, screener as screenerApi,
+  account, ApiError, apiConfigured, screener as screenerApi,
   type ScreenerSkipReason, type ScreenerSuggestWire, type ScreenerWirePage,
 } from "../api-client";
 /* The decided-and-waiting shape, owned by the module that renders it. Type-only, so this does not
    close a runtime cycle with `screener-state.ts`, which reads this file's overlay type. */
 import type { PendingDecision } from "./screener-state";
 import type { SuggestStanding } from "./no-suggestion";
+import { aiRefusalKey, clearedByAccess } from "./ai-refusal-copy";
 
 /**
  * One sender's suggestion, in the vocabulary the rows already speak. All five piles appear
@@ -299,6 +300,16 @@ export interface SuggestWire {
    * re-deriving a taxonomy here is how somebody with an empty balance is told the model is down.
    */
   messageFor: (err: unknown, fallback: string) => string;
+  /**
+   * IS AI AVAILABLE ON THIS ACCOUNT RIGHT NOW — asked only to take a stale refusal DOWN, never
+   * to decide whether to try.
+   *
+   * `true` means the account's own access verdict says AI is on; `false` means it says it is
+   * off; `null` means this transport could not tell, which clears nothing. Optional, because a
+   * transport that cannot ask is a transport whose refusals simply keep clearing on the next
+   * press — the behaviour every surface had before this existed.
+   */
+  aiAvailable?: () => Promise<boolean | null>;
 }
 
 /**
@@ -312,6 +323,23 @@ const CLOUD_WIRE: SuggestWire = {
   list: (opts) => screenerApi.list(opts),
   suggest: (senders, opts) => screenerApi.suggest(senders, opts ?? {}),
   messageFor: apiMessageFor,
+  // `GET /account/access` — the entitlements verdict this API already answers, served from the
+  // port's own cache, so this costs the program nothing per ask. An unmetered host meters
+  // nothing and gates nothing, which is `true`; an older server omits `aiEnabled` and that is
+  // `null`, not `false` — "it did not say" must not read as "it said no".
+  aiAvailable: async () => {
+    try {
+      const a = await account.access();
+      // BOTH ANSWERS READ STRICTLY, because the third state is the one that matters: `metered`
+      // absent is a server that did not say, and `!a.metered` would have read that as "no
+      // program here, AI is on" — a body of `{}` clearing a true refusal.
+      if (a.metered === false) return true;
+      if (a.metered === true && typeof a.aiEnabled === "boolean") return a.aiEnabled;
+      return null;
+    } catch {
+      return null;
+    }
+  },
 };
 
 /**
@@ -458,6 +486,15 @@ export function useScreenerSuggestions(opts: {
   const [size, setSize] = useState(0);
   const [quote, setQuote] = useState<{ senders: number; credits: number } | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  /**
+   * IS THE LINE ON SCREEN A REFUSAL AN ACCESS READ COULD LIFT — the arming condition, and the
+   * only thing that makes the effect below ask anything at all.
+   *
+   * Held apart from `notice` rather than derived from it: `notice` also carries progress, prices
+   * and "these senders already have a suggestion", and a sentence is not a state. Nothing asks
+   * while this is false, which is every moment of an ordinary session.
+   */
+  const [refused, setRefused] = useState(false);
   /** See {@link SuggestBatchControl.progress}. Written beside `notice`, never derived from it. */
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
   const [maxPerRequest, setMaxPerRequest] = useState(ASSUMED_MAX_PER_REQUEST);
@@ -562,6 +599,7 @@ export function useScreenerSuggestions(opts: {
   const notify = useRef({ toast, t });
   notify.current = { toast, t };
 
+
   /**
    * The transport and the overlay sink, HELD IN A REF for the reason `notify` above is.
    *
@@ -572,6 +610,65 @@ export function useScreenerSuggestions(opts: {
    */
   const link = useRef({ wire, publish: opts.publish });
   link.current = { wire, publish: opts.publish };
+  /**
+   * THE SENTENCE FOR A REFUSAL, IN THE READER'S LANGUAGE WHERE THERE IS ONE.
+   *
+   * The three refusals every deployment can produce — no actions left, AI switched off, AI
+   * unavailable — come out of the catalogue by their `code`; the server's English `message` is
+   * for a log, and rendering it verbatim is what put an English sentence on a German screen.
+   * Everything else still keeps the transport's own words: a host with no classifier connected
+   * has a fact to state that no code here carries.
+   */
+  const tAi = useTranslations("aiRefusal");
+  const whyFor = useCallback((err: unknown, fallback: string): string => {
+    const key = aiRefusalKey(err);
+    return key === null ? link.current.wire.messageFor(err, fallback) : tAi(key);
+  }, [tAi]);
+  /** Held for the effect below, which may not read a `useCallback` that changes every render. */
+  const say = useRef(whyFor);
+  say.current = whyFor;
+
+  /**
+   * NO STICKY FALSE STATE — a refusal line comes down when the account says AI is available.
+   *
+   * The card kept its sentence until the next press, and a press is not something a person makes
+   * on the way past: one account was shown "no AI actions remain" at nine in the evening and was
+   * still being shown it at a quarter to nine the next morning, having spent credits in between.
+   * A sentence about an account has to be re-asked against the account.
+   *
+   * NOT A POLL, and deliberately: it asks once when the line goes up, and again when the tab
+   * comes back to the foreground — which is the moment the person in the case above returned to
+   * it. While no refusal is standing this registers a listener and asks nothing; a transport with
+   * no `aiAvailable` asks nothing at all. `insufficient_credits` never arms it, because no access
+   * read describes a balance (`clearedByAccess`).
+   */
+  useEffect(() => {
+    if (!refused) return;
+    let alive = true;
+    const ask = (): void => {
+      void (async () => {
+        const available = await link.current.wire.aiAvailable?.();
+        // `true` ONLY. `false` is the account confirming the refusal, `null`/absent is a
+        // transport that could not tell — and clearing a line on "I do not know" is how the
+        // false state gets replaced by a different false state.
+        if (!alive || available !== true) return;
+        setNotice(null);
+        setRefused(false);
+        // RE-ARMED. The automatic path disarms itself on a refusal so it cannot flood a wall;
+        // the wall is what just came down, so leaving it disarmed would trade a stale sentence
+        // for a silently dead setting.
+        io.current.autoDisarmed = false;
+      })();
+    };
+    ask();
+    if (typeof document === "undefined") return () => { alive = false; };
+    const onVisible = (): void => { if (document.visibilityState === "visible") ask(); };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      alive = false;
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, [refused]);
 
   const merge = useCallback(
     (rows: Array<{ address: string; suggestion: SenderSuggestion }>) => {
@@ -706,7 +803,10 @@ export function useScreenerSuggestions(opts: {
         // standing condition (no credits, AI off, no classifier), not a blip, so retrying it
         // automatically is a flood against a wall.
         io.current.autoDisarmed = true;
-        const why = link.current.wire.messageFor(err, notify.current.t("suggest.failed"));
+        const why = say.current(err, notify.current.t("suggest.failed"));
+        // ARMED FOR THE CLEAR: this line is a claim about the account, and an access read that
+        // contradicts it must take it down (see the effect below).
+        if (clearedByAccess(err)) setRefused(true);
         // TOASTED, NOT ONLY NOTICED — and the distinction was found by a test rather than by
         // reading. `notice` is painted INSIDE the suggest panel, which on this path nobody
         // opened, so setting it alone left a refused automatic purchase completely invisible: the
@@ -803,6 +903,9 @@ export function useScreenerSuggestions(opts: {
       setPhase("pricing");
       setQuote(null);
       setNotice(null);
+      // A PRESS IS THE OTHER EVIDENCE. Whatever this run answers replaces the line, so the arm
+      // comes down with it — including for `insufficient_credits`, which no access read speaks to.
+      setRefused(false);
       void (async () => {
         let senders = 0;
         let credits = 0;
@@ -817,7 +920,8 @@ export function useScreenerSuggestions(opts: {
             // The server's own sentence. Every refusal on this path — no classifier
             // connected, AI switched off, no credits — already has a true one, and a second
             // taxonomy here is how a user gets told the wrong reason.
-            setNotice(wire.messageFor(err, t("suggest.failed")));
+            setNotice(whyFor(err, t("suggest.failed")));
+            if (clearedByAccess(err)) setRefused(true);
             return;
           }
           if (io.current.run !== run) return;
@@ -886,6 +990,7 @@ export function useScreenerSuggestions(opts: {
         setPhase("closed");
         setQuote(null);
         setNotice(null);
+        setRefused(false);
         setProgress(null);
         // Back to the ordinary ladder. A closed control that still reported `again` would draw the
         // re-ask's wording over the next press, whichever button opened it.
@@ -943,7 +1048,7 @@ export function useScreenerSuggestions(opts: {
               // sentence that says the run stopped would be two surfaces disagreeing about the
               // same event, with the moving one winning the reader's attention.
               setProgress(null);
-              const why = wire.messageFor(err, t("suggest.failed"));
+              const why = whyFor(err, t("suggest.failed"));
               // A HALTED RUN STILL SPENT. Announced before the toast, so the allowance line and
               // the summary describe the same account at the same moment.
               if (charged > 0) announceSpend();
@@ -960,7 +1065,12 @@ export function useScreenerSuggestions(opts: {
                   t,
                 ));
               } else {
+                // ARMED ONLY WHERE THE REFUSAL IS THE WHOLE LINE. The branch above says
+                // "Suggested 10 of 12" first, and an access read lifting the refusal is no
+                // reason to erase the report of what was bought — clearing that sentence threw
+                // away the only record of a halted run's purchases.
                 setNotice(why);
+                if (clearedByAccess(err)) setRefused(true);
               }
               return;
             }
@@ -991,6 +1101,7 @@ export function useScreenerSuggestions(opts: {
           setStanding(stopped ?? null);
           setPhase("closed");
           setNotice(null);
+          setRefused(false);
           // CLEARED, not left at `{done: total}`. A full track that never goes away is a claim
           // that work is still in flight; the completed run's numbers are in the toast.
           setProgress(null);
@@ -1053,7 +1164,7 @@ export function useScreenerSuggestions(opts: {
           if (io.current.optInRun !== run) return;
           // The server's own sentence — no classifier connected, AI switched off, no credits.
           // A second taxonomy here is how a user with an empty balance is told the model is down.
-          setOptIn({ phase: "ready", quote: null, notice: wire.messageFor(err, t("suggest.failed")) });
+          setOptIn({ phase: "ready", quote: null, notice: whyFor(err, t("suggest.failed")) });
         }
       })();
     };

@@ -7,7 +7,7 @@ import {
 import { serviceContext } from "../context.js";
 import { jsonResponse } from "../responses.js";
 import type { Route } from "../router.js";
-import { message, drafting, drafter, readBody, spendOf } from "./shared.js";
+import { message, drafting, drafter, readBody, spendOf, accessPortOf } from "./shared.js";
 import { pagingNumber } from "../query-bounds.js";
 
 /**
@@ -155,6 +155,9 @@ export const messageRoutes: Route[] = [
       const { draftId, seq } = await drafting(deps).draftFromMessage(ctx, params.id!, {
         drafter: drafter(deps),
         credits,
+        // Read ONLY when the gate has already refused: a `state` refusal this account's own
+        // access view contradicts is answered 503 rather than billed (`ai-refusal.ts`).
+        ...(accessPortOf(deps) ? { access: accessPortOf(deps)! } : {}),
         attemptKey: deps.idempotency ? clientIdempotencyKey(deps.idempotency.key) : undefined,
         idempotency: deps.idempotency
           ? {

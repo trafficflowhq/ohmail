@@ -203,6 +203,13 @@ const BASE_MESSAGE_NAMESPACES = [
   // `test/desktop-messages.test.ts` counts it by the dotted key — the shape the header above
   // warns is the one a reader misses. Reachable on every door: any list opens without a cursor.
   "cursor",
+  // `aiRefusal` is the three sentences an AI refusal says — no actions left, AI switched off,
+  // AI unavailable right now — read by shared shell code (`screener-suggest.ts`,
+  // `draft-reply.ts`) for BOTH surfaces that can be refused. They used to be the server's own
+  // English, rendered verbatim on a German screen; rendering them from the catalogue is what
+  // this namespace is for, so a build without it puts `aiRefusal.insufficientCredits` where
+  // that sentence belongs.
+  "aiRefusal",
   "reply", "ribbon", "screener", "screening", "search", "session", "settings",
   // `sync` is the shell's failing-sync strip. The desktop compiles it and
   // can never render it (a fixtures engine is permanently settled), but the guard compares

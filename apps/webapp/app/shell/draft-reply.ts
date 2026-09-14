@@ -20,6 +20,7 @@ import { useCallback, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { ApiError, api, apiConfigured } from "../api-client";
 import type { RichValue } from "./rich-text";
+import { aiRefusalKey } from "./ai-refusal-copy";
 
 /**
  * `closed` — the verb is idle.
@@ -67,6 +68,8 @@ export function useDraftReply(opts: {
   onDraft: (draft: DraftedReply, messageId: string) => void;
 }): DraftReplyControl {
   const t = useTranslations("draftReply");
+  /** The three AI refusals both surfaces share — see `ai-refusal-copy.ts`. */
+  const tAi = useTranslations("aiRefusal");
   const { onDraft } = opts;
 
   const [phase, setPhase] = useState<DraftReplyPhase>("closed");
@@ -151,10 +154,17 @@ export function useDraftReply(opts: {
          * already been told they cannot afford.
          */
         setPhase("offered");
-        setNotice(messageFor(err, t("failed"), bought ? t("failedOpaque") : t("failedOpaqueEarly")));
+        // THE THREE REFUSALS EVERY DEPLOYMENT CAN MAKE COME OUT OF THE CATALOGUE, by their code
+        // — the twin of the Screener's rule, for the same reason: the server's `message` is
+        // English written for a log, and a German reader was being shown it. Everything else
+        // still passes through verbatim, which is what the paragraph above is about.
+        const key = aiRefusalKey(err);
+        setNotice(key === null
+          ? messageFor(err, t("failed"), bought ? t("failedOpaque") : t("failedOpaqueEarly"))
+          : tAi(key));
       }
     })();
-  }, [messageId, phase, onDraft, t]);
+  }, [messageId, phase, onDraft, t, tAi]);
 
   return {
     phase,

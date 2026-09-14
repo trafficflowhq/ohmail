@@ -12,7 +12,8 @@ import {
 import type { DraftPort } from "@trafficflow/core/mail";
 import {
   accessOf, isMetered,
-  type AccessVerdict, type EntitlementsComposition, type EntitlementsPort, type SpendPort,
+  type AccessPort, type AccessVerdict, type EntitlementsComposition, type EntitlementsPort,
+  type SpendPort,
 } from "@trafficflow/db";
 import type { ImapAdmissionPort, ApiDeps } from "../deps.js";
 
@@ -55,6 +56,19 @@ export function entitlementsPort(deps: ApiDeps): EntitlementsPort | null {
  * one that renders a manage link does, and it uses `entitlementsPort` above.
  */
 export function spendOf(deps: ApiDeps): SpendPort | undefined {
+  const e = entitlementsOf(deps);
+  return e !== null && isMetered(e) ? e : undefined;
+}
+
+/**
+ * THE ACCESS HALF FOR A REFUSAL CROSS-CHECK, or nobody — the same object {@link spendOf}
+ * answers with, narrowed to the one method.
+ *
+ * `undefined` on an unmetered or unfinished host for {@link spendOf}'s reason: neither can
+ * produce the refusal this is consulted about. The services read it only AFTER the gate has
+ * refused, never on the way in, so this adds no call to any successful request.
+ */
+export function accessPortOf(deps: ApiDeps): AccessPort | undefined {
   const e = entitlementsOf(deps);
   return e !== null && isMetered(e) ? e : undefined;
 }

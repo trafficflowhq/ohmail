@@ -1,6 +1,6 @@
 import {
   noticeSinkFor, setNoticeSink, UNMETERED, accessOf, isMetered,
-  type EntitlementsComposition, type SpendPort, type Tx,
+  type AccessPort, type EntitlementsComposition, type SpendPort, type Tx,
 } from "@trafficflow/db";
 import {
   API_MAX_DURATION_MS, makePooledDb, recordApiFault, entitlementsFaultRow,
@@ -287,6 +287,14 @@ function buildServices(cfg: HostConfig): ApiServices {
     const composed = bag.entitlementsPort as EntitlementsComposition | undefined;
     return composed !== undefined && isMetered(composed) ? composed : undefined;
   };
+  /**
+   * THE ACCESS HALF OF THE SAME OBJECT — narrowed separately rather than cast, so a port that
+   * one day answers spend and not access cannot be handed over as one that answers both.
+   */
+  const accessHalf = (): AccessPort | undefined => {
+    const composed = bag.entitlementsPort as EntitlementsComposition | undefined;
+    return composed !== undefined && isMetered(composed) ? composed : undefined;
+  };
   lazily(bag, "screener", () => makeScreenerService({
     /* This host is killed by a platform, and it is the only one that is: `maxDuration = 60`
      * on the catch-all route this bag serves. `ScreenerService.suggest` admits a sender's
@@ -310,6 +318,11 @@ function buildServices(cfg: HostConfig): ApiServices {
     // The spend half of whatever this host declared, read off the bag so there is ONE port per
     // process — it caches its access verdicts, and a second instance would cache separately.
     ...(spendHalf() ? { credits: spendHalf()! } : {}),
+    // THE SAME OBJECT, for the one read that happens only after the gate has refused: a `state`
+    // refusal this account's own access view contradicts is answered 503 rather than billed
+    // (`ai-refusal.ts`). The same instance, so the fresh read it makes also refreshes the cache
+    // every other caller reads.
+    ...(accessHalf() ? { access: accessHalf()! } : {}),
     ...(anthropicApiKey ? {
       classifier: makeHaikuClassifier({
         client: makeAnthropicClient({
