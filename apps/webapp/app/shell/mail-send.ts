@@ -168,17 +168,14 @@ export interface MailSendApi {
    */
   send: (m: MailSend, opts?: { surface?: "inline"; heldRow?: string | null }) => void;
   /**
-   * CANCEL CANCELS — withdraw this lane's QUEUED send, if it has one.
-   *
-   * A queued send is an intent standing on the engine's outbox: nothing is on the wire, and the
-   * reconnect flush (or a later boot, from the durable row) will deliver it. Closing the composer
-   * over one used to leave it standing, so a message somebody cancelled still went — once, never
-   * twice, which is why it read as ordinary rather than as a defect. Nothing queued answers
-   * `close`: there is nothing to withdraw and the caller carries on.
+   * CANCEL CANCELS — withdraw this lane's QUEUED send, if it has one. A queued send is an intent
+   * on the engine's outbox: nothing is on the wire, and the reconnect flush or a later boot
+   * delivers it. Closing the composer over one used to leave it standing, so a message somebody
+   * cancelled still went — once, never twice, which is why it read as ordinary. Nothing queued
+   * answers `close`, and the caller carries on.
    *
    * `already_sent` is the one answer that withdraws nothing: the request has left this device and
-   * only the server knows what it did with it. The caller says so rather than closing silently
-   * over a delivery it cannot take back.
+   * only the server knows what it did with it.
    */
   withdraw: (lane: string) => Promise<CancelSaid>;
 }
@@ -522,15 +519,13 @@ export function clearLaneScratch(
       // because it is already keyed BY DRAFT ID: it can only ever name the message that went.
       if (m.draftId) durableRemove(replyMetaKey(`draft:${m.draftId}`), "reply.meta");
       /**
-       * AND THE SCRATCH ONLY IF THE COMPOSER IS STILL HOLDING THIS MESSAGE. There is one compose
-       * buffer per account, so "clear the scratch" used to mean "clear whatever is open" — and a
-       * confirmation arriving while somebody was writing the next message emptied that message
-       * instead. The answer is DECIDED BY THE CALLER and handed in, because the clear below spends
-       * the compose session, which is one of the two names the question is asked by: asked again
-       * afterwards it would answer no about the very settlement that had just removed the name.
-       * Nothing is left behind by refusing — every door that puts another message in the composer
-       * clears the buffer itself before seeding the new one, so the text this send delivered is
-       * already gone by the time this declines to remove it (see `composeStillHolds`).
+       * AND THE SCRATCH ONLY IF THE COMPOSER IS STILL HOLDING THIS MESSAGE. One buffer per
+       * account meant "clear the scratch" was "clear whatever is open", so a confirmation
+       * arriving while somebody wrote the next message emptied that one. DECIDED BY THE CALLER
+       * and handed in: the clear below spends the compose session, one of the two names the
+       * question is asked by, so asking again afterwards would answer no about itself.
+       * Refusing leaves nothing behind — every door that replaces the form clears the buffer
+       * first, so the delivered text is already gone (see `composeStillHolds`).
        */
       if (aboutThisCompose) clearComposeDraft(owner);
       return;
@@ -577,17 +572,13 @@ export function sendVerb(
 
 /**
  * MAY THIS COMPOSE BE CANCELLED RIGHT NOW? — one predicate, both consumers, for the same reason
- * {@link canSend} is one.
+ * {@link canSend} is one. Cancel rode the same lock as the fields, which refused it for exactly
+ * the state where cancelling means something: a QUEUED send is on the outbox with nothing on the
+ * wire, and withdrawing it is what Cancel is for.
  *
- * Cancel used to ride the same lock as the fields, which locked it for exactly the state in which
- * cancelling means something: a QUEUED send is an intent standing on the outbox with nothing on
- * the wire, and withdrawing it is the whole of what Cancel is for. The person abandoned the
- * composer some other way, the intent stayed standing, and the next reconnect delivered a message
- * they had cancelled.
- *
- * `sending` stays refused — the request has left and this device cannot un-send it — and so does a
- * HELD message, whose send is owed an answer nobody has: `unverified` may already have delivered,
- * and Cancel there would delete the account's only record that it happened.
+ * `sending` stays refused — the request has left and this device cannot un-send it — and so does
+ * a HELD message, whose send may already have delivered and whose row is the account's only
+ * record that it happened.
  */
 export function canCancel(state: SendState, held: boolean): boolean {
   return !held && state.phase !== "sending";
@@ -967,13 +958,11 @@ export function useMailSend(
   /**
    * Close the surface if it is still the one open — see `AppShell.onSendSettled`. The settled
    * MUTATION rides along because the shell's draft bookkeeping needs its `draftId`: a compose
-   * send that carried no row id made its own row, and the row autosave adopted in the meantime
-   * is then a phantom copy of a delivered message (`compose-autosave.ts` → `settled`).
+   * send carrying no row made its own, so the row autosave adopted meanwhile is a phantom copy.
    *
-   * `aboutThisCompose` is whether the compose surface is still holding the message that settled,
-   * decided where the names are still readable (see `settle`). The shell hands it on, and
-   * `settleCompose` acts only when it is true: the phantom-copy judgement is only true of the
-   * message that was sent, and applied to the draft now open it DELETES that draft's row.
+   * `aboutThisCompose` is whether the composer is still holding the message that settled, decided
+   * where the names are still readable (see `settle`). That judgement is true only of the message
+   * that was sent; applied to the draft now open it DELETES that draft's row.
    */
   onSettled: (key: string, m: MailSend, aboutThisCompose: boolean) => void,
 ): MailSendApi {
@@ -1009,15 +998,13 @@ export function useMailSend(
    */
   const accepted = useRef(new Set<string>());
   /**
-   * WHICH MESSAGE EACH LANE'S LIVE SEND IS FOR — the composer's two names, taken at the press and
-   * not re-derived at the settlement. A settlement can arrive minutes later, by which time the
-   * surface may be holding a different draft entirely; reading the names then is reading about
-   * that other draft, which is how finishing one message emptied the one beside it. Compose only:
-   * a reply and a forward are named by the message they answer and no door can rename them.
+   * WHICH MESSAGE EACH LANE'S LIVE SEND IS FOR — the composer's two names, taken at the press.
+   * A settlement can arrive minutes later, when the surface may hold a different draft entirely;
+   * reading the names then reads about THAT draft, which is how finishing one message emptied the
+   * one beside it. Compose only: a reply and a forward are named by the message they answer.
    *
-   * Spent by {@link settle}. A lane whose send failed keeps its entry until the next press
-   * overwrites it — one entry per lane, and a stale one can only be read by a settlement that
-   * cannot happen (the lane's key is gone).
+   * Spent by {@link settle}. A failed lane keeps its entry until the next press overwrites it —
+   * one per lane, and a stale one is readable only by a settlement that cannot happen.
    */
   const sentFor = useRef(new Map<string, ComposeHeld>());
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -1807,18 +1794,13 @@ export function useMailSend(
   );
 
   /**
-   * ── CANCEL CANCELS ────────────────────────────────────────────────────────────────────────
+   * CANCEL CANCELS — see {@link MailSendApi.withdraw}. The lane's Idempotency-Key is the handle:
+   * {@link queued} holds it from the engine's `queued` answer and the lock refuses a second
+   * press, so a lane has at most one. The engine marks the key in memory AND the outbox row on
+   * disk, which is what stops this session's flush and a later boot alike.
    *
-   * See {@link MailSendApi.withdraw}. The lane's Idempotency-Key is the handle: {@link queued}
-   * holds it from the moment the engine answered `queued`, and the lock refuses a second press,
-   * so a lane has at most one. The engine marks the key in memory and the outbox row on disk
-   * ({@link OhmailEngine.withdrawQueued}), which is what stops this session's flush AND a later
-   * boot from delivering it — a mark only in this tab would be undone by the next start.
-   *
-   * Everything this lane was holding goes with the intent: the lock, the key, the frozen
-   * mutation, the accepted flag, the identity the press recorded, the durable claim and the
-   * phase. The claim is released BY FINGERPRINT, so an unresolved record for a different message
-   * on the same lane is untouched — the same rule the confirmed path uses.
+   * Everything this lane held goes with the intent. The durable claim is released BY FINGERPRINT,
+   * so an unresolved record for a different message on the same lane is untouched.
    */
   const withdraw = useCallback(async (lane: string): Promise<CancelSaid> => {
     let key: string | null = null;

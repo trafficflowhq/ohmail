@@ -442,19 +442,14 @@ export function useComposeAutosave(opts: {
       return;
     }
     /**
-     * ── WHICH MESSAGE THIS SETTLEMENT IS ABOUT, BEFORE ANYTHING IS DONE ABOUT IT ─────────────
+     * WHICH MESSAGE THIS SETTLEMENT IS ABOUT, BEFORE ANYTHING IS DONE ABOUT IT. Everything below
+     * acts on the composer — it judges the row, drops it, clears the buffer, empties the form —
+     * and all of it is destruction for any message but the one that was sent, the phantom-copy
+     * judgement worst of all, which DELETES the row it decides against. A send confirming while
+     * somebody was writing the next message threw that message away.
      *
-     * Everything below acts on the composer: it judges the row, drops the held row, clears the
-     * scratch buffer and empties the form. All of it is right for the message that was sent and
-     * all of it is destruction for any other — the phantom-copy judgement worst of all, which
-     * DELETES the row it decides against. A send confirming while somebody is writing the next
-     * message therefore threw that message away: its row off the account, its text out of the
-     * buffer, the form emptied under the cursor.
-     *
-     * So the surface is asked first, by name, and a settlement about a message it no longer
-     * holds is left alone. The record still stands, so that message is recognised if it comes
-     * back; the sentence is the same one the reload path's own guard prints, because it is the
-     * same question asked at the other end of the same road.
+     * A settlement about a message this surface no longer holds is left alone. The record stands,
+     * so that message is still recognised if it comes back.
      */
     if (!fate.aboutThisCompose) {
       console.warn(

@@ -374,15 +374,12 @@ export interface ComposeHeld {
 }
 
 /**
- * IS THE COMPOSE SURFACE STILL HOLDING THE MESSAGE THIS OPERATION WAS FOR?
- *
- * Every settlement and every adoption asks this before it touches the form, and it is the whole
- * of the one-composer-per-draft rule: a send that lands while the person is writing something
- * else must act on the message it was for or on nothing. It used to act on whatever was open —
- * "the current scratch" — so finishing one message emptied the draft beside it and deleted its
- * row. The surface's own names are the answer: {@link composeRowKey} is the one place that says
- * which draft this composer owns, so a second owner is refused by asking it rather than by a
- * registry beside it.
+ * IS THE COMPOSE SURFACE STILL HOLDING THE MESSAGE THIS OPERATION WAS FOR? — the whole of the
+ * one-composer-per-draft rule. A settlement that lands while the person is writing something
+ * else must act on the message it was for or on nothing; it used to act on whatever was open,
+ * so finishing one message emptied the draft beside it and deleted its row. The surface's own
+ * names are the answer, and {@link composeRowKey} is the one place that says which draft this
+ * composer owns — so a second owner is refused by asking it, not by a registry beside it.
  */
 export function composeStillHolds(
   held: ComposeHeld, owner: string | null = storageOwner(),

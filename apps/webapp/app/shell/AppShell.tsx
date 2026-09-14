@@ -4030,18 +4030,14 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
   const cancelCompose = useStableCallback(() => {
     void (async () => {
       /**
-       * ── CANCEL CANCELS, AND THE SEND IS THE FIRST THING IT CANCELS ──────────────────────────
+       * CANCEL CANCELS, AND THE SEND IS THE FIRST THING IT CANCELS. A queued send is an intent
+       * standing on the outbox, which the next reconnect or the next boot delivers; abandoning
+       * the compose used to leave it there, so a message somebody had cancelled still went.
+       * Withdrawn before the row and the buffer go, or it would race its own cleanup.
        *
-       * A queued send is an intent standing on the engine's outbox — nothing on the wire, and the
-       * next reconnect or the next boot delivers it. Abandoning the compose used to leave that
-       * intent alone, so a message somebody had cancelled still went out: once, never twice, which
-       * is why it read as ordinary. It is withdrawn here, before the row and the buffer go,
-       * because a withdrawal that ran after them would be racing its own cleanup.
-       *
-       * `already_sent` withdraws nothing: the request has left this device and only the server
-       * knows what it did with it. The compose stays exactly as it is and the reader is told —
-       * emptying the form over a delivery nobody can take back would be the product claiming to
-       * have cancelled something it did not.
+       * `already_sent` withdraws nothing — the request has left this device — so the compose
+       * stays as it is and the reader is told. Emptying the form over a delivery nobody can take
+       * back would be the product claiming to have cancelled something it did not.
        */
       if (await mailSend.withdraw(COMPOSE_SEND_KEY) === "already_sent") {
         toast(t("compose.cancelAlreadySent"));
