@@ -4,7 +4,7 @@ import {
   type ListOlderFn,
   type ListTrashFn,
   type MessageBodyWire,
-  type MutationOutcome,
+  type MutationAnswer,
   type OhmailEngine,
   type RestoreFromTrashFn,
   type SnapshotFn,
@@ -573,7 +573,7 @@ export function createSyncGate(mirrorOwner: string | null): SyncGate {
          * A plain `Error` here would be read as non-retryable and the overlay rolled back — the click silently
          * discarded, which is the worse failure of the two.
          */
-        mutate: async (m, opts): Promise<MutationOutcome> => {
+        mutate: async (m, opts): Promise<MutationAnswer> => {
           const refuse = (): never => {
             throw new MutationRejectedError(
               "ohmail: this mailbox is not the account this browser is signed in to",

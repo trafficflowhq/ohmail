@@ -468,7 +468,7 @@ export function planScreeningChange(
  */
 export type ScreeningToastKey =
   | "toastRuled" | "toastRetargeted" | "toastAlreadyRuled" | "toastAlreadyRuledRetro"
-  | "toastRuleQueued" | "toastRuleFailed" | "toastMoved";
+  | "toastRuleQueued" | "toastRuleOrganizer" | "toastRuleFailed" | "toastMoved";
 
 export function screeningToast(
   plan: ScreeningPlan,
@@ -493,6 +493,10 @@ export function screeningToast(
       return "toastRuled";
     default:
       if (ruleStatus === "rolled_back") return "toastRuleFailed";
+      // THE SERVER'S WAIT, NOT THIS CLIENT'S. `POST /rules` answers 202 on an account whose live
+      // mailboxes another install organizes: no rule row was written here, and "Future mail from
+      // them files there too" would be a claim about a rule that does not exist yet.
+      if (ruleStatus === "awaiting_organizer") return "toastRuleOrganizer";
       if (ruleStatus === "queued") return "toastRuleQueued";
       return plan.ruleState === "retargeted" ? "toastRetargeted" : "toastRuled";
   }
@@ -500,12 +504,16 @@ export function screeningToast(
 
 /**
  * The WORST of several outcomes, because a plan can retarget more than one rule and a claim is
- * only as true as its weakest half. Ordered rolled_back < queued < confirmed: one refusal makes
- * the whole sentence false, and one queued mutation makes it not-yet-true.
+ * only as true as its weakest half. Ordered rolled_back < awaiting_organizer < queued <
+ * confirmed: one refusal makes the whole sentence false, and either wait makes it not-yet-true.
+ * `awaiting_organizer` outranks `queued` because it is the more specific statement — the request
+ * is on the server and nothing this client does will advance it, where a queued mutation is this
+ * client's own retry and the next drive may land it.
  */
 export function worstStatus(results: readonly { status: MutationStatus }[]): MutationStatus | null {
   if (results.length === 0) return null;
   if (results.some((r) => r.status === "rolled_back")) return "rolled_back";
+  if (results.some((r) => r.status === "awaiting_organizer")) return "awaiting_organizer";
   if (results.some((r) => r.status === "queued")) return "queued";
   return "confirmed";
 }

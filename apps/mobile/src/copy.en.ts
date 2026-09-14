@@ -1419,6 +1419,20 @@ const TABLE = {
    * nothing" was reported on the desktop.
    */
   toastMoveAlready: (place: string) => `Already in ${place}.`,
+   * A MOVE OR DELETE ON A MAILBOX THIS PHONE ONLY READS. The server records the press for the
+   * install that organizes the mailbox and answers 202; nothing has moved and nothing is in the
+   * bin, so these say what happened rather than what was asked for. The named and unnamed forms
+   * are the three-state holder shape every sentence in this family already has.
+   */
+  toastMoveQueued: (place: string, holder: string) =>
+    `Queued for ${holder} — it goes to ${place} on the next pass.`,
+  toastMoveQueuedUnknown: (place: string) =>
+    `Queued for the organizer — it goes to ${place} on the next pass.`,
+  toastDeleteQueued: (holder: string) => `Queued for ${holder} — it is deleted on the next pass.`,
+  toastDeleteQueuedUnknown: "Queued for the organizer — it is deleted on the next pass.",
+  /** Pressed again while the first request is still waiting, and past the engine's stated bound. */
+  organizerStillWaiting: (holder: string) => `Still waiting for ${holder}.`,
+  organizerStillWaitingUnknown: "Still waiting for the organizer.",
   /** The reply / forward composer (`reply.*`). */
   replyTo: (name: string) => `Reply to ${name}`,
   replyToAll: (names: string) => `Reply to ${names}`,

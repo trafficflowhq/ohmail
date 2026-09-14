@@ -61,7 +61,7 @@ import {
   type WithdrawOutcome,
 } from "@ohmail/client-engine";
 import { Copy } from "../copy";
-import { refuse, type RefusalArg } from "../refusal";
+import { refuse, type Refusal, type RefusalArg } from "../refusal";
 import { folderLeafOf, folderUnreadCounts } from "./folders";
 import type { ScreeningAnswer } from "../net/consent";
 import type { ServerWaitingSender } from "../net/screener";
@@ -1896,14 +1896,29 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
   };
 
   /**
-   * MOVE — and the PLACE a pile shows is the sender's routing, not a folder the mail sits in.
+   * ALREADY ASKED FOR? The sentence for a message whose press is still waiting on the install
+   * that organizes the mailbox, or `null` when nothing of ours is waiting on it. Pressing again
+   * is answered rather than dispatched: a second request would change nothing and the first is
+   * still the truth. Past the engine's stated bound the wait gets its own words — the request is
+   * no less pending for being slow, which is why the sentence changes and nothing else does.
+   */
+  const stillWaitingFor = (messageId: string): Refusal | null => {
+    const waiting = engine.organizerRequests().find((r) => r.messageId === messageId);
+    if (!waiting) return null;
+    const holder = waiting.queuedWith.name;
+    if (!waiting.slow) return null;
+    return holder ? refuse("organizerStillWaiting", holder) : refuse("organizerStillWaitingUnknown");
+  };
+
+  /**
+   * MOVE — the place a pile shows is the sender's ROUTING, and the sentence comes from the ANSWER.
    *
-   * The web's arm carried this defect and was reported on the 0.19.0 desktop: a newsletter
-   * presented in Reads is physically in the INBOX, so "Move → Ohbox" dispatched a bare INBOX to
-   * INBOX move, which is the engine's local 404 with nothing sent — `release` above names the same
-   * shape — and the surface said "Moved" over it. This arm is the web's, in the phone's words:
-   * retarget the rules that hold this sender at the place it is presented in, move the message
-   * only when it really is filed somewhere else, and speak from the answer.
+   * A newsletter presented in Reads sits physically in the INBOX, so a bare INBOX→INBOX move is a
+   * local 404 with nothing sent: the rules holding this sender at the presented place are what
+   * gets retargeted. And where this phone only READS, the server records the press for the
+   * organizing install and answers 202 — nothing moved, so "Moved" there would be false.
+   * `watched` loses the fact the MOVE carries, so that one is awaited raw, the way
+   * `liveDecidedElsewhere` above already does and for the same reason.
    */
   const move = async (messageId: string, dest: MoveTarget): Promise<boolean> => {
     const presented = messageOf(messageId);
@@ -1923,37 +1938,66 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
         ruleId: r.id,
         destination: folder,
       }));
-    const parts = retargets.map((mu) => watched(engine.mutate(mu)));
-    if (m.folder !== folder) {
-      parts.push(watched(engine.mutate({ kind: "move", messageId, folder })));
-    }
     // Nothing to dispatch means the mail is already in the place it was asked for, rules and all.
     // Said rather than swallowed: a press that returns in silence is the defect this arm had.
-    if (parts.length === 0) {
+    if (retargets.length === 0 && m.folder === folder) {
       toast(refuse("toastMoveAlready", moveTargetLabel(dest)));
       return false;
     }
-    const ok = (await Promise.all(parts)).every(Boolean);
-    /* Two calls rather than one with a spread: each sentence is passed exactly its own arguments,
-       which is what `refusal.test.ts` reads out of this file's source. */
-    toast(ok ? refuse("toastMoved", moveTargetLabel(dest)) : refuse("liveSaveFailed"));
-    return ok;
+    // A press already waiting on the organizer past the engine's bound is ANSWERED, never
+    // dispatched again: a second request would change nothing and the first is still the truth.
+    const waiting = stillWaitingFor(messageId);
+    if (waiting) { toast(waiting); return true; }
+    const parts = retargets.map((mu) => watched(engine.mutate(mu)));
+    const res = m.folder !== folder
+      ? await engine.mutate({ kind: "move", messageId, folder }).catch(() => null)
+      : null;
+    const rulesOk = (await Promise.all(parts)).every(Boolean);
+    if (res?.status === "awaiting_organizer") {
+      const holder = res.queuedWith?.name ?? null;
+      /* Two calls rather than one with a spread: each sentence is passed exactly its own
+         arguments, which is what `refusal.test.ts` reads out of this file's source. */
+      toast(holder
+        ? refuse("toastMoveQueued", moveTargetLabel(dest), holder)
+        : refuse("toastMoveQueuedUnknown", moveTargetLabel(dest)));
+      return true;
+    }
+    if (m.folder !== folder && (!res || res.status === "rolled_back")) {
+      toast(refuse("liveSaveFailed"));
+      return false;
+    }
+    if (!rulesOk) {
+      toast(refuse("liveSaveFailed"));
+      return false;
+    }
+    toast(refuse("toastMoved", moveTargetLabel(dest)));
+    return true;
   };
 
   /**
-   * DELETE, stated on the optimistic apply like every triage verb — the tombstone drops the
-   * row the instant the sentence is spoken, and a rejection (422 `no_trash_folder`, a 404)
-   * overrides it with the failure sentence over the restored row. No `via`, no read verb: a
-   * delete is not a read, and the pin arithmetic is the engine's (`spentResurface` rides the
-   * same mutation effects).
+   * DELETE. The tombstone drops the row at the press (the engine's optimistic effect); the
+   * SENTENCE waits for the answer, because there are three of them — deleted, recorded for the
+   * organizer, refused — and only the first is "In den Papierkorb verschoben." A rejection (422
+   * `no_trash_folder`, a 404) restores the row and says so. No `via`, no read verb: a delete is
+   * not a read, and the pin arithmetic is the engine's (`spentResurface` rides the same mutation
+   * effects).
    */
   const deleteMessage = async (messageId: string): Promise<boolean> => {
     const m = messageOf(messageId);
     if (!m) return false;
+    const waiting = stillWaitingFor(messageId);
+    if (waiting) { toast(waiting); return true; }
+    // The same door as `move`: a reader's delete is a REQUEST, and "In den Papierkorb
+    // verschoben." over a message still in place is the sentence this arm exists to stop.
+    const res = await engine.mutate({ kind: "message_delete", messageId }).catch(() => null);
+    if (res?.status === "awaiting_organizer") {
+      const holder = res.queuedWith?.name ?? null;
+      toast(holder ? refuse("toastDeleteQueued", holder) : refuse("toastDeleteQueuedUnknown"));
+      return true;
+    }
+    if (!res || res.status === "rolled_back") { toast(refuse("deleteFailed")); return false; }
     toast(refuse("toastDeleted"));
-    const ok = await watched(engine.mutate({ kind: "message_delete", messageId }));
-    if (!ok) toast(refuse("deleteFailed"));
-    return ok;
+    return true;
   };
 
   /**

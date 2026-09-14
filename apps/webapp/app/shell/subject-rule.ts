@@ -17,6 +17,7 @@ import {
   type EngineMessage,
   type EngineMutation,
   type EntityReader,
+  type MutationStatus,
   type RuleDTO,
 } from "@ohmail/client-engine";
 import type { DecisionDestination } from "@ohmail/ui";
@@ -400,13 +401,17 @@ export function planSubjectRule(
  * correctly on screen, but the server has not been told.
  */
 export type SubjectRuleToastKey =
-  | "subjectRuled" | "subjectRuleQueued" | "subjectRuleFailed" | "subjectAlready";
+  | "subjectRuled" | "subjectRuleQueued" | "subjectRuleOrganizer"
+  | "subjectRuleFailed" | "subjectAlready";
 
 export function subjectRuleToast(
-  plan: SubjectRulePlan, status: "confirmed" | "queued" | "rolled_back" | null,
+  plan: SubjectRulePlan, status: MutationStatus | null,
 ): SubjectRuleToastKey {
   if (plan.already || plan.ruleMutations.length === 0) return "subjectAlready";
   if (status === "rolled_back") return "subjectRuleFailed";
+  // The rule was recorded for the install that organizes the mailbox and written nowhere yet —
+  // a different wait from the offline one below, and a different sentence.
+  if (status === "awaiting_organizer") return "subjectRuleOrganizer";
   if (status === "queued") return "subjectRuleQueued";
   return "subjectRuled";
 }

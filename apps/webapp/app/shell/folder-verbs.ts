@@ -18,6 +18,7 @@
 import { useMemo } from "react";
 import { useTranslations } from "next-intl";
 import type { ToastFn } from "@ohmail/ui";
+import type { MutationStatus } from "@ohmail/client-engine";
 import { api, apiConfigured } from "../api-client";
 import type { FolderVerbs } from "./FoldersRailGroup";
 
@@ -33,9 +34,13 @@ type FolderMutation =
   | { kind: "folder_delete"; folderId: string }
   | { kind: "folder_op_dismiss"; folderId: string };
 
-/** The engine surface this module needs — `AppShell`'s own engine object satisfies it. */
+/**
+ * The engine surface this module needs — `AppShell`'s own engine object satisfies it. The status
+ * is the engine's OWN union rather than a copy of three of its members: a narrower spelling here
+ * refuses the real engine the day a fourth arrives, which is how this type earned its import.
+ */
 interface MutatingEngine {
-  mutate: (m: FolderMutation) => Promise<{ status: "confirmed" | "queued" | "rolled_back" }>;
+  mutate: (m: FolderMutation) => Promise<{ status: MutationStatus }>;
 }
 
 export function useFolderVerbs(engine: MutatingEngine, toast: ToastFn): FolderVerbs {
