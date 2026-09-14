@@ -74,6 +74,31 @@
   </screenshots>
 
   <releases>
+    <release version="0.19.0" date="2026-09-14">
+      <description>
+        <ul>
+          <li>Search answers while you type</li>
+          <li>Attachments land in your Downloads folder</li>
+          <li>The attachment loader no longer spins</li>
+          <li>Mail written as one line per block no longer arrives double-spaced</li>
+          <li>A signature you set on one device now shows up when you write from another</li>
+          <li>Mail from someone you had already written to no longer waits in the Screener</li>
+          <li>Reads names which of your addresses a message came to</li>
+          <li>Applying a new rule to past mail is its own choice</li>
+          <li>Every screen that says another install organizes a mailbox says what to press</li>
+          <li>Organizing a mailbox is recorded the moment it is claimed</li>
+          <li>Choosing another computer to organize a mailbox stops the previous one at its next write</li>
+          <li>Taking a mailbox back works from the mailbox page</li>
+          <li>A mailbox whose settings ohmail could not read is no longer stuck</li>
+          <li>A mailbox whose saved password this computer cannot open says so</li>
+          <li>Signing out holds even when a password was being saved</li>
+          <li>A filing whose copy landed and whose delete was refused is no longer recorded as finished</li>
+          <li>A decision you made while a pass was running is no longer overwritten by it</li>
+          <li>A page you did not ask for</li>
+          <li>Removing a mailbox waits for the mail it is still reading</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.18.0" date="2026-09-13">
       <description>
         <ul>
@@ -186,22 +211,6 @@
           <li>Self-hosting: no plans, no metering, no billing surface</li>
           <li>The engine's log</li>
           <li>A door with no account asks nothing about one</li>
-        </ul>
-      </description>
-    </release>
-    <release version="0.16.0" date="2026-09-10">
-      <description>
-        <ul>
-          <li>Trash and filing</li>
-          <li>Reading</li>
-          <li>Writing and sending</li>
-          <li>Away replies</li>
-          <li>Settings, rules and mail on a mailbox another machine organizes</li>
-          <li>Search</li>
-          <li>Doors: a laptop through your desktop, and a server you run</li>
-          <li>Screen readers and small controls</li>
-          <li>RPM packages for Fedora and openSUSE</li>
-          <li>Sentences that say what the product does</li>
         </ul>
       </description>
     </release>
