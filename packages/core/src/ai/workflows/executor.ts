@@ -7,6 +7,8 @@ import {
   auditLog,
   workflows as workflowsTbl,
   workflowRuns,
+  fenceErased,
+  fencedAccountWrite,
   type Tx,
 } from "@trafficflow/db";
 /**
@@ -48,7 +50,7 @@ import type { ToolName, WorkflowStep } from "../../workflow-shapes.js";
  * unaffected by where it now lives. */
 export type { WorkflowInverse } from "../../workflow-shapes.js";
 import type { WorkflowInverse } from "../../workflow-shapes.js";
-import { carryDialect } from "@trafficflow/db/dialect";
+import { dialect } from "@trafficflow/db/dialect";
 
 /** What a tool's `apply` returns: an audit-safe `effect` summary + the `inverse` (undo). */
 export interface ToolApplyResult {
@@ -351,6 +353,13 @@ const draftReplyTool: Tool = {
     // a drafter capped at a thousand output tokens cannot reach it.
     const promoted = plainTextToOutboundBody(result.body);
 
+    /* THE MAILBOX SCOPE, and only `prepare` knows it — which is why it cannot be asked when the
+       step transaction opens. `drafts.mailbox_id` keys to a row a MAILBOX erasure leaves standing,
+       so that key refuses nothing and the account's stamp says nothing about the mailbox. */
+    await fenceErased(ctx.tx, dialect(ctx.tx), {
+      accountId: ctx.accountId, mailboxId: prepared.mailboxId,
+    });
+
     // Unique workflow_dedup_key + ON CONFLICT DO NOTHING → a re-drain never stores a
     // second draft. status 'draft' — NEVER auto-sent (only SendService sends).
     const inserted = await ctx.tx.insert(drafts).values({
@@ -408,6 +417,9 @@ const addKbEntryTool: Tool = {
      */
     const screened = screenModelInput([{ label: "kb_entry", fields: [title, content] }]);
     if (!screened.admitted) throw new WorkflowStepError(`credential_screened:${screened.reason}`);
+    // The step transaction is fenced; this asks again because the entry is the person's own words
+    // and the read above happened inside it — one indexed row against a lock already held.
+    await fenceErased(ctx.tx, dialect(ctx.tx), { accountId: ctx.accountId });
     const inserted = await ctx.tx.insert(kbEntries).values({
       accountId: ctx.accountId, title, content, workflowDedupKey: dedupKey,
       createdAt: ctx.now, updatedAt: ctx.now,
@@ -606,10 +618,12 @@ export class WorkflowExecutor {
         // (iv) THE STEP TRANSACTION: database writes only. Both checks above are repeated here
         //      as the write-time layer — (i) and (ii) are about not paying, these are about not
         //      double-applying and not acting.
-        await deps.db.transaction(async (txRaw) => {
-          // The brand does not travel to a transaction object, and every locking statement below
-          // needs it, so it is carried from the handle the transaction was opened on.
-          const tx = carryDialect(deps.db, txRaw as object) as unknown as Tx;
+        /* THROUGH THE SEAM. A queued run loads its step before the account is deleted and applies
+           it afterwards: the step writes the person's own text AND an audit row, and neither the
+           erased account nor the deleted run was checked. The seam carries the dialect brand
+           across the transaction boundary, which this block used to do by hand. */
+        await fencedAccountWrite(deps.db, { accountId: run.accountId }, async (txRaw) => {
+          const tx = txRaw as unknown as Tx;
           const repo = makeDrizzleRepo(tx);
           // Idempotency gate: an existing (runId, stepIndex) audit row ⇒ already applied.
           // Reaching this after (i) passed needs a concurrent drain of the SAME run, which the

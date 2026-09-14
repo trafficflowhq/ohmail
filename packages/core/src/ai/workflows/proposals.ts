@@ -1,6 +1,6 @@
 import { and, eq, isNotNull, or, sql } from "drizzle-orm";
 import {
-  messages, rules, learningSignals, workflowProposals, type Tx,
+  messages, rules, learningSignals, workflowProposals, fencedAccountWrite, type Tx,
 } from "@trafficflow/db";
 import { validateSteps, validateTrigger, type WorkflowStep, type WorkflowTrigger } from "../../workflow-shapes.js";
 import type { WorkflowPattern, WorkflowProposal, WorkflowPort } from "./propose.js";
@@ -167,7 +167,11 @@ export async function generateProposals(
     p.name.trim().length > 0 && validateSteps(p.steps).ok && validateTrigger(p.trigger).ok);
 
   const now = deps.now?.() ?? new Date();
-  return db.transaction(async (tx) => {
+  /* THROUGH THE SEAM. The proposal pass reads correspondent patterns and then AWAITS A MODEL —
+     seconds, sometimes longer — so an erasure committing inside that window met an unfenced
+     insert that put the patterns back as generated workflow text. "A background pass, no session"
+     was the reason it carried, and having no session is not having no subject. */
+  return fencedAccountWrite(db, { accountId }, async (tx) => {
     // Dedup semantics: replace the OPEN set (re-running never accumulates dups).
     await tx.delete(workflowProposals)
       .where(and(eq(workflowProposals.accountId, accountId), eq(workflowProposals.status, "open")));
