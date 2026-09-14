@@ -3482,7 +3482,42 @@ export interface LeaseGateResult {
    * is unknown and never "the same generation".
    */
   uidValidity: number | bigint | null;
+  /**
+   * THE BASELINE THIS VERDICT GRANTED, ISSUED HERE AND AWAITED BY WHOEVER NEEDS IT.
+   *
+   * On `organize` only; `custody: "unproven"` on every other verdict, because there is no claim of
+   * ours to take a baseline for. See {@link MetaBaselineReading} for why it is a reading and not a
+   * stamp, and `runLeaseGate`'s tail for the order the two halves are asked in.
+   */
+  stamp: Promise<MetaBaselineReading>;
 }
+
+/**
+ * WHAT THE FOLDER LOOKED LIKE AT THE INSTANT THIS CLAIM WAS PROVED TO STAND — a baseline and the
+ * custody question, answered together because either alone is worthless.
+ *
+ * The counters are the cheap half of "is my claim still there" ({@link MetaFolderStamp}). They are
+ * only a BASELINE if our claim stood when they were read, and that is the half that used to be
+ * missing: the counters were taken by a separate round trip after the gate returned, so a takeover
+ * landing before the server answered was already inside them — and every later boundary then read
+ * "nothing moved" against a reading that already held the rival's write. So the gate asks for the
+ * counters and then re-proves custody by nonce, in that order: a takeover landing before the
+ * counters, or between them and the proof, leaves our claim missing from the proof; one landing
+ * after moves the counters away from the baseline. Three answers and not two, because "I could not
+ * look" is not "somebody took it" — the module's rule everywhere else.
+ */
+export type MetaBaselineReading =
+  /** Our claim stood when these counters were read. `stamp: null` — no counters, so no baseline. */
+  | { readonly custody: "held"; readonly stamp: MetaFolderStamp | null }
+  /** The folder could not be re-read, so custody is unproven: no baseline, and never a stand-down. */
+  | { readonly custody: "unproven" }
+  /**
+   * Somebody else holds the mailbox now, and this is the verdict the survivors elected. A
+   * {@link StandDownVerdict} and not a `LeaseVerdict`: the only reading that loses custody is one
+   * where a LIVE rival stands, and a lost WRITE — nobody there — is `unproven`, so the caller
+   * cannot be handed a "lost" it would have to re-classify.
+   */
+  | { readonly custody: "lost"; readonly verdict: StandDownVerdict };
 
 /**
  * Read, decide, then write — the whole gate, in that order. Reconnect is learn-then-act: the
@@ -3526,6 +3561,10 @@ export async function runLeaseGate(input: LeaseGateInput): Promise<LeaseGateResu
      so reading a global meant a phone that could not claim its own mailbox, measured on a device.
      The import is substituted for the platform's crypto module in that bundle and is Node's here. */
   const newNonce = input.newNonce ?? ((): string => randomUUID());
+  /* NO CLAIM OF OURS, SO NO BASELINE. Every non-`organize` return carries this: `unproven` is the
+     honest name — there is nothing of ours to prove custody of — and no caller reads it, because a
+     baseline is only ever asked for on the organize path. */
+  const noBaseline: Promise<MetaBaselineReading> = Promise.resolve({ custody: "unproven" });
 
   // ── ONE OPERATION PER TRY, AND THAT IS THE RULE RATHER THAN A STYLE ────────────────────────
   //
@@ -3782,7 +3821,7 @@ export async function runLeaseGate(input: LeaseGateInput): Promise<LeaseGateResu
       }
     }
     log("lease_stand_down", { verdict: verdict.verdict });
-    return { verdict, nonce: null, uidValidity: electionUidValidity };
+    return { verdict, nonce: null, uidValidity: electionUidValidity, stamp: noBaseline };
   }
 
   // The incumbency clock. Renewing must NOT restart it, or two installs that both renew every
@@ -3931,7 +3970,7 @@ export async function runLeaseGate(input: LeaseGateInput): Promise<LeaseGateResu
           });
         }
       }
-      return { verdict: survivors, nonce: null, uidValidity: electionUidValidity };
+      return { verdict: survivors, nonce: null, uidValidity: electionUidValidity, stamp: noBaseline };
     }
     throw new LeaseUnavailableError(
       `the claim this gate just appended to ${META_FOLDER} is no longer there and no live rival ` +
@@ -3966,7 +4005,7 @@ export async function runLeaseGate(input: LeaseGateInput): Promise<LeaseGateResu
       }
     }
     log("lease_lost_race", { verdict: confirmed.verdict });
-    return { verdict: confirmed, nonce: null, uidValidity: electionUidValidity };
+    return { verdict: confirmed, nonce: null, uidValidity: electionUidValidity, stamp: noBaseline };
   }
 
   // WHAT THIS WIN DISPLACED, plus our own older copies. One expunge, so a takeover cannot land
@@ -4112,7 +4151,7 @@ export async function runLeaseGate(input: LeaseGateInput): Promise<LeaseGateResu
             .filter((c): c is OrganizerClaim => !isMalformed(c) && c.installId === self.installId)
             .map((c) => c.ref)
             .filter((r): r is unknown => r !== undefined));
-          return { verdict: survivors, nonce: null, uidValidity: electionUidValidity };
+          return { verdict: survivors, nonce: null, uidValidity: electionUidValidity, stamp: noBaseline };
         }
         throw new LeaseUnavailableError(
           `the claim this gate appended to ${META_FOLDER} did not survive the handover's ` +
@@ -4159,7 +4198,7 @@ export async function runLeaseGate(input: LeaseGateInput): Promise<LeaseGateResu
           .map((c) => c.ref)
           .filter((r): r is unknown => r !== undefined));
         log("lease_lost_race", { verdict: finalElection.verdict });
-        return { verdict: finalElection, nonce: null, uidValidity: electionUidValidity };
+        return { verdict: finalElection, nonce: null, uidValidity: electionUidValidity, stamp: noBaseline };
       }
 
       // Custody holds: the displaced are gone and our claim stands — the handover landed,
@@ -4173,7 +4212,62 @@ export async function runLeaseGate(input: LeaseGateInput): Promise<LeaseGateResu
       }
     }
   }
-  return { verdict, nonce, uidValidity: electionUidValidity };
+  /**
+   * THE BASELINE, AND THE PROOF THAT IT IS ONE — the gate's last act, issued and never awaited.
+   *
+   * ORDER IS THE WHOLE MECHANISM. The counters are asked for FIRST and custody is re-proved by
+   * nonce after them: a takeover landing before the counters, or between them and the proof, leaves
+   * our claim missing from the proof and answers `lost`; one landing after the proof moves the
+   * counters away from the baseline, which is what the permit's next boundary is for. Asked the
+   * other way round — proof, then counters — a takeover landing between the two would be inside the
+   * baseline, and that is the defect this closes.
+   *
+   * NOT AWAITED HERE, and that is not thrift: the caller's row write follows the verified claim with
+   * nothing awaited in front of it ({@link LeaseGateResult.stamp}), and two round trips awaited here
+   * would sit in front of it. The permit awaits this before it grants, so no write boundary is ever
+   * reached while custody is unsettled.
+   */
+  const proveAndStamp = async (): Promise<MetaBaselineReading> => {
+    const stamp = io.stampMeta === undefined ? null : await io.stampMeta().catch(() => null);
+    let after: readonly ClaimRecord[];
+    try {
+      after = (await electionRead(await readClaims(() => io.listClaims()))).records
+        .map((m) => parseClaim(m.raw, m.ref, m.internalDate ?? null))
+        .filter((c): c is ClaimRecord => c !== null);
+    } catch {
+      /* COULD NOT LOOK, which is never a stand-down — this module's rule at every other probe. And
+         no baseline either: counters nothing can vouch for are not one. */
+      log("lease_baseline_unproven", { op: "list_claims" satisfies LeaseOp });
+      return { custody: "unproven" };
+    }
+    if (after.some((c): c is OrganizerClaim =>
+      !isMalformed(c) && c.installId === self.installId && c.nonce === nonce)) {
+      return { custody: "held", stamp };
+    }
+    /* OUR CLAIM IS GONE FROM UNDER THE COUNTERS. Decided over the survivors with this caller's own
+       identity, exactly as the verify's vanished-claim arm decides it: a live foreign winner is a
+       takeover we lost and this install stops; anything else is a WRITE we lost, which the next gate
+       re-enters cleanly, so it costs a look rather than somebody's mailbox. */
+    const survivors = decideLease({
+      self,
+      claims: after,
+      now,
+      ...(input.staleAfterMs !== undefined ? { staleAfterMs: input.staleAfterMs } : {}),
+    });
+    if (survivors.verdict !== "stand_down") {
+      log("lease_baseline_unproven", { op: "renew_claim" satisfies LeaseOp });
+      return { custody: "unproven" };
+    }
+    log("lease_lost_race", { verdict: "taken_over_mid_stamp" });
+    /* AND THE MAILBOX IS LEFT CONSISTENT — no half-move. Our records go back, best effort, so the
+       winner is not obstructed for a whole staleness window by an install that has stopped. */
+    await releaseRefs(after
+      .filter((c): c is OrganizerClaim => !isMalformed(c) && c.installId === self.installId)
+      .map((c) => c.ref)
+      .filter((r): r is unknown => r !== undefined));
+    return { custody: "lost", verdict: survivors };
+  };
+  return { verdict, nonce, uidValidity: electionUidValidity, stamp: proveAndStamp() };
 }
 
 // Layer 4: requests — a reader's decision, waiting for the organizer. The claim answers "who

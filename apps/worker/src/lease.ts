@@ -3,7 +3,8 @@ import {
   DEFAULT_STALE_AFTER_MS, LeaseUnavailableError, LeaseClockSkewError, META_FOLDER,
   ClaimReleaseError,
   isMalformed, parseClaim, runLeaseGate, sameMetaStamp,
-  type LeaseIo, type LeaseOp, type LeaseSelf, type LeaseVerdict, type MetaFolderStamp,
+  type LeaseIo, type LeaseOp, type LeaseSelf, type LeaseVerdict, type MetaBaselineReading,
+  type MetaFolderStamp,
   type OrganizerClaim,
   type RawClaimMessage,
   type TakeoverAuthorization,
@@ -156,16 +157,17 @@ export type MailboxLeaseOutcome =
   | {
     organize: true; nonce: string | null; by: null; uidValidity: number | bigint | null;
     /**
-     * THE FOLDER'S COUNTERS AS THIS CLAIM WAS VERIFIED — issued here, awaited by whoever needs it. A
-     * permit's baseline and the claim it rides have to be ONE READING: taken later, a take-over landing
-     * in between is baked into the baseline, and every write boundary then reads "nothing moved" while
-     * somebody else moves the folder, for a whole TTL or a hundred writes. So the STATUS goes out the
-     * instant the gate's last write lands, before any gap exists. NOT awaited here: the row that follows
-     * the claim is written next by both adopt callers with nothing awaited in front of it, and an 83 ms
-     * STATUS there is the window they exist to close. `null` for every way of not knowing; {@link
-     * LeaseIo.stampMeta} never throws.
+     * THE FOLDER'S COUNTERS AS THIS CLAIM WAS VERIFIED, AND THE PROOF THAT THEY ARE ITS OWN — issued
+     * by the gate, awaited by whoever needs it. A permit's baseline and the claim it rides have to be
+     * ONE ACT: taken later, a take-over landing in between is baked into the baseline, and every write
+     * boundary then reads "nothing moved" while somebody else moves the folder, for a whole TTL or a
+     * hundred writes. A STATUS issued here, after the gate returned, was still a separate round trip
+     * and still had that gap in front of it — so the gate takes the counters itself and re-proves
+     * custody by nonce behind them ({@link MetaBaselineReading}). NOT awaited by the gate: the row that
+     * follows the claim is written next by both adopt callers with nothing awaited in front of it, and
+     * that window is what they exist to close.
      */
-    stamp: Promise<MetaFolderStamp | null>;
+    stamp: Promise<MetaBaselineReading>;
   }
   | {
     organize: false;
@@ -255,10 +257,13 @@ export async function readMailboxLease(input: MailboxLeaseInput): Promise<Mailbo
   if (result.verdict.verdict === "organize") {
     return {
       organize: true, nonce: result.nonce, by: null, uidValidity: result.uidValidity,
-      // ISSUED, NEVER AWAITED HERE — see {@link MailboxLeaseOutcome}. The `catch` is belt: the
-      // contract says `null` rather than a throw, and an unhandled rejection on a promise a caller
-      // is entitled to ignore would be this function's fault rather than the connection's.
-      stamp: io.stampMeta === undefined ? Promise.resolve(null) : io.stampMeta().catch(() => null),
+      // THE GATE'S OWN READING, CARRIED — never a STATUS taken here. Issued by the gate the instant
+      // its last write landed and proved against the claim it admitted; asking for it here would be
+      // a second act with the whole of `runLeaseGate`'s return path in front of it, which is the
+      // window a takeover landed in. The `catch` is belt: the contract answers rather than throwing,
+      // and an unhandled rejection on a promise a caller is entitled to ignore would be this
+      // function's fault rather than the connection's.
+      stamp: result.stamp.catch((): MetaBaselineReading => ({ custody: "unproven" })),
     };
   }
   return {
@@ -741,15 +746,31 @@ export async function acquireLeasePermit(input: LeasePermitInput): Promise<Lease
    * THE BASELINE IS THE CLAIM'S OWN READING, AND NEVER A LATER ONE. This used to take its own STATUS
    * here, after the caller's row write: a take-over landing in that gap was baked into the baseline, so
    * every boundary read "nothing moved" while somebody else moved the folder, for a whole TTL or a
-   * hundred writes. The reading now comes from {@link MailboxLeaseOutcome.stamp}, issued the instant the
-   * gate's last write landed, so the two are one reading by construction and anything later is OUTSIDE
-   * the baseline — which is what makes the first write boundary probe it. No extra round trip: the same
-   * one STATUS, moved to the instant that makes it mean something. SAID ONCE PER PERMIT; a connection
-   * that cannot stamp keeps exactly the bound it had, named rather than silent.
+   * hundred writes. The reading comes from {@link MailboxLeaseOutcome.stamp} — the GATE's, taken in the
+   * same act as the verdict that admitted the claim and proved against it by nonce — so anything later
+   * is OUTSIDE the baseline, which is what makes the first write boundary probe it. SAID ONCE PER
+   * PERMIT; a connection that cannot stamp keeps exactly the bound it had, named rather than silent.
+   *
+   * AND A LOST CUSTODY IS A STAND-DOWN HERE, not a bound to ride out. The gate discovered the takeover
+   * while recording the baseline; the permit is revoked before it is ever granted and no write boundary
+   * is reached, so the mailbox is left as the winner wrote it. The TTL and the write count stay what
+   * they always were — a backstop behind this, never the thing that ends the overlap.
    */
   let baselineStamped = false;
-  const takeBaseline = async (reading: Promise<MetaFolderStamp | null>): Promise<void> => {
-    stamp = await reading;
+  const takeBaseline = async (reading: Promise<MetaBaselineReading>): Promise<void> => {
+    const custody = await reading;
+    if (custody.custody === "lost") {
+      revoked = true;
+      throw new OrganizerStandDownError({
+        organize: false,
+        reason: standDownReason(custody.verdict),
+        /* `held`, never derived: the only reading that loses custody is one a LIVE rival won, which
+           is what {@link MetaBaselineReading} narrows the arm's verdict to. */
+        state: "held",
+        by: custody.verdict.by,
+      });
+    }
+    stamp = custody.custody === "held" ? custody.stamp : null;
     baselineStamped = stamp !== null;
     if (stamp === null && !unstampedSaid) {
       unstampedSaid = true;
