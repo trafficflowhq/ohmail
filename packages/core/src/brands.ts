@@ -1,19 +1,12 @@
 /**
- * THE CURATED BRAND DICTIONARY the sender check compares a claimed identity against.
- *
- * A `.ts` module and not the `brands.json` the brief named: `tsconfig.base.json` sets no
- * `resolveJsonModule`, so a JSON import would not compile in this package OR in the four graphs
- * that build core from source, and turning that option on repo-wide is a compiler change for a
- * data file. The shape is the same; `as const satisfies` makes a malformed row a compile error.
- *
- * WHAT A ROW MEANS AND WHAT IT COSTS. `domains` is the set of REGISTRABLE domains this brand
- * sends its own mail from, taken from the brand's own site and mail (never a guess). An
- * INCOMPLETE row is the failure mode worth naming: a brand that also mails from a bulk sender's
- * own domain, absent here, reads as an impersonation of itself — and what that costs is one
- * SUGGESTION saying "spam" on a row a person still decides for themselves. Nothing is filed, no
- * rule is written, no mail moves. A row is therefore added only for a brand whose sending domains
- * are known, and `sender-check.ts` carries three further escapes: the sender domain containing
- * the brand's own token, a snippet-only mention, and the softer `brand_mismatch` class.
+ * THE CURATED BRAND DICTIONARY the sender check compares a claimed identity against. A `.ts`
+ * module and not JSON: nothing here sets `resolveJsonModule`. `domains` is the set of REGISTRABLE
+ * domains a brand sends its OWN mail from, from the brand's own site, never a guess. An INCOMPLETE
+ * row is the failure mode worth naming: a brand that also mails from a bulk sender's domain,
+ * absent here, reads as impersonating itself — and that costs one SUGGESTION saying spam on a row
+ * a person still decides. Nothing is filed, no rule is written, no mail moves. `sender-check.ts`
+ * carries three escapes: the sender domain containing the brand's token, a `Reply-To` at it, and
+ * a snippet-only mention.
  */
 
 export interface Brand {

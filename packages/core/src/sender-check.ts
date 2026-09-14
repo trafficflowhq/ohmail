@@ -3,16 +3,13 @@ import { BRANDS, type Brand } from "./brands.js";
 
 /**
  * WHO IS THIS MAIL REALLY FROM — a deterministic check that runs BEFORE the model and bounds what
- * its answer may say. The model was being asked to spot a forged sender with the evidence
- * withheld: the screening prompt names "a forged or deceptive sender, phishing" while the input
- * it reads carries a display name, a subject and a snippet — every one of them written by the
- * sender. Measured: two first-time senders at unrelated domains, the same "your domain expires in
- * 2 days" subject, both suggested `ohmail/Reads` at 0.95 as "an automated service notification
- * from your hosting provider". This file computes the facts nobody outside can write — the
- * sender's own domain against the brand the mail claims to be, the same subject arriving from
- * strangers, the authentication verdict — hands them to the model as facts, and CAPS the answer
- * where they decide. Pure: no clock, no store, no network, no node builtin, so every graph that
- * compiles this package can run it.
+ * its answer may say. The screening prompt names "a forged or deceptive sender, phishing" while
+ * every field of the request was written by the sender, so the model was asked to spot forgery
+ * with the evidence withheld: two first-time senders at unrelated domains, one "your domain
+ * expires in 2 days" subject, both suggested `ohmail/Reads` at 0.95. This computes the facts
+ * nobody outside can write — the sending domain against the brand the mail claims, the same
+ * subject from strangers, the authentication verdict — hands them to the model as facts, and caps
+ * the answer where they decide. Pure: no clock, no store, no network, no node builtin.
  */
 
 /** Which fact decided a capped suggestion. A closed set — the row renders one sentence per code. */
