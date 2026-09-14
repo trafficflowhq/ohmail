@@ -3468,7 +3468,7 @@
     "aboutDoorHostWhy": "ohmail auf {host} öffnet dein Postfach und organisiert es; dieser {machine} liest und handelt darüber. Über deine Post geht nichts an uns."
   },
   "aiRefusal": {
-    "insufficientCredits": "Auf diesem Konto sind keine KI-Aktionen mehr übrig.",
+    "insufficientCredits": "Kein KI-Guthaben mehr auf diesem Konto.",
     "aiDisabled": "KI ist für dieses Konto ausgeschaltet.",
     "aiUnavailable": "KI ist gerade nicht verfügbar. Bitte versuche es noch einmal."
   },

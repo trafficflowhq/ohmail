@@ -3468,7 +3468,7 @@
     "aboutDoorHostWhy": "ohmail on {host} opens your mailbox and organizes it; this {machine} reads and acts through it. Nothing about your mail is sent to us."
   },
   "aiRefusal": {
-    "insufficientCredits": "No AI actions remain on this account.",
+    "insufficientCredits": "No AI budget left on this account.",
     "aiDisabled": "AI is switched off for this account.",
     "aiUnavailable": "AI is unavailable right now. Please try again."
   },
