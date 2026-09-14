@@ -35,7 +35,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { OUTBOX_TYPE } from "@ohmail/client-engine";
-import { OUTBOX_WITHDRAWN_CODE } from "@ohmail/client-engine";
 import type { EngineMessage, EntityReader, MutationResult, OhmailEngine } from "@ohmail/client-engine";
 import type { ToastFn } from "@ohmail/ui";
 import {
@@ -1191,23 +1190,6 @@ export function useMailSend(
 
   const absorb = useCallback(
     (key: string, m: MailSend, res: MutationResult) => {
-      /**
-       * A WITHDRAWN VERB OWES NO SENTENCE. Cancel took this send off the queue and {@link
-       * MailSendApi.withdraw} already ended the lane; a flush that was carrying it answers with
-       * the rollback it made of it, and "Send failed" over a send the person themselves cancelled
-       * is the wrong sentence with no right one behind it. Read before the phase is derived,
-       * because every derivation below would give it one.
-       */
-      // `res.error !== undefined` first and not `res.error?.code`: an answer with no error reads
-      // `undefined` there, and `undefined` equals anything a missing constant resolves to.
-      if (res.error !== undefined && res.error.code === OUTBOX_WITHDRAWN_CODE) {
-        queued.current.delete(res.key);
-        inFlight.current.delete(res.key);
-        locked.current.delete(key);
-        accepted.current.delete(key);
-        setPhase(key, IDLE);
-        return;
-      }
       let next = phaseFor(res);
       if (res.status === "queued") {
         // Remember the server's 202 the one time it is said, and re-apply it to every later
@@ -1853,6 +1835,13 @@ export function useMailSend(
     /* `withdrawn` is the cancellation; `gone` is a key the queue no longer holds, which the
        engine has already settled elsewhere — either way nothing will be delivered under it, and
        the withdrawal mark refuses it at the wire if a flush is mid-lift. */
+    /**
+     * AND THE LANE IS ENDED HERE, WHICH IS WHY NOTHING DOWNSTREAM NEEDS A WITHDRAWN ARM. A result
+     * for this key can only reach {@link absorb} through `queued`, and `queued` no longer holds
+     * it a line below; the one window where it still does is this call's own await, where the
+     * phase it would set is overwritten by the `IDLE` at the end of this function before anything
+     * renders. A branch nothing can reach is a guard nobody can watch fail, so there is none.
+     */
     const m = inFlight.current.get(key);
     queued.current.delete(key);
     inFlight.current.delete(key);
