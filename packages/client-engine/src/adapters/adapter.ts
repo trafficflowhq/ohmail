@@ -19,6 +19,14 @@ export interface SyncParams {
 
 export interface MutationOutcome {
   /**
+   * THE ARM: the server CARRIED THIS OUT. Optional because absence has exactly one meaning —
+   * applied — and every construction site that predates the queued arm is one. The queued arm
+   * below states itself, and it is the only thing that can: a 202 cannot be built without the
+   * holder it is waiting on, which is what makes "a request recorded, read as a move made"
+   * unrepresentable rather than merely censused.
+   */
+  settlement?: "applied";
+  /**
    * Authoritative changes to apply to the mirror right away (the §3.4
    * read-your-writes echo). Empty ⇒ the endpoint returned no seq'd DTO —
    * the engine reconciles via the next /sync drain instead.
@@ -60,6 +68,46 @@ export interface MutationOutcome {
    */
   pendingWith?: { name: string | null } | null;
 }
+
+/**
+ * THE 202 ARM — the server RECORDED the mutation for the install that organizes the mailbox and
+ * did NOTHING ELSE. Nothing moved, nothing was deleted, no rule was written, and no `change_log`
+ * row exists to describe it: this answer is the only evidence the press happened.
+ *
+ * It is a SEPARATE ARM rather than a flag on {@link MutationOutcome} because the two were read as
+ * one thing for the length of a release — the adapter dropped the distinction, the drain that
+ * followed carried nothing, and the engine settled the request as a completion, so a reader's
+ * Move reported "Moved" over mail that had not moved. A queued answer cannot be built without
+ * saying who it waits on, which is the property that makes that reading impossible here.
+ *
+ * `changes` is always empty and `seq` always null for the reason the server states at
+ * `MessageService.requestMove`: nothing changed in this account's store, and a seq would advance
+ * every client's cursor past a change that does not exist. Both are present so the engine reads
+ * ONE shape whichever arm it holds.
+ */
+export interface MutationQueued {
+  settlement: "queued";
+  /**
+   * Who it is waiting on. `name: null` is a real holder without a name — the three-state shape
+   * every holder sentence renders, never "nobody".
+   */
+  queuedWith: { name: string | null };
+  /**
+   * The server's `organizer_requests.id`, or `null` from a door that answers a queued state
+   * without naming one (the rules family, whose 202 carries `travel` instead).
+   */
+  requestId: string | null;
+  changes: SyncChange[];
+  seq: null;
+}
+
+/**
+ * What a mutation comes back as. Two arms RETURN; the third — refused — is the thrown
+ * {@link MutationRejectedError}, which is a typed channel of its own with the server's code and
+ * sentence on it, and which the engine turns into `rolled_back` at one place. Three answers, one
+ * vocabulary: applied, queued, refused.
+ */
+export type MutationAnswer = MutationOutcome | MutationQueued;
 
 /**
  * One attachment's metadata as the server sends it
@@ -149,7 +197,7 @@ export interface EngineAdapter {
   mutate(
     m: EngineMutation,
     opts: { idempotencyKey: string; createAttempted?: boolean },
-  ): Promise<MutationOutcome>;
+  ): Promise<MutationAnswer>;
   /**
    * Fetch one message's body text, or `null` when this adapter serves no
    * bodies at all. `null` is the FixturesAdapter's answer and not a stub:

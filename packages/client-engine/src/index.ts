@@ -322,7 +322,7 @@ export {
 } from "./mutations.js";
 
 // Adapters.
-export type { EngineAdapter, MutationOutcome, SyncParams } from "./adapters/adapter.js";
+export type { EngineAdapter, MutationAnswer, MutationOutcome, MutationQueued, SyncParams } from "./adapters/adapter.js";
 export { DEMO_NOW, FixturesAdapter, parseFixtureTime, type FixturesAdapterOptions } from "./adapters/fixtures-adapter.js";
 export {
   HttpAdapter,
@@ -410,9 +410,13 @@ export {
   // A forward copy's inherited-parts ceiling — the send service's own bound, mirrored. Exported
   // for the same reason.
   SENT_FORWARD_MAX_PARTS,
+  // How long a request may wait on the organizer before the surface says so out loud. Exported
+  // so the sentence's guard reads the shipped bound rather than a copy of it.
+  ORGANIZER_REQUEST_SLOW_MS,
   type EngineOptions,
   type MutationResult,
   type MutationStatus,
+  type OrganizerRequestView,
   // Cancel's vocabulary: what a withdrawal found, and the refusal code a withdrawn verb settles
   // with — a surface reads the code to say nothing rather than "it failed".
   type WithdrawOutcome,

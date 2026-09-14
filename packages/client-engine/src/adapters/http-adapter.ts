@@ -29,7 +29,7 @@ import type {
 } from "../engine.js";
 import type {
   AttachmentWire, EngineAdapter, HeldReleaseGroupWire, HeldReleaseResultWire, HeldReleaseWire,
-  MutationOutcome, SyncParams,
+  MutationAnswer, MutationOutcome, MutationQueued, SyncParams,
 } from "./adapter.js";
 import { retryAfterMsOf, retryingRead } from "./retrying-read.js";
 
@@ -265,6 +265,19 @@ export class HttpAdapter implements EngineAdapter {
    * replays the first reservation's outcome without touching SMTP.
    */
   private readonly draftForKey = new Map<string, string>();
+  /**
+   * THE ROW VERSION THIS SEND WAS COMPOSED AGAINST, per Idempotency-Key — the revision the PUT (or
+   * the create) answered with, carried on the send so the server can refuse a row another window
+   * rewrote in between. Keyed and cleared exactly as `draftForKey` is, so a same-key retry vouches
+   * for the same row and the map cannot outlive the sends it belongs to.
+   */
+  private readonly revisionForKey = new Map<string, string>();
+
+  /** One send key's per-request memory, dropped together — the two maps have one lifetime. */
+  private forgetSendKey(key: string): void {
+    this.draftForKey.delete(key);
+    this.revisionForKey.delete(key);
+  }
   /**
    * Keys whose `POST /drafts` went out and came back unreadable.
    *
@@ -933,10 +946,47 @@ export class HttpAdapter implements EngineAdapter {
     };
   }
 
+  /**
+   * THE 202 DOOR, READ IN ONE PLACE. Every mutation route answers 202 for one reason: the write
+   * did not happen here, a record was written for the install that organizes the mailbox, and the
+   * press is waiting on it. `pending: true` is the discriminator the service puts on the body.
+   *
+   * Read DEFENSIVELY and answer `null` for anything else: a body this code cannot parse is not a
+   * queued answer, and guessing one would withhold a write that did happen. The holder's name
+   * travels directly or, for the rules family, as the first named install in `travel` — that door
+   * has no `organizer_requests` id, so `requestId` is null there rather than invented.
+   */
+  /** A JSON body when there is one — a 204 and an unparseable body both read as `null`. */
+  private async jsonOrNull(res: Response): Promise<unknown> {
+    return await res.json().catch(() => null);
+  }
+
+  private queuedAnswer(res: Response, body: unknown): MutationQueued | null {
+    if (res.status !== 202) return null;
+    const b = body as { pending?: unknown; requestId?: unknown; holder?: { name?: unknown } | null; travel?: unknown } | null;
+    if (!b || b.pending !== true) return null;
+    const named = (h: unknown): string | null => {
+      const n = (h as { name?: unknown } | null)?.name;
+      return typeof n === "string" && n.trim() !== "" ? n : null;
+    };
+    const holder = b.holder
+      ? named(b.holder)
+      : Array.isArray(b.travel)
+        ? (b.travel.map((t) => named((t as { holder?: unknown } | null)?.holder)).find((n) => n !== null) ?? null)
+        : null;
+    return {
+      settlement: "queued",
+      queuedWith: { name: holder },
+      requestId: typeof b.requestId === "string" && b.requestId !== "" ? b.requestId : null,
+      changes: [],
+      seq: null,
+    };
+  }
+
   async mutate(
     m: EngineMutation,
     opts: { idempotencyKey: string; createAttempted?: boolean },
-  ): Promise<MutationOutcome> {
+  ): Promise<MutationAnswer> {
     switch (m.kind) {
       case "move": {
         const res = await this.request("POST", `/messages/${m.messageId}/move`, {
@@ -945,7 +995,13 @@ export class HttpAdapter implements EngineAdapter {
         });
         if (!res.ok) throw await this.rejectionOf(res);
         const seq = this.noteSeq(res);
-        const dto = (await res.json()) as EngineMessage;
+        const body = await res.json().catch(() => null);
+        // 200 IS A MOVE MADE; 202 IS A MOVE ASKED FOR (`routes/messages.ts`). The 202's body is
+        // the message UNMOVED beside the request — reading it as the echo of a move would paint
+        // the row where nothing has put it.
+        const queued = this.queuedAnswer(res, body);
+        if (queued) return queued;
+        const dto = body as EngineMessage;
         return {
           changes: seq !== null ? [this.messageEcho(dto, seq, "move", { from: null, to: m.folder })] : [],
           seq,
@@ -958,7 +1014,11 @@ export class HttpAdapter implements EngineAdapter {
         });
         if (!res.ok) throw await this.rejectionOf(res);
         const seq = this.noteSeq(res);
-        const dto = (await res.json()) as EngineMessage;
+        const body = await res.json().catch(() => null);
+        // 202 = the delete became a request for the organizer; nothing is in the bin yet.
+        const queued = this.queuedAnswer(res, body);
+        if (queued) return queued;
+        const dto = body as EngineMessage;
         // The echo is the tombstone, at the echoed seq — op:"delete" carries no entity (§3.4),
         // and the apply core turns it into `entity: null` for every selector.
         return {
@@ -1009,15 +1069,12 @@ export class HttpAdapter implements EngineAdapter {
         // with a decision result, a 200 from an older server, and this.
 
         // Guessing `pending` from anything less than the flag itself would withhold a filing that did happen.
-        const decided = await res.json().catch(() => null) as
-          { pending?: unknown; holder?: { name?: unknown } | null } | null;
+        const decided = await res.json().catch(() => null);
         const seq = this.noteSeq(res);
-        if (decided && decided.pending === true) {
-          const name = typeof decided.holder?.name === "string" && decided.holder.name.trim()
-            ? decided.holder.name
-            : null;
-          return { changes: [], seq, pendingWith: { name } };
-        }
+        // Through the same door as Move and Delete now: this case read the 202 correctly before
+        // they did, and reading it in one place is what stops the next case forgetting.
+        const queued = this.queuedAnswer(res, decided);
+        if (queued) return queued;
         return { changes: [], seq };
       }
 
@@ -1283,6 +1340,12 @@ export class HttpAdapter implements EngineAdapter {
         });
         if (res.status === 404) return { changes: [], seq: null };
         if (!res.ok) throw await this.rejectionOf(res);
+        // 204 IS A RULE GONE; 202 IS A DELETE ASKED FOR — the route's own words, and on an
+        // account whose every live mailbox another install organizes the row is deliberately
+        // still there. Reading the 202 as a 204 is telling somebody a rule is gone while the
+        // offline organizer still runs it (`routes/rules.ts`, the `asked()` note).
+        const queued = this.queuedAnswer(res, await this.jsonOrNull(res));
+        if (queued) return queued;
         return { changes: [], seq: this.noteSeq(res) };
       }
 
@@ -1300,7 +1363,11 @@ export class HttpAdapter implements EngineAdapter {
         });
         if (!res.ok) throw await this.rejectionOf(res);
         const seq = this.noteSeq(res);
-        const dto = (await res.json()) as RuleDTO;
+        const body = await res.json().catch(() => null);
+        // 202 = the edit wrote nothing here; the body carries the UNCHANGED rule.
+        const queued = this.queuedAnswer(res, body);
+        if (queued) return queued;
+        const dto = body as RuleDTO;
         return {
           changes: seq === null ? [] : [{ type: "rule", op: "update", id: dto.id, seq, updatedAt: dto.updatedAt, entity: dto }],
           seq,
@@ -1353,7 +1420,11 @@ export class HttpAdapter implements EngineAdapter {
         });
         if (!res.ok) throw await this.rejectionOf(res);
         const seq = this.noteSeq(res);
-        const dto = (await res.json()) as RuleDTO;
+        const body = await res.json().catch(() => null);
+        // 201 IS A RULE THAT EXISTS; 202 IS A RULE ASKED FOR — no `rules` row was written here.
+        const queued = this.queuedAnswer(res, body);
+        if (queued) return queued;
+        const dto = body as RuleDTO;
         return {
           changes: seq === null ? [] : [{ type: "rule", op: "create", id: dto.id, seq, updatedAt: dto.updatedAt, entity: dto }],
           seq,
@@ -1593,7 +1664,7 @@ export class HttpAdapter implements EngineAdapter {
     if (draftId && !this.draftForKey.has(idempotencyKey)) {
       this.draftForKey.set(idempotencyKey, draftId);
       const wantsBcc = (m.bcc?.length ?? 0) > 0;
-      let echoed: { bcc?: unknown; mailboxId?: unknown } | null = null;
+      let echoed: { bcc?: unknown; mailboxId?: unknown; contentRevision?: unknown } | null = null;
       try {
         const put = await this.request("PUT", `/drafts/${encodeURIComponent(draftId)}`, {
           body: {
@@ -1610,7 +1681,7 @@ export class HttpAdapter implements EngineAdapter {
             ...(m.mailboxId ? { mailboxId: m.mailboxId } : {}),
           },
         });
-        if (put.ok) echoed = (await put.json()) as { bcc?: unknown; mailboxId?: unknown };
+        if (put.ok) echoed = (await put.json()) as { bcc?: unknown; mailboxId?: unknown; contentRevision?: unknown };
       } catch { /* see above — the row stands, and the send is what matters */ }
 
       // ── THE VERSION-SKEW GUARD, ON THIS PATH TOO ────────────────────────────────────────
@@ -1623,7 +1694,7 @@ export class HttpAdapter implements EngineAdapter {
       // failure the guard exists for, and "the PUT did not answer" is not proof that it was
       // stored. A send with no Bcc is unaffected and still tolerates a blipped PUT.
       if (wantsBcc && !Array.isArray(echoed?.bcc)) {
-        this.draftForKey.delete(idempotencyKey);
+        this.forgetSendKey(idempotencyKey);
         throw new MutationRejectedError(
           "This message was not sent: the server did not confirm the Bcc recipients. Reload to update, then try again.",
           { code: "bcc_unsupported", retryable: false },
@@ -1641,11 +1712,19 @@ export class HttpAdapter implements EngineAdapter {
       // PUT blipped — refuses the send. Text tolerates a blipped PUT because a stale row is
       // at most one debounce old; the row's IDENTITY may be days old, so it does not.
       if (m.mailboxId && echoed?.mailboxId !== m.mailboxId) {
-        this.draftForKey.delete(idempotencyKey);
+        this.forgetSendKey(idempotencyKey);
         throw new MutationRejectedError(
           "This message was not sent: the server did not confirm the sending address. Try again, or reload to update.",
           { code: "from_mailbox_unconfirmed", retryable: false },
         );
+      }
+
+      // THE VERSION THIS PRESS IS VOUCHING FOR. The PUT above wrote the message on screen and the
+      // answer says which version the row is now at; the send below carries it, so a second window
+      // whose autosave lands in between is refused instead of delivered. A server that predates the
+      // field echoes none and the send goes as it always did.
+      if (typeof echoed?.contentRevision === "string" && echoed.contentRevision.length > 0) {
+        this.revisionForKey.set(idempotencyKey, echoed.contentRevision);
       }
     }
     if (!draftId && (createAttemptedBefore || this.createAttempted.has(idempotencyKey))) {
@@ -1690,7 +1769,7 @@ export class HttpAdapter implements EngineAdapter {
       });
       if (!created.ok) throw await this.rejectionOf(created);
       this.noteSeq(created);
-      const draft = await readJsonOrAmbiguous<{ id?: string; bcc?: unknown }>(created, "draft create");
+      const draft = await readJsonOrAmbiguous<{ id?: string; bcc?: unknown; contentRevision?: unknown }>(created, "draft create");
       if (!draft.id) {
         /**
          * AN UNREADABLE CREATE IS AMBIGUOUS, AND THE CREATE IS NOT IDEMPOTENT: The old sentence here said ohmail
@@ -1730,7 +1809,7 @@ export class HttpAdapter implements EngineAdapter {
       // The draft the old API stored is an orphan (the same cost the create-lost path already documents), never a
       // wrong delivery. Non-retryable: retrying the same key against the same old API repeats the same drop.
       if (m.bcc && m.bcc.length > 0 && !Array.isArray(draft.bcc)) {
-        this.draftForKey.delete(idempotencyKey);
+        this.forgetSendKey(idempotencyKey);
         throw new MutationRejectedError(
           "This message was not sent: the server did not accept the Bcc recipients. Reload to update, then try again.",
           { code: "bcc_unsupported", retryable: false },
@@ -1738,6 +1817,11 @@ export class HttpAdapter implements EngineAdapter {
       }
       draftId = draft.id;
       this.draftForKey.set(idempotencyKey, draftId);
+      // The row this press made a moment ago — vouched for on the send exactly as an existing
+      // row's is, so the field is on every send this client makes rather than on most of them.
+      if (typeof draft.contentRevision === "string" && draft.contentRevision.length > 0) {
+        this.revisionForKey.set(idempotencyKey, draft.contentRevision);
+      }
     }
 
     // ── SEND LATER (mail 0077): the press becomes an APPOINTMENT, not a delivery ─────────────
@@ -1753,7 +1837,7 @@ export class HttpAdapter implements EngineAdapter {
       // surface disables the affordance for both cases; this is the same rule where it cannot
       // be bypassed, refused before any request rather than after the row is marked.
       if ((m.attachments?.length ?? 0) > 0 || m.forwardOf) {
-        this.draftForKey.delete(idempotencyKey);
+        this.forgetSendKey(idempotencyKey);
         throw new MutationRejectedError(
           "Send later isn't available for messages with attachments or forwards yet.",
           { code: "schedule_unsupported_content", retryable: false },
@@ -1770,17 +1854,17 @@ export class HttpAdapter implements EngineAdapter {
         // draft row stands (it is in Drafts, nothing lost); what must not happen is a silent
         // fallback to sending NOW — the user picked a time, and mail leaving early is the one
         // surprise this feature exists to rule out.
-        this.draftForKey.delete(idempotencyKey);
+        this.forgetSendKey(idempotencyKey);
         throw new MutationRejectedError(
           "This message was not scheduled: the server does not support Send later yet. Reload to update.",
           { status: 404, code: "schedule_unsupported", retryable: false },
         );
       }
       if (!res.ok) {
-        this.draftForKey.delete(idempotencyKey);
+        this.forgetSendKey(idempotencyKey);
         throw await this.rejectionOf(res);
       }
-      this.draftForKey.delete(idempotencyKey);
+      this.forgetSendKey(idempotencyKey);
       // THE SCHEDULED ROW RIDES THE ECHO — the route answers the draft DTO with its seq, and
       // handing it back as a change is what keeps the Scheduled group populated across the
       // confirm: the engine drops the optimistic overlay the moment this outcome resolves, and
@@ -1807,7 +1891,7 @@ export class HttpAdapter implements EngineAdapter {
     // ATTACHMENTS AND `forwardOf` RIDE THE SEND, not the draft. Attachment bytes are base64 on this one request; the
     // server decodes them, caps the total, hands them to the transport, and stores none of them. `forwardOf` is just
     // the original's id — the server reads the original, refuses a no_forward one, builds the quoted MIME and streams
-    // its attachments. Omitted when neither is set, so a plain send stays the bodyless request it has always been.
+    // its attachments. Omitted when neither is set; a plain send now carries the vouched row version and nothing else.
     // …UNLESS THEY DO NOT FIT, AND THIS CLIENT IS ALLOWED TO STAGE: See {@link HttpAdapter.stagedIdsFor}. The
     // threshold, not "always", is the decision: under the inline ceiling the request is byte-identical to the one
     // this client has always sent, so the overwhelming majority of sends gain no new failure mode, and the staged
@@ -1816,7 +1900,13 @@ export class HttpAdapter implements EngineAdapter {
       attachments?: typeof m.attachments;
       stagedAttachmentIds?: string[];
       forwardOf?: string;
+      ifContentRevision?: string;
     } = {};
+    // WHICH VERSION OF THE ROW THIS PRESS SAW — see `revisionForKey`. Absent only where the server
+    // never named one; the server reads absence as unstated and sends, which is what keeps this
+    // client working against an API that predates the field.
+    const vouched = this.revisionForKey.get(idempotencyKey);
+    if (vouched) sendBody.ifContentRevision = vouched;
     const staged = await this.stagedIdsFor(m, idempotencyKey);
     if (staged) sendBody.stagedAttachmentIds = staged;
     else if (m.attachments && m.attachments.length) sendBody.attachments = m.attachments;
@@ -1837,7 +1927,7 @@ export class HttpAdapter implements EngineAdapter {
     }
 
     if (res.ok && wire.status === "sent") {
-      this.draftForKey.delete(idempotencyKey);
+      this.forgetSendKey(idempotencyKey);
       // No echo turned into changes: the answer is `{status, providerMessageId}`, not a
       // seq'd DTO, and the draft's `sent` transition arrives on the authoritative drain the
       // engine runs when `changes` is empty — the `triage_set`/`mark_seen` contract.
@@ -1866,7 +1956,7 @@ export class HttpAdapter implements EngineAdapter {
       // a later edit would get wrong, and a refusal that names no row is indistinguishable from one whose row nobody
       // created.
       const unverifiedRow = draftId;
-      this.draftForKey.delete(idempotencyKey);
+      this.forgetSendKey(idempotencyKey);
       throw new MutationRejectedError(
         // The fallback matches the shell's own sentence for this state: the send is HELD under the
         // key it went out under, so the honest instruction is to look rather than to press again —
@@ -1958,7 +2048,7 @@ export class HttpAdapter implements EngineAdapter {
       );
     }
 
-    this.draftForKey.delete(idempotencyKey);
+    this.forgetSendKey(idempotencyKey);
     if (wire.status === "failed") {
       // A definitively-undelivered prior attempt under this key. Terminal, never retryable.
       throw new MutationRejectedError(

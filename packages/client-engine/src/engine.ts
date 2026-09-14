@@ -12,7 +12,7 @@
 // core entry point browser bundles may import. Never the barrel or `./mail` from here: both
 // carry mailparser and `node:crypto`, which no consumer of this engine can load.
 import { CALENDAR_FALLBACK_FILENAME, isCalendarMime } from "@trafficflow/core/ics";
-import type { AttachmentWire, EngineAdapter, MutationOutcome } from "./adapters/adapter.js";
+import type { AttachmentWire, EngineAdapter, MutationOutcome, MutationQueued } from "./adapters/adapter.js";
 import { messageIdKey, mutationEffects, replySubject, sentOverlayMessage, type MutationEffect } from "./mutations.js";
 import {
   indexingAddressResult,
@@ -50,6 +50,7 @@ import {
   type EngineDraft,
   type EngineMessage,
   type EngineMutation,
+  type ISODateTime,
   type MessageBodyBatchWire,
   type MessageBodyRecord,
   type OhmailView,
@@ -84,7 +85,14 @@ const withheldMarkerOf = (w: unknown): WithheldMarker | null =>
  *   SSE/push are WAKE SIGNALS only — attachWakeSignal() nudges a syncOnce.
  */
 
-export type MutationStatus = "confirmed" | "queued" | "rolled_back";
+/**
+ * `queued` and `awaiting_organizer` are two different waits and must never be collapsed:
+ * `queued` is THIS client's retry queue (the wire failed, the intent stands under its
+ * Idempotency-Key, a drive will send it again), `awaiting_organizer` is the SERVER's — the
+ * request is recorded and the install that organizes the mailbox will carry it out, so nothing
+ * here retries and nothing here may report it done.
+ */
+export type MutationStatus = "confirmed" | "queued" | "awaiting_organizer" | "rolled_back";
 
 /**
  * WHAT A WITHDRAWAL FOUND — {@link OhmailEngine.withdrawQueued}'s answer. `withdrawn` is the
@@ -128,6 +136,37 @@ export interface MutationResult {
    * caller that ignores this shows the press undoing itself a second later.
    */
   pendingWith?: { name: string | null } | null;
+  /**
+   * WHO THE SERVER RECORDED THIS FOR — present on `awaiting_organizer` and nowhere else. The
+   * mutation reached the wire and the wire took it; what has NOT happened is the act. The
+   * surface says "Queued for the organizer" from this, and `pendingWith` carries the same fact
+   * under the name the Screener's standing reader already knows.
+   */
+  queuedWith?: { name: string | null };
+  /** The server's `organizer_requests.id` for a queued mutation, where the door named one. */
+  requestId?: string;
+}
+
+/**
+ * A mutation the SERVER queued for the install that organizes the mailbox, as a surface reads it.
+ * It is not on any retry queue here: nothing this client does moves it, and only a change
+ * arriving through /sync settles it.
+ */
+export interface OrganizerRequestView {
+  id: string;
+  key: string;
+  kind: EngineMutation["kind"];
+  /** The message the verb names, or `null` for a verb that names something else. */
+  messageId: string | null;
+  queuedWith: { name: string | null };
+  requestId: string | null;
+  /** When the press was recorded. */
+  at: ISODateTime;
+  /**
+   * Past {@link ORGANIZER_REQUEST_SLOW_MS}. The surface says "Still waiting for the organizer"
+   * and the request STAYS PENDING — the bound changes the sentence, never the belief.
+   */
+  slow: boolean;
 }
 
 /** What one supersession changed, and everything needed to put it back. */
@@ -1576,6 +1615,17 @@ export const OUTBOX_BACKOFF_BASE_MS = 30_000;
 export const OUTBOX_BACKOFF_CAP_MS = 3_600_000;
 
 /**
+ * HOW LONG A REQUEST WAITS BEFORE THE SURFACE SAYS SO OUT LOUD.
+ *
+ * The install that organizes the mailbox applies a recorded request on its next pass — "within a
+ * minute, longer if that machine is asleep" is what the product already tells people. Past this
+ * the wait deserves its own sentence ("Still waiting for the organizer"), and the request STAYS
+ * PENDING: the bound changes what is SAID, never what is believed, because there is no evidence
+ * either way and inventing some is the defect this whole path exists to end.
+ */
+export const ORGANIZER_REQUEST_SLOW_MS = 5 * 60_000;
+
+/**
  * HOW OLD an UNKEYED CREATE may be and still replay — the server's own `idempotencyExpiry`
  * (24 h), mirrored as a literal for the same reason every compose-cap mirror is: this bundle
  * pulls in no server module. Only `rule_create` and a first `draft_save` are judged by it; see
@@ -1819,6 +1869,19 @@ export class OhmailEngine {
    * (bounded, backed-off) cadence, so no new retry loop exists here.
    */
   private readonly awaitingEcho = new Map<string, number>();
+  /**
+   * MUTATIONS THE SERVER QUEUED FOR ANOTHER INSTALL — kept until a CHANGE confirms them.
+   *
+   * Nothing in this client moves them: there is no retry (the request is stored server-side under
+   * its Idempotency-Key and a second POST only re-reads the same 202), no overlay (the server's
+   * own answer carries the row unmoved) and no drain that can settle one by being empty. A drain
+   * carrying no news is not the organizer acting, and reading it as one is how a reader's Move
+   * came to report "Moved" over mail nobody had moved.
+   */
+  private readonly organizerQueue = new Map<string, {
+    id: string; key: string; mutation: EngineMutation;
+    queuedWith: { name: string | null }; requestId: string | null; at: number;
+  }>();
   /** Count of drains whose page loop has BEGUN — the happens-before token {@link awaitingEcho} compares. */
   private drainEpoch = 0;
   /** {@link OhmailEngine.restoreOutbox}'s latch. */
@@ -2738,7 +2801,7 @@ export class OhmailEngine {
       // later it is gone.
       const highBefore = this.store.maxSeq();
       pagesThisDrain += 1;
-      this.countReceived(flattenResponse(resp));
+      this.noteApplied(flattenResponse(resp));
       await this.store.applyResponse(resp);
       // AFTER THE ROWS, NEVER BEFORE. A kill between the two leaves the written count BEHIND the
       // mirror, which the consumer's floor absorbs; the other order leaves it AHEAD, and the rows
@@ -2845,7 +2908,7 @@ export class OhmailEngine {
         types: ["rule"],
         ...(this.syncLimit !== undefined ? { limit: this.syncLimit } : {}),
       });
-      this.countReceived(flattenResponse(resp));
+      this.noteApplied(flattenResponse(resp));
       await this.store.applyChanges(flattenResponse(resp));
       await this.persistReceived();
       since = resp.cursor;
@@ -3016,7 +3079,7 @@ export class OhmailEngine {
     } catch {
       return; // the delta drain that follows is the source of truth, and of error reporting
     }
-    this.countReceived(page.changes);
+    this.noteApplied(page.changes);
     await this.store.applyChanges(page.changes); // rows only — the cursor is the delta's
     await this.persistReceived();
     this.notify();
@@ -3242,7 +3305,7 @@ export class OhmailEngine {
         // Rows + cursor in ONE flush. The buckets are a formality: `flattenResponse` concatenates
         // all four and `applyToRecords` dispatches on each change's own `op`, so which bucket a
         // change sits in cannot affect the result. Snapshot changes are all `op:"create"`.
-        this.countReceived(page.changes);
+        this.noteApplied(page.changes);
         await this.store.applyResponse({
           changes: { creates: page.changes, updates: [], moves: [], deletes: [] },
           cursor: encodeSeqCursor(page.asOfSeq),
@@ -3251,7 +3314,7 @@ export class OhmailEngine {
         });
         await this.persistReceived();
       } else {
-        this.countReceived(page.changes);
+        this.noteApplied(page.changes);
         await this.store.applyChanges(page.changes); // rows only — the cursor stays "0"
         await this.persistReceived();
       }
@@ -3271,6 +3334,79 @@ export class OhmailEngine {
    * {@link receivedMessages} — and one change per id per page, resolved at the highest seq exactly
    * as `applyToRecords` resolves it.
    */
+  /**
+   * ONE ROAD FOR EVERY PAGE THIS ENGINE APPLIES — the row count and the organizer-request
+   * settlement both hang off it, so a new apply site cannot bring changes in past one of them.
+   * Called BEFORE the write, which is right for both: the count reads the mirror as it stood, and
+   * the settlement only needs to know the confirming change has arrived.
+   */
+  private noteApplied(changes: SyncChange[]): void {
+    this.countReceived(changes);
+    this.settleOrganizerRequests(changes);
+  }
+
+  /**
+   * SETTLE EVERY QUEUED REQUEST THIS PAGE CONFIRMS, and nothing else. A request whose confirming
+   * change is not in this page stays exactly where it was — absence of news is not confirmation.
+   */
+  private settleOrganizerRequests(changes: SyncChange[]): void {
+    if (this.organizerQueue.size === 0 || changes.length === 0) return;
+    let settled = false;
+    for (const [id, r] of this.organizerQueue) {
+      if (!changes.some((ch) => OhmailEngine.confirmsOrganizerRequest(r.mutation, ch))) continue;
+      this.organizerQueue.delete(id);
+      settled = true;
+    }
+    if (settled) {
+      this.overlayRev++;
+      this.notify();
+    }
+  }
+
+  /**
+   * DOES THIS CHANGE SAY THE ORGANIZER CARRIED THAT REQUEST OUT? Per verb, and deliberately
+   * narrow: a move is confirmed by the message arriving IN the folder that was asked for (a move
+   * elsewhere is somebody else's act, not this request's), a delete by its tombstone, a screener
+   * decision by its sender's own row. Any other kind answers `false` and the request keeps
+   * waiting — a guess here would be the settling-on-nothing this path exists to end.
+   */
+  private static confirmsOrganizerRequest(m: EngineMutation, ch: SyncChange): boolean {
+    switch (m.kind) {
+      case "move": {
+        if (ch.type !== "message" || ch.id !== m.messageId || ch.op === "delete") return false;
+        const to = ch.move?.to ?? (ch.entity as EngineMessage | undefined)?.folder;
+        return to === m.folder;
+      }
+      case "message_delete":
+        return ch.type === "message" && ch.id === m.messageId && ch.op === "delete";
+      case "screener_decide":
+        return ch.type === "screener_sender" && ch.id === m.senderId;
+      default:
+        return false;
+    }
+  }
+
+  /**
+   * WHAT IS WAITING ON THE ORGANIZER, oldest first — the surface's read. `slow` is the only thing
+   * time decides here: past {@link ORGANIZER_REQUEST_SLOW_MS} the sentence changes and the
+   * request does not.
+   */
+  organizerRequests(): OrganizerRequestView[] {
+    const now = this.now().getTime();
+    return [...this.organizerQueue.values()]
+      .sort((a, b) => a.at - b.at)
+      .map((r) => ({
+        id: r.id,
+        key: r.key,
+        kind: r.mutation.kind,
+        messageId: "messageId" in r.mutation ? r.mutation.messageId : null,
+        queuedWith: r.queuedWith,
+        requestId: r.requestId,
+        at: new Date(r.at).toISOString(),
+        slow: now - r.at >= ORGANIZER_REQUEST_SLOW_MS,
+      }));
+  }
+
   private countReceived(changes: SyncChange[]): void {
     this.restoreReceivedCount();
     /* A MAILBOX RECEIPT IS READ FIRST AND IT IS AUTHORITATIVE. One `mailbox` delete stands for
@@ -5614,6 +5750,15 @@ export class OhmailEngine {
         ...(p.createAttempted === true ? { createAttempted: true } : {}),
       });
       /**
+       * THE 202 ARM, BEFORE ANYTHING ELSE IN THIS METHOD. Everything below settles: it applies an
+       * echo, materialises a Sent copy, or drains and drops the overlay. A queued answer must
+       * reach none of it — the server recorded a request for another install and did nothing, so
+       * there is no echo to apply, nothing to materialise, and a drain that carries no news is
+       * not evidence. It returns its own status instead of joining `confirmed`, which is what the
+       * surfaces read to say "Queued for the organizer" rather than "Moved".
+       */
+      if (outcome.settlement === "queued") return await this.holdForOrganizer(p, outcome);
+      /**
        * The happens-before token for {@link awaitingEcho}: any drain whose page loop begins
        * AFTER this line reads a change log that already holds this mutation's rows (the seq
        * argument in {@link OhmailEngine.syncFresh}). Captured HERE — not where a failure is
@@ -5641,7 +5786,7 @@ export class OhmailEngine {
         // Read-your-writes echo (§3.4): idempotent apply — converges with the
         // delta that will arrive at the same seq.
         try {
-          this.countReceived(outcome.changes);
+          this.noteApplied(outcome.changes);
           await this.store.applyChanges(outcome.changes);
         } catch {
           // The SERVER took the write; only the LOCAL apply failed (a torn sqlite flush, a
@@ -5899,6 +6044,39 @@ export class OhmailEngine {
         ...(rejection.entityId ? { entityId: rejection.entityId } : {}),
       };
     }
+  }
+
+  /**
+   * HOLD A MUTATION THE SERVER QUEUED FOR THE ORGANIZER.
+   *
+   * Three acts, and each of them is the honest one for "recorded, not done":
+   *
+   *  - the OPTIMISTIC PAINT GOES BACK, because the 202's own body carries the row unmoved and
+   *    leaving the overlay would show mail where nobody has put it — the service says exactly
+   *    this at `MessageService.requestMove` ("the client renders waiting-for-holder beside a
+   *    message that has not moved");
+   *  - the DURABLE OUTBOX ENTRY IS DROPPED, because there is nothing to retry: the request is
+   *    stored server-side under this Idempotency-Key and a second POST re-reads the same answer;
+   *  - the REQUEST IS KEPT, in {@link organizerQueue}, until a change confirms it.
+   */
+  private async holdForOrganizer(p: PendingMutation, outcome: MutationQueued): Promise<MutationResult> {
+    this.overlays.delete(p.id);
+    this.awaitingEcho.delete(p.id);
+    await this.dropOutbox(p.id);
+    this.organizerQueue.set(p.id, {
+      id: p.id, key: p.key, mutation: p.mutation,
+      queuedWith: outcome.queuedWith, requestId: outcome.requestId, at: this.now().getTime(),
+    });
+    this.overlayRev++;
+    this.notify();
+    return {
+      id: p.id, key: p.key, status: "awaiting_organizer", seq: null,
+      queuedWith: outcome.queuedWith,
+      ...(outcome.requestId ? { requestId: outcome.requestId } : {}),
+      // The same fact under the name the Screener's standing reader has known since the decision
+      // door learnt the 202 (`screener-state.ts#markQueued`) — one answer, not two.
+      pendingWith: outcome.queuedWith,
+    };
   }
 
   /**
