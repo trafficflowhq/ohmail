@@ -15,9 +15,7 @@
 -- repeatedly without effect. ROLLBACK is
 -- `ALTER TABLE idempotency_keys DROP COLUMN erased_at`: replays serve stored responses again.
 --
--- 0111 IS MAX+1 AT THIS LANE'S BASE, and the erasure fence's `mailboxes.erased_at`
--- is the same number at the same base — the journal's idx has to be contiguous, so there is no
--- other number either lane could take. Whichever lands second is renumbered against the journal it
--- lands onto; they are the same theme and land together.
+-- 0111 is max+1 at the journal this was written against, and the journal's idx has to be
+-- contiguous, so it is the only number available there.
 
 ALTER TABLE "idempotency_keys" ADD COLUMN IF NOT EXISTS "erased_at" timestamp with time zone;

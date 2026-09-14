@@ -499,9 +499,8 @@ export async function bootstrapEnvCreds(
      * last cycle failed. FIRST, and inside the transaction that writes, so a removal committing
      * mid-bootstrap loses the race rather than the person losing the erasure.
      *
-     * When the erasure fence's `fencedAccountWrite`/`readMailboxErasedAt` land,
-     * these two reads become that one call — the account half is already spelled the way
-     * `request-drain.ts` spells it.
+     * The two reads are the fence's own, spelled the way `request-drain.ts` spells the account
+     * half; when the shared fenced-write seam carries a mailbox scope they become one call.
      */
     const [row] = await tx.select({
       accountId: mailboxes.accountId, status: mailboxes.status,

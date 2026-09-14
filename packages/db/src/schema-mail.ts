@@ -1294,6 +1294,7 @@ export const idempotencyKeys = pgTable("idempotency_keys", {
   responseJson: jsonb("response_json").notNull(),       // the stored response body, replayed verbatim
   seq: bigint("seq", { mode: "number" }),               // change_log seq to re-emit as X-Sync-Seq (null if none)
   expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),   // created_at + 24h (lazy cleanup)
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   /**
    * When an erasure blanked this row's content (migration 0111). NULL for every ordinary row.
    * `response_json` is a COMPLETE COPY of what a mutation returned — a draft's body and its
@@ -1303,7 +1304,6 @@ export const idempotencyKeys = pgTable("idempotency_keys", {
    * would let the retry re-apply the mutation, which is the one thing the key is for.
    */
   erasedAt: timestamp("erased_at", { withTimezone: true }),
-  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 }, (t) => ({ pk: primaryKey({ columns: [t.accountId, t.key] }) }));
 
 // ─────────────────────────────────────────────────────────────────────────────

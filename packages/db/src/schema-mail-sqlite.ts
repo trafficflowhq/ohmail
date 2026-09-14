@@ -1270,9 +1270,9 @@ export const idempotencyKeys = sqliteTable("idempotency_keys", {
   responseJson: text("response_json", { mode: "json" }).notNull(),       // the stored response body, replayed verbatim
   seq: integer("seq"),               // change_log seq to re-emit as X-Sync-Seq (null if none)
   expiresAt: integer("expires_at", { mode: "timestamp_ms" }).notNull(),   // created_at + 24h (lazy cleanup)
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).default(NOW_MS).notNull(),
   /** When an erasure replaced this row's content — see the server schema's header (0111). */
   erasedAt: integer("erased_at", { mode: "timestamp_ms" }),
-  createdAt: integer("created_at", { mode: "timestamp_ms" }).default(NOW_MS).notNull(),
 }, (t) => ({ pk: primaryKey({ columns: [t.accountId, t.key] }) }));
 
 // ─────────────────────────────────────────────────────────────────────────────

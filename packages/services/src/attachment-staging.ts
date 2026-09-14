@@ -279,10 +279,10 @@ export function makeAttachmentStagingPort(deps: {
         /* THE FINALIZE STEP DELETES THE OBJECT IT CANNOT RECORD.
          *
          * A ticket that is not here has no row anywhere, so nothing will ever sweep the bytes it
-         * names: the sweep works from tickets. Neither store can revoke a grant it has already
-         * signed — an object-store upload token and a presigned URL are both self-contained and
-         * honoured until they expire, with nothing of ours in the request path — so this is where
-         * a write that outlived its record is answered. The path is derived, and it is inside
+         * names: the sweep works from tickets. Neither object store can revoke a grant it has
+         * already signed — both mint a self-contained token honoured until it expires, with
+         * nothing of ours in the request path — so this is where a write that outlived its
+         * record is answered. The path is derived, and it is inside
          * THIS account's own prefix, so the worst a caller can do with a made-up id is delete
          * bytes of their own that nothing names. Best-effort: the refusal below is the answer to
          * the send either way, and the reconciliation pass is what promises the bucket. */
