@@ -274,12 +274,10 @@ export async function runReconcileCron(
      * ONE-SHOT, as at `index.ts#mayOrganize`: the authorization bought this becoming and no other,
      * or a lapse-then-resubscribe would seize the mailbox back months later from whatever a human
      * deliberately moved it to. It rides {@link LeasePermitInput.onClaimHeld} rather than sitting
-     * after the acquisition, because this call site passes no `adopt` — the claim's append, its
-     * verify and the probe all happen INSIDE `acquireLeasePermit`, so no reordering out here could
-     * reach the window the phone and the always-on worker each closed at their own call sites.
-     * FENCED, and the answer is READ: `false` is a write that did not land (this process no longer
-     * leads the shard, or the row is a tombstone), so the press stays spendable for the next sweep
-     * and the line says so rather than leaving the row lying silently.
+     * after the acquisition: this call site passes no `adopt`, so the claim's append, its verify
+     * and the probe all happen INSIDE the permit and no reordering out here reaches the window.
+     * FENCED, and the answer is READ — `false` is a write that did not land, so the press stays
+     * spendable for the next sweep and the line says so.
      */
     const promote = async (): Promise<void> => {
       try {

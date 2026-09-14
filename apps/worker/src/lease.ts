@@ -646,19 +646,14 @@ export interface LeasePermitInput extends Omit<MailboxLeaseInput, "now"> {
    */
   onRenew?: (renewal: { nonce: string | null; at: Date }) => void;
   /**
-   * THE ROW FOLLOWS THE CLAIM — the caller's durable record of this becoming, run in front of the
-   * probe rather than after the receipt.
+   * THE ROW FOLLOWS THE CLAIM — the caller's record of this becoming, run in front of the probe.
    *
-   * `readMailboxLease` appends this install's claim and verifies it, so from the instant it answers
-   * `organize` the mailbox is ours to every reader of `ohmail/_meta`. The row is what every write
-   * door consults, and a caller that wrote it AFTER this call spent `restamp()`'s IMAP STATUS —
-   * measured at 83 ms against a real server — with its own claim standing over a row still saying
-   * `reader`, refusing its own requests `409 organized_elsewhere` and naming itself. The phone and
-   * the always-on worker each moved that write to their own call site; a caller with no `adopt`
-   * cannot, because the claim, the verify and the probe all happen in here. Hence the hook: ONCE
-   * per permit, never on a renewal, and a hook that THROWS does not break the receipt — the lease
-   * is held either way, so the throw is logged (`lease_permit_claim_held_failed`) and the permit
-   * still returns.
+   * `readMailboxLease` appends and verifies this install's claim, so the mailbox is already ours to
+   * every reader of `ohmail/_meta`. A caller that wrote its row AFTER this call spent `restamp()`'s
+   * IMAP STATUS — 83 ms, measured — with its own doors refusing its own requests by name; one with
+   * no `adopt` cannot move that write itself, because the claim, the verify and the probe all happen
+   * in here. ONCE per permit, never on a renewal, and a hook that throws is logged
+   * (`lease_permit_claim_held_failed`) rather than swallowed — the lease is held either way.
    */
   onClaimHeld?: (held: { nonce: string | null; at: Date }) => void | Promise<void>;
 }
