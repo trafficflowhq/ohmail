@@ -2,7 +2,7 @@ import { and, desc, eq } from "drizzle-orm";
 import {
   PROFILE_FOUND_AUDIT_ACTION, auditLog, latestProfileFoundMarker, profileImportResolutionExists,
   mailboxProfileMirror,
-  type Tx, auditAction,} from "@trafficflow/db";
+  type Tx, auditAction, fencedAccountWrite,} from "@trafficflow/db";
 /* NAMED AT A LEAF, NEVER AT THE PACKAGE ROOT — this module is bundled into the desktop engine.
    `@trafficflow/core`'s index carries `export *` lines that convey the whole AI runtime
    (classification, the model client, drafting, the three workflow modules) and the hosted
@@ -1425,20 +1425,28 @@ export async function applyProfileRead(
   /* REPLACED WHOLE. Every column in the SET, deliberately: a partial update is how a row ends up
      carrying one generation's uid beside another generation's number, and that row would be served
      as a current document by a locator that addresses something else. */
-  await deps.db.insert(mailboxProfileMirror)
-    .values({
-      mailboxId: deps.mailboxId, accountId: deps.accountId,
-      uidvalidity: typeof generation === "bigint" ? generation : BigInt(generation),
-      uid, doc: read.doc, readAt: deps.now,
-    })
-    .onConflictDoUpdate({
-      target: mailboxProfileMirror.mailboxId,
-      set: {
-        accountId: deps.accountId,
+  /* THROUGH THE SEAM, WITH THE MAILBOX. This cache holds correspondent addresses, rule text and
+     away-reply content — the rows `mailbox-erasure.ts` sweeps by name — and the fetch above began
+     before the erasure did. An UPSERT, so it creates: without the fence the swept cache comes
+     straight back, and `mailbox_profile_mirror` has no key to anything the sweep deletes. */
+  await fencedAccountWrite(
+    deps.db as unknown as Tx,
+    { accountId: deps.accountId, mailboxId: deps.mailboxId },
+    async (tx) => tx.insert(mailboxProfileMirror)
+      .values({
+        mailboxId: deps.mailboxId, accountId: deps.accountId,
         uidvalidity: typeof generation === "bigint" ? generation : BigInt(generation),
         uid, doc: read.doc, readAt: deps.now,
-      },
-    });
+      })
+      .onConflictDoUpdate({
+        target: mailboxProfileMirror.mailboxId,
+        set: {
+          accountId: deps.accountId,
+          uidvalidity: typeof generation === "bigint" ? generation : BigInt(generation),
+          uid, doc: read.doc, readAt: deps.now,
+        },
+      }),
+  );
   deps.log("profile_mirror_written", {
     mailboxId: deps.mailboxId, accountId: deps.accountId,
     generation: String(generation), uid, residue: read.residue,
