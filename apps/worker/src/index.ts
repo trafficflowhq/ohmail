@@ -27,6 +27,7 @@ import {
    * have — the worker's deliberately small runtime dependency set, and `test/deps.test.ts` is
    * what keeps that true. */
   makeSupabaseStagingStorage, makeS3StagingStorage, sweepExpiredStagingFor,
+  reconcileStagingOrphansFor, StagingListingUnsupportedError,
   type AlertSink,
   type AlertSinkHealth,
   type AttachmentStagingStorage,
@@ -4410,6 +4411,47 @@ export async function startWorkerWithLock(
               reason: "the rows stay and the next maintenance pass retries — objects are deleted " +
                 "before their rows, so nothing is orphaned by a failure here",
             });
+          }
+          /* AND THE OBJECTS NO TICKET NAMES — the half the sweep above cannot reach.
+           *
+           * That one works from tickets, so the one thing it can never see is an object whose
+           * ticket is gone: a signed upload grant outlives the erasure that expired its ticket
+           * and the sweep that removed its object, and the bytes it writes afterwards sit in the
+           * bucket with nothing anywhere pointing at them. This walks the bucket instead and
+           * deletes what no ticket names, bounded by age so it cannot race a live mint. Same
+           * slot, after the expiry sweep: an object the sweep just removed is not a candidate,
+           * and one whose row the sweep just deleted is younger than the age bound anyway.
+           * COUNTS ONLY in the log — an object path names an account and a ticket. */
+          try {
+            const rec = await reconcileStagingOrphansFor(
+              db as unknown as Tx, stagingStorage, new Date());
+            if (rec.orphans > 0 || rec.unrecognised > 0 || !rec.complete) {
+              log.info("attachment_staging_reconciled", {
+                scanned: rec.scanned, orphans: rec.orphans, deleted: rec.deleted,
+                unrecognised: rec.unrecognised, pages: rec.pages,
+                stoppedBy: rec.stoppedBy, complete: rec.complete,
+              });
+            }
+            if (rec.unrecognised > 0) {
+              log.warn("attachment_staging_foreign_objects", {
+                unrecognised: rec.unrecognised,
+                reason: "objects in the staging bucket whose path is not one this deployment " +
+                  "writes. Counted and left alone: this bucket is supposed to hold nothing else",
+              });
+            }
+          } catch (err) {
+            if (err instanceof StagingListingUnsupportedError) {
+              log.warn("attachment_staging_reconcile_unsupported", {
+                reason: "this storage cannot list its bucket, so an object whose ticket is gone " +
+                  "can never be found; the expiry sweep alone cannot promise an empty bucket",
+              });
+            } else {
+              log.error("attachment_staging_reconcile_failed", {
+                err,
+                reason: "nothing was deleted and nothing was recorded as deleted; the next " +
+                  "maintenance pass walks the bucket again from the start",
+              });
+            }
           }
         } else {
           log.info("attachment_staging_sweep_skipped", {

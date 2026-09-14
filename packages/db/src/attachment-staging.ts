@@ -444,7 +444,22 @@ async function readObjectWithin(res: Response, maxBytes: number): Promise<Uint8A
   return out;
 }
 
-/** The three storage calls, as an injectable port so tests can drive the whole path with no network. */
+/** One object as a bucket listing sees it. `lastModifiedAt` is what bounds the orphan rule. */
+export interface StagedObjectListing {
+  objectPath: string;
+  /** When the bucket last wrote these bytes; `null` when the store declared none. */
+  lastModifiedAt: Date | null;
+  sizeBytes: number | null;
+}
+
+/** One page of a bucket walk. `cursor` is OPAQUE and belongs to the implementation that made it. */
+export interface StagedObjectPage {
+  objects: StagedObjectListing[];
+  /** `null` when the walk is finished. */
+  cursor: string | null;
+}
+
+/** The storage calls, as an injectable port so tests can drive the whole path with no network. */
 export interface AttachmentStagingStorage {
   /** Mint a signed, single-object upload grant. */
   signUpload(objectPath: string, contentType: string): Promise<{
@@ -463,9 +478,34 @@ export interface AttachmentStagingStorage {
   download(objectPath: string, opts?: { maxBytes?: number }): Promise<Uint8Array>;
   /** Remove objects. Best-effort by contract: a path that is already gone is not an error. */
   remove(objectPaths: readonly string[]): Promise<void>;
+  /**
+   * Walk the bucket, page by page. OPTIONAL so every fake storage in a test keeps compiling —
+   * the same reason `download`'s ceiling is optional — and present on both shipped stores, which
+   * is what {@link reconcileStagingOrphans} asserts before it claims to have swept anything.
+   *
+   * It exists because the expiry sweep works from TICKETS: an object whose ticket is gone is
+   * invisible to it for ever. A signed PUT outlives the erasure that removed its ticket, so the
+   * bytes it writes afterwards have no record at all — nothing to sweep them by except the bucket
+   * itself.
+   */
+  list?(cursor: string | null, limit: number): Promise<StagedObjectPage>;
 }
 
 const STORAGE_PREFIX = "/storage/v1";
+
+/**
+ * How many account folders one Supabase walk may step over while finding nothing. A deployment
+ * has one folder per account that has ever staged a file; this is a TERMINATION bound on a loop
+ * that would otherwise page through an empty bucket for ever, not a limit on what may be swept.
+ */
+const MAX_STAGING_LIST_FOLDERS = 100_000;
+
+/** A store's own timestamp string, or `null` when it declared none we can read. */
+function stagedInstant(v: unknown): Date | null {
+  if (typeof v !== "string") return null;
+  const d = new Date(v);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
 
 /**
  * The Supabase Storage implementation. `signUpload` returns the token-bearing URL and the exact
@@ -519,6 +559,61 @@ export function makeSupabaseStagingStorage(
       return opts?.maxBytes === undefined
         ? new Uint8Array(await res.arrayBuffer())
         : await readObjectWithin(res as unknown as Response, opts.maxBytes);
+    },
+
+    /**
+     * Supabase's listing is FOLDER-SHAPED: one call answers about one prefix, and an object path
+     * here is `<accountId>/<ticketId>`, so a full walk is two levels. The cursor carries both
+     * offsets — the account folder's index and how far into it we are — which keeps the port's
+     * contract one opaque string while the walk stays resumable across pages and across runs.
+     * A folder entry is the one with no `id`; the account prefix is what makes the two levels
+     * exist at all (see {@link stagingObjectPath}).
+     */
+    async list(cursor, limit) {
+      const [f, o] = (cursor ?? "0|0").split("|");
+      let folderAt = Number.parseInt(f ?? "0", 10) || 0;
+      const objectAt = Number.parseInt(o ?? "0", 10) || 0;
+
+      const page = async (prefix: string, lim: number, offset: number): Promise<Array<{
+        name?: unknown; id?: unknown; updated_at?: unknown; created_at?: unknown;
+        metadata?: { size?: unknown } | null;
+      }>> => {
+        const res = await fetchImpl(`${base}/object/list/${encodeURIComponent(cfg.bucket)}`, {
+          method: "POST",
+          headers: { ...auth, "content-type": "application/json" },
+          body: JSON.stringify({
+            prefix, limit: lim, offset, sortBy: { column: "name", order: "asc" },
+          }),
+        });
+        if (!res.ok) {
+          throw new AttachmentStagingStorageError("list", res.status, await res.text().catch(() => ""));
+        }
+        const body = await res.json();
+        return Array.isArray(body) ? body : [];
+      };
+
+      // Walk forward over EMPTY folders rather than returning an empty page with a cursor that
+      // has not moved: a caller that stops on an empty page would stop at the first one.
+      for (;;) {
+        const folders = await page("", 1, folderAt);
+        const folder = folders[0];
+        if (!folder || typeof folder.name !== "string") return { objects: [], cursor: null };
+        const rows = await page(folder.name, limit, objectAt);
+        const objects = rows
+          .filter((r) => r.id != null && typeof r.name === "string")
+          .map((r) => ({
+            objectPath: `${folder.name as string}/${r.name as string}`,
+            lastModifiedAt: stagedInstant(r.updated_at ?? r.created_at),
+            sizeBytes: typeof r.metadata?.size === "number" ? r.metadata.size : null,
+          }));
+        if (rows.length >= limit) {
+          return { objects, cursor: `${folderAt}|${objectAt + rows.length}` };
+        }
+        folderAt += 1;
+        if (objects.length > 0) return { objects, cursor: `${folderAt}|0` };
+        // An empty (or all-folder) page: keep walking rather than handing back a dead page.
+        if (folderAt > MAX_STAGING_LIST_FOLDERS) return { objects: [], cursor: null };
+      }
     },
 
     async remove(objectPaths) {
@@ -583,6 +678,14 @@ export const S3_UPLOAD_GRANT_TTL_SECONDS = 3600;
  * not cover it. Key segments are percent-encoded — keys here are ids by construction, but a URL
  * builder must not trust that.
  */
+/** The five entities S3 escapes in a key. Nothing else appears in a response body it writes. */
+function decodeXmlText(v: string): string {
+  return v
+    .replace(/&lt;/g, "<").replace(/&gt;/g, ">")
+    .replace(/&quot;/g, "\"").replace(/&apos;/g, "'")
+    .replace(/&amp;/g, "&");
+}
+
 export function s3StagingObjectUrl(
   cfg: Pick<S3StagingStorageConfig, "endpoint" | "bucket">, objectPath: string,
 ): string {
@@ -655,6 +758,40 @@ export function makeS3StagingStorage(
       return opts?.maxBytes === undefined
         ? new Uint8Array(await res.arrayBuffer())
         : await readObjectWithin(res as unknown as Response, opts.maxBytes);
+    },
+
+    /**
+     * `ListObjectsV2`, read out of the XML by hand. Three fields off a flat response do not
+     * justify an XML parser, and the shapes are fixed by the S3 API: `Key`, `LastModified`,
+     * `Size`, with `NextContinuationToken` when the answer was truncated. The cursor IS that
+     * token, which is what makes the walk resumable on a store that has no offsets.
+     */
+    async list(cursor, limit) {
+      const u = new URL(urlFor(""));
+      u.searchParams.set("list-type", "2");
+      u.searchParams.set("max-keys", String(limit));
+      if (cursor) u.searchParams.set("continuation-token", cursor);
+      const req = await client.sign(u.toString(), { method: "GET" });
+      const res = await fetchImpl(req);
+      if (!res.ok) {
+        throw new AttachmentStagingStorageError("list", res.status, await res.text().catch(() => ""));
+      }
+      const xml = await res.text();
+      const objects: StagedObjectListing[] = [];
+      for (const m of xml.matchAll(/<Contents>([\s\S]*?)<\/Contents>/g)) {
+        const body = m[1] ?? "";
+        const key = /<Key>([\s\S]*?)<\/Key>/.exec(body)?.[1];
+        if (key === undefined) continue;
+        const size = /<Size>(\d+)<\/Size>/.exec(body)?.[1];
+        objects.push({
+          objectPath: decodeXmlText(key),
+          lastModifiedAt: stagedInstant(/<LastModified>([\s\S]*?)<\/LastModified>/.exec(body)?.[1]),
+          sizeBytes: size === undefined ? null : Number.parseInt(size, 10),
+        });
+      }
+      const truncated = /<IsTruncated>\s*true\s*<\/IsTruncated>/i.test(xml);
+      const next = /<NextContinuationToken>([\s\S]*?)<\/NextContinuationToken>/.exec(xml)?.[1];
+      return { objects, cursor: truncated && next ? decodeXmlText(next) : null };
     },
 
     async remove(objectPaths) {
@@ -821,6 +958,188 @@ export async function drainExpiredStaging(deps: {
   // different claims whenever a page failed, and reporting the second one from the first is how a
   // growing bucket reads as a clean sweep.
   return { deleted, pages, failedPages, drained: stoppedBy === "dry" && failedPages === 0, stoppedBy };
+}
+
+/**
+ * HOW OLD AN OBJECT MUST BE BEFORE ITS MISSING TICKET MEANS ANYTHING — 25 hours.
+ *
+ * The ticket row is written BEFORE the signed URL is handed out, so a live upload always has a
+ * row. What the reconciliation must not do is race the mint: an object listed between one
+ * process's insert and this process's read would look ticketless for a moment. Every live
+ * ticket is younger than {@link ATTACHMENT_STAGING_TTL_MS}, and the expiry sweep runs hourly,
+ * so an object older than the TTL plus one sweep interval cannot belong to any ticket that
+ * should still exist. A DERIVED bound, not a chosen one: it moves with the TTL it is about.
+ */
+export const STAGING_ORPHAN_MIN_AGE_MS = ATTACHMENT_STAGING_TTL_MS + 60 * 60 * 1000;
+
+/** How many objects one listing page takes. */
+export const STAGING_RECONCILE_PAGE = 200;
+
+/** How many objects one reconciliation may examine. A ceiling on work, like the drain's. */
+export const STAGING_RECONCILE_MAX_OBJECTS = 20_000;
+
+/** The wall-clock budget for one reconciliation — it shares the worker's serial slot. */
+export const STAGING_RECONCILE_DEADLINE_MS = 60_000;
+
+/** What one reconciliation did. Counts only: an object path names an account and a ticket. */
+export interface StagingReconcileResult {
+  /** Objects listed. */
+  scanned: number;
+  /** Objects old enough to judge that have no ticket row. */
+  orphans: number;
+  /** Of those, how many were deleted. Equal to `orphans` unless this was a dry run. */
+  deleted: number;
+  /** Objects whose path is not `<accountId>/<ticketId>`. Counted, NEVER deleted. */
+  unrecognised: number;
+  pages: number;
+  /** Which bound ended the walk. `"dry"` is the ordinary answer: the bucket was walked whole. */
+  stoppedBy: "dry" | "objects" | "deadline";
+  /** TRUE only when the whole bucket was walked AND nothing was left undeleted. */
+  complete: boolean;
+}
+
+/** Thrown when a reconciliation is asked of a store that cannot list its own bucket. */
+export class StagingListingUnsupportedError extends Error {
+  constructor() {
+    super("this staging storage cannot list its bucket; orphans cannot be reconciled");
+    this.name = "StagingListingUnsupportedError";
+  }
+}
+
+/** `<accountId>/<ticketId>` → the ticket id, or `null` when the path is not one of ours. */
+export function stagingTicketIdOf(objectPath: string): string | null {
+  const parts = objectPath.split("/");
+  if (parts.length !== 2) return null;
+  const [account, ticket] = parts;
+  const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  return account && ticket && uuid.test(account) && uuid.test(ticket) ? ticket : null;
+}
+
+/**
+ * WALK THE BUCKET AND DELETE THE BYTES NO TICKET NAMES.
+ *
+ * The expiry sweep works from tickets, so it can only remove what it can still see. A signed PUT
+ * outlives the erasure that removed its ticket and the sweep that removed its object: the bytes
+ * it writes afterwards are in the bucket with no row anywhere pointing at them, and nothing would
+ * ever have looked at them again. This is the pass that works the other way round — from the
+ * objects — which is also why it catches whatever has already leaked that way.
+ *
+ * SAFE BY AGE, not by a lock: see {@link STAGING_ORPHAN_MIN_AGE_MS}. An object whose store
+ * declared no timestamp at all is left alone and counted, because "I do not know how old this is"
+ * is not "it is old". A path that is not `<accountId>/<ticketId>` is somebody else's object in a
+ * bucket that is supposed to hold only ours, and this pass reports it rather than deleting it.
+ *
+ * `dryRun` is what an operator's read-only count uses: everything is walked and judged and
+ * nothing is removed. Counts only — an object path names an account and a ticket, and neither
+ * belongs in a log line.
+ */
+export async function reconcileStagingOrphans(deps: {
+  storage: AttachmentStagingStorage;
+  /** Which of these ticket ids still have a row. The db half; scoped by the caller. */
+  ticketsPresent: (ids: readonly string[]) => Promise<Set<string>>;
+  now: Date;
+  dryRun?: boolean;
+  pageSize?: number;
+  maxObjects?: number;
+  deadlineMs?: number;
+  minAgeMs?: number;
+  /** Injected so a test can drive the deadline without waiting for it. */
+  clock?: () => number;
+  /** Called once per failed page. The worker logs; nothing here decides what a failure means. */
+  onPageError?: (err: unknown) => void;
+}): Promise<StagingReconcileResult> {
+  const list = deps.storage.list;
+  if (!list) throw new StagingListingUnsupportedError();
+  const pageSize = deps.pageSize ?? STAGING_RECONCILE_PAGE;
+  const maxObjects = deps.maxObjects ?? STAGING_RECONCILE_MAX_OBJECTS;
+  const deadlineMs = deps.deadlineMs ?? STAGING_RECONCILE_DEADLINE_MS;
+  const minAgeMs = deps.minAgeMs ?? STAGING_ORPHAN_MIN_AGE_MS;
+  const clock = deps.clock ?? Date.now;
+  const startedAt = clock();
+  const oldEnoughBefore = deps.now.getTime() - minAgeMs;
+
+  let cursor: string | null = null;
+  let scanned = 0;
+  let orphans = 0;
+  let deleted = 0;
+  let unrecognised = 0;
+  let pages = 0;
+  let failedPages = 0;
+  let stoppedBy: StagingReconcileResult["stoppedBy"] = "dry";
+
+  for (;;) {
+    if (scanned >= maxObjects) { stoppedBy = "objects"; break; }
+    if (clock() - startedAt >= deadlineMs) { stoppedBy = "deadline"; break; }
+
+    const page: StagedObjectPage = await list.call(
+      deps.storage, cursor, Math.min(pageSize, maxObjects - scanned));
+    scanned += page.objects.length;
+    if (page.objects.length > 0) pages += 1;
+
+    const candidates: Array<{ path: string; id: string }> = [];
+    for (const o of page.objects) {
+      const id = stagingTicketIdOf(o.objectPath);
+      if (id === null) { unrecognised += 1; continue; }
+      // No timestamp is not "old": an object the store cannot date is left where it is.
+      if (o.lastModifiedAt === null) continue;
+      if (o.lastModifiedAt.getTime() > oldEnoughBefore) continue;
+      candidates.push({ path: o.objectPath, id });
+    }
+
+    if (candidates.length > 0) {
+      try {
+        const present = await deps.ticketsPresent(candidates.map((c) => c.id));
+        const gone = candidates.filter((c) => !present.has(c.id));
+        orphans += gone.length;
+        if (gone.length > 0 && deps.dryRun !== true) {
+          await deps.storage.remove(gone.map((c) => c.path));
+          deleted += gone.length;
+        }
+      } catch (err) {
+        failedPages += 1;
+        deps.onPageError?.(err);
+      }
+    }
+
+    cursor = page.cursor;
+    if (cursor === null) { stoppedBy = "dry"; break; }
+  }
+
+  return {
+    scanned, orphans, deleted, unrecognised, pages, stoppedBy,
+    // ASSERTED, never inferred, for the drain's reason: "the walk ran out of pages" and "the
+    // bucket holds no orphans" are different claims the moment a page failed or a run was dry.
+    complete: stoppedBy === "dry" && failedPages === 0 && (deps.dryRun === true || deleted === orphans),
+  };
+}
+
+/** Which of these ticket ids still have a row. The db half of {@link reconcileStagingOrphans}. */
+export async function stagingTicketsPresent(
+  tx: Tx, ids: readonly string[],
+): Promise<Set<string>> {
+  if (ids.length === 0) return new Set();
+  const rows = await tx.select({ id: attachmentStaging.id })
+    .from(attachmentStaging)
+    .where(inArray(attachmentStaging.id, [...ids]));
+  return new Set(rows.map((r) => r.id));
+}
+
+/**
+ * The reconciliation bound to a database handle — what the worker's maintenance slot calls,
+ * beside {@link sweepExpiredStagingFor} and for the reason that one cannot cover.
+ */
+export async function reconcileStagingOrphansFor(
+  db: Tx, storage: AttachmentStagingStorage, now: Date,
+  opts: {
+    dryRun?: boolean; pageSize?: number; maxObjects?: number; deadlineMs?: number;
+    minAgeMs?: number; clock?: () => number; onPageError?: (err: unknown) => void;
+  } = {},
+): Promise<StagingReconcileResult> {
+  return reconcileStagingOrphans({
+    storage, now,
+    ticketsPresent: (ids) => stagingTicketsPresent(db, ids),
+    ...opts,
+  });
 }
 
 /**
