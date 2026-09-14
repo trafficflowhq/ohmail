@@ -905,17 +905,48 @@ export function parseClaim(raw: string, ref?: unknown, serverStamp?: Date | null
 export function ownClockSkewMs(
   records: readonly RawClaimMessage[], installId: string,
 ): number | null {
+  return ownClockReading(records, installId)?.skewMs ?? null;
+}
+
+/**
+ * The same measurement, WITH THE RECORD IT CAME FROM — because a discrepancy is only evidence
+ * about the clock this install has NOW if this process is the one that wrote the record.
+ *
+ * Both stamps on a message are immutable. Correcting a computer's clock does not reach back and
+ * change them, so a record written with a wrong clock refuses every later cycle by itself — and
+ * the refusal precedes the append, so no record measurable under the CORRECTED clock can ever be
+ * written. A person who fixed their clock was refused for ever, by a sentence blaming the clock
+ * they had just fixed. The nonce is what tells the two cases apart: see the gate's use of
+ * {@link writtenByThisProcess}.
+ */
+export function ownClockReading(
+  records: readonly RawClaimMessage[], installId: string,
+): { skewMs: number; nonce: string } | null {
   let newestServer = -Infinity;
-  let skewMs: number | null = null;
+  let reading: { skewMs: number; nonce: string } | null = null;
   for (const r of records) {
     const at = r.internalDate instanceof Date ? r.internalDate.getTime() : NaN;
     if (!Number.isFinite(at) || at <= newestServer) continue;
     const c = parseClaim(r.raw, r.ref);
     if (c === null || isMalformed(c) || c.installId !== installId) continue;
     newestServer = at;
-    skewMs = c.heartbeat.getTime() - at;
+    reading = { skewMs: c.heartbeat.getTime() - at, nonce: c.nonce };
   }
-  return skewMs;
+  return reading;
+}
+
+/**
+ * DID THIS PROCESS WRITE THAT RECORD? — and it is deliberately NOT {@link bearsOurNonce}.
+ *
+ * `bearsOurNonce` answers "may I treat this claim as mine", and with no armed nonce its answer is
+ * yes: a fresh process trusts any claim wearing its id exactly once, which is what keeps own-role
+ * resumption working. This asks the opposite question — "is this record evidence about the state I
+ * am in now" — and with no armed nonce the honest answer is NO, because the record predates this
+ * process's memory entirely.
+ */
+export function writtenByThisProcess(self: LeaseSelf, nonce: string): boolean {
+  if (self.lastNonce === null) return false;
+  return nonce === self.lastNonce || (self.pendingNonce != null && nonce === self.pendingNonce);
 }
 
 /**
@@ -3782,9 +3813,36 @@ export async function runLeaseGate(input: LeaseGateInput): Promise<LeaseGateResu
     // longer configured window is silently the smaller of the two. Said out loud, never widened.
     log("lease_window_above_skew_cutoff", { staleAfterMs: staleWindowMs, effectiveMs: MAX_FUTURE_SKEW_MS });
   }
-  const skew = clockSkewRefusal({
-    skewMs: ownClockSkewMs(messages, self.installId), staleAfterMs: staleWindowMs,
+  const clockReading = ownClockReading(messages, self.installId);
+  /**
+   * A DISCREPANCY ON A RECORD THIS PROCESS DID NOT WRITE COSTS ONE RENEWAL, NOT THE MAILBOX.
+   *
+   * Both stamps on a claim are immutable, so a record written with a wrong clock goes on refusing
+   * for ever — and because the refusal precedes the append, no record measurable under a CORRECTED
+   * clock can ever be written. A person who set their clock was told, every cycle, that the clock
+   * they had just fixed was wrong, and their mail stopped. So a record from before this process's
+   * memory is admitted once: the renewal it licenses writes a claim under the clock this install
+   * has NOW, and every cycle after it measures THAT one and refuses if it is still wrong.
+   *
+   * THE RESIDUAL, STATED: a process that keeps running across a correction goes on measuring the
+   * record it wrote with the wrong clock until it is next launched. The protection is unchanged in
+   * the direction that matters — an install whose clock is wrong writes one claim per launch and
+   * then stops — and nothing here widens the bound.
+   */
+  const staleReading = clockReading !== null && !writtenByThisProcess(self, clockReading.nonce);
+  const skew = staleReading ? null : clockSkewRefusal({
+    skewMs: clockReading?.skewMs ?? null, staleAfterMs: staleWindowMs,
   });
+  if (staleReading) {
+    const wouldRefuse = clockSkewRefusal({
+      skewMs: clockReading?.skewMs ?? null, staleAfterMs: staleWindowMs,
+    });
+    if (wouldRefuse !== null) {
+      log("lease_clock_skew_stale_reading", {
+        skewMs: wouldRefuse.skewMs, bound: wouldRefuse.bound, boundMs: wouldRefuse.boundMs,
+      });
+    }
+  }
   if (skew === null) {
     /* Re-armed the moment the clock is inside the bound again, so the line is written once PER
        EPISODE rather than once per process: a clock corrected and then broken again is a second
