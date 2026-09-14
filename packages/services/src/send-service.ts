@@ -11,6 +11,7 @@ import {
 } from "@trafficflow/core/mail";
 import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import { withAccountTx, type ServiceContext } from "./context.js";
+import { draftContentRevision } from "./draft-revision.js";
 import type { AttachmentAdapter, OpenAdapter } from "./attachments-service.js";
 import { ServiceError, SettleFailed, TransientDialRefusal } from "./errors.js";
 import { sanitizeOutboundHtml } from "./outbound-html.js";
@@ -236,6 +237,13 @@ export interface SendInput {
    * quote is exactly the seam a redacted body would escape through.
    */
   forwardOf?: string | null;
+  /**
+   * WHICH VERSION OF THE DRAFT THIS PRESS WAS COMPOSED AGAINST — the `DraftDTO.contentRevision`
+   * the client last saw, carried back so the send can assert the row is still the one it wrote.
+   * Absent means UNSTATED (a client that predates the field), and an unstated press is admitted:
+   * the refusal exists to stop a wrong delivery, not to stop an older client sending its own mail.
+   */
+  ifContentRevision?: string;
 }
 
 /** How many original parts a forward may re-attach, and their combined byte ceiling. */
@@ -1152,6 +1160,28 @@ export class SendService {
       // `'error'` is the worker's IMAP verdict, SMTP a different transport. THE HELD STAGED FAULT
       // is raised here for the identical reason.
       if (stagedFault) throw stagedFault;
+
+      /**
+       * THE ROW IS STILL THE ONE THIS PRESS WAS COMPOSED AGAINST — the send-what-you-see gate.
+       *
+       * Two windows hold one draft: the second one's delayed autosave commits between the final
+       * save and this request, and everything below reads the ROW — its recipients, its words —
+       * so the press delivered somebody else's message to somebody else's address and reported
+       * success for it. Refused, never sent-with-a-warning: the author reviews the row and
+       * presses again, and that second press carries the revision its own save returned.
+       *
+       * ABOVE every other new-reservation precondition, because each of those is computed FROM
+       * the row: judged on a row the caller never saw they answer about somebody else's content.
+       * BELOW the insert for the reason the checks around it give — the CONFLICT branch has
+       * already returned, so an idempotent replay of a settled send is never told this instead of
+       * its stored outcome.
+       */
+      if (input.ifContentRevision && input.ifContentRevision !== draftContentRevision(d)) {
+        throw new ServiceError(
+          "draft_changed", 409,
+          "This draft changed in another window. Review it before sending.",
+        );
+      }
 
       // THE RECIPIENT CAP, with the other NEW-RESERVATION preconditions. The three lists are on
       // the row this transaction already locked, so the total costs nothing — and this is the

@@ -951,6 +951,15 @@ export interface DraftDTO {
   sendError: string | null;
   createdAt: ISODateTime;
   updatedAt: ISODateTime;
+  /**
+   * WHICH VERSION OF THIS DRAFT THIS IS — an opaque server-minted digest of the row's sendable
+   * content. A client carries the one it last saw back on the send (`ifContentRevision`); a send
+   * naming a revision the row has moved off is refused, `draft_changed`, and nothing goes. Not
+   * `updatedAt`: that moves when a second window writes an identical buffer back, and refusing a
+   * send over a change nobody can see is a false alarm. Opaque — never parsed, never recomputed
+   * client-side (`draftContentRevision` is the one implementation).
+   */
+  contentRevision: string;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

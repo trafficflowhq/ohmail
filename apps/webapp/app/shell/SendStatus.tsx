@@ -81,7 +81,16 @@ export function SendStatus({
              */
             ? send.code === "mailbox_disabled"
               ? { tone: "error", text: t("statusMailboxDisabled") }
-              : { tone: "error", text: t("statusFailed") }
+              /**
+               * ANOTHER WINDOW WROTE THIS DRAFT BETWEEN THE LAST SAVE AND THIS PRESS. `warn`, not
+               * `error`: nothing failed and nothing left — the row simply is not the message this
+               * screen was looking at, and sending it would have delivered somebody else's words.
+               * The editor is untouched (only a confirmation spends it), so the words are still
+               * here; pressing Send again writes them back and goes.
+               */
+              : send.code === "draft_changed"
+                ? { tone: "warn", text: t("statusDraftChanged") }
+                : { tone: "error", text: t("statusFailed") }
             : send.phase === "duplicate"
               /**
                * The server already has this message — three facts, three sentences. `warn`, not `error`:

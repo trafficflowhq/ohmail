@@ -27,6 +27,29 @@ interface SendRequestBody {
   stagedAttachmentIds?: unknown;
   /** Forward this original — the server reads it, refuses a no_forward one, and quotes it. */
   forwardOf?: string;
+  /**
+   * WHICH VERSION OF THE DRAFT THIS PRESS WAS COMPOSED AGAINST — the `DraftDTO.contentRevision`
+   * the client last saw. The send refuses a row that has moved off it (`draft_changed`, 409) and
+   * delivers nothing. Absent is UNSTATED, which a client predating the field is: it sends as it
+   * always did.
+   */
+  ifContentRevision?: unknown;
+}
+
+/**
+ * The vouched revision, shape-checked. An opaque server-minted sha-256 hex digest, so the shape
+ * IS the bound — and a malformed one is a 400 rather than a 409: answering "this draft changed"
+ * to a caller whose token was never a revision would name the wrong fault.
+ */
+function readContentRevision(raw: unknown): string | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  if (typeof raw !== "string" || !/^[0-9a-f]{64}$/.test(raw)) {
+    throw new ServiceError(
+      "validation_failed", 400,
+      "ifContentRevision must be a draft revision as the server issued it",
+    );
+  }
+  return raw;
 }
 
 /**
@@ -269,6 +292,9 @@ export const draftsRoutes: Route[] = [
       const attachments = decodeSendAttachments(body.attachments);
       const stagedAttachmentIds = readStagedIds(body.stagedAttachmentIds);
       const forwardOf = typeof body.forwardOf === "string" && body.forwardOf.length > 0 ? body.forwardOf : undefined;
+      // THE ROW THIS PRESS SAW. Threaded to `SendService.reserve`, which compares it against the
+      // row it locks — see `SendInput.ifContentRevision`.
+      const ifContentRevision = readContentRevision(body.ifContentRevision);
       // Prod: decrypt both imap+smtp creds → connected ImapAdapter. Tests
       // may inject a fake/GreenMail send spy via `deps.services.sendAdapter`.
       const openSendAdapter = deps.services?.sendAdapter ?? ((mailboxId: string) => makeSendAdapter(deps, mailboxId));
@@ -303,7 +329,8 @@ export const draftsRoutes: Route[] = [
             ? { stagedAttachments: deps.services.attachmentStaging(deps.db).source }
             : {}),
         },
-        { attachments, stagedAttachmentIds, forwardOf },
+        { attachments, stagedAttachmentIds, forwardOf,
+          ...(ifContentRevision ? { ifContentRevision } : {}) },
       );
       switch (result.status) {
         case "sent":

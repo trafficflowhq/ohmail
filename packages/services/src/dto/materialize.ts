@@ -8,6 +8,7 @@ import {
   type EntityType,
 } from "@trafficflow/db";
 import { dialect } from "@trafficflow/db/dialect";
+import { draftContentRevision } from "../draft-revision.js";
 import type { Db } from "../context.js";
 import type {
   FolderDTO, SettingsDTO,
@@ -106,6 +107,11 @@ export function draftRowToDTO(d: typeof drafts.$inferSelect): DraftDTO {
     sendError: d.sendError ?? null,
     createdAt: d.createdAt.toISOString(),
     updatedAt: d.updatedAt.toISOString(),
+    // WHICH VERSION OF THIS DRAFT THE READER IS HOLDING — see `draftContentRevision`. Carried
+    // back on the send so a row another window rewrote under the press is refused rather than
+    // delivered. Derived from the WHOLE row, which is why the bounded page below keeps it while
+    // dropping the body: the client vouches for the row, never for the projection.
+    contentRevision: draftContentRevision(d),
   };
 }
 
