@@ -605,7 +605,7 @@ export class HttpAdapter implements EngineAdapter {
     const wire = (await res.json()) as Partial<UnsubscribeResult>;
     const REFUSALS: readonly UnsubscribeRefusal[] = [
       "not_actionable", "author_failed_authentication", "no_header", "mailto_only",
-      "not_one_click", "already_recorded",
+      "not_one_click", "already_recorded", "previous_attempt_unsettled",
     ];
     return {
       messageId: typeof wire.messageId === "string" ? wire.messageId : messageId,

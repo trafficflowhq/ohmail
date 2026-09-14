@@ -260,19 +260,26 @@ interface TargetState {
 }
 
 /**
- * The one field this side reads out of a pass's own answer, validated rather than believed. A
- * body that is not JSON, is not an object, or whose `remaining` is absent, negative, fractional
- * or not a number at all answers `null` — which leaves the previous reading standing rather than
- * writing a number nobody sent. Bounded by the same 32 KiB the rest of this file assumes of our
- * own routes: a body larger than that is not one of ours and is not parsed.
+ * The one field this side reads out of a pass's own answer, validated rather than believed, in
+ * THREE states because there are three: a number the pass counted, an explicit `null` where the
+ * pass says it did not measure, and `undefined` for a body this side cannot believe — not JSON,
+ * not an object, no such field, or a value that is negative, fractional or not a number. Only the
+ * last leaves the row's previous reading standing. Bounded by the same 32 KiB the rest of this
+ * file assumes of our own routes: a body larger than that is not one of ours and is not parsed.
  */
-export function readRemaining(body: string): number | null {
-  if (body.length > 32 * 1024) return null;
+export function readRemaining(body: string): number | null | undefined {
+  if (body.length > 32 * 1024) return undefined;
   let parsed: unknown;
-  try { parsed = JSON.parse(body); } catch { return null; }
-  if (typeof parsed !== "object" || parsed === null) return null;
+  try { parsed = JSON.parse(body); } catch { return undefined; }
+  if (typeof parsed !== "object" || parsed === null) return undefined;
+  if (!("remaining" in parsed)) return undefined;
   const n = (parsed as { remaining?: unknown }).remaining;
-  if (typeof n !== "number" || !Number.isInteger(n) || n < 0) return null;
+  // THE PASS SAYING "I DID NOT MEASURE" is not the same as a body this side cannot believe, and
+  // the difference decides whether the row keeps its last reading. An explicit null is an answer:
+  // the run did not reach the end of its window, and a stale small number left standing under it
+  // would read as a healthy pass for as long as the pass stayed unable to look.
+  if (n === null) return null;
+  if (typeof n !== "number" || !Number.isInteger(n) || n < 0) return undefined;
   return n;
 }
 
@@ -340,7 +347,10 @@ export function startApiCron(deps: ApiCronDeps): ApiCronHandle {
         const text = await res.text();
         if (res.ok && t.readsRemaining === true) {
           const n = readRemaining(text);
-          if (n !== null) state.remaining = n;
+          // `undefined` is the only value that leaves the row's previous answer standing: a body
+          // this side cannot believe writes nothing. A number and an explicit null are both the
+          // pass's own answer and both replace it.
+          if (n !== undefined) state.remaining = n;
         }
       } catch { /* the status already answered */ }
       outcome = res.ok ? "ok"

@@ -344,7 +344,14 @@ export type UnsubscribeRefusal =
   | "no_header"
   | "mailto_only"
   | "not_one_click"
-  | "already_recorded";
+  | "already_recorded"
+  /**
+   * A record exists whose send did NOT settle as done. It arrives on a 2xx like
+   * `"already_recorded"` and is emphatically NOT it: a claim is written before the request, so a
+   * claim that was stranded or failed means nothing was sent. A surface may not render this one
+   * as a completed unsubscribe.
+   */
+  | "previous_attempt_unsettled";
 
 /**
  * What `POST /messages/:id/unsubscribe` answered on a 2xx. A refusal (409) is NOT this — it is a

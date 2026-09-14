@@ -1619,7 +1619,7 @@ function heldRemoteProps(
  * · `mailto_only`   — the one refusal we owe an explanation: a route exists and ohmail declines it, because it
  *   never sends mail on the user's behalf. Indicator, no action.
  */
-function HeldUnsubscribe({
+export function HeldUnsubscribe({
   state,
   url,
   onUnsubscribe,
@@ -1660,12 +1660,18 @@ function HeldUnsubscribe({
     setBusy(true);
     try {
       const res = await onUnsubscribe();
+      // THE SENTENCE FOLLOWS THE OUTCOME, NOT THE RECORD. `already_recorded` is the only refusal
+      // that means a request settled as sent; `previous_attempt_unsettled` is a claim that never
+      // did, and saying "Already unsubscribed" over it told a person the thing was done while the
+      // mail kept arriving.
       setResult(
         res && res.refusal === "already_recorded"
           ? t("unsubAlready")
-          : res && res.posted
-            ? t("unsubSent")
-            : t("unsubDone"),
+          : res && res.refusal === "previous_attempt_unsettled"
+            ? t("unsubUnfinished")
+            : res && res.posted
+              ? t("unsubSent")
+              : t("unsubDone"),
       );
     } catch (err) {
       // The server's own sentence — never a re-derived one (the same discipline `remoteImages`

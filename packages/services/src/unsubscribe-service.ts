@@ -2,7 +2,7 @@ import { and, asc, eq, gte, inArray, isNull, sql } from "drizzle-orm";
 import { dialect } from "@trafficflow/db/dialect";
 import {
   assertOrganizerRole,
-  accountSettings, messages, messageBodies, folderState, unsubscribeRecords, type Tx,
+  accountSettings, mailboxes, messages, messageBodies, folderState, unsubscribeRecords, type Tx,
 } from "@trafficflow/db";
 import {
   authVerdictFromHeaders, oneClickUnsubscribeUri, unsubscribeHeaderState,
@@ -135,10 +135,26 @@ export type UnsubscribeRefusal =
   /** An `https:` URI exists but the sender did not advertise RFC 8058 one-click. */
   | "not_one_click"
   /**
-   * This mailbox has already asked to leave this list. NOT a failure — it is the record table
-   * doing its whole job, and the honest answer is "nothing more to send".
+   * This mailbox has already asked to leave this list AND THE REQUEST SETTLED AS SENT. NOT a
+   * failure — it is the record table doing its whole job, and the honest answer is "nothing more
+   * to send". It is the only refusal a surface may render as a completed unsubscribe.
    */
-  | "already_recorded";
+  | "already_recorded"
+  /**
+   * A record for this list exists and its send did NOT settle as done — claimed and stranded, or
+   * failed on the wire, or refused by our own address gate. A CLAIM IS NOT AN OUTCOME: this used
+   * to answer {@link UnsubscribeRefusal} `"already_recorded"`, so a person whose unsubscribe was
+   * claimed and never sent was told it had been done while the mail kept arriving. A person's
+   * press re-attempts a stranded or failed one; the automatic pass never does, because it cannot
+   * tell an unattended retry from a second send.
+   */
+  | "previous_attempt_unsettled"
+  /**
+   * The mailbox this message belongs to is disconnected. Nothing is sent in the name of a mailbox
+   * its owner stopped — removal leaves the mirrored mail and the organizer role behind, so the
+   * state is the fact that decides, not the role.
+   */
+  | "mailbox_disconnected";
 
 export interface UnsubscribeResult {
   messageId: string;
@@ -188,13 +204,18 @@ export interface DrainRun {
   accounts: number;
   sweep: UnsubscribeSweep;
   /**
-   * Candidates the window still holds after this run, counted — what the NEXT run will look at.
+   * Candidates the window still holds after this run — what the NEXT run will look at — or `null`
+   * where the counting walk did not reach the end of the window. THE TWO ARE DIFFERENT FACTS: a
+   * zero means nothing is owed, and a `null` means this run did not establish that. Collapsing
+   * them is the defect the walk exists against, where a count taken from a stretch of rows the
+   * pass could not act on reported an empty backlog.
+   *
    * Not a count of unsubscribes owed: a second message from a list this mailbox has already left
    * has no record row of its own (the row is keyed by mailbox and list) and stays in the window
    * until it ages out, looked at each run and posted to never. The question this number answers
    * is whether the pass is keeping up, so what matters about it is whether it GROWS.
    */
-  remaining: number;
+  remaining: number | null;
   elapsedMs: number;
 }
 
@@ -235,16 +256,39 @@ export const UNSUB_DRAIN_TARGETS_PER_ACCOUNT = 10;
 export const UNSUB_DRAIN_BUDGET_MS = UNSUB_DRAIN_RUN_BUDGET_MS;
 
 /**
- * HOW MANY SCREENED-OUT ROWS ONE RUN MAY LOOK AT BEFORE IT FILTERS THEM, and it is the bound the
- * whole defect was missing. The selective fact is `folder_state` — a reject destination inside
- * the window, an indexed read — and the expensive one is the per-message header probe. Asked as
- * one flat join the planner estimates a single row, drives from `messages` and probes the body of
- * every message a deployment holds, which on a large one costs most of a minute before anything
- * bounded has started. The page is a FENCE: the window's rows, oldest first, capped here, and
- * everything else joins what it returns. A page that comes back FULL means there may be more
- * behind it, which is `remaining`'s job to say.
+ * HOW MANY SCREENED-OUT ROWS ONE CHUNK READS BEFORE IT JUDGES THEM. The selective fact is
+ * `folder_state` — a reject destination inside the window, an indexed read — and the expensive one
+ * is the per-message header probe. Asked as one flat join the planner estimates a single row,
+ * drives from `messages` and probes the body of every message a deployment holds, which on a large
+ * one costs most of a minute before anything bounded has started. A subquery carrying its own
+ * LIMIT is not reordered into the join, so this is the FENCE that keeps the shape.
+ *
+ * IT IS A CHUNK, NOT A PAGE, and the difference is a defect this code shipped with: cut once at
+ * the head of the window, a chunk full of rows that turn out to be INELIGIBLE hides everything
+ * behind it for ever — the pass posts nothing and, because the same read answers the progress
+ * count, reports that nothing is owed. The walk below reads chunks in sequence under a cursor that
+ * advances past what it rejected, so progress is monotonic and eligibility is decided AFTER the
+ * cut without the cut deciding what may be reached.
  */
 export const UNSUB_DRAIN_SCAN_PAGE = 2_000;
+
+/**
+ * HOW MANY CHUNKS ONE RUN MAY WALK. The ceiling on a walk that would otherwise be the whole
+ * window; with the chunk above it is what one run examines at most. A walk stopped by this ceiling
+ * has NOT reached the end of the window, which is why `remaining` can answer "not measured" — a
+ * zero from a walk that stopped early is the same lie as a zero from a starved page.
+ */
+export const UNSUB_DRAIN_SCAN_CHUNKS = 8;
+
+/**
+ * WHEN A CLAIM STOPS MEANING "SOMEBODY IS SENDING THIS RIGHT NOW". A record is written before the
+ * request and settled after it, so a `claimed` row is EITHER an attempt in flight or one whose
+ * process died mid-send. Age is what tells them apart, and the difference is load-bearing in both
+ * directions: treat a live one as stranded and eight concurrent presses send eight requests to a
+ * stranger; treat a stranded one as live and a person is told for ever that a send which never
+ * happened is done. Comfortably above one run's whole budget, so nothing in flight can look old.
+ */
+export const UNSUB_CLAIM_STRANDED_MS = 2 * 60 * 1000;
 
 /**
  * The least budget one item is worth starting with. Below it the item is `remaining` — left for
@@ -267,6 +311,48 @@ export interface DrainBudget {
   /** Milliseconds left before the closing reserve — what the POSTING phase may spend. */
   postingLeftMs(): number;
   elapsedMs(): number;
+}
+
+/** Where a walk stopped, as the pair the chunk is ordered by. */
+interface ScanCursor { at: Date; messageId: string }
+
+/** One row a chunk read, with the verdict the chunk computed rather than filtered on. */
+interface ScannedRow { messageId: string; accountId: string; at: Date; eligible: boolean }
+
+/**
+ * BOUND A WAIT BY WHAT IS LEFT, and say which wait it was. One elapsed-time budget that nothing
+ * derives a deadline from is a budget in name: the database calls and the resolver's DNS each wait
+ * on their own clock, and three independent waits of twenty seconds are sixty. The work is not
+ * cancelled — a query already sent runs to its end server-side — but the RUN returns, which is
+ * what the invocation ceiling is about; a pass that is killed reports nothing at all.
+ *
+ * Deliberately NOT used on the claim or the settle: abandoning either is how a claim is stranded,
+ * and a stranded claim is the state this service works hardest to avoid.
+ */
+export async function withDeadline<T>(p: Promise<T>, ms: number, what: string): Promise<T> {
+  if (ms <= 0) throw new ServiceError("unsubscribe_budget_spent", 503, `no budget left for ${what}`);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      p,
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(
+          () => reject(new ServiceError("unsubscribe_budget_spent", 503, `${what} outlived the budget`)),
+          ms,
+        );
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
+/**
+ * The SSRF gate's resolver, wrapped so its DNS lookup takes a slice of the budget rather than the
+ * resolver's own clock. The gate's signature is unchanged — it is handed something that resolves.
+ */
+function resolverWithin(resolver: HostResolver, leftMs: () => number): HostResolver {
+  return { resolve: (hostname: string) => withDeadline(resolver.resolve(hostname), leftMs(), "the address check") };
 }
 
 export function startDrainBudget(
@@ -366,6 +452,8 @@ interface MessageRow {
   fromAddress: string;
   headers: Record<string, unknown>;
   desiredFolder: string | null;
+  /** `connected` | `error` | `disabled`, or `null` where the mailbox row is gone. */
+  mailboxStatus: string | null;
 }
 
 /**
@@ -401,7 +489,13 @@ export class UnsubscribeService {
     ctx: ServiceContext, messageId: string, mode: "manual" | "automatic",
     budget?: DrainBudget,
   ): Promise<UnsubscribeResult> {
-    const row = await this.load(ctx, messageId);
+    // EVERY WAIT DERIVES ITS DEADLINE FROM WHAT IS LEFT. One elapsed-time budget that only the
+    // POST consults is a budget in name: these reads and the address check below each waited on
+    // their own clock, and independent waits add up past the ceiling the run is measured against.
+    const within = <T>(p: Promise<T>, what: string): Promise<T> =>
+      budget === undefined ? p : withDeadline(p, budget.leftMs(), what);
+
+    const row = await within(this.load(ctx, messageId), "the message read");
 
     /**
      * A READER SENDS NO UNSUBSCRIBE (mail 0083). An RFC 8058 one-click POST is an IRREVERSIBLE
@@ -413,18 +507,41 @@ export class UnsubscribeService {
      * past it. PER MAILBOX: `row.mailboxId` is already loaded and used one line below for the
      * trust set, so this costs one indexed read on a row already touched.
      */
-    await assertOrganizerRole(asTx(ctx), dialect(ctx.db), ctx.accountId, row.mailboxId);
+    // THE AWAIT SITS ON THE CALL, and the deadline sits around the wait. `organizer-role-census`
+    // asks every write door for `await assertOrganizerRole(` because a check whose promise is
+    // dropped is not a check — handing the call straight to the budget wrapper satisfied the
+    // budget and made the door invisible to the census, which is the guard doing its job.
+    await within((async () => {
+      await assertOrganizerRole(asTx(ctx), dialect(ctx.db), ctx.accountId, row.mailboxId);
+    })(), "the organizer check");
+
+    /**
+     * A DISCONNECTED MAILBOX IS ACTED FOR BY NOTHING. Beside the role check and not somewhere
+     * else, because the two are one question — is this mailbox still ours to send for — and a
+     * caller that asked half of it would be making an outbound request in the name of a mailbox
+     * its owner stopped. Removal keeps the mirrored messages and the organizer role, so `status`
+     * is the fact that decides; the drain's own walk excludes these rows too, and that one is an
+     * optimisation, not a second decision-maker.
+     */
+    if (row.mailboxStatus === "disabled") {
+      throw new ServiceError("unsubscribe_mailbox_disconnected", 409,
+        "this mailbox is disconnected, and ohmail sends nothing in the name of a mailbox you stopped");
+    }
 
     // Per-mailbox trust, resolved for the mailbox that HOLDS this message — see
     // {@link UnsubscribeDeps.trustedAuthservIdsFor}. Held rather than inlined because its SIZE is
     // a second, independent fact: it says whether an identity claim about this message is
     // CHECKABLE at all, which the verdict alone cannot distinguish from "checked, inconclusive".
-    const trusted = await this.deps.trustedAuthservIdsFor(asTx(ctx), row.mailboxId);
+    const trusted = await within(
+      this.deps.trustedAuthservIdsFor(asTx(ctx), row.mailboxId), "the trust read");
     const identityCheckable = trusted.size > 0;
     const authVerdict = authVerdictFromHeaders(row.headers, row.fromAddress, trusted);
-    await asTx(ctx).update(messages)
-      .set({ authVerdict, updatedAt: ctx.now() })
-      .where(and(eq(messages.id, messageId), eq(messages.accountId, ctx.accountId)));
+    await within(
+      asTx(ctx).update(messages)
+        .set({ authVerdict, updatedAt: ctx.now() })
+        .where(and(eq(messages.id, messageId), eq(messages.accountId, ctx.accountId))),
+      "the verdict write",
+    );
 
     const header = unsubscribeHeaderState(row.headers);
     const refuse = (refusal: UnsubscribeRefusal, status: number, message: string): never => {
@@ -493,12 +610,35 @@ export class UnsubscribeService {
     // message that merely lacked `List-Unsubscribe-Post` leaves NO row and a later message from
     // the same list can still be acted on. The absence of a row means "not yet considered", and
     // that is the only thing it is allowed to mean.
-    const claim = await this.claim(ctx, row, messageId);
-    if (claim === null) {
-      return {
-        messageId, posted: false, status: null, refusal: "already_recorded", header, authVerdict,
-      };
+    const held = await this.claim(ctx, row, messageId);
+    // A CLAIM IS NOT AN OUTCOME. The row is written BEFORE the request, so its mere EXISTENCE says
+    // only that somebody got as far as trying; reading it as "done" told a person their
+    // unsubscribe had been sent when a DNS failure had stopped it, while the mail kept arriving.
+    // Only a settled `sent` is done. A stranded or failed one is retryable BY A PERSON — their
+    // press is an explicit act — and never by the automatic pass, which cannot tell an unattended
+    // retry from a second send. A gate refusal stays consumed: a URL our own gate rejected is not
+    // evidence that a different URL for the same list would be safe.
+    if (!held.fresh) {
+      if (held.state === "sent") {
+        return {
+          messageId, posted: false, status: null, refusal: "already_recorded", header, authVerdict,
+        };
+      }
+      // A `claimed` row younger than {@link UNSUB_CLAIM_STRANDED_MS} is an attempt IN FLIGHT, not
+      // a stranded one, and re-attempting it is the duplicate send the unique index exists to
+      // stop — eight concurrent presses would each find the winner's fresh claim and send.
+      const inFlight = held.state === "claimed"
+        && ctx.now().getTime() - held.updatedAt.getTime() < UNSUB_CLAIM_STRANDED_MS;
+      if (mode === "automatic" || held.state === "refused" || inFlight) {
+        return {
+          messageId, posted: false, status: null,
+          refusal: "previous_attempt_unsettled", header, authVerdict,
+        };
+      }
+      // …and a person's press falls through to the send, on the SAME row. No second row is ever
+      // inserted: the uniqueness on `(mailbox_id, list_key)` is what stops duplicate sends.
     }
+    const claim = held.id;
 
     // The gate runs against the URL we are about to use, immediately before we use it. It is
     // INSIDE the claim deliberately: a refusal here consumes the claim rather than leaving the
@@ -508,7 +648,12 @@ export class UnsubscribeService {
     // steer the second lookup to a private host.
     let pin: string[];
     try {
-      pin = await assertPublicHttpUrl(url!, this.deps.resolver);
+      pin = await assertPublicHttpUrl(
+        url!,
+        // The gate's DNS takes a slice of the budget rather than the resolver's own clock — the
+        // wait UD-R4-01 named, between the claim and the POST.
+        budget === undefined ? this.deps.resolver : resolverWithin(this.deps.resolver, () => budget.leftMs()),
+      );
     } catch (err) {
       await this.settle(ctx, claim, { state: "refused", refusal: "ssrf_gate" });
       throw err;
@@ -640,43 +785,34 @@ export class UnsubscribeService {
     // it stays a candidate for ever — and most screened-out mail publishes no route at all. KEY
     // EXISTENCE only, never a second copy of the grammar; the malformed shape (a `-Post` over
     // `mailto:` alone) survives a pass, and the window is what bounds that.
-    const page = this.scanPage(asTx(ctx), opts.since, ctx.accountId);
-    const candidates = await asTx(ctx).select({ id: page.messageId })
-      .from(page)
-      // INNER, not LEFT: the headers live on the body row, and a message with no body row has no
-      // headers, so it can never be actionable. Its absence is a filter, not a missing value.
-      .innerJoin(messageBodies, eq(messageBodies.messageId, page.messageId))
-      .leftJoin(unsubscribeRecords, eq(unsubscribeRecords.messageId, page.messageId))
-      .where(and(
-        isNull(unsubscribeRecords.id),
-        sql`jsonb_exists(${messageBodies.headers}, 'list-unsubscribe')`,
-        sql`jsonb_exists(${messageBodies.headers}, 'list-unsubscribe-post')`,
-      ))
-      // OLDEST FIRST. An unordered LIMIT is a sample, and a sample can hand back the same rows
-      // for ever while the oldest never move — here that would mean the rows closest to falling
-      // out of the drain's window are the ones it never reaches.
-      .orderBy(asc(page.at), asc(page.messageId))
-      .limit(opts.limit);
-
-    return this.postEach(ctx, candidates.map((c) => c.id), {
-      count: opts.limit,
-      budget: opts.budget ?? startDrainBudget(opts.budgetMs ?? UNSUB_DRAIN_BUDGET_MS, 0),
+    const budget = opts.budget ?? startDrainBudget(opts.budgetMs ?? UNSUB_DRAIN_BUDGET_MS, 0);
+    const walk = await this.walkWindow(asTx(ctx), opts.since, ctx.accountId, {
+      want: opts.limit, budget,
     });
+
+    return this.postEach(ctx, walk.eligible.map((c) => c.messageId), { count: opts.limit, budget });
   }
 
   /**
-   * THE FENCE THE CANDIDATE READS DRIVE FROM. `folder_state` holds the selective fact — a reject
-   * destination inside the window — and the per-message header probe is the expensive one. Asked
-   * as one flat join the planner estimates a single row and drives from `messages`, probing every
-   * body a deployment holds to find the few this pass wants. A subquery carrying its own LIMIT is
-   * not reordered into the join, so the shape holds whatever the planner believes, and
-   * {@link UNSUB_DRAIN_SCAN_PAGE} is what everything else joins against.
+   * ONE CHUNK OF THE WINDOW, JUDGED BUT NOT FILTERED. The fence is the subquery's own LIMIT, which
+   * a planner does not reorder into the join; the eligibility facts hang off it as LEFT joins and
+   * are returned as a FLAG rather than a filter, so the caller sees every row the chunk read and
+   * can advance its cursor past the ones it may not act on. Filtering here is what starved the
+   * pass: rows the cut selected and eligibility then removed hid everything behind them.
+   *
+   * The two mailbox facts are asked TOGETHER — the account's automatic switch and the mailbox's
+   * own connected state — because a disconnected mailbox is acted for by nothing, and a later
+   * caller that asked only one of them would be sending in the name of a mailbox its owner
+   * stopped. `run()` asks the same pair at the seam, where the decision belongs.
    */
-  private scanPage(tx: Tx, since: Date, accountId: string | null) {
-    return tx.select({
+  private async scanChunk(
+    tx: Tx, since: Date, accountId: string | null, after: ScanCursor | null, deadlineMs: number,
+  ): Promise<{ rows: ScannedRow[]; read: number }> {
+    const page = tx.select({
       messageId: folderState.messageId,
       at: folderState.updatedAt,
       accountId: messages.accountId,
+      mailboxId: messages.mailboxId,
     })
       .from(folderState)
       .innerJoin(messages, eq(messages.id, folderState.messageId))
@@ -684,10 +820,99 @@ export class UnsubscribeService {
         inArray(folderState.desiredFolder, REJECT_DESTINATIONS as string[]),
         gte(folderState.updatedAt, since),
         accountId === null ? undefined : eq(messages.accountId, accountId),
+        // THE CURSOR, as a row value so the pair is compared once and the index order is the
+        // comparison's order. `updated_at` alone is not unique; `message_id` is unique in
+        // `folder_state`, so the pair is a stable key. The literals are cast rather than bound
+        // bare: PGlite and postgres@3 disagree on how a Date and a uuid serialize inside a raw
+        // fragment, and the drain has both dialects under it.
+        after === null ? undefined : sql`(${folderState.updatedAt}, ${folderState.messageId}) > (${after.at.toISOString()}::timestamptz, ${after.messageId}::uuid)`,
       ))
+      // OLDEST FIRST. An unordered LIMIT is a sample, and a sample can hand back the same rows
+      // for ever while the oldest never move — here that would mean the rows closest to falling
+      // out of the drain's window are the ones it never reaches.
       .orderBy(asc(folderState.updatedAt), asc(folderState.messageId))
       .limit(UNSUB_DRAIN_SCAN_PAGE)
       .as("scan_page");
+
+    const rows = await withDeadline(
+      tx.select({
+        messageId: page.messageId,
+        at: page.at,
+        accountId: page.accountId,
+        eligible: sql<boolean>`(
+          ${unsubscribeRecords.id} is null
+          and ${accountSettings.blockAutoUnsubscribeAt} is null
+          and ${mailboxes.status} <> 'disabled'
+          and ${messageBodies.messageId} is not null
+          and jsonb_exists(${messageBodies.headers}, 'list-unsubscribe')
+          and jsonb_exists(${messageBodies.headers}, 'list-unsubscribe-post')
+        )`,
+      })
+        .from(page)
+        // EVERY join is LEFT, including the body one that used to be INNER: the caller needs the
+        // chunk's own row count to know whether the window is exhausted and where its cursor goes,
+        // and an inner join would silently shorten the chunk to the rows that happened to qualify.
+        .leftJoin(messageBodies, eq(messageBodies.messageId, page.messageId))
+        .leftJoin(unsubscribeRecords, eq(unsubscribeRecords.messageId, page.messageId))
+        .leftJoin(accountSettings, eq(accountSettings.accountId, page.accountId))
+        .leftJoin(mailboxes, eq(mailboxes.id, page.mailboxId))
+        .orderBy(asc(page.at), asc(page.messageId)),
+      deadlineMs, "the candidate read",
+    );
+
+    return {
+      rows: rows.map((r) => ({
+        messageId: r.messageId, accountId: r.accountId, at: r.at, eligible: r.eligible === true,
+      })),
+      read: rows.length,
+    };
+  }
+
+  /**
+   * WALK THE WINDOW IN CHUNKS UNTIL THERE IS ENOUGH TO DO, OR THERE IS NO MORE WINDOW.
+   *
+   * `exhausted` is the whole point of the return: it is true only where the walk reached the end
+   * of the window, and it is the only state in which a count taken from this walk is a fact. A
+   * walk stopped by the chunk ceiling, by the budget, or because it had enough work knows nothing
+   * about what lies behind it, and must not answer zero on its behalf.
+   */
+  private async walkWindow(
+    tx: Tx, since: Date, accountId: string | null,
+    opts: { want: number; budget: DrainBudget; count?: boolean },
+  ): Promise<{ eligible: ScannedRow[]; eligibleSeen: number; exhausted: boolean; chunks: number }> {
+    const eligible: ScannedRow[] = [];
+    let eligibleSeen = 0;
+    let exhausted = false;
+    let chunks = 0;
+    let after: ScanCursor | null = null;
+
+    while (chunks < UNSUB_DRAIN_SCAN_CHUNKS) {
+      const left = opts.budget.leftMs();
+      if (left <= 0) break;
+      let chunk;
+      try {
+        chunk = await this.scanChunk(tx, since, accountId, after, left);
+      } catch (err) {
+        // A read that ran out of budget STOPS the walk; it does not fail the run and it does not
+        // make `exhausted` true. Anything else is a real fault and belongs to the caller.
+        if (err instanceof ServiceError && err.code === "unsubscribe_budget_spent") break;
+        throw err;
+      }
+      chunks += 1;
+      for (const row of chunk.rows) {
+        if (!row.eligible) continue;
+        eligibleSeen += 1;
+        if (eligible.length < opts.want) eligible.push(row);
+      }
+      // THE CURSOR ADVANCES PAST WHAT THE CHUNK REJECTED — this is the monotonic progress the
+      // single cut did not have. The last row READ, never the last row taken.
+      const last = chunk.rows[chunk.rows.length - 1];
+      if (last !== undefined) after = { at: last.at, messageId: last.messageId };
+      if (chunk.read < UNSUB_DRAIN_SCAN_PAGE) { exhausted = true; break; }
+      if (!opts.count && eligible.length >= opts.want) break;
+    }
+
+    return { eligible, eligibleSeen, exhausted, chunks };
   }
 
   /**
@@ -716,45 +941,45 @@ export class UnsubscribeService {
     const since = new Date(opts.now().getTime() - UNSUB_DRAIN_WINDOW_MS);
     const tx = db as unknown as Tx;
 
-    // The account list is the candidate query one level up, grouped: an account is owed something
-    // iff it has a candidate in the window. OLDEST CANDIDATE FIRST, so the rows closest to
-    // falling out of the window are reached first, and LIMITed — a run's account list is as
-    // unbounded as its target list if nobody says otherwise.
+    // ONE WALK ACROSS THE WINDOW, oldest first, cursored so a stretch of rows this pass may not
+    // act on cannot hide the work behind it. It replaces the grouped account census AND the
+    // per-account candidate read: both asked the same window through the same fence, and a fence
+    // cut once at the head of the window is what let a large screen-out of ineligible rows stop
+    // the pass while its progress number said nothing was owed.
     //
-    // The switch predicate here is an OPTIMISATION and not a second decision-maker: it can only
-    // REMOVE accounts, never admit one, and `postEach` reads the switch at the seam exactly as it
-    // does for an interactive screen-out. Without it a blocked account's candidates would hold a
-    // place in every run until they aged out of the window, which is starvation with a bound
-    // rather than none — the bound is not the argument for leaving it.
-    const page = this.scanPage(tx, since, null);
-    const oldest = sql<string>`min(${page.at})`;
-    const owed = await tx.select({ accountId: page.accountId })
-      .from(page)
-      .innerJoin(messageBodies, eq(messageBodies.messageId, page.messageId))
-      .leftJoin(unsubscribeRecords, eq(unsubscribeRecords.messageId, page.messageId))
-      .leftJoin(accountSettings, eq(accountSettings.accountId, page.accountId))
-      .where(and(
-        isNull(unsubscribeRecords.id),
-        isNull(accountSettings.blockAutoUnsubscribeAt),
-        sql`jsonb_exists(${messageBodies.headers}, 'list-unsubscribe')`,
-        sql`jsonb_exists(${messageBodies.headers}, 'list-unsubscribe-post')`,
-      ))
-      .groupBy(page.accountId)
-      .orderBy(asc(oldest))
-      .limit(accounts);
+    // The account ceiling and the per-account ceiling are applied to what the walk YIELDS, so an
+    // account with a long run of candidates cannot spend the whole batch, and the walk asks for
+    // exactly as much as those two ceilings admit.
+    const walk = await this.walkWindow(tx, since, null, {
+      want: accounts * perAccount, budget,
+    });
+
+    const byAccount = new Map<string, string[]>();
+    for (const row of walk.eligible) {
+      const held = byAccount.get(row.accountId);
+      if (held === undefined) {
+        if (byAccount.size >= accounts) continue;
+        byAccount.set(row.accountId, [row.messageId]);
+      } else if (held.length < perAccount) {
+        held.push(row.messageId);
+      }
+    }
 
     const sweep: UnsubscribeSweep = {
       considered: 0, posted: 0, skipped: 0, failed: 0, remaining: 0,
     };
     let visited = 0;
-    for (const row of owed) {
+    for (const [accountId, ids] of byAccount) {
       // The SAME budget every segment reads, not a slice handed down: an account entered with
       // less than one item's worth left is the next tick's, not this one's half-run.
       if (budget.postingLeftMs() < UNSUB_ITEM_MIN_MS) break;
       visited += 1;
-      const one = await this.sweepScreenedOut(
-        { db, accountId: row.accountId, userId: null, now: opts.now, requestId: opts.requestId },
-        { since, limit: perAccount, budget },
+      // `postEach` reads the account's automatic switch at the SEAM. The walk's own predicate
+      // excludes a blocked account too, and that one is an optimisation: it can only remove an
+      // account, never admit one, and removing the seam's read would move a decision into a query.
+      const one = await this.postEach(
+        { db, accountId, userId: null, now: opts.now, requestId: opts.requestId },
+        ids, { count: perAccount, budget },
       );
       sweep.considered += one.considered;
       sweep.posted += one.posted;
@@ -764,29 +989,23 @@ export class UnsubscribeService {
     }
 
     // WHAT IS STILL OWED, COUNTED RATHER THAN INFERRED — the reserve this budget holds back exists
-    // for this one read. The old answer was a boolean assembled from three guesses (the clock cut
-    // us short, an account left targets, the account list came back full), which cannot tell an
-    // operator whether a pass is keeping up; this is the number the health row carries.
-    const remaining = await this.owedCount(tx, since);
+    // for this one read. It is `null`, never 0, when the counting walk did not reach the end of
+    // the window: a zero that is really "I stopped looking" is the sentence that told an operator
+    // this pass was keeping up while it had not looked at the backlog at all.
+    const remaining = await this.owedCount(tx, since, budget);
 
     return { accounts: visited, sweep, remaining, elapsedMs: budget.elapsedMs() };
   }
 
-  /** How many candidates the window still holds for anyone — the closing read, one page-fenced scan. */
-  private async owedCount(tx: Tx, since: Date): Promise<number> {
-    const page = this.scanPage(tx, since, null);
-    const [row] = await tx.select({ n: sql<number>`count(*)::int` })
-      .from(page)
-      .innerJoin(messageBodies, eq(messageBodies.messageId, page.messageId))
-      .leftJoin(unsubscribeRecords, eq(unsubscribeRecords.messageId, page.messageId))
-      .leftJoin(accountSettings, eq(accountSettings.accountId, page.accountId))
-      .where(and(
-        isNull(unsubscribeRecords.id),
-        isNull(accountSettings.blockAutoUnsubscribeAt),
-        sql`jsonb_exists(${messageBodies.headers}, 'list-unsubscribe')`,
-        sql`jsonb_exists(${messageBodies.headers}, 'list-unsubscribe-post')`,
-      ));
-    return Number(row?.n ?? 0);
+  /**
+   * How many candidates the window still holds for anyone, or `null` where the walk could not
+   * reach the end of it. The two are different facts and the caller may not collapse them.
+   */
+  private async owedCount(tx: Tx, since: Date, budget: DrainBudget): Promise<number | null> {
+    const walk = await this.walkWindow(tx, since, null, {
+      want: 0, count: true, budget,
+    });
+    return walk.exhausted ? walk.eligibleSeen : null;
   }
 
   /**
@@ -822,7 +1041,7 @@ export class UnsubscribeService {
    */
   private async claim(
     ctx: ServiceContext, row: MessageRow, messageId: string,
-  ): Promise<string | null> {
+  ): Promise<{ id: string; fresh: boolean; state: string; updatedAt: Date }> {
     const listKey = unsubscribeListKey(row.headers, row.fromAddress);
     const claimed = await asTx(ctx).insert(unsubscribeRecords).values({
       accountId: ctx.accountId,
@@ -837,7 +1056,34 @@ export class UnsubscribeService {
         target: [unsubscribeRecords.mailboxId, unsubscribeRecords.listKey],
       })
       .returning({ id: unsubscribeRecords.id });
-    return claimed[0]?.id ?? null;
+    const won = claimed[0];
+    if (won !== undefined) return { id: won.id, fresh: true, state: "claimed", updatedAt: ctx.now() };
+
+    // THE CONFLICT CARRIES ITS OWN STATE. Answering only "somebody else has it" is what let a
+    // claim be read as an outcome; the caller decides on the STATE, and the row it names is the
+    // one a re-attempt settles — never a second row.
+    const [existing] = await asTx(ctx).select({
+      id: unsubscribeRecords.id,
+      state: unsubscribeRecords.state,
+      // The AGE is half the answer: it is what tells an attempt in flight from a stranded one.
+      updatedAt: unsubscribeRecords.updatedAt,
+    })
+      .from(unsubscribeRecords)
+      .where(and(
+        eq(unsubscribeRecords.mailboxId, row.mailboxId),
+        eq(unsubscribeRecords.listKey, listKey),
+      ))
+      .limit(1);
+    // The insert conflicted, so a row exists; a read that finds none means it was deleted between
+    // the two statements (an erasure), and that is not this call's to invent an outcome for.
+    if (existing === undefined) {
+      throw new ServiceError("unsubscribe_record_vanished", 409,
+        "the record for this list was removed while we were writing it");
+    }
+    return {
+      id: existing.id, fresh: false, state: existing.state,
+      updatedAt: existing.updatedAt instanceof Date ? existing.updatedAt : new Date(existing.updatedAt),
+    };
   }
 
   /** Record the outcome on a claim we own. Never widens the claim, never releases it. */
@@ -871,10 +1117,15 @@ export class UnsubscribeService {
       fromAddress: messages.fromAddress,
       headers: messageBodies.headers,
       desiredFolder: folderState.desiredFolder,
+      // The mailbox's own connected state, read here so the seam below can ask it in the same
+      // breath as the role. Disconnection leaves the mirrored mail and the organizer role behind,
+      // so the role alone cannot tell whether this mailbox is still ours to act for.
+      mailboxStatus: mailboxes.status,
     })
       .from(messages)
       .leftJoin(messageBodies, eq(messageBodies.messageId, messages.id))
       .leftJoin(folderState, eq(folderState.messageId, messages.id))
+      .leftJoin(mailboxes, eq(mailboxes.id, messages.mailboxId))
       .where(and(eq(messages.id, messageId), eq(messages.accountId, ctx.accountId)))
       .limit(1);
 
@@ -892,7 +1143,7 @@ export class UnsubscribeService {
       : {};
     return {
       mailboxId: row.mailboxId, fromAddress: row.fromAddress,
-      headers, desiredFolder: row.desiredFolder,
+      headers, desiredFolder: row.desiredFolder, mailboxStatus: row.mailboxStatus,
     };
   }
 }

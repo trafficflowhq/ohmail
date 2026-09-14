@@ -831,6 +831,7 @@
     "unsubSending": "Wird gesendet …",
     "unsubSent": "Abmeldung wurde gesendet.",
     "unsubAlready": "Von dieser Liste bist du schon abgemeldet.",
+    "unsubUnfinished": "Ein früherer Versuch ist nicht durchgegangen. Versuch es noch einmal.",
     "unsubDone": "Fertig.",
     "unsubExternal": "Auf der Seite des Absenders abmelden",
     "unsubMailtoOnly": "Dieser Absender bietet die Abmeldung nur per E-Mail an, und ohmail sendet niemals Post in deinem Namen.",

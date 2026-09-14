@@ -685,7 +685,9 @@ export const internalRoutes: Route[] = [
         // COUNTS AND NOTHING ELSE — no account, no sender, no URL. A log line naming which lists
         // somebody left is a privacy leak with a long half-life, and this one is written every
         // time the clock ticks.
-        if (run.sweep.considered > 0 || run.sweep.failed > 0 || run.remaining > 0) {
+        // `remaining === null` means the run did not reach the end of the window, which is a
+        // thing an operator wants in the log precisely because it is not a zero.
+        if (run.sweep.considered > 0 || run.sweep.failed > 0 || run.remaining !== 0) {
           log.info("unsubscribe_drained", {
             accounts: run.accounts,
             claimed: run.sweep.considered,
@@ -696,9 +698,10 @@ export const internalRoutes: Route[] = [
             elapsedMs: run.elapsedMs,
           });
         }
-        // WHAT THE RUN DID AND WHAT IS LEFT. `remaining` is a count and the caller's health row
-        // carries it: a pass that answers a flat outcome cannot tell "delivered one and was
-        // killed" from "did nothing", which is the state this route shipped in.
+        // WHAT THE RUN DID AND WHAT IS LEFT. `remaining` is a count the caller's health row
+        // carries — a pass that answers a flat outcome cannot tell "delivered one and was killed"
+        // from "did nothing" — and it is `null`, never 0, where this run did not reach the end of
+        // the window. A zero that means "I stopped looking" is the same lie in a smaller place.
         return json(200, {
           now: deps.now().toISOString(),
           accounts: run.accounts,

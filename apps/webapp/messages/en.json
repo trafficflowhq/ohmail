@@ -831,6 +831,7 @@
     "unsubSending": "Sending…",
     "unsubSent": "Unsubscribe request sent.",
     "unsubAlready": "Already unsubscribed from this list.",
+    "unsubUnfinished": "We tried before and it did not go through. Try again.",
     "unsubDone": "Done.",
     "unsubExternal": "Unsubscribe on the sender’s site",
     "unsubMailtoOnly": "This sender only offers unsubscribe by email, and ohmail never sends mail on your behalf.",
