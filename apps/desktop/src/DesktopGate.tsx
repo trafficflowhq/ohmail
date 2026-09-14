@@ -57,6 +57,7 @@ import { DesktopDevices } from "./DesktopDevices.js";
 import { awayOverBridge } from "./local-away.js";
 import { organizerNoticeOverBridge } from "./local-organizer-notice.js";
 import { profileImportOverBridge } from "./local-profile-import.js";
+import { localImageWire } from "./local-images.js";
 import { consentOverBridge, consentOverBridgeStandalone } from "./local-consent.js";
 import { olderBodyOverBridge } from "./local-older-body.js";
 import { junkOverBridge } from "./local-junk.js";
@@ -1053,6 +1054,12 @@ export function DesktopGate() {
           : consentDoorFor(status, hostedSession) === "standalone"
             ? { consentTransport: consentOverBridgeStandalone }
             : {})}
+        /* PICTURES, ON EVERY DOOR THIS WINDOW HAS. Unconditional, unlike the consent transport
+           above, because the capability does not differ by door: the local engine serves the
+           image proxy itself, and a paired window's unmatched paths reach the hosted one — both
+           ends run the same `proxyImage` with the same gate. This hands in the pipe; the policy
+           is the door's and the rendering is the shared shell's. */
+        imageWire={localImageWire}
         {...(accountDoor ? { suggestWire: cloudSuggestWire } : {})}
         /* THE REACH-PAST BODY WIRE — BOTH doors, `consentTransport`'s transport-not-a-control
            rule: the door, its states and its sentences are the shared shell's

@@ -1636,6 +1636,11 @@ export function MessagePane({
    * render; absence of the chrome (demo, a client with no attachment service) is handled where
    * the props are passed, by handing `MessageBody` neither of the pair.
    */
+  const onRemoteImages = useCallback(
+    (urls: string[]) => chrome.remoteImages?.needRemote(message.id, urls),
+    [chrome.remoteImages, message.id],
+  );
+
   const onCidImages = useCallback(
     (contentIds: string[]) => chrome.attachments?.needCidImages(message.id, contentIds),
     [chrome.attachments, message.id],
@@ -1688,6 +1693,11 @@ export function MessagePane({
            the attachment seam, never from any url the sender wrote. Both halves travel
            together or not at all: a client with no attachment service (`?demo=1`) hands
            `MessageBody` neither, and every `cid:` box stays blanked exactly as before. */
+        /* The pipe-door's pictures, and the request that fills them. Both absent on a client
+           whose proxy can be named in a `src` — there the chrome holds nothing and this is an
+           empty map, so the rendering is the one that shipped. */
+        resolvedRemoteImages={chrome.remoteImages?.resolvedFor(message.id)}
+        onRemoteImages={onRemoteImages}
         cidImages={chrome.attachments ? chrome.attachments.cidImagesOf(message.id) : undefined}
         onCidImages={chrome.attachments ? onCidImages : undefined}
         onRenderMode={onRenderMode}

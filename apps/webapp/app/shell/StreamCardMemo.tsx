@@ -114,6 +114,8 @@ function StreamCardMemoInner({
         imageProxy={remoteImages ? remoteImages.proxyFor(m.id) : null}
         onLoadRemote={remoteImages && !remoteImages.auto ? () => remoteImages.consent(m.id) : undefined}
         loadTrackingPixels={remoteImages?.loadPixels ?? false}
+        resolvedRemoteImages={remoteImages?.resolvedFor(m.id)}
+        onRemoteImages={remoteImages ? (urls) => remoteImages.needRemote(m.id, urls) : undefined}
         onNotice={setNotice}
       />
     ) : undefined;

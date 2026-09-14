@@ -756,6 +756,7 @@ export function AppShell({
   awayOnHost,
   profileImportTransport,
   consentTransport,
+  imageWire,
   olderBodyWire,
   junkWire,
   trashWire,
@@ -1002,6 +1003,13 @@ export function AppShell({
    */
   consentTransport?: ConsentTransport;
   /**
+   * FETCH ONE REMOTE PICTURE'S BYTES THROUGH THIS SHELL'S DOOR, as a `data:` URI, or `null`
+   * when the door refused. Supplied by a shell whose engine is reached over a pipe rather than
+   * a port, where no `<img src>` can name the proxy; absent on the hosted client, which names
+   * the proxy directly and is left exactly as it shipped.
+   */
+  imageWire?: (messageId: string, url: string) => Promise<string | null>;
+  /**
    * THE REACH-PAST BODY WIRE, when the host has its own — the desktop on its HOSTED door. The
    * shared shell's default is the browser's Cloud client (decided inside `older-body.ts`, which
    * owns the api-client import); the desktop aliases that client to a refusing stub, so without
@@ -1105,6 +1113,7 @@ export function AppShell({
             awayOnHost={awayOnHost}
             profileImportTransport={profileImportTransport}
             consentTransport={consentTransport}
+            imageWire={imageWire}
             olderBodyWire={olderBodyWire}
             junkWire={junkWire}
             trashWire={trashWire}
@@ -1161,7 +1170,7 @@ function MailStateHost({ probe, freshnessProbe, children }: { probe?: MailboxPro
   );
 }
 
-function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, sendSurfaceMaxTotalBytes, accountSection, mailboxSection, aiSection, billingSection, invitesSection, securitySection, aboutSection, desktopSection, devicesSection, defaultMailSection, notificationHost, screeningSection, screenerSuggest, awayTransport, awayIsLocal, awayOnHost, profileImportTransport, consentTransport, olderBodyWire, junkWire, trashWire, suggestWire, firstRun, mailtoDraft, onMailtoDraftSeeded, onUnread }: {
+function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, sendSurfaceMaxTotalBytes, accountSection, mailboxSection, aiSection, billingSection, invitesSection, securitySection, aboutSection, desktopSection, devicesSection, defaultMailSection, notificationHost, screeningSection, screenerSuggest, awayTransport, awayIsLocal, awayOnHost, profileImportTransport, consentTransport, imageWire, olderBodyWire, junkWire, trashWire, suggestWire, firstRun, mailtoDraft, onMailtoDraftSeeded, onUnread }: {
   /** The pull settle watch's read — the same probe `MailStateHost` above provides the strip. */
   mailboxFacts?: MailboxProbe;
   /** See `AppShell`'s prop of this name — absent withholds the organizer notice. */
@@ -1193,6 +1202,13 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
   awayOnHost?: string | null;
   profileImportTransport?: ProfileImportTransport;
   consentTransport?: ConsentTransport;
+  /**
+   * FETCH ONE REMOTE PICTURE'S BYTES THROUGH THIS SHELL'S DOOR, as a `data:` URI, or `null`
+   * when the door refused. Supplied by a shell whose engine is reached over a pipe rather than
+   * a port, where no `<img src>` can name the proxy; absent on the hosted client, which names
+   * the proxy directly and is left exactly as it shipped.
+   */
+  imageWire?: (messageId: string, url: string) => Promise<string | null>;
   /** The reach-past body wire — see the outer prop of the same name. */
   olderBodyWire?: OlderBodyWire;
   /** The Junk window's wire — see the outer prop of the same name. */
@@ -2823,6 +2839,11 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
     mayRead: mayReadOlderBody,
     onFailed: (message) => toast(message),
     mode: consent.blockRemoteImages ? "manual" : "auto",
+    /* THE PIPE-DOOR'S FETCHER. Supplied only by a shell whose engine has no origin a `src` can
+       name (the desktop); absent here means the hosted mechanism, unchanged. It is what turns
+       `apiConfigured()` from the question "can this client show a picture" into one of two
+       ways of answering it. */
+    fetchImage: imageWire,
     // The pixel switch rides the same hook for the same reason `mode` does: the Settings row and
     // the open message read one `useConsentState`, so flipping it re-sanitizes what is on screen.
     // `blockTrackingPixels` rests TRUE, so every unknown arrives as "do not load".
@@ -7740,7 +7761,11 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
                  * preference and change no picture. `cloudClient` is exactly that build fact, and it is checked
                  * rather than `remoteImages !== undefined` only because it names WHY.
                  */
-                remoteImagesSection={demo || !consent.known || !consent.cloudClient ? undefined : (
+                /* GATED ON THE CAPABILITY, not on `cloudClient`. The old test asked "is this a
+                   Cloud build", which answered the right question only for as long as the hosted
+                   door was the only one that could fetch a picture. A desktop whose local door
+                   now serves the proxy would have been refused its own switch by a build fact. */
+                remoteImagesSection={demo || !consent.known || !remoteImages ? undefined : (
                   <>
                     <RemoteImagesRow
                       blocked={consent.blockRemoteImages}

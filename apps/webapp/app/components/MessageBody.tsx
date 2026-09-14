@@ -3167,6 +3167,24 @@ export interface MessageBodyProps {
    */
   cidImages?: ReadonlyMap<string, string>;
   /**
+   * Remote pictures this client has already fetched, as `data:` URIs keyed by the sender's url
+   * — {@link SanitizeOptions.resolvedRemoteImages} verbatim. Supplied only by a door with no
+   * origin to name in a `src`; everywhere else {@link imageProxy} does the work and this is
+   * absent, which is what keeps the hosted rendering byte-identical.
+   */
+  resolvedRemoteImages?: ReadonlyMap<string, string>;
+  /**
+   * ASK FOR THE PICTURES THE FRAME IS SHOWING BLANKED — {@link onCidImages}'s twin, and it
+   * carries the same contract: called with the urls this rendering could show and cannot yet,
+   * termination by the list draining rather than by state here, and a re-fire with an unchanged
+   * list is a cheap no-op by the callee's contract.
+   *
+   * Beacons are never in the list. That is not politeness to the callee: it is the pixel rule,
+   * and putting a classified beacon in a list whose only purpose is "fetch these" would be the
+   * one way this seam could become a tracker's road back.
+   */
+  onRemoteImages?: (urls: string[]) => void;
+  /**
    * Called — from an effect, never during render — with the Content-IDs the FRAMED document
    * references and cannot resolve, in document order, so the shell can fetch exactly those
    * parts. Not called for the frameless rendering (it draws no images; the strip lists them
@@ -3227,6 +3245,8 @@ export function MessageBody({
   onLoadRemote,
   loadTrackingPixels = false,
   cidImages,
+  resolvedRemoteImages,
+  onRemoteImages,
   onCidImages,
   onRenderMode,
   onNotice,
@@ -3331,7 +3351,9 @@ export function MessageBody({
     if (!html) return null;
     if (!mounted || !sanitizerAvailable()) return { state: "unsupported" as const };
     const { html: clean, blocked, sheets, oversize, light, reflow, prose, rich, background, cids } =
-      sanitizeMailHtml(html, { imageProxy: proxy, cidImages, loadPixels: loadTrackingPixels });
+      sanitizeMailHtml(html, {
+        imageProxy: proxy, cidImages, resolvedRemoteImages, loadPixels: loadTrackingPixels,
+      });
     // A message too large to neutralise renders as TEXT, with a reason. Never as a blank
     // frame, and never by taking however long the neutralising would have taken.
     if (oversize) return { state: "oversize" as const };
@@ -3393,7 +3415,7 @@ export function MessageBody({
     // for the same reason `proxy` is — it is half of the document the frame gets — and it is
     // memoized on `imageProxy`, so it moves only when the proxy itself does.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [html, proxy, imgSource, mounted, cidImages, loadTrackingPixels]);
+  }, [html, proxy, imgSource, mounted, cidImages, resolvedRemoteImages, loadTrackingPixels]);
 
   /**
    * THE THREE-TERM ANSWER, IN ONE PLACE SO NOTHING DISAGREES WITH ANYTHING ELSE.
@@ -3612,6 +3634,27 @@ export function MessageBody({
   useEffect(() => {
     if (wantedCids && wantedCids.length > 0) onCidImages?.(wantedCids);
   }, [wantedCids, onCidImages]);
+
+  /**
+   * ── AND THE SAME FOR REMOTE PICTURES, ON A DOOR THAT FETCHES THEM ITSELF ────────────────
+   *
+   * Gated on `remoteLoaded` because that is the whole question the account already answered:
+   * asking for bytes the reader has not consented to would be the per-message button pressing
+   * itself. `pixel` entries are filtered out here rather than by the callee — see
+   * {@link MessageBodyProps.onRemoteImages}. `via === "img"` because a CSS `url()` cannot be
+   * swapped for a `data:` URI by the resolved map, which only rewrites `<img src>`.
+   *
+   * The JOIN is the effect's dependency rather than the array, which would be a fresh identity
+   * every render and would re-fire this on every paint.
+   */
+  const wantedRemote = mail?.state === "ok" && !framelessView && remoteLoaded
+    ? [...new Set(mail.blocked.filter((b) => b.via === "img" && !b.pixel).map((b) => b.url))]
+    : undefined;
+  const wantedRemoteKey = wantedRemote?.join("\u0000");
+  useEffect(() => {
+    if (wantedRemoteKey) onRemoteImages?.(wantedRemoteKey.split("\u0000"));
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- the key IS the array's identity
+  }, [wantedRemoteKey, onRemoteImages]);
 
   /**
    * ── WHAT WAS REFUSED, AND WHAT IS SAID ABOUT IT ─────────────────────────────────────────

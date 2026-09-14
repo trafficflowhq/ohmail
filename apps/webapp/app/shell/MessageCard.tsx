@@ -331,6 +331,13 @@ export function MessageCard({
     [chrome.attachments, message.id],
   );
 
+  /* The remote twin, on the same reasoning as the block above: a sibling panel draws its html
+     through the same `MessageBody`, so a picture is no less absent there. */
+  const onRemoteImages = useCallback(
+    (urls: string[]) => chrome.remoteImages?.needRemote(message.id, urls),
+    [chrome.remoteImages, message.id],
+  );
+
   /**
    * THE SIBLING'S FILES — the found defect this block closes: A conversation panel rendered header and body and
    * NOTHING said the message carried files: the strip lived only on the focused panel, so a reader's own sent reply —
@@ -393,6 +400,8 @@ export function MessageCard({
                 : undefined
             }
             loadTrackingPixels={chrome.remoteImages?.loadPixels ?? false}
+            resolvedRemoteImages={chrome.remoteImages?.resolvedFor(message.id)}
+            onRemoteImages={onRemoteImages}
             cidImages={chrome.attachments ? chrome.attachments.cidImagesOf(message.id) : undefined}
             onCidImages={chrome.attachments ? onCidImages : undefined}
             onRenderMode={onRenderMode}

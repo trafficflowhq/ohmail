@@ -23,6 +23,9 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  INLINE_IMAGE_MAX_BYTES, INLINE_IMAGE_MAX_PARTS, INLINE_IMAGE_MAX_TOTAL_BYTES,
+} from "@ohmail/client-engine";
 import { API_BASE, apiConfigured, messageOf, privacy } from "../api-client";
 
 /**
@@ -63,6 +66,18 @@ export interface RemoteImagesChrome {
    * sanitizer as `SanitizeOptions.loadPixels` and does nothing where no proxy exists.
    */
   loadPixels: boolean;
+  /**
+   * The pictures already fetched for THIS message, as `data:` URIs keyed by the sender's url.
+   * Empty everywhere but a pipe-door: on a client that can name the proxy in a `src`,
+   * {@link proxyFor} is the whole mechanism and nothing is ever held here.
+   */
+  resolvedFor: (messageId: string) => ReadonlyMap<string, string>;
+  /**
+   * Fetch these pictures for this message — called by the rendering with the urls it is showing
+   * blanked and could show. A no-op where there is no fetcher, and idempotent: a url already
+   * held, in flight, or refused is never asked for twice.
+   */
+  needRemote: (messageId: string, urls: string[]) => void;
 }
 
 /**
@@ -115,6 +130,16 @@ export interface RemoteImagesOptions {
    * every unknown arrives here as `false`.
    */
   loadPixels: boolean;
+  /**
+   * FETCH ONE PICTURE'S BYTES THROUGH THE DOOR, for a door with no origin to put in an
+   * `<img src>` — the desktop, whose engine is reached over a pipe and not a port. Resolves to
+   * a `data:` URI, or `null` when the door refused: the SSRF gate, a non-image content type,
+   * the size cap, or an account that opted out.
+   *
+   * ABSENT is the hosted client, and the absence is what keeps it byte-identical — no fetching,
+   * no state, {@link proxyFor} as the only mechanism, exactly as it shipped.
+   */
+  fetchImage?: (messageId: string, url: string) => Promise<string | null>;
 }
 
 /**
@@ -187,8 +212,83 @@ export function useRemoteImages(opts: RemoteImagesOptions): RemoteImagesChrome |
   const auto = opts.mode === "auto";
   const loadPixels = opts.loadPixels;
 
+  /**
+   * ── THE PIPE-DOOR'S PICTURES ────────────────────────────────────────────────────────────
+   *
+   * One map per message of url → `data:` URI, plus the two sets that make {@link needRemote}
+   * idempotent: what is in flight, and what was refused. Refusals are REMEMBERED because the
+   * rendering re-reports its blanked urls on every sanitize pass, and a door that answered "no"
+   * for this url will answer "no" again — without this, a refused picture would be re-fetched
+   * on every render, which is the most expensive loop in the product.
+   */
+  const [resolved, setResolved] = useState<ReadonlyMap<string, ReadonlyMap<string, string>>>(
+    () => new Map(),
+  );
+  const inFlight = useRef(new Set<string>());
+  const refused = useRef(new Set<string>());
+  /** Bytes already spent per message, against the budget the embedded pictures use. */
+  const spent = useRef(new Map<string, number>());
+
+  const fetchImageRef = useRef(opts.fetchImage);
+  fetchImageRef.current = opts.fetchImage;
+
+  const resolvedFor = useCallback(
+    (messageId: string): ReadonlyMap<string, string> => resolved.get(messageId) ?? EMPTY,
+    [resolved],
+  );
+
+  const needRemote = useCallback((messageId: string, urls: string[]): void => {
+    const fetchImage = fetchImageRef.current;
+    if (!fetchImage) return;
+    for (const url of urls) {
+      const key = `${messageId}\u0000${url}`;
+      if (inFlight.current.has(key) || refused.current.has(key)) continue;
+      /* THE PER-MESSAGE PART COUNT, and it is counted against what has been ASKED rather than
+         what arrived: a sender can name any number of pictures, and a bound that only counted
+         successes would let them spend the budget with failures. */
+      const already = resolved.get(messageId)?.size ?? 0;
+      if (already + inFlight.current.size >= INLINE_IMAGE_MAX_PARTS) break;
+      if ((spent.current.get(messageId) ?? 0) >= INLINE_IMAGE_MAX_TOTAL_BYTES) break;
+      inFlight.current.add(key);
+      void (async () => {
+        try {
+          const uri = await fetchImage(messageId, url);
+          /* The per-part ceiling, measured on what ARRIVED. A `data:` URI is base64, so the
+             bytes it carries are about three quarters of its length; the comparison is on the
+             decoded size because that is the number the embedded pictures' ceiling names. */
+          const bytes = uri === null ? 0 : Math.floor((uri.length - uri.indexOf(",") - 1) * 0.75);
+          if (uri === null || bytes > INLINE_IMAGE_MAX_BYTES) {
+            refused.current.add(key);
+            return;
+          }
+          spent.current.set(messageId, (spent.current.get(messageId) ?? 0) + bytes);
+          setResolved((prev) => {
+            const next = new Map(prev);
+            const forMessage = new Map(next.get(messageId) ?? []);
+            forMessage.set(url, uri);
+            next.set(messageId, forMessage);
+            return next;
+          });
+        } catch {
+          /* A door that threw is a door that said no, and it is remembered as one: the reader
+             gets the blanked box, which is what every message showed before any of this. */
+          refused.current.add(key);
+        } finally {
+          inFlight.current.delete(key);
+        }
+      })();
+    }
+  }, [resolved]);
+
   return useMemo(
-    () => (apiConfigured() ? { proxyFor, consented, consent, auto, loadPixels } : undefined),
-    [proxyFor, consented, consent, auto, loadPixels],
+    () => (
+      apiConfigured() || opts.fetchImage
+        ? { proxyFor, consented, consent, auto, loadPixels, resolvedFor, needRemote }
+        : undefined
+    ),
+    [proxyFor, consented, consent, auto, loadPixels, resolvedFor, needRemote, opts.fetchImage],
   );
 }
+
+/** One identity for "this message has no fetched pictures", never mutated. */
+const EMPTY: ReadonlyMap<string, string> = new Map();

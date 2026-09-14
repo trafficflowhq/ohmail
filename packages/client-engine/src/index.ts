@@ -443,6 +443,12 @@ export {
   type StorePolicy,
   DEFAULT_STORE_POLICY,
   type WakeSignalSource,
+  /* The embedded pictures' fetch budget, re-exported so the REMOTE pictures on a pipe-door can
+     spend against the same numbers instead of inventing a second set. They are one budget
+     because they are one cost: bytes this app fetches on an open and carries in the frame. */
+  INLINE_IMAGE_MAX_BYTES,
+  INLINE_IMAGE_MAX_PARTS,
+  INLINE_IMAGE_MAX_TOTAL_BYTES,
 } from "./engine.js";
 
 /* THE MIRROR'S BOUNDS TABLE — total over every entity type, so a type added without an answer
