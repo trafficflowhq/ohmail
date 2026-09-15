@@ -6109,17 +6109,12 @@ export class OhmailEngine {
   }
 
   /**
-   * HOLD A MUTATION THE SERVER QUEUED FOR THE ORGANIZER.
-   *
-   * Three acts, and each of them is the honest one for "recorded, not done":
-   *
-   *  - the OPTIMISTIC PAINT GOES BACK, because the 202's own body carries the row unmoved and
-   *    leaving the overlay would show mail where nobody has put it — the service says exactly
-   *    this at `MessageService.requestMove` ("the client renders waiting-for-holder beside a
-   *    message that has not moved");
-   *  - the DURABLE OUTBOX ENTRY IS DROPPED, because there is nothing to retry: the request is
-   *    stored server-side under this Idempotency-Key and a second POST re-reads the same answer;
-   *  - the REQUEST IS KEPT, in {@link organizerQueue}, until a change confirms it.
+   * HOLD A MUTATION THE SERVER QUEUED FOR THE ORGANIZER. Three acts, each the honest one for
+   * "recorded, not done": the OPTIMISTIC PAINT goes back, because the 202's body carries the row
+   * unmoved and leaving the overlay shows mail where nobody put it; the DURABLE OUTBOX ENTRY is
+   * dropped, because there is nothing to retry — the request is stored server-side under this
+   * Idempotency-Key and a second POST re-reads the same answer; and the REQUEST IS KEPT, in
+   * {@link organizerQueue}, until a change confirms it.
    */
   private async holdForOrganizer(p: PendingMutation, outcome: MutationQueued): Promise<MutationResult> {
     this.overlays.delete(p.id);

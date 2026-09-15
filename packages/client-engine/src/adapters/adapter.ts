@@ -71,19 +71,12 @@ export interface MutationOutcome {
 
 /**
  * THE 202 ARM — the server RECORDED the mutation for the install that organizes the mailbox and
- * did NOTHING ELSE. Nothing moved, nothing was deleted, no rule was written, and no `change_log`
- * row exists to describe it: this answer is the only evidence the press happened.
- *
- * It is a SEPARATE ARM rather than a flag on {@link MutationOutcome} because the two were read as
- * one thing for the length of a release — the adapter dropped the distinction, the drain that
- * followed carried nothing, and the engine settled the request as a completion, so a reader's
- * Move reported "Moved" over mail that had not moved. A queued answer cannot be built without
- * saying who it waits on, which is the property that makes that reading impossible here.
- *
- * `changes` is always empty and `seq` always null for the reason the server states at
- * `MessageService.requestMove`: nothing changed in this account's store, and a seq would advance
- * every client's cursor past a change that does not exist. Both are present so the engine reads
- * ONE shape whichever arm it holds.
+ * did nothing else: nothing moved, no `change_log` row exists, and this answer is the only
+ * evidence the press happened. A SEPARATE ARM rather than a flag on {@link MutationOutcome},
+ * because read as one thing the engine settles the request as a completion and a reader's Move
+ * reports "Moved" over mail that has not moved; a queued answer cannot be built without saying
+ * who it waits on. `changes` is always empty and `seq` always null — nothing changed in this
+ * account's store, and a seq would advance every cursor past a change that does not exist.
  */
 export interface MutationQueued {
   settlement: "queued";

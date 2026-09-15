@@ -214,14 +214,11 @@ export type StartPhoneEngineFromSealed = (deps: {
  * WHAT OPENING THE PLATFORM ANSWERED, AS THIS DOOR TAKES IT — the verdict, never the ready half.
  *
  * `openLocalEnginePlatform` has always returned both arms, and this seam was typed as the pair
- * alone while the app's dynamic import cast the module to that shape. So a platform that REFUSED
- * — an unreadable key ring, a removal still owed on the store — handed back `exec: undefined`,
- * the engine threw on it, and a refusal already carrying a deck key reached the screen as
- * "opening the mailbox stopped" followed by a driver's words. A refusal is only as real as the
- * pipeline it runs through.
- *
- * `exec` stays `unknown` here: the engine is a pre-bundled artifact and this module names none
- * of its types — the wider store type is assignable to it, so the composition still fits.
+ * alone while the dynamic import cast the module to that shape. So a platform that REFUSED — an
+ * unreadable key ring, a removal still owed — handed back `exec: undefined`, the engine threw on
+ * it, and a refusal already carrying a deck key reached the screen as "opening the mailbox
+ * stopped". A refusal is only as real as the pipeline it runs through. `exec` stays `unknown`:
+ * this module names none of the engine's types and the wider store type is assignable to it.
  */
 export type StandalonePlatform =
   | { kind: "ready"; exec: unknown; keks: Record<number, string> }

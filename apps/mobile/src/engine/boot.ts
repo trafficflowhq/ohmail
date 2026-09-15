@@ -306,20 +306,13 @@ export async function forgetMirror(deps: MobileEngineDeps, ownerKey: string): Pr
 export const MOBILE_WINDOW: StorePolicy = { mode: "windowed", days: 90, minRows: 5000, maxRows: 10000 };
 
 /**
- * The `?types=` filter every mobile drain carries — the cellular rule, stated as this client's
- * complete vocabulary. READ FROM THE DECLARATION rather than written out again: it used to be a
- * hand-copied list, and the copy went stale in the one direction that matters. `mailbox` joined
- * `SyncEntityType` and never joined this list, so the phone never asked for the receipt a
- * removal emits — a mailbox removed on the paired desktop kept its messages, its drafts and its
- * cached bodies on the phone, and a reconnect added them again beside the originals. The engine
- * has always known how to sweep them (`store.ts#cascadeMailboxRemoval`); nothing ever told it to.
- *
- * The bound the copy existed for is unchanged and is now structural: the request carries exactly
- * the categories this client can apply, so a server that grows a new type cannot flood a phone
- * with vocabulary it has no reader for — it has to join the declaration first, which is where
- * the store's own handling is written. The precedent behind the rule is the filter that omitted
- * `tag` and shipped a client whose tags silently never arrived; `mailbox` was the same fault a
- * second time, which is why the list is no longer a place anything can be forgotten.
+ * The `?types=` filter every mobile drain carries, READ FROM THE DECLARATION rather than written
+ * out again: the hand-copied list went stale in the one direction that matters. `mailbox` joined
+ * `SyncEntityType` and never joined this list, so the phone never asked for the receipt a removal
+ * emits — a mailbox removed on the paired desktop kept its mail on the phone, and a reconnect
+ * added it again. The engine could always sweep it (`store.ts#cascadeMailboxRemoval`); nothing
+ * told it to. The bound the copy existed for is now structural: a server that grows a new type
+ * has to join the declaration first, which is where the store's own handling is written.
  */
 export const MOBILE_SYNC_TYPES: string[] = [...SYNC_ENTITY_TYPES];
 

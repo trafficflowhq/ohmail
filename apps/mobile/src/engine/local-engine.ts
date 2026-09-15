@@ -175,25 +175,14 @@ async function engineStoreSurvivors(deps: EngineStoreSeams): Promise<string[]> {
 }
 
 /**
- * ── REMOVING THE MAILBOX ON THIS PHONE: THE KEY, THEN THE STORE, EACH READ BACK ─────────────
+ * REMOVING THE MAILBOX ON THIS PHONE: THE KEY, THEN THE STORE, EACH READ BACK.
  *
- * "Stop and remove" used to delete the client mirror and stop — the engine's own store and the
- * key ring that opens the password sealed in it both outlived it, so connecting a DIFFERENT
- * mailbox afterwards booted an engine over the survivor, `ensureLocalWorld` found the existing
- * account, and the removed mailbox was attached beside the new one. A person who removed a
- * mailbox read its mail under the next one's session.
- *
- * KEY FIRST. A kill between the two leaves a store whose sealed password nothing can open,
- * where the other order leaves the key to mail that is still here. Neither is meant to survive:
- * the caller records the removal before this runs, and {@link openLocalEnginePlatform} finishes
- * whatever this did not on the next launch.
- *
- * The probe's second delete is its own litter — opening a deleted name creates it, and leaving
- * that stub would make the next launch read an empty file as a store. It runs ONLY where the
- * probe found nothing, and that condition is not tidiness: unconditional, it deletes the store
- * on the very path where the first delete did not, so either call alone satisfies this function
- * and neither can be watched fail. A guard nobody has watched fail is not evidence, and a second
- * mechanism covering the first measures the pair.
+ * "Stop and remove" used to delete the client mirror and stop, so the engine's store and the key
+ * ring that opens the password in it both outlived it: connecting a DIFFERENT mailbox booted an
+ * engine over the survivor and attached the removed one beside it. KEY FIRST — a kill between
+ * the two leaves a store nothing can open, the other order leaves the key to mail still here.
+ * The probe's second delete runs ONLY where the probe found nothing: unconditional, either call
+ * alone satisfies this function and neither can be watched fail.
  */
 export async function removeStandaloneEngine(deps: EngineStoreSeams): Promise<void> {
   await forgetKek(deps.kv);
@@ -224,22 +213,14 @@ export interface EngineRemovalRecord {
 }
 
 /**
- * Open the engine's store and resolve its key — the two things that must both succeed.
- * Ordered store-then-key on purpose: the key's failure is the one that must not leave a
- * half-built install behind, so an unreadable key closes the store again before the refusal
- * leaves this function — nothing holds a file handle for an engine that will not start. The
- * random source and keystore arrive through seams so the node suite drives this without a
- * native module; production binds the app's existing `secureKV()` — one keystore seam, not a
- * second one for the engine.
+ * Open the engine's store and resolve its key — both must succeed. Ordered store-then-key: an
+ * unreadable key closes the store again before the refusal leaves this function, so nothing
+ * holds a handle for an engine that will not start. The random source and keystore arrive
+ * through seams so the node suite drives this without a native module.
  *
- * ── AND BEFORE EITHER, THE REMOVAL BELT ────────────────────────────────────────────────────
- *
- * This is the ONE gate in front of the engine's store: the door press and the relaunch both
- * arrive here. A removal that was interrupted — killed after the record was written and before
- * the deletions landed — leaves a store holding the removed mailbox, and opening it is exactly
- * the attach the removal existed to prevent. So a recorded removal is FINISHED here and the
- * launch is refused by name; the next press opens a store that no longer exists, which is a
- * fresh one. A deletion that still cannot land leaves the record standing and refuses again.
+ * AND BEFORE EITHER, THE REMOVAL BELT — the ONE gate in front of the engine's store, which the
+ * door press and the relaunch both reach. An interrupted removal leaves a store holding the
+ * removed mailbox, so a recorded removal is FINISHED here and the launch refused by name.
  */
 export async function openLocalEnginePlatform(deps: EngineStoreSeams & {
   randomKekHex: RandomKekHex;

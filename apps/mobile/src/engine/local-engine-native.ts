@@ -33,14 +33,12 @@ export async function openEngineDatabase(name: string = ENGINE_DB_FILE): Promise
 /**
  * REMOVE that same file — the deleter named against the OPENER above, and the pairing is the
  * whole of whether a removal removes anything. The mirror's deleter wraps its argument in
- * `dbFileName` because the mirror's opener does; this file is opened by its own bare name, so
- * wrapping it here would delete `ohmail-engine.db.db` — a database nothing ever wrote to — and
- * report a completed removal over a mailbox still on the phone. `test/forget.test.ts` reads this
- * module as text and refuses the pair drifting.
+ * `dbFileName` because the mirror's opener does; this file is opened by its bare name, so
+ * wrapping it here would delete `ohmail-engine.db.db` and report a completed removal over a
+ * mailbox still on the phone. `test/forget.test.ts` reads this module as text and refuses drift.
  *
- * Swallowed, on `nativeEngineDeps().deleteDatabase`'s rule: `deleteDatabaseAsync` rejects on a
- * name that is not there, and the caller's own read-back is the only thing that decides whether
- * the removal landed — a deleter that silently did nothing is caught by the probe, not by a catch.
+ * Swallowed, on `nativeEngineDeps().deleteDatabase`'s rule: it rejects on a name that is not
+ * there, and the caller's read-back is the only thing that decides whether the removal landed.
  */
 export async function deleteEngineDatabase(name: string = ENGINE_DB_FILE): Promise<void> {
   try {

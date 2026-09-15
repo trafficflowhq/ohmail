@@ -1419,6 +1419,7 @@ const TABLE = {
    * nothing" was reported on the desktop.
    */
   toastMoveAlready: (place: string) => `Already in ${place}.`,
+  /**
    * A MOVE OR DELETE ON A MAILBOX THIS PHONE ONLY READS. The server records the press for the
    * install that organizes the mailbox and answers 202; nothing has moved and nothing is in the
    * bin, so these say what happened rather than what was asked for. The named and unnamed forms

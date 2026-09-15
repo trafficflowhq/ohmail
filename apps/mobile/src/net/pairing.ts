@@ -905,20 +905,14 @@ export async function forgetProfile(
 
   /* ── THE MAILBOX ON THIS PHONE HAS A FOURTH STORE, AND IT IS THE AUTHORITY ────────────────
    *
-   * A pairing's forget spans three stores. A standalone install adds the engine's own —
-   * `ohmail-engine.db`, holding the account the next bootstrap reuses, the mailbox row the
-   * roster attaches, the mail, and the password sealed under the keystore's key ring. None of
-   * it was in this ceremony, so "Stop and remove" left every byte of it and connecting a
-   * DIFFERENT mailbox afterwards served the removed one's mail under the new one's session.
+   * A pairing's forget spans three stores; a standalone install adds the engine's own —
+   * `ohmail-engine.db`, holding the account the next bootstrap reuses, the mailbox row, the mail
+   * and the sealed password. None of it was in this ceremony, so "Stop and remove" left it all.
    *
-   * ORDER: record, key, store, identity. The record is durable and goes FIRST, so a kill
-   * anywhere below is finished by the engine's own bootstrap before it attaches anything; the
-   * key goes before the store, so an interruption leaves a store nothing can open rather than
-   * the key to mail that is still here; the identity row goes last, because while it stands the
-   * launch refuses it (`buildSession`) and the person can press remove again.
-   *
-   * A failure here is a PARTIAL take-back and nothing below it runs: the row stays, the record
-   * stays, and the sentence says the mail is still on the phone — which is the honest state. */
+   * ORDER: record, key, store, identity. The record is durable and goes FIRST so a kill below is
+   * finished by the engine's bootstrap; the identity row goes last, because while it stands the
+   * launch refuses it and the person can press remove again. A failure here is a PARTIAL
+   * take-back: nothing below runs, and the sentence says the mail is still on the phone. */
   if (localOnly && env.standalone) {
     try {
       /* The ACCOUNT ID, which is the identity the bootstrap would otherwise reuse — never the

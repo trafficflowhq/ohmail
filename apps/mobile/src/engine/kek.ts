@@ -122,16 +122,13 @@ export function kekRing(hex: string): Record<number, string> {
 
 /**
  * Remove this install's engine key — the FIRST deletion of the standalone door's take-back, and
- * the order is ruled rather than chosen. Key, then store: a kill between them leaves a store
- * whose sealed password nothing can open, where store-then-key leaves the key to a mailbox
- * whose bytes are still on the phone. Neither residue is meant to survive, which is what the
- * removal record in `state/servers.ts` is for — it is written before this runs and the engine's
- * bootstrap finishes whatever this sequence did not. Note: this key is in the keystore, which on
- * iOS survives deleting the app (`install-marker.ts` states the asymmetry), so the removal is
- * the only thing that takes it.
+ * the order is ruled: key, then store. A kill between them leaves a store whose sealed password
+ * nothing can open; store-then-key leaves the key to a mailbox whose bytes are still here. The
+ * removal record in `state/servers.ts` is written before this runs and the bootstrap finishes
+ * whatever this did not. This key is in the keystore, which on iOS survives deleting the app.
  *
- * READ BACK, on `ensureKek`'s rule: a keystore `remove` that resolves without removing would
- * leave the sealed credential openable while the person was told the mailbox had gone.
+ * READ BACK, on `ensureKek`'s rule: a `remove` that resolves without removing would leave the
+ * sealed credential openable while the person was told the mailbox had gone.
  */
 export async function forgetKek(kv: SecureKV): Promise<void> {
   return serialize(async () => {

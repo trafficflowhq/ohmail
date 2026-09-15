@@ -1931,44 +1931,45 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
       toast(refuse("liveSaveFailed"));
       return false;
     }
-    const retargets: EngineMutation[] = presented.folder === folder
+    /* The plan as DATA first: nothing reaches `engine.mutate` until the list is known non-empty
+       and no request of ours is still waiting on the organizer for this message. The move goes
+       LAST so that, reading back, it is the first queued answer found and names its own holder. */
+    const writes: EngineMutation[] = presented.folder === folder
       ? []
       : holdingRules(raw, m.from.address, presented.folder as Folder).map((r) => ({
         kind: "rule_update",
         ruleId: r.id,
         destination: folder,
       }));
+    if (m.folder !== folder) writes.push({ kind: "move", messageId, folder });
     // Nothing to dispatch means the mail is already in the place it was asked for, rules and all.
     // Said rather than swallowed: a press that returns in silence is the defect this arm had.
-    if (retargets.length === 0 && m.folder === folder) {
+    if (writes.length === 0) {
       toast(refuse("toastMoveAlready", moveTargetLabel(dest)));
       return false;
     }
-    // A press already waiting on the organizer past the engine's bound is ANSWERED, never
-    // dispatched again: a second request would change nothing and the first is still the truth.
     const waiting = stillWaitingFor(messageId);
     if (waiting) { toast(waiting); return true; }
-    const parts = retargets.map((mu) => watched(engine.mutate(mu)));
-    const res = m.folder !== folder
-      ? await engine.mutate({ kind: "move", messageId, folder }).catch(() => null)
-      : null;
-    const rulesOk = (await Promise.all(parts)).every(Boolean);
-    if (res?.status === "awaiting_organizer") {
-      const holder = res.queuedWith?.name ?? null;
+    /* RAW answers, never `watched`: it folds `awaiting_organizer` into landed-or-not, and on a
+       mailbox this phone only reads EVERY write here comes back that way, the rule edits included
+       (`rule_update` is named in the 202 census). Folding them would say "Moved" over a rule
+       nobody made, which is the defect this verb exists to remove. */
+    const answers = await Promise.all(
+      writes.map((w) => engine.mutate(w).catch((): MutationResult | null => null)),
+    );
+    if (answers.some((r) => r === null || r.status === "rolled_back")) {
+      toast(refuse("liveSaveFailed"));
+      return false;
+    }
+    const queued = [...answers].reverse().find((r) => r?.status === "awaiting_organizer");
+    if (queued) {
+      const holder = queued.queuedWith?.name ?? null;
       /* Two calls rather than one with a spread: each sentence is passed exactly its own
          arguments, which is what `refusal.test.ts` reads out of this file's source. */
       toast(holder
         ? refuse("toastMoveQueued", moveTargetLabel(dest), holder)
         : refuse("toastMoveQueuedUnknown", moveTargetLabel(dest)));
       return true;
-    }
-    if (m.folder !== folder && (!res || res.status === "rolled_back")) {
-      toast(refuse("liveSaveFailed"));
-      return false;
-    }
-    if (!rulesOk) {
-      toast(refuse("liveSaveFailed"));
-      return false;
     }
     toast(refuse("toastMoved", moveTargetLabel(dest)));
     return true;

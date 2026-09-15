@@ -160,20 +160,12 @@ const MAX_PENDING_WAKE_DROPS = 24;
 /**
  * THE REMOVAL OF THE MAILBOX ON THIS PHONE, RECORDED BEFORE ANYTHING IS DELETED.
  *
- * "Stop and remove" deletes three things a standalone install has and a pairing does not: the
- * engine's own store, the key ring that opens the password sealed inside it, and the row naming
- * the mailbox. A kill anywhere in that sequence used to leave the store — with the account the
- * next bootstrap reuses, the mailbox row it attaches, and the mail — standing under a person who
- * had pressed remove. So the intent is written FIRST and cleared LAST, and the engine's bootstrap
- * reads it: a recorded removal is finished and refused before any mailbox is attached.
- *
- * The value is the engine's ACCOUNT ID and nothing else — the identity the bootstrap would
- * otherwise reuse. Never an address: a durable record of which mailbox somebody had is exactly
- * what a removal is supposed to end.
- *
- * Its own keystore value rather than an index field, for {@link PendingWakeDrop}'s reason and
- * more so: this record must never fail to be written because an unrelated index write is near
- * iOS's 2 KB warning, and it is the one record whose absence leaves mail on the phone.
+ * A kill during the delete sequence used to leave the engine's store — with the account the next
+ * bootstrap reuses, the mailbox row it attaches, and the mail — standing under a person who had
+ * pressed remove. So the intent is written FIRST and cleared LAST, and the bootstrap reads it.
+ * The value is the engine's ACCOUNT ID and nothing else, never an address: a durable record of
+ * which mailbox somebody had is what a removal is supposed to end. Its own keystore value, so it
+ * can never fail to be written because an unrelated index write is near iOS's 2 KB warning.
  */
 const ENGINE_REMOVAL_KEY = `${PREFIX}.engine-removal`;
 
