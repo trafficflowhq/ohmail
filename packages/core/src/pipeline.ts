@@ -522,7 +522,13 @@ export const UNMETERED_STORAGE_CAP: unique symbol = Symbol("ohmail: unmetered st
 export type StorageCap = number | typeof UNMETERED_STORAGE_CAP;
 
 export interface CommitDeps {
-  repo: RepoPort;
+  /**
+   * `completeFolderState` is REQUIRED, never optional-chained, for {@link ReconcileApplyDeps}'s
+   * reason: the plan this commit persists was computed in phase 1, outside this transaction, so
+   * both writing arms carry the desire they planned against as a witness. An absent method would
+   * collapse "this repo predates the primitive" into "the blind write is fine".
+   */
+  repo: RepoPort & Pick<WorkerRepo, "completeFolderState">;
   accountId: string;
   mailboxId: string;
   routing?: RoutingPort;
@@ -1448,11 +1454,29 @@ export async function commitChange(plan: ChangePlan, deps: CommitDeps): Promise<
 
   switch (e.action.type) {
     case "none": {
-      await repo.upsertFolderState(e.messageId, {
-        desiredFolder: e.state.desiredFolder,
-        observedFolder: e.state.desiredFolder,
+      /* CONDITIONAL, because this plan is older than this transaction: `e.state` was read in
+         phase 1 and the person may have filed the message somewhere else since, a press that
+         succeeded. Writing the planned pair back restored the desire they had just replaced AND
+         marked it reconciled, so the accepted press was cancelled and the row claimed to agree
+         with the server about it. The arrival is a fresh physical fact — `none` IS
+         `arrival.folder === desired` — so a miss still records where the message actually is and
+         leaves the placement to the newer press: the row stays pending against the current
+         desire and the reconciler plans again, once, from that. */
+      const matched = await repo.completeFolderState(e.messageId, {
+        expectDesiredFolder: e.state.desiredFolder,
+        observedFolder: e.arrivalLocator.folder,
         lastSetBy: e.state.lastSetBy,
+        physicalObservation: true,
       });
+      // `false` answers both "a newer intent owns the row" and "there is no row"; only a read
+      // tells them apart, and no row means no intent to preserve.
+      if (!matched && !(await repo.getFolderState(e.messageId))) {
+        await repo.upsertFolderState(e.messageId, {
+          desiredFolder: e.state.desiredFolder,
+          observedFolder: e.state.desiredFolder,
+          lastSetBy: e.state.lastSetBy,
+        });
+      }
       break;
     }
     case "adopt_external": {
@@ -1499,9 +1523,19 @@ export async function commitChange(plan: ChangePlan, deps: CommitDeps): Promise<
       break;
     }
     case "move": {
-      // Leave the pending row as-is (desired != observed); the reconcile runner
-      // realizes the physical move outside any transaction.
-      await repo.upsertFolderState(e.messageId, e.state);
+      // Leave the pending row as-is (desired != observed); the reconcile runner realizes the
+      // physical move outside any transaction. Conditional for the `none` arm's reason: a filing
+      // pressed since phase 1 owns `desired_folder`, and re-asserting the planned pair would send
+      // the mail where the older decision said. A stale echo, so a miss writes nothing — the
+      // press's own row is already pending, which is the queue this arm exists to keep it in.
+      const matched = await repo.completeFolderState(e.messageId, {
+        expectDesiredFolder: e.state.desiredFolder,
+        observedFolder: e.state.observedFolder,
+        lastSetBy: e.state.lastSetBy,
+      });
+      if (!matched && !(await repo.getFolderState(e.messageId))) {
+        await repo.upsertFolderState(e.messageId, e.state);
+      }
       break;
     }
   }

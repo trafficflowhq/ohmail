@@ -1,6 +1,7 @@
 import { commitChange, planChange, type ProcessResult, type StorageCap } from "./pipeline.js";
 import type { AppendedSent } from "./send.js";
 import type { Change, RepoPort, RoutingPort } from "./ports.js";
+import type { WorkerRepo } from "./adapters/drizzle-repo.js";
 
 /**
  * Record-at-send: project the Sent-folder copy this send just made. A PROJECTION OF A WRITE
@@ -33,7 +34,9 @@ export interface RecordSentDeps {
    * how a transaction is opened and what a repo over it is (`makeDrizzleRepo(tx)`), and this file
    * stays a statement about the pipeline.
    */
-  withTx<T>(run: (txRepo: RepoPort & RoutingPort) => Promise<T>): Promise<T>;
+  withTx<T>(
+    run: (txRepo: RepoPort & RoutingPort & Pick<WorkerRepo, "completeFolderState">) => Promise<T>,
+  ): Promise<T>;
 }
 
 /**

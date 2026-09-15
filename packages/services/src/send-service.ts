@@ -10,6 +10,11 @@ import {
   type OpenSendAdapter, type RepoPort, type RoutingPort, type SendAdapter, type StorageCap,
 } from "@trafficflow/core/mail";
 import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
+import type { WorkerRepo } from "@trafficflow/core/adapters/drizzle-repo";
+
+/** The Sent projection's transaction repo: the ports it writes through, plus the conditional
+ *  folder completion `commitChange` requires (the plan is older than the transaction). */
+type SentTxRepo = RepoPort & RoutingPort & Pick<WorkerRepo, "completeFolderState">;
 import { withAccountTx, type ServiceContext } from "./context.js";
 import { draftContentRevision } from "./draft-revision.js";
 import type { AttachmentAdapter, OpenAdapter } from "./attachments-service.js";
@@ -989,7 +994,7 @@ export class SendService {
         withTx: (run) => asTx(ctx).transaction(
           // Carried from `ctx.db`: the transaction object has no dialect brand of its own, and the
           // routing writes this repository performs all compose locking statements.
-          (tx) => run(makeDrizzleRepo(carryDialect(ctx.db, tx) as never) as RepoPort & RoutingPort),
+          (tx) => run(makeDrizzleRepo(carryDialect(ctx.db, tx) as never) as SentTxRepo),
         ),
       });
     } catch (err) {
