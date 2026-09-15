@@ -98,18 +98,14 @@ export const rulesRoutes: Route[] = [
     relay: true,
     cost: "work",
 
-    // The key dance is done HERE rather than by `options: { idempotent: true }`, and for ONE
-    // reason: the concurrent case ends in `not_found` more often than in a lost claim (the loser
-    // blocks on the winner's ROW lock at the delete, wakes to 0 rows and throws before it ever
-    // reaches the claim), and `withIdempotency` catches only the lost claim. The lookup, the hash
-    // and the race are mirrored line for line (`canonicalQuery` imported, so the two hashes
-    // cannot drift).
+    // The key dance is done HERE rather than by `options: { idempotent: true }` for one reason:
+    // the concurrent case ends in `not_found` more often than in a lost claim (the loser blocks on
+    // the winner's ROW lock at the delete and wakes to zero rows), and `withIdempotency` catches
+    // only the lost claim. The lookup and the hash are mirrored line for line (`canonicalQuery`
+    // imported, so the two cannot drift).
     //
-    // What is NOT done here is the replay's SHAPE. It was, and that is the whole defect this
-    // route carried: the handler rendered every stored row as its ordinary 204, so the retry of a
-    // QUEUED delete came back "the rule is gone" while the offline install that organizes the
-    // mailbox still had it. `storedResponse` is the one renderer and the status class is the
-    // row's, never this route's idea of what it usually answers.
+    // What is NOT done here is the replay's SHAPE — it was, and that is this route's defect: every
+    // stored row was rendered as the ordinary 204, so a QUEUED delete replayed as done.
     handler: async (req, deps, params) => {
       const key = req.headers.get("idempotency-key");
       const accountId = deps.session?.accountId;
@@ -119,16 +115,13 @@ export const rulesRoutes: Route[] = [
         jsonResponse(null, { status: 204, seq: seq ?? undefined });
 
       /**
-       * ONE VALUE IS BOTH THE ANSWER AND THE STORED RESPONSE — the same shape `POST /rules` and
-       * `PATCH /rules/:id` use for their queued half. `202` is a delete that removed nothing here
-       * (mail 0094): on an account whose every live mailbox another install organizes the row is
-       * deliberately kept — it is the only visible copy of a rule still running on the machine
-       * that runs it — so 204 would be a false claim, and the service's `claimRequestReplay`
-       * stores exactly this object at exactly this status.
-       *
-       * A mixed account still answers 204: the row IS gone here, and the request in flight to the
-       * other install shows on the rules surface rather than in this response. That cost is old
-       * and stated; what is new is that nothing re-derives which of the two states it holds.
+       * ONE VALUE IS BOTH THE ANSWER AND THE STORED RESPONSE — the shape `POST /rules` and
+       * `PATCH /rules/:id` already use. `202` is a delete that removed nothing here (mail 0094):
+       * the row kept is the only visible copy of a rule still running on the machine that runs
+       * it, so 204 would be a false claim, and `claimRequestReplay` stores exactly this object at
+       * exactly this status. A mixed account still answers 204 — the row IS gone there — and the
+       * request in flight shows on the rules surface instead. What is new is that nothing
+       * re-derives which of the two states it holds.
        */
       const answer = (r: RuleRemoval | RuleRequestResult): Response =>
         "pending" in r ? jsonResponse(r, { status: 202 }) : revoked(r.seq);
