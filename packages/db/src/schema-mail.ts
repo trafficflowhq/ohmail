@@ -25,6 +25,15 @@ const tsvector = customType<{ data: string; driverData: string }>({
   dataType() { return "tsvector"; },
 });
 
+/**
+ * THE NEVER SENTINEL — the instant a "has this ever happened" column carries until it has.
+ *
+ * A shared value rather than a literal per column: the two stores spell the epoch differently in
+ * SQL and this module is conveyed to both, so the instant is written here and each migration
+ * writes its own store's form of it.
+ */
+const EPOCH = new Date(0);
+
 export const mailboxes = pgTable("mailboxes", {
   id: uuid("id").defaultRandom().primaryKey(),
   accountId: uuid("account_id").notNull(),
@@ -1445,9 +1454,13 @@ export const awayResponders = pgTable("away_responders", {
    * is reached before one the pass has already served. NOT `updated_at`: that column is the
    * away EPISODE key (`away_responder_sent.responder_updated_at`), and moving it once a minute
    * would open a new episode each time and re-answer every correspondent.
+   *
+   * The default is written as the INSTANT and not as the server's own function: the migration
+   * spells it `to_timestamp(0)`, which only Postgres accepts, and this module is one the engine
+   * conveys to a store that does not (`dialect-census.test.ts` refuses the function here).
    */
   lastConsideredAt: timestamp("last_considered_at", { withTimezone: true })
-    .notNull().default(sql`to_timestamp(0)`),
+    .notNull().default(EPOCH),
 }, (t) => ({ uqAccount: unique().on(t.accountId) }));   // one row per account ⇒ PUT upserts
 
 /**
