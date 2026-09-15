@@ -213,9 +213,13 @@ jobs:
     # macOS, because the app's Info.plist is read with PlistBuddy here and
     # Sparkle's sign_update is a macOS binary in the job below.
     runs-on: macos-15
-    timeout-minutes: 20
+    timeout-minutes: 30
     permissions:
       contents: read
+      # The builder check reads /actions/runs and /actions/artifacts, which the token refuses
+      # under `contents` alone. A read scope, and the narrowest one that lets this job ask what
+      # the build produced: nothing here can write to a release.
+      actions: read
 
     steps:
       # CHECK OUT THE TAG BEING RELEASED, NOT THE REF THIS RUN WAS LAUNCHED ON.
@@ -463,6 +467,37 @@ jobs:
             echo "Every Linux artifact needs a platform key of its own in latest.json." >&2
             exit 1
           fi
+
+          # ══════════════════════════════════════════════════════════════════
+          # AND NOW THE ONE READING THAT DOES NOT COME OFF THIS RELEASE PAGE.
+          #
+          # Everything above resolved names. Everything below hashes, signs and
+          # verifies — all of it over the bytes just downloaded, so all of it
+          # agrees with whatever is attached. Somebody who can replace an asset
+          # (a maintainer, a token, a workflow with a wider scope than it needs)
+          # gets those replacement bytes hashed into SHA256SUMS, signed under
+          # this release's version, and installed by clients that verify them
+          # correctly against a signature we made. A signature says the bytes
+          # were attached to this release. It does not say they are what this
+          # source built.
+          #
+          # So each asset is checked against the BUILD's own artifact first:
+          # the digest the Actions API recorded at upload time, the archive
+          # downloaded here hashing to that same value, the installer taken out
+          # of THAT archive, and the asset attached to the release. Four
+          # readings, three downloads, one of them from outside this page. A
+          # mismatch, an expired artifact or an API answer that cannot be read
+          # refuses by name here — before a checksum is written and long before
+          # a key is in any environment.
+          #
+          # The commit comes from the tag checkout at the top of this job, not
+          # from the API: the tag names the binaries, and the runs of the build
+          # workflow at that commit are what made them.
+          # ══════════════════════════════════════════════════════════════════
+          TAG_COMMIT="$(git rev-parse HEAD)"
+          echo "$RELEASE_TAG is commit $TAG_COMMIT"
+          node .tools/scripts/verify-assets-against-builder.mjs assets \
+            --repo "$REPO" --commit "$TAG_COMMIT" --work "$RUNNER_TEMP/builder-check"
 
           # ══════════════════════════════════════════════════════════════════
           # SHA256SUMS — the checksums the download page has been promising.
