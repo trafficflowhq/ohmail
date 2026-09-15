@@ -99,6 +99,15 @@ on:
         required: false
         default: true
         type: boolean
+      verify_only:
+        description: >-
+          Check every installer on the page against the build that produced it and
+          STOP. Nothing is signed, attached or published, and no flag is touched —
+          this is how the provenance check is read against a real release without
+          writing to it.
+        required: false
+        default: false
+        type: boolean
 
 # Read here, and write in exactly one place: the job that attaches the feeds
 # takes the write scope, and the job that holds the signing keys takes neither.
@@ -162,9 +171,17 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag }}
+          VERIFY_ONLY: ${{ inputs.verify_only }}
         run: |
           set -euo pipefail
           REPO="$GITHUB_REPOSITORY"
+          # A verify-only run writes nothing anywhere, and that starts here: the one job with the
+          # scope to move a flag is also the first to say it is not going to.
+          if [ "${VERIFY_ONLY:-false}" = true ]; then
+            echo "fence=verify-only" >> "$GITHUB_OUTPUT"
+            echo "verify-only: this run checks $RELEASE_TAG's installers against the build that made them, and stops."
+            exit 0
+          fi
           # ── THE STATE IS READ, OR THIS RUN STOPS BEFORE ANY FLAG MOVES ───
           # `set -e` already kills a step whose read fails. It kills it without a name and
           # without saying what it leaves behind — a release published as Latest with no feeds
@@ -236,8 +253,8 @@ jobs:
     # no desktop binaries, so running here could only fail — and a red run on
     # every phone release teaches people to ignore this workflow's failures,
     # which are the ones that strand updaters. A manual dispatch names its tag
-    # on purpose and always runs. The two jobs below need no `if:` of their own:
-    # a skipped `needs:` skips them.
+    # on purpose and always runs. The two jobs below carry one `if:` each, for the
+    # verify-only dispatch alone; a skipped `needs:` is what skips them otherwise.
     if: github.event_name == 'workflow_dispatch' || startsWith(github.event.release.tag_name, 'v')
     # macOS, because the app's Info.plist is read with PlistBuddy here and
     # Sparkle's sign_update is a macOS binary in the job below.
@@ -295,6 +312,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag }}
           RELEASE_PUBLISHED_AT: ${{ github.event.release.published_at }}
+          VERIFY_ONLY: ${{ inputs.verify_only }}
         run: |
           set -euo pipefail
 
@@ -525,8 +543,15 @@ jobs:
           # ══════════════════════════════════════════════════════════════════
           TAG_COMMIT="$(git rev-parse HEAD)"
           echo "$RELEASE_TAG is commit $TAG_COMMIT"
-          node .tools/scripts/verify-assets-against-builder.mjs assets \
-            --repo "$REPO" --commit "$TAG_COMMIT" --work "$RUNNER_TEMP/builder-check"
+          node .tools/scripts/verify-assets-against-builder.mjs assets --repo "$REPO" --commit "$TAG_COMMIT"
+
+          # …and for a verify-only run that is the whole job. It stops HERE rather than before the
+          # download, because the check is the thing being read; everything below it signs.
+          if [ "${VERIFY_ONLY:-false}" = true ]; then
+            echo "VERIFY-ONLY $RELEASE_TAG: every installer on the page is the one the build produced."
+            echo "Nothing was signed, attached or published, and no flag was touched."
+            exit 0
+          fi
 
           # ══════════════════════════════════════════════════════════════════
           # SHA256SUMS — the checksums the download page has been promising.
@@ -701,6 +726,10 @@ jobs:
           path: signing-input
           retention-days: 1
           if-no-files-found: error
+        # After `with:`, so the pairing guard still reads the artifact's name off the line under
+        # its own `uses:`. Nothing to carry on a verify-only run, and `if-no-files-found: error`
+        # would redden a run that did exactly what it was asked to.
+        if: inputs.verify_only != true
 
       # The metadata travels on its own artifact, so the publish job never
       # downloads a payload it has no use for.
@@ -710,6 +739,10 @@ jobs:
           path: meta
           retention-days: 1
           if-no-files-found: error
+        # After `with:`, so the pairing guard still reads the artifact's name off the line under
+        # its own `uses:`. Nothing to carry on a verify-only run, and `if-no-files-found: error`
+        # would redden a run that did exactly what it was asked to.
+        if: inputs.verify_only != true
 
   # ── 2 · SIGN · the keys, and nothing else on this runner ─────────────────
   #
@@ -720,6 +753,9 @@ jobs:
   sign:
     name: sign the update payloads
     needs: prepare
+    # A verify-only dispatch never reaches a key. `inputs` is null on a release event, so this
+    # reads `null != true` there and the job runs, which is the ordinary path.
+    if: inputs.verify_only != true
     runs-on: macos-15
     timeout-minutes: 20
     permissions:
@@ -995,6 +1031,8 @@ jobs:
   publish:
     name: write, verify and attach the feeds
     needs: [fence, prepare, sign]
+    # Stated rather than inherited from the skipped `sign` above: this is the job that writes.
+    if: inputs.verify_only != true
     runs-on: macos-15
     timeout-minutes: 20
     permissions:
