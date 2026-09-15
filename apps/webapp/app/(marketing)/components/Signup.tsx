@@ -67,8 +67,22 @@ export function SignupProvider({ children }: { children: ReactNode }) {
   const [tier, setTier] = useState<SignupTier>("undecided");
   const [email, setEmail] = useState("");
   const [invalid, setInvalid] = useState(false);
+  /**
+   * WHICH SUBMISSION AN ANSWER BELONGS TO. `join` awaited the POST and then set the step from
+   * whatever the dialog held by the time it returned — so submitting A, closing, reopening and
+   * typing B made A's late answer report B as registered. B was never submitted, and the person
+   * waits for mail going somewhere else. The generation is minted at submit and again whenever
+   * the dialog opens; an answer whose generation is no longer current is discarded and nothing
+   * is said about the address on screen. `submitted` is the address that submission carried, and
+   * the confirmation is rendered from it rather than from the live field.
+   */
+  const submission = useRef(0);
+  const [submitted, setSubmitted] = useState("");
 
   const open = useCallback((preselect?: SignupTier) => {
+    // Reopening is a new submission: anything still in flight belongs to the dialog the person
+    // left, not to this one.
+    submission.current += 1;
     setStep("email");
     setInvalid(false);
     if (preselect) setTier(preselect);
@@ -89,8 +103,15 @@ export function SignupProvider({ children }: { children: ReactNode }) {
 
   const join = async (e: FormEvent) => {
     e.preventDefault();
+    const generation = ++submission.current;
+    const address = email.trim();
+    setSubmitted(address);
     setStep("sending");
-    const ok = await submitWaitlist(email.trim(), tier);
+    const ok = await submitWaitlist(address, tier);
+    // The answer is this submission's or it is nobody's. A stale one says nothing at all: the
+    // person moved on, and a dialog that reports on an address they did not submit is worse
+    // than one that reports nothing.
+    if (generation !== submission.current) return;
     setStep(ok ? "done" : "error");
   };
 
@@ -241,7 +262,7 @@ export function SignupProvider({ children }: { children: ReactNode }) {
               <h2 id="signup-title" className="l-signup-title">
                 {t("successTitle")}
               </h2>
-              <p className="l-signup-lead">{t("successBody", { email: email.trim() })}</p>
+              <p className="l-signup-lead">{t("successBody", { email: submitted })}</p>
               <div className="l-signup-row">
                 <button type="button" className="btn primary l-btn-lg l-signup-go" onClick={close}>
                   {t("done")}
