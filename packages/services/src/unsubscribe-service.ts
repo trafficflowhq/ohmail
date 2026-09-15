@@ -1,4 +1,4 @@
-import { and, asc, eq, gte, inArray, isNull, sql } from "drizzle-orm";
+import { and, asc, eq, gt, gte, inArray, isNull, or, sql } from "drizzle-orm";
 import { dialect } from "@trafficflow/db/dialect";
 import {
   assertOrganizerRole,
@@ -820,12 +820,16 @@ export class UnsubscribeService {
         inArray(folderState.desiredFolder, REJECT_DESTINATIONS as string[]),
         gte(folderState.updatedAt, since),
         accountId === null ? undefined : eq(messages.accountId, accountId),
-        // THE CURSOR, as a row value so the pair is compared once and the index order is the
-        // comparison's order. `updated_at` alone is not unique; `message_id` is unique in
-        // `folder_state`, so the pair is a stable key. The literals are cast rather than bound
-        // bare: PGlite and postgres@3 disagree on how a Date and a uuid serialize inside a raw
-        // fragment, and the drain has both dialects under it.
-        after === null ? undefined : sql`(${folderState.updatedAt}, ${folderState.messageId}) > (${after.at.toISOString()}::timestamptz, ${after.messageId}::uuid)`,
+        // THE CURSOR. `updated_at` alone is not unique; `message_id` is unique in `folder_state`,
+        // so the pair is a stable key, and this is that pair's comparison written out. NOT a raw
+        // row-value fragment: bare literals there serialize differently under PGlite and
+        // postgres@3, and casting them to fix that puts a Postgres timestamptz and uuid cast into
+        // a file the PHONE bundle loads, where the store is SQLite and neither exists. Built here,
+        // each side binds through its own column type on every dialect.
+        after === null ? undefined : or(
+          gt(folderState.updatedAt, after.at),
+          and(eq(folderState.updatedAt, after.at), gt(folderState.messageId, after.messageId)),
+        ),
       ))
       // OLDEST FIRST. An unordered LIMIT is a sample, and a sample can hand back the same rows
       // for ever while the oldest never move — here that would mean the rows closest to falling
