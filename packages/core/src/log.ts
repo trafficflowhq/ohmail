@@ -444,6 +444,13 @@ export const ALLOWED_FIELDS: readonly string[] = [
   // every cycle is a classification bug in `KNOWN_SET_NEUTRAL`. `dbReads` and `hits` are absent:
   // the event's existence already says what `dbReads` would.
   "rows", "bytes", "bytesSaved", "droppedBy",
+  // The same census's three BUDGET fields, added WITH the call site that emits them rather than
+  // after a live run refused them a sixth time. All three are byte counts and nothing else:
+  // `retainedBytes` is what this mailbox's memo is charged, `processRetainedBytes` what every memo
+  // in the process is charged together, and `processBudgetBytes` the constant they share. The pair
+  // IS the reading — a worker sitting at its budget is one whose memos are evicting each other,
+  // which is the difference between "this mailbox re-read" and "this host is over-subscribed".
+  "retainedBytes", "processRetainedBytes", "processBudgetBytes",
   // ── alerting (the worker's alert loop and the API's internal alert route) ──
   "alertKey", "alertKeys", "alertSinks", "alertIntervalMs", "rosterIntervalMs",
   "pollIntervalMs", "firing", "delivered", "failedSinks", "oldestSeconds",
