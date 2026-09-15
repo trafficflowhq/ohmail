@@ -215,19 +215,16 @@ fn main() {
                         host::hide_main_window(_app);
                     }
                     // THE CLOSE PRESS ON AN INSTALL THAT IS NOT HOSTING, and the whole of the
-                    // freeze: measured, the press reached `Destroyed`'s `stop()` in 11 ms and
-                    // that call returned 3 004 ms later, with the window on screen the whole
-                    // time. The policy is unchanged — this event still ends the app and
-                    // still stops the engine — but the window goes first and the engine is
-                    // waited for off this thread. `leave_then_exit` carries why the close has to
-                    // be refused for the hide to take effect at all.
+                    // freeze: measured, the press reached `Destroyed`'s `stop()` in 11 ms and it
+                    // returned 3 004 ms later with the window still on screen. The policy is
+                    // unchanged — this still ends the app and still stops the engine — but the
+                    // window goes first; `leave_then_exit` carries why the close has to be
+                    // refused for a hide to take effect at all.
                     //
-                    // WINDOWS AND LINUX ONLY, and the cfg is the policy rather than a workaround:
-                    // there, destroying the last window ends the app, so refusing the close and
-                    // exiting when the engine has left reaches the same end by a path that can
-                    // put the window away first. On macOS a closed window is NOT a quit — the
-                    // process stays, the dock icon stays — so the close proceeds exactly as
-                    // before and `Destroyed` below starts the same off-thread stop.
+                    // WINDOWS AND LINUX ONLY, and that cfg is policy rather than a workaround:
+                    // there, destroying the last window ends the app. On macOS a closed window is
+                    // not a quit, so the close proceeds as before and `Destroyed` starts the same
+                    // off-thread stop.
                     host::LifecycleAction::Nothing => {
                         #[cfg(not(target_os = "macos"))]
                         if signal == host::WindowSignal::MainCloseRequested {
