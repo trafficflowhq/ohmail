@@ -1592,15 +1592,14 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
    */
   const syncStatus = useSyncStatus();
   /**
-   * "COLD START TO A USABLE LIST" — the budget's own measure, marked once.
-   *
-   * MAIL ON SCREEN, not a completed drain. Keyed on `bootstrapping` this measured the first full
-   * sync cycle instead: on a settled 74k mailbox it read 30 324 ms where the rows were up at
-   * 5 619 ms, and on the 0.19.0 runs whose first import was still running, 78 212 and 65 413 ms —
-   * a figure about the server's pace, reported as the wait a reader sits through. `pulled` is the
-   * mirror's own row count, so the first render holding mail marks. An EMPTY mailbox still owes a
-   * drain before "nothing here" is a fact, and `settled` is that case, which keeps a new account
-   * markable. `markStartup` takes the first answer, so a re-mount cannot overwrite a cold figure.
+   * "COLD START TO A USABLE LIST" — the budget's own measure, marked once. MAIL ON SCREEN, not a
+   * completed drain: keyed on `bootstrapping` this measured the first full sync cycle instead, and
+   * on a settled 74k mailbox it read 30 324 ms where the rows were up at 5 619 ms — on the 0.19.0
+   * runs whose first import was still running, 78 212 and 65 413 ms, a figure about the server's
+   * pace reported as the wait a reader sits through. `pulled` is the mirror's own row count, so
+   * the first render holding mail marks. An EMPTY mailbox still owes a drain before "nothing here"
+   * is a fact, and `settled` is that case, which keeps a new account markable. `markStartup` takes
+   * the first answer, so a re-mount cannot overwrite a cold figure.
    */
   useEffect(() => {
     if (pulled > 0 || mailState.settled) markStartup("listUsable");

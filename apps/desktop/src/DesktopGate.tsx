@@ -91,15 +91,14 @@ const ADDRESS_SHOWN = 80;
 const SETTLING_POLL_MS = 250;
 
 /**
- * How often the window re-asks the shell what the engine is doing ONCE IT HAS SETTLED.
- *
- * The ask used to stop at "serving", and Rust goes on changing its mind after that: an engine
- * can die, be restarted by its supervisor, come back. Every one of those was written to the log
- * and delivered to nobody, so the window kept describing a run that had ended — a mailbox on
- * screen with nothing behind it — until somebody reopened it. This is the live owner of that
- * fact, and it is deliberately SLOW: one local stdio call every five seconds, the floor the
- * ruling names, because liveness bought with a fast poll is an idle cost on every install that
- * is working. The settling cadence above is the fast one and exists only while the engine climbs.
+ * How often the window re-asks the shell what the engine is doing ONCE IT HAS SETTLED. The ask
+ * used to stop at "serving", and Rust goes on changing its mind after that: an engine can die, be
+ * restarted by its supervisor, come back. Every one of those was written to the log and delivered
+ * to nobody, so the window kept describing a run that had ended — a mailbox on screen with nothing
+ * behind it — until somebody reopened it. This is the live owner of that fact, and it is
+ * deliberately SLOW: one local stdio call every five seconds, the floor the ruling names, because
+ * liveness bought with a fast poll is an idle cost on every install that is working. The settling
+ * cadence above is the fast one and exists only while the engine climbs.
  */
 export const LIFECYCLE_POLL_MS = 5_000;
 
