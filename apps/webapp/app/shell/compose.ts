@@ -9,7 +9,7 @@
 import type { ComposeAttachment, EmailAddress, EngineMutation } from "@ohmail/client-engine";
 import type { SignatureState } from "./signature";
 import { durableRemove, durableSet } from "./durable";
-import { storageOwner } from "./storage-owner";
+import { isDemoOwned, storageOwner } from "./storage-owner";
 
 /** The compose form, verbatim as typed. `to` is TEXT; `plan()` is what turns it into addresses. */
 export interface ComposeFields {
@@ -352,7 +352,10 @@ export function clearComposeDraft(owner: string | null = storageOwner()): void {
   durableRemove(composeRowKey(owner), "compose.row");
   // AND the un-owned key a browser upgraded from an earlier bundle may still hold. This is
   // the only line that touches it: it is drained on the next clear and never read back.
-  durableRemove(LEGACY_COMPOSE_DRAFT_KEY, "compose.draft");
+  // NEVER FROM THE DEMO. This key carries no owner, so the demo's own partition does not reach
+  // it — and the demo clears at every door that replaces the form. A shop window draining the one
+  // buffer an upgraded browser still holds is the same lost message by a different route.
+  if (!isDemoOwned(owner)) durableRemove(LEGACY_COMPOSE_DRAFT_KEY, "compose.draft");
 }
 
 /**

@@ -29,6 +29,7 @@ import { cloudWakeStream, createEngine, EngineUnarmedError, syncsWhileHidden } f
 import { useLoadingGrace } from "./loading-grace";
 import { useModalGate } from "./modal-gate";
 import { readOwner } from "./owner-cookie";
+import { setDemoStorage } from "./storage-owner";
 import { markStartup } from "./ui-vitals";
 import {
   markSessionAlive, probeSessionNow, sessionIsDead, subscribeSessionRevival,
@@ -207,6 +208,13 @@ export function EngineProvider({
   // than to a live engine, because the account id has to be re-established before anything
   // may touch persistence again.
   const desired = resolveDemo(serverDemo);
+  /* AND THE DEMO'S STORAGE PARTITION, established here because this is where the demo is decided —
+     both of its doors (`/demo` in the landing page's iframe, `?demo=1` in an ordinary tab) pass
+     through this line. In RENDER and re-derived every render: the shell reads the compose scratch
+     in a mount effect, a child's effects run before its parent's, and a navigation out of the demo
+     has to hand the partition back. Without it the fixture world resolved the visitor's own account
+     and overwrote the unsent message in their real composer. */
+  setDemoStorage(desired);
 
   /**
    * The initializer runs during the FIRST render on each side — which on the client is the

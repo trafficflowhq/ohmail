@@ -36,6 +36,40 @@ import { isOwnerShaped, readOwner } from "./owner-cookie";
 let hostOwner: string | null = null;
 
 /**
+ * IS THIS SURFACE THE DEMO? The landing page embeds the real client at `/demo` in an iframe on the
+ * SAME ORIGIN, and `?demo=1` boots it in an ordinary tab — so `storageOwner()` resolved the
+ * visitor's own account there and the fixture world read, overwrote and cleared the compose scratch
+ * holding their unsent message. Module scope for the reason `hostOwner` is: the key builders are
+ * plain functions, not components.
+ */
+let demoSurface = false;
+
+/**
+ * THE DEMO'S OWN OWNER — a value `isOwnerShaped` REFUSES, so neither the `tf_owner` cookie nor
+ * {@link setStorageOwner} can ever produce it and the two key spaces are disjoint by construction
+ * rather than by a guard each demo feature has to remember.
+ */
+export const DEMO_STORAGE_OWNER = "demo:fixtures";
+
+/** Whether a key was built for the demo — the one question a product reader asks about an owner. */
+export function isDemoOwned(owner: string | null): boolean {
+  return owner === DEMO_STORAGE_OWNER;
+}
+
+/**
+ * THIS SURFACE IS THE DEMO, OR IS NOT. Called during RENDER from `EngineProvider`, where the demo
+ * is resolved, and re-derived on every render so a client-side navigation in either direction moves
+ * it — {@link setStorageOwner}'s ordering rule for its reason: a child's effects run before its
+ * parent's, and the shell reads the scratch buffer in one of them. Browser only, because this
+ * module's state is per DOCUMENT in a browser and per PROCESS on a server, where concurrent renders
+ * would share it; nothing on the server reads a storage key.
+ */
+export function setDemoStorage(on: boolean): void {
+  if (typeof window === "undefined") return;
+  demoSurface = on;
+}
+
+/**
  * The host says whose storage this window is now using — the desktop's mounted mailbox id, the
  * host door's pairing scope, or `null` when the surface has stopped serving one. Call it during
  * RENDER, above the `AppShell` this gate returns: an effect is too late by one commit, and the
@@ -57,12 +91,17 @@ export function setStorageOwner(id: string | null): void {
  * one may not override it. `null` still means "no owner", and the four key builders still spell
  * that as their own `"local"` suffix rather than as a blank — a surface with no account is a real
  * situation, not a missing value.
+ *
+ * ONE ANSWER OUTRANKS THE COOKIE, and only one: the demo. A shop window may not resolve to the
+ * account whose browser it happens to be running in ({@link DEMO_STORAGE_OWNER}).
  */
 export function storageOwner(): string | null {
+  if (demoSurface) return DEMO_STORAGE_OWNER;
   return readOwner() ?? hostOwner;
 }
 
-/** Test seam: forget the host's answer. Never called by product code. */
+/** Test seam: forget the host's answer and the demo latch. Never called by product code. */
 export function resetStorageOwnerForTest(): void {
   hostOwner = null;
+  demoSurface = false;
 }
