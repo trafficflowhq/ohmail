@@ -8,7 +8,9 @@ import {
   closeStoodDownAppointments, isMailboxDisabledReason, organizerKindColumn, standDownMemory,
   type MailboxDisabledReason, type Tx, type OrganizerIntent,
 } from "@trafficflow/db";
-import { generateToken, hashToken } from "@trafficflow/services/mail";
+import {
+  generateToken, hashToken, type ResolvedSessionCore,
+} from "@trafficflow/services/mail";
 import type { LocalDb } from "./db.js";
 
 /**
@@ -483,6 +485,58 @@ export async function mintLaunchSession(
     .returning({ id: sessions.id });
 
   return { token, sessionId: row!.id, revoked: stale.length };
+}
+
+/**
+ * IS THIS THIS INSTALL'S OWN LAUNCH BEARER, EXPIRED? — the one question the sign-out door asks
+ * that {@link resolveSession} cannot answer, because expiry is the very thing it refuses on.
+ *
+ * Leave the app open for a day. The launch token cannot be refreshed — there is no ceremony and
+ * no user to re-authenticate — so it expires, every route answers 401, and SIGN OUT answered 401
+ * with them: the one action that ends a broken session needed the broken thing, and the only way
+ * out was a restart nothing mentioned. The way out of a broken session may never depend on it.
+ *
+ * So the sign-out door asks this instead, and NOTHING ELSE DOES. The token's life is not
+ * extended; every other route still refuses at the same minute it always did. What is relaxed is
+ * the clock alone — the row must still hash to a real session, be UNREVOKED, and carry no
+ * `deviceId`, which is the structural discriminator: a paired device's session is minted into
+ * this same table and its lifecycle is its own, so a phone's bearer can never open this door.
+ */
+export async function resolveExpiredLaunchSession(
+  db: LocalDb, token: string,
+): Promise<ResolvedSessionCore | null> {
+  const rows = await db
+    .select({
+      id: sessions.id,
+      accountId: sessions.accountId,
+      userId: sessions.userId,
+      lastTwofaAt: sessions.lastTwofaAt,
+      scope: sessions.scope,
+      emailVerifiedAt: users.emailVerifiedAt,
+    })
+    .from(sessions)
+    /* THE SAME INNER JOIN `resolveSession` TAKES, and for its reason: a session whose user is gone
+       resolves to nothing rather than to an identity with nobody behind it. */
+    .innerJoin(users, eq(users.id, sessions.userId))
+    .where(and(
+      eq(sessions.accessTokenHash, hashToken(token)),
+      isNull(sessions.revokedAt),
+      // A LAUNCH session only — see the header.
+      isNull(sessions.deviceId),
+    ))
+    .limit(1);
+  const row = rows[0];
+  if (!row) return null;
+  /* THE ROW'S OWN VALUES, never invented ones. The single predicate this omits is the clock; a
+     fabricated `lastTwofaAt` would be this door claiming a second factor that never happened. */
+  return {
+    accountId: row.accountId,
+    userId: row.userId,
+    sessionId: row.id,
+    lastTwofaAt: row.lastTwofaAt,
+    scope: row.scope === "enrollment" ? "enrollment" : "full",
+    emailVerifiedAt: row.emailVerifiedAt,
+  };
 }
 
 /**

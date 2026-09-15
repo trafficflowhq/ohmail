@@ -2343,6 +2343,7 @@
     "desktopStateCredentialForeign": "The saved password belongs to a different mail server, so nothing is syncing.",
     "desktopStateNeedsCredential": "This mailbox needs its password again. Enter it to start syncing.",
     "desktopStateUnreachable": "Can't reach the mail server.",
+    "desktopStateSessionExpired": "Your sign-in on this computer expired. Sign in again.",
     "desktopStateUnknown": "Can't check the mail server right now.",
     "desktopStateLastAnswered": "Last answered {when}.",
     "desktopStatePaused": "Paused",

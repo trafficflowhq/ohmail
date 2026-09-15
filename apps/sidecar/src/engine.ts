@@ -181,7 +181,7 @@ export type OpenLocalDbFn = (
 ) => Promise<OpenLocalDb>;
 import {
   endLegacyOrganizerPauses, ensureLocalWorld, loadLocalRoster, loadUnattachedLocalRoster,
-  mintLaunchSession,
+  mintLaunchSession, resolveExpiredLaunchSession,
   type LocalRosterRow, type LocalWorld,
 } from "./identity.js";
 // ONE RUNTIME PER MAILBOX, held in a map. The record, the map and the seed decision live in
@@ -6751,8 +6751,12 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
          * it, and a phone's view of its host is the pairing layer's answer. */
         const localConnectionsMatch = req.method === "GET"
           && url.pathname === "/local/mailboxes/connections";
+        /* `DELETE /local/stored-login` — signing out of this install, NAMED because one line
+           below treats it apart from its neighbours: it is the only door here that opens on an
+           expired launch bearer, since it is the way OUT of the state that expiry creates. */
+        const localSignOutMatch = req.method === "DELETE" && url.pathname === "/local/stored-login";
         const localAction = localConnectionsMatch
-          || (req.method === "DELETE" && url.pathname === "/local/stored-login")
+          || localSignOutMatch
           || (req.method === "POST" && url.pathname === "/local/organizer/takeover")
           || localRemoveMatch !== null
           || localOrganizeMatch !== null
@@ -6799,7 +6803,22 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           const token = header && /^Bearer\s+/i.test(header)
             ? header.replace(/^Bearer\s+/i, "").trim()
             : "";
-          const core = token ? await resolveSession(db, token, now()) : null;
+          const live = token ? await resolveSession(db, token, now()) : null;
+          /* ── THE WAY OUT OF A BROKEN SESSION MAY NOT DEPEND ON IT ─────────────────────────
+           *
+           * The launch bearer has no refresh ceremony, so after a day it expires and every route
+           * here answers 401 — SIGN OUT with them, which made the one action that ends a broken
+           * session need the broken thing. Its life is NOT extended: this asks the expiry
+           * question only for the sign-out door, and only once the ordinary resolution has said
+           * no. Every other route still refuses at the same minute it always did, and the
+           * credential is cleared on this path alone — never on a 401 from anywhere else.
+           * See {@link resolveExpiredLaunchSession} for what stays required. */
+          const staleLaunch = live === null && token !== ""
+            ? await resolveExpiredLaunchSession(db, token)
+            : null;
+          /* ADMITTED ON THE SIGN-OUT DOOR ALONE. Every other route reads `staleLaunch` only to
+             SAY which refusal this is — see the 401 below, and the reason it is not one code. */
+          const core = live ?? (localSignOutMatch ? staleLaunch : null);
           if (!core) {
             /* THE VERDICT FOR THE ONE REFUSAL EVERY DOOR HERE SHARES. Without it the receipt
                above is followed by nothing, which is the state it was added to end. */
@@ -6807,13 +6826,38 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
               method: req.method,
               route: localActionRoute,
               status: 401,
-              reason: "the request carried no launch bearer this install recognises, so nothing " +
-                "was read or written",
+              reason: staleLaunch
+                ? "this install's launch session has expired, so nothing was read or written. " +
+                  "The bearer is this install's own and the clock is what refused it; the shell " +
+                  "is told which refusal this is so a person is not left reading silence"
+                : "the request carried no launch bearer this install recognises, so nothing " +
+                  "was read or written",
             });
+            /* TWO CODES, BECAUSE THEY ARE TWO STATES AND ONLY ONE OF THEM HAS A REMEDY. An
+               unrecognised bearer is a request nobody here can place; an EXPIRED one is this
+               install's own, and the surface that polls this route rendered its refusal as "Can't
+               check the mail server right now" — a silence that reads as no new mail while the
+               day-old session quietly refused every poll. Named, so the row can say what
+               happened and what to press. */
             return new Response(
-              JSON.stringify({ error: { code: "unauthorized", message: "authentication required" } }),
+              JSON.stringify(staleLaunch
+                ? {
+                    error: {
+                      code: "launch_session_expired",
+                      message: "this install's sign-in expired; sign in again to keep reading mail",
+                    },
+                  }
+                : { error: { code: "unauthorized", message: "authentication required" } }),
               { status: 401, headers: { "content-type": "application/json" } },
             );
+          }
+          if (staleLaunch && live === null) {
+            log("local_sign_out_on_expired_launch", {
+              route: localActionRoute,
+              reason: "this install's launch session had expired, so every route was answering " +
+                "401 — signing out among them. The sign-out is performed on the expired bearer " +
+                "rather than refused: the way out of a broken session never depends on it",
+            });
           }
           if (localOrganizeMatch) {
               /* Agree and start organizing, with the window in the SAME write. The ceremony is

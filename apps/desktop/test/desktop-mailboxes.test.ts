@@ -3850,6 +3850,53 @@ describe("a mailbox with no password on this computer says so", () => {
 
 /**
  * ══════════════════════════════════════════════════════════════════════════════════════════
+ *  THE SIGN-IN ON THIS COMPUTER EXPIRED, AND THE ROW SAYS SO INSTEAD OF SAYING NOTHING
+ * ══════════════════════════════════════════════════════════════════════════════════════════
+ *
+ * The engine mints its bearer per launch and cannot refresh it, so a day in, every poll answers
+ * 401 and no mail arrives. That reached this pane as an ordinary refusal and the row said "Can't
+ * check the mail server right now" — true, useless, and read as "no new mail" — while the one
+ * action that ends the state was refusing on the same bearer.
+ *
+ * WATCH THEM FAIL: delete the `session-expired` arm from `stateOf` and the first case reddens
+ * on the silence; make `readMailboxReachVia` read every 401 as `refused` and it reddens the same
+ * way, which is the shipped state.
+ */
+describe("an expired launch session is named, not left as silence", () => {
+  const copy = (messages as unknown as { mailboxes: Record<string, string> }).mailboxes;
+
+  const refusal = (body: unknown): Response =>
+    new Response(JSON.stringify(body), { status: 401, headers: { "content-type": "application/json" } });
+
+  it("says the sign-in expired and what to do, within one poll", async () => {
+    FACTS = [MAILBOX];
+    bridgeReply = () => refusal({ error: { code: "launch_session_expired", message: "expired" } });
+
+    const text = (await render("local")).textContent ?? "";
+    expect(text).toContain(copy.desktopStateSessionExpired!);
+    expect(text, "a state with a remedy was rendered as the shared silence")
+      .not.toContain(copy.desktopStateUnknown!);
+    expect(text, "a stale bearer announced an outage at the person's mail server")
+      .not.toContain(copy.desktopStateUnreachable!);
+  });
+
+  it("POSITIVE CONTROL — every other 401 keeps the shared sentence", async () => {
+    FACTS = [MAILBOX];
+    /* A bearer this install does not know, and a 401 whose body is not the engine's. Neither is
+       a state a person can act on, so neither may borrow the sentence that is. */
+    for (const body of [{ error: { code: "unauthorized", message: "authentication required" } }, {}]) {
+      bridgeReply = () => refusal(body);
+      const text = (await render("local")).textContent ?? "";
+      expect(text).toContain(copy.desktopStateUnknown!);
+      expect(text).not.toContain(copy.desktopStateSessionExpired!);
+      await act(async () => { root!.unmount(); });
+      root = null;
+    }
+  });
+});
+
+/**
+ * ══════════════════════════════════════════════════════════════════════════════════════════
  *  THE SETTINGS DOCUMENT CANNOT BE READ, AND THE ROW SAYS SO INSTEAD OF "UP TO DATE"
  * ══════════════════════════════════════════════════════════════════════════════════════════
  *

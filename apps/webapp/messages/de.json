@@ -2343,6 +2343,7 @@
     "desktopStateNeedsCredential": "Dieses Postfach braucht sein Passwort erneut. Gib es ein, damit wieder synchronisiert wird.",
     "desktopStateCredentialForeign": "Das gespeicherte Passwort gehört zu einem anderen Mailserver, daher wird nichts synchronisiert.",
     "desktopStateUnreachable": "Der Mailserver ist nicht erreichbar.",
+    "desktopStateSessionExpired": "Deine Anmeldung auf diesem Computer ist abgelaufen. Melde dich erneut an.",
     "desktopStateUnknown": "Der Mailserver lässt sich gerade nicht prüfen.",
     "desktopStateLastAnswered": "Letzte Antwort {when}.",
     "desktopStatePaused": "Pausiert",

@@ -141,15 +141,26 @@ export type MailboxReachPollState = "unasked" | "verdict" | "silent" | "faulted"
 /**
  * WHICH silence or fault this was.
  *
- * It reaches the LOG and never a sentence. The row has one honest thing to say for all of them —
- * "Can't check the mail server right now" — because every one of them is the same fact from the
- * person's side: this install cannot say. Which of them it was is the diagnostician's question.
+ * It reaches the LOG and never a sentence, with ONE exception named below. For the rest the row
+ * has one honest thing to say — "Can't check the mail server right now" — because every one of
+ * them is the same fact from the person's side: this install cannot say. Which of them it was is
+ * the diagnostician's question.
  */
 export type MailboxReachPollReason =
   /** THE QUESTION NEVER ARRIVED: the bridge itself rejected, so the engine never saw a request. */
   | "transport-threw"
   /** 404 — an engine that predates the route, or a transport that does not carry the local ones. */
   | "route-absent"
+  /**
+   * THE ONE REFUSAL WITH ITS OWN SENTENCE: this install's launch session expired.
+   *
+   * The engine mints a bearer per launch and cannot refresh it, so after a day every poll 401s.
+   * That arrived here as `refused` and the row said "Can't check the mail server right now" — a
+   * silence a person reads as no new mail, while nothing had arrived for hours and the one
+   * action that fixes it was refusing too. It is this install's own state and it has a remedy,
+   * so it is told apart and said.
+   */
+  | "session-expired"
   /** The engine answered and refused or fell over: any other non-OK status. */
   | "refused"
   /** An OK answer whose body is not JSON. */
@@ -283,6 +294,18 @@ export async function readMailboxReachVia(
   /* THE ENGINE PREDATES THE ROUTE — the one non-OK status that is genuinely silence, and the
      reason this is a status test rather than `!res.ok`. */
   if (res.status === 404) return silent("route-absent", { status: 404 });
+  /* A 401 IS TWO STATES AND ONLY ONE OF THEM HAS A REMEDY — the engine names which, so this
+     does not guess from a status code. Anything else about the refusal, a body that is not the
+     engine's or is not JSON included, stays the shared silence. */
+  if (res.status === 401) {
+    let code: unknown;
+    try {
+      code = ((await res.json()) as { error?: { code?: unknown } } | null)?.error?.code;
+    } catch {
+      /* Not the engine's JSON. The status is all there is to say. */
+    }
+    return faulted(code === "launch_session_expired" ? "session-expired" : "refused", 401);
+  }
   if (!res.ok) return faulted("refused", res.status);
   let body: unknown;
   try {
@@ -1264,6 +1287,14 @@ export function DesktopMailboxes(
      * a stale bearer 401s every poll, announcing a provider outage while mail arrives.
      * "Can't check the mail server right now" is honest; a transient 5xx costs one poll, and
      * no debounce — a delay holds a true outage back as long as a false one. */
+    /* ── THE SIGN-IN ON THIS COMPUTER EXPIRED, AND THAT IS NOT "CANNOT CHECK" ──────────────
+     *
+     * Above the shared silence below and gated on nothing else: the engine mints its bearer per
+     * launch and has no way to refresh it, so a day in, every poll 401s and no mail arrives.
+     * This pane said "Can't check the mail server right now" — true, useless, and read as "no
+     * new mail" — while the one action that ends the state was refusing on the same bearer.
+     * Said, with the remedy, because it is this install's own state and a person can act on it. */
+    if (reach.reason === "session-expired") return say(t("desktopStateSessionExpired"));
     if (!r && reachUnknownForRow(reach, organizesHere(m), now)) {
       return say(t("desktopStateUnknown"));
     }
