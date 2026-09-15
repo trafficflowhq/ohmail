@@ -412,6 +412,42 @@ export function sameVanityParent(a: string, b: string): boolean {
   return pa.length > 0 && pa.includes(".") && pa === parent(b);
 }
 
+/**
+ * ONE ASYNCHRONOUS ANSWER'S CLAIM ON THE SCREEN — the pane's ordering rule, in one place.
+ *
+ * Every read takes a sequence BEFORE its `await` and applies only if nothing newer has been
+ * displayed since; every press takes one too, so its own answer is always told and every read
+ * issued before it is retired. A dead pane answers `false` to both, which is what lets the two
+ * verbs replace the `alive.current` guard at every call site rather than sit beside it.
+ */
+export interface LatestWins {
+  /** A READ's answer: applied only if it is the newest thing issued. */
+  claim(): boolean;
+  /** A PRESS's own answer: always applied, and it retires every read issued before the press. */
+  publish(): boolean;
+}
+
+/** A channel of the rule above — one per group of state a late answer can contradict. */
+export function useLatestWins(alive: { current: boolean }): () => LatestWins {
+  const issued = useRef(0);
+  const applied = useRef(0);
+  return useCallback((): LatestWins => {
+    const seq = ++issued.current;
+    return {
+      claim: () => {
+        if (!alive.current || seq <= applied.current) return false;
+        applied.current = seq;
+        return true;
+      },
+      publish: () => {
+        if (!alive.current) return false;
+        if (seq > applied.current) applied.current = seq;
+        return true;
+      },
+    };
+  }, [alive]);
+}
+
 export function MailboxSection() {
   const t = useTranslations("mailboxes");
   /**
@@ -626,6 +662,24 @@ export function MailboxSection() {
   useEffect(() => () => { alive.current = false; }, []);
 
   /**
+   * LATEST WINS — a response is applied only if it is NEWER than what is displayed.
+   *
+   * `alive.current` alone asks whether the pane is still here, never whether the answer is still
+   * current. The poll runs every ten seconds: a delayed one issued before "Stop organizing" landed
+   * after it and restored the Organizing description AND its control over a mailbox the person had
+   * just left. Ordering is by ISSUE time, so a press outranks every read already in flight when it
+   * was pressed. Both verbs stand in for the old `alive.current` guard and answer `false` for a
+   * dead pane, so no call site keeps two checks.
+   */
+  const listWins = useLatestWins(alive);
+  /**
+   * The organizer PANEL's own channel — a peek about one mailbox, which the list poll never writes.
+   * On the list's counter a poll landing mid-peek would retire the answer the panel is waiting for;
+   * on its own it still refuses the case it exists for, two Check presses whose answers cross.
+   */
+  const peekWins = useLatestWins(alive);
+
+  /**
    * Re-read the mailbox list. `counts` is asked for on pane open and never on the poll: `messageCount` is one grouped
    * aggregate over the account's whole `messages` table, and `refresh` runs on a 10-second timer while this pane is
    * on screen — putting the count on the poll would buy a number that changes by single digits an hour and charge a
@@ -640,9 +694,10 @@ export function MailboxSection() {
    * id cannot resurrect a row or lend its number to a new one.
    */
   const refresh = useCallback(async (opts: { counts?: boolean } = {}): Promise<void> => {
+    const wins = listWins();
     try {
       const { items: got } = await mailboxApi.list(opts.counts ? { counts: true } : {});
-      if (alive.current) {
+      if (wins.claim()) {
         /**
          * AND IT RETURNS `got` ITSELF WHEN THERE IS NOTHING TO CARRY: Not a micro-optimisation. `setItems` with a
          * value React can see is unchanged makes React BAIL OUT of the re-render, and the first version of this merge
@@ -689,9 +744,9 @@ export function MailboxSection() {
        * re-deriving it here is how somebody is told they are out of slots when the real problem is an unpaid
        * subscription.
        */
-      if (alive.current) { setListFailed(true); setError(messageOf(err)); }
+      if (wins.claim()) { setListFailed(true); setError(messageOf(err)); }
     }
-  }, []);
+  }, [listWins]);
 
   /**
    * STEP ONE — look at the mailbox and report what is holding it.
@@ -705,16 +760,17 @@ export function MailboxSection() {
     setError(null);
     setNotice(null);
     setOrganizer({ id, peek: null });
+    const wins = peekWins();
     try {
       const peek = await mailboxApi.organizer(id);
-      if (alive.current) setOrganizer({ id, peek });
+      if (wins.claim()) setOrganizer({ id, peek });
     } catch (err) {
       // THE SERVER'S SENTENCE. "The mailbox could not be checked" is a different fact from "nobody
       // holds it", and inventing a sentence here is how the two get merged — which would invite a
       // takeover of a mailbox somebody is actively organizing.
-      if (alive.current) { setOrganizer(null); setError(messageOf(err)); }
+      if (wins.claim()) { setOrganizer(null); setError(messageOf(err)); }
     }
-  }, []);
+  }, [peekWins]);
 
   /**
    * STEP TWO — record that a human asked for this mailbox.
@@ -770,9 +826,10 @@ export function MailboxSection() {
   const confirmRelease = useCallback(async (id: string): Promise<void> => {
     setError(null);
     setReleasing((q) => new Set(q).add(id));
+    const wins = listWins();
     try {
       const result = await mailboxApi.release(id);
-      if (!alive.current) return;
+      if (!wins.publish()) return;
       setReleaseFor(null);
       setNotice(
         result.outcome === "requested" ? t("stopOrganizingQueued")
@@ -783,18 +840,21 @@ export function MailboxSection() {
       // guessing — the same reason the takeover refreshes instead of writing a local role.
       await refresh();
     } catch (err) {
-      if (alive.current) { setReleaseFor(null); setError(messageOf(err)); }
+      if (wins.publish()) { setReleaseFor(null); setError(messageOf(err)); }
     } finally {
+      /* The spinner belongs to THIS press, not to the screen's newest answer: gating its
+         removal would leave a stale press spinning for ever. */
       if (alive.current) setReleasing((q) => { const n = new Set(q); n.delete(id); return n; });
     }
-  }, [refresh, t]);
+  }, [listWins, refresh, t]);
 
   const confirmTakeover = useCallback(async (id: string): Promise<TakeoverVerdict> => {
     setError(null);
     setTakingOver((q) => new Set(q).add(id));
+    const wins = listWins();
     try {
       const result = await mailboxApi.organize(id);
-      if (!alive.current) return "settled";
+      if (!wins.publish()) return "settled";
       setOrganizer(null);
       setNotice(
         result.outcome === "authorized" ? t("organizerQueued")
@@ -806,7 +866,7 @@ export function MailboxSection() {
       await refresh();
       return "settled";
     } catch (err) {
-      if (!alive.current) return "refused";
+      if (!wins.publish()) return "refused";
       setOrganizer(null);
       setError(messageOf(err));
       // Nothing was asked for, so the way back must stay reachable — see `takingOver`.
@@ -824,7 +884,7 @@ export function MailboxSection() {
       }
       return "refused";
     }
-  }, [refresh, t]);
+  }, [listWins, refresh, t]);
 
   /**
    * The server's entitlement verdict, read before anything is typed.
@@ -943,6 +1003,7 @@ export function MailboxSection() {
   const resync = (id: string): void => {
     setError(null);
     setQueued((q) => new Set(q).add(id));
+    const wins = listWins();
     void (async () => {
       try {
         await mailboxApi.resync(id);
@@ -956,7 +1017,7 @@ export function MailboxSection() {
         if (!alive.current) return;
         setQueued((q) => { const n = new Set(q); n.delete(id); return n; });
       } catch (err) {
-        if (!alive.current) return;
+        if (!wins.publish()) return;
         setError(messageOf(err));
         setQueued((q) => { const n = new Set(q); n.delete(id); return n; });
       }
@@ -974,10 +1035,11 @@ export function MailboxSection() {
   const dismissQuiet = (id: string): void => {
     setError(null);
     setDismissingQuiet((q) => new Set(q).add(id));
+    const wins = listWins();
     void (async () => {
       try {
         const dto = await mailboxApi.dismissInboundQuiet(id);
-        if (!alive.current) return;
+        if (!wins.publish()) return;
         setItems((list) => (list === null ? list : list.map((it) => (it.id === dto.id
           // KEEP the fields this response legitimately lacks: the dismissal answer never carries
           // `messageCount` (only `?counts=1` does), and replacing the row wholesale would blank
@@ -985,9 +1047,10 @@ export function MailboxSection() {
           ? { ...it, ...dto, messageCount: it.messageCount }
           : it))));
       } catch (err) {
-        if (!alive.current) return;
+        if (!wins.publish()) return;
         setError(messageOf(err));
       } finally {
+        /* The button's debounce, like `confirmRelease`'s spinner — this press's own, ungated. */
         if (alive.current) setDismissingQuiet((q) => { const n = new Set(q); n.delete(id); return n; });
       }
     })();
@@ -1389,6 +1452,7 @@ export function MailboxSection() {
       return;
     }
     setStage("saving");
+    const wins = listWins();
     try {
       const address = typed.address.trim();
       await mailboxApi.create({
@@ -1411,7 +1475,7 @@ export function MailboxSection() {
           user: typed.user.trim() || address, pass: typed.pass,
         },
       });
-      if (!alive.current) return;
+      if (!wins.publish()) return;
       // The password leaves this component the moment the server has it.
       setTyped(emptyTyped());
       setPassword("");
@@ -1431,7 +1495,7 @@ export function MailboxSection() {
       // customer sees after the ceremony is a shell that still believes they have none.
       refreshMailState();
     } catch (err) {
-      if (!alive.current) return;
+      if (!wins.publish()) return;
       // A refused probe sends the user back to the FORM, not to the factor step. Everything else `connect()` can fail
       // with is about the account (a spent step-up, an entitlement, a duplicate); the factor step is a sensible place
       // to stand for those. A probe refusal is about the four fields that were typed, and the factor step has no way
@@ -1472,11 +1536,12 @@ export function MailboxSection() {
       return;
     }
     setStage("saving");
+    const wins = listWins();
     try {
       // The `smtp` block only when an SMTP field was typed — see {@link smtpPatchOf}.
       const smtp = smtpPatchOf(edited);
       await mailboxApi.update(target.id, { imap: imapPatchOf(edited), ...(smtp ? { smtp } : {}) });
-      if (!alive.current) return;
+      if (!wins.publish()) return;
       // The password leaves this component the moment the server has it.
       setEdited(emptyEdit());
       setEditing(null);
@@ -1491,7 +1556,7 @@ export function MailboxSection() {
       // worker's next pass — the strip reads the same route and should not stay a poll behind.
       refreshMailState();
     } catch (err) {
-      if (!alive.current) return;
+      if (!wins.publish()) return;
       const reason = probeReasonOf(err);
       if (reason) {
         // Back to the EDIT form, not the factor step: the factor screen cannot change a host or a
@@ -1524,9 +1589,10 @@ export function MailboxSection() {
       return;
     }
     setStage("saving");
+    const wins = listWins();
     try {
       await mailboxApi.remove(target.id);
-      if (!alive.current) return;
+      if (!wins.publish()) return;
       setRemoving(null);
       setPassword("");
       setChallenge(null);
@@ -1537,7 +1603,7 @@ export function MailboxSection() {
       // the strip disagree about this mailbox for up to thirty seconds.
       refreshMailState();
     } catch (err) {
-      if (!alive.current) return;
+      if (!wins.publish()) return;
       setStage("remove");
       fail(err);
     }
