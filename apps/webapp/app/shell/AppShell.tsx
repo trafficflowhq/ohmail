@@ -4331,12 +4331,28 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
       ...planned.ruleMutations,
       ...planned.mutations.filter((x) => x.kind === "screener_decide"),
     ]);
-    const mutations = planned.mutations.filter((x) =>
-      kept.has(x) || (x.kind === "move" && only.has(x.messageId)));
-    /* The decide's own count is the plan's to state; otherwise it is what is left here. */
-    const moved = planned.mutations.some((x) => x.kind === "screener_decide")
-      ? planned.moved
-      : mutations.filter((x) => x.kind === "move").length;
+    /**
+     * AND THE NAMED MESSAGES ARE MOVED, whatever the plan's own past-mail half decided.
+     *
+     * `planScreeningChange` writes those moves only when the person asked for the backlog, and
+     * this press never does — so filtering the plan's moves now yields none and the mail the
+     * press was made on would stay where it is under a rule that says otherwise. The plan's own
+     * rule states it: with the move as the instruction there is no switch to gate on. So the ids
+     * this press names are minted here, and only those — never the sender's visible backlog.
+     */
+    const wanted = FOLDER_OF_VIEW[view];
+    const decided = planned.mutations.some((x) => x.kind === "screener_decide");
+    const named: EngineMutation[] = decided ? [] : [...only]
+      .map((id) => reader.get<EngineMessage>("message", id))
+      .filter((msg): msg is EngineMessage => msg != null && wanted != null && msg.folder !== wanted)
+      .map((msg) => ({ kind: "move", messageId: msg.id, folder: wanted! }));
+    const mutations = [
+      ...planned.mutations.filter((x) => kept.has(x)),
+      ...named,
+    ];
+    /* The decide re-files the mail it holds itself, so its own count is the plan's to state;
+       otherwise it is what this press actually names. */
+    const moved = decided ? planned.moved : named.length;
     /* The NAME on the row, and the address only when the row carries no name. */
     const who = sender.name && sender.name.trim() ? sender.name.trim() : displayAddress(sender.address);
     return { plan: { ...planned, mutations, moved }, who };
