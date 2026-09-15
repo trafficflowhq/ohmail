@@ -1397,6 +1397,12 @@ export const awayResponders = sqliteTable("away_responders", {
      landing. The closed set lives in the migration on both stores (the server CHECKs it with
      `<@`); nothing here reads a pile the phone writes, because the phone writes none today. */
   piles: text("piles", { mode: "json" }).notNull().default(sql`'["INBOX"]'`),
+  /* When the away pass last WALKED this responder — the rotation stamp, written on the accounts
+     one invocation actually entered. The probe orders by it first, so a served page sorts last
+     and the responders behind it come up next; 0 means never walked. NOT `updated_at`, which is
+     the away episode key. See the Postgres twin for the whole argument. */
+  lastConsideredAt: integer("last_considered_at", { mode: "timestamp_ms" })
+    .notNull().default(sql`0`),
 }, (t) => ({ uqAccount: unique().on(t.accountId) }));   // one row per account ⇒ PUT upserts
 
 /**

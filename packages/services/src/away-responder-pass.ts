@@ -241,6 +241,12 @@ export async function runAwayResponderPass(
   result.expired = await expireEndedResponders(db, now(), deps.mailboxIds, log);
   await healMissingEnabledAt(db, now());
   const live = await liveResponders(db, now(), deps.mailboxIds);
+  /* THE ROTATION'S OTHER HALF — the accounts this invocation actually ENTERED, stamped once after
+     the walk so the next tick starts behind them. Entered and not selected: the send budget can
+     stop the walk on account five of fifty, and stamping the whole page would hand this defect
+     straight to the budget — the forty-five it never reached would sort last and never be
+     reached again. */
+  const walked: string[] = [];
 
   for (const responder of live) {
     if (result.sent >= budget) { result.capped = true; break; }
@@ -253,6 +259,7 @@ export async function runAwayResponderPass(
        thirty accounts were served when twenty-nine were never read. `capped: true` beside it is
        what says the rest are waiting. */
     result.accounts += 1;
+    walked.push(responder.accountId);
     try {
       await answerForAccount(db, deps, responder, result, budget, batch, now, log);
     } catch (err) {
@@ -265,6 +272,7 @@ export async function runAwayResponderPass(
       });
     }
   }
+  await markConsidered(db, walked, now());
   return result;
 }
 
@@ -329,6 +337,23 @@ async function healMissingEnabledAt(db: Db, at: Date): Promise<void> {
     .where(and(eq(awayResponders.enabled, true), isNull(awayResponders.enabledAt)));
 }
 
+/**
+ * Stamp the rotation column on the responders this invocation WALKED — one UPDATE, after the walk.
+ *
+ * NOT `updated_at`: that column is the away EPISODE key (`away_responder_sent.responder_updated_at`),
+ * and moving it once a minute would open a new episode each tick and re-answer every correspondent.
+ * An UPDATE and never an insert, so an account erased between the probe and here matches zero rows
+ * and nothing the Art. 17 sweep took can be recreated from it. Left to throw rather than swallowed:
+ * a store that cannot take this write is not the per-account fault the loop above contains, and a
+ * tick that dies here is safe to repeat — the ledger is what makes a reply at-most-once, not this.
+ */
+async function markConsidered(db: Db, accountIds: readonly string[], at: Date): Promise<void> {
+  if (accountIds.length === 0) return;
+  await (db as unknown as Tx).update(awayResponders)
+    .set({ lastConsideredAt: at })
+    .where(inArray(awayResponders.accountId, [...accountIds]));
+}
+
 async function liveResponders(
   db: Db, at: Date, mailboxIds: readonly string[] | undefined,
 ): Promise<LiveResponder[]> {
@@ -371,14 +396,20 @@ async function liveResponders(
         )),
       )]),
     ))
-    /* DETERMINISTIC, and it decides two things rather than one. Without an ORDER BY, Postgres
-       returns whatever the scan produces, so (a) WHICH 50 responders are considered at all when
-       more than 50 are live is arbitrary, and (b) the walk order is stable in practice — which,
-       against a GLOBAL send budget, means an account early in that order with steady inbound mail
-       consumes every send on every tick and an account later in it never gets one. Ordering by
-       `enabled_at` puts the responder that has been waiting longest first, so the fleet drains in
-       a defensible order instead of a scan-dependent one. */
-    .orderBy(asc(awayResponders.enabledAt), asc(awayResponders.accountId))
+    /* THE ROTATION, and it is what makes the cap a bound on HOW MUCH work happens rather than on
+       WHOSE. Ordered by `enabled_at` alone the page was deterministic and therefore the SAME
+       fifty every tick: past fifty live responders the ones behind the page were shown as enabled
+       and answered nobody, for as long as the page ahead of them stayed on. `last_considered_at`
+       leads the order, so the accounts a run walked sort last and the ones behind them come up
+       next; `enabled_at` stays as the tie-break, which is the old rule inside one rotation — the
+       responder waiting longest first, and a scan-dependent order still refused. The cap is
+       unchanged: every enabled responder is reached within ceil(N / AWAY_ACCOUNTS_PER_RUN) ticks.
+       The column is NOT NULL on both stores because the two order NULLs in opposite directions. */
+    .orderBy(
+      asc(awayResponders.lastConsideredAt),
+      asc(awayResponders.enabledAt),
+      asc(awayResponders.accountId),
+    )
     .limit(AWAY_ACCOUNTS_PER_RUN);
 
   const out: LiveResponder[] = [];

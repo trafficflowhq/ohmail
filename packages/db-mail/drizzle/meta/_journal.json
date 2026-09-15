@@ -799,6 +799,13 @@
       "when": 1791602600017,
       "tag": "0113_refresh_consumed_by_attempt",
       "breakpoints": true
+    },
+    {
+      "idx": 114,
+      "version": "7",
+      "when": 1791602600018,
+      "tag": "0114_away_rotation_stamp",
+      "breakpoints": true
     }
   ]
 }

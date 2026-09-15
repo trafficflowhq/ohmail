@@ -218,5 +218,11 @@ export const SQLITE_JOURNAL: readonly SqliteJournalEntry[] = [
     "statements": [
       "ALTER TABLE \"refresh_tokens\" ADD COLUMN \"consumed_by_attempt\" text;"
     ]
+  },
+  {
+    "name": "0114_away_rotation_stamp.sql",
+    "statements": [
+      "ALTER TABLE \"away_responders\" ADD COLUMN \"last_considered_at\" integer NOT NULL DEFAULT 0;"
+    ]
   }
 ] as const;

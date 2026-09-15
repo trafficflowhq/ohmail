@@ -695,6 +695,13 @@ export const MAIL_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // able to renew. Deploy order migration → API, and this marker is what makes a wrong order a
   // 503 rather than a fleet-wide sign-out.
   ["refresh_tokens", "consumed_by_attempt"],
+  // mail 0114_away_rotation_stamp — one column on `away_responders`: the instant the away pass
+  // last walked a responder, which is what rotates its per-run page. Probed because the pass
+  // ORDERS BY it on every tick and the API host is where the pass runs, so an API deployed ahead
+  // of the migration 42703s the probe and NOTHING is answered — fleet-wide, not for one account.
+  // `AwayResponderService.get` selects the row whole as well, so the away settings screen fails
+  // with it. No worker half: the worker only pokes the route. Deploy order migration → API.
+  ["away_responders", "last_considered_at"],
 ] as const;
 
 /**
@@ -971,7 +978,7 @@ export const MAIL_EXPECTED_MARKERS =
 // 0067/0068 (the device-sync alert's withdrawn SECURITY DEFINER carrier and its retirement)
 // add no column and get no marker: a function's absence is the ALERT RULE's own isolated,
 // tolerated state, not a schema fault a serving API should 503 over.
-export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0113_refresh_consumed_by_attempt";
+export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0114_away_rotation_stamp";
 
 
 /* `CLOUD_SCHEMA_MARKER_JOURNAL_TAG` moved to `./health-cloud.js`: it is the NAME of a cloud
