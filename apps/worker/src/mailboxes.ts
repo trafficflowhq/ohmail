@@ -492,15 +492,12 @@ export async function bootstrapEnvCreds(
     /* A TOMBSTONE IS NOT A TEMPLATE.
      *
      * A removal leaves the `mailboxes` row standing and deletes the credentials, so an
-     * environment-bootstrap deployment that restarts after one reads a row it is configured for
-     * and puts the person's IMAP and SMTP passwords back on the deployment they took them off.
-     * `disabled` is the status BOTH removals write — plain disconnect and erase — and it is the
-     * only one that means somebody removed this mailbox: an `error` row is a live mailbox whose
-     * last cycle failed. FIRST, and inside the transaction that writes, so a removal committing
-     * mid-bootstrap loses the race rather than the person losing the erasure.
-     *
-     * ONE fence call, account then mailbox — the shared seam carries the mailbox scope now, and
-     * a credential re-minted for an erased mailbox is a live way back into it.
+     * environment-bootstrap deployment restarting after one would put the person's IMAP and SMTP
+     * passwords back on a mailbox they took them off. `disabled` is the status BOTH removals write
+     * — plain disconnect and erase; an `error` row is a live mailbox whose last cycle failed.
+     * FIRST, and inside the transaction that writes, so a removal committing mid-bootstrap loses
+     * the race rather than the person losing the erasure. ONE fence call, account AND mailbox: a
+     * credential re-minted for an erased mailbox is a live way back into it.
      */
     const [row] = await tx.select({
       accountId: mailboxes.accountId, status: mailboxes.status,
