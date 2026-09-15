@@ -154,7 +154,16 @@ fn main() {
     #[cfg(feature = "local-engine")]
     vitals::start();
 
-    app.run(move |_app, _event| {
+    // THE ONE PLACE THE QUIT IS ALLOWED TO WAIT, and it is after the loop rather than inside it.
+    //
+    // `run_return` gives this function the loop's exit code back instead of ending the process
+    // inside it, which is what lets the engine be waited for with no window on screen and no
+    // handler blocking the loop. Measured on Omarchy: waiting inside the callback keeps the
+    // window mapped for the whole wait, because a run loop cannot flush its own hide or its own
+    // destroy while a handler is blocked in it.
+    #[cfg(feature = "local-engine")]
+    let quitting = std::sync::Arc::clone(&shell);
+    let exit_code = app.run_return(move |_app, _event| {
         // The close/quit policy is `host::lifecycle_action` — ONE function, tested against the
         // contract that disarmed is exactly the behaviour above this feature existed: Destroyed
         // stops the engine, a close request passes through, Exit stops. Armed swaps the close
@@ -190,7 +199,11 @@ fn main() {
             };
             if let Some(signal) = signal {
                 match host::lifecycle_action(host_runtime.armed(), signal) {
-                    host::LifecycleAction::StopEngine => shell.stop(),
+                    // NOBODY WAITS HERE, and that is the whole of it: this arm only makes sure
+                    // the engine is on its way out. The waiting is below, after the loop.
+                    host::LifecycleAction::StopEngine => {
+                        shell.begin_stop();
+                    }
                     host::LifecycleAction::HideInsteadOfClose => {
                         if let tauri::RunEvent::WindowEvent {
                             event: tauri::WindowEvent::CloseRequested { api, .. },
@@ -201,9 +214,47 @@ fn main() {
                         }
                         host::hide_main_window(_app);
                     }
-                    host::LifecycleAction::Nothing => {}
+                    // THE CLOSE PRESS ON AN INSTALL THAT IS NOT HOSTING, and the whole of the
+                    // freeze: measured, the press reached `Destroyed`'s `stop()` in 11 ms and
+                    // that call returned 3 004 ms later, with the window on screen the whole
+                    // time. The policy is unchanged — this event still ends the app and
+                    // still stops the engine — but the window goes first and the engine is
+                    // waited for off this thread. `leave_then_exit` carries why the close has to
+                    // be refused for the hide to take effect at all.
+                    //
+                    // WINDOWS AND LINUX ONLY, and the cfg is the policy rather than a workaround:
+                    // there, destroying the last window ends the app, so refusing the close and
+                    // exiting when the engine has left reaches the same end by a path that can
+                    // put the window away first. On macOS a closed window is NOT a quit — the
+                    // process stays, the dock icon stays — so the close proceeds exactly as
+                    // before and `Destroyed` below starts the same off-thread stop.
+                    host::LifecycleAction::Nothing => {
+                        #[cfg(not(target_os = "macos"))]
+                        if signal == host::WindowSignal::MainCloseRequested {
+                            use tauri::Manager;
+                            if let tauri::RunEvent::WindowEvent {
+                                event: tauri::WindowEvent::CloseRequested { api, .. },
+                                ..
+                            } = &_event
+                            {
+                                api.prevent_close();
+                            }
+                            if let Some(window) = _app.get_webview_window("main") {
+                                let _ = window.hide();
+                            }
+                            shell.leave_then_exit(_app, engine::SHUTDOWN_BOUND);
+                        }
+                    }
                 }
             }
         }
     });
+
+    // The window is gone and the loop is over, so this costs a person nothing — and the bound is
+    // what stops a supervisor that is itself stuck from keeping a windowless process alive. The
+    // engine loses its stdin when this process goes either way, which is the same EOF it was
+    // asked to leave on.
+    #[cfg(feature = "local-engine")]
+    quitting.finish_stop(engine::SHUTDOWN_BOUND);
+    std::process::exit(exit_code);
 }

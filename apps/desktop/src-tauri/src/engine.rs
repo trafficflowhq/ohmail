@@ -228,6 +228,16 @@ impl Default for Timings {
 /// escalation exists for.
 pub const STOP_GRACE: Duration = Duration::from_secs(5);
 
+/// The longest a quit holds this process open, AFTER its window has already gone, for the engine
+/// to finish leaving.
+///
+/// [`STOP_GRACE`] plus a second for the kill and the reap: the supervisor asks, waits that long,
+/// kills, and the kernel hands back a status. It is a bound on the whole of it rather than a
+/// second grace period, so a supervisor that is itself stuck cannot keep a windowless process
+/// alive for ever — and the engine loses its stdin when this process exits either way, which is
+/// the same EOF it was already asked to leave on.
+pub const SHUTDOWN_BOUND: Duration = Duration::from_secs(6);
+
 /// How long the supervisor sleeps when NOTHING can wake it. A backstop, not a poll.
 ///
 /// Everything this shell has to react to now wakes the supervisor: a quit and a protocol fault
@@ -1234,6 +1244,27 @@ pub struct Shell {
     /// the host door on the relaunch, which is a phone losing its mail mid-read over a settings
     /// edit. `crate::host` decides the value; this struct only carries it into each plan.
     host_spawn: Mutex<Option<crate::host::HostSpawn>>,
+    /// How far this app is through leaving.
+    ///
+    /// ── WHY A QUIT NO LONGER RUNS ON THE THREAD THAT DRAWS ──────────────────────────────────
+    ///
+    /// [`Shell::stop`] is bounded — the engine gets [`STOP_GRACE`], then it is killed — but it is
+    /// SECONDS of bound, and it used to be called straight out of the window's own close event.
+    /// Measured on Omarchy: the press reached that call in 11 ms and it returned 3 004 ms later,
+    /// with the window on screen the whole time, because a run loop can neither hide a window nor
+    /// process its own destroy while a handler is blocked inside it. The waiting happens on a
+    /// thread of its own now, and the process exits when it ends.
+    leaving: Mutex<Leaving>,
+}
+
+/// The three states a quit can be in. A plain flag would not do: the difference between "nobody
+/// started one" and "one was started and its bound ran out" decides whether the last wait may call
+/// [`Shell::stop`] again, and calling it on a supervisor that is already stuck would hang the exit
+/// on a lock rather than bound it.
+enum Leaving {
+    NotStarted,
+    InFlight(Receiver<()>),
+    Done,
 }
 
 /// Marks a sign-out refusal taken BEFORE the engine was stopped or any file moved, so nothing
@@ -1249,10 +1280,18 @@ impl Shell {
     /// host module's publication tests need is only the TYPE: their engine answers come through
     /// an injected poll, never through this.
     pub(crate) fn inert_for_tests() -> Shell {
+        Shell::around(Engine::inert(EngineState::Stopped))
+    }
+
+    /// The same shell around a RUNNING engine, for the quit tests: what `begin_stop` and
+    /// `finish_stop` promise is about a child that takes time to leave, and an inert engine
+    /// leaves instantly enough to pass either way.
+    pub(crate) fn around(engine: Engine) -> Shell {
         Shell {
             paths: ShellPaths { app_data: None, resources: None, downloads: None },
-            engine: Mutex::new(Arc::new(Engine::inert(EngineState::Stopped))),
+            engine: Mutex::new(Arc::new(engine)),
             host_spawn: Mutex::new(None),
+            leaving: Mutex::new(Leaving::NotStarted),
         }
     }
 }
@@ -1334,7 +1373,12 @@ impl Shell {
             Plan::Spawn(launch) => Engine::spawn(launch),
             Plan::Inert(state) => Engine::inert(state),
         };
-        Shell { paths, engine: Mutex::new(Arc::new(engine)), host_spawn: Mutex::new(host) }
+        Shell {
+            paths,
+            engine: Mutex::new(Arc::new(engine)),
+            host_spawn: Mutex::new(host),
+            leaving: Mutex::new(Leaving::NotStarted),
+        }
     }
 
     /// The plan, with the host-mode variables added when — and only when — they apply. Every
@@ -1383,6 +1427,98 @@ impl Shell {
     /// Ask the engine to leave. Idempotent, and safe from a window-close and again from the exit.
     pub fn stop(&self) {
         self.engine().stop();
+    }
+
+    /// Start the engine leaving, and DO NOT WAIT for it. `true` if this call started it.
+    ///
+    /// What a close press runs, so that nothing between the press and an empty screen belongs to
+    /// the engine. Everything [`Shell::stop`] does still happens, in the same order, with the same
+    /// grace period and the same kill — on a thread nobody is drawing on.
+    pub fn begin_stop(self: &Arc<Shell>) -> bool {
+        let mut slot = self.leaving.lock().expect("shell shutdown");
+        if !matches!(*slot, Leaving::NotStarted) {
+            return false;
+        }
+        let (done, waited) = mpsc::channel();
+        let shell = Arc::clone(self);
+        *slot = Leaving::InFlight(waited);
+        thread::Builder::new()
+            .name("ohmail-quit".into())
+            .spawn(move || {
+                shell.stop();
+                // A receiver that has already given up is not a failure: the bound belongs to the
+                // app, and this thread's work is done whether or not anybody is still listening.
+                let _ = done.send(());
+            })
+            .expect("ohmail: failed to start the shutdown thread");
+        true
+    }
+
+    /// Wait for a shutdown started by [`Shell::begin_stop`], bounded; start and wait for one if
+    /// nothing did.
+    ///
+    /// The last thing the app does, and by then there is no window, so waiting here costs a person
+    /// nothing. The bound is what stops a stuck supervisor from keeping a windowless process
+    /// alive; `false` means it ran out, which is logged and then accepted — the engine loses its
+    /// stdin when this process goes, which is the same EOF it was asked to leave on. A bound that
+    /// runs out leaves the state DONE rather than started-again: a second wait must not hand the
+    /// same engine a second bound, and [`Shell::stop`] on a supervisor that is already stuck would
+    /// block on its lock instead of being bounded by anything.
+    pub fn finish_stop(self: &Arc<Shell>, within: Duration) -> bool {
+        let mut slot = self.leaving.lock().expect("shell shutdown");
+        let verdict = match &*slot {
+            Leaving::Done => true,
+            // Nothing started one — a platform that ends the app without a close request, or a
+            // quit from the tray. The window is gone by now, so this is the old behaviour.
+            Leaving::NotStarted => {
+                self.stop();
+                true
+            }
+            Leaving::InFlight(waited) => match waited.recv_timeout(within) {
+                Ok(()) => true,
+                // The sender was dropped without a word: the thread is over either way.
+                Err(mpsc::RecvTimeoutError::Disconnected) => true,
+                Err(mpsc::RecvTimeoutError::Timeout) => {
+                    log_line(format_args!(
+                        "the engine had not finished leaving {}ms after the window closed; \
+                         quitting anyway, which closes its input",
+                        within.as_millis()
+                    ));
+                    false
+                }
+            },
+        };
+        *slot = Leaving::Done;
+        verdict
+    }
+
+    /// Leave: start the engine's shutdown and end the app when it is done, or when the bound runs
+    /// out.
+    ///
+    /// FOR THE PLATFORMS WHERE CLOSING THE WINDOW IS THE QUIT — Windows and Linux, where
+    /// destroying the last window ends the app. The close is refused and the window hidden
+    /// instead, which is the only way the window can actually go: a hide is a message to the run
+    /// loop, and a loop that is on its way out never reads it. Measured on Omarchy, that is not a
+    /// theory — with the close allowed to proceed the window stayed on screen for the whole
+    /// shutdown however little the handlers did. So the loop is kept alive, with nothing on
+    /// screen, until the engine has left; then this ends it.
+    pub fn leave_then_exit<R: tauri::Runtime>(
+        self: &Arc<Shell>,
+        app: &tauri::AppHandle<R>,
+        within: Duration,
+    ) {
+        if !self.begin_stop() {
+            return;
+        }
+        let shell = Arc::clone(self);
+        let app = app.clone();
+        thread::Builder::new()
+            .name("ohmail-leave".into())
+            .spawn(move || {
+                shell.finish_stop(within);
+                app.exit(0);
+            })
+            .expect("ohmail: failed to start the shutdown thread");
     }
 
     /// Replace the running engine with one started from `next`.

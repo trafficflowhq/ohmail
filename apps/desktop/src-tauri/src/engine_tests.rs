@@ -1121,6 +1121,66 @@ fn a_child_that_leaves_is_noticed_without_waiting_for_a_timer() {
     assert_eq!(engine.last_exit().expect("the run ended").code, Some(0));
 }
 
+/// THE CLOSE PRESS DOES NOT WAIT FOR THE ENGINE, AND THE EXIT DOES.
+///
+/// The freeze this repairs, measured on Omarchy: the press reached `Destroyed`'s `stop()` in
+/// 11 ms and that call returned 3 004 ms later, with the window on screen the whole time. Both
+/// halves are here, against an engine that ignores the ask and therefore takes the WHOLE grace
+/// period — `begin_stop` comes back in a fraction of it, `finish_stop` waits it out and finds the
+/// engine gone. Watched fail by putting `shell.stop()` back in place of `begin_stop`: the first
+/// assertion then reads the whole grace period.
+#[test]
+fn the_close_press_hands_the_engine_off_and_the_exit_waits_for_it() {
+    let fixture = Fixture::new("quit-off-thread");
+    let shell = Arc::new(Shell::around(Engine::spawn_with(fixture.launch("serve-deaf"), quick())));
+    wait_for(
+        || matches!(shell.engine().state(), EngineState::Serving { .. }),
+        Duration::from_secs(20),
+        "the engine to announce itself",
+    );
+    let pid = shell.engine().pid().expect("a running engine has a pid");
+
+    let began = Instant::now();
+    shell.begin_stop();
+    let pressed = began.elapsed();
+    assert!(
+        pressed < quick().stop_grace / 4,
+        "the press took {pressed:?} of the {:?} grace period, which is the freeze",
+        quick().stop_grace
+    );
+
+    // The exit is where the waiting belongs, and by then there is no window to freeze.
+    assert!(shell.finish_stop(Duration::from_secs(20)), "the shutdown did not finish inside the bound");
+    assert!(began.elapsed() >= quick().stop_grace, "a deaf engine was not held to the grace period");
+    assert_eq!(shell.engine().state(), EngineState::Stopped);
+    #[cfg(unix)]
+    assert!(!alive(pid), "process {pid} is gone");
+    let _ = pid;
+}
+
+/// AN EXIT THAT NOBODY WARNED IS STILL A STOP. A platform that ends the app without a close
+/// request — and the tray's own Quit — reaches `finish_stop` with nothing in flight, and the
+/// engine must still be reaped there rather than left behind.
+#[test]
+fn an_exit_with_no_press_before_it_still_stops_the_engine() {
+    let fixture = Fixture::new("quit-unwarned");
+    let shell = Arc::new(Shell::around(Engine::spawn_with(fixture.launch("serve"), quick())));
+    wait_for(
+        || matches!(shell.engine().state(), EngineState::Serving { .. }),
+        Duration::from_secs(20),
+        "the engine to announce itself",
+    );
+    let pid = shell.engine().pid().expect("a running engine has a pid");
+
+    assert!(shell.finish_stop(Duration::from_secs(20)));
+
+    assert_eq!(shell.engine().state(), EngineState::Stopped);
+    assert_eq!(fixture.exits(), 1, "it was asked to leave, not killed: {:?}", fixture.lines());
+    #[cfg(unix)]
+    assert!(!alive(pid), "process {pid} is gone");
+    let _ = pid;
+}
+
 // ── Supervision: noticing, restarting, and knowing when to stop ─────────────────────────────
 
 #[test]
