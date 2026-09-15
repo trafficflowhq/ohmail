@@ -74,6 +74,18 @@
   </screenshots>
 
   <releases>
+    <release version="0.19.1" date="2026-09-17">
+      <description>
+        <ul>
+          <li>Reopening the app no longer holds the text of every reply you have sent</li>
+          <li>Mail the app lets go of takes its leftovers with it</li>
+          <li>A phone or second computer paired to this one keeps less of the mailbox</li>
+          <li>Re-pairing while the app was renewing its access no longer costs you the new pairing</li>
+          <li>Two sentences about where your password and your key go now say what the app does</li>
+          <li>The "Another computer" door says it is not available yet</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.19.0" date="2026-09-14">
       <description>
         <ul>
@@ -202,23 +214,6 @@
           <li>The self-host boot check can pass a healthy stack again</li>
           <li>A self-hosted install can sit behind a TLS terminator it does not own</li>
           <li>Two self-hosted stacks on one machine no longer adopt each other</li>
-        </ul>
-      </description>
-    </release>
-    <release version="0.16.1" date="2026-09-10">
-      <description>
-        <ul>
-          <li>The message actions use the width they have</li>
-          <li>Trash and filing</li>
-          <li>Triage piles on the desktop</li>
-          <li>Away replies</li>
-          <li>A connection that stops answering is noticed in seconds</li>
-          <li>Sync now can be pressed again</li>
-          <li>Filing is steadier when two decisions land at once</li>
-          <li>About names the build this app was made from</li>
-          <li>Self-hosting: no plans, no metering, no billing surface</li>
-          <li>The engine's log</li>
-          <li>A door with no account asks nothing about one</li>
         </ul>
       </description>
     </release>

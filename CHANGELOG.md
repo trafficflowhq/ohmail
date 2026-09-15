@@ -18,7 +18,7 @@ See [Status](README.md#status--read-this-first).
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
 [Roadmap](README.md#roadmap).
 
-## [0.19.1] — 2026-09-15
+## [0.19.1] — 2026-09-17
 
 ### Reopening the app no longer holds the text of every reply you have sent
 

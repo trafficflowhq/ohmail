@@ -575,6 +575,28 @@ function installShellStub(window) {
             error: { code: "not_found", message: "no manage page is served here" },
           }));
         }
+        /* `GET /account/access` — WHETHER THIS ACCOUNT'S DOOR OPERATES A METERED PROGRAM, asked
+           once at mount by `useDesktopManageOffer` on the account door, which is what decides
+           whether the Subscription pane is built at all.
+
+           `metered: false` IS THE MODELLED ANSWER, NOT A CONVENIENCE. It is the product's own
+           stated contract: DesktopSubscription.tsx says "a managed door whose program is absent
+           answers `metered: false`", and a stub engine has no entitlements program behind it. The
+           hook reads 402 as offered, a non-ok as nowhere, and ok as `metered === true` — so this
+           answer withholds the pane and grows no nav entry, which is the resting state the rest of
+           these checks assert. Answering 402, or 200 with `metered: true`, would draw a pane and a
+           nav entry and move a product decision inside the asserted DOM; the manage-link entry
+           above withholds for the same reason.
+
+           IT WAS ADDED AFTER THE CHECK NAMED IT RED, exactly like the entry above, and the drift is
+           worth naming: the desktop began asking this route in the 0.19.1 range (the subscription
+           link is minted on the press now) and the stub was not taught it, so the render gate
+           refused with `the stub was asked for no route it does not serve`. That is the
+           `unmodelled` list doing its job, and a double that answered differently from the real
+           API would have hidden the change instead of reporting it. GET only and exact. */
+        if (url === "/account/access" && (payload?.method ?? "GET") === "GET") {
+          return Promise.resolve(frame(200, "OK", { metered: false }));
+        }
         /* RECORDED, not silently 404'd into a console error the checks would then
            report as a product defect. A surface that starts calling a second route
            at boot has to be modelled here; until it is, this says so by name. */
