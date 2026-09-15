@@ -165,7 +165,31 @@ jobs:
         run: |
           set -euo pipefail
           REPO="$GITHUB_REPOSITORY"
-          STATE="$(gh release view "$RELEASE_TAG" --repo "$REPO" --json isPrerelease,isDraft)"
+          # ── THE STATE IS READ, OR THIS RUN STOPS BEFORE ANY FLAG MOVES ───
+          # `set -e` already kills a step whose read fails. It kills it without a name and
+          # without saying what it leaves behind — a release published as Latest with no feeds
+          # on it, which is how 0.17.0 went. So the read is retried, and an exhausted read
+          # refuses by name: nothing after it runs, and nothing before it has touched the page.
+          read_state() {
+            local attempt
+            local answer
+            for attempt in 1 2 3 4 5; do
+              if answer="$(gh release view "$RELEASE_TAG" --repo "$REPO" --json isPrerelease,isDraft 2>/dev/null)" \
+                 && [ -n "$answer" ] \
+                 && printf '%s' "$answer" | jq -e 'has("isPrerelease") and has("isDraft")' > /dev/null 2>&1; then
+                printf '%s' "$answer"
+                return 0
+              fi
+              sleep 5
+            done
+            return 1
+          }
+          STATE="$(read_state)" || {
+            echo "FENCE-STATE-UNREADABLE $RELEASE_TAG: the release's own state did not answer in five reads." >&2
+            echo "No flag was touched by this run. A page published as Latest stays Latest with no feeds" >&2
+            echo "until this workflow is dispatched against the tag again." >&2
+            exit 1
+          }
           PRE="$(printf '%s' "$STATE" | jq -r '.isPrerelease')"
           DRAFT="$(printf '%s' "$STATE" | jq -r '.isDraft')"
           echo "entered_prerelease=$PRE" >> "$GITHUB_OUTPUT"
@@ -183,7 +207,12 @@ jobs:
           # an edit that answers 0 and changes nothing would leave the release exposed
           # while this run reported it protected.
           if gh release edit "$RELEASE_TAG" --repo "$REPO" --prerelease; then
-            NOW="$(gh release view "$RELEASE_TAG" --repo "$REPO" --json isPrerelease | jq -r '.isPrerelease')"
+            AFTER="$(read_state)" || {
+              echo "FENCE-STATE-UNREADABLE $RELEASE_TAG: the flag was set and the page would not say so." >&2
+              echo "The state this run leaves the release in is unknown, so it goes no further." >&2
+              exit 1
+            }
+            NOW="$(printf '%s' "$AFTER" | jq -r '.isPrerelease')"
           else
             NOW=unknown
           fi
@@ -1303,8 +1332,71 @@ jobs:
             echo "the feeds are on $RELEASE_TAG; the page stays a prerelease because this run was asked to leave it one."
             exit 0
           fi
+
+          # ── THE FLAG COMES OFF ON EVIDENCE, NOT ON POSITION ───────────────
+          #
+          # This step carries no `if:`, so standing here already means every step before it
+          # succeeded. But that is a property of the FILE — an edit moves it, and the guard
+          # against that is a test somebody has to keep. These markers are a property of the
+          # RUN: one per feed the release actually carries, one per feed that answered from the
+          # address clients read, each written by the step that did the work. The promotion
+          # asks what happened rather than where it is standing, and a run missing any of them
+          # leaves a prerelease — which is an update path, where Latest with no feeds is a 404.
+          OWED=""
+          for f in latest.json appcast-macos.xml SHA256SUMS; do
+            for stage in attached served; do
+              [ -e "feeds-state/$stage/$f" ] || OWED="$OWED $stage/$f"
+            done
+          done
+          if [ -n "$OWED" ]; then
+            echo "promoted=no" >> "$GITHUB_OUTPUT"
+            echo "reason=this run has no record that every feed is on the page and answering" >> "$GITHUB_OUTPUT"
+            echo "LATEST-NOT-GRANTED $RELEASE_TAG: this run recorded no$OWED" >&2
+            echo "The page stays a prerelease, so /releases/latest keeps serving the last release whose feeds work." >&2
+            exit 1
+          fi
+
+          # ── AND THE PAGE'S OWN STATE, READ BEFORE THE EDIT AND NOT AFTER IT ──
+          # A release-state request that fails has to stop this run while the page is still a
+          # prerelease. Read only afterwards, the flag is already off when the trouble shows.
+          read_state() {
+            local attempt
+            local answer
+            for attempt in 1 2 3 4 5; do
+              if answer="$(gh release view "$RELEASE_TAG" --repo "$REPO" --json isPrerelease,isDraft 2>/dev/null)" \
+                 && [ -n "$answer" ] \
+                 && printf '%s' "$answer" | jq -e 'has("isPrerelease") and has("isDraft")' > /dev/null 2>&1; then
+                printf '%s' "$answer"
+                return 0
+              fi
+              sleep 5
+            done
+            return 1
+          }
+          BEFORE="$(read_state)" || {
+            echo "promoted=no" >> "$GITHUB_OUTPUT"
+            echo "reason=the release state could not be read" >> "$GITHUB_OUTPUT"
+            echo "LATEST-NOT-GRANTED $RELEASE_TAG: the release's own state did not answer in five reads," >&2
+            echo "so the prerelease flag was not touched and the page stays a prerelease." >&2
+            exit 1
+          }
+          # The draft belt, read from the page rather than from the fence job's output: a page
+          # that is a draft now is not this job's to publish, whatever it was when the run began.
+          if [ "$(printf '%s' "$BEFORE" | jq -r '.isDraft')" = true ]; then
+            echo "promoted=no" >> "$GITHUB_OUTPUT"
+            echo "reason=the page is a draft" >> "$GITHUB_OUTPUT"
+            echo "the feeds are on $RELEASE_TAG; it is a draft, and publishing it is not this job's to do."
+            exit 0
+          fi
+
           gh release edit "$RELEASE_TAG" --repo "$REPO" --prerelease=false
-          NOW="$(gh release view "$RELEASE_TAG" --repo "$REPO" --json isPrerelease | jq -r '.isPrerelease')"
+          AFTER="$(read_state)" || {
+            echo "promoted=no" >> "$GITHUB_OUTPUT"
+            echo "reason=the release state could not be read back after the edit" >> "$GITHUB_OUTPUT"
+            echo "LATEST-NOT-GRANTED $RELEASE_TAG: the edit was made and the page would not say what it is." >&2
+            exit 1
+          }
+          NOW="$(printf '%s' "$AFTER" | jq -r '.isPrerelease')"
           if [ "$NOW" != false ]; then
             echo "promoted=no" >> "$GITHUB_OUTPUT"
             echo "reason=the prerelease flag would not come off" >> "$GITHUB_OUTPUT"
