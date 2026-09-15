@@ -920,9 +920,9 @@ export const DE: Deck = {
   toastMoveAlready: (place: string) => `Schon in ${place}.`,
   /** Siehe `copy.en.ts`: 202 heisst vorgemerkt, nicht erledigt — verschoben wurde nichts. */
   toastMoveQueued: (place: string, holder: string) =>
-    `Für ${holder} vorgemerkt — beim nächsten Durchgang nach ${place}.`,
+    `Für ${holder} vorgemerkt — beim nächsten Durchgang: ${place}.`,
   toastMoveQueuedUnknown: (place: string) =>
-    `Für den Organizer vorgemerkt — beim nächsten Durchgang nach ${place}.`,
+    `Für den Organizer vorgemerkt — beim nächsten Durchgang: ${place}.`,
   toastDeleteQueued: (holder: string) => `Für ${holder} vorgemerkt — gelöscht wird beim nächsten Durchgang.`,
   toastDeleteQueuedUnknown: "Für den Organizer vorgemerkt — gelöscht wird beim nächsten Durchgang.",
   organizerStillWaiting: (holder: string) => `Warte weiterhin auf ${holder}.`,
