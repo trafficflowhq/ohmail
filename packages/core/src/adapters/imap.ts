@@ -2224,9 +2224,26 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
   ): Promise<{
     fetched: InternalCreate[]; truncated: boolean; unanswered: number[];
     oversize: Array<{ uid: number; size: number }>;
+    /** The PASS budget was already spent when this folder was asked; nothing here was fetched. */
+    budgetSpent: boolean;
   }> {
     const fetched: InternalCreate[] = [];
-    if (uids.length === 0) return { fetched, truncated: false, unanswered: [], oversize: [] };
+    if (uids.length === 0) {
+      return { fetched, truncated: false, unanswered: [], oversize: [], budgetSpent: false };
+    }
+    // ── THE ANTI-STALL RULE IS THIS FOLDER'S; THE BUDGET IS THE WHOLE PASS'S ──────────────────
+    //
+    // `take.length === 0` below always admits a folder's first message past the byte budget, so
+    // the drain cannot wedge on one large mail. But the budget is SHARED across every folder of
+    // the pass, so that arm admitted a first message in each REMAINING folder after the budget
+    // was already gone — a hundred folders holding one 25 MiB message each retained all of it,
+    // and a bound enforced only at the end of a multi-folder pass is no bound during it. The
+    // pass budget is asked HERE, before any fetch and from no server value: entered spent, this
+    // folder takes nothing and the caller stops the pass. The anti-stall rule keeps its job —
+    // once per pass, by the folder that still had budget when it was asked.
+    if (budget.bytes <= 0 || budget.messages <= 0) {
+      return { fetched, truncated: true, unanswered: [], oversize: [], budgetSpent: true };
+    }
 
     const dates = await this.arrivalDatesFor(folder, curUidValidity, uids);
     const newestFirst = orderCandidates(uids, dates);
@@ -2271,7 +2288,7 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
       take.push(uid);
       bytes += size;
     }
-    if (take.length === 0) return { fetched, truncated, unanswered: [], oversize };
+    if (take.length === 0) return { fetched, truncated, unanswered: [], oversize, budgetSpent: false };
 
     /**
      * The byte budget above trusts a number the server chose — the literal-length arm. Everything
@@ -2406,7 +2423,7 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
     }
 
     fetched.sort((a, b) => (dates.get(b.uid) ?? 0) - (dates.get(a.uid) ?? 0) || b.uid - a.uid);
-    return { fetched, truncated, unanswered, oversize };
+    return { fetched, truncated, unanswered, oversize, budgetSpent: false };
   }
 
   /**
@@ -2722,12 +2739,17 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
         // `changedSince` could report, so nothing is lost by sourcing them here instead.
         const unknownUids = currentUids.filter((u) => !effectiveKnown.has(u));
         const {
-          fetched, truncated, unanswered: withheldUids, oversize: refusedOnSize,
+          fetched, truncated, unanswered: withheldUids, oversize: refusedOnSize, budgetSpent,
         } = await this.fetchCapped(unknownUids, folder, curUidValidity, budget);
         creates.push(...fetched);
         budget.messages -= fetched.length;
         for (const f of fetched) budget.bytes -= f.raw.length;
         if (truncated) hasBacklog = true;
+        // Spent before this folder was asked: nothing was fetched here and nothing further can
+        // be, so the pass ends with what it has. Every folder from here keeps its STORED cursor —
+        // absent from `newFolders` is "leave the row alone" (`sync.ts` iterates what is present) —
+        // so the next pass re-derives exactly this work against a fresh budget.
+        if (budgetSpent) break;
         // Reported, never swallowed. The cursor written at the bottom of this loop ADVANCES over
         // these UIDs, so the caller owes each one a durable record first — see
         // {@link ChangeBatch.unanswered}, which is where that obligation is stated.
