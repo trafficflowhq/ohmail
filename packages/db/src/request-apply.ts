@@ -700,10 +700,27 @@ export type ApplyRuleRequestResult =
   | { applied: true; op: "create" | "update" | "delete"; ruleId: string; lastSeq: bigint }
   | { applied: false; refusal: RuleRefusal };
 
+/**
+ * What a key lookup reads back: the row's identity, and EVERY column a request could write.
+ *
+ * The state columns are here so the drain can compare rather than assume. A column named by
+ * {@link RULE_CREATE_STATE} and missing from the select would compare against `undefined`, decide
+ * "differs" on every replay and rewrite the row for ever — the census refuses that pairing.
+ */
+interface FoundRule {
+  id: string;
+  destination: string;
+  priority: number;
+  enabled: boolean;
+  subjectContains: string | null;
+  bodyContains: string | null;
+}
+
 /** The oldest row matching the four-field key — deterministic, see the family header. */
-async function findRuleByKey(tx: Tx, accountId: string, key: RuleKey): Promise<{ id: string; destination: string; subjectContains: string | null; bodyContains: string | null } | null> {
+async function findRuleByKey(tx: Tx, accountId: string, key: RuleKey): Promise<FoundRule | null> {
   const rows = await tx.select({
     id: rulesTbl.id, destination: rulesTbl.destination,
+    priority: rulesTbl.priority, enabled: rulesTbl.enabled,
     subjectContains: rulesTbl.subjectContains, bodyContains: rulesTbl.bodyContains,
     createdAt: rulesTbl.createdAt,
   })
@@ -718,6 +735,37 @@ async function findRuleByKey(tx: Tx, accountId: string, key: RuleKey): Promise<{
     .orderBy(asc(rulesTbl.createdAt), asc(rulesTbl.id))
     .limit(1);
   return rows[0] ?? null;
+}
+
+/**
+ * THE STATE A `rule.create` ASKS FOR, derived from the request type rather than listed by hand.
+ *
+ * `op` and `key` say WHICH rule; `applyRetro` says what to do with mail already filed. Everything
+ * else in {@link ValidatedRuleCreate} is a column the request would write, so `Record` over that
+ * key set means a field added to the interface does not compile until it is named here — and the
+ * next field is covered rather than repeating this fix per field.
+ */
+type RuleCreateStateField = Exclude<keyof ValidatedRuleCreate, "op" | "key" | "applyRetro">;
+
+const RULE_CREATE_STATE: Readonly<Record<RuleCreateStateField, keyof FoundRule>> = {
+  destination: "destination",
+  priority: "priority",
+  enabled: "enabled",
+};
+
+/**
+ * WHAT THE ROW WOULD HAVE TO CHANGE FOR THE REQUESTED STATE TO HOLD.
+ *
+ * Empty means it already holds and nothing is written — that idempotence is the whole reason the
+ * key lookup exists, and a reconciler that rewrote every row on every replay would undo it.
+ */
+function ruleCreateDiff(found: FoundRule, want: ValidatedRuleCreate): Partial<typeof rulesTbl.$inferInsert> {
+  const diff: Record<string, unknown> = {};
+  for (const field of Object.keys(RULE_CREATE_STATE) as RuleCreateStateField[]) {
+    const column = RULE_CREATE_STATE[field];
+    if (found[column] !== want[field]) diff[column] = want[field];
+  }
+  return diff as Partial<typeof rulesTbl.$inferInsert>;
 }
 
 /**
@@ -737,11 +785,29 @@ export async function applyRuleRequest(
   const { key } = payload;
 
   if (payload.op === "create") {
-    /* AN EXISTING ROW FOR THIS KEY IS THE IDEMPOTENT REPLAY, not a conflict. The rule the person
-       asked for exists; answering `applied` is the honest outcome, and creating a second identical
-       row would be the schema's missing unique index doing damage rather than the request. */
+    /* A ROW UNDER THIS KEY IS NOT THE ANSWER ON ITS OWN. The key names WHICH rule; it says nothing
+       about where that rule files, how it ranks or whether it is on — and a reader working from a
+       stale profile creates over the organizer's rule with a destination of their own. Acking
+       `applied` on the lookup alone told that person their rule was in force while their mail kept
+       going to the old folder: a false state, not a lost write. So the difference is applied HERE,
+       in this transaction, before anything is acked; an identical request still writes nothing,
+       which is the idempotent replay this lookup exists for. */
     const existing = await findRuleByKey(tx, accountId, key);
     if (existing) {
+      const diff = ruleCreateDiff(existing, payload);
+      if (Object.keys(diff).length > 0) {
+        const reconcile: Partial<typeof rulesTbl.$inferInsert> = { ...diff, updatedAt: now };
+        /* The backlog re-opens on the update path's terms: only when the ROUTING moved, never for
+           a reorder or an on/off, and only if the request asked for the mail already filed. */
+        if (diff.destination !== undefined && payload.applyRetro) {
+          reconcile.retroRequestedAt = now;
+          reconcile.retroDoneAt = null;
+          reconcile.retroCursor = null;
+          reconcile.retroMoved = 0;
+        }
+        await tx.update(rulesTbl).set(reconcile)
+          .where(and(eq(rulesTbl.id, existing.id), eq(rulesTbl.accountId, accountId)));
+      }
       return {
         applied: true, op: "create", ruleId: existing.id,
         lastSeq: (await recordRuleDelta(ledger(tx), accountId, [existing.id], "update"))[0]!,
