@@ -13,6 +13,7 @@ import type { MailboxAdapter, ImapConfig } from "@trafficflow/core/adapters/imap
 import { buildIdentityOf, buildVersionOf, type BuildIdentitySource } from "./build-version.js";
 import type { MailboxSelection } from "./mailboxes.js";
 import type { ThreadBackfillPass } from "./thread-backfill.js";
+import { dialHostGuardFromEnv, type DialHostGuard } from "./dial-host-guard.js";
 
 /** One IMAP IDLE connection per mailbox lives in this process — cap it. */
 export const DEFAULT_MAX_MAILBOXES = 64;
@@ -260,6 +261,16 @@ export interface WorkerConfig {
   mailboxRetryMs?: number;
   /** Consecutive runtime sync failures before a mailbox is detached + quarantined. */
   maxSyncFailures?: number;
+  /**
+   * THIS DEPLOYMENT'S POLICY ON THE HOSTS IT MAY DIAL, and unlike the seam below `loadConfig` DOES
+   * populate it — from `TF_PROBE_ALLOW_PRIVATE`, the same variable the API reads for its add-time
+   * probe. Every mailbox dial is assembled through it, so a stored server whose name has since
+   * moved to an address this deployment will not connect to is refused instead of dialled, and one
+   * it will connect to is dialled at the address that was just cleared. ABSENT REFUSES rather than
+   * dialling by name: a composition that never decided must not look like a self-hosted install
+   * that decided to admit. See `dial-host-guard.ts`.
+   */
+  dialHostGuard?: DialHostGuard;
   /** TEST SEAM (never populated by `loadConfig`): build the mailbox adapter. Production
    *  always gets a real `ImapAdapter`. Tests inject a fake so post-connect failures,
    *  connection-count assertions and total sync death are drivable deterministically. */
@@ -757,6 +768,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): WorkerConfig {
       user: env.SMTP_USER, pass: env.SMTP_PASS,
     } : undefined,
     keyProvider: keyProviderFromKekEnv(env),
+    // Read here so the deployed process cannot start without a decided policy, and read
+    // from the API's own variable so the two cannot disagree about one operator's network.
+    dialHostGuard: dialHostGuardFromEnv(env),
     kek: kekEnvIdentity(env),
     pollIntervalMs: Number(env.POLL_INTERVAL_MS ?? 60000),
     sentDomain: env.TF_SENT_DOMAIN ?? "trafficflow.ch",

@@ -14,6 +14,7 @@ import { keyProviderFromEnvOptional } from "@trafficflow/core";
 import { ImapAdapter } from "@trafficflow/core/adapters/imap";
 import { makeDrizzleRepo, type WorkerRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import { loadMailboxCreds } from "./mailboxes.js";
+import { checkedDial, dialHostGuardFromEnv } from "./dial-host-guard.js";
 import { junkSweepPass } from "./junk-sweep.js";
 import {
   CLOUD_DISPLAY_NAME, LeaseUnavailableError, OrganizerStandDownError, acquireLeasePermit,
@@ -67,8 +68,12 @@ if (mb.releaseRequestedAt !== null) {
 const creds = await loadMailboxCreds(owned.db, mailboxId, keyProvider);
 if (!creds) { console.error("no imap credentials for this mailbox"); await owned.close(); process.exit(2); }
 
+/* This command dials the operator's own deployment, so it asks the deployment's own policy —
+   the same variable the organizer and the API read. A tool that dialled a host the always-on
+   organizer refuses would be a third answer about one network. */
 const adapter = new ImapAdapter({
   host: creds.imap.host, port: creds.imap.port, secure: creds.imap.secure,
+  ...(await checkedDial(dialHostGuardFromEnv(process.env), creds.imap.host, "imap")),
   ...(creds.imap.allowInsecure ? { allowInsecure: true } : {}),
   auth: creds.imap.auth,
 });

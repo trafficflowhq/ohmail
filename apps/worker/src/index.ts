@@ -73,6 +73,7 @@ const JUNK_SWEEP_PER_CYCLE = 200;
 import { makeStorageCapResolver } from "./storage-cap.js";
 import { DeadLetterLedger, isDatabaseFault, isSharedDatabaseFault } from "./dead-letter.js";
 import { KnownSetCache } from "./known-set.js";
+import { checkedDial } from "./dial-host-guard.js";
 import { markDatabaseFaults, asDatabaseFault } from "./db-fault.js";
 import { runKickstart } from "./kickstart.js";
 import {
@@ -2107,8 +2108,17 @@ export async function startWorkerWithLock(
           });
         }
 
+        /**
+         * THE DIAL'S OWN CHECK, at the moment of the dial. The stored host was cleared once, when
+         * this mailbox was added; everything since handed the NAME to a fresh socket that resolved
+         * it again. Under the managed policy this resolves and clears now and the dial goes to what
+         * cleared; under the self-host policy it clears nothing and the dial is by name, because a
+         * mail server on the operator's own network is legitimate there. Each transport is its own
+         * dial and gets its own check — the submission host is a different name, cleared separately.
+         */
         adapter = makeAdapter({
           host: creds.imap.host, port: creds.imap.port, secure: creds.imap.secure,
+          ...(await checkedDial(config.dialHostGuard, creds.imap.host, "imap")),
           // The connect-time plaintext consent, if the credential row carries one. See
           // `TransportCreds.allowInsecure` for why omitting this strands a consented mailbox.
           ...(creds.imap.allowInsecure ? { allowInsecure: true } : {}),
@@ -2117,6 +2127,7 @@ export async function startWorkerWithLock(
           auth: creds.imap.auth,
           smtp: creds.smtp ? {
             host: creds.smtp.host, port: creds.smtp.port, secure: creds.smtp.secure,
+            ...(await checkedDial(config.dialHostGuard, creds.smtp.host, "smtp")),
             // An smtp credential row is always a password (oauth mailboxes carry no smtp row); narrow
             // to the password member so it fits `ImapConfig.smtp.auth`, and omit auth otherwise.
             ...("pass" in creds.smtp.auth ? { auth: creds.smtp.auth } : {}),

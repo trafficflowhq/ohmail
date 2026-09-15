@@ -68,6 +68,16 @@ export const SERVER_UNAVAILABLE_RESPONSE_CODES: ReadonlySet<string> = new Set(["
 export const OAUTH_ERROR_DETAIL_CODES: ReadonlySet<string> = new Set(["OAUTH_INVALID_GRANT"]);
 
 /**
+ * The organizer's own refusal to dial a host, safe to STORE for the reason
+ * {@link OAUTH_ERROR_DETAIL_CODES} is: it is a constant this codebase chose, not a server-supplied
+ * atom, so echoing it to the account owner lets nobody else pick the words. The `error_code` beside
+ * it is `connect` — the failure IS a connect-time one — and this detail is what tells a reader
+ * which connect failure it was: a mail server whose address now points somewhere this deployment
+ * will not connect to, rather than one that is merely down.
+ */
+export const DIAL_REFUSAL_DETAIL_CODES: ReadonlySet<string> = new Set(["MAILBOX_HOST_REFUSED"]);
+
+/**
  * Timeouts — Node's errnos AND the ones the INSTALLED IMAP client actually emits. The four imapflow
  * codes were missing, and their absence was not theoretical: `imapflow@1.5.0` sets `err.code` to
  * `CONNECT_TIMEOUT`, `GREETING_TIMEOUT`, `UPGRADE_TIMEOUT` and `ETIMEOUT` — between them EVERY way a
@@ -221,6 +231,9 @@ export const MAILBOX_ERROR_DETAIL_TOKENS: ReadonlySet<string> = new Set<string>(
   // classifyMailboxError's OAUTH_INVALID_GRANT → 'auth'), so the taxonomy and the storage rule stay
   // in step — the same discipline every set above this line follows.
   ...OAUTH_ERROR_DETAIL_CODES,
+  // The dial guard's one storable detail, added WITH the classifier arm that emits it (see
+  // classifyMailboxError's MAILBOX_HOST_REFUSED -> 'connect'), on the same discipline.
+  ...DIAL_REFUSAL_DETAIL_CODES,
 ]);
 
 /**

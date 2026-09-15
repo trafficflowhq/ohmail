@@ -276,6 +276,11 @@ services:
       S3_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:?set MINIO_ROOT_PASSWORD in .env}
       S3_BUCKET: ${S3_BUCKET:-ohmail-staging}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      # A mail server on your own network. THE SAME VALUE THE api GETS, and for the same reason the
+      # push allowance below is set on both: the api checks this host when you ADD the mailbox and
+      # the organizer checks it again every time it DIALS, so a value on only one of them is a
+      # mailbox the api accepted and the organizer refuses on every cycle.
+      TF_PROBE_ALLOW_PRIVATE: ${TF_PROBE_ALLOW_PRIVATE:-}
       # THE SAME VALUE THE api GETS, and for the same reason the storage block above is
       # duplicated rather than shared: this process is the one that actually POSTs the wake, so a
       # value set on only one service produces a registration the api accepted and the organizer
