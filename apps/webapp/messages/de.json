@@ -3165,6 +3165,8 @@
     "applied": "Der Rechner, der dieses Postfach organisiert, hat es übernommen.",
     "changedElsewhere": "Von einem anderen Rechner geändert. Das sind jetzt die gespeicherten Abwesenheitseinstellungen.",
     "failed": "Das wurde nicht gespeichert. Es hat sich nichts geändert.",
+    "failedStillOn": "Nicht gespeichert — die Abwesenheitsantwort ist weiterhin an.",
+    "failedStillOff": "Nicht gespeichert — die Abwesenheitsantwort ist weiterhin aus.",
     "incomplete": "Trag eine Nachricht ein, bevor du das einschaltest.",
     "unreachable": "Deine Abwesenheitseinstellungen konnten gerade nicht gelesen werden. Hier hat sich nichts geändert.",
     "notice": "Die Abwesenheitsantwort ist an — {audience, select, everyone {alle, die schreiben,} other {Leute, die du reingelassen hast,}} deren Post {piles} landet, bekommen {throttle, select, always {auf jede Nachricht eine Antwort} per_message {eine Antwort, bis du den Text änderst} per_week {höchstens einmal pro Woche eine Antwort} other {höchstens einmal am Tag eine Antwort}}.",

@@ -121,6 +121,15 @@ export const AWAY_COPY = {
    */
   changedElsewhere: "Changed from another computer. These are the away settings it holds now.",
   failed: "That did not save. Nothing changed.",
+  /**
+   * THE SWITCH AND THE SENTENCE AFTER A REFUSED SAVE. Turning the responder off and pressing Save
+   * during an outage left the row reading "Off. Nothing is sent." over a responder that was still
+   * enabled and still answering mail — the controls kept the optimistic edit while the sentence
+   * said only that something had failed. The controls go back to what is STORED and these say
+   * which state that is, because "it did not save" does not tell somebody whether mail is going out.
+   */
+  failedStillOn: "Could not save — the responder is still on.",
+  failedStillOff: "Could not save — the responder is still off.",
   incomplete: "Add a message before turning this on.",
   unreachable: "Your away settings could not be read just now. Nothing here has changed.",
 } as const;
@@ -265,7 +274,7 @@ export function AwayResponderRow({ onChanged, transport, local = false, host = n
    * account another install organizes, the write did not happen here and a request is waiting.
    */
   const [state, setState] = useState<
-    "idle" | "saved" | "asked" | "applied" | "changedElsewhere" | "failed" | "expired"
+    "idle" | "saved" | "asked" | "applied" | "changedElsewhere" | "failed" | "failedWire" | "expired"
   >("idle");
   /**
    * The read came back refused — a state rather than silence because the control has its own pane
@@ -309,6 +318,13 @@ export function AwayResponderRow({ onChanged, transport, local = false, host = n
    * request that had already been replaced. A watcher whose generation is stale decides nothing.
    */
   const saveGen = useRef(0);
+  /**
+   * WHAT THE SERVER LAST CONFIRMED — written wherever `draft` is set from an answer, and read by
+   * the refusal path. A refused save may not leave the switch showing the edit: the responder is
+   * whatever is stored, and a row that says "Off" over a responder still sending is a false state
+   * about mail going out in somebody's name.
+   */
+  const stored = useRef<Draft | null>(null);
   useEffect(() => {
     alive.current = true;
     return () => {
@@ -322,6 +338,12 @@ export function AwayResponderRow({ onChanged, transport, local = false, host = n
       try {
         const loaded = await wireOf().state();
         if (!alive.current) return;
+        stored.current = {
+          enabled: loaded.enabled, body: loaded.body,
+          startsAt: loaded.startsAt, endsAt: loaded.endsAt,
+          audience: loaded.audience, throttle: loaded.throttle,
+          piles: loaded.piles ?? [...AWAY_PILES_DEFAULT],
+        };
         setDraft({
           enabled: loaded.enabled, body: loaded.body,
           startsAt: loaded.startsAt, endsAt: loaded.endsAt,
@@ -439,23 +461,24 @@ export function AwayResponderRow({ onChanged, transport, local = false, host = n
          watcher has nothing to compare against. */
       const asked: Draft = { ...draft };
       try {
-        const stored = await wireOf().save(draft);
+        const echoed = await wireOf().save(draft);
         if (!alive.current) return;
         // Set from the ECHO, never from what was asked for: the server is what the worker reads.
-        setDraft({
-          enabled: stored.enabled, body: stored.body,
-          startsAt: stored.startsAt, endsAt: stored.endsAt,
-          audience: stored.audience, throttle: stored.throttle,
-          piles: stored.piles ?? [...AWAY_PILES_DEFAULT],
-        });
+        stored.current = {
+          enabled: echoed.enabled, body: echoed.body,
+          startsAt: echoed.startsAt, endsAt: echoed.endsAt,
+          audience: echoed.audience, throttle: echoed.throttle,
+          piles: echoed.piles ?? [...AWAY_PILES_DEFAULT],
+        };
+        setDraft(stored.current);
         changed.current?.({
-          enabled: stored.enabled, audience: stored.audience, throttle: stored.throttle,
-          piles: stored.piles ?? [...AWAY_PILES_DEFAULT],
+          enabled: echoed.enabled, audience: echoed.audience, throttle: echoed.throttle,
+          piles: echoed.piles ?? [...AWAY_PILES_DEFAULT],
         });
         /* THE 202's DISCRIMINATOR DECIDES THE SENTENCE. `stored` is the row as it stands HERE —
            the saved one when the write happened here, the UNCHANGED one when it travelled — so
            without this the pane put the old values back and said "Saved." over them. */
-        if (stored.pending === true) {
+        if (echoed.pending === true) {
           setState("asked");
           /* AND `asked` IS A STATE THAT HAS TO END. It says the organizing machine "applies it on
              its next pass", and nothing here could ever learn that it had: no poll, no
@@ -464,12 +487,17 @@ export function AwayResponderRow({ onChanged, transport, local = false, host = n
              told, which is the same defect the 202 discriminator was added to fix, one step later.
              `watchForApplied` ends it, and the load effect's own read is what ends it for anyone
              who left the pane and came back. */
-          watchForApplied(stored.updatedAt, asked, gen);
+          watchForApplied(echoed.updatedAt, asked, gen);
         } else {
           setState("saved");
         }
       } catch {
-        if (alive.current) setState("failed");
+        if (!alive.current) return;
+        /* THE CONTROLS GO BACK TO WHAT IS STORED. Without this the switch kept the edit: turn the
+           responder off, press Save during an outage, and the row read "Off. Nothing is sent."
+           while the saved responder was still on and still answering every stranger who wrote. */
+        if (stored.current) setDraft(stored.current);
+        setState("failedWire");
       } finally {
         if (alive.current) setPending(false);
       }
@@ -690,6 +718,16 @@ export function AwayResponderRow({ onChanged, transport, local = false, host = n
         ) : null}
         {state === "failed" ? (
           <span className="set-note-inline" role="alert">{complete ? t("failed") : t("incomplete")}</span>
+        ) : null}
+        {/* THE SENTENCE FOLLOWS THE SWITCH, which by now shows the SAVED state — a refusal that
+            says only "that did not save" leaves somebody not knowing whether mail is going out in
+            their name. Its own state rather than a re-derivation of `complete`: that predicate
+            reads the reverted draft, and a stored responder with no body would have answered
+            "Add a message before turning this on." to an outage. */}
+        {state === "failedWire" ? (
+          <span className="set-note-inline" role="alert">
+            {draft.enabled ? t("failedStillOn") : t("failedStillOff")}
+          </span>
         ) : null}
         {state === "expired" ? (
           <span className="set-note-inline" role="alert">{t("untilExpired")}</span>

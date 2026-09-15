@@ -3165,6 +3165,8 @@
     "applied": "The machine that organizes this mailbox has applied it.",
     "changedElsewhere": "Changed from another computer. These are the away settings it holds now.",
     "failed": "That did not save. Nothing changed.",
+    "failedStillOn": "Could not save — the responder is still on.",
+    "failedStillOff": "Could not save — the responder is still off.",
     "incomplete": "Add a message before turning this on.",
     "unreachable": "Your away settings could not be read just now. Nothing here has changed.",
     "notice": "Away responder is on — {audience, select, everyone {everyone who writes} other {people you've let in}} whose mail lands {piles} {audience, select, everyone {gets} other {get}} {throttle, select, always {a reply to every message} per_message {one reply, until you change the text} per_week {a reply at most once a week} other {a reply at most once a day}}.",
