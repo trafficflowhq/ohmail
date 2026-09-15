@@ -73,6 +73,7 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStderr, ChildStdin, ChildStdout, Command, ExitStatus, Stdio};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender, SyncSender};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread::{self, JoinHandle};
@@ -227,9 +228,15 @@ impl Default for Timings {
 /// escalation exists for.
 pub const STOP_GRACE: Duration = Duration::from_secs(5);
 
-/// How often the supervisor looks at the child. Small enough to be invisible, large enough to
-/// cost nothing.
-const POLL: Duration = Duration::from_millis(25);
+/// How long the supervisor sleeps when NOTHING can wake it. A backstop, not a poll.
+///
+/// Everything this shell has to react to now wakes the supervisor: a quit and a protocol fault
+/// notify it, and a child going away closes both its pipes, which the readers report (see
+/// [`Shared::readers`]). What is left is the one case neither covers — a child that hands its
+/// pipes to something outliving it, so EOF never arrives — and a process that has already died is
+/// not in a hurry. This used to be an unconditional 25 ms `try_wait` loop: forty wake-ups a second
+/// for as long as the app was open, to learn that nothing had happened.
+const LIVENESS_BACKSTOP: Duration = Duration::from_secs(30);
 
 /// A string that must never reach a log, a panic message or a `Debug` derive.
 ///
@@ -866,6 +873,15 @@ struct Shared {
     /// lifetime as `host_signal`.
     lan_signal: Option<crate::host::LanSignal>,
     stop: bool,
+    /// How many of this run's two pipe readers are still reading.
+    ///
+    /// THE SUPERVISOR'S WAY OF BEING TOLD THAT THE CHILD HAS GONE. A process exit closes every
+    /// descriptor the process holds, so both of the engine's pipes reach EOF and both readers
+    /// return; this reaching zero is that fact, portably, with no signal handler and no timer.
+    /// It is what lets `wait_for_exit` sleep instead of asking the kernel forty times a second.
+    /// Set to two when the readers are spawned, under the same lock, so it can never read zero
+    /// while the child is alive.
+    readers: u8,
     /// When the current child must be killed if it has not left by itself.
     deadline: Option<Instant>,
     finished: bool,
@@ -891,6 +907,13 @@ struct Inner {
     shared: Mutex<Shared>,
     cv: Condvar,
     timings: Timings,
+    /// Every turn of [`wait_for_exit`], counted, because the invariant is otherwise invisible.
+    ///
+    /// "The supervisor does not wake while the engine is idle" cannot be read off a clock — a
+    /// test can only watch time pass. This is the thread saying how many times it came round,
+    /// and `the_supervisor_sleeps_through_an_idle_engine` is what reads it. Per ENGINE rather
+    /// than per process: the test suite runs several supervisors at once.
+    turns: AtomicU64,
 }
 
 fn new_shared(state: EngineState, finished: bool) -> Shared {
@@ -908,6 +931,7 @@ fn new_shared(state: EngineState, finished: bool) -> Shared {
         host_signal: None,
         lan_signal: None,
         stop: false,
+        readers: 0,
         deadline: None,
         finished,
         next_id: 1,
@@ -930,6 +954,7 @@ impl Engine {
                 shared: Mutex::new(new_shared(state, true)),
                 cv: Condvar::new(),
                 timings: Timings::default(),
+                turns: AtomicU64::new(0),
             }),
             thread: Mutex::new(None),
         }
@@ -945,6 +970,7 @@ impl Engine {
             shared: Mutex::new(new_shared(EngineState::Starting { attempt: 1 }, false)),
             cv: Condvar::new(),
             timings,
+            turns: AtomicU64::new(0),
         });
         let worker = Arc::clone(&inner);
         let thread = thread::Builder::new()
@@ -982,6 +1008,12 @@ impl Engine {
 
     /// How the last run ended, straight from the operating system's exit status.
     #[allow(dead_code)]
+    /// How many times this engine's supervisor has come round its wait. See [`Inner::turns`].
+    #[cfg(test)]
+    pub fn supervisor_turns(&self) -> u64 {
+        self.inner.turns.load(Ordering::Relaxed)
+    }
+
     pub fn last_exit(&self) -> Option<Exit> {
         self.inner.shared.lock().expect("engine state").last_exit
     }
@@ -1755,6 +1787,10 @@ fn supervise(inner: Arc<Inner>, launch: Launch) {
             s.lan_signal = None;
             s.first_error = None;
             s.latest_error = None;
+            // BOTH READERS, COUNTED IN BEFORE EITHER IS SPAWNED. They are what tells the
+            // supervisor the child has gone, so a window where this reads zero with a live child
+            // would be a supervisor that returns before its engine has started.
+            s.readers = 2;
             // THE DEADLINE BELONGS TO ONE RUN, AND CARRYING IT INTO THE NEXT KILLS THE NEXT.
             //
             // Found by the crash-loop tests rather than reasoned about: a run torn down for a
@@ -1774,9 +1810,15 @@ fn supervise(inner: Arc<Inner>, launch: Launch) {
         }
 
         let reader_inner = Arc::clone(&inner);
-        let reader = thread::spawn(move || read_frames(stdout, &reader_inner));
+        let reader = thread::spawn(move || {
+            read_frames(stdout, &reader_inner);
+            reader_finished(&reader_inner);
+        });
         let forwarder_inner = Arc::clone(&inner);
-        let forwarder = thread::spawn(move || forward_diagnostics(stderr, &forwarder_inner));
+        let forwarder = thread::spawn(move || {
+            forward_diagnostics(stderr, &forwarder_inner);
+            reader_finished(&forwarder_inner);
+        });
 
         let started = Instant::now();
         let status = wait_for_exit(&inner, &mut child);
@@ -1895,10 +1937,31 @@ fn supervise(inner: Arc<Inner>, launch: Launch) {
     inner.finish();
 }
 
+/// One of a run's two pipe readers has reached the end of its stream.
+///
+/// The supervisor is asleep, and this is one of the three things that wake it. See
+/// [`Shared::readers`] for why the end of a pipe is how this shell learns that a child is going.
+fn reader_finished(inner: &Arc<Inner>) {
+    {
+        let mut s = inner.shared.lock().expect("engine state");
+        s.readers = s.readers.saturating_sub(1);
+    }
+    inner.cv.notify_all();
+}
+
 /// Wait for this run of the engine to end, killing it if it has been asked to leave and has not.
+///
+/// ── IT WAITS TO BE TOLD. IT DOES NOT ASK. ───────────────────────────────────────────────────
+///
+/// Three things can end a run and each one wakes this thread: a quit arms a deadline and notifies
+/// ([`Engine::stop`]), a protocol fault does the same ([`fault`]), and a child going away closes
+/// both its pipes, which [`Shared::readers`] counts down. So an engine that is simply serving
+/// costs this thread nothing — where it used to cost a `try_wait` and a sleep forty times a
+/// second, every second the app was open, on every platform and on the laptops' batteries.
 fn wait_for_exit(inner: &Arc<Inner>, child: &mut Child) -> ExitStatus {
     let mut killed = false;
     loop {
+        inner.turns.fetch_add(1, Ordering::Relaxed);
         match child.try_wait() {
             Ok(Some(status)) => return status,
             Ok(None) => {}
@@ -1911,29 +1974,51 @@ fn wait_for_exit(inner: &Arc<Inner>, child: &mut Child) -> ExitStatus {
             }
         }
 
-        let deadline = {
-            let mut s = inner.shared.lock().expect("engine state");
-            // A malformed frame is unrecoverable: a length-prefixed stream has no resync point, so
-            // once the two ends disagree about where a frame starts, every later byte is misread.
-            // Ask it to leave the same way a quit does, and hold it to the same deadline.
-            if s.fault.is_some() && s.deadline.is_none() {
-                s.stdin = None;
-                s.deadline = Some(Instant::now() + inner.timings.stop_grace);
-            }
-            s.deadline
-        };
+        let mut s = inner.shared.lock().expect("engine state");
+        // A malformed frame is unrecoverable: a length-prefixed stream has no resync point, so
+        // once the two ends disagree about where a frame starts, every later byte is misread.
+        // Ask it to leave the same way a quit does, and hold it to the same deadline.
+        if s.fault.is_some() && s.deadline.is_none() {
+            s.stdin = None;
+            s.deadline = Some(Instant::now() + inner.timings.stop_grace);
+        }
+        let deadline = s.deadline;
+        let pipes_closed = s.readers == 0;
 
         if let Some(deadline) = deadline {
             if !killed && Instant::now() >= deadline {
+                drop(s);
                 killed = true;
                 log_line(format_args!(
                     "still running {}ms after being asked to leave; killing it",
                     inner.timings.stop_grace.as_millis()
                 ));
                 let _ = child.kill();
+                continue;
             }
         }
-        thread::sleep(POLL);
+
+        if pipes_closed {
+            // BOTH PIPES ARE SHUT, SO THE CHILD IS ALREADY INSIDE ITS OWN EXIT — and the wait is
+            // the exact instrument for that, where a timer would be a guess. EOF reaches a reader
+            // before the task becomes reapable, so the look above can still find it running; this
+            // is that gap and nothing else. The kill is not owed on this path: a child that has
+            // closed the stream it reports on has finished everything the grace period protects,
+            // and one that has not closed its pipes is the one the deadline above is for.
+            drop(s);
+            return child.wait().unwrap_or_else(|_| exit_status_unavailable());
+        }
+
+        // Nothing to do until something happens. A deadline is the one thing nobody will wake
+        // this thread for, so it is the only timeout that is ever short.
+        let wait = match deadline {
+            // Already killed: the kernel is on its way to a status and the pipes closing is what
+            // announces it. A deadline that has been acted on owes this nothing further.
+            _ if killed => LIVENESS_BACKSTOP,
+            Some(deadline) => deadline.saturating_duration_since(Instant::now()),
+            None => LIVENESS_BACKSTOP,
+        };
+        let _ = inner.cv.wait_timeout(s, wait).expect("engine state");
     }
 }
 
@@ -2207,10 +2292,15 @@ fn accept_header(header: &[u8], inner: &Arc<Inner>) -> Result<Answer, String> {
 
 fn fault(inner: &Arc<Inner>, message: String) {
     log_line(format_args!("{message}"));
-    let mut s = inner.shared.lock().expect("engine state");
-    if s.fault.is_none() {
-        s.fault = Some(message);
+    {
+        let mut s = inner.shared.lock().expect("engine state");
+        if s.fault.is_none() {
+            s.fault = Some(message);
+        }
     }
+    // The supervisor sleeps until it is told otherwise, and an unrecoverable stream is one of the
+    // three things it has to act on — it is what arms the deadline this run will be held to.
+    inner.cv.notify_all();
 }
 
 /// Fill `buf`. `Ok(false)` means the stream ended before any of it arrived or part-way through.
@@ -3835,16 +3925,21 @@ const OPENER_VERDICT: Duration = Duration::from_millis(1200);
 
 #[cfg(feature = "local-engine")]
 fn run_opener(mut command: Command, refused: &str) -> Result<(), String> {
-    let mut child = command.spawn().map_err(|err| format!("{refused} ({err})"))?;
-    let deadline = Instant::now() + OPENER_VERDICT;
-    loop {
-        match child.try_wait() {
-            Ok(Some(status)) if status.success() => return Ok(()),
-            Ok(Some(status)) => return Err(format!("{refused} ({status})")),
-            Ok(None) if Instant::now() >= deadline => return Ok(()),
-            Ok(None) => std::thread::sleep(Duration::from_millis(25)),
-            Err(err) => return Err(format!("{refused} ({err})")),
-        }
+    let child = command.spawn().map_err(|err| format!("{refused} ({err})"))?;
+    // A THREAD BLOCKED ON THE CHILD, and this one waiting on a channel — rather than both asking
+    // the kernel every 25 ms. It also REAPS: an opener that execs the browser itself is still
+    // running at the deadline, and dropping its handle there left a zombie behind per link opened.
+    let (done, verdict) = mpsc::channel();
+    let mut child = child;
+    thread::spawn(move || {
+        let _ = done.send(child.wait());
+    });
+    match verdict.recv_timeout(OPENER_VERDICT) {
+        Ok(Ok(status)) if status.success() => Ok(()),
+        Ok(Ok(status)) => Err(format!("{refused} ({status})")),
+        Ok(Err(err)) => Err(format!("{refused} ({err})")),
+        // Still running at the deadline, and still running is not a refusal.
+        Err(_) => Ok(()),
     }
 }
 

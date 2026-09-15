@@ -1065,6 +1065,62 @@ fn a_stopped_engine_is_not_restarted() {
     assert_eq!(engine.state(), EngineState::Stopped);
 }
 
+/// THE SUPERVISOR SLEEPS THROUGH AN IDLE ENGINE, which is the whole of the idle-cost change.
+///
+/// It counts TURNS of the supervisor's wait rather than watching a clock: the cost of the old
+/// shape was never wall-clock time, it was forty wake-ups a second learning that nothing had
+/// happened — on every platform, and on the laptops' batteries. Watched fail by putting
+/// `LIVENESS_BACKSTOP` back to 25 ms, which reads about four hundred turns over the same ten
+/// seconds.
+#[test]
+fn the_supervisor_sleeps_through_an_idle_engine() {
+    let fixture = Fixture::new("idle");
+    let engine = Engine::spawn_with(fixture.launch("serve"), quick());
+    wait_for(
+        || matches!(engine.state(), EngineState::Serving { .. }),
+        Duration::from_secs(20),
+        "the engine to announce itself",
+    );
+
+    let before = engine.supervisor_turns();
+    thread::sleep(Duration::from_secs(10));
+    let turns = engine.supervisor_turns() - before;
+
+    assert!(turns < 15, "the supervisor came round {turns} times in ten idle seconds");
+    engine.stop();
+}
+
+/// A CHILD THAT LEAVES IS NOTICED AT ONCE, AND NOT AT THE END OF A TIMER.
+///
+/// The supervisor sleeps now, so something has to wake it, and that something is the end of the
+/// child's pipes: a process exit closes them, both readers return, and `reader_finished` says so.
+/// Watched fail by taking the notify out of `reader_finished` — the quit then waits the whole
+/// grace period out and kills a process that had already gone. The grace is three seconds here
+/// rather than `quick`'s 400 ms so that the two outcomes are an order of magnitude apart.
+#[test]
+fn a_child_that_leaves_is_noticed_without_waiting_for_a_timer() {
+    let fixture = Fixture::new("prompt");
+    let timings = Timings { stop_grace: Duration::from_secs(3), ..quick() };
+    let engine = Engine::spawn_with(fixture.launch("serve"), timings);
+    wait_for(
+        || matches!(engine.state(), EngineState::Serving { .. }),
+        Duration::from_secs(20),
+        "the engine to announce itself",
+    );
+
+    let began = Instant::now();
+    engine.stop();
+
+    assert!(
+        began.elapsed() < Duration::from_millis(500),
+        "the quit took {:?} for a child that left at once",
+        began.elapsed()
+    );
+    // It was asked, not killed: the exit handler ran and the kernel had a clean status for it.
+    assert_eq!(fixture.exits(), 1);
+    assert_eq!(engine.last_exit().expect("the run ended").code, Some(0));
+}
+
 // ── Supervision: noticing, restarting, and knowing when to stop ─────────────────────────────
 
 #[test]
