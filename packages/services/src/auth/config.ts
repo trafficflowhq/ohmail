@@ -79,12 +79,6 @@ export const DEFAULT_AUTH_CONFIG: Omit<AuthConfig, "rpID" | "rpName" | "origin">
   // (RFC 9700 §4.14.2): a token replayed WITHIN the window buys a parallel chain living until a
   // sign-out, device revocation, or the next reuse detection — all ACTIONS, no timer.
   refreshReuseGraceMs: 60_000,
-  // A MINUTE, and the ceiling beside it refuses more. The window has to cover a phone's whole
-  // retry ladder across a dropped response — a reconnect, a backoff, a relaunch — and nothing
-  // past that: the attempt id is the discriminator, so time only bounds how long a lost answer
-  // stays claimable, and a client that has not come back inside a minute has a live pair or
-  // none.
-  refreshRetryGraceMs: 60_000,
   loginTokenTtlMs: 5 * MIN,
   webauthnChallengeTtlMs: 5 * MIN,
   oauthCodeTtlMs: 60_000,           // short-TTL single-use code

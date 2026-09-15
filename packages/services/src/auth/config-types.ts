@@ -129,17 +129,16 @@ export interface AuthConfig {
    * OAuth grant never pass grace: they stay strict.
    */
   refreshReuseGraceMs: number;
-  /**
-   * How long after a refresh token is CONSUMED the SAME attempt id may re-present it and be
-   * answered instead of swept — every surface, because a lost response is not a browser's
-   * problem. Not `refreshReuseGraceMs`'s twin in anything but width: that one admits ANY
-   * presentation for its window, which is the theft arm switched off. This admits exactly one —
-   * the presentation naming the attempt that consumed the row (`refresh_tokens
-   * .consumed_by_attempt`, mail 0112) — so a stranger's replay is refused at the first instant
-   * as at the last. Capped at {@link REFRESH_RETRY_GRACE_CEILING_MS} where it is read: past a
-   * minute a retry is not a retry, it is a kept token.
+  /*
+   * THE ATTEMPT ARM HAS NO NUMBER HERE, deliberately — see `rotateRefresh`. A same-attempt-id
+   * retry is admitted while the PRESENTED token's own `expires_at` stands, and use beats the id:
+   * a tail consumed by a different attempt means the client moved on, so the presentation is a
+   * replay and sweeps. The field above had to be short because TIME was its only discriminator;
+   * the id discriminates here and the clock only bounds claimability. Its residual, stated beside
+   * the cookie's: a thief holding a captured wire — token AND id together — may replay it while
+   * the phone sleeps, inside that token's own window, and buys a line the retry rotates past.
+   * Every such rotation is audited `refresh_replayed`.
    */
-  refreshRetryGraceMs: number;
   // Lockout
   maxFailures: number;
   lockoutMs: number;

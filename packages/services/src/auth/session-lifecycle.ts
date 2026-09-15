@@ -61,13 +61,6 @@ export function classifyRefreshFailure(err: unknown): RefreshFailure {
 
 const asTx = (ctx: ServiceContext): Tx => ctx.db as unknown as Tx;
 
-/**
- * The hard ceiling on {@link AuthConfig.refreshRetryGraceMs}. Past a minute a re-presented token
- * is not a client finishing a rotation, it is a kept token, and no configuration may say
- * otherwise: the retry arm reads `min(configured, this)`, so a deployment can only narrow it.
- */
-export const REFRESH_RETRY_GRACE_CEILING_MS = 60_000;
-
 /** The widest client-chosen attempt id this server will record. */
 const ATTEMPT_ID_MAX_CHARS = 128;
 
@@ -719,11 +712,13 @@ export class SessionLifecycle {
         // client holding the OLD token, and its retry was byte-identical to a replay — an
         // ordinary dropped answer cost somebody their pairing. The claim recorded WHICH attempt
         // spent this row, so a re-presentation naming that attempt is that client finishing its
-        // own rotation. Unlike the cookie grace below, which admits ANY presentation for its
-        // window, this admits exactly one. `attemptHash !== null` first: an id-less presentation
-        // must never match an id-less consumption, or the arm swallows the strict case whole.
+        // own rotation, and it is bounded by that token's OWN window — no second clock: the id
+        // discriminates, so time only bounds claimability (the grace below needs a number because
+        // time is all it has). `attemptHash !== null` first: an id-less presentation must never
+        // match an id-less consumption, or the arm swallows the strict case whole. USE still
+        // beats the id — `replayRotation` refuses a chain that moved on under another attempt.
         if (attemptHash !== null && existing.consumedByAttempt === attemptHash
-          && consumedMsAgo <= Math.min(this.cfg.refreshRetryGraceMs, REFRESH_RETRY_GRACE_CEILING_MS)) {
+          && existing.expiresAt.getTime() > now.getTime()) {
           const replayed = await this.replayRotation(ctx, existing, attemptHash, now, ttls);
           if (replayed) return replayed;
         }
@@ -878,9 +873,9 @@ export class SessionLifecycle {
    * A token store keeps HASHES, so the successor's bytes cannot be handed back twice. What is
    * idempotent is the LINE: one attempt converges on one live tail however often its answer is
    * lost, because every replay consumes the tail it finds and mints its replacement under the
-   * session lock. The tail is KILL-STAMPED (`expires_at = consumed_at`) — this consumption is
-   * not a PRESENTATION, and {@link recoverLostRotation}'s classifier reads that stamp. No live
-   * tail means the client adopted and something else spent it: the sweep's case, fail closed.
+   * session lock. The tail is KILL-STAMPED (`expires_at = consumed_at`), not a PRESENTATION —
+   * {@link recoverLostRotation}'s classifier reads that stamp. USE BEATS THE ID: a chain that
+   * moved on under another attempt falls to the sweep, as does one with no live tail. Audited.
    */
   private async replayRotation(
     ctx: ServiceContext,
@@ -900,6 +895,23 @@ export class SessionLifecycle {
         && (ttls.absoluteTtlMs == null
           || now.getTime() - session.createdAt.getTime() <= ttls.absoluteTtlMs);
       if (!renewable) return null;
+      // USE BEATS THE ID. A chain that moved on under ANOTHER attempt — or under none — means the
+      // client DID receive its answer and rotated past it, so this presentation is somebody else
+      // holding a captured wire, and it belongs to the sweep. Read in the lock, against every row
+      // consumed at or after the presented one; this arm's own kill-stamps carry `attemptHash`,
+      // so repeated retries of one attempt never trip it. `>=` and not-self: two rotations can
+      // land in one millisecond (the recovery path's reading, and for its reason).
+      const movedOn = await tx.select({ id: refreshTokens.id }).from(refreshTokens)
+        .where(and(
+          eq(refreshTokens.familyId, existing.familyId),
+          ne(refreshTokens.id, existing.id),
+          isNotNull(refreshTokens.consumedAt),
+          gte(refreshTokens.consumedAt, existing.consumedAt!),
+          or(isNull(refreshTokens.consumedByAttempt),
+            ne(refreshTokens.consumedByAttempt, attemptHash)),
+        ))
+        .limit(1);
+      if (movedOn.length > 0) return null;
       const [tail] = await tx.update(refreshTokens)
         .set({ consumedAt: now, expiresAt: now, consumedByAttempt: attemptHash })
         .where(and(
@@ -915,7 +927,7 @@ export class SessionLifecycle {
       // are what an investigation joins on.
       const [user] = await tx.select().from(users)
         .where(eq(users.id, existing.userId)).limit(1);
-      await this.audit(tx, user ?? null, "refresh_retry_replayed", undefined, txCtx,
+      await this.audit(tx, user ?? null, "refresh_replayed", undefined, txCtx,
         `family=${existing.familyId} session=${existing.sessionId}`);
       return this.mintRotation(txCtx, tx, tail, now, ttls);
     });
