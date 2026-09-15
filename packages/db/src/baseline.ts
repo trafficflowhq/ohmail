@@ -379,8 +379,10 @@ const REISSUED_ORIGINALS: ReadonlyArray<{
 
 /**
  * Record the original entry's row wherever only its reissue ran — see {@link REISSUED_ORIGINALS}.
- * Runs AFTER the migrator pass (the reissue's row must exist first) and is a no-op everywhere
- * else. Returns the tags recorded, `adoptBaseline`'s idempotency-proof shape.
+ * Runs AFTER the migrator pass (the reissue's row must exist first) and records nothing on a
+ * journal with no reissue; it still installs {@link ensureOneRowPerWhen} there, because this is
+ * the only step that runs after the migrator on every journal. Returns the tags recorded,
+ * `adoptBaseline`'s idempotency-proof shape.
  */
 export async function adoptReissuedOriginals(
   db: Executor & TxRunner,
