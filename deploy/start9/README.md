@@ -44,8 +44,8 @@ StartOS package translates them, it does not re-decide them.
   including the redirect URI), the AI key, the private-network probe
   allowance (`TF_PROBE_ALLOW_PRIVATE=1`) and the private-network push-endpoint
   allowance (`TF_PUSH_ALLOW_PRIVATE=1`, for a UnifiedPush distributor on the
-  same box — a separate decision from the probe, since it licenses an
-  unattended sender rather than one connection check) are optional fields with
+  same box — a separate decision from the probe, which is about the mail
+  server whose address you entered) are optional fields with
   the template's own sentences beside them.
 - **The origin requirement carries over.** ohmail refuses a plain-http,
   non-loopback origin — secure cookies and passkeys demand https. StartOS

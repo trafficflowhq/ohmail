@@ -140,7 +140,9 @@ hour.
 If the mailbox you are connecting lives on your own network — the same NAS
 the Umbrel sits next to, say — add `TF_PROBE_ALLOW_PRIVATE=1` to
 `settings.env` and restart the app, then confirm the connection-security
-notice when adding the mailbox if that server has no TLS.
+notice when adding the mailbox if that server has no TLS. It applies both
+when you add the mailbox and on every sync afterwards, so the api and the
+organizer both read it.
 
 The same applies, separately, to a **push distributor** on your own
 network. The mobile app can register a UnifiedPush endpoint so your server
@@ -150,8 +152,9 @@ resolve to a public address, because the organizer POSTs to it unattended
 for as long as the registration lives. If your distributor is on the LAN
 (an `ntfy` on the Umbrel itself), add `TF_PUSH_ALLOW_PRIVATE=1`. It is a
 **separate** switch from `TF_PROBE_ALLOW_PRIVATE` on purpose: permitting
-one connection check when you add a mailbox is not the same decision as
-permitting a background process to keep sending.
+this install to reach a mail server whose address you entered is not the
+same decision as permitting it to keep POSTing to an endpoint a phone
+registered.
 
 > **[screenshot placeholder: the add-mailbox screen with a household member's
 > Gmail account filled in]**

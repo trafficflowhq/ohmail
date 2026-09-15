@@ -107,10 +107,12 @@ Two optional blocks worth deciding now:
   placeholder sender `ohmail@selfhost.example`.
 - **Mail server on your own LAN?** If the mailbox you'll connect lives at a
   private address (a NAS, a home mail server), set
-  `TF_PROBE_ALLOW_PRIVATE=1` — the add-mailbox connection check refuses
-  private-network targets by default. If that server also has no TLS, you
-  will additionally confirm the connection-security notice when you add the
-  mailbox; plaintext IMAP is never used without that explicit consent.
+  `TF_PROBE_ALLOW_PRIVATE=1` — private-network targets are refused by
+  default, both when you add the mailbox and on every sync afterwards, so
+  this has to be set on **both** the `api` and the `organizer`. The bundled
+  compose file sets it on both from the one value. If that server also has
+  no TLS, you will additionally confirm the connection-security notice when
+  you add the mailbox; plaintext IMAP is never used without that consent.
 - **Push distributor on your own LAN?** The mobile app can register a
   UnifiedPush endpoint so this server wakes the phone when mail arrives — a
   signal with no subject, no sender and no count in it. By default the
@@ -118,9 +120,10 @@ Two optional blocks worth deciding now:
   organizer POSTs to it unattended for as long as the registration lives. If
   your distributor is on the LAN (an `ntfy` beside this server), set
   `TF_PUSH_ALLOW_PRIVATE=1`. It is a **separate** switch from
-  `TF_PROBE_ALLOW_PRIVATE` on purpose, and it has to be set on **both** the
-  `api` and the `organizer` — the first accepts the registration, the second
-  dials it.
+  `TF_PROBE_ALLOW_PRIVATE` on purpose — that one is about a mail server whose
+  address you entered and this install checked, this one is about an endpoint
+  a phone registered — and it too has to be set on **both** the `api` and the
+  `organizer`: the first accepts the registration, the second dials it.
 - **Want the phone to actually ring?** Generate this install's own VAPID
   keypair:
 
