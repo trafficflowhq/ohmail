@@ -37,9 +37,10 @@ export {
 } from "./mailbox-dedup.js";
 export {
   setupProdDatabase, assertSessionUrl, assertExpectedHost, readJournals,
-  readAppliedWhens, journalStatuses, journalProblems,
+  readAppliedWhens, appliedRowsOf, digestMismatches, journalStatuses, journalProblems,
   TRIGRAM_INDEXES, PROD_DB_HOST_ENV, DATA_API_SETTLE_MS,
-  type ProdSetupReport, type JournalStatus, type AppliedWhens, type ProdSetupOptions,
+  type ProdSetupReport, type JournalStatus, type JournalMismatch, type AppliedRows,
+  type AppliedWhens, type ProdSetupOptions,
 } from "./setup-prod.js";
 /**
  * The Data API half of the lockdown, for a caller that provisions a Supabase-shaped host and

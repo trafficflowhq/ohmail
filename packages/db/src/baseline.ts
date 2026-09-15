@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { sql, type SQL } from "drizzle-orm";
@@ -312,13 +313,32 @@ export interface TxRunner {
 }
 
 /**
- * The sha256 drizzle would have stored for a migration file. It is never re-verified after
- * apply, so this is cosmetic — but a row whose hash is a lie is a row that misleads whoever
- * reads it during an incident, so it is computed properly.
+ * The sha256 drizzle's migrator records for a migration file — REPRODUCED, never invented.
+ * `readMigrationFiles` (drizzle-orm 0.36.4, `migrator.js`) computes
+ * `createHash("sha256").update(readFileSync(path).toString()).digest("hex")` and
+ * `PgDialect.migrate` writes that string into `__drizzle_migrations.hash`, so the utf8 decode is
+ * part of the definition rather than a detail. This is now the ONE hasher: `setup-prod.ts`
+ * verifies every recorded row against it, and a second way of computing the same thing would
+ * refuse honest deployments while proving nothing.
  */
-async function hashOf(spec: JournalSpec, tag: string): Promise<string> {
-  const { createHash } = await import("node:crypto");
-  return createHash("sha256").update(readFileSync(join(spec.dir, `${tag}.sql`))).digest("hex");
+export function migrationSqlHash(spec: JournalSpec, tag: string): string {
+  return createHash("sha256")
+    .update(readFileSync(join(spec.dir, `${tag}.sql`), "utf8"))
+    .digest("hex");
+}
+
+/**
+ * ONE ROW PER `when`, enforced by the database. drizzle's table ships with no constraint, and its
+ * migrator applies an entry only when the entry sorts strictly ABOVE the recorded maximum — so two
+ * entries sharing a `when` leave the second recorded as applied without ever running, silently
+ * (measured twice here). `journal-split.test.ts` property 2 is the same rule over the journal
+ * FILES; this is the writer's half, and it belongs on BOTH journals — it used to be created only
+ * where a reissue adoption ran, which is `mail`, never `cloud` on a virgin deployment.
+ */
+export async function ensureOneRowPerWhen(db: Executor, spec: JournalSpec): Promise<void> {
+  await db.execute(sql`create unique index if not exists
+    ${sql.raw(`"__drizzle_migrations_created_at_uq_${spec.migrationsSchema}"`)}
+    on ${sql.raw(`"${spec.migrationsSchema}"."__drizzle_migrations"`)} (created_at)`);
 }
 
 /**
@@ -367,23 +387,19 @@ export async function adoptReissuedOriginals(
   spec: JournalSpec,
   log: (msg: string) => void = () => {},
 ): Promise<string[]> {
+  // BEFORE the early return, and before the ON CONFLICT below needs it: a virgin replay skips
+  // adoption entirely, so this runs after the migrator for EVERY journal — `cloud` has no
+  // reissue and was therefore the half that never got the constraint. See `ensureOneRowPerWhen`.
+  const tableId = sql.raw(`"${spec.migrationsSchema}"."__drizzle_migrations"`);
+  await ensureOneRowPerWhen(db, spec);
   const mine = REISSUED_ORIGINALS.filter((r) => r.journal === spec.name);
   if (mine.length === 0) return [];
-  const tableId = sql.raw(`"${spec.migrationsSchema}"."__drizzle_migrations"`);
-  // The unique index the ON CONFLICT below needs. `adoptBaseline` creates it on the adoption
-  // path, but a VIRGIN replay skips adoption entirely and drizzle's own table ships with no
-  // constraint at all — so it is ensured here too, idempotently, and it carries the same
-  // second job everywhere: a duplicate-`when` collision fails LOUDLY instead of the migrator
-  // skipping it in silence.
-  await db.execute(sql`create unique index if not exists
-    ${sql.raw(`"__drizzle_migrations_created_at_uq_${spec.migrationsSchema}"`)}
-    on ${tableId} (created_at)`);
   const took: string[] = [];
   for (const r of mine) {
     const reissued = await rows<{ n: number | string }>(db, sql`
       select count(*)::int as n from ${tableId} where created_at = ${r.reissue.when}`);
     if (Number(reissued[0]?.n ?? 0) === 0) continue;
-    const hash = await hashOf(spec, r.original.tag);
+    const hash = migrationSqlHash(spec, r.original.tag);
     // A row written by a SUPERSEDED form of the reissue file carries that form's hash; rewrite
     // it to the canonical one (see `priorHashes`), so the row describes the shipped journal.
     for (const prior of r.reissue.priorHashes) {
@@ -433,15 +449,13 @@ export async function adoptBaseline(
 
   const schemaId = sql.raw(`"${spec.migrationsSchema}"`);
   const tableId = sql.raw(`"${spec.migrationsSchema}"."__drizzle_migrations"`);
-  const hashes = await Promise.all(verdict.entries.map(async (e) => [e, await hashOf(spec, e.tag)] as const));
+  const hashes = verdict.entries.map((e) => [e, migrationSqlHash(spec, e.tag)] as const);
 
   const adopted = await db.transaction(async (tx) => {
     await tx.execute(sql`create schema if not exists ${schemaId}`);
     await tx.execute(sql`create table if not exists ${tableId} (
       id SERIAL PRIMARY KEY, hash text NOT NULL, created_at bigint)`);
-    await tx.execute(sql`create unique index if not exists
-      ${sql.raw(`"__drizzle_migrations_created_at_uq_${spec.migrationsSchema}"`)}
-      on ${tableId} (created_at)`);
+    await ensureOneRowPerWhen(tx, spec);
     const took: string[] = [];
     for (const [entry, hash] of hashes) {
       const res = await tx.execute(sql`

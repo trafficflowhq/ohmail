@@ -1,7 +1,9 @@
 import { sql, type SQL } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
-import { readJournalOf, type JournalEntry, type JournalSpec } from "./baseline.js";
+import {
+  migrationSqlHash, readJournalOf, type JournalEntry, type JournalSpec,
+} from "./baseline.js";
 import { onNotice } from "./notices.js";
 import { runMigrations, JOURNALS } from "./migrate.js";
 import { ROLE_DEFAULT_TIMEOUTS } from "./client.js";
@@ -22,10 +24,19 @@ import {
  * `pg_trgm` and the trigram indexes come from {@link ensureSearchExtensions}, outside the
  * migrator (PGlite has no `pg_trgm`) — provision with the migrator alone and the FUZZY arm of
  * search is dead in production while every test stays green. So the two steps are welded together
- * and VERIFIED: every journal entry applied (per journal, by pinned migrations table), `pg_trgm`
- * installed, both trigram indexes present, a real fuzzy computation answers. The migrations
- * tables are PINNED, not discovered: a name-based resolver found the legacy table — a superset of
- * both new journals' whens — and reported OK whether or not either new pass had run.
+ * and VERIFIED: every journal entry applied AND DESCRIBING THE SQL THIS TREE SHIPS (per journal,
+ * by pinned migrations table), `pg_trgm` installed, both trigram indexes present, a real fuzzy
+ * computation answers. The migrations tables are PINNED, not discovered: a name-based resolver
+ * found the legacy table — a superset of both new journals' whens — and reported OK whether or
+ * not either new pass had run.
+ *
+ * "Describing the SQL" is the second correction, and the same mistake one level in. A journal
+ * entry means the SQL it names RAN, and this file used to take a matching `created_at` as proof
+ * of that — a clock, where the two failures it exists to catch are both silent under one: two
+ * lanes colliding on a `when` make drizzle record the later entry as applied without running it,
+ * and an edited already-applied migration leaves the database without the change while the stamp
+ * never moves. drizzle has always stored `sha256(<the .sql file>)` in the same row; verification
+ * now reads it. See {@link digestMismatches}.
  */
 
 /** The trigram GIN indexes {@link ensureSearchExtensions} creates — verified by name. */
@@ -58,6 +69,11 @@ export interface JournalStatus {
   appliedThisRun: string[];
   /** Tags this journal expects that its OWN migrations table does not record. */
   missing: string[];
+  /**
+   * Tags the table DOES record at the right `when` while describing different SQL — the state a
+   * stamp cannot see and this file exists to refuse. See {@link digestMismatches}.
+   */
+  mismatched: JournalMismatch[];
 }
 
 export interface ProdSetupReport {
@@ -246,20 +262,87 @@ function quoteIdent(name: string): string {
 }
 
 /**
- * The `when` values recorded in ONE journal's own migrations table, addressed by its PINNED
- * schema. An absent table is an empty set, not a fallback to somebody else's table — see the
- * pinning note at the top of this file for what the fallback cost.
+ * What ONE journal's own migrations table records, addressed by its PINNED schema: per `when`,
+ * the hashes of the rows carrying it. BOTH columns, because a stamp alone is not evidence —
+ * drizzle writes `sha256(<the .sql file>)` into `hash` beside `created_at`, and reading only the
+ * clock is what made this verification vacuous. An absent table is an empty map, not a fallback
+ * to somebody else's table — see the pinning note at the top of this file for what that cost.
+ *
+ * A `when` maps to a LIST, not one hash: the unique index `ensureOneRowPerWhen` installs makes a
+ * second row impossible going forward, and a database predating it can still hold one. That case
+ * has to be visible rather than collapsed away, which is exactly what the old `Set` did.
  */
-async function appliedWhensOf(db: SqlExecutor, spec: JournalSpec): Promise<Set<number>> {
+export type AppliedRows = Map<number, string[]>;
+
+export async function appliedRowsOf(db: SqlExecutor, spec: JournalSpec): Promise<AppliedRows> {
+  const out: AppliedRows = new Map();
   const present = await rows<{ n: number | string }>(
     db,
     sql`select count(*)::int as n from information_schema.tables
          where table_schema = ${spec.migrationsSchema} and table_name = '__drizzle_migrations'`,
   );
-  if (Number(present[0]?.n ?? 0) === 0) return new Set();
+  if (Number(present[0]?.n ?? 0) === 0) return out;
   const ident = sql.raw(`"${spec.migrationsSchema}"."__drizzle_migrations"`);
-  const found = await rows<{ created_at: string | number }>(db, sql`select created_at from ${ident}`);
-  return new Set(found.map((r) => Number(r.created_at)));
+  const found = await rows<{ created_at: string | number; hash: string | null }>(
+    db,
+    sql`select created_at, "hash" from ${ident}`,
+  );
+  for (const r of found) {
+    const when = Number(r.created_at);
+    const at = out.get(when);
+    if (at) at.push(r.hash ?? ""); else out.set(when, [r.hash ?? ""]);
+  }
+  return out;
+}
+
+async function appliedWhensOf(db: SqlExecutor, spec: JournalSpec): Promise<Set<number>> {
+  return new Set((await appliedRowsOf(db, spec)).keys());
+}
+
+/** One journal entry whose row does not describe the SQL the journal ships for it. */
+export interface JournalMismatch {
+  tag: string;
+  when: number;
+  /** `sha256` of the SQL this tree ships for `tag`, as drizzle's migrator computes it. */
+  expected: string;
+  /** What the row at this `when` recorded. `null` when there is no single row to name. */
+  recorded: string | null;
+  /** Rows sharing this `when` — more than one is the collision the unique index now refuses. */
+  rowsAtWhen: number;
+}
+
+/**
+ * THE DECIDING COMPARISON: a journal entry means the SQL it names RAN, so verification compares
+ * CONTENT, not a clock.
+ *
+ * Two lanes colliding on a `when` make drizzle record the later entry as applied without running
+ * it, and editing an already-applied migration leaves the database without the change while the
+ * journal is unmoved. Both are invisible to a stamp and both are loud here: the row's hash and
+ * the shipped file's hash disagree, or one `when` carries more than one row.
+ *
+ * An entry with NO row is not a mismatch — that is `missing`, a different problem with its own
+ * line. Pure, and separated from the query on purpose: this is the line under test.
+ */
+export function digestMismatches(
+  spec: JournalSpec,
+  entries: readonly JournalEntry[],
+  recorded: ReadonlyMap<number, readonly string[]>,
+): JournalMismatch[] {
+  const out: JournalMismatch[] = [];
+  for (const e of entries) {
+    const at = recorded.get(e.when);
+    if (!at || at.length === 0) continue;
+    const expected = migrationSqlHash(spec, e.tag);
+    if (at.length === 1 && at[0] === expected) continue;
+    out.push({
+      tag: e.tag,
+      when: e.when,
+      expected,
+      recorded: at.length === 1 ? (at[0] ?? null) : null,
+      rowsAtWhen: at.length,
+    });
+  }
+  return out;
 }
 
 /** Per journal: the whens its own pinned table records. Read before AND after the run. */
@@ -279,38 +362,60 @@ export async function readAppliedWhens(db: SqlExecutor): Promise<AppliedWhens> {
  * Exported because it is the assertion `journal-verification.pg.test.ts` bites on directly: the
  * inverse case — a database where the cloud pass did NOT run must produce a problem naming the
  * cloud journal — cannot be reached through `setupProdDatabase`, which always runs both passes.
+ * `journals` defaults to the two shipped ones and is a parameter for the same reason: the
+ * content arm is measured against a test schema rather than by rewriting a live journal table.
  */
-export async function journalStatuses(db: SqlExecutor, before: AppliedWhens): Promise<JournalStatus[]> {
+export async function journalStatuses(
+  db: SqlExecutor,
+  before: AppliedWhens,
+  journals: ReadonlyArray<{ spec: JournalSpec; entries: JournalEntry[] }> = readJournals(),
+): Promise<JournalStatus[]> {
   const out: JournalStatus[] = [];
-  for (const { spec, entries } of readJournals()) {
-    const applied = await appliedWhensOf(db, spec);
+  for (const { spec, entries } of journals) {
+    const recorded = await appliedRowsOf(db, spec);
     const was = before.get(spec.name) ?? new Set<number>();
     out.push({
       name: spec.name,
       migrationsSchema: spec.migrationsSchema,
       expected: entries.length,
-      applied: applied.size,
-      appliedThisRun: entries.filter((e) => applied.has(e.when) && !was.has(e.when)).map((e) => e.tag),
-      missing: entries.filter((e) => !applied.has(e.when)).map((e) => e.tag),
+      applied: recorded.size,
+      appliedThisRun: entries.filter((e) => recorded.has(e.when) && !was.has(e.when)).map((e) => e.tag),
+      missing: entries.filter((e) => !recorded.has(e.when)).map((e) => e.tag),
+      mismatched: digestMismatches(spec, entries, recorded),
     });
   }
   return out;
 }
 
 /**
- * One problem line per journal that is not fully applied, NAMING the journal and its pinned
- * table. Naming the journal is the point: "migrations NOT applied: 0002_billing" leaves an
- * operator guessing which half and therefore which table to look in, and after the split the two
- * halves fail independently — mail can commit while cloud does not.
+ * One problem line per journal that is not fully applied OR whose rows do not describe the SQL
+ * this tree ships, NAMING the journal and its pinned table. Naming the journal is the point:
+ * "migrations NOT applied: 0002_billing" leaves an operator guessing which half and therefore
+ * which table to look in, and after the split the two halves fail independently — mail can commit
+ * while cloud does not. A MISDESCRIBED entry names BOTH readings, because "the hashes differ" is
+ * not something an operator can act on and "this one, against that one" is.
  */
 export function journalProblems(statuses: readonly JournalStatus[]): string[] {
-  return statuses
-    .filter((s) => s.missing.length > 0)
-    .map(
-      (s) =>
+  const out: string[] = [];
+  for (const s of statuses) {
+    if (s.missing.length > 0) {
+      out.push(
         `${s.name} journal INCOMPLETE (${s.migrationsSchema}.__drizzle_migrations has ` +
-        `${s.applied}/${s.expected}): ${s.missing.join(", ")}`,
-    );
+          `${s.applied}/${s.expected}): ${s.missing.join(", ")}`,
+      );
+    }
+    for (const m of s.mismatched) {
+      out.push(
+        `${s.name} journal MISDESCRIBED at ${m.when} ` +
+          `(${s.migrationsSchema}.__drizzle_migrations): ${m.tag} ships SQL whose sha256 is ` +
+          `${m.expected}, the table records ` +
+          `${m.rowsAtWhen > 1 ? `${m.rowsAtWhen} rows at this 'when'` : m.recorded || "no hash"}. ` +
+          `A matching timestamp is not proof the SQL ran — this database and this journal ` +
+          `disagree about what was applied, so nothing may be deployed over it.`,
+      );
+    }
+  }
+  return out;
 }
 
 /**
