@@ -13,6 +13,13 @@ See [Status](README.md#status--read-this-first).
 
 ## [Unreleased]
 
+### Still to come
+
+Signed installers — a real Apple Developer ID and an Authenticode certificate. See
+[Roadmap](README.md#roadmap).
+
+## [0.19.1] — 2026-09-15
+
 ### Reopening the app no longer holds the text of every reply you have sent
 
 Opening the app fetched every draft your account has ever held, with its full text — and most
@@ -61,11 +68,6 @@ spent. It is now listed and marked on the setup screen, with nothing behind it t
 pairing link pasted into the "Your own server" field gets the same answer. The door is due in the
 next version. Pairing a phone or a browser to a computer running ohmail is a different thing and is
 untouched.
-
-### Still to come
-
-Signed installers — a real Apple Developer ID and an Authenticode certificate. See
-[Roadmap](README.md#roadmap).
 
 ## [0.19.0] — 2026-09-14
 
@@ -6430,7 +6432,8 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.19.0...HEAD
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.19.1...HEAD
+[0.19.1]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.19.1
 [0.19.0]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.19.0
 [0.18.0]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.18.0
 [0.17.0]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.17.0
