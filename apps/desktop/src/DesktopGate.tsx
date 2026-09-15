@@ -91,6 +91,19 @@ const ADDRESS_SHOWN = 80;
 const SETTLING_POLL_MS = 250;
 
 /**
+ * How often the window re-asks the shell what the engine is doing ONCE IT HAS SETTLED.
+ *
+ * The ask used to stop at "serving", and Rust goes on changing its mind after that: an engine
+ * can die, be restarted by its supervisor, come back. Every one of those was written to the log
+ * and delivered to nobody, so the window kept describing a run that had ended — a mailbox on
+ * screen with nothing behind it — until somebody reopened it. This is the live owner of that
+ * fact, and it is deliberately SLOW: one local stdio call every five seconds, the floor the
+ * ruling names, because liveness bought with a fast poll is an idle cost on every install that
+ * is working. The settling cadence above is the fast one and exists only while the engine climbs.
+ */
+export const LIFECYCLE_POLL_MS = 5_000;
+
+/**
  * How often a CLOUD-door window re-asks the engine whether the hosted session still exists.
  *
  * The engine learns a dead session on its own (`cloud-auth.ts`'s definitive-refusal cue) and
@@ -130,29 +143,67 @@ function openSetupOnStandalone(status: EngineStatus | null): void {
   goFirstRun();
 }
 
+/**
+ * THE RUN BEHIND THE BRIDGE, AS ONE STRING — what tells a delivered lifecycle change from the
+ * same answer arriving again. The fields are the ones that describe WHICH engine and WHAT it is
+ * doing; a change in any of them is a different run or a different state of this one, and both
+ * are things the window must re-read rather than remember. `JSON.stringify` rather than a joined
+ * key: a separator byte in an address would make two runs compare equal.
+ */
+function lifecycleMark(shell: Shell): string {
+  if (shell.kind !== "status") return JSON.stringify([shell.kind, shell.kind === "unreachable" ? shell.reason : null]);
+  const s = shell.status;
+  return JSON.stringify([
+    "status", s.state, s.mode ?? null, s.flavor ?? null, s.mailboxId ?? null,
+    s.credentialState ?? null, s.baseUrl ?? null,
+  ]);
+}
+
 export function DesktopGate() {
   const [shell, setShell] = useState<Shell | null>(null);
   /* The door chooser, opened from Settings over a working install. Distinct from the chooser a
      fresh install lands on: this one is cancellable, because there is something to go back to. */
   const [overlay, setOverlay] = useState<null | "doors" | "cloud" | "host" | "takeover">(null);
 
+  /**
+   * WHAT THE WINDOW HAS BEEN TOLD THE ENGINE IS — the settled lifecycle, owned by the one
+   * writer that paints it. A ref rather than state because nothing renders it, and written in
+   * the delivery itself rather than in the component body: a body-written ref is only as fresh
+   * as the last paint, and the comparison below is made in an async callback where no paint has
+   * happened yet. Record, then paint.
+   */
+  const delivered = useRef<string | null>(null);
+
   const refresh = useCallback(async () => {
-    setShell(await readShell());
+    const next = await readShell();
+    const mark = lifecycleMark(next);
+    /* `null` is "nothing delivered yet", which is the first answer of the launch and not a
+       change — the window has no previous run to have been describing. */
+    const moved = delivered.current !== null && delivered.current !== mark;
+    delivered.current = mark;
+    setShell(next);
+    /* A DIFFERENT RUN, OR THE SAME ONE IN A DIFFERENT STATE: whatever /health said describes an
+       engine that has gone. Re-key so the door's auth state is earned again from the engine now
+       behind the bridge, exactly as every other lifecycle act here does. */
+    if (moved) setAuthEpoch((n) => n + 1);
   }, []);
 
   useEffect(() => {
     void refresh();
   }, [refresh]);
 
-  /* Re-ask while the engine is coming up, and not otherwise. A permanent poll would be four
-     inter-process calls a second for the life of the app to learn nothing; a poll that never
-     runs would leave "Starting…" on screen after the engine had started. While it runs it is
-     also what carries the engine's boot narration (`status.bootPhase`) onto the screen. */
+  /* ONE OWNER OF THE LIFECYCLE, TWO CADENCES. Fast while the engine is coming up — every
+     millisecond there is a millisecond of skeleton over a mailbox that is ready, and this is
+     also what carries the boot narration (`status.bootPhase`) onto the screen — and slow for
+     ever after, because the shell goes on changing its mind once it has served and nothing
+     pushed those changes here. The steady half is `LIFECYCLE_POLL_MS`, one local stdio call
+     every five seconds; the alternative was a window describing an engine that had died. No
+     bridge, no owner: outside the app there is nothing to ask. */
   const settling =
     shell?.kind === "status" && (shell.status.state === "starting" || shell.status.state === "restarting");
   useEffect(() => {
-    if (!settling) return;
-    const timer = setInterval(() => void refresh(), SETTLING_POLL_MS);
+    if (!bridgeAvailable()) return;
+    const timer = setInterval(() => void refresh(), settling ? SETTLING_POLL_MS : LIFECYCLE_POLL_MS);
     return () => clearInterval(timer);
   }, [settling, refresh]);
 
