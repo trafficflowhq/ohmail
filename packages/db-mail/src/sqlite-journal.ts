@@ -202,9 +202,21 @@ export const SQLITE_JOURNAL: readonly SqliteJournalEntry[] = [
     ]
   },
   {
+    "name": "0111_mailbox_erased_at.sql",
+    "statements": [
+      "ALTER TABLE \"mailboxes\" ADD COLUMN \"erased_at\" integer;"
+    ]
+  },
+  {
     "name": "0112_idempotency_erased_at.sql",
     "statements": [
       "ALTER TABLE \"idempotency_keys\" ADD COLUMN \"erased_at\" integer;"
+    ]
+  },
+  {
+    "name": "0113_refresh_consumed_by_attempt.sql",
+    "statements": [
+      "ALTER TABLE \"refresh_tokens\" ADD COLUMN \"consumed_by_attempt\" text;"
     ]
   }
 ] as const;

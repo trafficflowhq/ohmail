@@ -129,6 +129,17 @@ export interface AuthConfig {
    * OAuth grant never pass grace: they stay strict.
    */
   refreshReuseGraceMs: number;
+  /**
+   * How long after a refresh token is CONSUMED the SAME attempt id may re-present it and be
+   * answered instead of swept — every surface, because a lost response is not a browser's
+   * problem. Not `refreshReuseGraceMs`'s twin in anything but width: that one admits ANY
+   * presentation for its window, which is the theft arm switched off. This admits exactly one —
+   * the presentation naming the attempt that consumed the row (`refresh_tokens
+   * .consumed_by_attempt`, mail 0112) — so a stranger's replay is refused at the first instant
+   * as at the last. Capped at {@link REFRESH_RETRY_GRACE_CEILING_MS} where it is read: past a
+   * minute a retry is not a retry, it is a kept token.
+   */
+  refreshRetryGraceMs: number;
   // Lockout
   maxFailures: number;
   lockoutMs: number;

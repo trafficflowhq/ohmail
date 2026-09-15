@@ -62,6 +62,36 @@ export function classifyRefreshFailure(err: unknown): RefreshFailure {
 const asTx = (ctx: ServiceContext): Tx => ctx.db as unknown as Tx;
 
 /**
+ * The hard ceiling on {@link AuthConfig.refreshRetryGraceMs}. Past a minute a re-presented token
+ * is not a client finishing a rotation, it is a kept token, and no configuration may say
+ * otherwise: the retry arm reads `min(configured, this)`, so a deployment can only narrow it.
+ */
+export const REFRESH_RETRY_GRACE_CEILING_MS = 60_000;
+
+/** The widest client-chosen attempt id this server will record. */
+const ATTEMPT_ID_MAX_CHARS = 128;
+
+/**
+ * The attempt id's door — bounded, because it is a client-chosen string that lands in a column,
+ * and REFUSED rather than quietly dropped: a client whose id this server will not record needs to
+ * hear that now, while its token is still live, not at the retry where a dropped id would look
+ * like theft. Read before `rotateRefresh` for the same reason the cross-account refusal is:
+ * a refused request rotates nothing. Absent stays `undefined` — every client written before this
+ * field sends none and gets the strict arm it has always had.
+ */
+export function readAttemptId(raw: unknown): string | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  if (typeof raw !== "string" || raw.trim() === "") {
+    throw new ServiceError("validation_failed", 400, "attemptId must be a non-empty string");
+  }
+  if (raw.length > ATTEMPT_ID_MAX_CHARS) {
+    throw new ServiceError("validation_failed", 400,
+      `attemptId is ${raw.length} characters; the limit is ${ATTEMPT_ID_MAX_CHARS}`);
+  }
+  return raw;
+}
+
+/**
  * The closed set a paired device may declare itself as — `devices.kind`'s own vocabulary,
  * now the shared {@link DeviceKind} (see its doc for the legacy `"macos"` reading and why
  * new kinds are server-side enablement until clients declare them).
@@ -188,14 +218,17 @@ export class SessionLifecycle {
    */
   async refresh(
     ctx: ServiceContext,
-    b: { refreshToken?: string },
+    b: { refreshToken?: string; attemptId?: string },
     opts: { concurrentGrace?: boolean; surface?: SessionSurface } = {},
   ): Promise<{ tokens?: OAuthTokens }> {
     const token = b.refreshToken;
     if (!token) throw new ServiceError("unauthorized", 401, "missing refresh token");
     // `opts.surface` is passed STRAIGHT THROUGH, undefined included: the one default lives in
-    // `surfaceTtls`, so there is no second place for the two to drift apart.
-    const tokens = await this.rotateRefresh(ctx, token, opts.concurrentGrace === true, opts.surface);
+    // `surfaceTtls`, so there is no second place for the two to drift apart. `attemptId` is read
+    // at this door, BEFORE the rotation, so a malformed one refuses without consuming anything.
+    const tokens = await this.rotateRefresh(
+      ctx, token, opts.concurrentGrace === true, opts.surface, readAttemptId(b.attemptId),
+    );
     return { tokens };
   }
 
@@ -608,10 +641,16 @@ export class SessionLifecycle {
    */
   protected async rotateRefresh(
     ctx: ServiceContext, presented: string, grace: boolean, surface?: SessionSurface,
+    attemptId?: string,
   ): Promise<OAuthTokens> {
     const db = asTx(ctx);
     const now = ctx.now();
     const tokenHash = hashToken(presented);
+    // WHICH ATTEMPT is spending this token — hashed, for the token's own reason: a client-chosen
+    // string never sits at rest beside a credential digest. `null` is "this presentation named
+    // no attempt", which is what every client before the field sends and what the strict arm has
+    // always answered.
+    const attemptHash = attemptId === undefined ? null : hashToken(attemptId);
     // Resolved ONCE, and used by both the hot path and the grace path below, so a rotation cannot
     // issue one window while the cap it was checked against belongs to another. An absent
     // `surface` lands on the cookie window — see `surfaceTtls`, which owns that decision.
@@ -648,7 +687,7 @@ export class SessionLifecycle {
     }
 
     const [row] = await db.update(refreshTokens)
-      .set({ consumedAt: now })
+      .set({ consumedAt: now, consumedByAttempt: attemptHash })
       .where(and(
         eq(refreshTokens.tokenHash, tokenHash),
         isNull(refreshTokens.consumedAt),
@@ -676,6 +715,18 @@ export class SessionLifecycle {
       // revokes. `config.ts` states the bounded residual.
       if (existing.consumedAt) {
         const consumedMsAgo = now.getTime() - existing.consumedAt.getTime();
+        // A RETRY OF AN UNANSWERED ATTEMPT IS NOT A REUSE. A lost rotation response leaves the
+        // client holding the OLD token, and its retry was byte-identical to a replay — an
+        // ordinary dropped answer cost somebody their pairing. The claim recorded WHICH attempt
+        // spent this row, so a re-presentation naming that attempt is that client finishing its
+        // own rotation. Unlike the cookie grace below, which admits ANY presentation for its
+        // window, this admits exactly one. `attemptHash !== null` first: an id-less presentation
+        // must never match an id-less consumption, or the arm swallows the strict case whole.
+        if (attemptHash !== null && existing.consumedByAttempt === attemptHash
+          && consumedMsAgo <= Math.min(this.cfg.refreshRetryGraceMs, REFRESH_RETRY_GRACE_CEILING_MS)) {
+          const replayed = await this.replayRotation(ctx, existing, attemptHash, now, ttls);
+          if (replayed) return replayed;
+        }
         if (grace && consumedMsAgo <= this.cfg.refreshReuseGraceMs) {
           const [session] = await db.select().from(sessions)
             .where(eq(sessions.id, existing.sessionId)).limit(1);
@@ -819,6 +870,55 @@ export class SessionLifecycle {
       accessToken: newAccess, refreshToken: newRefresh, tokenType: "Bearer",
       expiresIn: Math.floor(this.cfg.accessTtlMs / 1000),
     };
+  }
+
+  /**
+   * Answer the SAME attempt again — or `null`, which falls through to the arms that sweep.
+   *
+   * A token store keeps HASHES, so the successor's bytes cannot be handed back twice. What is
+   * idempotent is the LINE: one attempt converges on one live tail however often its answer is
+   * lost, because every replay consumes the tail it finds and mints its replacement under the
+   * session lock. The tail is KILL-STAMPED (`expires_at = consumed_at`) — this consumption is
+   * not a PRESENTATION, and {@link recoverLostRotation}'s classifier reads that stamp. No live
+   * tail means the client adopted and something else spent it: the sweep's case, fail closed.
+   */
+  private async replayRotation(
+    ctx: ServiceContext,
+    existing: typeof refreshTokens.$inferSelect,
+    attemptHash: string,
+    now: Date,
+    ttls: SurfaceTtls,
+  ): Promise<OAuthTokens | null> {
+    return this.inTransaction(ctx, async (txCtx) => {
+      const tx = asTx(txCtx);
+      // THE SERIALIZATION POINT, the recovery path's: two retries of one attempt arriving
+      // together must not both mint. Inside the lock the tail read and its claim are one view.
+      const [session] = await dialect(ctx.db).forUpdate(tx.select().from(sessions)
+        .where(eq(sessions.id, existing.sessionId)).limit(1));
+      // The grace path's exact `renewable` reading: live session, inside any absolute cap.
+      const renewable = session != null && session.revokedAt == null
+        && (ttls.absoluteTtlMs == null
+          || now.getTime() - session.createdAt.getTime() <= ttls.absoluteTtlMs);
+      if (!renewable) return null;
+      const [tail] = await tx.update(refreshTokens)
+        .set({ consumedAt: now, expiresAt: now, consumedByAttempt: attemptHash })
+        .where(and(
+          eq(refreshTokens.familyId, existing.familyId),
+          isNull(refreshTokens.consumedAt),
+          isNull(refreshTokens.revokedAt),
+        ))
+        .returning();
+      if (!tail) return null;
+      // Audited IN the claim's transaction, the recovery arm's rule: no re-admission without its
+      // row, and a bookkeeping fault rolls the claim back rather than re-admitting silently. The
+      // attempt id is the client's own string and is NOT in the row — `family=` and `session=`
+      // are what an investigation joins on.
+      const [user] = await tx.select().from(users)
+        .where(eq(users.id, existing.userId)).limit(1);
+      await this.audit(tx, user ?? null, "refresh_retry_replayed", undefined, txCtx,
+        `family=${existing.familyId} session=${existing.sessionId}`);
+      return this.mintRotation(txCtx, tx, tail, now, ttls);
+    });
   }
 
   /**

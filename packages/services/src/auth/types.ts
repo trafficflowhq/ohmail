@@ -195,7 +195,15 @@ export interface AuthAuditEvent {
     // place a stale token buys a working credential, and an investigation must be able to see
     // every such re-admission next to the reuse sweeps. The `device` field carries
     // `family=<id> session=<id>`, the reuse row's exact convention.
-    | "refresh_recovered";
+    | "refresh_recovered"
+    // A RETRY OF AN UNANSWERED ATTEMPT was answered instead of swept: a consumed token came back
+    // naming the very attempt id that spent it, inside the retry grace, so the client's rotation
+    // response had been lost and it was finishing its own rotation. The family's live tail is
+    // consumed in the same act and its replacement minted, so one live line exists afterwards.
+    // Recorded beside the two rows above because this is the other place a spent token buys a
+    // credential, and an investigation reads all three together. `device` carries
+    // `family=<id> session=<id>` — never the attempt id, which is the client's own string.
+    | "refresh_retry_replayed";
   method?: "webauthn" | "totp" | "recovery_code" | "password";
   ip: string;
   device?: string;

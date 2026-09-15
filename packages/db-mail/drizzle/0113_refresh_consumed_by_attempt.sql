@@ -1,0 +1,23 @@
+-- WHICH ATTEMPT CONSUMED THIS TOKEN — one nullable column on `refresh_tokens`, and the whole of
+-- how a retry stops looking like a theft.
+--
+-- A rotation is two halves: consume + mint, and the response carrying the new pair back. When the
+-- second half is lost, the client still holds the OLD token and presents it again — byte-identical
+-- to a stolen token being replayed, so the reuse detector revoked the family and a dropped
+-- response on a phone cost somebody their pairing. The client now mints an attempt id, persists it
+-- beside the token BEFORE it submits, and repeats it on every retry of that same attempt; the
+-- claim records the digest here. A consumed token re-presented with the attempt id that consumed
+-- it, inside the retry grace, is that client finishing its own rotation. Anything else — a
+-- different id, no id at all, or the same id past the window — is reuse and still sweeps.
+--
+-- sha256 of the client's string, never the string: a client-chosen value does not sit at rest in
+-- this table, and the column is a fixed width whatever a caller sends. It authorizes nothing on
+-- its own — without the token it names no row, and with the token the window is a minute.
+--
+-- Additive, nullable, `IF NOT EXISTS`, no default and no backfill: every row already written
+-- reads NULL, which is exactly "this rotation named no attempt" and routes to the strict arm the
+-- server has always had. A desktop engine replaying this journal at every launch applies it
+-- repeatedly without effect. ROLLBACK is
+-- `ALTER TABLE refresh_tokens DROP COLUMN consumed_by_attempt`: every retry is a theft again.
+
+ALTER TABLE "refresh_tokens" ADD COLUMN IF NOT EXISTS "consumed_by_attempt" text;

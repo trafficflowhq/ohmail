@@ -687,6 +687,14 @@ export const MAIL_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // just this chooser. No worker half: the worker compares the stored instant and never reads the
   // preference. Deploy order migration → API.
   ["account_settings", "resurface_time"],
+  // mail 0113_refresh_consumed_by_attempt — one column on `refresh_tokens`: which attempt spent
+  // this token, so a retry of a refresh whose answer was lost stops reading as a replay. The
+  // most load-bearing marker in this list, because the write is not on a feature's own route —
+  // `rotateRefresh`'s consuming UPDATE sets it on EVERY rotation, so an API deployed ahead of the
+  // migration 42703s `POST /auth/refresh` itself and every client on every surface stops being
+  // able to renew. Deploy order migration → API, and this marker is what makes a wrong order a
+  // 503 rather than a fleet-wide sign-out.
+  ["refresh_tokens", "consumed_by_attempt"],
 ] as const;
 
 /**
@@ -963,7 +971,7 @@ export const MAIL_EXPECTED_MARKERS =
 // 0067/0068 (the device-sync alert's withdrawn SECURITY DEFINER carrier and its retirement)
 // add no column and get no marker: a function's absence is the ALERT RULE's own isolated,
 // tolerated state, not a schema fault a serving API should 503 over.
-export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0110_resurface_time";
+export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0113_refresh_consumed_by_attempt";
 
 
 /* `CLOUD_SCHEMA_MARKER_JOURNAL_TAG` moved to `./health-cloud.js`: it is the NAME of a cloud
