@@ -2,7 +2,7 @@ import { and, asc, desc, eq, inArray, isNotNull, isNull, ne, sql, type SQL } fro
 import type { AnyPgColumn } from "drizzle-orm/pg-core";
 import {
   mailboxes, mailboxCredentials, isOrganizerRole, organizerDisplayName, capabilitiesColumn, type Tx,
-  organizerKindColumn, closedSetValue, readAccountErasedAt, AccountErasedError,
+  organizerKindColumn, closedSetValue, fenceErased, MailboxErasedError,
   type OrganizerRole, type OrganizerKind, type OrganizerState,
   rules,
 } from "@trafficflow/db";
@@ -499,15 +499,20 @@ export async function bootstrapEnvCreds(
      * last cycle failed. FIRST, and inside the transaction that writes, so a removal committing
      * mid-bootstrap loses the race rather than the person losing the erasure.
      *
-     * The two reads are the fence's own, spelled the way `request-drain.ts` spells the account
-     * half; when the shared fenced-write seam carries a mailbox scope they become one call.
+     * ONE fence call, account then mailbox — the shared seam carries the mailbox scope now, and
+     * a credential re-minted for an erased mailbox is a live way back into it.
      */
     const [row] = await tx.select({
       accountId: mailboxes.accountId, status: mailboxes.status,
     }).from(mailboxes).where(eq(mailboxes.id, input.mailboxId)).limit(1);
     if (!row) return;
-    const erasedAt = await readAccountErasedAt(tx, d, row.accountId);
-    if (erasedAt != null) throw new AccountErasedError(row.accountId);
+    try {
+      await fenceErased(tx, d, { accountId: row.accountId, mailboxId: input.mailboxId });
+    } catch (err) {
+      // The mailbox arm answers in this module's own class: `index.ts` keys its skip on it.
+      if (!(err instanceof MailboxErasedError)) throw err;
+      throw new BootstrapRefusedError(input.mailboxId, "mailbox_erased");
+    }
     if (row.status === "disabled") {
       throw new BootstrapRefusedError(input.mailboxId, "mailbox_erased");
     }

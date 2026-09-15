@@ -1,7 +1,7 @@
 import { and, asc, eq, exists, gt, gte, inArray, isNotNull, isNull, ne, or, sql } from "drizzle-orm";
 import {
   awayReplies, awayResponders, awaySenderState, folderState, mailboxes, messageBodies, messages,
-  AccountErasedError, readAccountErasedAt,
+  AccountErasedError, MailboxErasedError, fenceErased, readAccountErasedAt,
   type Tx,
 } from "@trafficflow/db";
 import {
@@ -765,6 +765,16 @@ async function readCandidates(
 }
 
 /**
+ * The fence's two refusals, read as ONE outcome: the reply is not sent and nothing is written,
+ * whether the account or the mailbox is the erased subject. `subjectOf` is what the log line says
+ * it was — the counter is shared because the person's reading of both is the same.
+ */
+const isErasedRefusal = (err: unknown): boolean =>
+  err instanceof AccountErasedError || err instanceof MailboxErasedError;
+const subjectOf = (err: unknown): string =>
+  err instanceof MailboxErasedError ? "mailbox" : "account";
+
+/**
  * One candidate: decide, reserve, send, finalize — the order is the correctness argument. (1)
  * ELIGIBILITY, no network: a suppression writes its ledger row and stops. (2) THE RESERVATION,
  * one transaction committed BEFORE anything dials: `INSERT … ON CONFLICT DO NOTHING RETURNING` (0
@@ -799,12 +809,12 @@ async function answerOne(
       // Same fence, same ending as the reservation's: the ledger row carries this correspondent's
       // address and the sweep has taken the table, so the refusal is recorded in the counter and
       // the log rather than in a row that would put the address back.
-      if (!(err instanceof AccountErasedError)) throw err;
+      if (!isErasedRefusal(err)) throw err;
       result.refusedErased += 1;
       log.warn("away_reply_refused_erased", {
         accountId: responder.accountId, mailboxId: candidate.mailboxId, messageId: candidate.id,
-        reason: "the account was erased before this suppressed candidate's ledger row was " +
-          "written; no row is recorded and nothing was sent",
+        reason: `the ${subjectOf(err)} was erased before this suppressed candidate's ledger row ` +
+          "was written; no row is recorded and nothing was sent",
       });
       return;
     }
@@ -838,12 +848,12 @@ async function answerOne(
        committing behind it would have put them back. Nothing is recorded in the DATABASE here,
        deliberately: every table this pass writes is one erasure empties, so a row explaining the
        refusal would be the recreated row. The counter and this line are the record. */
-    if (err instanceof AccountErasedError) {
+    if (isErasedRefusal(err)) {
       result.refusedErased += 1;
       log.warn("away_reply_refused_erased", {
         accountId: responder.accountId, mailboxId: candidate.mailboxId, messageId: candidate.id,
-        reason: "the account was erased after this candidate was read; no reply is sent and no " +
-          "row is written — the reservation rolled back with the fence",
+        reason: `the ${subjectOf(err)} was erased after this candidate was read; no reply is ` +
+          "sent and no row is written — the reservation rolled back with the fence",
       });
       return;
     }
@@ -955,10 +965,12 @@ async function reserve(
      * and the responder were read before the sweep; without this, a reservation committing after
      * it recreates exactly what the person was told had gone — and the pass then SENDS. First
      * because `deleteAccount` stamps `accounts` as ITS first statement: whichever side wins, the
-     * other waits and sees a settled answer. `AccountErasedError` is an outcome, never a retry.
+     * other waits and sees a settled answer. Both refusals are an outcome, never a retry. The
+     * MAILBOX is asked too: its removal leaves the row standing, so the account says nothing here.
      */
-    const erasedAt = await readAccountErasedAt(tx, dialect(db), responder.accountId);
-    if (erasedAt != null) throw new AccountErasedError(responder.accountId);
+    await fenceErased(tx, dialect(db), {
+      accountId: responder.accountId, mailboxId: candidate.mailboxId,
+    });
 
     const claim = await tx.insert(awayReplies).values({
       accountId: responder.accountId,
@@ -1070,8 +1082,9 @@ async function recordDecision(
   outcome: "suppressed", reason: AwaySuppression, textHash: string, at: Date,
 ): Promise<void> {
   await (db as unknown as Tx).transaction(async (tx) => {
-    const erasedAt = await readAccountErasedAt(tx, dialect(db), responder.accountId);
-    if (erasedAt != null) throw new AccountErasedError(responder.accountId);
+    await fenceErased(tx, dialect(db), {
+      accountId: responder.accountId, mailboxId: candidate.mailboxId,
+    });
     await tx.insert(awayReplies).values({
       accountId: responder.accountId,
       mailboxId: candidate.mailboxId,
