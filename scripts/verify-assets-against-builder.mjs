@@ -50,6 +50,15 @@ export const INSTALLERS = {
 /** The three feeds this workflow writes. They are not installers and no build produces them. */
 export const FEED_FILES = ["latest.json", "appcast-macos.xml", "SHA256SUMS"];
 
+/**
+ * The assets on a desktop release page that the desktop build does not make. The Android workflow
+ * builds and signs the APK and its mapping under its own tag and they are copied here; they are in
+ * no feed and nothing in this job signs them. Skipped by name and PRINTED, never silently, because
+ * an unnamed skip is the same as no check. Their provenance is a different reading — that workflow's
+ * own artifacts, and an APK identified by its certificate — and it is owed.
+ */
+export const NOT_FROM_THIS_BUILD = ["ohmail-android.apk", "ohmail-android-mapping.txt.gz"];
+
 /** The workflow whose runs build the installers, named rather than pinned to a run id. */
 const BUILD_WORKFLOW = "build.yml";
 const BUILD_WORKFLOW_NAME = "build";
@@ -235,10 +244,12 @@ export function verifyAssetsAgainstBuilder({ assetsDir, repo, commit, work }) {
     refuse("BUILDER-NO-REPO", `  --repo must be owner/name; got ${repo ? `"${repo}"` : "nothing"}.`);
   }
 
-  const names = readdirSync(assetsDir)
-    .filter((n) => !FEED_FILES.includes(n))
-    .filter((n) => statSync(join(assetsDir, n)).isFile())
-    .sort();
+  const present = readdirSync(assetsDir).filter((n) => statSync(join(assetsDir, n)).isFile()).sort();
+  const skipped = present.filter((n) => FEED_FILES.includes(n) || NOT_FROM_THIS_BUILD.includes(n));
+  for (const n of skipped) {
+    console.log(`skipped ${n} — ${FEED_FILES.includes(n) ? "a feed this run writes" : "not built by the desktop build"}`);
+  }
+  const names = present.filter((n) => !skipped.includes(n));
   if (names.length === 0) refuse("BUILDER-NO-ASSETS", `  ${assetsDir} holds no installer to check.`);
   /* An asset this table has never heard of is a platform whose provenance nobody can state, and it
    * would ride onto the download page inside a SHA256SUMS that vouches for it. */
