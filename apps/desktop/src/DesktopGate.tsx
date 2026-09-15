@@ -622,6 +622,81 @@ export function DesktopGate() {
 
   const status = shell.kind === "status" ? shell.status : null;
 
+  /**
+   * THE DOOR OVERLAY, BUILT ABOVE THE EARLY RETURNS — because one of them needs it.
+   *
+   * It used to be composed at the bottom of this component, under the mail client, and the
+   * revoked-pairing branch below returns long before that: its two buttons set this state and
+   * the person stayed on the same card, with nothing on screen having changed. One element,
+   * rendered by whichever branch is on screen, is what makes a press lead to its door.
+   */
+  const hostLabel = hostLabelOf(status?.baseUrl);
+  const doorOverlay = overlay ? (
+    /* OVER the client, not under it. `.gate` is a full-height flow element — correct when it
+       IS the window, wrong when the mail is already on screen behind it, where it would
+       simply render below the fold. The wrapper takes it out of flow and puts it above the
+       command palette (`--z-pal`) and below the toasts, which is where a modal setup step
+       belongs: nothing in the app should be reachable while it is open, and a toast it
+       produces still has to be readable over it. Inline because it is the only element in
+       either product that needs it. */
+    <div
+      style={{
+        position: "fixed",
+        inset: 0,
+        zIndex: 85,
+        overflowY: "auto",
+        background: "var(--canvas)",
+      }}
+    >
+    <DoorChooser
+      start={overlay}
+      /* "Sign in again" is not "choose the cloud door again": the door is already chosen, and
+         re-configuring it would replace the engine — taking somebody's mail off the screen
+         for the length of a restart to change nothing. */
+      /* THE SAME DISTINCTION FOR THE PAIRED DOOR. `"host"` here means "pair again with the
+         computer this install already reads through", which is two requests against the
+         running engine; the chooser's default would reconfigure and give `enforceMirrorOwner`
+         grounds to discard the copy the Settings row promises is kept. */
+      cloudAction={overlay === "cloud" || overlay === "host" ? "signIn" : "configure"}
+      /* THE MAILBOXES THE OTHER COMPUTER HELD, captured at the press and BEFORE this overlay
+         changes anything — see `beginTakeover`. Three states, three sentences; `null` is a
+         read that failed and must never render as an empty list. */
+      {...(overlay === "takeover" ? { roster: takeoverRoster, host: hostLabel } : {})}
+      onCancel={() => {
+        /* CANCEL IS NOT "NOTHING HAPPENED". A door attempt inside this overlay may have
+           already REPLACED the engine (`engine_configure` runs before the credential
+           step) without reaching `onEntered`, so the epoch never moved and the stored
+           /health answer describes the PREVIOUS engine. Closing the overlay is the reveal
+           moment, so the EPOCH advances here — clearing the stored answer is not enough,
+           because a probe already in flight holds the OLD key in its closure and a late
+           old-engine answer would re-store under a still-current key. The bump re-keys
+           the gate, retires both probe effects and withholds the app until the engine
+           actually behind the bridge gives its own first /health. `refresh()` re-reads
+           the shell: the door state itself may have moved under an abandoned attempt. */
+        setAuthEpoch((n) => n + 1);
+        setOverlay(null);
+        void refresh();
+      }}
+      onEntered={(r) => {
+        /* THE SETTINGS OVERLAY, which is where a mailbox is CONNECTED AGAIN after a removal
+           — the same act as the first launch's connect, so it opens setup on the same rule.
+           A cloud entry here answers `null` at the door rule and navigates nowhere.
+
+           EXCEPT AFTER A TAKEOVER. The guided setup walks somebody through consenting to
+           organize a mailbox as if it were new, and this one is not: its rules and its
+           consent travel in the mailbox itself, the profile-import card is what asks about
+           them, and the peek that names who held it last is on the Mailboxes pane rather
+           than on that stage. Sending somebody through the from-scratch walk here would ask
+           them to answer questions they already answered on the other computer. */
+        if (overlay === "takeover") goSettings("mailboxes");
+        else openSetupOnStandalone(r.status ?? null);
+        if (r.status) onStatus(r.status);
+        else void refresh();
+      }}
+    />
+    </div>
+  ) : null;
+
   /* THE HOSTED SESSION ENDED under a window that was already serving mail. Say so, in a
      sentence, and offer the way back — never a mailbox that silently stopped moving. The
      mirrored mail is kept on disk (sign-out freezes the directory) and returns with the
@@ -702,13 +777,19 @@ export function DesktopGate() {
     const revokedHost = hostLabelOf(status?.baseUrl);
     if (paired && revokedHost !== null && !signInAfterExpiry) {
       return (
-        <GateNotice
-          reason={DOOR_COPY.gateUnpaired(machineWord(), revokedHost)}
-          actionLabel={DOOR_COPY.gatePairAgain}
-          onAction={() => setOverlay("host")}
-          secondaryLabel={DOOR_COPY.gateOwn}
-          onSecondary={beginTakeover}
-        />
+        <>
+          <GateNotice
+            reason={DOOR_COPY.gateUnpaired(machineWord(), revokedHost)}
+            actionLabel={DOOR_COPY.gatePairAgain}
+            onAction={() => setOverlay("host")}
+            secondaryLabel={DOOR_COPY.gateOwn}
+            onSecondary={beginTakeover}
+          />
+          {/* THE DOOR EACH BUTTON NAMES. Pair again opens the pairing door over this card and
+              Set up on its own opens the takeover card; without this the presses moved state
+              nobody rendered and the person read the same notice twice. */}
+          {doorOverlay}
+        </>
       );
     }
     if (signInAfterExpiry) {
@@ -745,7 +826,6 @@ export function DesktopGate() {
    * normally — because a line that said "reachable" would stand in the rail for ever and make the
    * one state worth noticing a change of wording rather than the arrival of a warning.
    */
-  const hostLabel = hostLabelOf(status?.baseUrl);
   const hostConnection: HostConnection | undefined = ((): HostConnection | undefined => {
     if (!paired || freshness === null || hostLabel === null) return undefined;
     const settingsLink = { href: "#/settings/desktop", label: DOOR_COPY.hostFootSettings };
@@ -1156,71 +1236,7 @@ export function DesktopGate() {
           two cannot disagree. It WAITS rather than being withheld: the ask is one-time and
           un-answered, so it is offered on the next visit with the flow closed. */}
       {routeNow.firstRun ? null : <DefaultMailAsk />}
-      {overlay ? (
-        /* OVER the client, not under it. `.gate` is a full-height flow element — correct when it
-           IS the window, wrong when the mail is already on screen behind it, where it would
-           simply render below the fold. The wrapper takes it out of flow and puts it above the
-           command palette (`--z-pal`) and below the toasts, which is where a modal setup step
-           belongs: nothing in the app should be reachable while it is open, and a toast it
-           produces still has to be readable over it. Inline because it is the only element in
-           either product that needs it. */
-        <div
-          style={{
-            position: "fixed",
-            inset: 0,
-            zIndex: 85,
-            overflowY: "auto",
-            background: "var(--canvas)",
-          }}
-        >
-        <DoorChooser
-          start={overlay}
-          /* "Sign in again" is not "choose the cloud door again": the door is already chosen, and
-             re-configuring it would replace the engine — taking somebody's mail off the screen
-             for the length of a restart to change nothing. */
-          /* THE SAME DISTINCTION FOR THE PAIRED DOOR. `"host"` here means "pair again with the
-             computer this install already reads through", which is two requests against the
-             running engine; the chooser's default would reconfigure and give `enforceMirrorOwner`
-             grounds to discard the copy the Settings row promises is kept. */
-          cloudAction={overlay === "cloud" || overlay === "host" ? "signIn" : "configure"}
-          /* THE MAILBOXES THE OTHER COMPUTER HELD, captured at the press and BEFORE this overlay
-             changes anything — see `beginTakeover`. Three states, three sentences; `null` is a
-             read that failed and must never render as an empty list. */
-          {...(overlay === "takeover" ? { roster: takeoverRoster, host: hostLabel } : {})}
-          onCancel={() => {
-            /* CANCEL IS NOT "NOTHING HAPPENED". A door attempt inside this overlay may have
-               already REPLACED the engine (`engine_configure` runs before the credential
-               step) without reaching `onEntered`, so the epoch never moved and the stored
-               /health answer describes the PREVIOUS engine. Closing the overlay is the reveal
-               moment, so the EPOCH advances here — clearing the stored answer is not enough,
-               because a probe already in flight holds the OLD key in its closure and a late
-               old-engine answer would re-store under a still-current key. The bump re-keys
-               the gate, retires both probe effects and withholds the app until the engine
-               actually behind the bridge gives its own first /health. `refresh()` re-reads
-               the shell: the door state itself may have moved under an abandoned attempt. */
-            setAuthEpoch((n) => n + 1);
-            setOverlay(null);
-            void refresh();
-          }}
-          onEntered={(r) => {
-            /* THE SETTINGS OVERLAY, which is where a mailbox is CONNECTED AGAIN after a removal
-               — the same act as the first launch's connect, so it opens setup on the same rule.
-               A cloud entry here answers `null` at the door rule and navigates nowhere.
-
-               EXCEPT AFTER A TAKEOVER. The guided setup walks somebody through consenting to
-               organize a mailbox as if it were new, and this one is not: its rules and its
-               consent travel in the mailbox itself, the profile-import card is what asks about
-               them, and the peek that names who held it last is on the Mailboxes pane rather
-               than on that stage. Sending somebody through the from-scratch walk here would ask
-               them to answer questions they already answered on the other computer. */
-            if (overlay === "takeover") goSettings("mailboxes");
-            else openSetupOnStandalone(r.status ?? null);
-            if (r.status) onStatus(r.status);
-            else void refresh();
-          }}
-        />
-        </div>
-      ) : null}
+      {doorOverlay}
     </>
   );
 }
