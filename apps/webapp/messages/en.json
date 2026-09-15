@@ -2802,6 +2802,7 @@
     "footNoRule": "This moves the mail that is here. It makes no rule, so future mail is unchanged.",
     "toastRuled": "{place} — {count, plural, =0 {their mail is already there} one {1 message from {sender} moved} other {# messages from {sender} moved}}. Future mail from them files there too.",
     "toastRuledFuture": "{place} — future mail from {sender} files there too. Mail already here stays where it is.",
+    "toastRuledMoved": "{place} — {count, plural, one {1 message from {sender} moved} other {# messages from {sender} moved}}. Future mail from them files there too. The rest of their mail here stays where it is.",
     "toastMoved": "{place} — {count, plural, one {1 message} other {# messages}} from {sender} moved. No rule was made, so future mail is unchanged.",
     "toastAlready": "{sender} is already in {place}.",
     "bulkTo": "screen to",

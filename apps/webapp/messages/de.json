@@ -2802,6 +2802,7 @@
     "footNoRule": "Das verschiebt die Post, die hier ist. Es entsteht keine Regel, künftige Post bleibt also unverändert.",
     "toastRuled": "{place} — {count, plural, =0 {seine Post liegt schon dort} one {1 Nachricht von {sender} verschoben} other {# Nachrichten von {sender} verschoben}}. Künftige Post von ihm geht auch dorthin.",
     "toastRuledFuture": "{place} — künftige Post von {sender} geht auch dorthin. Post, die schon hier ist, bleibt, wo sie ist.",
+    "toastRuledMoved": "{place} — {count, plural, one {1 Nachricht von {sender} verschoben} other {# Nachrichten von {sender} verschoben}}. Künftige Post von ihm geht auch dorthin. Ihre übrige Post hier bleibt, wo sie ist.",
     "toastMoved": "{place} — {count, plural, one {1 Nachricht} other {# Nachrichten}} von {sender} verschoben. Es wurde keine Regel angelegt, künftige Post bleibt also unverändert.",
     "toastAlready": "{sender} ist schon in {place}.",
     "bulkTo": "screenen nach",

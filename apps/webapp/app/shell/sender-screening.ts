@@ -470,7 +470,8 @@ export function planScreeningChange(
  */
 export type ScreeningToastKey =
   | "toastRuled" | "toastRetargeted" | "toastAlreadyRuled" | "toastAlreadyRuledRetro"
-  | "toastRuledFuture" | "toastRuleQueued" | "toastRuleFailed" | "toastMoved" | "toastRuleOrganizer";
+  | "toastRuledFuture" | "toastRuledMoved" | "toastRuleQueued" | "toastRuleFailed" | "toastMoved"
+  | "toastRuleOrganizer";
 
 export function screeningToast(
   plan: ScreeningPlan,
@@ -500,6 +501,16 @@ export function screeningToast(
       // them files there too" would be a claim about a rule that does not exist yet.
       if (ruleStatus === "awaiting_organizer") return "toastRuleOrganizer";
       if (ruleStatus === "queued") return "toastRuleQueued";
+      /**
+       * WHAT THE PLAN DID, NOT WHAT IT ASKED OF THE SERVER — and the two are different questions.
+       *
+       * `retro` says the rule will ALSO be applied to mail already on the server. A Move press
+       * never asks for that and still moves the mail it was made on, so keying the sentence on
+       * `retro` alone told somebody "mail already here stays where it is" about the very message
+       * that had just moved. The discriminator is therefore the plan's own moves. Below the three
+       * status arms, so this is only ever read of an ANSWER that applied.
+       */
+      if (!plan.retro && plan.mutations.some((m) => m.kind === "move")) return "toastRuledMoved";
       // THE BACKLOG DECLINED IS ITS OWN SENTENCE. With the past-mail switch off nothing moves, so
       // every count here is zero — and the `=0` arm of the sentences below reads "their mail is
       // already there", which is false of a sender whose mail the person asked us to leave alone.
