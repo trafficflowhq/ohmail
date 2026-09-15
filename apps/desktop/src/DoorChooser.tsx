@@ -19,6 +19,7 @@ import { ProviderPicker } from "../../webapp/app/shell/ProviderPicker";
 import { hostsFor, providerById } from "../../webapp/app/shell/providers";
 import {
   EMPTY_LOCAL,
+  PAIRED_DOOR_AVAILABLE,
   beginBrowserSignIn,
   enterCloudDoor,
   enterCloudDoorWithCode,
@@ -261,10 +262,17 @@ export function DoorChooser({
                  self-hosted origin's shape), so it is left to this door; `k1.` is unambiguous. */
               const pasted = hostLinkProblem(typedOrigin);
               if (pasted.link !== null && pasted.link.pin !== null) {
-                setProblem(null);
                 setSuggestion(null);
                 setProvedLink(null);
                 setMismatch(false);
+                /* THE SECOND WAY IN, and the one somebody actually arrives by. It gets the
+                   same answer as the tile: routing it to a pane that cannot finish is the
+                   dead end, whichever field the link was pasted into. */
+                if (!PAIRED_DOOR_AVAILABLE) {
+                  setProblem(DOOR_COPY.doorHostUnavailable);
+                  return;
+                }
+                setProblem(null);
                 setStep("host");
                 return;
               }
@@ -470,9 +478,22 @@ function Doors({ onPick, onCancel }: { onPick: (step: Step) => void; onCancel?: 
         {/* SECOND, and the order is still "nearest first": this computer, then another of yours,
             then a server you run, then ours. A paired desktop is nearer than a server — it is a
             machine in the same house — and it is the door somebody arrives at holding a link. */}
-        <button type="button" className="door-tile" onClick={() => onPick("host")}>
+        {/* LISTED AND MARKED, NOT REMOVED. The door cannot be completed from any state a new
+            install is in — `PAIRED_DOOR_AVAILABLE` in `doors.ts` carries the three readings —
+            so it says so HERE, at step one, rather than at the third. A tile taken off the
+            screen is a product that quietly got smaller, and a person who arrived holding a
+            pairing link would find nothing to explain it. */}
+        <button
+          type="button"
+          className="door-tile"
+          disabled={!PAIRED_DOOR_AVAILABLE}
+          onClick={() => onPick("host")}
+        >
           <span className="door-name">{DOOR_COPY.doorHostName}</span>
           <span className="door-say">{DOOR_COPY.doorHostSay(machineWord())}</span>
+          {PAIRED_DOOR_AVAILABLE ? null : (
+            <span className="door-unavailable">{DOOR_COPY.doorHostUnavailable}</span>
+          )}
         </button>
         <button type="button" className="door-tile" onClick={() => onPick("server")}>
           <span className="door-name">{DOOR_COPY.doorServerName}</span>

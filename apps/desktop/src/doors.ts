@@ -534,6 +534,30 @@ export interface HostRefusal {
   status: number | null;
 }
 
+/**
+ * WHETHER THE "ANOTHER COMPUTER" DOOR CAN BE WALKED AT ALL. False, and it is a fact about this
+ * build rather than a switch: three components each require something one of the others is
+ * supposed to supply, and no path supplies all three. Read at this tip, 2026-09-15:
+ *
+ *  · step one asks the LOCAL engine over the bridge, and a fresh install has no configured
+ *    engine to answer — the probe is refused `unreachable` before a link can be checked;
+ *  · an ordinary tailnet link carries no pin, because `originNeedsPin` demands one of an IP
+ *    literal and not of a DNS name, and the shell refuses a pin-less desktop-host door;
+ *  · the one door shape the shell does admit — pinned, with no mailbox address, because which
+ *    mailbox this install reads is the host's answer to the redeem — relaunches the engine
+ *    Inert for want of `OHMAIL_MAILBOX_ADDRESS`, which every cloud-mode launch requires.
+ *
+ * So the door says so at step one instead of failing at the third. The tile stays listed and
+ * marked: somebody arriving with a pairing link in their hand needs to read why it will not
+ * work here, and a door removed from the screen is a product that quietly got smaller.
+ *
+ * THE SENTENCE IS NOT HERE. This module is reachable from the SERVED host client's import
+ * graph and `desktopDoor` is window-only — `door-copy.ts` holds the words, `DoorChooser`
+ * renders them. a later change flips this line, and
+ * `apps/desktop/test/desktop-paired-door-unavailable.test.tsx` is what says so.
+ */
+export const PAIRED_DOOR_AVAILABLE = false;
+
 /** What the link step ended as: the parsed link and what to call it, or why it was refused. */
 export interface HostLinkStep {
   link: PairLink | null;

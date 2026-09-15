@@ -3434,6 +3434,7 @@
     "notifyNewMail": "{count, plural, one {One new message for you.} other {# new messages for you.}}",
     "doorHostName": "Another computer",
     "doorHostSay": "ohmail on another computer of yours organizes; this {machine} works through it. While that computer is off, this one shows its copy and can change nothing.",
+    "doorHostUnavailable": "Pairing with another computer isn't available in this version yet.",
     "hostAskLead": "Paste the pairing link from ohmail on that computer — Settings → Devices → Add a device. Only the desktop app gives one out; the phone app cannot.",
     "hostLink": "Pairing link",
     "hostLinkPlaceholder": "https://…/pair#…",

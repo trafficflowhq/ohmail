@@ -33,6 +33,16 @@ A device you pair reads this computer's mailbox over your own network. It kept e
 every message body it had ever seen for as long as the page stayed open. It now keeps the same
 window this app does, and reaches back over the same connection for the rest.
 
+### The "Another computer" door says it is not available yet
+
+Choosing it asked the mail engine to check the pairing link, on an install that has no mail engine
+running yet — and the one setup it could have written would not have started one. The door was
+unwalkable from every state, and it said so only at the last step, after a link had been pasted and
+spent. It is now listed and marked on the setup screen, with nothing behind it to walk into; a
+pairing link pasted into the "Your own server" field gets the same answer. The door is due in the
+next version. Pairing a phone or a browser to a computer running ohmail is a different thing and is
+untouched.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
@@ -1122,9 +1132,10 @@ set an out-of-office and no out-of-office would ever be sent.
 
 ### Doors: a laptop through your desktop, and a server you run
 
-- Set one computer up, then let your others work through it. The setup chooser has a fourth door,
-  **Another computer**, which takes the pairing link the first machine hands out under Settings →
-  Devices; your mail stays organized in one place, on hardware you own.
+- The setup chooser has a fourth door, **Another computer**, meant to take the pairing link the
+  first machine hands out under Settings → Devices. It does not work, and did not in this version:
+  it is marked unavailable from 0.19.1 and is due in 0.19.2. Pairing a **phone** or a browser to a
+  computer running ohmail, which is the other half of Settings → Devices, works and is unaffected.
 - A pairing link works once and is checked before it is used, so a link that is not one, a plain
   unencrypted address, a changed key and something that is not ohmail are refused before the setup
   is touched. A link already used is refused when it is redeemed, a moment later.

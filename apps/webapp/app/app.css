@@ -3238,6 +3238,27 @@ input.set-tag-input {
   font-weight: 600;
   color: var(--ink2);
 }
+/* A DOOR THAT SAYS IT CANNOT BE WALKED YET. Marked, not removed: the tile keeps its place and
+   its description, and the mark is the line that changes. The lift and the pointer go with the
+   press — a tile that rises under the cursor and then does nothing is a worse answer than a
+   flat one. */
+.door-tile:disabled {
+  cursor: default;
+}
+.door-tile:disabled:hover {
+  box-shadow: var(--lift-0);
+  transform: none;
+}
+.door-tile:disabled .door-name,
+.door-tile:disabled .door-say {
+  color: var(--ink3);
+}
+.door-unavailable {
+  font-size:calc(11.5px + var(--type-up));
+  font-weight: 600;
+  color: var(--ink2);
+  line-height: 1.5;
+}
 /* The travel sentence. It is beneath ALL THREE tiles because it is true of all
    three, so it sits outside the grid and is spaced away from it — a hint tucked
    under the last tile would read as being about that tile. */

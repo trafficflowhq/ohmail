@@ -130,7 +130,11 @@ const PAIRED_DOOR_KEYS = [
      catalogues, and the translation case below would refuse it correctly. `desktop-door-copy`
      holds it in the six-key "deliberately identical" set instead, which is where the exemption
      belongs. */
-  "doorHostName", "doorHostSay", "hostAskLead", "hostLink", "hostLinkHint",
+  "doorHostName", "doorHostSay",
+  /* The mark on that tile in 0.19.1 — the door refuses at step one and this is what it says.
+     On this list because a key deleted with its last call site must read as a feature gone. */
+  "doorHostUnavailable",
+  "hostAskLead", "hostLink", "hostLinkHint",
   "hostCheck", "hostChecking", "hostReached", "hostReachedLanBefore", "hostReachedLanAfter",
   "hostReachedTs", "hostPairLead", "hostPair", "hostPairing",
   // every refusal, window-side and engine-side

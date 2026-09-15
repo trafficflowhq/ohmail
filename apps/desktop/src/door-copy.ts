@@ -63,6 +63,12 @@ const EN = {
   doorHostSay: (machine: string) =>
     `ohmail on another computer of yours organizes; this ${machine} works through it. While that `
     + "computer is off, this one shows its copy and can change nothing.",
+  /* ── THE MARK ON THAT TILE, AND THE WHOLE OF WHAT THIS DOOR DOES IN 0.19.1 ───────────────
+     The door could not be completed from any state a new install is in — `PAIRED_DOOR_AVAILABLE`
+     in `doors.ts` carries the three readings. Said at step one, plainly, with nothing after it:
+     a person holding a pairing link needs to know it will not work here, not to be walked to a
+     field and refused by the shell. */
+  doorHostUnavailable: "Pairing with another computer isn't available in this version yet.",
   doorServerName: "Your own server",
   doorServerLead: "Self-hosted ohmail Cloud.",
   doorServerSay: "A server you run does the organizing; this app keeps a copy.",

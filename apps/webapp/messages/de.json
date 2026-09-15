@@ -3434,6 +3434,7 @@
     "notifyNewMail": "{count, plural, one {Eine neue Nachricht für dich.} other {# neue Nachrichten für dich.}}",
     "doorHostName": "Ein anderer Computer",
     "doorHostSay": "ohmail auf einem anderen Computer von dir organisiert; dieser {machine} arbeitet über ihn. Ist der andere Computer aus, zeigt dieser {machine} seine Kopie und kann nichts ändern.",
+    "doorHostUnavailable": "Die Kopplung mit einem anderen Computer ist in dieser Version noch nicht verfügbar.",
     "hostAskLead": "Füge den Kopplungslink aus ohmail auf dem anderen Computer ein — dort unter Einstellungen → Geräte → Gerät hinzufügen. Nur die Desktop-App gibt einen aus; die Handy-App kann das nicht.",
     "hostLink": "Kopplungslink",
     "hostLinkPlaceholder": "https://…/pair#…",
