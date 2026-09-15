@@ -2711,6 +2711,17 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
        */
       let credentialBlock: CredentialBlock | null = null;
       /**
+       * THIS RUNTIME NEVER DIALLED, BECAUSE IT HAD NO PASSWORD — see
+       * {@link MailboxConnectionState.needsCredential}.
+       *
+       * Not {@link credentialBlock}, which is about a stored row that could not be OPENED: here
+       * nothing is stored and there is nothing to open. Not an outage either — no clock is
+       * armed and nothing is retried, because with no password there is nothing to retry and
+       * dialling an empty one is how a provider locks an account. One writer sets it (`start()`'s
+       * two no-password arms) and one clears it (a later read that opens the row).
+       */
+      let needsCredential = false;
+      /**
        * WHAT THIS MAILBOX'S FIRST SYNC HAS PRODUCED — the third answer the connection record
        * carries, derived from the drain's own stamps and the mirror's own rows. See
        * {@link createFirstSyncTracker}: nothing here can set it, which is the point.
@@ -2838,6 +2849,9 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           login = fresh;
           useDialledPassword(fresh.pass);
           credentialBlock = null;
+          /* AND THE STATE THE LAUNCH ENTERED WITH NO PASSWORD — this read is the thing that ends
+             it: a password is stored and this mailbox dials with it from here. */
+          needsCredential = false;
           log("mailbox_login_restored", {
             mailboxId: mb.id,
             state: fresh.state,
@@ -5961,8 +5975,17 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
              socket, or a re-dial onto a live server with an unreadable lease reports a mailbox
              that is being organized when nothing is being filed. */
           return {
-            reachable: outageSince === null,
+            /* AND NOTHING IS REACHABLE THAT WAS NEVER DIALLED. `outageSince === null` alone is
+               the negation of an observed death, which a runtime that opened no socket at all
+               cannot have — so a mailbox with no password answered `true` and Settings said "Up
+               to date" over one that had never read a byte. See {@link needsCredential}: it is
+               the state's own name, and the surfaces rank it above the outage arm. */
+            reachable: outageSince === null && !needsCredential,
             unreachableSince: outageSince,
+            /* NO PASSWORD ON THIS INSTALL — the state, not a diagnosis of the server. Rides
+               beside `unreachableSince` rather than inside it: there is no outage clock to
+               name, and an outage sentence would send somebody to look at a working network. */
+            needsCredential,
             /* AND WHY, WHEN THE REASON IS THIS INSTALL'S OWN STORE rather than the server. No
                socket was opened at all here, so "can't reach the mail server" would send somebody
                to look at a network that is working. See {@link CredentialBlock}. */
@@ -6012,12 +6035,26 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           // and a mailbox whose key was replaced would be unrecoverable rather than one prompt
           // away. Deliberately BEFORE `connect()`: an empty password is a login attempt the
           // server will refuse, and a refused login on some providers counts toward a lockout.
-          if (login.state !== "ready" || !login.pass) return;
+          //
+          // IT IS SAID, THOUGH. Returning in silence left `outageSince` null over a runtime that
+          // had opened nothing, so the connections route answered `reachable: true` and the row
+          // read "Up to date" — measured by signing out with two mailboxes and reconnecting only
+          // the primary. Nothing is scheduled with it: with no password there is nothing to
+          // retry, and the state is what a person acts on.
+          // No second log line: the attach above already wrote `stored_login_absent` once, and a
+          // state a surface renders is not news to repeat.
+          if (login.state !== "ready" || !login.pass) {
+            needsCredential = true;
+            return;
+          }
           /* …AND NOT AFTER A SIGN-OUT. Same shape and same place as the line above, for the same
              reason: this is not a failed launch, it is an install with no password to use. The
              throwing check in `dialAndGate` is what the re-dial meets; a launch answers quietly
              so a sign-out during boot does not surface as a broken app. */
           if (signedOutSinceDial()) {
+            /* THE SAME STATE AS THE ARM ABOVE, and it is set for the arm above's reason: this
+               runtime opened no socket, so nothing may report it reachable. */
+            needsCredential = true;
             log("stored_login_absent", {
               mailboxId: mb.id,
               state: "absent",
@@ -6856,6 +6893,11 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
               reachable: r.connection.reachable,
               unreachableSince: r.connection.unreachableSince?.toISOString() ?? null,
               signInRefused: r.connection.signInRefused,
+              /* NO PASSWORD FOR THIS MAILBOX ON THIS COMPUTER — a flat boolean, because there is
+                 nothing else to say: no clock, no code, no server involved. A surface older than
+                 the field reads an absent one as `false`, which is the state this install was in
+                 before the field existed. */
+              needsCredential: r.connection.needsCredential,
               /* THE STORED-PASSWORD BLOCK, as the object it is — a state and whether a second
                  read confirmed it. Two flat fields would admit "confirmed" with nothing to be
                  confirmed about. No server name and no address, like every other field here. */

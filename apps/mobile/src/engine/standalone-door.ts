@@ -153,6 +153,13 @@ export interface StandaloneEngine {
       unreachableSince: Date | null;
       signInRefused: boolean;
       /**
+       * NO PASSWORD ON THIS PHONE FOR THIS MAILBOX — the state a runtime that never dialled has,
+       * which is neither reachable nor an outage. Optional because this declaration is a claim
+       * about an UNTYPED artifact: an engine bundle older than the field carries none, and
+       * absent must read as "the engine did not say" rather than as a password to ask for.
+       */
+      needsCredential?: boolean;
+      /**
        * AND WHAT THE FIRST SYNC OF THIS MAILBOX PRODUCED — `pending`, `finished`, or
        * `produced_nothing_readable`. The third is the one no surface could report: a drain came
        * back, not one message reached the mirror, and every other field here says the install is

@@ -291,6 +291,7 @@ export const DE: Deck = {
   staleAsOfIdle: (time: string) => `Stand ${time}`,
 
   connectionLost: "Verbindung verloren. Verbinde neu …",
+  connectionNeedsPassword: "Dieses Postfach braucht sein Passwort erneut. Gib es ein, damit wieder synchronisiert wird.",
   connectionGoneSince: (time: string) => `Seit ${time} keine Verbindung`,
 
   firstSyncNothingReadable: "Aus diesem Postfach konnte noch nichts gelesen werden.",

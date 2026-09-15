@@ -2341,6 +2341,7 @@
     "desktopStateCredentialUnreadable": "This computer can't open the saved password, so nothing is syncing.",
     "desktopStateSignInAgain": "This computer can't open the saved password. Enter it again to start syncing.",
     "desktopStateCredentialForeign": "The saved password belongs to a different mail server, so nothing is syncing.",
+    "desktopStateNeedsCredential": "This mailbox needs its password again. Enter it to start syncing.",
     "desktopStateUnreachable": "Can't reach the mail server.",
     "desktopStateUnknown": "Can't check the mail server right now.",
     "desktopStateLastAnswered": "Last answered {when}.",

@@ -116,6 +116,16 @@ export interface MailboxConnectionState {
    */
   signInRefused: boolean;
   /**
+   * NO PASSWORD ON THIS INSTALL FOR THIS MAILBOX, so nothing was ever dialled — its own state,
+   * and neither {@link reachable} nor an outage. Set where a runtime starts with no usable
+   * login and returns without opening a socket: `reachable` used to stay true there because it
+   * is the negation of an observed death, and a mailbox nothing had ever reached read "Up to
+   * date" (measured: sign out with two mailboxes, reconnect only the primary). It is NOT an
+   * outage — {@link unreachableSince} stays null, there is no clock to name and nothing is being
+   * retried, because with no password there is nothing to retry. The remedy is a person's.
+   */
+  needsCredential: boolean;
+  /**
    * THE STORED PASSWORD COULD NOT BE USED — see {@link CredentialBlock}, `null` when it could.
    *
    * Beside `signInRefused` and not folded into it: no server has answered this launch at all, so

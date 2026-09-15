@@ -67,6 +67,13 @@ export interface MailboxReach {
    */
   credentialBlocked: { state: "unreadable" | "foreign-host"; confirmed: boolean } | null;
   /**
+   * NO PASSWORD FOR THIS MAILBOX ON THIS COMPUTER, so nothing was dialled — its own fact, and
+   * above the outage arm for `credentialBlocked`'s reason: no server was asked anything. It is
+   * not `credentialBlocked` (a stored row that will not open) and not an outage (no clock, no
+   * retry). An engine older than the field sends nothing, which reads as `false`.
+   */
+  needsCredential: boolean;
+  /**
    * THIS MAILBOX'S SETTINGS DOCUMENT CANNOT BE READ OR WRITTEN — `null` while it can.
    *
    * Its own fact and below the socket arms, because the server here is answering perfectly: mail
@@ -329,7 +336,7 @@ export async function readMailboxReachVia(
   for (const raw of items) {
     const it = (typeof raw === "object" && raw !== null ? raw : {}) as {
       mailboxId?: unknown; reachable?: unknown; unreachableSince?: unknown; signInRefused?: unknown;
-      credentialBlocked?: unknown; profileBlocked?: unknown;
+      credentialBlocked?: unknown; profileBlocked?: unknown; needsCredential?: unknown;
     };
     /* NO ID, NOTHING TO SAY IT ABOUT. Dropped rather than faulted: marking the slice would let one
        unattributable entry speak for rows it never named. */
@@ -337,7 +344,7 @@ export async function readMailboxReachVia(
     if (typeof it.reachable !== "boolean") {
       out[it.mailboxId] = {
         answered: false, reachable: false, signInRefused: false, credentialBlocked: null,
-        profileBlocked: null, unreachableSince: null,
+        profileBlocked: null, unreachableSince: null, needsCredential: false,
       };
       continue;
     }
@@ -349,6 +356,10 @@ export async function readMailboxReachVia(
          cannot have refused a sign-in, and the dangerous default is the other one — telling
          somebody their password was rejected because their app is out of date. */
       signInRefused: it.signInRefused === true,
+      /* THE EXACT BOOLEAN, on this file's standing rule: an engine older than the field says
+         nothing about it, and "this mailbox needs its password" is not a sentence to invent
+         from an absence. */
+      needsCredential: it.needsCredential === true,
       /* READ AS A PAIR OR NOT AT ALL, on the rule above: an engine older than the field says
          nothing, and half of this object is not a fact. A `state` outside the two the engine can
          send is dropped rather than rendered — the sentence is chosen by it. */
@@ -1234,6 +1245,16 @@ export function DesktopMailboxes(
       if (state === "foreign-host") return say(t("desktopStateCredentialForeign"));
       return say(t(confirmed ? "desktopStateSignInAgain" : "desktopStateCredentialUnreadable"));
     }
+    /* ── NO PASSWORD AT ALL ON THIS COMPUTER — beside the block above and above the outage arm.
+     *
+     * The same family and a different fact: `credentialBlocked` is a stored row that will not
+     * open, this is no row. Above the outage arm because no socket was opened, so "Can't reach
+     * the mail server" would send somebody to look at a network that is working; and it must be
+     * said at all because `reachable` used to answer true here and the row read "Up to date"
+     * over a mailbox nothing had ever read — measured by signing out with two mailboxes and
+     * reconnecting only the primary. The sentence carries the remedy: it is a person's, and
+     * nothing is retrying in the meantime. */
+    if (r?.needsCredential) return say(t("desktopStateNeedsCredential"));
     /* ── THE ENGINE COULD NOT SAY, AND THAT IS ITS OWN SENTENCE ──────────────────────────
      * Only when the row has no answer of its own, and only when the absence is NEWS —
      * {@link reachUnknownForRow} owns that, because this arm used to read `reach.faulted`

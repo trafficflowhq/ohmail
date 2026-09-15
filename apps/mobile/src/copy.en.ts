@@ -489,6 +489,7 @@ const TABLE = {
      minutes, because by then "Reconnecting…" is a promise nobody should keep waiting on.
      `time` arrives sentence-ready from the world layer, like the stale label's. */
   connectionLost: "Connection lost. Reconnecting…",
+  connectionNeedsPassword: "This mailbox needs its password again. Enter it to start syncing.",
   connectionGoneSince: (time: string) => `Couldn't reconnect since ${time}`,
 
   /* NOTHING HAS BEEN READ FROM THIS MAILBOX, and that is a different fact from the two above —

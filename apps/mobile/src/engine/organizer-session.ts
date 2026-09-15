@@ -242,6 +242,12 @@ export interface StandaloneHere {
   /** The server answered and rejected the sign-in — not an outage, and not retried. */
   readonly signInRefused: boolean;
   /**
+   * NO PASSWORD ON THIS PHONE FOR THIS MAILBOX — nothing was dialled, so it is neither reachable
+   * nor an outage. The engine's own field, re-spelled nowhere. `false` while the engine has not
+   * said, which is what every build before the field reported.
+   */
+  readonly needsCredential: boolean;
+  /**
    * WHAT THE FIRST SYNC OF THIS MAILBOX PRODUCED — `pending`, `finished`,
    * `produced_nothing_readable`, or `null` while the engine has not said, exactly as the two
    * fields above are. The engine's own word, unmodified: this app re-spells no engine value.
@@ -272,6 +278,7 @@ export function standaloneHere(): StandaloneHere | null {
   let reachable: boolean | null = null;
   let unreachableSince: string | null = null;
   let signInRefused = false;
+  let needsCredential = false;
   /** `null` until the engine has said — see the field. */
   let firstSync: string | null = null;
   /**
@@ -339,6 +346,9 @@ export function standaloneHere(): StandaloneHere | null {
     if (conn.length > 0) {
       reachable = conn.every((c) => c.reachable);
       signInRefused = conn.some((c) => c.signInRefused);
+      /* `some`, like the refusal beside it and unlike `reachable`: the news is that a mailbox on
+         this phone is waiting for a password, and a second healthy link does not answer it. */
+      needsCredential = conn.some((c) => c.needsCredential === true);
       const since = conn
         .map((c) => c.unreachableSince)
         .filter((d): d is Date => d instanceof Date)
@@ -364,7 +374,7 @@ export function standaloneHere(): StandaloneHere | null {
   }
   return {
     id, address: held.address, organizing, releaseRequestedAt, heldBy, reachable,
-    unreachableSince, signInRefused, firstSync,
+    unreachableSince, signInRefused, needsCredential, firstSync,
   };
 }
 

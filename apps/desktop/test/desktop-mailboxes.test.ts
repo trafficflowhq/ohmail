@@ -3789,6 +3789,67 @@ describe("a stored password this computer cannot use is an outage, and says whic
 
 /**
  * ══════════════════════════════════════════════════════════════════════════════════════════
+ *  NO PASSWORD ON THIS COMPUTER FOR THIS MAILBOX — the state, said, with the remedy
+ * ══════════════════════════════════════════════════════════════════════════════════════════
+ *
+ * Sign out with two mailboxes and reconnect only the primary. The secondary's runtime starts
+ * with nothing to dial with, so it opens no socket — and `reachable` is the negation of an
+ * observed death, which a runtime that never dialled cannot have had. The row read "Up to date"
+ * over a mailbox nothing was reading. It is neither reachable nor an outage; it is a person's.
+ *
+ * WATCH THEM FAIL: delete the `needsCredential` arm from `stateOf` and the first case reddens on
+ * "Up to date"; move it BELOW the outage arm and it reddens on "Can't reach the mail server",
+ * which is a claim about a server this install never dialled.
+ */
+describe("a mailbox with no password on this computer says so", () => {
+  const copy = (messages as unknown as { mailboxes: Record<string, string> }).mailboxes;
+
+  const reach = (over: Record<string, unknown>): Response => new Response(JSON.stringify({
+    items: [{ mailboxId: "mbx-1", reachable: false, unreachableSince: null, ...over }],
+  }), { status: 200, headers: { "content-type": "application/json" } });
+
+  it("says it needs its password, not that the mailbox is up to date", async () => {
+    FACTS = [MAILBOX];
+    bridgeReply = () => reach({ needsCredential: true });
+
+    const text = (await render("local")).textContent ?? "";
+    expect(text).toContain(copy.desktopStateNeedsCredential!);
+    expect(text, "a mailbox nothing was reading read as one that is up to date")
+      .not.toContain(copy.desktopStateUpToDate!);
+    expect(text, "no socket was opened, and the row blamed the person's network")
+      .not.toContain(copy.desktopStateUnreachable!);
+  });
+
+  it("POSITIVE CONTROL — a mailbox with a password is untouched", async () => {
+    FACTS = [MAILBOX];
+    bridgeReply = () => reach({ reachable: true });
+    const text = (await render("local")).textContent ?? "";
+    expect(text).toContain(copy.desktopStateUpToDate!);
+    expect(text).not.toContain(copy.desktopStateNeedsCredential!);
+  });
+
+  it("THE STATE BESIDE IT — a stored password that will not open keeps its own sentence", async () => {
+    FACTS = [MAILBOX];
+    bridgeReply = () => reach({ credentialBlocked: { state: "unreadable", confirmed: true } });
+    const text = (await render("local")).textContent ?? "";
+    expect(text).toContain(copy.desktopStateSignInAgain!);
+    expect(text, "a password this computer holds was reported as no password at all")
+      .not.toContain(copy.desktopStateNeedsCredential!);
+  });
+
+  it("an engine older than the field says nothing, and nothing is what it means", async () => {
+    FACTS = [MAILBOX];
+    /* No `needsCredential` at all, and an outage stated: the absence must not become a password
+       to ask for, and it must not silence the sentence the same answer does state. */
+    bridgeReply = () => reach({ unreachableSince: new Date(Date.now() - 20 * 60_000).toISOString() });
+    const text = (await render("local")).textContent ?? "";
+    expect(text).toContain(copy.desktopStateUnreachable!);
+    expect(text).not.toContain(copy.desktopStateNeedsCredential!);
+  });
+});
+
+/**
+ * ══════════════════════════════════════════════════════════════════════════════════════════
  *  THE SETTINGS DOCUMENT CANNOT BE READ, AND THE ROW SAYS SO INSTEAD OF "UP TO DATE"
  * ══════════════════════════════════════════════════════════════════════════════════════════
  *
