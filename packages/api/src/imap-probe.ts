@@ -57,8 +57,10 @@ export const MAX_PINNED_PROBE_ADDRESSES = 16;
 /**
  * The guard's answer as the dialler takes it: a bounded address list, or `undefined` for
  * "dial by name" (the local policy, which cleared nothing). See {@link MAX_PINNED_PROBE_ADDRESSES}.
+ * Exported for `send-adapter.ts`, which runs the same guard at its own dial: two spellings of
+ * "what the guard cleared" would be two things to keep in step.
  */
-function pinFrom(cleared: readonly string[] | null): readonly string[] | undefined {
+export function pinFrom(cleared: readonly string[] | null): readonly string[] | undefined {
   if (cleared === null || cleared.length === 0) return undefined;
   return cleared.slice(0, MAX_PINNED_PROBE_ADDRESSES);
 }
@@ -101,8 +103,12 @@ export function makeProbeHostGuard(resolver: HostResolver): ProbeHostGuard {
   };
 }
 
-/** The active guard for a set of deps — the enforcing policy on Cloud, ALLOW_ANY otherwise. */
-function probeHostGuardFor(deps: ApiDeps): ProbeHostGuard {
+/**
+ * The active guard for a set of deps — the enforcing policy on Cloud, ALLOW_ANY otherwise.
+ * Exported because the SEND path runs it too (`send-adapter.ts`): a stored host was checked once,
+ * at add time, and the socket resolves the name again, so the same guard has to run at the dial.
+ */
+export function probeHostGuardFor(deps: ApiDeps): ProbeHostGuard {
   return deps.services?.probeHostGuard ?? ALLOW_ANY_PROBE_HOST;
 }
 

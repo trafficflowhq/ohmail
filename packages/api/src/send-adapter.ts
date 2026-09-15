@@ -4,6 +4,7 @@ import { ImapAdapter, buildImapAuth, type CredMetaAuth } from "@trafficflow/core
 import type { NetTimeouts } from "@trafficflow/core/adapters/imap";
 import type { SendAdapter } from "@trafficflow/core/mail";
 import { ServiceError } from "@trafficflow/services/mail";
+import { pinFrom, probeHostGuardFor } from "./imap-probe.js";
 import type { ApiDeps } from "./deps.js";
 
 interface CredMeta extends CredMetaAuth {
@@ -17,6 +18,52 @@ interface CredMeta extends CredMetaAuth {
    * Written by the door that stored this credential; see the refusal below for what it costs.
    */
   smtpUnsettled?: string;
+}
+
+/**
+ * The core gate's word for "the resolver had nothing to say", reached here as the tail of the
+ * `ServiceError` message `@trafficflow/services/mail` wraps it in. Matched rather than assumed:
+ * `send-adapter-pin.test.ts` drives a throwing resolver end to end, so a reworded refusal reddens
+ * here instead of quietly turning every DNS blip into a terminal verdict. See {@link hostRefusal}.
+ */
+const UNRESOLVED = "host did not resolve";
+
+/**
+ * THE HOST GUARD AT THE DIAL, which is the only moment it means anything. A stored `meta.host` was
+ * resolved and cleared ONCE, when the mailbox was added; every send since has handed the NAME to a
+ * fresh socket that resolves it again, so the address that was checked and the address that is
+ * dialled were never the same fact. Here they are one act: resolve, clear, and hand the cleared
+ * addresses down as the pin. The name travels untouched — SNI and certificate validation must see
+ * what the user typed. A self-host install clears nothing and therefore pins nothing (a LAN mail
+ * server is legitimate there); each leg is its own server and gets its own check.
+ */
+async function clearedFor(
+  deps: ApiDeps, host: string, port: number, transport: "imap" | "smtp",
+): Promise<readonly string[] | undefined> {
+  try {
+    return pinFrom(await probeHostGuardFor(deps).check(host, port, transport));
+  } catch (err) {
+    throw hostRefusal(err, transport);
+  }
+}
+
+/**
+ * The guard's refusal as the send path owes it, and the CLASS is the decision. `resolveStale`
+ * reads a `ServiceError` from this factory as "this mailbox can never be dialled again" and
+ * settles a stranded send terminally `unverified` — right for a server at an address this service
+ * will not connect to, wrong for a resolver that was down for a minute. Before this guard existed
+ * a DNS failure arrived from the socket as an ordinary dial error and the row was deferred, so a
+ * resolver failure keeps leaving by that door.
+ */
+function hostRefusal(err: unknown, transport: "imap" | "smtp"): unknown {
+  if (!(err instanceof ServiceError)) return err;
+  const leg = transport === "imap" ? "incoming (IMAP)" : "outgoing (SMTP)";
+  if (err.message.endsWith(UNRESOLVED)) return new Error(`the ${leg} server's hostname did not resolve`);
+  return new ServiceError(
+    "mailbox_host_refused", 502,
+    `This mailbox's ${leg} server is at an address that is not one this service will connect to. `
+      + "Check the server settings in Settings → Mailboxes.",
+  );
 }
 
 /**
@@ -45,6 +92,11 @@ export async function makeSendAdapter(
   const smtpRow = rows.find((r) => r.transport === "smtp");
 
   const imapMeta = (imapRow.meta ?? {}) as CredMeta;
+  const imapPort = imapMeta.port ?? 993;
+  // BEFORE the secret is decrypted, and before any transport exists: a server this deployment
+  // will not dial should cost no key material, and a refusal that arrives after the adapter is
+  // built is a refusal that arrives after a socket may have opened. See {@link clearedFor}.
+  const imapPin = await clearedFor(deps, imapMeta.host ?? "", imapPort, "imap");
   const imapSecret = await deps.keyProvider.decrypt(imapRow.secretEnc, imapRow.keyVersion);
   // The IMAP auth goes through the SHARED builder — an oauth2 row becomes the token callback here,
   // never a password. `imapSecret` is a REFRESH TOKEN for oauth, a password otherwise.
@@ -98,10 +150,18 @@ export async function makeSendAdapter(
     };
   }
 
+  // The submission server is its own name on its own transport — its own check, its own pin. The
+  // no-smtp-row fallback dials the IMAP host on 587, which is a second transport on one name and
+  // is checked as one rather than borrowing the IMAP leg's verdict.
+  const smtpPin = await clearedFor(deps, smtpConfig.host, smtpConfig.port, "smtp");
+
   const adapter = newAdapter({
     host: imapMeta.host ?? "",
-    port: imapMeta.port ?? 993,
+    port: imapPort,
     secure: imapMeta.secure ?? true,
+    // The cleared addresses, so the socket goes where the check went. `host` above is untouched:
+    // the pin narrows the ADDRESS and nothing else — see `ImapConfig.pin`.
+    ...(imapPin ? { pin: imapPin } : {}),
     // SHORTER DEADLINES FOR A CALLER THAT HAS LESS TIME, threaded rather than raced.
     //
     // The reconciling pass runs three dials inside the same 60-second invocation the default
@@ -115,7 +175,7 @@ export async function makeSendAdapter(
     // to the Sent folder of a consented no-TLS mailbox must dial the way the probe proved.
     ...(imapMeta.insecureConsent === true ? { allowInsecure: true } : {}),
     auth: imapAuth,
-    smtp: smtpConfig,
+    smtp: { ...smtpConfig, ...(smtpPin ? { pin: smtpPin } : {}) },
     sentDomain: domainOf(imapMeta.user),
   });
   // Same reason as `makeOpenAdapter`: `connect()` logs in and LISTs, so a failure after login
