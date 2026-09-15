@@ -79,6 +79,27 @@ let longFrames = 0;
 let longTasks = 0;
 let sink: UiVitalsSink | null = null;
 
+/**
+ * THE STARTUP REPORT, EMITTED ONCE THE THREE MARKS ARE COMPLETE.
+ *
+ * Five minutes is the wrong clock for a start: a cell that launches the app, waits for the list and
+ * closes it never reaches the interval, so it reads no mark at all — which is why every 0.19.0 start
+ * figure on all three platforms is driver-timed and no platform has ever read `listUsableMs` for a
+ * start. The VOCABULARY is the ordinary report's, so this is one more report, earlier, and not a
+ * second shape the desktop's shell, its log line and the CI check would each have to learn.
+ */
+let startupEmitted = false;
+let emitReport: (() => void) | null = null;
+
+function flushStartupOnce(): void {
+  if (startupEmitted || emitReport === null) return;
+  if (startup.shellPainted === null || startup.listUsable === null || startup.engineReady === null) {
+    return;
+  }
+  startupEmitted = true;
+  emitReport();
+}
+
 /** A clock, or `null` where the runtime has none — nothing here invents a number. */
 function nowMs(): number | null {
   return typeof performance === "object" && typeof performance.now === "function"
@@ -108,6 +129,7 @@ export function markStartup(mark: UiStartupMark): void {
   const at = nowMs();
   if (at === null) return;
   startup[mark] = at;
+  flushStartupOnce();
 }
 
 /** What the startup marks currently hold — for a test, and for the report. */
@@ -414,8 +436,14 @@ export function startUiVitals(intervalMs: number = REPORT_EVERY_MS): () => void 
     }
   };
   const timer = setInterval(emit, intervalMs);
+  // Armed AFTER `emit` exists and flushed immediately: `shellPainted` is marked by the same effect
+  // that calls this, one line earlier, so a start whose other two marks are already in is reported
+  // here rather than waiting out an interval it may never see.
+  emitReport = emit;
+  flushStartupOnce();
   return () => {
     clearInterval(timer);
+    emitReport = null;
     stopSampler();
   };
 }
@@ -435,6 +463,8 @@ export function resetUiVitalsForTest(): void {
   // The sampler and its arming listeners are module state too: a suite that left one running
   // would arm the next suite's window from the previous one's events.
   stopSampler();
+  startupEmitted = false;
+  emitReport = null;
   rings.open = newRing();
   rings.switch = newRing();
   rings.search = newRing();

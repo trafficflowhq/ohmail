@@ -1512,15 +1512,17 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
   /**
    * "COLD START TO A USABLE LIST" — the budget's own measure, marked once.
    *
-   * `bootstrapping === false` is "a drain has completed for this engine", which is the honest
-   * moment: the rows on screen are the mailbox's rather than nothing, and it is true of an EMPTY
-   * mailbox too — a definition keyed on a non-empty list would never mark for a new account and
-   * would report no cold-start figure at all. `markStartup` takes the first answer and ignores
-   * every later one, so a re-mount cannot overwrite the cold figure with a warm one.
+   * MAIL ON SCREEN, not a completed drain. Keyed on `bootstrapping` this measured the first full
+   * sync cycle instead: on a settled 74k mailbox it read 30 324 ms where the rows were up at
+   * 5 619 ms, and on the 0.19.0 runs whose first import was still running, 78 212 and 65 413 ms —
+   * a figure about the server's pace, reported as the wait a reader sits through. `pulled` is the
+   * mirror's own row count, so the first render holding mail marks. An EMPTY mailbox still owes a
+   * drain before "nothing here" is a fact, and `settled` is that case, which keeps a new account
+   * markable. `markStartup` takes the first answer, so a re-mount cannot overwrite a cold figure.
    */
   useEffect(() => {
-    if (!syncStatus.bootstrapping) markStartup("listUsable");
-  }, [syncStatus.bootstrapping]);
+    if (pulled > 0 || mailState.settled) markStartup("listUsable");
+  }, [pulled, mailState.settled]);
   /**
    * The account's language wins over this device's — riding the `GET /consent` this shell
    * already makes. Both preferences are needed: localStorage is what a standalone install and
