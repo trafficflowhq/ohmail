@@ -254,6 +254,31 @@ export class BearerManager {
    * header); everything else — a network failure, the admission bound's 503, any answer that is
    * not an authentication judgment — clears nothing and resolves `false`.
    */
+  /**
+   * IS THE PAIRING THIS ROTATION IS FOR STILL THE ONE THIS ORIGIN HOLDS? Asked IMMEDIATELY
+   * BEFORE THE STORE IS TOUCHED, never only before the await.
+   *
+   * The check at the top of `rotate` answers about a state the resumption no longer has. Re-pair
+   * in another tab while a refresh is in flight and the late answer lands under the SUCCESSOR's
+   * scope: a late refusal's `die()` deletes the new pairing's refresh token and its scope, and a
+   * late success's `adopt` overwrites them with the old pairing's — either way the pairing the
+   * person just made stops working, from a background rotation, with no user act. Both were
+   * reproduced against the unchanged module.
+   *
+   * A mismatch stands THIS TAB down — in memory only, telling the gate, leaving the jar alone,
+   * which is `standDown`'s whole reason — and the caller writes nothing. It is not a lock: two
+   * refreshes still run, and the one whose pairing is gone simply keeps its hands off.
+   *
+   * Not to be confused with the launch rule: a refused LAUNCH must still DISCARD the credential
+   * it sealed. That is about a credential this install owns and got wrong; this is about a
+   * credential that belongs to a different pairing.
+   */
+  private standDownIfRepaired(scope: string | null): boolean {
+    if (this.readScope() === scope) return false;
+    this.standDown();
+    return true;
+  }
+
   private rotate(): Promise<boolean> {
     return (this.rotating ??= this.underLock(async (): Promise<boolean> => {
       // THE FRESHEST TOKEN WINS — see the header's second finding. Another tab may have rotated
@@ -269,6 +294,10 @@ export class BearerManager {
         this.standDown();
         return false;
       }
+      // THE SCOPE THIS ROTATION IS FOR, captured in a LOCAL beside the token it is about to
+      // present. Not re-read off `this.scopeAtStart` after the await: a redeem on this very
+      // manager moves that field, which is exactly the case the comparison below has to catch.
+      const scopeAtSend = this.scopeAtStart;
       // A refused read answers null from the door — the in-memory copy is all there is.
       const stored = this.door.get(REFRESH_STORAGE_KEY);
       if (stored !== null && stored !== this.refresh) this.refresh = stored;
@@ -290,6 +319,9 @@ export class BearerManager {
         try {
           const body = (await res.json()) as { tokens?: BearerTokens };
           if (body.tokens?.accessToken && body.tokens.refreshToken) {
+            /* THE WRITE DOOR. `res.json()` is a second suspension point, so this is asked after
+               it and not once after the fetch. */
+            if (this.standDownIfRepaired(scopeAtSend)) return false;
             this.adopt(body.tokens);
             return true;
           }
@@ -297,11 +329,14 @@ export class BearerManager {
           /* an OK answer this build cannot read — the old token is consumed and the new pair is
              lost, so the stranded session falls through to the sign-out below, honestly */
         }
+        if (this.standDownIfRepaired(scopeAtSend)) return false;
         this.die();
         return false;
       }
       if (res.status === 401 || res.status === 403) {
-        // The server judged the presented token and said no. Definitive: sign out.
+        // The server judged the presented token and said no. Definitive: sign out — of the
+        // pairing this rotation was FOR, which is why the scope is asked again first.
+        if (this.standDownIfRepaired(scopeAtSend)) return false;
         this.die();
         return false;
       }

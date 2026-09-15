@@ -442,6 +442,117 @@ describe("the pairing scope", () => {
     expect(res.status).toBe(200);
   });
 
+  /**
+   * ═══ A RE-PAIR WHILE A REFRESH IS IN FLIGHT ══════════════════════════════════════════════
+   *
+   * The case above moves the scope BEFORE the rotation starts, and the check at the top of
+   * `rotate` catches it. These three move it DURING the await, which that check cannot see: a
+   * check placed before a suspension point answers about a state the resumption no longer has.
+   * Both outcomes were reproduced against the unchanged module and both end with a person
+   * unable to reach their mail — the late REFUSAL deleted the successor's credential, the late
+   * SUCCESS overwrote it with the old pairing's, and in each case the pairing just made had
+   * stopped working with no user act.
+   *
+   * The re-pair happens INSIDE the scripted answer, which is what makes these cases about the
+   * suspension point rather than about a sequence a test arranged around it.
+   *
+   * MUTATION (2026-09-15): drop the post-await comparison — `standDownIfRepaired` returning
+   * `false` unconditionally — and the first two go red on the successor's credential, exactly
+   * as the reviewer reproduced them. The third stays green under it, which is what says the
+   * guard is not simply refusing everything.
+   */
+  it("a LATE REFUSAL after a re-pair leaves the successor's credential alone", async () => {
+    const storage = memoryStorage();
+    const stale = new BearerManager({ storage, fetchImpl: async () => new Response("") });
+    stale.adopt({ accessToken: "a-1", refreshToken: "r-a" }, { fresh: true });
+
+    let successorScope: string | null = null;
+    const { fetch, seen } = scripted([
+      () => json(401, { error: { code: "unauthorized" } }),
+      () => {
+        /* THE RE-PAIR, while this refresh is pending: another tab redeems a fresh link for a
+           different computer at the same origin, which re-mints the scope and writes its own
+           refresh token. Then the old pairing's refresh comes back refused. */
+        const other = new BearerManager({ storage, fetchImpl: async () => new Response("") });
+        other.adopt({ accessToken: "b-1", refreshToken: "r-b" }, { fresh: true });
+        successorScope = other.pairScope();
+        return json(401, { error: { code: "unauthorized" } });
+      },
+    ]);
+    const tab = new BearerManager({ storage, fetchImpl: fetch });
+    tab.adopt({ accessToken: "a-1", refreshToken: "r-a" }, { fresh: true });
+    let dead = false;
+    tab.onSessionDead(() => { dead = true; });
+
+    const res = await tab.fetch("/messages", {});
+
+    expect(seen.some((r) => r.url === "/auth/refresh"), "no refresh was attempted").toBe(true);
+    expect(res.status).toBe(401);
+    expect(
+      storage.getItem(REFRESH_STORAGE_KEY),
+      "the successor's refresh token was deleted by the old pairing's late refusal",
+    ).toBe("r-b");
+    expect(
+      storage.getItem(PAIR_SCOPE_KEY),
+      "the successor's scope was deleted by the old pairing's late refusal",
+    ).toBe(successorScope);
+    /* AND THIS TAB ENDED, in memory, telling the gate — `standDown`, not `die`. */
+    expect(dead, "the tab whose pairing is gone did not end its own session").toBe(true);
+    expect(tab.paired()).toBe(false);
+  });
+
+  it("a LATE SUCCESS after a re-pair does not overwrite the successor's credential", async () => {
+    const storage = memoryStorage();
+    let successorScope: string | null = null;
+    const { fetch } = scripted([
+      () => json(401, { error: { code: "unauthorized" } }),
+      () => {
+        const other = new BearerManager({ storage, fetchImpl: async () => new Response("") });
+        other.adopt({ accessToken: "b-1", refreshToken: "r-b" }, { fresh: true });
+        successorScope = other.pairScope();
+        /* The old pairing's refresh SUCCEEDS, a moment too late. Adopting here would seal the
+           old computer's token into the new pairing's jar. */
+        return json(200, { tokens: { accessToken: "a-2", refreshToken: "r-a2" } });
+      },
+    ]);
+    const tab = new BearerManager({ storage, fetchImpl: fetch });
+    tab.adopt({ accessToken: "a-1", refreshToken: "r-a" }, { fresh: true });
+
+    const res = await tab.fetch("/messages", {});
+
+    expect(res.status).toBe(401);
+    expect(
+      storage.getItem(REFRESH_STORAGE_KEY),
+      "the old pairing's rotated token was written over the successor's",
+    ).toBe("r-b");
+    expect(storage.getItem(PAIR_SCOPE_KEY)).toBe(successorScope);
+    expect(tab.paired(), "the tab whose pairing is gone is not still holding one").toBe(false);
+  });
+
+  it("an ordinary refresh, with nobody re-pairing, still stores its result", async () => {
+    /* THE POSITIVE CONTROL. A guard that refuses every write would pass both cases above and
+       break the product; this is the case that has to stay green under it. Its twin lives in
+       "the 401 recovery" above, driven through the wire; this one is here so the trio reads
+       together and so the mutation's effect on it is visible in one run. */
+    const storage = memoryStorage();
+    const { fetch, seen } = scripted([
+      () => json(401, { error: { code: "unauthorized" } }),
+      () => json(200, { tokens: { accessToken: "a-2", refreshToken: "r-a2" } }),
+      () => json(200, { ok: true }),
+    ]);
+    const tab = new BearerManager({ storage, fetchImpl: fetch });
+    tab.adopt({ accessToken: "a-1", refreshToken: "r-a" }, { fresh: true });
+    const scope = tab.pairScope();
+
+    const res = await tab.fetch("/messages", {});
+
+    expect(res.status).toBe(200);
+    expect(storage.getItem(REFRESH_STORAGE_KEY), "the rotation did not store").toBe("r-a2");
+    expect(storage.getItem(PAIR_SCOPE_KEY), "a rotation is the same pairing").toBe(scope);
+    expect(seen[2]!.headers.authorization, "the replay went out stale").toBe("Bearer a-2");
+    expect(tab.paired()).toBe(true);
+  });
+
   it("a new pairing cannot read the previous one's scratch space", async () => {
     const storage = memoryStorage();
     const bearer = new BearerManager({ storage, fetchImpl: async () => new Response("") });

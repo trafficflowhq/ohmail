@@ -33,6 +33,16 @@ A device you pair reads this computer's mailbox over your own network. It kept e
 every message body it had ever seen for as long as the page stayed open. It now keeps the same
 window this app does, and reaches back over the same connection for the rest.
 
+### Re-pairing while the app was renewing its access no longer costs you the new pairing
+
+A browser or phone paired to a computer running ohmail renews its access in the background. The
+renewal checked which pairing it belonged to before it asked, and not after the answer came back —
+so pairing the device to a different computer while a renewal was in flight let the late answer land
+on the new pairing: deleting its credential if the renewal was refused, replacing it with the old
+computer's if it succeeded. Either way the pairing you had just made stopped working, with nothing
+on screen to say why. A renewal now checks again at the moment it would write, and one that no
+longer belongs to the pairing this device holds writes nothing.
+
 ### Two sentences about where your password and your key go now say what the app does
 
 "Your password never passes through the app's window" was not true of the window you type it into:
