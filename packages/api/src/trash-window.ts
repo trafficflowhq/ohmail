@@ -288,7 +288,7 @@ export async function listServerTrash(
       });
       return { boxId: box.id, page };
     } catch (err) {
-      deps.logger?.warn?.("trash_window_read_failed", { mailboxId: box.id, err: String(err) });
+      deps.logger?.warn?.("trash_window_read_failed", { mailboxId: box.id, err });
       states.push({ id: box.id, address: box.address, window: "unreachable" });
       return null;
     }
@@ -403,7 +403,7 @@ export async function searchServerTrash(
       if (page.truncated) truncated = true;
       return { boxId: box.id, page };
     } catch (err) {
-      deps.logger?.warn?.("trash_window_search_failed", { mailboxId: box.id, err: String(err) });
+      deps.logger?.warn?.("trash_window_search_failed", { mailboxId: box.id, err });
       states.push({ id: box.id, address: box.address, window: "unreachable" });
       return null;
     }
