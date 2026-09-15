@@ -1142,15 +1142,12 @@ async function buildSession(
   /**
    * ══ THE MAILBOX ON THIS PHONE STANDS DOWN WHEN THE PHONE GOES SOMEWHERE ELSE ═══════════════
    *
-   * Here because this is the one place every session is built — launch, switch and re-pair all
-   * inherit it. The engine in this process is not torn down by a switch, so it went on polling,
-   * renewing and reporting; the world read that module state under the account that had replaced
-   * it and rendered the OTHER mailbox's "Connection lost" over a healthy one. The call is the
-   * forget's own hand-back-and-stop (`endStandaloneHere`), so the lease goes back at once and
-   * another machine can take the mailbox; switching back is an ordinary cold resume through the
-   * gate, with no consent press. Before the refusals below, not after: the caller has already
-   * left the outgoing session, so a connect that then refuses must not leave an engine holding a
-   * mailbox nothing is showing.
+   * Here because this is the one place every session is built. A switch tore nothing down, so the
+   * engine went on polling and reporting and the world read that module state under the account
+   * that had replaced it — the OTHER mailbox's "Connection lost" over a healthy one. The call is
+   * the forget's own hand-back-and-stop, so the lease goes back at once; switching back is an
+   * ordinary cold resume. Before the refusals below: the caller has already left the outgoing
+   * session, so a connect that then refuses must not leave an engine holding a hidden mailbox.
    */
   if (profile.origin !== LOCAL_ENGINE_ORIGIN && env.standalone?.door() != null) {
     await env.standalone.standDownAway();

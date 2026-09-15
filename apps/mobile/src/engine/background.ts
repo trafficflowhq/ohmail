@@ -410,14 +410,12 @@ export function createBackgroundOrganizing(deps: BackgroundDeps): BackgroundOrga
   /**
    * ══ THE CONTROLS ARE TORN DOWN BY THE STOP'S SUCCESS, NEVER BY THE ATTEMPT ═════════════════
    *
-   * This dropped the notification and the watchdog unconditionally. Press Stop on the
-   * notification, let the release fail, and every visible sign that the mailbox was being
-   * organized was gone while the foreground engine went on polling, organizing and RENEWING the
-   * lease — so no other install could take the mailbox either, and there was no way back to the
-   * control that would have stopped it. The reading that licenses the teardown is the ENGINE's,
-   * asked after the release: `released` and `not_organizing` both settle to a runtime that
-   * organizes nothing, and anything else is asked again under {@link STOP_ATTEMPTS}. Past the
-   * bound the notification stays, saying what happened.
+   * This dropped the notification and the watchdog unconditionally, so a release that failed took
+   * every visible sign the mailbox was being organized while the engine went on polling and
+   * RENEWING the lease — no other install could take it either, and there was no way back to the
+   * control. The reading that licenses the teardown is the ENGINE's, asked after the release;
+   * anything else is asked again under {@link STOP_ATTEMPTS}, and past the bound the notification
+   * stays, saying what happened.
    */
   const stopByPerson = async (): Promise<void> => {
     /* NOT `handedBack`. That flag is the iOS transitional state — given back, and to be taken again
