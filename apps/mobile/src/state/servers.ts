@@ -72,6 +72,16 @@ export interface ServerProfile {
    */
   refreshToken: string | null;
   /**
+   * The name this phone gave the refresh attempt it last SUBMITTED, or `null` — nothing is in
+   * flight and nothing is owed a retry. Written before the request goes out and cleared by the
+   * adoption that answers it, so the only way to find one standing is a rotation whose response
+   * never arrived (a dropped answer, or a kill between submit and adopt). The retry repeats it,
+   * and that is the whole of how the server tells a retry from a replay — see
+   * {@link import('../net/bearer').BearerManagerRN.rotate}. Not a credential: alone it names no
+   * row and opens nothing, and it is never logged. Absent in every row written before this field.
+   */
+  refreshAttempt: string | null;
+  /**
    * Where the `/sync` family lives on this server — the origin itself, or `<origin>/api`.
    * Measured at pairing time ({@link import('../net/server-base').resolveApiBase}) rather than
    * derived, because a QR carries no door; a self-host stack serves the API behind `/api`, so
@@ -276,6 +286,10 @@ export class ServerProfileStore {
         flavor: p.flavor,
         accountId: p.accountId,
         refreshToken: typeof p.refreshToken === "string" ? p.refreshToken : null,
+        // Absent in every row written before the field, and absent is exactly right: those rows
+        // hold no unanswered attempt, so their next rotation mints a fresh id and the server
+        // reads a presentation naming none — the strict arm, which is what they had.
+        refreshAttempt: typeof p.refreshAttempt === "string" ? p.refreshAttempt : null,
         // Absent in rows written before pinning existed, and absent for every origin that never
         // needed one — the same `null`, and correctly so: the pairing seam decides whether an
         // origin REQUIRES a pin from the origin's own shape, not from whether a row carries one.
@@ -342,6 +356,10 @@ export class ServerProfileStore {
         flavor: input.flavor,
         accountId: input.accountId,
         refreshToken: input.refreshToken,
+        // A fresh pairing is a fresh family: whatever attempt the OLD credential left unanswered
+        // names a row on a family this token has nothing to do with, and carrying it forward
+        // would offer the server an id that can only ever miss.
+        refreshAttempt: null,
         // A RE-PAIR REPLACES THE PIN rather than keeping the old one. That is the rotation
         // story: a desktop that was reinstalled presents a new key, and the only way this phone
         // ever accepts it is the person scanning a fresh code from that machine.
@@ -403,6 +421,9 @@ export class ServerProfileStore {
         flavor: input.flavor,
         accountId: input.accountId,
         refreshToken: null,
+        /* AND NO ATTEMPT: the standalone door mints its own bearer per launch, so there is no
+           family a server could judge and no rotation that could go unanswered. */
+        refreshAttempt: null,
         /* NO PIN AND NO BASE. There is no certificate to pin — nothing leaves the device — and the
            API answers at the origin, which is what an absent base already means. */
         pin: null,
@@ -468,12 +489,33 @@ export class ServerProfileStore {
     });
   }
 
-  /** The BearerManager vault's write half — every successful rotation lands here. */
+  /**
+   * The BearerManager vault's write half — every successful rotation lands here. It CLEARS the
+   * armed attempt in the same write, because adopting the answer is exactly what makes the
+   * attempt answered; two writes could leave a fresh token beside a stale attempt id if the
+   * process died between them. Harmless if it ever did — an unconsumed token's row names no
+   * attempt, so the id could only miss — but one write cannot go half-way, and one writer means
+   * the clearing is not something a later caller can forget.
+   */
   saveRefreshToken(id: string, refreshToken: string): Promise<void> {
     return this.enqueue(async () => {
       const p = await this.readProfile(id);
       if (p === null) return; // forgotten mid-rotation — nothing to persist into
-      await this.writeProfile({ ...p, refreshToken });
+      await this.writeProfile({ ...p, refreshToken, refreshAttempt: null });
+    });
+  }
+
+  /**
+   * ARM AN ATTEMPT — durably, BEFORE the refresh request is submitted. That order is the whole
+   * point: a name written after the answer would not exist in the one case it is for, the answer
+   * that never comes. A missing row is the same no-op as {@link saveRefreshToken}'s, and for the
+   * same reason.
+   */
+  armRefreshAttempt(id: string, attemptId: string): Promise<void> {
+    return this.enqueue(async () => {
+      const p = await this.readProfile(id);
+      if (p === null) return;
+      await this.writeProfile({ ...p, refreshAttempt: attemptId });
     });
   }
 
@@ -503,7 +545,9 @@ export class ServerProfileStore {
     return this.enqueue(async () => {
       const p = await this.readProfile(id);
       if (p === null) return;
-      await this.writeProfile({ ...p, refreshToken: null });
+      // The attempt goes with it: the family this id names is judged and gone, and a re-pair
+      // starts a new one. Leaving it would hand the next rotation a name that can only miss.
+      await this.writeProfile({ ...p, refreshToken: null, refreshAttempt: null });
     });
   }
 

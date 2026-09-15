@@ -641,6 +641,14 @@ const TABLE = {
     "This phone still owes a deletion for that mailbox's copied mail and could not carry "
     + `it out (${detail}). Restart ohmail so it can finish, then pair again with a fresh code.`,
   pairEndedOnServer: "this pairing ended on the server — scan a fresh QR to pair again",
+  /**
+   * The one death worth naming. A family is swept when a token it had already spent is
+   * presented, so this says what happened rather than leaving a person at "pair again" with
+   * no reason — which is what the reuse sweep used to mean on a phone whose refresh answer
+   * had simply been dropped.
+   */
+  pairKeyPresentedTwice:
+    "Signed out on this phone: this session's key was presented twice. Pair again.",
   notPairedHere: "that server is no longer paired on this phone",
   pairingsUnreadable: (detail: string) =>
     `could not read this phone's stored pairings — ${detail}`,

@@ -380,6 +380,8 @@ export const DE: Deck = {
     + `sie nicht ausführen (${detail}). Starte ohmail neu, damit es das abschließen kann, und `
     + "koppele dann mit einem frischen Code erneut.",
   pairEndedOnServer: "diese Kopplung wurde auf dem Server beendet — scanne einen frischen QR-Code, um erneut zu koppeln",
+  pairKeyPresentedTwice:
+    "Auf diesem Telefon abgemeldet: der Schlüssel dieser Sitzung wurde zweimal vorgelegt. Koppele erneut.",
   notPairedHere: "dieser Server ist auf diesem Telefon nicht mehr gekoppelt",
   pairingsUnreadable: (detail: string) =>
     `die gespeicherten Kopplungen dieses Telefons ließen sich nicht lesen — ${detail}`,

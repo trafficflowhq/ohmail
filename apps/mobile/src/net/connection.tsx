@@ -20,6 +20,7 @@ import {
 } from "../engine/organizer-session";
 import { consoleEngineLogSink } from "../engine/engine-log";
 import { decidedState, type DecidedState } from "./decided";
+import { deathRefusal } from "./session-death";
 import {
   CLAIM_LAPSES_AFTER_MINUTES, PHONE_CLAIM_NAME, organizesHere, reopenStandaloneMailbox,
   type ReopenOutcome, type StandaloneEngine,
@@ -377,11 +378,13 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
          fire: the engine in this process mints its own bearer per launch, so there is no family for
          a server to judge and no `ended` state this session can reach. A faked manager here would
          have made this line compile and the state unreachable. */
-      offDead.current = session.bearer?.onSessionDead(() => {
-        // The server judged this family's token — a revoke or a reuse-past. Render mail no
-        // further: tear down and say the one-gesture remedy.
+      offDead.current = session.bearer?.onSessionDead((why) => {
+        // The server judged this family's token. Render mail no further: tear down and say the
+        // one-gesture remedy — and, where the door named a SWEPT family, say what happened. A
+        // person whose refresh answer was dropped used to be signed out with no reason at all;
+        // the reason is the difference between a bug they can report and a phone that just quit.
         teardown(session);
-        enter({ k: "ended", reason: refuse("pairEndedOnServer") });
+        enter({ k: "ended", reason: deathRefusal(why) });
         void refreshProfiles();
       }) ?? null;
       enter({ k: "live", session });

@@ -440,6 +440,7 @@ function vaultFor(profiles: ServerProfileStore, id: string): RefreshVault {
   return {
     save: (t) => profiles.saveRefreshToken(id, t),
     clear: () => profiles.clearRefreshToken(id),
+    armAttempt: (a) => profiles.armRefreshAttempt(id, a),
   };
 }
 
@@ -819,8 +820,9 @@ export async function revokeProfile(env: PairingEnv, profile: ServerProfile): Pr
     origin: profile.origin,
     accessToken: null,
     refreshToken: profile.refreshToken,
-    // A throwaway vault: the profile is being forgotten, so nothing should persist into it.
-    vault: { save: async () => undefined, clear: async () => undefined },
+    // A throwaway vault: the profile is being forgotten, so nothing should persist into it —
+    // the armed attempt included, which is why the third member is a no-op and not a write.
+    vault: { save: async () => undefined, clear: async () => undefined, armAttempt: async () => undefined },
     ...(env.fetchImpl ? { fetchImpl: env.fetchImpl } : {}),
   });
   try {
@@ -1059,17 +1061,30 @@ export async function drainPendingWipes(env: PairingEnv): Promise<string[]> {
  */
 export async function drainPendingWakeDrops(env: PairingEnv): Promise<string[]> {
   const stillOwed: string[] = [];
-  const rows = await env.profiles.list();
-  for (const owed of await env.profiles.pendingWakeDrops()) {
-    const profile = rows.find((p) => p.id === owed.profileId);
-    if (profile === undefined || profile.refreshToken === null) {
-      await env.profiles.clearPendingWakeDrop(owed.subscriptionId);
-      continue;
-    }
-    const bearer = new BearerManagerRN({
+  /**
+   * ONE MANAGER PER PROFILE, FOR ALL OF ITS DEBTS, built from a row re-read at that moment.
+   *
+   * A snapshot taken once with a manager per debt is the collision {@link connectProfileById}
+   * already names: the first manager rotates, the keystore holds the successor, and the second
+   * is handed the SNAPSHOT's consumed token. Presenting it is the reuse signal, so a phone with
+   * two wake debts on one account revoked its own pairing while paying them, during launch. One
+   * manager also single-flights its rotation, so the second debt spends nothing at all.
+   */
+  const managers = new Map<string, { bearer: BearerManagerRN; profile: ServerProfile } | null>();
+  const managerFor = async (
+    profileId: string,
+  ): Promise<{ bearer: BearerManagerRN; profile: ServerProfile } | null> => {
+    const held = managers.get(profileId);
+    if (held !== undefined) return held;
+    const profile = (await env.profiles.list()).find((p) => p.id === profileId);
+    const built = profile === undefined || profile.refreshToken === null ? null : new BearerManagerRN({
       origin: profile.origin,
       accessToken: null,
       refreshToken: profile.refreshToken,
+      /* The attempt this phone may still owe an answer for — a launch that pays these debts is
+         exactly where a rotation killed mid-flight comes back, and the retry has to be the same
+         attempt or the server reads it as a replay. */
+      refreshAttempt: profile.refreshAttempt,
       /**
        * The profile's real vault — a throwaway one here killed pairings.
        * `revokeProfile` uses a throwaway correctly: the profile it spends is
@@ -1083,6 +1098,18 @@ export async function drainPendingWakeDrops(env: PairingEnv): Promise<string[]> 
       vault: vaultFor(env.profiles, profile.id),
       ...(env.fetchImpl ? { fetchImpl: env.fetchImpl } : {}),
     });
+    const entry = built === null ? null : { bearer: built, profile: profile! };
+    managers.set(profileId, entry);
+    return entry;
+  };
+
+  for (const owed of await env.profiles.pendingWakeDrops()) {
+    const held = await managerFor(owed.profileId);
+    if (held === null) {
+      await env.profiles.clearPendingWakeDrop(owed.subscriptionId);
+      continue;
+    }
+    const { bearer, profile } = held;
     const dropped = await dropWakeRow(
       /* `fetch` beside the manager, because that is the member `dropWakeRow` reads now. A cast
          through `unknown` compiles either way, so the omission would have been a runtime throw on

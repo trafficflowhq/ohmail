@@ -3,10 +3,9 @@
  * port of `apps/desktop/src/host-client/bearer.ts` semantics — single-flight rotation,
  * 401/403-only judgment, generation-bound replay, refusal-only sign-out — with two narrowing
  * substitutions: the refresh token persists in the device keystore, and `navigator.locks` is
- * dropped because RN is one JS runtime with no sibling presenters. Only a 401/403 from
- * `/auth/refresh` judges the token; recovery is bound to the token generation; one rotation,
- * one replay. Residual: a lost rotation response leaves the keystore one token behind, strict
- * reuse revokes the family, and one fresh QR scan re-pairs (`rotate()` awaits the vault write).
+ * dropped because RN is one JS runtime with no sibling presenters. A lost rotation response used
+ * to end the pairing: strict reuse read the retry of the retained token as theft. Every attempt
+ * now carries a name persisted BEFORE it submits and repeated until an answer lands.
  */
 
 /** The wire pair the redeem and the refresh both answer — the desktop manager's exact shape. */
@@ -23,6 +22,51 @@ export interface BearerTokens {
 export interface RefreshVault {
   save(refreshToken: string): Promise<void>;
   clear(): Promise<void>;
+  /**
+   * Persist the name of the attempt about to be submitted, beside the token it will spend. The
+   * store clears it in the same write that saves the answer, so adopting IS clearing and no
+   * caller can forget to.
+   */
+  armAttempt(attemptId: string): Promise<void>;
+}
+
+/**
+ * WHY A SESSION ENDED, for the surface that has to say it. `revoked` is the server withdrawing
+ * this family because a spent token was presented by somebody — the one case a person meets as
+ * "pair again" with no reason at all, and the one this app now names.
+ */
+export type SessionDeath = "refused" | "revoked";
+
+/**
+ * Name an attempt. NOT a credential — it authorizes nothing, names no row without the token
+ * beside it, and the server's window on it is a minute — but unguessable all the same, so that
+ * holding a stolen token is not also holding the retry arm. `Math.random` twice plus the clock,
+ * because a native crypto module is a `require` this bundle cannot afford to have missing.
+ */
+/**
+ * The refusal the server gives a family it has just SWEPT. Pinned on the server side by the auth-flow suite ("a REFUSAL
+ * still clears the jar — and now NAMES which refusal it was") and on this side by the
+ * bearer-retry suite: the sentence is the wire, and both halves have to move together.
+ */
+const REUSE_REFUSAL = "refresh token reuse detected";
+
+/**
+ * Which death a refusal names. Anything unreadable is the ORDINARY refusal — a guess would be
+ * worse than the plain sentence, and this decides only which words a person reads, never whether
+ * the session ends.
+ */
+async function readDeathReason(res: Response): Promise<SessionDeath> {
+  try {
+    const body = (await res.json()) as { error?: { message?: unknown } };
+    return body.error?.message === REUSE_REFUSAL ? "revoked" : "refused";
+  } catch {
+    return "refused";
+  }
+}
+
+function mintAttemptId(): string {
+  const chunk = (): string => Math.floor(Math.random() * 36 ** 8).toString(36).padStart(8, "0");
+  return `r${Date.now().toString(36)}${chunk()}${chunk()}`;
 }
 
 /** The same loose-init fetch shape the engine's HttpAdapter and the desktop manager ride. */
@@ -50,7 +94,13 @@ export class BearerManagerRN {
    * rotation (the desktop manager's rule, kept verbatim).
    */
   private generation = 0;
-  private readonly deadListeners = new Set<() => void>();
+  /**
+   * The name of the attempt in flight, or the one a previous attempt left UNANSWERED — loaded
+   * from the keystore at construction, which is what makes a retry survive an app kill between
+   * submit and adopt. Cleared by every adoption and every death.
+   */
+  private attempt: string | null;
+  private readonly deadListeners = new Set<(why: SessionDeath) => void>();
 
   constructor(opts: {
     /** `https://host` or plain `http://192.168…` — the door this credential belongs to. */
@@ -59,12 +109,19 @@ export class BearerManagerRN {
     accessToken?: string | null;
     /** The persisted refresh token the profile store loaded — the family's head. */
     refreshToken: string | null;
+    /**
+     * The attempt the store had armed — `ServerProfile.refreshAttempt`. Present only where a
+     * rotation was submitted and never adopted, which is precisely the case the retry is for:
+     * a relaunch resumes that attempt rather than starting one the server cannot recognise.
+     */
+    refreshAttempt?: string | null;
     vault: RefreshVault;
     fetchImpl?: FetchLike;
   }) {
     this.origin = opts.origin.replace(/\/+$/, "");
     this.access = opts.accessToken ?? null;
     this.refresh = opts.refreshToken;
+    this.attempt = opts.refreshAttempt ?? null;
     this.vault = opts.vault;
     // Bind the global — RN's fetch is a plain function today, but the illegal-invocation trap
     // the desktop manager documents costs nothing to keep closed.
@@ -85,6 +142,10 @@ export class BearerManagerRN {
     this.access = tokens.accessToken;
     this.refresh = tokens.refreshToken;
     this.generation++;
+    // THE ATTEMPT IS ANSWERED. In memory first, for the stamp's reason; the store clears it in
+    // the same write `save` makes, so there is no window where a new token stands beside an old
+    // attempt's name. A `fetch` resolves once or throws, so one attempt never has two answers.
+    this.attempt = null;
     return this.vault.save(tokens.refreshToken).catch(() => {
       /* A keystore refusal: the session lives until the next kill, then one scan re-pairs. */
     });
@@ -100,18 +161,23 @@ export class BearerManagerRN {
    * routed logout below can die inside its own recovery (the refresh refused mid-logout), and
    * the funeral must not be held twice — one dead signal per session, whoever reports it.
    */
-  private async die(): Promise<void> {
+  private async die(why: SessionDeath): Promise<void> {
     if (this.access === null && this.refresh === null) return;
     this.access = null;
     this.refresh = null;
+    this.attempt = null;
     await this.vault.clear().catch(() => {
       /* already gone, or the keystore refused — either way this session is over locally */
     });
-    for (const cb of [...this.deadListeners]) cb();
+    for (const cb of [...this.deadListeners]) cb(why);
   }
 
-  /** Subscribe to the session ending — revoked, reused-past, expired. Returns the unsubscribe. */
-  onSessionDead(cb: () => void): () => void {
+  /**
+   * Subscribe to the session ending. The callback is told WHY, because "pair again" with no
+   * reason is what a person meets today and `revoked` is the one death worth naming: somebody
+   * presented a token this family had already spent.
+   */
+  onSessionDead(cb: (why: SessionDeath) => void): () => void {
     this.deadListeners.add(cb);
     return () => this.deadListeners.delete(cb);
   }
@@ -127,12 +193,25 @@ export class BearerManagerRN {
     return (this.rotating ??= (async (): Promise<boolean> => {
       const presented = this.refresh;
       if (presented === null) return false;
+      // THE NAME GOES DOWN BEFORE THE REQUEST GOES OUT, and a retry of an attempt whose answer
+      // never arrived carries the SAME one — resumed from the field the store loaded at
+      // construction, so an app killed between submit and adopt still retries as itself rather
+      // than as a stranger holding a spent token. A fresh name only where none is owed. The
+      // vault write is AWAITED: a name on the wire that is not yet in the keystore is the one
+      // ordering a retry cannot recover from.
+      const attemptId = this.attempt ?? mintAttemptId();
+      this.attempt = attemptId;
+      await this.vault.armAttempt(attemptId).catch(() => {
+        /* The keystore refused. The attempt is still named on the wire and in memory, so a retry
+           inside this process is recognised; only one that outlives the process is not — which
+           is exactly where every phone stood before the name existed. */
+      });
       let res: Response;
       try {
         res = await this.fetchImpl(`${this.origin}/auth/refresh`, {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ refreshToken: presented }),
+          body: JSON.stringify({ refreshToken: presented, attemptId }),
         });
       } catch {
         // Never CONFIRMED presented — usually never sent at all. Nothing to conclude, nothing
@@ -150,12 +229,15 @@ export class BearerManagerRN {
           /* an OK answer this build cannot read — the old token is consumed and the new pair is
              lost, so the stranded session falls through to the sign-out below, honestly */
         }
-        await this.die();
+        await this.die("refused");
         return false;
       }
       if (res.status === 401 || res.status === 403) {
-        // The server judged the presented token and said no. Definitive: sign out.
-        await this.die();
+        // The server judged the presented token and said no. Definitive: sign out — and say WHICH
+        // no, where it can be read: the door relays its refusal BY NAME rather than one flattened
+        // sentence, so a family swept for reuse is distinguishable from a token that merely
+        // expired and the person gets a reason instead of "pair again".
+        await this.die(await readDeathReason(res));
         return false;
       }
       // 503 host_busy, a 5xx, a proxy hiccup — the handler never judged the token. Keep the
@@ -222,7 +304,9 @@ export class BearerManagerRN {
         /* unreachable server — the server-side session ages out; this device is out now */
       }
     }
-    await this.die();
+    // "refused", not "revoked": a deliberate sign-out is not a family somebody replayed, and the
+    // surface must not tell the person their key was presented twice when they pressed the button.
+    await this.die("refused");
     return told;
   }
 }
