@@ -1251,9 +1251,10 @@ export const refreshTokens = pgTable("refresh_tokens", {
    * mail 0112 — WHICH ATTEMPT consumed this token (sha256 of the client's id), or NULL where the
    * presentation named none. When a rotation's response is LOST the client still holds the old
    * token, and its retry is byte-identical to a replayed theft; this tells them apart. The SAME
-   * id inside `refreshRetryGraceMs` is that client finishing its own rotation; any other
-   * presentation of a consumed token is still reuse and still sweeps the family. Hashed for the
-   * token's reason — a client-chosen string never sits at rest here. It grants nothing alone.
+   * id, while this token's own `expires_at` stands, is that client finishing its own rotation;
+   * any other presentation — and any chain that moved on under another attempt — is still reuse
+   * and still sweeps. Hashed for the token's reason: a client-chosen string never sits at rest
+   * here. It grants nothing alone.
    */
   consumedByAttempt: text("consumed_by_attempt"),
 }, (t) => ({
