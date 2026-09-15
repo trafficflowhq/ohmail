@@ -56,9 +56,10 @@ export class NotifyRulesService {
   }
 
   async remove(ctx: ServiceContext, id: string): Promise<void> {
-    const deleted = await ctx.db.delete(notifyRules)
+    // Through the one door, like the insert above — see `snippets-service.ts#update`.
+    const deleted = await withAccountTx(ctx, async (tx) => tx.delete(notifyRules)
       .where(and(eq(notifyRules.id, id), eq(notifyRules.accountId, ctx.accountId)))
-      .returning();
+      .returning());
     if (deleted.length === 0) throw new ServiceError("not_found", 404, "notify rule not found");
   }
 }

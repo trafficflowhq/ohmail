@@ -170,19 +170,19 @@ export class WorkflowsService {
     if (patch.enabled !== undefined) set.enabled = this.validEnabled(patch.enabled);
 
     // Scope to the account AND exclude soft-deleted — a cross-account/deleted id matches 0 rows.
-    const updated = await ctx.db.update(workflows).set(set)
+    const updated = await withAccountTx(ctx, async (tx) => tx.update(workflows).set(set)
       .where(and(eq(workflows.id, id), eq(workflows.accountId, ctx.accountId), isNull(workflows.deletedAt)))
-      .returning();
+      .returning());
     if (updated.length === 0) throw new ServiceError("not_found", 404, "workflow not found");
     return toWorkflowDTO(updated[0]!);
   }
 
   /** Soft-delete: mark `deletedAt` + disable — NEVER hard-delete (preserves `workflow_runs` history). */
   async softDelete(ctx: ServiceContext, id: string): Promise<void> {
-    const deleted = await ctx.db.update(workflows)
+    const deleted = await withAccountTx(ctx, async (tx) => tx.update(workflows)
       .set({ deletedAt: ctx.now(), enabled: false, updatedAt: ctx.now() })
       .where(and(eq(workflows.id, id), eq(workflows.accountId, ctx.accountId), isNull(workflows.deletedAt)))
-      .returning();
+      .returning());
     if (deleted.length === 0) throw new ServiceError("not_found", 404, "workflow not found");
   }
 

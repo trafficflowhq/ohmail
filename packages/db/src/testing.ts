@@ -11,7 +11,7 @@ import postgres from "postgres";
 import { adoptBaseline } from "./baseline.js";
 import { JOURNALS } from "./migrate.js";
 import { schema } from "./schema.js";
-import { assertDistinct, brandDialect } from "./dialect/index.js";
+import { assertDistinct, brandDialect, deliverLocalNotifyAtCommit } from "./dialect/index.js";
 import { migrateSqlite } from "./sqlite-migrate.js";
 
 /**
@@ -100,7 +100,9 @@ async function makeSqliteTestDb(): Promise<PgliteDatabase<typeof schema>> {
       return { rows: method === "get" ? (rows[0] ?? []) : rows };
     });
   });
-  return brandDialect(db, "sqlite") as unknown as PgliteDatabase<typeof schema>;
+  // Wrapped as the device composition wraps it, so an announcement made in a transaction here
+  // is delivered at commit and not at the call — see `deliverLocalNotifyAtCommit`.
+  return brandDialect(deliverLocalNotifyAtCommit(db), "sqlite") as unknown as PgliteDatabase<typeof schema>;
 }
 
 /** The database name in a URL — what a diagnostic may print, where the URL itself may not. */

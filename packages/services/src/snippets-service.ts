@@ -66,18 +66,21 @@ export class SnippetsService {
     const title = this.validText(body.title, "title");
     const text = this.validText(body.body, "body");
     const shortcut = this.validShortcut(body.shortcut);
-    const updated = await ctx.db.update(snippets)
+    // Through the one door, like the insert above. A statement issued straight on the handle is
+    // outside the device store's transaction queue: it lands inside whatever transaction is open
+    // and is rolled back with it, after this method has already answered with the new row.
+    const updated = await withAccountTx(ctx, async (tx) => tx.update(snippets)
       .set({ title, body: text, shortcut, updatedAt: ctx.now() })
       .where(and(eq(snippets.id, id), eq(snippets.accountId, ctx.accountId)))
-      .returning();
+      .returning());
     if (updated.length === 0) throw new ServiceError("not_found", 404, "snippet not found");
     return toDTO(updated[0]!);
   }
 
   async remove(ctx: ServiceContext, id: string): Promise<void> {
-    const deleted = await ctx.db.delete(snippets)
+    const deleted = await withAccountTx(ctx, async (tx) => tx.delete(snippets)
       .where(and(eq(snippets.id, id), eq(snippets.accountId, ctx.accountId)))
-      .returning();
+      .returning());
     if (deleted.length === 0) throw new ServiceError("not_found", 404, "snippet not found");
   }
 

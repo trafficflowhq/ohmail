@@ -131,18 +131,19 @@ export class KbService {
     const title = this.validText(body.title, "title");
     const content = this.validText(body.content, "content");
     const tags = this.validTags(body.tags);
-    const updated = await ctx.db.update(kbEntries)
+    // Through the one door, like the insert above — see `snippets-service.ts#update`.
+    const updated = await withAccountTx(ctx, async (tx) => tx.update(kbEntries)
       .set({ title, content, tags, updatedAt: ctx.now() })
       .where(and(eq(kbEntries.id, id), eq(kbEntries.accountId, ctx.accountId)))
-      .returning();
+      .returning());
     if (updated.length === 0) throw new ServiceError("not_found", 404, "kb entry not found");
     return toDTO(updated[0]!);
   }
 
   async remove(ctx: ServiceContext, id: string): Promise<void> {
-    const deleted = await ctx.db.delete(kbEntries)
+    const deleted = await withAccountTx(ctx, async (tx) => tx.delete(kbEntries)
       .where(and(eq(kbEntries.id, id), eq(kbEntries.accountId, ctx.accountId)))
-      .returning();
+      .returning());
     if (deleted.length === 0) throw new ServiceError("not_found", 404, "kb entry not found");
   }
 

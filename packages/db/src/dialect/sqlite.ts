@@ -86,6 +86,72 @@ export function onLocalNotify(channel: string, listener: ChannelListener): () =>
   return () => { set.delete(listener); };
 }
 
+/** One announcement, held until the transaction that made it commits. */
+interface Announcement { readonly channel: string; readonly payload: string }
+
+/**
+ * WHICH QUEUE A TRANSACTION'S ANNOUNCEMENTS GO INTO — the half that makes the contract true here.
+ *
+ * The contract says a notification is delivered at COMMIT, and the server honours it by handing
+ * `pg_notify` to the transaction. This store has no such queue, so one is kept beside it, keyed by
+ * the transaction object the driver hands the body. A SAVEPOINT gets its own object and shares its
+ * parent's queue: releasing a savepoint is not a commit. A `tx` nobody registered — the handle
+ * itself, or a caller outside any transaction — has no commit to wait for and delivers at once.
+ */
+const queues = new WeakMap<object, Announcement[]>();
+
+function deliverLocal(channel: string, payload: string): void {
+  for (const listener of listeners.get(channel) ?? []) listener(payload);
+}
+
+/** Register `tx` against `queue`, and every savepoint opened on it. */
+function joinQueue(tx: object, queue: Announcement[]): void {
+  queues.set(tx, queue);
+  const nested = (tx as { transaction?: (f: (t: object) => Promise<unknown>) => Promise<unknown> })
+    .transaction;
+  if (typeof nested !== "function") return;
+  (tx as { transaction: unknown }).transaction = function savepoint(
+    body: (t: object) => Promise<unknown>,
+  ): Promise<unknown> {
+    // A savepoint that rolls back takes its OWN announcements with it and leaves the ones made
+    // before it standing — which is what the mark is for. The list is contiguous because this
+    // store has one serialized connection.
+    const mark = queue.length;
+    return nested.call(tx, async (inner: object) => { joinQueue(inner, queue); return body(inner); })
+      .catch((err: unknown) => { queue.length = mark; throw err; });
+  };
+}
+
+/**
+ * Hold this handle's announcements until its transaction COMMITS, and drop them if it does not.
+ *
+ * Applied where the device store is composed, outermost, so the delivery happens after the write
+ * is durable and outside whatever queue serialized it. Without it a listener is woken by a write
+ * that later rolls back — and on a device the listener and the writer are one program, so it acts
+ * on state the store does not hold.
+ */
+export function deliverLocalNotifyAtCommit<T extends object>(db: T): T {
+  const handle = db as T & {
+    transaction?: (f: (t: object) => Promise<unknown>, cfg?: unknown) => Promise<unknown>;
+  };
+  const inner = handle.transaction;
+  if (typeof inner !== "function") return db;
+  handle.transaction = function delivering(
+    body: (t: object) => Promise<unknown>, cfg?: unknown,
+  ): Promise<unknown> {
+    const queue: Announcement[] = [];
+    return inner.call(handle, async (tx: object) => { joinQueue(tx, queue); return body(tx); }, cfg)
+      .then(
+        (value: unknown) => {
+          for (const a of queue) deliverLocal(a.channel, a.payload);
+          return value;
+        },
+        (err: unknown) => { queue.length = 0; throw err; },
+      );
+  };
+  return db;
+}
+
 export function sqliteDialect(): Dialect {
   return {
     name: "sqlite",
@@ -109,8 +175,13 @@ export function sqliteDialect(): Dialect {
     skipLocked: <Q>(q: Q, _opts?: Omit<LockOptions, "skipLocked">): Q => q,
     advisoryLock: async () => {},
 
-    notify: async (_tx, channel, payload) => {
-      for (const listener of listeners.get(channel) ?? []) listener(payload);
+    // At COMMIT, like the server's, and for the server's reason: a listener is never woken for a
+    // row that rolled back. See {@link deliverLocalNotifyAtCommit} for where the queue comes from;
+    // a caller outside any transaction has no commit to wait for and is delivered at once.
+    notify: async (tx, channel, payload) => {
+      const queue = typeof tx === "object" && tx !== null ? queues.get(tx) : undefined;
+      if (queue !== undefined) { queue.push({ channel, payload }); return; }
+      deliverLocal(channel, payload);
     },
 
     // Folded on both sides so the comparison is at least symmetric — but NOT equivalent to the

@@ -1,6 +1,6 @@
 import { and, asc, eq, gt, ilike } from "drizzle-orm";
 import { contacts, contactNotes, threadNotes, threads } from "@trafficflow/db";
-import type { ServiceContext } from "./context.js";
+import { withAccountTx, type ServiceContext } from "./context.js";
 import { ServiceError } from "./errors.js";
 import { clampLimit, decodeListCursor, encodeListCursor } from "./pagination.js";
 import type { ContactDTO, NoteDTO, Page } from "./dto/types.js";
@@ -97,9 +97,12 @@ export class ContactsService {
     if (name !== null && typeof name !== "string") {
       throw new ServiceError("validation_failed", 400, "name must be a string or null");
     }
-    const updated = await ctx.db.update(contacts).set({ name })
+    // Through the one door. A statement issued straight on the handle is outside the device
+    // store's transaction queue: it lands inside whatever transaction is open and is rolled back
+    // with it, after this method has already answered with the new row.
+    const updated = await withAccountTx(ctx, async (tx) => tx.update(contacts).set({ name })
       .where(and(eq(contacts.id, id), eq(contacts.accountId, ctx.accountId)))
-      .returning();
+      .returning());
     if (updated.length === 0) throw new ServiceError("not_found", 404, "contact not found");
     return contactToDTO(updated[0]!);
   }
@@ -120,9 +123,9 @@ export class ContactsService {
     await this.assertContact(ctx, contactId);   // IDOR: the parent must belong to the account
     const validBody = this.validBody(body);
     const now = ctx.now();
-    const [row] = await ctx.db.insert(contactNotes).values({
+    const [row] = await withAccountTx(ctx, async (tx) => tx.insert(contactNotes).values({
       accountId: ctx.accountId, contactId, body: validBody, createdAt: now, updatedAt: now,
-    }).returning();
+    }).returning());
     return { id: row!.id, target: { kind: "contact", contactId }, body: row!.body, updatedAt: row!.updatedAt.toISOString() };
   }
 
@@ -140,9 +143,9 @@ export class ContactsService {
     await this.assertThread(ctx, threadId);
     const validBody = this.validBody(body);
     const now = ctx.now();
-    const [row] = await ctx.db.insert(threadNotes).values({
+    const [row] = await withAccountTx(ctx, async (tx) => tx.insert(threadNotes).values({
       accountId: ctx.accountId, threadId, body: validBody, createdAt: now, updatedAt: now,
-    }).returning();
+    }).returning());
     return { id: row!.id, target: { kind: "thread", threadId }, body: row!.body, updatedAt: row!.updatedAt.toISOString() };
   }
 
@@ -154,34 +157,43 @@ export class ContactsService {
     const validBody = this.validBody(body);
     const now = ctx.now();
 
-    const c = await ctx.db.update(contactNotes).set({ body: validBody, updatedAt: now })
-      .where(and(eq(contactNotes.id, noteId), eq(contactNotes.accountId, ctx.accountId)))
-      .returning();
-    if (c.length > 0) {
-      return { id: c[0]!.id, target: { kind: "contact", contactId: c[0]!.contactId }, body: c[0]!.body, updatedAt: c[0]!.updatedAt.toISOString() };
-    }
-
-    const t = await ctx.db.update(threadNotes).set({ body: validBody, updatedAt: now })
-      .where(and(eq(threadNotes.id, noteId), eq(threadNotes.accountId, ctx.accountId)))
-      .returning();
-    if (t.length > 0) {
-      return { id: t[0]!.id, target: { kind: "thread", threadId: t[0]!.threadId }, body: t[0]!.body, updatedAt: t[0]!.updatedAt.toISOString() };
-    }
+    // ONE transaction over both attempts, through the one door: the note is a single row in one
+    // of the two tables, and two separate statements on the handle can be split by somebody
+    // else's transaction and rolled back after this method has answered.
+    const edited = await withAccountTx(ctx, async (tx) => {
+      const c = await tx.update(contactNotes).set({ body: validBody, updatedAt: now })
+        .where(and(eq(contactNotes.id, noteId), eq(contactNotes.accountId, ctx.accountId)))
+        .returning();
+      if (c[0]) {
+        return { id: c[0].id, target: { kind: "contact" as const, contactId: c[0].contactId }, body: c[0].body, updatedAt: c[0].updatedAt.toISOString() };
+      }
+      const t = await tx.update(threadNotes).set({ body: validBody, updatedAt: now })
+        .where(and(eq(threadNotes.id, noteId), eq(threadNotes.accountId, ctx.accountId)))
+        .returning();
+      if (t[0]) {
+        return { id: t[0].id, target: { kind: "thread" as const, threadId: t[0].threadId }, body: t[0].body, updatedAt: t[0].updatedAt.toISOString() };
+      }
+      return null;
+    });
+    if (edited) return edited;
 
     throw new ServiceError("not_found", 404, "note not found");
   }
 
   /** DELETE /notes/:id — same dual-table, account-scoped resolution. */
   async deleteNote(ctx: ServiceContext, noteId: string): Promise<void> {
-    const c = await ctx.db.delete(contactNotes)
-      .where(and(eq(contactNotes.id, noteId), eq(contactNotes.accountId, ctx.accountId)))
-      .returning();
-    if (c.length > 0) return;
-
-    const t = await ctx.db.delete(threadNotes)
-      .where(and(eq(threadNotes.id, noteId), eq(threadNotes.accountId, ctx.accountId)))
-      .returning();
-    if (t.length > 0) return;
+    // ONE transaction over both attempts — see `updateNote` for why.
+    const removed = await withAccountTx(ctx, async (tx) => {
+      const contact = await tx.delete(contactNotes)
+        .where(and(eq(contactNotes.id, noteId), eq(contactNotes.accountId, ctx.accountId)))
+        .returning();
+      if (contact.length > 0) return true;
+      const thread = await tx.delete(threadNotes)
+        .where(and(eq(threadNotes.id, noteId), eq(threadNotes.accountId, ctx.accountId)))
+        .returning();
+      return thread.length > 0;
+    });
+    if (removed) return;
 
     throw new ServiceError("not_found", 404, "note not found");
   }

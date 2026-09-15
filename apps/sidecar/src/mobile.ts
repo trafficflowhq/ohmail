@@ -23,7 +23,7 @@ import { drizzle as drizzleSqliteProxy } from "drizzle-orm/sqlite-proxy";
 /* The two tables a relaunch reads to find out where this mailbox lives. The barrel, like
    `engine.ts` — the device twin is substituted at the module the barrel itself reaches. */
 import { mailboxCredentials, mailboxes, organizerDisplayName } from "@trafficflow/db";
-import { brandDialect } from "@trafficflow/db/dialect";
+import { brandDialect, deliverLocalNotifyAtCommit } from "@trafficflow/db/dialect";
 import { migrateSqlite } from "@trafficflow/db/sqlite-migrate";
 import type { LeasePeekAnswer, OrganizerKind, StandDownReason } from "@trafficflow/core/adapters/organizer-lease";
 /* THE WORKER'S SOCKET PROFILE, not a third one. See {@link startPhoneEngine}. */
@@ -522,7 +522,12 @@ export async function openPhoneStore(
     },
   );
 
-  const branded = brandDialect(oneTransactionAtATime(db, transactionWaitMs), "sqlite") as unknown as LocalDb;
+  /* OUTSIDE the transaction gate, so an announcement is delivered after the write is durable
+     and without holding the next writer's turn — the contract's "delivered when the
+     transaction commits", which this store has to keep for itself. */
+  const branded = brandDialect(
+    deliverLocalNotifyAtCommit(oneTransactionAtATime(db, transactionWaitMs)), "sqlite",
+  ) as unknown as LocalDb;
   return {
     db: branded,
     dataDir: "",

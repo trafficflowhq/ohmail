@@ -13,7 +13,10 @@ import { pgDialect } from "./pg.js";
 import { sqliteDialect } from "./sqlite.js";
 
 export { pgDialect } from "./pg.js";
-export { sqliteDialect, assertSqliteCapabilities, SQLITE_MINIMUM, onLocalNotify } from "./sqlite.js";
+export {
+  sqliteDialect, assertSqliteCapabilities, SQLITE_MINIMUM, onLocalNotify,
+  deliverLocalNotifyAtCommit,
+} from "./sqlite.js";
 
 /** The SQL dialects the mail schema is written for. */
 export type DialectName = "pg" | "sqlite";
