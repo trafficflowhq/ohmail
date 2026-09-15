@@ -80,9 +80,13 @@ const EN = {
 
   /* ── DOOR ONE: the person's own IMAP server, opened from this machine ────────────────────── */
   localTitle: "Your own mailbox",
+  /* ── "under a key held in the keychain" WAS HALF TRUE ────────────────────────────────────
+     The key is in the keychain where the keystore will hold it, AND in a file beside the app's
+     data that `resolve_install_key` asks FIRST and mirrors to. This sentence is about where the
+     PASSWORD is; `credReadyWhy` is where the key is named, so the half-fact leaves this one. */
   localLead: (machine: string) =>
     `This computer connects to your mail server directly. Your password is stored on this `
-    + `${machine}, encrypted under a key held in the keychain, and is never sent to us.`,
+    + `${machine}, encrypted under a key this install keeps here, and is never sent to us.`,
   localAddress: "Mailbox address",
   localPassword: "Mailbox password",
   localPasswordHint:
@@ -390,7 +394,13 @@ const EN = {
   credCloudCheckingValue: "Checking",
   credCloudCheckingWhy: "The mail engine has not answered about this account's session yet.",
   credReadyValue: "Stored",
-  credReadyWhy: (machine: string) => `Sealed under a key in this ${machine}'s keychain, and working.`,
+  /* ── WHERE THE KEY ACTUALLY IS, BOTH PLACES ─────────────────────────────────────────────
+     `resolve_install_key` asks the FILE first and returns from it; a key read from the keystore
+     is mirrored into that file on the way past, so on every launch after the first the file is
+     what answers. Naming only the keychain describes a store the app does not read from. */
+  credReadyWhy: (machine: string) =>
+    `Sealed under this install's key — kept in this ${machine}'s keychain and mirrored to a file `
+    + "beside the app's data — and working.",
   credAbsentValue: "Not stored",
   credAbsentWhy: (machine: string) =>
     `No mailbox password is stored on this ${machine}, so nothing is being synced yet.`,
@@ -507,9 +517,16 @@ const EN = {
   installSignOutWhy: (machine: string) =>
     `Clears the login and forgets which mailbox this is. Your mail stays on this ${machine} and `
     + "on your server.",
+  /* ── "NEVER PASSES THROUGH THE APP'S WINDOW" WAS FALSE OF THE WINDOW IT IS TYPED INTO ────
+     The mailbox password is typed here and travels from here to the engine over the bridge. What
+     never passes through this window is a HOSTED account's session, which the engine establishes
+     itself — so the sentence says that, and keeps the two halves that are measured true: nothing
+     secret reaches the settings file (`refuse_secrets`), and nothing of it reaches us. */
   installPasswordNote:
-    "Your password never passes through the app's window or its settings file: it goes straight "
-    + "to the mail engine, which seals it under a key held in this computer's keychain.",
+    "Your mailbox password goes from this window straight to the mail engine on this computer, "
+    + "which seals it under this install's key. It is never written to the app's settings file, "
+    + "and it never reaches us. A hosted account's session is not typed at all: the engine "
+    + "establishes that itself, and this window never holds it.",
 
   /* ── SETTINGS → GENERAL: the mailto row, and the one-time ask over the mail ──────────────── */
   mailtoLabel: "Default mail app",

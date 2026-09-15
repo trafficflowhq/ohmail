@@ -33,6 +33,15 @@ A device you pair reads this computer's mailbox over your own network. It kept e
 every message body it had ever seen for as long as the page stayed open. It now keeps the same
 window this app does, and reaches back over the same connection for the rest.
 
+### Two sentences about where your password and your key go now say what the app does
+
+"Your password never passes through the app's window" was not true of the window you type it into:
+it goes from that field to the mail engine on your own computer. What it never touches is the app's
+settings file, and it never reaches us — and a hosted account's session is the thing that is never
+typed at all, because the engine establishes that itself. The app's key was described as living in
+your computer's keychain; it is kept there and also in a file beside the app's data, which is what
+the app reads on later starts. Both sentences say that now.
+
 ### The "Another computer" door says it is not available yet
 
 Choosing it asked the mail engine to check the pairing link, on an install that has no mail engine

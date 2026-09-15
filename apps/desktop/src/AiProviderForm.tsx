@@ -654,8 +654,11 @@ export function AiProviderForm({ onStatus }: AiProviderFormProps) {
       ) : null}
 
       {/* WRITTEN FOR THIS FORM AND NOT BORROWED FROM THE PANE AROUND IT, because the two are not
-          the same claim. The mailbox password never passes through this window. An API key does —
-          you type it here — and what is true of it is the sentence below. */}
+          the same claim. Both secrets are typed into this window — the sentence that said the
+          mailbox password was not has been narrowed, and this comment with it. What differs is
+          where each one GOES: the mailbox password only ever reaches the mail engine on this
+          computer, and an API key reaches a third party, which is what the sentence below is
+          about. */}
       <SettingsNote>{t("note")}</SettingsNote>
     </>
   );

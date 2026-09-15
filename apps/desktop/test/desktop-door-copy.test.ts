@@ -116,11 +116,12 @@ describe("with a German catalogue set, the standalone window answers German", ()
     expect(DOOR_COPY.doorLocalName("Mac")).toBe("Auf diesem Mac");
     expect(DOOR_COPY.serverReached("ohmail.example.com", "anna@example.com"))
       .toBe("ohmail.example.com erreicht. Anmeldung als anna@example.com.");
-    /* THE APOSTROPHE CASE. `{machine}'s keychain` puts an ASCII apostrophe next to a closing
-       brace, which is where ICU's quoting rule bites if it bites at all — a run of literal text
+    /* THE APOSTROPHE CASE. `this install's key` and `the app's data` put ASCII apostrophes in a
+       run of literal text, which is where ICU's quoting rule bites if it bites at all — the run
        must come back literal. Rendered, not reasoned about. */
     expect(DOOR_COPY.credReadyWhy("Mac"))
-      .toBe("Mit einem Schlüssel aus dem Schlüsselbund dieses Mac versiegelt, und es funktioniert.");
+      .toBe("Mit dem Schlüssel dieser Installation versiegelt — er liegt im Schlüsselbund dieses "
+        + "Mac und in einer Datei neben den Daten der App — und es funktioniert.");
     expect(DOOR_COPY.engineNoKey("PC")).toBe("Der Schlüsselspeicher dieses PC hat nicht geantwortet");
     expect(DOOR_COPY.notifyNewMail(1)).toBe("Eine neue Nachricht für dich.");
     expect(DOOR_COPY.notifyNewMail(4)).toBe("4 neue Nachrichten für dich.");
@@ -136,7 +137,51 @@ describe("with a German catalogue set, the standalone window answers German", ()
     expect(DOOR_COPY.doorLocalName("PC")).toBe("On this PC");
     expect(DOOR_COPY.notifyNewMail(1)).toBe("One new message for you.");
     expect(DOOR_COPY.notifyNewMail(4)).toBe("4 new messages for you.");
-    expect(DOOR_COPY.credReadyWhy("Mac")).toBe("Sealed under a key in this Mac's keychain, and working.");
+    expect(DOOR_COPY.credReadyWhy("Mac")).toBe(
+      "Sealed under this install's key — kept in this Mac's keychain and mirrored to a file "
+      + "beside the app's data — and working.",
+    );
+  });
+
+  /**
+   * ═══ THE TWO SENTENCES ABOUT WHERE A PASSWORD AND A KEY GO ═══════════════════════════════
+   *
+   * These are claims, so they are pinned, so rewording one is rewording this case and having to
+   * re-derive it against the code. Both were shipped false in one half and were narrowed to the
+   * half that is measured true (2026-09-15):
+   *
+   *  · "Your password never passes through the app's window" was false of the window it is typed
+   *    into: the local door's form is in this window and `enterLocalDoor` sends the password from
+   *    here down the bridge. What never passes through this window is a HOSTED account's session
+   *    — the engine establishes that itself and the shell holds no credential of any kind,
+   *    which is why `REQUIRED_CLOUD_VARS` names no token. The two halves that stayed are the
+   *    settings file (`refuse_secrets` refuses any payload carrying one) and "never reaches us".
+   *  · "a key held in this computer's keychain" omitted the file. `resolve_install_key` asks the
+   *    FILE FIRST and returns from it, and a key read from the keystore is mirrored into that
+   *    file on the way past — so after the first launch the file is what answers. A sentence
+   *    naming only the keychain describes a store the app does not read from.
+   *
+   * WHAT IS DELIBERATELY NOT CLAIMED: the file's permission. It is created `0600` under `unix`
+   * and the Windows build sets no mode, so "only your account can read it" is not true of every
+   * build this copy ships in.
+   */
+  it("the password sentence names the window it is typed into, and the file the key is in", () => {
+    expect(DOOR_COPY.installPasswordNote).toBe(
+      "Your mailbox password goes from this window straight to the mail engine on this computer, "
+      + "which seals it under this install's key. It is never written to the app's settings file, "
+      + "and it never reaches us. A hosted account's session is not typed at all: the engine "
+      + "establishes that itself, and this window never holds it.",
+    );
+    /* THE HALF THAT WAS FALSE, named as a needle so the sentence cannot drift back to it. */
+    expect(DOOR_COPY.installPasswordNote).not.toContain("never passes through the app's window");
+    expect(DOOR_COPY.credReadyWhy("PC")).toContain("file beside the app's data");
+    /* AND THE TWIN ON THE FIRST-RUN DOOR — one sentence trimmed and its pair left standing is
+       how the first false claim survives its own fix. */
+    expect(DOOR_COPY.localLead("PC")).toBe(
+      "This computer connects to your mail server directly. Your password is stored on this PC, "
+      + "encrypted under a key this install keeps here, and is never sent to us.",
+    );
+    expect(DOOR_COPY.localLead("PC")).not.toContain("keychain");
   });
 
   /**
