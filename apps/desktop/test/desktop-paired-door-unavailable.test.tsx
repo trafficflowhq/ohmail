@@ -34,7 +34,8 @@ import { parsePairLink } from "@ohmail/client-engine";
  * shipped is the third-step dead end: a link pasted, checked, and refused by a shell the window
  * never asked.
  *
- * `PAIRED_DOOR_AVAILABLE` is the deciding line. a later change flips it and this file is what says so.
+ * `PAIRED_DOOR_AVAILABLE` is the deciding line. The design that makes the door walkable flips
+ * it, and this file is what says so.
  */
 
 /* Without this React's `act` does not flush, warns, and every assertion below would be about
@@ -184,7 +185,7 @@ describe("the door says so at step one", () => {
     expect(el.querySelector("#host-link")).toBeNull();
   });
 
-  it("the deciding line is one line, and it is what a later change flips", () => {
+  it("the deciding line is one line, and it is what the design fix flips", () => {
     expect(PAIRED_DOOR_AVAILABLE).toBe(false);
   });
 });

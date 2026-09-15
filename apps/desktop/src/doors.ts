@@ -553,7 +553,7 @@ export interface HostRefusal {
  *
  * THE SENTENCE IS NOT HERE. This module is reachable from the SERVED host client's import
  * graph and `desktopDoor` is window-only — `door-copy.ts` holds the words, `DoorChooser`
- * renders them. a later change flips this line, and
+ * renders them. The design that makes the door walkable flips this line, and
  * `apps/desktop/test/desktop-paired-door-unavailable.test.tsx` is what says so.
  */
 export const PAIRED_DOOR_AVAILABLE = false;
