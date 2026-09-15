@@ -579,7 +579,8 @@
     "toastBulkLater": "{count, plural, one {1 Nachricht} other {# Nachrichten}} in „Später antworten“ vorgemerkt.",
     "toastBulkAside": "{count, plural, one {1 Nachricht} other {# Nachrichten}} geparkt.",
     "toastBulkResurface": "{count, plural, one {1 Nachricht taucht} other {# Nachrichten tauchen}} {when} wieder auf.",
-    "toastBulkMoved": "{count, plural, =0 {Nichts zu verschieben — liegt schon in {place}.} one {1 Nachricht verschoben \u2014 {place}.} other {# Nachrichten verschoben \u2014 {place}.}}",
+    "toastBulkMovedSenders": "{place} — Post von {senders, plural, one {1 Absender} other {# Absendern}} landet ab jetzt dort, {count, plural, =0 {nichts musste verschoben werden} one {1 Nachricht verschoben} other {# Nachrichten verschoben}}.",
+    "toastBulkMoveFailed": "Nichts verschoben — die Änderung konnte nicht gespeichert werden. Bitte noch einmal versuchen.",
     "sentNote": "Deine zuletzt gesendete Post steht mit oben. Ältere gesendete Post bleibt auf deinem Server — du findest sie über die Suche."
   },
   "reads": {

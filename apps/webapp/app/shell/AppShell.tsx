@@ -237,6 +237,7 @@ import {
   senderScreening,
   worstStatus,
   type ScreeningDest,
+  type ScreeningPlan,
   type ScreeningScope,
 } from "./sender-screening";
 import { SubjectRuleSheet, type SubjectRuleState } from "./SubjectRuleSheet";
@@ -4305,15 +4306,20 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
    * So the press writes the ROUTING — the fact that decides the place — and the row moves with
    * it, without a byte on the wire about folders. Plan and sentence are the Screener's own.
    */
-  const moveToPlace = useStableCallback((m: EngineMessage, view: OhmailView) => {
-    const sender = senderScreening(reader, m.id);
-    /* No sender to route means no place to route them to — said, never swallowed. */
-    if (!sender) {
-      toast(t("ohbox.moveGone"));
-      return;
-    }
-    /* SENDER SCOPE AND NO RETRO: the press is about one message, not a domain, and nobody asked
-       the server to walk the backlog. */
+  /**
+   * ONE SENDER'S ROUTING, NARROWED TO THE MESSAGES THIS PRESS NAMED — the plan both Move arms
+   * dispatch. The single-message arm passes the one id it was pressed on; the selection arm
+   * passes that sender's picked ids. Nothing else differs between them, which is the point: a
+   * second implementation of "move to a place" is what left the bulk arm writing folder moves
+   * against the PRESENTED place — effectless, and its refusal discarded.
+   */
+  const planMoveToPlace = useStableCallback((
+    seedId: string, view: OhmailView, only: ReadonlySet<string>,
+  ): { plan: ScreeningPlan; who: string } | null => {
+    const sender = senderScreening(reader, seedId);
+    if (!sender) return null;
+    /* SENDER SCOPE AND NO RETRO: the press is about these messages, not a domain, and nobody
+       asked the server to walk the backlog. */
     const planned = planScreeningChange(sender, view as ScreeningDest, "sender", true, false);
     /**
      * AND IT MOVES THE MESSAGE IT WAS PRESSED ON, not the sender's whole visible backlog.
@@ -4330,22 +4336,31 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
       ...planned.mutations.filter((x) => x.kind === "screener_decide"),
     ]);
     const mutations = planned.mutations.filter((x) =>
-      kept.has(x) || (x.kind === "move" && x.messageId === m.id));
-    /* The decide's own count is the plan's to state; otherwise it is what is left here — 1 or 0. */
+      kept.has(x) || (x.kind === "move" && only.has(x.messageId)));
+    /* The decide's own count is the plan's to state; otherwise it is what is left here. */
     const moved = planned.mutations.some((x) => x.kind === "screener_decide")
       ? planned.moved
       : mutations.filter((x) => x.kind === "move").length;
-    const plan = { ...planned, mutations, moved };
-    const place = PLACE_LABEL[view] ?? view;
     /* The NAME on the row, and the address only when the row carries no name. */
     const who = sender.name && sender.name.trim() ? sender.name.trim() : displayAddress(sender.address);
+    return { plan: { ...planned, mutations, moved }, who };
+  });
+
+  const moveToPlace = useStableCallback((m: EngineMessage, view: OhmailView) => {
+    const planned = planMoveToPlace(m.id, view, new Set([m.id]));
+    /* No sender to route means no place to route them to — said, never swallowed. */
+    if (!planned) {
+      toast(t("ohbox.moveGone"));
+      return;
+    }
+    const place = PLACE_LABEL[view] ?? view;
     /* NO EMPTY-PLAN SHORTCUT, deliberately: a plan with nothing in it dispatches nothing and
        `screeningToast` answers `toastAlreadyRuled` off `ruleState` alone, so the one path already
        speaks for the press that changes nothing. A branch here would be a second sentence on a
        state the strip's own filter makes all but unreachable — unwatchable, and the shape this
        arm shipped with. */
-    void dispatchScreeningChange(plan, (mu) => fileAndRefresh(engine.mutate(mu))).then((key) => {
-      toast(t(`screening.${key}`, { sender: who, place, count: plan.moved }));
+    void dispatchScreeningChange(planned.plan, (mu) => fileAndRefresh(engine.mutate(mu))).then((key) => {
+      toast(t(`screening.${key}`, { sender: planned.who, place, count: planned.plan.moved }));
     });
   });
 
@@ -4946,19 +4961,50 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
         toast(refused);
         return false;
       }
-      // `move:<view>` — the destination travels with the action, exactly as it does for one
-      // message. A message already in the destination is not re-moved: the count in
-      // the toast is what CHANGED, which is the only count worth reporting.
+      /**
+       * `move:<view>` — THE SAME VERB THE SINGLE ROW USES, once per sender.
+       *
+       * This arm used to dispatch a folder move per message against the PRESENTED place, which
+       * for a pile is not where the mail physically sits: Reads and Receipts are what a sender's
+       * rule says, not a folder, so the moves computed no effects, the engine refused them, and
+       * the sentence counted messages nothing had moved. The press writes the ROUTING instead —
+       * `planMoveToPlace` per sender, narrowed to THAT sender's picked messages — and the
+       * sentence names both numbers, because a selection spanning senders changes where mail
+       * from every one of them goes from now on and that is the part worth saying.
+       */
       const view = action.slice("move:".length) as OhmailView;
-      const folder = FOLDER_OF_VIEW[view];
-      let moved = 0;
-      for (const messageId of ids) {
-        const m = reader.get<EngineMessage>("message", messageId);
-        if (!m || m.folder === folder) continue;
-        void fileAndRefresh(engine.mutate({ kind: "move", messageId, folder }));
-        moved++;
+      /* The destination has to BE one — the single arm's own guard, asked here too. */
+      if (!FOLDER_OF_VIEW[view]) return false;
+      const bySender = new Map<string, string[]>();
+      for (const id of ids) {
+        const m = reader.get<EngineMessage>("message", id);
+        if (!m) continue;
+        const key = m.from.address.trim().toLowerCase();
+        const held = bySender.get(key);
+        if (held) held.push(id);
+        else bySender.set(key, [id]);
       }
-      toast(t("ohbox.toastBulkMoved", { count: moved, place: PLACE_LABEL[view] ?? view }));
+      const plans = [...bySender.values()]
+        .map((picked) => planMoveToPlace(picked[0]!, view, new Set(picked)))
+        .filter((x): x is { plan: ScreeningPlan; who: string } => x !== null);
+      if (plans.length === 0) {
+        toast(t("ohbox.moveGone"));
+        return false;
+      }
+      const place = PLACE_LABEL[view] ?? view;
+      /* ONE sentence for the press, raised when every sender's plan has answered — and the two
+         counts are what APPLIED, never what was picked. A sender whose rule the service refused
+         is not a sender whose mail goes there now. */
+      void Promise.all(plans.map((p) =>
+        dispatchScreeningChange(p.plan, (mu) => fileAndRefresh(engine.mutate(mu)))
+          .then((key) => ({ key, moved: p.plan.moved }))))
+        .then((answers) => {
+          const done = answers.filter((a) => a.key !== "toastRuleFailed");
+          const moved = done.reduce((n, a) => n + a.moved, 0);
+          toast(done.length === 0
+            ? t("ohbox.toastBulkMoveFailed")
+            : t("ohbox.toastBulkMovedSenders", { senders: done.length, count: moved, place }));
+        });
       return true;
     },
   );
