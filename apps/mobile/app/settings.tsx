@@ -526,7 +526,11 @@ function ThisPhonePanel() {
                     label={Copy.settingsStartHere}
                     variant="quiet"
                     onPress={() => {
-                      setSaid(null);
+                      /* THE PRESS DOES NOT WIPE THE ANSWER TO THE LAST ONE. `setSaid(null)` stood
+                         here: the sentence explaining a refused stop was destroyed by the very
+                         press somebody made to try again, and the second press then produced
+                         nothing to replace it. A record is spent by `pressSaidLine` against the
+                         CLAIM — which is a state change — and by this press's own answer below. */
                       /* THROUGH THE ONE DOOR, which reads the instruction in force: pressed during
                          a stop this is queued once and run when the stop completes, rather than
                          racing it. The engine's own verb underneath refuses a live foreign claim,
@@ -574,7 +578,8 @@ function ThisPhonePanel() {
                  goes back to `Organizing` on its own and this is the sentence beside it.
                  There is one card this sheet can open over: `mayStopHere` answers true only for
                  `ours`, which only the door in this process produces. */
-              setSaid(null);
+              /* AND NOT `setSaid(null)` FIRST — see the start verb. The condition clears a
+                 refusal, never a press. */
               void pressOrganizeHere("stop").then((outcome) => {
                 setSaid(outcome === "refused" ? "stopRefused" : null);
               });

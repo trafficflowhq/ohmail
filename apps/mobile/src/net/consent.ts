@@ -1,6 +1,7 @@
 import { faceOf, type FaceName } from "../theme/face.js";
 import type { ConnectedSession } from "./pairing.js";
-
+/* THE ONE BASE EVERY REQUEST IS COMPOSED OFF — see `request-base.ts`. */
+import { requestBase } from "./request-base";
 /**
  * Account settings over the paired server — the "Use folders" consent read and write. The
  * feature is off by default and per-account (FOLDERS-SPEC.md §6); the authority is the
@@ -118,7 +119,7 @@ function screeningOf(body: Record<string, unknown>): ScreeningAnswer | null {
 
 export async function readFoldersEnabled(session: ConnectedSession): Promise<FoldersConsent | null> {
   try {
-    const res = await session.fetch(`${session.profile.origin}/consent`, { method: "GET" });
+    const res = await session.fetch(`${requestBase(session)}/consent`, { method: "GET" });
     if (res.status !== 200) return null;
     const body = (await res.json()) as Record<string, unknown> & {
       foldersEnabledAt?: unknown; signatures?: unknown; themeFace?: unknown;
@@ -155,7 +156,7 @@ export async function readFoldersEnabled(session: ConnectedSession): Promise<Fol
  * which the pane shows as its one failure sentence.
  */
 export async function writeFoldersEnabled(session: ConnectedSession, enabled: boolean): Promise<{ on: boolean }> {
-  const res = await session.fetch(`${session.profile.origin}/consent/settings`, {
+  const res = await session.fetch(`${requestBase(session)}/consent/settings`, {
     method: "PATCH",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ foldersEnabled: enabled }),
@@ -193,7 +194,7 @@ export async function writeFoldersEnabled(session: ConnectedSession, enabled: bo
 export async function writeResurfaceTime(
   session: ConnectedSession, resurfaceTime: string,
 ): Promise<string | null> {
-  const res = await session.fetch(`${session.profile.origin}/consent/settings`, {
+  const res = await session.fetch(`${requestBase(session)}/consent/settings`, {
     method: "PATCH",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ resurfaceTime }),
@@ -206,7 +207,7 @@ export async function writeResurfaceTime(
 export async function writeThemeFace(
   session: ConnectedSession, face: FaceName,
 ): Promise<FaceName | null> {
-  const res = await session.fetch(`${session.profile.origin}/consent/settings`, {
+  const res = await session.fetch(`${requestBase(session)}/consent/settings`, {
     method: "PATCH",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ themeFace: face }),

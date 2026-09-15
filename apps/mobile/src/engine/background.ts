@@ -33,6 +33,15 @@ export interface ServiceNotice {
   readonly body: string;
   /** The one action's label — "Stop organizing". */
   readonly stopLabel: string;
+  /**
+   * THE BODY A STOP THAT COULD NOT COMPLETE LEAVES ON THE NOTIFICATION.
+   *
+   * Composed by the app beside the ordinary body, because the deck is the app's and the address
+   * is runtime data. REQUIRED, so TypeScript is the census over every composition: absent, a
+   * failed stop would keep the "Organizing" body over a person who has just pressed stop, and
+   * nothing would say so.
+   */
+  readonly stopFailedBody: string;
 }
 
 /**
@@ -204,6 +213,19 @@ export interface BackgroundDeps {
 export const CLAIM_WATCH_MS = 60_000;
 
 /**
+ * HOW MANY TIMES A STOP THE MAIL SERVER WOULD NOT CONFIRM IS ASKED AGAIN, and the wait between.
+ *
+ * Three: the fault a release meets is a busy folder or a connection just back — passing — and one
+ * attempt makes somebody's stop the cost of a bad half-second. Bounded rather than open, because a
+ * retry loop over a fault that is NOT passing is an install asking for ever. Past the bound the
+ * engine is still organizing, so the notification STAYS, carrying
+ * {@link ServiceNotice.stopFailedBody}: the person can press again, and nothing has hidden a
+ * mailbox that is being organized.
+ */
+export const STOP_ATTEMPTS = 3;
+export const STOP_BACKOFF_MS = 200;
+
+/**
  * WHY THE MAILBOX WAS GIVEN BACK, KEPT, OR THE NOTIFICATION TAKEN DOWN — a closed set of CODES.
  *
  * Codes and not sentences, for two reasons that point the same way. Nobody reads these but a
@@ -350,22 +372,83 @@ export function createBackgroundOrganizing(deps: BackgroundDeps): BackgroundOrga
    * claim is not still standing when the surface that advertises it disappears. A release that
    * recorded nothing still takes it down — the person pressed stop, and the claim lapses on its own.
    */
-  const stopByPerson = async (): Promise<void> => {
-    let stopped: StopOrganizingOutcome = "refused";
+  /**
+   * HAS THE ENGINE ACTUALLY STOPPED — its own answer, consumed and never re-derived here.
+   *
+   * `organizing` on the engine's report is already a MASK over the mechanism: it can only ever
+   * withhold what a pass declared, so it cannot say "organizing" over a runtime with nothing
+   * running. A second derivation on this side would be a second source of truth about the one
+   * question that decides whether the notification may go. An unreadable runtime is NOT a stop —
+   * the same reading every other path here takes: a momentary failure must not take a person's
+   * only sign that their mailbox is being organized away.
+   */
+  const engineStopped = (): boolean => {
     try {
-      stopped = await deps.engine.stopOrganizing();
+      return deps.engine.organizing().every((m) => !m.organizing);
     } catch (err) {
-      log("organizer_stop_by_person_failed", { err, why: "stopped_from_notification" });
+      log("organizer_stop_state_unreadable", { err, why: "stopped_from_notification" });
+      return false;
     }
-    /* The WORD the engine answered, so a refused release is readable in the log rather than
-       arriving as a `false` that also means "nothing to give up". The notification still comes
-       down: this is the notification's own Stop, and the paragraph above says why. */
-    log("organizer_stopped_by_person", { why: "stopped_from_notification", stopped });
+  };
+
+  /**
+   * SAY ON THE NOTIFICATION THAT THE STOP DID NOT COMPLETE — the same surface the press was made
+   * on. `start` with the same channel re-issues `startForeground` under one notification id, so
+   * this updates the body rather than posting a second one. A refused re-post leaves the standing
+   * notification as it was, which is still a true statement about a running engine.
+   */
+  const sayStopFailed = async (): Promise<void> => {
+    if (deps.service === null) return;
+    const notice = deps.notice();
+    try {
+      await deps.service.start({ ...notice, body: notice.stopFailedBody });
+    } catch (err) {
+      log("organizer_stop_notice_failed", { err, why: "stopped_from_notification" });
+    }
+  };
+
+  /**
+   * ══ THE CONTROLS ARE TORN DOWN BY THE STOP'S SUCCESS, NEVER BY THE ATTEMPT ═════════════════
+   *
+   * This dropped the notification and the watchdog unconditionally. Press Stop on the
+   * notification, let the release fail, and every visible sign that the mailbox was being
+   * organized was gone while the foreground engine went on polling, organizing and RENEWING the
+   * lease — so no other install could take the mailbox either, and there was no way back to the
+   * control that would have stopped it. The reading that licenses the teardown is the ENGINE's,
+   * asked after the release: `released` and `not_organizing` both settle to a runtime that
+   * organizes nothing, and anything else is asked again under {@link STOP_ATTEMPTS}. Past the
+   * bound the notification stays, saying what happened.
+   */
+  const stopByPerson = async (): Promise<void> => {
     /* NOT `handedBack`. That flag is the iOS transitional state — given back, and to be taken again
        on the way in — and a person's stop is the opposite of a state something resumes from. */
     handedBack = false;
+    for (let attempt = 1; ; attempt += 1) {
+      let stopped: StopOrganizingOutcome = "refused";
+      try {
+        stopped = await deps.engine.stopOrganizing();
+      } catch (err) {
+        log("organizer_stop_by_person_failed", { err, why: "stopped_from_notification", attempt });
+      }
+      /* The WORD the engine answered, so a refused release is readable in the log rather than
+         arriving as a `false` that also means "nothing to give up". */
+      log("organizer_stopped_by_person", { why: "stopped_from_notification", stopped, attempt });
+      moved();
+      if (engineStopped()) {
+        await dropService("stopped_from_notification");
+        return;
+      }
+      if (attempt >= STOP_ATTEMPTS) break;
+      await sayStopFailed();
+      await new Promise((r) => {
+        (setTimeout(r, STOP_BACKOFF_MS * attempt) as unknown as { unref?: () => void }).unref?.();
+      });
+    }
+    /* A CODE AND A COUNT, never a sentence — {@link BackgroundReason}'s rule: prose in this file
+       is prose the copy census scans, and what this line means is in the block above it. */
+    log("organizer_stop_did_not_complete", { why: "stopped_from_notification", attempts: STOP_ATTEMPTS });
+    await sayStopFailed();
     moved();
-    await dropService("stopped_from_notification");
   };
 
   /** Drop the notification and the watch that belongs to it. Idempotent; never throws. */

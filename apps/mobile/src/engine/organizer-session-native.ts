@@ -70,6 +70,9 @@ export function startOrganizerSessionNative(
       channelName: Copy.stateOrganizing,
       body: Copy.notifBody(address),
       stopLabel: Copy.notifStop,
+      /* AND THE BODY A STOP THAT COULD NOT COMPLETE LEAVES — composed here for the ordinary
+         body's reason: the deck is the app's, the address is runtime data. */
+      stopFailedBody: Copy.notifStopFailed,
     }),
     appPhases: (listener) => {
       const sub = AppState.addEventListener("change", (status) => { listener(status); });

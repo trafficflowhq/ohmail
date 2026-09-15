@@ -1,6 +1,7 @@
 import { faultDetail, refuse, type Refusal } from "../refusal";
 import type { ConnectedSession } from "./pairing.js";
-
+/* THE ONE BASE EVERY REQUEST IS COMPOSED OFF — see `request-base.ts`. */
+import { requestBase } from "./request-base";
 /**
  * The mailbox facts over the paired server — `GET /mailboxes`, the phone's first read of it.
  * The route is `cost: "read"` with no step-up and mounted on `localRoutes`, which all three
@@ -80,7 +81,7 @@ function stateOf(raw: unknown): PhoneMailbox["organizerState"] {
  */
 export async function readMailboxes(session: ConnectedSession): Promise<PhoneMailbox[] | null> {
   try {
-    const res = await session.fetch(`${session.profile.origin}/mailboxes`, { method: "GET" });
+    const res = await session.fetch(`${requestBase(session)}/mailboxes`, { method: "GET" });
     if (res.status !== 200) return null;
     const body = (await res.json()) as unknown;
     /**
@@ -144,7 +145,7 @@ export async function releaseMailbox(
 ): Promise<"requested" | "already" | "refused"> {
   try {
     const res = await session.fetch(
-      `${session.profile.origin}/mailboxes/${encodeURIComponent(mailboxId)}/release`,
+      `${requestBase(session)}/mailboxes/${encodeURIComponent(mailboxId)}/release`,
       { method: "POST" },
     );
     if (res.status === 202) return "requested";
@@ -189,7 +190,7 @@ export async function organizeHere(
   let res: Response;
   try {
     res = await session.fetch(
-      `${session.profile.origin}/local/mailboxes/${encodeURIComponent(mailboxId)}/organize`,
+      `${requestBase(session)}/local/mailboxes/${encodeURIComponent(mailboxId)}/organize`,
       { method: "POST", headers: { "content-type": "application/json" }, body: "{}" },
     );
   } catch (err) {

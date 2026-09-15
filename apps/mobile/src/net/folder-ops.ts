@@ -1,5 +1,6 @@
 import type { ConnectedSession } from "./pairing.js";
-
+/* THE ONE BASE EVERY REQUEST IS COMPOSED OFF — see `request-base.ts`. */
+import { requestBase } from "./request-base";
 /**
  * The delete confirm's server-truth counts — `GET /folders/:id/summary`. The folder-delete ceremony asks before the
  * act, stating what moves (FOLDERS-SPEC.md §18): only the server can count honestly, since the phone's mirror is a
@@ -33,7 +34,7 @@ export async function readFolderSummary(
   // unhandled rejection after the caller has moved on.
   const answered = (async (): Promise<{ folders: number; messages: number } | null> => {
     const res = await session.fetch(
-      `${session.profile.origin}/folders/${encodeURIComponent(folderId)}/summary`,
+      `${requestBase(session)}/folders/${encodeURIComponent(folderId)}/summary`,
       { method: "GET", signal: abort.signal },
     );
     if (res.status !== 200) return null;

@@ -1,5 +1,6 @@
 import type { ConnectedSession } from "./pairing.js";
-
+/* THE ONE BASE EVERY REQUEST IS COMPOSED OFF — see `request-base.ts`. */
+import { requestBase } from "./request-base";
 /**
  * New-mail wake — the registration half. The phone's distributor app (the user's choice)
  * mints an endpoint URL, the app hands it to the server it is paired with, and the server
@@ -103,7 +104,7 @@ const HOSTED_FLAVORS = new Set(["managed", "selfhost", "self-host"]);
  */
 export async function serverVapidKey(session: ConnectedSession): Promise<string | null> {
   try {
-    const res = await session.fetch(`${session.profile.origin}/push/vapid-key`, {
+    const res = await session.fetch(`${requestBase(session)}/push/vapid-key`, {
       method: "GET",
     });
     if (res.status !== 200) return null;
@@ -161,7 +162,7 @@ export async function registerWake(
    */
   let res: Response;
   try {
-    res = await session.fetch(`${session.profile.origin}/push/subscriptions`, {
+    res = await session.fetch(`${requestBase(session)}/push/subscriptions`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
@@ -239,7 +240,7 @@ export async function dropWakeRow(session: ConnectedSession, id: string | null):
   if (id === null) return { ok: true };
   let res: Response;
   try {
-    res = await session.fetch(`${session.profile.origin}/push/subscriptions/${id}`, {
+    res = await session.fetch(`${requestBase(session)}/push/subscriptions/${id}`, {
       method: "DELETE",
     });
   } catch {

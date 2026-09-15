@@ -36,10 +36,11 @@ import { junkFolderSaid } from "./folders";
 import { readScreenerWaiting, type ServerWaitingSender } from "../net/screener";
 import { PHONE_CLAIM_NAME, organizesHere } from "../engine/standalone-door";
 /* THE DOOR ANSWERING FOR ITSELF, with no request — `organizer-session.ts` holds the one engine
-   this process runs and `standaloneHere` is its read. The state module reaches into `engine/`
+   this process runs and `standaloneHereFor` is its read, SCOPED to the session being
+   rendered — the module's door outlives a switch. The state module reaches into `engine/`
    for exactly this and nothing else: the alternative is a second copy of the connection facts
    kept in React, and a second copy is a second writer. */
-import { standaloneHere } from "../engine/organizer-session";
+import { standaloneHereFor } from "../engine/organizer-session";
 import { readFolderSummary } from "../net/folder-ops";
 import * as Crypto from "expo-crypto";
 import type { FaceName } from "../theme/face";
@@ -1260,14 +1261,14 @@ export function WorldProvider({ children }: { children: ReactNode }) {
         // with no store write — so `freshBeat` ticks when the verdict changes.
         staleAsOf: staleAsOf(engine, zone),
         /* THE DOOR'S OWN WORD, re-read per derivation like the two above. It is NOT in this
-           memo's dependency array and cannot be: `standaloneHere` reads module state, not React
+           memo's dependency array and cannot be: the door read is module state, not React
            state, so there is nothing here to depend on. The watcher below is what re-derives
            when it moves — the same one the stale label uses, the same beat, one writer. */
-        connection: connectionSay(standaloneHere(), new Date(), zone),
+        connection: connectionSay(standaloneHereFor(session), new Date(), zone),
         /* ONE read of the door for both verdicts would be one call; this is a second call to the
            same module state in the same synchronous derivation, which is one moment. See the
            field: they are two facts and both are rendered. */
-        firstSync: firstSyncSay(standaloneHere()),
+        firstSync: firstSyncSay(standaloneHereFor(session)),
       },
       abandoned: engine.abandoned(),
       face: {
@@ -1297,12 +1298,18 @@ export function WorldProvider({ children }: { children: ReactNode }) {
      comparing references would bump the beat on every tick and re-derive the whole world four
      times a minute over a healthy link. */
   const renderedConnection = JSON.stringify([world.boot.connection, world.boot.firstSync]);
+  /* WHOSE DOOR THIS WORLD RENDERS, as a BOOLEAN — see `standaloneHereFor`. The world object is
+     fresh per derivation, so depending on it would re-subscribe this watcher every render. */
+  const rendersOwnDoor = world.standalone;
   useEffect(() => {
     if (engine === null) return;
     const check = (): void => {
       const staleMoved = staleAsOf(engine, zone) !== renderedStale;
       const connMoved = JSON.stringify(
-        [connectionSay(standaloneHere(), new Date(), zone), firstSyncSay(standaloneHere())],
+        [
+          connectionSay(standaloneHereFor({ standalone: rendersOwnDoor }), new Date(), zone),
+          firstSyncSay(standaloneHereFor({ standalone: rendersOwnDoor })),
+        ],
       ) !== renderedConnection;
       /* ONE bump for either, so the loop still terminates in one step: the re-derive re-reads
          BOTH verdicts, and the re-armed check finds both sides equal. */
@@ -1311,7 +1318,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
     check();
     const id = setInterval(check, LIVE_VERDICT_BEAT_MS);
     return () => clearInterval(id);
-  }, [engine, zone, renderedStale, renderedConnection]);
+  }, [engine, zone, renderedStale, renderedConnection, rendersOwnDoor]);
 
   return (
     <WorldContext.Provider value={world}>

@@ -123,6 +123,8 @@ export const DE: Deck = {
   phoneThisPhone: "Dieses Telefon",
   phoneStateOrganizing: "Organisiert",
   phoneStateStopping: "Wird beendet",
+  phoneStateStopPending: "Stopp ausstehend",
+  phoneStateStopPendingWhy: "Ein Stopp steht bereits aus; es wartet auf das Postfach.",
   /* Ohne Desktop-Zwilling: nur auf dem Telefon kann ein Start hinter einem Stopp warten. */
   phoneStateStarting: "Wird gestartet",
   phoneStateNotOrganized: "Dieses Postfach wird von nichts organisiert",
@@ -750,6 +752,7 @@ export const DE: Deck = {
   stateOrganizing: "Organisiert",
   notifBody: (address: string): string => `Organisiert ${address}.`,
   notifStop: "Nicht mehr organisieren",
+  notifStopFailed: "Stopp nicht abgeschlossen — wird erneut versucht.",
   organizerRestricted:
     "Der Energiesparmodus lässt ohmail auf diesem Telefon nicht im Hintergrund organisieren. "
     + "Es organisiert, solange die App offen ist, und gibt das Postfach zurück, wenn du sie "

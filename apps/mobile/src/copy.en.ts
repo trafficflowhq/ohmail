@@ -210,6 +210,11 @@ const TABLE = {
   phoneThisPhone: "This phone",
   phoneStateOrganizing: "Organizing",
   phoneStateStopping: "Stopping",
+  /* THE STOP THE MAIL SERVER HAS NOT HONOURED, which is neither of the two above. The person
+     pressed stop, this phone recorded it, and the mailbox has not confirmed — so the claim is
+     still ours and "Organizing" would say the press did nothing. */
+  phoneStateStopPending: "Stop pending",
+  phoneStateStopPendingWhy: "A stop is already pending; waiting for the mailbox.",
   /* The sixth, and the only one with no desktop twin: a computer has no start to wait through —
      its press lands on an idle mailbox. A phone's can be queued behind a stop it changed its mind
      about, and the chip has to say which of the two is happening. */
@@ -1179,6 +1184,10 @@ const TABLE = {
   notifBody: (address: string): string => `Organizing ${address}.`,
   /** The one action. The words of the desktop's own stop verb, so the two cannot drift. */
   notifStop: "Stop organizing",
+  /* THE BODY A STOP THAT COULD NOT COMPLETE LEAVES. The notification stays up because the engine
+     is still organizing; taking it down would remove every visible sign of a thing that is
+     happening, which is the state this sentence exists instead of. */
+  notifStopFailed: "Stop did not complete — retrying.",
   /**
    * Battery saver, said once. Under battery saver — or a per-app background restriction —
    * Android may kill the service at any moment with nothing saying why, so this app does not

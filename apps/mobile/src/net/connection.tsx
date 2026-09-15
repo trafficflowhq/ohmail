@@ -203,6 +203,10 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
            platform's SQLite, its key ring and the install marker are all `-native` modules. */
         standalone: {
           door: organizerDoor,
+          /* AND THE MAILBOX ON THIS PHONE LETS GO WHEN THE PHONE GOES SOMEWHERE ELSE. The forget's
+             own verb: the claim goes back, the session and its notification stop, the engine
+             stops. `buildSession` runs it for any account that is not this door's — see the port. */
+          standDownAway: async () => { await endStandaloneHere(); },
           reopen: () => reopenWithBackground({
             startFromSealed: phoneEngineReopen(),
             platform: async () => {

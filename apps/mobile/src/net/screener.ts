@@ -1,5 +1,6 @@
 import type { ConnectedSession } from "./pairing.js";
-
+/* THE ONE BASE EVERY REQUEST IS COMPOSED OFF — see `request-base.ts`. */
+import { requestBase } from "./request-base";
 /**
  * The waiting queue as the server holds it — `GET /screener` over the paired server. The server's
  * queue is a derivation over mail physically in `ohmail/Screener`, one row per sender
@@ -67,7 +68,7 @@ export async function readScreenerWaiting(
     let cursor: string | null = null;
     for (let page = 0; page < MAX_PAGES; page++) {
       const q = `?limit=200${cursor === null ? "" : `&cursor=${encodeURIComponent(cursor)}`}`;
-      const res = await session.fetch(`${session.profile.origin}/screener${q}`, { method: "GET" });
+      const res = await session.fetch(`${requestBase(session)}/screener${q}`, { method: "GET" });
       if (res.status !== 200) return null;
       const body = (await res.json()) as { items?: unknown; nextCursor?: unknown } | null;
       const items = Array.isArray(body?.items) ? body.items : null;

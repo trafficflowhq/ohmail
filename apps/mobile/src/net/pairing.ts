@@ -36,6 +36,7 @@ import { faultDetail, refuse, type Refusal, type RefusalArg } from "../refusal";
 import { dropWakeRow, type UnifiedPushDistributor } from "./push.js";
 import { resolveApiBase } from "./server-base.js";
 
+import { apiBaseOf } from "./request-base";
 /** The hosted service — the managed picker card negotiates against this and nothing else. */
 export const MANAGED_ORIGIN = "https://api.ohmail.app";
 
@@ -161,7 +162,8 @@ export async function resolveAccountId(
   /** Where the `/sync` family answers. Absent ⇒ the origin, which is right for two of three. */
   apiBase?: string,
 ): Promise<{ accountId: string; via: "session" | "rows" } | null> {
-  const base = apiBase ?? origin;
+  /* THE ONE RESOLVER, not a second spelling of its rule — `request-base.ts`. */
+  const base = apiBaseOf(origin, apiBase ?? null);
   try {
     const res = await fetchImpl(`${origin}/auth/session`, { headers: authHeaders() });
     if (res.ok) {
@@ -408,6 +410,17 @@ export interface PairingEnv {
      * `removeStandaloneEngine` in the app; the suite drives it against a real store.
      */
     removeEngine: () => Promise<void>;
+    /**
+     * THE MAILBOX ON THIS PHONE IS NOT OPEN ANY MORE — hand its lease back and stop its engine.
+     *
+     * `endStandaloneHere()` in the app. Run when a session is built for ANOTHER account: the
+     * standalone promise is "organizes while open" (stated in onboarding), and a mailbox somebody
+     * switched away from is not open. Without it the engine stayed up, kept the claim, and its
+     * state was read by the surface of the account that replaced it. REQUIRED rather than
+     * optional, so TypeScript is the census over every composition: a port that omitted it would
+     * leave the engine running and nothing would say so.
+     */
+    standDownAway: () => Promise<void>;
   };
 }
 
@@ -1126,6 +1139,22 @@ async function buildSession(
    * switch and re-pair inherit it. A re-pair is not caught here because
    * `pairWithServer` settles the owed forget before it arrives.
    */
+  /**
+   * ══ THE MAILBOX ON THIS PHONE STANDS DOWN WHEN THE PHONE GOES SOMEWHERE ELSE ═══════════════
+   *
+   * Here because this is the one place every session is built — launch, switch and re-pair all
+   * inherit it. The engine in this process is not torn down by a switch, so it went on polling,
+   * renewing and reporting; the world read that module state under the account that had replaced
+   * it and rendered the OTHER mailbox's "Connection lost" over a healthy one. The call is the
+   * forget's own hand-back-and-stop (`endStandaloneHere`), so the lease goes back at once and
+   * another machine can take the mailbox; switching back is an ordinary cold resume through the
+   * gate, with no consent press. Before the refusals below, not after: the caller has already
+   * left the outgoing session, so a connect that then refuses must not leave an engine holding a
+   * mailbox nothing is showing.
+   */
+  if (profile.origin !== LOCAL_ENGINE_ORIGIN && env.standalone?.door() != null) {
+    await env.standalone.standDownAway();
+  }
   if (await env.profiles.isOwedForget(profile.id)) {
     return {
       kind: "refused",

@@ -201,9 +201,12 @@ export type PhoneClaim =
   | { k: "unknown" }
   /**
    * The DOOR IN THIS PROCESS holds the claim — {@link claimHere} and no other producer.
-   * `stopping` = a hand-back is asked for and not yet confirmed.
+   * `stopping` = a hand-back is asked for and not yet confirmed. `releasePending` = the person's
+   * stop is RECORDED on the row and the mail server has not honoured it: the engine's own second
+   * answer, carried so the chip is the engine's state rather than a plain `Organizing` over a
+   * mailbox somebody has already asked this phone to let go.
    */
-  | { k: "ours"; stopping: boolean }
+  | { k: "ours"; stopping: boolean; releasePending: boolean }
   /** Read, and no install holds it. `starting` = a start is asked for and not yet confirmed. */
   | { k: "free"; starting: boolean }
   /**
@@ -228,7 +231,13 @@ export function claimChipLabel(claim: PhoneClaim): string | null {
     case "unknown":
       return null;
     case "ours":
-      return claim.stopping ? Copy.phoneStateStopping : Copy.phoneStateOrganizing;
+      /* THE ENGINE'S STATE, IN THE ORDER A PERSON NEEDS IT. A stop this phone is carrying out is
+         `Stopping`; one the mail server has been asked for and has not honoured is its own chip —
+         rendered as `Organizing` it told somebody their press had done nothing and offered them
+         the same verb again. */
+      return claim.stopping ? Copy.phoneStateStopping
+        : claim.releasePending ? Copy.phoneStateStopPending
+          : Copy.phoneStateOrganizing;
     case "free":
       return claim.starting ? Copy.phoneStateStarting : Copy.phoneStateNotOrganized;
     case "handedBack":
@@ -360,7 +369,13 @@ export function claimHere(
   handedBack: boolean = false,
 ): PhoneClaim {
   if (here.organizing === null) return { k: "unknown" };
-  if (here.organizing) return { k: "ours", stopping: instruction === "stopping" };
+  /* THE STANDING RELEASE TRAVELS WITH BOTH `ours` ARMS. It is one fact about one claim — the
+     person asked and the mail server has not said yet — and it is true whether the pass is still
+     reporting itself organizing or has already stopped reporting it. */
+  const releasePending = here.releaseRequestedAt !== null;
+  if (here.organizing) {
+    return { k: "ours", stopping: instruction === "stopping", releasePending };
+  }
   const held = here.heldBy;
   /* A STOP THE MAIL SERVER HAS NOT HONOURED IS STILL OURS. The engine arranges nothing while it
    * carries out a release, so `organizing` is false on both of its endings — and on a device that
@@ -371,7 +386,7 @@ export function claimHere(
    * reads `Stopping`, one the server refused reads `Organizing`. Pinned `true` here, the chip said
    * `Stopping` for ever and the Stop verb — the only way to ask again — stayed hidden. */
   if (held === null && here.releaseRequestedAt !== null) {
-    return { k: "ours", stopping: instruction === "stopping" };
+    return { k: "ours", stopping: instruction === "stopping", releasePending };
   }
   if (held === null) {
     /* NOT WHILE A PRESS IS IN FLIGHT: `starting` is a transition a person asked for and is the
@@ -404,6 +419,11 @@ export function claimNoteLine(claim: PhoneClaim, os: string): string | null {
       return null;
     case "unknown":
       return null;
+    case "ours":
+      /* A STOP THE MAIL SERVER HAS NOT HONOURED gets the sentence that says what is happening —
+         the platform rule ("dismiss the notification to stop") is an instruction about a press
+         that has already been made. Every other `ours` keeps it. */
+      return claim.releasePending ? Copy.phoneStateStopPendingWhy : platformRuleLine(os);
     case "handedBack":
       /* AND THIS ONE DOES GET A SENTENCE, where `free` gets none: the chip names a state a person
          has never seen a word for, and what it means for them is that their laptop may take the

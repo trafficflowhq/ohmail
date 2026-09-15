@@ -369,6 +369,20 @@ export function standaloneHere(): StandaloneHere | null {
 }
 
 /**
+ * THE DOOR IN THIS PROCESS, FOR A SESSION THAT IS IT — `null` for every other account.
+ *
+ * {@link standaloneHere} is MODULE state: one engine per process, and it outlives a switch. A
+ * surface scoped to an account read it unscoped, so after switching to a healthy paired or Cloud
+ * account the retained standalone engine's outage was rendered as that account's — a person
+ * looking at a working mailbox told it was broken, about a mailbox they had switched away from.
+ * Every rendered state belongs to the account being rendered, so the read is scoped at the one
+ * place both verdicts come through.
+ */
+export function standaloneHereFor(session: { readonly standalone: boolean }): StandaloneHere | null {
+  return session.standalone ? standaloneHere() : null;
+}
+
+/**
  * What the consent press answered, where a person asks the question. `restrictedSaid`'s idiom
  * one fact over; the first surface chosen for this was wrong — a consent refusal written into
  * `syncError` rendered inside "Sync failed — the mirror keeps what it has", so a mailbox
@@ -512,7 +526,20 @@ export async function pressOrganizeHere(want: "start" | "stop"): Promise<PressOu
   }
   const state = organizerInstruction();
   if (want === "start" && (state === "running" || state === "starting")) return "standing";
-  if (want === "stop" && (state === "idle" || state === "stopping")) return "standing";
+  /**
+   * A STOP OVER A STANDING RELEASE IS NOT ALREADY IN FORCE, AND THE PRESS REACHES THE ENGINE.
+   *
+   * The engine answers `organizing: false` while it carries out a release — a pass honouring one
+   * arranges nothing either way — so the instruction settled to `idle` and a second press was
+   * served from the SURFACE's word: it answered `standing` without calling the engine at all, and
+   * the panel's only explanation was wiped by the press that produced nothing. The row's standing
+   * `release_requested_at` is the engine's second answer and it is what separates a stop the mail
+   * server honoured from one it has not, so a press made over one is a fresh ask.
+   */
+  const releaseStanding = standaloneHere()?.releaseRequestedAt != null;
+  if (want === "stop" && !releaseStanding && (state === "idle" || state === "stopping")) {
+    return "standing";
+  }
   return runInstruction(want);
 }
 
