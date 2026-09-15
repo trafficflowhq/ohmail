@@ -946,6 +946,11 @@ pub struct HostRuntime<R: tauri::Runtime> {
     /// The launch- or arm-time problem. `None` when nothing stands between this install and
     /// serving (the tri-state still derives listener-pending from the engine's own signals).
     problem: Mutex<Option<Problem>>,
+    /// THE ONE THING A CLOSED VOCABULARY CANNOT SAY: a stand-down whose RECORD did not save,
+    /// with the reason the write gave. Its own slot rather than a [`Problem`], because a
+    /// withdraw refusal can be sitting in `problem` at the same moment and both are true.
+    /// Carried in `host_state` as a finished sentence; `None` when there is nothing to say.
+    notice: Mutex<Option<String>>,
     tray: Mutex<Option<TrayHandles<R>>>,
 }
 
@@ -1021,12 +1026,20 @@ impl<R: tauri::Runtime> HostRuntime<R> {
             "lanState": self.lan_state_json(),
             "state": state,
             "problem": problem.map(Problem::as_str),
+            /* THE SENTENCE, WHOLE. Everything else here is a word the window maps to copy; this
+               one carries a reason the shell was given and the window has no vocabulary for, so
+               it crosses finished and the pane renders it as it stands. */
+            "notice": self.notice.lock().expect("host notice").clone(),
             "autostart": autostart,
         })
     }
 
     fn set_problem(&self, problem: Option<Problem>) {
         *self.problem.lock().expect("host problem") = problem;
+    }
+
+    fn set_notice(&self, notice: Option<String>) {
+        *self.notice.lock().expect("host notice") = notice;
     }
 
     /// The answer to a REFUSED attempt: the runtime's real state — an already-armed install
@@ -1083,6 +1096,7 @@ pub fn manage<R: tauri::Runtime>(
         origin: Mutex::new(boot.spawn.as_ref().and_then(|s| s.origin.clone())),
         lan: Mutex::new(boot.lan.clone()),
         problem: Mutex::new(boot.problem),
+        notice: Mutex::new(None),
         tray: Mutex::new(None),
     });
     app.manage(Arc::clone(&runtime));
@@ -1387,6 +1401,9 @@ pub fn tailscale_serve_arm<R: tauri::Runtime>(
         .clone()
         .ok_or_else(|| "this computer named no place for the app to keep its settings".to_string())?;
     config::write_host(&path, &config::HostSettings { enabled: true, port, lan: lan.clone() })?;
+    /* The setting is on disk, so a previous stand-down's "hosting may come back at the next
+       start" is no longer about anything — it described a file this write has just replaced. */
+    host.set_notice(None);
 
     {
         use tauri_plugin_autostart::ManagerExt;
@@ -1461,25 +1478,63 @@ pub fn tailscale_serve_arm<R: tauri::Runtime>(
     Ok(host.state_json(autostart_enabled(&app)))
 }
 
-/// Everything a disarm does short of restarting the engine: bump the generation (any in-flight
-/// publication that has not yet run its serve sees the move and does nothing), withdraw the
-/// tailnet registration under the serve lock (one that already published is undone HERE, because
-/// the lock orders this off-switch after it), unregister start-at-login, persist OFF, take the
-/// tray down, give macOS its dock icon back. Proceeds even when the CLI refuses or is gone — the
-/// setting is the user's to turn off on a machine Tailscale has already left — and returns the
-/// withdraw refusal, typed, for the caller to report.
+/// THE SENTENCE A FAILED RECORD LEAVES ON SCREEN.
 ///
-/// A settings-write failure is returned as `Err` and does NOT undo the stand-down: the runtime
-/// is already off, and a stale `enabled: true` on disk is caught at the next launch by the door
-/// and probe checks, which publish nothing on their own.
-fn stand_down<R: tauri::Runtime>(
-    app: &tauri::AppHandle<R>,
+/// Every other thing this module reports is a word from a closed vocabulary the window maps to
+/// its own copy. This one carries a reason the operating system gave the shell — a full disk, a
+/// permission — which no vocabulary can hold, so it crosses finished and is rendered as it
+/// stands. It says all three true things in order: hosting is off NOW (the listener is gone
+/// before this is ever composed), the setting did not save and why, and what that costs at the
+/// next start.
+fn setting_not_saved(reason: &str) -> String {
+    format!(
+        "Hosting is off now. The setting could not be saved ({reason}), so hosting may come back \
+         at the next start until it is."
+    )
+}
+
+/// Everything a disarm does, and the two things that must be true whatever fails.
+///
+/// ── A STAND-DOWN IS COMPLETE, AND IT FAILS TOWARDS OFF ──────────────────────────────────────
+///
+/// A failed `host.json` write used to RETURN, before the caller reached the engine restart. The
+/// running engine went on serving paired devices over the LAN while the window read the runtime
+/// and reported hosting off. A person turned it off, was told it was off, and their mailbox was
+/// still being served on their network. The defect was the early return, not the order: nothing
+/// reconciled a failure between the record and the act.
+///
+/// So NOTHING here returns early. The record is written first and the world goes away in every
+/// case: `world_off` clears the next spawn's host settings and replaces the engine, and `replan`
+/// stops the old one before it spawns the new one, so when it returns this install holds no
+/// listener. A write that failed is not swallowed either — it is [`setting_not_saved`], carried
+/// in `host_state` and rendered by the pane.
+///
+/// THE RECORD IS FIRST BY FAILURE DIRECTION. Both orders leave a gap; only this one leaves the
+/// gap on the safe side. Between the write and the replan the file says off while the listener is
+/// still up — and a crash there kills the listener with the shell, so the file and the world
+/// agree at the next start. The reverse gap spans the replan's whole blocking window, and a crash
+/// inside it leaves a file that still says enabled: the LAN listener comes back at the next start
+/// with no sentence anywhere.
+///
+/// AND THE REPORTED STATE FOLLOWS THE LISTENER, NOT THE FILE. The pane polls `host_state`, which
+/// answers off on the armed flag, so the flag is flipped AFTER `world_off` returns — in between
+/// the window is told this install is not serving yet, which is true, rather than that hosting is
+/// off, which would be the same false state on a two-second scale.
+///
+/// The steps the APP owns (start-at-login, macOS's dock icon) and the world step are injected so
+/// the order itself can be measured; `stand_down` below supplies the real ones. Proceeds even
+/// when the CLI refuses or is gone — the setting is the user's to turn off on a machine
+/// Tailscale has already left — and returns the withdraw refusal, typed, for the caller.
+fn stand_down_with<R: tauri::Runtime>(
     host: &Arc<HostRuntime<R>>,
-) -> Result<Option<Problem>, String> {
+    run: &dyn Fn(&[String]) -> CliResult,
+    app_side: &dyn Fn(),
+    world_off: &dyn Fn(),
+) -> Option<Problem> {
     host.generation.fetch_add(1, Ordering::SeqCst);
     let withdraw = {
         let _serialized = host.serve_ops.lock().expect("serve ops");
-        disarm_serve_with(&|args| run_tailscale(args))
+        disarm_serve_with(run)
     };
     if let Err(problem) = &withdraw {
         engine::log_line(format_args!(
@@ -1489,7 +1544,47 @@ fn stand_down<R: tauri::Runtime>(
         ));
     }
     host.published.store(false, Ordering::SeqCst);
+    app_side();
+    // A fresh stand-down is a fresh reading: whatever the last one could not save is not what
+    // this one is about, and the write below says so again if it fails again.
+    host.set_notice(None);
 
+    // ── THE RECORD, FIRST — so that anything which kills the app from here on leaves a file
+    //    that does not host. A failure is carried, never returned. ────────────────────────────
+    if let Some(path) = host.settings_path.as_deref() {
+        let port = host.port.lock().expect("host port").unwrap_or(1);
+        // The port and the LAN choice survive a disarm so re-arming offers the same ones back.
+        let lan = host.lan.lock().expect("host lan").clone();
+        if let Err(reason) =
+            config::write_host(path, &config::HostSettings { enabled: false, port, lan })
+        {
+            engine::log_line(format_args!(
+                "host mode is being turned off and the setting could not be written ({reason}); \
+                 the listener goes anyway and the next launch reads a file that still says \
+                 enabled"
+            ));
+            host.set_notice(Some(setting_not_saved(&reason)));
+        }
+    }
+
+    // ── THE WORLD, IN EVERY CASE. Past this line this install holds no listener. ─────────────
+    world_off();
+
+    /* AND ONLY THEN THE FLAG. `host_state` is polled by the pane while all this runs, and it
+       reports off on this flag: flipped before the listener went, it would answer "hosting is
+       off" about an install still serving — the same false state on a two-second scale that the
+       failed write used to leave for ever. */
+    host.armed.store(false, Ordering::SeqCst);
+    *host.origin.lock().expect("host origin") = None;
+    host.set_problem(withdraw.as_ref().err().copied());
+    host.take_down_tray();
+    withdraw.err()
+}
+
+/// The two things a stand-down asks of the APP rather than of host mode: the start-at-login
+/// registration goes (always-on is what it existed for), and on macOS the dock icon comes back
+/// — an Accessory policy outliving the tray would strand the app with no way to show a window.
+fn app_side_of_stand_down<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
     {
         use tauri_plugin_autostart::ManagerExt;
         if let Err(err) = app.autolaunch().disable() {
@@ -1498,56 +1593,84 @@ fn stand_down<R: tauri::Runtime>(
             ));
         }
     }
-
-    host.armed.store(false, Ordering::SeqCst);
-    *host.origin.lock().expect("host origin") = None;
-    host.set_problem(withdraw.as_ref().err().copied());
-    host.shell.set_host_spawn(None);
-    host.take_down_tray();
-    // The dock icon returns on macOS: Accessory policy outliving the tray would strand the app.
     #[cfg(target_os = "macos")]
     let _ = app.set_activation_policy(tauri::ActivationPolicy::Regular);
+}
 
-    if let Some(path) = host.settings_path.as_deref() {
-        let port = host.port.lock().expect("host port").unwrap_or(1);
-        // The port and the LAN choice survive a disarm so re-arming offers the same ones back.
-        let lan = host.lan.lock().expect("host lan").clone();
-        config::write_host(path, &config::HostSettings { enabled: false, port, lan })?;
-    }
-    Ok(withdraw.err())
+/// The stand-down above with this app's own halves supplied: the tailnet CLI, the start-at-login
+/// registration and the dock icon, and the world step — the engine replaced without its host
+/// door, which is what takes the listener away.
+fn stand_down<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    host: &Arc<HostRuntime<R>>,
+) -> Option<Problem> {
+    stand_down_with(
+        host,
+        &|args| run_tailscale(args),
+        &|| app_side_of_stand_down(app),
+        &|| {
+            host.shell.set_host_spawn(None);
+            /* THE LISTENER, TAKEN AWAY. `replan` stops the engine before it spawns the
+               replacement, so when this returns the host door of this install is gone rather
+               than scheduled to go. The door-switch caller replaces the engine again a moment
+               later with the new door's plan; one extra restart is what the invariant costs on
+               that path, and it is paid while the person is already watching a door change. */
+            host.shell.replan();
+        },
+    )
 }
 
 /// Stand host mode down because the SHELL is moving under it — a door switch away from the
 /// local organizer, or a sign-out. Both take the engine's host listener away, and a tailnet
 /// registration outliving the listener it pointed at would proxy whatever binds that loopback
-/// port next. Best-effort by design: the transition itself must not be blocked by a settings
-/// write, so a failure is logged and the next launch's own checks (door, probe) publish nothing.
+/// port next. The transition is never blocked by a settings write: the listener goes either way
+/// and an unsaved setting is the sentence [`setting_not_saved`] leaves in `host_state`.
 pub fn stand_down_on_shell_transition<R: tauri::Runtime>(
     app: &tauri::AppHandle<R>,
     host: &Arc<HostRuntime<R>>,
     why: &str,
 ) {
-    if !host.armed() {
-        return;
-    }
-    engine::log_line(format_args!("host mode stands down: {why}"));
-    if let Err(reason) = stand_down(app, host) {
-        engine::log_line(format_args!(
-            "host mode: the setting could not be written while standing down ({reason}); the \
-             next launch republishes nothing without a door and a probe"
-        ));
-    }
+    stand_down_on_shell_transition_with(
+        host,
+        &|args| run_tailscale(args),
+        &|| app_side_of_stand_down(app),
+        &|| {
+            host.shell.set_host_spawn(None);
+            host.shell.replan();
+        },
+        why,
+    );
 }
 
-/// Disarm host mode: the stand-down above, then the engine restarts without its host door.
+/// The transition stand-down with its halves injected, so the ORDER on this path is measurable
+/// too — it is the same body as a disarm's and it must not drift from it. Answers whether it
+/// stood anything down: a disarmed install is left alone, which is what the caller relies on
+/// when a door switch happens on a machine that never hosted.
+fn stand_down_on_shell_transition_with<R: tauri::Runtime>(
+    host: &Arc<HostRuntime<R>>,
+    run: &dyn Fn(&[String]) -> CliResult,
+    app_side: &dyn Fn(),
+    world_off: &dyn Fn(),
+    why: &str,
+) -> bool {
+    if !host.armed() {
+        return false;
+    }
+    engine::log_line(format_args!("host mode stands down: {why}"));
+    let _withdraw = stand_down_with(host, run, app_side, world_off);
+    true
+}
+
+/// Disarm host mode. The stand-down takes the listener away itself and the answer is composed
+/// after it, so nothing here can report hosting off while an engine of this install is serving.
 #[tauri::command(async)]
 pub fn tailscale_serve_disarm<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     host: tauri::State<'_, Arc<HostRuntime<R>>>,
 ) -> Result<serde_json::Value, String> {
-    // `stand_down` already records the withdraw refusal, if any, as the runtime problem.
-    let _withdraw = stand_down(&app, host.inner())?;
-    host.shell.replan();
+    // `stand_down` already records the withdraw refusal, if any, as the runtime problem, and it
+    // has already replaced the engine — the answer below describes a shell with no listener up.
+    let _withdraw = stand_down(&app, host.inner());
     engine::log_line(format_args!("host mode disarmed; the engine restarts without its host door"));
     Ok(host.state_json(autostart_enabled(&app)))
 }

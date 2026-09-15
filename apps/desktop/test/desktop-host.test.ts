@@ -68,6 +68,9 @@ const A_STATE = {
   lanState: null,
   state: "serving",
   problem: null,
+  // The shell's one finished sentence — a stand-down whose setting could not be saved, with the
+  // write's own reason in it. Null whenever there is nothing to say, which is nearly always.
+  notice: null,
   autostart: true,
 };
 
@@ -132,6 +135,20 @@ describe("the host-state union", () => {
     expect(hostStateOfPayload({ ...A_STATE, port: 0 })?.port).toBeNull();
     expect(hostStateOfPayload({ ...A_STATE, port: "3311" })?.port).toBeNull();
     expect(hostStateOfPayload({ ...A_STATE, port: 70000 })?.port).toBeNull();
+  });
+
+  it("carries the shell's finished sentence, and an empty one is nothing to say", () => {
+    /* The stand-down that could not record itself. It is not a word from the problem vocabulary
+       — it carries the operating system's own reason — so it crosses whole and the pane renders
+       it as it stands. An empty string is `null`: a blank warning row is worse than none. */
+    const said = "Hosting is off now. The setting could not be saved (permission denied), so "
+      + "hosting may come back at the next start until it is.";
+    expect(hostStateOfPayload({ ...A_STATE, enabled: false, state: "off", notice: said })?.notice)
+      .toBe(said);
+    expect(hostStateOfPayload({ ...A_STATE, notice: "" })?.notice).toBeNull();
+    expect(hostStateOfPayload({ ...A_STATE, notice: 7 })?.notice).toBeNull();
+    // And an answer with a sentence in it is still an answer — never voided by it.
+    expect(hostStateOfPayload({ ...A_STATE, notice: said })).not.toBeNull();
   });
 
   it("degrades an unknown problem to null rather than voiding the whole answer", () => {

@@ -64,6 +64,15 @@ export interface HostState {
   lanState: LanState | null;
   state: HostTriState;
   problem: HostProblem | null;
+  /**
+   * A FINISHED SENTENCE FROM THE SHELL, or null when there is nothing to say.
+   *
+   * Everything else here is a word from a closed vocabulary this window maps to its own copy.
+   * This one carries a reason the operating system gave the shell — a stand-down whose setting
+   * could not be written, with the write's own words — which no vocabulary can hold, so the
+   * shell composes it and the pane renders it as it stands.
+   */
+  notice: string | null;
   /** Whether this install starts at login; null when the platform would not say. */
   autostart: boolean | null;
 }
@@ -127,6 +136,9 @@ export function hostStateOfPayload(payload: unknown): HostState | null {
     // The deliberate asymmetry — see the header: an unknown problem name degrades to null
     // rather than voiding the answer.
     problem: oneOf(raw.problem, HOST_PROBLEMS),
+    // An empty string is nothing to say, and says it as null: a blank warning row is a worse
+    // answer than none.
+    notice: typeof raw.notice === "string" && raw.notice.length > 0 ? raw.notice : null,
     autostart: typeof raw.autostart === "boolean" ? raw.autostart : null,
   };
 }

@@ -168,6 +168,22 @@ describe("every designed state renders — and is captured for the design review
     capture("2-off-advanced");
   });
 
+  it("OFF, and the setting did not save: hosting is off, and the pane says what that costs", async () => {
+    /* THE STAND-DOWN WHOSE RECORD FAILED. The listener is gone — the shell takes it away before
+       it writes anything — and `host.json` still says enabled, so the next start would bring
+       hosting back. The shell composes that sentence because it carries the write's own reason;
+       a closed vocabulary cannot hold one. Watched failing by deleting the notice row from the
+       OFF branch, and by the Rust case that composes it. */
+    const notice =
+      "Hosting is off now. The setting could not be saved (permission denied), so hosting may "
+      + "come back at the next start until it is.";
+    shell({ hostState: { ...OFF, notice }, tailscale: RUNNING });
+    await mount();
+    expect(hostEl.textContent).toContain(notice);
+    expect(hostEl.querySelector(".acct-warn[role=alert]")).not.toBeNull();
+    capture("3a-off-setting-not-saved");
+  });
+
   it("OFF, guided: Tailscale missing — the friendly install step with the deep-link", async () => {
     shell({ hostState: OFF, tailscale: { state: "no-cli" } });
     await mount();

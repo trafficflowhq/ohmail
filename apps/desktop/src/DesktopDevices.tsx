@@ -859,6 +859,16 @@ export function DesktopDevices() {
           </p>
         ) : null}
 
+        {/* THE STAND-DOWN THAT COULD NOT BE RECORDED. Hosting IS off — the shell takes the
+            listener away before it writes anything — and the setting on disk still says on, so
+            the next start would bring hosting back. The shell composes this one because it
+            carries the write's own reason; everything else on this pane is a mapped word. */}
+        {host.notice ? (
+          <p className="acct-warn" role="alert">
+            {host.notice}
+          </p>
+        ) : null}
+
         {probe === undefined ? <p className="set-note-inline">{t("checking")}</p> : null}
 
         {probe === null ? (

@@ -603,9 +603,14 @@ use std::time::Duration;
 /// through an injected poll and the CLI through an injected runner, so the shell here is inert
 /// scaffolding — only the generation, the lock and the flags are real.
 fn armed_runtime() -> HostRuntime<tauri::Wry> {
+    armed_runtime_at(None)
+}
+
+/// The same, with a place for `host.json` — what the stand-down's record step writes to.
+fn armed_runtime_at(settings_path: Option<PathBuf>) -> HostRuntime<tauri::Wry> {
     HostRuntime {
         shell: Arc::new(engine::Shell::inert_for_tests()),
-        settings_path: None,
+        settings_path,
         armed: AtomicBool::new(true),
         generation: AtomicU64::new(0),
         published: AtomicBool::new(false),
@@ -614,6 +619,7 @@ fn armed_runtime() -> HostRuntime<tauri::Wry> {
         origin: Mutex::new(None),
         lan: Mutex::new(None),
         problem: Mutex::new(None),
+        notice: Mutex::new(None),
         tray: Mutex::new(None),
     }
 }
@@ -958,4 +964,258 @@ fn an_armed_spawn_unsets_every_host_variable_it_does_not_define() {
     let env = env_map(&launch.env);
     assert_eq!(env.get("OHMAIL_LAN_BIND").map(String::as_str), Some("192.168.1.23"));
     assert!(env.get("OHMAIL_HOST_ORIGIN").is_none());
+}
+
+// ── A STAND-DOWN IS COMPLETE, AND IT FAILS TOWARDS OFF ───────────────────────────────────────
+//
+// The acceptance for turning hosting off is THE LISTENER — a connect to the port refused — and
+// never `host.json` and never the armed flag. The world step the real stand-down fills with
+// `set_host_spawn(None)` + `replan()` is filled here with a real socket being closed, so a body
+// that returns on a failed write leaves that socket answering and the case names it. Two things
+// are held: the world goes away in EVERY case, and what is on disk when it goes is a file that
+// does not host — so the crash the order is chosen for cannot bring hosting back. The engine's
+// own replan is beyond a unit test's reach; what a unit test CAN hold is that nothing may stand
+// between the person's press and the world going away.
+
+use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream};
+
+/// A stand-in for the engine's host door: a real loopback socket, and the port it holds.
+fn a_live_socket() -> (TcpListener, u16) {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind a loopback port");
+    let port = listener.local_addr().expect("the bound address").port();
+    (listener, port)
+}
+
+/// Whether anything answers on that port right now. A refused connect is the stand-down's
+/// acceptance; a successful one is a listener still up.
+fn socket_answers(port: u16) -> bool {
+    let addr: SocketAddr = format!("127.0.0.1:{port}").parse().expect("a loopback address");
+    match TcpStream::connect_timeout(&addr, Duration::from_millis(250)) {
+        Ok(stream) => {
+            let _ = stream.shutdown(Shutdown::Both);
+            true
+        }
+        Err(_) => false,
+    }
+}
+
+/// A directory of this test's own, named for the case so two cases cannot share one, holding the
+/// `host.json` an ARMED install has: `enabled: true`. Seeded rather than absent because an absent
+/// file reads as disabled, which would let a stand-down that wrote nothing pass for one that did.
+fn a_settings_dir(case: &str) -> (PathBuf, PathBuf) {
+    let dir = std::env::temp_dir()
+        .join(format!("ohmail-host-standdown-{}-{case}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("mkdir");
+    let path = dir.join("host.json");
+    config::write_host(&path, &config::HostSettings { enabled: true, port: 3311, lan: None })
+        .expect("seed the armed setting");
+    (dir, path)
+}
+
+/// Close the directory to writes, so the record step meets a real refusal from the operating
+/// system with the operating system's own words.
+fn seal(dir: &Path) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(dir).expect("stat").permissions();
+        perms.set_mode(0o500);
+        std::fs::set_permissions(dir, perms).expect("chmod");
+    }
+}
+
+fn unseal_and_remove(dir: &Path) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(dir).expect("stat").permissions();
+        perms.set_mode(0o700);
+        let _ = std::fs::set_permissions(dir, perms);
+    }
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn a_stand_down_whose_setting_cannot_be_saved_still_takes_the_listener_away() {
+    // ── THE DEFECT THIS PINS SHUT ───────────────────────────────────────────────────────────
+    // With LAN hosting live, press Turn off on a machine where `host.json` cannot be written:
+    // the old body marked host mode off, cleared the NEXT spawn's host settings and returned
+    // the write error BEFORE the engine was replaced. The running engine went on serving paired
+    // devices over the LAN while the window read the runtime and reported hosting OFF.
+    let (dir, path) = a_settings_dir("unwritable");
+    // The write fails for a real reason, from the operating system, in a real directory.
+    seal(&dir);
+
+    let host = Arc::new(armed_runtime_at(Some(path.clone())));
+    let (socket, port) = a_live_socket();
+    assert!(socket_answers(port), "the stand-in listener never came up");
+    let world = RefCell::new(Some(socket));
+
+    let withdrawn = stand_down_with(
+        &host,
+        &|_| ran(0, ""),
+        &|| {},
+        &|| {
+            // What the real one does here is `set_host_spawn(None)` + `replan()`; what this one
+            // does is close the socket. Both answer the same question: is anything listening?
+            drop(world.borrow_mut().take());
+        },
+    );
+
+    assert_eq!(withdrawn, None, "the tailnet withdrawal answered cleanly");
+    assert!(!socket_answers(port), "hosting reports off while a listener is still up");
+    assert!(!host.armed());
+
+    // And the failure is a SENTENCE, not a swallowed error: the pane renders this.
+    let state = host.state_json(None);
+    let notice = state["notice"].as_str().expect("a failed record with nothing said about it");
+    assert!(notice.starts_with("Hosting is off now."), "{notice}");
+    assert!(notice.contains("could not be saved"), "{notice}");
+    assert!(notice.contains("may come back at the next start"), "{notice}");
+    assert_eq!(state["enabled"], serde_json::json!(false));
+    // And the file really did not take the write — which is what the sentence is about.
+    assert_eq!(config::read_host(&path).map(|h| h.enabled), Some(true));
+
+    unseal_and_remove(&dir);
+}
+
+#[test]
+fn an_ordinary_stand_down_stops_serving_and_says_nothing_it_does_not_have_to() {
+    // THE POSITIVE CONTROL. A stand-down that refuses everything would pass the case above; this
+    // is the ordinary Turn off — the listener goes, the setting saves, and there is no sentence
+    // because nothing went wrong.
+    let (dir, path) = a_settings_dir("writable");
+    let host = Arc::new(armed_runtime_at(Some(path.clone())));
+    let (socket, port) = a_live_socket();
+    let world = RefCell::new(Some(socket));
+    let reported_at_the_world_step = RefCell::new(serde_json::Value::Null);
+
+    let withdrawn = stand_down_with(
+        &host,
+        &|_| ran(0, ""),
+        &|| {},
+        &|| {
+            /* WHAT THE PANE WOULD BE TOLD WHILE THE LISTENER IS GOING. `host_state` answers off
+               on the armed flag, and the pane polls it: the flag may not flip until the world
+               step has returned, or the window is told hosting is off about an install still
+               serving — the same false state the failed write used to leave for ever. */
+            *reported_at_the_world_step.borrow_mut() = host.state_json(None);
+            drop(world.borrow_mut().take());
+        },
+    );
+
+    assert_eq!(
+        reported_at_the_world_step.borrow()["enabled"],
+        serde_json::json!(true),
+        "the runtime reported hosting off while the listener was still up"
+    );
+
+    assert_eq!(withdrawn, None);
+    assert!(!socket_answers(port), "the ordinary stand-down left a listener up");
+    let state = host.state_json(None);
+    assert!(state["notice"].is_null(), "a sentence about a write that worked");
+    assert_eq!(state["enabled"], serde_json::json!(false));
+    assert_eq!(
+        config::read_host(&path).map(|h| h.enabled),
+        Some(false),
+        "the setting was not written"
+    );
+    unseal_and_remove(&dir);
+}
+
+#[test]
+fn the_record_is_written_before_the_world_so_a_crash_between_them_cannot_host() {
+    // ── CONTROL (d): WHICH WAY THIS FAILS ───────────────────────────────────────────────────
+    //
+    // Both orders leave a gap between the setting and the listener. This one leaves it on the
+    // safe side: at the moment the world step runs, `host.json` already says off, so anything
+    // that kills the app from here on — the crash the gap is about — leaves a file the next
+    // launch reads as disabled, and the listener dies with the shell. The reverse order leaves
+    // `enabled: true` across the whole of `replan`'s blocking window (a stop grace and a
+    // respawn), and a crash there brings the LAN listener back at the next start with no
+    // sentence anywhere.
+    //
+    // The crash is not simulated; what it would leave IS. The world step reads the setting as it
+    // stands at that instant and the boot decision — the real one, `HostBoot::detect_with` — is
+    // asked what the next launch would do with it.
+    //
+    // Watched failing: move the record block below `world_off()` and this reads `enabled: true`
+    // at the world step and an ARMED boot.
+    let (dir, path) = a_settings_dir("crash-gap");
+    let host = Arc::new(armed_runtime_at(Some(path.clone())));
+    let (socket, port) = a_live_socket();
+    let world = RefCell::new(Some(socket));
+    let at_the_world_step: RefCell<Option<Option<config::HostSettings>>> = RefCell::new(None);
+
+    let _ = stand_down_with(
+        &host,
+        &|_| ran(0, ""),
+        &|| {},
+        &|| {
+            *at_the_world_step.borrow_mut() = Some(config::read_host(&path));
+            drop(world.borrow_mut().take());
+        },
+    );
+
+    let settings = at_the_world_step
+        .borrow_mut()
+        .take()
+        .expect("the world step never ran");
+    assert_eq!(
+        settings.as_ref().map(|h| h.enabled),
+        Some(false),
+        "the setting still says enabled where a crash would leave it"
+    );
+    // What the next launch would do with exactly that file.
+    let boot = HostBoot::detect_with(settings, Some(config::Mode::Local), &probe_ok, None);
+    assert!(!boot.armed, "a crash in the gap comes back hosting");
+    assert!(boot.spawn.is_none());
+    assert!(!socket_answers(port), "the listener outlived the stand-down");
+
+    unseal_and_remove(&dir);
+}
+
+#[test]
+fn the_shell_transition_stands_down_in_the_same_order_and_leaves_a_disarmed_install_alone() {
+    // The other way in: a door switch or a sign-out. Same body, same order — and the same
+    // sentence when the record cannot be saved, because "best effort" may not mean "serving".
+    let (dir, path) = a_settings_dir("transition");
+    seal(&dir);
+
+    let host = Arc::new(armed_runtime_at(Some(path)));
+    let (socket, port) = a_live_socket();
+    let world = RefCell::new(Some(socket));
+    let stood = stand_down_on_shell_transition_with(
+        &host,
+        &|_| ran(0, ""),
+        &|| {},
+        &|| { drop(world.borrow_mut().take()); },
+        "the install is switching to a door with no host listener",
+    );
+    assert!(stood, "an armed install must stand down on a shell transition");
+    assert!(!socket_answers(port), "the door switch left the host listener up");
+    let notice = host.state_json(None)["notice"].as_str().map(str::to_string);
+    assert!(
+        notice.as_deref().unwrap_or("").contains("could not be saved"),
+        "the transition swallowed the failed record: {notice:?}"
+    );
+
+    // A DISARMED install is left alone — the early return that keeps a door switch on a machine
+    // that never hosted from touching anything.
+    let quiet = Arc::new(armed_runtime_at(None));
+    quiet.armed.store(false, Ordering::SeqCst);
+    let (socket, port) = a_live_socket();
+    let untouched = RefCell::new(Some(socket));
+    let stood = stand_down_on_shell_transition_with(
+        &quiet,
+        &|_| -> CliResult { panic!("the CLI ran for an install that was not hosting") },
+        &|| { panic!("the app was asked to change for an install that was not hosting"); },
+        &|| { drop(untouched.borrow_mut().take()); },
+        "a door switch on an install that never hosted",
+    );
+    assert!(!stood);
+    assert!(socket_answers(port), "a disarmed install's stand-down touched the world");
+
+    unseal_and_remove(&dir);
 }
