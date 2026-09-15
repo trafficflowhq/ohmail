@@ -305,15 +305,13 @@ export interface JunkSweepCommandPort {
  * reused UID under a new epoch looked already-known and its body was never fetched. So the cursor's `uidValidity` is the epoch its remembered UIDs belong to, and only those entries are handed over.
  */
 /**
- * WHAT ONE CYCLE ACTUALLY DID — the counters behind "an idle tick's cost is proportional to what
- * changed". Measurement, not behaviour: absent ⇒ nothing is counted and every path is unchanged.
- *
- * `cursorBuilds` counts {@link buildCursor} calls (one per cycle); `locatorReads` the ones that
+ * WHAT ONE CYCLE ACTUALLY DID. Measurement, not behaviour: absent ⇒ nothing is counted and every
+ * path is unchanged. `cursorBuilds` counts {@link buildCursor} calls, `locatorReads` the ones that
  * went to the store for the whole projection and `locatorRows` the rows those returned — the
- * QUERIES and the ROWS TOUCHED. `cursorFolders` counts the per-folder arrays actually rebuilt, the
- * DERIVATIONS. `observed` is what the adapter handed over. A tick over a mailbox where nothing
- * changed reads zero, touches zero rows, derives nothing and observes nothing; every other reading
- * is a mailbox that moved, or a gate that stopped working.
+ * QUERIES and the ROWS TOUCHED; `cursorFolders` the per-folder arrays rebuilt, the DERIVATIONS;
+ * `observed` what the adapter handed over. A tick over a mailbox where nothing changed reads zero,
+ * touches zero rows, derives nothing and observes nothing. Anything else is a mailbox that moved,
+ * or a gate that stopped working.
  */
 export interface CycleCensus {
   cursorBuilds: number;
@@ -338,19 +336,13 @@ export async function buildCursor(
   if (census !== undefined) census.cursorBuilds += 1;
 
   /**
-   * THE PROJECTION IS READ ONLY WHEN THE ANSWER IS NOT ALREADY DERIVED.
-   *
-   * Everything below the read — grouping the whole projection by folder, filtering each group to
-   * its folder's epoch, mapping it into `KnownEntry`s — is proportional to the MAILBOX, and it ran
-   * on every cycle to produce, for a settled mailbox, exactly the arrays it produced last time.
-   * {@link KnownSetCache} holds those arrays against the generation of the locator set they came
-   * from, so when the set has not moved this function reads nothing at all.
-   *
-   * The precondition is narrow on purpose: every folder must NAME its own epoch (the fallback
-   * `soleEpochOf` derives one FROM the entries, so a folder without a row epoch needs them) and
-   * every folder must have an entry in the derivation. Anything else takes the read — which is
-   * what this function did on every cycle before there was a memo, and what every caller without
-   * one still does.
+   * THE PROJECTION IS READ ONLY WHEN THE ANSWER IS NOT ALREADY DERIVED. Grouping the whole
+   * projection by folder and filtering each group to its folder's epoch is proportional to the
+   * MAILBOX, and it ran every cycle to produce, for a settled mailbox, the arrays it produced last
+   * time. {@link KnownSetCache} holds them against the generation of the set they came from. The
+   * precondition is narrow: every folder's ROW EPOCH must match what it was, because that is the
+   * input the resolution was taken from. Anything else takes the read — what this function did on
+   * every cycle before there was a memo, and what every caller without one still does.
    */
   const derived = memo?.derivedFolders() ?? null;
   const epochs = new Map<string, string>();

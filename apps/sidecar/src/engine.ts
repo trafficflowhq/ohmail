@@ -4675,20 +4675,13 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
        */
       /**
        * THE KNOWN-SET MEMO, ONE PER ATTACHMENT — `apps/worker/src/known-set.ts`, on this door.
-       *
-       * Without it every idle cycle re-read every locator this mailbox has: `buildCursor` asks for
-       * the whole projection to decide which UIDs need not be fetched, so a settled mailbox paid
-       * its own SIZE per poll for the answer "nothing". The memo answers from memory for as long
-       * as nothing could have changed it, and it is DIRTY BY DEFAULT — the proxy drops it on every
-       * repo method not classified neutral, and `runSyncCycle` drops it on any throw.
-       *
-       * Two legs hold it up on this door, and they are not the hosted worker's. One: this process
-       * holds an EXCLUSIVE lock on the data directory, so no other process can write the
-       * projection. Two: the app's own routes share the store and do NOT go through the cycle's
-       * repo — every one of them writes a change-log row, so the mark {@link changeLogMark}
-       * already reads for the idle ladder is the comparison, taken immediately before each drain.
-       * The one writer with no change row is the removal wipe, and it runs only after the runtime
-       * has left the roster — this memo dies with the attachment that owns it.
+       * Without it every idle cycle re-read every locator this mailbox holds. DIRTY BY DEFAULT:
+       * the proxy drops it on every repo method not classified neutral, `runSyncCycle` on any
+       * throw. Two legs hold it here — this process holds an EXCLUSIVE lock on the data directory,
+       * so nothing else can write the projection; and the app's own routes share the store without
+       * going through the cycle's repo, so the change-log mark {@link changeLogMark} is the
+       * comparison. The one writer with no change row is the removal wipe, which runs after the
+       * runtime has left the roster, so this memo dies with the attachment that owns it.
        */
       const knownSet = new KnownSetCache(mb.id);
       /** The change-log mark this runtime's last drain left behind; `null` is an unknown. */
@@ -4780,18 +4773,13 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           cursorBuilds: 0, locatorReads: 0, locatorRows: 0, cursorFolders: 0, observed: 0,
         };
         let checkpoints = 0;
-        /* WHERE THE CHANGE LOG STOOD WHEN THIS DRAIN BEGAN — the comparison BOTH gates below are
-           taken on, and read here rather than at the caller because the lease gate runs between
-           the two and writes `ohmail/_meta`. One indexed aggregate over the log's own primary key,
-           once per drain.
-
-           THE MEMO'S DROP IS THE FIRST OF THE TWO. The proxy in `known-set.ts` drops on every
-           write the CYCLE makes; the app's own routes share this store, go nowhere near the
-           cycle's repo, and every one of them writes a change-log row — so this mark is the whole
-           comparison. It is recorded at the drain's END as the value read HERE, not as a second
-           reading: a route that wrote WHILE this drain ran would otherwise be folded into the
-           end reading and never drop anything. A mark that could not be read is an UNKNOWN and
-           takes the drop path, never the keep path. */
+        /* WHERE THE CHANGE LOG STOOD WHEN THIS DRAIN BEGAN — the comparison BOTH gates below
+           take, read here and not at the caller because the lease gate writes `ohmail/_meta`
+           between the two. One indexed aggregate per drain. The memo's drop is the first gate:
+           the app's own routes write this store without going through the cycle's repo, and each
+           writes a change row. It is RECORDED at the drain's end as the value read HERE — a route
+           that wrote while the drain ran would otherwise be folded into the end reading and drop
+           nothing. An unreadable mark is an UNKNOWN and takes the drop path. */
         const markAtStart = await changeLogMark();
         if (markAtStart === null || knownSetMark === null || markAtStart !== knownSetMark) {
           knownSet.drop("the store moved outside the drain");
@@ -4997,21 +4985,14 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                renders must not be able to disagree with the line a log carries about one pass. */
             firstSync.noteStamps(stamps);
           }
-          /* And behind the drain, for the tail above — the suggestions, the name repair, the join
-             heal and the stamps all write AFTER the last cycle's fold. The periodic checkpointer
-             (`db.ts`) bounds the log to five minutes of churn and nothing narrower, which is why the
-             cycle takes its own; what is left here is one drain's tail. AWAITED: the next drain
-             cannot start until this one's log folds in, and `checkpoint()` never throws
-             (`checkpointWal`).
-
-             AND ONLY WHEN THE TAIL HAS SOMETHING TO FOLD. A settled mailbox ran one cycle that
-             moved nothing, and its whole tail is `stampSynced`'s one-row `last_sync_at` — a fact
-             the next drain re-derives, so a crash that loses it costs nothing and it does not
-             earn a fold of its own. Every tail pass that writes mail the window must learn about
-             writes a change-log row, so the mark is the comparison; a mark that could not be read
-             is an UNKNOWN and takes the fold, never skips it. `inbound_quiet` writes no change row
-             and says so itself — its stamps are `mailboxes` columns a panel polls, and the
-             five-minute checkpointer is their bound, as it was before this gate. */
+          /* THE TAIL'S FOLD, AND ONLY WHEN THE TAIL WROTE. The suggestions, the name repair, the
+             join heal and the stamps all write after the last cycle's fold, and the periodic
+             checkpointer bounds the log to five minutes and nothing narrower. But a settled
+             mailbox's whole tail is `stampSynced`'s one-row `last_sync_at`, which the next drain
+             re-derives — a crash that loses it costs nothing, and it does not earn a fold. Every
+             tail pass writing mail writes a change row, so the mark is the comparison; an
+             unreadable mark takes the fold rather than skipping it. `inbound_quiet` writes no
+             change row and says so itself. AWAITED, and `checkpoint()` never throws. */
           const markAtEnd = await changeLogMark();
           const tailWrote = markAtStart === null || markAtEnd === null || markAtEnd !== markAtStart;
           if (cycles > 0 && (census.observed > 0 || tailWrote)) {

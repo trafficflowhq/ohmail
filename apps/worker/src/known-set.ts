@@ -167,19 +167,13 @@ export class KnownSetCache {
    */
   private gen = 0;
   /**
-   * THE CURSOR SHAPE, DERIVED ONCE PER SET. `buildCursor` groups the whole projection by folder and
-   * filters each group to the folder's epoch — mailbox-sized work, and on a settled mailbox it
-   * produced the same arrays every cycle from a set the memo above had not let move.
-   *
-   * Three parts, and each answers a different question. `byFolder` holds the arrays, keyed by
-   * `folder\u0000epoch`, so a folder whose epoch moved misses and is rebuilt alone. `rowEpochs` is
-   * the epoch each folder's ROW named at the time (`null` for a row that named none) — the input
-   * that decides the resolution, and the only way to know a folder's answer would come out the
-   * same. `resolved` is the epoch each folder actually resolved to, which for a row that names
-   * none is derived FROM the entries: same entries and same rows, same answer.
-   *
-   * Held against {@link gen}, so a set that moved invalidates all of it at once, and dropped with
-   * the entries.
+   * THE CURSOR SHAPE, DERIVED ONCE PER SET — `buildCursor`'s per-folder work, which is
+   * mailbox-sized and produced the same arrays every cycle. `byFolder` holds them keyed by
+   * `folder\u0000epoch`, so a folder whose epoch moved is rebuilt alone; `rowEpochs` is the epoch
+   * each folder's ROW named at the time (`null` for none), the input the resolution was taken
+   * from; `resolved` is what each folder resolved to, which for a row naming none is derived FROM
+   * the entries — same entries and same rows, same answer. Held against {@link gen}, so a set that
+   * moved invalidates all of it at once, and dropped with the entries.
    */
   private shape: {
     gen: number;

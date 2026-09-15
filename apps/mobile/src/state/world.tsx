@@ -1075,15 +1075,13 @@ export function WorldProvider({ children }: { children: ReactNode }) {
   }, [engine, screening]);
 
   /**
-   * THE MAILBOX'S OWN PROJECTION — everything derived from the mirror, and nothing derived from
-   * the connection.
+   * THE MAILBOX'S OWN PROJECTION — derived from the mirror, never from the connection.
    *
-   * It used to be one memo with the boot facts inside it, so a poll's `connecting → syncing →
-   * idle` walk re-derived the WHOLE world two or three times a tick: the partition, both shelves,
-   * the piles, History, the tags, the scheduled list and the folder lists, over a mirror that had
-   * not moved. The split is the fix — this half is keyed on what the MAILBOX does (`version`, the
-   * screening answer, the folders flag, the clock's own beat), and the half below re-reads the
-   * boot facts per render, so the labels still clear in the pass the drain settles in.
+   * One memo held both, so a poll's `connecting → syncing → idle` walk re-derived the WHOLE world
+   * two or three times a tick: the partition, both shelves, the piles, History, the tags, the
+   * scheduled list and the folder lists, over a mirror that had not moved. This half is keyed on
+   * what the MAILBOX does; the half below re-reads the boot facts per render, so the labels still
+   * clear in the pass the drain settles in.
    */
   const projected = useMemo<Omit<World, "boot" | "abandoned" | "face" | "sendOutcome"> | null>(() => {
     if (engine === null || session === null) return null;
@@ -1234,16 +1232,12 @@ export function WorldProvider({ children }: { children: ReactNode }) {
 
   /**
    * AND THE WORLD THE SCREENS READ — the projection above plus the facts that move with the
-   * CONNECTION, assembled per render and derived from nothing.
-   *
-   * Every field here is a read, never a walk: `settled` and `staleAsOf` are two store reads, the
-   * two door verdicts are module state, and the face and send-outcome fields are values this
-   * component already holds. That is why they may depend on `conn.syncing` — the settled stamp
-   * lands as a drain completes and the label has to clear in the SAME pass, which is what the
-   * split had to preserve: before it, that same dependency dragged the whole mailbox through a
-   * re-derivation two or three times a poll. `outcomeSeq` is here for its own reason — a
-   * reconnect flush settling a queued key has to reach a locked composer's settle effect, and no
-   * mirror change says so.
+   * CONNECTION, assembled per render and derived from nothing. Every field here is a read, never a
+   * walk: two store reads, two module-state verdicts, values this component already holds. That is
+   * why it may depend on `conn.syncing` — the settled stamp lands as a drain completes and the
+   * label has to clear in the SAME pass; before the split that dependency dragged the whole
+   * mailbox through a re-derivation two or three times a poll. `outcomeSeq` is here so a reconnect
+   * flush settling a queued key reaches a locked composer's settle effect.
    */
   const world = useMemo<World>(() => {
     if (projected === null || engine === null || session === null) return emptyWorld(actions);

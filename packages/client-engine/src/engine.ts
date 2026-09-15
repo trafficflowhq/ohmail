@@ -3563,17 +3563,14 @@ export class OhmailEngine {
    * history, and history is what the window is for.
    */
   /**
-   * AND AT THE SETTLE IT RUNS ONLY WHEN SOMETHING MOVED. Everything below reads the whole mirror
+   * AND AT THE SETTLE IT RUNS ONLY WHEN SOMETHING MOVED — everything below reads the whole mirror
    * and sorts it, so a settled client paid its own SIZE per poll to be told there was nothing to
-   * evict. The inputs are records — messages and the five that pin them — plus the age term, and
-   * {@link StoreReader.stampExcept} moves for every one of the first while {@link cutlineGen}
-   * carries the second. Bodies are the one type excluded: they are evicted BY this pass and never
-   * decide it, and a single open writes three of them.
-   *
-   * The age term alone can make a row evictable with nothing written, and that is deliberately not
-   * a reason to run: ageing only ever evicts MORE, a mirror nobody is writing to is not growing,
-   * and the next arrival, the next cutline answer and the next launch each run the pass. A backlog
-   * page (`graceAbove`) is never skipped — that arm exists to bound the mirror on the way IN.
+   * evict. Its inputs are records plus the age term: {@link StoreReader.stampExcept} moves for
+   * every record, {@link cutlineGen} for the age term. Bodies are excluded — evicted BY this pass,
+   * never deciding it. The age term alone can open a gap with nothing written, and that is
+   * deliberately not a reason to run: ageing only evicts MORE, an unwritten mirror is not growing,
+   * and the next arrival, cutline answer and launch each run the pass. A backlog page
+   * (`graceAbove`) is never skipped — that arm bounds the mirror on the way IN.
    */
   private static readonly PRUNE_IGNORES: readonly string[] = ["message_body"];
 
