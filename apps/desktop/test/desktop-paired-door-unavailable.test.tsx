@@ -42,6 +42,15 @@ import { parsePairLink } from "@ohmail/client-engine";
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const h = React.createElement;
+/* TYPED FOR `createElement`, which picks its last overload for a props object with no
+   `children` and reports the provider as unassignable — the shape several files in this
+   directory carry as a pinned error. Declared here instead, so this file adds none. */
+const Intl = NextIntlClientProvider as unknown as React.FunctionComponent<{
+  locale: string;
+  messages: unknown;
+  timeZone: string;
+  children?: React.ReactNode;
+}>;
 /* The same spelling `desktop-door-chooser.test.tsx` uses: this React's `act` is on the
    namespace rather than a named export the type declarations admit. */
 const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
@@ -106,8 +115,8 @@ describe("the door says so at step one", () => {
     await act(async () => {
       root!.render(
         h(
-          NextIntlClientProvider,
-          { locale: "en", messages: en as never, timeZone: "Europe/Zurich" },
+          Intl,
+          { locale: "en", messages: en, timeZone: "Europe/Zurich" },
           h(DoorChooser, { onEntered: () => {} }),
         ),
       );

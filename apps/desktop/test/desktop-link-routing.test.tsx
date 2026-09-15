@@ -5,6 +5,9 @@ import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 
 import en from "../../webapp/messages/en.json";
+/* THE SENTENCE FROM THE TABLE THAT HOLDS IT, never a literal: a copy edit must move this
+   case with it rather than leave it asserting a sentence nobody renders. */
+import { DOOR_COPY } from "../src/door-copy.js";
 
 /**
  * ═══ A PAIRING LINK PASTED INTO THE SELF-HOSTED DOOR'S ADDRESS FIELD ═══════════════════════
@@ -103,7 +106,22 @@ const PIN = "D".repeat(43);
 const LINK = `https://192.168.1.24:8443/pair#k1.${PIN}.tok_pasted`;
 
 describe("a pinned pairing link in the self-hosted address field", () => {
-  it("opens the paired door instead, and dials nothing", async () => {
+  /**
+   * RE-DERIVED 2026-09-15, because half this case's premise died with a ruling and the other
+   * half is the whole reason the routing exists.
+   *
+   * What it asserted was "the paired door opens". That door refuses at step one now — it cannot
+   * be completed from any state a new install is in (`PAIRED_DOOR_AVAILABLE`) — so opening it
+   * would be the dead end the ruling removed. What the routing is FOR survives untouched and is
+   * what this case holds: the link is RECOGNISED as a pairing link before anything is dialled,
+   * so it is answered by the paired door's own sentence rather than by the self-hosted door's
+   * refusals — the worst of which tells somebody to install a root certificate — and it costs
+   * zero fetches, so the previous door's mirror is untouched.
+   *
+   * The name changed with the assertion. A case renamed and left asserting the old thing is how
+   * a guard keeps passing for a property nobody holds any more.
+   */
+  it("is answered by the paired door's own sentence, and dials nothing", async () => {
     const shell = refusingShell();
     const el = await openServerDoor();
     /* The premise: we really are on the self-hosted door. */
@@ -113,11 +131,22 @@ describe("a pinned pairing link in the self-hosted address field", () => {
     await type(el, "server-address", "mila@example.com");
     await submit(el);
 
-    /* THE PAIRED DOOR IS NOW ON SCREEN. Its own lead names where the link comes from. */
-    expect(el.textContent, "the window stayed on the self-hosted door").toContain("Another computer");
-    expect(el.textContent).toContain("Paste the pairing link from ohmail on that computer");
-    /* AND THE OPERATOR-CA SENTENCE — the advice this routing exists to prevent — is gone. */
-    expect(el.textContent, "the certificate advice was shown for a pairing link")
+    /* THE PAIRED DOOR'S ANSWER, on the door the person is standing at. */
+    expect(el.textContent, "the link was not recognised as a pairing link")
+      .toContain(DOOR_COPY.doorHostUnavailable);
+    /* AND NOT ITS PANE — reaching `#host-link` is the dead end. */
+    expect(el.querySelector("#host-link"), "the window walked into the paired door's form")
+      .toBeNull();
+    /* AND THE REFUSAL SAYS NOTHING ABOUT CERTIFICATES — the advice this routing exists to
+       prevent. SCOPED TO `.join-error`, and that scope is the re-derivation, not a weakening:
+       the self-hosted door's standing hint under its address field mentions a root certificate
+       at rest, before anything has been typed, so a whole-screen read of those words was only
+       ever answering "did the window navigate away". What the routing prevents is the door's
+       REFUSAL blaming a certificate for a pairing link, which is this element. */
+    const refusal = el.querySelector(".join-error");
+    expect(refusal?.textContent, "the link produced no refusal at all")
+      .toBe(DOOR_COPY.doorHostUnavailable);
+    expect(refusal?.textContent, "the certificate advice was given for a pairing link")
       .not.toMatch(/root certificate/i);
     /* ZERO FETCHES. Nothing was configured, so the previous door's mirror is untouched. */
     expect(shell.calls, "the window dialled before recognising the link").toEqual([]);
