@@ -7,8 +7,8 @@
  */
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
-import { FOLDER_OF_VIEW, isProtectedMessage, isResurfaced, type EngineMessage, type OhmailView, type TagDTO } from "@ohmail/client-engine";
-import { Button, Chip, DatePicker, Icon, InfoNote, Kbd, ProtectedBlock, ReadingPane } from "@ohmail/ui";
+import { FOLDER_OF_VIEW, isResurfaced, type EngineMessage, type OhmailView, type TagDTO } from "@ohmail/client-engine";
+import { Button, Chip, DatePicker, Icon, InfoNote, Kbd, ReadingPane } from "@ohmail/ui";
 import { AttachmentStrip } from "../components/AttachmentStrip";
 import { isPreviewable } from "../components/AttachmentPreview";
 import { opensInSystemViewer } from "./open-attachment";
@@ -1261,18 +1261,6 @@ function ActionBar({
   );
 }
 
-/** "Protected — …" renders with the leading word bolded, like the prototype. */
-function ProtectedPolicy({ text }: { text: string }) {
-  const dash = text.indexOf(" — ");
-  if (dash < 0) return <>{text}</>;
-  return (
-    <>
-      <b>{text.slice(0, dash)}</b>
-      {text.slice(dash)}
-    </>
-  );
-}
-
 /**
  * Every gesture that means "I am reading this now" — see `release` in the thread anchor below.
  * Module scope so the effect that installs them has no changing dependency to declare.
@@ -1344,17 +1332,8 @@ export function MessagePane({
   const tc = useTranslations("reply");
   /** Hydration state copy, shared with the Reads/Receipts cards and the Screener preview. */
   const tb = useTranslations("body");
-  const tm = useTranslations("message");
   /** The conversation stack, so the pane can open at the LATEST message — see below. */
   const convRef = useRef<HTMLDivElement>(null);
-  /**
-   * `isProtectedMessage`, NOT `message.protected` — see the same decision in `Conversation.tsx`
-   * for the failure this was. `protected` is the fixture world's display extra and is absent on
-   * every live message, so this pane's protected branch had never once run against a real
-   * account; the engine meanwhile refuses to hydrate those bodies, and the pane rendered the
-   * resulting record-less `snippet` as "Loading the full message…" with no end and no control.
-   */
-  const isProtected = isProtectedMessage(message);
   const mine = tagsOfMessage(message, tags);
   // Shared with every other mount of this message's bar; clears when the message changes.
   const [panel, setPanel] = useBarPanel(message.id);
@@ -1575,30 +1554,19 @@ export function MessagePane({
   }, [message.id, body.state]);
 
   /**
-   * A PROTECTED MESSAGE RENDERS NO TEXT, AND IT IS THIS BRANCH THAT MAKES IT TRUE. `isProtected` is checked FIRST and
-   * `body` is not consulted inside it: a protected message renders the block and no text at all, whatever the mirror
-   * or a hydration happens to hold for it. The endpoint's own text is already redacted server-side
-   * (`message-service.ts` `getBody`), so hydration cannot introduce a secret here — but "the text we were given is
-   * safe" and "this pane does not render a protected message's text" are two different guarantees, and the second is
-   * the one a reader can see. AND IT IS NOW THE ONLY EXPRESSION THAT RENDERS THE MAIL HERE. This pane used to hand
-   * `ReadingPane` a `body` STRING whenever there was no conversation — a third render path, and the one most messages
-   * took, which `ReadingPane` drew as its own `<p className="msg-body">`.
+   * THE ONE EXPRESSION THAT RENDERS THE MAIL HERE. This pane used to hand `ReadingPane` a `body`
+   * STRING whenever there was no conversation — a third render path, and the one most messages
+   * took, which `ReadingPane` drew as its own `<p className="msg-body">`. A body fix that only
+   * reached `focusedBody` would have been invisible on exactly the common case; `children`
+   * replaces `body` in `ReadingPane`, so the pane composes that slot itself, always.
    */
 
   /**
-   * A body fix that only reached `focusedBody` would have been invisible on exactly the common case. `children`
-   * replaces `body` in `ReadingPane`, so the pane composes that slot itself now, always, and the `body` prop is not
-   * passed in any case.
-   */
-  /**
-   * THE FIXTURE EXTRA IS OPTIONAL HERE, AND ON A LIVE ACCOUNT IT IS ALWAYS ABSENT.
-   *
-   * `message.protected` carries demo-authored copy — a label, a redaction note, a policy
-   * sentence. It exists only in the fixture world. `ProtectedBlock` defaults all three to the
-   * same wording the live surfaces already use for this state (`ohbox.protectedPreview`,
-   * `reply.quotedProtected` — "Verification code ······ (redacted)"), so a live protected
-   * message renders the block with the product's own copy and no policy line, rather than
-   * throwing on `message.protected!` the moment this branch became reachable for real mail.
+   * SENSITIVE MAIL IS RENDERED LIKE ANY OTHER, and a redaction block used to stand here instead.
+   * Body withholding was withdrawn: the mail sits in full on the person's own server, so blanking
+   * this copy hid it from the one person entitled to read it, and the detector over-fired on
+   * ordinary mail. `isProtectedMessage` is a constant `false` and stays as a named seam for the
+   * body-fetch and cache gates in the engine — the branch it gated HERE rendered for nobody.
    */
   /**
    * WHICH RENDERING IS ON SCREEN, BECAUSE THE STRIP BELOW DEPENDS ON IT: Mail that declares no layout canvas is drawn
@@ -1657,16 +1625,7 @@ export function MessagePane({
     [chrome.attachments, message.id],
   );
 
-  const extra = message.protected;
-  const focusedBody = isProtected ? (
-    <ProtectedBlock
-      /* The server may name the protected field itself; when it does not, the catalogue does —
-         `extra?.label` alone rendered an empty line in every locale. */
-      label={extra?.label ?? tm("protectedLabel")}
-      redactedNote={extra?.redactedNote ?? tm("protectedRedacted")}
-      policy={extra ? <ProtectedPolicy text={extra.policy} /> : undefined}
-    />
-  ) : (
+  const focusedBody = (
     /* A `<div>` rather than the `<p>` this was, because `BodyText` emits the paragraphs
        now and a `<p>` may not contain one. `.msg-body` is unchanged and stays the one element
        that holds the mail and nothing else, which is what `test/conversation.test.ts` and
@@ -1718,12 +1677,10 @@ export function MessagePane({
   );
 
   /*
-   * The strip travels WITH the body, so every place that renders the focused message
-   * gets it and none of them has to remember. `isProtected` gates it for the same reason the
-   * body is gated above: this pane renders no protected content at all, and a file
-   * a sender attached is content.
+   * The strip travels WITH the body, so every place that renders the focused message gets it and
+   * none of them has to remember.
    */
-  const attachments = isProtected ? undefined : chrome.attachments;
+  const attachments = chrome.attachments;
   const focusedMessage = (
     <>
       {focusedBody}
@@ -1792,7 +1749,7 @@ export function MessagePane({
    * instead. A body that arrives first clears `waiting` and the timer with it.
    */
   const waitingForBody = body.state === "loading" || body.state === "snippet";
-  const stalled = useBodyStalled(message.id, !isProtected && waitingForBody);
+  const stalled = useBodyStalled(message.id, waitingForBody);
   /**
    * THE FAILURE'S TAXONOMY: AUTH LOSS IS NOT A CONTENT FAILURE: "Couldn't load the full message — Retry" was this
    * pane's one sentence for every failure, and during a dead session it was the WRONG one: the message is fine, the
@@ -1812,11 +1769,11 @@ export function MessagePane({
   const sessionDead = useSessionDead();
   const bodyFailed = body.state === "failed";
   useEffect(() => {
-    if (!bodyFailed || isProtected) return;
+    if (!bodyFailed) return;
     return subscribeSessionRevival(() => chrome.hydrateBody(message.id, { retry: true }));
-  }, [bodyFailed, isProtected, chrome, message.id]);
+  }, [bodyFailed, chrome, message.id]);
   const bodyNote =
-    isProtected || body.state === "full" ? undefined : body.state === "withheld" ? (
+    body.state === "full" ? undefined : body.state === "withheld" ? (
       /* ── WITHHELD IS ANSWERED, NOT FAILED — so no Retry and no spinner. ─────────────────────
          The server said it holds no content for this message, which a retry cannot change and
          a "couldn't load" would misstate: nothing failed. WHICH policy emptied it decides the

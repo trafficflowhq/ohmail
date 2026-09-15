@@ -1476,15 +1476,12 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
   /**
    * A PRESS IS REPORTED FROM ITS ANSWER — the shell's one dispatch seam.
    *
-   * Every verb here used to be `void engine.mutate(…)` with its success sentence raised on the
-   * next line: the overlay moved the row, the service refused, the engine rolled the overlay back,
-   * and the sentence stood over mail that had not changed. A reader install's Done on a scheduled
-   * message said "filed under Earlier" while the booking survived and the mail came back.
-   *
-   * So the sentence waits for the outcome. `rolled_back` renders the refusal instead and answers
-   * `false`, which is what lets a caller withhold the follow-up half of a two-verb press. The
-   * optimistic overlay is the engine's own and it is already rolled back by the time this resolves
-   * — nothing is undone here, the interface is simply told the truth about it.
+   * Every verb here used to be `void engine.mutate(…)` with its sentence raised on the next line:
+   * the service refused, the engine rolled the overlay back, and the sentence stood over mail that
+   * had not changed. So the sentence waits for the outcome. `rolled_back` renders the refusal and
+   * answers `false`, which lets a caller withhold the follow-up half of a two-verb press. Nothing
+   * is undone here — the overlay is the engine's own, already rolled back by the time this
+   * resolves; the interface is simply told the truth about it.
    */
   const dispatchPress = useStableCallback((mutation: EngineMutation): Promise<PressOutcome> =>
     engine.mutate(mutation).then(
@@ -4964,13 +4961,12 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
       /**
        * `move:<view>` — THE SAME VERB THE SINGLE ROW USES, once per sender.
        *
-       * This arm used to dispatch a folder move per message against the PRESENTED place, which
-       * for a pile is not where the mail physically sits: Reads and Receipts are what a sender's
-       * rule says, not a folder, so the moves computed no effects, the engine refused them, and
-       * the sentence counted messages nothing had moved. The press writes the ROUTING instead —
-       * `planMoveToPlace` per sender, narrowed to THAT sender's picked messages — and the
-       * sentence names both numbers, because a selection spanning senders changes where mail
-       * from every one of them goes from now on and that is the part worth saying.
+       * This arm dispatched a folder move per message against the PRESENTED place, which for a
+       * pile is not where the mail sits: Reads and Receipts are what a sender's rule says, so the
+       * moves computed no effects and the sentence counted messages nothing had moved. It writes
+       * the ROUTING instead — `planMoveToPlace` per sender, narrowed to that sender's picked
+       * messages — and names both numbers, because a selection spanning senders changes where
+       * mail from every one of them goes from now on.
        */
       const view = action.slice("move:".length) as OhmailView;
       /* The destination has to BE one — the single arm's own guard, asked here too. */

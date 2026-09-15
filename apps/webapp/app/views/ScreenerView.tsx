@@ -31,7 +31,6 @@ import {
   ListGroupLabel,
   ListRows,
   MessageRow,
-  ProtectedBlock,
   SegmentedControl,
   SizeLadder,
   Spinner,
@@ -1769,7 +1768,6 @@ export function HeldMail({
   dull?: boolean;
 }) {
   const t = useTranslations("body");
-  const tm = useTranslations("message");
   /**
    * WHAT THIS MESSAGE HAD REFUSED, as the viewer reports it (`MessageBody.onNotice`) — worn in the
    * head line as the glyph and two-word caption the stream card and the message header wear, so
@@ -1828,17 +1826,15 @@ export function HeldMail({
    * state offers, and it is what makes the new sentence honest: `hydrateBody` refuses an automatic re-ask, so without
    * the button this state would be a dead end with better wording.
    */
-  const protectedMail = bodyStall === "protected";
   const waiting =
-    !protectedMail
-    && bodyState !== undefined
+    bodyState !== undefined
     && bodyState !== "full"
     && bodyState !== "failed"
     && (bodyState === "loading" || bodyStall == null);
   const stalled = useBodyStalled(messageId ?? subject, waiting);
   const failed = bodyState === "failed" || (waiting && stalled);
   const note =
-    protectedMail || bodyState === undefined || bodyState === "full"
+    bodyState === undefined || bodyState === "full"
       ? null
       : failed
         ? t("failed")
@@ -1851,8 +1847,7 @@ export function HeldMail({
         <b>{from}</b>
         {address ? <span className="addr">{address}</span> : null}
         {/* Before the time, so the date keeps its corner and the notice leads into it — the stream
-            card's order. A protected message mounts the block below and never the viewer, so no
-            report arrives for it and nothing here needs to gate on that. */}
+            card's order. */}
         {notice ? <BlockNoticeGloss notice={notice} /> : null}
         <span className="t num">{time ?? ""}</span>
       </div>
@@ -1870,28 +1865,22 @@ export function HeldMail({
           mail client and not a text dump. With no html (a fixture row, or a body not yet
           hydrated to `full`) `MessageBody` renders the text part, which is what this preview
           showed before. */}
+      {/* SENSITIVE MAIL IS SHOWN HERE LIKE ANY OTHER, and this used to be a redaction block over
+          it. The gate is where a stranger's first mail is read, and a verification code from a
+          stranger is the ordinary case rather than an exotic one; the mail already sits in full
+          on the person's own server, so hiding this copy hid it from the one person entitled to
+          read it. Body withholding was withdrawn (`isProtectedMessage` is a constant false) and
+          the branch that stood here rendered for nobody. */}
       <div className="hm-body">
-        {protectedMail ? (
-          /* SENSITIVE MAIL RENDERS NO TEXT IN THIS PILE EITHER. The gate is where a stranger's
-             first mail is
-             read, and a verification code from a stranger is the ordinary case rather than an
-             exotic one. `MessagePane` has always routed a protected message past its body
-             renderer; this preview handed the same message's text to `MessageBody` and then
-             said it was still loading. The block carries its own default label — the string
-             `ohbox.protectedPreview` and `reply.quotedProtected` already show elsewhere — so
-             the reader gets the product's one answer for protected mail, not a third one. */
-          <ProtectedBlock label={tm("protectedLabel")} redactedNote={tm("protectedRedacted")} />
-        ) : (
-          <MessageBody
-            text={body}
-            html={html}
-            remoteLoaded={remoteLoaded}
-            imageProxy={imageProxy}
-            onLoadRemote={onLoadRemote}
-            loadTrackingPixels={loadTrackingPixels ?? false}
-            onNotice={setNotice}
-          />
-        )}
+        <MessageBody
+          text={body}
+          html={html}
+          remoteLoaded={remoteLoaded}
+          imageProxy={imageProxy}
+          onLoadRemote={onLoadRemote}
+          loadTrackingPixels={loadTrackingPixels ?? false}
+          onNotice={setNotice}
+        />
       </div>
       {note ? (
         <p className={failed ? "hm-state warn" : "hm-state"} role="status">
@@ -1906,7 +1895,7 @@ export function HeldMail({
       {/* The unsubscribe control (C): only once the body is hydrated (`full`), so the posture is
           real, and only where a server can act on it (`onUnsubscribe` present — absent on the
           demo and in the waiting preview). */}
-      {!protectedMail && bodyState === "full" && onUnsubscribe && unsubscribe ? (
+      {bodyState === "full" && onUnsubscribe && unsubscribe ? (
         <HeldUnsubscribe state={unsubscribe} url={unsubscribeUrl ?? null} onUnsubscribe={onUnsubscribe} />
       ) : null}
     </article>

@@ -13,14 +13,11 @@ export const DAY_WATCH_MS = 60_000;
 /**
  * THE SHELL'S RENDERED CLOCK, AND IT MOVES.
  *
- * It used to be `useMemo(() => new Date(), [])`: frozen at mount, so an app left open overnight
- * kept yesterday. Every relative label went with it, and "Tomorrow" was minted from a day that
- * had already passed — the booking resurfaced the moment it was made.
- *
- * `fixed` is the fixture world's instant: a demo whose clock moves changes under a frame, and it
- * takes no timer at all. Otherwise the value is re-read only when the calendar DAY in the
- * reader's zone differs from the one on screen — one re-render at midnight rather than 1 440 a
- * day, on a shell whose re-render cost is measured.
+ * It was `useMemo(() => new Date(), [])`: frozen at mount, so an app left open overnight kept
+ * yesterday and "Tomorrow" was minted from a day that had already passed. `fixed` is the fixture
+ * world's instant — a demo whose clock moves changes under a frame — and it arms no timer at
+ * all. Otherwise the value is re-read only when the calendar DAY in the reader's zone differs
+ * from the one on screen: one re-render at midnight rather than 1 440 a day.
  */
 export function useDayClock(fixed: Date | null): Date {
   const [now, setNow] = useState<Date>(() => fixed ?? new Date());

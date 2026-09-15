@@ -14,7 +14,6 @@ import { useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import {
   FOLDER_OF_VIEW,
-  isProtectedMessage,
   physicalFolderOf,
   heldReleaseGroups,
   heldReleaseTotalOf,
@@ -72,15 +71,15 @@ export interface DecideOptions {
 }
 
 /**
- * Why a held message's body is never going to arrive. `ScreenerHeldMail.bodyState` says what
- * the text IS; it cannot say whether a `snippet` is in flight or will never be fetched — that
- * is a fact about the MESSAGE, held by `OhmailEngine.hydrateBody`: `protected` (sensitive mail
- * — hydrateBody returns without asking and purges any cached body) and `absent` (the id is not
- * in the mirror — fixture held ids, or a drained or evicted row). Both were rendered as
- * "Loading the full message…" with no end: the preview claimed a request the engine had decided
- * never to make. Reading the predicate hydrateBody reads keeps the two from drifting.
+ * Why a held message's body is never going to arrive. `ScreenerHeldMail.bodyState` says what the
+ * text IS; it cannot say whether a `snippet` is in flight or will never be fetched — that is a
+ * fact about the MESSAGE, held by `OhmailEngine.hydrateBody`. One reason is left: `absent`, the
+ * id is not in the mirror (fixture held ids, or a drained or evicted row). It was rendered as
+ * "Loading the full message…" with no end, claiming a request the engine had decided never to
+ * make. The second reason was sensitive mail, and body withholding was withdrawn — a held
+ * sensitive message is fetched and shown like any other.
  */
-export type HeldBodyStall = "protected" | "absent";
+export type HeldBodyStall = "absent";
 
 interface PendingEntry {
   sender: ScreenerSenderDTO;
@@ -1569,16 +1568,11 @@ export function useScreenerState(
 
   /**
    * See {@link HeldBodyStall}. The RAW reader, deliberately: the projection answers where a
-   * message PRESENTS, and this asks two questions about the message itself — does it exist, and
-   * is it protected. `isProtectedMessage` rather than a re-derived test, because it is the exact
-   * predicate `hydrateBody` uses to decide not to fetch, and the whole defect was a surface
-   * disagreeing with that decision.
+   * message PRESENTS, and this asks one question about the message itself — is it in the mirror
+   * at all. A row the mirror does not hold is one `hydrateBody` will never fetch.
    */
-  const bodyStall = (messageId: string): HeldBodyStall | null => {
-    const m = reader.get<EngineMessage>("message", messageId);
-    if (!m) return "absent";
-    return isProtectedMessage(m) ? "protected" : null;
-  };
+  const bodyStall = (messageId: string): HeldBodyStall | null =>
+    (reader.get<EngineMessage>("message", messageId) ? null : "absent");
 
   // A pinned sender and the DERIVED row for the same address are the same sender: the
   // pin is this session's memory of a decision whose mail the mirror now reports sitting
