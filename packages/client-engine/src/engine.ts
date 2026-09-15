@@ -26,6 +26,7 @@ import { oneSourceReader, sendingMailboxId, winningStates } from "./selectors.js
 import { flattenResponse } from "./apply.js";
 import { CASCADE_TYPES } from "./mirror-bounds.js";
 import { countNotify } from "./client-vitals.js";
+import { ObjectUrlLedger } from "./object-urls.js";
 import { MemoryMirrorStore, type EntityReader, type MirrorStore } from "./store.js";
 // THE SHARED DRAIN POLICY — the staleness threshold, the dense-page limit and the two
 // derivations over the drain stamp, held in one module with the desktop sidecar's mirror
@@ -2193,6 +2194,12 @@ export class OhmailEngine {
   private readonly attachmentListRequests = new Map<string, Promise<AttachmentsOutcome>>();
   /** In-flight byte fetches by `messageId:attachmentId` — see {@link OhmailEngine.openAttachment}. */
   private readonly attachmentRequests = new Map<string, Promise<void>>();
+  /**
+   * Every `blob:` URL this engine has minted and not yet revoked, owned by the message it was
+   * minted for. The debt is recorded at the MINT, not in the attachment entry a release is
+   * allowed to delete first — see {@link ObjectUrlLedger}.
+   */
+  private readonly objectUrls = new ObjectUrlLedger();
   /**
    * `contentId → data: URI` per message — the embedded images already minted for the reader's
    * frame, dropped with the rest of the message's byte state by
@@ -6185,7 +6192,7 @@ export class OhmailEngine {
       const bytes = base64ToBytes(a.contentBase64);
       const mimeType = a.contentType || "application/octet-stream";
       const minted = bytes
-        ? this.mintObjectUrl(new Blob([bytes as BlobPart], { type: mimeType }), mimeType)
+        ? this.mintObjectUrl(messageId, new Blob([bytes as BlobPart], { type: mimeType }), mimeType)
         : undefined;
       return {
         // A local id, namespaced so it can never collide with a server row id. It is only ever
@@ -7248,7 +7255,7 @@ export class OhmailEngine {
         // REVOKE BEFORE RE-MINTING. A retry over a `failed` item that had somehow minted a URL,
         // or any second pass, would otherwise leak the old one for the life of the document.
         this.revokeItem(messageId, attachmentId);
-        const minted = this.mintObjectUrl(blob, current.mimeType);
+        const minted = this.mintObjectUrl(messageId, blob, current.mimeType);
         // The URL and the typed Blob are stored together: a preview parses the Blob (no
         // `fetch(blob:)`, which `connect-src 'self'` refuses on the live host), the strip and
         // `<a download>` use the URL, and both are dropped by `releaseAttachments` at once.
@@ -7256,6 +7263,12 @@ export class OhmailEngine {
           state: "ready",
           ...(minted ? { objectUrl: minted.url, blob: minted.blob } : {}),
         });
+        // THE READER MOVED ON WHILE THE BYTES WERE ON THE WIRE. The release already dropped the
+        // list, so the patch above wrote nothing and no entry carries this URL. The ledger still
+        // names it — revoke now rather than hold the whole file until the document dies.
+        if (minted && this.itemOf(messageId, attachmentId)?.objectUrl !== minted.url) {
+          this.revokeUrl(minted.url);
+        }
       })
       .catch((err: unknown) => {
         const code = (err as { code?: unknown } | null)?.code;
@@ -7503,22 +7516,19 @@ export class OhmailEngine {
   releaseAllAttachments(): void {
     const ids = new Set([...this.attachmentLists.keys(), ...this.sentAttachmentSeeds.keys()]);
     for (const messageId of ids) this.forceReleaseAttachments(messageId);
+    // Whatever the per-message passes could not name: a URL whose fetch is still in flight, and
+    // one minted for a message whose entry and seed are both already gone.
+    this.objectUrls.releaseAll();
   }
 
   /** The unconditional half of {@link OhmailEngine.releaseAttachments}. */
   private forceReleaseAttachments(messageId: string): void {
-    const seed = this.sentAttachmentSeeds.get(messageId);
-    if (seed) {
-      // The seed's compose items hold minted URLs even when the copy's list was never published
-      // (a forward still waiting on its parent) — revoke them here or they outlive everything.
-      // Revoking one twice is a no-op, so the held-list pass below stays as it is.
-      for (const item of seed.composeItems) this.revokeUrl(item.objectUrl);
-      this.sentAttachmentSeeds.delete(messageId);
-    }
-    const held = this.attachmentLists.get(messageId);
-    if (held?.state === "ready") {
-      for (const item of held.items) this.revokeUrl(item.objectUrl);
-    }
+    // ONE drain of the ledger, not a walk of the entries: it holds the seed's compose URLs (a
+    // forward still waiting on its parent publishes no list to find them under), the ready items'
+    // URLs, and any minted for this message while its entry was already gone. Each is revoked
+    // exactly once — the two walks this replaces revoked a seeded item's URL twice.
+    this.objectUrls.releaseOwner(messageId);
+    this.sentAttachmentSeeds.delete(messageId);
     this.attachmentLists.delete(messageId);
     this.inlineImages.delete(messageId);
     this.calendarTexts.delete(messageId);
@@ -7546,10 +7556,9 @@ export class OhmailEngine {
     this.revokeUrl(this.itemOf(messageId, attachmentId)?.objectUrl);
   }
 
+  /** Through the ledger, so a URL already revoked is not revoked a second time. */
   private revokeUrl(url: string | undefined): void {
-    if (!url) return;
-    const U = (globalThis as { URL?: { revokeObjectURL?: (u: string) => void } }).URL;
-    U?.revokeObjectURL?.(url);
+    this.objectUrls.revoke(url);
   }
 
   /**
@@ -7562,13 +7571,10 @@ export class OhmailEngine {
    * diverge: the bytes a preview parses are byte-for-byte the ones the browser would render or save, at the same
    * downgraded type. Minting and retention are one act for exactly that reason.
    */
-  private mintObjectUrl(blob: Blob, declaredMime: string): { url: string; blob: Blob } | undefined {
-    const U = (globalThis as {
-      URL?: { createObjectURL?: (b: Blob) => string };
-    }).URL;
-    if (typeof U?.createObjectURL !== "function") return undefined;
+  private mintObjectUrl(owner: string, blob: Blob, declaredMime: string): { url: string; blob: Blob } | undefined {
     const safeType = RENDERABLE_MIME.has(declaredMime.toLowerCase()) ? declaredMime : "application/octet-stream";
     const typed = blob.type === safeType ? blob : new Blob([blob], { type: safeType });
-    return { url: U.createObjectURL(typed), blob: typed };
+    const url = this.objectUrls.mint(owner, typed);
+    return url === undefined ? undefined : { url, blob: typed };
   }
 }
