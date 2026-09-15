@@ -372,6 +372,15 @@ export interface MessageChrome {
    * contract: the resurface is already dispatched by the time this runs.
    */
   onResurfaceTime?: (hhmm: string) => void;
+  /**
+   * THE CLOCK A HORIZON IS MINTED FROM, read at the PRESS. The bar used to compose "Tomorrow"
+   * from a value the shell captured at MOUNT, so an app left open overnight booked a return from
+   * yesterday and the message resurfaced the moment it was scheduled. A function rather than a
+   * `Date`, because the fault was precisely a `Date` that had stopped moving. The default is the
+   * device clock — the honest answer for a pane mounted without a shell — and the shell supplies
+   * its own so the fixture world keeps its fixed instant.
+   */
+  nowAt?: () => Date;
 }
 
 const noop = (): void => {};
@@ -382,6 +391,7 @@ const noop = (): void => {};
  * reply editor exists in order to show a message.
  */
 const MessageChromeContext = createContext<MessageChrome>({
+  nowAt: () => new Date(),
   ownAddresses: [],
   absoluteTime: false,
   onToggleAbsoluteTime: noop,

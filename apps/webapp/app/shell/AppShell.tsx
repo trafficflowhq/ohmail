@@ -91,6 +91,7 @@ import {
 import { PullNewMail, usePullNewMail } from "./PullNewMail";
 import { useOlderMail } from "./older-mail";
 import { PLACE_LABEL, avatarHue, hueOf, initialsOf, placeLabel, resurfaceLabel, tomorrowAt } from "./format";
+import { useDayClock } from "./day-clock";
 import { activeFormatLocale, activeFormatZone } from "./locale";
 import { displayAddress, displayDomain } from "./idn";
 import { MessagePane, type BulkAction, type MessageAction } from "./MessagePane";
@@ -1553,7 +1554,13 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
   // every door that has one: the Cloud client, the desktop window, the served host-client.
   // See `PullNewMail.tsx`.
   const pullBinding = usePullNewMail(mailboxFacts);
-  const now = useMemo(() => (demo ? DEMO_NOW : new Date()), [demo]);
+  /* The clock this shell RENDERS against — see `day-clock.ts` for why it is not a mount value. */
+  const now = useDayClock(demo ? DEMO_NOW : null);
+  /**
+   * …and what a PRESS reads. The rendered clock is at most one watch interval old, which is a
+   * minute in which a booking can be made for the wrong day; a press asks the clock itself.
+   */
+  const nowAt = useStableCallback((): Date => (demo ? DEMO_NOW : new Date()));
 
   /* ── consent: what is PRESENTED, as opposed to where it sits ────────────────────────────
    *
@@ -4689,7 +4696,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
           // place the strip's control shows (mail 0110): a key that kept minting 09:00 after
           // somebody set 14:30 would be the one resurface in the product that ignored the
           // default, and nothing on screen would say so.
-          const when = tomorrowAt(now, consent.resurfaceTime).iso;
+          const when = tomorrowAt(nowAt(), consent.resurfaceTime).iso;
           void mutateAndReport(
             { kind: "triage_set", messageId: m.id, state: "bubbled_up", bubbleUpAt: when },
             t("ohbox.toastResurface", { when: resurfaceLabel(when) }),
@@ -4916,7 +4923,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
         const state = action === "later" ? "reply_later" : action === "aside" ? "set_aside" : "bubbled_up";
         // The same default the single-message verb uses — the picker's first dated preset, at
         // the account's own hour (mail 0110).
-        const when = action === "resurface" ? tomorrowAt(now, consent.resurfaceTime).iso : null;
+        const when = action === "resurface" ? tomorrowAt(nowAt(), consent.resurfaceTime).iso : null;
         void mutateSetAndReport(
           ids.map((messageId) => ({
             kind: "triage_set" as const,
@@ -6769,6 +6776,8 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
          consent hook's own, NULL wherever no transport can store one, and it is handed over as
          fire-and-forget because the strip calls it after the resurface has already been
          dispatched — the message was the ask. A refusal is logged and the horizon stands. */
+      /* The strip mints its horizons from THIS, at the press — see `MessageChrome.nowAt`. */
+      nowAt,
       resurfaceTime: consent.resurfaceTime,
       onResurfaceTime: rememberResurfaceTime === null
         ? undefined
@@ -6785,7 +6794,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
       sendSurfaceMaxTotalBytes, replyBook,
       openSenderMenu, ownNameOf, mailboxLabelOf, writeTo, openReply, openForward, openSubjectRule,
       conversationOf, bodyOfMessage, hydrateBody, hydrateThread, attachments, remoteImages,
-      consent.foldersEnabled, consent.resurfaceTime, rememberResurfaceTime, reader, barPanel],
+      consent.foldersEnabled, consent.resurfaceTime, rememberResurfaceTime, reader, barPanel, nowAt],
   );
 
   // Resolved here rather than inside the popover so a sender whose last message has just

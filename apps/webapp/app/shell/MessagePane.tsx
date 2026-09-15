@@ -511,6 +511,13 @@ function ActionBar({
    * an unreadable value and an API too old to carry the field to 09:00, so this always holds a
    * real `'HH:MM'` — which is what makes the time visible before anybody decides.
    */
+  /**
+   * THE CLOCK THE HORIZONS ARE MINTED FROM — asked, never captured. `now` is this pane's rendered
+   * instant; the shell's is re-read when the calendar day turns, but a press is still the only
+   * moment that can be right about which day it is, so the chooser asks again at the press. The
+   * fallback is the pane's own `now`, which is fresh per render for every caller in the tree.
+   */
+  const nowAt = chrome.nowAt ?? ((): Date => now);
   const storedClock = resurfaceClock(chrome.resurfaceTime);
   const storedHhmm = `${pad2(storedClock.hour)}:${pad2(storedClock.minute)}`;
   const [resurfaceAt, setResurfaceAt] = useState(storedHhmm);
@@ -751,8 +758,9 @@ function ActionBar({
      * "Now" dispatches `resurface_now` — a state, not a date; see {@link MessageAction}, and it is separated from the
      * three horizons by nothing but order: the question the strip asks is still "when?".
      */
-    const tomorrow = tomorrowAt(now, resurfaceAt);
-    const nextWeek = nextWeekAt(now, resurfaceAt);
+    const base = nowAt();
+    const tomorrow = tomorrowAt(base, resurfaceAt);
+    const nextWeek = nextWeekAt(base, resurfaceAt);
     /** The horizon whose night skips the chosen hour, where there is one — the strip's own sentence
      *  about it is rendered below, before anything is pressed. Only a booking that DIFFERS from the
      *  request earns one: the repeated-hour night books the time that was asked for. */
@@ -768,9 +776,11 @@ function ActionBar({
      * when the hour is the one already stored — an unchanged control is not a decision — and
      * "Now" never reaches here at all: it is a state, not a date, and the time cannot apply.
      */
-    const pick = (horizon: ResurfaceHorizon) => {
+    const pick = (mint: () => ResurfaceHorizon) => {
       answerPanel();
-      onAction(`resurface:${horizon.iso}`);
+      /* MINTED HERE, at the press. The labels above were composed when the strip painted; a strip
+         left open across midnight would otherwise dispatch the day it painted on. */
+      onAction(`resurface:${mint().iso}`);
       if (resurfaceAt !== storedHhmm) chrome.onResurfaceTime?.(resurfaceAt);
     };
     /** "Tomorrow, 14:30" — so a screen reader hears the hour a sighted person can read. The time is
@@ -816,7 +826,7 @@ function ActionBar({
             type="button"
             className="abar-b abar-solo"
             aria-label={withTime(t("resurfaceTomorrow"), tomorrow.time)}
-            onClick={() => pick(tomorrow)}
+            onClick={() => pick(() => tomorrowAt(nowAt(), resurfaceAt))}
           >
             {t("resurfaceTomorrow")}
           </button>
@@ -824,7 +834,7 @@ function ActionBar({
             type="button"
             className="abar-b abar-solo"
             aria-label={withTime(t("resurfaceNextWeek"), nextWeek.time)}
-            onClick={() => pick(nextWeek)}
+            onClick={() => pick(() => nextWeekAt(nowAt(), resurfaceAt))}
           >
             {t("resurfaceNextWeek")}
           </button>
@@ -842,7 +852,7 @@ function ActionBar({
           {dateOpen ? (
             <DatePicker
               locale={activeFormatLocale()}
-              today={dayValue(now.toISOString())}
+              today={dayValue(nowAt().toISOString())}
               min={dayValue(tomorrow.iso)}
               anchor={dateRef.current}
               labels={{
@@ -853,7 +863,8 @@ function ActionBar({
               }}
               onPick={(day) => {
                 setDateOpen(false);
-                pick(dayAt(day, resurfaceAt));
+                /* A CHOSEN DATE NEEDS NO CLOCK — the person named the day. */
+                pick(() => dayAt(day, resurfaceAt));
               }}
               onClose={closeDate}
             />
