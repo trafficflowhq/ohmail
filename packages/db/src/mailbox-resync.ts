@@ -29,6 +29,15 @@ export interface MailboxResyncOutcome {
   accountId: string | null;
   /** The backoff that was in force, for the operator's record. */
   clearedRetryAfter: Date | null;
+  /**
+   * THE AUDIT ROW THIS WRITE APPENDED — `null` when it appended none.
+   *
+   * Carried out of the transaction so the surface can display the row that exists rather than
+   * one composed from the request. A console that names a row nobody wrote is the shape these
+   * two fields close: no row, no id, and the sentence says so.
+   */
+  auditId: string | null;
+  auditAt: Date | null;
 }
 
 /**
@@ -54,9 +63,9 @@ export async function resyncMailbox(db: Tx, input: MailboxResyncWrite): Promise<
     // Nothing to release. `accountId: null` distinguishes "no such mailbox" from "this one is not
     // in a backoff", because they are different answers to the operator: the first is a wrong id,
     // the second is "there was nothing to do".
-    if (!row) return { changed: false, accountId: null, clearedRetryAfter: null };
+    if (!row) return { changed: false, accountId: null, clearedRetryAfter: null, auditId: null, auditAt: null };
     if (row.retryAfter == null) {
-      return { changed: false, accountId: row.accountId, clearedRetryAfter: null };
+      return { changed: false, accountId: row.accountId, clearedRetryAfter: null, auditId: null, auditAt: null };
     }
 
     // The `IS NOT NULL` predicate is kept on the UPDATE as well, so the statement is still
@@ -66,7 +75,9 @@ export async function resyncMailbox(db: Tx, input: MailboxResyncWrite): Promise<
       .set({ retryAfter: null })
       .where(and(eq(mailboxes.id, mailboxId), isNotNull(mailboxes.retryAfter)));
 
-    await tx.insert(auditLog).values({
+    // RETURNING, because the identity of the row is part of the outcome: the operator's surface
+    // renders the entry it was given, and it can only be given one that was written.
+    const [audit] = await tx.insert(auditLog).values({
       accountId: row.accountId,
       action: auditAction("admin.mailbox.resync"),
       payload: { mailbox_id: mailboxId, account_id: row.accountId, note, actor: staffId },
@@ -75,7 +86,13 @@ export async function resyncMailbox(db: Tx, input: MailboxResyncWrite): Promise<
       // a failure that did not happen.
       inverse: null,
       createdAt: now,
-    });
-    return { changed: true, accountId: row.accountId, clearedRetryAfter: row.retryAfter };
+    }).returning({ id: auditLog.id, createdAt: auditLog.createdAt });
+    return {
+      changed: true,
+      accountId: row.accountId,
+      clearedRetryAfter: row.retryAfter,
+      auditId: audit?.id ?? null,
+      auditAt: audit?.createdAt ?? null,
+    };
   });
 }

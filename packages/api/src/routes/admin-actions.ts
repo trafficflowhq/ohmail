@@ -3,6 +3,7 @@ import { resyncMailbox } from "@trafficflow/db/cloud";
 import {
 } from "@trafficflow/services";
 import { resolveStaffSession, type StaffIdentity } from "./admin-staff.js";
+import { mailboxResyncAnswer } from "../admin-write-wire.js";
 import { presentsSecret, secretRouteJson as json } from "../secret-auth.js";
 import type { ApiDeps } from "../deps.js";
 import type { Handler, Route } from "../router.js";
@@ -151,22 +152,23 @@ async function resync(
   // A mailbox id that matches no row is the operator's mistake, not a no-op, and it must not
   // read as one: 404 rather than a 200 that says `changed: false` beside a wrong id.
   if (outcome.accountId === null) return { status: 404, body: { error: { code: "mailbox_not_found" } } };
+  // `changed: false` is a mailbox that was not parked — a 200 that wrote no audit row, exactly as
+  // a replayed suspend is, and `audit` is null beside it. The console renders the difference
+  // rather than calling both of them success, because "released" and "there was nothing to
+  // release" are different things to the person deciding what to try next. The audit row's
+  // IDENTITY travels too: a surface that displays a row it was not given is displaying a guess.
   return {
     status: 200,
-    body: {
-      ok: true,
-      action: "admin.mailbox.resync",
+    body: mailboxResyncAnswer({
       mailboxId: input.mailboxId,
       accountId: outcome.accountId,
-      // `changed: false` is a mailbox that was not parked — a 200 that wrote no audit row,
-      // exactly as a replayed suspend is. The console renders the difference rather than
-      // calling both of them success, because "released" and "there was nothing to release"
-      // are different things to the person deciding what to try next.
       changed: outcome.changed,
-      clearedRetryAfter: outcome.clearedRetryAfter?.toISOString() ?? null,
+      clearedRetryAfter: outcome.clearedRetryAfter,
+      auditId: outcome.auditId,
+      auditAt: outcome.auditAt,
       actor: staff.email,
-      at: deps.now().toISOString(),
-    },
+      at: deps.now(),
+    }),
   };
 }
 
