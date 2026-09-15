@@ -582,18 +582,17 @@ export function classifyMailboxError(err: unknown, phase: MailboxErrorPhase): Ma
     // `connect` — "retry later" — NEVER auth, so a Microsoft blip cannot quarantine every oauth
     // mailbox as bad credentials. `OAUTH_CONFIG_MISSING` (a deployment with no client secret) is a
     // named refusal that is our fault, not the mailbox's, so it is `unknown`, not `auth`.
-    // THIS DEPLOYMENT WOULD NOT DIAL THIS HOST — `dial-host-guard.ts`'s refusal, read by CLASS
-    // through the closed code it carries rather than by message. `connect`, because that is what
-    // it is: no connection was made, and a mailbox whose server has moved to an address we will
-    // not reach is the same thing to its owner as one we cannot reach. NEVER `auth` — nothing was
-    // presented — and never `unknown`, which is where it fell before this arm existed.
-    if (code === "MAILBOX_HOST_REFUSED") return "connect";
     if (code === "OAUTH_INVALID_GRANT") return "auth";
     if (code === "OAUTH_TOKEN_ENDPOINT_UNAVAILABLE") return "connect";
     if (isTlsCode(code)) return "tls";
     if (TIMEOUT_ERRNOS.has(code)) return "timeout";
     if (CONNECT_ERRNOS.has(code) || SERVER_UNAVAILABLE_CODES.has(code)) return "connect";
     if (STORAGE_SQLSTATES.has(code)) return "storage";
+
+    // `dial-host-guard.ts`'s refusal, read by CLASS through the closed code it carries. `connect`
+    // because that is what it is — no connection was made — never `auth` (nothing was presented)
+    // and never `unknown`, which is where it fell before this arm existed.
+    if (code === "MAILBOX_HOST_REFUSED") return "connect";
   }
 
   // ── THE FLAG: "the LOGIN command did not succeed", and nothing above it explained why. ──

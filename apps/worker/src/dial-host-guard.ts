@@ -3,19 +3,13 @@ import {
 } from "@trafficflow/core/net";
 
 /**
- * THE HOST GUARD AT THE ORGANIZER'S DIAL. A stored `meta.host` was resolved and cleared once, when
- * the mailbox was added; every dial the background process has made since handed the NAME to a
- * fresh socket that resolved it again, so the address that was checked and the address that was
- * dialled were two different facts. Here they are one act: resolve, clear, and hand the cleared
- * addresses down as `ImapConfig.pin`. The name travels untouched — SNI and certificate validation
- * must see what the person typed; the pin narrows the ADDRESS and nothing else.
- *
- * ONE POLICY, READ FROM THE DEPLOYMENT. Not the API's `packages/api/src/dial-host-guard.ts`: that
- * one reaches `@trafficflow/services/mail`, which this app keeps out of its runtime dependencies
- * on a measured boot hazard. Both compose the SAME gate — `assertPublicHost` in
- * `@trafficflow/core/net`, the subpath that exists for this consumer — which is the rule that file
- * states: one implementation, two thin adapters, because a second copy of an SSRF gate is a bypass
- * nobody can see.
+ * THE HOST GUARD AT THE ORGANIZER'S DIAL. A stored `meta.host` was cleared once, when the mailbox
+ * was added; every dial since handed the NAME to a fresh socket that resolved it again, so the
+ * address checked and the address dialled were two different facts. Here they are one act, and the
+ * cleared addresses travel as `ImapConfig.pin` — the name is untouched, because SNI and
+ * certificate validation must see what the person typed. It composes the same gate the API's door
+ * does (`assertPublicHost`, `@trafficflow/core/net`) and not the API's module, which reaches a
+ * package this app keeps out of its runtime graph: one implementation, two thin adapters.
  */
 
 /** The deployment's verdict on a host: the addresses to pin, or `null` for "dial by name". */
@@ -43,13 +37,11 @@ export function makeDialHostGuard(resolver: HostResolver): DialHostGuard {
 /**
  * Build this deployment's policy from its own configuration.
  *
- * `TF_PROBE_ALLOW_PRIVATE=1` — the same variable `apps/server/src/config.ts` reads for the API's
- * add-time probe, deliberately, on `pushEndpointGuardFromEnv`'s exact argument: the process that
- * ACCEPTS a mailbox and the process that DIALS it must not disagree about whether its server is
- * reachable, or an operator gets a mailbox the API took and the organizer refuses on every cycle.
- * `=== "1"` exactly, like both siblings, so `"true"` and `"yes"` cannot arm a relaxation. ABSENT
- * SELECTS THE STRICT BRANCH, which is the API's stated rule and not a convenience: a security
- * default nobody chose is not a default.
+ * `TF_PROBE_ALLOW_PRIVATE=1` — the variable `apps/server/src/config.ts` reads for the API's probe,
+ * on `pushEndpointGuardFromEnv`'s exact argument: the process that ACCEPTS a mailbox and the one
+ * that DIALS it must not disagree, or an operator gets a mailbox the API took and the organizer
+ * refuses every cycle. `=== "1"` exactly, like both siblings. ABSENT SELECTS THE STRICT BRANCH:
+ * a security default nobody chose is not a default.
  */
 export function dialHostGuardFromEnv(
   env: NodeJS.ProcessEnv = process.env, resolver: HostResolver = nodeHostResolver,
