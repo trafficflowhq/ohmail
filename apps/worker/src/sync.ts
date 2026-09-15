@@ -2162,9 +2162,12 @@ async function retireLocatorlessFlag(deps: SyncDeps, p: PendingFlagState): Promi
     );
     if (spent) {
       // The ONLY write that takes this row out of `pending` through this port. Paired with the
-      // audit row above, and never issued without it — see the header.
-      await r.upsertFlagState(p.messageId, {
-        desiredSeen: p.desiredSeen, observedSeen: p.desiredSeen, lastSetBy: "us",
+      // audit row above, and never issued without it — see the header. CONDITIONAL, and with no
+      // physical fact to carry: `p` was read at the top of the cycle, so a mark-read pressed since
+      // must not be retired by a deferral earned against the older one. A miss writes nothing and
+      // the next cycle re-derives from the fresh desire.
+      await r.completeFlagState(p.messageId, {
+        expectDesiredSeen: p.desiredSeen, observedSeen: p.desiredSeen, lastSetBy: "us",
       });
     } else {
       await r.deferFlagReconcile(p.messageId, {
@@ -2200,7 +2203,7 @@ async function reconcileFlags(deps: SyncDeps, at: CyclePageCursor): Promise<bool
   for (const p of pending) {
     if (p.lastSetBy !== "us") continue;                       // user-wins: never revert an external \Seen
     if (p.desiredSeen === p.observedSeen) {
-      await fencedLiveGroup(deps, (r) => r.upsertFlagState(p.messageId, { desiredSeen: p.desiredSeen, observedSeen: p.desiredSeen, lastSetBy: "us" }));
+      await fencedLiveGroup(deps, (r) => r.completeFlagState(p.messageId, { expectDesiredSeen: p.desiredSeen, observedSeen: p.desiredSeen, lastSetBy: "us" }));
       continue;
     }
     if (!p.nativeLocator) { await retireLocatorlessFlag(deps, p); continue; }
@@ -2222,7 +2225,7 @@ async function reconcileFlags(deps: SyncDeps, at: CyclePageCursor): Promise<bool
         // same way rather than re-STOREd (one IMAP round trip per cycle) for ever.
         await fencedLiveGroup(deps, async (r) => {
           if (!(await r.primaryInstanceVanished(p.messageId))) return;
-          await r.upsertFlagState(p.messageId, { desiredSeen: p.desiredSeen, observedSeen: p.desiredSeen, lastSetBy: "us" });
+          await r.completeFlagState(p.messageId, { expectDesiredSeen: p.desiredSeen, observedSeen: p.desiredSeen, lastSetBy: "us" });
           await r.recordAudit(
             accountId, "reconcile.flags.voided",
             { messageId: p.messageId, locator: p.nativeLocator, seen: p.desiredSeen },
@@ -2276,12 +2279,32 @@ async function reconcileFlags(deps: SyncDeps, at: CyclePageCursor): Promise<bool
     // reports, and `applyExternalFlag` adopts it.
     try {
       await fencedLiveGroup(deps, async (r) => {
-        await r.upsertFlagState(p.messageId, { desiredSeen: p.desiredSeen, observedSeen: p.desiredSeen, lastSetBy: "us" });
+        /* CONDITIONAL on the desire this STORE was computed against, compared in the statement that
+           writes — `completeFlagState`, never `upsertFlagState`. `p.desiredSeen` is minutes old on a
+           slow host and every mark-read/mark-unread press writes `desired_seen`, so writing it back
+           here erased the person's last press: read, then unread over one slow STORE, and the row
+           came back `read` on both sides with nothing left pending to correct it. The observation is
+           written on a miss too (`physicalObservation`) — the server really does hold this flag now,
+           and that is what leaves the row PENDING against the newer desire for the next cycle to
+           STORE. Nothing is re-issued here: a completion that re-sent would be this same race one
+           level up, and a STORE that then fails is the deferral arm's, above. */
+        const matched = await r.completeFlagState(p.messageId, {
+          expectDesiredSeen: p.desiredSeen, observedSeen: p.desiredSeen,
+          lastSetBy: "us", physicalObservation: true,
+        });
         await r.recordAudit(
           accountId, "reconcile.flags",
           { messageId: p.messageId, locator: p.nativeLocator, seen: p.desiredSeen },
           { action: "setFlags", locator: p.nativeLocator, seen: !p.desiredSeen },
         );
+        if (!matched) {
+          log?.info("reconcile_flag_superseded", {
+            mailboxId, accountId, messageId: p.messageId, seen: p.desiredSeen,
+            reason: "the read-state was pressed again while this STORE was on the wire; what the " +
+              "server now holds is recorded and the newer press keeps the row pending, so the next " +
+              "cycle writes the person's last word to the server",
+          });
+        }
       });
     } catch (err) {
       rethrowRefusal(err);

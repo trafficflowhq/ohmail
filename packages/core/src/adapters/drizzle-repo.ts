@@ -238,6 +238,36 @@ export interface FolderCompletion {
   physicalObservation?: boolean;
 }
 
+/**
+ * What a landed `\Seen` STORE may write back — {@link WorkerRepo.completeFlagState}'s argument and
+ * {@link FolderCompletion} one flag over. A {@link FlagStateRow} states an intent; a completion
+ * records what the server holds after a write decided earlier. The desired read-state appears only
+ * as {@link expectDesiredSeen}: read back live and compared in the same statement, never written.
+ */
+export interface FlagCompletion {
+  /**
+   * The desired `\Seen` this completion was COMPUTED AGAINST. Never written — see
+   * {@link WorkerRepo.completeFlagState} — but always READ live and compared: it decides whether
+   * this caller still owns the row, and whether {@link observedSeen} may be recorded on a miss.
+   */
+  expectDesiredSeen: boolean;
+  /**
+   * What the server now holds — OR, when {@link physicalObservation} is false, a value that only
+   * matters if this call turns out to MATCH (a miss ignores it entirely).
+   */
+  observedSeen: boolean;
+  lastSetBy: "us" | "external";
+  /**
+   * Whether {@link observedSeen} carries a fresh physical fact — a `\Seen` the server just
+   * accepted. `true` (the landed STORE) makes a MISS still write `observed_seen`, and that write is
+   * what leaves the row PENDING against the newer desire, so the ordinary reconcile pass moves the
+   * server to it. `false` (the retirements and the gone-void, which never asked the server) keeps a
+   * miss writing nothing: those callers carry a stale echo of `PendingFlagState`, and writing it on
+   * a miss would retire an intent the person had just replaced.
+   */
+  physicalObservation?: boolean;
+}
+
 /** Worker-facing repo: everything the pipeline needs (RepoPort + RoutingPort) plus enumeration for sync/reconcile. */
 export interface WorkerRepo extends RepoPort, RoutingPort {
   /**
@@ -262,6 +292,15 @@ export interface WorkerRepo extends RepoPort, RoutingPort {
   adoptFolderState(
     messageId: string, s: FolderStateRow, expectDesiredFolder: string,
   ): Promise<boolean>;
+  /**
+   * The read-state completion, and why it is not {@link RepoPort.upsertFlagState}: `reconcileFlags`
+   * reads a pending row, puts a `\Seen` STORE on the wire and writes back when it lands, while
+   * `desired_seen` is written by every mark-read/mark-unread press in the product. Completing
+   * through `upsertFlagState` wrote the stale desire back, so a read then an unread over one slow
+   * STORE left the person's last press erased on both sides. `desired_seen` is not in this SET
+   * list at all. Returns whether the witness still matched; false means a newer press owns the row.
+   */
+  completeFlagState(messageId: string, c: FlagCompletion): Promise<boolean>;
   getMailbox(mailboxId: string): Promise<
     { id: string; accountId: string; address: string; kickstartAt: Date | null } | null
   >;
@@ -1443,6 +1482,51 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
       setWhere: eq(folderState.desiredFolder, expectDesiredFolder),
     }).returning({ messageId: folderState.messageId });
     return row !== undefined;
+  }
+
+  /**
+   * {@link WorkerRepo.completeFlagState} — {@link completeFolderState} one column over, against the
+   * same lost update. `desired_seen` is never in the SET, so a completion cannot write back a
+   * desire read before the round trip. A caller with a fresh physical fact
+   * (`c.physicalObservation`, the landed STORE) gets `observed_seen` written on every call: on a
+   * miss that is the whole point, because the row must go back to PENDING against the newer desire
+   * or the server keeps the flag this STORE just set and nothing ever asks it again. Stale-echo
+   * callers (the retirements, the gone-void) write nothing on a miss. `reconcile_status` derives
+   * from the live desire. Returns whether the witness matched.
+   */
+  async completeFlagState(messageId: string, c: FlagCompletion): Promise<boolean> {
+    const physical = c.physicalObservation === true;
+    /* Literals rather than bound parameters, for the reason `completeFolderState` states: the
+       device store's driver takes no JavaScript boolean, and both values are constants by the time
+       the statement is composed. The witness comes back as TEXT for the same portability — the two
+       stores spell a boolean column's value differently, and a row that is GONE answers nothing. */
+    const expect = c.expectDesiredSeen ? sql`TRUE` : sql`FALSE`;
+    const observed = c.observedSeen ? sql`TRUE` : sql`FALSE`;
+    const matched = sql`desired_seen = ${expect}`;
+    const gate = physical ? sql`TRUE` : matched;
+    const result = await this.d.exec(this.db, sql`
+      UPDATE ${flagState} SET
+        observed_seen = CASE WHEN ${gate}
+          THEN ${observed} ELSE observed_seen END,
+        last_set_by = CASE WHEN ${matched}
+          THEN ${c.lastSetBy} ELSE last_set_by END,
+        reconcile_status = CASE
+          WHEN ${gate} THEN
+            CASE WHEN desired_seen = ${observed} THEN 'reconciled' ELSE 'pending' END
+          ELSE reconcile_status
+        END,
+        conflict = CASE WHEN ${gate}
+          THEN FALSE ELSE conflict END,
+        updated_at = CASE WHEN ${gate}
+          THEN ${this.d.now()} ELSE updated_at END,
+        attempts = CASE WHEN ${matched}
+          THEN 0 ELSE attempts END,
+        next_attempt_at = CASE WHEN ${matched}
+          THEN NULL ELSE next_attempt_at END
+      WHERE message_id = ${this.d.castUuid(messageId)}
+      RETURNING CASE WHEN desired_seen = ${expect} THEN 'yes' ELSE 'no' END AS "matched"
+    `);
+    return String(result[0]?.[0] ?? "") === "yes";
   }
 
   /** {@link upsertFolderState}'s read-state twin, backoff reset included and for its reasons. */
