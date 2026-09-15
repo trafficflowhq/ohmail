@@ -2599,14 +2599,6 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
     const unanswered: Array<{ folder: string; uidValidity: string; uid: number }> = [];
     /** UIDs refused pre-fetch on RFC822.SIZE — see {@link ChangeBatch.oversize}. */
     const oversize: Array<{ folder: string; uidValidity: string; uid: number; size: number }> = [];
-    // ONE budget for the whole call, spent in WATCHED_FOLDERS order (INBOX first, Sent LAST),
-    // so the bound is per-cycle rather than per-folder — six folders each fetching a full batch
-    // would be six times the memory this is supposed to cap.
-    //
-    // That ordering is also the entire cost answer for watching Sent: adding the Sent folder does
-    // NOT add a batch. Sent can only spend what INBOX and the ohmail folders left, so a Sent
-    // backlog of tens of thousands of messages cannot delay this cycle's inbound mail by one
-    // message — it drains through `hasBacklog` re-kicks behind it.
     // The pass LEADS with the folder the last one's budget stopped at, so a mailbox whose first
     // folders each hold a large message does not re-spend the whole budget on them every pass and
     // leave the tail waiting for days. Nothing else about the order moves: it is the CREATES
@@ -2615,6 +2607,14 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
     const scanOrder = leadWith(scanFolders, resumeAt?.folder);
     /** Set when a folder is refused for a spent budget — the cursor the NEXT pass leads with. */
     let stoppedAt: BudgetStop | undefined;
+    // ONE budget for the whole call, spent in WATCHED_FOLDERS order (INBOX first, Sent LAST),
+    // so the bound is per-cycle rather than per-folder — six folders each fetching a full batch
+    // would be six times the memory this is supposed to cap.
+    //
+    // That ordering is also the entire cost answer for watching Sent: adding the Sent folder does
+    // NOT add a batch. Sent can only spend what INBOX and the ohmail folders left, so a Sent
+    // backlog of tens of thousands of messages cannot delay this cycle's inbound mail by one
+    // message — it drains through `hasBacklog` re-kicks behind it.
     const budget = {
       messages: this.opts.maxBatchMessages ?? DEFAULT_SYNC_BATCH_MAX_MESSAGES,
       bytes: this.opts.maxBatchBytes ?? DEFAULT_SYNC_BATCH_MAX_BYTES,
