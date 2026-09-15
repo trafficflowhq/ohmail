@@ -73,15 +73,21 @@ mod gtk_sink {
         }
     }
 
-    /// Apply the ask to the app's one window. A window that is not there yet is not an error:
-    /// the caller runs after the runtime has built it, and there is nothing else to ask.
+    /// Apply the ask to the app's one window, and SAY SO when it cannot be applied. A budget that
+    /// silently failed to be asked for reads exactly like one that was granted, which is the shape
+    /// this whole module is a fix for — so both the missing window and the refused call are named.
     pub fn apply<R: tauri::Runtime>(app: &tauri::AppHandle<R>, ask: Ask) {
         use tauri::Manager;
-        let Some(window) = app.get_webview_window("main") else { return };
-        let _ = window.with_webview(move |platform| {
+        let Some(window) = app.get_webview_window("main") else {
+            eprintln!("ohmail: no main window to ask for a webview budget");
+            return;
+        };
+        if let Err(e) = window.with_webview(move |platform| {
             let view = platform.inner();
             super::apply_to(&mut WebKit(&view), ask);
-        });
+        }) {
+            eprintln!("ohmail: the webview budget was not applied: {e}");
+        }
     }
 }
 

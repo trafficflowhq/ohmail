@@ -551,7 +551,7 @@ describe("the Rust side", () => {
    * describe would stay green while the shell grew a capability. Adding a file therefore fails
    * this test until somebody decides which rules it lives under.
    */
-  it("is these twenty-one files and no others", () => {
+  it("is these twenty-three files and no others", () => {
     const files = fs.readdirSync(path.join(APP, "src-tauri/src")).sort();
     expect(files).toEqual([
       // Which door this install came in by, and the environment each one composes. Compiled only
@@ -619,6 +619,15 @@ describe("the Rust side", () => {
       // watched on every platform's CI.
       "vitals.rs",
       "vitals_tests.rs",
+      // WHAT WEBKITGTK IS TOLD THIS WINDOW IS. The webview was left at the cache model and the
+      // back/forward cache a browser with a history and many tabs wants; this window shows one
+      // document and never navigates back. Neither setting is reachable from the environment, so
+      // the pair is asked for in code — together, through one carrier, because applying one and
+      // not the other costs most of the saving and still looks like a fix. ALWAYS compiled: the
+      // preview opens the same window and asks for the same budget. Linux only so far; WKWebView
+      // has the same pair and is its own change.
+      "webview_budget.rs",
+      "webview_budget_tests.rs",
     ]);
   });
 
