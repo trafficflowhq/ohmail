@@ -72,15 +72,6 @@ export const mailboxes = sqliteTable("mailboxes", {
   accountId: text("account_id").notNull(),
   provider: text("provider").notNull(),      // 'imap'
   address: text("address").notNull(),
-  /**
-   * The MAILBOX erasure fence (migration 0111) — `accounts.erased_at`'s twin, one scope down.
-   * NULL for a live mailbox and for one removed WITHOUT erasure; the instant of the erasure
-   * otherwise, stamped inside `sweepMailboxData`'s own transaction. This row SURVIVES the sweep
-   * as a tombstone, so a key to it refuses no late writer. Carried here and not noop'd because
-   * the column is on the shared twin: a device whose `mailboxes` lacks it reads through a schema
-   * that no longer matches and fails at the first query.
-   */
-  erasedAt: integer("erased_at", { mode: "timestamp_ms" }),
   createdAt: integer("created_at", { mode: "timestamp_ms" }).default(NOW_MS).notNull(),
   // ── Migration 0007: real mailbox lifecycle fields. Server defaults so
   // the 0006-era rows stay valid on the additive cutover (no backfill needed). ──
@@ -406,6 +397,18 @@ export const mailboxes = sqliteTable("mailboxes", {
   signatureHtml: text("signature_html"),
   /** The sign-out fence's durable stamp — see the Postgres twin. An integer, as every timestamp here is. */
   signedOutAt: integer("signed_out_at", { mode: "timestamp_ms" }),
+  // DECLARED LAST to match the store: SQLite's ALTER TABLE ADD COLUMN appends, so 0111 puts
+  // this column after every column that predates it, and the declaration is compared to the
+  // built store column-for-column and in order.
+  /**
+   * The MAILBOX erasure fence (migration 0111) — `accounts.erased_at`'s twin, one scope down.
+   * NULL for a live mailbox and for one removed WITHOUT erasure; the instant of the erasure
+   * otherwise, stamped inside `sweepMailboxData`'s own transaction. This row SURVIVES the sweep
+   * as a tombstone, so a key to it refuses no late writer. Carried here and not noop'd because
+   * the column is on the shared twin: a device whose `mailboxes` lacks it reads through a schema
+   * that no longer matches and fails at the first query.
+   */
+  erasedAt: integer("erased_at", { mode: "timestamp_ms" }),
 }, (t) => ({
   // ONE ACTIVE MAILBOX PER ADDRESS (mail 0021). PARTIAL, because `delete` is a soft delete to
   // `status='disabled'` and a plain unique would make reconnecting a disconnected address fail

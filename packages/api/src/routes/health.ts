@@ -687,6 +687,17 @@ export const MAIL_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // just this chooser. No worker half: the worker compares the stored instant and never reads the
   // preference. Deploy order migration → API.
   ["account_settings", "resurface_time"],
+  // mail 0111_mailbox_erased_at — one column on `mailboxes`: the instant the erasure sweep took
+  // that mailbox's mail. Probed on the whole-row-select rule: the mailbox row is selected whole
+  // on the mailbox reads every surface makes, so an API deployed ahead of the migration 42703s
+  // them rather than just the fence that reads the stamp. Deploy order migration → API.
+  ["mailboxes", "erased_at"],
+  // mail 0112_idempotency_erased_at — one column on `idempotency_keys`: when an erasure replaced
+  // the response that row had stored. The heaviest of this pair, because the replay path reads it
+  // on EVERY idempotent request (`lookupIdempotent`, then the 410 fence in `middleware.ts`), so an
+  // API deployed ahead of the migration 42703s every retried mutation on every surface rather
+  // than one feature's route. Deploy order migration → API.
+  ["idempotency_keys", "erased_at"],
   // mail 0113_refresh_consumed_by_attempt — one column on `refresh_tokens`: which attempt spent
   // this token, so a retry of a refresh whose answer was lost stops reading as a replay. The
   // most load-bearing marker in this list, because the write is not on a feature's own route —
