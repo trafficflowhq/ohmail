@@ -75,8 +75,10 @@ export function estimateWireBytes(rows: ReadonlyArray<KnownLocator>): number {
  *   heap        512 MiB   `apps/worker/Dockerfile` and `Dockerfile.selfhost` (`--max-old-space-size`)
  *   budget      128 MiB   a QUARTER of it — the rest is the scan window, the adapter's fetch
  *                         buffers, the dead-letter ledgers, the postgres pool and the runtime
- *   entry         334 B   one remembered locator, index included, measured on the same rig
- *   so the budget holds about four hundred thousand remembered locators IN TOTAL, spread over
+ *   entry         374 B   one remembered locator, index included — CHARGED; the same entry
+ *                         measured 360 bytes against rows a real Postgres minted, so the charge
+ *                         sits about 4% above what the heap actually holds
+ *   so the budget holds about three hundred and sixty thousand remembered locators IN TOTAL, over
  *   however many mailboxes are attached: the sixty-fifth costs what the fifth costs, which is the
  *   property the per-attachment version lacked.
  * A heap that moves without this fraction moving reddens `known-set-budget.test.ts`, which reads
@@ -97,14 +99,17 @@ export const KNOWN_SET_BUDGET_BYTES = (WORKER_HEAP_MIB / KNOWN_SET_BUDGET_DIVISO
  * and then grows into the index is no budget.
  *
  * Characters are charged at two bytes: a folder name that survives IMAP UTF-7 decoding is two-byte
- * in the runtime, so an ASCII-only mailbox is charged about twice what it holds. That is the
- * direction a bound must err in. Rig reading, synthetic: 334 bytes an entry estimated, 334
- * measured against the heap.
+ * in the runtime, so an ASCII-only mailbox is over-charged for its strings. The per-entry constants
+ * go the other way and had to be MEASURED rather than reasoned: against rows the driver itself
+ * minted (`test/rigs/known-set-real-rows-rig.mjs`, on a lane database) an entry costs 360 bytes,
+ * where the first draft of these constants charged 334 — a budget under-charging by 7% is a bound
+ * that is quietly exceeded, so they were raised until the charge sits ABOVE the measurement with
+ * room. Synthetic rows read lower than real ones; the real figure is the one that governs.
  */
-const LOCATOR_OBJECT_BYTES = 96;
+const LOCATOR_OBJECT_BYTES = 128;
 const STRING_HEADER_BYTES = 16;
 const BYTES_PER_CHAR = 2;
-const INDEX_SLOT_BYTES = 16;
+const INDEX_SLOT_BYTES = 24;
 
 export function estimateRetainedBytes(rows: ReadonlyArray<KnownLocator>): number {
   let total = 0;
