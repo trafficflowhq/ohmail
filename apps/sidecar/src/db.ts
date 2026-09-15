@@ -799,12 +799,11 @@ function removeIfUnchanged(path: string, judged: HeldLock): boolean {
  * ── THE FILE AND ITS RECORD ARE ONE ACT ──────────────────────────────────────────────────────
  *
  * Create the lock file WITH ITS OWNER ALREADY IN IT, or throw `EEXIST` because somebody holds it.
- * `openSync(path, "wx")` and then a write is two steps where the file system offers one: killed
+ * `openSync(path, "wx")` then a write is two steps where the file system offers one: killed
  * between them, a build left an EMPTY lock naming nobody, and the rule below — no record is not
- * evidence a process is gone — then refused every later launch. So the record goes to a temp file
- * in the same directory and is `link`ed into place: `link` fails `EEXIST` when the name is taken,
- * exactly as `wx` did, and the name appears only once the bytes are behind it. The temp name is
- * dropped on every exit, including the refused one.
+ * evidence a process is gone — refused every later launch. So the record goes to a temp file in
+ * the same directory and is `link`ed into place: `link` fails `EEXIST` when the name is taken,
+ * and the name appears only once the bytes are behind it.
  */
 function claimLockFile(path: string): void {
   const tmp = `${path}.${process.pid}.${Math.random().toString(36).slice(2, 10)}.tmp`;
@@ -825,15 +824,13 @@ function claimLockFile(path: string): void {
 }
 
 /**
- * Take an exclusive lock on the data directory, or refuse. {@link claimLockFile} is atomic — two
- * processes racing cannot both win, and the winner's file names it from the instant it exists. A
- * lock left by a crash names a pid, and a pid that is gone releases it (the alternative, a lock
- * outliving the crash, means a laptop that lost power cannot open its mail). And a pid that is
- * BACK releases it too, the half that was missing: after a reboot the pid counter starts again and
- * some unrelated process is issued the dead engine's number, so `kill(pid, 0)` answers "alive" and
- * the lock was held by a process that never heard of this mailbox — permanently, until a file was
- * deleted. {@link LockRecord} records WHICH process, and a live pid whose identity does not match
- * the record is taken over.
+ * Take an exclusive lock on the data directory, or refuse. {@link claimLockFile} is atomic, and
+ * the winner's file names it from the instant it exists. A lock left by a crash names a pid, and
+ * a pid that is gone releases it — the alternative means a laptop that lost power cannot open its
+ * mail. A pid that is BACK releases it too, the half that was missing: after a reboot the counter
+ * starts again and some unrelated process is issued the dead engine's number, so `kill(pid, 0)`
+ * answers "alive" for a process that never heard of this mailbox. {@link LockRecord} records
+ * WHICH process, and a live pid whose identity does not match the record is taken over.
  */
 export function lockDataDir(dataDir: string): () => void {
   const path = join(dataDir, LOCK_FILE);
@@ -852,23 +849,13 @@ export function lockDataDir(dataDir: string): () => void {
       const rec = parseLockRecord(held.raw);
       /* ── NO RECORD IS NOT EVIDENCE THAT A PROCESS IS GONE ──────────────────────────────────
        *
-       * The rule the legacy bare pid one function above already follows, completed for the record
-       * that is not there at all. An EMPTY lock file is the ordinary state of a lock another
-       * launcher is HALFWAY THROUGH TAKING — the file is created `O_EXCL` and the record written a
-       * statement later — so reading empty as stale deleted a live lock on no evidence and put two
-       * PGlite instances on one directory, which is the one thing this function exists to stop.
-       * Truncated and unreadable bytes take the same answer, and THEIR refusal tells the person
-       * the way out: delete the file if that process is definitely gone.
-       *
-       * ── EXCEPT ONE SHAPE, DECIDED BY ITS AGE AND NOTHING ELSE ─────────────────────────────
-       *
-       * {@link claimLockFile} cannot produce an empty lock, so the only ones left are a pre-fix
-       * install's crash residue — which the rule above made permanent. The window it reasons
-       * about is two adjacent syscalls, so an EMPTY file older than
-       * {@link EMPTY_LOCK_STALE_AFTER_MS} is not a launch in progress: replaced once, then raced
-       * for. A FRESH one is exactly what that rule says it is and is refused with the wait rather
-       * than with a file to delete, because it clears itself. Unreadable BYTES are not this
-       * shape: something wrote them.
+       * An EMPTY lock file is the ordinary state of one another launcher is HALFWAY THROUGH
+       * TAKING — created `O_EXCL`, record written a statement later — so reading empty as stale
+       * deleted a live lock and put two PGlite instances on one directory. Truncated bytes take
+       * the same answer, and their refusal names the way out: delete the file if that process is
+       * definitely gone. EXCEPT BY AGE: {@link claimLockFile} cannot produce an empty lock, so an
+       * EMPTY file older than {@link EMPTY_LOCK_STALE_AFTER_MS} is a pre-fix crash residue, not a
+       * launch in progress — replaced once, then raced for. Unreadable BYTES are not this shape.
        */
       if (rec === null) {
         if (held.raw === "" && Date.now() - held.mtimeMs >= EMPTY_LOCK_STALE_AFTER_MS) {

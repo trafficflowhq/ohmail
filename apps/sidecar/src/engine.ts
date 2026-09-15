@@ -671,22 +671,13 @@ export function refusingKeyProvider(): KeyProvider {
 
 /**
  * THE IMAGE PROXY'S EGRESS, ARMED — the third of this process's non-mailbox egresses, and the
- * one whose trade the reader has to be told about.
- *
- * It was refused until now, for want of an allow-list of hosts this machine may talk to. The
- * product loads pictures, so the refusal moved rather than the protection: the
- * SSRF gate still resolves every url and refuses loopback, private, link-local and CGNAT
- * addresses before a socket is opened, and the fetch is PINNED to the addresses that resolution
- * returned, so a message can still never make this machine talk to something on its own network.
- *
- * What an allow-list would have bought, and what the reader now pays: on Cloud the fetch leaves
- * our server, so the sender learns nothing about the reader. Here it leaves the reader's own
- * machine, so a loaded picture tells the sender's server that the message was opened and from
- * which network. That is the whole cost of the switch, it is stated in Settings, and it is why
- * tracking pixels stay refused in both positions — a beacon is all cost and no picture.
- *
- * Same shape as the one-click unsubscribe egress below: a sender-chosen url, the real resolver,
- * the gate doing the work.
+ * one whose trade the reader has to be told about. The SSRF gate resolves every url and refuses
+ * loopback, private, link-local and CGNAT addresses before a socket is opened, and the fetch is
+ * PINNED to the addresses resolution returned, so a message can never make this machine talk to
+ * something on its own network. The trade: on Cloud the fetch leaves our server, here it leaves
+ * the reader's own machine, so a loaded picture tells the sender the message was opened and from
+ * which network. Stated in Settings, and why tracking pixels stay refused in both positions — a
+ * beacon is all cost and no picture.
  */
 
 /**
@@ -7151,15 +7142,13 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
               );
                /* And the engine beside the row, which the shared service cannot reach.
                 * `MailboxService.delete` knows about ROWS; not that this door holds an open IMAP
-                * login, renews an organizer claim each poll and serves the mirror. All three were
-                * measured still running after a removal — a phantom organizer that stands other
-                * installs down, and a mirror that made a re-added address serve every message twice.
-                * ORDER: quiesce (above), release, wipe, then stop — the release needs the login the
-                * stop closes, the wipe needs the pass already finished. `assertMailboxStillHere`
-                * refuses any commit that finishes into the removed mailbox. The RELEASE is best
-                * effort and reported (`claimReleased`); the WIPE is not — a removal that left the
-                * mail here is refused, because "it is gone" would be a false statement about the
-                * only copy the person can see. */
+                * login, renews an organizer claim each poll and serves the mirror — all three were
+                * measured still running after a removal. ORDER: quiesce (above), release, wipe,
+                * then stop — the release needs the login the stop closes, the wipe needs the pass
+                * already finished. `assertMailboxStillHere` refuses any commit that finishes into
+                * the removed mailbox. The RELEASE is best effort and reported (`claimReleased`);
+                * the WIPE is not — a removal that left the mail here is refused, because "it is
+                * gone" would be a false statement about the only copy the person can see. */
                /* "If the roster holds it", not "if it is the one mailbox". This read
                 * `if (mailboxId === world.mailboxId)`, the same statement while an install ran one
                 * mailbox and a silent hole the moment it runs two: removing the SECOND matched

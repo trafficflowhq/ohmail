@@ -1029,12 +1029,10 @@ async function finalize(
  * A DECIDED-AND-NOT-SENT candidate's ledger row. It takes a transaction now — not to make it
  * atomic with anything, but because the ERASURE FENCE needs one: this row carries the
  * correspondent's address into a table the Art. 17 sweep empties, and a suppressed candidate's
- * ledger row recreates it just as surely as a reservation does. The header used to read "outside
- * any transaction because there is nothing to make atomic with it", which was true about the
- * throttle and silent about the sweep.
+ * ledger row recreates it just as surely as a reservation does.
  *
- * `ON CONFLICT DO NOTHING` because a concurrent runner may have reserved this message between the
- * candidate read and here. Its decision is the one that counts — it holds the reservation.
+ * `ON CONFLICT DO NOTHING` because a concurrent runner may have reserved this message between
+ * the candidate read and here. Its decision is the one that counts — it holds the reservation.
  */
 async function recordDecision(
   db: Db, responder: LiveResponder, candidate: Candidate, sender: string,

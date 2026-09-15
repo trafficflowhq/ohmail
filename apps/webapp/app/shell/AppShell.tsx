@@ -4168,17 +4168,12 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
   /**
    * MOVE, TO A PLACE THE ROUTER OWNS — and all five of the Move strip's destinations are.
    *
-   * Reported on the 0.19.0 desktop: Move → Ohbox on a newsletter in Reads did nothing, twice. Reads
-   * is not a folder that mail sits in — `consentPartition` PRESENTS a message at the place the
-   * sender's rule names, so that newsletter was physically in the INBOX all along. The strip
-   * offered Ohbox against the presented place, the arm dispatched a folder move INBOX→INBOX, the
-   * engine computed no effects and rejected the verb before the wire, and the shell said "Moved to
-   * Ohbox." over an answer it had thrown away.
-   *
-   * So the press writes the ROUTING, which is the fact that decides the place, and the row moves
-   * with it — on a mailbox organized in place, without a byte on the wire about folders. The plan
-   * and the sentence are the Screener's own (`sender-screening.ts`): one writer, and the sentence
-   * is chosen from what the server answered rather than from what the press hoped.
+   * Reads is not a folder mail sits in: `consentPartition` PRESENTS a message at the place the
+   * sender's rule names, so a newsletter shown there is physically in the INBOX. The strip
+   * offered Ohbox against the presented place, the arm dispatched INBOX→INBOX, the engine
+   * computed no effects, and the shell said "Moved to Ohbox." over an answer it had thrown away.
+   * So the press writes the ROUTING — the fact that decides the place — and the row moves with
+   * it, without a byte on the wire about folders. Plan and sentence are the Screener's own.
    */
   const moveToPlace = useStableCallback((m: EngineMessage, view: OhmailView) => {
     const sender = senderScreening(reader, m.id);

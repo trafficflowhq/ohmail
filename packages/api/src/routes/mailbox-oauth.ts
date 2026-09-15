@@ -309,11 +309,10 @@ export const mailboxOAuthRoutes: Route[] = [
        * account-owned and the Art. 17 sweep deletes it, while `accounts` SURVIVES erasure — so
        * nothing structural refuses an insert that lands after the sweep, and what it would put
        * back is sealed PKCE ceremony state, a live way into a mailbox on an erased account. The
-       * window here is narrower than the device flow's (no wait on a person reading a code) and
-       * narrower is not closed: the config resolve, the hint read and the encrypt above all sit
-       * between the session check and this write. `withAccountTx` reads `accounts.erased_at
-       * FOR SHARE` first and refuses 410. The encrypt stays outside it — no key work in a
-       * transaction, and a sealed buffer nobody writes costs nothing.
+       * window is narrower than the device flow's and narrower is not closed: the config resolve,
+       * the hint read and the encrypt all sit between the session check and this write.
+       * `withAccountTx` reads `accounts.erased_at FOR SHARE` first and refuses 410; the encrypt
+       * stays outside it — no key work in a transaction.
        */
       await withAccountTx(ctx, async (tx) => {
         await createOAuthCeremony(tx as unknown as Tx, {

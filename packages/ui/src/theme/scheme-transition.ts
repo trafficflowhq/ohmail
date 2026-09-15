@@ -1,22 +1,12 @@
 /**
  * THE SCHEME CHANGES BY FADING, NOT BY CUTTING — one helper, two callers.
  *
- * Every token on the page moves at once when the scheme changes, and the mail list alone is
- * hundreds of rows: transitioning them individually is the expensive way to do the cheap thing.
- * `document.startViewTransition` crossfades the whole document as one composited pair of
- * snapshots, so the cost does not grow with the row count and ANY token change is covered,
- * including the Omarchy feed restaging the live palette.
- *
- * Three refusals, in order, and each of them is the whole point of the helper existing rather
- * than a CSS rule:
- *
- *  · `prefers-reduced-motion: reduce` — instant, no transition and no class. Not "slower":
- *    the house policy is that state changes become immediate.
- *  · NOT ARMED — instant. The provider arms this one frame after it mounts, so the adoption
- *    stamp that re-writes the boot value does not animate the window into existence.
- *  · No `startViewTransition` — the `scheme-shift` class instead, for 320 ms. WebKitGTK,
- *    WKWebView and WebView2 do not all have the API, so it is feature-detected rather than
- *    assumed, and the class is RE-ARMED on a second change rather than stacked.
+ * `document.startViewTransition` crossfades the document as one composited pair of snapshots, so
+ * cost does not grow with the row count and ANY token change is covered. Three refusals, each the
+ * reason this is a helper and not a CSS rule: `prefers-reduced-motion` is instant, because state
+ * changes become immediate rather than slower; NOT ARMED is instant, the provider arming a frame
+ * after mount so the adoption stamp does not animate the window into existence; and with no
+ * `startViewTransition` the `scheme-shift` class runs 320 ms, feature-detected and RE-ARMED.
  */
 
 /** 320 ms: the 280 ms transition plus a frame, so the class outlives what it starts. */

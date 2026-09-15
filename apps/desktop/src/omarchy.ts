@@ -1,20 +1,12 @@
 /**
- * THE OMARCHY THEME FEED, from the window's side. On an Omarchy system the shell detects the
- * desktop theme, reads its raw material and watches it; this module turns that material into
- * ohmail token values for the ohmarchy face. PULL is the `omarchy_theme` command, asked once
- * at start (an event emitted before this bundle's scripts run is an event nobody hears); PUSH
- * is the `omarchy:theme` event over the one receive-only `core:event:allow-listen` grant
- * (`native.ts` carries the asymmetry's reasoning). Raw text down, nothing up. The mapped
- * values land in ONE <style> element scoped to `:root[data-face="ohmarchy"]` — inline
- * properties on <html> would repaint every face; the attribute's name is this module's
- * exported constant.
- *
- * SCHEME × FACE STAYS ORTHOGONAL (OHMARCHY-CONTRACT.md). The element carries the SAME FIVE
- * SELECTOR FORMS `packages/tokens/src/ohmarchy.css` uses, so the live theme and the static
- * face agree by construction: the theme's own scheme under the no-explicit-theme form and
- * under its own `[data-theme]` pair, the derived counterpart under the other pair. Without the
- * axis one unscoped `!important` rule outranked both static scheme blocks and the rail's
- * scheme control moved the attribute while nothing on screen changed colour.
+ * THE OMARCHY THEME FEED, from the window's side: raw theme material in, ohmail token values for
+ * the ohmarchy face out. PULL is the `omarchy_theme` command asked once at start (an event
+ * emitted before this bundle runs is an event nobody hears); PUSH is the `omarchy:theme` event
+ * over the receive-only listen grant. Raw text down, nothing up. Values land in ONE <style>
+ * element scoped to `:root[data-face="ohmarchy"]` — inline properties on <html> would repaint
+ * every face. SCHEME × FACE STAYS ORTHOGONAL (OHMARCHY-CONTRACT.md): the element uses the SAME
+ * FIVE SELECTOR FORMS as `packages/tokens/src/ohmarchy.css`, so the live theme and the static
+ * face agree by construction.
  */
 
 /*

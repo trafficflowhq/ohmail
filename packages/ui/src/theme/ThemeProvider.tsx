@@ -1,15 +1,12 @@
 /**
- * Theme: an explicit preference is stamped as `data-theme` on <html>;
- * "system" removes the attribute so tokens.css's prefers-color-scheme
- * fallback applies. The first client render matches the server render
- * (no storage or matchMedia reads during render); persisted state is
- * adopted post-mount, and `themeInitScript()` stamps it pre-paint.
- * The face is a second dimension: `data-face="ohmarchy"`, absent = paper,
- * resolved device preference over synced account face over Linux-only
- * detection. The account face write lives in the host, not here.
- * "System" is whatever the host's optional `systemScheme` source says, and
- * `prefers-color-scheme` when it wired none — on Omarchy the desktop theme's
- * own mode, which the media query only learns through the GTK portal.
+ * Theme: an explicit preference is stamped as `data-theme` on <html>; "system" removes the
+ * attribute so tokens.css's prefers-color-scheme fallback applies. The first client render
+ * matches the server render (no storage or matchMedia reads during render); persisted state is
+ * adopted post-mount, and `themeInitScript()` stamps it pre-paint. The face is a second
+ * dimension: `data-face="ohmarchy"`, absent = paper, resolved device preference over synced
+ * account face over Linux-only detection. "System" is whatever the host's optional
+ * `systemScheme` source says, and `prefers-color-scheme` when it wired none — on Omarchy the
+ * desktop theme's own mode, which the media query only learns through the GTK portal.
  */
 import {
   createContext,
@@ -73,12 +70,10 @@ export interface SystemSchemeSource {
  *
  *  · from auto → the explicit OPPOSITE of what is rendered, so the first press always shows;
  *  · from an explicit scheme the system does not share → the other explicit scheme;
- *  · from an explicit scheme the system DOES share → auto, which leaves the canvas alone by
- *    construction and is the one press where the glyph and the sentence carry the whole
- *    change — the hand-back.
- *
- * Three presses return home. A fixed ring light → dark → auto was rejected: on a light system
- * the first press out of auto changes nothing, which is the defect this lane exists to fix.
+ *  · from an explicit scheme the system DOES share → auto, the hand-back, which leaves the
+ *    canvas alone by construction.
+ * Three presses return home; a fixed ring light → dark → auto was rejected because on a light
+ * system the first press out of auto changes nothing.
  */
 export function nextSchemePreference(
   preference: ThemePreference,

@@ -2061,14 +2061,12 @@ export interface SanitizeOptions {
   /**
    * REMOTE PICTURES ALREADY FETCHED, as `data:` URIs keyed by the sender's own url.
    *
-   * The door that has no ORIGIN — the desktop, whose engine is reached over a pipe and not a
-   * port — cannot be named in an `<img src>`, so its pictures arrive the way `cid:` parts
-   * already do: fetched through the same image proxy (server-side, SSRF-gated, pixel-refusing)
-   * and handed here as bytes. `img-src data:` has always been in the frame's policy, so this
-   * adds NO source to it; {@link imageProxy} stays null there and the policy is byte-identical.
-   *
-   * It does not lift the pixel override: a classified beacon is never fetched, so it is never
-   * in this map, and a map that somehow carried one would still lose to `pixel` below.
+   * The door that has no ORIGIN — the desktop, whose engine is reached over a pipe — cannot be
+   * named in an `<img src>`, so its pictures arrive the way `cid:` parts do: fetched through the
+   * same image proxy (SSRF-gated, pixel-refusing) and handed here as bytes. `img-src data:` has
+   * always been in the frame's policy, so this adds NO source to it. It does not lift the pixel
+   * override: a classified beacon is never fetched, so it is never in this map, and one that
+   * somehow carried it would still lose to `pixel` below.
    */
   resolvedRemoteImages?: ReadonlyMap<string, string> | null;
   /**
@@ -3640,12 +3638,10 @@ export function MessageBody({
    *
    * Gated on `remoteLoaded` because that is the whole question the account already answered:
    * asking for bytes the reader has not consented to would be the per-message button pressing
-   * itself. `pixel` entries are filtered out here rather than by the callee — see
+   * itself. `pixel` entries are filtered here rather than by the callee — see
    * {@link MessageBodyProps.onRemoteImages}. `via === "img"` because a CSS `url()` cannot be
-   * swapped for a `data:` URI by the resolved map, which only rewrites `<img src>`.
-   *
-   * The JOIN is the effect's dependency rather than the array, which would be a fresh identity
-   * every render and would re-fire this on every paint.
+   * swapped for a `data:` URI. The JOIN is the effect's dependency rather than the array, which
+   * would be a fresh identity every render and would re-fire this on every paint.
    */
   const wantedRemote = mail?.state === "ok" && !framelessView && remoteLoaded
     ? [...new Set(mail.blocked.filter((b) => b.via === "img" && !b.pixel).map((b) => b.url))]

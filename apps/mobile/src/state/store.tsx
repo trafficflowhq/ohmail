@@ -1,10 +1,9 @@
 /**
  * App-local preferences — the one piece of client state that is not the mirror: the light/dark
  * preference and the face pin (paper / ohmarchy, "only this device"). Both are DEVICE-LOCAL and
- * both are kept across relaunches now, in one record, because persisting one while the other
- * reset is an incoherence somebody would report. The scheme stays device-only for the reason
- * the face does not: a face is a taste that follows the person, a scheme belongs to the machine
- * in front of you — its screen and its room.
+ * both survive relaunch, in one record, because persisting one while the other reset is an
+ * incoherence. The scheme stays device-only for the reason the face does not: a face is a taste
+ * that follows the person, a scheme belongs to the machine in front of you.
  *
  * The ordering and the keystore live in `appearance-store.ts`; this component is the wiring.
  * With no `kv` nothing is persisted and the choice holds for the session.

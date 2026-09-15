@@ -1,15 +1,12 @@
 /**
  * REMOTE PICTURES ON A DOOR WITH NO ORIGIN.
  *
- * The window's engine is reached over Tauri's command channel, not a port — `bridge-fetch.ts`
- * says why, and the posture stands: nothing listens, so no `<img src>` can name the proxy the
- * way the hosted client does. The bytes travel the same road every mail body and attachment
- * already takes, and reach the frame as a `data:` URI, which the frame's policy has always
- * admitted. No port, no token in the page, and `frameCsp` does not move.
- *
- * The FETCH itself is the local door's `GET /img` — the same `PrivacyService.proxyImage` the
- * hosted door runs, with the SSRF gate, the beacon refusal, the timeout and the size cap. This
- * module adds no policy of its own; it is a transport and nothing else.
+ * Nothing listens on a port here — the engine is reached over Tauri's command channel
+ * (`bridge-fetch.ts` says why) — so no `<img src>` can name the proxy the way the hosted client
+ * does. The bytes take the road mail bodies already take and reach the frame as a `data:` URI,
+ * which `frameCsp` has always admitted and does not move for. The fetch is the local door's
+ * `GET /img`, the same `PrivacyService.proxyImage` the hosted door runs; this module is
+ * transport and adds no policy of its own.
  */
 
 import { bridgeFetch } from "./bridge-fetch.js";
@@ -36,13 +33,12 @@ function dataUri(type: string, bytes: Uint8Array): string {
 /**
  * Fetch one remote picture for one message through this window's engine.
  *
- * Resolves to a `data:` URI, or `null` for every refusal — the SSRF gate, an account that opted
- * out, a beacon, a non-image type, a transport failure. ONE return value for all of them on
- * purpose: the caller's only move is the blanked box, and a thrown error here would have to be
- * classified by a renderer that cannot act on the difference. The door logs which arm refused.
+ * Resolves to a `data:` URI, or `null` for every refusal — SSRF gate, opted-out account, beacon,
+ * non-image type, transport failure. ONE return value for all of them: the caller's only move is
+ * the blanked box, and a thrown error would have to be classified by a renderer that cannot act
+ * on the difference. The door logs which arm refused.
  *
- * `mid` is the AUTHORISATION, not a decoration: the proxy refuses a message this account does
- * not own, so the id is what makes the url fetchable at all.
+ * `mid` is the AUTHORISATION: the proxy refuses a message this account does not own.
  */
 export async function localImageWire(messageId: string, url: string): Promise<string | null> {
   try {

@@ -1,15 +1,11 @@
 /**
- * THE APPEARANCE THIS PHONE KEEPS — the light/dark preference and the face pin, in ONE record.
+ * THE APPEARANCE THIS PHONE KEEPS — light/dark preference and face pin, in ONE record.
  *
- * Both were in memory: a relaunch returned the scheme to Auto and dropped the pin. Persisting
- * one without the other is an incoherence somebody would report, so there is one key and one
- * record and they cannot drift apart. There is no pre-paint stamp to protect on a phone (React
- * Native paints nothing before JS), so the boot read is an ordinary async read.
- *
- * The ORDERING lives here rather than in the provider because this workspace has no React
- * Native renderer: logic inside a component is logic no test can drive. The one rule that has
- * been wrong on every surface once — a boot read that resolves AFTER a press must not publish
- * the pre-press value — is a field on this object and a test below drives it directly.
+ * Both were in memory, so a relaunch returned the scheme to Auto and dropped the pin. One key
+ * and one record: persisting one without the other is an incoherence. No pre-paint stamp to
+ * protect on a phone, so the boot read is an ordinary async read. The ORDERING lives here, not
+ * in the provider, because this workspace has no React Native renderer; the rule it enforces is
+ * that a boot read resolving AFTER a press must not publish the pre-press value.
  */
 import type { FaceName } from "../theme/face";
 import type { ThemePref } from "./model";
