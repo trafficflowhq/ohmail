@@ -795,19 +795,16 @@ export async function applyRuleRequest(
     const existing = await findRuleByKey(tx, accountId, key);
     if (existing) {
       const diff = ruleCreateDiff(existing, payload);
-      if (Object.keys(diff).length > 0) {
-        const reconcile: Partial<typeof rulesTbl.$inferInsert> = { ...diff, updatedAt: now };
-        /* The backlog re-opens on the update path's terms: only when the ROUTING moved, never for
-           a reorder or an on/off, and only if the request asked for the mail already filed. */
-        if (diff.destination !== undefined && payload.applyRetro) {
-          reconcile.retroRequestedAt = now;
-          reconcile.retroDoneAt = null;
-          reconcile.retroCursor = null;
-          reconcile.retroMoved = 0;
-        }
-        await tx.update(rulesTbl).set(reconcile)
-          .where(and(eq(rulesTbl.id, existing.id), eq(rulesTbl.accountId, accountId)));
-      }
+      /* The backlog re-opens on the update path's terms: only when the ROUTING moved, never for a
+         reorder or an on/off, and only if the request asked for the mail already filed. */
+      const retro: Partial<typeof rulesTbl.$inferInsert> =
+        diff.destination !== undefined && payload.applyRetro
+          ? { retroRequestedAt: now, retroDoneAt: null, retroCursor: null, retroMoved: 0 }
+          : {};
+      // Flat, not nested: the delta below is this write's door and the census reads them together.
+      if (Object.keys(diff).length > 0) await tx.update(rulesTbl)
+        .set({ ...diff, ...retro, updatedAt: now })
+        .where(and(eq(rulesTbl.id, existing.id), eq(rulesTbl.accountId, accountId)));
       return {
         applied: true, op: "create", ruleId: existing.id,
         lastSeq: (await recordRuleDelta(ledger(tx), accountId, [existing.id], "update"))[0]!,
