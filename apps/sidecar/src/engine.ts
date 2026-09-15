@@ -107,7 +107,12 @@ import { localLanRoutes } from "./lan-routes.js";
 // It lives in the worker package today because the worker was its only caller. If the loop later
 // moves into a package shared by both hosts, this import moves with it and nothing else here
 // changes. A test in this package fails if a second copy of the loop ever appears beside it.
-import { KnownSetCache, newCycleCensus, runSyncCycle, type SyncDeps } from "@trafficflow/worker/sync";
+import { runSyncCycle, type CycleCensus, type SyncDeps } from "@trafficflow/worker/sync";
+/* The memo the cycle's `knownSet` takes, from its OWN subpath and not through the loop's module:
+   `one-pipeline.test.ts` holds this file's value import from `@trafficflow/worker/sync` to
+   `runSyncCycle` alone, because a second value out of the loop's module would be a second piece of
+   the pipeline running here. This is per-attachment state, not a piece of the pipeline. */
+import { KnownSetCache } from "@trafficflow/worker/known-set";
 
 // The ORGANIZER LEASE, from the same package and for the same reason: two readings of one decision
 // table is how a LOCAL install and the CLOUD service come to disagree about who organizes a
@@ -4768,7 +4773,12 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
            is the shared loop's own (mailbox-sized derivations, the rows they walked, and what the
            adapter handed over); `checkpoints` is this file's. Both are folded into `sync_drain`,
            so a settled mailbox's poll says in one line whether it did anything at all. */
-        const census = newCycleCensus();
+        /* Zeroed here rather than through a helper, for the import rule above: the TYPE still
+           comes from the loop, so a counter added there stops this line compiling — which is the
+           direction that keeps a census honest. */
+        const census: CycleCensus = {
+          cursorBuilds: 0, locatorReads: 0, locatorRows: 0, cursorFolders: 0, observed: 0,
+        };
         let checkpoints = 0;
         /* WHERE THE CHANGE LOG STOOD WHEN THIS DRAIN BEGAN — the comparison BOTH gates below are
            taken on, and read here rather than at the caller because the lease gate runs between

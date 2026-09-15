@@ -305,14 +305,6 @@ export interface JunkSweepCommandPort {
  * reused UID under a new epoch looked already-known and its body was never fetched. So the cursor's `uidValidity` is the epoch its remembered UIDs belong to, and only those entries are handed over.
  */
 /**
- * The memo {@link SyncDeps.knownSet} takes, re-exported here rather than behind a subpath of its
- * own: a caller that may SET the field has to be able to build the value, and this loop's deps
- * are its contract. `known-set.ts` already publishes with `apps/worker/src`, so nothing new is
- * conveyed by the re-export.
- */
-export { KnownSetCache } from "./known-set.js";
-
-/**
  * WHAT ONE CYCLE ACTUALLY DID — the counters behind "an idle tick's cost is proportional to what
  * changed". Measurement, not behaviour: absent ⇒ nothing is counted and every path is unchanged.
  *
