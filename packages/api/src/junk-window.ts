@@ -220,7 +220,7 @@ export async function listJunk(
       });
       return { boxId: box.id, page };
     } catch (err) {
-      deps.logger?.warn?.("junk_window_read_failed", { mailboxId: box.id, err: String(err) });
+      deps.logger?.warn?.("junk_window_read_failed", { mailboxId: box.id, err });
       states.push({ id: box.id, address: box.address, window: "unreachable" });
       return null;
     }
@@ -399,7 +399,7 @@ export async function searchJunk(
       if (page.truncated) truncated = true;
       return { boxId: box.id, page };
     } catch (err) {
-      deps.logger?.warn?.("junk_window_search_failed", { mailboxId: box.id, err: String(err) });
+      deps.logger?.warn?.("junk_window_search_failed", { mailboxId: box.id, err });
       states.push({ id: box.id, address: box.address, window: "unreachable" });
       return null;
     }
@@ -665,7 +665,7 @@ export async function rescueJunk(
             // Best-effort: an oversize or failed pre-fetch narrows the rescue to the move; the
             // body stays husked and the marker stays TRUE until the move lands (it still names
             // where the bytes live). Logged, never fatal — the user pressed "move", not "fetch".
-            deps.logger?.warn?.("junk_rescue_prefetch_failed", { mailboxId: args.mailboxId, err: String(err) });
+            deps.logger?.warn?.("junk_rescue_prefetch_failed", { mailboxId: args.mailboxId, err });
           }
         }
       }
@@ -738,7 +738,7 @@ export async function rescueJunk(
         }
       }
     } catch (err) {
-      deps.logger?.warn?.("junk_rescue_unhusk_failed", { mailboxId: args.mailboxId, err: String(err) });
+      deps.logger?.warn?.("junk_rescue_unhusk_failed", { mailboxId: args.mailboxId, err });
     }
   }
 
@@ -769,7 +769,7 @@ export async function rescueJunk(
       .set({ syncRequestedAt: deps.now?.() ?? new Date() })
       .where(and(eq(mailboxes.id, args.mailboxId), eq(mailboxes.accountId, accountId)));
   } catch (err) {
-    deps.logger?.warn?.("junk_rescue_kick_failed", { mailboxId: args.mailboxId, err: String(err) });
+    deps.logger?.warn?.("junk_rescue_kick_failed", { mailboxId: args.mailboxId, err });
   }
   return allowed !== undefined ? { status: "rescued", allowed } : { status: "rescued" };
 }
