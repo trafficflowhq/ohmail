@@ -183,6 +183,12 @@ export interface SyncDeps {
    */
   knownSet?: KnownSetCache;
   /**
+   * WHAT THIS CYCLE DID, counted — see {@link CycleCensus}. ABSENT ⇒ nothing is counted and every
+   * path runs as it did before this field; present ⇒ the caller folds the totals into its own
+   * drain line. A measurement seam, never a behaviour one: nothing in this file reads it back.
+   */
+  census?: CycleCensus;
+  /**
    * WHICH BUILD is running — the second arm of the durable ledger's due predicate.
    *
    * Absent ⇒ resolved from the environment by {@link buildVersionOf}, the same three sources
@@ -298,11 +304,31 @@ export interface JunkSweepCommandPort {
  * the server epoch that issued it, and reducing locators to `{uid, messageId}` discarded that — a
  * reused UID under a new epoch looked already-known and its body was never fetched. So the cursor's `uidValidity` is the epoch its remembered UIDs belong to, and only those entries are handed over.
  */
+/**
+ * WHAT ONE CYCLE ACTUALLY DID — the counters behind "an idle tick's cost is proportional to what
+ * changed". Measurement, not behaviour: absent ⇒ nothing is counted and every path is unchanged.
+ * `cursorBuilds` is the number of mailbox-sized derivations {@link buildCursor} performed and
+ * `locatorRows` the rows they walked; with no {@link SyncDeps.knownSet} every build is also a
+ * store read, which is the whole of the local engine's idle cost. `observed` is what the adapter
+ * handed over — zero means nothing changed, and every gate in this file keys on that.
+ */
+export interface CycleCensus {
+  cursorBuilds: number;
+  locatorRows: number;
+  observed: number;
+}
+
+/** A zeroed {@link CycleCensus} — one per drain, folded into the caller's own log line. */
+export function newCycleCensus(): CycleCensus {
+  return { cursorBuilds: 0, locatorRows: 0, observed: 0 };
+}
+
 export async function buildCursor(
-  repo: WorkerRepo, mailboxId: string, deadLetters?: DeadLetterLedger,
+  repo: WorkerRepo, mailboxId: string, deadLetters?: DeadLetterLedger, census?: CycleCensus,
 ): Promise<ImapCursor> {
   const folderRows = await repo.getMailboxFolders(mailboxId);
   const known = await repo.listKnownLocators(mailboxId);
+  if (census !== undefined) { census.cursorBuilds += 1; census.locatorRows += known.length; }
   const knownByFolder = new Map<string, Array<{ uid: number; uidValidity: string; messageId: string | null; seen: boolean | null }>>();
   for (const k of known) {
     const arr = knownByFolder.get(k.folder) ?? [];
@@ -798,8 +824,12 @@ async function syncCycleWithin(
     }
   }
 
-  const cursor = await buildCursor(repo, mailboxId, deadLetters);
+  const cursor = await buildCursor(repo, mailboxId, deadLetters, deps.census);
   const batch = await adapter.changesSince(cursor);
+  if (deps.census !== undefined) {
+    deps.census.observed += batch.creates.length + batch.moves.length
+      + batch.flagChanges.length + batch.deletes.length;
+  }
   // A folder whose STORED cursor this build could not read was scanned from cold — the adapter has
   // no logger and reports the names instead, and a re-bootstrap that nobody records is the
   // silent state the row is about. One line per folder, labelled: a folder a person made carries

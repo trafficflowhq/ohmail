@@ -107,7 +107,7 @@ import { localLanRoutes } from "./lan-routes.js";
 // It lives in the worker package today because the worker was its only caller. If the loop later
 // moves into a package shared by both hosts, this import moves with it and nothing else here
 // changes. A test in this package fails if a second copy of the loop ever appears beside it.
-import { runSyncCycle, type SyncDeps } from "@trafficflow/worker/sync";
+import { newCycleCensus, runSyncCycle, type SyncDeps } from "@trafficflow/worker/sync";
 // The ORGANIZER LEASE, from the same package and for the same reason: two readings of one decision
 // table is how a LOCAL install and the CLOUD service come to disagree about who organizes a
 // mailbox, and disagreement here IS the dual-organizer bug.
@@ -4742,6 +4742,12 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         // injected `now()`: a test may freeze that clock, and a frozen clock would report every
         // cycle as 0 ms.
         const cycleMs: number[] = [];
+        /* WHAT THIS DRAIN DID, counted — the reading behind the idle-cost gates below. `census`
+           is the shared loop's own (mailbox-sized derivations, the rows they walked, and what the
+           adapter handed over); `checkpoints` is this file's. Both are folded into `sync_drain`,
+           so a settled mailbox's poll says in one line whether it did anything at all. */
+        const census = newCycleCensus();
+        let checkpoints = 0;
         while (!stopped && cycles < maxCycles) {
           /* THE REFUSAL, AT EVERY CYCLE EDGE. A drain runs for up to a hundred cycles and each
              one moves mail, so the question "is this still the connection I gated?" has to be
@@ -4779,6 +4785,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
              */
             const outcome = await inStoreLane("ingest", async () => runSyncCycle({
             ...syncDeps,
+            census,
             /* THE GATED CONNECTION, spread over `syncDeps`'s live getter on purpose. The getter is
                what lets a re-dialled mailbox use its new connection; this is what stops a drain
                that is ALREADY RUNNING from being handed one. Both are needed and they are not in
@@ -4823,134 +4830,149 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
              and a peak of 8 MiB against 58, two reps in opposite orders
              (`test/rigs/checkpoint-churn-rig.mjs`). */
           await opened.checkpoint();
+          checkpoints += 1;
           // Yield, so a backlog drain cannot starve the request handler sharing this event loop.
           await new Promise((r) => setTimeout(r, 0));
         }
-        // One line per drain — a settled mailbox emits it every poll interval, so it stays quiet;
-        // a slow or spinning drain is the line that shows it. `slowestMs` above the poll interval is
-        // the signal to chase (a cycle longer than the interval is a high-duty period and a quit that
-        // waits on it). Literal field keys, not a spread of the summary object: the log census refuses
-        // a call site whose field set it cannot read statically. See `summarizeDrain`.
-        if (cycles > 0) {
+        /* ONE LINE PER DRAIN, WRITTEN AT THE DRAIN'S END — a settled mailbox emits it every poll
+           interval, so it stays quiet; a slow or spinning drain is the line that shows it.
+           `slowestMs` above the poll interval is the signal to chase. It reports the WHOLE drain,
+           tail included, because the tail takes the last checkpoint and the count of those is what
+           says whether an idle poll did anything at all; the `finally` is what keeps a tail that
+           throws from taking the record of the cycles that ran with it. Literal field keys, not a
+           spread of the summary object: the log census refuses a call site whose field set it
+           cannot read statically. See `summarizeDrain`. */
+        let drainLineWritten = false;
+        const writeDrainLine = (): void => {
+          if (drainLineWritten || cycles === 0) return;
+          drainLineWritten = true;
           const shape = summarizeDrain(cycleMs);
-          log("sync_drain", { cycles: shape.cycles, totalMs: shape.totalMs, slowestMs: shape.slowestMs, drained });
-        }
-        /* AFTER THE CYCLES, AND THAT ORDER IS THE FEATURE. The senders this asks about are the ones
-           the cycles above just brought in, so running it first would spend a whole drain behind the
-           mail it is about. It is also OUTSIDE the loop for `resurfaceDue`'s reason turned round: a
-           backlog drain is up to a hundred cycles, and asking after each of them would page through
-           the same queue a hundred times for one arrival. Before the checkpoint below, so the rows it
-           writes are folded into the same fold. */
-        await onceForTheAccount(() => suggestNew(screening.ohboxBar));
-        /* AND THE HISTORICAL-NAME REPAIR LAST OF ALL THE WORK, which is the ordering claim the
-           suite pins rather than a preference. It is about rows that have been on this disk for as
-           long as the install has existed, so nothing it does is urgent, and a cold launch's first
-           drain is exactly when the user is watching an empty window fill up. Running it before the
-           cycles — or between them — would spend a page of parsing and a write transaction in front
-           of the mail somebody is waiting for, every launch, to correct a display name they have
-           been reading past for months. Before the checkpoint below for `suggestNew`'s reason: the
-           rows it writes belong in the same fold. */
-        await onceForTheAccount(backfillStoredNames);
-        /* REJOIN THE CONVERSATIONS A FORWARD SPLIT, the same pass the hosted worker runs
-           (`@trafficflow/worker/thread-join-heal`) for the reason every pass above is the
-           worker's: on this door the store under the user's home IS the authority, no worker
-           anywhere else will ever visit it, and a second implementation of the join evidence
-           would be a second population of merges decided by different rules. Time-gated
-           in-launch (six hours, like the hosted gate) because it repairs presentation — a
-           conversation reading as two threads — and its pre-filter is a GROUP BY nobody should
-           pay per drain. After the name repair, before the stamp, so its change rows fold into
-           the same checkpoint. A failure is CONTAINED like every pass above: threads stay
-           split, mail keeps arriving, the next gated drain asks again. */
-        if (Date.now() - lastJoinHealAt >= LOCAL_JOIN_HEAL_EVERY_MS) {
-          lastJoinHealAt = Date.now();
-          try {
-            const r = await threadJoinHealPass({
-              db: db as unknown as Tx, apply: true, accountId: world.accountId, log: undefined,
-              cursor: joinHealCursor,
-            });
-            // Persist the resume point for every capped walk — never reset it on a failure: a
-            // deterministically failing group would pin the walk to its own page and starve the
-            // tail. The pass already retries a failure once in-run, so what remains is
-            // persistent and waits for the wrap-around.
-            joinHealCursor = r.capped && r.cursor ? r.cursor : undefined;
-            if (r.merged > 0) log("thread_join_heal", { merged: r.merged, moved: r.messagesMoved, skipped: r.skipped });
-            // A `_failed` suffix, or the sidecar's log filter files it as informational and the
-            // only diagnostic of a caught merge failure is lost (`createSidecarLog` classifies
-            // by name; see apps/sidecar/src/log.ts).
-            if (r.failed > 0) log("thread_join_heal_failed", { failed: r.failed, merged: r.merged, skipped: r.skipped });
-          } catch (err) {
-            log("thread_join_heal_failed", {
-              err,
-              reason: "no group committed partially — each is one transaction; split threads " +
-                "stay split and the next gated drain re-reads reality",
-            });
-          }
-        }
-        /* NOTICE THE MAILBOX A PROVIDER-SIDE FORWARD EMPTIED — the same pass the hosted worker
-           runs (`@trafficflow/worker/inbound-quiet`), for the reason every pass above is the
-           worker's: this store is the authority for this install, no worker anywhere else will
-           judge it, and a second implementation of the predicate would tell the same mailbox's
-           owner two different stories across the doors. Time-gated in-launch (six hours, the
-           hosted gate) because the windows it judges are fortnights. After the heal, before the
-           stamp — it writes no change rows (the mailbox panel polls `GET /mailboxes`), so the
-           checkpoint ordering is indifferent, and the tail keeps all the maintenance in one
-           place. A failure is CONTAINED like every pass above: episodes already stamped stand,
-           mail keeps arriving, the next gated drain asks again. */
-        if (Date.now() - lastInboundQuietAt >= LOCAL_INBOUND_QUIET_EVERY_MS) {
-          lastInboundQuietAt = Date.now();
-          try {
-            const r = await inboundQuietPass(db as unknown as Tx, now(), { accountId: world.accountId });
-            if (r.tripped > 0 || r.cleared > 0) {
-              log("inbound_quiet_pass", { tripped: r.tripped, cleared: r.cleared });
+          log("sync_drain", {
+            cycles: shape.cycles, totalMs: shape.totalMs, slowestMs: shape.slowestMs, drained,
+            observed: census.observed, cursorBuilds: census.cursorBuilds,
+            locatorRows: census.locatorRows, checkpoints,
+          });
+        };
+        try {
+          /* AFTER THE CYCLES, AND THAT ORDER IS THE FEATURE. The senders this asks about are the ones
+             the cycles above just brought in, so running it first would spend a whole drain behind the
+             mail it is about. It is also OUTSIDE the loop for `resurfaceDue`'s reason turned round: a
+             backlog drain is up to a hundred cycles, and asking after each of them would page through
+             the same queue a hundred times for one arrival. Before the checkpoint below, so the rows it
+             writes are folded into the same fold. */
+          await onceForTheAccount(() => suggestNew(screening.ohboxBar));
+          /* AND THE HISTORICAL-NAME REPAIR LAST OF ALL THE WORK, which is the ordering claim the
+             suite pins rather than a preference. It is about rows that have been on this disk for as
+             long as the install has existed, so nothing it does is urgent, and a cold launch's first
+             drain is exactly when the user is watching an empty window fill up. Running it before the
+             cycles — or between them — would spend a page of parsing and a write transaction in front
+             of the mail somebody is waiting for, every launch, to correct a display name they have
+             been reading past for months. Before the checkpoint below for `suggestNew`'s reason: the
+             rows it writes belong in the same fold. */
+          await onceForTheAccount(backfillStoredNames);
+          /* REJOIN THE CONVERSATIONS A FORWARD SPLIT, the same pass the hosted worker runs
+             (`@trafficflow/worker/thread-join-heal`) for the reason every pass above is the
+             worker's: on this door the store under the user's home IS the authority, no worker
+             anywhere else will ever visit it, and a second implementation of the join evidence
+             would be a second population of merges decided by different rules. Time-gated
+             in-launch (six hours, like the hosted gate) because it repairs presentation — a
+             conversation reading as two threads — and its pre-filter is a GROUP BY nobody should
+             pay per drain. After the name repair, before the stamp, so its change rows fold into
+             the same checkpoint. A failure is CONTAINED like every pass above: threads stay
+             split, mail keeps arriving, the next gated drain asks again. */
+          if (Date.now() - lastJoinHealAt >= LOCAL_JOIN_HEAL_EVERY_MS) {
+            lastJoinHealAt = Date.now();
+            try {
+              const r = await threadJoinHealPass({
+                db: db as unknown as Tx, apply: true, accountId: world.accountId, log: undefined,
+                cursor: joinHealCursor,
+              });
+              // Persist the resume point for every capped walk — never reset it on a failure: a
+              // deterministically failing group would pin the walk to its own page and starve the
+              // tail. The pass already retries a failure once in-run, so what remains is
+              // persistent and waits for the wrap-around.
+              joinHealCursor = r.capped && r.cursor ? r.cursor : undefined;
+              if (r.merged > 0) log("thread_join_heal", { merged: r.merged, moved: r.messagesMoved, skipped: r.skipped });
+              // A `_failed` suffix, or the sidecar's log filter files it as informational and the
+              // only diagnostic of a caught merge failure is lost (`createSidecarLog` classifies
+              // by name; see apps/sidecar/src/log.ts).
+              if (r.failed > 0) log("thread_join_heal_failed", { failed: r.failed, merged: r.merged, skipped: r.skipped });
+            } catch (err) {
+              log("thread_join_heal_failed", {
+                err,
+                reason: "no group committed partially — each is one transaction; split threads " +
+                  "stay split and the next gated drain re-reads reality",
+              });
             }
-          } catch (err) {
-            log("inbound_quiet_pass_failed", {
-              err,
-              reason: "the quiet-mailbox judgment was skipped this drain; stamped episodes " +
-                "stand, nothing trips or clears, and the next gated drain re-reads reality",
-            });
           }
-        }
-        /* HOW FAR THIS MAILBOX HAS GOT, WRITTEN DOWN. On a hosted account these two columns are the
-           worker's; here this process IS the worker, and the window's sync line reads them to tell a
-           first import apart from a settled mailbox. `inboundDrained` is the distinction that
-           matters for the second stamp: a drain that ran out of CYCLES with inbound mail still owed
-           has not finished the import, and saying it had would tell somebody their mailbox was
-           complete with half of it still on its way — while outbound filing the reconciler still
-           owes (the OTHER reason the loop keeps going) is not import and must not withhold the
-           stamp. See `sync-stamp.ts`. */
-        if (cycles > 0) {
-          const stamps = await stampSynced(db, mb.id, now(), inboundDrained);
-          /* HOW LONG THE FIRST IMPORT TOOK, from the stamps that just decided it — the number
-             nobody could read off a log before. The count is a thunk so a settled mailbox's pass
-             pays nothing for it; see `first-sync.ts`. */
-          await firstSyncLog.report(mb.id, stamps, () => mirroredMessageCount(db, mb.id), passStartedAt);
-          /* AND WHETHER THE IMPORT IS STILL OPEN, from the SAME stamps — the state a surface
-             renders must not be able to disagree with the line a log carries about one pass. */
-          firstSync.noteStamps(stamps);
-        }
-        /* And behind the drain, for the tail above — the suggestions, the name repair, the join
-           heal and the stamps all write AFTER the last cycle's fold. The periodic checkpointer
-           (`db.ts`) bounds the log to five minutes of churn and nothing narrower, which is why the
-           cycle takes its own; what is left here is one drain's tail. AWAITED: the next drain
-           cannot start until this one's log folds in, and `checkpoint()` never throws
-           (`checkpointWal`). A zero-cycle drain wrote nothing and skips it. */
-        if (cycles > 0) await opened.checkpoint();
-        /* PUT THE IDLE BACK ON INBOX. The cycles above re-SELECT other folders, after which an
-           INBOX arrival emits nothing — a dead push channel that looks exactly like a slow one
-           (the worker measured p50 194 s that way, which is why `rearmWatch` exists). It also
-           rings the bell itself for growth that landed in the blind window. A belt, so a failure
-           is logged and never turned into a failed drain; the next poll still comes. */
-        if (restMayBeTaken && typeof conn.rearmWatch === "function") {
-          try {
-            await conn.rearmWatch();
-          } catch (err) {
-            log("local_wake_rearm_failed", {
-              err,
-              reason: "the INBOX watch could not be re-armed after this drain, so arrivals may " +
-                "wait for the poll until the connection is re-dialled",
-            });
+          /* NOTICE THE MAILBOX A PROVIDER-SIDE FORWARD EMPTIED — the same pass the hosted worker
+             runs (`@trafficflow/worker/inbound-quiet`), for the reason every pass above is the
+             worker's: this store is the authority for this install, no worker anywhere else will
+             judge it, and a second implementation of the predicate would tell the same mailbox's
+             owner two different stories across the doors. Time-gated in-launch (six hours, the
+             hosted gate) because the windows it judges are fortnights. After the heal, before the
+             stamp — it writes no change rows (the mailbox panel polls `GET /mailboxes`), so the
+             checkpoint ordering is indifferent, and the tail keeps all the maintenance in one
+             place. A failure is CONTAINED like every pass above: episodes already stamped stand,
+             mail keeps arriving, the next gated drain asks again. */
+          if (Date.now() - lastInboundQuietAt >= LOCAL_INBOUND_QUIET_EVERY_MS) {
+            lastInboundQuietAt = Date.now();
+            try {
+              const r = await inboundQuietPass(db as unknown as Tx, now(), { accountId: world.accountId });
+              if (r.tripped > 0 || r.cleared > 0) {
+                log("inbound_quiet_pass", { tripped: r.tripped, cleared: r.cleared });
+              }
+            } catch (err) {
+              log("inbound_quiet_pass_failed", {
+                err,
+                reason: "the quiet-mailbox judgment was skipped this drain; stamped episodes " +
+                  "stand, nothing trips or clears, and the next gated drain re-reads reality",
+              });
+            }
           }
+          /* HOW FAR THIS MAILBOX HAS GOT, WRITTEN DOWN. On a hosted account these two columns are the
+             worker's; here this process IS the worker, and the window's sync line reads them to tell a
+             first import apart from a settled mailbox. `inboundDrained` is the distinction that
+             matters for the second stamp: a drain that ran out of CYCLES with inbound mail still owed
+             has not finished the import, and saying it had would tell somebody their mailbox was
+             complete with half of it still on its way — while outbound filing the reconciler still
+             owes (the OTHER reason the loop keeps going) is not import and must not withhold the
+             stamp. See `sync-stamp.ts`. */
+          if (cycles > 0) {
+            const stamps = await stampSynced(db, mb.id, now(), inboundDrained);
+            /* HOW LONG THE FIRST IMPORT TOOK, from the stamps that just decided it — the number
+               nobody could read off a log before. The count is a thunk so a settled mailbox's pass
+               pays nothing for it; see `first-sync.ts`. */
+            await firstSyncLog.report(mb.id, stamps, () => mirroredMessageCount(db, mb.id), passStartedAt);
+            /* AND WHETHER THE IMPORT IS STILL OPEN, from the SAME stamps — the state a surface
+               renders must not be able to disagree with the line a log carries about one pass. */
+            firstSync.noteStamps(stamps);
+          }
+          /* And behind the drain, for the tail above — the suggestions, the name repair, the join
+             heal and the stamps all write AFTER the last cycle's fold. The periodic checkpointer
+             (`db.ts`) bounds the log to five minutes of churn and nothing narrower, which is why the
+             cycle takes its own; what is left here is one drain's tail. AWAITED: the next drain
+             cannot start until this one's log folds in, and `checkpoint()` never throws
+             (`checkpointWal`). A zero-cycle drain wrote nothing and skips it. */
+          if (cycles > 0) { await opened.checkpoint(); checkpoints += 1; }
+          /* PUT THE IDLE BACK ON INBOX. The cycles above re-SELECT other folders, after which an
+             INBOX arrival emits nothing — a dead push channel that looks exactly like a slow one
+             (the worker measured p50 194 s that way, which is why `rearmWatch` exists). It also
+             rings the bell itself for growth that landed in the blind window. A belt, so a failure
+             is logged and never turned into a failed drain; the next poll still comes. */
+          if (restMayBeTaken && typeof conn.rearmWatch === "function") {
+            try {
+              await conn.rearmWatch();
+            } catch (err) {
+              log("local_wake_rearm_failed", {
+                err,
+                reason: "the INBOX watch could not be re-armed after this drain, so arrivals may " +
+                  "wait for the poll until the connection is re-dialled",
+              });
+            }
+          }
+        } finally {
+          writeDrainLine();
         }
         return cycles;
       };
