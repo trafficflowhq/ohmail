@@ -2118,6 +2118,26 @@ export class OhmailEngine {
    */
   private cutlineDays: number | null = null;
   private cutlineAllTime = false;
+  /**
+   * WHAT THE WINDOWED PRUNE LAST RAN OVER — the stamp of everything but bodies, and the cutline
+   * generation it ran under. The pass reads the whole mirror and SORTS it; on a settled client
+   * that is a mailbox-sized derivation once per poll for the answer "nothing to evict". `-1` has
+   * no stamp equal to it, so a client that has never pruned always runs.
+   */
+  private prunedAtStamp = -1;
+  private prunedAtCutline = -1;
+  /**
+   * The cutline's own generation, bumped by {@link OhmailEngine.setCutline}. The age term is the
+   * one input to the prune that is NOT a record write, so a new answer has to be able to
+   * invalidate the stamp above on its own.
+   */
+  private cutlineGen = 0;
+  /**
+   * The store version the last COMPLETED eager pass ranked at. The pass sorts the whole mirror to
+   * pick the newest window; between two ticks that changed nothing it picks the same window, asks
+   * the same admission and is refused by it, every time.
+   */
+  private eagerRankedAt = -1;
   /** See {@link STALE_RESUME_MS}; the option exists for tests. */
   private readonly staleResumeMs: number;
   /** In-flight archive passes by query key — see {@link OhmailEngine.searchServer}. */
@@ -3000,6 +3020,16 @@ export class OhmailEngine {
    * actually reading.
    */
   private async runEagerBodies(gen: number): Promise<void> {
+    /* AND ONLY WHEN THE MIRROR HAS MOVED SINCE THE LAST PASS. The ranking below reads every
+       message in the mirror and SORTS it, and the shell kicks the pass after every settled drain —
+       so a client nobody is writing to ranked its whole mailbox once per poll to pick the same
+       window, offer the same ids and have every one of them refused by the admission as already
+       held. {@link StoreReader.version} moves for any record write, bodies included, which is
+       exactly the breadth this wants: a body that landed is one the pass no longer owes.
+       Recorded only on a pass that RAN TO THE END — a teardown between slices leaves the want
+       list unfinished, and latching there would drop the rest for the life of the engine. */
+    const rankedAt = this.store.version();
+    if (rankedAt === this.eagerRankedAt) return;
     const ranked = this.read()
       .entries<EngineMessage>("message")
       .map((e) => ({ id: e.id, t: messageTime(e.entity) }));
@@ -3025,6 +3055,8 @@ export class OhmailEngine {
       if (stopped()) return;
       await this.hydrateMany(ids.slice(i, i + EAGER_BODIES_SLICE), { rendered: false, stopped });
     }
+    // The pass reached the end of its own want list — see the note at the top.
+    this.eagerRankedAt = this.store.version();
   }
 
   /**
@@ -3155,6 +3187,8 @@ export class OhmailEngine {
     // Anything not exactly `all_time` reads as the window — the client cutline's own rule, and
     // the safe failure direction here too (a narrower window, never a wider one, by accident).
     this.cutlineAllTime = cutline?.scope === "all_time";
+    /* A NEW ANSWER IS A NEW AGE TERM, and no record moved to say so — see {@link cutlineGen}. */
+    this.cutlineGen += 1;
   }
 
   /**
@@ -3528,12 +3562,38 @@ export class OhmailEngine {
    * still `pending` — both unanswered questions, unanswerable without the mail. Anything resolved does NOT pin: it is
    * history, and history is what the window is for.
    */
+  /**
+   * AND AT THE SETTLE IT RUNS ONLY WHEN SOMETHING MOVED. Everything below reads the whole mirror
+   * and sorts it, so a settled client paid its own SIZE per poll to be told there was nothing to
+   * evict. The inputs are records — messages and the five that pin them — plus the age term, and
+   * {@link StoreReader.stampExcept} moves for every one of the first while {@link cutlineGen}
+   * carries the second. Bodies are the one type excluded: they are evicted BY this pass and never
+   * decide it, and a single open writes three of them.
+   *
+   * The age term alone can make a row evictable with nothing written, and that is deliberately not
+   * a reason to run: ageing only ever evicts MORE, a mirror nobody is writing to is not growing,
+   * and the next arrival, the next cutline answer and the next launch each run the pass. A backlog
+   * page (`graceAbove`) is never skipped — that arm exists to bound the mirror on the way IN.
+   */
+  private static readonly PRUNE_IGNORES: readonly string[] = ["message_body"];
+
   private async pruneToPolicy(graceAbove?: number): Promise<boolean> {
     const policy = this.storePolicy;
     if (policy.mode !== "windowed") return false; // `full` — the default. Nothing is ever evicted.
+    if (graceAbove === undefined
+        && this.store.stampExcept(OhmailEngine.PRUNE_IGNORES) === this.prunedAtStamp
+        && this.cutlineGen === this.prunedAtCutline) {
+      return false;
+    }
+    /** Record what this pass ran over, AFTER its own writes — a prune moves the stamp itself. */
+    const pruned = <T>(answer: T): T => {
+      this.prunedAtStamp = this.store.stampExcept(OhmailEngine.PRUNE_IGNORES);
+      this.prunedAtCutline = this.cutlineGen;
+      return answer;
+    };
 
     const rows = this.store.entries<EngineMessage>("message");
-    if (rows.length <= policy.minRows) return false;
+    if (rows.length <= policy.minRows) return pruned(false);
 
     // Newest first. `date` is the mail's own time and the order every pile renders in; a row
     // without one (or with an unparseable one) sorts oldest, but is still protected by the
@@ -3560,11 +3620,11 @@ export class OhmailEngine {
       if (graceAbove !== undefined && row.seq > graceAbove) continue;
       victims.push({ type: "message", id: row.id });
     }
-    if (victims.length === 0) return false;
+    if (victims.length === 0) return pruned(false);
     // EVERY ROW THAT NAMED AN EVICTED MESSAGE GOES WITH IT. See {@link cascadeVictims}.
     victims.push(...this.cascadeVictims(victims, graceAbove));
     await this.store.prune(victims); // hard delete + the `message_body` cascade
-    return true;
+    return pruned(true);
   }
 
   /**

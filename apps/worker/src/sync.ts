@@ -6,7 +6,7 @@ import {
 import {
   WATCHED_FOLDERS, MessageGoneError, parseRef, FILING_BATCH_MAX,
   epochOf, epochVerdict, sameEpoch, UNKNOWN_EPOCH, type Epoch,
-  type ImapCursor, type MailboxAdapter, type PersistedFolderCursor,
+  type ImapCursor, type KnownEntry, type MailboxAdapter, type PersistedFolderCursor,
 } from "@trafficflow/core/adapters/imap";
 import { LeaseUnavailableError } from "@trafficflow/core/adapters/organizer-lease";
 // The role vocabulary lives in `@trafficflow/db` (mail 0083) because both the worker and the
@@ -305,6 +305,14 @@ export interface JunkSweepCommandPort {
  * reused UID under a new epoch looked already-known and its body was never fetched. So the cursor's `uidValidity` is the epoch its remembered UIDs belong to, and only those entries are handed over.
  */
 /**
+ * The memo {@link SyncDeps.knownSet} takes, re-exported here rather than behind a subpath of its
+ * own: a caller that may SET the field has to be able to build the value, and this loop's deps
+ * are its contract. `known-set.ts` already publishes with `apps/worker/src`, so nothing new is
+ * conveyed by the re-export.
+ */
+export { KnownSetCache } from "./known-set.js";
+
+/**
  * WHAT ONE CYCLE ACTUALLY DID — the counters behind "an idle tick's cost is proportional to what
  * changed". Measurement, not behaviour: absent ⇒ nothing is counted and every path is unchanged.
  * `cursorBuilds` is the number of mailbox-sized derivations {@link buildCursor} performed and
@@ -325,6 +333,7 @@ export function newCycleCensus(): CycleCensus {
 
 export async function buildCursor(
   repo: WorkerRepo, mailboxId: string, deadLetters?: DeadLetterLedger, census?: CycleCensus,
+  memo?: KnownSetCache,
 ): Promise<ImapCursor> {
   const folderRows = await repo.getMailboxFolders(mailboxId);
   const known = await repo.listKnownLocators(mailboxId);
@@ -337,6 +346,19 @@ export async function buildCursor(
   }
   const names = new Set<string>(WATCHED_FOLDERS);
   for (const r of folderRows) names.add(r.folder);
+  /**
+   * AND THE PER-FOLDER ARRAYS ARE DERIVED ONCE PER SET, NOT ONCE PER CYCLE. Filtering each group
+   * to its folder's epoch and mapping it into `KnownEntry`s is mailbox-sized, and with the memo
+   * warm it ran every cycle over locators that had not moved to produce the same arrays. The memo
+   * holds them against the generation they came from; a miss rebuilds, which is what every caller
+   * without a memo does on every cycle and what this loop did before there was one.
+   *
+   * The DEAD LETTERS are never memoized: the ledger is small and its entries turn over as attempts
+   * are spent, so they are re-read each cycle and only their ABSENCE lets the derived array be
+   * handed over as it stands.
+   */
+  const derived = memo?.derivedFolders() ?? null;
+  const fresh = new Map<string, KnownEntry[]>();
   const folders: ImapCursor["folders"] = {};
   for (const f of names) {
     const row = folderRows.find((r) => r.folder === f);
@@ -350,21 +372,43 @@ export async function buildCursor(
       // An UNNAMED epoch means nothing remembered may be presented as known — the adapter would
       // read a bare number as belonging to whatever epoch it is looking at. `!== "0"` missed the
       // `String(undefined)` a silent server persists, so those UIDs were handed over as facts.
-      known: !epochOf(epoch).known ? [] : [
-        // `seen` rides along as the flag baseline the no-CONDSTORE fallback diffs against
-        // (`KnownEntry.seen`). Dead-letter entries below carry none, which is correct: nothing
-        // was ever ingested for them, so no baseline can be stated and none may be diffed.
-        ...entries.filter((e) => sameEpoch(epochOf(e.uidValidity), epochOf(epoch)))
-          .map((e) => ({ uid: e.uid, messageId: e.messageId, seen: e.seen })),
-        // The UIDs this process has written off. They are "known" in the only sense the adapter
-        // uses the word — do not fetch this again — and leaving them out is what made one poison
-        // message cost a full body fetch on every cycle for ever. Epoch-matched for the same
-        // reason the real locators are. See `DeadLetterLedger`.
-        ...(deadLetters?.knownFor(f, epoch) ?? []),
-      ],
+      known: knownFor(f, epoch, entries, derived, fresh, deadLetters),
     };
   }
+  memo?.rememberFolders(fresh);
   return { folders };
+}
+
+/**
+ * One folder's known list: the epoch-matched locators, then the UIDs this process has written off.
+ *
+ * `seen` rides along as the flag baseline the no-CONDSTORE fallback diffs against
+ * (`KnownEntry.seen`). Dead-letter entries carry none, which is correct: nothing was ever ingested
+ * for them, so no baseline can be stated and none may be diffed. Leaving them out is what made one
+ * poison message cost a full body fetch on every cycle for ever; they are epoch-matched for the
+ * same reason the real locators are. See `DeadLetterLedger`.
+ */
+function knownFor(
+  folder: string, epoch: string,
+  entries: ReadonlyArray<{ uid: number; uidValidity: string; messageId: string | null; seen: boolean | null }>,
+  derived: Map<string, KnownEntry[]> | null,
+  fresh: Map<string, KnownEntry[]>,
+  deadLetters?: DeadLetterLedger,
+): KnownEntry[] {
+  // An UNNAMED epoch means nothing remembered may be presented as known — the adapter would read a
+  // bare number as belonging to whatever epoch it is looking at. `!== "0"` missed the
+  // `String(undefined)` a silent server persists, so those UIDs were handed over as facts.
+  if (!epochOf(epoch).known) return [];
+  const key = `${folder}\u0000${epoch}`;
+  const locators = derived?.get(key)
+    ?? entries.filter((e) => sameEpoch(epochOf(e.uidValidity), epochOf(epoch)))
+      .map((e) => ({ uid: e.uid, messageId: e.messageId, seen: e.seen }));
+  fresh.set(key, locators);
+  const dead = deadLetters?.knownFor(folder, epoch) ?? [];
+  // Handed over AS IT STANDS when there is nothing to append — the adapter treats the cursor as
+  // read-only, and a copy per folder per cycle is the very cost this derivation was memoized to
+  // stop paying.
+  return dead.length === 0 ? locators : [...locators, ...dead];
 }
 
 /**
@@ -824,7 +868,7 @@ async function syncCycleWithin(
     }
   }
 
-  const cursor = await buildCursor(repo, mailboxId, deadLetters, deps.census);
+  const cursor = await buildCursor(repo, mailboxId, deadLetters, deps.census, deps.knownSet);
   const batch = await adapter.changesSince(cursor);
   if (deps.census !== undefined) {
     deps.census.observed += batch.creates.length + batch.moves.length

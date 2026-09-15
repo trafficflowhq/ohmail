@@ -1074,8 +1074,19 @@ export function WorldProvider({ children }: { children: ReactNode }) {
       : null);
   }, [engine, screening]);
 
-  const world = useMemo<World>(() => {
-    if (engine === null || session === null) return emptyWorld(actions);
+  /**
+   * THE MAILBOX'S OWN PROJECTION — everything derived from the mirror, and nothing derived from
+   * the connection.
+   *
+   * It used to be one memo with the boot facts inside it, so a poll's `connecting → syncing →
+   * idle` walk re-derived the WHOLE world two or three times a tick: the partition, both shelves,
+   * the piles, History, the tags, the scheduled list and the folder lists, over a mirror that had
+   * not moved. The split is the fix — this half is keyed on what the MAILBOX does (`version`, the
+   * screening answer, the folders flag, the clock's own beat), and the half below re-reads the
+   * boot facts per render, so the labels still clear in the pass the drain settles in.
+   */
+  const projected = useMemo<Omit<World, "boot" | "abandoned" | "face" | "sendOutcome"> | null>(() => {
+    if (engine === null || session === null) return null;
     /* THE STANDALONE DOOR HAS NOBODY TO ASK — this app IS the engine there and `GET /consent` is
        a route this session does not dial (the same fact the queue read is skipped for, below).
        Waiting for an answer that can never arrive would withhold the Screener for the life of
@@ -1111,33 +1122,6 @@ export function WorldProvider({ children }: { children: ReactNode }) {
     const pileTotal = piles.reduce((n, p) => n + p.items.length, 0);
     return {
       live: true,
-      // Read per derivation, not latched: the first drain's completion stamps the mirror and
-      // flips `conn.syncing`, which is in this memo's deps — so `settled` turns true in the
-      // same render pass that could otherwise flash an empty state over a just-synced mailbox.
-      boot: {
-        settled: mirrorSettled(session.store),
-        syncFailure: conn.syncError,
-        // Re-read per derivation, like `settled`: a drain's settle flips `conn.syncing`, which
-        // is in this memo's deps, so the label clears in the same pass the mirror becomes
-        // current. The completion stamp no longer bumps the mirror `version` (`setMeta`,
-        // `packages/client-engine/src/store.ts` — an idle client was rebuilding its whole view
-        // once per poll to record a timestamp), so `conn.syncing` carries the clearing. Not
-        // "silently stop": `freshBeat` below ticks this memo on its own minute cadence, so
-        // removing `conn.syncing` from the deps would delay the clear to the next tick, not
-        // prevent it. The appearing direction is time's alone — a phone sitting open crosses
-        // the threshold with no store write — so `freshBeat` ticks when the verdict changes.
-        staleAsOf: staleAsOf(engine, zone),
-        /* THE DOOR'S OWN WORD, re-read per derivation like the two above. It is NOT in this
-           memo's dependency array and cannot be: `standaloneHere` reads module state, not React
-           state, so there is nothing here to depend on. The watcher below is what re-derives
-           when it moves — the same one the stale label uses, the same beat, one writer. */
-        connection: connectionSay(standaloneHere(), v.now, zone),
-        /* ONE read of the door for both verdicts would be one call; this is a second call to the
-           same module state in the same synchronous derivation, which is one moment. See the
-           field: they are two facts and both are rendered. */
-        firstSync: firstSyncSay(standaloneHere()),
-      },
-      abandoned: engine.abandoned(),
       worldKey: session.ownerKey,
       /**
        * Whose mail this is — and the standalone door has no address to name. On every paired
@@ -1229,12 +1213,6 @@ export function WorldProvider({ children }: { children: ReactNode }) {
       signatures,
       resurfaceTime,
       remember: rememberResurfaceTime,
-      face: {
-        account: accountFace,
-        known: accountFaceKnown,
-        pending: facePending,
-        applyAll: applyFaceAllDevices,
-      },
       /* THE SAME VIEW THE LISTS WERE DERIVED FROM, field for field. It used to carry the clock,
          the language and the folders flag alone, so the reading screen projected the mirror under
          a different cutline than the list that linked to it (a row the list showed could answer
@@ -1244,20 +1222,71 @@ export function WorldProvider({ children }: { children: ReactNode }) {
         now: new Date(), zone, locale, foldersEnabled: foldersOn,
         ownAddresses: addressesNow.current, mailboxes: mailboxes ?? [], screening: posture,
       }),
-      sendOutcome: outcomeOf,
       actions,
     };
-    // `version` IS the dependency that re-derives the world on every mirror change; the
-    // reader itself is stable across drains, so it cannot stand in for it — and `outcomeSeq`
-    // re-derives it when a reconnect flush settles a queued key, so a locked composer's
-    // settle effect fires without a mirror change. `conn.syncing`/`conn.syncError` re-derive
-    // the BOOT facts: the settled stamp lands as a drain completes (syncing falls), and the
-    // failure sentence is part of what an unsettled screen renders.
+    // `version` IS the dependency that re-derives this projection on every mirror change; the
+    // reader itself is stable across drains, so it cannot stand in for it. The connection's
+    // state is deliberately NOT here — see the header, and the assembly below, which carries it.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [engine, session, scopes, zone, locale, actions, version, outcomeSeq, outcomeOf, freshBeat,
+  }, [engine, session, scopes, zone, locale, actions, version, freshBeat,
     foldersOn, foldersPending, foldersStorable, setFoldersEnabled, signatures,
-    resurfaceTime, rememberResurfaceTime, screening, screenerServer, conn.syncing,
-    conn.syncError, accountFace, accountFaceKnown, facePending, applyFaceAllDevices]);
+    resurfaceTime, rememberResurfaceTime, screening, screenerServer]);
+
+  /**
+   * AND THE WORLD THE SCREENS READ — the projection above plus the facts that move with the
+   * CONNECTION, assembled per render and derived from nothing.
+   *
+   * Every field here is a read, never a walk: `settled` and `staleAsOf` are two store reads, the
+   * two door verdicts are module state, and the face and send-outcome fields are values this
+   * component already holds. That is why they may depend on `conn.syncing` — the settled stamp
+   * lands as a drain completes and the label has to clear in the SAME pass, which is what the
+   * split had to preserve: before it, that same dependency dragged the whole mailbox through a
+   * re-derivation two or three times a poll. `outcomeSeq` is here for its own reason — a
+   * reconnect flush settling a queued key has to reach a locked composer's settle effect, and no
+   * mirror change says so.
+   */
+  const world = useMemo<World>(() => {
+    if (projected === null || engine === null || session === null) return emptyWorld(actions);
+    return {
+      ...projected,
+      // Read per derivation, not latched: the first drain's completion stamps the mirror and
+      // flips `conn.syncing`, which is in this memo's deps — so `settled` turns true in the
+      // same render pass that could otherwise flash an empty state over a just-synced mailbox.
+      boot: {
+        settled: mirrorSettled(session.store),
+        syncFailure: conn.syncError,
+        // Re-read per derivation, like `settled`: a drain's settle flips `conn.syncing`, which
+        // is in this memo's deps, so the label clears in the same pass the mirror becomes
+        // current. The completion stamp no longer bumps the mirror `version` (`setMeta`,
+        // `packages/client-engine/src/store.ts` — an idle client was rebuilding its whole view
+        // once per poll to record a timestamp), so `conn.syncing` carries the clearing. Not
+        // "silently stop": `freshBeat` below ticks on its own minute cadence, so removing
+        // `conn.syncing` from the deps would delay the clear to the next tick, not prevent it.
+        // The appearing direction is time's alone — a phone sitting open crosses the threshold
+        // with no store write — so `freshBeat` ticks when the verdict changes.
+        staleAsOf: staleAsOf(engine, zone),
+        /* THE DOOR'S OWN WORD, re-read per derivation like the two above. It is NOT in this
+           memo's dependency array and cannot be: `standaloneHere` reads module state, not React
+           state, so there is nothing here to depend on. The watcher below is what re-derives
+           when it moves — the same one the stale label uses, the same beat, one writer. */
+        connection: connectionSay(standaloneHere(), new Date(), zone),
+        /* ONE read of the door for both verdicts would be one call; this is a second call to the
+           same module state in the same synchronous derivation, which is one moment. See the
+           field: they are two facts and both are rendered. */
+        firstSync: firstSyncSay(standaloneHere()),
+      },
+      abandoned: engine.abandoned(),
+      face: {
+        account: accountFace,
+        known: accountFaceKnown,
+        pending: facePending,
+        applyAll: applyFaceAllDevices,
+      },
+      sendOutcome: outcomeOf,
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projected, engine, session, actions, zone, conn.syncing, conn.syncError, outcomeSeq,
+    outcomeOf, accountFace, accountFaceKnown, facePending, applyFaceAllDevices]);
 
   /**
    * The freshness watcher — the clock's other half, after the memo because its sentinel IS the

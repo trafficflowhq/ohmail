@@ -1,3 +1,4 @@
+import type { KnownEntry } from "@trafficflow/core/adapters/imap-types";
 import type { KnownLocator, WorkerRepo } from "@trafficflow/core/adapters/drizzle-repo";
 
 /**
@@ -159,6 +160,20 @@ export class KnownSetCache {
   private droppedBy: string | null = null;
   private cycleReads = 0;
   private cycleHits = 0;
+  /**
+   * BUMPED WHENEVER THE ENTRIES MOVE — replaced by a read-through, or thrown away by a drop. It is
+   * the stamp anything DERIVED from the known set is keyed on, so a derivation can tell "the same
+   * locators as last cycle" from "a set I have not seen" without comparing them.
+   */
+  private gen = 0;
+  /**
+   * THE CURSOR SHAPE, DERIVED ONCE PER SET. `buildCursor` groups the whole projection by folder and
+   * filters each group to the folder's epoch — mailbox-sized work, and on a settled mailbox it
+   * produced the same arrays every cycle from a set the memo above had not let move. Keyed by
+   * `folder\u0000epoch`, so a folder whose epoch moved simply misses and is rebuilt; held against
+   * {@link gen}, so a set that moved invalidates every entry at once. Dropped with the entries.
+   */
+  private shape: { gen: number; byFolder: Map<string, KnownEntry[]> } | null = null;
 
   constructor(mailboxId: string) {
     this.mailboxId = mailboxId;
@@ -218,9 +233,24 @@ export class KnownSetCache {
    * which is the moment the drop actually cost something.
    */
   drop(why: string): void {
-    if (this.entries !== null) this.droppedBy = why;
+    if (this.entries !== null) { this.droppedBy = why; this.gen += 1; }
     this.entries = null;
     this.tupleIndex = null;
+    this.shape = null;
+  }
+
+  /**
+   * The per-folder known arrays a previous {@link buildCursor} derived from the CURRENT entries, or
+   * `null` when there is no such derivation. A caller reads what it finds and rebuilds the rest —
+   * a miss is always safe and always means "do the work".
+   */
+  derivedFolders(): Map<string, KnownEntry[]> | null {
+    return this.shape !== null && this.shape.gen === this.gen ? this.shape.byFolder : null;
+  }
+
+  /** Remember a derivation against the set it was taken from. */
+  rememberFolders(byFolder: Map<string, KnownEntry[]>): void {
+    this.shape = { gen: this.gen, byFolder };
   }
 
   /**
@@ -247,6 +277,8 @@ export class KnownSetCache {
     const rows = await read(mailboxId);
     this.entries = [...rows];
     this.tupleIndex = null;
+    this.shape = null;
+    this.gen += 1;
     this.lastRows = rows.length;
     this.lastBytes = estimateWireBytes(rows);
     this.cycleReads++;

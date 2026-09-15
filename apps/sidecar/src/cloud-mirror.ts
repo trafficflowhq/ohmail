@@ -2612,6 +2612,21 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
    */
   const NEWEST_FIRST = [sql`${messages.date} desc nulls last`, desc(messages.id)];
 
+  /**
+   * HOW MANY BODY-LESS MESSAGES THE LAST ASK FOUND TO WANT, after the `unanswered` filter. Read by
+   * one consumer, the rest latch below; `-1` is "no ask has been made".
+   */
+  let lastGapWanted = -1;
+  /**
+   * THE BODY GAP IS KNOWN EMPTY — a settled mirror's poll then costs a comparison instead of an
+   * anti-join over every message the account has. It latches shut only on an ask over the WHOLE
+   * gap that found nothing to want, and it is cleared by anything that could open one: a drain
+   * that applied rows, a bootstrap, the cap-marker repair. FALSE by default and on every path this
+   * file does not name, which is the direction an omission must fail in — an unasked question is
+   * never "there is nothing to ask".
+   */
+  let bodyGapKnownEmpty = false;
+
   const fetchMissingBodies = async (limit: number = BODIES_CATCHUP_MAX): Promise<number> => {
     const rows = await cfg.db.select({ id: messages.id })
       .from(messages)
@@ -2620,6 +2635,7 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
       .orderBy(...NEWEST_FIRST)
       .limit(limit);
     const wanted = rows.map((r) => r.id).filter((id) => !unanswered.has(id));
+    lastGapWanted = wanted.length;
     if (wanted.length === 0) return 0;
     return askForIds(wanted);
   };
@@ -2713,7 +2729,16 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
       if (aborted) return newest;
       return newest + await walkAllBodies();
     }
-    return fetchMissingBodies();
+    /* AND A COMPLETED WALK ASKS ONLY WHEN THE GAP COULD HAVE OPENED. The query below is an
+       anti-join over every message the account holds, and on a settled mirror it returned nothing
+       on every poll for ever. The set it reads grows in exactly one way — a message arriving
+       without its body — and the drain above says whether any arrived. So an ask that finds
+       nothing to want latches, an applied row unlatches, and a mirror nobody is writing to pays a
+       boolean. `-1` from a limited ask cannot latch: only the whole-gap ask below writes it. */
+    if (bodyGapKnownEmpty) return 0;
+    const filled = await fetchMissingBodies();
+    if (lastGapWanted === 0) bodyGapKnownEmpty = true;
+    return filled;
   };
 
   const runPull = async (): Promise<number> => {
@@ -2733,6 +2758,10 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
       snapshotPage1 = undefined;
       await refreshMailboxes();
       const { applied, sweep, cut } = await drainSync();
+      /* A ROW THAT LANDED MAY HAVE LANDED WITHOUT ITS BODY, so the gap is open again — see
+         {@link bodyGapKnownEmpty}. Here rather than inside the drain: this is the one place that
+         knows a whole pull's applied count, and the latch is about the pull. */
+      if (applied > 0) bodyGapKnownEmpty = false;
       // REACHABLE MEANS REACHABLE. The drain came back, so Cloud demonstrably answers — flip the
       // flag here, not only at the end of the whole pull. It used to flip only after the sweep,
       // the tag repair and the body walk all completed, so an install part-way through a long
