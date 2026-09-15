@@ -4770,11 +4770,22 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
            so a settled mailbox's poll says in one line whether it did anything at all. */
         const census = newCycleCensus();
         let checkpoints = 0;
-        /* WHERE THE CHANGE LOG STOOD WHEN THIS DRAIN BEGAN — the comparison the tail fold below
-           is taken on. Read here rather than reusing the caller's: the gate runs between the two
-           and writes `ohmail/_meta`, so the caller's reading is about a different moment. One
-           indexed aggregate over the log's own primary key, once per drain. */
+        /* WHERE THE CHANGE LOG STOOD WHEN THIS DRAIN BEGAN — the comparison BOTH gates below are
+           taken on, and read here rather than at the caller because the lease gate runs between
+           the two and writes `ohmail/_meta`. One indexed aggregate over the log's own primary key,
+           once per drain.
+
+           THE MEMO'S DROP IS THE FIRST OF THE TWO. The proxy in `known-set.ts` drops on every
+           write the CYCLE makes; the app's own routes share this store, go nowhere near the
+           cycle's repo, and every one of them writes a change-log row — so this mark is the whole
+           comparison. It is recorded at the drain's END as the value read HERE, not as a second
+           reading: a route that wrote WHILE this drain ran would otherwise be folded into the
+           end reading and never drop anything. A mark that could not be read is an UNKNOWN and
+           takes the drop path, never the keep path. */
         const markAtStart = await changeLogMark();
+        if (markAtStart === null || knownSetMark === null || markAtStart !== knownSetMark) {
+          knownSet.drop("the store moved outside the drain");
+        }
         while (!stopped && cycles < maxCycles) {
           /* THE REFUSAL, AT EVERY CYCLE EDGE. A drain runs for up to a hundred cycles and each
              one moves mail, so the question "is this still the connection I gated?" has to be
@@ -4997,6 +5008,8 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
             await opened.checkpoint();
             checkpoints += 1;
           }
+          // What the memo above is held against next time — see the note at `markAtStart`.
+          knownSetMark = markAtStart;
           /* PUT THE IDLE BACK ON INBOX. The cycles above re-SELECT other folders, after which an
              INBOX arrival emits nothing — a dead push channel that looks exactly like a slow one
              (the worker measured p50 194 s that way, which is why `rearmWatch` exists). It also
@@ -5253,16 +5266,15 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
        * {@link restMayBeTaken} — resting behind a doorbell nobody wired would be trading freshness
        * for CPU, which is the fix this lane was told not to make.
        */
-      const noteIdleOutcome = async (before: string | null): Promise<string | null> => {
+      const noteIdleOutcome = async (before: string | null): Promise<void> => {
         const after = await changeLogMark();
         const quiet = before !== null && after !== null && before === after;
-        if (!quiet) { idlePollMs = pollIntervalMs; return after; }
-        if (!restMayBeTaken) return after;
+        if (!quiet) { idlePollMs = pollIntervalMs; return; }
+        if (!restMayBeTaken) return;
         const next = nextIdlePollMs(idlePollMs, pollIntervalMs, idlePollCeilingMs);
-        if (next === idlePollMs) return after;
+        if (next === idlePollMs) return;
         idlePollMs = next;
         log("sync_idle_backoff", { nextPollMs: next, ceilingMs: idlePollCeilingMs });
-        return after;
       };
 
       const syncUntilQuiet = async (
@@ -5290,24 +5302,10 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
            however little it finds: somebody is at the screen. */
         if (opts.force === true) idlePollMs = pollIntervalMs;
         const markBefore = await changeLogMark();
-        /* AND ANYTHING THIS PROCESS WROTE OUTSIDE THE DRAIN DROPS THE MEMO. The proxy in
-           `known-set.ts` drops on every write the CYCLE makes; the app's own routes share this
-           store and go nowhere near the cycle's repo, and every one of them writes a change-log
-           row — so the mark above, which the ladder reads anyway, is the whole comparison. An
-           unreadable mark is an UNKNOWN and takes the drop path, never the keep path. */
-        if (markBefore === null || knownSetMark === null || markBefore !== knownSetMark) {
-          knownSet.drop("the store moved outside the drain");
-        }
         try {
           const cycles = await drainPass(maxCycles);
           noteCycleServed();
-          /* ONE reading of the mark for both consumers — the ladder's verdict and the memo's. Two
-             would be two reads of a moving row at two moments, and the pair could disagree about
-             the same drain. */
-          const markAfter = opts.force !== true
-            ? await noteIdleOutcome(markBefore)
-            : await changeLogMark();
-          knownSetMark = markAfter;
+          if (opts.force !== true) await noteIdleOutcome(markBefore);
           return cycles;
         } catch (err) {
           /* A FAILED DRAIN IS NOT A QUIET ONE, and the bound this protects is one the app states
