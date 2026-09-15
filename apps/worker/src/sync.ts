@@ -202,18 +202,14 @@ export interface SyncDeps {
    */
   fence?: SyncWriteFence;
   /**
-   * THE ORGANIZER LEASE THIS CYCLE WRITES UNDER — a permit, or the named reason there is none.
-   *
-   * The fence above answers worker-to-worker; this answers install-to-install, and only this one
-   * can stop a process writing to a mailbox its owner has moved to another machine.
-   *
-   * REQUIRED, on `role`'s exact argument one field down: while it was optional the hosted cycle
-   * received none, so every boundary inside it read `not_supplied` — which `assertMayWriteToMailbox`
-   * ADMITS — and a handover mid-scan left both installs moving one person's mail for the rest of the
-   * cycle. An omitted authority defaulting to permission is the shape that produced that, so a
-   * composition that genuinely holds no lease types the reason (`reader`, `not_supplied`); a fixture
-   * that omits it still reads as `not_supplied`, and `lease-write-permit-census.test.ts` is what
-   * refuses a production `runSyncCycle(` call whose own argument list does not name this field.
+   * THE ORGANIZER LEASE THIS CYCLE WRITES UNDER — a permit, or the named reason there is none. The
+   * fence above answers worker-to-worker; this answers install-to-install, and only this one can
+   * stop a process writing to a mailbox its owner has moved to another machine. REQUIRED, on
+   * `role`'s exact argument one field down: while it was optional the hosted cycle received none,
+   * every boundary inside it read `not_supplied` — which `assertMayWriteToMailbox` ADMITS — and a
+   * handover mid-scan left both installs moving one person's mail. A composition that holds no lease
+   * types the reason; `lease-write-permit-census.test.ts` refuses a production `runSyncCycle(` call
+   * whose own argument list does not name this field.
    */
   writeAuthority: OrganizerWriteAuthority;
   /** Structured log sink. Absent ⇒ a skip is still recorded in `audit_log`, just not logged. */

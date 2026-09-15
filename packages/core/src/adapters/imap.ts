@@ -1430,19 +1430,14 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
   }
 
   /**
-   * WHAT THE FOLDER LOOKS LIKE RIGHT NOW — one EXAMINE, and the reading comes out of that
-   * command's own reply. Three things make this the only honest way to ask:
-   *
-   *  · STATUS is what this used to ask, and RFC 3501 §6.3.10 says not to ask it about the
-   *    CURRENTLY SELECTED mailbox — which is exactly the mailbox the sweep has just left
-   *    selected. A server may answer it from the state it has already reported.
-   *  · `client.mailbox` is a MEMORY: imapflow's mailbox-lock fast path hands back an already-open
-   *    mailbox with no new SELECT, so a count read there can predate the arrival being looked for.
-   *  · EXAMINE and not SELECT, because imapflow's DELETE closes a selected mailbox first
-   *    (`commands/delete.js`) and CLOSE on a read-write mailbox EXPUNGES. Never-expunge is the
-   *    product rule.
-   *
-   * Null is "no reading" — the caller fails closed on it. The caller holds the mailbox lock.
+   * WHAT THE FOLDER LOOKS LIKE RIGHT NOW — one EXAMINE, read from that command's own reply.
+   * STATUS is not asked: RFC 3501 §6.3.10 forbids it for the CURRENTLY SELECTED mailbox, which is
+   * what the sweep has just left selected, and a server may answer from state it already reported.
+   * `client.mailbox` is a MEMORY — imapflow's lock fast path hands back an open mailbox with no new
+   * SELECT — so a count read there can predate the arrival being looked for. EXAMINE and not SELECT,
+   * because imapflow's DELETE closes a selected mailbox first and CLOSE on a read-write mailbox
+   * EXPUNGES, and never-expunge is the product rule. Null is "no reading" and the caller fails
+   * closed on it; the caller holds the mailbox lock.
    */
   private async folderFence(serverPath: string): Promise<FolderSweepFence | null> {
     let mb: MailboxObject | undefined;
@@ -1462,19 +1457,14 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
   }
 
   /**
-   * DELETE — of a folder verified empty SINCE THE SWEEP, the last line of the never-expunge rule:
-   * RFC 3501's DELETE takes a folder's messages with it, so a message another client files into
-   * the folder while it is being emptied would go with it, and the mailbox is the master — there
-   * is nothing to restore it from. So the emptiness is re-read in the narrowest window the
-   * protocol allows (one EXAMINE, under the lock, with the DELETE issued before the lock is
-   * released) and compared with `fence`, what {@link moveAll} left. Anything but an unchanged,
-   * empty reading refuses: `"not_empty"` (mail is in there now), `"changed"` (empty, but the
-   * modseq moved, so mail passed through since the sweep), `"unverified"` (no fence, or the
-   * server would not answer — a DELETE on a guess is the expunge this rule forbids).
-   *
-   * The residual, stated: a message delivered between the EXAMINE and the DELETE is still taken
-   * by the server. IMAP offers no primitive that closes that, so it is one round trip wide
-   * instead of a whole sweep-and-tombstone pass, and the fence catches everything before it.
+   * DELETE — of a folder verified empty SINCE THE SWEEP, the last line of the never-expunge rule.
+   * RFC 3501's DELETE takes a folder's messages with it and the mailbox is the master, so a message
+   * another client files in while it is being emptied would go with it and nothing could restore it.
+   * The emptiness is re-read in the narrowest window the protocol allows — one EXAMINE, under the
+   * lock, the DELETE issued before the lock is released — and compared with `fence`, what {@link
+   * moveAll} left. Anything but an unchanged, empty reading refuses: `"not_empty"`, `"changed"`
+   * (mail passed through since the sweep), `"unverified"` (no fence, or the server would not
+   * answer). The residual, stated: a delivery between the EXAMINE and the DELETE is still taken.
    */
   async deleteFolder(canonical: string, fence: FolderSweepFence | null): Promise<FolderDeleteOutcome> {
     const path = this.toServerPath(canonical);
@@ -1505,17 +1495,14 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
   }
 
   /**
-   * Move EVERYTHING in one folder to another — the folder delete's sweep, at folder level
-   * rather than per known message, because the mailbox may hold mail the mirror never ingested
-   * (the ingest window, declined outcomes, mail that arrived a second ago) and every one of
-   * them must reach Trash before the folder may go. One `MOVE 1:*` on the warm connection;
-   * imapflow's own fallback (COPY + \Deleted + EXPUNGE) covers servers without MOVE — the
-   * standard move mechanics, not an expunge of mail (the copy lands first). Returns how many
-   * messages the sweep found; a source that no longer exists is 0 — nothing to move.
-   *
-   * It also returns the FENCE: one EXAMINE inside the sweep's own lock, so what it reports is
-   * the folder as the sweep left it and nothing can have slipped between the last write and the
-   * reading. {@link deleteFolder} is authorized against that and nothing else.
+   * Move EVERYTHING in one folder to another — the folder delete's sweep, at folder level rather
+   * than per known message, because the mailbox may hold mail the mirror never ingested and every
+   * one of them must reach Trash before the folder may go. One `MOVE 1:*` on the warm connection;
+   * imapflow's fallback (COPY + \Deleted + EXPUNGE) covers servers without MOVE and is the standard
+   * move mechanics, not an expunge of mail — the copy lands first. Returns how many messages the
+   * sweep found; a source that no longer exists is 0. It also returns the FENCE: one EXAMINE inside
+   * the sweep's own lock, so what it reports is the folder as the sweep left it, and {@link
+   * deleteFolder} is authorized against that and nothing else.
    */
   async moveAll(folder: string, toFolder: string): Promise<FolderSweepResult> {
     const src = this.toServerPath(folder);
@@ -2497,21 +2484,14 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
   }
 
   /**
-   * Is this PASSIVE folder provably unchanged — may the pass skip the SELECT? An agreeing EPOCH
-   * and three equalities, all needed, failing CLOSED (any missing field reads normally; the epoch
-   * has its own paragraph below): `highestModseq` — no flag
-   * change, no arrival (RFC 7162 §3.1); `uidNext` — no arrival, redundant on a correct server and
-   * kept because iCloud's CHANGEDSINCE is inert; `messages` (EXISTS) — the expunge half the
-   * others cannot cover, since CONDSTORE does not raise HIGHESTMODSEQ for an EXPUNGE. A folder
-   * holding a permanently-unknown UID never satisfies the third and is read every cycle — the
-   * safe direction. Passive folders only: INBOX and the organized five are where the product
-   * happens.
-   *
-   * AND ALL THREE ARE COUNTERS INSIDE AN EPOCH. A folder deleted and recreated — a customer
-   * refiling an archive, a restore, a migration tool — can match every one of them while holding
-   * different mail, and the skip then serves the old contents for ever, because every later cycle
-   * takes the same shortcut. So the cursor's UIDVALIDITY must agree with the one the server states
-   * NOW, read back from this STATUS and never derived; anything short of agreement reads normally.
+   * Is this PASSIVE folder provably unchanged — may the pass skip the SELECT? An agreeing EPOCH and
+   * three equalities, all needed, failing CLOSED (any missing field reads normally):
+   * `highestModseq` — no flag change, no arrival (RFC 7162 §3.1); `uidNext` — no arrival, kept
+   * because iCloud's CHANGEDSINCE is inert; `messages` (EXISTS) — the expunge half, since CONDSTORE
+   * does not raise HIGHESTMODSEQ for an EXPUNGE. All three are counters INSIDE an epoch: a folder
+   * deleted and recreated can match every one while holding different mail, so the cursor's
+   * UIDVALIDITY must agree with the one the server states NOW, read back from this STATUS and never
+   * derived. Passive folders only — INBOX and the organized five.
    */
   private unchangedPassive(
     status: FolderStatus | undefined, prev: FolderCursor | undefined, condstore: boolean,

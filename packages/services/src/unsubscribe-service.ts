@@ -205,15 +205,12 @@ export interface DrainRun {
   sweep: UnsubscribeSweep;
   /**
    * Candidates the window still holds after this run — what the NEXT run will look at — or `null`
-   * where the counting walk did not reach the end of the window. THE TWO ARE DIFFERENT FACTS: a
-   * zero means nothing is owed, and a `null` means this run did not establish that. Collapsing
-   * them is the defect the walk exists against, where a count taken from a stretch of rows the
-   * pass could not act on reported an empty backlog.
-   *
-   * Not a count of unsubscribes owed: a second message from a list this mailbox has already left
-   * has no record row of its own (the row is keyed by mailbox and list) and stays in the window
-   * until it ages out, looked at each run and posted to never. The question this number answers
-   * is whether the pass is keeping up, so what matters about it is whether it GROWS.
+   * where the counting walk did not reach the end of the window. THE TWO ARE DIFFERENT FACTS: zero
+   * means nothing is owed, `null` means this run did not establish that, and collapsing them is the
+   * defect the walk exists against. Not a count of unsubscribes owed: a second message from a list
+   * this mailbox has already left has no record row of its own (the row is keyed by mailbox and
+   * list) and stays in the window until it ages out. The question this number answers is whether the
+   * pass is keeping up, so what matters about it is whether it GROWS.
    */
   remaining: number | null;
   elapsedMs: number;
@@ -257,18 +254,13 @@ export const UNSUB_DRAIN_BUDGET_MS = UNSUB_DRAIN_RUN_BUDGET_MS;
 
 /**
  * HOW MANY SCREENED-OUT ROWS ONE CHUNK READS BEFORE IT JUDGES THEM. The selective fact is
- * `folder_state` — a reject destination inside the window, an indexed read — and the expensive one
- * is the per-message header probe. Asked as one flat join the planner estimates a single row,
- * drives from `messages` and probes the body of every message a deployment holds, which on a large
- * one costs most of a minute before anything bounded has started. A subquery carrying its own
- * LIMIT is not reordered into the join, so this is the FENCE that keeps the shape.
- *
- * IT IS A CHUNK, NOT A PAGE, and the difference is a defect this code shipped with: cut once at
- * the head of the window, a chunk full of rows that turn out to be INELIGIBLE hides everything
- * behind it for ever — the pass posts nothing and, because the same read answers the progress
- * count, reports that nothing is owed. The walk below reads chunks in sequence under a cursor that
- * advances past what it rejected, so progress is monotonic and eligibility is decided AFTER the
- * cut without the cut deciding what may be reached.
+ * `folder_state` (an indexed read); the expensive one is the per-message header probe. As one flat
+ * join the planner estimates a single row, drives from `messages` and probes the body of every
+ * message a deployment holds — most of a minute before anything bounded starts. A subquery carrying
+ * its own LIMIT is not reordered into the join, so this is the FENCE that keeps the shape. IT IS A
+ * CHUNK, NOT A PAGE: cut once at the head of the window, a chunk full of INELIGIBLE rows hides
+ * everything behind it for ever. The walk below reads chunks in sequence under a cursor that
+ * advances past what it rejected, so progress is monotonic.
  */
 export const UNSUB_DRAIN_SCAN_PAGE = 2_000;
 
@@ -794,16 +786,13 @@ export class UnsubscribeService {
   }
 
   /**
-   * ONE CHUNK OF THE WINDOW, JUDGED BUT NOT FILTERED. The fence is the subquery's own LIMIT, which
-   * a planner does not reorder into the join; the eligibility facts hang off it as LEFT joins and
-   * are returned as a FLAG rather than a filter, so the caller sees every row the chunk read and
-   * can advance its cursor past the ones it may not act on. Filtering here is what starved the
-   * pass: rows the cut selected and eligibility then removed hid everything behind them.
-   *
-   * The two mailbox facts are asked TOGETHER — the account's automatic switch and the mailbox's
-   * own connected state — because a disconnected mailbox is acted for by nothing, and a later
-   * caller that asked only one of them would be sending in the name of a mailbox its owner
-   * stopped. `run()` asks the same pair at the seam, where the decision belongs.
+   * ONE CHUNK OF THE WINDOW, JUDGED BUT NOT FILTERED. The fence is the subquery's own LIMIT, which a
+   * planner does not reorder into the join; the eligibility facts hang off it as LEFT joins and are
+   * returned as a FLAG rather than a filter, so the caller sees every row the chunk read and can
+   * advance its cursor past the ones it may not act on. Filtering here is what starved the pass.
+   * The two mailbox facts are asked TOGETHER — the account's automatic switch and the mailbox's own
+   * connected state — because a disconnected mailbox is acted for by nothing, and a caller that
+   * asked only one would send in the name of a mailbox its owner stopped.
    */
   private async scanChunk(
     tx: Tx, since: Date, accountId: string | null, after: ScanCursor | null, deadlineMs: number,

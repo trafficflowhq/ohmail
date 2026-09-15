@@ -88,15 +88,13 @@ export function uidRefsAt(epoch: Epoch, uids: readonly number[]): UidRef[] {
 
 /**
  * THE ONE GUARD BEHIND EVERY REMEMBERED-UID DECISION — the passive folder skip and all three
- * `ohmail/_meta` cleanups. `reported` is what the server states NOW, read back at the moment of
- * use and never derived. A batch is `stale` as soon as one ref contradicts it, `unknown` when
- * nothing contradicts and some epoch was never named, `usable` only when every ref agrees; an
- * empty batch remembers nothing, so it proves nothing.
- *
- * What a caller does with `unknown` is the caller's policy, and the two policies here are both
- * right: a cleanup PROCEEDS, because refusing would strand every mailbox on a connection that
- * states no UIDVALIDITY and the custody read-back is the backstop; the passive skip REFUSES,
- * because its fallback is one SELECT and being wrong costs somebody's mail.
+ * `ohmail/_meta` cleanups. `reported` is what the server states NOW, read back at the moment of use
+ * and never derived. A batch is `stale` as soon as one ref contradicts it, `unknown` when nothing
+ * contradicts and some epoch was never named, `usable` only when every ref agrees; an empty batch
+ * remembers nothing, so it proves nothing. What a caller does with `unknown` is the caller's policy:
+ * a cleanup PROCEEDS (refusing would strand every mailbox on a connection that states no
+ * UIDVALIDITY, and the custody read-back is the backstop), the passive skip REFUSES (its fallback
+ * is one SELECT, and being wrong costs somebody's mail).
  */
 export function uidRefsAtEpoch(
   refs: readonly UidRef[], reported: Epoch,
