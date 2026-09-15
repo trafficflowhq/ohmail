@@ -199,13 +199,14 @@ export const ALLOWED_FIELDS: readonly string[] = [
   // `count` meaning either is not a claim a reviewer can check. (`drained` is already above.)
   "cycles", "totalMs", "slowestMs",
   // WHAT THE DRAIN ACTUALLY DID, on the same line and added WITH its call site. `observed` is the
-  // number of changes the adapter handed over, `cursorBuilds` the mailbox-sized cursor derivations
-  // the cycles performed, `locatorRows` the rows those derivations walked, and `checkpoints` the
-  // WAL folds taken. Four counters: integers from `.length` and `++`, naming no mailbox, folder,
-  // sender or message. NAMED because the reading is that an idle poll should show `observed: 0`
-  // with the other three at their floor — a settled mailbox whose `locatorRows` tracks its size is
-  // the defect this quartet exists to make visible, and `droppedFields` would hide exactly it.
-  "observed", "cursorBuilds", "locatorRows", "checkpoints",
+  // number of changes the adapter handed over; `cursorBuilds` the cursor builds the cycles ran,
+  // `locatorReads` the ones that went to the store for the whole projection, `locatorRows` the rows
+  // those returned and `cursorFolders` the per-folder arrays rebuilt from them; `checkpoints` the
+  // WAL folds taken. Six counters: integers from `.length` and `++`, naming no mailbox, folder,
+  // sender or message. NAMED because the reading is that an idle poll shows zero for all but
+  // `cursorBuilds` — a settled mailbox whose `locatorRows` tracks its own size is the defect this
+  // set exists to make visible, and `droppedFields` would hide exactly it.
+  "observed", "cursorBuilds", "locatorReads", "locatorRows", "cursorFolders", "checkpoints",
   // ── The local engine's idle ladder (`sync_idle_backoff`), added WITH the call site ──
   //
   // `nextPollMs` is the delay the next poll was armed at and `ceilingMs` the constant it climbs

@@ -333,6 +333,15 @@ export interface CloudMirror {
   /** Drain `/sync` to the horizon, then backfill bodies. Returns the number of applied entities. */
   pullOnce(): Promise<number>;
   /**
+   * HOW MANY TIMES THIS MIRROR HAS ASKED THE STORE WHICH MESSAGES HAVE NO BODY.
+   *
+   * That question is an anti-join over every message the account holds, and it used to be asked on
+   * every poll of a mirror with nothing missing. It is a COUNTER and not a log line because the
+   * reading is a difference between two polls, which no single line can carry; a guard reads it,
+   * nothing in the product does.
+   */
+  bodyGapReads(): number;
+  /**
    * A WAKE: something committed on the hosted account — pull now, without disturbing the poll.
    *
    * The push channel's entry point (`cloud-wake.ts` calls it per `sync` frame), shaped for
@@ -2617,6 +2626,8 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
    * one consumer, the rest latch below; `-1` is "no ask has been made".
    */
   let lastGapWanted = -1;
+  /** See {@link CloudMirror.bodyGapReads}. */
+  let gapReads = 0;
   /**
    * THE BODY GAP IS KNOWN EMPTY — a settled mirror's poll then costs a comparison instead of an
    * anti-join over every message the account has. It latches shut only on an ask over the WHOLE
@@ -2628,6 +2639,7 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
   let bodyGapKnownEmpty = false;
 
   const fetchMissingBodies = async (limit: number = BODIES_CATCHUP_MAX): Promise<number> => {
+    gapReads += 1;
     const rows = await cfg.db.select({ id: messages.id })
       .from(messages)
       .leftJoin(messageBodies, eq(messageBodies.messageId, messages.id))
@@ -2950,6 +2962,7 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
 
   return {
     pullOnce,
+    bodyGapReads: () => gapReads,
     kick,
     draining: () => inflight !== null,
     online: () => reachable,

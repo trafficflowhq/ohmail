@@ -4877,7 +4877,8 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           log("sync_drain", {
             cycles: shape.cycles, totalMs: shape.totalMs, slowestMs: shape.slowestMs, drained,
             observed: census.observed, cursorBuilds: census.cursorBuilds,
-            locatorRows: census.locatorRows, checkpoints,
+            locatorReads: census.locatorReads, locatorRows: census.locatorRows,
+            cursorFolders: census.cursorFolders, checkpoints,
           });
         };
         try {

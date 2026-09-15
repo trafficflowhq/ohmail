@@ -315,20 +315,25 @@ export { KnownSetCache } from "./known-set.js";
 /**
  * WHAT ONE CYCLE ACTUALLY DID — the counters behind "an idle tick's cost is proportional to what
  * changed". Measurement, not behaviour: absent ⇒ nothing is counted and every path is unchanged.
- * `cursorBuilds` is the number of mailbox-sized derivations {@link buildCursor} performed and
- * `locatorRows` the rows they walked; with no {@link SyncDeps.knownSet} every build is also a
- * store read, which is the whole of the local engine's idle cost. `observed` is what the adapter
- * handed over — zero means nothing changed, and every gate in this file keys on that.
+ *
+ * `cursorBuilds` counts {@link buildCursor} calls (one per cycle); `locatorReads` the ones that
+ * went to the store for the whole projection and `locatorRows` the rows those returned — the
+ * QUERIES and the ROWS TOUCHED. `cursorFolders` counts the per-folder arrays actually rebuilt, the
+ * DERIVATIONS. `observed` is what the adapter handed over. A tick over a mailbox where nothing
+ * changed reads zero, touches zero rows, derives nothing and observes nothing; every other reading
+ * is a mailbox that moved, or a gate that stopped working.
  */
 export interface CycleCensus {
   cursorBuilds: number;
+  locatorReads: number;
   locatorRows: number;
+  cursorFolders: number;
   observed: number;
 }
 
 /** A zeroed {@link CycleCensus} — one per drain, folded into the caller's own log line. */
 export function newCycleCensus(): CycleCensus {
-  return { cursorBuilds: 0, locatorRows: 0, observed: 0 };
+  return { cursorBuilds: 0, locatorReads: 0, locatorRows: 0, cursorFolders: 0, observed: 0 };
 }
 
 export async function buildCursor(
@@ -336,46 +341,83 @@ export async function buildCursor(
   memo?: KnownSetCache,
 ): Promise<ImapCursor> {
   const folderRows = await repo.getMailboxFolders(mailboxId);
-  const known = await repo.listKnownLocators(mailboxId);
-  if (census !== undefined) { census.cursorBuilds += 1; census.locatorRows += known.length; }
-  const knownByFolder = new Map<string, Array<{ uid: number; uidValidity: string; messageId: string | null; seen: boolean | null }>>();
-  for (const k of known) {
-    const arr = knownByFolder.get(k.folder) ?? [];
-    arr.push({ uid: k.uid, uidValidity: k.uidValidity, messageId: k.messageId, seen: k.seen });
-    knownByFolder.set(k.folder, arr);
-  }
   const names = new Set<string>(WATCHED_FOLDERS);
   for (const r of folderRows) names.add(r.folder);
+  if (census !== undefined) census.cursorBuilds += 1;
+
   /**
-   * AND THE PER-FOLDER ARRAYS ARE DERIVED ONCE PER SET, NOT ONCE PER CYCLE. Filtering each group
-   * to its folder's epoch and mapping it into `KnownEntry`s is mailbox-sized, and with the memo
-   * warm it ran every cycle over locators that had not moved to produce the same arrays. The memo
-   * holds them against the generation they came from; a miss rebuilds, which is what every caller
-   * without a memo does on every cycle and what this loop did before there was one.
+   * THE PROJECTION IS READ ONLY WHEN THE ANSWER IS NOT ALREADY DERIVED.
    *
-   * The DEAD LETTERS are never memoized: the ledger is small and its entries turn over as attempts
-   * are spent, so they are re-read each cycle and only their ABSENCE lets the derived array be
-   * handed over as it stands.
+   * Everything below the read — grouping the whole projection by folder, filtering each group to
+   * its folder's epoch, mapping it into `KnownEntry`s — is proportional to the MAILBOX, and it ran
+   * on every cycle to produce, for a settled mailbox, exactly the arrays it produced last time.
+   * {@link KnownSetCache} holds those arrays against the generation of the locator set they came
+   * from, so when the set has not moved this function reads nothing at all.
+   *
+   * The precondition is narrow on purpose: every folder must NAME its own epoch (the fallback
+   * `soleEpochOf` derives one FROM the entries, so a folder without a row epoch needs them) and
+   * every folder must have an entry in the derivation. Anything else takes the read — which is
+   * what this function did on every cycle before there was a memo, and what every caller without
+   * one still does.
    */
   const derived = memo?.derivedFolders() ?? null;
+  const epochs = new Map<string, string>();
+  const rowEpochs = new Map<string, string | null>();
+  for (const f of names) {
+    const e = epochOf(folderRows.find((r) => r.folder === f)?.uidValidity);
+    rowEpochs.set(f, e.known ? e.value : null);
+  }
+  let readOwed = true;
+  if (derived !== null && derived.rowEpochs.size === rowEpochs.size) {
+    readOwed = false;
+    for (const [f, cur] of rowEpochs) {
+      // The row epoch is the INPUT the resolution was taken from — equal inputs over a locator set
+      // that has not moved give the same answer, and anything else is a read. A folder whose row
+      // names NO epoch is included by this: its answer was derived from the entries, and the same
+      // entries derive it again.
+      if (derived.rowEpochs.get(f) !== cur) { readOwed = true; break; }
+      const was = derived.resolved.get(f);
+      if (was === undefined) { readOwed = true; break; }
+      epochs.set(f, was);
+    }
+  }
+
+  const knownByFolder = new Map<string, Array<{ uid: number; uidValidity: string; messageId: string | null; seen: boolean | null }>>();
+  if (readOwed) {
+    epochs.clear();
+    /* WARM IS READ BEFORE THE READ, not after it: the read is what makes it warm, so asking
+       afterwards answers "yes" every time and the counter says nothing. */
+    const servedFromMemory = memo?.warm === true;
+    const known = await repo.listKnownLocators(mailboxId);
+    if (census !== undefined) {
+      if (!servedFromMemory) census.locatorReads += 1;
+      census.locatorRows += known.length;
+    }
+    for (const k of known) {
+      const arr = knownByFolder.get(k.folder) ?? [];
+      arr.push({ uid: k.uid, uidValidity: k.uidValidity, messageId: k.messageId, seen: k.seen });
+      knownByFolder.set(k.folder, arr);
+    }
+    for (const f of names) {
+      epochs.set(f, rowEpochs.get(f) ?? soleEpochOf(knownByFolder.get(f) ?? []));
+    }
+  }
+
   const fresh = new Map<string, KnownEntry[]>();
   const folders: ImapCursor["folders"] = {};
   for (const f of names) {
     const row = folderRows.find((r) => r.folder === f);
-    const entries = knownByFolder.get(f) ?? [];
-    const rowEpoch = epochOf(row?.uidValidity);
-    const epoch = rowEpoch.known ? rowEpoch.value : soleEpochOf(entries);
+    const epoch = epochs.get(f) ?? "0";
     folders[f] = {
       uidValidity: epoch,
       uidNext: row?.uidNext ?? 0,
       highestModseq: row?.highestModseq ?? "0",
-      // An UNNAMED epoch means nothing remembered may be presented as known — the adapter would
-      // read a bare number as belonging to whatever epoch it is looking at. `!== "0"` missed the
-      // `String(undefined)` a silent server persists, so those UIDs were handed over as facts.
-      known: knownFor(f, epoch, entries, derived, fresh, deadLetters),
+      known: knownFor(f, epoch, knownByFolder.get(f) ?? [], derived?.byFolder ?? null, fresh, deadLetters, census),
     };
   }
-  memo?.rememberFolders(fresh);
+  // A derivation is remembered only when it was built from a READ — a pass that reused the last
+  // one has nothing new to say, and rewriting it would stamp old arrays with a new generation.
+  if (readOwed) memo?.rememberFolders(fresh, rowEpochs, epochs);
   return { folders };
 }
 
@@ -394,13 +436,16 @@ function knownFor(
   derived: Map<string, KnownEntry[]> | null,
   fresh: Map<string, KnownEntry[]>,
   deadLetters?: DeadLetterLedger,
+  census?: CycleCensus,
 ): KnownEntry[] {
   // An UNNAMED epoch means nothing remembered may be presented as known — the adapter would read a
   // bare number as belonging to whatever epoch it is looking at. `!== "0"` missed the
   // `String(undefined)` a silent server persists, so those UIDs were handed over as facts.
   if (!epochOf(epoch).known) return [];
   const key = `${folder}\u0000${epoch}`;
-  const locators = derived?.get(key)
+  const reused = derived?.get(key);
+  if (reused === undefined && census !== undefined) census.cursorFolders += 1;
+  const locators = reused
     ?? entries.filter((e) => sameEpoch(epochOf(e.uidValidity), epochOf(epoch)))
       .map((e) => ({ uid: e.uid, messageId: e.messageId, seen: e.seen }));
   fresh.set(key, locators);
