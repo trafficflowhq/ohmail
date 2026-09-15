@@ -1445,19 +1445,14 @@ export const awayResponders = pgTable("away_responders", {
   enabledAt: timestamp("enabled_at", { withTimezone: true }),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
   /**
-   * When the away pass last WALKED this responder — stamped on the accounts one invocation
-   * actually entered, never on the whole page it drew and never on a reply it sent. It IS the
-   * rotation: the probe orders by this column first, so the responders a run served sort last
-   * and the ones behind them come up next. Without it the page is the same fifty every tick and
-   * the fifty-first is enabled and never answers anybody. `to_timestamp(0)` means NEVER WALKED,
-   * which is what every existing row and every new one starts as, so a responder enabled today
-   * is reached before one the pass has already served. NOT `updated_at`: that column is the
-   * away EPISODE key (`away_responder_sent.responder_updated_at`), and moving it once a minute
-   * would open a new episode each time and re-answer every correspondent.
-   *
-   * The default is written as the INSTANT and not as the server's own function: the migration
-   * spells it `to_timestamp(0)`, which only Postgres accepts, and this module is one the engine
-   * conveys to a store that does not (`dialect-census.test.ts` refuses the function here).
+   * When the away pass last WALKED this responder — the rotation. The probe orders by it first,
+   * so the accounts a run entered sort last and the ones behind them come up next; without it
+   * the page is the same fifty every tick and the fifty-first never answers anybody. The epoch
+   * means NEVER WALKED, which every row starts at. NOT `updated_at`: that is the away episode
+   * key (`away_responder_sent.responder_updated_at`), and moving it once a minute would open a
+   * new episode each tick and re-answer every correspondent. The default is the INSTANT, not
+   * the migration's own `to_timestamp(0)` — a Postgres-only function in a module the engine
+   * conveys to a store that has no such function.
    */
   lastConsideredAt: timestamp("last_considered_at", { withTimezone: true })
     .notNull().default(EPOCH),
