@@ -698,7 +698,18 @@ export interface PersistedFolderCursor {
  */
 export interface KnownEntry { uid: number; messageId: string | null; seen?: boolean | null; }
 export interface FolderCursor extends PersistedFolderCursor { known: KnownEntry[]; }
-export interface ImapCursor { folders: Record<string, FolderCursor>; }
+/**
+ * Where a pass stopped because the shared byte budget was spent — the folder it did not take
+ * from, and the lowest UID that folder still owes (everything at or above it there is untaken).
+ * The epoch travels with the uid or the uid is not a fact: `uidValidity` is the server's own
+ * spelling and is read through `epochOf` before anything compares it, never as a number.
+ */
+export interface BudgetStop { folder: string; uidValidity: string; uid: number; }
+export interface ImapCursor {
+  folders: Record<string, FolderCursor>;
+  /** Where the previous pass's budget ran out, if it did — see {@link BudgetStop}. */
+  budgetStop?: BudgetStop;
+}
 
 export interface ChangeBatch {
   creates: Change[];
@@ -721,6 +732,13 @@ export interface ChangeBatch {
    * every fake adapter keeps compiling; absent reads as `false`.
    */
   hasBacklog?: boolean;
+  /**
+   * This pass stopped at this folder on a spent byte budget — the first sync CONTINUES, it did
+   * not finish. Set with `hasBacklog`; absent means the pass reached every folder it scanned. A
+   * caller that persists it and hands it back on the next cursor gets the resume across a
+   * restart; the adapter remembers it in memory for the life of the connection either way.
+   */
+  budgetStop?: BudgetStop;
   /**
    * UIDs this pass asked the server for and did not get back — the caller owes each a durable
    * failure row BEFORE writing the folder cursor. RFC 3501 lets `UID FETCH` return fewer messages

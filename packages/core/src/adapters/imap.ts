@@ -70,6 +70,7 @@ import {
   imapTlsFloor, smtpTlsFloor,
   type ImapConfig, type ImapAdapterOpts, type ImapCapabilities, type MailboxAdapter,
   type ImapCursor, type ChangeBatch, type PersistedFolderCursor, type FolderCursor,
+  type BudgetStop,
   type KnownEntry,
   type OutboundMessage, type SendResult, type FetchedPart, type FetchPartOptions,
   type FetchRawOptions, type NetTimeouts, type FetchByUidOptions, type TargetedFetch,
@@ -862,6 +863,16 @@ interface FlagDrain {
   advanceTo: string;
 }
 
+/**
+ * `folders` with `lead` moved to the front, and every other position preserved. A lead that is
+ * not in the list — a folder renamed or deleted since the stop — leaves the order alone, which is
+ * the one safe reading of a name the server no longer has.
+ */
+function leadWith(folders: readonly string[], lead: string | undefined): string[] {
+  const at = lead === undefined ? -1 : folders.indexOf(lead);
+  return at <= 0 ? [...folders] : [folders[at]!, ...folders.filter((f) => f !== lead)];
+}
+
 export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
   private client!: ImapFlow;
   private transporter: Transporter | null = null;
@@ -928,6 +939,15 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
   private passiveStatus: ReadonlyMap<string, FolderStatus> = new Map();
   /** Folder → in-flight bounded flag drain. See {@link FlagDrain}. */
   private readonly flagDrain = new Map<string, FlagDrain>();
+
+  /**
+   * Where the last pass's byte budget ran out. In memory beside {@link ImapAdapter.flagDrain} and
+   * for the same reason: losing it costs the next pass its lead, never a message — every folder
+   * from the stop kept its stored cursor, so the work is re-derived whatever happens to this. A
+   * caller that persists the value reported on the batch may hand it back on the cursor, and that
+   * one wins.
+   */
+  private budgetStop: BudgetStop | undefined;
   /**
    * How many `changesSince` passes this adapter has run — the ROTATION COUNTER of the flag
    * schedule. See the scheduling block in {@link ImapAdapter.changesSince}.
@@ -2587,6 +2607,14 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
     // NOT add a batch. Sent can only spend what INBOX and the ohmail folders left, so a Sent
     // backlog of tens of thousands of messages cannot delay this cycle's inbound mail by one
     // message — it drains through `hasBacklog` re-kicks behind it.
+    // The pass LEADS with the folder the last one's budget stopped at, so a mailbox whose first
+    // folders each hold a large message does not re-spend the whole budget on them every pass and
+    // leave the tail waiting for days. Nothing else about the order moves: it is the CREATES
+    // order, a mail-latency guarantee, and with no stop to resume from it is exactly what it was.
+    const resumeAt = cursor.budgetStop ?? this.budgetStop;
+    const scanOrder = leadWith(scanFolders, resumeAt?.folder);
+    /** Set when a folder is refused for a spent budget — the cursor the NEXT pass leads with. */
+    let stoppedAt: BudgetStop | undefined;
     const budget = {
       messages: this.opts.maxBatchMessages ?? DEFAULT_SYNC_BATCH_MAX_MESSAGES,
       bytes: this.opts.maxBatchBytes ?? DEFAULT_SYNC_BATCH_MAX_BYTES,
@@ -2632,7 +2660,7 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
     // What every claimant behind a folder keeps whatever that folder does with its turn.
     const flagFloor = Math.max(1, Math.floor(flagTotal / (2 * Math.max(1, flagClaimants.size))));
 
-    for (const [folderIndex, folder] of scanFolders.entries()) {
+    for (const [folderIndex, folder] of scanOrder.entries()) {
       const isSent = folder === sentFolder;
       const isPassive = passiveFolders.has(folder);
       const serverPath = this.toServerPath(folder);
@@ -2748,8 +2776,18 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
         // Spent before this folder was asked: nothing was fetched here and nothing further can
         // be, so the pass ends with what it has. Every folder from here keeps its STORED cursor —
         // absent from `newFolders` is "leave the row alone" (`sync.ts` iterates what is present) —
-        // so the next pass re-derives exactly this work against a fresh budget.
-        if (budgetSpent) break;
+        // so the next pass re-derives exactly this work against a fresh budget, leading here.
+        if (budgetSpent) {
+          stoppedAt = {
+            folder,
+            uidValidity: String(curUidValidity),
+            // The lowest UID this folder still owes. Not the newest-first front: learning that
+            // costs the metadata fetch this refusal exists to skip, and "at or above this, none
+            // of it was taken" is the true statement either way.
+            uid: minOf(unknownUids, 0),
+          };
+          break;
+        }
         // Reported, never swallowed. The cursor written at the bottom of this loop ADVANCES over
         // these UIDs, so the caller owes each one a durable record first — see
         // {@link ChangeBatch.unanswered}, which is where that obligation is stated.
@@ -2792,7 +2830,7 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
           // was real; the schedule above closes it — progress is guaranteed per cycle by
           // `allowance`. `allowance` can be 0 after rounding, so `flagsTruncated` does not imply
           // anything was accepted — a share bounds from above.
-          const after = scanFolders.slice(folderIndex + 1).filter((f) => flagClaimants.has(f)).length;
+          const after = scanOrder.slice(folderIndex + 1).filter((f) => flagClaimants.has(f)).length;
           const unreserved = budget.flags - after * flagFloor;
           const share = flagClaimants.has(folder)
             ? Math.ceil(budget.flags / (after + 1))
@@ -2965,6 +3003,9 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
       }
     }
 
+    // Cleared when the pass reached the end, so a completed first sync stops leading with a
+    // folder that owes nothing.
+    this.budgetStop = stoppedAt;
     const correlated = correlateMoves(creates, deletes);
     return {
       // `ownAuthored` is stamped HERE, on pure creates only, and not inside `correlateMoves`.
@@ -2997,6 +3038,7 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
       deletes: correlated.deletes.map((d): Change => ({ type: "delete", locator: { folder: d.folder, ref: makeRef(d.uidValidity, d.uid) } })),
       newCursor: { folders: newFolders },
       hasBacklog,
+      ...(stoppedAt ? { budgetStop: stoppedAt } : {}),
       unanswered,
       oversize,
       ...(unreadableCursors.length > 0 ? { rebootstrapped: unreadableCursors } : {}),
