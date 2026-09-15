@@ -4594,12 +4594,59 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
        * it impossible. `mailboxIds: [mb.id]` — each mailbox keeps its own.
        */
       /**
-       * @param gen  the connection generation the caller gated under, and @param conn the adapter
-       *   instance it belongs to. Threaded in rather than read from the closure because this pass
-       *   OUTLIVES a cycle: it is the caller's identity that decides whether a delivery is still
-       *   this install's to make, and the closure's binding is exactly the thing that moves.
+       * @param gen  the connection generation the caller gated under, @param conn the adapter
+       *   instance it belongs to, and @param permit the organizer lease those two were gated on.
+       *   All three threaded in rather than read from the closure because this pass OUTLIVES a
+       *   cycle: it is the caller's own authority that decides whether a delivery is still this
+       *   install's to make, and the closure's bindings are exactly the things that move.
        */
-      const answerAway = async (gen: number, conn: MailboxAdapter): Promise<void> => {
+      const answerAway = async (
+        gen: number, conn: MailboxAdapter, permit: OrganizerWriteAuthority,
+      ): Promise<void> => {
+        /** Set by the refusal below, read by `cancelled` so the pass ends where it stands. */
+        let leaseLost = false;
+        /* ── THE SEND BOUNDARY ASKS THE LEASE, BECAUSE THE CONNECTION ANSWERS SOMETHING ELSE ──
+         *
+         * Choosing another organizer mid-pass leaves THIS socket open and healthy, so the
+         * connection check admits every remaining reply and two installs answer one correspondent.
+         * An away reply is irreversible mail sent in somebody's name, so the authority is re-asked
+         * at the last point before delivery — `check()` is the permit's own bounded re-read — and
+         * a refusal both refuses this send and ends the pass.
+         *
+         * An UNREADABLE lease is not a stand-down: a read that throws leaves the receipt untouched
+         * (`lease.ts`), so the permit's `revoked` latch decides and an outage lets mail flow.
+         */
+        const refuse = (): void => {
+          leaseLost = true;
+          log("away_responder_stood_down", {
+            mailboxId: mb.id,
+            reason: "another install holds this mailbox now, so this automatic reply was not sent "
+              + "and the pass ends here; the install that holds it answers the same message from "
+              + "its own pass, and mail continues to arrive either way",
+          });
+        };
+        const askLease = async (): Promise<void> => {
+          if ("check" in permit) {
+            try {
+              await permit.check();
+              return;
+            } catch (err) {
+              if (!leaseStoodDown(permit)) return;
+              refuse();
+              throw err;
+            }
+          }
+          refuse();
+          throw new Error("no organizer lease permit authorises this away reply");
+        };
+        const sendUnderLease: OpenSendAdapter = async (
+          mailboxId: string,
+        ): Promise<SendAdapter> => {
+          const sender = await openLocalSend(mailboxId);
+          /* SPREAD, never a hand-written literal: a method this door forgets to name does not
+             exist to the pass, which is how `forceClose` was silently lost at the sibling seam. */
+          return { ...sender, send: async (msg) => { await askLease(); return sender.send(msg); } };
+        };
         try {
           const r = await runAwayResponderPass(db as never, {
             /* ── THE PASS STOPS IF THIS MAILBOX STOPS BEING OURS WHILE IT RUNS ─────────────
@@ -4612,8 +4659,10 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
              *
              * `stopped` is in the predicate for the same reason — a removed mailbox must not go
              * on sending on its own behalf while `detach()` waits for the pass to end. */
-            cancelled: () => stopped || gen !== generation || conn !== adapter,
-            openSendAdapter: openLocalSend,
+            cancelled: () =>
+              stopped || gen !== generation || conn !== adapter
+              || leaseLost || leaseStoodDown(permit),
+            openSendAdapter: sendUnderLease,
             mailboxIds: [mb.id],
             now,
           });
@@ -4743,7 +4792,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
            the time this line is reached the connection may have been replaced twice over. A guard
            six lines up is a guard about a different moment. */
         assertSameConnection(gen, conn);
-        if (organizing) await answerAway(gen, conn);
+        if (organizing) await answerAway(gen, conn, leasePermit);
         /* AND THE RECONCILER — UNGATED, unlike the two lines above it. See its own note: those two
            SEND on the mailbox's behalf and a reader must not; this one settles a reservation THIS
            install wrote, by reading. Gating it would leave a demoted install saying "Sending…" for
