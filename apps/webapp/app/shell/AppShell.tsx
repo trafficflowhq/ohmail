@@ -48,6 +48,8 @@ import {
   type EngineMessage,
   type EngineMutation,
   type EntityReader,
+  type MutationRejectedError,
+  type MutationResult,
   type FeedView,
   type Folder,
   type OhmailView,
@@ -1447,6 +1449,81 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
     [t],
   );
 
+  /**
+   * THE REFUSAL, IN THE PERSON'S OWN LANGUAGE. `MutationRejectedError.message` is server English
+   * and rendering it puts an untranslated protocol sentence inside a translated interface, so the
+   * branch is on `code`. `organized_elsewhere` is the one this seam exists for: a reader install's
+   * triage, park and resurface are refused per mailbox, and the holder's name rides the refusal's
+   * own details. Anything else — a message that has gone, an outage — gets the sentence that is
+   * true of all of them: nothing changed.
+   */
+  /**
+   * What one dispatch answered. A discriminated union rather than an optional refusal: "applied"
+   * and "refused for a reason nobody named" are different answers, and an optional field would
+   * collapse them the first time a caller read it.
+   */
+  type PressOutcome = { applied: true } | { applied: false; refusal: MutationRejectedError | undefined };
+
+  const refusalSentence = useStableCallback((err: MutationRejectedError | undefined): string => {
+    if (err?.code !== "organized_elsewhere") return t("ohbox.refusedPress");
+    const by = (err.details as { by?: { name?: string | null } } | null | undefined)?.by;
+    const name = by?.name && by.name.trim() ? by.name.trim() : null;
+    return name ? t("ohbox.refusedOrganized", { name }) : t("ohbox.refusedOrganizedUnknown");
+  });
+
+  /**
+   * A PRESS IS REPORTED FROM ITS ANSWER — the shell's one dispatch seam.
+   *
+   * Every verb here used to be `void engine.mutate(…)` with its success sentence raised on the
+   * next line: the overlay moved the row, the service refused, the engine rolled the overlay back,
+   * and the sentence stood over mail that had not changed. A reader install's Done on a scheduled
+   * message said "filed under Earlier" while the booking survived and the mail came back.
+   *
+   * So the sentence waits for the outcome. `rolled_back` renders the refusal instead and answers
+   * `false`, which is what lets a caller withhold the follow-up half of a two-verb press. The
+   * optimistic overlay is the engine's own and it is already rolled back by the time this resolves
+   * — nothing is undone here, the interface is simply told the truth about it.
+   */
+  const dispatchPress = useStableCallback((mutation: EngineMutation): Promise<PressOutcome> =>
+    engine.mutate(mutation).then(
+      (res: MutationResult): PressOutcome => (res.status === "rolled_back"
+        ? { applied: false, refusal: res.error }
+        : { applied: true }),
+      /* `mutate` resolves with a verdict rather than rejecting, so a throw here is this client
+         failing — still a press that did nothing, and still owed a sentence. */
+      (): PressOutcome => ({ applied: false, refusal: undefined }),
+    ));
+
+  const mutateAndReport = useStableCallback(
+    (mutation: EngineMutation, okSentence: string | null): Promise<boolean> =>
+      dispatchPress(mutation).then((out) => {
+        if (!out.applied) { toast(refusalSentence(out.refusal)); return false; }
+        if (okSentence !== null) toast(okSentence);
+        return true;
+      }),
+  );
+
+  /**
+   * THE SAME RULE OVER A SET, and the reason it is not a loop over the one above: a toast per
+   * refused message over a selection of forty is not feedback, it is a denial of service on your
+   * own screen. So the set speaks ONCE — the sentence counts what actually applied, and a set
+   * where nothing applied is a refused press reported as one, in the first refusal's own words.
+   */
+  const mutateSetAndReport = useStableCallback(
+    (mutations: readonly EngineMutation[], say: (applied: number) => string | null): Promise<number> =>
+      Promise.all(mutations.map((mu) => dispatchPress(mu))).then((outs) => {
+        const applied = outs.filter((o) => o.applied).length;
+        if (applied === 0 && outs.length > 0) {
+          const refused = outs.find((o): o is Extract<PressOutcome, { applied: false }> => !o.applied);
+          toast(refusalSentence(refused?.refusal));
+          return 0;
+        }
+        const sentence = say(applied);
+        if (sentence !== null) toast(sentence);
+        return applied;
+      }),
+  );
+
   /** Which mailboxes a set of messages lives in — first-seen order, de-duplicated. An
    *  unresolvable message contributes `""`, which the predicate refuses as an unknown id. */
   const mailboxesOf = useStableCallback(
@@ -2744,9 +2821,12 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
    * being looked at); absent means deliberate. The forward is easy to lose and impossible to
    * typecheck, so `test/resurface-now-shell.test.ts` asserts the label reaches the adapter.
    */
-  const markSeen = useStableCallback((ids: string[], unread: boolean, via?: "glance") => {
-    if (ids.length === 0) return;
-    void engine.mutate({ kind: "mark_seen", messageIds: ids, unread, ...(via ? { via } : {}) });
+  const markSeen = useStableCallback((ids: string[], unread: boolean, via?: "glance"): Promise<boolean> => {
+    if (ids.length === 0) return Promise.resolve(false);
+    /* Through the shell's one dispatch seam, with NO sentence of its own: the read state is its
+       own confirmation on the row, and the callers that DO say something (the bulk verbs, the
+       resurface release) say it from the verdict this answers with. */
+    return mutateAndReport({ kind: "mark_seen", messageIds: ids, unread, ...(via ? { via } : {}) }, null);
   });
 
   /**
@@ -4400,8 +4480,10 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
 
   const toggleTag = useStableCallback((messageId: string, tagId: string, assigned: boolean) => {
     const name = tags.find((x) => x.id === tagId)?.name ?? tagId;
-    void engine.mutate({ kind: "tag_assign", messageId, tagId, assigned });
-    toast(assigned ? t("tag.toastTagged", { name }) : t("tag.toastUntagged", { name }));
+    void mutateAndReport(
+      { kind: "tag_assign", messageId, tagId, assigned },
+      assigned ? t("tag.toastTagged", { name }) : t("tag.toastUntagged", { name }),
+    );
   });
 
   /**
@@ -4419,17 +4501,15 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
       return m != null && m.labels.includes(tagId) !== assigned;
     });
     if (targets.length === 0) return;
-    for (const messageId of targets) {
-      void engine.mutate({ kind: "tag_assign", messageId, tagId, assigned });
-    }
-    if (targets.length === 1) {
-      toast(assigned ? t("tag.toastTagged", { name }) : t("tag.toastUntagged", { name }));
-      return;
-    }
-    toast(
-      assigned
-        ? t("tag.toastTaggedMany", { name, count: targets.length })
-        : t("tag.toastUntaggedMany", { name, count: targets.length }),
+    /* The COUNT IS WHAT APPLIED, not what was picked — the set seam answers with it, so a press
+       that reached three of five says three rather than claiming the two the server refused. */
+    void mutateSetAndReport(
+      targets.map((messageId) => ({ kind: "tag_assign", messageId, tagId, assigned } as const)),
+      (applied) => (applied === 1
+        ? (assigned ? t("tag.toastTagged", { name }) : t("tag.toastUntagged", { name }))
+        : (assigned
+          ? t("tag.toastTaggedMany", { name, count: applied })
+          : t("tag.toastUntaggedMany", { name, count: applied }))),
     );
   });
 
@@ -4455,10 +4535,10 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
    * next drain under the real id, which is why nothing here asserts the tag is visible yet.
    */
   const createTag = useStableCallback((messageId: string, name: string) => {
-    void engine.mutate({
-      kind: "tag_assign", messageId, tagId: crypto.randomUUID(), assigned: true, createName: name,
-    });
-    toast(t("tag.toastTagged", { name }));
+    void mutateAndReport(
+      { kind: "tag_assign", messageId, tagId: crypto.randomUUID(), assigned: true, createName: name },
+      t("tag.toastTagged", { name }),
+    );
   });
 
   /**
@@ -4471,13 +4551,11 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
    * mutation's own comment.
    */
   const createTagAlone = useStableCallback((name: string) => {
-    void engine.mutate({ kind: "tag_create", tagId: crypto.randomUUID(), name });
-    toast(t("tag.toastCreated", { name }));
+    void mutateAndReport({ kind: "tag_create", tagId: crypto.randomUUID(), name }, t("tag.toastCreated", { name }));
   });
 
   const renameTag = useStableCallback((tagId: string, name: string) => {
-    void engine.mutate({ kind: "tag_rename", tagId, name });
-    toast(t("tag.toastRenamed", { name }));
+    void mutateAndReport({ kind: "tag_rename", tagId, name }, t("tag.toastRenamed", { name }));
   });
 
   /**
@@ -4487,8 +4565,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
    */
   const deleteTag = useStableCallback((tagId: string) => {
     const name = reader.get<TagDTO>("tag", tagId)?.name ?? "";
-    void engine.mutate({ kind: "tag_delete", tagId });
-    toast(t("tag.toastDeleted", { name }));
+    void mutateAndReport({ kind: "tag_delete", tagId }, t("tag.toastDeleted", { name }));
   });
   /**
    * Recolour a tag. NO toast, deliberately: the dot changes colour in place, which is the
@@ -4497,7 +4574,9 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
    * so this cannot store a colour nothing can draw.
    */
   const recolorTag = useStableCallback((tagId: string, hue: string) => {
-    void engine.mutate({ kind: "tag_recolor", tagId, hue });
+    /* Through the seam with no sentence of its own — the dot changing colour IS the confirmation.
+       A refusal still speaks: the seam says so, which is the half that was missing. */
+    void mutateAndReport({ kind: "tag_recolor", tagId, hue }, null);
   });
   const tagAdmin = useMemo(
     () => ({ onCreate: createTagAlone, onRename: renameTag, onRecolor: recolorTag, onDelete: deleteTag }),
@@ -4558,20 +4637,22 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
          */
         case "later":
           if (m.triage?.state === "reply_later") {
-            void engine.mutate({ kind: "triage_set", messageId: m.id, state: "none" });
-            toast(t("ohbox.toastUnqueued"));
+            void mutateAndReport({ kind: "triage_set", messageId: m.id, state: "none" }, t("ohbox.toastUnqueued"));
           } else {
-            void engine.mutate({ kind: "triage_set", messageId: m.id, state: "reply_later" });
-            toast(t("ohbox.toastQueued"));
+            void mutateAndReport(
+              { kind: "triage_set", messageId: m.id, state: "reply_later" },
+              t("ohbox.toastQueued"),
+            );
           }
           break;
         case "aside":
           if (m.triage?.state === "set_aside") {
-            void engine.mutate({ kind: "triage_set", messageId: m.id, state: "none" });
-            toast(t("ohbox.toastUnparked"));
+            void mutateAndReport({ kind: "triage_set", messageId: m.id, state: "none" }, t("ohbox.toastUnparked"));
           } else {
-            void engine.mutate({ kind: "triage_set", messageId: m.id, state: "set_aside" });
-            toast(t("ohbox.toastAside"));
+            void mutateAndReport(
+              { kind: "triage_set", messageId: m.id, state: "set_aside" },
+              t("ohbox.toastAside"),
+            );
           }
           break;
         case "unread":
@@ -4594,8 +4675,10 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
           // silently re-dating it — the toggle rule above, and the only way to take back a
           // resurface that the popover's picker cannot offer (it has no "cancel this" row).
           if (m.triage?.state === "bubbled_up") {
-            void engine.mutate({ kind: "triage_set", messageId: m.id, state: "none" });
-            toast(t("ohbox.toastResurfaceCleared"));
+            void mutateAndReport(
+              { kind: "triage_set", messageId: m.id, state: "none" },
+              t("ohbox.toastResurfaceCleared"),
+            );
             break;
           }
           // The horizon-less default — the keyboard's `b` and the palette. The popover on the
@@ -4607,13 +4690,10 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
           // somebody set 14:30 would be the one resurface in the product that ignored the
           // default, and nothing on screen would say so.
           const when = tomorrowAt(now, consent.resurfaceTime).iso;
-          void engine.mutate({
-            kind: "triage_set",
-            messageId: m.id,
-            state: "bubbled_up",
-            bubbleUpAt: when,
-          });
-          toast(t("ohbox.toastResurface", { when: resurfaceLabel(when) }));
+          void mutateAndReport(
+            { kind: "triage_set", messageId: m.id, state: "bubbled_up", bubbleUpAt: when },
+            t("ohbox.toastResurface", { when: resurfaceLabel(when) }),
+          );
           break;
         }
         case "delete": {
@@ -4676,8 +4756,10 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
            * the server writes it in one transaction, and `ohboxView.resurfaced` has the row on the next drain. No
            * `bubbleUpAt`: there is no schedule to spend.
            */
-          void engine.mutate({ kind: "triage_set", messageId: m.id, state: "resurfaced" });
-          toast(t("ohbox.toastResurfaceNow"));
+          void mutateAndReport(
+            { kind: "triage_set", messageId: m.id, state: "resurfaced" },
+            t("ohbox.toastResurfaceNow"),
+          );
           break;
         case "resurface_done": {
           /**
@@ -4695,11 +4777,17 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
            * Same end state, never a new one: unscheduled, read, top of "Earlier". Skipping the clear would leave the
            * pile listing a message the reader just said they were done with.
            */
-          if (m.triage?.state === "bubbled_up") {
-            void engine.mutate({ kind: "triage_set", messageId: m.id, state: "none" });
-          }
-          markSeen([m.id], false);
-          toast(t("ohbox.toastResurfaceDone"));
+          /* AND THE SENTENCE FOLLOWS THE ANSWER. A reader install cannot triage: the clear was
+             refused, the engine rolled it back, and this arm reported "filed under Earlier" over
+             a booking that still stood and mail that still came back. A refused clear means the
+             schedule is intact, so the deliberate read that would file the row is never sent —
+             half a release is a message read out of a pile it is still in. */
+          const release = async (): Promise<void> => {
+            if (m.triage?.state === "bubbled_up"
+              && !(await mutateAndReport({ kind: "triage_set", messageId: m.id, state: "none" }, null))) return;
+            if (await markSeen([m.id], false)) toast(t("ohbox.toastResurfaceDone"));
+          };
+          void release();
           break;
         }
         default: {
@@ -4709,13 +4797,10 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
           // it is.
           if (action.startsWith("resurface:")) {
             const when = action.slice("resurface:".length);
-            void engine.mutate({
-              kind: "triage_set",
-              messageId: m.id,
-              state: "bubbled_up",
-              bubbleUpAt: when,
-            });
-            toast(t("ohbox.toastResurface", { when: resurfaceLabel(when) }));
+            void mutateAndReport(
+              { kind: "triage_set", messageId: m.id, state: "bubbled_up", bubbleUpAt: when },
+              t("ohbox.toastResurface", { when: resurfaceLabel(when) }),
+            );
             break;
           }
           // `move:<view>` — the destination travels with the action. Before
@@ -4814,13 +4899,17 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
         );
       }
       if (action === "read" || action === "unread") {
-        // The batch mutation, unchanged: one request, one transaction, one intent.
-        markSeen(ids, action === "unread");
-        toast(
-          t(action === "unread" ? "ohbox.toastBulkUnread" : "ohbox.toastBulkRead", {
-            count: ids.length,
-          }),
-        );
+        // The batch mutation, unchanged: one request, one transaction, one intent — and the
+        // sentence now waits for its verdict, like every other press in this file.
+        void markSeen(ids, action === "unread").then((ok) => {
+          if (ok) {
+            toast(
+              t(action === "unread" ? "ohbox.toastBulkUnread" : "ohbox.toastBulkRead", {
+                count: ids.length,
+              }),
+            );
+          }
+        });
         return true;
       }
       if (action === "later" || action === "aside" || action === "resurface") {
@@ -4828,20 +4917,18 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
         // The same default the single-message verb uses — the picker's first dated preset, at
         // the account's own hour (mail 0110).
         const when = action === "resurface" ? tomorrowAt(now, consent.resurfaceTime).iso : null;
-        for (const messageId of ids) {
-          void engine.mutate({
-            kind: "triage_set",
+        void mutateSetAndReport(
+          ids.map((messageId) => ({
+            kind: "triage_set" as const,
             messageId,
             state,
             ...(when ? { bubbleUpAt: when } : {}),
-          });
-        }
-        toast(
-          action === "resurface"
-            ? t("ohbox.toastBulkResurface", { count: ids.length, when: resurfaceLabel(when!) })
+          })),
+          (applied) => (action === "resurface"
+            ? t("ohbox.toastBulkResurface", { count: applied, when: resurfaceLabel(when!) })
             : t(action === "later" ? "ohbox.toastBulkLater" : "ohbox.toastBulkAside", {
-                count: ids.length,
-              }),
+                count: applied,
+              })),
         );
         return true;
       }
@@ -4933,12 +5020,14 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
         toast(t("screening.toastBulkNothing", { place }));
         return true;
       }
-      for (const m of plan.mutations) void engine.mutate(m);
       // Two sentences because there are two outcomes, and the second one is permanent. The
       // single-sender path already says which happened; this keeps that vocabulary and adds
-      // the only thing bulk introduces — that a selection can contain both.
-      toast(
-        plan.rules > 0
+      // the only thing bulk introduces — that a selection can contain both. Through the set
+      // seam: a plan where the service refused everything is a refusal, said once, rather than
+      // a count of senders nothing was decided about.
+      void mutateSetAndReport(
+        plan.mutations,
+        () => (plan.rules > 0
           ? t("screening.toastBulkRuled", {
               place,
               senders: plan.senders,
@@ -4949,7 +5038,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
               place,
               senders: plan.senders,
               count: plan.messages,
-            }),
+            })),
       );
       return true;
     },
