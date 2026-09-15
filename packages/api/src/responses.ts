@@ -5,10 +5,27 @@ export interface JsonResponseInit {
   headers?: Record<string, string>;
 }
 
-/** JSON body + `Content-Type: application/json`; attaches `X-Sync-Seq` when a seq is given. */
+/**
+ * The statuses HTTP gives NO body. `new Response(JSON.stringify(x), { status: 204 })` throws, so
+ * before this set existed the shared response layer could not make one — which is why
+ * `DELETE /rules/:id` built its replay by hand, and why that replay answered 204 "the rule is
+ * gone" to the retry of a 202 the offline organizer had not applied yet. A route that has to
+ * shape its own response is a route that can lose what it stored.
+ */
+const NULL_BODY_STATUSES: ReadonlySet<number> = new Set([204, 205, 304]);
+
+/**
+ * JSON body + `Content-Type: application/json`; attaches `X-Sync-Seq` when a seq is given.
+ *
+ * At a null-body status the body is DROPPED rather than stringified — the status says there is no
+ * representation, and one that carried a body would be unsendable, not merely odd. `Content-Type`
+ * goes with it, because there is nothing to type.
+ */
 export function jsonResponse(body: unknown, init: JsonResponseInit = {}): Response {
   const headers = new Headers(init.headers);
-  headers.set("Content-Type", "application/json");
+  const status = init.status ?? 200;
+  const bodiless = NULL_BODY_STATUSES.has(status);
+  if (!bodiless) headers.set("Content-Type", "application/json");
   // `nosniff` on EVERY response, set here rather than per route so a new route cannot miss
   // it. Defence in depth and nothing more: these bodies are `application/json` and a modern
   // browser honours that, so the header matters for legacy sniffing rather than for any live
@@ -19,7 +36,7 @@ export function jsonResponse(body: unknown, init: JsonResponseInit = {}): Respon
   // or navigate, and the webapp already carries the full set on the surface where they bite.
   headers.set("X-Content-Type-Options", "nosniff");
   if (init.seq !== undefined && init.seq !== null) headers.set("X-Sync-Seq", String(init.seq));
-  return new Response(JSON.stringify(body), { status: init.status ?? 200, headers });
+  return new Response(bodiless ? null : JSON.stringify(body), { status, headers });
 }
 
 /**

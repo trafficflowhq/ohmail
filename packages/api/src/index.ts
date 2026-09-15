@@ -117,7 +117,7 @@ export {
 
 // Idempotency store.
 export {
-  recordIdempotent, lookupIdempotent, idempotencyExpiry,
+  recordIdempotent, lookupIdempotent, storedResponse, idempotencyExpiry,
   type StoredIdempotent, type RecordIdempotentInput,
 } from "./idempotency.js";
 

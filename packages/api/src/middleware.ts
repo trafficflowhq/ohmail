@@ -6,8 +6,8 @@ import { silentLogger } from "@trafficflow/core/mail";
 // The reader refusal, from the package that throws it — see the envelope arm below for why it
 // cannot live beside `ServiceError`.
 import { csrfTokenFor } from "./csrf.js";
-import { errorResponse, jsonResponse } from "./responses.js";
-import { lookupIdempotent, type StoredIdempotent } from "./idempotency.js";
+import { errorResponse } from "./responses.js";
+import { lookupIdempotent, storedResponse, type StoredIdempotent } from "./idempotency.js";
 import type { ApiDeps, SessionVia } from "./deps.js";
 import { accessRefusedMayReach, unverifiedMayReach } from "./router.js";
 import { accessFor } from "./routes/shared.js";
@@ -575,7 +575,7 @@ export const withIdempotency: Middleware = (next, route) => async (req, deps, pa
   const replay = (found: StoredIdempotent): Response =>
     found.requestHash !== requestHash
       ? errorResponse("idempotency_replay", 409, "idempotency key reused with a different request")
-      : jsonResponse(found.responseJson, { status: found.responseStatus, seq: found.seq ?? undefined });
+      : storedResponse(found);
 
   const found = await lookupIdempotent(deps.db, accountId, key, deps.now());
   if (found) return replay(found);

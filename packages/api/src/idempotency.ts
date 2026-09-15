@@ -3,6 +3,7 @@ import {
   type Tx,
 } from "@trafficflow/db";
 import type { Db } from "@trafficflow/services/mail";
+import { jsonResponse } from "./responses.js";
 
 /** `expires_at = now + 24h`. The TTL itself lives in `packages/db`. */
 export const idempotencyExpiry = dbIdempotencyExpiry;
@@ -58,4 +59,26 @@ export async function lookupIdempotent(
   db: Db, accountId: string, key: string, now: Date,
 ): Promise<StoredIdempotent | null> {
   return readIdempotencyKey(db as unknown as Tx, accountId, key, now);
+}
+
+/**
+ * THE ONE PLACE A STORED RESPONSE BECOMES A RESPONSE.
+ *
+ * A replay answers what the original answered: the stored STATUS CLASS and the stored body,
+ * verbatim, never re-derived from the route's knowledge of what it usually does. `DELETE
+ * /rules/:id` re-derived it — it shaped every replay as its ordinary 204 — so the retry of a
+ * QUEUED delete (202, the rule still live on the offline install that organizes the mailbox)
+ * came back "the rule is gone" while the rule was running. Whether a queued mutation has
+ * completed is the organizer's to say, not a retry's.
+ *
+ * It takes the whole {@link StoredIdempotent} and hands back a `Response` so a caller has no
+ * field to shape with: policy, storage and shaping cannot drift when there is one of each. The
+ * bodiless statuses are `jsonResponse`'s (a 204's `{}` placeholder is the schema's NOT NULL
+ * requirement, and never reaches the wire).
+ */
+export function storedResponse(found: StoredIdempotent): Response {
+  return jsonResponse(found.responseJson, {
+    status: found.responseStatus,
+    seq: found.seq ?? undefined,
+  });
 }

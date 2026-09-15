@@ -143,10 +143,14 @@ export interface RuleRequestResult {
 }
 
 /**
- * A delete's result. `seq` is the emitted `delete` change, or NULL when nothing was removed here
- * because every live mailbox is organized elsewhere — the local row stays until the organizer
- * applies the request, and a seq for a change that did not happen would advance every client's
- * cursor past nothing.
+ * A delete that REMOVED THE ROW HERE. `seq` is the emitted `delete` change; `travel` rides beside
+ * it on a mixed account, where the row is gone here AND the same edit is in flight to the installs
+ * holding the other mailboxes.
+ *
+ * The queued half — every live mailbox organized elsewhere, so nothing was removed — is a
+ * {@link RuleRequestResult} and not a `seq: null` shaped like a removal. Two states wearing one
+ * type is how the door came to answer "it is gone" for a rule still running: the caller had to
+ * re-derive which one it held, and its idempotent replay re-derived it wrong.
  */
 export interface RuleRemoval {
   seq: number | null;
@@ -631,8 +635,8 @@ export class RulesService {
   async remove(
     ctx: ServiceContext, id: string,
     opts: { idempotency?: RuleIdempotency | null } = {},
-  ): Promise<RuleRemoval> {
-    const out = await asTx(ctx).transaction(async (tx): Promise<RuleRemoval> => {
+  ): Promise<RuleRemoval | RuleRequestResult> {
+    const out = await asTx(ctx).transaction(async (tx): Promise<RuleRemoval | RuleRequestResult> => {
       /* -- A RULE GOES WHEREVER THE ACCOUNT'S MAILBOXES ARE ORGANIZED (0083, then 0094) -----
        *
        * A rule is not a note: `evaluateRules` is the router, `rule-retro.ts` re-files the backlog
@@ -661,19 +665,12 @@ export class RulesService {
         const travel = await fanOutRuleEdit(
           tx as unknown as Tx, ctx, plan, "rule.delete", ruleRequestPayload(before),
         );
-        if (opts.idempotency) {
-          const claimed = await claimIdempotencyKey(tx, {
-            accountId: ctx.accountId,
-            key: opts.idempotency.key,
-            requestHash: opts.idempotency.requestHash,
-            responseStatus: 202,
-            responseJson: travel,
-            seq: null,
-            now: ctx.now(),
-          });
-          if (!claimed) throw new IdempotencyRaceLost(ctx.accountId, opts.idempotency.key);
-        }
-        return { seq: null as number | null, travel };
+        /* THE ANSWER IS WHAT GETS STORED. `claimRequestReplay` stores the object it returns and
+           the route sends that same object at 202, so a replay cannot describe an outcome the
+           press did not — `create` and `update` answer their queued half through it too. This
+           branch used to store the bare `travel` under a status the route then ignored, and the
+           retry came back 204: the rule gone, on an install that still had it. */
+        return this.claimRequestReplay(tx as unknown as Tx, ctx, opts, { pending: true, travel });
       }
 
       const deleted = await tx.delete(rules)

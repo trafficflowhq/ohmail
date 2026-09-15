@@ -56,6 +56,9 @@ export {
 export {
   RulesService, rulesService,
   type CreateRuleBody, type PatchRuleBody, type RuleMutation,
+  // The two halves a delete can answer with. The route names BOTH, because deciding which one it
+  // holds by re-reading fields is what let a queued delete be reported as done.
+  type RuleRemoval, type RuleRequestResult,
 } from "./rules-service.js";
 
 // Consent: the sent-mail seed, the dormancy cutline, and putting an account back to unscreened.
