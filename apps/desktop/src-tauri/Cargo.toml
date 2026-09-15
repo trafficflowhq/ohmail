@@ -277,6 +277,15 @@ tauri-plugin-autostart = { version = "2", optional = true }
 tauri-plugin-deep-link = { version = "2", optional = true }
 tauri-plugin-single-instance = { version = "2", features = ["deep-link"], optional = true }
 
+# WHAT WEBKITGTK IS TOLD THIS WINDOW IS. The webview's cache model and its back/forward cache are
+# sized for a browser by default — a history and many tabs — and this window shows one document
+# with no history. Neither is reachable from the environment, so the pair is asked for in code
+# (`src/webview_budget.rs`). The crate is already in this binary's dependency graph (wry links the
+# same `=2.0.2` with the same feature), so naming it here adds no third-party code to audit; MIT,
+# like everything else here, and nothing may be copyleft but this project's own AGPL-3.0.
+[target.'cfg(target_os = "linux")'.dependencies]
+webkit2gtk = { version = "=2.0.2", features = ["v2_38"] }
+
 [dev-dependencies]
 # The signature-verification biting test signs nothing at test time — it verifies
 # a committed fixture (`test/fixtures/updater/payload.bin{,.sig}`) against the

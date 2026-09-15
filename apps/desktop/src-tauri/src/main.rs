@@ -101,6 +101,10 @@ mod vitals;
 #[cfg(feature = "local-engine")]
 mod perf_budgets;
 
+// What WebKitGTK keeps for a window that shows one document. Always compiled: the published
+// preview opens the same window and asks for the same budget.
+mod webview_budget;
+
 fn main() {
     let mut builder = tauri::Builder::default();
     // The commands the window may call, registered in `engine.rs` so that this file names none
@@ -121,6 +125,11 @@ fn main() {
     let app = builder
         .build(tauri::generate_context!())
         .expect("ohmail: failed to start the Tauri runtime");
+
+    // What the webview is told this window is: one document, not a browser. WebKitGTK's default
+    // cache model and its back/forward cache are sized for a history and many tabs, and this
+    // window has neither. `webview_budget.rs` carries the pair and the reasoning.
+    webview_budget::apply(app.handle());
 
     // HOST MODE IS DECIDED BEFORE THE ENGINE STARTS, because the decision is part of the spawn:
     // an armed install's engine gets three extra environment variables (`host.rs` carries the
