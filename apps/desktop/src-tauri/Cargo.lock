@@ -2578,6 +2578,7 @@ dependencies = [
  "tauri-plugin-notification",
  "tauri-plugin-single-instance",
  "tauri-plugin-updater",
+ "webkit2gtk",
 ]
 
 [[package]]
