@@ -125,6 +125,7 @@ import { KnownSetCache } from "@trafficflow/worker/known-set";
 // window, at exactly the moment somebody has chosen to leave.
 import {
   readMailboxLease, acquireLeasePermit, releaseMailboxClaim, LeaseUnavailableError,
+  OrganizerStandDownError,
   leaseStoodDown, DEFAULT_STALE_AFTER_MS, type OrganizerWriteAuthority,
 } from "@trafficflow/worker/lease";
 // The APPEND-LESS read, straight from core: an install that has not been asked to organize must
@@ -4848,6 +4849,24 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           }));
             cycleServed = true;
             ({ hasBacklog, owesFiling } = outcome);
+          } catch (err) {
+            /* ── A HAND-OVER IS A STATE CHANGE, NOT A FAILED DRAIN ──────────────────────────
+             *
+             * `runSyncCycle` makes a mid-cycle stand-down terminal and THROWS it, which the
+             * hosted worker's callers need — `reconcile-cron.ts` answers that class with its own
+             * stand-down bookkeeping. Here nobody above answers it: the throw reaches
+             * `syncUntilQuiet`'s catch, which drops the idle ladder to base, the poll then logs
+             * `sync_cycle_failed` and a press is refused in those words — "your sync failed" for
+             * somebody moving organizing to their other machine, and the drain's own tail lost
+             * with it. The cycle stopped writing at its page; this ends the DRAIN at that page.
+             * Nothing is recorded here: the cycle has already written its `stood_down_mid_cycle`
+             * verdict, the post-drain writes are refused by the permit's own last verdict, and
+             * the next pass's gate re-reads the lease and answers reader — the one derivation of
+             * that state. NOT `LeaseUnavailableError`: an unreadable lease is a question with no
+             * answer, it keeps counting toward the connection bound, and it leaves as it did.
+             */
+            if (!(err instanceof OrganizerStandDownError)) throw err;
+            break;
           } finally {
             if (cycleServed) noteCycleServed();
           }
