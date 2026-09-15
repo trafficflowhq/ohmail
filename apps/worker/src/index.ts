@@ -2298,6 +2298,10 @@ export async function startWorkerWithLock(
           // changes hands is detached and re-attached and the new runtime starts cold. Dropped
           // explicitly on detach, the lock-loss tripwire and every stand-down — a memo of somebody
           // else's mailbox must stop existing the moment leadership is in doubt.
+          // Per attachment, but no longer AT THE SIZE OF THE ROSTER: every memo in this process
+          // competes for one byte budget derived from the deployed heap, and taking a projection
+          // evicts the least recently used one (`known-set.ts`, `KnownSetBudget`). Nothing is
+          // passed here because the bound is the DEFAULT — a memo built without one is bounded.
           knownSet: new KnownSetCache(mb.mailboxId),
           // The account's managed storage cap AT ATTACH — the per-cycle spread below refreshes
           // it, so this value's real job is that the field cannot be forgotten: it is required,

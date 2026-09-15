@@ -734,10 +734,15 @@ async function cycleWithKnownSet(
         mailboxId: input.mailboxId, accountId: input.accountId,
         rows: census.rows, bytes: census.bytes, bytesSaved: census.bytesSaved,
         droppedBy: census.droppedBy,
+        retainedBytes: census.retainedBytes,
+        processRetainedBytes: census.processRetainedBytes,
+        processBudgetBytes: census.processBudgetBytes,
         reason: "the in-memory known-set was cold or had been dropped, so this cycle re-read it " +
           "from the database. `droppedBy` names the repo write (or the leadership event) that " +
-          "dropped it; `bytesSaved` is the estimated wire bytes this attachment has not read " +
-          "since it began",
+          "dropped it, and reads `evicted` when the process's shared locator budget needed the " +
+          "room for another mailbox; `bytesSaved` is the estimated wire bytes this attachment has " +
+          "not read since it began; `processRetainedBytes` against `processBudgetBytes` is how " +
+          "close every memo in this process together is to that budget",
       });
     }
     return out;

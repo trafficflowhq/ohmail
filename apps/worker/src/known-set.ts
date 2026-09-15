@@ -26,6 +26,11 @@ export interface KnownSetCensus {
   bytesSaved: number;
   /** Why the memo was last dropped, or `null` if it never has been. */
   droppedBy: string | null;
+  /** Heap bytes this memo is charged against the process budget, 0 when it holds nothing. */
+  retainedBytes: number;
+  /** Heap bytes every memo in this process is charged, and the budget they share. */
+  processRetainedBytes: number;
+  processBudgetBytes: number;
 }
 
 /**
@@ -54,6 +59,135 @@ export function estimateWireBytes(rows: ReadonlyArray<KnownLocator>): number {
   }
   return total;
 }
+
+/**
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *  THE BUDGET EVERY LOCATOR MEMO IN THIS PROCESS SHARES
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *
+ * What this process retains has to grow with the WORK, not with the roster. A memo per attachment
+ * with no eviction makes the ceiling the number of mailboxes served: on the rig's synthetic
+ * projections (`test/rigs/known-set-peak-rig.mjs`, heap read at the peak with every memo warm) the
+ * retained figure was flatly linear in the attachment count — 128 MiB at four, 1 022 MiB at
+ * thirty-two — and a full roster wanted several times the whole heap.
+ *
+ * THE ARITHMETIC, so the next heap change is a decision and not a surprise:
+ *   heap        512 MiB   `apps/worker/Dockerfile` and `Dockerfile.selfhost` (`--max-old-space-size`)
+ *   budget      128 MiB   a QUARTER of it — the rest is the scan window, the adapter's fetch
+ *                         buffers, the dead-letter ledgers, the postgres pool and the runtime
+ *   entry         334 B   one remembered locator, index included, measured on the same rig
+ *   so the budget holds about four hundred thousand remembered locators IN TOTAL, spread over
+ *   however many mailboxes are attached: the sixty-fifth costs what the fifth costs, which is the
+ *   property the per-attachment version lacked.
+ * A heap that moves without this fraction moving reddens `known-set-budget.test.ts`, which reads
+ * both Dockerfiles: the ceiling is a deploy setting and is asserted where it is set.
+ */
+export const WORKER_HEAP_MIB = 512;
+/** The budget is this fraction of the heap — a quarter. */
+export const KNOWN_SET_BUDGET_DIVISOR = 4;
+export const KNOWN_SET_BUDGET_BYTES = (WORKER_HEAP_MIB / KNOWN_SET_BUDGET_DIVISOR) * 1024 * 1024;
+
+/**
+ * WHAT ONE REMEMBERED LOCATOR COSTS THE HEAP, charged high rather than exactly.
+ *
+ * Per entry: the `KnownLocator` object with its five fields and its slot in the entries array, a
+ * string header plus characters for every string it holds, and the entry's key in the lazily-built
+ * membership index with its slot in that `Set`. The index is charged whether or not it has been
+ * built, because the charge is what the memo MAY hold — a budget that admits on the smaller figure
+ * and then grows into the index is no budget.
+ *
+ * Characters are charged at two bytes: a folder name that survives IMAP UTF-7 decoding is two-byte
+ * in the runtime, so an ASCII-only mailbox is charged about twice what it holds. That is the
+ * direction a bound must err in. Rig reading, synthetic: 334 bytes an entry estimated, 334
+ * measured against the heap.
+ */
+const LOCATOR_OBJECT_BYTES = 96;
+const STRING_HEADER_BYTES = 16;
+const BYTES_PER_CHAR = 2;
+const INDEX_SLOT_BYTES = 16;
+
+export function estimateRetainedBytes(rows: ReadonlyArray<KnownLocator>): number {
+  let total = 0;
+  for (const r of rows) {
+    const uidDigits = String(r.uid).length;
+    total += LOCATOR_OBJECT_BYTES
+      + STRING_HEADER_BYTES + BYTES_PER_CHAR * r.folder.length
+      + STRING_HEADER_BYTES + BYTES_PER_CHAR * r.uidValidity.length
+      + (r.messageId === null ? 0 : STRING_HEADER_BYTES + BYTES_PER_CHAR * r.messageId.length)
+      // the membership key `folder<NUL>uidValidity:uid` and its slot in the index Set
+      + STRING_HEADER_BYTES + BYTES_PER_CHAR * (r.folder.length + r.uidValidity.length + uidDigits + 2)
+      + INDEX_SLOT_BYTES;
+  }
+  return total;
+}
+
+/**
+ * The byte budget the process's locator memos share, least-recently-used across MAILBOXES.
+ *
+ * EVICTION HAPPENS ON INSERTION — inside {@link KnownSetCache.list}, at the moment a memo takes a
+ * projection, never at the end of a cycle or a pass. A bound enforced at the end of a multi-mailbox
+ * pass is no bound during one, and "during one" is where this process meets its heap ceiling.
+ *
+ * `charged` is a `Map`, so its iteration order is insertion order and the first key is the least
+ * recently used; a hit re-inserts (see {@link touch}). Holding the caches strongly is sound because
+ * `drop()` releases and every path that retires a runtime drops first — detach, the lock-loss
+ * tripwire, promotion and every stand-down (`index.ts`). A runtime removed without a drop would
+ * pin its projection here, which is why that door is single and asserted.
+ */
+export class KnownSetBudget {
+  private readonly charged = new Map<KnownSetCache, number>();
+  private total = 0;
+
+  constructor(readonly limitBytes: number) {}
+
+  /** Heap bytes currently charged across every memo in this process. */
+  get chargedBytes(): number { return this.total; }
+  /** How many memos hold a projection right now. */
+  get warmCount(): number { return this.charged.size; }
+
+  /** A hit makes this memo the most recently used: delete and re-insert moves it to the end. */
+  touch(cache: KnownSetCache): void {
+    const bytes = this.charged.get(cache);
+    if (bytes === undefined) return;
+    this.charged.delete(cache);
+    this.charged.set(cache, bytes);
+  }
+
+  /**
+   * Charge `bytes` for `cache`, evicting the least recently used memos until the total fits.
+   * Answers whether the memo may keep its projection at all: a single mailbox whose projection
+   * exceeds the WHOLE budget is served cold for ever rather than admitted and then evicting
+   * everybody else — one mailbox may not spend the process's memory on itself.
+   */
+  admit(cache: KnownSetCache, bytes: number): boolean {
+    this.release(cache);
+    if (bytes > this.limitBytes) return false;
+    for (const victim of this.charged.keys()) {
+      if (this.total + bytes <= this.limitBytes) break;
+      // `drop` calls back into `release`, which is what removes the entry and the bytes. Deleting
+      // the entry the iterator is on is defined behaviour for a Map iterator.
+      victim.drop("evicted: the process locator budget");
+    }
+    this.charged.set(cache, bytes);
+    this.total += bytes;
+    return true;
+  }
+
+  /** Give back whatever `cache` was charged. Idempotent — `drop` is. */
+  release(cache: KnownSetCache): void {
+    const bytes = this.charged.get(cache);
+    if (bytes === undefined) return;
+    this.charged.delete(cache);
+    this.total -= bytes;
+  }
+}
+
+/**
+ * The one budget this worker process's memos share, sized by the arithmetic above. It is the
+ * DEFAULT rather than an argument the composition root must remember: a memo built without a
+ * budget is bounded, and only a caller that says otherwise (the rig, the suite) is not.
+ */
+export const processKnownSetBudget = new KnownSetBudget(KNOWN_SET_BUDGET_BYTES);
 
 /**
  * The repo methods that CANNOT move what `listKnownLocators` projects. Everything absent drops the memo.
@@ -148,14 +282,22 @@ export const KNOWN_SET_NEUTRAL: ReadonlySet<string> = new Set([
  * ABSENT from `SyncDeps` ⇒ byte-identical to before this file existed — every cycle re-reads.
  * Tests, the reconcile backstop and any caller that has not thought about leadership get exactly
  * the old behaviour, which is the direction an omission must fail in.
+ *
+ * BOUNDED ACROSS MAILBOXES, not per mailbox: what it may hold is charged to {@link KnownSetBudget},
+ * which evicts the least recently used memo the moment this one takes a projection. Holding one
+ * whole projection per attachment made the process's ceiling the ROSTER — see the budget's header
+ * for the arithmetic and what it is a quarter of.
  */
 export class KnownSetCache {
   /** The mailbox this memo belongs to. A read for any other mailbox goes to the database. */
   readonly mailboxId: string;
+  /** The process-wide byte budget this memo competes in. */
+  private readonly budget: KnownSetBudget;
 
   private entries: ReadonlyArray<KnownLocator> | null = null;
   private lastRows = 0;
   private lastBytes = 0;
+  private retainedBytes = 0;
   private bytesSaved = 0;
   private droppedBy: string | null = null;
   private cycleReads = 0;
@@ -182,7 +324,8 @@ export class KnownSetCache {
     resolved: Map<string, string>;
   } | null = null;
 
-  constructor(mailboxId: string) {
+  constructor(mailboxId: string, budget: KnownSetBudget = processKnownSetBudget) {
+    this.budget = budget;
     this.mailboxId = mailboxId;
   }
 
@@ -244,6 +387,10 @@ export class KnownSetCache {
     this.entries = null;
     this.tupleIndex = null;
     this.shape = null;
+    // Give the bytes back on the SAME line that gives the memory back, so the budget cannot come
+    // to believe this process holds a projection nobody holds.
+    this.retainedBytes = 0;
+    this.budget.release(this);
   }
 
   /**
@@ -277,6 +424,12 @@ export class KnownSetCache {
    * database rather than with another mailbox's UIDs. Getting that wrong would let one account's
    * IMAP server decide what another account's sync loop treats as already-known, which is the
    * boundary every mailbox-scoped statement in `drizzle-repo.ts` exists to hold.
+   *
+   * THIS IS WHERE EVICTION HAPPENS — on the insertion, in the middle of the pass, not at the end
+   * of one. `admit` charges what this projection may retain and evicts the least recently used
+   * memos of OTHER mailboxes until the process fits its budget; a projection too big for the whole
+   * budget is not retained at all and this mailbox reads cold every cycle, which costs one read
+   * rather than everybody else's memory.
    */
   async list(
     read: (mailboxId: string) => Promise<KnownLocator[]>, mailboxId: string,
@@ -285,12 +438,21 @@ export class KnownSetCache {
     if (this.entries !== null) {
       this.cycleHits++;
       this.bytesSaved += this.lastBytes;
+      this.budget.touch(this);
       // A COPY, because the caller owns what it is handed. `buildCursor` only reads, but a memo
       // that hands out its own array makes any future caller's mutation permanent and invisible.
       return [...this.entries];
     }
     const rows = await read(mailboxId);
-    this.entries = [...rows];
+    const wants = estimateRetainedBytes(rows);
+    if (this.budget.admit(this, wants)) {
+      this.entries = [...rows];
+      this.retainedBytes = wants;
+    } else {
+      this.entries = null;
+      this.retainedBytes = 0;
+      this.droppedBy = "not admitted: one projection over the whole process locator budget";
+    }
     this.tupleIndex = null;
     this.shape = null;
     this.gen += 1;
@@ -308,6 +470,9 @@ export class KnownSetCache {
       bytes: this.lastBytes,
       bytesSaved: this.bytesSaved,
       droppedBy: this.droppedBy,
+      retainedBytes: this.retainedBytes,
+      processRetainedBytes: this.budget.chargedBytes,
+      processBudgetBytes: this.budget.limitBytes,
     };
   }
 }
