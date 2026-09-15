@@ -73,7 +73,7 @@ const JUNK_SWEEP_PER_CYCLE = 200;
 import { makeStorageCapResolver } from "./storage-cap.js";
 import { DeadLetterLedger, isDatabaseFault, isSharedDatabaseFault } from "./dead-letter.js";
 import { KnownSetCache } from "./known-set.js";
-import { checkedDial } from "./dial-host-guard.js";
+import { checkedDial, dialHostGuardFromEnv } from "./dial-host-guard.js";
 import { markDatabaseFaults, asDatabaseFault } from "./db-fault.js";
 import { runKickstart } from "./kickstart.js";
 import {
@@ -655,6 +655,13 @@ export async function startWorkerWithLock(
     const selection = selectionOf(config);
     const makeAdapter = config.adapterFactory
       ?? ((cfg, ctx) => new ImapAdapter(cfg, { onConnectionError: ctx.onConnectionError }));
+    /**
+     * THIS DEPLOYMENT'S POLICY ON THE HOSTS IT MAY DIAL, decided once, here, for every attach
+     * below. `loadConfig` supplies it for the deployed process; a programmatic caller that
+     * supplied none gets the ENVIRONMENT's answer rather than a silent dial by name, which is
+     * the same input read the same way — absent enforces, `TF_PROBE_ALLOW_PRIVATE=1` admits.
+     */
+    const dialHostGuard = config.dialHostGuard ?? dialHostGuardFromEnv();
 
     // Structured logs + the alert pass. Every line this worker emits from here on is one JSON object
     // carrying `instanceId` and `shard`, and every per-mailbox line adds `accountId`/`mailboxId` —
@@ -2118,7 +2125,7 @@ export async function startWorkerWithLock(
          */
         adapter = makeAdapter({
           host: creds.imap.host, port: creds.imap.port, secure: creds.imap.secure,
-          ...(await checkedDial(config.dialHostGuard, creds.imap.host, "imap")),
+          ...(await checkedDial(dialHostGuard, creds.imap.host, "imap")),
           // The connect-time plaintext consent, if the credential row carries one. See
           // `TransportCreds.allowInsecure` for why omitting this strands a consented mailbox.
           ...(creds.imap.allowInsecure ? { allowInsecure: true } : {}),
@@ -2127,7 +2134,7 @@ export async function startWorkerWithLock(
           auth: creds.imap.auth,
           smtp: creds.smtp ? {
             host: creds.smtp.host, port: creds.smtp.port, secure: creds.smtp.secure,
-            ...(await checkedDial(config.dialHostGuard, creds.smtp.host, "smtp")),
+            ...(await checkedDial(dialHostGuard, creds.smtp.host, "smtp")),
             // An smtp credential row is always a password (oauth mailboxes carry no smtp row); narrow
             // to the password member so it fits `ImapConfig.smtp.auth`, and omit auth otherwise.
             ...("pass" in creds.smtp.auth ? { auth: creds.smtp.auth } : {}),

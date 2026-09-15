@@ -25,7 +25,7 @@ import {
   cloudInstallId, leaseStoodDown, mailboxHasRequestKey, type LeasePermit,
 } from "./lease.js";
 import { isCliEntry } from "./entry.js";
-import { checkedDial } from "./dial-host-guard.js";
+import { checkedDial, dialHostGuardFromEnv } from "./dial-host-guard.js";
 import { cronEvent, runCronCli } from "./cron-log.js";
 
 /**
@@ -180,7 +180,7 @@ export async function runReconcileCron(
     // host the worker beside it refuses would be a second answer about one operator's machine.
     adapter = new ImapAdapter({
       host: config.imap.host, port: config.imap.port, secure: config.imap.secure,
-      ...(await checkedDial(config.dialHostGuard, config.imap.host, "imap")),
+      ...(await checkedDial(config.dialHostGuard ?? dialHostGuardFromEnv(), config.imap.host, "imap")),
       auth: { user: config.imap.user, pass: config.imap.pass }, sentDomain: config.sentDomain,
     });
     await adapter.connect();

@@ -266,9 +266,9 @@ export interface WorkerConfig {
    * populate it — from `TF_PROBE_ALLOW_PRIVATE`, the same variable the API reads for its add-time
    * probe. Every mailbox dial is assembled through it, so a stored server whose name has since
    * moved to an address this deployment will not connect to is refused instead of dialled, and one
-   * it will connect to is dialled at the address that was just cleared. ABSENT REFUSES rather than
-   * dialling by name: a composition that never decided must not look like a self-hosted install
-   * that decided to admit. See `dial-host-guard.ts`.
+   * it will connect to is dialled at the address that was just cleared. A caller that omits it
+   * gets the SAME input read the same way (`dialHostGuardFromEnv`), never a silent dial by name.
+   * See `dial-host-guard.ts`.
    */
   dialHostGuard?: DialHostGuard;
   /** TEST SEAM (never populated by `loadConfig`): build the mailbox adapter. Production
