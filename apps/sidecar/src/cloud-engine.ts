@@ -26,6 +26,7 @@ import { startCloudWake, type CloudWake } from "./cloud-wake.js";
 import { matchReadRoute } from "./cloud-read.js";
 import { createWriteThroughProxy, type WriteThroughProxy } from "./cloud-proxy.js";
 import {
+  accountAnswer,
   accountIsForeign,
   apiBaseFor,
   baseIsForeign,
@@ -1484,7 +1485,11 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
            guard above refuses, reached through the one path that guard deliberately exempts.
 
            So a pending discard is a second reason to take this arm, independent of whose account
-           it is: while a discard is staged, no redeem of any kind may activate. */
+           it is: while a discard is staged, no redeem of any kind may activate.
+
+           `accountIsForeign` covers the UNNAMED answer too since the header stopped counting as a
+           match, and it belongs on this arm: a start-over is somebody saying "replace what is
+           here", so staging the discard is what they asked for either way. */
         if (startOver && (accountIsForeign(recordedAccount, redeemed.accountId)
           || readMirrorDiscardPending(config.dataDir))) {
           /* The way out of the refusal below, only ever taken on purpose. Without it the mismatch is
@@ -1510,7 +1515,8 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
             address: config.address,
           });
         }
-        if (accountIsForeign(recordedAccount, redeemed.accountId)) {
+        const answer = accountAnswer(recordedAccount, redeemed.accountId);
+        if (answer !== "admitted") {
           // REFUSED, AND NOTHING KEPT. The pair is not sealed and `activate` is not called, so
           // every read below stays `409 not_signed_in` — there is no window in which this session
           // reaches the previous world's rows. The DISCARD is deliberately not done here, for the
@@ -1518,8 +1524,30 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
           // removing `pgdata` under an open database, which the constructor already does correctly
           // before anything is opened.
           //
-          // The message names neither account. Somebody standing at this machine pairing with
+          // TWO REFUSALS, because they are two facts and a person can act on only one of them. A
+          // MISMATCH is another world at the same address and the way on is a deliberate start
+          // over. UNNAMED is a host that sent no account header over a directory whose mail IS
+          // bound to one: nobody can say whose this is, so it was admitted — the absence read as
+          // agreement — and one world's session was served over another world's mail. The sentence
+          // names the header that did not arrive, because that is the thing to go and fix.
+          //
+          // Neither message names an account. Somebody standing at this machine pairing with
           // their own computer must not be told whose mail is on it.
+          if (answer === "unnamed") {
+            log?.("cloud_pair_account_unnamed", { changed: true });
+            return json(
+              {
+                error: {
+                  code: "pair_account_unnamed",
+                  message:
+                    "that computer did not say which account this pairing belongs to, and this " +
+                    "install already holds mail that belongs to one. Update ohmail on that " +
+                    "computer and pair again, or start over from scratch here",
+                },
+              },
+              409,
+            );
+          }
           log?.("cloud_pair_account_mismatch", { changed: true });
           return json(
             {

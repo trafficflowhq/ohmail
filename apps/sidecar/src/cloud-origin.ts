@@ -221,7 +221,9 @@ export interface MirrorRecord {
    * this product has, invisible to an address comparison. NULL IS A DISTINCT STATE, not a value to
    * fill in — every record predating the field and every composition that does not name accounts.
    * Collapsing it into "matches anything" reads "never told" as agreement; into "matches nothing"
-   * refuses every such pairing. So it is kept, and {@link accountIsForeign} refuses only on a positive disagreement.
+   * refuses every such pairing. So it is kept HERE — an absent record is admitted, which is what
+   * keeps such a composition pairable — and {@link accountAnswer} tells the two absences apart:
+   * nothing RECORDED has nothing to disagree with, nothing NAMED over a recorded id does.
    */
   account: string | null;
   /**
@@ -273,17 +275,41 @@ export function mirrorIsForeign(
 }
 
 /**
- * Is this a different account than the one this directory's mail belongs to? `true` ONLY on a
- * positive disagreement: both sides named an account and the two differ. Every other combination is
- * `false`, each for its own reason: NOTHING RECORDED (a record predating the field, or a host that
- * does not name accounts) has nothing to disagree with, and refusing would make this install
- * unpairable with a correct composition; NOTHING NAMED NOW (the answer carried no account header) is
- * a fact about this response, not evidence, and reading it as a change would discard a working
- * mirror over one absent header. Ids are compared verbatim — folding case or whitespace would invent
- * an equivalence between values a server considers distinct.
+ * WHAT THE TWO SIDES SAID ABOUT THE ACCOUNT — three answers, because two of them are not one.
+ *
+ * `accountIsForeign` used to fold the last two together and answer `false` for both, which put an
+ * ABSENT header on the admitting side of an isolation boundary: a directory bound to an account
+ * was paired with a host that named none, and this install then served one world's session over
+ * another world's mail. An optional value's absence is "not answered", never "the same".
  */
+export type AccountVerdict =
+  /** They agree, or nothing is recorded here — a record predating the field, or a first pairing. */
+  | "admitted"
+  /** Both sides named one and the two differ — the reinstalled host. */
+  | "mismatch"
+  /** Mail here is bound to an account and the answer named none: nobody can say whose this is. */
+  | "unnamed";
+
+/**
+ * Whose account does this directory's mail belong to, compared with whose the answer named.
+ *
+ * NOTHING RECORDED is `admitted` and stays so: there is nothing to disagree with, and refusing
+ * would make this install unpairable with a composition that does not name accounts at all.
+ * NOTHING NAMED NOW is `unnamed` — the caller refuses it and says which header was missing,
+ * because the cost of admitting it is two accounts in one database, the worst thing this program
+ * can do with someone's mail, and the cost of refusing it is a re-pair against a host that says
+ * who it is. Ids are compared verbatim — folding case or whitespace would invent an equivalence
+ * between values a server considers distinct.
+ */
+export function accountAnswer(
+  recorded: string | null | undefined, named: string | null | undefined,
+): AccountVerdict {
+  if (typeof recorded !== "string" || recorded === "") return "admitted";
+  if (typeof named !== "string" || named === "") return "unnamed";
+  return recorded === named ? "admitted" : "mismatch";
+}
+
+/** Is this directory's mail somebody else's, or unattributable? See {@link accountAnswer}. */
 export function accountIsForeign(recorded: string | null | undefined, named: string | null | undefined): boolean {
-  if (typeof recorded !== "string" || recorded === "") return false;
-  if (typeof named !== "string" || named === "") return false;
-  return recorded !== named;
+  return accountAnswer(recorded, named) !== "admitted";
 }
