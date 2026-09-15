@@ -199,6 +199,21 @@ async function saveConfig(
     clientSecret = { ciphertext: enc.ciphertext, keyVersion: enc.keyVersion };
   }
 
+  /**
+   * THE REVISION THE FORM WAS RENDERED FROM. Absent means the caller is not participating (a
+   * script, an older console); a value must match what is stored, and `null` asserts there was
+   * no row. Two operators with the panel open otherwise overwrite each other's registration while
+   * each keeps their own secret — and neither is told.
+   */
+  if (body.expectedUpdatedAt !== undefined) {
+    const current = await readOAuthProviderConfig(deps.db, MICROSOFT_PROVIDER);
+    const stored = current ? current.updatedAt.toISOString() : null;
+    const expected = body.expectedUpdatedAt === null ? null : str(body.expectedUpdatedAt);
+    if (stored !== expected) {
+      return { status: 409, body: { error: { code: "stale_revision" }, currentUpdatedAt: stored } };
+    }
+  }
+
   await writeOAuthProviderConfig(deps.db, {
     provider: MICROSOFT_PROVIDER,
     ...(clientId !== undefined ? { clientId } : {}),
@@ -215,10 +230,32 @@ async function saveConfig(
   // The read is re-run so the console renders the EFFECTIVE verdict after the write rather than
   // echoing what it just sent — which is how a form comes to show `enabled: true` beside a
   // registration the resolver refuses for a missing field.
-  const after = await readConfig({}, staff, deps);
+  //
+  // IT IS CAUGHT HERE, AND THAT IS THE POINT. The write is COMMITTED by the line above; letting a
+  // failing re-read fall to the wrapper's catch turned it into a 503, which the console renders as
+  // "The save failed on the server. Nothing was changed." — the opposite of what happened, to
+  // somebody who will reasonably do it again. A read that fails after a commit makes the current
+  // state UNKNOWN; it never makes the write untrue.
+  let after: { status: number; body: unknown };
+  try {
+    after = await readConfig({}, staff, deps);
+  } catch (err) {
+    (deps.logger ?? silentLogger).child({ route: "/admin/oauth/microsoft/save" })
+      .error("admin_oauth_reread_failed", { err: String(err) });
+    return {
+      status: 200,
+      body: { ok: true, saved: true, reread: false, action: "admin.oauth.microsoft.save", actor: staff.email },
+    };
+  }
   return {
     status: 200,
-    body: { ...(after.body as Record<string, unknown>), action: "admin.oauth.microsoft.save", actor: staff.email },
+    body: {
+      ...(after.body as Record<string, unknown>),
+      saved: true,
+      reread: true,
+      action: "admin.oauth.microsoft.save",
+      actor: staff.email,
+    },
   };
 }
 
