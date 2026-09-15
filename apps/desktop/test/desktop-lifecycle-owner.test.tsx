@@ -33,6 +33,17 @@ interface Host {
 }
 const host = globalThis as unknown as Host;
 
+/** A paired install whose session was revoked — the surface that can open a door overlay. */
+const PAIRED_REVOKED: EngineStatus = {
+  state: "serving",
+  mode: "cloud",
+  flavor: "desktop-host",
+  address: "someone@example.com",
+  mailboxId: "mbx-1",
+  baseUrl: "https://kestrel.tail1234.ts.net",
+  credentialState: "ready",
+};
+
 const LOCAL_SERVING: EngineStatus = {
   state: "serving",
   mode: "local",
@@ -67,10 +78,12 @@ const EMPTY_SNAPSHOT = JSON.stringify({
 /** The shell behind the bridge, with a status this test moves and a count of the asks. */
 function fakeShell(initial: EngineStatus): {
   set(next: EngineStatus): void;
+  health(next: Record<string, unknown>): void;
   asks(): number;
 } {
   let status = initial;
   let asks = 0;
+  let health: Record<string, unknown> = { signedIn: true };
   const callbacks = new Map<number, (payload: unknown) => void>();
   let next = 1;
   host.__TAURI_INTERNALS__ = {
@@ -88,7 +101,7 @@ function fakeShell(initial: EngineStatus): {
       if (command === "plugin:event|listen") return null;
       if (command === "engine_request") {
         const url = String(payload?.url ?? "");
-        if (url === "/health") return encode(200, JSON.stringify({ signedIn: true }));
+        if (url === "/health") return encode(200, JSON.stringify(health));
         if (url.startsWith("/sync/snapshot")) return encode(200, EMPTY_SNAPSHOT);
         if (url.startsWith("/mailboxes")) return encode(200, JSON.stringify({ items: [] }));
         return encode(200, EMPTY_PAGE);
@@ -96,7 +109,11 @@ function fakeShell(initial: EngineStatus): {
       return null;
     },
   };
-  return { set: (n) => { status = n; }, asks: () => asks };
+  return {
+    set: (n) => { status = n; },
+    health: (n) => { health = n; },
+    asks: () => asks,
+  };
 }
 
 let root: Root | null = null;
@@ -172,6 +189,52 @@ describe("the gate owns the engine lifecycle past serving", () => {
     await advance(LIFECYCLE_POLL_MS * 3);
     expect(mounted()).toBe(true);
     expect(text()).toBe(before);
+  });
+
+  it("a run that moves while a door is open leaves the door on screen", async () => {
+    /* ── WHAT A LIVE OWNER MUST NOT COST ────────────────────────────────────────────────────
+     * A delivered lifecycle move re-keys the door's auth answer, and a pending auth answer is
+     * one of this component's early returns — above the element that renders the overlay. So a
+     * steady owner that delivers a move while somebody is standing in a door would take the
+     * door off the screen mid-attempt, with whatever they had typed. The door is rendered by
+     * the branch that is on screen, which is the same rule the revoked notice keeps.
+     */
+    const shell = fakeShell(PAIRED_REVOKED);
+    shell.health({ signedIn: false, sessionExpired: true });
+    const el = await render();
+    await advance(500);
+    expect(text(), "the revoked notice never rendered, so nothing here opens a door")
+      .toContain("no longer paired");
+
+    const pairAgain = [...el.querySelectorAll("button")]
+      .find((b) => (b.textContent ?? "").includes("Pair again"));
+    await act(async () => {
+      pairAgain!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await advance(200);
+    expect(text(), "the pairing door did not open").toContain("Paste the pairing link");
+
+    /* Somebody is standing in it, with something typed. This is what a remount costs, and a
+       sentence still on screen does not prove the element behind it survived. */
+    const field = el.querySelector<HTMLInputElement>("#host-link")!;
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!;
+    await act(async () => {
+      setter.call(field, "https://kestrel.tail1234.ts.net/pair#code");
+      field.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    expect(el.querySelector<HTMLInputElement>("#host-link")!.value).not.toBe("");
+
+    /* The engine is replaced under the open door — a restart, exactly what a door attempt
+       causes — and the steady owner delivers it. */
+    shell.set({ ...PAIRED_REVOKED, state: "restarting" });
+    await advance(LIFECYCLE_POLL_MS + 500);
+
+    expect(text(), "the delivered move took the open door off the screen")
+      .toContain("Paste the pairing link");
+    expect(
+      el.querySelector<HTMLInputElement>("#host-link")!.value,
+      "the door was remounted under the person: what they had typed is gone",
+    ).toBe("https://kestrel.tail1234.ts.net/pair#code");
   });
 
   it("asks on the steady cadence and never faster — the floor, pinned", async () => {

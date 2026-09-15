@@ -763,10 +763,18 @@ export function DesktopGate() {
      healthy relaunch resolves inside the grace and nothing is drawn. */
   if (authKey !== null && !hostedAuthKnown) {
     return (
-      <div className="gate gate-boot">
-        <BootSkeleton active rail />
-        <BootStatus phase={status?.bootPhase} applied={status?.bootApplied} pending={status?.bootPending} />
-      </div>
+      <>
+        <div className="gate gate-boot">
+          <BootSkeleton active rail />
+          <BootStatus phase={status?.bootPhase} applied={status?.bootApplied} pending={status?.bootPending} />
+        </div>
+        {/* AND THE DOOR SOMEBODY IS STANDING IN, KEPT. This branch is reached DURING a door
+            attempt — the attempt replaces the engine, the delivered lifecycle move re-keys the
+            auth answer, and the withheld app is this frame. Rendering the overlay at the same
+            position the branch below does is what keeps React from remounting it: measured, a
+            remount empties the pairing link the person had already typed. */}
+        {doorOverlay}
+      </>
     );
   }
 
