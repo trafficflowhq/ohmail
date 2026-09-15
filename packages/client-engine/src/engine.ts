@@ -3183,12 +3183,17 @@ export class OhmailEngine {
     // condition nothing could ever be watched fail. `Infinity` and `NaN` are not inert: one
     // makes the age term keep the whole mailbox, the other makes every comparison against the
     // floor false and evicts it.
-    this.cutlineDays = typeof days === "number" && Number.isFinite(days) ? days : null;
+    const resolved = typeof days === "number" && Number.isFinite(days) ? days : null;
     // Anything not exactly `all_time` reads as the window — the client cutline's own rule, and
     // the safe failure direction here too (a narrower window, never a wider one, by accident).
-    this.cutlineAllTime = cutline?.scope === "all_time";
-    /* A NEW ANSWER IS A NEW AGE TERM, and no record moved to say so — see {@link cutlineGen}. */
-    this.cutlineGen += 1;
+    const allTime = cutline?.scope === "all_time";
+    /* A NEW ANSWER IS A NEW AGE TERM, and no record moves to say so — see {@link cutlineGen}. Only
+       a DIFFERENT answer, though: every caller re-states the cutline whenever its own consent read
+       settles, and a shell that re-states the same answer per poll would bump this per poll and
+       put the windowed prune back on a tick. */
+    if (resolved !== this.cutlineDays || allTime !== this.cutlineAllTime) this.cutlineGen += 1;
+    this.cutlineDays = resolved;
+    this.cutlineAllTime = allTime;
   }
 
   /**
