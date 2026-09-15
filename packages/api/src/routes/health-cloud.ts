@@ -145,20 +145,14 @@ export const CLOUD_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // pass READS the table, so a worker ahead of it dies inside the evaluation rather than
   // delivering the finding that would explain why.
   ["api_faults", "arm"],
-  // cloud 0036_staff_step_up_and_pending_totp — THREE markers, one per table the migration
-  // touches, because each is missing in a different way and each fails somewhere else.
-  //
-  // `staff_users.totp_pending_started_at` is that table's LAST added column, on `api_faults.arm`'s
-  // rule: its presence implies the pending pair above it. Absent, `totp/begin` 42703s and nobody
-  // can enrol a new authenticator — loudly, at the one moment somebody is locked out.
-  //
-  // `staff_sessions.last_twofa_at` is the SWALLOWED kind. It is NOT NULL, so an API ahead of the
-  // migration fails every staff sign-in at the insert, and the console reports a sign-in that
-  // will not take rather than a database behind the bundle.
-  //
-  // `staff_audit_log.action` is the column the recovery's insert writes (never `id`: a primary
-  // key exists the moment the table does). Absent, the operator command's 42P01 is the last step
-  // of an act whose earlier statements have already cleared somebody's second factor.
+  // cloud 0036_staff_step_up_and_pending_totp — THREE markers, one per table it touches, because
+  // each is missing in a different way. `staff_users.totp_pending_started_at` is that table's LAST
+  // added column, on `api_faults.arm`'s rule: absent, `totp/begin` 42703s and nobody can enrol,
+  // loudly, at the one moment somebody is locked out. `staff_sessions.last_twofa_at` is the
+  // SWALLOWED kind — NOT NULL, so an API ahead of the migration fails every staff sign-in at the
+  // insert and the console reports a sign-in that will not take. `staff_audit_log.action` is the
+  // column the recovery's insert writes (never `id`: a primary key exists the moment the table
+  // does), and absent, its 42P01 is the last step of an act that has already cleared a factor.
   ["staff_users", "totp_pending_started_at"],
   ["staff_sessions", "last_twofa_at"],
   ["staff_audit_log", "action"],

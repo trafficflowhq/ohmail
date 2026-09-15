@@ -9,7 +9,6 @@ import {
   withSession, withSpendGate, withStepUp,
   type Middleware,
 } from "./middleware.js";
-import { withStaffStepUp } from "./staff-step-up.js";
 
 export interface App {
   handle(req: Request, deps: ApiDeps): Promise<Response>;
@@ -25,13 +24,9 @@ export interface App {
 // sits directly after `withStepUp`: both judge a privilege the resolved session carries or does
 // not, and a caller missing both should hear about the step-up first — the cheaper fix.
 const FULL_PIPELINE: Middleware[] = [
-  withRequestId, withErrorEnvelope, withRequestGuard, withStaffStepUp, withSession, withStepUp,
-  withSpendGate, withCsrf, withIdempotency,
+  withRequestId, withErrorEnvelope, withRequestGuard, withSession, withStepUp, withSpendGate,
+  withCsrf, withIdempotency,
 ];
-
-// `withStaffStepUp` is in all three pipelines: the staff writes are ANONYMOUS routes whose
-// identity is a `staff_sessions` row in the body, so that chain is the only one that could
-// enforce their second-factor window, and a flag cannot be declared into a chain that ignores it.
 
 // Reduced pipeline for `raw` routes (SSE, /oauth/authorize): no JSON envelope coercion, no
 // CSRF, no idempotency. It keeps `withRequestGuard` (both raw routes are GET today; a raw
@@ -42,7 +37,7 @@ const FULL_PIPELINE: Middleware[] = [
 // `raw-pipeline-parity.test.ts` asserts the membership rather than trusting this comment. Safe
 // without `withErrorEnvelope`: both middlewares RETURN an `errorResponse` and never throw, so
 // there is nothing for the absent envelope to catch.
-const RAW_PIPELINE: Middleware[] = [withRequestId, withRequestGuard, withStaffStepUp, withSession, withStepUp, withSpendGate];
+const RAW_PIPELINE: Middleware[] = [withRequestId, withRequestGuard, withSession, withStepUp, withSpendGate];
 
 // `anonymous` routes: no session resolution at all (`/health`). `withSession` resolves any
 // credential that happens to be presented, which a liveness probe must not do: a probe with an
@@ -53,7 +48,27 @@ const RAW_PIPELINE: Middleware[] = [withRequestId, withRequestGuard, withStaffSt
 // resolves one, so a membership assertion would pass while enforcing nothing. The fence is a
 // census over the route table in both directions: every `anonymous` route is
 // `cost: "unauthenticated"`, and every `unauthenticated` route is `public`.
-const ANONYMOUS_PIPELINE: Middleware[] = [withRequestId, withRequestGuard, withStaffStepUp];
+const ANONYMOUS_PIPELINE: Middleware[] = [withRequestId, withRequestGuard];
+
+/**
+ * The chain a route runs through: its pipeline, plus the middleware the ROUTE carries
+ * (`RouteOptions.middleware`), spliced in after `withRequestGuard` — before any session, so a
+ * carried control can refuse without the database. `pipeline-order.test.ts` holds that.
+ *
+ * This module is compiled into the standalone desktop door, so a control judging a MANAGED-SERVICE
+ * credential may not be a member of these arrays: the staff step-up was, and it brought the staff
+ * routes and the cloud schema into the engine bundle (752 inputs → 1204, a staff table in the
+ * bytes, refused by the census). Carried, it is mounted only where its own routes are.
+ */
+export function pipelineFor(route: Route): readonly Middleware[] {
+  const chain = route.options?.anonymous
+    ? ANONYMOUS_PIPELINE
+    : route.options?.raw ? RAW_PIPELINE : FULL_PIPELINE;
+  const carried = route.options?.middleware;
+  if (!carried || carried.length === 0) return chain;
+  const after = chain.indexOf(withRequestGuard) + 1;
+  return [...chain.slice(0, after), ...carried, ...chain.slice(after)];
+}
 
 /**
  * The first parameter whose shape could never name a row — or `null` when every one is fine.
@@ -229,9 +244,7 @@ async function dispatch(
       route: m.route,
     };
   }
-  const chain = m.route.options?.anonymous
-    ? ANONYMOUS_PIPELINE
-    : m.route.options?.raw ? RAW_PIPELINE : FULL_PIPELINE;
-  const composed = chain.reduceRight<Handler>((next, mw) => mw(next, m.route), m.route.handler);
+  const composed = pipelineFor(m.route)
+    .reduceRight<Handler>((next, mw) => mw(next, m.route), m.route.handler);
   return { res: await composed(req, deps, m.params), route: m.route };
 }

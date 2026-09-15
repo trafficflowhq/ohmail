@@ -1,5 +1,9 @@
 import type { ApiDeps } from "./deps.js";
 import { matchSpec, type RouteParams } from "./match-path.js";
+/* TYPE ONLY, and that is load-bearing: `middleware.ts` imports values from this module, so a
+   value import back would be a runtime cycle. `import type` is erased, so the graph is unchanged
+   and nothing new enters any bundle. */
+import type { Middleware } from "./middleware.js";
 
 /* Re-exported so every existing consumer of this module keeps its import. */
 export { matchSpec, type RouteParams };
@@ -105,16 +109,16 @@ export interface RouteOptions {
   /** Requires a recent 2FA (`withStepUp`); else 403 step_up_required. */
   stepUp?: boolean;
   /**
-   * A STAFF write: requires the staff session in the body to have proved a second factor inside
-   * `STAFF_STEP_UP_WINDOW_SECONDS` (`withStaffStepUp`); else 403 step_up_required.
+   * MIDDLEWARE THIS ROUTE CARRIES, run in its pipeline at the position `app.ts` names.
    *
-   * Separate from {@link stepUp} because it judges a different credential: these routes are
-   * `anonymous`, carry no customer session, and their identity is a `staff_sessions` row. Both
-   * flags are read by middleware present in all three pipelines, so a route cannot declare one
-   * into a chain that would not enforce it, and `admin-step-up-census.test.ts` requires this flag
-   * on every `/admin/*` route classified as a write.
+   * A flag says what a route WANTS and leaves some chain to honour it; a middleware here IS the
+   * control and travels with the route into every composition that mounts it. `staffStepUp:
+   * boolean` was the flag form, and honouring it made `app.ts` — which the standalone door
+   * composes — import the staff routes and the cloud schema: the engine census refused the
+   * artifact by name. Managed-service administration lives in the private plane, and a control
+   * declared beside its own routes cannot reach a door that mounts none of them.
    */
-  staffStepUp?: boolean;
+  middleware?: readonly Middleware[];
   /**
    * The route is part of the 2FA-ENROLLMENT surface, so an enrollment-scoped session
    * is admitted. Absent — the default, and the default for every route in the

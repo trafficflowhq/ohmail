@@ -5,6 +5,7 @@ import {
 } from "@trafficflow/db/cloud";
 import { MS_TENANT_RE } from "@trafficflow/core";
 import { resolveStaffSession, type StaffIdentity } from "./admin-staff.js";
+import { withStaffStepUp } from "../staff-step-up.js";
 import { presentsSecret, secretRouteJson as json } from "../secret-auth.js";
 import type { ApiDeps } from "../deps.js";
 import type { Handler, Route } from "../router.js";
@@ -270,13 +271,13 @@ async function saveConfig(
  */
 const OPTIONS = { public: true, anonymous: true, raw: true } as const;
 /**
- * The SAVE additionally carries `staffStepUp`: it is a write, and a write asks for a second factor
- * proved inside `STAFF_STEP_UP_WINDOW_SECONDS` (`packages/api/src/staff-step-up.ts`). The READ
- * does not, deliberately — it is a read over a POST transport because the session token has to
- * ride in a body, and asking an operator for a code to LOOK at the registration would train them
- * to type codes at prompts that are not writes.
+ * The SAVE additionally CARRIES `withStaffStepUp`: it is a write, and a write asks for a second
+ * factor proved inside `STAFF_STEP_UP_WINDOW_SECONDS` (`packages/api/src/staff-step-up.ts`). The
+ * READ does not, deliberately — it is a read over a POST transport because the session token has
+ * to ride in a body, and asking an operator for a code to LOOK at the registration would train
+ * them to type codes at prompts that are not writes.
  */
-const WRITE_OPTIONS = { ...OPTIONS, staffStepUp: true } as const;
+const WRITE_OPTIONS = { ...OPTIONS, middleware: [withStaffStepUp] } as const;
 const COST = "unauthenticated" as const;
 
 /* `relay: false` throughout: the hosted console's own surface, never forwarded by a Cloud-mode

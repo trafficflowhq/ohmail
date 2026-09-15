@@ -4,13 +4,20 @@ import { presentsSecret, secretRouteJson } from "./secret-auth.js";
 import type { Middleware } from "./middleware.js";
 
 /**
- * THE STAFF WRITE STEP-UP, ENFORCED IN THE PIPELINE.
+ * THE STAFF WRITE STEP-UP — CARRIED BY THE ROUTES IT GUARDS.
  *
  * The console's Actions page has always said that "a staff session without a recent step-up gets
  * 403 before any of it runs", and nothing enforced it: the staff writes are `anonymous` routes,
  * so `withStepUp` — which judges a CUSTOMER session — never ran on them. One control and not
  * two: the window is {@link STAFF_STEP_UP_WINDOW_SECONDS}, the API puts it on the wire, and the
  * console's prompt mirrors that value rather than deciding anything.
+ */
+/**
+ * NOT A PIPELINE MEMBER. This judges a managed-service credential and reaches the staff route
+ * module and the cloud schema; `app.ts` is compiled into the standalone desktop door, so a
+ * membership there put `staff_users` into the published engine bundle and the census refused it.
+ * The write routes carry it in `options.middleware` instead, so it is mounted exactly where they
+ * are — in the managed composition, and nowhere a local door can reach.
  */
 /**
  * It only ever ADDS one refusal. An unarmed host still answers 404, a caller with no shared
@@ -21,8 +28,6 @@ import type { Middleware } from "./middleware.js";
  * session token rides in the body here and the handler reads the original stream after it.
  */
 export const withStaffStepUp: Middleware = (next, route) => async (req, deps, params) => {
-  if (!route.options?.staffStepUp) return next(req, deps, params);
-
   const cfg = deps.admin;
   if (!cfg || cfg.secret.trim().length === 0) return next(req, deps, params);
   if (!presentsSecret(req, cfg.secret)) return next(req, deps, params);
