@@ -4606,13 +4606,11 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         /** Set by the refusal below, read by `cancelled` so the pass ends where it stands. */
         let leaseLost = false;
         /* ── THE SEND BOUNDARY ASKS THE LEASE, BECAUSE THE CONNECTION ANSWERS SOMETHING ELSE ──
-         *
          * Choosing another organizer mid-pass leaves THIS socket open and healthy, so the
          * connection check admits every remaining reply and two installs answer one correspondent.
          * An away reply is irreversible mail sent in somebody's name, so the authority is re-asked
          * at the last point before delivery — `check()` is the permit's own bounded re-read — and
          * a refusal both refuses this send and ends the pass.
-         *
          * An UNREADABLE lease is not a stand-down: a read that throws leaves the receipt untouched
          * (`lease.ts`), so the permit's `revoked` latch decides and an outage lets mail flow.
          */
