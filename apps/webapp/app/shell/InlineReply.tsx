@@ -493,7 +493,13 @@ export function InlineReply({
         body: value.text,
         ...replyEnvelopeOnWire(envPlan),
       };
-  const locked = !canSend(send, wouldSend);
+  /**
+   * SEND NEVER SNAPSHOTS A MESSAGE WITH AN ATTACHMENT PENDING — the compose surface's rule, on
+   * the surface beside it. A pick commits in one `onChange` when its conversion ends; until then
+   * the reply holds a message without the file that was chosen for it.
+   */
+  const [attaching, setAttaching] = useState<readonly string[]>([]);
+  const locked = !canSend(send, wouldSend) || attaching.length > 0;
 
   /**
    * THE FROM CONTROL, BUILT ONCE — the same `<select>` whether it stands in the collapsed
@@ -756,12 +762,19 @@ export function InlineReply({
         <ComposeAttach
           attachments={[...attachments]}
           onChange={onAttachments}
+          onAttaching={setAttaching}
           disabled={inFlight}
           maxTotalBytes={composeAttachCap(from.maxMessageBytes, sendSurfaceMaxTotalBytes)}
           /* The reply panel takes pastes and drops exactly as compose does — a pasted picture
              is an attachment, not a silent nothing (`ComposeAttach.dropZone`). */
           dropZone={box}
         />
+      ) : null}
+      {/* WHY SEND IS WAITING, named — the compose surface's sentence, same words. */}
+      {attaching.length > 0 ? (
+        <p className="reply-hint" role="status">
+          {tc("stillAttaching", { name: attaching[0]!, count: attaching.length })}
+        </p>
       ) : null}
 
       <div className="reply-actions">

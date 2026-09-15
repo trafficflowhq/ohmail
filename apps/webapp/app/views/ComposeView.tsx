@@ -532,7 +532,16 @@ export function ComposeView({
      reason it is on its way does not change either fact. Adding a third state here is how a
      surface comes to disagree with itself about one question. */
   const held = locked ?? null;
-  const sendBlocked = !canSend(send, plan.mutation) || held !== null;
+  /**
+   * SEND NEVER SNAPSHOTS A MESSAGE WITH AN ATTACHMENT PENDING. A pick decodes, re-encodes and
+   * commits in one `onChange` at the end; between the press and that commit the form holds a
+   * message without the file the person just chose, and Send took exactly that. The names are
+   * what the refusal sentence states — a disabled button with no reason is a form that stopped
+   * working. No clock: the pick's own end is the release, so there is no deadline to invent and
+   * no window in which the file could be dropped silently.
+   */
+  const [attaching, setAttaching] = useState<readonly string[]>([]);
+  const sendBlocked = !canSend(send, plan.mutation) || held !== null || attaching.length > 0;
   const inFlight = send.phase === "sending" || send.phase === "queued" || held !== null;
   /* CANCEL IS NOT AN INPUT, and a queued send is not on the wire — see `canCancel`, which is
      deliberately NOT the same question as `inFlight`. */
@@ -847,6 +856,7 @@ export function ComposeView({
             <ComposeAttach
               attachments={fields.attachments ?? []}
               onChange={(next) => onFields({ ...fields, attachments: next })}
+              onAttaching={setAttaching}
               disabled={inFlight}
               /* The whole compose surface takes pastes and drops — a picture pasted into the
                  editor and a file dropped on the form are attachments, not silence and not a
@@ -862,6 +872,13 @@ export function ComposeView({
                  announcement is the number this form states. */
               maxTotalBytes={composeAttachCap(from.maxMessageBytes, sendSurfaceMaxTotalBytes)}
             />
+            {/* WHY SEND IS WAITING, named. A live region because the press that reveals it is the
+                press it refuses. */}
+            {attaching.length > 0 ? (
+              <p className="compose-note" role="status">
+                {t("stillAttaching", { name: attaching[0]!, count: attaching.length })}
+              </p>
+            ) : null}
             {/* THE QUESTION SITS ABOVE THE ROW IT WAS ASKED FROM, at full panel width — the
                 Drafts list's panel, and deliberately not a modal: Compose was moved OUT of a
                 dialog the keyboard could not leave, and putting one back to ask about

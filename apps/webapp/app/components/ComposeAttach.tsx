@@ -197,12 +197,24 @@ function readAsBase64(file: Blob): Promise<string> {
 export function ComposeAttach({
   attachments,
   onChange,
+  onAttaching,
   disabled,
   maxTotalBytes = COMPOSE_ATTACH_MAX_TOTAL_BYTES,
   dropZone,
 }: {
   attachments: ComposeAttachment[];
   onChange: (next: ComposeAttachment[]) => void;
+  /**
+   * WHICH FILES ARE STILL BECOMING ATTACHMENTS — the names, while a pick is converting, and an
+   * empty list when nothing is. A pick decodes and re-encodes off the main path and commits in one
+   * `onChange` at the end, so between the press and that commit the form holds a message the
+   * person believes carries a file it does not: Send used to snapshot exactly that. The sending
+   * surface joins this to its own lock and says which file it is waiting for.
+   *
+   * ABSENT where a harness mounts this component bare. A caller that takes it is refusing a send;
+   * a caller that does not is where it always was, so the prop cannot silently disarm a lock.
+   */
+  onAttaching?: (files: readonly string[]) => void;
   disabled?: boolean;
   /**
    * The ceiling this form enforces and states, in raw bytes. Callers pass
@@ -271,6 +283,18 @@ export function ComposeAttach({
    */
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
+  const onAttachingRef = useRef(onAttaching);
+  onAttachingRef.current = onAttaching;
+  /**
+   * THE PICKS IN FLIGHT, keyed by their own number: two picks can overlap (a drop while a paste
+   * decodes), and a single boolean would have the first one to settle announce that nothing is
+   * attaching while the other still is. The report is the union, in pick order.
+   */
+  const picksInFlight = useRef(new Map<number, readonly string[]>());
+  const pickSeq = useRef(0);
+  const reportAttaching = useRef((): void => {
+    onAttachingRef.current?.([...picksInFlight.current.values()].flat());
+  });
   const maxTotalBytesRef = useRef(maxTotalBytes);
   maxTotalBytesRef.current = maxTotalBytes;
   /**
@@ -511,184 +535,195 @@ export function ComposeAttach({
   const onFiles = useCallback(
     async (fileList: FileList | null) => {
       if (!fileList || fileList.length === 0) return;
-      setError(null);
-      setCompressed(null);
-      setDuplicates([]);
-      // THIS SURFACE'S DIAL, once per pick, off the ref — inside the handler because the level
-      // must be the one on screen at the moment of the pick, not the one a stale closure holds.
-      const level = levelRef.current;
-      let refused = false;
-      /**
-       * THE STRICTEST CAP ANY REFUSAL WAS MADE UNDER — what the error line formats. The cap is
-       * live, so a candidate stranded at a dipped cap and a commit refusal at the restored one
-       * are refusals under DIFFERENT numbers; formatting the commit-time cap claimed a limit
-       * the refused files actually fit (review finding). `refused` alone remains for failures
-       * with no cap of their own (an unreadable file).
-       */
-      let refusedAtCap: number | null = null;
-      const refuseAt = (c: number): void => {
-        refusedAtCap = refusedAtCap === null ? c : Math.min(refusedAtCap, c);
-      };
-      const skippedEarly: string[] = [];
-      const picked: Array<{
-        attachment: ComposeAttachment;
-        bytes: number;
-        originalBytes: number;
-        compressed: boolean;
-      }> = [];
-      for (const file of Array.from(fileList)) {
-        try {
-          // BEFORE THE CAP CHECK. The whole value of compressing on the client is that it changes
-          // which files are admissible, and it cannot do that from behind the check that refuses
-          // them. See the header note. Admission itself is deferred to the COMMIT below, against
-          // the list as it stands then — a dial move can re-encode rows while these files decode,
-          // and a cap judged against the list as it stood at pick time would admit or refuse
-          // against sizes that no longer exist.
-          const picture = await compressImage(file, level);
-          // REFUSE THE UNADMITTABLE BEFORE ENCODING IT. `readAsBase64` allocates ~4/3 of the file as a string, so
-          // what can never be admitted must be turned away on its SIZE — known right here — rather than after the tab
-          // has paid to encode it: a single file over the cap, and equally the tail of a batch whose accepted files
-          // already fill it (ten near-cap files would otherwise stage hundreds of MB of strings for a commit that
-          // admits one — review finding). The bound is REPROJECTED per file against the cap and the list AS THEY
-          // STAND NOW, never a running reservation: a reservation treats tentative staging as final admission, so a
-          // cap lowered (or a row removed) mid-batch kept charging for a staged file the commit was going to refuse
-          // and turned away a later file that fit (review finding).
+      /* THE LOCK IS TAKEN BEFORE THE FIRST AWAIT, and given back in `finally` — a refused file, a
+         discarded compose and an ordinary commit all end the same way, or a send stays blocked
+         over a pick that is no longer happening. */
+      const pick = ++pickSeq.current;
+      picksInFlight.current.set(pick, Array.from(fileList).map((f) => f.name || "attachment"));
+      reportAttaching.current();
+      try {
+        setError(null);
+        setCompressed(null);
+        setDuplicates([]);
+        // THIS SURFACE'S DIAL, once per pick, off the ref — inside the handler because the level
+        // must be the one on screen at the moment of the pick, not the one a stale closure holds.
+        const level = levelRef.current;
+        let refused = false;
+        /**
+         * THE STRICTEST CAP ANY REFUSAL WAS MADE UNDER — what the error line formats. The cap is
+         * live, so a candidate stranded at a dipped cap and a commit refusal at the restored one
+         * are refusals under DIFFERENT numbers; formatting the commit-time cap claimed a limit
+         * the refused files actually fit (review finding). `refused` alone remains for failures
+         * with no cap of their own (an unreadable file).
+         */
+        let refusedAtCap: number | null = null;
+        const refuseAt = (c: number): void => {
+          refusedAtCap = refusedAtCap === null ? c : Math.min(refusedAtCap, c);
+        };
+        const skippedEarly: string[] = [];
+        const picked: Array<{
+          attachment: ComposeAttachment;
+          bytes: number;
+          originalBytes: number;
+          compressed: boolean;
+        }> = [];
+        for (const file of Array.from(fileList)) {
+          try {
+            // BEFORE THE CAP CHECK. The whole value of compressing on the client is that it changes
+            // which files are admissible, and it cannot do that from behind the check that refuses
+            // them. See the header note. Admission itself is deferred to the COMMIT below, against
+            // the list as it stands then — a dial move can re-encode rows while these files decode,
+            // and a cap judged against the list as it stood at pick time would admit or refuse
+            // against sizes that no longer exist.
+            const picture = await compressImage(file, level);
+            // REFUSE THE UNADMITTABLE BEFORE ENCODING IT. `readAsBase64` allocates ~4/3 of the file as a string, so
+            // what can never be admitted must be turned away on its SIZE — known right here — rather than after the tab
+            // has paid to encode it: a single file over the cap, and equally the tail of a batch whose accepted files
+            // already fill it (ten near-cap files would otherwise stage hundreds of MB of strings for a commit that
+            // admits one — review finding). The bound is REPROJECTED per file against the cap and the list AS THEY
+            // STAND NOW, never a running reservation: a reservation treats tentative staging as final admission, so a
+            // cap lowered (or a row removed) mid-batch kept charging for a staged file the commit was going to refuse
+            // and turned away a later file that fit (review finding).
 
-          // A staged candidate counts only while the current cap would still admit it; duplicates were skipped at
-          // their encode and never stage. The COMMIT below remains the authority on admission.
-          const capNow = maxTotalBytesRef.current;
-          let projected = totalBytes(attachmentsRef.current);
-          for (let i = 0; i < picked.length; ) {
-            const p = picked[i]!;
-            if (projected + p.bytes <= capNow) {
-              projected += p.bytes;
-              i += 1;
-            } else {
-              /* STRANDED ⇒ REFUSED NOW, AT PICK-TIME SEMANTICS — evicted for memory AND said on
-                 screen, exactly as a file picked under this cap would have been refused. The
-                 alternative — keeping the candidate for the commit to reconsider under a cap
-                 that might restore — was built and reverted: it put awaits back inside the
-                 settled commit, and every hazard the atomic commit exists to close (a discard
-                 resurrected, a stale cap honored, an unbounded staging window, a re-encode
-                 whose size diverges from its accounting) came back through that door. A cap
-                 dip mid-batch is a From switch inside one pick's encode loop; its cost here is
-                 one stated refusal and one re-pick, never a silent loss. */
-              picked.splice(i, 1);
-              refuseAt(capNow);
+            // A staged candidate counts only while the current cap would still admit it; duplicates were skipped at
+            // their encode and never stage. The COMMIT below remains the authority on admission.
+            const capNow = maxTotalBytesRef.current;
+            let projected = totalBytes(attachmentsRef.current);
+            for (let i = 0; i < picked.length; ) {
+              const p = picked[i]!;
+              if (projected + p.bytes <= capNow) {
+                projected += p.bytes;
+                i += 1;
+              } else {
+                /* STRANDED ⇒ REFUSED NOW, AT PICK-TIME SEMANTICS — evicted for memory AND said on
+                   screen, exactly as a file picked under this cap would have been refused. The
+                   alternative — keeping the candidate for the commit to reconsider under a cap
+                   that might restore — was built and reverted: it put awaits back inside the
+                   settled commit, and every hazard the atomic commit exists to close (a discard
+                   resurrected, a stale cap honored, an unbounded staging window, a re-encode
+                   whose size diverges from its accounting) came back through that door. A cap
+                   dip mid-batch is a From switch inside one pick's encode loop; its cost here is
+                   one stated refusal and one re-pick, never a silent loss. */
+                picked.splice(i, 1);
+                refuseAt(capNow);
+              }
             }
+            if (picture.bytes > capNow || projected + picture.bytes > capNow) {
+              refuseAt(capNow);
+              continue;
+            }
+            const contentBase64 = await readAsBase64(picture.blob);
+            const filename = file.name || "attachment";
+            const attachment: ComposeAttachment = {
+              filename,
+              contentType: picture.contentType,
+              contentBase64,
+            };
+            /* THE SAME FILE TWICE IS A SKIP, NOT A SECOND ROW — detected the moment its bytes are
+               known, so a duplicate neither spends the memory bound above nor a slot below. The
+               commit re-checks against the list as it stands then; this early skip is what keeps
+               the bound honest. */
+            if (
+              [...attachmentsRef.current, ...picked.map((p) => p.attachment)].some(
+                (a) => a.filename === filename && a.contentBase64 === contentBase64,
+              )
+            ) {
+              skippedEarly.push(filename);
+              continue;
+            }
+            // The pristine source, retained for the dial (see ATTACHMENT_SOURCES). When the
+            // admitted bytes ARE the source (Original, or a file the shrink could not help), the
+            // base64 in hand is the source's own encoding — cache it so a move never re-reads it.
+            ATTACHMENT_SOURCES.set(attachment, {
+              blob: file,
+              encodedLevel: level,
+              ...(picture.blob === file ? { originalBase64: contentBase64 } : {}),
+            });
+            picked.push({
+              attachment,
+              bytes: picture.bytes,
+              originalBytes: picture.originalBytes,
+              compressed: picture.compressed,
+            });
+          } catch {
+            refused = true;
           }
-          if (picture.bytes > capNow || projected + picture.bytes > capNow) {
-            refuseAt(capNow);
-            continue;
-          }
-          const contentBase64 = await readAsBase64(picture.blob);
-          const filename = file.name || "attachment";
-          const attachment: ComposeAttachment = {
-            filename,
-            contentType: picture.contentType,
-            contentBase64,
-          };
-          /* THE SAME FILE TWICE IS A SKIP, NOT A SECOND ROW — detected the moment its bytes are
-             known, so a duplicate neither spends the memory bound above nor a slot below. The
-             commit re-checks against the list as it stands then; this early skip is what keeps
-             the bound honest. */
+        }
+
+        // A pick landing after the compose was discarded must not repopulate it — see `mounted`.
+        if (!mounted.current) return;
+
+        // THE COMMIT — against the list as it stands NOW, in one `onChange` through the latest
+        // closure. `attachments` (the closure copy) may be a level behind: a re-encode pass can
+        // have replaced rows while these files decoded, and a commit built on the snapshot would
+        // silently revert them (review finding).
+        const latest = attachmentsRef.current;
+        const cap = maxTotalBytesRef.current;
+        let running = totalBytes(latest);
+        const admitted: ComposeAttachment[] = [];
+        const skipped: string[] = [...skippedEarly];
+        let savedFrom = 0;
+        let savedTo = 0;
+        for (const p of picked) {
+          /* THE SAME FILE TWICE IS A SKIP, NOT A SECOND ROW. Same name and byte-identical
+             content is the same attachment, and two indistinguishable rows invite deleting the
+             wrong one — or mailing both. Compared on the ADMITTED bytes, against the list the
+             commit will actually extend. */
           if (
-            [...attachmentsRef.current, ...picked.map((p) => p.attachment)].some(
-              (a) => a.filename === filename && a.contentBase64 === contentBase64,
+            [...latest, ...admitted].some(
+              (a) => a.filename === p.attachment.filename && a.contentBase64 === p.attachment.contentBase64,
             )
           ) {
-            skippedEarly.push(filename);
+            skipped.push(p.attachment.filename);
             continue;
           }
-          // The pristine source, retained for the dial (see ATTACHMENT_SOURCES). When the
-          // admitted bytes ARE the source (Original, or a file the shrink could not help), the
-          // base64 in hand is the source's own encoding — cache it so a move never re-reads it.
-          ATTACHMENT_SOURCES.set(attachment, {
-            blob: file,
-            encodedLevel: level,
-            ...(picture.blob === file ? { originalBase64: contentBase64 } : {}),
-          });
-          picked.push({
-            attachment,
-            bytes: picture.bytes,
-            originalBytes: picture.originalBytes,
-            compressed: picture.compressed,
-          });
-        } catch {
-          refused = true;
+          if (running + p.bytes > cap) {
+            refuseAt(cap);
+            continue;
+          }
+          admitted.push(p.attachment);
+          running += p.bytes;
+          if (p.compressed) {
+            savedFrom += p.originalBytes;
+            savedTo += p.bytes;
+          }
         }
+        /*
+         * EVERY FAILURE MODE THE PICK HAD IS SAID — both sentences on a mixed batch, never one
+         * standing in for the other (review finding: an exclusive branch left an unreadable file
+         * reading as a second size refusal).
+         *  · The cap sentence is PAST-CONDITIONAL, deliberately: it describes the refusal
+         *    DECISION under the cap in force when it was made — the cap is live, and a
+         *    present-tense "must stay under X" beside a header announcing a restored limit
+         *    asserted two active limits at once.
+         *  · The read sentence carries no number, because a read failure is not a size story.
+         */
+        const failures: string[] = [];
+        if (refusedAtCap !== null) failures.push(t("attachRefused", { size: formatSize(refusedAtCap) }));
+        if (refused) failures.push(t("attachUnreadable"));
+        if (failures.length > 0) setError(failures.join(" "));
+        // The totals of this pick, not of the list: the sentence explains what just happened to the
+        // files being added, and for the single-picture case — which is nearly all of them — the two
+        // numbers are that picture's own.
+        if (savedFrom > 0) setCompressed({ from: savedFrom, to: savedTo });
+        if (skipped.length > 0) setDuplicates(skipped);
+        if (admitted.length > 0) {
+          const committed = [...latest, ...admitted];
+          pendingFlush.current = committed; // cleared by the render that receives it — see the ref
+          onChangeRef.current(committed);
+          // The dial may have moved while these files decoded — they were encoded at the level of
+          // their PICK, which is the level the user has since moved off. Land the whole list at
+          // the level chosen last: sources are retained, and the pass commits atomically like any
+          // other, so no observable list mixes levels longer than one pass. The just-committed
+          // list rides along because the renderer has not flushed it into the ref yet.
+          if (levelRef.current !== level) void requalify(levelRef.current, committed);
+        }
+        // Clear the native input so re-picking the same file fires `change` again.
+        if (inputRef.current) inputRef.current.value = "";
+      } finally {
+        picksInFlight.current.delete(pick);
+        reportAttaching.current();
       }
-
-      // A pick landing after the compose was discarded must not repopulate it — see `mounted`.
-      if (!mounted.current) return;
-
-      // THE COMMIT — against the list as it stands NOW, in one `onChange` through the latest
-      // closure. `attachments` (the closure copy) may be a level behind: a re-encode pass can
-      // have replaced rows while these files decoded, and a commit built on the snapshot would
-      // silently revert them (review finding).
-      const latest = attachmentsRef.current;
-      const cap = maxTotalBytesRef.current;
-      let running = totalBytes(latest);
-      const admitted: ComposeAttachment[] = [];
-      const skipped: string[] = [...skippedEarly];
-      let savedFrom = 0;
-      let savedTo = 0;
-      for (const p of picked) {
-        /* THE SAME FILE TWICE IS A SKIP, NOT A SECOND ROW. Same name and byte-identical
-           content is the same attachment, and two indistinguishable rows invite deleting the
-           wrong one — or mailing both. Compared on the ADMITTED bytes, against the list the
-           commit will actually extend. */
-        if (
-          [...latest, ...admitted].some(
-            (a) => a.filename === p.attachment.filename && a.contentBase64 === p.attachment.contentBase64,
-          )
-        ) {
-          skipped.push(p.attachment.filename);
-          continue;
-        }
-        if (running + p.bytes > cap) {
-          refuseAt(cap);
-          continue;
-        }
-        admitted.push(p.attachment);
-        running += p.bytes;
-        if (p.compressed) {
-          savedFrom += p.originalBytes;
-          savedTo += p.bytes;
-        }
-      }
-      /*
-       * EVERY FAILURE MODE THE PICK HAD IS SAID — both sentences on a mixed batch, never one
-       * standing in for the other (review finding: an exclusive branch left an unreadable file
-       * reading as a second size refusal).
-       *  · The cap sentence is PAST-CONDITIONAL, deliberately: it describes the refusal
-       *    DECISION under the cap in force when it was made — the cap is live, and a
-       *    present-tense "must stay under X" beside a header announcing a restored limit
-       *    asserted two active limits at once.
-       *  · The read sentence carries no number, because a read failure is not a size story.
-       */
-      const failures: string[] = [];
-      if (refusedAtCap !== null) failures.push(t("attachRefused", { size: formatSize(refusedAtCap) }));
-      if (refused) failures.push(t("attachUnreadable"));
-      if (failures.length > 0) setError(failures.join(" "));
-      // The totals of this pick, not of the list: the sentence explains what just happened to the
-      // files being added, and for the single-picture case — which is nearly all of them — the two
-      // numbers are that picture's own.
-      if (savedFrom > 0) setCompressed({ from: savedFrom, to: savedTo });
-      if (skipped.length > 0) setDuplicates(skipped);
-      if (admitted.length > 0) {
-        const committed = [...latest, ...admitted];
-        pendingFlush.current = committed; // cleared by the render that receives it — see the ref
-        onChangeRef.current(committed);
-        // The dial may have moved while these files decoded — they were encoded at the level of
-        // their PICK, which is the level the user has since moved off. Land the whole list at
-        // the level chosen last: sources are retained, and the pass commits atomically like any
-        // other, so no observable list mixes levels longer than one pass. The just-committed
-        // list rides along because the renderer has not flushed it into the ref yet.
-        if (levelRef.current !== level) void requalify(levelRef.current, committed);
-      }
-      // Clear the native input so re-picking the same file fires `change` again.
-      if (inputRef.current) inputRef.current.value = "";
     },
     [t, requalify],
   );
