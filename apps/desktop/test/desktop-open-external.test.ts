@@ -457,8 +457,14 @@ describe("the one platform table, read on every platform", () => {
   it("a spawn that started is not an open that happened", () => {
     // The reported case: `xdg-open` with no handler exits 3 while the `Ok` is already back at the
     // window. The shell reads the child's verdict within a bound instead of dropping it.
+    //
+    // The bound used to be a 25 ms `try_wait` loop and is now a thread blocked on the child with
+    // the wait on this side — so the needles name the bound (`recv_timeout`) and the wait, which
+    // together assert more than the old one did: the verdict is not only read within a bound, the
+    // child is also reaped rather than left as a zombie for every link opened.
     const run = bodyOf(engine, "fn run_opener(");
-    expect(run).toMatch(/try_wait\(\)/);
+    expect(run).toMatch(/recv_timeout\(OPENER_VERDICT\)/);
+    expect(run).toMatch(/child\.wait\(\)/);
     expect(run).toMatch(/status\.success\(\)/);
     expect(run).not.toMatch(/\.map\(\|_\| \(\)\)/);
   });

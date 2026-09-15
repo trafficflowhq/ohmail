@@ -154,16 +154,9 @@ fn main() {
     #[cfg(feature = "local-engine")]
     vitals::start();
 
-    // THE ONE PLACE THE QUIT IS ALLOWED TO WAIT, and it is after the loop rather than inside it.
-    //
-    // `run_return` gives this function the loop's exit code back instead of ending the process
-    // inside it, which is what lets the engine be waited for with no window on screen and no
-    // handler blocking the loop. Measured on Omarchy: waiting inside the callback keeps the
-    // window mapped for the whole wait, because a run loop cannot flush its own hide or its own
-    // destroy while a handler is blocked in it.
     #[cfg(feature = "local-engine")]
     let quitting = std::sync::Arc::clone(&shell);
-    let exit_code = app.run_return(move |_app, _event| {
+    let on_event = move |_app: &tauri::AppHandle, _event: tauri::RunEvent| {
         // The close/quit policy is `host::lifecycle_action` — ONE function, tested against the
         // contract that disarmed is exactly the behaviour above this feature existed: Destroyed
         // stops the engine, a close request passes through, Exit stops. Armed swaps the close
@@ -245,13 +238,19 @@ fn main() {
                 }
             }
         }
-    });
+    };
 
-    // The window is gone and the loop is over, so this costs a person nothing — and the bound is
-    // what stops a supervisor that is itself stuck from keeping a windowless process alive. The
-    // engine loses its stdin when this process goes either way, which is the same EOF it was
-    // asked to leave on.
+    // THE ONE PLACE A QUIT IS ALLOWED TO WAIT, and it is after the loop rather than inside it.
+    // `run_return` hands the loop's exit code back instead of ending the process itself, so the
+    // engine can be waited for with no window on screen and no handler blocking the loop —
+    // measured, waiting inside the callback keeps the window mapped for the whole wait, because a
+    // run loop can flush neither its own hide nor its own destroy from inside a handler.
+    // `leave_the_process` is in `engine.rs` rather than here because this file is compiled into
+    // EVERY build, and what it does not contain is a property of the shipped binary.
     #[cfg(feature = "local-engine")]
-    quitting.finish_stop(engine::SHUTDOWN_BOUND);
-    std::process::exit(exit_code);
+    engine::leave_the_process(&quitting, app.run_return(on_event));
+    // The preview has no engine and nothing to wait for, so its loop owns the exit as it always
+    // has.
+    #[cfg(not(feature = "local-engine"))]
+    app.run(on_event);
 }

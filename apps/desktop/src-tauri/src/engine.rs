@@ -1267,6 +1267,18 @@ enum Leaving {
     Done,
 }
 
+/// The last line of the app: wait, bounded, for the engine to finish leaving, then end the process
+/// with the loop's own exit code.
+///
+/// It is here rather than in `main.rs` because that file is compiled into EVERY build, the preview
+/// included, and what it does NOT contain is a property of the shipped binary — no command, no
+/// socket, no `std::process`. This module is not in the preview at all.
+#[cfg(feature = "local-engine")]
+pub fn leave_the_process(shell: &Arc<Shell>, code: i32) -> ! {
+    shell.finish_stop(SHUTDOWN_BOUND);
+    std::process::exit(code)
+}
+
 /// Marks a sign-out refusal taken BEFORE the engine was stopped or any file moved, so nothing
 /// about the install has changed. `engine_logout` reads it to decide whether host mode still has
 /// a listener to stand down beside — a refusal after the stop leaves the door gone, and leaving
