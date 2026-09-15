@@ -3,6 +3,7 @@ import { mailboxCredentials } from "@trafficflow/db";
 import { ImapAdapter, buildImapAuth, type CredMetaAuth } from "@trafficflow/core/adapters/imap";
 import { ServiceError, type OpenAdapter, type AttachmentAdapter } from "@trafficflow/services/mail";
 import type { ApiDeps } from "./deps.js";
+import { clearedFor } from "./dial-host-guard.js";
 import { imapAdmission } from "./routes/shared.js";
 import { IMAP_OPERATION_DEADLINE_MS, raced } from "./imap-budget.js";
 
@@ -220,6 +221,18 @@ async function openImapUnderCap(
     const imapRow = rows.find((r) => r.transport === "imap");
     if (!imapRow) throw new ServiceError("upstream_unavailable", 502, "mailbox has no IMAP credentials");
 
+    const meta = (imapRow.meta ?? {}) as CredMetaAuth & {
+      host?: string; port?: number; secure?: boolean; insecureConsent?: boolean;
+    };
+    const imapPort = meta.port ?? 993;
+    /* THE HOST GUARD, BEFORE EITHER SLOT. This door dials the same stored hostname the send path
+     * does, with the same credential, and the check that cleared it ran once at add time — so it
+     * runs here too, and the dial goes to what it cleared ({@link clearedFor}). Ahead of the
+     * admission slots deliberately: a server this deployment will not dial should cost neither a
+     * local slot nor a database one, and refusing after them means two release paths on a request
+     * that never had a socket. */
+    const pin = await clearedFor(deps, meta.host ?? "", imapPort, "imap");
+
     // ADMISSION, before the credential is decrypted and long before a socket exists. Local first:
     // it is free, and reversing the order would spend a database slot on a request that then times
     // out waiting locally and gives it straight back.
@@ -269,16 +282,16 @@ async function openImapUnderCap(
       }
     };
 
-    const meta = (imapRow.meta ?? {}) as CredMetaAuth & {
-      host?: string; port?: number; secure?: boolean; insecureConsent?: boolean;
-    };
     let adapter: ImapAdapter;
     try {
       const secret = await deps.keyProvider.decrypt(imapRow.secretEnc, imapRow.keyVersion);
       adapter = new ImapAdapter({
         host: meta.host ?? "",
-        port: meta.port ?? 993,
+        port: imapPort,
         secure: meta.secure ?? true,
+        // The cleared addresses, so the socket goes where the check went. `host` above is
+        // untouched: the pin narrows the ADDRESS and nothing else — see `ImapConfig.pin`.
+        ...(pin ? { pin } : {}),
         // The connect-time plaintext consent — same threading as the worker and the send
         // adapter, so every dialler of this credential row negotiates the way the probe proved.
         ...(meta.insecureConsent === true ? { allowInsecure: true } : {}),
