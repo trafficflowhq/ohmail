@@ -1884,6 +1884,11 @@ fn supervise(inner: Arc<Inner>, launch: Launch) {
         for (key, value) in &launch.env {
             command.env(key, value);
         }
+        // HOW MANY ALLOCATOR ARENAS THE ENGINE MAY HAVE. On this command and not in the shell's own
+        // environment: glibc reads the variable when a process starts, so the child gets it and
+        // this process does not. Capping it here was measured to be a redistribution rather than a
+        // saving in the WEBVIEW's process, which is why that half does not exist.
+        crate::allocator_arenas::apply_to_engine(&mut command);
 
         let mut child = match command.spawn() {
             Ok(child) => child,

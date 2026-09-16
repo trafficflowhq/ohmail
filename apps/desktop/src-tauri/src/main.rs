@@ -105,15 +105,11 @@ mod perf_budgets;
 // preview opens the same window and asks for the same budget.
 mod webview_budget;
 
-// How many allocator arenas this app's processes may have. Always compiled; Linux does the work.
+// How many allocator arenas the engine this shell spawns may have. Applied to that child's
+// command in `engine.rs`, never to this process — `allocator_arenas.rs` has the measurement.
 mod allocator_arenas;
 
 fn main() {
-    // FIRST, BEFORE ANY THREAD EXISTS. The webview's process is a CHILD, glibc reads this tunable
-    // once at a process's own start, and writing the environment beside a thread that reads it is
-    // a data race — so the cap is set here and nowhere else. `allocator_arenas.rs` has the measured
-    // reason; `desktop-shell.test.ts` asserts this line comes before the runtime is built.
-    allocator_arenas::apply();
     // WHEN WEBKIT SHOULD GIVE MEMORY BACK. Process-global and read when the FIRST web context is
     // created, which wry does while the runtime is built — so it is set here, beside the arena
     // cap, and there is no window to apply it to yet. `webview_budget.rs` has the thresholds and

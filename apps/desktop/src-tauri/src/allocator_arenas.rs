@@ -1,35 +1,34 @@
-//! How many allocator arenas this app's processes are allowed.
+//! How many allocator arenas the ENGINE the shell spawns is allowed.
 //!
 //! glibc gives a contending thread its own arena — the main one on the brk heap, each other one a
-//! 64 MiB mmap'd region it grows into. The webview's process runs dozens of threads, and on a
-//! machine without a working GPU driver ten of them are the software rasteriser's. Measured on the
-//! Omarchy guest, five arenas held 186 MB of a 716 MB renderer: a quarter of the process, in the
-//! allocator rather than in anything the app put there.
+//! 64 MiB mmap'd region. Measured on the Omarchy guest, capping them in the WEBVIEW's process is a
+//! redistribution and not a saving: the per-thread arenas fell from 115 908 kB to 34 836 kB and the
+//! brk heap rose from 69 024 kB to 157 576 kB, with the process's own RSS unmoved. So this is set
+//! for the ENGINE CHILD ONLY, on the command that spawns it, never for this process and never
+//! process-wide — a cap the renderer pays for and does not benefit from is a cost with no return.
 //!
-//! The cap is an ENVIRONMENT variable and not a `mallopt` call because the process that holds that
-//! memory is a CHILD: glibc reads this tunable once, at ITS startup, so the shell sets it for
-//! everything it spawns. It is written as the first statement of `main`, before any thread exists
-//! — writing the environment of a process that is already threaded is a data race.
-//!
-//! Linux only: Windows and macOS do not use glibc's allocator and neither reads this.
+//! Linux only: no other platform's allocator reads it.
 
-/// The cap. Two, because two and four measured the same memory and two is the smaller promise.
-pub const ARENA_MAX: &str = "2";
+use std::process::Command;
+
+/// The cap the engine is spawned with, or `None` while no measurement asks for one.
+///
+/// Set from the engine's own settled reading, never copied from the renderer's — the two
+/// processes were measured apart because they allocate differently.
+pub const ENGINE_ARENA_MAX: Option<&str> = None;
 
 /// The variable glibc reads. Named once, here.
 pub const ARENA_MAX_VAR: &str = "MALLOC_ARENA_MAX";
 
-/// Cap the arenas for this process and every process it spawns.
+/// Put the cap on the engine's command, if there is one to put.
 ///
-/// # Safety
-/// Called as the first statement of `main`, where this program is single-threaded. `set_var` is
-/// unsound beside another thread reading the environment, which is why the call site is fixed and
-/// asserted by `desktop-shell.test.ts` rather than left to a reader's care.
-pub fn apply() {
-    #[cfg(target_os = "linux")]
-    if std::env::var_os(ARENA_MAX_VAR).is_none() {
-        // An operator who set it keeps their value: this is a default, not a policy.
-        unsafe { std::env::set_var(ARENA_MAX_VAR, ARENA_MAX) };
+/// On the command and not in this process's environment: glibc reads the variable when a process
+/// starts, so a child spawned with it gets it, and nothing else does.
+pub fn apply_to_engine(command: &mut Command) {
+    if cfg!(target_os = "linux") {
+        if let Some(value) = ENGINE_ARENA_MAX {
+            command.env(ARENA_MAX_VAR, value);
+        }
     }
 }
 

@@ -640,32 +640,28 @@ describe("the Rust side", () => {
   });
 
   /**
-   * THE ALLOCATOR CAP IS SET BEFORE THERE IS ANYTHING TO RACE WITH.
+   * THE ALLOCATOR CAP IS THE ENGINE CHILD'S, AND IT NEVER TOUCHES THE PROCESS THAT SETS IT.
    *
-   * glibc reads `MALLOC_ARENA_MAX` once, at a process's own start, and the process holding the
-   * arenas is the webview's CHILD process — so the shell sets it for everything it spawns. Two
-   * things make the POSITION load-bearing rather than tidy: writing the environment beside a
-   * thread that reads it is a data race, and a write after the runtime is built reaches no child
-   * the runtime has already spawned. Both failures are silent, so the order is asserted here.
+   * Capping glibc's arenas in the WEBVIEW's process was measured to be a redistribution and not a
+   * saving: the per-thread arenas fell by 81 MB and the brk heap rose by 88 MB, with the process's
+   * own RSS unmoved. So the cap goes on the command that spawns the engine and nowhere else. A
+   * `set_var` in `main` would be the shape that was refuted — it reaches the webview's process too,
+   * which pays the contention and gets nothing back — and nothing about it would show in a log.
    */
-  it("caps the allocator arenas before it builds anything", () => {
-    const src = read("src-tauri/src/main.rs");
-    const call = src.indexOf("allocator_arenas::apply();");
-    expect(call, "main.rs must call allocator_arenas::apply()").toBeGreaterThan(-1);
-    expect(call, "the cap must be set before the Tauri builder exists").toBeLessThan(
-      src.indexOf("tauri::Builder::default()"),
+  it("caps the engine's allocator arenas on the child, never on this process", () => {
+    const main = read("src-tauri/src/main.rs");
+    expect(main, "the cap must not be set process-wide").not.toMatch(/MALLOC_ARENA_MAX/);
+    expect(main, "main must not call a process-wide arena setter").not.toMatch(
+      /allocator_arenas::apply\(\)/,
     );
-    expect(call, "the cap must be set before the runtime is built").toBeLessThan(
-      src.indexOf(".build(tauri::generate_context!())"),
+    const engine = read("src-tauri/src/engine.rs");
+    const call = engine.indexOf("allocator_arenas::apply_to_engine(&mut command)");
+    expect(call, "engine.rs must put the cap on the command it spawns").toBeGreaterThan(-1);
+    expect(call, "the cap must be on the command BEFORE it is spawned").toBeLessThan(
+      engine.indexOf("let mut child = match command.spawn()"),
     );
-    // The first statement of `main`, not merely an early one: anything above it is a statement
-    // that could spawn the thread this ordering exists to stay ahead of.
-    const body = src.slice(src.indexOf("fn main() {") + "fn main() {".length);
-    const firstStatement = body
-      .split("\n")
-      .map((l) => l.trim())
-      .find((l) => l.length > 0 && !l.startsWith("//"));
-    expect(firstStatement).toBe("allocator_arenas::apply();");
+    // And the module that owns it sets nothing in this process, whatever the value becomes.
+    expect(read("src-tauri/src/allocator_arenas.rs")).not.toMatch(/env::set_var/);
   });
 
   /**
@@ -688,17 +684,15 @@ describe("the Rust side", () => {
   });
 
   /**
-   * THE ENGINE IS A CHILD OF THIS SHELL, SO IT INHERITS THE CAP — AND NOTHING MAY QUIETLY TAKE IT
-   * AWAY.
+   * NOTHING MAY TAKE THE CAP BACK OFF THE COMMAND IT WAS PUT ON.
    *
-   * glibc reads `MALLOC_ARENA_MAX` at a process's own start, and the sidecar engine starts as a
-   * child of this shell, so one `set_var` in `main` reaches both the webview's process and the
-   * engine's. That inheritance is the whole design — the alternative is a second setter — and it
-   * has exactly two ways to be lost silently: the spawn clearing the environment, or the variable
-   * being added to the per-config unset list beside the IMAP ones. Neither would fail a build or
-   * show in a log; the engine would simply go on holding arenas nobody was looking at.
+   * The engine's launch composes an unset list and an env list, and the shell applies them in that
+   * order before the cap goes on. Two silent ways to lose it: the variable joining the per-config
+   * unset list beside the IMAP ones, or the spawn clearing the environment wholesale. Neither
+   * fails a build or shows in a log — the engine would simply go on holding arenas nobody was
+   * looking at, which is the state this whole lever exists to be able to change.
    */
-  it("does not take the allocator cap away from the engine it spawns", () => {
+  it("does not take the allocator cap back off the engine's command", () => {
     expect(read("src-tauri/src/engine.rs")).not.toMatch(/\benv_clear\(/);
     expect(read("src-tauri/src/config.rs")).not.toMatch(/MALLOC_ARENA_MAX/);
     expect(read("src-tauri/src/host.rs")).not.toMatch(/MALLOC_ARENA_MAX/);

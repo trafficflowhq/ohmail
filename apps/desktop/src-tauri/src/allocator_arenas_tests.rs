@@ -1,13 +1,7 @@
-//! The cap is a number a child can read, and an existing value wins.
+//! What the cap is allowed to be, and that it reaches the child and nothing else.
 
-use super::{apply, ARENA_MAX, ARENA_MAX_VAR};
-
-#[test]
-fn the_cap_is_a_positive_integer_glibc_will_parse() {
-    let n: u32 = ARENA_MAX.parse().expect("the cap must parse as a number");
-    assert!(n >= 1, "an arena cap of zero would be glibc's default, not a cap");
-    assert!(n <= 8, "a cap this high is not a cap: the measured five arenas would all survive");
-}
+use super::{apply_to_engine, ARENA_MAX_VAR, ENGINE_ARENA_MAX};
+use std::process::Command;
 
 #[test]
 fn the_variable_is_the_one_glibc_reads() {
@@ -15,16 +9,23 @@ fn the_variable_is_the_one_glibc_reads() {
 }
 
 #[test]
-#[cfg(target_os = "linux")]
-fn an_operator_who_set_it_keeps_their_value() {
-    // Serial by construction: this test owns the variable for its own process. The arm that
-    // matters is the SECOND call — a default that overwrote an operator's value would be a
-    // setting the app took away from them.
-    unsafe { std::env::set_var(ARENA_MAX_VAR, "7") };
-    apply();
-    assert_eq!(std::env::var(ARENA_MAX_VAR).ok().as_deref(), Some("7"));
-    unsafe { std::env::remove_var(ARENA_MAX_VAR) };
-    apply();
-    assert_eq!(std::env::var(ARENA_MAX_VAR).ok().as_deref(), Some(ARENA_MAX));
-    unsafe { std::env::remove_var(ARENA_MAX_VAR) };
+fn a_cap_that_exists_is_a_number_glibc_will_parse() {
+    // Absent is the state while no measurement asks for a cap, and it is not a failure. What is
+    // refused is a cap that is present and meaningless: zero is glibc's own default rather than a
+    // cap, and anything high enough to admit every arena measured is not one either.
+    if let Some(value) = ENGINE_ARENA_MAX {
+        let n: u32 = value.parse().expect("the cap must parse as a number");
+        assert!(n >= 1, "an arena cap of zero is glibc's default, not a cap");
+        assert!(n <= 8, "a cap this high would admit every arena the engine was measured holding");
+    }
+}
+
+#[test]
+fn the_cap_never_touches_this_process() {
+    // The whole point of putting it on the command: the webview's process was measured paying for
+    // a cap it does not benefit from. If this ever sets the variable here, that cost comes back.
+    let before = std::env::var_os(ARENA_MAX_VAR);
+    let mut command = Command::new("/bin/true");
+    apply_to_engine(&mut command);
+    assert_eq!(std::env::var_os(ARENA_MAX_VAR), before);
 }
