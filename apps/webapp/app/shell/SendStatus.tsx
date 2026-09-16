@@ -90,7 +90,17 @@ export function SendStatus({
                */
               : send.code === "draft_changed"
                 ? { tone: "warn", text: t("statusDraftChanged") }
-                : { tone: "error", text: t("statusFailed") }
+                /**
+                 * THIS CLIENT COULD NOT SAVE THE DRAFT, so it cannot say which version would
+                 * have gone — and it refuses rather than sending a row it never vouched for.
+                 * `warn` for `draft_changed`'s reason and not `statusFailed`'s: nothing left
+                 * and nothing is lost, the words are still in the editor, and the remedy is
+                 * the press that is already on screen. Its own sentence because the reader's
+                 * next move differs — nobody else wrote this draft, the save did not land.
+                 */
+                : send.code === "draft_unsaved"
+                  ? { tone: "warn", text: t("statusDraftUnsaved") }
+                  : { tone: "error", text: t("statusFailed") }
             : send.phase === "duplicate"
               /**
                * The server already has this message — three facts, three sentences. `warn`, not `error`:
