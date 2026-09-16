@@ -135,7 +135,7 @@ import { ProfileImportCard, useProfileImport, type ProfileImportTransport } from
 import {
   COMPOSE_SEND_KEY, heldRowUnverified, inlineForwardKey, promoteOrphanedReplyLane,
   REPLY_DRAFT_PREFIX, SEND_IN_FLIGHT_PHASES,
-  sendPendingInOutbox, useMailSend, readReplyDraft, writeReplyDraft,
+  sendPendingInDurableOutbox, sendPendingInOutbox, useMailSend, readReplyDraft, writeReplyDraft,
   readReplyMeta, writeReplyMeta, type LanePromotionPlan, type SendState,
 } from "./mail-send";
 import {
@@ -3251,6 +3251,16 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
       const parent = engine.read().get<EngineMessage>("message", id) ?? null;
       const wasOpen = replyToRef.current === id;
       for (const lane of [id, inlineForwardKey(id)]) {
+        /* A LANE WHOSE SEND IS ALREADY ON ITS WAY IS NOT PROMOTED, and this is the write-site
+           census's rule, not a new one: a row created for a message that may already have been
+           delivered is the double-send bait. Three witnesses, the same three the compose create
+           gate asks — the in-memory queue, the durable outbox, and a record the jar holds for this
+           lane. The lane is LEFT, so `settle` still clears it when the send lands. */
+        if (
+          sendPendingInOutbox(engine, lane)
+          || sendPendingInDurableOutbox(engine, lane)
+          || holdOf(engine, { lane, draftId: null, session: null }).kind !== "free"
+        ) continue;
         void promoteOrphanedReplyLane(
           lane, id, promotionPlanFor(lane, id, parent),
           (m) => engine.mutate(m as EngineMutation),
