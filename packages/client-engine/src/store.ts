@@ -197,6 +197,14 @@ export interface MirrorStore extends EntityReader {
   forceCursor(cursor: Cursor): void;
   /** Live entities keyed "type:id", tombstones dropped — the convergence oracle view. */
   snapshot(): Map<string, unknown>;
+  /**
+   * The RAW record, tombstone included — the one read that can tell "this row was deleted" from
+   * "this mirror never held it". {@link get} folds both into `undefined`, and the difference is
+   * load-bearing: a delete writes `entity: null` at the deleting seq, while {@link prune} removes
+   * the record outright, so an ABSENT record is a row outside this device's window and says
+   * nothing about the server. Anything that acts on "gone" reads this and never mere absence.
+   */
+  record(type: string, id: string): MirrorRecord | undefined;
 }
 
 export abstract class BaseMirrorStore implements MirrorStore {
@@ -935,7 +943,7 @@ export abstract class BaseMirrorStore implements MirrorStore {
     return out;
   }
 
-  /** Raw record access (seq inspection in tests). */
+  /** See {@link MirrorStore.record} — the tombstone-vs-absent read, and seq inspection in tests. */
   record(type: string, id: string): MirrorRecord | undefined {
     return this.records.get(recordKey(type, id));
   }

@@ -35,7 +35,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { OUTBOX_TYPE } from "@ohmail/client-engine";
-import type { EngineMessage, EntityReader, MutationResult, OhmailEngine } from "@ohmail/client-engine";
+import type {
+  EmailAddress, EngineMessage, EntityReader, MutationResult, OhmailEngine,
+} from "@ohmail/client-engine";
 import type { ToastFn } from "@ohmail/ui";
 import {
   clearComposeDraft, composePlan, composeSessionId, composeStillHolds, readComposeDraft,
@@ -534,12 +536,84 @@ export function clearLaneScratch(
     // exactly as a reply's draft does below. The compose form's autosave is deliberately
     // untouched: this send never used the form, and a half-written compose must survive
     // somebody forwarding a message mid-sentence.
-    durableRemove(replyDraftKey(key), "reply.draft");
-    durableRemove(replyMetaKey(key), "reply.meta");
+    clearReplyLane(key);
     return;
   }
-  durableRemove(replyDraftKey(m.inReplyTo), "reply.draft");
-  durableRemove(replyMetaKey(m.inReplyTo), "reply.meta");
+  clearReplyLane(m.inReplyTo);
+}
+
+/**
+ * THE TWO KEYS ONE LANE HOLDS, dropped together — the body scratch and the editor meta. Its own
+ * function because there is now a second ending that spends a lane ({@link
+ * promoteOrphanedReplyLane}), and two copies of "which keys is this lane holding" is two places
+ * for a lane to leak a draft that outlives the message it was.
+ */
+export function clearReplyLane(lane: string): void {
+  durableRemove(replyDraftKey(lane), "reply.draft");
+  durableRemove(replyMetaKey(lane), "reply.meta");
+}
+
+/**
+ * WHAT A DEAD PARENT STILL LETS US NAME — read by the caller, from the row, in the instant before
+ * the mirror tombstones it. A create is refused without a mailbox (400), so this is the whole of
+ * whether a lane can be promoted at all.
+ */
+export interface LanePromotionPlan {
+  mailboxId: string;
+  subject: string;
+  to: readonly EmailAddress[];
+}
+
+/** What became of one orphaned lane. Every arm but `promoted` leaves both keys where they are. */
+export type LanePromotion = "promoted" | "empty" | "unplaceable" | "refused";
+
+/**
+ * PROMOTE, NEVER DROP — a half-written reply whose parent another mail client has taken away.
+ *
+ * The inline reply has no autosave: it is `localStorage` keyed on the parent's id, and the only
+ * reader is the editor that opens ON that parent. So a message moved out of every watched folder
+ * by another client does not delete the words — it makes them unreachable, which is the same loss
+ * with a better alibi. This turns them into a server draft row carrying `inReplyToMessageId` of
+ * the dead id (legal: the FK is nullable and the delete is soft), and only THEN drops the lane.
+ *
+ * THE ORDER IS THE INVARIANT. The lane is cleared after the row is confirmed and never before, so
+ * a refused save, a jar that cannot be read or a parent nothing can place leaves the text exactly
+ * where it was — unreachable, as it is today, rather than gone.
+ */
+export async function promoteOrphanedReplyLane(
+  lane: string,
+  parentId: string,
+  plan: LanePromotionPlan | null,
+  save: (m: {
+    kind: "draft_save"; draftId: null; mailboxId: string; inReplyToMessageId: string;
+    subject: string; body: string; html?: string;
+    to: EmailAddress[]; cc: never[]; bcc: never[];
+  }) => Promise<Pick<MutationResult, "status" | "entityId">>,
+): Promise<LanePromotion> {
+  const body = readReplyDraft(lane);
+  if (body.text.trim().length === 0) return "empty";
+  if (plan === null) return "unplaceable";
+  const result = await save({
+    kind: "draft_save", draftId: null,
+    mailboxId: plan.mailboxId, inReplyToMessageId: parentId,
+    subject: plan.subject, body: body.text,
+    ...(body.html ? { html: body.html } : {}),
+    to: plan.to.map((a) => ({ ...a })), cc: [], bcc: [],
+  });
+  // ADOPTED, not assumed — `compose-autosave`'s rule: without the server's id nothing was
+  // created, and clearing here would be the loss this function exists to prevent.
+  if (result.status !== "confirmed" || !result.entityId) return "refused";
+  /* THE EDITOR META TRAVELS WITH THE TEXT, onto the new row's own lane — `draft:<rowId>`, which is
+     what the compose form reads a reopened draft's block state from. The `sig` half is the reason:
+     an EDITED signature is the person's words too, and the row has no column for it, so dropping
+     the meta here would restore a signature somebody had struck. Written before the old lane is
+     cleared: the order is the same invariant as above. */
+  const meta = readReplyMeta(lane);
+  if (meta.subject !== undefined || meta.sig !== undefined) {
+    writeReplyMeta(`draft:${result.entityId}`, meta);
+  }
+  clearReplyLane(lane);
+  return "promoted";
 }
 
 /**

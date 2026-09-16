@@ -35,7 +35,10 @@ import { BootSkeleton } from "../shell/BootSkeleton";
 import { useLoadingGrace } from "../shell/loading-grace";
 import { useMailState } from "../shell/MailStateProvider";
 import type { OlderMail } from "../shell/older-mail";
-import { Key, MessagePane, MOVE_TARGETS, type BulkAction, type MessageAction, type MoveTarget } from "../shell/MessagePane";
+import {
+  Key, MessageGone, MessagePane, MOVE_TARGETS,
+  type BulkAction, type MessageAction, type MessageGoneProps, type MoveTarget,
+} from "../shell/MessagePane";
 import { MoreMenu, type MoreMenuItem } from "../shell/MoreMenu";
 import { isModalOpen } from "../shell/modal-gate";
 import { useBarDensity } from "../shell/bar-density";
@@ -155,6 +158,7 @@ export function OhboxView({
   tags,
   now,
   selectedId,
+  gone = null,
   onSelect,
   onEnterReader,
   onMarkSeen,
@@ -240,6 +244,14 @@ export function OhboxView({
   tags: TagDTO[];
   now: Date;
   selectedId: string | null;
+  /**
+   * THE COLUMN'S MESSAGE WAS TAKEN AWAY BY ANOTHER MAIL CLIENT — non-null ⇒ render the notice
+   * where the pane would be, instead of the resting panel. It cannot be derived here: a tombstone
+   * takes the row out of `all`, so this view can only see that nothing is selected, which is also
+   * what a resting column looks like. The shell asks the mirror and answers. See
+   * {@link MessageGone}.
+   */
+  gone?: MessageGoneProps | null;
   onSelect: (id: string) => void;
   /**
    * Open the reader ON A MESSAGE.
@@ -2212,6 +2224,11 @@ export function OhboxView({
             }}
             onAddTag={onAddTag}
           />
+        ) : gone ? (
+          /* BEFORE the resting panel, and that order is the whole arm: "nothing open" and "the
+             message you had open has been removed elsewhere" were one state, and the second one
+             is the one that reads as lost mail. */
+          <MessageGone openTrash={gone.openTrash} />
         ) : all.length > 0 ? (
           /**
            * The resting column — what the reading column says when nothing is open, which since the two fallbacks

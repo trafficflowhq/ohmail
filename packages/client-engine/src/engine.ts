@@ -2012,6 +2012,8 @@ export class OhmailEngine {
    */
   private readonly withdrawnKeys = new Set<string>();
   private readonly listeners = new Set<() => void>();
+  /** See {@link OhmailEngine.onMessagesRemoved} — told BEFORE the page is written. */
+  private readonly removalListeners = new Set<(ids: readonly string[]) => void>();
   private readonly readerView: OverlayReader;
   /** {@link oneSourceReader} over the overlay — what {@link OhmailEngine.read} hands out. */
   private readonly resolvedView: EntityReader;
@@ -3398,6 +3400,33 @@ export class OhmailEngine {
   private noteApplied(changes: SyncChange[]): void {
     this.countReceived(changes);
     this.settleOrganizerRequests(changes);
+    this.noteMessagesRemoved(changes);
+  }
+
+  /**
+   * WHICH MESSAGES THIS PAGE TAKES AWAY — told to whoever asked, before the write.
+   *
+   * BEFORE is the whole of why this hangs off {@link noteApplied}: a listener's business is with
+   * what the removed row still lets it derive — the mailbox it came from, who a reply to it would
+   * have gone to, the subject — and after the apply the row is a tombstone carrying none of that.
+   * The webapp's reply-lane promotion is the consumer: a half-written answer keyed on a message
+   * another mail client moved out of every watched folder has to become a draft row with an
+   * audience, and this is the last instant anything can name one.
+   *
+   * Deduped, and NOT gated on the row being live here: the lane is keyed on the id, so a message
+   * this device had already evicted is still a message somebody may be answering.
+   */
+  private noteMessagesRemoved(changes: SyncChange[]): void {
+    if (this.removalListeners.size === 0) return;
+    const ids = [...new Set(
+      changes.filter((ch) => ch.type === "message" && ch.op === "delete").map((ch) => ch.id),
+    )];
+    if (ids.length === 0) return;
+    for (const l of this.removalListeners) {
+      // A listener that throws is a listener's defect, never a reason to abandon a drain
+      // mid-page — the apply below it is what keeps this mirror convergent.
+      try { l(ids); } catch { /* the consumer's own problem */ }
+    }
   }
 
   /**
@@ -3828,6 +3857,28 @@ export class OhmailEngine {
   subscribe(listener: () => void): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
+  }
+
+  /**
+   * TELL ME WHICH MESSAGES A PAGE REMOVES, as it removes them — {@link subscribe} says only that
+   * something moved, which is no use to anything that has to read the row one last time. Fired
+   * synchronously from {@link noteMessagesRemoved}, before the apply; see there for why.
+   */
+  onMessagesRemoved(listener: (ids: readonly string[]) => void): () => void {
+    this.removalListeners.add(listener);
+    return () => this.removalListeners.delete(listener);
+  }
+
+  /**
+   * IS THIS MESSAGE GONE — as opposed to merely not here. `true` only for a TOMBSTONE: a record
+   * the mirror holds with `entity: null`, written by the deleting change at its own seq. An
+   * absent record answers `false`, because the window is bounded and {@link MirrorStore.prune}
+   * removes rather than tombstones, so absence is "outside this device's window" and a surface
+   * that read it as "deleted" would say "gone" about ordinary mail on every small mirror.
+   */
+  messageIsGone(id: string): boolean {
+    const rec = this.store.record("message", id);
+    return rec !== undefined && rec.entity === null;
   }
 
   private notify(): void {

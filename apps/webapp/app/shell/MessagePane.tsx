@@ -1306,6 +1306,40 @@ export function MessageActionBar({
   );
 }
 
+/**
+ * WHAT THE READING SURFACE SAYS WHEN THE MESSAGE HAS LEFT — one sentence, in the shape every
+ * resting column already uses, and a way to follow the mail.
+ *
+ * The IMAP mailbox is the master, so another client moving a message out of every watched folder
+ * is legitimate and ohmail is right to drop the row. What was not legitimate is the silence: the
+ * pane simply blanked, which is character-for-character what it renders when nothing is open, so
+ * a person watching their open message and their half-written answer disappear together had no
+ * way to tell a removal from a bug. ohmail's own Trash list structurally cannot hold the row
+ * (it inner-joins the folder ohmail's own delete verb writes), so the one place it can still be
+ * read is the LIVE Trash window over the provider's own folder — which is what the link opens.
+ */
+export interface MessageGoneProps {
+  /**
+   * `null` ⇒ this build has no live Trash window to point at (the demo, "Use folders" off, a
+   * seed still owed), and the sentence stands alone rather than offering a door into an empty
+   * room. Never a bare `href`: the navigation carries the switch mark every other one does.
+   */
+  openTrash: (() => void) | null;
+}
+
+export function MessageGone({ openTrash }: MessageGoneProps) {
+  const tr = useTranslations("reader");
+  return (
+    <div className="empty msg-gone" role="status">
+      <span className="glyph" aria-hidden="true">✉</span>
+      <b>{tr("gone")}</b>
+      {openTrash ? (
+        <Button variant="ghost" onClick={openTrash}>{tr("goneTrash")}</Button>
+      ) : null}
+    </div>
+  );
+}
+
 export function MessagePane({
   message,
   tags,

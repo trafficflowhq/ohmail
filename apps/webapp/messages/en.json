@@ -1490,6 +1490,8 @@
     "yourMail": "What happens to your mail"
   },
   "reader": {
+    "gone": "This message was moved or deleted in another mail app.",
+    "goneTrash": "Look in Trash",
     "hint": "to return",
     "back": "Back",
     "pane": "Open message",
@@ -2895,6 +2897,7 @@
     "subjectFoot": "The sender’s other mail keeps going where it goes now. Change or revoke this at Settings → Rules."
   },
   "reply": {
+    "toastSavedAsDraft": "Your unsent reply was saved in Drafts.",
     "to": "Reply to {name}",
     "toAll": "Reply to {names}",
     "ccLine": "Cc {names}",

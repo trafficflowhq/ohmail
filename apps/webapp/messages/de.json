@@ -1490,6 +1490,8 @@
     "yourMail": "Was mit deiner Post passiert"
   },
   "reader": {
+    "gone": "Diese Nachricht wurde in einem anderen Mailprogramm verschoben oder gelöscht.",
+    "goneTrash": "Im Papierkorb nachsehen",
     "hint": "zum Zurückgehen",
     "back": "Zurück",
     "pane": "Geöffnete Nachricht",
@@ -2895,6 +2897,7 @@
     "subjectFoot": "Die übrige Post dieses Absenders geht weiter dorthin, wo sie jetzt hingeht. Ändern oder widerrufen kannst du das unter Einstellungen → Regeln."
   },
   "reply": {
+    "toastSavedAsDraft": "Deine ungesendete Antwort wurde in den Entwürfen gespeichert.",
     "to": "Antwort an {name}",
     "toAll": "Antwort an {names}",
     "ccLine": "Kopie an {names}",

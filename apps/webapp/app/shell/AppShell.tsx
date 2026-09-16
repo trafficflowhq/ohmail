@@ -35,6 +35,8 @@ import {
   rulesList,
   senderKey,
   sendingMailboxId,
+  replySubject,
+  forwardSubject,
   tagsCrossView,
   threadOf,
   threadParticipantsIndex,
@@ -94,7 +96,7 @@ import { PLACE_LABEL, avatarHue, hueOf, initialsOf, placeLabel, resurfaceLabel, 
 import { useDayClock } from "./day-clock";
 import { activeFormatLocale, activeFormatZone } from "./locale";
 import { displayAddress, displayDomain } from "./idn";
-import { MessagePane, type BulkAction, type MessageAction } from "./MessagePane";
+import { MessageGone, MessagePane, type BulkAction, type MessageAction } from "./MessagePane";
 import { AttachmentPreview } from "../components/AttachmentPreview";
 import { dispatchMarkAll, dispatchMarkAllRead } from "./read-all";
 import { useMessageAttachments } from "./attachments";
@@ -131,9 +133,10 @@ import { OhmarchyOffer, useOhmarchyOffer } from "./OhmarchyOffer";
 import type { ApplyFaceAllDevices } from "./FaceRow";
 import { ProfileImportCard, useProfileImport, type ProfileImportTransport } from "./ProfileImportCard";
 import {
-  COMPOSE_SEND_KEY, heldRowUnverified, inlineForwardKey, SEND_IN_FLIGHT_PHASES,
+  COMPOSE_SEND_KEY, heldRowUnverified, inlineForwardKey, promoteOrphanedReplyLane,
+  REPLY_DRAFT_PREFIX, SEND_IN_FLIGHT_PHASES,
   sendPendingInOutbox, useMailSend, readReplyDraft, writeReplyDraft,
-  readReplyMeta, writeReplyMeta, type SendState,
+  readReplyMeta, writeReplyMeta, type LanePromotionPlan, type SendState,
 } from "./mail-send";
 import {
   attachSendLockDraft, holdOf, releaseSendLockForRow, unresolvedSendRows,
@@ -492,15 +495,26 @@ export function openTargetFor(
  * rowless message, so `snippet` says so). The mirror wins whenever it has the row — it carries
  * the overlay and this device's own triage and flag state.
  */
+/**
+ * THREE ANSWERS, AND THE THIRD IS THE ONE THIS SURFACE WAS MISSING. `null` used to mean both
+ * "nothing is open" and "the message being read has been taken away", which is why a message
+ * another mail client moved out of every watched folder left a blank pane and no word said.
+ * `"gone"` is that second state named; see {@link OhmailEngine.messageIsGone} for why it is asked
+ * of the TOMBSTONE and never of mere absence.
+ */
+export type ReaderAnswer = EngineMessage | "gone" | null;
+
 export function readerMessageFor(
   readerFor: string | null,
   fromMirror: (id: string) => EngineMessage | undefined,
   offMirror: EngineMessage | null,
-): EngineMessage | null {
+  isGone: (id: string) => boolean,
+): ReaderAnswer {
   if (!readerFor) return null;
   const mine = fromMirror(readerFor);
   if (mine) return mine;
-  return offMirror?.id === readerFor ? offMirror : null;
+  if (offMirror?.id === readerFor) return offMirror;
+  return isGone(readerFor) ? "gone" : null;
 }
 
 /**
@@ -2726,6 +2740,24 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
   const selectedOhbox = allOhbox.find((m) => m.id === ohboxSel) ?? null;
 
   /**
+   * THE READING COLUMN'S OWN "GONE", and it needs its own question: the column renders from the
+   * SELECTED ROW, so a tombstone takes the row out of `allOhbox` and `selectedOhbox` answers
+   * `null` — indistinguishable from a resting column with nobody's message in it, which is what
+   * the reader saw. The cursor still names the id, so the mirror can still be asked.
+   */
+  const ohboxGone = selectedOhbox === null && ohboxSel !== null && engine.messageIsGone(ohboxSel);
+  /**
+   * WHERE A GONE MESSAGE CAN STILL BE READ — the LIVE Trash window over the provider's own
+   * folder. `null` wherever that window reads nothing (`useTrashWindow`'s own gate: the demo,
+   * "Use folders" off, a seed still owed), because a link into an empty room is worse than no
+   * link. ohmail's own Trash list is not an option at any setting: it inner-joins the folder only
+   * ohmail's delete verb writes, and this row was never deleted by ohmail.
+   */
+  const openTrashWindow = !demo && consent.foldersEnabled && !seedOwed
+    ? () => go("trash")
+    : null;
+
+  /**
    * DERIVE-CLOSE the Quick-Look overlay when the message it belongs to stops being the open
    * one — a different row selected, a view change, the reader closed. `attachments` are held
    * for `selectedOhbox` only and their `blob:` URLs are revoked the moment it moves, so a
@@ -2763,11 +2795,19 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
    * `OhboxView.open` documents — the sheet swapping to a message nobody opened the moment
    * the list re-partitioned underneath it.
    */
-  const readerMessage: EngineMessage | null = readerMessageFor(
+  const readerAnswer: ReaderAnswer = readerMessageFor(
     readerFor,
     (id) => reader.get<EngineMessage>("message", id),
     readerOffMirror,
+    (id) => engine.messageIsGone(id),
   );
+  /**
+   * The reader is standing on a message the mirror has TOMBSTONED — another mail client moved or
+   * deleted it. Split out rather than widened through: everything below asks `readerMessage` for a
+   * row, and a string in that variable would be a row-shaped lie at ten call sites.
+   */
+  const readerGone = readerAnswer === "gone";
+  const readerMessage: EngineMessage | null = readerGone ? null : readerAnswer;
 
   /**
    * THE OHBOX'S ARMED READ — reported by `OhboxView.onReadArmed`, held here for ONE consumer:
@@ -3172,6 +3212,98 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
   /** The mode, readable from settle handlers and draft arrivals — same idiom as `replyToRef`. */
   const replyModeRef = useRef(replyMode);
   replyModeRef.current = replyMode;
+
+  /* ── a parent another mail client took away ───────────────────────────────────────────── */
+
+  /**
+   * WHAT A DEAD PARENT STILL LETS A PROMOTED LANE NAME — the mailbox to create the row in, the
+   * subject and the audience. `null` ⇒ nothing can place it, and the lane is then left exactly as
+   * it is rather than cleared, which is the invariant this whole path exists for.
+   *
+   * The audience is the PLAIN reply's, never reply-all: the lane holds a body and an editor meta
+   * and has never held recipients, so widening one nobody asked for would put somebody's
+   * half-written sentence in front of a room. Without a parent (a window that loads after the
+   * tombstone) there is no audience and no subject to derive at all — the row carries the words,
+   * which is the thing that cannot be recovered any other way, and the compose form is where the
+   * rest is filled in.
+   */
+  const promotionPlanFor = useStableCallback(
+    (lane: string, parentId: string, parent: EngineMessage | null): LanePromotionPlan | null => {
+      /* `sendingMailboxId` is the COMPOSE fallback, and that is what this row is: a draft the
+         person will address and send from the compose form, not a reply going out now. */
+      const mailboxId = parent?.mailboxId ?? sendingMailboxId(engine.read());
+      if (!mailboxId) return null;
+      const meta = readReplyMeta(lane);
+      const forward = lane !== parentId;
+      const subject = meta.subject
+        ?? (parent ? (forward ? forwardSubject(parent.subject) : replySubject(parent.subject)) : "");
+      const to = !forward && parent ? (replyRecipients(parent, ownAddresses) ?? [parent.from]) : [];
+      return { mailboxId, subject, to };
+    },
+  );
+
+  /**
+   * PROMOTE EVERY LANE THESE DEAD IDS HOLD — the reply's and the inline forward's, because a
+   * forwarded note is somebody's own writing too and dropping one of a pair is half a fix.
+   *
+   * Called from the engine's removal signal, which fires BEFORE the page is applied: that is the
+   * last instant `parent` can be read, and every field but the text comes from it.
+   */
+  const promoteLanesOf = useStableCallback((ids: readonly string[]) => {
+    for (const id of ids) {
+      const parent = engine.read().get<EngineMessage>("message", id) ?? null;
+      const wasOpen = replyToRef.current === id;
+      for (const lane of [id, inlineForwardKey(id)]) {
+        void promoteOrphanedReplyLane(
+          lane, id, promotionPlanFor(lane, id, parent),
+          (m) => engine.mutate(m as EngineMutation),
+        ).then((outcome) => {
+          if (outcome !== "promoted" || !wasOpen) return;
+          // The editor's host is already unmounting; what is owed is the sentence saying where
+          // the words went, and `replyTo` released so it does not keep naming a dead message.
+          setReplyTo(null);
+          toast(t("reply.toastSavedAsDraft"));
+        });
+      }
+    }
+  });
+
+  /** Every lane this window holds is judged at most once per mount — see the effect below. */
+  const orphanScanDone = useRef(false);
+
+  /**
+   * THE TWO WAYS A LANE IS ORPHANED, AND THEY PARTITION THE CASES.
+   *
+   * A window that is OPEN when the delete arrives learns it from the removal signal. A window
+   * that was closed then — a second tab, tomorrow's reload — learns it from the mirror it
+   * hydrates, and that is this scan: once per mount, on the first publish after hydration.
+   *
+   * IT ASKS FOR A TOMBSTONE AND NEVER FOR ABSENCE. The mirror is a window over the account and
+   * `prune` removes rather than tombstones, so a parent that is merely not here is ordinary mail
+   * outside this device's window — promoting on that would turn every small mirror into a
+   * draft-making machine.
+   */
+  useEffect(() => {
+    const scan = (): void => {
+      if (orphanScanDone.current) return;
+      orphanScanDone.current = true;
+      let keys: string[] = [];
+      try { keys = Object.keys(window.localStorage); } catch { return; } // storage blocked
+      const dead = new Set<string>();
+      for (const k of keys) {
+        if (!k.startsWith(REPLY_DRAFT_PREFIX)) continue;
+        const lane = k.slice(REPLY_DRAFT_PREFIX.length);
+        const parentId = lane.startsWith("fwd:") ? lane.slice("fwd:".length) : lane;
+        // A lane whose remainder is still namespaced belongs to a surface with its own row.
+        if (parentId.length === 0 || parentId.includes(":")) continue;
+        if (engine.messageIsGone(parentId)) dead.add(parentId);
+      }
+      if (dead.size > 0) promoteLanesOf([...dead]);
+    };
+    return engine.subscribe(scan);
+  }, [engine, promoteLanesOf]);
+
+  useEffect(() => engine.onMessagesRemoved(promoteLanesOf), [engine, promoteLanesOf]);
 
   /**
    * A DRAFT THAT ARRIVED ON TOP OF SOMETHING ALREADY WRITTEN, and has not been placed yet.
@@ -7315,6 +7447,9 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
                 tags={tags}
                 now={now}
                 selectedId={selectedOhbox?.id ?? null}
+                /* The column's third answer — see `ohboxGone`. One prop, because "the message
+                   this column was showing has been taken away" is one fact. */
+                gone={ohboxGone ? { openTrash: openTrashWindow } : null}
                 onSelect={setOhboxSel}
                 /* The ID travels, and that is not tidiness. This was `() => setReaderOpen(true)`
                    against a reader hard-wired to `selectedOhbox`, so the indirection hid a
@@ -8128,7 +8263,9 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
           reader owning it too, closing the inline reply would also close the message it
           was quoting, in the same keypress. */}
       <Reader
-        open={readerMessage != null}
+        /* OPEN FOR THE "GONE" ANSWER TOO — the sheet closing on a tombstone is precisely the
+           silence this fixes: the message left and the surface said nothing. */
+        open={readerMessage != null || readerGone}
         ariaLabel={t("reader.pane")}
         returnHint={t("reader.hintReturn")}
         closeOnEscape={false}
@@ -8156,6 +8293,8 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
             onAction={(a) => onMessageAction(a, sheetMessage)}
             onAddTag={openTagPicker}
           />
+        ) : readerGone ? (
+          <MessageGone openTrash={openTrashWindow} />
         ) : (
           <span />
         )}
