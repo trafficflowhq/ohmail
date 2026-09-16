@@ -5443,11 +5443,6 @@ export function makeRequestReaderIo(
  */
 const compoundAckSearchRefused = new WeakSet<object>();
 
-/** For a case that needs a connection's capability latch to start clean. */
-export function forgetCompoundAckSearchRefusal(client: object): void {
-  compoundAckSearchRefused.delete(client);
-}
-
 /**
  * THE STALE ACKS IN ONE UID WINDOW, ASKED TWO WAYS. iCloud refuses the compound term
  * (`HEADER X-Ohmail-Ack "" BEFORE <date> UID lo:hi`) and imapflow resolves `false` rather than
