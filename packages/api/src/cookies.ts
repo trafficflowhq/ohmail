@@ -69,7 +69,6 @@ export function sessionCookies(
 ): string[] {
   const accessMax = seconds(cfg.accessTtlMs);
   const refreshMax = seconds(cfg.refreshTtlMs);
-  const ownerId = ownerCookieValue(owner);
   return [
     `tf_session=${tokens.accessToken}; HttpOnly; SameSite=Strict; Secure; Path=/; Max-Age=${accessMax}`,
     `tf_refresh=${tokens.refreshToken}; HttpOnly; SameSite=Strict; Secure; Path=/auth/refresh; Max-Age=${refreshMax}`,
@@ -77,10 +76,23 @@ export function sessionCookies(
     // Presence-only: the value is a constant and is never read. HttpOnly anyway — nothing in
     // the client needs to see it, and a marker JS cannot touch is a marker XSS cannot plant.
     `${RESUME_COOKIE}=1; HttpOnly; SameSite=Lax; Secure; Path=/; Max-Age=${refreshMax}`,
-    ...(ownerId
-      ? [`${OWNER_COOKIE}=${ownerId}; SameSite=Strict; Secure; Path=/; Max-Age=${refreshMax}`]
-      : []),
+    ...ownerCookie(owner, cfg),
   ];
+}
+
+/**
+ * The account marker's own Set-Cookie line, or nothing at all.
+ *
+ * Split out of {@link sessionCookies} because this marker is minted in a second place —
+ * `GET /auth/session`, where a jar that has lost it gets it back. Two spellings of these
+ * attributes is how a re-mint acquires a different `Path` or a `Domain=` and quietly becomes a
+ * different cookie; there is one. `null` and a value outside {@link ownerCookieValue}'s set both
+ * mint nothing, which is always safe: the client falls back to asking.
+ */
+export function ownerCookie(owner: string | null, cfg: AuthConfig): string[] {
+  const ownerId = ownerCookieValue(owner);
+  if (!ownerId) return [];
+  return [`${OWNER_COOKIE}=${ownerId}; SameSite=Strict; Secure; Path=/; Max-Age=${seconds(cfg.refreshTtlMs)}`];
 }
 
 /**

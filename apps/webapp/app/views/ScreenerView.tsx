@@ -391,9 +391,12 @@ export function SuggestControl({ control }: { control: SuggestBatchControl }) {
           ) : null}
         </>
       }
-      /* Whatever the server said, verbatim — an empty balance, AI switched off, no model
-         connected on this deployment. Each is a different, actionable fact and none of them
-         is inferable from a status code. */
+      /* WHOEVER SAID IT, in their own voice. A coded server refusal keeps the server's words —
+         an empty balance, AI switched off, no model connected on this deployment, each a
+         different actionable fact no status code carries. A refusal this client produced
+         instead of sending gets this client's own sentence, from the catalogue, in the reader's
+         language: an English line about a cookie used to arrive here as the AI service's own
+         explanation (`whyFor` / `clientRefusalKey`). */
       note={control.notice}
     />
   );

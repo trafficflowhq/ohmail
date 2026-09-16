@@ -250,15 +250,34 @@ export function apiOwnerBinding(): OwnerBinding {
  * longer prove anything, which is the moment to stop rather than the moment to trust.
  */
 export function apiOwnerHolds(path: string, opts: { ceremony?: boolean } = {}): boolean {
-  if (opts.ceremony === true) return true;
-  if (OWNER_FREE_EXACT.some((p) => path === p)) return true;
-  if (OWNER_FREE_PREFIXES.some((p) => path.startsWith(p))) return true;
-  if (binding.kind === "public") return true;
-  if (binding.kind === "blocked") return false;
+  return apiOwnerVerdict(path, opts) === "holds";
+}
+
+/**
+ * WHY it does not hold, in the three states a person can actually be in.
+ *
+ * One boolean answered all three with one sentence, and that sentence named the rarest of them:
+ * a browser whose marker had gone told its owner they were signed in to a DIFFERENT account —
+ * false for anyone with one account, and the state they were really in had no way out but a
+ * fresh sign-in. `absent` is silence and heals on the next page load (`GET /auth/session` mints
+ * the marker again); `signed-out` is a sign-out this browser asked for and the server did not
+ * confirm; `mismatch` is the genuine case. The refusal each earns is {@link ownerRefusal}.
+ */
+export type OwnerVerdict = "holds" | "absent" | "signed-out" | "mismatch";
+
+export function apiOwnerVerdict(path: string, opts: { ceremony?: boolean } = {}): OwnerVerdict {
+  if (opts.ceremony === true) return "holds";
+  if (OWNER_FREE_EXACT.some((p) => path === p)) return "holds";
+  if (OWNER_FREE_PREFIXES.some((p) => path.startsWith(p))) return "holds";
+  if (binding.kind === "public") return "holds";
+  // The binding's own name for a sign-out the server did not confirm — the same state the
+  // reserved cookie word carries, reached from this module instead of from the jar.
+  if (binding.kind === "blocked") return "signed-out";
   const marker = readOwnerMarker();
-  if (marker.kind !== "account") return false;
-  const expected = binding.kind === "bound" ? binding.owner : binding.owner;
-  return expected === null || marker.id === expected;
+  if (marker.kind === "absent") return "absent";
+  if (marker.kind === "signed-out") return "signed-out";
+  const expected = binding.owner;
+  return expected === null || marker.id === expected ? "holds" : "mismatch";
 }
 
 /**
@@ -331,7 +350,7 @@ export function credentialRoutes(): readonly string[] {
 }
 
 /**
- * A response that could not say it was ours. Distinct from {@link ownerMismatch} on purpose: that
+ * A response that could not say it was ours. Distinct from {@link ownerRefusal} on purpose: those
  * one means the BROWSER stopped naming us before or after the request, and this one means the
  * SERVER did not name us in the answer. A reader that conflates them cannot tell "the jar changed"
  * from "the answer was somebody else's", and only the second is evidence of the in-flight switch.
@@ -423,11 +442,15 @@ function checkAnswerOwner(path: string, seen: string | null | undefined, ceremon
  * and `res.json()` on an empty body throws.
  */
 export async function api<T>(path: string, opts: RequestOptions = {}): Promise<T> {
-  const holds = (): boolean => apiOwnerHolds(path, { ...(opts.ceremony === true ? { ceremony: true } : {}) });
+  /** Refuse with the sentence this state has earned — see {@link ownerRefusal}. */
+  const mustHold = (): void => {
+    const verdict = apiOwnerVerdict(path, { ...(opts.ceremony === true ? { ceremony: true } : {}) });
+    if (verdict !== "holds") throw ownerRefusal(verdict);
+  };
   // BEFORE the request and AGAIN after it. The first stops a call being made under somebody
   // else's session; the second stops an answer being handed back when the jar changed while it
   // was in flight. Both are the same question — see {@link apiOwnerHolds}.
-  if (!holds()) throw ownerMismatch(path);
+  mustHold();
 
   /*
    * A cookie-writing request takes the lock, and does not recover under it.
@@ -450,7 +473,7 @@ export async function api<T>(path: string, opts: RequestOptions = {}): Promise<T
     return withSessionCookieLock(async () => {
       const seen: { account?: string | null } = {};
       const answer = await attempt<T>(path, opts, seen);
-      if (!holds()) throw ownerMismatch(path);
+      mustHold();
       checkAnswerOwner(path, seen.account, ceremony);
       return answer;
     });
@@ -459,7 +482,7 @@ export async function api<T>(path: string, opts: RequestOptions = {}): Promise<T
   try {
     const seen: { account?: string | null } = {};
     const answer = await attempt<T>(path, opts, seen);
-    if (!holds()) throw ownerMismatch(path);
+    mustHold();
     checkAnswerOwner(path, seen.account, ceremony);
     return answer;
   } catch (err) {
@@ -478,15 +501,15 @@ export async function api<T>(path: string, opts: RequestOptions = {}): Promise<T
      * and be read as reuse. Cheap, because the answer is already wrong by
      * then: a request this client may no longer make gets no recovery attempt on somebody else's credential.
      */
-    if (!holds()) throw ownerMismatch(path);
+    mustHold();
     if (!(await resumeSession())) throw err;
     // The refresh rewrites the whole jar, so the question has to be asked again before the
     // retry: a refresh that landed as a different account must not be retried as this one.
-    if (!holds()) throw ownerMismatch(path);
+    mustHold();
     // A second failure is the real answer: the caller sees the refused request, not a loop.
     const seenAgain: { account?: string | null } = {};
     const retried = await attempt<T>(path, opts, seenAgain);
-    if (!holds()) throw ownerMismatch(path);
+    mustHold();
     // The retry is a fresh answer and gets the fresh answer's check. A recovery rotates the
     // session, so this is the arm where the account behind the cookie is most likely to have
     // moved between the two attempts.
@@ -534,22 +557,38 @@ export function cookieWritingPaths(): readonly string[] {
 }
 
 /**
- * The refusal, as an `ApiError` so every existing caller's error path renders it.
+ * The refusal, as an `ApiError` so every existing caller's error path renders it. `status: 0`
+ * puts it beside `api_unconfigured` and `coded: false` keeps it out of every classifier that
+ * keys on the API's envelope — the session classifier above all: this is a statement about
+ * which account the client is for, never a verdict about a session.
  *
- * `status: 0` puts it beside `api_unconfigured` — a client-side refusal that never reached a
- * server, rather than something a server said — and `coded: false` keeps it out of every
- * classifier that keys on the API's own envelope. In particular the session classifier must
- * never read this as a verdict about a session: it is a statement about which account this
- * client is for.
+ * THREE STATES, THREE CODES, THREE SENTENCES. One sentence for all three told a single-account
+ * person about a second account that does not exist, and named no way out of the state they
+ * were in. Distinct codes so a surface can do better than the text.
  */
-function ownerMismatch(_path: string): ApiError {
-  return new ApiError(
-    0,
+const OWNER_REFUSALS: Readonly<Record<Exclude<OwnerVerdict, "holds">, readonly [string, string]>> = {
+  absent: [
+    "owner_absent",
+    "This browser has lost the name of the account this window is for. Reload the page and it comes back.",
+  ],
+  "signed-out": [
+    "owner_signed_out",
+    "A sign-out was asked for on this browser and not confirmed. Sign in again to use this window.",
+  ],
+  mismatch: [
     "owner_mismatch",
     "This window is signed in to a different account than this browser now holds.",
-    undefined,
-    { coded: false },
-  );
+  ],
+};
+
+function ownerRefusal(verdict: Exclude<OwnerVerdict, "holds">): ApiError {
+  const [code, message] = OWNER_REFUSALS[verdict];
+  return new ApiError(0, code, message, undefined, { coded: false });
+}
+
+/** Every code {@link ownerRefusal} can throw, for the surfaces that classify one. */
+export function ownerRefusalCodes(): readonly string[] {
+  return Object.values(OWNER_REFUSALS).map(([code]) => code);
 }
 
 async function attempt<T>(

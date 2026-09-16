@@ -16,7 +16,7 @@ import { useTranslations } from "next-intl";
 import { senderKey } from "@ohmail/client-engine";
 import type { ToastFn } from "@ohmail/ui";
 import {
-  account, ApiError, apiConfigured, screener as screenerApi,
+  account, ApiError, apiConfigured, OFFLINE_CODE, screener as screenerApi,
   type ScreenerSkipReason, type ScreenerSuggestWire, type ScreenerWirePage,
 } from "../api-client";
 /* The decided-and-waiting shape, owned by the module that renders it. Type-only, so this does not
@@ -622,7 +622,12 @@ export function useScreenerSuggestions(opts: {
   const tAi = useTranslations("aiRefusal");
   const whyFor = useCallback((err: unknown, fallback: string): string => {
     const key = aiRefusalKey(err);
-    return key === null ? link.current.wire.messageFor(err, fallback) : tAi(key);
+    if (key !== null) return tAi(key);
+    // A refusal this client produced has no server voice to borrow — see {@link clientRefusalKey}.
+    // `t` through the ref for the reason the ref exists: it is a new function every render.
+    const here = clientRefusalKey(err);
+    if (here !== null) return notify.current.t(here);
+    return link.current.wire.messageFor(err, fallback);
   }, [tAi]);
   /** Held for the effect below, which may not read a `useCallback` that changes every render. */
   const say = useRef(whyFor);
@@ -795,10 +800,11 @@ export function useScreenerSuggestions(opts: {
         notify.current.toast(summarize(res, notify.current.t));
       } catch (err) {
         if (io.current.autoRun !== run) return;
-        // DISARM, DO NOT RETRY. See the latch's own comment: every refusal on this path is a
-        // standing condition (no credits, AI off, no classifier), not a blip, so retrying it
-        // automatically is a flood against a wall.
-        io.current.autoDisarmed = true;
+        // DISARM, DO NOT RETRY — for a refusal a SERVER stated. See the latch's own comment and
+        // {@link disarmsAutoSuggest}: a standing condition is a wall, a client-side refusal is
+        // not, and disarming on the second one stopped the pass for a browser that had only
+        // lost its owner marker.
+        if (disarmsAutoSuggest(err)) io.current.autoDisarmed = true;
         const why = say.current(err, notify.current.t("suggest.failed"));
         // ARMED FOR THE CLEAR: this line is a claim about the account, and an access read that
         // contradicts it must take it down (see the effect below).
@@ -1352,7 +1358,45 @@ function summarize(
  * `ApiError` is a bug in this client, with nothing true to say.
  */
 function apiMessageFor(err: unknown, fallback: string): string {
-  return err instanceof ApiError ? err.message : fallback;
+  // ONLY A CODED ERROR LENDS ITS WORDS. `wire.coded` is "our envelope said this"; an `ApiError`
+  // built on this side of the wire carries `coded: false`, and relaying its message put a
+  // client-side sentence about a cookie on screen as the AI service's account of itself. The
+  // caller's own copy is the honest answer there — see {@link clientRefusalKey}.
+  return err instanceof ApiError && err.wire.coded ? err.message : fallback;
+}
+
+/**
+ * A REFUSAL THIS CLIENT PRODUCED, AND THE `screener` KEY THAT SAYS SO IN THE READER'S LANGUAGE.
+ *
+ * The panel renders `notice` under a comment promising whatever the server said, and a refusal
+ * that never reached a server was going through it verbatim. The account gate throws three of
+ * these — its three states, three codes — and each deserves its own sentence, because the one
+ * that matters most tells a person their window can be recovered by reloading it.
+ */
+const CLIENT_REFUSALS: Readonly<Record<string, string>> = {
+  owner_absent: "suggest.refusedOwnerAbsent",
+  owner_signed_out: "suggest.refusedOwnerSignedOut",
+  owner_mismatch: "suggest.refusedOwnerMismatch",
+  [OFFLINE_CODE]: "suggest.refusedOffline",
+};
+
+export function clientRefusalKey(err: unknown): string | null {
+  if (!(err instanceof ApiError) || err.wire.coded) return null;
+  return CLIENT_REFUSALS[err.code] ?? "suggest.refusedHere";
+}
+
+/**
+ * MAY THIS REFUSAL DISARM THE AUTOMATIC PASS FOR THE MOUNT?
+ *
+ * The latch exists for a STANDING condition a server stated — no credits, AI off, no classifier
+ * — where retrying is a flood against a wall. A refusal this client produced is not that: the
+ * account gate's is undone by the next page load, and disarming on it meant a browser that had
+ * merely lost its marker also stopped preparing suggestions, silently, for the whole mount.
+ * Anything that is not an `ApiError` keeps the old answer: the desktop bridge's refusals come
+ * off a wire this client cannot inspect.
+ */
+export function disarmsAutoSuggest(err: unknown): boolean {
+  return !(err instanceof ApiError) || err.wire.coded;
 }
 
 /**

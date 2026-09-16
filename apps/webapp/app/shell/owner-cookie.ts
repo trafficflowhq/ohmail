@@ -93,11 +93,12 @@ export function isOwnerShaped(value: string): boolean {
  * server cannot see.
  */
 export function readOwner(jar?: string): string | null {
-  const value = rawOwnerCookie(jar);
-  // The reserved sign-out marker is NOT an account id, and this is the function everything that
-  // names a mirror or a storage key goes through — so it must never hand the word back as one.
-  if (value === null || value === OWNER_SIGNED_OUT) return null;
-  return OWNER_SHAPE.test(value) ? value : null;
+  // DERIVED from {@link readOwnerMarker}, not a second parse of the same cookie. It used to
+  // re-implement the shape test and the reserved-word check side by side with it, which is two
+  // spellings of "whose is this" — and three consumers reading two spellings is how one door
+  // came to scope a storage key where another refused a request. One resolver, one enum.
+  const marker = readOwnerMarker(jar);
+  return marker.kind === "account" ? marker.id : null;
 }
 
 /** The cookie's raw value, or `null` when it is not in the jar. Shared by both readers. */

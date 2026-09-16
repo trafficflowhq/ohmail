@@ -1089,6 +1089,7 @@ export function importFloorSpeaks(
  */
 export type MailStateKey =
   | "stopped"
+  | "ownerLost"
   | "failing"
   | "stale"
   | "catchingUp"
@@ -1502,15 +1503,17 @@ function earliest(stamps: Array<string | null>): string | null {
 export interface MailStateInputs {
   /**
    * `useSyncStatus()` — what the tab's own drain loop is doing. Structural,
-   * re-declared rather than imported ({@link MailboxFacts}'s reason: this
-   * module ships in the Desktop mirror). All four scheduler fields, but the
-   * ladder keys on three: `refused` — a coded 401/403 the server has not
-   * yet RE-MADE — is received and NOT rendered as a failure; one request's
-   * evidence is treated as transient and falls through to the calm progress
-   * states. Only a confirmed refusal (`terminal`) speaks — see
-   * {@link climb}'s `failing` arm.
+   * re-declared rather than imported ({@link MailboxFacts}'s reason). All
+   * five scheduler fields, four of which the ladder keys on: `refused` — a
+   * coded 401/403 not yet RE-MADE — is received and NOT rendered as a
+   * failure, because one request's evidence is transient; only a confirmed
+   * refusal speaks. `ownerLost` is the gate standing down because the
+   * account marker changed, which used to be silent.
    */
-  sync: { bootstrapping: boolean; failures: number; terminal: boolean; refused: boolean };
+  sync: {
+    bootstrapping: boolean; failures: number; terminal: boolean; refused: boolean;
+    ownerLost: boolean;
+  };
   /** `SYNC_FAILURE_STREAK`, passed in so the surfaces cannot drift from the scheduler. */
   failureStreak: number;
   /**
@@ -1619,6 +1622,13 @@ function climb(input: MailStateInputs): MailState {
   // silence. What surfaces a failure banner is a sustained streak here, or
   // a confirmed refusal latched `terminal` and rendered by `stopped`.
   if (sync.failures >= failureStreak) return { ...QUIET, key: "failing" };
+
+  // THIS WINDOW HAS LOST TRACK OF ITS ACCOUNT — the marker it was confirmed for changed, the
+  // gate revoked, and the loop stood down. Above everything below it for the reason `failing` is:
+  // nothing under here can move while the gate is shut, and a "catching up" or an age would
+  // describe a mirror that is not converging on anything. Below `stopped`, which is a refusal the
+  // server re-made and outranks a state the next page load undoes.
+  if (sync.ownerLost) return { ...QUIET, key: "ownerLost" };
 
   // STALE — the content on screen is real and OLD, and the strip says
   // which: "As of <time> · catching up", the last completed drain's own

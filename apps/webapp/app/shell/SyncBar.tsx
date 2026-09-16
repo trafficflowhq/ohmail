@@ -272,6 +272,20 @@ function speech(state: MailState, t: Translate, tm: Translate, cloud: boolean): 
         link: cloud ? { href: "/login", label: t("signIn") } : null,
       };
 
+    case "ownerLost":
+      // THE MARKER CHANGED UNDER A LIVE WINDOW. `status`, not `alert`, and no "sign in again":
+      // nothing was refused and nobody said this session is over — the browser stopped naming
+      // the account this mirror belongs to, which happens on a sign-in elsewhere, a sign-out in
+      // another tab, or a cookie the browser simply lost. What was wrong was standing down in
+      // silence: the mirror takes no pages, a press is queued rather than sent, and the page
+      // looked healthy. The link is a real recovery rather than advice — a full page load asks
+      // `GET /auth/session`, which mints an absent marker back.
+      return {
+        tone: "", role: "status", warn: true, busy: false,
+        title: t("ownerLost"), detail: null,
+        link: { href: "/mailbox", label: t("reload") },
+      };
+
     case "failing":
       // Polite, and deliberately not re-announced: the text is constant for as long as the
       // outage lasts, so the region updates once when it appears and once when it goes.

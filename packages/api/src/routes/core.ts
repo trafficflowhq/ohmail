@@ -1,11 +1,29 @@
 import { silentLogger } from "@trafficflow/core";
 import { serviceContext } from "../context.js";
+import { ownerCookie, OWNER_COOKIE } from "../cookies.js";
+import type { ApiDeps } from "../deps.js";
 import type { Route } from "../router.js";
-import { json, readBody } from "./shared.js";
+import { cookieSurface, json, parseCookies, readBody } from "./shared.js";
 import { auth, enrollmentSession } from "./shared-cloud.js";
 // The carved lifecycle pair — `/auth/logout` + `/auth/refresh` — spread back in below at their
 // old positions, as the same objects. See `session-lifecycle.ts` for the carve.
 import { sessionLifecycleRoutes } from "./session-lifecycle.js";
+
+/**
+ * AN ABSENT ACCOUNT MARKER SELF-HEALS HERE — the only route that mints one outside a sign-in.
+ *
+ * The browser's gate refuses every call while it cannot read `tf_owner`, and `POST /auth/refresh`
+ * resolves no user: it can re-stamp what the jar holds and nothing more, so a lost marker meant
+ * ninety days of refusals. This route resolves a user, so it writes the id it just resolved.
+ *
+ * Narrow: a cookie surface, a FULL session, and only where the jar says nothing. A marker naming
+ * another account is a disagreement to report, and `signed_out_pending` a refusal not to undo.
+ */
+function healOwnerMarker(req: Request, deps: ApiDeps, accountId: string): string[] {
+  if (!cookieSurface(deps)) return [];
+  if (parseCookies(req.headers.get("cookie"))[OWNER_COOKIE] !== undefined) return [];
+  return ownerCookie(accountId, deps.authConfig);
+}
 
 /** §2.2 — register, login, session, logout, refresh. */
 export const coreRoutes: Route[] = [
@@ -118,7 +136,10 @@ export const coreRoutes: Route[] = [
     options: { enrollmentOk: true },
     handler: async (req, deps) => {
       const result = await auth(deps).getSession(serviceContext(deps, req));
-      return json(result, 200);
+      // An enrollment session owns no mailbox and gets no marker — the same rule
+      // `enrollmentCookies` keeps on the way in.
+      const heal = result.scope === "full" ? healOwnerMarker(req, deps, result.user.accountId) : [];
+      return json(result, 200, heal);
     },
   },
   // `/auth/logout` and `/auth/refresh` — CARVED into `session-lifecycle.ts` (Phase 3), spread

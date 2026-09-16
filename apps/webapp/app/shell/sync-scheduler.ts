@@ -49,14 +49,24 @@ export interface SyncStatus {
    * `test/sync-liveness.test.ts` guards both halves.
    */
   refused: boolean;
+  /**
+   * THE MARKER THIS WINDOW WAS CONFIRMED FOR HAS CHANGED, so the gate is `revoked` and the loop
+   * has stood down. Not `terminal`: nothing was refused, and a fresh confirm undoes it.
+   *
+   * Published because standing down in SILENCE was the defect — a revoked gate takes no pages
+   * and leaves a mutation queued while the page looks healthy. The sentence it drives names
+   * the reload that fixes it, which is a recovery and not advice: `GET /auth/session` mints an
+   * absent marker back.
+   */
+  ownerLost: boolean;
 }
 
 /** A live engine before its first tick, and the permanent value for the demo. */
 export const SYNC_SETTLED: SyncStatus = {
-  bootstrapping: false, failures: 0, terminal: false, refused: false,
+  bootstrapping: false, failures: 0, terminal: false, refused: false, ownerLost: false,
 };
 export const SYNC_BOOTSTRAPPING: SyncStatus = {
-  bootstrapping: true, failures: 0, terminal: false, refused: false,
+  bootstrapping: true, failures: 0, terminal: false, refused: false, ownerLost: false,
 };
 
 /**
@@ -73,7 +83,8 @@ export function sameSyncStatus(a: SyncStatus, b: SyncStatus): boolean {
   return a.bootstrapping === b.bootstrapping
     && a.failures === b.failures
     && a.terminal === b.terminal
-    && a.refused === b.refused;
+    && a.refused === b.refused
+    && a.ownerLost === b.ownerLost;
 }
 
 /**
@@ -1366,7 +1377,12 @@ export function startSyncScheduler(
 
   const publish = (): void => {
     if (stopped) return;
-    options.onStatus?.({ bootstrapping, failures, terminal, refused: refusedAt !== null });
+    // `ownerLost` is READ, not latched: the gate is the only owner of that state, and a flag
+    // kept here would go on claiming a lost marker after a confirm had taken it back.
+    options.onStatus?.({
+      bootstrapping, failures, terminal, refused: refusedAt !== null,
+      ownerLost: (gate?.identity() ?? "holds") === "revoked",
+    });
   };
 
   const disarm = (): void => {
@@ -1497,13 +1513,15 @@ export function startSyncScheduler(
         return;
       }
       /**
-       * `revoked` rides with `unconfirmed` HERE and not with `contradicted`, which is the opposite of how the read
-       * gate treats it — deliberately, and the two are answering different questions. The read gate asks "may this
-       * window act on the answer?" and a lapsed grant means no. The strip asks "what should the person be told?" and
-       * a lapsed grant is not a claim about the account: the marker changed, which happens on a sign-in elsewhere, a
-       * sign-out, a rotation. Saying "this mailbox has stopped syncing; sign in again" over that would be the slice's
-       * own defect in a new place — a sentence stronger than the evidence. So it disarms QUIETLY and waits for
-       * `onOpen`, exactly as an un-confirmed gate does.
+       * `revoked` rides with `unconfirmed` HERE and not with `contradicted`, the opposite of the read gate — the two
+       * answer different questions. "May this window act on the answer?" is no for a lapsed grant; "what should the
+       * person be told?" is not "sign in again", because a marker changes on a sign-in elsewhere, a sign-out, a
+       * rotation. So it disarms and waits for `onOpen`, as an un-confirmed gate does.
+       */
+      /**
+       * QUIETLY was the half that was wrong, and the fix is not a stronger sentence: the status carries
+       * {@link SyncStatus.ownerLost} for `revoked` alone and the strip says the weak true thing, whose reload is a
+       * real recovery. `unconfirmed` stays silent — nobody has said anything yet.
        */
       if (owns === "unconfirmed" || owns === "revoked") {
         // Same as the contradiction arm: a lapsed grant is not a licence to keep listening.

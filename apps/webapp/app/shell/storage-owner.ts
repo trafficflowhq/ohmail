@@ -24,7 +24,7 @@
  * prop would have to thread through all four builders' call sites, and forgetting one is silent.
  */
 
-import { isOwnerShaped, readOwner } from "./owner-cookie";
+import { isOwnerShaped, readOwnerMarker, type OwnerMarker } from "./owner-cookie";
 
 /**
  * The identity the HOST established for this surface, or `null` on a surface that has none.
@@ -104,12 +104,52 @@ export function setStorageOwner(id: string | null): void {
  * account whose browser it happens to be running in ({@link DEMO_STORAGE_OWNER}).
  */
 export function storageOwner(): string | null {
-  if (demoSurface) return DEMO_STORAGE_OWNER;
-  return readOwner() ?? hostOwner;
+  return storageOwnerState().owner;
+}
+
+/**
+ * WHICH of those answers it was, and — when it was none of them — what the marker actually said.
+ *
+ * `storageOwner()` answering `null` is read by four key builders as the `"local"` suffix, and
+ * that suffix is a real key space holding real records: a browser's durable send lanes live in
+ * it. Collapsing "no account on this surface" (the desktop, the host door) with "the marker has
+ * gone" (a browser that lost the cookie) made the second look like the first, so a signed-in
+ * window silently moved to `local` and its own send records became invisible to `holdOf`. Same
+ * enum as the API gate and the sync gate read; the difference here is that it is NAMED.
+ */
+export type StorageOwnerSource = "demo" | "cookie" | "host" | "unowned";
+
+export interface StorageOwnerState {
+  /** What the key builders use. `null` spells itself `"local"` — see the header. */
+  owner: string | null;
+  source: StorageOwnerSource;
+  /** What `tf_owner` said, from the one resolver. `"absent"` on a surface that has no cookie. */
+  marker: OwnerMarker["kind"];
+}
+
+/** The last unowned state said out loud, so a render-path read cannot become a log flood. */
+let saidUnowned: string | null = null;
+
+export function storageOwnerState(): StorageOwnerState {
+  const marker = readOwnerMarker();
+  if (demoSurface) return { owner: DEMO_STORAGE_OWNER, source: "demo", marker: marker.kind };
+  if (marker.kind === "account") return { owner: marker.id, source: "cookie", marker: marker.kind };
+  if (hostOwner !== null) return { owner: hostOwner, source: "host", marker: marker.kind };
+  // SAID ONCE PER STATE. A window that reaches here on a cookie surface has lost its marker and
+  // is writing to the shared key space; the desktop and the host door reach it every time and
+  // mean nothing by it, which is why the marker's own word is in the line.
+  if (saidUnowned !== marker.kind) {
+    saidUnowned = marker.kind;
+    console.warn("ohmail: no owner for this browser's storage — using the shared key space", {
+      marker: marker.kind,
+    });
+  }
+  return { owner: null, source: "unowned", marker: marker.kind };
 }
 
 /** Test seam: forget the host's answer and the demo latch. Never called by product code. */
 export function resetStorageOwnerForTest(): void {
   hostOwner = null;
   demoSurface = false;
+  saidUnowned = null;
 }
