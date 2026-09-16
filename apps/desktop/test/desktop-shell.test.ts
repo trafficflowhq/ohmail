@@ -551,9 +551,17 @@ describe("the Rust side", () => {
    * describe would stay green while the shell grew a capability. Adding a file therefore fails
    * this test until somebody decides which rules it lives under.
    */
-  it("is these twenty-three files and no others", () => {
+  it("is these twenty-five files and no others", () => {
     const files = fs.readdirSync(path.join(APP, "src-tauri/src")).sort();
     expect(files).toEqual([
+      // HOW MANY ALLOCATOR ARENAS THIS APP'S PROCESSES MAY HAVE. glibc gives a contending
+      // thread its own 64 MiB arena and the webview's process runs dozens of threads; five of
+      // them held a quarter of the renderer on the measured guest. The cap is an environment
+      // variable because the process that holds that memory is a CHILD, and it is written as the
+      // first statement of `main` because writing the environment of a threaded process is a
+      // race. Linux only: no other platform reads it.
+      "allocator_arenas.rs",
+      "allocator_arenas_tests.rs",
       // Which door this install came in by, and the environment each one composes. Compiled only
       // under `local-engine`, like `engine.rs` — asserted below, because a feature-off shell
       // configures nothing and must carry no way to.
@@ -629,6 +637,35 @@ describe("the Rust side", () => {
       "webview_budget.rs",
       "webview_budget_tests.rs",
     ]);
+  });
+
+  /**
+   * THE ALLOCATOR CAP IS SET BEFORE THERE IS ANYTHING TO RACE WITH.
+   *
+   * glibc reads `MALLOC_ARENA_MAX` once, at a process's own start, and the process holding the
+   * arenas is the webview's CHILD process — so the shell sets it for everything it spawns. Two
+   * things make the POSITION load-bearing rather than tidy: writing the environment beside a
+   * thread that reads it is a data race, and a write after the runtime is built reaches no child
+   * the runtime has already spawned. Both failures are silent, so the order is asserted here.
+   */
+  it("caps the allocator arenas before it builds anything", () => {
+    const src = read("src-tauri/src/main.rs");
+    const call = src.indexOf("allocator_arenas::apply();");
+    expect(call, "main.rs must call allocator_arenas::apply()").toBeGreaterThan(-1);
+    expect(call, "the cap must be set before the Tauri builder exists").toBeLessThan(
+      src.indexOf("tauri::Builder::default()"),
+    );
+    expect(call, "the cap must be set before the runtime is built").toBeLessThan(
+      src.indexOf(".build(tauri::generate_context!())"),
+    );
+    // The first statement of `main`, not merely an early one: anything above it is a statement
+    // that could spawn the thread this ordering exists to stay ahead of.
+    const body = src.slice(src.indexOf("fn main() {") + "fn main() {".length);
+    const firstStatement = body
+      .split("\n")
+      .map((l) => l.trim())
+      .find((l) => l.length > 0 && !l.startsWith("//"));
+    expect(firstStatement).toBe("allocator_arenas::apply();");
   });
 
   /**

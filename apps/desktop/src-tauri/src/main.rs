@@ -105,7 +105,16 @@ mod perf_budgets;
 // preview opens the same window and asks for the same budget.
 mod webview_budget;
 
+// How many allocator arenas this app's processes may have. Always compiled; Linux does the work.
+mod allocator_arenas;
+
 fn main() {
+    // FIRST, BEFORE ANY THREAD EXISTS. The webview's process is a CHILD, glibc reads this tunable
+    // once at a process's own start, and writing the environment beside a thread that reads it is
+    // a data race — so the cap is set here and nowhere else. `allocator_arenas.rs` has the measured
+    // reason; `desktop-shell.test.ts` asserts this line comes before the runtime is built.
+    allocator_arenas::apply();
+
     let mut builder = tauri::Builder::default();
     // The commands the window may call, registered in `engine.rs` so that this file names none
     // of them. With the feature off the line is not compiled and the builder is untouched.
