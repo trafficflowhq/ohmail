@@ -63,7 +63,7 @@ const WIRE_ROW = {
  * — one that opened onto a mirror that had already stopped.
  */
 const inputs = (mailboxes: MailStateInputs["mailboxes"], mirrored: number): MailStateInputs => ({
-  sync: { bootstrapping: false, failures: 0, terminal: false, refused: false },
+  sync: { bootstrapping: false, failures: 0, terminal: false, refused: false, ownerLost: false },
   failureStreak: 3,
   mailboxes,
   mirrored,
