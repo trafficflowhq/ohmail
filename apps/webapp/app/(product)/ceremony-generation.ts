@@ -1,16 +1,14 @@
 "use client";
 
 /**
- * THE CEREMONY'S GENERATION — what makes Cancel and Back mean it.
- *
- * An outcome attached to a verify promise's RESOLUTION rather than to the ceremony's STATE acts
- * after the person has walked away: that is how a cancelled account-erase still erased. Each
- * factor path captures the counter `begin` returns before its first `await`; `end` — Cancel,
- * Back, a failure — bumps it before it clears anything; `claim` compares and spends it, at ONE
- * door per ceremony rather than one per caller, so a new factor path inherits the gate instead
- * of the defect. A refused claim calls nothing and raises `discarded`, which the surface must
- * SAY: a silent discard leaves somebody unable to tell what happened. Unmount is not the gate —
- * a pane need not go away for the ceremony to be over, and a ceremony can be over while it stays.
+ * THE CEREMONY'S GENERATION — what makes Cancel and Back mean it. An outcome attached to a verify
+ * promise's RESOLUTION rather than to the ceremony's STATE acts after the person has walked away:
+ * that is how a cancelled account-erase still erased. Each factor path captures the counter
+ * `begin` returns before its first `await`; `end` — Cancel, Back, a failure — bumps it before it
+ * clears anything; `claim` compares and spends it, at ONE door per ceremony rather than one per
+ * caller. A refused claim calls nothing and raises `discarded`, which the surface must SAY: a
+ * silent discard leaves somebody unable to tell what happened. Unmount is not the gate — a pane
+ * need not go away for the ceremony to be over.
  */
 
 import { useCallback, useMemo, useRef, useState } from "react";
