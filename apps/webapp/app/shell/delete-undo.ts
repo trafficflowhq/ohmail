@@ -394,10 +394,13 @@ const ROW_ABSENT = "not_found";
 
 /**
  * ONE MESSAGE, ONE ATTEMPT, CLASSIFIED. Anything but `rolled_back` is settled — a queued verb is
- * in the engine's durable outbox and is its problem now. A row that is NOT THERE means the delete
- * already happened once the mirror is hydrated (a delete tombstones the row), and means nothing
- * at all before that: a replay that cannot see the mailbox may not decide the mailbox agrees with
- * it, which is the whole of the defect this file was carrying. Everything else is still owed.
+ * in the engine's durable outbox and is its problem now. `not_found` past a hydrated mirror is
+ * settled too, and the narrowing is load-bearing: it is the DISPATCH that must have told a
+ * tombstone from a row the window merely evicted, because "absent" alone says nothing about the
+ * mailbox. `engine.replayDelete` is the dispatch that does — a known tombstone settles, any other
+ * absence asks the mailbox — so what reaches this arm is an answer, not a hole. Before hydration
+ * it means nothing at all: a replay that cannot see the mailbox may not decide the mailbox agrees
+ * with it. Everything else is still owed.
  */
 async function attemptOne(
   fn: HeldDispatch, messageId: string, pressId: string, hydrated: boolean,

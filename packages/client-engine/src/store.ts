@@ -191,6 +191,19 @@ export interface MirrorStore extends EntityReader {
    * went, INCLUDING the cascaded bodies, so a caller can assert the sweep did something rather than assume it.
    */
   pruneBySeq(seq: number): Promise<number>;
+  /**
+   * DID THIS MIRROR PUT THAT ROW DOWN — the tombstone behind the reader, and the ONE question the
+   * reader cannot answer. `get` returns `undefined` for both of the store's absences, and they
+   * mean opposite things: a TOMBSTONE (`entity: null`, {@link prune}'s note — every removal but a
+   * prune) is this device's own record that the row is gone, while NO RECORD AT ALL is what a
+   * prune leaves, and says only that the window no longer keeps it. A caller that settles a
+   * confirmed deletion on absence alone settles it against an eviction.
+   *
+   * Reads the record and nothing else: there is no recent-tombstone ledger here, so the bound is
+   * the mirror's own and a tombstone the window does take stops answering. `false` for a live row
+   * and for a row this mirror has never held.
+   */
+  isTombstoned(type: string, id: string): boolean;
   /** Discard all local state and reset the cursor to "0" (410 re-bootstrap, §3.2). */
   resetForBootstrap(): Promise<void>;
   /** Overwrite the in-memory cursor (dev/test only — e.g. forcing a 410 path). */
@@ -450,6 +463,12 @@ export abstract class BaseMirrorStore implements MirrorStore {
   get<T = unknown>(type: string, id: string): T | undefined {
     const rec = this.records.get(recordKey(type, id));
     return rec && rec.entity !== null ? (rec.entity as T) : undefined;
+  }
+
+  /** See {@link MirrorStore.isTombstoned} — the record, read straight, nothing remembered. */
+  isTombstoned(type: string, id: string): boolean {
+    const rec = this.records.get(recordKey(type, id));
+    return rec !== undefined && rec.entity === null;
   }
 
   /**

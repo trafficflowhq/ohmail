@@ -7129,6 +7129,67 @@ export class OhmailEngine {
     return request;
   }
 
+  /**
+   * FINISH A DELETE A KILLED TAB LEFT BEHIND — the boot replay's road, and the only one that may
+   * not read an absent row as agreement. The mirror is a WINDOW and a stranded intent lives a
+   * day, so by the next launch the row may be gone for a reason the person had nothing to do
+   * with, and the IMAP mailbox is the master. Three cases, in the order they are cheap:
+   *
+   *   · a TOMBSTONE this device holds — the delete converged; settled, no round trip;
+   *   · the row is still here — the ordinary {@link OhmailEngine.mutate} road, overlay and outbox;
+   *   · any other absence — the window evicted it, or this device never saw it: ASK THE MAILBOX.
+   *
+   * The re-ask is the same `DELETE /messages/:id` the verb always sends, so it is idempotent by
+   * construction: a row still there is deleted, a row already gone answers 404 and settles.
+   */
+  async replayDelete(
+    messageId: string,
+    /** The press this replay belongs to, from the surface's journal — see {@link restoreFromTrash}. */
+    opts: { intentId?: string } = {},
+  ): Promise<MutationResult> {
+    const key = opts.intentId === undefined || opts.intentId === ""
+      ? this.uuid()
+      : `delete-replay:${opts.intentId}:${messageId}`;
+    if (this.store.isTombstoned("message", messageId)) {
+      return { id: this.uuid(), key, status: "confirmed", seq: null };
+    }
+    const res = await this.mutate({ kind: "message_delete", messageId });
+    // The LOCAL refusal is the only one absence produces (`mutationEffects` answers [] for a row
+    // the mirror does not hold) — and it is a statement about this device, never about the
+    // mailbox. Nothing went on the wire, so ask.
+    if (res.status !== "rolled_back" || (res.error?.code ?? null) !== "not_found") return res;
+    return this.reaskDelete(messageId, key);
+  }
+
+  /**
+   * THE MAILBOX'S OWN ANSWER about a message this mirror no longer keeps. No overlay and no
+   * outbox entry — there is no local row to hide and nothing to reconcile, exactly as
+   * {@link restoreFromTrash} has none; the durable record is the surface's journal, which is
+   * what clears on this result. The echo is deliberately NOT applied: the tombstone arrives on
+   * the next drain like every other server fact, and applying a change outside the drain would
+   * be a second writer of the log.
+   */
+  private async reaskDelete(messageId: string, key: string): Promise<MutationResult> {
+    try {
+      await this.adapter.mutate({ kind: "message_delete", messageId }, { idempotencyKey: key });
+      return { id: this.uuid(), key, status: "confirmed", seq: null };
+    } catch (err: unknown) {
+      const rejection = err instanceof MutationRejectedError ? err : null;
+      // ALREADY GONE IS THE OUTCOME THAT WAS ASKED FOR. A 404 here is the mailbox saying it does
+      // not have the message, which is the state the press wanted; keeping the record for it
+      // would strand a request nobody can ever settle.
+      if (rejection !== null && (rejection.status === 404 || rejection.code === "not_found")) {
+        return { id: this.uuid(), key, status: "confirmed", seq: null };
+      }
+      return {
+        id: this.uuid(), key, status: "rolled_back", seq: null,
+        error: rejection ?? new MutationRejectedError(
+          err instanceof Error ? err.message : String(err), { status: null, code: null, retryable: true },
+        ),
+      };
+    }
+  }
+
   // ── attachments ──────────────────────────────────────────────────────────
 
   /**
