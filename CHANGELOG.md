@@ -13,6 +13,16 @@ See [Status](README.md#status--read-this-first).
 
 ## [Unreleased]
 
+### A change waiting for the installation that organizes your mailbox says so on every screen
+
+When another installation organizes a mailbox, this one reads it: a press here is recorded for that
+installation to carry out on its next pass. Screening a sender, releasing held mail, changing or
+revoking a rule, deleting a message and the piles all reported those presses as done — the rule was
+still filing mail, the message was not in the bin, and nothing said what was being waited on. Every
+one of them now names the wait, and over a selection the sentence counts what changed and what did
+not. Closing a reply you had started sending also cancels that send now, the way Cancel in the
+compose window already did; what you wrote is kept.
+
 ### Filing a message while your mailbox was being read no longer loses the filing
 
 When ohmail finds a message in a folder it did not put it in, it adopts that placement — the
