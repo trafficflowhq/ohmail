@@ -2333,10 +2333,9 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
    * at the gate is decided with `screener_decide`, which carries the past-mail answer; (2) a
    * term-free rule of the same kind already at the destination writes no new rule and is re-armed
    * for the backlog when that answer is yes; (3) rules pointing elsewhere — every one — are
-   * retargeted; (4) otherwise one is written. The moves are the optimistic half, capped at
-   * `RETRO_VISIBLE_MOVES` (50), GATED ON `applyRetro` and NARROWED BY `retroPassWouldMove` — see
-   * {@link movePastMail}; the rule is awaited and reported, the moves roll their own rows back.
-   * Raw mirror reads.
+   * retargeted; (4) otherwise one is written. The moves are the optimistic half, capped at 50,
+   * gated on `applyRetro` and narrowed by `retroPassWouldMove` — see {@link movePastMail}; the
+   * rule is awaited and reported, the moves roll their own rows back. Raw mirror reads.
    */
   const screenSender = async (
     messageId: string, dest: Destination, scope: Scope, applyRetro = true,

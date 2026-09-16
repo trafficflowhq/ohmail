@@ -425,18 +425,14 @@ export function planScreeningChange(
   }
 
   /**
-   * THE PAST-MAIL HALF, AND THE SWITCH IS ITS GATE. "Also move the mail already in your mailbox"
-   * off used to change the sentence and the rule's flag while this fan-out dispatched up to fifty
-   * moves anyway. The answer is read HERE, the one place every branch above passes through: off
-   * writes the rule and touches nothing already here. The cap stays because each entry is its own
-   * `POST /messages/:id/move` taking the account's write lock (uncapped, a domain scope on a big
-   * provider fired thousands from a tab); `messages` is newest-first, so the slice is the mail on
-   * screen and the server's resumable pass owns the rest. With NO rule (`none`) the move IS the
-   * instruction, which is why the sheet withdraws the switch there rather than gating on it.
-   *
-   * WHICH mail is `retroPassWouldMove`'s, not this file's: these fifty are the optimistic head of
-   * the server's own set, so selecting differently makes the press undo filing that pass would
-   * never touch. `folder !== wanted` alone moved a customer's own folders and mail set aside.
+   * THE PAST-MAIL HALF, AND THE SWITCH IS ITS GATE. Off used to change the sentence and the rule's
+   * flag while this fan-out dispatched fifty moves anyway; the answer is read HERE, the one place
+   * every branch above passes through. The cap stays because each entry is its own
+   * `POST /messages/:id/move` on the account's write lock (uncapped, a domain scope fired thousands
+   * from a tab), and `messages` is newest-first, so the slice is the mail on screen. WHICH mail is
+   * `retroPassWouldMove`'s, not this file's: the fifty are the head of the server pass's own set,
+   * and `folder !== wanted` alone moved a customer's own folders and mail set aside. With NO rule
+   * (`none`) the move IS the instruction, which is why the sheet withdraws the switch there.
    */
   const movesPastMail = applyRetro || ruleState === "none";
   const outOfPlace = subject.messages.filter(
