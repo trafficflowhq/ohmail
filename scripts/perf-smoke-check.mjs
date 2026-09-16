@@ -284,12 +284,27 @@ export function readDeriveP95Budget(tablePath) {
   const b = table?.latency?.["derive-p95"];
   if (!b) return { present: false, ceilingMs: null, goalMs: null, origin: null, status: "absent" };
   const num = (v) => (typeof v === "number" && Number.isFinite(v) ? v : null);
+  /* `origin` IS THE BUDGET'S ORIGIN AND NOTHING ELSE, and until 2026-09-16 it held the name of the
+   * readings instead — a row whose whole open question was that it has no origin as a budget
+   * reported one. The budget's origin is `null` while the table says `no-origin-yet`; the GOAL's
+   * origin is a separate fact, and the arm prints that one when there is no ceiling. `status` is
+   * read from the table's own word (`state`) with the older field taken as a fallback. */
+  const state = typeof b.state === "string" ? b.state : b.status;
+  const goalReading = b.goalReading && typeof b.goalReading === "object" ? b.goalReading : null;
   return {
     present: true,
     ceilingMs: num(b.ceilingMs),
     goalMs: num(b.goalMs),
-    origin: typeof b.origin === "string" ? b.origin : null,
-    status: typeof b.status === "string" ? b.status : num(b.ceilingMs) === null ? "unmeasured" : "ruled",
+    origin: state === "no-origin-yet" ? null : typeof b.origin === "string" ? b.origin : null,
+    goalOrigin: goalReading && typeof goalReading.value === "string" ? goalReading.value : null,
+    status:
+      state === "no-origin-yet"
+        ? "unmeasured"
+        : typeof state === "string"
+          ? state
+          : num(b.ceilingMs) === null
+            ? "unmeasured"
+            : "ruled",
   };
 }
 
