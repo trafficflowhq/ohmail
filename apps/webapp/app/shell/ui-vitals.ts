@@ -30,6 +30,16 @@ export const RING = 100;
 /** Beside `engine_vitals` and `renderer_vitals`, which are also five minutes. */
 export const REPORT_EVERY_MS = 5 * 60_000;
 
+/**
+ * THE RANGE A HOST MAY MOVE THE REPORT INTO. Five minutes is the right cadence for a window
+ * somebody is using and the wrong one for a measurement run, which ends before the first report
+ * and reads none of these figures. So the desktop shell — the only door with an environment to
+ * read — may answer with a cadence, and these are the bounds it is answered within: the same two
+ * numbers as `vitals.rs`, asserted equal by `ui-vitals-census.test.ts`.
+ */
+export const REPORT_MIN_MS = 1_000;
+export const REPORT_MAX_MS = 60 * 60_000;
+
 /** A frame that took longer than this is one somebody saw drop. 50 ms is three frames at 60 Hz. */
 export const LONG_FRAME_MS = 50;
 
@@ -419,6 +429,28 @@ function rounded(value: number | null): number | null {
   return value === null ? null : Math.round(value);
 }
 
+/** The cadence a host asked for, or `null` for the one this module ships with. */
+let intervalOverrideMs: number | null = null;
+/** Re-arms a running report on a new cadence, or `null` when none is running. */
+let retime: (() => void) | null = null;
+
+/**
+ * THE CADENCE THE HOST ASKED FOR, taken from the answer to a report rather than from a setting.
+ *
+ * A window cannot read the process environment, so the knob lives in the desktop shell and rides
+ * back on the `ui_vitals` call this instrument already makes. `null`, a non-number and anything
+ * outside {@link REPORT_MIN_MS}..{@link REPORT_MAX_MS} are all "no answer" and leave the shipped
+ * cadence standing — a shell one version ahead cannot talk this window into reporting every
+ * millisecond, which would make the instrument a cost on the thing it measures.
+ */
+export function setUiVitalsInterval(ms: number | null): void {
+  if (ms === null || !Number.isFinite(ms) || ms < REPORT_MIN_MS || ms > REPORT_MAX_MS) return;
+  const next = Math.round(ms);
+  if (next === intervalOverrideMs) return;
+  intervalOverrideMs = next;
+  retime?.();
+}
+
 /**
  * Start the instrument: the frame sampler, the long-task observer, and the five-minute report.
  * Answers the stop function.
@@ -435,7 +467,11 @@ export function startUiVitals(intervalMs: number = REPORT_EVERY_MS): () => void 
       console.debug("ui_vitals", report);
     }
   };
-  const timer = setInterval(emit, intervalMs);
+  let timer = setInterval(emit, intervalOverrideMs ?? intervalMs);
+  retime = () => {
+    clearInterval(timer);
+    timer = setInterval(emit, intervalOverrideMs ?? intervalMs);
+  };
   // Armed AFTER `emit` exists and flushed immediately: `shellPainted` is marked by the same effect
   // that calls this, one line earlier, so a start whose other two marks are already in is reported
   // here rather than waiting out an interval it may never see.
@@ -443,6 +479,7 @@ export function startUiVitals(intervalMs: number = REPORT_EVERY_MS): () => void 
   flushStartupOnce();
   return () => {
     clearInterval(timer);
+    retime = null;
     emitReport = null;
     stopSampler();
   };
@@ -465,6 +502,8 @@ export function resetUiVitalsForTest(): void {
   stopSampler();
   startupEmitted = false;
   emitReport = null;
+  intervalOverrideMs = null;
+  retime = null;
   rings.open = newRing();
   rings.switch = newRing();
   rings.search = newRing();

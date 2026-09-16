@@ -22,6 +22,33 @@ import type { Diagnostic } from "./log.js";
 export const ENGINE_VITALS_INTERVAL_MS = 5 * 60_000;
 
 /**
+ * THE KNOB'S BOUNDS. A run shorter than the shipped five minutes reads no figure of the app's
+ * own at all, so the interval is settable — within a range, because the value outside it is the
+ * failure this knob would otherwise introduce: below a second the sampler is a cost on the
+ * process it measures, and above an hour a soak records nothing it could not have read from a
+ * single sample. The shipped default is unchanged and absent means absent.
+ */
+export const VITALS_INTERVAL_MIN_MS = 1_000;
+export const VITALS_INTERVAL_MAX_MS = 60 * 60_000;
+
+/**
+ * One environment value, ruled on BY NAME — the whole rule for every interval knob in this
+ * process. A garbage or out-of-range value REFUSES the boot rather than degrading quietly: an
+ * instrument silently left on its default is exactly the reading a short run would then report
+ * as the app's own, which is the mistake this knob exists to remove.
+ */
+export function resolveVitalsIntervalMs(name: string, raw: string): number {
+  const ms = Number(raw.trim());
+  if (!Number.isInteger(ms) || ms < VITALS_INTERVAL_MIN_MS || ms > VITALS_INTERVAL_MAX_MS) {
+    throw new Error(
+      `${name} must be whole milliseconds between ${VITALS_INTERVAL_MIN_MS} and ` +
+        `${VITALS_INTERVAL_MAX_MS}; unset it for the shipped interval`,
+    );
+  }
+  return ms;
+}
+
+/**
  * The engine's memory, on a timer — the first half of a question nothing here can answer today.
  * There is no `memoryUsage()` call anywhere in this repository and no RSS figure in its documents;
  * the only number came from a throwaway build (~half a gigabyte with five thousand messages, plus a

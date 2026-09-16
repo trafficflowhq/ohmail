@@ -3715,14 +3715,18 @@ fn notify<R: tauri::Runtime>(
 /// shell's too: a window that reported every frame would fill somebody's log with its own
 /// instrument, so a report inside [`UI_VITALS_MIN_GAP`] of the last one is dropped, silently,
 /// because a refusal the window could act on is not one it should.
+///
+/// AND IT ANSWERS WITH THE CADENCE IT WANTS. The window cannot read this process's environment, so
+/// the knob that shortens the report lives here and rides back on the call the instrument already
+/// makes: with no knob the answer is the window's own five minutes and nothing re-arms.
 #[cfg(feature = "local-engine")]
 #[tauri::command]
-fn ui_vitals(reported: serde_json::Value) {
+fn ui_vitals(reported: serde_json::Value) -> u64 {
     static LAST: Mutex<Option<std::time::Instant>> = Mutex::new(None);
     let now = std::time::Instant::now();
     let accept = match LAST.lock() {
         Ok(mut slot) => {
-            let soon = slot.map_or(false, |last| now.duration_since(last) < UI_VITALS_MIN_GAP);
+            let soon = slot.map_or(false, |last| now.duration_since(last) < ui_vitals_min_gap());
             if !soon {
                 *slot = Some(now);
             }
@@ -3735,12 +3739,23 @@ fn ui_vitals(reported: serde_json::Value) {
     if accept {
         log_json_line(&crate::vitals::ui_vitals_line(&reported));
     }
+    crate::vitals::ui_vitals_interval().as_millis() as u64
 }
 
 /// The floor under `ui_vitals`, well below the window's own five-minute cadence so an ordinary
 /// report is never the one that is dropped.
 #[cfg(feature = "local-engine")]
 const UI_VITALS_MIN_GAP: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// That floor, or half the cadence the knob asked for when the knob asked for less.
+///
+/// A floor of a minute under a five-second run would drop every report the run exists to read, so
+/// the throttle follows the cadence rather than outliving it. With no knob the cadence is five
+/// minutes, half of it is two and a half, and the shipped minute is what stands.
+#[cfg(feature = "local-engine")]
+fn ui_vitals_min_gap() -> std::time::Duration {
+    UI_VITALS_MIN_GAP.min(crate::vitals::ui_vitals_interval() / 2)
+}
 
 /// How many pieces of mail the dock or taskbar icon says are waiting. Zero removes the badge.
 ///

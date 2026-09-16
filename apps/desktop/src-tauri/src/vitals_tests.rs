@@ -585,6 +585,59 @@ fn a_pass_that_read_no_figure_is_not_a_measurement() {
     ]));
 }
 
+/* ── the interval knobs — one rule, two names, the shipped defaults unmoved ──────────────────── */
+
+/// THE RANGE IS THE REFUSAL, AND THE REFUSAL NAMES THE VARIABLE. Both instruments are read through
+/// one rule, so a knob added later cannot get its own looser one; the value itself never reaches
+/// the sentence, because an environment string is the operator's and not this process's to repeat.
+#[test]
+fn an_interval_knob_takes_its_range_and_refuses_anything_else_by_name() {
+    for var in [RENDERER_VITALS_VAR, UI_VITALS_VAR] {
+        assert_eq!(interval_ms_from_env(var, None), Ok(None), "{var}");
+        assert_eq!(interval_ms_from_env(var, Some("   ")), Ok(None), "{var}");
+        assert_eq!(interval_ms_from_env(var, Some(" 5000 ")), Ok(Some(5_000)), "{var}");
+        assert_eq!(
+            interval_ms_from_env(var, Some(&VITALS_INTERVAL_MIN_MS.to_string())),
+            Ok(Some(VITALS_INTERVAL_MIN_MS)),
+        );
+        assert_eq!(
+            interval_ms_from_env(var, Some(&VITALS_INTERVAL_MAX_MS.to_string())),
+            Ok(Some(VITALS_INTERVAL_MAX_MS)),
+        );
+
+        for raw in [
+            (VITALS_INTERVAL_MIN_MS - 1).to_string(),
+            (VITALS_INTERVAL_MAX_MS + 1).to_string(),
+            "0".to_string(),
+            "-5000".to_string(),
+            "nonsense".to_string(),
+            "5000.5".to_string(),
+        ] {
+            let refused = interval_ms_from_env(var, Some(&raw)).expect_err(&raw);
+            assert!(refused.contains(var), "{refused}");
+            assert!(refused.contains(&VITALS_INTERVAL_MIN_MS.to_string()), "{refused}");
+            assert!(refused.contains(&VITALS_INTERVAL_MAX_MS.to_string()), "{refused}");
+            assert!(!refused.contains("nonsense"), "the value is not repeated: {refused}");
+        }
+    }
+}
+
+/// THE SHIPPED CADENCES ARE READ OFF THE CODE, never off a literal here: a test asserting five
+/// minutes would go on passing after somebody changed the constant it exists to protect. Both sit
+/// inside the knob's own range, so the default is a value the knob could also have been given.
+#[test]
+fn the_shipped_intervals_are_unchanged_and_inside_the_range() {
+    for shipped in [SAMPLE_EVERY, UI_VITALS_EVERY] {
+        let ms = shipped.as_millis() as u64;
+        assert!(ms >= VITALS_INTERVAL_MIN_MS, "{ms}");
+        assert!(ms <= VITALS_INTERVAL_MAX_MS, "{ms}");
+        assert_eq!(interval_ms_from_env("OHMAIL_X", None), Ok(None));
+    }
+    // The window's cadence and the shell's are the same clock, which is what lets one grep over
+    // `engine.log` put the two lines side by side.
+    assert_eq!(SAMPLE_EVERY, UI_VITALS_EVERY);
+}
+
 /* ── `ui_vitals` — the window's own line, composed here and never forwarded ───────────────────── */
 
 #[test]
@@ -676,6 +729,54 @@ fn an_unreported_or_impossible_number_is_null_and_never_zero() {
     // derived nothing reports a count of 0 with null percentiles, never zero milliseconds.
     assert!(line.contains("\"deriveCount\":0"), "zero derivations IS a measurement: {line}");
     assert!(line.contains("\"deriveP95Ms\":null"), "no derivation means no milliseconds: {line}");
+}
+
+/// THE NAMES A MEASUREMENT RUN'S READERS ASK THIS LINE FOR — the three startup marks, the open,
+/// switch and search percentiles with their counts, the frame counter, and the derivation's four.
+/// Written down here because those readers live outside this repository, and a field they read
+/// that this line stops carrying is a measurement that silently refuses rather than one that moves.
+const PERF_KIT_READS: &[&str] = &[
+    "shellPaintedMs", "listUsableMs", "engineReadyMs",
+    "openP95Ms", "openCount",
+    "switchP95Ms", "switchCount",
+    "searchP95Ms", "searchCount",
+    "longFrames",
+    "deriveMs", "deriveP50Ms", "deriveP95Ms", "deriveCount",
+];
+
+/// THE KIT'S OWN PARSER, MODELLED: `grep -ao '"<field>":[0-9]*' | cut -d: -f2` — the digits that
+/// follow the name, and NOTHING where the value is not a number. A `null` therefore reads as an
+/// empty string, which is how a reader tells "not measured" from a figure of zero.
+fn perf_kit_field(line: &str, name: &str) -> Option<String> {
+    let key = format!("\"{name}\":");
+    let at = line.find(&key)? + key.len();
+    let digits: String = line[at..].chars().take_while(char::is_ascii_digit).collect();
+    Some(digits)
+}
+
+/// EVERY FIELD THE PERFORMANCE KIT READS PARSES OUT OF THE SHIPPED LINE, through the kit's own
+/// rule rather than by eye. The negative is in the same arm: a null parses to nothing, so no
+/// reader can take an unmeasured window for a window that measured zero.
+#[test]
+fn every_field_the_performance_kit_reads_parses_out_of_this_line() {
+    let mut reported = serde_json::Map::new();
+    for (i, name) in PERF_KIT_READS.iter().enumerate() {
+        reported.insert((*name).to_string(), serde_json::json!(i as u64 + 1));
+    }
+    let line = ui_vitals_line(&serde_json::Value::Object(reported));
+
+    // `perf_log_count`: the event tag the readers filter on, on this line.
+    assert!(line.contains("\"event\":\"ui_vitals\""), "{line}");
+    for (i, name) in PERF_KIT_READS.iter().enumerate() {
+        assert!(UI_VITALS_FIELDS.contains(name), "{name} is not in the shell's vocabulary");
+        let read = perf_kit_field(&line, name).unwrap_or_else(|| panic!("{name} missing: {line}"));
+        assert_eq!(read, (i + 1).to_string(), "{name} did not parse out of {line}");
+    }
+
+    // A window that measured nothing: the same rule reads an empty value, never a zero.
+    let idle = ui_vitals_line(&serde_json::json!({ "openCount": 0 }));
+    assert_eq!(perf_kit_field(&idle, "longFrames").as_deref(), Some(""), "{idle}");
+    assert_eq!(perf_kit_field(&idle, "openCount").as_deref(), Some("0"), "{idle}");
 }
 
 /// NO MEMORY FIGURE IS DERIVED FROM A PAGE-SIZE LITERAL.

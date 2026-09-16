@@ -590,6 +590,73 @@ pub fn describe(children: &[Child]) -> impl fmt::Display + '_ {
 /// over the log puts the two processes' figures on the same clock.
 pub const SAMPLE_EVERY: std::time::Duration = std::time::Duration::from_secs(5 * 60);
 
+/// How often the WINDOW reports — `apps/webapp/app/shell/ui-vitals.ts`'s `REPORT_EVERY_MS`, which
+/// this shell has to know because it answers the window with the cadence it wants. The two are
+/// asserted equal by a census in the webapp's tests, which reads both out of source.
+pub const UI_VITALS_EVERY: std::time::Duration = std::time::Duration::from_secs(5 * 60);
+
+/// The two knobs' names, and the bounds every one of them is read through.
+///
+/// A run shorter than five minutes reads no figure of the app's own — which is why every recorded
+/// renderer reading of this app so far came from a sampler standing outside it. Both instruments
+/// are therefore settable within a range, and the range is where the value that would break them
+/// lives: below a second an instrument is a cost on the thing it measures, and above an hour a
+/// soak records nothing a single sample could not have told it. Absent leaves the shipped default.
+pub const RENDERER_VITALS_VAR: &str = "OHMAIL_RENDERER_VITALS_MS";
+pub const UI_VITALS_VAR: &str = "OHMAIL_UI_VITALS_MS";
+pub const VITALS_INTERVAL_MIN_MS: u64 = 1_000;
+pub const VITALS_INTERVAL_MAX_MS: u64 = 60 * 60_000;
+
+/// One environment value, ruled on BY NAME. `Ok(None)` is an absent knob; `Err` is a refusal
+/// sentence naming the variable and the range, and never the value — an environment string is the
+/// operator's own and this process does not repeat it into a log somebody else may read.
+pub fn interval_ms_from_env(var: &str, raw: Option<&str>) -> Result<Option<u64>, String> {
+    let text = match raw.map(str::trim) {
+        Some(text) if !text.is_empty() => text,
+        _ => return Ok(None),
+    };
+    let refusal = || {
+        format!(
+            "{var} must be whole milliseconds between {VITALS_INTERVAL_MIN_MS} and              {VITALS_INTERVAL_MAX_MS}; unset it for the shipped interval"
+        )
+    };
+    let ms: u64 = text.parse().map_err(|_| refusal())?;
+    if !(VITALS_INTERVAL_MIN_MS..=VITALS_INTERVAL_MAX_MS).contains(&ms) {
+        return Err(refusal());
+    }
+    Ok(Some(ms))
+}
+
+/// The resolved interval for one knob, read from the environment ONCE.
+///
+/// Once, because a refusal is worth saying and worth saying only once: an instrument on a timer
+/// would otherwise repeat it for the life of the app. A refused knob keeps the shipped default —
+/// the shell does not fail to launch over the cadence of its own instrument — and the sentence
+/// names which variable was ignored so nobody reads the default as the knob having taken.
+fn resolved(slot: &'static std::sync::OnceLock<std::time::Duration>, var: &str,
+            default: std::time::Duration) -> std::time::Duration {
+    *slot.get_or_init(|| match interval_ms_from_env(var, std::env::var(var).ok().as_deref()) {
+        Ok(Some(ms)) => std::time::Duration::from_millis(ms),
+        Ok(None) => default,
+        Err(sentence) => {
+            crate::engine::log_line(format_args!("{sentence}"));
+            default
+        }
+    })
+}
+
+/// How often this shell samples the renderer. [`SAMPLE_EVERY`] unless the knob says otherwise.
+pub fn sample_every() -> std::time::Duration {
+    static SLOT: std::sync::OnceLock<std::time::Duration> = std::sync::OnceLock::new();
+    resolved(&SLOT, RENDERER_VITALS_VAR, SAMPLE_EVERY)
+}
+
+/// The cadence this shell ASKS THE WINDOW FOR, answered on every `ui_vitals` call.
+pub fn ui_vitals_interval() -> std::time::Duration {
+    static SLOT: std::sync::OnceLock<std::time::Duration> = std::sync::OnceLock::new();
+    resolved(&SLOT, UI_VITALS_VAR, UI_VITALS_EVERY)
+}
+
 /// Where the real process table lives. A constant so the tests never touch it. Linux's alone —
 /// the other two platforms answer through a system call, not a filesystem.
 #[cfg(target_os = "linux")]
@@ -971,7 +1038,7 @@ pub fn start() {
                 previous_total = Some(total);
             }
 
-            std::thread::sleep(SAMPLE_EVERY);
+            std::thread::sleep(sample_every());
         }
     });
 }

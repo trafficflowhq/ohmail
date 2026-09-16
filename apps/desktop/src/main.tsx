@@ -16,7 +16,7 @@ import { localStorageDoor } from "@ohmail/client-engine/durable";
 import { enableDesktopAttachments } from "../../webapp/app/shell/open-attachment";
 import { enableExternalLinks, interceptLinkClicks } from "../../webapp/app/shell/open-external";
 import { stampColumns } from "../../webapp/app/shell/column-store";
-import { setUiVitalsSink } from "../../webapp/app/shell/ui-vitals";
+import { setUiVitalsInterval, setUiVitalsSink } from "../../webapp/app/shell/ui-vitals";
 import { DesktopLocale } from "./DesktopLocale.js";
 import "../../webapp/app/app.css";
 // After app.css for the webapp door's reason: the Zero layout ladder (data-layout="zero",
@@ -40,8 +40,12 @@ installOfflineGuard();
    the report goes to `console.debug` and no further. This window has somewhere better: the log
    the engine and the shell already write, where a slow install's evidence is all in one file.
    Armed HERE, before the first render, so the very first report has somewhere to go — and
-   outside the app `reportUiVitals` finds no shell and does nothing. */
-setUiVitalsSink(reportUiVitals);
+   outside the app `reportUiVitals` finds no shell and does nothing. The shell ANSWERS with the
+   cadence it wants, which is how a measurement run shorter than five minutes gets a report at
+   all; with no knob set it answers the same five minutes and nothing re-arms. */
+setUiVitalsSink((report) => {
+  void reportUiVitals(report).then(setUiVitalsInterval);
+});
 
 /* ── THE BOOT CHECK: one status call over the shell's command channel, proving the shell is
    reachable and this build compiled the real sync client (the MAIL engine is `DesktopGate`'s).

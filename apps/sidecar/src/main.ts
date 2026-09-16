@@ -10,6 +10,7 @@ import { maybeStartLanListener, type LanListener } from "./host-lan.js";
 import { encodeFrame, PROTOCOL_VERSION } from "./frame.js";
 import { serveOverStdio, type StdioHost } from "./host.js";
 import { createSidecarLog, createSidecarLogger, diagnosticFor } from "./log.js";
+import { resolveVitalsIntervalMs } from "./vitals.js";
 import type { PhaseHeader } from "./protocol.js";
 
 /**
@@ -195,6 +196,20 @@ export function configFromEnv(env: NodeJS.ProcessEnv = process.env): SidecarConf
     // declare every mailbox unreachable on every poll, which is a misconfiguration wearing an
     // outage's clothes rather than a degraded feature.
     ...(env.OHMAIL_HEARTBEAT_MS ? { heartbeatTimeoutMs: Number(env.OHMAIL_HEARTBEAT_MS) } : {}),
+    /* HOW OFTEN THE ENGINE WRITES ITS OWN MEMORY DOWN. Absent is the shipped five minutes, and
+       a measurement run shorter than that reads no figure of the engine's own — which is why
+       every recorded reading of this app so far came from an external sampler. The value is
+       ruled on by `resolveVitalsIntervalMs`, which refuses a garbage or out-of-range one by
+       name at boot: a knob that quietly fell back to the default would have a short run report
+       the default's silence as the app's own reading. */
+    ...(env.OHMAIL_ENGINE_VITALS_MS?.trim()
+      ? {
+          vitalsIntervalMs: resolveVitalsIntervalMs(
+            "OHMAIL_ENGINE_VITALS_MS",
+            env.OHMAIL_ENGINE_VITALS_MS,
+          ),
+        }
+      : {}),
     ...(Object.keys(keks).length > 0 ? { keks } : {}),
     // ── HOST MODE (Phase 3) — three knobs, all of them the shell's, none of them required ────
     //

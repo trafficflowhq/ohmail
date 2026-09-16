@@ -305,8 +305,10 @@ export interface SidecarConfig {
   /**
    * HOW OFTEN THE ENGINE SAMPLES ITS OWN MEMORY. Default {@link ENGINE_VITALS_INTERVAL_MS}.
    *
-   * A TEST SEAM and nothing else: the shipped interval is five minutes, and a guard that proved
-   * the timer by waiting for it would take five minutes to fail. Production passes nothing.
+   * A test seam AND a measurement knob: a guard that proved the timer by waiting for it would
+   * take five minutes to fail, and a measurement run shorter than five minutes reads no figure
+   * of the engine's own. `configFromEnv` fills it from `OHMAIL_ENGINE_VITALS_MS` within a
+   * bounded range; an ordinary launch passes nothing and the shipped interval stands.
    */
   vitalsIntervalMs?: number;
   /**

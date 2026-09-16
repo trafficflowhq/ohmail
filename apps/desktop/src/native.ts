@@ -387,15 +387,19 @@ export async function requestDefaultMail(): Promise<{
  * the webview's; without this it could not say how the WINDOW behaved. Nothing leaves the machine.
  *
  * The argument is a bag of NUMBERS and the shell does not forward it: `vitals.rs` reads the names
- * it knows, takes a number or nothing from each, and composes the line itself, so this command
- * cannot carry a subject, an address or a folder name out of the page. Fire-and-forget: a refused
- * report must never surface anywhere near somebody's mail.
+ * it knows and composes the line itself, so this cannot carry a subject or an address out.
+ * ANSWERS THE CADENCE THE SHELL WANTS, or `null` where there was none. Never surfaced: a refused
+ * report has no business anywhere near somebody's mail.
  */
-export function reportUiVitals(report: Record<string, number | null>): void {
+export async function reportUiVitals(
+  report: Record<string, number | null>,
+): Promise<number | null> {
   const shell = internals();
-  if (!shell) return;
-  void shell.invoke(UI_VITALS_COMMAND, { reported: report }).catch(() => {
-    /* No shell grant, an older shell, a poisoned log lock — none of them is a thing to say to
-       somebody reading their mail, and the next report is five minutes away. */
-  });
+  if (!shell) return null;
+  try {
+    const answer = await shell.invoke(UI_VITALS_COMMAND, { reported: report });
+    return typeof answer === "number" ? answer : null;
+  } catch {
+    return null;
+  }
 }
