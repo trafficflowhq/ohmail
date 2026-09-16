@@ -1,9 +1,15 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { sql, type SQL } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
 import {
   migrationSqlHash, readJournalOf, type JournalEntry, type JournalSpec,
 } from "./baseline.js";
+import {
+  classifyDrift, driftAdmitted, driftSentence, gitProvenanceReader,
+  type MigrationDrift, type ProvenanceReader,
+} from "./migration-provenance.js";
 import { onNotice } from "./notices.js";
 import { runMigrations, JOURNALS } from "./migrate.js";
 import { ROLE_DEFAULT_TIMEOUTS } from "./client.js";
@@ -74,6 +80,11 @@ export interface JournalStatus {
    * stamp cannot see and this file exists to refuse. See {@link digestMismatches}.
    */
   mismatched: JournalMismatch[];
+  /**
+   * Each of those, resolved against the repository's history: what RAN, and whether it is the
+   * same program as the file this tree ships. Only `comment-only` and `allowed` proceed.
+   */
+  drift: MigrationDrift[];
 }
 
 export interface ProdSetupReport {
@@ -369,11 +380,13 @@ export async function journalStatuses(
   db: SqlExecutor,
   before: AppliedWhens,
   journals: ReadonlyArray<{ spec: JournalSpec; entries: JournalEntry[] }> = readJournals(),
+  reader: ProvenanceReader = gitProvenanceReader(),
 ): Promise<JournalStatus[]> {
   const out: JournalStatus[] = [];
   for (const { spec, entries } of journals) {
     const recorded = await appliedRowsOf(db, spec);
     const was = before.get(spec.name) ?? new Set<number>();
+    const mismatched = digestMismatches(spec, entries, recorded);
     out.push({
       name: spec.name,
       migrationsSchema: spec.migrationsSchema,
@@ -381,19 +394,47 @@ export async function journalStatuses(
       applied: recorded.size,
       appliedThisRun: entries.filter((e) => recorded.has(e.when) && !was.has(e.when)).map((e) => e.tag),
       missing: entries.filter((e) => !recorded.has(e.when)).map((e) => e.tag),
-      mismatched: digestMismatches(spec, entries, recorded),
+      mismatched,
+      // The shipped SQL is read ONCE here and handed to the classifier, so the text this
+      // comparison is made against is the same text `migrationSqlHash` above hashed.
+      drift: mismatched.map((m) =>
+        classifyDrift(
+          spec.name, spec.dir, m,
+          readFileSync(join(spec.dir, `${m.tag}.sql`), "utf8"),
+          reader,
+        ),
+      ),
     });
   }
   return out;
 }
 
 /**
+ * What history said about one drift, in the words an operator can act on. Every arm here is a
+ * REFUSAL — the two admitted kinds never reach it.
+ */
+function driftRefusal(d: MigrationDrift): string {
+  if (d.kind === "rows-collide") return "";
+  if (d.kind === "unreadable") {
+    return ` The repository's history could not be read (${d.note ?? "no reason given"}), so ` +
+      `what ran could not be identified — run this from a full git clone at the deployed tip.`;
+  }
+  if (d.kind === "unknown-provenance") {
+    return ` No version this file has ever held in the repository's history hashes to the ` +
+      `recorded value, so what ran cannot be identified.`;
+  }
+  return ` The version that ran (${d.provenance?.commit ?? "?"}, ${d.provenance?.at ?? "?"}) ` +
+    `differs from the shipped file in EXECUTABLE SQL, and no allowance names this pair.`;
+}
+
+/**
  * One problem line per journal that is not fully applied OR whose rows do not describe the SQL
- * this tree ships, NAMING the journal and its pinned table. Naming the journal is the point:
- * "migrations NOT applied: 0002_billing" leaves an operator guessing which half and therefore
- * which table to look in, and after the split the two halves fail independently — mail can commit
- * while cloud does not. A MISDESCRIBED entry names BOTH readings, because "the hashes differ" is
- * not something an operator can act on and "this one, against that one" is.
+ * this tree ships, NAMING the journal and its pinned table: after the split the two halves fail
+ * independently, and a MISDESCRIBED entry names BOTH readings because "the hashes differ" is not
+ * something an operator can act on and "this one, against that one" is.
+ *
+ * Differing bytes are NOT the refusal. A migration's identity is its executable SQL, so a
+ * mismatch refuses only once history has been asked what ran. See {@link classifyDrift}.
  */
 export function journalProblems(statuses: readonly JournalStatus[]): string[] {
   const out: string[] = [];
@@ -404,18 +445,25 @@ export function journalProblems(statuses: readonly JournalStatus[]): string[] {
           `${s.applied}/${s.expected}): ${s.missing.join(", ")}`,
       );
     }
-    for (const m of s.mismatched) {
+    for (const d of s.drift) {
+      if (driftAdmitted(d)) continue;
       out.push(
-        `${s.name} journal MISDESCRIBED at ${m.when} ` +
-          `(${s.migrationsSchema}.__drizzle_migrations): ${m.tag} ships SQL whose sha256 is ` +
-          `${m.expected}, the table records ` +
-          `${m.rowsAtWhen > 1 ? `${m.rowsAtWhen} rows at this 'when'` : m.recorded || "no hash"}. ` +
-          `A matching timestamp is not proof the SQL ran — this database and this journal ` +
+        `${s.name} journal MISDESCRIBED at ${d.when} ` +
+          `(${s.migrationsSchema}.__drizzle_migrations): ${d.tag} ships SQL whose sha256 is ` +
+          `${d.expected}, the table records ` +
+          `${d.rowsAtWhen > 1 ? `${d.rowsAtWhen} rows at this 'when'` : d.recorded || "no hash"}.` +
+          `${driftRefusal(d)}` +
+          ` A matching timestamp is not proof the SQL ran — this database and this journal ` +
           `disagree about what was applied, so nothing may be deployed over it.`,
       );
     }
   }
   return out;
+}
+
+/** The admitted drifts, named one per line — an admission nobody reads is a bypass. */
+export function admittedDriftLines(statuses: readonly JournalStatus[]): string[] {
+  return statuses.flatMap((s) => s.drift.filter(driftAdmitted).map(driftSentence));
 }
 
 /**
@@ -696,6 +744,10 @@ export async function setupProdDatabase(
     }
 
     const statuses = await journalStatuses(db, before);
+    // Every admitted drift is NAMED. A deployment that proceeds over a file whose bytes moved
+    // says which file, which applied version and on what grounds — an admission nobody reads is
+    // a bypass with extra steps.
+    for (const line of admittedDriftLines(statuses)) log(`applied-migration drift ADMITTED: ${line}`);
     const appliedThisRun = statuses.flatMap((s) => s.appliedThisRun);
 
     const ext = await rows<{ extversion: string }>(
