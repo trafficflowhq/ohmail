@@ -1461,6 +1461,11 @@ const TABLE = {
   replyCancel: "Cancel",
   replySending: "Sending…",
   replySent: "Reply sent.",
+  /* WHEN THE SERVER ANSWERED FROM AN EARLIER PRESS. A second press under a resumed send key
+     is answered from the first reservation, so what left is the earlier message — never two
+     copies, and never a confirmation that names words nobody sent. Said only when the server
+     states it AND this press carried different words; either alone is an ordinary send. */
+  replyEarlierWent: "This reply had already been sent. Your newer text was not sent as a second copy.",
   replyQueued: "Not sent yet. ohmail is still trying.",
   replyUnverified: "We couldn't confirm this send. Check your Sent folder before sending it again.",
   replyAlreadySent: "Too late to cancel. This message has already been sent.",
@@ -1470,6 +1475,7 @@ const TABLE = {
   forwardToPlaceholder: "name@example.org, …",
   forwardNotePlaceholder: "Add a note (optional)",
   forwarded: "Forwarded.",
+  forwardEarlierWent: "This forward had already been sent. Your newer text was not sent as a second copy.",
   /*
    * SEND LATER (mail 0077) — the composer's second way for a message to end, and the
    * Scheduled screen that holds what it produced. Every sentence below is the webapp

@@ -138,6 +138,15 @@ export interface MutationResult {
    */
   pendingWith?: { name: string | null } | null;
   /**
+   * THE SEND WAS ANSWERED FROM AN EARLIER RESERVATION — see {@link MutationOutcome.firstSend}.
+   *
+   * On the CONFIRMED result, because the mutation genuinely succeeded; what it qualifies is
+   * WHICH message the confirmation is about. A surface that ignores it says "sent" about a
+   * press that delivered nothing new, which is true of the mail and false of the words on
+   * screen when the two have come apart.
+   */
+  firstSend?: { status: string; at: string };
+  /**
    * WHO THE SERVER RECORDED THIS FOR — present on `awaiting_organizer` and nowhere else. The
    * mutation reached the wire and the wire took it; what has NOT happened is the act. The
    * surface says "Queued for the organizer" from this, and `pendingWith` carries the same fact
@@ -5970,6 +5979,9 @@ export class OhmailEngine {
         id: p.id, key: p.key, status: "confirmed", seq: outcome.seq,
         ...(outcome.entityId ? { entityId: outcome.entityId } : {}),
         ...(outcome.pendingWith ? { pendingWith: outcome.pendingWith } : {}),
+        // Rides the confirmed result for `pendingWith`'s reason: the server answered, and this
+        // is the only thing that can say the answer was about an earlier press.
+        ...(outcome.firstSend ? { firstSend: outcome.firstSend } : {}),
       };
     } catch (err) {
       const rejection = err instanceof MutationRejectedError

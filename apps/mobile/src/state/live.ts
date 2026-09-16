@@ -1289,6 +1289,73 @@ export function sendIntentOf(m: EngineMutation): string | null {
   return null;
 }
 
+/**
+ * DOES THIS PRESS SAY SOMETHING DIFFERENT FROM THE ONE STILL STANDING?
+ *
+ * Over the fields THIS PRESS STATED, and no others. The queued mutation has been through the
+ * engine's enrichment — a reply's recipients, mailbox and subject are derived there — and the
+ * press being compared has not, so a blanket comparison reads every derived field as a change
+ * and calls an unaltered retry a different message. A field this press leaves unstated is one
+ * enrichment derives the same way both times, so it is not a difference.
+ *
+ * The miss that admits is conservative by design: a press that DROPS a field the standing one
+ * stated (a reply-all, then a plain reply) reads as unchanged and gets the ordinary sentence
+ * where the fuller one was owed. Quiet, never false.
+ */
+export function sendTextDiffers(standing: EngineMutation, pressed: EngineMutation): boolean {
+  if (standing.kind !== "mail_send" || pressed.kind !== "mail_send") return false;
+  const a = standing, b = pressed;
+  const stated: Array<[unknown, unknown]> = [
+    [b.body, a.body], [b.html, a.html], [b.subject, a.subject],
+    [b.to, a.to], [b.cc, a.cc], [b.bcc, a.bcc],
+  ];
+  return stated.some(([pressedValue, standingValue]) =>
+    pressedValue !== undefined && JSON.stringify(pressedValue) !== JSON.stringify(standingValue));
+}
+
+/**
+ * KEYS WHOSE SEND WAS RESUMED OVER DIFFERENT WORDS — half of the two facts the sentence needs.
+ *
+ * A second press under a standing key SUPERSEDES the queued mutation, so by the time anything
+ * settles the earlier text is nowhere left to read. Only the moment of the resume sees both
+ * versions, so it writes this down. The OTHER half is the server's `firstSend`, which says the
+ * answer came from a reservation this key already held — without it the press's own words are
+ * what went, and this mark alone would name the wrong message.
+ *
+ * Keyed by ENGINE so a session swap takes its marks with it rather than answering for the next
+ * account's keys, and so nothing outlives the process it belongs to.
+ */
+const resumedOverOtherText = new WeakMap<OhmailEngine, Set<string>>();
+
+/** Mark this key as resumed over other words. */
+export function noteResumedOverOtherText(engine: OhmailEngine, key: string): void {
+  const marks = resumedOverOtherText.get(engine) ?? new Set<string>();
+  marks.add(key);
+  resumedOverOtherText.set(engine, marks);
+}
+
+/** Read the mark. */
+export function wasResumedOverOtherText(engine: OhmailEngine, key: string): boolean {
+  return resumedOverOtherText.get(engine)?.has(key) === true;
+}
+
+/** Spend the mark — only where the send settled and its sentence has been said. */
+export function forgetResumedOverOtherText(engine: OhmailEngine, key: string): void {
+  resumedOverOtherText.get(engine)?.delete(key);
+}
+
+/**
+ * WAS THIS CONFIRMATION ABOUT AN EARLIER MESSAGE? Both facts, asked together, which is the only
+ * way either is worth anything: the server says this key was already settled (so this press
+ * delivered nothing), and this device says the press carried different words (so what went is
+ * not what is on screen). One without the other is an ordinary send — a plain retry of the same
+ * words, or a resume the server had never heard of — and says the ordinary sentence.
+ */
+export function earlierVersionWent(engine: OhmailEngine, r: MutationResult | null): boolean {
+  if (r === null || r.status !== "confirmed" || r.firstSend === undefined) return false;
+  return wasResumedOverOtherText(engine, r.key);
+}
+
 /** One settled entry of {@link flushQueued}'s ledger: what happened, to which KIND of intent. */
 export interface FlushedOutcome {
   status: "confirmed" | "rolled_back" | "unverified";
@@ -1304,6 +1371,11 @@ export interface FlushedOutcome {
    * from the queue by the time the result is read.
    */
   sendAt: string | null;
+  /**
+   * mail_send only: this confirmation is about an EARLIER press — see {@link earlierVersionWent}.
+   * "Reply sent." over the newer words would name a message nobody sent.
+   */
+  earlierWent: boolean;
 }
 
 /**
@@ -1342,7 +1414,13 @@ export async function flushQueued(engine: OhmailEngine): Promise<Map<string, Flu
       r.status === "confirmed" ? ("confirmed" as const)
         : r.error?.code === "send_unverified" ? ("unverified" as const)
           : ("rolled_back" as const);
-    outcomes.set(r.key, { status, kind: meta.kind, forward: meta.forward, sendAt: meta.sendAt });
+    const earlierWent = earlierVersionWent(engine, r);
+    // Terminal: the sentence is about to be said, so the mark is spent here rather than kept
+    // for a second announcement of the same send.
+    forgetResumedOverOtherText(engine, r.key);
+    outcomes.set(r.key, {
+      status, kind: meta.kind, forward: meta.forward, sendAt: meta.sendAt, earlierWent,
+    });
   }
   return outcomes;
 }
@@ -2011,7 +2089,11 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
    * queued intent die together (an app kill sends nothing the reader was not shown), and the
    * locked Send keeps a fresh-key duplicate impossible while the reconnect flush retries.
    */
-  const sent = async (p: Promise<MutationResult>, sentToast: RefusalArg): Promise<SendResult> => {
+  const sent = async (
+    p: Promise<MutationResult>,
+    sentToast: RefusalArg,
+    earlierWentToast: RefusalArg,
+  ): Promise<SendResult> => {
     const first = await p.then((r) => r, () => null);
     let settled: MutationResult | null = first;
     if (first && first.status === "queued") {
@@ -2022,8 +2104,17 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
       settled = flushed.find((r) => r.key === first.key) ?? first;
     }
     const outcome = sendOutcomeOfResult(settled);
+    /**
+     * WHICH MESSAGE THIS CONFIRMATION IS ABOUT. A press that resumed a standing key is answered
+     * from the first reservation when there is one — never two copies, never a silent second
+     * delivery, but the words that left are the earlier ones, and the ordinary sentence would
+     * name a message nobody sent. The mark is spent only when this press SETTLED; a still-queued
+     * send leaves it for the reconnect flush, which is the surface that will announce it.
+     */
+    const earlierWent = outcome !== "queued" && earlierVersionWent(engine, settled);
+    if (outcome !== "queued" && first !== null) forgetResumedOverOtherText(engine, first.key);
     toast(
-      outcome === "sent" ? sentToast
+      outcome === "sent" ? (earlierWent ? earlierWentToast : sentToast)
         : outcome === "queued" ? refuse("replyQueued")
           : outcome === "unverified" ? refuse("replyUnverified")
             : refuse("replyFailed"),
@@ -2043,8 +2134,15 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     const intent = sendIntentOf(m);
     const standing = intent === null
       ? undefined
-      : engine.pendingMutations().find((p) => sendIntentOf(p.mutation) === intent)?.key;
-    return engine.mutate(m, standing === undefined ? {} : { key: standing });
+      : engine.pendingMutations().find((p) => sendIntentOf(p.mutation) === intent);
+    // WHAT THE RESUME MAY COST, WRITTEN DOWN WHILE BOTH VERSIONS EXIST. The key that stops a
+    // second copy also lets the server answer from the first reservation, and only this moment
+    // can see that the words changed — see `resumedOverOtherText`. Whether it cost anything is
+    // the server's half of the question, asked when the answer comes back.
+    if (standing !== undefined && sendTextDiffers(standing.mutation, m)) {
+      noteResumedOverOtherText(engine, standing.key);
+    }
+    return engine.mutate(m, standing === undefined ? {} : { key: standing.key });
   };
 
   /**
@@ -2090,6 +2188,10 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
       // classifier exists to prevent. The time is read back in the reader's own clock, so the
       // toast names the wall clock the preset fixed.
       sendAt ? Copy.scheduledFor(scheduleLabel(sendAt, now(), zone)) : Copy.replySent,
+      // AHEAD OF THE APPOINTMENT SENTENCE, deliberately: what the server answered from is the
+      // EARLIER press's reservation, so naming a time this press asked for would promise an
+      // arrangement nobody made.
+      Copy.replyEarlierWent,
     );
   };
 
@@ -2142,6 +2244,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
         to,
       }, sig)),
       Copy.forwarded,
+      Copy.forwardEarlierWent,
     );
   };
 

@@ -201,6 +201,8 @@ interface SendWire {
   status?: "sent" | "unverified" | "failed" | "in_flight" | "queued";
   providerMessageId?: string | null;
   message?: string;
+  /** See {@link MutationOutcome.firstSend} — shape-checked here, never trusted by its presence. */
+  firstSend?: { status?: unknown; at?: unknown };
 }
 
 /**
@@ -2014,7 +2016,17 @@ export class HttpAdapter implements EngineAdapter {
       // to materialise an optimistic Sent overlay on confirm and to reconcile it against the real
       // row when a later drain ingests it (`OhmailEngine.dispatch`). A missing/empty value simply
       // means no overlay — the send still confirmed.
-      return { changes: [], seq, providerMessageId: wire.providerMessageId ?? null };
+      // WHOSE SEND THIS WAS, when the server says it was not this one's. Shape-checked rather
+      // than forwarded: a malformed value would otherwise reach a surface as a fact about
+      // somebody's mail, and absence is the only other state — there is nothing to guess at.
+      const first = wire.firstSend;
+      const firstSend = typeof first?.status === "string" && typeof first.at === "string"
+        ? { status: first.status, at: first.at }
+        : null;
+      return {
+        changes: [], seq, providerMessageId: wire.providerMessageId ?? null,
+        ...(firstSend ? { firstSend } : {}),
+      };
     }
 
     if (wire.status === "unverified") {

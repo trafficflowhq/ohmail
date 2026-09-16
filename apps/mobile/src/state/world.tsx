@@ -970,8 +970,13 @@ export function WorldProvider({ children }: { children: ReactNode }) {
             // appointment as a delivery. The time is read in the reader's own clock, the same
             // sentence the foreground press would have spoken.
             if (o.status === "confirmed") {
+              // WHICH MESSAGE, FIRST IN THE CHAIN. A confirmation the server answered from an
+              // earlier reservation is about that press's words, and about its arrangement —
+              // naming a time this press asked for would promise one nobody made. See
+              // `FlushedOutcome.earlierWent`.
               showToast(
-                o.sendAt !== null ? refuse("scheduledFor", scheduleLabel(o.sendAt, new Date(), zone)) : o.forward ? refuse("forwarded") : refuse("replySent"),
+                o.earlierWent ? refuse(o.forward ? "forwardEarlierWent" : "replyEarlierWent")
+                  : o.sendAt !== null ? refuse("scheduledFor", scheduleLabel(o.sendAt, new Date(), zone)) : o.forward ? refuse("forwarded") : refuse("replySent"),
               );
             }
             else if (o.status === "unverified") showToast(refuse("replyUnverified"));

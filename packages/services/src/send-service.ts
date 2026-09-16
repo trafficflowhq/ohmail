@@ -579,6 +579,33 @@ export interface SendResult {
   providerMessageId: string | null;
   draftId: string;
   seq: number | null;
+  /**
+   * WHOSE SEND THIS ANSWER IS ABOUT, when it is not this request's — see {@link FirstSendFacts}.
+   * Present only where a reservation this key already held answered, which is exactly the state
+   * a client cannot otherwise see: the 200 for a replayed key is the same shape as a fresh
+   * send's, so without this field a second press cannot tell that nothing new was sent.
+   */
+  firstSend?: FirstSendFacts;
+}
+
+/**
+ * THE EARLIER SEND THIS ANSWER CAME FROM — two facts, one shape, both doors.
+ *
+ * A client can be answered from somebody else's press in two ways: the 409 that refuses a
+ * duplicate, and the 200 that replays a settled key's own outcome. They say the same thing about
+ * the same row, so they say it identically — one shape to admit, one to parse, one meaning to
+ * attach to it. `at` is the DELIVERY's instant where there is one, because it is what a person
+ * acts on when they go and look in Sent.
+ */
+export interface FirstSendFacts {
+  status: string;
+  /** ISO-8601, UTC. */
+  at: string;
+}
+
+/** The one place the shape is built. */
+export function firstSendFacts(status: string, at: Date): FirstSendFacts {
+  return { status, at: at.toISOString() };
 }
 
 /**
@@ -1522,7 +1549,7 @@ export class SendService {
             throw new ServiceError(
               "duplicate_send", 409,
               duplicateSendSentence(priorStatus, firstSendAt),
-              { firstSend: { status: priorStatus, at: firstSendAt.toISOString() } },
+              { firstSend: firstSendFacts(priorStatus, firstSendAt) },
               stillRunning,
             );
           }
@@ -1686,9 +1713,18 @@ export class SendService {
       );
     }
     if (row.status === "sent") {
+      /**
+       * AND IT SAYS WHOSE SEND IT IS ANSWERING FROM. This arm is reached only when the key
+       * already held a reservation, so the caller's press delivered nothing — and without the
+       * field it cannot know that: the shape is otherwise identical to a fresh send's 200. A
+       * second press over different words is then announced as though the newer words went, and
+       * they did not. The instant is the delivery's where the row has one; the reservation's
+       * own stamp is the fallback, on the same reasoning the duplicate refusal states at length.
+       */
       return {
         status: "sent", providerMessageId: row.providerMessageId,
         draftId: draftOfTerminalAttempt(row), seq: null,
+        firstSend: firstSendFacts("sent", row.sentAt ?? row.createdAt),
       };
     }
     if (row.status === "unverified") {

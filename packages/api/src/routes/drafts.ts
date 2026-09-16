@@ -334,8 +334,14 @@ export const draftsRoutes: Route[] = [
       );
       switch (result.status) {
         case "sent":
+          // `firstSend` RIDES WHEN THE SERVICE STATES IT, and only then: it means this key was
+          // already settled and this request delivered nothing. Absent on an ordinary send, so
+          // the shape every installed client parses today is byte-identical to what it was.
           return jsonResponse(
-            { status: "sent", providerMessageId: result.providerMessageId },
+            {
+              status: "sent", providerMessageId: result.providerMessageId,
+              ...(result.firstSend ? { firstSend: result.firstSend } : {}),
+            },
             { status: 200, seq: result.seq ?? undefined },
           );
         case "unverified":

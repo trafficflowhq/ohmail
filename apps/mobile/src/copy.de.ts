@@ -942,6 +942,7 @@ export const DE: Deck = {
   replyCancel: "Abbrechen",
   replySending: "Wird gesendet …",
   replySent: "Antwort gesendet.",
+  replyEarlierWent: "Diese Antwort wurde bereits gesendet. Dein neuerer Text wurde nicht als zweite Kopie gesendet.",
   replyQueued: "Noch nicht gesendet. ohmail versucht es weiter.",
   replyUnverified: "Wir konnten diesen Versand nicht bestätigen. Schau in deinen Gesendet-Ordner, bevor du nochmal sendest.",
   replyAlreadySent: "Zu spät zum Abbrechen. Diese Nachricht wurde bereits gesendet.",
@@ -951,6 +952,7 @@ export const DE: Deck = {
   forwardToPlaceholder: "name@beispiel.de, …",
   forwardNotePlaceholder: "Notiz hinzufügen (optional)",
   forwarded: "Weitergeleitet.",
+  forwardEarlierWent: "Diese Weiterleitung wurde bereits gesendet. Dein neuerer Text wurde nicht als zweite Kopie gesendet.",
 
   sendLater: "Später senden",
   sendLaterWhat: "Wann soll diese Nachricht gesendet werden?",
