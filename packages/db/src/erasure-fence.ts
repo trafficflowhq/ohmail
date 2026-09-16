@@ -1,7 +1,7 @@
 import { eq } from "drizzle-orm";
 import { carryDialect, dialect, type Dialect, type LockMode } from "./dialect/index.js";
 import { accounts, mailboxes } from "./schema-mail.js";
-import type { Tx } from "./change-log.js";
+import type { MailboxMustBeLive, Tx } from "./change-log.js";
 
 /**
  * THE ERASURE FENCE, AND THE SEAM EVERY ACCOUNT-SCOPED WRITER GOES THROUGH.
@@ -113,10 +113,19 @@ export async function fenceErased(tx: Tx, d: Dialect, scope: FenceScope): Promis
  * and, after the mailbox row is taken, cross {@link fenceErased}'s order — this reads one row, so
  * a caller already holding it adds no lock. ONLY where the account arm is structural:
  * `erasure-fence-census.test.ts` derives that from the schema and refuses a door without it.
+ *
+ * `askedBy` is the one way this sends no statement at all — see the note on the call.
  */
 export async function fenceErasedMailbox(
   tx: Tx, d: Dialect, mailboxId: string, mode: LockMode = "share",
+  askedBy?: MailboxMustBeLive | undefined,
 ): Promise<void> {
+  // ASKED BY SOMEBODY ELSE'S STATEMENT, and then not asked again here. `askedBy` is the carrier
+  // the caller is already sending in this transaction — {@link MailboxMustBeLive} reads this same
+  // row at this same strength and refuses this same stamp, so a read of our own would be a second
+  // round trip for an answer already being fetched, on every message of every first sync. Only
+  // for THIS mailbox: a carrier naming another one answers nothing about this write.
+  if (askedBy !== undefined && askedBy.mailboxId === mailboxId) return;
   const erasedAt = await readMailboxErasedAt(tx, d, mailboxId, mode);
   if (erasedAt != null) throw new MailboxErasedError(mailboxId);
 }

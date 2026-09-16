@@ -1245,6 +1245,9 @@ export async function commitChange(plan: ChangePlan, deps: CommitDeps): Promise<
       // until this line; the unsubscribe service is the only other writer, from the same parser
       // and the same stored headers.
       authVerdict: p.authVerdict,
+      // The fence the allocation below is already carrying — see `InsertMessageInput`: the write
+      // door asks nothing of its own when this commit's own statement asks for it.
+      mailboxMustBeLive: deps.mailboxMustBeLive,
     });
 
     // The winner owns the tail. A loser writes NOTHING (measured on real Postgres).

@@ -5,6 +5,9 @@ import type { PgDatabase, PgTransaction } from "drizzle-orm/pg-core";
  * the desktop engine's bundle follows. Both tables below are mail-domain. */
 import { accountSyncState, changeLog, mailboxes } from "./schema-mail.js";
 import { dialect } from "./dialect/index.js";
+/* The seam owns the erasure class, and its own import of this file is TYPE-ONLY, so this edge
+ * is one-way at runtime. */
+import { MailboxErasedError } from "./erasure-fence.js";
 
 /**
  * A Drizzle query runner: either a top-level db handle (postgres-js in prod, PGlite in tests) or
@@ -132,12 +135,16 @@ export function parseChangeWake(payload: string): { accountId: string; seq: bigi
 /**
  * THE MAILBOX A WRITER IS COMMITTING INTO, asked BY the allocating statement.
  *
- * The ingest's removal fence is a locked read of `mailboxes.status` inside the commit's own
- * transaction — one round trip per message on a hosted store. Handed here it costs none: the
- * allocation already runs in that transaction and already takes a row lock, so the status rides
- * in the same statement. {@link answer} is the CALLER's decider: this module refuses nothing and
- * knows nothing about what a status means — it passes the value and lets whatever the caller
- * throws abort the transaction with nothing committed. `null` ⇔ no such mailbox row.
+ * The ingest's fence is a locked read of the mailbox row inside the commit's own transaction —
+ * one round trip per message on a hosted store. Handed here it costs none: the allocation already
+ * runs in that transaction and already takes a row lock, so the row rides in the same statement.
+ *
+ * ONE READ, TWO STAMPS. `status` is the REMOVAL question and {@link answer} is the caller's
+ * decider for it: this module refuses nothing on a status and knows nothing about what one means
+ * (`null` ⇔ no such mailbox row). `erased_at` is the ERASURE question, and that one IS decided
+ * here, because the seam owns its meaning and its class — a stamped row throws
+ * {@link MailboxErasedError} before the caller is told anything, and the transaction this
+ * statement ran in commits nothing. A door that hands this carrier over has asked BOTH.
  */
 export interface MailboxMustBeLive {
   readonly mailboxId: string;
@@ -189,9 +196,10 @@ export async function allocateSeqRange(
     return blockEndingAt(await allocateBesideTheFence(tx, d, accountId, bump, mustBeLive), count);
   }
   if (mustBeLive) {
-    const read = await d.exec(tx, sql`select ${mailboxes.status} as status from ${mailboxes}
+    const read = await d.exec(tx, sql`select ${mailboxes.status} as status,
+        ${mailboxes.erasedAt} as erased_at from ${mailboxes}
       where ${mailboxes.id} = ${mustBeLive.mailboxId} ${d.lockClause({ mode: "share" })}`);
-    mustBeLive.answer(statusOf(read[0]?.[0]));
+    answerBothStamps(mustBeLive, read[0]?.[0], read[0]?.[1]);
   }
   const rows = await tx
     .update(accountSyncState)
@@ -214,12 +222,25 @@ function statusOf(value: unknown): string | null {
 }
 
 /**
+ * The erasure first, then the caller's decider. In that order because the two stamps are not the
+ * same kind of answer: an erased mailbox is refused HERE with the seam's own class, whatever the
+ * caller would have made of the status beside it, and a caller that admits `disabled` (the
+ * recovering cycle does) must not be handed a row whose mail has just been swept.
+ */
+function answerBothStamps(
+  mustBeLive: MailboxMustBeLive, status: unknown, erasedAt: unknown,
+): void {
+  if (erasedAt != null) throw new MailboxErasedError(mustBeLive.mailboxId);
+  mustBeLive.answer(statusOf(status));
+}
+
+/**
  * THE ALLOCATION AND THE FENCE IN ONE STATEMENT.
  *
  * `fence` takes the mailbox row at `share` — the same strength and the same lock the standing
  * read takes — and the UPDATE names it, so the row is held before the counter moves and no seq
- * is spent on a mailbox that is already gone. The status comes back beside `next_seq`, which is
- * what makes the fence free: one round trip for a question that cost one of its own.
+ * is spent on a mailbox that is already gone. Both stamps come back beside `next_seq`, which is
+ * what makes the fence free: one round trip for two questions that cost one each of their own.
  */
 async function allocateBesideTheFence(
   tx: LedgerTx, d: ReturnType<typeof dialect>, accountId: string,
@@ -227,17 +248,18 @@ async function allocateBesideTheFence(
 ): Promise<bigint> {
   const [row] = await d.exec(tx, sql`
     with fence as (
-      select ${mailboxes.status} as status from ${mailboxes}
+      select ${mailboxes.status} as status, ${mailboxes.erasedAt} as erased_at from ${mailboxes}
        where ${mailboxes.id} = ${mustBeLive.mailboxId} ${d.lockClause({ mode: "share" })}
     ), allocated as (
       update ${accountSyncState} set ${sql.identifier(accountSyncState.nextSeq.name)} = ${bump}
        where ${accountSyncState.accountId} = ${accountId} and exists (select 1 from fence)
       returning ${accountSyncState.nextSeq} as next_seq
     )
-    select (select next_seq from allocated) as next_seq, (select status from fence) as status`);
-  // The caller's decider, BEFORE the seqs are believed: on a refusal it throws out of here and
-  // the transaction this statement ran in commits nothing.
-  mustBeLive.answer(statusOf(row?.[1]));
+    select (select next_seq from allocated) as next_seq, (select status from fence) as status,
+           (select erased_at from fence) as erased_at`);
+  // Both stamps, BEFORE the seqs are believed: on either refusal it throws out of here and the
+  // transaction this statement ran in commits nothing.
+  answerBothStamps(mustBeLive, row?.[1], row?.[2]);
   const last = row?.[0];
   if (last == null) {
     throw new Error(

@@ -1,6 +1,6 @@
 import { and, asc, desc, eq, inArray, isNull, lte, or, sql, type SQL, type SQLWrapper } from "drizzle-orm";
 import type { AnyPgColumn } from "drizzle-orm/pg-core";
-import { accountStorage, changeLog, fenceErasedMailbox, messages, messageInstances, messageFailures, folderOps, folderState, flagState, mailboxes, mailboxCredentials, mailboxFolders, threads, rules as rulesTbl, contacts as contactsTbl, auditLog, messageBodies, attachments as attachmentsTbl, routingDecisions, approvals, graduations, recordRouteOverride, routeOverrideActionId, awayReplies, awaySenderState, recordChange as recordChangeTx, recordChanges as recordChangesTx, type MailboxMustBeLive, bodyBytesOf, reserveBodyBytes, reserveBodyBytesEvicting, releaseBodyBytes, type ChangeInput, type LedgerTx, type Tx, type EntityType, auditAction, ACCOUNT_THREAD_STRUCTURE_LOCK_CLASS, dueNow as sharedDueNow, type FilingRefusalClass } from "@trafficflow/db";
+import { accountStorage, changeLog, fenceErasedMailbox, MailboxErasedError, messages, messageInstances, messageFailures, folderOps, folderState, flagState, mailboxes, mailboxCredentials, mailboxFolders, threads, rules as rulesTbl, contacts as contactsTbl, auditLog, messageBodies, attachments as attachmentsTbl, routingDecisions, approvals, graduations, recordRouteOverride, routeOverrideActionId, awayReplies, awaySenderState, recordChange as recordChangeTx, recordChanges as recordChangesTx, type MailboxMustBeLive, bodyBytesOf, reserveBodyBytes, reserveBodyBytesEvicting, releaseBodyBytes, type ChangeInput, type LedgerTx, type Tx, type EntityType, auditAction, ACCOUNT_THREAD_STRUCTURE_LOCK_CLASS, dueNow as sharedDueNow, type FilingRefusalClass } from "@trafficflow/db";
 import type {
   RepoPort, RoutingPort, ExternalOverrideInput, ExternalOverrideOutcome,
   StoredMessage, InsertedMessage, InsertMessageInput, FolderStateRow, FlagStateRow,
@@ -715,14 +715,19 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
   }
 
   async insertMessage(input: InsertMessageInput): Promise<InsertedMessage> {
-    /* THE MAILBOX TOMBSTONE, FIRST AND IN THIS TRANSACTION. The row's key to `mailboxes` refuses
-       the account sweep, which deletes that parent — and nothing at all for the mailbox's own
-       erasure, which leaves the row standing. First because that is the lock order every writer
-       here holds: the erasure takes the mailbox row and then this mailbox's messages, so a
-       writer holding a message row and asking afterwards is its deadlock partner. This branch
-       has written nothing yet — a plan carrying a dedup-key upgrade always names an EXISTING
-       row, so `new` never reaches here with a `messages` row already held. */
-    await fenceErasedMailbox(this.db as unknown as Tx, this.d, input.mailboxId);
+    /* THE MAILBOX TOMBSTONE, IN THIS TRANSACTION AND BEFORE THIS WRITE. The row's key to
+       `mailboxes` refuses the account sweep, which deletes that parent — and nothing at all for
+       the mailbox's own erasure, which leaves the row standing. The lock order every writer here
+       holds: the erasure takes the mailbox row and then this mailbox's messages, so a writer
+       holding a message row and asking afterwards is its deadlock partner. This branch has
+       written nothing yet — a plan carrying a dedup-key upgrade always names an EXISTING row, so
+       `new` never reaches here with a `messages` row already held.
+       ASKED BY THE CALLER'S OWN STATEMENT when one is handed over: `mailboxMustBeLive` is the
+       change-log allocation this commit is already sending, which takes this row at this strength
+       and refuses this stamp — a read here would be a second round trip on every message of every
+       first sync for an answer already on its way. */
+    await fenceErasedMailbox(
+      this.db as unknown as Tx, this.d, input.mailboxId, "share", input.mailboxMustBeLive);
     const inserted = await this.db.insert(messages).values({
       accountId: input.accountId, mailboxId: input.mailboxId,
       messageIdHeader: input.canonical.messageIdHeader,
@@ -2055,12 +2060,20 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
     });
   }
 
+  /**
+   * The standing fence read — ONE row, TWO stamps, and the erasure decided here.
+   *
+   * `status` is the caller's question and travels back unjudged; `erased_at` is the seam's, so a
+   * stamped row throws its class rather than being handed to a caller that admits `error` and
+   * `disabled`. Both come out of the one locked read the removal fence already paid for.
+   */
   async mailboxStatusForWrite(mailboxId: string): Promise<string | null> {
     const rows = await this.d.forUpdate(
-      this.db.select({ status: mailboxes.status }).from(mailboxes)
+      this.db.select({ status: mailboxes.status, erasedAt: mailboxes.erasedAt }).from(mailboxes)
         .where(eq(mailboxes.id, mailboxId)).limit(1),
       { mode: "share" },
     );
+    if (rows[0]?.erasedAt != null) throw new MailboxErasedError(mailboxId);
     return rows[0]?.status ?? null;
   }
 

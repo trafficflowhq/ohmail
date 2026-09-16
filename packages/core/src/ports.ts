@@ -183,6 +183,19 @@ export interface InsertMessageInput {
    * behaviour. `planChange` always states it; nothing else inserts messages.
    */
   authVerdict?: AuthVerdict;
+  /**
+   * The fence this commit is already sending — {@link MailboxMustBeLive}, handed straight through
+   * to the erasure fence at the write door.
+   *
+   * Present, the door asks nothing of its own: the caller's allocation reads the same mailbox row
+   * at the same strength in the same transaction and refuses the same stamp, so a read here would
+   * be one extra round trip per message of every first sync. Absent — every caller outside the
+   * hosted ingest commit — the door reads the stamp itself. The caller that supplies it owes the
+   * question in the same transaction whatever this insert does: `sync.ts#commitFenced` sends the
+   * standing read when its allocation never happened (an upsert that lost the race allocates
+   * nothing), which is the case that keeps the hand-over from being a way past the fence.
+   */
+  mailboxMustBeLive?: MailboxMustBeLive | undefined;
 }
 
 /**
