@@ -1171,6 +1171,7 @@
     "sendLaterConfirm": "Senden planen",
     "sendLaterClose": "Zurück",
     "sendLaterPast": "Diese Zeit ist vorbei. Wähle eine Zeit in der Zukunft.",
+    "sendLaterSkipNote": "Wird um {booked} gesendet — die Uhren überspringen {asked} in dieser Nacht.",
     "sendLaterZone": "Zeiten in deiner Zeitzone ({zone}).",
     "sendLaterUnavailable": "Später senden ist für Nachrichten mit Anhängen oder Weiterleitungen noch nicht verfügbar.",
     "toastScheduled": "Geplant für {when}.",

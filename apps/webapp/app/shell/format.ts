@@ -18,6 +18,7 @@ import {
   zonedWeekday,
   type EmailAddress,
   type WallClockVerdict,
+  type ZonedComposition,
   type EngineMessage,
   type TagDTO,
   type WithheldMarker,
@@ -263,12 +264,19 @@ export function nextWeekNine(base: Date): string {
  * a resurface label never had to say more than "Fri 09:00".
  */
 
-/** Today at 18:00 where the reader is — the "this evening" send preset. May be in the past
- *  late in the day; the caller offers it only while it is meaningfully ahead of now. */
-export function todayEvening(base: Date): string {
+/**
+ * Today at 18:00 where the reader is — the "this evening" send preset. May be in the past late in
+ * the day; the caller offers it only while it is meaningfully ahead of now.
+ *
+ * The composition, not a bare instant: an appointment is a wall clock somebody chose, and 18:00 is
+ * only ever exact because no zone in the tz database moves its clocks at dinner. The day the preset
+ * list gains an hour a transition crosses, the verdict is already here and the caller already reads
+ * the instant for its label.
+ */
+export function todayEvening(base: Date): ZonedComposition {
   const zone = activeFormatZone();
   const f = zonedFields(base, zone);
-  return zonedInstant({ year: f.year, month: f.month, day: f.day, hour: 18 }, zone).toISOString();
+  return composeZonedWallClock({ year: f.year, month: f.month, day: f.day, hour: 18 }, zone);
 }
 
 /**
@@ -293,7 +301,7 @@ export function scheduleLabel(when: string, now: Date): string {
 /**
  * An instant as an `<input type="datetime-local">` value — the wall clock it shows WHERE THE
  * READER IS, "YYYY-MM-DDTHH:mm". The input's own value is zoneless by spec; pairing this with
- * {@link instantOfLocalInput} pins both directions of the conversion to `activeFormatZone()`,
+ * {@link composedLocalInput} pins both directions of the conversion to `activeFormatZone()`,
  * so the picker, the presets and every label read one clock.
  */
 export function localInputValue(iso: string): string {
@@ -301,15 +309,23 @@ export function localInputValue(iso: string): string {
   return `${f.year}-${pad(f.month)}-${pad(f.day)}T${pad(f.hour)}:${pad(f.minute)}`;
 }
 
-/** The other direction: a picked "YYYY-MM-DDTHH:mm" wall clock, read in the reader's zone, as
- *  the UTC instant it names — or `null` for anything that is not that shape. */
-export function instantOfLocalInput(value: string): string | null {
+/**
+ * The other direction: a picked "YYYY-MM-DDTHH:mm" wall clock, read in the reader's zone, as the
+ * appointment it names — or `null` for anything that is not that shape.
+ *
+ * THE COMPOSER, not the raw door. This is the one control in the product where a person types a
+ * wall clock freely, so it is the one that reaches the two nights: 02:30 on the autumn night
+ * happens twice and `zonedInstant` answers the LAST, an hour after the reader's clock first reads
+ * it, and on the spring night it books 03:30 without saying so. A chosen clock takes the first of
+ * two and carries the verdict the picker states.
+ */
+export function composedLocalInput(value: string): ZonedComposition | null {
   const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(value);
   if (!m) return null;
-  return zonedInstant({
+  return composeZonedWallClock({
     year: Number(m[1]), month: Number(m[2]), day: Number(m[3]),
     hour: Number(m[4]), minute: Number(m[5]),
-  }, activeFormatZone()).toISOString();
+  }, activeFormatZone());
 }
 
 /**

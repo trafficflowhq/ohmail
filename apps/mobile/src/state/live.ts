@@ -63,6 +63,7 @@ import {
   type TagDTO,
   type WallClockVerdict,
   type WithdrawOutcome,
+  type ZonedComposition,
 } from "@ohmail/client-engine";
 import { Copy } from "../copy";
 import { refuse, type Refusal, type RefusalArg } from "../refusal";
@@ -2616,8 +2617,8 @@ export const RESURFACE_HOURS: readonly string[] = Array.from({ length: 33 }, (_,
  * be written onto the day — it is skipped, or it happens twice — and `Date`'s local setters
  * answer both without saying so, which is how a sheet showing 02:30 booked 03:30. Every horizon
  * here is `composeZonedWallClock`, the SAME function the webapp's `format.ts` uses, and carries
- * the clock it booked. The zone is the device's, injectable for the suite; send later's presets
- * below sit on whole hours no transition crosses and keep the platform's own arithmetic.
+ * the clock it booked. The zone is the device's, injectable for the suite — and send later's
+ * presets below are the same composition, for the same reason, on the same zone.
  */
 
 /** A HORIZON: the instant booked, the wall clock it READS as, and which rule produced it. */
@@ -2693,11 +2694,13 @@ export function dayNine(from: Date, daysAhead: number): Date {
  * Today at 18:00 where the reader is — the "this evening" send preset. MAY BE IN THE PAST late
  * in the day; the caller offers it only while it is meaningfully ahead of now
  * ({@link SEND_LATER_MIN_LEAD_MS}), which is the webapp `ComposeView`'s own rule.
+ *
+ * The composition, not a bare instant: 18:00 is only ever exact because no zone moves its clocks
+ * at dinner, and the verdict is what says so rather than the list's shape being trusted for it.
  */
-export function todayEvening(from: Date): Date {
-  const d = new Date(from);
-  d.setHours(18, 0, 0, 0);
-  return d;
+export function todayEvening(from: Date, zone: string = readerZone()): ZonedComposition {
+  const f = zonedFields(from, zone);
+  return composeZonedWallClock({ year: f.year, month: f.month, day: f.day, hour: 18 }, zone);
 }
 
 /**
@@ -2728,12 +2731,20 @@ export const SEND_LATER_HOURS = [8, 9, 12, 15, 18, 21] as const;
  */
 export const DAY_OFFSETS: number[] = Array.from({ length: 91 }, (_, i) => i);
 
-/** A calendar day `offset` days from `from`, at `hour` local — the picker's one instant maker. */
-export function dayAtHour(from: Date, offset: number, hour: number): Date {
-  const d = new Date(from);
-  d.setDate(d.getDate() + offset);
-  d.setHours(hour, 0, 0, 0);
-  return d;
+/**
+ * A calendar day `offset` days from `from`, at `hour` where the reader is — the picker's one
+ * appointment maker, and the same composition the horizons above use.
+ *
+ * `setDate`/`setHours` counted the day and wrote the hour in the PROCESS's zone and answered both
+ * of the two nights without saying which rule it had applied. The hours offered today cross no
+ * transition; `hour` is the parameter, not the list, so the rule holds for whatever the list
+ * becomes.
+ */
+export function dayAtHour(
+  from: Date, offset: number, hour: number, zone: string = readerZone(),
+): ZonedComposition {
+  const f = zonedFields(from, zone);
+  return composeZonedWallClock({ year: f.year, month: f.month, day: f.day + offset, hour }, zone);
 }
 
 /**
@@ -2745,9 +2756,10 @@ export function dayAtHour(from: Date, offset: number, hour: number): Date {
  * It lives here rather than in the sheet because a lead filter is logic, and this module's
  * charter is that the screens hold none: the suite drives the rule without a renderer.
  */
-export function usableHours(from: Date, offset: number): number[] {
+export function usableHours(from: Date, offset: number, zone: string = readerZone()): number[] {
   return SEND_LATER_HOURS.filter(
-    (hour) => dayAtHour(from, offset, hour).getTime() - from.getTime() >= SEND_LATER_MIN_LEAD_MS,
+    (hour) =>
+      dayAtHour(from, offset, hour, zone).instant.getTime() - from.getTime() >= SEND_LATER_MIN_LEAD_MS,
   );
 }
 

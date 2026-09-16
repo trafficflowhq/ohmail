@@ -1171,6 +1171,7 @@
     "sendLaterConfirm": "Schedule send",
     "sendLaterClose": "Back",
     "sendLaterPast": "That time has passed. Pick a future time.",
+    "sendLaterSkipNote": "That will send at {booked} — the clocks skip {asked} that night.",
     "sendLaterZone": "Times are in your time zone ({zone}).",
     "sendLaterUnavailable": "Send later isn't available for messages with attachments or forwards yet.",
     "toastScheduled": "Scheduled for {when}.",

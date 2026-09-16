@@ -844,7 +844,10 @@ function ActionBar({
             className="abar-b abar-solo abar-date-trigger"
             aria-haspopup="dialog"
             aria-expanded={dateOpen}
-            aria-label={withTime(t("resurfacePick"), resurfaceAt)}
+            /* NO TIME ON THIS ONE. The other two name a day, so the hour they book is a fact;
+               this one names no day yet, and the hour it carried was the one in the field —
+               which is not what a day on either of the two nights books. The popover states
+               the composed hour per day instead, so nothing here has to promise for it. */
             onClick={() => setDateOpen((open) => !open)}
           >
             {t("resurfacePick")}
@@ -855,6 +858,9 @@ function ActionBar({
               today={dayValue(nowAt().toISOString())}
               min={dayValue(tomorrow.iso)}
               anchor={dateRef.current}
+              /* THE HOUR EACH DAY WOULD BOOK, composed for that day — the same `dayAt` the
+                 press dispatches, so a cell cannot name an hour its own press would not book. */
+              dayNote={(day) => dayAt(day, resurfaceAt).time}
               labels={{
                 dialog: t("resurfacePick"),
                 prevMonth: t("datePrevMonth"),

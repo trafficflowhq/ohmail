@@ -34,7 +34,7 @@ import {
 } from "../shell/RecipientField";
 import { ComposeAttach, composeAttachCap } from "../components/ComposeAttach";
 import {
-  instantOfLocalInput, localInputValue, nextWeekNine, scheduleLabel, todayEvening, tomorrowNine,
+  composedLocalInput, localInputValue, nextWeekNine, scheduleLabel, todayEvening, tomorrowNine,
 } from "../shell/format";
 import { activeFormatLocale, activeFormatZone } from "../shell/locale";
 import type { ComposeFields, ComposePlan } from "../shell/compose";
@@ -370,8 +370,8 @@ export function ComposeView({
         const seedOf = (ms: number): string =>
           localInputValue(new Date(Math.ceil(ms / 60_000) * 60_000).toISOString());
         let seed = seedOf(now.getTime() + SEND_LATER_MIN_LEAD_MS);
-        const inverse = instantOfLocalInput(seed);
-        if (inverse === null || Date.parse(inverse) - now.getTime() < SEND_LATER_MIN_LEAD_MS) {
+        const inverse = composedLocalInput(seed);
+        if (inverse === null || inverse.instant.getTime() - now.getTime() < SEND_LATER_MIN_LEAD_MS) {
           seed = seedOf(now.getTime() + SEND_LATER_MIN_LEAD_MS + 3_600_000);
         }
         setCustomAt(seed);
@@ -389,9 +389,13 @@ export function ComposeView({
   }, [onSendLater]);
   // The evening preset is offered only while it is meaningfully ahead — past ~17:45 "this evening at
   // 18:00" is a promise measured in seconds, and the honest menu simply omits it.
-  const eveningIso = todayEvening(openedAt);
+  const eveningIso = todayEvening(openedAt).instant.toISOString();
   const eveningUsable = Date.parse(eveningIso) - openedAt.getTime() > SEND_LATER_MIN_LEAD_MS;
-  const customIso = instantOfLocalInput(customAt);
+  /* THE TYPED CLOCK, COMPOSED — the presets name hours no transition crosses, this field names
+     any hour at all, so it is the one appointment on this screen whose wall clock can be missing
+     or doubled. It carries the verdict; the sentence below states it before the press. */
+  const custom = composedLocalInput(customAt);
+  const customIso = custom?.instant.toISOString() ?? null;
   const customUsable = customIso !== null
     && Date.parse(customIso) - openedAt.getTime() >= SEND_LATER_MIN_LEAD_MS;
 
@@ -964,6 +968,18 @@ export function ComposeView({
                     and the zone is stated plainly, because "18:00" is only half a fact. */}
                 {customAt && !customUsable ? (
                   <p className="send-note" role="status">{t("sendLaterPast")}</p>
+                ) : null}
+                {/* THE NIGHT THE TYPED HOUR IS MISSING, SAID OUT LOUD — the strip's own rule on
+                    the other surface: only a booking that DIFFERS from the request earns a
+                    sentence, so the repeated hour gets none (it books the time that was asked
+                    for) and an ordinary evening gets none either. */}
+                {custom && custom.verdict === "shifted_forward" ? (
+                  <p className="send-note" role="status">
+                    {t("sendLaterSkipNote", {
+                      booked: `${String(custom.hour).padStart(2, "0")}:${String(custom.minute).padStart(2, "0")}`,
+                      asked: customAt.slice(11, 16),
+                    })}
+                  </p>
                 ) : null}
                 <p className="send-note">{t("sendLaterZone", { zone: activeFormatZone() })}</p>
               </div>

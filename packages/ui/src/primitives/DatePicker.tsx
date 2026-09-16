@@ -32,6 +32,14 @@ export interface DatePickerProps {
   /** The chosen day, if there is one — rendered selected, and the initial cursor. */
   value?: string | null;
   onPick: (day: string) => void;
+  /**
+   * WHAT THAT DAY WOULD BOOK, per rendered day — appended to a pickable cell's accessible name.
+   * The host owns it because the zone and the hour are the host's: this file knows calendar days
+   * and nothing else. Two nights a year the hour a host asks for is not the hour that day can
+   * book, so a picker that states the asked one states a time it cannot honour. `null` for a day
+   * with nothing to add; disabled days are never asked.
+   */
+  dayNote?: (day: string) => string | null | undefined;
   onClose: () => void;
   /** The control that opened the picker: placement is measured from its box. */
   anchor: HTMLElement | null;
@@ -139,6 +147,7 @@ export function DatePicker({
   min,
   value,
   onPick,
+  dayNote,
   onClose,
   anchor,
   labels,
@@ -300,7 +309,9 @@ export function DatePicker({
               const isSel = !!valueDay && compareDays(d, valueDay) === 0;
               const isCursor = compareDays(d, cursor) === 0;
               const ok = enabled(d);
-              const label = isToday ? `${fullName.format(ms(d))}, ${labels.today}` : fullName.format(ms(d));
+              const dated = isToday ? `${fullName.format(ms(d))}, ${labels.today}` : fullName.format(ms(d));
+              const note = ok ? dayNote?.(key) : null;
+              const label = note ? `${dated}, ${note}` : dated;
               return (
                 <button
                   key={key}

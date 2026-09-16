@@ -604,7 +604,7 @@ function ComposeSheet({
    * while it is meaningfully ahead — past ~17:57 "this evening at 18:00" is a promise measured
    * in seconds, and the honest menu simply omits it (the webapp's `eveningUsable`).
    */
-  const eveningAt = todayEvening(openedAt);
+  const eveningAt = todayEvening(openedAt).instant;
   const eveningUsable = eveningAt.getTime() - openedAt.getTime() > SEND_LATER_MIN_LEAD_MS;
   const openLater = () => {
     // The keyboard would cover the picker it is being asked to read.
@@ -902,7 +902,7 @@ function ComposeSheet({
                    preset fixes, and the four ordinary hours between and around them. */
                 <ScrollView style={{ maxHeight: 208 }}>
                   {usableHours(openedAt, later.offset).map((hour) => {
-                    const at = dayAtHour(openedAt, later.offset, hour);
+                    const at = dayAtHour(openedAt, later.offset, hour).instant;
                     return (
                       <SheetRow
                         key={hour}
