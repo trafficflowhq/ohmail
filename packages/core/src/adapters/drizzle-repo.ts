@@ -717,15 +717,11 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
   async insertMessage(input: InsertMessageInput): Promise<InsertedMessage> {
     /* THE MAILBOX TOMBSTONE, IN THIS TRANSACTION AND BEFORE THIS WRITE. The row's key to
        `mailboxes` refuses the account sweep, which deletes that parent — and nothing at all for
-       the mailbox's own erasure, which leaves the row standing. The lock order every writer here
-       holds: the erasure takes the mailbox row and then this mailbox's messages, so a writer
-       holding a message row and asking afterwards is its deadlock partner. This branch has
-       written nothing yet — a plan carrying a dedup-key upgrade always names an EXISTING row, so
-       `new` never reaches here with a `messages` row already held.
+       the mailbox's own erasure, which leaves the row standing. This branch holds no `messages`
+       row yet, so it is not the erasing sweep's deadlock partner.
        ASKED BY THE CALLER'S OWN STATEMENT when one is handed over: `mailboxMustBeLive` is the
        change-log allocation this commit is already sending, which takes this row at this strength
-       and refuses this stamp — a read here would be a second round trip on every message of every
-       first sync for an answer already on its way. */
+       and refuses this stamp — a read here would be a second round trip per message. */
     await fenceErasedMailbox(
       this.db as unknown as Tx, this.d, input.mailboxId, "share", input.mailboxMustBeLive);
     const inserted = await this.db.insert(messages).values({

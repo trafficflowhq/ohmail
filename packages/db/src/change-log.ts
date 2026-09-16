@@ -133,16 +133,11 @@ export function parseChangeWake(payload: string): { accountId: string; seq: bigi
 }
 
 /**
- * THE MAILBOX A WRITER IS COMMITTING INTO, asked BY the allocating statement.
- *
- * The ingest's fence is a locked read of the mailbox row inside the commit's own transaction —
- * one round trip per message on a hosted store. Handed here it costs none: the allocation already
- * runs in that transaction and already takes a row lock, so the row rides in the same statement.
- *
- * ONE READ, TWO STAMPS. `status` is the REMOVAL question and {@link answer} is the caller's
- * decider for it: this module refuses nothing on a status and knows nothing about what one means
- * (`null` ⇔ no such mailbox row). `erased_at` is the ERASURE question, and that one IS decided
- * here, because the seam owns its meaning and its class — a stamped row throws
+ * THE MAILBOX A WRITER IS COMMITTING INTO, asked BY the allocating statement — ONE READ, TWO
+ * STAMPS, and no statement of its own: the allocation already runs in the commit's transaction
+ * and already takes the row lock. `status` is the REMOVAL question and {@link answer} is the
+ * caller's decider for it (`null` ⇔ no such mailbox row). `erased_at` is the ERASURE question,
+ * and the seam decides that one here because it owns the class — a stamped row throws
  * {@link MailboxErasedError} before the caller is told anything, and the transaction this
  * statement ran in commits nothing. A door that hands this carrier over has asked BOTH.
  */

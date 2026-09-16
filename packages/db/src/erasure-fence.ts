@@ -113,8 +113,6 @@ export async function fenceErased(tx: Tx, d: Dialect, scope: FenceScope): Promis
  * and, after the mailbox row is taken, cross {@link fenceErased}'s order — this reads one row, so
  * a caller already holding it adds no lock. ONLY where the account arm is structural:
  * `erasure-fence-census.test.ts` derives that from the schema and refuses a door without it.
- *
- * `askedBy` is the one way this sends no statement at all — see the note on the call.
  */
 export async function fenceErasedMailbox(
   tx: Tx, d: Dialect, mailboxId: string, mode: LockMode = "share",
