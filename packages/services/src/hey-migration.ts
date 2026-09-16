@@ -130,6 +130,10 @@ export class HeyMigrationService {
           continue;
         }
 
+        /* NO RETRO REQUEST, deliberately — `profile-import-service`'s rule, stated here too since
+           the 2026-09-16 ruling made every other omission a defect: an import carries decisions
+           somebody made in ANOTHER product, so "nobody asked for the backlog" is the honest state,
+           and walking a whole imported mailbox on arrival is a press this flow never offered. */
         const [row] = await tx.insert(rulesTbl).values({
           accountId: ctx.accountId,
           kind: o.kind,
@@ -137,6 +141,7 @@ export class HeyMigrationService {
           destination: o.destination,
           provenance: "migrated",
           enabled: true,
+          retroRequestedAt: null,
         }).returning({ id: rulesTbl.id });
         await recordRuleDelta(tx, ctx.accountId, [row!.id], "create");
         ruleIds.push(row!.id);

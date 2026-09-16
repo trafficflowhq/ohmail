@@ -145,9 +145,16 @@ export class LearningService {
       await recordRuleDelta(tx, accountId, flipped.map((r) => r.id), "update");
       return;
     }
+    /* THE RETRO REQUEST IS PART OF THIS WRITE, not a later press (the 2026-09-16 ruling).
+       A promotion is a decision the person made — it graduates off their own approvals — and a
+       rule that claims a sender's mail without asking for the backlog leaves that mail where it
+       was. Measured on a live account: eight rules created over two days with retro_requested_at
+       NULL, and fifteen of their messages still at the gate days later, which is what the release
+       screen was counting. Stamped HERE so the rule and the request commit together; `null` would
+       mean "nobody asked", which is the state that produced the defect. */
     const [row] = await tx.insert(rulesTbl).values({
       accountId, kind: p.kind, match: p.match, destination: p.destination,
-      provenance: "promoted", enabled: true,
+      provenance: "promoted", enabled: true, retroRequestedAt: d.now(),
     }).returning({ id: rulesTbl.id });
     await recordRuleDelta(tx, accountId, [row!.id], "create");
   }

@@ -567,6 +567,11 @@ export async function allowSender(
       destination: ALLOW_RULE_DESTINATION,
       provenance: "promoted",
       enabled: true,
+      /* The backlog comes with the rescue. "Not junk" says this sender's mail belongs
+         in the Ohbox, and the message being rescued is rarely their only one — without the stamp
+         the rest stays wherever the spam verdict put it and nothing ever revisits it, because
+         NULL is read everywhere as "nobody asked". Stamped in the rescue's own transaction. */
+      retroRequestedAt: nowAt,
     }).returning({ id: rulesTbl.id });
     await recordRuleDelta(tx, accountId, [rule!.id], "create");
     return { disabledRuleIds: disabled.map((r) => r.id), createdRuleId: rule!.id };
