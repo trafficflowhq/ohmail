@@ -109,12 +109,10 @@ export async function fenceErased(tx: Tx, d: Dialect, scope: FenceScope): Promis
  *
  * A row with a NOT NULL key to `mailboxes` cannot outlive the ACCOUNT sweep, which deletes that
  * parent; the MAILBOX sweep leaves it standing as the tombstone, so the stamp is the only thing
- * such a write can be refused by. Asking the account again would read a row the caller already
- * holds and — after the mailbox row is taken — would cross {@link fenceErased}'s order. This takes
- * the mailbox row alone, so a caller that already holds it adds no lock at all.
- *
- * Use it ONLY where the account arm is structural: `erasure-fence-census.test.ts` derives that
- * from the schema and refuses a door that asks the mailbox alone without it.
+ * left that can refuse such a write. Asking the account again would read a row the caller holds
+ * and, after the mailbox row is taken, cross {@link fenceErased}'s order — this reads one row, so
+ * a caller already holding it adds no lock. ONLY where the account arm is structural:
+ * `erasure-fence-census.test.ts` derives that from the schema and refuses a door without it.
  */
 export async function fenceErasedMailbox(
   tx: Tx, d: Dialect, mailboxId: string, mode: LockMode = "share",

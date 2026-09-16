@@ -970,17 +970,13 @@ async function applyUpsert(
       const f = ch.entity as { id?: string; name?: string; mailboxId?: string } | undefined;
       if (!f?.name || !f.mailboxId) return false;
       if (!known.has(f.mailboxId)) return false;
-      /* AND THE MAILBOX'S OWN TOMBSTONE. `known` holds tombstones too — attributing mail to a
-         different mailbox is the one thing this may never do — so membership is not liveness: a
-         mailbox erased on THIS install keeps its row, and this row's key to it refuses only the
-         account sweep. Asked inside the page's transaction, which is where a local erasure
-         commits its own deletes.
-
-         SKIPPED, NOT THROWN, which is the arm above's verb and had to be measured rather than
-         assumed: `applyPage` is called with no catch anywhere above it and the cursor moves only
-         after it returns, so a throw would re-pull the same page for ever — one erased mailbox
-         would stop the mirror for every other mailbox on the device. A skip is what the unknown
-         mailbox already gets. */
+      /* AND THE MAILBOX'S OWN TOMBSTONE — `known` holds tombstones too, so membership is not
+         liveness: a mailbox erased on THIS install keeps its row, and this row's key to it
+         refuses the account sweep alone. Asked inside the page's transaction.
+         SKIPPED, NOT THROWN, and measured rather than assumed: `applyPage` has no catch above it
+         and the cursor moves only when it returns, so a throw would re-pull the same page for
+         ever — one erased mailbox stopping the mirror for every other one on the device. A skip
+         is what the unknown mailbox already gets. */
       if (await readMailboxErasedAt(tx, dia, f.mailboxId) !== null) return false;
       await tx.insert(mailboxFolders).values({
         id: ch.id, mailboxId: f.mailboxId, folder: f.name, updatedAt: now,
