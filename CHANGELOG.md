@@ -66,6 +66,41 @@ repository's history, so a reworded comment no longer reads as a changed migrati
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
 [Roadmap](README.md#roadmap).
 
+### A mailbox you remove takes its in-flight retries with it
+
+A message that failed to sync is re-read by name on a later pass, and that re-read is refused when
+the mailbox has been removed in the meantime — nothing is written, the record stays owed, and the
+cycle stops there. The check costs one fewer database round trip per write now: the sync cycle
+already holds the mailbox's row while it writes, so it reads the answer off that.
+
+### A dropped connection during a background renewal no longer leaves extra sessions behind
+
+Apps renew their session in the background. When the answer to a renewal was lost, a browser was
+given a fresh credential for every retry — so one dropped connection could leave several usable
+credentials on a session that needed one — while the desktop app and the paired browser were
+signed out instead, because their retry was indistinguishable from a stolen token being replayed.
+Every retry of one renewal now converges on a single credential, and the desktop app and the
+paired browser name their attempts the way the phone already did, so a dropped answer costs a
+retry and nothing else.
+
+### An iCloud mailbox's organizer keeps answering your other computer's presses
+
+### A discard that cannot happen now says why, and a held message points at the question that frees it
+
+### A reply you were writing is saved as a draft if the message it answers is moved or deleted in another mail app
+
+### A message another mail app moves or deletes now says so where it was, instead of the pane going blank
+
+### The web Screener can show and release mail held behind rules you already made
+
+### A sender you sent to Spam counts as decided everywhere
+
+### A browser that loses track of your account recovers on the next page load instead of refusing everything
+
+### A meeting invitation with no event says so
+
+### An "Accepted:" your calendar app sent is no longer the face of a conversation
+
 ## [0.19.1] — 2026-09-16
 
 ### Reopening the app no longer holds the text of every reply you have sent
