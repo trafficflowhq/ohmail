@@ -69,6 +69,280 @@ pairing link pasted into the "Your own server" field gets the same answer. The d
 next version. Pairing a phone or a browser to a computer running ohmail is a different thing and is
 untouched.
 
+### A folder you delete no longer takes a message that arrived while it was being emptied
+
+Deleting a folder empties it into Trash first, so that the delete itself has nothing left to take.
+Emptiness was read in the one way the mail server is allowed to answer from a state it has already
+reported, and a message another client filed into that folder in between went with it — not in
+Trash, not on the server, and the mailbox is the master, so nothing brings it back. The folder is
+re-read immediately before the delete is issued now, and one that is not provably empty and
+unchanged is not deleted.
+
+### A folder your server recreated no longer shows its old contents
+
+If a folder is deleted and made again on the mail server — refiling an archive, a restore, a
+migration tool — ohmail could keep showing what used to be in it and never show what is there now.
+It reads the folder's numbering along with the counters it compares, so a recreated folder is read
+afresh. The same reading covers the small shared folder the computers organizing a mailbox talk
+through: a tidy-up no longer removes a request another computer was waiting on, or another
+install's settings.
+
+### A message deleted and restored on another device no longer disappears from this one
+
+A page of changes from another device applied every creation and then every deletion, so two
+changes to one message could be applied in the wrong order: delete a message elsewhere and restore
+it between the same two checks, and the restore was applied first and the delete second. The
+message was gone here with nothing left to heal it. A deletion now applies only when nothing later
+in the same page names the same message.
+
+### A message restored from Junk elsewhere no longer opens blank
+
+Where the hosted service declines to keep a message's text it stores a marker saying why, and only
+one of the three markers was carried across. The other two were stored as ordinary empty messages,
+which are never asked about again — so a message you rescued from Junk on another device opened
+blank here for good. Every marker is carried now, and a message that changes drops the marker so
+its text is fetched on the next pass.
+
+### Removing a mailbox stops the writes that were still in flight
+
+An arriving message was already refused into a mailbox you had removed while it was being read.
+Three later writers were not: restoring the text of a message a spam verdict had emptied, carrying
+your filing and read marks to the server, and the retry of a message that had failed to sync. Each
+planned from a reading taken before it wrote, so a removal landing in that gap wrote into a mailbox
+that was already gone. All of them ask the same question now, inside the transaction that does the
+writing and under the same lock as the removal.
+
+### Erasing an account or a mailbox stops the work already running
+
+Erasing reports success once what it held has been removed. Work that had started before that could
+still write afterwards and put some of it back — a draft, a decision about a sender, a cached copy
+of your settings, a saved password, an automatic reply that could still be sent. Those checks were
+made one writer at a time and several had been missed; they go through a single door now that asks
+and writes together, so a writer cannot skip it. Erasing one mailbox is covered too: its record
+stays behind on purpose, which is how it is remembered as removed, and a check that asked only about
+the account let writes through for a mailbox you had erased.
+
+### A message is sent as you last saw it
+
+With one draft open in two windows, the other window's save could land between your last save and
+your press — and the message that left was the other window's, to its recipients, reported as yours.
+A send now carries the version of the draft it was composed against: if the draft changed elsewhere,
+nothing is sent and you are asked to review it first. The editor keeps your words, and a draft saved
+back unchanged still sends.
+
+### Cancelling a queued send on the phone cancels it
+
+Send a reply with no signal and ohmail holds it until the connection is back. Pressing Cancel closed
+the composer and left that send on the queue, so writing the reply again and sending it delivered
+the message twice. Cancel withdraws the queued send now — on this run and after a restart — and a
+message written again for the same reply carries the same send identity, so the server delivers it
+once. A message that has already left says so rather than promising otherwise.
+
+### Turning off "Also move the mail already in your mailbox" leaves that mail where it is
+
+On the web and on the phone the switch was read after the move had already been dispatched, so
+screening a sender out moved up to fifty of their messages anyway — including mail you had filed by
+hand or set aside. With the switch on, the caption says what actually happens: up to fifty messages
+move at once, and the rule files the rest.
+
+### A rule you change on a mailbox another computer organizes now takes effect
+
+A rule is identified by what it matches. Finding a rule with the same match, the pass answered that
+the change was already applied and wrote nothing — so where it files, how it ranks against other
+rules and whether it is on at all were left as they were, and mail carried on going to the old
+folder while the app said the change was in force. The state that was asked for is compared against
+the state that is there, and the difference is applied. An identical request still writes nothing.
+
+### A change still travelling to your organizer is no longer reported as done
+
+Where the mailboxes on your account are organized by another install — a computer that is off, say —
+deleting a rule sends the change there and the rule keeps running until that install applies it. The
+first answer said so. The answer to a retry, after a reply went missing, said the rule was gone. A
+change waiting for your organizer is reported as waiting, however many times the request is sent.
+
+### Resurfacing a message takes a time, not just a day
+
+Choose the hour as well as the day, on the web and on the phone. The time you choose becomes the
+default for the next ones, and it is always shown before you decide, so "Tomorrow" says what it
+means. "Now" is unchanged: it is a state, not a date.
+
+### The unsubscribes a screen-out leaves behind now finish
+
+Screening a sender out leaves the lists you said no to. A screen-out that finds more than it can
+finish hands the rest to an hourly pass, and that pass could not finish either: it spent its whole
+run deciding what it owed and was cut off before it had done much about it. It works to a budget
+from the moment it starts now, takes a bounded batch at a time, leaves the rest for the next hour
+and reports how many are still waiting. Two things it should never have done went with it: a mailbox
+you disconnect is no longer sent for at all, and an unsubscribe that was started and never went
+through is no longer reported as already done — pressing again sends it.
+
+### Two computers can no longer both organize a mailbox after a take-over
+
+When you gave a mailbox to another computer, the one losing it compared the mailbox's shared folder
+against a reading taken a moment too late — one that already held the new organizer's work. Every
+check after that said nothing had changed, so both machines filed into the same mailbox until the
+older one's permit ran out. The reading is taken by the step that grants the permit now, and checked
+against the claim it belongs to, so a machine that has been taken over stops at its very next write
+instead of a minute later.
+
+### A lost answer no longer stops a mailbox being organized
+
+Every renewal writes a new marker and waits to be told it landed. If that answer never arrived — a
+dropped connection at the wrong moment — the computer no longer recognised the marker it had just
+written, decided another machine had taken the mailbox, and stopped. The marker it left behind then
+kept every other machine out too, and pressing stop could not clear it. A computer recognises what
+it wrote whether or not the answer came back, and its stop clears it. A marker genuinely written by
+another machine still stops it, which is the point of the check.
+
+### A phone that could not start organizing says so instead of showing it
+
+When ohmail on your phone comes back to the foreground it takes the mailbox again. If something went
+wrong in the moment after it took it — a busy store, a connection that had not finished coming back
+— the phone kept the mailbox, started nothing, and told you it was organizing. Nothing was filed and
+no other computer could take over. The phone gives the mailbox back and tries again a couple of
+times now, and if it still cannot start it says so on the screen that names this phone.
+
+### A clock you corrected no longer keeps refusing
+
+If a computer wrote its permit while its clock was badly wrong, every later check re-read that old
+marker, refused, and told you the clock was wrong — after you had already corrected it, and
+restarting did not help. A marker written under a clock that has since been corrected no longer
+decides: the install writes a new one under the clock it has now, and that is what later checks
+read. A clock that is still wrong is still refused.
+
+### Removing a mailbox on the phone removes its mail
+
+"Stop and remove" closed the mail engine and deleted the phone's copy of the mailbox, and left the
+engine's own store behind — the account, the mail, and the mailbox password sealed beside it.
+Connecting a different mailbox afterwards found that account and attached both, so the removed
+mailbox's mail was in the new mailbox's session. The removal takes all of it now, in one order. A
+mailbox you remove on a paired computer leaves the phone with it.
+
+### The phone shows the state of the account you are looking at
+
+After you switched from the mailbox on your phone to another account, ohmail kept organizing the
+first one in the background and showed that mailbox's state under the account you were looking at —
+so a healthy account could say "Connection lost" about a mailbox you had switched away from. ohmail
+on a phone organizes while it is open, and a mailbox you have switched away from is not open: it
+hands the mailbox back when you leave it, so your other computer can take it, and takes it again
+when you switch back.
+
+### Stop on the phone reaches the mailbox every time you press it
+
+If the mail server would not confirm your stop, Settings went on saying "Organizing" and offered
+Stop again — and pressing it did nothing at all, while erasing the one sentence that explained the
+first press. The screen says a stop is waiting for the mailbox now, pressing Stop asks again, and
+the explanation stays until something changes. On Android, pressing Stop on the notification no
+longer takes the notification away while the mailbox is still being organized.
+
+### A server that serves its API under /api works throughout
+
+Mail synced, but consent settings, the mailbox list, the screener and new-mail wakes were sent to
+the wrong address on those servers and quietly answered nothing. Every request goes to the address
+ohmail measured when you paired.
+
+### Cancelling the account-erase check cancels it
+
+Press "Verify and erase", change your mind, press Cancel, and when the second factor's response
+landed the account was erased anyway. Cancel cleared the screen; the check that already held the
+challenge went on to erase. A cancelled, failed or finished check is spent now, on all three factor
+paths: a response landing late does nothing, and the screen says nothing was erased.
+
+### A recovery code is spent only when it signs you in
+
+Signing in with a recovery code committed the spend on its own and created the session afterwards.
+Anything in between — a restart, a dropped connection, a database that refused the write — took the
+code and gave back nothing, which for somebody on their last code with the authenticator already
+gone is the end of the account. The spend and the session are one act now: either you are signed in
+or the sheet is exactly as you found it. A wrong code still costs an attempt.
+
+### A temporary fault is no longer reported as an empty AI budget
+
+When the credit check could not answer for an account, ohmail said no AI actions remained and asked
+for money — including on accounts that had plenty, and the card kept saying it overnight. It checks
+the account's own standing before saying anything about payment now: where the two disagree it says
+AI is briefly unavailable and to try again. What an account with no budget left is told has not
+changed. Those messages are in your own language rather than in English, and one about a temporary
+fault clears by itself once suggestions work again.
+
+### Opening settings no longer creates a subscription-management link each time
+
+The browser tab and the desktop window both asked for a management link the moment settings mounted,
+and the row was offered only once one had come back — so one signed-in account minted a link roughly
+every ninety seconds with nobody pressing anything. The link is made when you press Manage. Whether
+the row is offered at all is a separate question now, and that one mints nothing.
+
+### The two buttons on a revoked pairing open what they name
+
+When the computer you are paired to removes this one, the notice offers two ways on: pair again, or
+set this computer up on its own. Both buttons left you on the same notice. They now open the pairing
+step and the take-over step.
+
+### The window notices when its mail engine stops
+
+The window asked the app what the mail engine was doing while it was starting and stopped asking the
+moment it was ready. An engine that then stopped or restarted left the mailbox on screen exactly as
+it had been, with nothing behind it, until the app was reopened. The window keeps reading, and says
+what happened.
+
+### A crash while ohmail is starting no longer locks you out of your own mail
+
+ohmail keeps one lock file beside its local database so that two copies of the app can never open it
+at once. The file was created first and filled in a moment later, so a crash, a forced quit or a
+power cut in between left a lock naming nobody — and a lock that names nobody cannot be judged safe
+to remove, so every launch after that refused. The lock is written and put in place in one act now,
+and one left empty by an older version is taken over once. Separately, a removal that could not
+clear this computer's copy of the mail says so and keeps the mailbox in the list, instead of
+reporting the mailbox gone with every message still there; pressing Remove again runs the delete
+that failed.
+
+### An attachment you open and leave no longer stays in memory
+
+Opening an attachment hands the window a link to its bytes, and that link holds the whole file until
+it is handed back. It was handed back by the attachment's own row on screen — so moving on before
+the file finished arriving left the row gone by the time it did, with nothing left to hand the link
+back with, and the file stayed in memory for the rest of the session. The link is owed by the
+message it belongs to now, handed back when you move off that message and immediately when a file
+arrives after you have left.
+
+### A long store upgrade says how far along it is
+
+When an update has to rework the copy of your mail on this computer, the app showed one sentence and
+no movement — several minutes on a large mailbox, which reads as a hang. It counts the steps as it
+goes now, and after a few seconds says out loud that a large mailbox can take several minutes.
+
+### A deletion you confirmed completes after a reload, or says it did not
+
+Press Delete, lose the tab inside the undo window, reload, and the replay ran before this device's
+copy of the mailbox had been read off disk: it found no message, took that for the message being
+gone, and struck the deletion off. The message was still in the mailbox and the app had already said
+it was gone. The replay waits for that read now, and a deletion it cannot complete is retried and
+then named on screen rather than quietly dropped.
+
+### A first sync of a mailbox with many folders no longer loads a message from every one of them
+
+ohmail syncs a mailbox with a memory budget, and it would go over that budget once per folder: a
+mailbox with a hundred folders each holding one large message could pull about 2.6 GB of mail into
+memory before parsing any of it. Each folder checks the budget before it fetches now, so a pass
+holds the budget plus at most one message — measured at 200 MB where it used to reach 2.6 GB. A pass
+that runs out stops where it is, says the first sync is continuing, and the next one resumes at that
+folder.
+
+### A long first import no longer keeps the whole import in the local database's log
+
+The log is folded in after every batch, so an interrupted import loses at most the batch it was on
+rather than all of it — and the import itself is about a third faster, because folding the log is
+also what lets the database reuse its memory.
+
+### The demo on the site keeps to itself
+
+The demo on the landing page is the real client running on fictional mail, and it ran on the same
+browser storage as your own. If you had an unfinished message in ohmail and the demo opened, it
+could restore, overwrite or discard it — and after an outage that text is the only copy. The demo
+writes to its own space and reads nothing else. The signup form on the site also fixes a mix-up:
+submit one address, reopen the form and type another, and a slow answer to the first could report
+the second as registered. It confirms only the address you submitted.
+
 ## [0.19.0] — 2026-09-14
 
 ### Reopening the app no longer grows its cache of mail
