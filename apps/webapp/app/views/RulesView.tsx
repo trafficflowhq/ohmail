@@ -31,7 +31,8 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { Button, Icon, SettingsNote, SettingsSection, TextField, useToast } from "@ohmail/ui";
-import type { Folder, MutationStatus, RuleDTO } from "@ohmail/client-engine";
+import { pressVerdict, tallyVerdicts } from "@ohmail/client-engine";
+import type { Folder, PressAnswer, RuleDTO } from "@ohmail/client-engine";
 import { placeLabel } from "../shell/format";
 import { displayRuleMatch } from "../shell/idn";
 import { useListWindow } from "../shell/list-window";
@@ -173,8 +174,10 @@ type OpenAction =
 /**
  * WHAT HAPPENED, AS THE ENGINE REPORTS IT. `engine.mutate` resolves to a `MutationResult`,
  * which satisfies this structurally — the callbacks are `engine.mutate(...)` and nothing else.
+ * The holder rides along because a rule verb on a mailbox somebody else organizes answers 202
+ * and this pane has to name what it is waiting for.
  */
-export type RuleOutcome = { status: MutationStatus };
+export type RuleOutcome = PressAnswer;
 
 export interface RulesViewProps {
   /** Newest first — `rulesList(reader)`. */
@@ -249,26 +252,42 @@ export function RulesView({ rules, onRevoke, onRetarget }: RulesViewProps) {
    * success. The engine keeps a retryable failure on its offline queue with the overlay standing, so the row is
    * correctly gone from the screen — but the server has not been told yet, and "revoked" is a claim about the server.
    */
-  const report = (status: MutationStatus, ok: string, queued: string, failed: string): void => {
-    toast(status === "rolled_back" ? failed : status === "queued" ? queued : ok);
+  const report = (res: RuleOutcome, ok: string, queued: string, failed: string): void => {
+    const v = pressVerdict(res);
+    if (v.kind === "refused") { toast(failed); return; }
+    if (v.kind === "queued") {
+      /* THE TWO WAITS ARE DIFFERENT SENTENCES. `retry` is this browser's own queue, which the
+         next connection drains. `organizer` is a request recorded for the install that organizes
+         this mailbox — the rule is STILL FILING MAIL until that install's next pass, and saying
+         "revoked" over it is telling somebody a rule is gone while it runs. */
+      toast(v.wait === "retry" ? queued
+        : v.holder ? t("toastRuleOrganizer", { name: v.holder })
+        : t("toastRuleOrganizerUnknown"));
+      return;
+    }
+    toast(ok);
   };
 
   /**
    * Bulk revoke fans the SAME per-rule mutation over the filtered set and then reports ONE toast
    * that is true of the whole batch. A batch is not confirmed unless every rule confirmed: a
    * single refusal makes it "revoked X of N, the rest are still in place", never a flat success,
-   * because the rules that rolled back are exactly as present as before. Offline (every mutation
-   * queued, none refused) reports queued.
+   * because the rules that rolled back are exactly as present as before. Nothing refused and
+   * something WAITING is its own sentence — those rules are still filing mail.
    */
   const runBulk = (ids: string[]): void => {
     setOpen(null);
     const total = ids.length;
     void Promise.all(ids.map((id) => onRevoke(id))).then((results) => {
-      const ok = results.filter((r) => r.status === "confirmed").length;
-      const failed = results.filter((r) => r.status === "rolled_back").length;
-      if (failed === 0 && ok === total) toast(t("bulkToastRevoked", { count: total }));
-      else if (failed === 0) toast(t("bulkToastQueued"));
-      else if (ok > 0) toast(t("bulkToastPartial", { ok, count: total }));
+      const vs = results.map(pressVerdict);
+      const tally = tallyVerdicts(vs);
+      const waiting = vs.filter((v) => v.kind === "queued" && v.wait === "organizer").length;
+      if (tally.refused === 0 && tally.applied === total) toast(t("bulkToastRevoked", { count: total }));
+      else if (tally.refused === 0 && waiting > 0) {
+        toast(tally.holder ? t("toastRuleOrganizer", { name: tally.holder }) : t("toastRuleOrganizerUnknown"));
+      }
+      else if (tally.refused === 0) toast(t("bulkToastQueued"));
+      else if (tally.applied > 0) toast(t("bulkToastPartial", { ok: tally.applied, count: total }));
       else toast(t("bulkToastFailed"));
     });
   };
@@ -444,7 +463,7 @@ export function RulesView({ rules, onRevoke, onRetarget }: RulesViewProps) {
                           onClick={() => {
                             setOpen(null);
                             void onRevoke(rule.id).then((r) =>
-                              report(r.status, t("toastRevoked"), t("toastRevokeQueued"), t("toastRevokeFailed")),
+                              report(r, t("toastRevoked"), t("toastRevokeQueued"), t("toastRevokeFailed")),
                             );
                           }}
                         >
@@ -470,7 +489,7 @@ export function RulesView({ rules, onRevoke, onRetarget }: RulesViewProps) {
                               setOpen(null);
                               void onRetarget(rule.id, folder).then((r) =>
                                 report(
-                                  r.status,
+                                  r,
                                   t("toastRetargeted", { place: placeLabel(folder) }),
                                   t("toastRetargetQueued"),
                                   t("toastRetargetFailed"),

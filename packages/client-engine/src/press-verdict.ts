@@ -26,12 +26,20 @@ export type PressVerdict =
 export const PRESS_THREW: PressVerdict = { kind: "refused", refusal: undefined };
 
 /**
+ * WHAT THIS READING NEEDS OF A RESULT — structural, so a surface holding its own narrower
+ * outcome type (the rules pane's `RuleOutcome`) reads the same verdict without restating it.
+ * A whole {@link MutationResult} satisfies it.
+ */
+export type PressAnswer = Pick<MutationResult, "status">
+  & Partial<Pick<MutationResult, "error" | "queuedWith">>;
+
+/**
  * THE ONE READING OF A MUTATION RESULT. The `never` binding is the gate, evaluated by `tsc`: a
  * fifth `MutationStatus` cannot be added without this function being made to answer for it, and
  * because every completion sentence on both surfaces comes through here, that question is asked
  * once instead of at thirty call sites.
  */
-export function pressVerdict(res: MutationResult): PressVerdict {
+export function pressVerdict(res: PressAnswer): PressVerdict {
   switch (res.status) {
     case "confirmed":
       return { kind: "applied" };

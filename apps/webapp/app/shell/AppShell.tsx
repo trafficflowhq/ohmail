@@ -52,6 +52,10 @@ import {
   type EntityReader,
   type MutationRejectedError,
   type MutationResult,
+  PRESS_THREW,
+  pressVerdict,
+  type PressVerdict,
+  tallyVerdicts,
   type FeedView,
   type Folder,
   type OhmailView,
@@ -1480,7 +1484,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
    * and "refused for a reason nobody named" are different answers, and an optional field would
    * collapse them the first time a caller read it.
    */
-  type PressOutcome = { applied: true } | { applied: false; refusal: MutationRejectedError | undefined };
+  type PressOutcome = PressVerdict;
 
   const refusalSentence = useStableCallback((err: MutationRejectedError | undefined): string => {
     if (err?.code !== "organized_elsewhere") return t("ohbox.refusedPress");
@@ -1501,18 +1505,31 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
    */
   const dispatchPress = useStableCallback((mutation: EngineMutation): Promise<PressOutcome> =>
     engine.mutate(mutation).then(
-      (res: MutationResult): PressOutcome => (res.status === "rolled_back"
-        ? { applied: false, refusal: res.error }
-        : { applied: true }),
+      pressVerdict,
       /* `mutate` resolves with a verdict rather than rejecting, so a throw here is this client
          failing — still a press that did nothing, and still owed a sentence. */
-      (): PressOutcome => ({ applied: false, refusal: undefined }),
+      () => PRESS_THREW,
     ));
+
+  /**
+   * THE SENTENCE A WAIT GETS. `organizer` is a request the SERVER recorded for the install that
+   * organizes this mailbox: nothing here advances it and nothing here may report it done — the
+   * arm that made this seam say "Done" over a recorded request. `retry` is this client's own
+   * outbox, where the optimistic view standing is truthful, so it keeps the caller's sentence.
+   */
+  const queuedSentence = useStableCallback((holder: string | null): string =>
+    (holder ? t("ohbox.pressQueuedOrganized", { name: holder }) : t("ohbox.pressQueuedOrganizedUnknown")));
+
+  /** How many of a set are waiting on the ORGANIZER — a retry-queued press keeps the caller's
+   *  sentence, because the optimistic view standing is truthful for it. */
+  const organizerWaits = (outs: readonly PressVerdict[]): number =>
+    outs.filter((o) => o.kind === "queued" && o.wait === "organizer").length;
 
   const mutateAndReport = useStableCallback(
     (mutation: EngineMutation, okSentence: string | null): Promise<boolean> =>
       dispatchPress(mutation).then((out) => {
-        if (!out.applied) { toast(refusalSentence(out.refusal)); return false; }
+        if (out.kind === "refused") { toast(refusalSentence(out.refusal)); return false; }
+        if (out.kind === "queued" && out.wait === "organizer") { toast(queuedSentence(out.holder)); return false; }
         if (okSentence !== null) toast(okSentence);
         return true;
       }),
@@ -1521,21 +1538,29 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
   /**
    * THE SAME RULE OVER A SET, and the reason it is not a loop over the one above: a toast per
    * refused message over a selection of forty is not feedback, it is a denial of service on your
-   * own screen. So the set speaks ONCE — the sentence counts what actually applied, and a set
-   * where nothing applied is a refused press reported as one, in the first refusal's own words.
+   * own screen. So the set speaks ONCE — and it speaks the WHOLE press: a set of seven where
+   * three applied and four were refused used to say three and never mention the four, which is
+   * better than the count of what was picked and is not yet the truth. What is waiting on the
+   * organizer is counted separately again, because nothing has happened to it.
    */
   const mutateSetAndReport = useStableCallback(
     (mutations: readonly EngineMutation[], say: (applied: number) => string | null): Promise<number> =>
       Promise.all(mutations.map((mu) => dispatchPress(mu))).then((outs) => {
-        const applied = outs.filter((o) => o.applied).length;
-        if (applied === 0 && outs.length > 0) {
-          const refused = outs.find((o): o is Extract<PressOutcome, { applied: false }> => !o.applied);
-          toast(refusalSentence(refused?.refusal));
+        const tally = tallyVerdicts(outs);
+        const waiting = organizerWaits(outs);
+        if (tally.applied === 0 && outs.length > 0) {
+          if (tally.refused === 0 && waiting > 0) { toast(queuedSentence(tally.holder)); return 0; }
+          toast(refusalSentence(tally.firstRefusal));
           return 0;
         }
-        const sentence = say(applied);
+        const sentence = say(tally.applied);
         if (sentence !== null) toast(sentence);
-        return applied;
+        /* THE PART THAT DID NOT HAPPEN, SAID BESIDE IT. One extra sentence at most, and only
+           when the press was partial: a count of what applied is a true number under which four
+           refused messages are invisible. */
+        if (tally.refused > 0) toast(t("ohbox.pressPartlyRefused", { count: tally.refused }));
+        else if (waiting > 0) toast(t("ohbox.pressPartlyQueued", { count: waiting }));
+        return tally.applied;
       }),
   );
 
@@ -3164,7 +3189,27 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
     if (readColumnHidden()) setReaderFor(messageId);
   });
 
-  const closeReply = useStableCallback(() => setReplyTo(null));
+  /**
+   * CLOSING THE DOCK CANCELS ITS SEND, because the button says Cancel. `cancelCompose` has
+   * withdrawn a queued send since the composer got one; this dock, whose ghost button carries the
+   * same word, left the intent standing on the outbox — so a reply somebody had cancelled still
+   * went on the next reconnect. The SCRATCH IS NOT TOUCHED, which is the one thing closing this
+   * dock has never done: the text stays and the reply reopens with it. `already_sent` withdraws
+   * nothing, so the dock stays open and the reader is told rather than shown an empty pane over a
+   * delivery nobody can take back.
+   */
+  const closeReply = useStableCallback(() => {
+    const target = replyToRef.current;
+    if (target === null) { setReplyTo(null); return; }
+    const lane = replyModeRef.current === "forward" ? inlineForwardKey(target) : target;
+    void (async () => {
+      if (await mailSend.withdraw(lane) === "already_sent") {
+        toast(t("compose.cancelAlreadySent"));
+        return;
+      }
+      setReplyTo(null);
+    })();
+  });
 
   /**
    * Reply is a toggle on the verbs that say "Reply" — the pill and `r`/`⇧R`.
@@ -4192,37 +4237,39 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
          * stood here and swallowed three of the four {@link MutationStatus} values while the engine had
          * already put the row back with the rejection's own sentence on the result for this surface to say
          * — the silent comeback the comment above records being fixed once, for ONE code. The `never` arm
-         * is the point: a fifth status cannot be added without this site being made to answer for it.
+         * is the point: a fifth answer cannot be added without this site being made to answer for it.
+         *
+         * It switches on the VERDICT rather than on the status, and the four sentences are unchanged:
+         * `pressVerdict` is now the one place the four statuses are enumerated, so a second reading of
+         * them here would be the thing this file already refuses everywhere else.
          */
-        switch (res.status) {
-          case "rolled_back": {
+        const v = pressVerdict(res);
+        switch (v.kind) {
+          case "refused": {
             /* The engine dropped the overlay and the row is back (`engine.ts` — "the local effect rolls
                back VISIBLY, once"). The server's sentence is quoted, `scheduleFailedNote`'s treatment:
                `conflict` names cancelling the schedule, and a 403/500 names itself. */
-            const reason = res.error?.message?.trim();
+            const reason = v.refusal?.message?.trim();
             toast(reason
               ? t("drafts.discardRefused", { reason })
               : t("drafts.discardRefusedUnnamed"));
             return;
           }
           case "queued":
-            /* The overlay is KEPT and the verb replays under the same key, so the row is gone here and
-               not there. Told as "not yet", never as done. */
-            toast(t("drafts.discardQueued"));
+            /* `retry`: the overlay is KEPT and the verb replays under the same key, so the row is gone
+               here and not there. `organizer`: the optimistic paint went back, so the row is on screen
+               and the request is recorded for whichever install organizes this mailbox. Told as
+               "not yet" either way, never as done. */
+            toast(v.wait === "organizer" ? t("drafts.discardAwaitingOrganizer") : t("drafts.discardQueued"));
             return;
-          case "awaiting_organizer":
-            /* The optimistic paint went back, so the row is on screen and the request is recorded for
-               whichever install organizes this mailbox. */
-            toast(t("drafts.discardAwaitingOrganizer"));
-            return;
-          case "confirmed":
+          case "applied":
             break;
           default: {
-            /* The gate is the BINDING, evaluated by `tsc`: a fifth `MutationStatus` makes this line
+            /* The gate is the BINDING, evaluated by `tsc`: a fourth `PressVerdict` makes this line
                a type error at this site. The toast is only the belt for a build that got past it,
-               and it is the most conservative of the four sentences rather than a fifth nobody can
-               reach — a state the product cannot enter is a state no guard can be watched fail in. */
-            const unhandled: never = res.status;
+               and it is the most conservative of the sentences rather than one nobody can reach —
+               a state the product cannot enter is a state no guard can be watched fail in. */
+            const unhandled: never = v;
             void unhandled;
             toast(t("drafts.discardRefusedUnnamed"));
             return;
@@ -4476,7 +4523,10 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
       toast(t("screening.toastAlready", { sender: who, place }));
       return;
     }
-    void dispatchScreeningChange(plan, (m) => engine.mutate(m)).then((key) => {
+    /* THROUGH `fileAndRefresh`, LIKE EVERY OTHER FILING DISPATCH. This one has not been since it
+       shipped: the mail moved and the filing strip's count stayed stale until its next poll, up to
+       thirty seconds later. Both Move arms already go through it. */
+    void dispatchScreeningChange(plan, (m) => fileAndRefresh(engine.mutate(m))).then((key) => {
       toast(t(`screening.${key}`, { sender: who, place, count: plan.moved }));
     });
   });

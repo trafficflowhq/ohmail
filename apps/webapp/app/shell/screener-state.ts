@@ -19,12 +19,16 @@ import {
   heldReleaseTotalOf,
   screenerSegments,
   senderKey,
+  pressVerdict,
+  PRESS_THREW,
+  tallyVerdicts,
   type EngineMessage,
   type EngineMutation,
   type EntityReader,
   type Folder,
   type HeldReleaseGroupDTO,
   type OhmailEngine,
+  type PressTally,
   type ScreenDest,
   type ScreenerSenderDTO,
 } from "@ohmail/client-engine";
@@ -483,24 +487,21 @@ export function useScreenerState(
     sender.derived ? sender.held.map((h) => h.id) : [];
 
   /**
-   * Move a sender's whole bag, and answer whether it ALL landed. This was `for (…) void
+   * Move a sender's whole bag and COUNT WHAT BECAME OF IT. This was `for (…) void
    * engine.mutate(…)` — the release family's whole bug: a refused move rolled the overlay back
-   * (the row reappeared) while the press-time toast went on stating the release as done, with
-   * no undo window and no second confirmation. `false` on ANY refusal, not all: this is one act
-   * to the reader, and a release that moved four of five messages has not happened — the
-   * unmoved mail keeps the row alive either way. A rejected promise counts as a refusal; a
-   * `queued` result does not (the intent stands on the retry queue with its key). Empty ⇒
-   * `true`: nothing asked, nothing failed.
+   * (the row reappeared) while the press-time toast went on stating the release as done. It then
+   * answered landed-or-not, which is the half that was still wrong: a move the SERVER recorded
+   * for the organizing install counted as landed, so a release on a mailbox this install only
+   * reads reported mail as released that had not moved. Three counts, because the three endings
+   * are three different things to tell somebody. Empty ⇒ three zeros; a rejected promise is a
+   * refusal.
    */
-  const moveAll = (ids: string[], folder: Folder): Promise<boolean> =>
+  const moveAll = (ids: string[], folder: Folder): Promise<PressTally> =>
     Promise.all(
       ids.map((messageId) =>
-        engine.mutate({ kind: "move", messageId, folder }).then(
-          (r) => r.status !== "rolled_back",
-          () => false,
-        ),
+        engine.mutate({ kind: "move", messageId, folder }).then(pressVerdict, () => PRESS_THREW),
       ),
-    ).then((landed) => landed.every(Boolean));
+    ).then(tallyVerdicts);
 
   /**
    * A release is two halves now, and the answer is their conjunction. The rule half was missing (live,
@@ -516,15 +517,45 @@ export function useScreenerState(
     ruleMutations: EngineMutation[],
     moveIds: string[],
     folder: Folder,
-  ): Promise<boolean> => {
-    if (ruleMutations.length === 0 && moveIds.length === 0) return Promise.resolve(false);
+  ): Promise<PressTally> => {
+    /* NOTHING TO DO IS A REFUSAL — a press that can dispatch neither half cannot change what the
+       reader sees, and one counted refusal is how that reaches the caller's own reading. */
+    if (ruleMutations.length === 0 && moveIds.length === 0) {
+      return Promise.resolve({ applied: 0, queued: 0, refused: 1, firstRefusal: undefined, holder: null });
+    }
     const rules = Promise.all(
-      ruleMutations.map((m) =>
-        engine.mutate(m).then((r) => r.status !== "rolled_back", () => false),
-      ),
-    );
-    return Promise.all([rules, moveAll(moveIds, folder)])
-      .then(([ruled, moved]) => moved && ruled.every(Boolean));
+      ruleMutations.map((m) => engine.mutate(m).then(pressVerdict, () => PRESS_THREW)),
+    ).then(tallyVerdicts);
+    return Promise.all([rules, moveAll(moveIds, folder)]).then(([a, b]) => ({
+      applied: a.applied + b.applied,
+      queued: a.queued + b.queued,
+      refused: a.refused + b.refused,
+      firstRefusal: a.firstRefusal ?? b.firstRefusal,
+      holder: a.holder ?? b.holder,
+    }));
+  };
+
+  /**
+   * WHAT A RELEASE ANSWERED, as one sentence. A refusal anywhere makes the release refused — this
+   * is one act to the reader and a release that moved four of five has not happened. Nothing
+   * refused but something waiting is the queued sentence, which is the one this reading exists
+   * for: the row stays, and it says what it is waiting on rather than reporting a release.
+   */
+  const releaseSaid = (tally: PressTally, sender: ScreenerSenderDTO, segment: "screened" | "spam"): boolean => {
+    if (tally.refused > 0) { refuseRelease(sender, segment); return false; }
+    if (tally.queued > 0) {
+      for (const id of refusalKeys(sender)) s.refused.add(id);
+      bump();
+      toast(
+        tally.holder
+          ? t("toastReleaseQueued", { sender: senderLabel(sender), name: tally.holder })
+          : t("toastReleaseQueuedUnknown", { sender: senderLabel(sender) }),
+        { duration: UNDO_MS },
+      );
+      return false;
+    }
+    clearRefused(sender);
+    return true;
   };
 
   /**
@@ -1292,10 +1323,8 @@ export function useScreenerState(
     // release as done — which was the only thing on screen when the moves were refused, beside a
     // row that had not moved. Keeping it and adding the refusal is the same pairing `decide`
     // uses: the optimistic sentence when the press happens, the truth when the wire has answered.
-    void releaseHeld(retargets, physicallyHeldIn(raw, sender, segFolder), wanted).then((landed) => {
-      if (landed) clearRefused(sender);
-      else refuseRelease(sender, segment);
-    });
+    void releaseHeld(retargets, physicallyHeldIn(raw, sender, segFolder), wanted)
+      .then((tally) => releaseSaid(tally, sender, segment));
     // TWO SENTENCES, BECAUSE ONLY ONE OF THEM IS TRUE AT A TIME. `toastReleased` says "No rule
     // was made, so future mail is unchanged" — true for the no-rule release this always was, and
     // FALSE the moment a holding rule is retargeted above: that retarget is precisely a statement
@@ -1360,10 +1389,7 @@ export function useScreenerState(
         deletions,
         physicallyHeldIn(raw, row.sender, FOLDER_OF_VIEW.spam),
         FOLDER_OF_VIEW.screener,
-      ).then((landed) => {
-        if (landed) clearRefused(row.sender);
-        else refuseRelease(row.sender, "spam");
-      });
+      ).then((tally) => releaseSaid(tally, row.sender, "spam"));
       toast(t("toastNotSpamWaiting", { sender: senderLabel(row.sender) }));
       return;
     }
@@ -1410,18 +1436,16 @@ export function useScreenerState(
       // future arrival is quarantined. Retargeted to INBOX beside the moves, both watched.
       const retargets: EngineMutation[] = holdingRules(reader, row.sender.from.address, FOLDER_OF_VIEW.spam)
         .map((r) => ({ kind: "rule_update", ruleId: r.id, destination: "INBOX" }));
-      void releaseHeld(retargets, quarantined.map((m) => m.id), "INBOX").then((landed) => {
-        if (landed) {
-          clearRefused(row.sender);
-          return;
-        }
+      void releaseHeld(retargets, quarantined.map((m) => m.id), "INBOX").then((tally) => {
+        if (releaseSaid(tally, row.sender, "spam")) return;
+        /* The pin goes back for a wait as well as for a refusal: nothing has moved in either
+           case, and the derived row this session hid would otherwise come back unmarked. */
         if (!s.pins.some((p) => p.id === row.sender.id)) {
           const back = [...s.pins];
           back.splice(pinAt < 0 ? s.pins.length : pinAt, 0, row.sender);
           s.pins = back;
         }
-        // Bumps and raises the sentence — so the row is back and marked in one render.
-        refuseRelease(row.sender, "spam");
+        bump();
       });
     } else if (row.sender.derived) {
       release(row.sender, "ohbox", "spam");

@@ -24,7 +24,7 @@ export * from "./durable.js";
  * surface cannot import is a reducer a surface writes again.
  */
 export { PRESS_THREW, pressVerdict, tallyVerdicts } from "./press-verdict.js";
-export type { PressTally, PressVerdict } from "./press-verdict.js";
+export type { PressAnswer, PressTally, PressVerdict } from "./press-verdict.js";
 
 /**
  * The nameless-attachment naming pair, re-exported from core so every client names a
