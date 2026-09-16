@@ -22,7 +22,10 @@ export function HeldSendResolve({
 }) {
   const t = useTranslations("drafts");
   return (
-    <div className="draft-resolve" role="group" aria-label={t("resolveWhat")}>
+    /* `tabIndex={-1}`: a Discard refused for this row moves focus HERE, so the question the
+       reader has to answer is what they land on and hear, rather than a toast naming verbs that
+       are somewhere on a list of identical pairs. Not reachable by Tab — only by that press. */
+    <div className="draft-resolve" role="group" aria-label={t("resolveWhat")} tabIndex={-1}>
       <p className="set-note-inline">{t("resolveWhat")}</p>
       <div className="gate-actions">
         <Button variant="ghost" onClick={() => { onResolve(draftId, "arrived"); }}>

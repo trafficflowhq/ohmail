@@ -25,6 +25,27 @@ import { displayTime, scheduleLabel } from "../shell/format";
 import { useZoneNav } from "../shell/zone-nav";
 import { HeldSendResolve } from "../components/HeldSendResolve";
 
+/**
+ * WHEN A HELD SEND STOPS BEING "NOT CONFIRMED YET" AND BECOMES "WE NEVER CONFIRMED IT".
+ *
+ * `unverifiedNote` reads as a thing still settling, and for an hour it is. The account behind the
+ * 2026-09-16 incident carried one such row for THIRTY-SIX DAYS with the same sentence and the same
+ * two verbs, and nobody ever pressed them: nothing on screen said the question had gone stale.
+ * Seven days, ruled — it is a READING, not a state: no clock writes anything, the row is still
+ * `unverified` on the server, and the two verbs are still the only way out.
+ */
+const HELD_STALE_AFTER_MS = 7 * 24 * 60 * 60 * 1000;
+
+/**
+ * Has this held row's question been standing longer than the bound? `updatedAt` is the row's last
+ * write and nothing touches an `unverified` row while it waits, so it is the moment it was left
+ * held. An unparseable stamp reads NOT stale — the softer sentence is the one that claims less.
+ */
+function heldIsStale(d: EngineDraft, now: Date): boolean {
+  const at = Date.parse(d.updatedAt);
+  return Number.isFinite(at) && now.getTime() - at > HELD_STALE_AFTER_MS;
+}
+
 /** "you, and two others" — the recipients, as a line, or the empty-string for none. */
 function recipientLine(d: EngineDraft): string {
   const all = [...d.to, ...d.cc, ...d.bcc];
@@ -38,6 +59,8 @@ export function DraftsView({
   onOpen,
   onDiscard,
   onResolve,
+  askResolveFor,
+  heldHere,
   onCancelSchedule,
   onEditScheduled,
   /**
@@ -67,6 +90,21 @@ export function DraftsView({
    * engine by the shell; this view renders the two verbs and knows nothing about the hold.
    */
   onResolve: (draftId: string, outcome: "arrived" | "not_arrived") => void;
+  /**
+   * The row a Discard was just refused for, stamped by the press that was refused — the list puts
+   * focus on THAT row's pair of verbs. The toast alone named the answer and pointed at nothing: on
+   * a list with ten held rows there are ten identical pairs on screen (measured on the rig,
+   * 2026-09-16), so "tell us whether it arrived" is an instruction with no address.
+   */
+  askResolveFor?: { draftId: string; at: number } | null;
+  /**
+   * The rows THIS browser holds by a durable send record — asked of the shell, like `repliesHere`,
+   * because only it can read the jar. A record naming a row the mirror still calls `"draft"` is
+   * the lost-answer case, and it refuses Discard just as hard as an `unverified` status does; the
+   * verbs below were offered on the status alone, so that row was refused with no exit rendered
+   * anywhere. Optional: the three other doors that mount this view's component pass nothing.
+   */
+  heldHere?: ReadonlySet<string>;
   onCancelSchedule: (draftId: string) => void;
   onEditScheduled: (draft: EngineDraft) => void;
   repliesHere: (draft: EngineDraft) => boolean;
@@ -89,6 +127,24 @@ export function DraftsView({
   useEffect(() => {
     if (confirming !== null) confirmRef.current?.focus();
   }, [confirming]);
+  /**
+   * A REFUSED DISCARD PUTS FOCUS ON THE VERBS THAT UNBLOCK THAT ROW. Keyed on the press's own
+   * stamp, so a second press on the same row asks again; the ask is never cleared, because a value
+   * left standing cannot fire twice. `.draft-resolve` is a `group`, so focusing the group is what
+   * a screen reader hears — its label is the question — and the first verb is one Tab away.
+   */
+  const askedAt = askResolveFor?.at ?? null;
+  const askedFor = askResolveFor?.draftId ?? null;
+  useEffect(() => {
+    if (askedAt === null || askedFor === null) return;
+    const esc = (globalThis as { CSS?: { escape?: (s: string) => string } }).CSS?.escape
+      ?? ((s: string) => s);
+    const group = listRef.current
+      ?.querySelector<HTMLElement>(`.draft-row[data-id="${esc(askedFor)}"] .draft-resolve`);
+    if (!group) return;
+    group.scrollIntoView({ block: "nearest" });
+    group.focus();
+  }, [askedAt, askedFor]);
   const closeConfirm = useCallback((draftId: string) => {
     setConfirming(null);
     // `CSS.escape` is fenced because jsdom builds lack it; a draft id is a server UUID, so the
@@ -171,7 +227,13 @@ export function DraftsView({
             drafts.map((d) => {
               const to = recipientLine(d);
               return (
-                <div key={d.id} className="draft-row" data-id={d.id}>
+                <div
+                  key={d.id}
+                  /* The row a refused Discard was about is MARKED as well as focused: focus alone
+                     is invisible to a sighted reader who was watching the toast, not the list. */
+                  className={askedFor === d.id ? "draft-row draft-row-asked" : "draft-row"}
+                  data-id={d.id}
+                >
                   {/* THE TWO CONTROLS THAT ARE ACTUALLY SIDE BY SIDE, and only those. The
                       confirm below is a SIBLING of this line, not a third item in it — see
                       `.draft-row` in `app.css` for what it cost to have it inside. */}
@@ -201,7 +263,9 @@ export function DraftsView({
                           exactly "we could not tell", and a claim either way would be a guess. */}
                       {d.status !== "draft" ? (
                         <span className="draft-state" role="status">
-                          {d.status === "unverified" ? t("unverifiedNote") : t("interruptedNote")}
+                          {d.status === "unverified"
+                            ? t(heldIsStale(d, now) ? "unverifiedStaleNote" : "unverifiedNote")
+                            : t("interruptedNote")}
                         </span>
                       ) : null}
                       {/* A SCHEDULED SEND THAT COULD NOT BE KEPT (mail 0077). The server's own
@@ -239,7 +303,7 @@ export function DraftsView({
                       lifetime, so the verbs are never offered for a send still running. Only the
                       mutation dispatches from here; whether the row may then be discarded is the
                       shell's predicate on the next render. */}
-                  {d.status !== "draft" ? (
+                  {d.status !== "draft" || heldHere?.has(d.id) === true ? (
                     <HeldSendResolve draftId={d.id} onResolve={onResolve} />
                   ) : null}
                   {confirming === d.id ? (

@@ -5884,6 +5884,15 @@ input.set-tag-input {
   min-width: 0;
 }
 .draft-row:last-child { border-bottom: 0; }
+/* THE ROW A REFUSED DISCARD WAS ABOUT. The press moves focus into that row's "Did this message
+   arrive?" group; this is the same fact for a reader who was watching the toast rather than the
+   list, on a screen where every held row carries an identical pair. The accent ground is
+   `.draft-state`'s, so the row and its reason read as one thing. */
+.draft-row-asked {
+  background: var(--accent-soft);
+  border-radius: calc(var(--r-ctl) * 9 / 8);
+}
+.draft-resolve:focus { outline: 2px solid var(--accent); outline-offset: 2px; }
 .draft-open {
   flex: 1;
   min-width: 0;

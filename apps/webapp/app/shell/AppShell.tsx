@@ -135,7 +135,9 @@ import {
   sendPendingInOutbox, useMailSend, readReplyDraft, writeReplyDraft,
   readReplyMeta, writeReplyMeta, type SendState,
 } from "./mail-send";
-import { attachSendLockDraft, holdOf, releaseSendLockForRow } from "./send-lock";
+import {
+  attachSendLockDraft, holdOf, releaseSendLockForRow, unresolvedSendRows,
+} from "./send-lock";
 import {
   clearComposeDraft,
   composePlan,
@@ -3994,6 +3996,15 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
       state, row, holdOf(engine, { lane, draftId: row, session: null }), null, lane,
     );
   });
+  /**
+   * WHICH ROW THE LAST REFUSED DISCARD WAS ABOUT — the Drafts list moves focus to that row's own
+   * "Did this message arrive?" pair when this changes. Stamped rather than cleared: the effect
+   * that reads it fires once per press, and a value left standing can only be re-read by another
+   * press, which carries its own stamp. Naming the verbs in a toast was not enough — on a list
+   * with ten held rows, ten identical pairs are on screen and none of them is the answer to the
+   * press (measured on the rig, 2026-09-16).
+   */
+  const [heldResolveAsk, setHeldResolveAsk] = useState<{ draftId: string; at: number } | null>(null);
   const discardDraft = useStableCallback(
     (draftId: string) => {
       /**
@@ -4019,6 +4030,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
       });
       if (hold.kind !== "free") {
         toast(t("drafts.heldDiscardBlocked"));
+        setHeldResolveAsk({ draftId, at: Date.now() });
         return;
       }
       /* ── NOTHING IS FORGOTTEN BEFORE THE SERVER HAS ANSWERED — invariant T ─────────────────
@@ -4036,9 +4048,50 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
              so the compose that was bound to it is bound to it again. */
           settleComposeRef.current({ kind: "restoredBy409", rowId: draftId });
           toast(t("drafts.heldDiscardBlocked"));
+          setHeldResolveAsk({ draftId, at: Date.now() });
           return;
         }
-        if (res.status !== "confirmed") return;
+        /**
+         * EVERY OTHER ENDING SAYS WHY, AND THE SWITCH IS TOTAL. `if (res.status !== "confirmed") return;`
+         * stood here and swallowed three of the four {@link MutationStatus} values while the engine had
+         * already put the row back with the rejection's own sentence on the result for this surface to say
+         * — the silent comeback the comment above records being fixed once, for ONE code. The `never` arm
+         * is the point: a fifth status cannot be added without this site being made to answer for it.
+         */
+        switch (res.status) {
+          case "rolled_back": {
+            /* The engine dropped the overlay and the row is back (`engine.ts` — "the local effect rolls
+               back VISIBLY, once"). The server's sentence is quoted, `scheduleFailedNote`'s treatment:
+               `conflict` names cancelling the schedule, and a 403/500 names itself. */
+            const reason = res.error?.message?.trim();
+            toast(reason
+              ? t("drafts.discardRefused", { reason })
+              : t("drafts.discardRefusedUnnamed"));
+            return;
+          }
+          case "queued":
+            /* The overlay is KEPT and the verb replays under the same key, so the row is gone here and
+               not there. Told as "not yet", never as done. */
+            toast(t("drafts.discardQueued"));
+            return;
+          case "awaiting_organizer":
+            /* The optimistic paint went back, so the row is on screen and the request is recorded for
+               whichever install organizes this mailbox. */
+            toast(t("drafts.discardAwaitingOrganizer"));
+            return;
+          case "confirmed":
+            break;
+          default: {
+            /* The gate is the BINDING, evaluated by `tsc`: a fifth `MutationStatus` makes this line
+               a type error at this site. The toast is only the belt for a build that got past it,
+               and it is the most conservative of the four sentences rather than a fifth nobody can
+               reach — a state the product cannot enter is a state no guard can be watched fail in. */
+            const unhandled: never = res.status;
+            void unhandled;
+            toast(t("drafts.discardRefusedUnnamed"));
+            return;
+          }
+        }
         // The row's life ends; the block state keyed to it goes with it.
         writeReplyMeta(`draft:${draftId}`, {});
         // The compose form may be holding the very row that was just deleted — discarding from the
@@ -7722,6 +7775,17 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
                 onOpen={openDraft}
                 onDiscard={discardDraft}
                 onResolve={resolveHeldSend}
+                /* Which row a refused Discard was about — the list puts focus on that row's own
+                   pair of verbs. See `heldResolveAsk` above `discardDraft`. */
+                askResolveFor={heldResolveAsk}
+                /* ROWS THIS BROWSER HOLDS BY A DURABLE RECORD, whatever the mirror says. The list
+                   offered the resolve verbs on the row's own STATUS alone, so a row held by a
+                   record the server never heard about — a send whose answer was lost, the case
+                   `discardDraft`'s own predicate refuses — had the refusal and NO way out on
+                   screen. `unresolvedSendRows` is `holdOf`'s own reading, called rather than
+                   restated, and it is O(records) rather than O(drafts). Read here so it costs a
+                   jar read only while this view is the route. */
+                heldHere={unresolvedSendRows(COMPOSE_SEND_KEY)}
                 onCancelSchedule={cancelSchedule}
                 onEditScheduled={editScheduled}
                 repliesHere={draftRepliesHere}
