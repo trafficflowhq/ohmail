@@ -14,7 +14,7 @@ import type { WorkerRepo } from "@trafficflow/core/adapters/drizzle-repo";
 
 /** The Sent projection's transaction repo: the ports it writes through, plus the conditional
  *  folder completion `commitChange` requires (the plan is older than the transaction). */
-type SentTxRepo = RepoPort & RoutingPort & Pick<WorkerRepo, "completeFolderState">;
+type SentTxRepo = RepoPort & RoutingPort & Pick<WorkerRepo, "completeFolderState" | "adoptFolderState">;
 import { withAccountTx, type ServiceContext } from "./context.js";
 import { draftContentRevision } from "./draft-revision.js";
 import type { AttachmentAdapter, OpenAdapter } from "./attachments-service.js";

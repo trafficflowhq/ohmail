@@ -26,6 +26,7 @@ import {
   bridgeFetch,
   engineConfigure,
   engineStatus,
+  invokeShell,
   type DoorFlavorWire,
   type EngineConfig,
   type EngineStatus,
@@ -535,28 +536,60 @@ export interface HostRefusal {
 }
 
 /**
- * WHETHER THE "ANOTHER COMPUTER" DOOR CAN BE WALKED AT ALL. False, and it is a fact about this
- * build rather than a switch: three components each require something one of the others is
- * supposed to supply, and no path supplies all three. Read at this tip, 2026-09-15:
- *
- *  · step one asks the LOCAL engine over the bridge, and a fresh install has no configured
- *    engine to answer — the probe is refused `unreachable` before a link can be checked;
- *  · an ordinary tailnet link carries no pin, because `originNeedsPin` demands one of an IP
- *    literal and not of a DNS name, and the shell refuses a pin-less desktop-host door;
- *  · the one door shape the shell does admit — pinned, with no mailbox address, because which
- *    mailbox this install reads is the host's answer to the redeem — relaunches the engine
- *    Inert for want of `OHMAIL_MAILBOX_ADDRESS`, which every cloud-mode launch requires.
- *
- * So the door says so at step one instead of failing at the third. The tile stays listed and
- * marked: somebody arriving with a pairing link in their hand needs to read why it will not
- * work here, and a door removed from the screen is a product that quietly got smaller.
- *
- * THE SENTENCE IS NOT HERE. This module is reachable from the SERVED host client's import
- * graph and `desktopDoor` is window-only — `door-copy.ts` holds the words, `DoorChooser`
- * renders them. The design that makes the door walkable flips this line, and
- * `apps/desktop/test/desktop-paired-door-unavailable.test.tsx` is what says so.
+ * WHETHER THE "ANOTHER COMPUTER" DOOR CAN BE WALKED AT ALL. True since 2026-09-17, and the three
+ * readings that made it false are answered rather than worked around: step one still asks an
+ * ENGINE — the pin is a TLS fingerprint and judging one means seeing a certificate, which exists
+ * once — but where there is no door the shell starts one for the CANDIDATE ({@link proveHostLink});
+ * the shell's required list splits per door, so the address a pairing link cannot name is not on
+ * it; and a pin-less tailnet link is CORRECT, because `originNeedsPin` asks for a pin exactly where
+ * the identity IS the pin. `desktop-paired-door-walks.test.tsx` says so, and the unavailable
+ * sentence stays in `door-copy.ts` — a door that becomes unwalkable again says why.
  */
-export const PAIRED_DOOR_AVAILABLE = false;
+export const PAIRED_DOOR_AVAILABLE = true;
+
+/**
+ * THE WHOLE WALK'S CLOCK, entered once before the link is parsed and spent down through starting
+ * the candidate engine, asking it, and redeeming the link.
+ *
+ * A ceiling per segment is no ceiling: of the four segments of the phone's consent look only the
+ * fetch was raced against one, so a press was still pending at two minutes with nothing the door
+ * awaited carrying an end-to-end bound. And a refusal NAMES its segment — "it took too long" sends
+ * somebody to check a network when what ran out was a database opening on their own machine.
+ */
+export const PAIRED_WALK_BUDGET_MS = 60_000;
+
+/** The three segments the budget is spent in — the same words the shell composes. */
+export type WalkSegment = "starting up" | "checking that computer" | "finishing the pairing";
+
+/** A walk's clock: the moment it must be finished by. */
+export interface WalkBudget {
+  readonly deadline: number;
+  /** Injected in tests; `Date.now` everywhere else. */
+  readonly now: () => number;
+}
+
+/** Enter the budget. Called ONCE, at the top of the walk. */
+export function startWalk(
+  totalMs: number = PAIRED_WALK_BUDGET_MS,
+  now: () => number = Date.now,
+): WalkBudget {
+  return { deadline: now() + totalMs, now };
+}
+
+/** What is left of the walk, never negative. */
+export function walkLeftMs(budget: WalkBudget): number {
+  return Math.max(0, budget.deadline - budget.now());
+}
+
+/** The refusal a segment gives when the WALK ran out in it — not when that segment was slow. */
+export function walkExpired(budget: WalkBudget, segment: WalkSegment): HostRefusal | null {
+  if (walkLeftMs(budget) > 0) return null;
+  return {
+    kind: "out_of_time",
+    message: `ohmail ran out of time ${segment}. Try the pairing link again.`,
+    status: null,
+  };
+}
 
 /** What the link step ended as: the parsed link and what to call it, or why it was refused. */
 export interface HostLinkStep {
@@ -629,7 +662,32 @@ async function refusalOf(res: Response): Promise<HostRefusal | null> {
  * and its session exactly where they were. The window cannot dial — the engine is the process
  * that looks, handed the origin and the pin as a CANDIDATE.
  */
-export async function proveHostLink(link: PairLink): Promise<HostProof> {
+export async function proveHostLink(
+  link: PairLink,
+  /** The walk's clock. A caller that omits it gets a walk of its own — one step is still a walk. */
+  budget: WalkBudget = startWalk(),
+): Promise<HostProof> {
+  /**
+   * WHICH ENGINE ANSWERS, and it is decided by whether this install HAS a door rather than by
+   * trying one and falling back. A fallback would make the ordinary case — an install with a
+   * door, whose engine is right there — depend on a failure first, and it would start a
+   * candidate engine on an install that has a mirror to lose.
+   *
+   * `mode: null` is a fresh install, and the field is always present for exactly this reason.
+   * A shell that cannot be asked at all is not a fresh install; it is no shell, and the throw
+   * below says so rather than starting anything.
+   */
+  let hasDoor: boolean;
+  try {
+    hasDoor = (await engineStatus()).mode != null;
+  } catch (err) {
+    return { base: null, refusal: { kind: "unreachable", message: sentence(err), status: null } };
+  }
+  if (!hasDoor) return proveThroughCandidate(link, budget);
+
+  const expired = walkExpired(budget, "checking that computer");
+  if (expired !== null) return { base: null, refusal: expired };
+
   let res: Response;
   try {
     res = await bridgeFetch("/cloud/probe", {
@@ -667,6 +725,59 @@ export async function proveHostLink(link: PairLink): Promise<HostProof> {
   }
 }
 
+/**
+ * THE SAME QUESTION, ASKED IN AN ENGINE STARTED FOR THE CANDIDATE — the path a fresh install
+ * takes. The shell starts it in a directory of its own, asks the same `/cloud/probe` the branch
+ * above asks, and removes that directory afterwards: nothing is configured, no `config.json` is
+ * written, and the token is not sent — it is spent once, at the redeem.
+ *
+ * The answer is the route's own status and body, so the refusals a card translates are the same
+ * objects in both branches. What the walk has LEFT rides back with it, so the redeem is bounded by
+ * this clock rather than a fresh one.
+ */
+async function proveThroughCandidate(link: PairLink, budget: WalkBudget): Promise<HostProof> {
+  const expired = walkExpired(budget, "starting up");
+  if (expired !== null) return { base: null, refusal: expired };
+
+  let answer: { status?: number; body?: unknown };
+  try {
+    answer = (await invokeShell("host_candidate_probe", {
+      origin: link.origin,
+      /* THE PIN, AND NEVER THE TOKEN. A fingerprint is a hash of a public key — printed on the
+         other machine's screen for somebody to carry across a room — and the shell writes it into
+         the candidate's environment. An empty string where the link carried none: the engine's own
+         `originNeedsPin` decides whether that is admissible, which keeps one predicate. */
+      pin: link.pin ?? "",
+      budgetMs: walkLeftMs(budget),
+    })) as { status?: number; body?: unknown };
+  } catch (err) {
+    /* The shell's own refusals arrive as a rejected invoke: no engine in this build, a walk that
+       ran out in a segment it names, or an install that already has a door — which this branch is
+       not supposed to reach, and says so rather than starting a second engine. */
+    return { base: null, refusal: { kind: "unreachable", message: sentence(err), status: null } };
+  }
+
+  const status = typeof answer.status === "number" ? answer.status : 0;
+  const body = (answer.body ?? {}) as {
+    base?: unknown;
+    error?: { code?: string; message?: string; details?: { kind?: string } };
+  };
+  if (status < 200 || status >= 300) {
+    return {
+      base: null,
+      refusal: {
+        kind: body.error?.details?.kind ?? body.error?.code ?? "",
+        message: body.error?.message ?? null,
+        status,
+      },
+    };
+  }
+  return {
+    base: typeof body.base === "string" && body.base !== "" ? body.base : link.origin,
+    refusal: null,
+  };
+}
+
 /** What {@link proveHostLink} ended as: the base to configure, or why it was refused. */
 export interface HostProof {
   /** The base the ENGINE says answered — handed to `engine_configure` verbatim. */
@@ -688,7 +799,16 @@ export async function enterHostDoor(
   link: PairLink,
   /** The base {@link proveHostLink} reported. The link's origin only where none was measured. */
   base: string = link.origin,
+  /**
+   * THE SAME CLOCK THE PROBE SPENT FROM. Not a fresh one: the two steps are one ceremony to the
+   * person waiting, and a second budget entered here is how a walk with a bound in every segment
+   * ends up with none over the whole. A caller with no walk of its own gets one.
+   */
+  budget: WalkBudget = startWalk(),
 ): Promise<HostDoorResult> {
+  const beforeConfigure = walkExpired(budget, "starting up");
+  if (beforeConfigure !== null) return { status: null, refusal: beforeConfigure, problem: null };
+
   try {
     await engineConfigure({
       mode: "cloud",
@@ -705,6 +825,12 @@ export async function enterHostDoor(
   if (settled.state !== "serving") {
     return { status: settled, refusal: null, problem: stalled(settled) };
   }
+  /* THE LAST SEGMENT, and the clock is read again rather than assumed: the engine restart above is
+     the slowest thing in the walk, and a redeem entered with nothing left would spend the link's
+     one token on a step that cannot finish — the token is single-use, so the person would need a
+     fresh code from the other computer for a failure that was ours. */
+  const beforeRedeem = walkExpired(budget, "finishing the pairing");
+  if (beforeRedeem !== null) return { status: settled, refusal: beforeRedeem, problem: null };
   return redeemPairing(link, settled);
 }
 

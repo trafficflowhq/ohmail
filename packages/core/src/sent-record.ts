@@ -35,7 +35,7 @@ export interface RecordSentDeps {
    * stays a statement about the pipeline.
    */
   withTx<T>(
-    run: (txRepo: RepoPort & RoutingPort & Pick<WorkerRepo, "completeFolderState">) => Promise<T>,
+    run: (txRepo: RepoPort & RoutingPort & Pick<WorkerRepo, "completeFolderState" | "adoptFolderState">) => Promise<T>,
   ): Promise<T>;
 }
 

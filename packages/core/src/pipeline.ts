@@ -68,6 +68,65 @@ export interface ReconcileApplyDeps extends Omit<PipelineDeps, "repo"> {
   repo: RepoPort & Pick<WorkerRepo, "completeFolderState" | "adoptFolderState">;
 }
 
+/** {@link adoptWithWitness}'s deps — both conditional folder-state writers and the account. */
+type AdoptDeps = {
+  repo: RepoPort & Pick<WorkerRepo, "completeFolderState" | "adoptFolderState">;
+  accountId: string;
+};
+
+/**
+ * THE ADOPTION WRITE, WITNESSED — the one shape both `adopt_external` arms take, the reconcile
+ * runner's and the ingest arrival's. The mailbox is the master, so the observation is the truth AT
+ * ITS INSTANT; `witness` is the desire read before this pass's work, and the adoption may move the
+ * desire only while that witness still describes the row. ONE statement, because a completion
+ * followed by a blind upsert leaves a window for the very decision this exists to preserve. On a
+ * MISS the placement is still a fact the row is owed, written through the physical-observation
+ * path, which never touches `desired_folder`.
+ * Invariant: no press is ever overwritten by an observation older than the press.
+ */
+async function adoptWithWitness(
+  deps: AdoptDeps, messageId: string, adopted: string, witness: string,
+): Promise<{ matched: boolean; state: FolderStateRow }> {
+  const { repo, accountId } = deps;
+  const next: FolderStateRow = {
+    desiredFolder: adopted, observedFolder: adopted, lastSetBy: "external",
+  };
+  const matched = await repo.adoptFolderState(messageId, next, witness);
+  if (!matched) {
+    // A newer decision owns the row, and the PLACEMENT is still a fact the row is owed — the
+    // person moved this message and the server holds it there. The witness is stale by
+    // construction here, so this second statement can only write the physical columns:
+    // `desired_folder`, `last_set_by` and the backoff belong to whichever intent won.
+    await repo.completeFolderState(messageId, {
+      expectDesiredFolder: witness,
+      observedFolder: adopted,
+      lastSetBy: "external",
+      physicalObservation: true,
+    });
+    // No inverse: the desire never moved, so there is nothing for an operator to undo.
+    const live = await repo.getFolderState(messageId);
+    await repo.recordAudit(
+      accountId,
+      "adopt_superseded",
+      {
+        messageId, adopted, previousDesired: witness,
+        reason: "a newer decision for this message committed while this placement was being "
+          + "read. The folder the person put it in is recorded and the newer desire stands; "
+          + "the organizer applies it on its next cycle.",
+      },
+      null,
+    );
+    return { matched, state: live ?? next };
+  }
+  await repo.recordAudit(
+    accountId,
+    "adopt_external",
+    { messageId, adopted, previousDesired: witness },
+    { messageId, revertTo: witness },
+  );
+  return { matched, state: next };
+}
+
 /**
  * The "Organization Writer": perform the port writes for a computed reconcile action. Idempotent,
  * and the OUTSIDE-transaction move path: `adapter.move` never sits inside the seq/change_log tx.
@@ -201,56 +260,19 @@ export async function applyReconcileAction(
       return { locator: newLocator, state: next };
     }
     case "adopt_external": {
+      // A tombstoned message that re-appears is being RESTORED by its user (mail 0065) — the
+      // adopt evidence is the same evidence, so the un-delete rides the same arm. Taken before
+      // the placement write rather than after it: the re-appearance is a fact whichever desire
+      // wins below, and it is the order the ingest path already clears in.
+      await repo.clearDeletedOnAdopt?.(messageId);
       // `'external'` unconditionally, and NOT `action.attribution`: this is the reconcile runner,
       // which carries an organizer's intent to the server. A reader issues no moves and never
       // reaches it, so an adoption arriving here is a person's own hand by construction. The
       // reader's adopt is committed in `commitChange` instead, which does read `attribution`.
-      const next: FolderStateRow = {
-        desiredFolder: action.newDesired,
-        observedFolder: action.newDesired,
-        lastSetBy: "external",
-      };
-      // Conditional, like the landed move above: the adoption was decided against a desire read
-      // before this pass's network work, so it may move that desire only while the witness still
-      // describes the row. ONE statement — a completion followed by a blind upsert would leave a
-      // window for the very decision this exists to preserve.
-      const matched = await repo.adoptFolderState(messageId, next, state.desiredFolder);
-      // A tombstoned message that re-appears is being RESTORED by its user (mail 0065) — the
-      // adopt evidence is the same evidence, so the un-delete rides the same arm.
-      await repo.clearDeletedOnAdopt?.(messageId);
-      if (!matched) {
-        // A newer decision owns the row, and the PLACEMENT is still a fact the row is owed — the
-        // person moved this message and the server holds it there. The witness is stale by
-        // construction here, so this second statement can only write the physical columns:
-        // `desired_folder`, `last_set_by` and the backoff belong to whichever intent won.
-        await repo.completeFolderState(messageId, {
-          expectDesiredFolder: state.desiredFolder,
-          observedFolder: action.newDesired,
-          lastSetBy: "external",
-          physicalObservation: true,
-        });
-        // No inverse: the desire never moved, so there is nothing for an operator to undo.
-        const live = await repo.getFolderState(messageId);
-        await repo.recordAudit(
-          accountId,
-          "adopt_superseded",
-          {
-            messageId, adopted: action.newDesired, previousDesired: state.desiredFolder,
-            reason: "a newer decision for this message committed while this placement was being "
-              + "read. The folder the person put it in is recorded and the newer desire stands; "
-              + "the organizer applies it on its next cycle.",
-          },
-          null,
-        );
-        return { locator, state: live ?? next };
-      }
-      await repo.recordAudit(
-        accountId,
-        "adopt_external",
-        { messageId, adopted: action.newDesired, previousDesired: state.desiredFolder },
-        { messageId, revertTo: state.desiredFolder },
+      const { state: settled } = await adoptWithWitness(
+        { repo, accountId }, messageId, action.newDesired, state.desiredFolder,
       );
-      return { locator, state: next };
+      return { locator, state: settled };
     }
   }
 
@@ -523,12 +545,13 @@ export type StorageCap = number | typeof UNMETERED_STORAGE_CAP;
 
 export interface CommitDeps {
   /**
-   * `completeFolderState` is REQUIRED, never optional-chained, for {@link ReconcileApplyDeps}'s
-   * reason: the plan this commit persists was computed in phase 1, outside this transaction, so
-   * both writing arms carry the desire they planned against as a witness. An absent method would
-   * collapse "this repo predates the primitive" into "the blind write is fine".
+   * Both conditional writers are REQUIRED, never optional-chained, for {@link
+   * ReconcileApplyDeps}'s reason: the plan this commit persists was computed in phase 1, outside
+   * this transaction, so every writing arm carries the desire it planned against as a witness —
+   * the adoption included, through {@link adoptWithWitness}. An absent method would collapse
+   * "this repo predates the primitive" into "the blind write is fine".
    */
-  repo: RepoPort & Pick<WorkerRepo, "completeFolderState">;
+  repo: RepoPort & Pick<WorkerRepo, "completeFolderState" | "adoptFolderState">;
   accountId: string;
   mailboxId: string;
   routing?: RoutingPort;
@@ -1487,18 +1510,16 @@ export async function commitChange(plan: ChangePlan, deps: CommitDeps): Promise<
       // with `'peer'`, which read a drag from `ohmail/Reads` into `INBOX` as another install's
       // filing and let a pressed rule undo it — see the block where `readerAttribution` was, and
       // `reconciler.ts#ReconcileAction` for why the field is gone rather than merely unset.
-      await repo.upsertFolderState(e.messageId, {
-        desiredFolder: to, observedFolder: to, lastSetBy: "external",
-      });
+
+      // WITNESSED, like the reconcile runner's adoption: `e.state` was read in phase 1, OUTSIDE
+      // this transaction, so a press committed since owns `desired_folder` and this arrival's
+      // observation is older than it. A miss records where the message IS and leaves the desire
+      // to the newer press. The three writes below stand either way — the person's hand landing
+      // somewhere is a fact whichever desire won.
+      await adoptWithWitness({ repo, accountId }, e.messageId, to, e.state.desiredFolder);
       // The tombstone was already cleared before the switch (every arrival shape clears it, not
       // only this arm — see the block above); the `move` change below carries the live entity,
       // so this arm needs no separate resurrection delta.
-      await repo.recordAudit(
-        accountId,
-        "adopt_external",
-        { messageId: e.messageId, adopted: to, previousDesired: e.state.desiredFolder },
-        { messageId: e.messageId, revertTo: e.state.desiredFolder },
-      );
       const adoptSeq = await repo.recordChange({
         accountId, entityType: "message", entityId: e.messageId, op: "move",
         meta: { from: e.state.desiredFolder, to },

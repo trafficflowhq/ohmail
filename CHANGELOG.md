@@ -18,37 +18,6 @@ See [Status](README.md#status--read-this-first).
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
 [Roadmap](README.md#roadmap).
 
-## [0.19.5] — 2026-09-17
-
-### The Ohbox list no longer slides under the cursor after a jump
-
-After jumping down a long Ohbox — with the scrollbar, End, or a search hit — the rows at the top
-of the window could slide away before you scrolled them out, as the list measured rows further
-down for the first time. The list now holds its rows still while it measures the ones around you.
-
-## [0.19.3] — 2026-09-17
-
-### Long lists scroll their rows out of view instead of hiding them
-
-A long list draws only the messages around what you are looking at and sets aside space for the
-rest. It used to set aside one height for every message it had not drawn, and messages are not all
-one height — one showing a line of its text is taller than one that is not — so a long list ran
-ahead of the messages in it and stepped over some without ever showing them. The list now measures
-every row it draws and sets aside the heights it actually saw, so a list of any length scrolls
-without stepping over messages. 0.19.2 fixed this for short lists; this fixes the rest.
-
-## [0.19.2] — 2026-09-17
-
-### Scrolling the Ohbox no longer hides the messages at the top
-
-Scrolling the Ohbox cut messages off the top of the list instead of scrolling them out of view, and
-left a blank band under the header. To keep a long list quick the app draws only the messages around
-what you are looking at and sets aside a single height for the rest — and Ohbox messages are not all
-one height, so the list ran ahead of the messages in it and stepped over some without ever showing
-them. A list of up to 500 rows is now drawn whole, which is the size an Ohbox usually is, and scrolling
-it moves it by exactly what you scrolled. A longer list still behaves as it did in 0.19.1;
-that half is not fixed yet.
-
 ## [0.19.1] — 2026-09-16
 
 ### Reopening the app no longer holds the text of every reply you have sent
@@ -1464,7 +1433,7 @@ set an out-of-office and no out-of-office would ever be sent.
 
 - The setup chooser has a fourth door, **Another computer**, meant to take the pairing link the
   first machine hands out under Settings → Devices. It does not work, and did not in this version:
-  it is marked unavailable from 0.19.1 and is due in a later version. Pairing a **phone** or a
+  it is marked unavailable from 0.19.1 and is due in 0.19.2. Pairing a **phone** or a browser to a
   computer running ohmail, which is the other half of Settings → Devices, works and is unaffected.
 - A pairing link works once and is checked before it is used, so a link that is not one, a plain
   unencrypted address, a changed key and something that is not ohmail are refused before the setup
@@ -6741,10 +6710,7 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.19.5...HEAD
-[0.19.5]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.19.5
-[0.19.3]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.19.3
-[0.19.2]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.19.2
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.19.1...HEAD
 [0.19.1]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.19.1
 [0.19.0]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.19.0
 [0.18.0]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.18.0

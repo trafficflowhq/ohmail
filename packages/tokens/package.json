@@ -5,6 +5,7 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
+    "./omarchy-rule": "./omarchy/rule.ts",
     "./tokens.css": "./src/tokens.css",
     "./faces.css": "./src/faces.css",
     "./ohmarchy.css": "./src/ohmarchy.css"
