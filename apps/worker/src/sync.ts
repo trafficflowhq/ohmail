@@ -612,16 +612,14 @@ function openPage(at: CyclePageCursor, pass: CyclePass): void {
 
 /**
  * Rethrow a REFUSAL out of a catch arm that would otherwise swallow it or read it as a message fault.
- * FIVE classes the arms cannot tell from an ordinary failure: `LeaderFencedError` is proof this process
- * no longer leads the shard, `MailboxRemovedError` that the mailbox is gone, `MailboxErasedError` that
- * it was ERASED (the ingest repository's own fence — a different door to the same fact, read as a
- * message fault until it was named here), and the permit's own two — `OrganizerStandDownError`
- * (another install holds this mailbox) and `LeaseUnavailableError` (the lease could not be read).
- * None is evidence about the message or the pass, all five are terminal for the cycle, and `index.ts`
- * and `reconcile-cron.ts` read them as a skip. ONE PLACE DECIDES, because the swallowing arms are
- * many: three reconcile groups logged a removal as bookkeeping and carried on writing into a mailbox
- * that had gone, and `fileOne`/`reconcileFlags` recorded a stand-down as the MESSAGE's refusal. A
- * class added here kills every arm BELOW its call that named a class by hand — `refusalIsRemoval`.
+ * FIVE classes, none of them evidence about the message: `LeaderFencedError` (this process no longer
+ * leads the shard), `MailboxRemovedError` (the mailbox is gone), `MailboxErasedError` (the ingest
+ * repository's fence — a second door to the same fact, read as a message fault until it was named
+ * here), `OrganizerStandDownError` (another install holds this mailbox) and `LeaseUnavailableError`.
+ * All five are terminal for the cycle and both callers read them as a skip. ONE PLACE DECIDES: three
+ * reconcile groups once logged a removal as bookkeeping and carried on writing into a mailbox that
+ * had gone. A class added here kills every arm BELOW its call that named one by hand — hence
+ * {@link refusalIsRemoval}.
  */
 function rethrowRefusal(err: unknown): void {
   if (
