@@ -45,6 +45,13 @@ ENV NODE_ENV=production
 # Heap ceiling below the container cap so the JS engine aborts loggably instead of the
 # kernel SIGKILLing the process — an OOM kill leaves a log that says nothing.
 ENV NODE_OPTIONS="--max-old-space-size=512"
+# glibc gives a thread that first allocates under contention its own 64 MB arena and returns
+# those bytes only from the top of one, so a burst leaves them resident for the life of the
+# process — measured on the desktop engine as one +92.9 MB step in rss with the JS heap FALLING
+# across it. The variable is read at process start, so this is the only place it can be set for
+# an image. The value is the ENGINE's, measured; these processes talk to a real Postgres rather
+# than a WASM one and their own throughput under it is owed.
+ENV MALLOC_ARENA_MAX=2
 COPY --from=build --chown=node:node /app/build/host-server /app
 USER node
 EXPOSE 8080

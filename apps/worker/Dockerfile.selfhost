@@ -53,6 +53,13 @@ ENV NODE_ENV=production
 # memory bound is the per-cycle batch budget in `packages/core/src/adapters/imap-types.ts`.
 # This is a visibility aid and headroom, only.
 ENV NODE_OPTIONS="--max-old-space-size=512"
+# glibc gives a thread that first allocates under contention its own 64 MB arena and returns
+# those bytes only from the top of one, so a burst leaves them resident for the life of the
+# process — measured on the desktop engine as one +92.9 MB step in rss with the JS heap FALLING
+# across it. The variable is read at process start, so this is the only place it can be set for
+# an image. The value is the ENGINE's, measured; these processes talk to a real Postgres rather
+# than a WASM one and their own throughput under it is owed.
+ENV MALLOC_ARENA_MAX=2
 COPY --from=build --chown=node:node /app/build/host-worker /app
 USER node
 # The health server binds PORT (defaulting to 8080), which the compose healthcheck polls.
