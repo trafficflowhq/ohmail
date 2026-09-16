@@ -931,6 +931,9 @@ export const DE: Deck = {
     `Für den Organizer vorgemerkt — beim nächsten Durchgang: ${place}.`,
   toastDeleteQueued: (holder: string) => `Für ${holder} vorgemerkt — gelöscht wird beim nächsten Durchgang.`,
   toastDeleteQueuedUnknown: "Für den Organizer vorgemerkt — gelöscht wird beim nächsten Durchgang.",
+  pressQueuedForOrganizer: (holder: string) =>
+    `Für ${holder} vorgemerkt — passiert beim nächsten Durchgang.`,
+  pressQueuedForOrganizerUnknown: "Für den Organizer vorgemerkt — passiert beim nächsten Durchgang.",
   organizerStillWaiting: (holder: string) => `Warte weiterhin auf ${holder}.`,
   organizerStillWaitingUnknown: "Warte weiterhin auf den Organizer.",
 

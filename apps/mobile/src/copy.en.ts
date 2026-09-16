@@ -1450,6 +1450,12 @@ const TABLE = {
   toastDeleteQueued: (holder: string) => `Queued for ${holder} — it is deleted on the next pass.`,
   toastDeleteQueuedUnknown: "Queued for the organizer — it is deleted on the next pass.",
   /** Pressed again while the first request is still waiting, and past the engine's stated bound. */
+  /** ANY press the server recorded for the organizing install — the one sentence every verb
+   *  that used to say "done" over a recorded request now says. Move and Delete keep their own
+   *  wording because they can name the place and the act. */
+  pressQueuedForOrganizer: (holder: string) =>
+    `Queued for ${holder} — it happens on the next pass.`,
+  pressQueuedForOrganizerUnknown: "Queued for the organizer — it happens on the next pass.",
   organizerStillWaiting: (holder: string) => `Still waiting for ${holder}.`,
   organizerStillWaitingUnknown: "Still waiting for the organizer.",
   /** The reply / forward composer (`reply.*`). */

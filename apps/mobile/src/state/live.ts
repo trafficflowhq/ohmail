@@ -40,6 +40,9 @@ import {
   SIG_FOLLOWING,
   effectiveSignature,
   folderNameError,
+  PRESS_THREW,
+  pressVerdict,
+  tallyVerdicts,
   type FolderNameError,
   type SignatureState,
   type BodyState,
@@ -53,6 +56,7 @@ import {
   type FolderEntity,
   type MutationResult,
   type OhmailEngine,
+  type PressVerdict,
   type RuleDTO,
   type ScreenDest,
   type ScreenerSenderDTO,
@@ -1210,12 +1214,16 @@ const MARK_SEEN_MAX = 200;
 const LEAVE_SETTLE_DEADLINE_MS = 1_500;
 
 /**
- * One watched dispatch: `rolled_back` or a rejection is a refusal; `queued` is NOT — the
- * mutation is on the retry queue with its Idempotency-Key and the intent stands (the one
- * status where the optimistic view staying applied is truthful).
+ * One watched dispatch, AS A VERDICT — `pressVerdict`'s three answers and never a boolean.
+ *
+ * This used to answer `status !== "rolled_back"`, which put both waits on the completion side:
+ * a verb the SERVER recorded for the install that organizes the mailbox came back through the
+ * same door as a verb that happened, and every sentence below said it was done. `queued` on this
+ * client's own retry queue is still not a failure — the intent stands under its Idempotency-Key
+ * — and that is why the two waits stay apart rather than both reading as a refusal.
  */
-function watched(p: Promise<MutationResult>): Promise<boolean> {
-  return p.then((r) => r.status !== "rolled_back", () => false);
+function watched(p: Promise<MutationResult>): Promise<PressVerdict> {
+  return p.then(pressVerdict, () => PRESS_THREW);
 }
 
 /**
@@ -1628,6 +1636,37 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
   const inflight = new Map<FeedView, Set<Promise<boolean>>>();
 
   /**
+   * WHAT A PRESS IS TOLD — the one place a verdict becomes a sentence on this surface.
+   *
+   * `done` is the caller's own completion sentence, or `null` where it already raised an
+   * optimistic one. A press the SERVER recorded for the organizing install gets the queued
+   * sentence instead and answers `false`: nothing happened, so no caller may treat it as having.
+   * A press on this client's own retry queue answers `true` — the intent stands under its key.
+   */
+  const said = (v: PressVerdict, done: RefusalArg | null, failed: RefusalArg): boolean => {
+    if (v.kind === "refused") { toast(failed); return false; }
+    if (v.kind === "queued" && v.wait === "organizer") {
+      toast(v.holder ? refuse("pressQueuedForOrganizer", v.holder) : refuse("pressQueuedForOrganizerUnknown"));
+      return false;
+    }
+    if (done !== null) toast(done);
+    return true;
+  };
+
+  /** The same, over a SET: one sentence for the run, and a queued press is never counted landed. */
+  const saidAll = (vs: readonly PressVerdict[], done: RefusalArg | null, failed: RefusalArg): boolean => {
+    const t = tallyVerdicts(vs);
+    if (t.refused > 0) { toast(failed); return false; }
+    if (t.queued > 0 && vs.some((v) => v.kind === "queued" && v.wait === "organizer")) {
+      const holder = t.holder;
+      toast(holder ? refuse("pressQueuedForOrganizer", holder) : refuse("pressQueuedForOrganizerUnknown"));
+      return false;
+    }
+    if (done !== null) toast(done);
+    return true;
+  };
+
+  /**
    * One body ask, with the engine's retry gate honoured rather than fought: a record the
    * engine has marked `failed` is only re-asked when the caller says a human asked again
    * (`retry: true`), and every call here IS a human act — an open, a reopen, an expand.
@@ -1677,9 +1716,10 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     // labelled and the SERVER keeps the pin while marking read. The deliberate reads — the
     // sheet's Done, Mark as read — remain the acts that spend the pin.
     // `via: "glance"` — the involuntary read, so the server's pin semantics see it as such.
-    const ok = await watched(engine.mutate({ kind: "mark_seen", messageIds: [id], unread: false, via: "glance" }));
-    if (!ok) toast(refuse("liveSaveFailed"));
-    return ok;
+    return said(
+      await watched(engine.mutate({ kind: "mark_seen", messageIds: [id], unread: false, via: "glance" })),
+      null, refuse("liveSaveFailed"),
+    );
   };
 
   const sweepFeed = async (view: FeedView, passedIds: string[]): Promise<boolean> => {
@@ -1700,14 +1740,13 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     // that awaits the in-flight set (the leave commit) is guaranteed to observe the pool
     // AFTER a rollback has pulled its ids out, by structure rather than microtask order.
     const run = (async (): Promise<boolean> => {
-      const ok = await watched(engine.mutate({ kind: "feed_mark_seen", view, messageIds: fresh }));
+      const ok = said(await watched(engine.mutate({ kind: "feed_mark_seen", view, messageIds: fresh })), null, refuse("liveSaveFailed"));
       if (!ok) {
         // The engine rolled the rows back to unread; the CACHE has to roll back with it, or
         // the ids are skip-listed (the flip never retried) and the leave commit can anchor
         // on a row that is still unread. The rows stay sweepable: the
         // next scroll event re-attempts them.
         for (const id of fresh) seen.delete(id);
-        toast(refuse("liveSaveFailed"));
       }
       return ok;
     })();
@@ -1760,11 +1799,10 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
       if (anchor === null || ms > held) anchor = m;
     }
     if (anchor === null) return true;
-    const ok = await watched(
-      engine.mutate({ kind: "feed_mark_seen", view, messageIds: [], upToId: anchor.id }),
+    return said(
+      await watched(engine.mutate({ kind: "feed_mark_seen", view, messageIds: [], upToId: anchor.id })),
+      null, refuse("liveSaveFailed"),
     );
-    if (!ok) toast(refuse("liveSaveFailed"));
-    return ok;
   };
 
   const decide = async (row: ScreenerRow, dest: Destination, read: boolean, scope: Scope): Promise<boolean> => {
@@ -1793,7 +1831,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
      * than a correction a second later.
      */
     let queuedWith: { name: string | null } | null = null;
-    let landed: Promise<boolean>;
+    let landed: Promise<PressVerdict>;
     if (physicalFolderOf(rep) === FOLDER_OF_VIEW.screener) {
       landed = engine.mutate({
         kind: "screener_decide",
@@ -1805,9 +1843,9 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
       }).then(
         (r) => {
           queuedWith = r.pendingWith ?? null;
-          return r.status !== "rolled_back";
+          return pressVerdict(r);
         },
-        () => false,
+        () => PRESS_THREW,
       );
     } else {
       // PAST THE GATE (mirrored from the webapp's shape): this sender's mail is only
@@ -1842,16 +1880,17 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
        recorded for another machine — and saying the wrong one first and correcting it is the
        shape of the defect rather than a smaller version of it. The wait is one round trip on a
        press that already blocks on nothing else. */
-    const ok = await landed;
-    if (!ok) {
-      toast(refuse("liveDecideFailed", row.address));
-      return ok;
-    }
+    const v = await landed;
+    /* THE DECIDE'S OWN QUEUED SENTENCE COMES FIRST, because it is the more specific one: a
+       CONFIRMED decide against a mailbox somebody else organizes carries the holder on
+       `pendingWith`, and that names the install as well as the wait. Everything else goes
+       through the one speaker, which covers the rule_create arm this branch shares. */
     const queued = queuedWith as { name: string | null } | null;
-    toast(
-      queued === null ? refuse("liveDecided", destDone(dest), target) : queued.name ? refuse("liveDecidedElsewhere", queued.name, target) : refuse("liveDecidedElsewhereUnknown", target),
-    );
-    return ok;
+    if (v.kind === "applied" && queued !== null) {
+      toast(queued.name ? refuse("liveDecidedElsewhere", queued.name, target) : refuse("liveDecidedElsewhereUnknown", target));
+      return true;
+    }
+    return said(v, refuse("liveDecided", destDone(dest), target), refuse("liveDecideFailed", row.address));
   };
 
   const release = async (row: ScreenerRow, dest: Place, segment: "screened" | "spam"): Promise<boolean> => {
@@ -1885,9 +1924,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     toast(
       retargets.length > 0 ? refuse("liveReleasedRuled", row.held.length, destDone(dest)) : refuse("liveReleased", row.held.length, destDone(dest)),
     );
-    const ok = (await Promise.all(parts)).every(Boolean);
-    if (!ok) toast(refuse("liveReleaseFailed", row.address));
-    return ok;
+    return saidAll(await Promise.all(parts), null, refuse("liveReleaseFailed", row.address));
   };
 
   const setPile = async (messageId: string, kind: PileKind): Promise<boolean> => {
@@ -1902,8 +1939,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
           : {}),
       }),
     );
-    toast(ok ? refuse("livePileAdded", pileTitle(kind)) : refuse("livePileFailed", pileTitle(kind)));
-    return ok;
+    return said(ok, refuse("livePileAdded", pileTitle(kind)), refuse("livePileFailed", pileTitle(kind)));
   };
 
   /* ── the open message's verbs ──────────────────────────────────────────────────────────── */
@@ -1924,11 +1960,10 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     bubbleUpAt?: string,
   ): Promise<boolean> => {
     toast(say);
-    const ok = await watched(
-      engine.mutate({ kind: "triage_set", messageId, state, ...(bubbleUpAt ? { bubbleUpAt } : {}) }),
+    return said(
+      await watched(engine.mutate({ kind: "triage_set", messageId, state, ...(bubbleUpAt ? { bubbleUpAt } : {}) })),
+      null, refuse("liveSaveFailed"),
     );
-    if (!ok) toast(refuse("liveSaveFailed"));
-    return ok;
   };
 
   const pileToggle = async (messageId: string, kind: "replyLater" | "setAside"): Promise<boolean> => {
@@ -1963,9 +1998,10 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
   const markSeen = async (messageId: string, unread: boolean): Promise<boolean> => {
     // No `via`: this is the deliberate read, the one that spends a resurface pin on both sides
     // of the wire — the opposite of the open's glance and the streams' sweep.
-    const ok = await watched(engine.mutate({ kind: "mark_seen", messageIds: [messageId], unread }));
-    if (!ok) toast(refuse("liveSaveFailed"));
-    return ok;
+    return said(
+      await watched(engine.mutate({ kind: "mark_seen", messageIds: [messageId], unread })),
+      null, refuse("liveSaveFailed"),
+    );
   };
 
   const resurfaceDone = async (messageId: string): Promise<boolean> => {
@@ -1973,15 +2009,13 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     if (!m) return false;
     // A SCHEDULED message's release has an extra half: the booking is cleared first (the same
     // un-triage the toggles use), then the same deliberate read files it under Earlier.
-    const parts: Promise<boolean>[] = [];
+    const parts: Promise<PressVerdict>[] = [];
     if (triageStateOf(engine.read(), m) === "bubbled_up") {
       parts.push(watched(engine.mutate({ kind: "triage_set", messageId, state: "none" })));
     }
     parts.push(watched(engine.mutate({ kind: "mark_seen", messageIds: [messageId], unread: false })));
     toast(refuse("toastResurfaceDone"));
-    const ok = (await Promise.all(parts)).every(Boolean);
-    if (!ok) toast(refuse("liveSaveFailed"));
-    return ok;
+    return saidAll(await Promise.all(parts), null, refuse("liveSaveFailed"));
   };
 
   /**
@@ -2263,9 +2297,10 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
 
   const tagToggle = async (messageId: string, tag: WorldTag, assigned: boolean): Promise<boolean> => {
     toast(assigned ? refuse("tagTagged", tag.name) : refuse("tagUntagged", tag.name));
-    const ok = await watched(engine.mutate({ kind: "tag_assign", messageId, tagId: tag.id, assigned }));
-    if (!ok) toast(refuse("liveSaveFailed"));
-    return ok;
+    return said(
+      await watched(engine.mutate({ kind: "tag_assign", messageId, tagId: tag.id, assigned })),
+      null, refuse("liveSaveFailed"),
+    );
   };
 
   const tagCreate = async (messageId: string, name: string): Promise<boolean> => {
@@ -2276,11 +2311,10 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     const existing = liveTags(engine.read()).find((t) => t.name.toLowerCase() === typed.toLowerCase());
     if (existing) return tagToggle(messageId, existing, true);
     toast(refuse("tagTagged", typed));
-    const ok = await watched(
-      engine.mutate({ kind: "tag_assign", messageId, tagId: deps.uuid(), assigned: true, createName: typed }),
+    return said(
+      await watched(engine.mutate({ kind: "tag_assign", messageId, tagId: deps.uuid(), assigned: true, createName: typed })),
+      null, refuse("liveSaveFailed"),
     );
-    if (!ok) toast(refuse("liveSaveFailed"));
-    return ok;
   };
 
   /**
@@ -2333,7 +2367,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
       .sort((a, b) => (b.date ?? "").localeCompare(a.date ?? ""))[0];
     const decision: "yes" | "no" = dest === "screened" || dest === "spam" ? "no" : "yes";
 
-    let ruled: Promise<boolean>;
+    let ruled: Promise<PressVerdict[]>;
     if (waiting) {
       ruled = watched(
         engine.mutate({
@@ -2342,7 +2376,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
           // this press writes — the webapp's ruling, on the same wire.
           applyRetro,
         }),
-      );
+      ).then((v) => [v]);
       // The decide relocates the HELD rows and promotes the rule — it does not touch the
       // subject's mail that already left the gate. Those rows are the past-mail half (the
       // webapp's `planScreeningChange` shape: moves cover what the decide does not), so they
@@ -2373,24 +2407,21 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
         standing.length === 0
           ? [{ kind: "rule_create", ruleKind: scope, match, destination: wanted, applyRetro }]
           : [...retargets, ...rearms];
-      ruled = Promise.all(writes.map((w) => watched(engine.mutate(w)))).then((rs) => rs.every(Boolean));
+      ruled = Promise.all(writes.map((w) => watched(engine.mutate(w))));
       // The optimistic half: what the reader can see moves now; the server's pass does the rest.
       movePastMail((x) => x.folder !== wanted);
     }
-    toast(refuse("liveDecided", destDone(dest), target));
-    const ok = await ruled;
-    if (!ok) toast(refuse("liveDecideFailed", m.from.address));
-    return ok;
+    /* THE SENTENCE FOLLOWS THE ANSWER, not the press: the optimistic "Screened" stood over a
+       rule the server had only RECORDED for the organizing install, which is the same claim the
+       Screener's own decide stopped making. `saidAll` raises it, or the wait, or the refusal. */
+    return saidAll(await ruled, refuse("liveDecided", destDone(dest), target), refuse("liveDecideFailed", m.from.address));
   };
 
   /* ── the folder verbs — see the interface's header for the whole optimism model ─────────── */
 
   /** One folder command, spoken about ONLY on rollback — success's feedback is the pending row. */
-  const folderVerb = async (m: EngineMutation): Promise<boolean> => {
-    const ok = await watched(engine.mutate(m));
-    if (!ok) toast(refuse("folderVerbFailed"));
-    return ok;
-  };
+  const folderVerb = async (m: EngineMutation): Promise<boolean> =>
+    said(await watched(engine.mutate(m)), null, refuse("folderVerbFailed"));
 
   const folderCreate = (mailboxId: string, name: string): Promise<boolean> =>
     // The client-local row id, replaced by the server's echo (`tag_create`'s two-ids rule).

@@ -19,6 +19,14 @@ export const ENGINE_VERSION = "0.1.0";
 export * from "./durable.js";
 
 /**
+ * ONE READING OF A MUTATION RESULT, for every completion sentence on every surface. Exported from
+ * the barrel rather than as a leaf because both surfaces already compile it, and a reducer a
+ * surface cannot import is a reducer a surface writes again.
+ */
+export { PRESS_THREW, pressVerdict, tallyVerdicts } from "./press-verdict.js";
+export type { PressTally, PressVerdict } from "./press-verdict.js";
+
+/**
  * The nameless-attachment naming pair, re-exported from core so every client names a
  * nameless calendar part the same way (`toAttachmentItem` here already does; the mobile
  * app's fixture tiles need the same rule and reach core only through this package).
