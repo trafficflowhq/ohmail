@@ -13,6 +13,21 @@ See [Status](README.md#status--read-this-first).
 
 ## [Unreleased]
 
+### Filing a message while your mailbox was being read no longer loses the filing
+
+When ohmail finds a message in a folder it did not put it in, it adopts that placement — the
+mailbox is the master, and where you moved the message to is the truth. The reading behind that
+observation happens before the write, though, and filing the message somewhere else in between
+used to be overwritten by it, with nothing said. Your filing keeps the message now; where the
+server holds it is recorded either way.
+
+### Opening Settings in the demo on the site no longer turns off the notifications your signed-in browser is registered for
+
+The demo on the landing page is the real client running on fictional mail. Opening its Settings
+could reach past the demo into your own signed-in browser and cancel the registration that lets
+ohmail notify you while it is closed, so closed-browser notices stopped arriving with nothing on
+screen to say so. The demo no longer touches it.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
