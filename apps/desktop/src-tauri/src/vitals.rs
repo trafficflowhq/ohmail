@@ -18,12 +18,13 @@ use std::path::Path;
 
 /// The resident-set ceiling the renderer is expected to stay under, in kB.
 ///
-/// 1.5 GB, and the number has an origin: the incident measured 4.1 GB for the process group with
-/// the renderer alone at 923 MB nine minutes in, and the fixed build's renderer is bounded by its
-/// mirror window rather than by the mailbox. A crossing is therefore a real regression in the
-/// bound and not a big mailbox. It is a LOG LINE, never a limit — the shell does not kill the
-/// window it is reporting on.
-pub const RENDERER_BUDGET_KB: u64 = 1_500 * 1024;
+/// READ, NOT WRITTEN. This was a literal here, and three other readers spelled the same ceiling
+/// differently — a candidate was measured RED against one of them and 85% of the contract this
+/// file shipped. The number now comes from [`crate::perf_budgets`], which is generated from the
+/// one budget table, so the line a person reads in the log and the line a gate reddens on are the
+/// same number. A crossing is a regression in the bound, not a big mailbox; it is a LOG LINE and
+/// never a limit — the shell does not kill the window it is reporting on.
+pub use crate::perf_budgets::RENDERER_BUDGET_KB;
 
 /// `oom_score_adj` for the WebKit children, on Linux.
 ///

@@ -96,6 +96,10 @@ mod updater;
 // cargo and it reads a fixture /proc tree rather than the real one.
 #[cfg(feature = "local-engine")]
 mod vitals;
+// The generated half of the line above: the renderer ceiling `vitals.rs` reports against, written
+// out of the one budget table rather than spelled here. Gated with `vitals`, its only reader.
+#[cfg(feature = "local-engine")]
+mod perf_budgets;
 
 fn main() {
     let mut builder = tauri::Builder::default();
