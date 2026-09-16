@@ -129,6 +129,16 @@ assertSnapshotWindow(SNAPSHOT_WINDOW);
  */
 export const SNAPSHOT_DRAFT_PAGE = 100;
 
+/**
+ * HOW MANY MESSAGES PAGE 1 CARRIES — a viewport's worth, so the reader has mail while the rest of
+ * the window is still being read. Page 1 used to take {@link DEFAULT_LIMIT} like every other page,
+ * and the walk's cost is linear in the rows it emits, so most of that page was work in front of a
+ * first row nobody could see. It bounds the MESSAGE walk only: page 1's live state — rules, tags,
+ * folders, settings, message-less approvals — is unpaged and stays that way, and the keyset makes
+ * page 1 a strict PREFIX of what it replaced: the same rows, in the same order.
+ */
+export const SNAPSHOT_FIRST_PAGE_MESSAGES = 50;
+
 const DAY_MS = 86_400_000;
 
 export interface GetChangesOptions {
@@ -852,12 +862,21 @@ export class SyncService {
       ...(reachableTail ? [reachableTail] : []),
     );
 
+    /* THE BOUND THIS PAGE'S MESSAGE WALK TAKES. Page 1 of an ordinary cold start takes a
+       viewport's worth ({@link SNAPSHOT_FIRST_PAGE_MESSAGES}); every later page, and a walk that
+       starts in the tail, takes the caller's own limit. `Math.min` so a caller asking for FEWER
+       still gets what it asked for, and `fullPage` below compares against this and not `limit` —
+       against `limit` a short first page would read as the end of the mailbox. */
+    const walkLimit = cursor === null && !tailOnly
+      ? Math.min(SNAPSHOT_FIRST_PAGE_MESSAGES, limit)
+      : limit;
+
     const rows = await db
       .select({ id: messages.id, date: messages.date })
       .from(messages)
       .where(where)
       .orderBy(sql`${messages.date} desc nulls last`, desc(messages.id))
-      .limit(limit);
+      .limit(walkLimit);
 
     const pageMessages = await materializeMessagesInOrder(db, accountId, rows.map((r) => r.id));
 
@@ -938,7 +957,7 @@ export class SyncService {
     const emitted = (cursor?.emitted ?? 0) + walked.length;
     const last = walked[walked.length - 1];
     // A page the BYTES ended has more at this very keyset, so it continues like a full one.
-    const fullPage = (walked.length === limit || stoppedAt < rows.length) && last !== undefined;
+    const fullPage = (walked.length === walkLimit || stoppedAt < rows.length) && last !== undefined;
     const keysetOf = (phase?: "tail"): string => this.encodeSnapshotCursor({
       asOfSeq,
       date: last!.date ? last!.date.getTime() : null,
