@@ -688,6 +688,23 @@ describe("the Rust side", () => {
   });
 
   /**
+   * THE ENGINE IS A CHILD OF THIS SHELL, SO IT INHERITS THE CAP — AND NOTHING MAY QUIETLY TAKE IT
+   * AWAY.
+   *
+   * glibc reads `MALLOC_ARENA_MAX` at a process's own start, and the sidecar engine starts as a
+   * child of this shell, so one `set_var` in `main` reaches both the webview's process and the
+   * engine's. That inheritance is the whole design — the alternative is a second setter — and it
+   * has exactly two ways to be lost silently: the spawn clearing the environment, or the variable
+   * being added to the per-config unset list beside the IMAP ones. Neither would fail a build or
+   * show in a log; the engine would simply go on holding arenas nobody was looking at.
+   */
+  it("does not take the allocator cap away from the engine it spawns", () => {
+    expect(read("src-tauri/src/engine.rs")).not.toMatch(/\benv_clear\(/);
+    expect(read("src-tauri/src/config.rs")).not.toMatch(/MALLOC_ARENA_MAX/);
+    expect(read("src-tauri/src/host.rs")).not.toMatch(/MALLOC_ARENA_MAX/);
+  });
+
+  /**
    * ONE OWNER FOR THE MENU BAR, AND ONE FOR THE COMMAND TABLE.
    *
    * Both `Builder::setup` and `Builder::invoke_handler` REPLACE what was there rather than adding
