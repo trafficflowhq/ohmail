@@ -498,6 +498,27 @@ export function createSyncGate(mirrorOwner: string | null): SyncGate {
     return page;
   };
 
+  /**
+   * A PRESS THAT IS NOT A MUTATION — `gatedRead`'s wrapper on `mutate`'s rule.
+   *
+   * `holds`, not `mayReadIdentity`: this changes the account's own server state and its answer is
+   * re-read into the mirror, so the warm open that makes an unconfirmed READ correct would make an
+   * unconfirmed press somebody else's mail moving. It throws {@link ForeignSessionError} and not
+   * {@link MutationRejectedError} because there is no outbox to hold it under an idempotency key —
+   * a press refused here has not happened and the surface says so, rather than being told later.
+   */
+  const gatedPress = <A extends unknown[], R>(
+    fn: (...args: A) => Promise<R>,
+    what: string,
+  ): ((...args: A) => Promise<R>) => async (...args: A): Promise<R> => {
+    if (identity() !== "holds") throw new ForeignSessionError(what);
+    const out = await fn(...args);
+    // The arrival check `gatedRead` carries, for the reason it carries it — with the press's own
+    // stake: the answer is re-read straight into this mirror.
+    if (identity() !== "holds") throw new ForeignSessionError(what);
+    return out;
+  };
+
   return {
     identity,
     confirm(accountId) {
@@ -635,6 +656,19 @@ export function createSyncGate(mirrorOwner: string | null): SyncGate {
          */
         ...(adapter.fetchBodies
           ? { fetchBodies: gatedRead(adapter.fetchBodies.bind(adapter), "a thread's message bodies") }
+          : {}),
+
+        /**
+         * THE DRAFT'S OWN TEXT — `GET /drafts/:id`, forwarded, gated, spread, on the three rules
+         * above. Missing from this literal until 0.19.2, and the absence was a real refusal rather
+         * than a slower path: `readDraftBody` answers `null` without the capability, and
+         * `openDraftDecision` reads `null` as "this client cannot get the text" and opens NOTHING.
+         * So a live web account whose sync page carried a draft row without its body could not
+         * open that draft at all, while the ungated desktop could — the live-path-only shape this
+         * file's other paragraphs name, found by the derived census, not by a reader.
+         */
+        ...(adapter.fetchDraftBody
+          ? { fetchDraftBody: gatedRead(adapter.fetchDraftBody.bind(adapter), "a draft's text") }
           : {}),
 
         /**
@@ -828,6 +862,31 @@ export function createSyncGate(mirrorOwner: string | null): SyncGate {
           : {}),
         ...(adapter.fetchAllAttachments
           ? { fetchAllAttachments: gatedRead(adapter.fetchAllAttachments.bind(adapter), "every attachment") }
+          : {}),
+
+        /**
+         * MAIL HELD AT THE GATE — the pair, forwarded and spread for the reasons above, and gated
+         * at TWO strengths because they are two different acts. Neither was here before 0.19.2:
+         * `refreshHeldReleases` returns at its first line without `heldReleases`, so no
+         * `held_release_group` row ever reached a web mirror and the "held from senders you
+         * already decided" panel could not render on the live web path — the desktop, which wraps
+         * no gate, rendered it from the same server. `satisfies` accepted the omission because
+         * both are optional, which is what the derived census below now closes.
+         */
+        ...(adapter.heldReleases
+          ? { heldReleases: gatedRead(adapter.heldReleases.bind(adapter), "the mail held at your gate") }
+          : {}),
+        /**
+         * THE PRESS IS GATED ON `holds`, not on `mayReadIdentity` — `mutate`'s rule, not
+         * `gatedRead`'s. It records consent on the account's own rules and re-opens their backlog,
+         * and its answer is re-read straight into the mirror; the warm open that makes an
+         * unconfirmed READ correct makes an unconfirmed WRITE somebody else's mail moving. Not
+         * `MutationRejectedError`: this is no engine mutation, there is no outbox to hold it, so
+         * it refuses in the one shape every other door on this literal throws and the surface
+         * already has a path for.
+         */
+        ...(adapter.releaseHeld
+          ? { releaseHeld: gatedPress(adapter.releaseHeld.bind(adapter), "releasing mail held at your gate") }
           : {}),
       } satisfies GatedAdapter & { transport: EngineAdapter };
     },
