@@ -367,25 +367,23 @@ export async function materializeMessages(
     ));
   const awayRepliedBy = new Map(wrRows.map((r) => [r.messageId, iso(r.sentAt)]));
   /**
-   * THE TWO CALENDAR FACTS — one query each per page, on `owned` for the auto-reply flag's reason
-   * (the receipt reader carries them too, so a `delete` echo cannot disagree with the row the
-   * client holds). Both read stored headers and parts only; neither needs the .ics bytes, which
-   * are never persisted. `packages/core/src/mime.ts` holds the TS half of each definition.
+   * THE TWO CALENDAR FACTS — ONE query per page, not two: both read `message_bodies.headers` for
+   * the same ids, so asking them together costs one round trip instead of two scans of the same
+   * rows. On `owned` for the auto-reply flag's reason (the receipt reader carries them too, so a
+   * `delete` echo cannot disagree with the row the client already holds). Neither needs the .ics
+   * bytes, which are never persisted; `packages/core/src/mime.ts` holds the TS half of each.
    */
-  const invRows = await db.select({ id: messages.id }).from(messages)
-    .where(and(
-      inArray(messages.id, owned),
-      eq(messages.accountId, accountId),
-      invitationWithoutEventWhere(dialect(db), { id: sql`${messages.id}` }),
-    ));
-  const invitationIds = new Set(invRows.map((r) => r.id));
-  const itipRows = await db.select({ id: messages.id }).from(messages)
-    .where(and(
-      inArray(messages.id, owned),
-      eq(messages.accountId, accountId),
-      itipReplyHeaderWhere(dialect(db), { id: sql`${messages.id}` }),
-    ));
-  const itipReplyIds = new Set(itipRows.map((r) => r.id));
+  const calRows = await db.select({
+    id: messages.id,
+    invitation: invitationWithoutEventWhere(dialect(db), { id: sql`${messages.id}` }),
+    itipReply: itipReplyHeaderWhere(dialect(db), { id: sql`${messages.id}` }),
+  }).from(messages)
+    .where(and(inArray(messages.id, owned), eq(messages.accountId, accountId)));
+  // One store answers a boolean and the other a 0/1 integer — a driver difference, not a dialect
+  // one, so the same question is normalised to one answer here.
+  const isYes = (v: unknown): boolean => v === true || v === 1;
+  const invitationIds = new Set(calRows.filter((r) => isYes(r.invitation)).map((r) => r.id));
+  const itipReplyIds = new Set(calRows.filter((r) => isYes(r.itipReply)).map((r) => r.id));
 
   const fsBy = new Map(fsRows.map((r) => [r.messageId, r]));
   const stBy = new Map(stRows.map((r) => [r.messageId, r]));
