@@ -174,6 +174,7 @@ import {
   openLocalDb, type LocalDb, type LocalDbOpenPhase, type MigrationProgress, type OpenLocalDb,
 } from "./db.js";
 import { inStoreLane } from "./store-lanes.js";
+import { awaitFirstPage } from "./first-page-gate.js";
 
 /**
  * The shape {@link SidecarConfig.store} supplies — `openLocalDb`'s own signature, named so a
@@ -5392,6 +5393,21 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
            promotion — returns the ladder to base on the way in and takes no rest on the way out,
            however little it finds: somebody is at the screen. */
         if (opts.force === true) idlePollMs = pollIntervalMs;
+        /* THE WINDOW'S FIRST PAGE GOES FIRST — once per process, bounded, and never in front of a
+           press. A transaction is one admission in `store-lanes.ts`, so this drain's transactions
+           would otherwise hold the one connection through the whole of the reader's cold start;
+           `first-page-gate.ts` carries the measurements. A FORCED drain skips it: somebody is at
+           the screen asking for mail, and they are not the reader this gate is for. */
+        if (opts.force !== true) {
+          /* TWO LINES, NOT ONE WITH A FIELD: a rig telling the arms apart greps for an event, and
+             the two arms are different facts — the drain yielded and got its page, or the bound
+             fired and it went anyway. `already` is neither and says nothing. */
+          const yieldedAt = Date.now();
+          const waited = await awaitFirstPage();
+          const waitedMs = Date.now() - yieldedAt;
+          if (waited === "served") log("first_page_before_drain", { waitedMs });
+          else if (waited === "timed-out") log("first_page_grace_expired", { waitedMs });
+        }
         const markBefore = await changeLogMark();
         try {
           const cycles = await drainPass(maxCycles);

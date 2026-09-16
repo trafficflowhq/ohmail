@@ -209,6 +209,11 @@ export const ALLOWED_FIELDS: readonly string[] = [
   // `count`, on this file's own rule: `totalMs` and `slowestMs` are different quantities and one
   // `count` meaning either is not a claim a reviewer can check. (`drained` is already above.)
   "cycles", "totalMs", "slowestMs",
+  // HOW LONG THE FIRST DRAIN HELD FOR THE READER'S FIRST PAGE (`first_page_before_drain`,
+  // `first_page_grace_expired`), added WITH its call site. One `Date.now()` delta, an integer from
+  // a clock, naming no mailbox and no message — and it is the only number that says which of the
+  // two arms a cold start took and what the ordering cost the mail.
+  "waitedMs",
   // WHAT THE DRAIN ACTUALLY DID, on the same line and added WITH its call site. `observed` is the
   // number of changes the adapter handed over; `cursorBuilds` the cursor builds the cycles ran,
   // `locatorReads` the ones that went to the store for the whole projection, `locatorRows` the rows

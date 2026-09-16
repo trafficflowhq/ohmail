@@ -1,6 +1,7 @@
 import type { Readable, Writable } from "node:stream";
 import { FrameDecoder, FrameWriter, MAX_BODY_BYTES, PROTOCOL_VERSION, type FrameLimits } from "./frame.js";
 import { describeMethod, describeRoute, type Diagnostic } from "./log.js";
+import { noteFirstPageServed } from "./first-page-gate.js";
 import { decodeRequest, encodeResponse, type ErrorHeader, type ReadyHeader, type ReadyInfo, type RequestHeader } from "./protocol.js";
 
 /**
@@ -13,6 +14,12 @@ import { decodeRequest, encodeResponse, type ErrorHeader, type ReadyHeader, type
  * Promise<Response>` rather than an `App` + `ApiDeps`, because `ApiDeps` is MUTABLE (the caller mints
  * a fresh one per request anyway) and it lets the transport be tested against a trivial handler.
  */
+
+/**
+ * The bootstrap read, spelled once. `describeRoute` answers a path with its query dropped, so this
+ * is the whole of the match — see the release call in `dispatch`.
+ */
+const SNAPSHOT_ROUTE = "/sync/snapshot";
 
 export interface StdioHostOptions {
   /** Usually `(req) => app.handle(req, freshDeps())`. */
@@ -77,6 +84,12 @@ export function serveOverStdio(opts: StdioHostOptions): StdioHost {
         const res = await opts.handle(decodeRequest(header, body));
         const framed = await encodeResponse(header.id, res, maxBody);
         await writer.write(framed.header, framed.body);
+        /* THE BOOTSTRAP'S FIRST PAGE HAS LANDED — release the first drain, which has been holding
+           the connection's transactions off it. AFTER the write and not before it, because what
+           the gate promises is a page the window HAS. The route alone decides: a cold start's
+           first snapshot call is page 1 by construction (no cursor), so nothing here has to read
+           the query, which `describeRoute` drops for the reason its header gives. */
+        if (describeRoute(header.url) === SNAPSHOT_ROUTE) noteFirstPageServed();
       } catch (err) {
         const detail: ErrorHeader = {
           v: PROTOCOL_VERSION,

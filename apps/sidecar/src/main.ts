@@ -2,6 +2,7 @@ import { realpathSync } from "node:fs";
 import { Writable } from "node:stream";
 import { fileURLToPath } from "node:url";
 import { createSidecar, type Sidecar, type SidecarConfig } from "./engine.js";
+import { armFirstPageGate } from "./first-page-gate.js";
 import { createCloudSidecar, type CloudSidecar, type CloudSidecarConfig } from "./cloud-engine.js";
 import {
   createAdmission, maybeHoldStoodDownPort, maybeStartHostListener, type HostListener,
@@ -403,6 +404,9 @@ export async function runSidecar(): Promise<void> {
   // volume — and the shell that set `OHMAIL_DATA_DIR` already knows it. `mailboxId` is what
   // correlates this line with everything after it.
   log("serving", { mailboxId: sidecar.world.mailboxId });
+  // AND THE FIRST DRAIN'S GRACE STARTS HERE, because this is the first moment a window could ask
+  // for its bootstrap page — see `first-page-gate.ts` for what the drain is being held off.
+  armFirstPageGate();
 
   // THE HOST DOOR's loopback listener — bound iff host mode is armed AND the shell configured
   // both the port and the served origin, and a refusal to bind degrades to the stdio door with a
