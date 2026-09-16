@@ -4769,6 +4769,14 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
       const knownSet = new KnownSetCache(mb.id);
       /** The change-log mark this runtime's last drain left behind; `null` is an unknown. */
       let knownSetMark: string | null = null;
+      /**
+       * The mark the drain body read at its END, handed to {@link noteIdleOutcome} instead of
+       * re-read. Nothing between the two writes `change_log` — the checkpoint folds the WAL, the
+       * watch re-arm is network, the drain line is a log — so the second read was the same
+       * one-row aggregate twice per idle drain, four times in all. `null` means the body did not
+       * reach its end (it threw, or a stopped drain returned early) and the ladder re-reads.
+       */
+      let markAtDrainEnd: string | null = null;
 
       const drain = async (
         maxCycles: number, gen: number, conn: MailboxAdapter, organizing: boolean,
@@ -5095,6 +5103,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
              unreadable mark takes the fold rather than skipping it. `inbound_quiet` writes no
              change row and says so itself. AWAITED, and `checkpoint()` never throws. */
           const markAtEnd = await changeLogMark();
+          markAtDrainEnd = markAtEnd;
           const tailWrote = markAtStart === null || markAtEnd === null || markAtEnd !== markAtStart;
           if (cycles > 0 && (census.observed > 0 || tailWrote)) {
             await opened.checkpoint();
@@ -5359,7 +5368,11 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
        * for CPU, which is the fix this lane was told not to make.
        */
       const noteIdleOutcome = async (before: string | null): Promise<void> => {
-        const after = await changeLogMark();
+        /* THE MARK THE DRAIN ALREADY READ, not a second read of it. See {@link markAtDrainEnd}:
+           the drain body's own end-of-tail mark is this value, and the only code between the two
+           is the WAL fold, the watch re-arm and the drain log line — none of which can write
+           `change_log`. Absent means the body did not reach its end, and then it is read here. */
+        const after = markAtDrainEnd ?? await changeLogMark();
         const quiet = before !== null && after !== null && before === after;
         if (!quiet) { idlePollMs = pollIntervalMs; return; }
         if (!restMayBeTaken) return;
@@ -5409,6 +5422,10 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           else if (waited === "timed-out") log("first_page_grace_expired", { waitedMs });
         }
         const markBefore = await changeLogMark();
+        /* CLEARED BEFORE, NOT AFTER. A body that throws or returns early leaves the previous
+           drain's mark standing, and the ladder would then compare this drain against a reading
+           minutes old — a quiet verdict for a drain nobody measured. */
+        markAtDrainEnd = null;
         try {
           const cycles = await drainPass(maxCycles);
           noteCycleServed();
