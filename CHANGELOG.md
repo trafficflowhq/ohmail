@@ -65,8 +65,8 @@ Choosing it asked the mail engine to check the pairing link, on an install that 
 running yet — and the one setup it could have written would not have started one. The door was
 unwalkable from every state, and it said so only at the last step, after a link had been pasted and
 spent. It is now listed and marked on the setup screen, with nothing behind it to walk into; a
-pairing link pasted into the "Your own server" field gets the same answer. The door is due in the
-next version. Pairing a phone or a browser to a computer running ohmail is a different thing and is
+pairing link pasted into the "Your own server" field gets the same answer. The door is due in a
+later version. Pairing a phone or a browser to a computer running ohmail is a different thing and is
 untouched.
 
 ### A folder you delete no longer takes a message that arrived while it was being emptied
@@ -97,8 +97,8 @@ in the same page names the same message.
 
 ### A message restored from Junk elsewhere no longer opens blank
 
-Where the hosted service declines to keep a message's text it stores a marker saying why, and only
-one of the three markers was carried across. The other two were stored as ordinary empty messages,
+A message whose text the mirror does not keep is marked with the reason, and only one of the three
+markers was carried across to other devices. The other two were stored as ordinary empty messages,
 which are never asked about again — so a message you rescued from Junk on another device opened
 blank here for good. Every marker is carried now, and a message that changes drops the marker so
 its text is fetched on the next pass.
@@ -258,19 +258,15 @@ or the sheet is exactly as you found it. A wrong code still costs an attempt.
 
 ### A temporary fault is no longer reported as an empty AI budget
 
-When the credit check could not answer for an account, ohmail said no AI actions remained and asked
-for money — including on accounts that had plenty, and the card kept saying it overnight. It checks
-the account's own standing before saying anything about payment now: where the two disagree it says
-AI is briefly unavailable and to try again. What an account with no budget left is told has not
-changed. Those messages are in your own language rather than in English, and one about a temporary
-fault clears by itself once suggestions work again.
+When suggestions were briefly unavailable, ohmail said no AI actions remained — and kept saying it
+until the next day. It now says AI is briefly unavailable and to try again, in your own language,
+and the notice clears by itself once suggestions work. What an account with no budget left is told
+has not changed.
 
-### Opening settings no longer creates a subscription-management link each time
+### Opening settings no longer requests a subscription-management link each time
 
-The browser tab and the desktop window both asked for a management link the moment settings mounted,
-and the row was offered only once one had come back — so one signed-in account minted a link roughly
-every ninety seconds with nobody pressing anything. The link is made when you press Manage. Whether
-the row is offered at all is a separate question now, and that one mints nothing.
+The browser tab and the desktop window both asked for a management link the moment settings opened,
+whether or not you pressed anything. The link is made when you press Manage.
 
 ### The two buttons on a revoked pairing open what they name
 
