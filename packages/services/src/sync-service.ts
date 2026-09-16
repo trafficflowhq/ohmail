@@ -390,19 +390,13 @@ export class SyncService {
           "sync cursor is ahead of this account's change log; re-bootstrap with since=0",
         );
       }
-      /* AND THE CURSOR THAT IS ALREADY THE HORIZON ANSWERS HERE, out of the read the 410 checks
-         just took. A window up to date asks this question on every poll and the rest of the
-         function computes the same empty answer from it: `filters` carry `seq > since`, which
-         matches nothing, and the tail below then returns `cursor = since`, `hasMore = false` and
-         four empty arrays. It is an IDENTITY, not a 304 on a validator — the answer is a
-         function of the rows above the cursor and there are none.
-         WHAT MAKES IT EXACT: no row at or below `maxSeq` can become visible after this read.
-         `recordChanges` allocates through `allocateSeqRange`, whose `assertLedgerTx` REFUSES a
-         handle with no `rollback`, so the allocation is inside the writing transaction; its
-         UPDATE of `account_sync_state.next_seq` holds that counter row's lock until commit, so
-         allocation order is commit order and the visible seqs are always a contiguous prefix
-         (a Postgres test drives two overlapping writers against a sampling reader, with the
-         unsafe shape as its own control). */
+      /* A CURSOR THAT IS ALREADY THE HORIZON IS ANSWERED HERE, out of the read the 410 checks
+         just took — the rest of this function computes the same empty answer from it, since
+         `seq > since` matches nothing. An IDENTITY, not a 304: the answer is a function of the
+         rows above the cursor and there are none. It is exact because no row at or below
+         `maxSeq` can become visible afterwards — `allocateSeqRange` refuses a handle outside a
+         transaction and its counter UPDATE holds that row's lock to commit, so allocation order
+         is commit order, which a Postgres test drives with two overlapping writers. */
       if (sinceSeq === maxSeq) {
         return {
           changes: { creates: [], updates: [], moves: [], deletes: [] },
