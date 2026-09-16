@@ -1,7 +1,7 @@
 import { and, asc, eq, gt, inArray, isNotNull, isNull, sql } from "drizzle-orm";
 import {
-  approvals, autoReplyByUsWhere, drafts, folderState, mailboxes, messageBodies, messageStates, messages,
-  recordChange, rules as rulesTbl, type Tx,
+  approvals, auditAction, auditLog, autoReplyByUsWhere, drafts, folderState, mailboxes, messageBodies,
+  messageStates, messages, recordChange, rules as rulesTbl, type Tx,
 } from "@trafficflow/db";
 import {
   DEFAULT_OHBOX_POLICY, DESTINATIONS, authVerdictFromHeaders, evaluateRules,
@@ -373,6 +373,19 @@ export async function ruleRetroPass(
           await recordChange(tx, {
             accountId: rule.accountId, entityType: "message", entityId: c.messageId, op: "move",
             meta: { from: c.desiredFolder, to },
+          });
+          // The undo the account is owed, in the record a person can be shown — the same row
+          // `ohbox-tidy` and `screener-auto` write, because this is the same act: a machine moved
+          // mail nobody placed message by message. `ruleId` is the CAUSE, so "which press moved
+          // this?" is answerable; the change row above is cause-less and indistinguishable from a
+          // hand move. The physical move's own inverse stays `reconcileFolders`' to write.
+          await tx.insert(auditLog).values({
+            accountId: rule.accountId, action: auditAction("rule_retro_move"),
+            payload: {
+              mailboxId: c.mailboxId, messageId: c.messageId,
+              from: c.desiredFolder, to, ruleId: rule.id,
+            },
+            inverse: { messageId: c.messageId, from: to, to: c.desiredFolder },
           });
           moved++;
         }

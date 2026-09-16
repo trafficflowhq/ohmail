@@ -2877,7 +2877,6 @@
     "auditWhyGate": "Wartet am Screener. Über diesen Absender ist noch nichts entschieden.",
     "auditWhyArrival": "Beim Eintreffen einsortiert. Keine deiner Regeln deckt sie ab, also hat etwas anderes entschieden — meist, dass du diesem Absender schon geantwortet hattest.",
     "auditSuggestion": "Von der KI vorgeschlagen: {rationale}",
-    "ruleRetro": "· gilt für die {count, plural, one {1 Nachricht} other {# Nachrichten}}, die schon hier sind",
     "retroToggle": "Auch die Post verschieben, die schon im Postfach liegt",
     "retroToggleAria": "Die Regel auch auf Post anwenden, die schon hier ist",
     "retroToggleNote": "· {count, plural, one {1 Nachricht} other {# Nachrichten}} von ihnen hat ohmail synchronisiert; Post, die noch auf dem Server liegt, ist mitgemeint",

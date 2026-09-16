@@ -26,6 +26,7 @@ import {
   physicalFolderOf,
   presentationReader,
   presentsUnread,
+  retroPassWouldMove,
   readsPartition,
   receiptsByDay,
   rulesList,
@@ -1168,6 +1169,14 @@ function sizeLabel(bytes: number | null | undefined): string {
 }
 
 /* ─────────────────────────────────────────────────────────────── mutations */
+
+/**
+ * NEWEST FIRST, by the sender's own `Date:` — the order every list on this phone shows, so a
+ * slice taken with it is the mail the person is looking at. An undated row sorts last (`""`
+ * compares below every stamp), which is where an undated row already renders.
+ */
+const newestFirst = (a: EngineMessage, b: EngineMessage): number =>
+  (b.date ?? "").localeCompare(a.date ?? "");
 
 /**
  * Does this rule match this sender, by the same test `core/src/rules.ts#matches` applies —
@@ -2325,8 +2334,9 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
    * term-free rule of the same kind already at the destination writes no new rule and is re-armed
    * for the backlog when that answer is yes; (3) rules pointing elsewhere — every one — are
    * retargeted; (4) otherwise one is written. The moves are the optimistic half, capped at
-   * `RETRO_VISIBLE_MOVES` (50) and GATED ON `applyRetro` — see {@link movePastMail}; the rule is
-   * awaited and reported, the moves roll their own rows back. Raw mirror reads.
+   * `RETRO_VISIBLE_MOVES` (50), GATED ON `applyRetro` and NARROWED BY `retroPassWouldMove` — see
+   * {@link movePastMail}; the rule is awaited and reported, the moves roll their own rows back.
+   * Raw mirror reads.
    */
   const screenSender = async (
     messageId: string, dest: Destination, scope: Scope, applyRetro = true,
@@ -2353,19 +2363,24 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
      * read HERE, in the one place both branches move through, so the gate cannot be half-applied.
      * Off: the rule is written and nothing already here is touched. On: the bound stays (the
      * server's resumable pass owns the rest) and the moves are unawaited, each rolling its own
-     * row back.
+     * row back. WHICH mail is `retroPassWouldMove`'s at both call sites: these are the head of
+     * the server's own set, newest first, never a set of this file's own.
      */
     const movePastMail = (already: (x: EngineMessage) => boolean): void => {
       if (!applyRetro) return;
       subject
         .filter(already)
+        // NEWEST FIRST, because the fifty are the mail the person is looking at — the webapp's
+        // `sender-screening.ts` sorts for the same reason. Sliced out of the mirror's list order
+        // the fifty were arbitrary, so the messages that moved were not the ones on screen.
+        .sort(newestFirst)
         .slice(0, 50)
         .forEach((x) => void engine.mutate({ kind: "move", messageId: x.id, folder: wanted }));
     };
 
     const waiting = subject
       .filter((x) => physicalFolderOf(x) === FOLDER_OF_VIEW.screener)
-      .sort((a, b) => (b.date ?? "").localeCompare(a.date ?? ""))[0];
+      .sort(newestFirst)[0];
     const decision: "yes" | "no" = dest === "screened" || dest === "spam" ? "no" : "yes";
 
     let ruled: Promise<PressVerdict[]>;
@@ -2382,7 +2397,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
       // subject's mail that already left the gate. Those rows are the past-mail half (the
       // webapp's `planScreeningChange` shape: moves cover what the decide does not), so they
       // move only when the person asked for it.
-      movePastMail((x) => physicalFolderOf(x) !== FOLDER_OF_VIEW.screener && x.folder !== wanted);
+      movePastMail((x) => physicalFolderOf(x) !== FOLDER_OF_VIEW.screener && retroPassWouldMove(x, wanted));
     } else {
       const standing = rulesList(raw).filter(
         (r) =>
@@ -2410,7 +2425,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
           : [...retargets, ...rearms];
       ruled = Promise.all(writes.map((w) => watched(engine.mutate(w))));
       // The optimistic half: what the reader can see moves now; the server's pass does the rest.
-      movePastMail((x) => x.folder !== wanted);
+      movePastMail((x) => retroPassWouldMove(x, wanted));
     }
     /* THE SENTENCE FOLLOWS THE ANSWER, not the press: the optimistic "Screened" stood over a
        rule the server had only RECORDED for the organizing install, which is the same claim the

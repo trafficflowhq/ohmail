@@ -12,6 +12,7 @@
  */
 import {
   FOLDER_OF_VIEW,
+  retroPassWouldMove,
   rulesList,
   senderKey,
   type EngineMessage,
@@ -432,9 +433,15 @@ export function planScreeningChange(
    * provider fired thousands from a tab); `messages` is newest-first, so the slice is the mail on
    * screen and the server's resumable pass owns the rest. With NO rule (`none`) the move IS the
    * instruction, which is why the sheet withdraws the switch there rather than gating on it.
+   *
+   * WHICH mail is `retroPassWouldMove`'s, not this file's: these fifty are the optimistic head of
+   * the server's own set, so selecting differently makes the press undo filing that pass would
+   * never touch. `folder !== wanted` alone moved a customer's own folders and mail set aside.
    */
   const movesPastMail = applyRetro || ruleState === "none";
-  const outOfPlace = subject.messages.filter((m) => m.folder !== wanted && !movedByDecide.has(m.id));
+  const outOfPlace = subject.messages.filter(
+    (m) => retroPassWouldMove(m, wanted) && !movedByDecide.has(m.id),
+  );
   const toMove = movesPastMail ? outOfPlace.slice(0, RETRO_VISIBLE_MOVES) : [];
   for (const m of toMove) mutations.push({ kind: "move", messageId: m.id, folder: wanted });
 

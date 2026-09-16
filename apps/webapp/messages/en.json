@@ -2877,7 +2877,6 @@
     "auditWhyGate": "Waiting at the Screener. Nothing has been decided about this sender yet.",
     "auditWhyArrival": "Filed when it arrived. No rule of yours covers it, so something else decided — most often that you had already replied to this sender.",
     "auditSuggestion": "Suggested by AI: {rationale}",
-    "ruleRetro": "· applies to the {count, plural, one {1 message} other {# messages}} already here",
     "retroToggle": "Also move the mail already in your mailbox",
     "retroToggleAria": "Also apply the rule to mail already here",
     "retroToggleNote": "· {count, plural, one {1 message} other {# messages}} ohmail has synced from them; mail still on the server is included too",

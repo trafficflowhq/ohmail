@@ -12,6 +12,7 @@
  */
 import {
   FOLDER_OF_VIEW,
+  retroPassWouldMove,
   rulesList,
   senderKey,
   type EngineMessage,
@@ -351,7 +352,11 @@ export function planSubjectRule(
     (m) => clean !== "" && (field === "subject" ? (m.subject ?? "") : bodyTextOf(m))
       .toLowerCase().includes(clean.toLowerCase()),
   );
-  const misplaced = matching.filter((m) => m.folder !== wanted);
+  // OUT OF PLACE means out of a place the PASS would move it out of — `retroPassWouldMove`, the
+  // same question `sender-screening.ts` asks, because these moves are the optimistic head of that
+  // pass's set. On `folder !== wanted` alone this sheet moved mail out of the person's own folders
+  // and mail they had set aside, which is what the footer says the pass leaves alone.
+  const misplaced = matching.filter((m) => retroPassWouldMove(m, wanted));
 
   // A term the SERVER would refuse writes NOTHING — no rule and no moves. The moves exist only
   // as the optimistic half of a rule that is about to hold (or, on an `already` press, the
