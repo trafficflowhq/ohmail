@@ -28,6 +28,34 @@ could reach past the demo into your own signed-in browser and cancel the registr
 ohmail notify you while it is closed, so closed-browser notices stopped arriving with nothing on
 screen to say so. The demo no longer touches it.
 
+### A mailbox you erased cannot be filled or unlocked again
+
+Erasing a mailbox leaves the mailbox itself behind as the record that it was removed — and ten
+places could still write against that record afterwards: arriving mail, its folders, its drafts
+and, on a server configured from its environment, the password used to open it, resealed at the
+next restart. All ten now check first, and what they do about it fits where they run: a request is
+refused, a background copy skips that mailbox and keeps going.
+
+### A send that could not be saved first is refused rather than sent blind
+
+Every send writes what you wrote before it goes, and a save that failed did not stop it — so the
+message that left was the draft as the server held it, which with a second window open could be
+that window's words. A send now falls back to the last version of the draft this window saw, and a
+press with no version at all retries the save once and then refuses instead of sending blind. Your
+words stay in the editor either way. On the phone, a reply sent again after an earlier attempt had
+already reached the server now says that the earlier message is the one that went, rather than
+reporting the newer words as sent; and a Cancel pressed after the message has already gone says so
+rather than closing in silence.
+
+### A self-hosted install's outgoing-size probe checks the address it dials, like every other connection the organizer makes
+
+When you add a mailbox, the address of its outgoing server is resolved and checked. One dial was
+still skipping that: the probe that asks a submission server how large a message it will accept
+read the stored name and handed it to a new connection. It now resolves and checks at the moment
+it connects, like every other dial. A server at an address this install will not connect to is no
+longer dialled — the mailbox keeps the conservative size limit instead of learning one, and
+nothing else about it changes.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
