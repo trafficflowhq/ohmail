@@ -7130,17 +7130,13 @@ export class OhmailEngine {
   }
 
   /**
-   * FINISH A DELETE A KILLED TAB LEFT BEHIND — the boot replay's road, and the only one that may
-   * not read an absent row as agreement. The mirror is a WINDOW and a stranded intent lives a
-   * day, so by the next launch the row may be gone for a reason the person had nothing to do
-   * with, and the IMAP mailbox is the master. Three cases, in the order they are cheap:
+   * FINISH A DELETE A KILLED TAB LEFT BEHIND — the one road that may not read an absent row as
+   * agreement. The mirror is a WINDOW and a stranded intent lives a day, so by the next launch
+   * the row may be gone for a reason the person had nothing to do with; the mailbox is master.
    *
    *   · a TOMBSTONE this device holds — the delete converged; settled, no round trip;
-   *   · the row is still here — the ordinary {@link OhmailEngine.mutate} road, overlay and outbox;
-   *   · any other absence — the window evicted it, or this device never saw it: ASK THE MAILBOX.
-   *
-   * The re-ask is the same `DELETE /messages/:id` the verb always sends, so it is idempotent by
-   * construction: a row still there is deleted, a row already gone answers 404 and settles.
+   *   · the row is still here — the ordinary {@link OhmailEngine.mutate} road;
+   *   · any other absence — evicted, or never seen: ASK THE MAILBOX, idempotently.
    */
   async replayDelete(
     messageId: string,

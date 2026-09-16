@@ -1426,18 +1426,14 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
    * carry a delete to, and replaying one there would mutate a demo somebody is looking at.
    */
   useDeleteIntentReplay({
-    /* THROUGH `fileAndRefresh`, LIKE EVERY OTHER FILING DISPATCH — and this line is a fix rather
-       than a transcription. The replay used to read `(m) => engine.mutate(m)`, which carried no
-       `kind:` literal, so `filing-refresh-on-decision.test.tsx`'s census could not SEE it: a
-       filing dispatch invisible to the guard that exists to find exactly that. Naming the verb
-       here made the census name it, and the census was right — a replayed delete moves mail, so
-       the count the filing strip renders is stale until the facts are re-read.
-
-       AND IT IS `replayDelete`, NOT `mutate`: by this launch the row may be gone from the mirror
+    /* THROUGH `fileAndRefresh`, LIKE EVERY OTHER FILING DISPATCH: a replayed delete moves mail,
+       so the count the filing strip renders is stale until the facts are re-read. */
+    /* AND IT IS `replayDelete`, NOT `mutate`: by this launch the row may be gone from the mirror
        because the WINDOW evicted it, and `mutate` refuses that locally with a 404 the replay used
        to read as the mailbox agreeing. The door tells the two absences apart — a tombstone this
        device holds settles with no round trip, anything else asks the mailbox. The press id goes
-       with it, so the re-ask is that press and not a second one. */
+       with it, so the re-ask is that press and not a second one. `filing-refresh-on-decision`
+       reads this line by the CALL, since no `kind:` literal is left here to find it by. */
     mutate: (messageId, pressId) => fileAndRefresh(engine.replayDelete(messageId, { intentId: pressId })),
     now: () => Date.now(),
     enabled: !demo,

@@ -192,16 +192,14 @@ export interface MirrorStore extends EntityReader {
    */
   pruneBySeq(seq: number): Promise<number>;
   /**
-   * DID THIS MIRROR PUT THAT ROW DOWN — the tombstone behind the reader, and the ONE question the
-   * reader cannot answer. `get` returns `undefined` for both of the store's absences, and they
-   * mean opposite things: a TOMBSTONE (`entity: null`, {@link prune}'s note — every removal but a
-   * prune) is this device's own record that the row is gone, while NO RECORD AT ALL is what a
-   * prune leaves, and says only that the window no longer keeps it. A caller that settles a
-   * confirmed deletion on absence alone settles it against an eviction.
+   * DID THIS MIRROR PUT THAT ROW DOWN — the ONE question the reader cannot answer. `get` is
+   * `undefined` for both absences and they mean opposite things: a TOMBSTONE (`entity: null`,
+   * {@link prune}'s note) is this device's record that the row is GONE; NO RECORD AT ALL is what
+   * a prune leaves and says only that the window stopped keeping it. Settling a confirmed
+   * deletion on absence alone settles it against an eviction.
    *
-   * Reads the record and nothing else: there is no recent-tombstone ledger here, so the bound is
-   * the mirror's own and a tombstone the window does take stops answering. `false` for a live row
-   * and for a row this mirror has never held.
+   * Reads the record and nothing else — no recent-tombstone ledger, so the bound is the mirror's
+   * own. `false` for a live row and for one this mirror never held.
    */
   isTombstoned(type: string, id: string): boolean;
   /** Discard all local state and reset the cursor to "0" (410 re-bootstrap, §3.2). */
