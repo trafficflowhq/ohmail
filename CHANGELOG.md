@@ -18,7 +18,7 @@ See [Status](README.md#status--read-this-first).
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
 [Roadmap](README.md#roadmap).
 
-## [0.19.1] — 2026-09-17
+## [0.19.1] — 2026-09-16
 
 ### Reopening the app no longer holds the text of every reply you have sent
 
@@ -267,6 +267,14 @@ has not changed.
 
 The browser tab and the desktop window both asked for a management link the moment settings opened,
 whether or not you pressed anything. The link is made when you press Manage.
+
+### Turning hosting off stops it, even when the setting cannot be saved
+
+Turning hosting off stopped at the first thing that went wrong. On a computer where the setting
+could not be written — a full disk, a permission — the app gave up there and said hosting was off
+while devices you had paired went on reading your mailbox over your network. It now stops serving
+whatever happens, and if the setting could not be saved the Devices pane says so in a sentence and
+says what it costs: hosting may come back the next time the app starts, until it saves.
 
 ### The two buttons on a revoked pairing open what they name
 

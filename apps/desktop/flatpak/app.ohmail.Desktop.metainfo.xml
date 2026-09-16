@@ -74,7 +74,7 @@
   </screenshots>
 
   <releases>
-    <release version="0.19.1" date="2026-09-17">
+    <release version="0.19.1" date="2026-09-16">
       <description>
         <ul>
           <li>Reopening the app no longer holds the text of every reply you have sent</li>
@@ -108,6 +108,7 @@
           <li>A recovery code is spent only when it signs you in</li>
           <li>A temporary fault is no longer reported as an empty AI budget</li>
           <li>Opening settings no longer requests a subscription-management link each time</li>
+          <li>Turning hosting off stops it, even when the setting cannot be saved</li>
           <li>The two buttons on a revoked pairing open what they name</li>
           <li>The window notices when its mail engine stops</li>
           <li>A crash while ohmail is starting no longer locks you out of your own mail</li>
