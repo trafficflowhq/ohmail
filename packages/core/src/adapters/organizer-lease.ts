@@ -4964,6 +4964,23 @@ export function isAckRecord(raw: string): boolean {
 }
 
 /**
+ * IS THE ACK HEADER PRESENT AT ALL — the local twin of `HEADER X-Ohmail-Ack ""`, which is what a
+ * `true` header value compiles to on the wire and means PRESENT, whatever it says. Deliberately
+ * NOT {@link isAckRecord}, which reads the value: the sweep's fallback has to reach the same set
+ * the compound SEARCH reaches or the two forms delete different records, and a provider's answer
+ * is not a place to change what a sweep covers.
+ */
+function hasAckHeader(raw: string): boolean {
+  const headerBlock = raw.split(/\r?\n\r?\n/, 1)[0] ?? "";
+  for (const line of headerBlock.replace(/\r?\n[ \t]+/g, " ").split(/\r?\n/)) {
+    const at = line.indexOf(":");
+    if (at <= 0) continue;
+    if (line.slice(0, at).trim().toLowerCase() === AH.ack.toLowerCase()) return true;
+  }
+  return false;
+}
+
+/**
  * THE ACK COVERS ITS MAILBOX TOO, for the reason the request does.
  *
  * Without it an acknowledgement was portable between an account's mailboxes: copy a genuine record
@@ -5126,10 +5143,19 @@ export type RequestOp =
 
 export class RequestUnavailableError extends Error {
   readonly op: RequestOp;
-  constructor(message: string, options: { op: RequestOp; cause?: unknown }) {
+  /**
+   * WHICH refusal this is, in the one slot a log line carries without the message. The hardened
+   * logger reads `name` and `code` off a thrown value and never its text, so a refusal that wants
+   * to be greppable has to spell itself here; the sentence stays for a person reading a stack.
+   * Optional because most refusals of one op have one cause — this exists for the sweep, whose
+   * two forms fail for different reasons and need telling apart in production.
+   */
+  readonly code?: string;
+  constructor(message: string, options: { op: RequestOp; code?: string; cause?: unknown }) {
     super(message, options);
     this.name = "RequestUnavailableError";
     this.op = options.op;
+    if (options.code !== undefined) this.code = options.code;
   }
 }
 
@@ -5407,6 +5433,69 @@ export function makeRequestReaderIo(
  * would make a reader's accessor capable of writing an organizer's acknowledgement. The name is
  * the boundary the type system can actually hold.
  */
+/**
+ * WHICH CONNECTIONS HAVE REFUSED THE COMPOUND ACK SEARCH.
+ *
+ * Keyed on the CLIENT, which is the connection: a re-attach builds a new one and the question is
+ * put again, while every io built over one connection shares the answer. NOT the io — the drain
+ * builds a fresh one every cycle, so a latch there would put the refused term back on the wire
+ * every thirty seconds and the fallback would never be reached twice.
+ */
+const compoundAckSearchRefused = new WeakSet<object>();
+
+/** For a case that needs a connection's capability latch to start clean. */
+export function forgetCompoundAckSearchRefusal(client: object): void {
+  compoundAckSearchRefused.delete(client);
+}
+
+/**
+ * THE STALE ACKS IN ONE UID WINDOW, ASKED TWO WAYS.
+ *
+ * iCloud refuses the compound term (`HEADER X-Ohmail-Ack "" BEFORE <date> UID lo:hi`), and imapflow
+ * resolves `false` for a refused SEARCH rather than rejecting. The sweep is the only thing that
+ * ever makes this folder smaller, so a provider that refuses that form is a folder that only grows
+ * until every bounded read of it refuses and a second install's presses stop being answered. The
+ * fallback puts the same question with no SEARCH at all — a uid-range FETCH of the headers this
+ * sweep already keys on — and applies the two terms here: the ack header PRESENT, which is what
+ * `HEADER <name> ""` means, and an INTERNALDATE below a cutoff already floored to midnight, which
+ * is what `BEFORE <date>` means against one. Same window, same set, one round trip.
+ *
+ * `null` is neither form could answer. A window this could not read WHOLE throws out of the bounded
+ * read instead, because a partial look is not an answer and the sweep's cursor must not pass what
+ * it never saw.
+ */
+async function staleAckUidsInWindow(
+  client: LeaseImapClient, lo: number, hi: number, before: Date,
+): Promise<number[] | null> {
+  if (typeof client.search === "function" && !compoundAckSearchRefused.has(client)) {
+    const page = await client.search(
+      { header: { [AH.ack]: true }, before, uid: `${lo}:${hi}` }, { uid: true },
+    );
+    if (Array.isArray(page)) return page;
+    /* Not an exhausted budget and not an empty window: this server declines this form, and it will
+     * decline it for the life of the connection. Latch it and ask the other way. */
+    compoundAckSearchRefused.add(client);
+  }
+  if (typeof client.fetch !== "function") return null;
+  const read = await boundedFetch(
+    client.fetch(`${lo}:${hi}`, { uid: true, headers: true, internalDate: true }, { uid: true }),
+    {
+      max: META_RECORDS_MAX_PER_FETCH,
+      bytes: { max: IMAP_META_BYTES_MAX, of: (m) => m.headers?.byteLength ?? 0 },
+      bound: "page_rows",
+      map: (m): number | null => {
+        if (typeof m.uid !== "number" || m.headers === undefined) return null;
+        /* A record the server stamped no date on cannot be shown to be past the cutoff, and the
+         * safe direction for something that expunges is to leave it. */
+        if (!(m.internalDate instanceof Date)) return null;
+        if (m.internalDate.getTime() >= before.getTime()) return null;
+        return hasAckHeader(m.headers.toString("utf8")) ? m.uid : null;
+      },
+    },
+  );
+  return read.items.filter((u): u is number => u !== null);
+}
+
 export function makeRequestOrganizerIo(
   client: LeaseImapClient,
   toServerPath: (canonical: string) => string,
@@ -5440,11 +5529,11 @@ export function makeRequestOrganizerIo(
       const metaPath = await meta.path();
       const lock = await client.getMailboxLock(metaPath);
       try {
-        if (typeof client.search !== "function") {
+        if (typeof client.search !== "function" && typeof client.fetch !== "function") {
           throw new RequestUnavailableError(
-            `${META_FOLDER} cannot be searched by this connection, so stale acknowledgements `
-            + "cannot be identified and none were removed",
-            { op: "sweep_acks" },
+            `${META_FOLDER} can be neither searched nor fetched by this connection, so stale `
+            + "acknowledgements cannot be identified and none were removed",
+            { op: "sweep_acks", code: "sweep_no_reader" },
           );
         }
         /**
@@ -5486,19 +5575,19 @@ export function makeRequestOrganizerIo(
         let hi = resumeAt !== undefined && resumeAt < top ? resumeAt : top;
         for (let w = 0; w < SWEEP_SEARCH_WINDOW_BUDGET; w++) {
           const lo = Math.max(1, hi - SEARCH_UID_WINDOW + 1);
-          const page = await client.search(
-            { header: { [AH.ack]: true }, before: floored, uid: `${lo}:${hi}` }, { uid: true },
-          );
+          const page = await staleAckUidsInWindow(client, lo, hi, floored);
           /* A REFUSED SEARCH IS NOT AN EXHAUSTED BUDGET. The library resolves `false` rather
            * than rejecting, and treating that as "stop looking" reports a sweep that never ran —
            * the caller reads 0 stale and concludes there is nothing to compact, which is the one
            * conclusion that keeps a full folder full. Running out of WINDOWS is a smaller day's
-           * work and breaks; being refused is a fault and throws. */
-          if (!Array.isArray(page)) {
+           * work and breaks; a refusal is answered by the other form ({@link
+           * staleAckUidsInWindow}), and only a window neither form could answer throws. */
+          if (page === null) {
             throw new RequestUnavailableError(
-              `the search for stale acknowledgements in ${META_FOLDER} was refused, so none were `
-              + "removed and the folder was not compacted",
-              { op: "sweep_acks" },
+              `the search for stale acknowledgements in ${META_FOLDER} was refused and this `
+              + "connection cannot fetch the window instead, so none were removed and the folder "
+              + "was not compacted",
+              { op: "sweep_acks", code: "sweep_search_refused_no_fetch" },
             );
           }
           found.push(...page);
@@ -5515,11 +5604,6 @@ export function makeRequestOrganizerIo(
           hi = lo - 1;
           resumeBelow = hi;
         }
-        /* A REFUSED SEARCH IS NOT AN EMPTY FOLDER — the library resolves `false` rather than
-         * rejecting. Returning 0 for it reported a sweep that had not happened, and the sweep is
-         * the only thing that ever makes this folder smaller: a caller told "0 stale" concludes
-         * there is nothing to compact. The drain already logs a failed sweep and carries on, which
-         * is what it should do with this. */
         /* ── A PASS THAT FOUND NOTHING STILL COVERED ITS STRETCH ────────────────────────────
          *
          * Nothing to remove is the vacuous case of "everything found was removed", so the mark

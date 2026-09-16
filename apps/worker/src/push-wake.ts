@@ -495,7 +495,7 @@ export function startPushWake(deps: PushWakeDeps): RunningPushWake {
       // `void` + a terminal catch: nothing awaits this, so an escaped rejection would be an
       // unhandled rejection inside the always-on worker. See the header — degradation, never a crash.
       void fire(accountId).catch((err: unknown) => {
-        log?.warn("push_wake_pass_failed", { err: String(err) });
+        log?.warn("push_wake_pass_failed", { err });
       });
     }, debounceMs);
     (timer as unknown as { unref?: () => void }).unref?.();

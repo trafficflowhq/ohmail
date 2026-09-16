@@ -435,6 +435,21 @@ function recordsPresentIn(err: unknown): number | null {
 }
 
 /**
+ * WHAT A REFUSAL CONTRIBUTES TO A LOG LINE — the thrown VALUE, and the operation it names.
+ *
+ * `err` is a logger-owned slot: it takes the thrown value and derives `errorClass`/`errorCode`
+ * from it, never its text. Eleven sites here handed it `err.message` instead, so every line read
+ * `errorClass="String"` — asserting a thrown string that never existed — while the class that
+ * names the fault was thrown away. Measured in production: 118 `meta_ack_sweep_failed` lines in
+ * one morning, all of them blaming a String for a `RequestUnavailableError`. `op` is the call
+ * site's own fact rather than the logger's, and it is what tells two refusals of one class apart.
+ */
+function refusalFields(err: unknown): { err: unknown; op?: string } {
+  const op = (err as { op?: unknown } | null | undefined)?.op;
+  return { err, ...(typeof op === "string" ? { op } : {}) };
+}
+
+/**
  * DRAIN `ohmail/_meta` OF EVERY REQUEST THIS ORGANIZER CAN VERIFY, applying each in `decided_at`
  * then id order — two doors deciding one sender in one cycle land in the order the human made them.
  *
@@ -487,23 +502,49 @@ export async function applyMetaRequests(
    * the only thing that ever makes `ohmail/_meta` SMALLER, and it used to sit after the bounded read,
    * which refuses a folder over the ceiling — so a folder that crossed the ceiling BY ACKS could never
    * come back down: the read refused, the sweep never ran, and every drain refused from then on, with
-   * nothing self-healing. Asked of the server by header and date, so it costs integers in and an
-   * expunge out — no FETCH, no window, nothing a full folder can refuse (INTERNALDATE of an ack this
-   * organizer appended is its `ackedAt` to the day). Failure is logged and swallowed: a sweep that
-   * could not run is where this was before, and must not stop a drain that might still succeed. */
-  if (typeof io.sweepStaleAcks === "function") {
+   * nothing self-healing. Asked of the server by header and date where the server takes that form,
+   * and by a uid-range fetch of the same window where it does not — iCloud refuses the compound term
+   * outright. Failure is logged and swallowed: a sweep that could not run is where this was before,
+   * and must not stop a drain that might still succeed — but it is REMEMBERED, because a folder that
+   * then turns out to be over the ceiling has one thing left to try. */
+  /** This drain's sweep refusal, kept for the ceiling arm below; `null` while none has happened. */
+  let sweepRefusal: unknown = null;
+  let sweepRetries = 0;
+  const sweep = async (): Promise<void> => {
+    if (typeof io.sweepStaleAcks !== "function") return;
     try {
       const swept = await io.sweepStaleAcks(new Date(now.getTime() - REQUEST_STALE_AFTER_MS));
+      sweepRefusal = null;
       if (swept > 0) {
         log("meta_ack_sweep", { mailboxId: rt.mailboxId, accountId: rt.accountId, swept });
       }
     } catch (err) {
+      sweepRefusal = err;
       log("meta_ack_sweep_failed", {
         mailboxId: rt.mailboxId, accountId: rt.accountId,
-        err: err instanceof Error ? err.message : String(err),
+        ...refusalFields(err),
       });
     }
-  }
+  };
+  /* ── THE ONE THING LEFT TO TRY, ONCE PER DRAIN ────────────────────────────────────────────
+   *
+   * The ceiling and a refused sweep are the pair that has no way out: the folder only grows, so
+   * every later drain refuses too, and a second install's presses stop being answered for good.
+   * One more attempt is worth it here and nowhere else, because the first refusal may have taught
+   * the connection something (the compound search's capability latch) that the second can use.
+   * ONE — counted, not per page: the walk below reaches this from several places, and a sweep per
+   * page is a cycle whose cost the folder's own mess decides. */
+  const healAtCeiling = async (): Promise<void> => {
+    if (sweepRefusal === null || sweepRetries > 0) return;
+    sweepRetries += 1;
+    log("meta_ack_sweep_retried", {
+      mailboxId: rt.mailboxId, accountId: rt.accountId, attempt: sweepRetries,
+      reason: "ohmail/_meta is over the read ceiling and this cycle's sweep was refused, so the "
+        + "sweep is asked once more before the drain gives the cycle up",
+    });
+    await sweep();
+  };
+  await sweep();
 
   /* And the other half of keeping the folder readable, immediately after it and for the same
    * reason. The sweep makes `ohmail/_meta` smaller; nothing made it SHALLOWER, and a uid is spent
@@ -522,7 +563,7 @@ export async function applyMetaRequests(
     } catch (err) {
       log("meta_compact_failed", {
         mailboxId: rt.mailboxId, accountId: rt.accountId,
-        err: err instanceof Error ? err.message : String(err),
+        ...refusalFields(err),
       });
     }
   }
@@ -618,6 +659,9 @@ export async function applyMetaRequests(
        * of acks at the same count (which age out a day later). Safe because this applies signed decisions
        * under `meta-request:<id>`, so a re-read on a later page is a no-op, not a double application. */
     const truncated = truncationIn(err);
+    /* The folder is over the ceiling. If this cycle's sweep was refused, that is the pair with no
+     * way out, and the one retry happens here — once per drain, wherever the ceiling is met. */
+    if (truncated !== null) await healAtCeiling();
     /* ── A TRUNCATION MAY CARRY NO PAGE, AND THAT IS A FAILED LOOK LIKE ANY OTHER ────────────
      *
      * `records` is optional on the truncation: the bounded read attaches the window it did cover,
@@ -673,6 +717,7 @@ export async function applyMetaRequests(
            * first step and made the whole thing a no-op; the refusal carries the page, and the
            * page is what the walk wanted. Anything else really is a look that failed. */
           const pageTruncation = truncationIn(pageErr);
+          if (pageTruncation !== null) await healAtCeiling();
           if (pageTruncation === null || (pageTruncation.records?.length ?? 0) === 0) break;
           older = [...pageTruncation.records];
         }
@@ -703,7 +748,7 @@ export async function applyMetaRequests(
       // evidence of anything. The next cycle tries again.
       log("meta_requests_list_failed", {
         mailboxId: rt.mailboxId, accountId: rt.accountId,
-        err: err instanceof Error ? err.message : String(err),
+        ...refusalFields(err),
         records: recordsPresentIn(err),
       });
       keepPlace(false);
@@ -739,7 +784,7 @@ export async function applyMetaRequests(
       } catch (err) {
         log("meta_ack_sweep_failed", {
           mailboxId: rt.mailboxId, accountId: rt.accountId,
-          err: err instanceof Error ? err.message : String(err),
+          ...refusalFields(err),
         });
       }
     }
@@ -1062,7 +1107,7 @@ export async function applyMetaRequests(
       // succeeds and retries the apply cleanly — this is not a partial-apply state.
       log("organizer_request_apply_failed", {
         mailboxId: rt.mailboxId, accountId: rt.accountId, requestId: e.requestId,
-        err: err instanceof Error ? err.message : String(err),
+        ...refusalFields(err),
       });
       deferred++;
     }
@@ -1087,7 +1132,7 @@ export async function applyMetaRequests(
       ackFailures++;
       log("organizer_ack_append_failed", {
         mailboxId: rt.mailboxId, accountId: rt.accountId, requestId: a.requestId,
-        err: err instanceof Error ? err.message : String(err),
+        ...refusalFields(err),
         reason: "the outcome is not carried back this cycle; the reader falls back to its window",
       });
     }
@@ -1103,7 +1148,7 @@ export async function applyMetaRequests(
       // has resolved yet.
       log("meta_request_expunge_failed", {
         mailboxId: rt.mailboxId, accountId: rt.accountId, count: toRemove.length,
-        err: err instanceof Error ? err.message : String(err),
+        ...refusalFields(err),
         reason: "the records stay in the folder; the next cycle's drain retries them",
       });
       deferred += applied + refused;
@@ -1287,7 +1332,7 @@ export async function driveOutstandingRequests(
     // "everything was applied".
     log("outstanding_requests_list_failed", {
       mailboxId: rt.mailboxId, accountId: rt.accountId,
-      err: err instanceof Error ? err.message : String(err),
+      ...refusalFields(err),
       // As above: a full folder is the failure worth naming with a number, and appending without
       // being able to check for a duplicate is the loop this read exists to prevent.
       records: recordsPresentIn(err),
@@ -1386,7 +1431,7 @@ export async function driveOutstandingRequests(
       } catch (err) {
         log("outstanding_request_mark_sent_failed", {
           mailboxId: rt.mailboxId, accountId: rt.accountId, requestId: req.id,
-          err: err instanceof Error ? err.message : String(err),
+          ...refusalFields(err),
           reason: "the record is already in the folder; the row is retried next cycle",
         });
       }
@@ -1408,7 +1453,7 @@ export async function driveOutstandingRequests(
     } catch (err) {
       log("outstanding_request_append_failed", {
         mailboxId: rt.mailboxId, accountId: rt.accountId, requestId: req.id,
-        err: err instanceof Error ? err.message : String(err),
+        ...refusalFields(err),
         reason: "the request stays pending; the next cycle appends it",
       });
       continue;
@@ -1423,7 +1468,7 @@ export async function driveOutstandingRequests(
       // reason this branch can afford to do nothing but log.
       log("outstanding_request_mark_sent_failed", {
         mailboxId: rt.mailboxId, accountId: rt.accountId, requestId: req.id,
-        err: err instanceof Error ? err.message : String(err),
+        ...refusalFields(err),
         reason: "the record was appended; the next cycle marks the row without re-appending",
       });
     }
