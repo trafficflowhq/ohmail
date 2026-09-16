@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { BearerManager, REFRESH_STORAGE_KEY, type BearerTokens } from "../src/host-client/bearer.js";
+import {
+  BearerManager, REFRESH_ATTEMPT_STORAGE_KEY, REFRESH_STORAGE_KEY, type BearerTokens,
+} from "../src/host-client/bearer.js";
 
 /**
  * ═══ THE BEARER MANAGER — the served client's whole credential, held to its contract ══════════
@@ -97,7 +99,11 @@ describe("the 401 recovery", () => {
       (s) => { expect(s.headers.authorization).toBeUndefined(); return json(401, { error: { code: "unauthorized" } }); },
       (s) => {
         expect(s.url).toBe("/auth/refresh");
-        expect(JSON.parse(s.body!)).toEqual({ refreshToken: "refresh-1" });
+        // The presented token AND the name of this attempt — the server tells a retry of a
+        // lost answer from a replay by that name, so its presence is the wire contract.
+        const sent = JSON.parse(s.body!) as { refreshToken: string; attemptId: string };
+        expect(sent.refreshToken).toBe("refresh-1");
+        expect(sent.attemptId, "every rotation names its attempt").toMatch(/^r\S+$/);
         // The rotation itself carries no Authorization — there is nothing valid to carry.
         return json(200, { tokens: ROTATED });
       },
@@ -178,7 +184,11 @@ describe("the review's three rotation races", () => {
     const wire = scripted([
       () => json(401, {}),
       (s) => {
-        expect(JSON.parse(s.body!)).toEqual({ refreshToken: "refresh-2" });
+        // The presented token AND the name of this attempt — the server tells a retry of a
+        // lost answer from a replay by that name, so its presence is the wire contract.
+        const sent = JSON.parse(s.body!) as { refreshToken: string; attemptId: string };
+        expect(sent.refreshToken).toBe("refresh-2");
+        expect(sent.attemptId, "every rotation names its attempt").toMatch(/^r\S+$/);
         return json(200, { tokens: { accessToken: "access-3", refreshToken: "refresh-3" } });
       },
       (s) => { expect(s.headers.authorization).toBe("Bearer access-3"); return json(200, {}); },
@@ -568,5 +578,91 @@ describe("the pairing scope", () => {
       bearer.pairScope(),
       "the next computer at this address gets its own partition, not the previous one's",
     ).not.toBe(first);
+  });
+});
+
+/**
+ * ═══ A LOST ROTATION ANSWER — THE RETRY IS THE SAME ATTEMPT, NOT A STRANGER ══════════════════
+ *
+ * A rotation is two halves plus a response: the server consumes and mints, then the answer has to
+ * land. When it does not, this client still holds the old token, and its retry used to be
+ * byte-identical to a stolen token being replayed — so the server did the only thing it could and
+ * revoked the family. Every attempt now carries a name, written to the JAR before it submits and
+ * repeated until an answer lands.
+ *
+ * This is the client half of the invariant. The server half — N presentations of one token under
+ * ONE name leave exactly one live tail and no revocation — is measured against the real schema in
+ * the services rotation-retry pg twin. Together they are the whole claim.
+ */
+describe("a lost rotation answer", () => {
+  /** A door whose refresh answer is dropped until `answer` is flipped; every name is recorded. */
+  function lossyDoor(names: string[], state: { answer: "lost" | "ok" }): (url: string, init?: unknown) => Promise<Response> {
+    return async (url, init) => {
+      const i = (init ?? {}) as { body?: string; headers?: Record<string, string> };
+      if (url === "/auth/refresh") {
+        names.push((JSON.parse(i.body!) as { attemptId: string }).attemptId);
+        // A DROPPED ANSWER IS A THROW, which is what a broken connection is — never a judgment
+        // on the token. The server has rotated; this side hears nothing.
+        if (state.answer === "lost") throw new TypeError("network error");
+        return json(200, { tokens: ROTATED });
+      }
+      const auth = Object.entries(i.headers ?? {}).find(([k]) => k.toLowerCase() === "authorization")?.[1];
+      return auth === "Bearer access-2" ? json(200, { ok: true }) : json(401, {});
+    };
+  }
+
+  it("is retried under the SAME name until one lands, and adopting clears it", async () => {
+    const storage = memoryStorage({ [REFRESH_STORAGE_KEY]: "refresh-1" });
+    const names: string[] = [];
+    const state = { answer: "lost" as "lost" | "ok" };
+    const bearer = new BearerManager({ storage, fetchImpl: lossyDoor(names, state) });
+
+    for (let i = 0; i < 5; i += 1) {
+      expect((await bearer.fetch("/sync")).status, `retry ${i}: nothing was judged`).toBe(401);
+    }
+    expect(names).toHaveLength(5);
+    expect(new Set(names).size, "five retries of one lost answer, ONE name").toBe(1);
+    // On disk, not only in this object — which is what makes the name survive a reload.
+    expect(storage.getItem(REFRESH_ATTEMPT_STORAGE_KEY)).toBe(names[0]);
+    // A dropped answer clears nothing: the pairing and its token are exactly as they were.
+    expect(storage.getItem(REFRESH_STORAGE_KEY)).toBe("refresh-1");
+    expect(bearer.paired()).toBe(true);
+
+    state.answer = "ok";
+    expect((await bearer.fetch("/sync")).status).toBe(200);
+    expect(names[5], "the answered attempt is still the same one").toBe(names[0]);
+    // ADOPTING IS CLEARING: a name only ever stands where an answer never arrived.
+    expect(storage.getItem(REFRESH_ATTEMPT_STORAGE_KEY)).toBeNull();
+    expect(storage.getItem(REFRESH_STORAGE_KEY)).toBe("refresh-2");
+  });
+
+  it("the name survives a RELOAD — a manager rebuilt from the same jar resumes the attempt", async () => {
+    const storage = memoryStorage({ [REFRESH_STORAGE_KEY]: "refresh-1" });
+    const names: string[] = [];
+    const state = { answer: "lost" as "lost" | "ok" };
+    const first = new BearerManager({ storage, fetchImpl: lossyDoor(names, state) });
+    expect((await first.fetch("/sync")).status).toBe(401);
+
+    // The page is reloaded between submit and adopt — the case a name in memory cannot survive.
+    const second = new BearerManager({ storage, fetchImpl: lossyDoor(names, state) });
+    expect((await second.fetch("/sync")).status).toBe(401);
+
+    expect(names).toHaveLength(2);
+    expect(names[1], "the reloaded page retries as itself, not as a stranger").toBe(names[0]);
+  });
+
+  it("a fresh rotation after an adoption names a NEW attempt", async () => {
+    // The other half of clearing: a name that outlived its answer would make every later rotation
+    // claim to be a retry of one long-finished attempt.
+    const storage = memoryStorage({ [REFRESH_STORAGE_KEY]: "refresh-1" });
+    const names: string[] = [];
+    const state = { answer: "ok" as "lost" | "ok" };
+    const bearer = new BearerManager({ storage, fetchImpl: lossyDoor(names, state) });
+    expect((await bearer.fetch("/sync")).status).toBe(200);
+    bearer.adopt(PAIR);                       // back to the first pair, so /sync 401s again
+    expect((await bearer.fetch("/sync")).status).toBe(200);
+
+    expect(names).toHaveLength(2);
+    expect(names[1], "a finished attempt is never claimed twice").not.toBe(names[0]);
   });
 });

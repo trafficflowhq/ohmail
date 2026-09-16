@@ -131,10 +131,11 @@ export const sessionLifecycleRoutes: Route[] = [
       // than a browser sharing a jar. Both arguments are explicit; neither is the default.
       const body = await readBody<{ refreshToken?: string; attemptId?: string }>(req);
       // `attemptId` — the client's name for THIS rotation attempt, repeated on every retry of it.
-      // Optional, and absent is the strict arm every bearer client had before the field existed:
-      // the desktop host client, the sidecar's cloud auth and the OAuth grant all send nothing
-      // and rotate exactly as they did. The service bounds it and refuses a malformed one before
-      // consuming anything (`readAttemptId`); nothing about it is logged here or there.
+      // All three bearer clients send it now (the phone, the desktop host client, the sidecar's
+      // cloud auth); it stays OPTIONAL because absent is the strict arm the OAuth grant and any
+      // older build still take, and that arm is the theft detector. The service bounds it and
+      // refuses a malformed one before consuming anything (`readAttemptId`); nothing about it is
+      // logged here or there.
       const { tokens } = await sessionLifecycle(deps).refresh(
         serviceContext(deps, req),
         { refreshToken: body.refreshToken, attemptId: body.attemptId },

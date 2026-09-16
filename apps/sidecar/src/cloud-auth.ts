@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
 import type { KeyProvider } from "@trafficflow/core/mail";
 import type { Diagnostic } from "./log.js";
@@ -11,11 +12,24 @@ import type { Diagnostic } from "./log.js";
  * The 401 refresh is SINGLE-FLIGHT: the pull loop has several requests in flight and an expiring
  * token 401s all at once, and refreshing per-401 would rotate the refresh-token family, which the API
  * treats as compromise and revokes. So one in-flight refresh promise serves them all.
+ *
+ * A rotation whose ANSWER is lost used to cost the session all the same: the retry of the retained
+ * token was byte-identical to a replay. Every attempt now carries a name, sealed beside the token
+ * it is about to spend BEFORE the request goes out and repeated until an answer lands — the
+ * phone's field and the phone's semantics (`apps/mobile/src/net/bearer.ts`), three clients and one
+ * contract.
  */
 
 export interface CloudTokens {
   accessToken: string;
   refreshToken: string;
+  /**
+   * NOT part of the wire pair: the name of a rotation this install submitted and never adopted.
+   * It travels with the pair because it belongs to it — sealed in the same write, so a launch
+   * killed between submit and adopt resumes that attempt rather than presenting a spent token as
+   * a stranger. Absent means nothing is owed, which is every ordinary pair.
+   */
+  refreshAttempt?: string;
 }
 
 /**
@@ -72,6 +86,15 @@ export interface CloudAuthConfig {
    * no notice anywhere. Fire-and-forget; the fetch that triggered it still returns its 401.
    */
   onSessionRefused?: () => void;
+}
+
+/**
+ * Name an attempt. NOT a credential — it authorizes nothing and names no row without the token
+ * beside it — but unguessable all the same, so holding a stolen token is not also holding the
+ * retry arm. The phone prefixes its own the same way.
+ */
+function mintAttemptId(): string {
+  return `r${randomUUID()}`;
 }
 
 /** See {@link CloudAuthConfig.requestDeadlineMs}. Generous: a 500-row /sync page on a slow link. */
@@ -175,10 +198,19 @@ export function createCloudAuth(cfg: CloudAuthConfig): CloudAuth {
   };
 
   const refresh = async (): Promise<CloudTokens> => {
+    // THE NAME GOES DOWN BEFORE THE REQUEST GOES OUT, and a retry of an attempt whose answer never
+    // arrived carries the SAME one — resumed from the seal this launch loaded, so a process killed
+    // between submit and adopt still retries as itself. Where there is no seal the name lives for
+    // this process only, which is every retry this client makes without dying. The seal write is
+    // AWAITED: a name on the wire that is not yet on disk is the one ordering a retry cannot
+    // recover from, and `persist` swallows its own failure exactly as it does after a rotation.
+    const attemptId = tokens.refreshAttempt ?? mintAttemptId();
+    tokens = { ...tokens, refreshAttempt: attemptId };
+    await persist(tokens);
     const res = await fetchImpl(`${base}/auth/refresh`, withDeadline({
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ refreshToken: tokens.refreshToken }),
+      body: JSON.stringify({ refreshToken: tokens.refreshToken, attemptId }),
     }));
     if (res.status === 401 || res.status === 403) {
       // DEFINITIVE: the family is revoked, rotated past, or reused — no retry renews it.
@@ -191,6 +223,8 @@ export function createCloudAuth(cfg: CloudAuthConfig): CloudAuth {
     if (!next?.accessToken || !next?.refreshToken) {
       throw new CloudAuthError("the refresh response carried no token pair");
     }
+    // THE ATTEMPT IS ANSWERED, and the pair that replaces it carries no name — one seal write, so
+    // there is no window where a fresh token stands beside a spent attempt's name.
     tokens = { accessToken: next.accessToken, refreshToken: next.refreshToken };
     await persist(tokens);
     return tokens;

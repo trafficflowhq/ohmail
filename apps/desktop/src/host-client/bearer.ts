@@ -25,9 +25,12 @@
  */
 
 /*
- * The residual this client cannot close: a rotation whose RESPONSE is lost leaves the server
- * committed and the next recovery re-presents the old token — the family is revoked, the
- * phone lands on `/pair`, and one fresh QR scan re-pairs it. Bounded, visible, honest.
+ * A rotation whose RESPONSE is lost used to end the pairing: strict reuse read the retry of the
+ * retained token as theft, the browser landed on `/pair`, and one fresh QR scan re-paired it.
+ * Every attempt now carries a name, written to the jar BEFORE it submits and repeated until an
+ * answer lands, so the server can tell a retry from a replay. What remains is the phone's own
+ * bounded residual, stated there: an attacker holding a whole captured request can replay it
+ * inside the presented token's window, and the legitimate retry rotates straight past it.
  */
 
 import { storageDoor, type StorageDoor } from "@ohmail/client-engine/durable";
@@ -58,6 +61,15 @@ export const REFRESH_STORAGE_KEY = "ohmail.host.refreshToken";
  */
 export const PAIR_SCOPE_STORAGE_KEY = "ohmail.host.pairScope";
 
+/**
+ * THE NAME OF A ROTATION THIS ORIGIN SUBMITTED AND NEVER ADOPTED — the phone's field
+ * (`apps/mobile/src/net/bearer.ts`), the phone's semantics, three clients and one contract. It
+ * lives in the JAR rather than in memory for the same reason the token does: the answer can be
+ * lost to a reload or a crash, and whichever tab rotates next has to retry as the same attempt
+ * instead of presenting a spent token as a stranger and earning the reuse sweep.
+ */
+export const REFRESH_ATTEMPT_STORAGE_KEY = "ohmail.host.refreshAttempt";
+
 /** An id-shaped random scope. `randomUUID` where the platform has it, 128 bits of hex otherwise. */
 function mintPairScope(): string {
   const c = globalThis.crypto as Crypto | undefined;
@@ -69,6 +81,15 @@ function mintPairScope(): string {
   // No crypto at all is a browser this door cannot serve anyway (the redeem is HTTPS-or-tailnet
   // only). A time-and-random id still partitions two pairings, which is this value's whole job.
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
+}
+
+/**
+ * Name an attempt. NOT a credential — it authorizes nothing and names no row without the token
+ * beside it — but unguessable all the same, so holding a stolen token is not also holding the
+ * retry arm. Built on this file's one id source, prefixed the way the phone prefixes its own.
+ */
+function mintAttemptId(): string {
+  return `r${mintPairScope()}`;
 }
 
 /** The same loose-init shape `bridge-fetch.ts` uses, satisfying both http-adapter declarations. */
@@ -110,6 +131,12 @@ export class BearerManager {
    * rotation (see the header's third finding).
    */
   private generation = 0;
+  /**
+   * The attempt in flight, or the one a previous rotation left UNANSWERED — loaded from the jar
+   * at construction, which is what makes a retry survive a reload between submit and adopt.
+   * Cleared by every adoption and every death.
+   */
+  private attempt: string | null = null;
   private readonly deadListeners = new Set<() => void>();
 
   constructor(opts: { storage?: Storage | null; fetchImpl?: FetchLike } = {}) {
@@ -121,6 +148,7 @@ export class BearerManager {
     // native fetch refuses any receiver that is not its own global.
     this.fetchImpl = opts.fetchImpl ?? (globalThis.fetch.bind(globalThis) as FetchLike);
     this.refresh = this.door.get(REFRESH_STORAGE_KEY);
+    this.attempt = this.door.get(REFRESH_ATTEMPT_STORAGE_KEY);
     /**
      * A PAIRING THAT EXISTS MUST HAVE A SCOPE BEFORE THE FIRST RENDER, NOT AT ITS FIRST
      * ADOPT. The upgrade arm lived in {@link adopt}, which runs on a redeem or a rotation —
@@ -182,6 +210,12 @@ export class BearerManager {
     // Storage refused answers "lost" from the door and raises the notice; the session then lives
     // for this page load and the next one re-pairs, which is what the door exists to say out loud.
     this.door.set(REFRESH_STORAGE_KEY, tokens.refreshToken);
+    // THE ATTEMPT IS ANSWERED. Cleared AFTER the token is written, never before: a crash between
+    // the two leaves a name standing beside a token that has already rotated, which the server
+    // reads as an ordinary fresh attempt — while the other order would retry a spent token with
+    // no name at all, which is the sweep.
+    this.attempt = null;
+    this.door.remove(REFRESH_ATTEMPT_STORAGE_KEY);
     // A REDEEM re-mints; a rotation does not. The upgrade case is NOT handled here — it is
     // handled in the constructor, because by the time `adopt` runs the shell has already
     // mounted and read a partition. See `ensureScope`.
@@ -218,7 +252,9 @@ export class BearerManager {
   private die(): void {
     this.access = null;
     this.refresh = null;
+    this.attempt = null;
     this.door.remove(REFRESH_STORAGE_KEY);
+    this.door.remove(REFRESH_ATTEMPT_STORAGE_KEY);
     // The scratch space this pairing owned goes with it. The next pairing on this origin mints
     // a new scope and therefore cannot read what this one left — which is the whole point of
     // the key. The VALUES under the old scope are unreachable rather than deleted; the shared
@@ -239,6 +275,8 @@ export class BearerManager {
   private standDown(): void {
     this.access = null;
     this.refresh = null;
+    // In memory only, like the pair: the jar belongs to the pairing that replaced this one.
+    this.attempt = null;
     for (const cb of [...this.deadListeners]) cb();
   }
 
@@ -303,12 +341,19 @@ export class BearerManager {
       if (stored !== null && stored !== this.refresh) this.refresh = stored;
       const presented = this.refresh;
       if (presented === null) return false;
+      // THE NAME GOES DOWN BEFORE THE REQUEST GOES OUT, and a retry of an attempt whose answer
+      // never arrived carries the SAME one. The jar is the shared head for the name exactly as it
+      // is for the token — a tab that submitted and never adopted leaves the name behind, and
+      // whichever tab rotates next resumes it. A fresh name only where none is owed.
+      const attemptId = this.door.get(REFRESH_ATTEMPT_STORAGE_KEY) ?? this.attempt ?? mintAttemptId();
+      this.attempt = attemptId;
+      this.door.set(REFRESH_ATTEMPT_STORAGE_KEY, attemptId);
       let res: Response;
       try {
         res = await this.fetchImpl("/auth/refresh", {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ refreshToken: presented }),
+          body: JSON.stringify({ refreshToken: presented, attemptId }),
         });
       } catch {
         // Never CONFIRMED presented. Usually never sent at all; the lost-response case is the
