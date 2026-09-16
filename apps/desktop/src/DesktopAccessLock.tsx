@@ -1,15 +1,13 @@
 /**
  * THE LOCK SCREEN IN THE WINDOW — what an account the service has refused sees instead of its mail.
  *
- * The browser tab's `(product)/mailbox/AccessLock.tsx`, mirrored the way `DesktopSubscription`
- * mirrors the Subscription pane: the SAME five `accessLock` sentences out of the shared catalogue,
- * wearing this window's own gate chrome and leaving by this window's own door. A mirror and not an
- * import, because that file signs out through `app/sign-out.ts` — which the desktop build aliases
- * to the refusing api-client stub, so the one control on the screen would throw. The window ends a
- * session with `engine_logout`, which is what the Settings pane already presses.
+ * The browser tab's `AccessLock.tsx`, mirrored the way `DesktopSubscription` mirrors the
+ * Subscription pane: the same `accessLock` sentences, this window's own chrome and door. A mirror
+ * and NOT an import, because that file signs out through `app/sign-out.ts` — which this build
+ * aliases to the refusing api-client stub, so the one control on the screen would throw.
  *
  * Two doors stay open because a lock with no way out is a trap: signing out (this may be a shared
- * machine) and the way back, when the service supplied one. It deletes and wipes nothing itself.
+ * machine) and the way back, where the service supplied one. It deletes and wipes nothing itself.
  */
 
 import { useCallback, useState } from "react";
