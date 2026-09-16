@@ -13,7 +13,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { SettingsRow, SettingsSection } from "@ohmail/ui";
 
-import { bridgeFetch } from "./bridge-fetch.js";
+import { ACCESS_REFUSED_STATUS, ACCOUNT_ACCESS_PATH, bridgeFetch } from "./bridge-fetch.js";
 
 /**
  * The hosted route this pane addresses, root-relative like every path in this window.
@@ -32,11 +32,14 @@ export const MANAGE_LINK_PATH = "/account/manage-link";
  * status frame carries the door's KIND (`flavor`), and a server somebody runs themselves can
  * operate a program while a managed door whose program is absent answers `metered: false`; the
  * engine's own `/health` is about the session; `/hello`'s wire shape is frozen.
+ *
+ * DEFINED ON THE DOOR and re-exported here: the suggest transport asks the same route to take a
+ * stale AI refusal down, and one route spelled in two modules is one that drifts.
  */
-export const ACCOUNT_ACCESS_PATH = "/account/access";
+export { ACCOUNT_ACCESS_PATH };
 
 /** What the entitlements lock answers a refused account. See {@link useDesktopManageOffer}. */
-const ACCESS_REFUSED = 402;
+const ACCESS_REFUSED = ACCESS_REFUSED_STATUS;
 
 /** What the mint answers where no such page is served, or for an account nobody knows. */
 const NO_MANAGE_SURFACE = 404;

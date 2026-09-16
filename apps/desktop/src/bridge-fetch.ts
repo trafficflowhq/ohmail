@@ -53,6 +53,69 @@ const NO_SHELL =
  */
 const NULL_BODY_STATUSES = new Set([101, 103, 204, 205, 304]);
 
+/**
+ * WHAT THE ACCOUNT DOOR SAYS ABOUT THIS ACCOUNT — the read, and the refusal.
+ *
+ * The path lives here rather than beside either of its two callers because both name it and two
+ * spellings of one route drift: the Subscription pane re-exports this, and the suggest transport
+ * asks it to take a stale refusal down. It is already in the relay's allowlist, so nothing about
+ * the route or the bridge command changes.
+ */
+export const ACCOUNT_ACCESS_PATH = "/account/access";
+
+/** What the entitlements lock answers, and the one code that means this account, not this request. */
+export const ACCESS_REFUSED_STATUS = 402;
+export const ACCESS_REFUSED_CODE = "subscription_required";
+
+/** Why access was refused, and where the customer can put it right. The API's words, narrowed. */
+export interface AccessRefusedFacts {
+  reason: "payment_required" | "suspended";
+  manageUrl?: string;
+}
+
+type AccessRefusedSink = (facts: AccessRefusedFacts) => void;
+let accessRefusedSink: AccessRefusedSink | null = null;
+
+/**
+ * THE ACCESS REFUSAL, RAISED ONCE FOR THE WHOLE WINDOW — the browser tab's rule, on this door.
+ *
+ * Every hosted door may answer `402 subscription_required`, so handling it where it lands means
+ * meeting the refusal one failed write at a time, each pane saying its own thing. The gate
+ * subscribes instead and swaps the surface for one screen. LAST WRITER WINS: there is one gate
+ * per window, and two subscribers would be two surfaces disagreeing about one account. A
+ * notifier, not a throw — the `Response` is returned unchanged, so nothing that already handles
+ * a refusal changes behaviour.
+ */
+export function onAccessRefused(sink: AccessRefusedSink): () => void {
+  accessRefusedSink = sink;
+  return () => { if (accessRefusedSink === sink) accessRefusedSink = null; };
+}
+
+/**
+ * Narrow the envelope's `details` and tell the gate. An unrecognised reason is `payment_required`
+ * — the arm whose remedy is a link the customer can act on, rather than one reading as our fault.
+ * The body is decoded ONLY on the refusal status, so no ordinary answer pays for this.
+ */
+function noticeAccessRefusal(status: number, body: Uint8Array): void {
+  const sink = accessRefusedSink;
+  if (sink === null || status !== ACCESS_REFUSED_STATUS) return;
+  let env: { code?: unknown; details?: unknown } | undefined;
+  try {
+    env = (JSON.parse(new TextDecoder().decode(body)) as { error?: typeof env })?.error;
+  } catch {
+    return; /* Not JSON. A 402 this client cannot read is not one it may act on. */
+  }
+  if (env?.code !== ACCESS_REFUSED_CODE) return;
+  const d = (env.details ?? {}) as { reason?: unknown; manageUrl?: unknown };
+  const url = typeof d.manageUrl === "string" && d.manageUrl.length > 0 ? d.manageUrl : undefined;
+  try {
+    sink({
+      reason: d.reason === "suspended" ? "suspended" : "payment_required",
+      ...(url ? { manageUrl: url } : {}),
+    });
+  } catch { /* A sink that throws must not replace the refusal with its own failure. */ }
+}
+
 interface TauriInternals {
   invoke(command: string, payload?: Record<string, unknown>, options?: unknown): Promise<unknown>;
 }
@@ -191,7 +254,13 @@ function toResponse(bytes: Uint8Array): Response {
      recent DOM libraries parameterise the typed arrays by their backing buffer and accept only the
      `ArrayBuffer` instantiation, while a view taken from an existing buffer is typed against
      `ArrayBufferLike`. */
-  const body = bytes.subarray(4 + metaLength) as unknown as BodyInit;
+  const payload = bytes.subarray(4 + metaLength);
+  /* The one place the window can see a refusal of the ACCOUNT rather than of the request. Read
+     from the bytes before they become a body: a `Response` body may be consumed once, and the
+     caller owns that read. */
+  noticeAccessRefusal(status, payload);
+
+  const body = payload as unknown as BodyInit;
   return new Response(NULL_BODY_STATUSES.has(status) ? null : body, {
     status,
     statusText: typeof meta.statusText === "string" ? meta.statusText : "",

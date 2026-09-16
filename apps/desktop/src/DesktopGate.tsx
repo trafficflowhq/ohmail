@@ -47,6 +47,7 @@ import { DOOR_COPY, machineWord } from "./door-copy.js";
 import { desktopPaneLabel, DesktopSettings } from "./DesktopSettings.js";
 import { DesktopAiAccount } from "./DesktopAiAccount.js";
 import { DesktopSubscription, useDesktopManageOffer } from "./DesktopSubscription.js";
+import { DesktopAccessLock } from "./DesktopAccessLock.js";
 import { DesktopWebSection } from "./DesktopWebSection.js";
 import {
   accountDoorFor, awayDoorFor, consentDoorFor, firstRunDoorFor, gateFor, hostLabelOf,
@@ -75,7 +76,9 @@ import { decideNotices } from "@ohmail/client-engine";
 import { readChannels } from "../../webapp/app/shell/notification-settings";
 import { parseMailto, type MailtoDraft } from "./mailto.js";
 import { DefaultMailAsk, DefaultMailRow } from "./DesktopDefaultMail.js";
-import { createLocalEngine, type EngineStatus } from "./bridge-fetch.js";
+import {
+  createLocalEngine, onAccessRefused, type AccessRefusedFacts, type EngineStatus,
+} from "./bridge-fetch.js";
 
 /** How much of a refused address the one-line toast shows. The host is at the front. */
 const ADDRESS_SHOWN = 80;
@@ -388,6 +391,26 @@ export function DesktopGate() {
    * gates the ask as well as the mount: a door with no hosted account has nothing to ask.
    */
   const { manageOffered, withdrawManage } = useDesktopManageOffer(accountDoor);
+
+  /**
+   * HAS THE SERVICE REFUSED THIS ACCOUNT — subscribed once, for the whole window.
+   *
+   * Any hosted door may answer `402 subscription_required`, so this was met one failed write at
+   * a time, each pane saying its own thing about somebody's account. The bridge raises it once
+   * and the whole surface swaps for the lock screen below — mail beside a refusal is the state
+   * that prevents. It never unsets itself: a refusal is a fact about the account, and a later
+   * request that happens to succeed is not evidence it was lifted. Behind `accountDoor`, because
+   * a standalone install has no hosted account and nothing that could refuse one.
+   */
+  const [accessRefused, setAccessRefused] = useState<AccessRefusedFacts | null>(null);
+  useEffect(() => {
+    if (!accountDoor) {
+      setAccessRefused(null);
+      return;
+    }
+    return onAccessRefused((facts) => setAccessRefused((held) => held ?? facts));
+  }, [accountDoor]);
+
   useEffect(() => {
     // A new key is a new engine (or no cloud engine at all): the expiry flow's held step is
     // about an answer that no longer exists. The stored answer itself needs no reset — a stale
@@ -628,6 +651,15 @@ export function DesktopGate() {
        copy of somebody's mail — out of this window's memory; keeping it would leave it sitting
        behind the chooser for the life of the process. */
     setLive(null);
+  }
+
+  /* ONE SCREEN, AHEAD OF EVERY OTHER — the refused account's whole surface, the way the browser
+     tab swaps its own. Below the render-time state above so the mirror and the storage partition
+     are still settled correctly, and above the screens that follow because none of them is the
+     answer to this: a person whose account is refused should not be reading mail behind it, nor
+     be handed a door chooser. It takes nothing away — only the sign-out button wipes. */
+  if (accessRefused) {
+    return <DesktopAccessLock facts={accessRefused} onSignedOut={onStatus} />;
   }
 
   if (shell === null) {

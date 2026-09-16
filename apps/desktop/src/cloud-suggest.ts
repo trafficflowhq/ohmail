@@ -9,7 +9,7 @@
  * and `POST /screener/suggest` fall through to the engine's write-through proxy.
  */
 
-import { bridgeAvailable, bridgeFetch } from "./bridge-fetch.js";
+import { ACCOUNT_ACCESS_PATH, bridgeAvailable, bridgeFetch } from "./bridge-fetch.js";
 import type { SuggestWire } from "../../webapp/app/shell/screener-suggest.js";
 import type { ScreenerSuggestWire, ScreenerWirePage } from "../../webapp/app/api-client.js";
 
@@ -110,4 +110,28 @@ export const cloudSuggestWire: SuggestWire = {
     }),
 
   messageFor: (err, fallback) => (err instanceof SuggestRefused ? err.message : fallback),
+
+  /**
+   * IS AI AVAILABLE ON THIS ACCOUNT RIGHT NOW — asked only to take a stale refusal DOWN.
+   *
+   * The window used to omit this, so a card's refusal stood until the next press: a sentence
+   * about an account that outlived the fact it states. The read is the browser's, over the pipe
+   * — `GET /account/access` is already forwarded on this door — and it is asked when a refusal
+   * goes up and when the window is shown again, never on a cadence.
+   */
+  aiAvailable: async () => {
+    try {
+      const res = await bridgeFetch(ACCOUNT_ACCESS_PATH);
+      if (!res.ok) return null;
+      const a = (await res.json()) as { metered?: unknown; aiEnabled?: unknown };
+      // BOTH ANSWERS READ STRICTLY, because the third state is the one that matters: `metered`
+      // absent is a server that did not say, and `!a.metered` would have read that as "no
+      // program here, AI is on" — a body of `{}` clearing a true refusal.
+      if (a.metered === false) return true;
+      if (a.metered === true && typeof a.aiEnabled === "boolean") return a.aiEnabled;
+      return null;
+    } catch {
+      return null;
+    }
+  },
 };
