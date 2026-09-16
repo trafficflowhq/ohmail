@@ -985,6 +985,32 @@ const segmentsCache = new WeakMap<EntityReader, { v: number; key: string; out: S
  */
 
 /**
+ * SENDERS THIS ACCOUNT HAS ALREADY ANSWERED FOR, read off the held-release rows the server sent.
+ *
+ * FOLDER IS STILL THE RENDERING RULE — a waiting row is mail in `ohmail/Screener` — and this is
+ * the one fact a folder cannot carry: the mail is at the gate because a rule's backlog has not
+ * been released, not because nobody decided. Without it the same sender was listed as first-time
+ * waiting and as already decided on one screen. The rows are the SERVER's derivation and nothing
+ * is recomputed here, so what the queue subtracts is what a press would release; an empty mirror
+ * subtracts nothing, the honest answer for a door that has not replied.
+ */
+function heldReleaseClaim(reader: EntityReader): (key: string) => boolean {
+  const senders = new Set<string>();
+  const domains = new Set<string>();
+  for (const g of reader.list<HeldReleaseGroupDTO>(HELD_RELEASE_TYPE)) {
+    const match = g.match.trim().toLowerCase();
+    if (match === "") continue;
+    (g.kind === "domain" ? domains : senders).add(match);
+  }
+  if (senders.size === 0 && domains.size === 0) return () => false;
+  return (key: string): boolean => {
+    if (senders.has(key)) return true;
+    const at = key.lastIndexOf("@");
+    return at >= 0 && domains.has(key.slice(at + 1));
+  };
+}
+
+/**
  * Inert over a raw mirror, which is why `screener-derived.test.ts` is untouched: without a projection every
  * waiting-bucket message already has `folder === 'ohmail/Screener'` and `physicalFolder` unset, so the gate-physical
  * rep IS `newestFirst[0]` and no past-the-gate branch is reached.
@@ -1042,6 +1068,8 @@ export function screenerSegments(
     spam: new Map(),
   };
 
+  const alreadyDecided = heldReleaseClaim(reader);
+
   for (const m of reader.list<EngineMessage>("message")) {
     const view = VIEW_OF_FOLDER[m.folder] as OhmailView | undefined;
     const segment = view ? SEGMENT_OF_VIEW[view] : undefined;
@@ -1051,6 +1079,9 @@ export function screenerSegments(
     // guard the partition applies to its reckoning, applied to the grouping that renders it.
     // Screened and Quarantine are explicit placements somebody made and keep their rows.
     if (segment === "waiting" && own.has(key)) continue;
+    // …nor a sender this account has ALREADY ANSWERED FOR, whose mail is at the gate only because
+    // the rule's backlog has not been released — see {@link heldReleaseClaim}.
+    if (segment === "waiting" && alreadyDecided(key)) continue;
     const bucket = grouped[segment].get(key);
     if (bucket) bucket.push(m);
     else grouped[segment].set(key, [m]);

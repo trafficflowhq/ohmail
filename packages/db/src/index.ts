@@ -344,6 +344,7 @@ export {
 export {
   resolveCutline, senderIsActiveSql, senderIsDecidedSql, activeSenderExpr, anyOf, cutlineInstant,
   CUTLINE_PRESENTED_FOLDERS, CUTLINE_DEFAULT_DORMANCY_DAYS, CUTLINE_ALLOW_DESTINATIONS,
+  CUTLINE_DECIDED_DESTINATIONS, CUTLINE_GATE_FOLDER, destinationIsDecision, destinationIsDecisionSql,
   type CutlineFacts, type ResolvedCutline,
 } from "./screener-cutline.js";
 

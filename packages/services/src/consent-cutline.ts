@@ -3,7 +3,7 @@ import { DEFAULT_DORMANCY_DAYS, type ScreeningScope } from "@trafficflow/core/ma
 import type { ServiceContext } from "./context.js";
 import { dialect, type Dialect } from "@trafficflow/db/dialect";
 import {
-  activeSenderExpr, anyOf, cutlineInstant, resolveCutline, senderIsDecidedSql,
+  activeSenderExpr, anyOf, cutlineInstant, destinationIsDecisionSql, resolveCutline, senderIsDecidedSql,
 } from "@trafficflow/db";
 
 /**
@@ -147,15 +147,19 @@ export async function cutlineCounts(
     with own as (
       select lower(address) a from mailboxes where account_id = ${d.castUuid(ctx.accountId)}
     ),
+    -- The destination test comes from destinationIsDecisionSql, never a local comparison: this
+    -- file spelled one itself, so it read a DENY rule as a decision while the queue page did not,
+    -- and the same sender was first-time waiting on one screen and already decided on the other
+    -- (the 2026-09-16 ruling). One expression now, three readers.
     decided_sender as (
       select lower(match) m from rules
        where account_id = ${d.castUuid(ctx.accountId)} and enabled
-         and kind = 'sender' and destination <> 'ohmail/Screener'
+         and kind = 'sender' and ${destinationIsDecisionSql(sql`destination`)}
     ),
     decided_domain as (
       select lower(match) m from rules
        where account_id = ${d.castUuid(ctx.accountId)} and enabled
-         and kind = 'domain' and destination <> 'ohmail/Screener'
+         and kind = 'domain' and ${destinationIsDecisionSql(sql`destination`)}
     ),
     inbound as (
       select lower(m.from_address) addr,
@@ -182,14 +186,12 @@ export async function cutlineCounts(
     ),
     classified as (
       select i.addr, i.undecided_residence,
-             -- The two CTEs above are this file's own rule half, kept because it is WIDER than
-             -- the shared predicate: a DENY rule is a decision here and must stay one, or a
-             -- sender somebody said no to would re-enter the waiting count. The OR carries the
-             -- shared expression, which is the queue page's exclusion verbatim, so a sender the
-             -- queue refuses to list can never be one this count still calls first-time. Its own
-             -- contribution is the CONTACT arm; the allow-rule arm is already covered above, and
-             -- the redundancy is the point: one expression, both readers, no drift. (NO BACKTICKS
-             -- in this template literal -- see the note above.)
+             -- The two CTEs above and the shared predicate now decide a DESTINATION the same way
+             -- (both through destinationIsDecisionSql), so the rule arms agree by construction
+             -- rather than by having been read side by side. The OR is still carried: the shared
+             -- expression's own contribution is the CONTACT arm and the gate's defeat of it, which
+             -- these CTEs do not have. A sender the queue refuses to list can never be one this
+             -- count still calls first-time. (NO BACKTICKS in this template literal -- see above.)
              (exists (select 1 from decided_sender r where r.m = i.addr)
               or (${d.strpos(sql`i.addr`, sql`'@'`)} > 0
                   and exists (select 1 from decided_domain dd

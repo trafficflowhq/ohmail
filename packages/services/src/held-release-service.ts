@@ -1,7 +1,7 @@
 import { and, eq, inArray, isNotNull, isNull, or, sql } from "drizzle-orm";
 import {
-  auditAction, auditLog, folderState, mailboxes, messages, recordRuleDelta,
-  rules as rulesTbl, type LedgerTx, type Tx,
+  auditAction, auditLog, destinationIsDecisionSql, folderState, mailboxes, messages,
+  recordRuleDelta, rules as rulesTbl, type LedgerTx, type Tx,
 } from "@trafficflow/db";
 import { dialect } from "@trafficflow/db/dialect";
 import { SCREENER_FOLDER } from "./screener-service.js";
@@ -137,7 +137,13 @@ function decidedRule(accountId: string) {
     eq(rulesTbl.accountId, accountId),
     eq(rulesTbl.enabled, true),
     sql`${rulesTbl.kind} in ('sender', 'domain')`,
-    sql`${rulesTbl.destination} <> ${SCREENER_FOLDER}`,
+    /* ONE DEFINITION OF DECIDED, and this call site does not own it: `destinationIsDecisionSql`
+       is the same expression the Screener queue subtracts by, so a sender cannot be "already
+       decided" here and "first-time waiting" there — which three senders on one live account
+       were, with the two screens printing different counts of the same mailbox. It
+       reads WIDER than the old `<> Screener` in nothing and narrower in one state: a destination
+       outside the six is nobody's answer and no longer counts as a decision on either side. */
+    destinationIsDecisionSql(sql`${rulesTbl.destination}`),
     // Not in flight — see the predicate note above. Either nobody ever asked, or the walk finished.
     or(isNull(rulesTbl.retroRequestedAt), isNotNull(rulesTbl.retroDoneAt)),
   );

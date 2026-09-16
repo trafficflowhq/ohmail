@@ -141,25 +141,54 @@ export function senderIsActiveSql(
  * THE DESTINATIONS THAT SAY YES — `rules.ts#effectForDestination`'s allow side, as data.
  *
  * RE-DECLARED for {@link CUTLINE_DEFAULT_DORMANCY_DAYS}' reason, and DERIVED from that function by
- * `screener-cutline-one-owner.test.ts`, so a seventh folder reddens rather than widening what
- * counts as a decision. Anything outside the list reads as a deny — including a string the column
- * holds that is not one of the six — which leaves the sender in the queue rather than exempting
- * them on a folder nobody has classified.
+ * `screener-cutline-one-owner.test.ts`, so a seventh folder reddens rather than widening what the
+ * rule engine reads as an admission. This is the ALLOW side and nothing else: which destinations
+ * amount to a DECISION is {@link CUTLINE_DECIDED_DESTINATIONS}, a wider list, and the two were one
+ * list until 0.19.2 — see that constant for what that cost.
  */
 export const CUTLINE_ALLOW_DESTINATIONS: readonly string[] = ["INBOX", "ohmail/Reads", "ohmail/Receipts"];
+
+/** The gate itself. Pinned equal to `screener-apply.ts#SCREENER_FOLDER` by the one-owner test. */
+export const CUTLINE_GATE_FOLDER = "ohmail/Screener";
+
+/**
+ * THE DESTINATIONS THAT MEAN THE PERSON ANSWERED — every folder the product presents except the
+ * gate, and the ONE list every reader of "has this account decided about this sender" uses.
+ *
+ * RULED 2026-09-16: a DENY destination IS a decision. The queue read only
+ * {@link CUTLINE_ALLOW_DESTINATIONS}, so a sender sent to Spam stayed in it as first-time while
+ * the release screen called them decided — three senders on one account were in both lists, with
+ * two counts on one screen. Only the gate means "keep asking me"; a string outside the six is
+ * nobody's answer and leaves the sender in the queue.
+ */
+export const CUTLINE_DECIDED_DESTINATIONS: readonly string[] =
+  CUTLINE_PRESENTED_FOLDERS.filter((f) => f !== CUTLINE_GATE_FOLDER);
+
+/** {@link CUTLINE_DECIDED_DESTINATIONS} as a predicate — the same question off the wire. */
+export function destinationIsDecision(destination: string | null | undefined): boolean {
+  return destination != null && CUTLINE_DECIDED_DESTINATIONS.includes(destination);
+}
+
+/**
+ * …and as SQL, over whichever spelling of the column the caller holds. Both readers take this
+ * rather than an `in`-list or a `<>` of their own, which is the whole of the fix: the set the
+ * queue subtracts and the set the release screen counts are now one expression.
+ */
+export function destinationIsDecisionSql(destination: SQL): SQL {
+  const list = sql`(${sql.join(CUTLINE_DECIDED_DESTINATIONS.map((f) => sql`${f}`), sql`, `)})`;
+  return sql`${destination} in ${list}`;
+}
 
 /**
  * HAS THIS ACCOUNT ALREADY DECIDED IT KNOWS THIS SENDER — the queue's other half. The cutline asks
  * whether a sender is still worth ASKING about; this asks whether they were already ANSWERED.
- * `cutlineCounts` spelled the rule half inline and `GET /screener` asked nothing, so a
- * correspondent of a decade carrying an enabled rule AND a `contacts` row was listed as
- * first-time. A DECISION is an enabled `sender`/`domain` rule naming the author with an ALLOW
- * destination, or a `contacts` row; a DENY rule does not exclude and DEFEATS the contact arm.
- * `trim(lower(match))` is `matchPredicate`'s normalisation in SQL, so the set this excludes is the
- * set a rule moves, and the domain arm goes through {@link Dialect.domainOf} for the phone.
+ * A DECISION is an enabled `sender`/`domain` rule naming the author and sending them anywhere but
+ * the gate ({@link CUTLINE_DECIDED_DESTINATIONS} — Spam and Screened included since 0.19.2), or a
+ * `contacts` row; a rule pinning the sender TO the gate says "keep asking me" and alone defeats
+ * the contact arm. `trim(lower(match))` is `matchPredicate`'s normalisation in SQL, so the set
+ * this excludes is the set a rule moves, and the domain arm goes through {@link Dialect.domainOf}.
  */
 export function senderIsDecidedSql(d: Dialect, accountId: string, senderExpr: SQL): SQL {
-  const allow = sql`(${sql.join(CUTLINE_ALLOW_DESTINATIONS.map((f) => sql`${f}`), sql`, `)})`;
   const claims = sql`(
        (rd.kind = 'sender' and trim(lower(rd.match)) = ${senderExpr})
     or (rd.kind = 'domain' and trim(lower(rd.match)) = ${d.domainOf(senderExpr)})
@@ -173,12 +202,12 @@ export function senderIsDecidedSql(d: Dialect, accountId: string, senderExpr: SQ
        and ${claims}
   )`;
   return sql`(
-       ${ruleFor(sql`rd.destination in ${allow}`)}
+       ${ruleFor(destinationIsDecisionSql(sql`rd.destination`))}
     or (exists (
           select 1 from contacts cd
            where cd.account_id = ${d.castUuid(accountId)}
              and lower(cd.address) = ${senderExpr}
         )
-        and not ${ruleFor(sql`rd.destination not in ${allow}`)})
+        and not ${ruleFor(sql`rd.destination = ${CUTLINE_GATE_FOLDER}`)})
   )`;
 }
