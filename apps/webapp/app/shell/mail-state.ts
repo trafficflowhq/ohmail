@@ -682,15 +682,13 @@ export interface MailboxFacts {
    */
   hostedMessageCount?: number;
   /**
-   * MESSAGES IN THE STORE THIS IMPORT IS WRITING INTO — the local door's own `messages` table, and
-   * the import's true numerator ({@link pulledCount}). It used to be the same number as the
-   * renderer's mirror; `DESKTOP_WINDOW` ended that in 0.17.0, and the two now diverge by the size
-   * of the mailbox. THE DOORS WITH A STORE OF THEIR OWN POPULATE IT AND NOTHING ELSE DOES — the
-   * local door, and the Cloud mirror since `cloud-read.ts` was taught `?counts=1`. Never a hosted
-   * tab: there the same DTO field is the SERVER's count, what this device is pulling towards
-   * rather than what it has pulled, and that door's narrowing drops it for exactly that reason.
-   * Asked for only while a mailbox is unstamped, because it costs a grouped `count(*)`. Absent
-   * means "not asked", never `0`.
+   * MESSAGES IN THE STORE THIS IMPORT IS WRITING INTO — the import's true numerator ({@link
+   * pulledCount}). It used to be the renderer's mirror; `DESKTOP_WINDOW` ended that in 0.17.0.
+   * THE DOORS WITH A STORE OF THEIR OWN POPULATE IT AND NOTHING ELSE DOES — the local door, and
+   * the Cloud mirror since `cloud-read.ts` was taught `?counts=1`. Never a hosted tab: there the
+   * same field is the SERVER's count, what this device is pulling towards rather than what it has
+   * pulled, and that door's narrowing drops it for that reason. Asked for only while a mailbox is
+   * unstamped, because it costs a grouped `count(*)`. Absent means "not asked", never `0`.
    */
   messageCount?: number;
   /**
