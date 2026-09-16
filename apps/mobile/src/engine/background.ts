@@ -307,6 +307,13 @@ export function createBackgroundOrganizing(deps: BackgroundDeps): BackgroundOrga
   let announcedNotificationsOff = false;
   /** True from a completed hand-back until a resume has been asked for. */
   let handedBack = false;
+  /**
+   * IS THE APP BEHIND THE PERSON — the phase itself, written only by {@link AppPhase} edges and
+   * read by {@link reclaimCheck}. `inactive` never reaches it, for that arm's own reason. Not a
+   * platform fact and not a service fact: it says where the PERSON is, and the reclaim's whole
+   * premise is that this phone is the one in front of them.
+   */
+  let inBackground = false;
   let disposed = false;
   let watch: ReturnType<typeof setInterval> | null = null;
   /**
@@ -859,6 +866,17 @@ export function createBackgroundOrganizing(deps: BackgroundDeps): BackgroundOrga
      * than on the claim watch — that one is armed with the NOTIFICATION, and a phone is in front
      * of a person exactly when no notification is showing. */
     moved();
+    /* ══ A PHONE BEHIND THE PERSON WITH NOTHING RUNNING MAY NOT TAKE A MAILBOX ═══════════════
+     *
+     * The premise above is "this phone is the one in front of the person". Backgrounded WITHOUT a
+     * service that premise is false twice over: nobody is looking, and nothing here can renew what
+     * the press would win — the claim would land, the desktop that CAN organize would be refused
+     * for a staleness window, and the mailbox would be organized by nobody. So a background press
+     * is not made at all; the phone asks the lease when it comes back, like every other press.
+     * `organizerRuns()` is asked HERE rather than remembered, that predicate's own rule: the system
+     * can take the service at any moment. A phone whose service is still standing is organizing in
+     * the background legitimately and is not gated. */
+    if (inBackground && !organizerRuns()) return;
     /* `=== true` and not `!== false`: a read that could not answer is not a licence to ask for
        somebody else's mailbox, which is the opposite direction from the notification teardown's. */
     /* ONE READ for the whole tick — see {@link stateNow}. */
@@ -922,9 +940,11 @@ export function createBackgroundOrganizing(deps: BackgroundDeps): BackgroundOrga
          incoming call, and acting on it would hand the mailbox back for a gesture nobody made. */
       if (next === "inactive") return;
       if (next === "background") {
+        inBackground = true;
         await toBackground();
         return;
       }
+      inBackground = false;
       await toForeground();
     }),
     handedBack: () => handedBack,
