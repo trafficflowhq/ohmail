@@ -56,6 +56,11 @@ it connects, like every other dial. A server at an address this install will not
 longer dialled — the mailbox keeps the conservative size limit instead of learning one, and
 nothing else about it changes.
 
+### Setting up a self-hosted database no longer stops on a reworded comment
+
+A migration that has already run is verified against the SQL that ran, proved from the
+repository's history, so a reworded comment no longer reads as a changed migration.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
