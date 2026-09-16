@@ -1013,8 +1013,16 @@ fn a_settings_dir(case: &str) -> (PathBuf, PathBuf) {
     (dir, path)
 }
 
-/// Close the directory to writes, so the record step meets a real refusal from the operating
+/// Close the setting to writes, so the record step meets a real refusal from the operating
 /// system with the operating system's own words.
+///
+/// The bite is in a DIFFERENT PLACE on each platform, and a seal in the wrong place is a no-op
+/// that lets both cases pass for the wrong reason — which is what they did on Windows until
+/// 0.19.1. `write_private` stages a sibling and renames it over the target, so on Unix taking the
+/// DIRECTORY's write bit away refuses the staging open. Windows honours the readonly attribute
+/// for FILES and not for directories, and `fs::rename` there is `MoveFileExW`, which refuses to
+/// replace a readonly TARGET — so the seal goes on `host.json` itself. Both arms fail loudly if
+/// there is nothing to seal: a seal that could not bite must refuse, never shrug.
 fn seal(dir: &Path) {
     #[cfg(unix)]
     {
@@ -1022,6 +1030,14 @@ fn seal(dir: &Path) {
         let mut perms = std::fs::metadata(dir).expect("stat").permissions();
         perms.set_mode(0o500);
         std::fs::set_permissions(dir, perms).expect("chmod");
+    }
+    #[cfg(windows)]
+    {
+        let path = dir.join(config::HOST_FILE_NAME);
+        let mut perms =
+            std::fs::metadata(&path).expect("the setting to seal").permissions();
+        perms.set_readonly(true);
+        std::fs::set_permissions(&path, perms).expect("set readonly");
     }
 }
 
@@ -1032,6 +1048,21 @@ fn unseal_and_remove(dir: &Path) {
         let mut perms = std::fs::metadata(dir).expect("stat").permissions();
         perms.set_mode(0o700);
         let _ = std::fs::set_permissions(dir, perms);
+    }
+    // `remove_dir_all` refuses a readonly file on Windows, so the attribute comes off first.
+    #[cfg(windows)]
+    {
+        if let Ok(entries) = std::fs::read_dir(dir) {
+            for entry in entries.flatten() {
+                if let Ok(meta) = entry.metadata() {
+                    let mut perms = meta.permissions();
+                    if perms.readonly() {
+                        perms.set_readonly(false);
+                        let _ = std::fs::set_permissions(entry.path(), perms);
+                    }
+                }
+            }
+        }
     }
     let _ = std::fs::remove_dir_all(dir);
 }
