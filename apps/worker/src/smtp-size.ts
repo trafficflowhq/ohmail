@@ -19,13 +19,13 @@ import { checkedDial, type DialHostGuard } from "./dial-host-guard.js";
 
 /**
  * The production dial from this host: a real SMTP login on the TLS floor, on the worker's timeouts,
- * under the DEPLOYMENT'S OWN POLICY. This is the organizer's fifth dial and it was the one that
- * handed a stored submission name to a fresh socket with no check and no pin, three lines above
- * the attach that checks. Same helper, same call shape and same refusal class as the four adapter
- * sites (`dial-host-guard.ts`). A FACTORY and not a constant, because a guard that can be omitted
- * is a guard: the policy is threaded from the composition root, and `checkedDial` refuses a
- * missing one by name. The refusal reaches `learnSmtpMaxSize`'s catch and becomes a closed code —
- * a probe that may not dial costs this mailbox its ceiling and nothing else.
+ * under the DEPLOYMENT'S OWN POLICY. This is the organizer's fifth dial, and the one that handed a
+ * stored submission name to a fresh socket with no check and no pin — in the same attach callback
+ * that clears the very same host for the connection. Same helper, same call shape and same refusal
+ * class as the four adapter sites (`dial-host-guard.ts`). A FACTORY and not a constant, because a
+ * guard that can be omitted is no guard: the policy is threaded from the composition root, and
+ * `checkedDial` refuses a missing one by name. The refusal reaches `learnSmtpMaxSize`'s catch and
+ * becomes a closed code — a probe that may not dial costs this mailbox its ceiling and nothing else.
  */
 export function makeSmtpSizeDial(guard: DialHostGuard | undefined): SmtpSizeDial {
   return async (smtp) => verifySmtpLogin(
