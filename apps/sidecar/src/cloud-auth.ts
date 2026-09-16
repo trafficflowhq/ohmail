@@ -6,18 +6,17 @@ import type { Diagnostic } from "./log.js";
 /**
  * The cloud bearer client — a plain `Authorization: Bearer` fetch against the hosted API, with a
  * single-flight refresh on 401 and a sealed-to-disk token store. Not `HttpAdapter`, which is
- * browser-shaped (a `tf_csrf` cookie, `X-CSRF-Token`, a cookie jar); this is a Node child
- * authenticating with a token the shell handed it, and the hosted API prefers the `Authorization`
- * header and exempts a bearer from CSRF — so the client is small: no cookie jar, no CSRF, one header.
- * The 401 refresh is SINGLE-FLIGHT: the pull loop has several requests in flight and an expiring
- * token 401s all at once, and refreshing per-401 would rotate the refresh-token family, which the API
- * treats as compromise and revokes. So one in-flight refresh promise serves them all.
- *
+ * browser-shaped (a `tf_csrf` cookie, a jar); this is a Node child authenticating with a token the
+ * shell handed it, and the hosted API exempts a bearer from CSRF — so: no jar, one header.
+ * The 401 refresh is SINGLE-FLIGHT: the pull loop 401s all at once at expiry, and refreshing
+ * per-401 would present the family's token twice, which the API treats as compromise.
+ */
+
+/*
  * A rotation whose ANSWER is lost used to cost the session all the same: the retry of the retained
  * token was byte-identical to a replay. Every attempt now carries a name, sealed beside the token
  * it is about to spend BEFORE the request goes out and repeated until an answer lands — the
- * phone's field and the phone's semantics (`apps/mobile/src/net/bearer.ts`), three clients and one
- * contract.
+ * phone's field and semantics (`apps/mobile/src/net/bearer.ts`), three clients and one contract.
  */
 
 export interface CloudTokens {

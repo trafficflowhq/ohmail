@@ -586,13 +586,10 @@ describe("the pairing scope", () => {
  *
  * A rotation is two halves plus a response: the server consumes and mints, then the answer has to
  * land. When it does not, this client still holds the old token, and its retry used to be
- * byte-identical to a stolen token being replayed — so the server did the only thing it could and
- * revoked the family. Every attempt now carries a name, written to the JAR before it submits and
- * repeated until an answer lands.
- *
- * This is the client half of the invariant. The server half — N presentations of one token under
- * ONE name leave exactly one live tail and no revocation — is measured against the real schema in
- * the services rotation-retry pg twin. Together they are the whole claim.
+ * byte-identical to a replay — so the server revoked the family. Every attempt now carries a
+ * name, written to the JAR before it submits and repeated until an answer lands. This is the
+ * CLIENT half; the server half — N presentations under ONE name leave one live tail and no
+ * revocation — is measured in the services rotation-retry pg twin.
  */
 describe("a lost rotation answer", () => {
   /** A door whose refresh answer is dropped until `answer` is flipped; every name is recorded. */

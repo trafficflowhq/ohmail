@@ -705,9 +705,7 @@ export class SessionLifecycle {
       // only on the surface with the race (`grace`): within `refreshReuseGraceMs`, on a live
       // family within its cap, a re-presentation is re-rotated off the same family. Older — or
       // ANY re-presentation on a strict surface — is a kept, replayed token: theft, and it
-      // revokes. `config.ts` states the bounded residual. The window's meaning and value are
-      // untouched; what changed is that the arm CONVERGES rather than minting per presentation —
-      // see {@link convergeGrace}.
+      // revokes. The window is unchanged; the arm CONVERGES — see {@link convergeGrace}.
       if (existing.consumedAt) {
         const consumedMsAgo = now.getTime() - existing.consumedAt.getTime();
         // A RETRY OF AN UNANSWERED ATTEMPT IS NOT A REUSE. A lost rotation response leaves the
@@ -866,18 +864,14 @@ export class SessionLifecycle {
   }
 
   /**
-   * ONE LIVE TAIL, however many presentations of one consumed token arrive inside the grace
-   * window — the cookie surface's convergence, and the shape {@link replayRotation} already gives
-   * the native attempt arm. This used to MINT per presentation, so five retries of one lost
-   * answer left six live credentials on one family: five orphans nobody holds, each able to
-   * rotate a line of its own for ninety days, none of them ever colliding with the reuse
-   * detector. Now every presentation consumes whatever live tails the family has — kill-stamped
-   * (`expires_at = consumed_at`, the signature {@link recoverLostRotation} classifies by, so a
-   * convergence never reads as a second holder's spend) — and mints one replacement, under the
-   * session lock so concurrent presentations queue instead of racing. The LAST answer is
-   * therefore the live one, which is the one the shared jar keeps; a jar left holding an earlier
-   * answer converges again on its next presentation inside the window. `null` only where the
-   * session is gone or capped: the caller falls through exactly as it did before.
+   * ONE LIVE TAIL, however many presentations of one consumed token arrive inside the window —
+   * {@link replayRotation}'s shape, on the cookie surface. This MINTED per presentation, so five
+   * retries of one lost answer left six live credentials on one family: five orphans nobody
+   * holds, none of them ever colliding with the reuse detector. Now each presentation consumes
+   * whatever live tails the family has — kill-stamped `expires_at = consumed_at`, so a
+   * convergence never reads as a spend to {@link recoverLostRotation} — and mints one
+   * replacement, under the session lock. The LAST answer is the live one, which the shared jar
+   * keeps. `null` only where the session is gone or capped, as before.
    */
   private async convergeGrace(
     ctx: ServiceContext,
