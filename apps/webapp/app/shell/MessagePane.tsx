@@ -1657,11 +1657,20 @@ export function MessagePane({
   );
 
   const focusedBody = (
-    /* A `<div>` rather than the `<p>` this was, because `BodyText` emits the paragraphs
-       now and a `<p>` may not contain one. `.msg-body` is unchanged and stays the one element
-       that holds the mail and nothing else, which is what `test/conversation.test.ts` and
-       `test/inline-reply.test.ts` select on and what a reader is entitled to assume. */
-    <div className="msg-body">
+    <>
+      {/* WHERE OHMAIL KNOWS IT CANNOT SHOW THE EVENT, IT SAYS SO. An Outlook Web Access
+          invitation sends the event as a LINK, so there is no calendar part and no card — and
+          the body is OWA's boilerplate about the invitation, which without this line a reader
+          takes for the message. OUTSIDE `.msg-body` on purpose: that element holds the mail and
+          nothing else. One fact, no verb, no link followed — see `EngineMessage.invitationWithoutEvent`. */}
+      {message.invitationWithoutEvent === true ? (
+        <p className="msg-body-state" role="note">{tb("invitationWithoutEvent")}</p>
+      ) : null}
+      {/* A `<div>` rather than the `<p>` this was, because `BodyText` emits the paragraphs
+          now and a `<p>` may not contain one. `.msg-body` is unchanged and stays the one element
+          that holds the mail and nothing else, which is what `test/conversation.test.ts` and
+          `test/inline-reply.test.ts` select on and what a reader is entitled to assume. */}
+      <div className="msg-body">
       {/* The consent path for remote images. `remoteImages` is ABSENT on a client with no proxy
           (`?demo=1`, the desktop shell, a test with no API), and `MessageBody` answers that with
           no button rather than a dead one. `remoteLoaded` is the OR of three facts stored in
@@ -1703,8 +1712,9 @@ export function MessagePane({
         onCidImages={chrome.attachments ? onCidImages : undefined}
         onRenderMode={onRenderMode}
         onNotice={onNotice}
-      />
-    </div>
+        />
+      </div>
+    </>
   );
 
   /*

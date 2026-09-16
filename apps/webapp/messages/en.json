@@ -1510,7 +1510,8 @@
     "retry": "Retry",
     "withheld": "Not stored here — within your storage space, older stored copies give way to newer mail, and this one gave way (or space was full when it arrived). The message itself is safe in your mailbox on your mail server; this is the preview. A bigger plan adds storage space.",
     "withheldJunk": "Not stored here — your spam verdict filed this message to the Junk folder on your own mail server. It lives on there; this is the preview.",
-    "withheldExpunged": "No stored copy left — every copy of this message is gone from the folders ohmail reads on your mail server: deleted there, or moved elsewhere by another mail app. This preview is what remains."
+    "withheldExpunged": "No stored copy left — every copy of this message is gone from the folders ohmail reads on your mail server: deleted there, or moved elsewhere by another mail app. This preview is what remains.",
+    "invitationWithoutEvent": "This is a meeting invitation; the sender’s mail system did not attach the event."
   },
   "message": {
     "toLabel": "To",

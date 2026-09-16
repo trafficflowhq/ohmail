@@ -1,4 +1,5 @@
 import { isSentFolderPath } from "@trafficflow/core/folder-name";
+import { isAcknowledgementSubject } from "@trafficflow/core/ics";
 import { mayGroupByMessageId } from "@trafficflow/core/sender-headers";
 import type { EntityReader } from "./store.js";
 /* The address fold and the own-address predicate, from the leaf that owns both — never
@@ -356,6 +357,25 @@ export function isOwnSent(m: Pick<EngineMessage, "folder">): boolean {
 }
 
 /**
+ * IS THIS A CALENDAR CLIENT'S ACKNOWLEDGEMENT RATHER THAN SOMETHING A PERSON SAID — an
+ * "Accepted:" the account's own Calendar app sent back after the person accepted an invitation.
+ *
+ * Two arms, because the fact lives in two places and only one of them is mirrored: the top-level
+ * `Content-Type: …; method=REPLY` the server reads for us ({@link EngineMessage.itipReplyHeader}),
+ * and the subject a calendar client writes, which this side already holds. The subject arm is
+ * OWN-SENT only — a received "Accepted: …" is a person telling you something and keeps an
+ * ordinary face. DISPLAY ONLY: nothing here reaches threading, naming or a merge.
+ *
+ * The error it can make is bounded by where it is read: a person's own mail that genuinely opens
+ * "Accepted:" loses the FACE of its conversation and stays a member of it. Never hidden, never
+ * unthreaded — the cheaper direction.
+ */
+export function isItipAcknowledgement(m: Pick<EngineMessage, "folder" | "subject" | "itipReplyHeader">): boolean {
+  if (m.itipReplyHeader === true) return true;
+  return isOwnSent(m) && isAcknowledgementSubject(m.subject ?? "");
+}
+
+/**
  * IS THIS A RESURFACED ROW.
  *
  * A plain-string compare because `resurfaced` is deliberately NOT a member of {@link TriageState}:
@@ -582,11 +602,15 @@ export function ohboxView(reader: EntityReader): OhboxView {
    * replies the away responder sent on the person's behalf. Writing a message is finishing with
    * it, which is why own-sent mail joins this block at all; an automatic reply is the case
    * where that reasoning fails — nobody finished with anything — and the send-date fallback put
-   * one "Re: …" row per answered message at the top. `!== true`, never `=== false`: the field
+   * one "Re: …" row per answered message at the top. A calendar client's acknowledgement
+   * ({@link isItipAcknowledgement}) is held out for the same reason and is the same class of
+   * message: a machine wrote it, so nobody finished with anything. `!== true`, never `=== false`: the field
    * is absent on older mirrors/servers and absent must mean "the person's". Nothing is hidden;
    * the replies stay in the Sent folder view.
    */
-  const sent = all.filter((m) => isOwnSent(m) && m.autoReplyByUs !== true);
+  const sent = all.filter(
+    (m) => isOwnSent(m) && m.autoReplyByUs !== true && !isItipAcknowledgement(m),
+  );
 
   /**
    * The pin is state-driven and folder-agnostic — the whole mirror is

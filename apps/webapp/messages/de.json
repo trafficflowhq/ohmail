@@ -1510,7 +1510,8 @@
     "retry": "Erneut versuchen",
     "withheld": "Hier nicht gespeichert — innerhalb deines Speicherplatzes weichen ältere gespeicherte Kopien neuerer Post, und diese ist gewichen (oder der Platz war beim Eintreffen voll). Die Nachricht selbst liegt sicher in deinem Postfach auf deinem Mailserver; das hier ist die Vorschau. Ein größerer Tarif bringt mehr Speicherplatz.",
     "withheldJunk": "Hier nicht gespeichert — dein Spam-Urteil hat diese Nachricht in den Junk-Ordner deines eigenen Mailservers einsortiert. Dort lebt sie weiter; das hier ist die Vorschau.",
-    "withheldExpunged": "Keine gespeicherte Kopie mehr — jede Kopie dieser Nachricht ist aus den Ordnern verschwunden, die ohmail auf deinem Mailserver liest: dort gelöscht oder von einem anderen Mailprogramm verschoben. Diese Vorschau ist, was bleibt."
+    "withheldExpunged": "Keine gespeicherte Kopie mehr — jede Kopie dieser Nachricht ist aus den Ordnern verschwunden, die ohmail auf deinem Mailserver liest: dort gelöscht oder von einem anderen Mailprogramm verschoben. Diese Vorschau ist, was bleibt.",
+    "invitationWithoutEvent": "Das ist eine Besprechungseinladung; das Mailsystem des Absenders hat den Termin nicht angehängt."
   },
   "message": {
     "toLabel": "An",

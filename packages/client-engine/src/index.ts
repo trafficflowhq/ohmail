@@ -232,6 +232,7 @@ export {
 export {
   bodyOf,
   isOwnSent,
+  isItipAcknowledgement,
   isResurfaced,
   messageDisplayTime,
   // The shared whole-mirror date order — one sort per (reader, version), which every

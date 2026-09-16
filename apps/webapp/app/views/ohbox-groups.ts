@@ -1,4 +1,4 @@
-import type { EngineMessage } from "@ohmail/client-engine";
+import { isItipAcknowledgement, type EngineMessage } from "@ohmail/client-engine";
 
 /*
  * Conversation rows for the Ohbox list. Five unread replies in one conversation used to be five
@@ -32,7 +32,11 @@ export interface OhboxRowGroup {
   key: string;
   /** The section rows folded into this row, in the section's own order. */
   members: EngineMessage[];
-  /** The newest member by send time — the row shows ITS snippet and time. */
+  /**
+   * The member whose snippet and time the row shows — the newest one a PERSON wrote. A calendar
+   * client's acknowledgement is a member like any other and never the face; see
+   * {@link facingMemberOf}.
+   */
   latest: EngineMessage;
   /**
    * The message a click or ↵ acts on: the LATEST UNREAD member, else {@link latest}. Opening
@@ -61,8 +65,24 @@ function latestOf(members: readonly EngineMessage[]): EngineMessage {
   return best;
 }
 
+/**
+ * THE MEMBER WHOSE WORDS THE ROW SHOWS — the newest member that a PERSON wrote.
+ *
+ * A row names what a human said. A calendar client's acknowledgement is newest by send time the
+ * moment it is sent, so unheld it takes the conversation's face and the row reads "Accepted: …"
+ * over the message somebody actually wrote. Held out here, it stays an ordinary member — the
+ * conversation keeps its count and its history, and only the face is decided differently.
+ *
+ * All-acknowledgement conversations fall back to {@link latestOf}: a face is owed whatever the
+ * members are, and a row with no face is not a row.
+ */
+function facingMemberOf(members: readonly EngineMessage[]): EngineMessage {
+  const human = members.filter((m) => !isItipAcknowledgement(m));
+  return human.length > 0 ? latestOf(human) : latestOf(members);
+}
+
 function toGroup(key: string, members: EngineMessage[]): OhboxRowGroup {
-  const latest = latestOf(members);
+  const latest = facingMemberOf(members);
   const unread = members.filter((m) => m.unread);
   return {
     key,
