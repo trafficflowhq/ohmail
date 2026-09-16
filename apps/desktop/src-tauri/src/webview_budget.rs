@@ -30,6 +30,28 @@ pub struct Ask {
 /// One window, one document, no history.
 pub const ASK: Ask = Ask { cache_model: Model::DocumentViewer, page_cache: false };
 
+/// When WebKit should start giving memory back, and when it should start being rude about it.
+///
+/// These are FRACTIONS OF THE LIMIT below, which is the shape WebKitGTK takes them in.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Pressure {
+    /// The ceiling the fractions are of, in MiB.
+    pub limit_mib: u32,
+    /// Start releasing caches here. WebKitGTK's own default is a third of the limit.
+    pub conservative: f64,
+    /// Release everything releasable here.
+    pub strict: f64,
+    /// How often the limit is checked, in seconds.
+    pub poll_s: f64,
+}
+
+/// The ask. `kill` is not here and is never set: WebKitGTK can be told to KILL the web process
+/// at a threshold, and a mail window that vanishes to save memory is a worse outcome than the
+/// memory. Absent means disabled, which is the default, and making it unrepresentable is the
+/// point of it not being a field.
+pub const PRESSURE: Pressure =
+    Pressure { limit_mib: 1024, conservative: 0.33, strict: 0.5, poll_s: 15.0 };
+
 /// Anything the ask can be carried to. The shipped one is the webview; the tests' one records
 /// what it was asked, so a pair applied by halves fails rather than passes quietly.
 pub trait Sink {
@@ -47,6 +69,7 @@ pub fn apply_to<S: Sink>(sink: &mut S, ask: Ask) {
 mod gtk_sink {
     use super::{Ask, Model, Sink};
     use webkit2gtk::{CacheModel, SettingsExt, WebContextExt, WebViewExt};
+    use webkit2gtk::WebsiteDataManager;
 
     impl From<Model> for CacheModel {
         fn from(m: Model) -> Self {
@@ -73,6 +96,16 @@ mod gtk_sink {
         }
     }
 
+    /// The process-wide pressure settings, set before any web context exists.
+    pub fn pressure(p: super::Pressure) {
+        let mut s = webkit2gtk::MemoryPressureSettings::new();
+        s.set_memory_limit(p.limit_mib);
+        s.set_conservative_threshold(p.conservative);
+        s.set_strict_threshold(p.strict);
+        s.set_poll_interval(p.poll_s);
+        WebsiteDataManager::set_memory_pressure_settings(&mut s);
+    }
+
     /// Apply the ask to the app's one window, and SAY SO when it cannot be applied. A budget that
     /// silently failed to be asked for reads exactly like one that was granted, which is the shape
     /// this whole module is a fix for — so both the missing window and the refused call are named.
@@ -89,6 +122,17 @@ mod gtk_sink {
             eprintln!("ohmail: the webview budget was not applied: {e}");
         }
     }
+}
+
+/// Tell WebKitGTK when to give memory back, for this whole PROCESS.
+///
+/// Called from the top of `main`, before anything builds a window, because the WebKitGTK call
+/// behind it is process-global and is read when the first web context is created — after that a
+/// caller is talking to a context that has already taken its settings. There is no per-window
+/// form of it: the crate's other spelling is a builder property, and the builder belongs to wry.
+pub fn apply_process_pressure() {
+    #[cfg(target_os = "linux")]
+    gtk_sink::pressure(PRESSURE);
 }
 
 /// Ask WebKitGTK for this window's budget. Off Linux this is nothing yet.

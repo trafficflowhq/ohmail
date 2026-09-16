@@ -669,6 +669,25 @@ describe("the Rust side", () => {
   });
 
   /**
+   * THE MEMORY-PRESSURE HINT IS SET BEFORE THE FIRST WEB CONTEXT, WHICH IS THE ONLY TIME IT IS
+   * READ. WebKitGTK takes it process-globally and reads it when the first context is created —
+   * and wry creates that context while the runtime is built, so a call after `.build(...)` sets
+   * a value nothing will ever look at again. It cannot be told apart from a value that was
+   * applied, which is why this is asserted rather than left to the reader of one line.
+   */
+  it("hints the memory pressure before the runtime builds a web context", () => {
+    const src = read("src-tauri/src/main.rs");
+    const call = src.indexOf("webview_budget::apply_process_pressure();");
+    expect(call, "main.rs must set the process-global pressure hint").toBeGreaterThan(-1);
+    expect(call, "the hint must be set before the runtime is built").toBeLessThan(
+      src.indexOf(".build(tauri::generate_context!())"),
+    );
+    // And the kill threshold is never asked for: a mail window that vanishes to save memory is
+    // a worse outcome than the memory it saved.
+    expect(read("src-tauri/src/webview_budget.rs")).not.toMatch(/set_kill_threshold/);
+  });
+
+  /**
    * ONE OWNER FOR THE MENU BAR, AND ONE FOR THE COMMAND TABLE.
    *
    * Both `Builder::setup` and `Builder::invoke_handler` REPLACE what was there rather than adding

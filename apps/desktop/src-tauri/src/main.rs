@@ -114,6 +114,11 @@ fn main() {
     // a data race — so the cap is set here and nowhere else. `allocator_arenas.rs` has the measured
     // reason; `desktop-shell.test.ts` asserts this line comes before the runtime is built.
     allocator_arenas::apply();
+    // WHEN WEBKIT SHOULD GIVE MEMORY BACK. Process-global and read when the FIRST web context is
+    // created, which wry does while the runtime is built — so it is set here, beside the arena
+    // cap, and there is no window to apply it to yet. `webview_budget.rs` has the thresholds and
+    // why the kill threshold is not among them.
+    webview_budget::apply_process_pressure();
 
     let mut builder = tauri::Builder::default();
     // The commands the window may call, registered in `engine.rs` so that this file names none
