@@ -5449,20 +5449,14 @@ export function forgetCompoundAckSearchRefusal(client: object): void {
 }
 
 /**
- * THE STALE ACKS IN ONE UID WINDOW, ASKED TWO WAYS.
- *
- * iCloud refuses the compound term (`HEADER X-Ohmail-Ack "" BEFORE <date> UID lo:hi`), and imapflow
- * resolves `false` for a refused SEARCH rather than rejecting. The sweep is the only thing that
- * ever makes this folder smaller, so a provider that refuses that form is a folder that only grows
- * until every bounded read of it refuses and a second install's presses stop being answered. The
- * fallback puts the same question with no SEARCH at all — a uid-range FETCH of the headers this
- * sweep already keys on — and applies the two terms here: the ack header PRESENT, which is what
- * `HEADER <name> ""` means, and an INTERNALDATE below a cutoff already floored to midnight, which
- * is what `BEFORE <date>` means against one. Same window, same set, one round trip.
- *
- * `null` is neither form could answer. A window this could not read WHOLE throws out of the bounded
- * read instead, because a partial look is not an answer and the sweep's cursor must not pass what
- * it never saw.
+ * THE STALE ACKS IN ONE UID WINDOW, ASKED TWO WAYS. iCloud refuses the compound term
+ * (`HEADER X-Ohmail-Ack "" BEFORE <date> UID lo:hi`) and imapflow resolves `false` rather than
+ * rejecting; the sweep is the only thing that ever makes this folder smaller, so that provider's
+ * folder only grows until every bounded read of it refuses. The fallback puts the same question
+ * with no SEARCH — a uid-range FETCH of the headers this sweep keys on — under the two terms it
+ * spelled: the header PRESENT and an INTERNALDATE below a cutoff already floored to midnight.
+ * Same window, same set. `null` is neither form could answer; a window it could not read WHOLE
+ * throws instead.
  */
 async function staleAckUidsInWindow(
   client: LeaseImapClient, lo: number, hi: number, before: Date,
