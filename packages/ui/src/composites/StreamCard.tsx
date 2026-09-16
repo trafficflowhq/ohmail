@@ -3,6 +3,7 @@ import {
   useLayoutEffect,
   useRef,
   useState,
+  type CSSProperties,
   type ReactNode,
 } from "react";
 import { Icon } from "../icons.js";
@@ -116,6 +117,17 @@ export interface StreamCardProps {
   /** The delivery badge's whole phrase ("Delivered to Work") — its hover title. */
   mailboxTitle?: string;
   /**
+   * THE COLUMN WIDTH EVERY CARD IN THIS STREAM SHARES, measured ONCE by the stream.
+   *
+   * The height estimate below is a function of it, and the card used to read its own
+   * `offsetWidth` in a layout effect — one forced layout per card, after the previous card's
+   * effect had written a style, so sixty mounted cards cost sixty full layouts of the document,
+   * and most of a switch into a stream went on them. Absent (or 0) keeps the documented fallback:
+   * a card whose width nobody measured reserves {@link STREAM_CARD_FALLBACK_PX}, which is what
+   * jsdom has always got.
+   */
+  estWidthPx?: number;
+  /**
    * THE MESSAGE'S VERBS, at the foot of the card.
    *
    * Optional and default-absent: a card with no bar is exactly the card that shipped before.
@@ -158,6 +170,7 @@ export function StreamCard({
   recipients,
   mailbox,
   mailboxTitle,
+  estWidthPx,
   actions,
 }: StreamCardProps) {
   const [open, setOpen] = useState(false);
@@ -246,33 +259,28 @@ export function StreamCard({
    */
 
   /**
-   * WHY A LAYOUT EFFECT AND NOT A RENDER-TIME VALUE: the estimate is a function of the card's own width, and the
-   * width is only knowable from the element. Containment skips the CONTENTS, not the element's own box, so
-   * `offsetWidth` is real for every mounted card — including one that has never been rendered. `offsetWidth` is 0
-   * under jsdom, and `estimateCardHeight` answers the old 200 for a width of 0, so a card in a unit test reserves
-   * exactly what it reserved before.
+   * WHAT THIS CARD RESERVES, WORKED OUT IN THE RENDER AND WRITTEN WITH THE REST OF ITS STYLE.
+   *
+   * It used to be a layout effect that read this card's own `offsetWidth` and then wrote the
+   * property — a read after the previous card's write, so each of the sixty cards a stream mounts
+   * forced a full layout of the document. The width is the same for every card in a column, so the
+   * stream measures it once and hands it down ({@link StreamCardProps.estWidthPx}); the value is
+   * the same value, and the layout the browser now does once.
    */
-  useLayoutEffect(() => {
-    const card = cardRef.current;
-    if (!card) return;
-    card.style.setProperty(
-      "--sc-est",
-      `${estimateCardHeight({
-        width: card.offsetWidth,
-        subject,
-        preview: body,
-        recipients: recipients != null,
-        pill: !(isShort && !pending),
-        /* The pill's 44px touch size is a `max-width: 640px` media query, which is a fact about
-           the WINDOW rather than about the card — so it is read here and passed in. */
-        touch: typeof window !== "undefined" && window.innerWidth <= 640,
-        /* A card whose body is fetched rather than synced lays out CLAMPED, because `onNear`
-           hydrates it as it approaches — see `clamped`. `showViewer` is the arrived case and
-           `pending` the one on its way; a card carrying its whole body inline is neither. */
-        clamped: showViewer || pending,
-      })}px`,
-    );
-  }, [subject, body, recipients, isShort, pending, showViewer]);
+  const est = estimateCardHeight({
+    width: estWidthPx ?? 0,
+    subject,
+    preview: body,
+    recipients: recipients != null,
+    pill: !(isShort && !pending),
+    /* The pill's 44px touch size is a `max-width: 640px` media query, which is a fact about
+       the WINDOW rather than about the card — so it is read here and passed in. */
+    touch: typeof window !== "undefined" && window.innerWidth <= 640,
+    /* A card whose body is fetched rather than synced lays out CLAMPED, because `onNear`
+       hydrates it as it approaches — see `clamped`. `showViewer` is the arrived case and
+       `pending` the one on its way; a card carrying its whole body inline is neither. */
+    clamped: showViewer || pending,
+  });
 
   const toggle = () => {
     const clip = clipRef.current;
@@ -334,6 +342,8 @@ export function StreamCard({
     <article
       ref={cardRef}
       className={cls}
+      /* `contain-intrinsic-size: auto var(--sc-est, 200px)` in `app.css` reads this. */
+      style={{ "--sc-est": `${est}px` } as CSSProperties}
       data-sid={id}
       data-unseen={unread ? "1" : undefined}
       onClick={() => {

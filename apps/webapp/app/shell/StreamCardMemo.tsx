@@ -11,7 +11,7 @@
  * The guard is `test/stream-rerender.test.tsx`, driven through `presentationReader`.
  */
 
-import { memo, useState, type ReactNode } from "react";
+import { memo, useContext, useState, type ReactNode } from "react";
 import { useTranslations } from "next-intl";
 import type { EngineMessage, MessageBody } from "@ohmail/client-engine";
 import { StreamCard, StreamArt } from "@ohmail/ui";
@@ -19,7 +19,7 @@ import { senderName, displayTime } from "./format";
 import { displayAddress } from "./idn";
 import { MessageActionBar, type MessageAction } from "./MessagePane";
 import { MessageRecipients } from "./MessageRecipients";
-import { FoldTableArt } from "./StreamShell";
+import { FoldTableArt, StreamCardWidth } from "./StreamShell";
 import type { RemoteImagesChrome } from "./remote-images";
 import { MessageBody as MessageBodyView } from "../components/MessageBody";
 import { BlockNoticeGloss, type BlockNotice } from "../components/BlockNotice";
@@ -90,6 +90,10 @@ function StreamCardMemoInner({
 }: StreamCardMemoProps) {
   /* The card's two toggle words. `StreamCard` has none of its own — see `copy-census`. */
   const tm = useTranslations("message");
+  /* CONTEXT AND NOT A PROP: `areEqual` below skips a render whose props are unchanged, and the
+     width arrives once, after the stream has measured it — a context read re-renders the mounted
+     cards for that one change and leaves the comparator alone. */
+  const estWidthPx = useContext(StreamCardWidth);
   /**
    * WHAT THIS MESSAGE HAD REFUSED, as the viewer reports it (`MessageBody.onNotice`) — carried to
    * the card's HEAD as a glyph rather than said as a bar above the body. Internal state, not a
@@ -143,6 +147,9 @@ function StreamCardMemoInner({
   return (
     <StreamCard
       id={m.id}
+      /* The column's width, measured once by the stream rather than by every card — see
+         `StreamCardWidth`. 0 while nothing has measured it, which reserves the fallback. */
+      estWidthPx={estWidthPx}
       from={senderName(m)}
       address={displayAddress(m.from.address)}
       amount={m.amount}

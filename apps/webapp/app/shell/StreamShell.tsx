@@ -9,13 +9,28 @@
  *  - imperative scrollTo(id) for row clicks and j/k.
  */
 import {
+  createContext,
   forwardRef,
   useEffect,
   useImperativeHandle,
+  useLayoutEffect,
   useRef,
+  useState,
   type ReactNode,
 } from "react";
 import { useSeenOnScroll } from "@ohmail/ui";
+
+/**
+ * THE COLUMN WIDTH THE MOUNTED CARDS SHARE, measured once per stream.
+ *
+ * A stream card's height estimate is a function of its width, and each card used to read its own
+ * `offsetWidth` in a layout effect — after the previous card had written a style, so every one of
+ * the sixty cards a stream mounts forced a whole-document layout. Traced over a large mirror:
+ * 180 forced layouts, most of a switch into Reads. The width is one number for the column, so it
+ * is read here, once, and handed down; `0` means "not measured", which is what jsdom and a bare
+ * mount get and reserves the documented fallback.
+ */
+export const StreamCardWidth = createContext(0);
 
 export interface StreamHandle {
   /**
@@ -128,6 +143,27 @@ export const StreamShell = forwardRef<
   }
 >(function StreamShell({ ariaLabel, onCurrentChange, onSeen, onNear, onLeave, pileIndexOf, contentKey, children }, ref) {
   const divRef = useRef<HTMLDivElement>(null);
+  /**
+   * ONE READ FOR THE WHOLE COLUMN — see {@link StreamCardWidth}. A layout effect, so the measured
+   * width is in place before the paint (React flushes the state it sets synchronously); the first
+   * card is the sample because every card in the column is that wide. The `ResizeObserver` is
+   * guarded: jsdom has none, and a stream in a test then keeps the unmeasured fallback.
+   */
+  const [cardWidth, setCardWidth] = useState(0);
+  useLayoutEffect(() => {
+    const el = divRef.current;
+    if (!el) return;
+    const measure = () => {
+      const card = el.querySelector<HTMLElement>(".scast");
+      const w = card?.offsetWidth ?? 0;
+      setCardWidth((prev) => (w > 0 && Math.abs(w - prev) >= 1 ? w : prev));
+    };
+    measure();
+    if (typeof ResizeObserver !== "function") return;
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [contentKey]);
   const rafRef = useRef(0);
   const dwellRef = useRef(0);
   const curRef = useRef<string | null>(null);
@@ -652,7 +688,7 @@ export const StreamShell = forwardRef<
 
   return (
     <div className="stream" ref={divRef} aria-label={ariaLabel}>
-      {children}
+      <StreamCardWidth.Provider value={cardWidth}>{children}</StreamCardWidth.Provider>
     </div>
   );
 });
