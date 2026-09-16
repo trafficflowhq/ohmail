@@ -34,6 +34,14 @@ export type { PressAnswer, PressTally, PressVerdict } from "./press-verdict.js";
 export { CALENDAR_FALLBACK_FILENAME, isCalendarMime } from "@trafficflow/core/ics";
 
 /**
+ * WHICH OF A SENDER'S MAIL A SCREENING PRESS MAY MOVE ITSELF — re-exported from core so the two
+ * client planners (the webapp shell's `sender-screening.ts`, the phone's `live.ts`) ask ONE
+ * question and the fifty they move stay a subset of what the worker's pass would move. Here
+ * because this package is the one both of them compile; the phone reaches core only through it.
+ */
+export { retroPassWouldMove, type RetroCandidateRow } from "@trafficflow/core/destinations";
+
+/**
  * THE PAIRING LINK'S SHAPE — composed by the desktop's Devices pane, parsed by the phone. Here
  * because this is the one package both of those already compile, and a composer and a parser
  * that disagree is a QR code that cannot be scanned with nothing on either machine to look at.

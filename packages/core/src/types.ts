@@ -53,6 +53,38 @@ export function isOrganizedFolder(folder: string): boolean {
   return (DESTINATIONS as readonly string[]).includes(folder);
 }
 
+/** One message, as much of it as the question below reads — the wire's own fields. */
+export interface RetroCandidateRow {
+  /** Where the mailbox has it FILED: the wire's `folder`, which is `folder_state.desired_folder`. */
+  folder: string;
+  /** Set only by a client projection that re-homed `folder` for display; the filed folder wins. */
+  physicalFolder?: string;
+  /** The `message_states` row, or absent/null for a message with none. */
+  triage?: { state: string } | null;
+}
+
+/**
+ * WOULD THE SERVER'S RETRO PASS MOVE THIS MESSAGE — the one definition both clients ask.
+ *
+ * A screening press moves up to fifty messages from the client so the rows on screen land at once,
+ * and `apps/worker/src/rule-retro.ts#selectCandidates` applies the rule to the rest. Those fifty
+ * must be a SUBSET of the pass's set or the press undoes filing the pass would never touch: the
+ * clients filtered on the destination alone and so moved mail out of a customer's own folders and
+ * mail set aside, over a caption promising both were left alone.
+ *
+ * Three of the pass's clauses are facts the mirror carries — the allow-list over the six folders
+ * ohmail organizes, the destination idempotency, and no triage. Four are NOT on the wire and the
+ * client cannot ask them: a placement recorded as the person's own hand (`last_set_by 'external'`),
+ * a draft replying to it, a decided AI approval, and their own reply in the thread. Those keep the
+ * relation a subset rather than an equality, and stay the pass's alone.
+ */
+export function retroPassWouldMove(row: RetroCandidateRow, destination: string): boolean {
+  const filed = row.physicalFolder ?? row.folder;
+  if (!isOrganizedFolder(filed)) return false;
+  if (filed === destination) return false;
+  return (row.triage?.state ?? "none") === "none";
+}
+
 /**
  * User-commanded folder names — the shared validator (FOLDERS-SPEC.md stage 2). Create/rename
  * take a canonical `/`-joined path chosen by the user, and the client (the honest sentence before
