@@ -105,6 +105,25 @@ export async function fenceErased(tx: Tx, d: Dialect, scope: FenceScope): Promis
 }
 
 /**
+ * THE MAILBOX ARM, ASKED ALONE — for a write whose ACCOUNT arm is already structural.
+ *
+ * A row with a NOT NULL key to `mailboxes` cannot outlive the ACCOUNT sweep, which deletes that
+ * parent; the MAILBOX sweep leaves it standing as the tombstone, so the stamp is the only thing
+ * such a write can be refused by. Asking the account again would read a row the caller already
+ * holds and — after the mailbox row is taken — would cross {@link fenceErased}'s order. This takes
+ * the mailbox row alone, so a caller that already holds it adds no lock at all.
+ *
+ * Use it ONLY where the account arm is structural: `erasure-fence-census.test.ts` derives that
+ * from the schema and refuses a door that asks the mailbox alone without it.
+ */
+export async function fenceErasedMailbox(
+  tx: Tx, d: Dialect, mailboxId: string, mode: LockMode = "share",
+): Promise<void> {
+  const erasedAt = await readMailboxErasedAt(tx, d, mailboxId, mode);
+  if (erasedAt != null) throw new MailboxErasedError(mailboxId);
+}
+
+/**
  * THE SEAM. Opens a transaction, fences it, and runs the write inside it — the one door every
  * account-scoped writer in the open server goes through, so that remembering the call is not what
  * the person's erasure rests on.

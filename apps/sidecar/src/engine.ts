@@ -23,6 +23,8 @@ import {
   accountSettings, closeStoodDownAppointments, exportPendingMovesOnStandDown,
   RELEASED_ORGANIZER_SEND_SENTENCE,
   mailboxCredentials, mailboxes,
+  // The erasure fence's mailbox arm — one module for both doors, the sign-out fence's rule.
+  fenceErasedMailbox,
   // Mail 0083 — the role vocabulary and the machine-name bound. One spelling for the sidecar's
   // gate, the worker's gate and the eleven service write doors; see `db/src/organizer-role.ts`.
   organizerDisplayName, isOrganizerRole, capabilitiesColumn,
@@ -2505,6 +2507,11 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           const sealed = await keyProvider.encrypt(envPass);
           await db.transaction(async (tx) => {
             await fenceSignedOutMailbox(tx as unknown as Tx, dialect(db), mb.id, sealOrigin);
+            /* AND THE ERASURE FENCE, on the row the sign-out fence just took, so it costs no
+               lock. A removal leaves the `mailboxes` row as its tombstone, so this row's key to
+               it refuses the ACCOUNT sweep and nothing else: without this, a relaunch reseals
+               the passwords of a mailbox somebody erased. */
+            await fenceErasedMailbox(tx as unknown as Tx, dialect(db), mb.id);
             await tx.insert(mailboxCredentials).values({
               mailboxId: mb.id,
               transport: "imap",
@@ -6610,6 +6617,9 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
             };
             await db.transaction(async (tx) => {
               await fenceSignedOutMailbox(tx as unknown as Tx, dialect(db), seedRow.id, copyOrigin);
+              // The erasure fence, the seal's note above — this copies the same secret onto a
+              // second transport, so an erased mailbox must refuse it for the same reason.
+              await fenceErasedMailbox(tx as unknown as Tx, dialect(db), seedRow.id);
               await tx.insert(mailboxCredentials).values({
                 mailboxId: seedRow.id,
                 transport: "smtp",

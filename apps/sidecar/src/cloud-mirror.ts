@@ -1,7 +1,10 @@
 import { closeSync, fsyncSync, openSync, readFileSync, rmSync, writeFileSync, writeSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { and, asc, desc, eq, gt, inArray, isNull, ne, notInArray, sql } from "drizzle-orm";
+import { dialect, type Dialect } from "@trafficflow/db/dialect";
 import { recordChange, recordChanges, accountSettings, CAPABILITY_REQUESTS,
+  // The erasure fence's mailbox arm — the replay writes rows one mailbox owns.
+  fenceErasedMailbox,
 } from "@trafficflow/db";
 import {
   approvals, attachments, drafts, flagState, folderState, mailboxCredentials, mailboxFolders,
@@ -911,6 +914,12 @@ async function applyLabels(tx: Tx, world: LocalWorld, messageId: string, labels:
  */
 async function applyUpsert(
   tx: Tx,
+  /**
+   * This store's dialect, for the erasure fence's row read — a transaction object carries no
+   * brand. `dia` and not `d`: the draft arm below names its DTO `d`, and one letter reused
+   * across a switch that long is how the wrong value gets read.
+   */
+  dia: Dialect,
   world: LocalWorld,
   ch: SyncChange,
   now: Date,
@@ -960,6 +969,12 @@ async function applyUpsert(
       const f = ch.entity as { id?: string; name?: string; mailboxId?: string } | undefined;
       if (!f?.name || !f.mailboxId) return false;
       if (!known.has(f.mailboxId)) return false;
+      /* AND THE MAILBOX'S OWN TOMBSTONE. `known` holds tombstones too — attributing mail to a
+         different mailbox is the one thing this may never do — so membership is not liveness: a
+         mailbox erased on THIS install keeps its row, and this row's key to it refuses only the
+         account sweep. Asked inside the page's transaction, which is where the local erasure
+         commits its own deletes. */
+      await fenceErasedMailbox(tx, dia, f.mailboxId);
       await tx.insert(mailboxFolders).values({
         id: ch.id, mailboxId: f.mailboxId, folder: f.name, updatedAt: now,
       }).onConflictDoUpdate({
@@ -1006,6 +1021,12 @@ async function applyUpsert(
           .values({ id: m.threadId, accountId: world.accountId, updatedAt: now })
           .onConflictDoNothing({ target: threads.id });
       }
+      /* And the tombstone — the folder arm's note, same key. AFTER the stub and immediately
+         before the mail: a thread row belongs to the ACCOUNT, and this arm asks about the
+         MAILBOX, so fencing the stub on it would be a refusal aimed at the wrong erasure (the
+         census prints exactly that). Nothing is written either way — a refusal here takes the
+         whole page's transaction, stub included. */
+      await fenceErasedMailbox(tx, dia, m.mailboxId);
       const display = {
         /* THE ATTRIBUTION, AND IT IS IN THE CONFLICT SET FOR A REASON. This object is both the
            insert's display half and the `onConflictDoUpdate` set; `mailbox_id` used to be in
@@ -1168,6 +1189,9 @@ async function applyUpsert(
           .values({ id: d.threadId, accountId: world.accountId, updatedAt: now })
           .onConflictDoNothing({ target: threads.id });
       }
+      // And the tombstone — the message arm's note, same key and same placement: a draft is the
+      // person's own unsent words, and an erased mailbox is not where they go back.
+      await fenceErasedMailbox(tx, dia, d.mailboxId);
       // `in_reply_to_message_id` has an FK; keep it only when the parent is mirrored. A draft
       // whose parent is absent still lands (user writing is never dropped) but lands DEGRADED —
       // reported as `"partial"` below so the stale-resume freshen's supersession ledger never
@@ -1469,7 +1493,7 @@ async function applyPage(
     for (const type of APPLY_ORDER) {
       for (const ch of nonDeletes) {
         if (ch.type !== type) continue;
-        const outcome = await applyUpsert(tx, world, ch, now, gen, known);
+        const outcome = await applyUpsert(tx, dialect(db), world, ch, now, gen, known);
         if (outcome) {
           // Every entity keeps its hosted id verbatim — EXCEPT the settings row, whose id IS an
           // account id, and the one identity the two worlds do not share is the account's own:
@@ -1645,7 +1669,7 @@ async function applyTagBackfill(
       if (ch.type !== "tag" || ch.op === "delete") continue;
       // A tag names no mailbox, so the empty set below is not a shortcut — it is the honest
       // statement that this repair touches nothing a mailbox id could gate.
-      if (await applyUpsert(tx, world, ch, now, null, EMPTY_MAILBOXES)) {
+      if (await applyUpsert(tx, dialect(db), world, ch, now, null, EMPTY_MAILBOXES)) {
         await recordChange(tx, { accountId: world.accountId, entityType: "tag", entityId: ch.id, op: "create", meta: null });
         tagCount++;
       }
@@ -2454,7 +2478,7 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
     const knownHere = new Set(knownRows.map((r) => r.id));
     await cfg.db.transaction(async (tx) => {
       for (const ch of folderChanges) {
-        if (await applyUpsert(tx, cfg.world, ch, now(), null, knownHere)) {
+        if (await applyUpsert(tx, dialect(cfg.db), cfg.world, ch, now(), null, knownHere)) {
           await recordChange(tx, {
             accountId: cfg.world.accountId, entityType: "folder", entityId: ch.id, op: "create", meta: null,
           });

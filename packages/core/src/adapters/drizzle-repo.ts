@@ -1,6 +1,6 @@
 import { and, asc, desc, eq, inArray, isNull, lte, or, sql, type SQL, type SQLWrapper } from "drizzle-orm";
 import type { AnyPgColumn } from "drizzle-orm/pg-core";
-import { accountStorage, changeLog, messages, messageInstances, messageFailures, folderOps, folderState, flagState, mailboxes, mailboxCredentials, mailboxFolders, threads, rules as rulesTbl, contacts as contactsTbl, auditLog, messageBodies, attachments as attachmentsTbl, routingDecisions, approvals, graduations, recordRouteOverride, routeOverrideActionId, awayReplies, awaySenderState, recordChange as recordChangeTx, recordChanges as recordChangesTx, type MailboxMustBeLive, bodyBytesOf, reserveBodyBytes, reserveBodyBytesEvicting, releaseBodyBytes, type ChangeInput, type LedgerTx, type Tx, type EntityType, auditAction, ACCOUNT_THREAD_STRUCTURE_LOCK_CLASS, dueNow as sharedDueNow, type FilingRefusalClass } from "@trafficflow/db";
+import { accountStorage, changeLog, fenceErasedMailbox, messages, messageInstances, messageFailures, folderOps, folderState, flagState, mailboxes, mailboxCredentials, mailboxFolders, threads, rules as rulesTbl, contacts as contactsTbl, auditLog, messageBodies, attachments as attachmentsTbl, routingDecisions, approvals, graduations, recordRouteOverride, routeOverrideActionId, awayReplies, awaySenderState, recordChange as recordChangeTx, recordChanges as recordChangesTx, type MailboxMustBeLive, bodyBytesOf, reserveBodyBytes, reserveBodyBytesEvicting, releaseBodyBytes, type ChangeInput, type LedgerTx, type Tx, type EntityType, auditAction, ACCOUNT_THREAD_STRUCTURE_LOCK_CLASS, dueNow as sharedDueNow, type FilingRefusalClass } from "@trafficflow/db";
 import type {
   RepoPort, RoutingPort, ExternalOverrideInput, ExternalOverrideOutcome,
   StoredMessage, InsertedMessage, InsertMessageInput, FolderStateRow, FlagStateRow,
@@ -715,6 +715,14 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
   }
 
   async insertMessage(input: InsertMessageInput): Promise<InsertedMessage> {
+    /* THE MAILBOX TOMBSTONE, FIRST AND IN THIS TRANSACTION. The row's key to `mailboxes` refuses
+       the account sweep, which deletes that parent — and nothing at all for the mailbox's own
+       erasure, which leaves the row standing. First because that is the lock order every writer
+       here holds: the erasure takes the mailbox row and then this mailbox's messages, so a
+       writer holding a message row and asking afterwards is its deadlock partner. This branch
+       has written nothing yet — a plan carrying a dedup-key upgrade always names an EXISTING
+       row, so `new` never reaches here with a `messages` row already held. */
+    await fenceErasedMailbox(this.db as unknown as Tx, this.d, input.mailboxId);
     const inserted = await this.db.insert(messages).values({
       accountId: input.accountId, mailboxId: input.mailboxId,
       messageIdHeader: input.canonical.messageIdHeader,
@@ -895,6 +903,9 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
    * alternative is a resolved row silently shadowing a live failure.
    */
   async recordMessageFailure(mailboxId: string, input: MessageFailureInput): Promise<number> {
+    // The mailbox tombstone — `insertMessage`'s note, same key and same order. The cycle's own
+    // `fencedLiveGroup` has already taken this row in this transaction, so this adds no lock.
+    await fenceErasedMailbox(this.db as unknown as Tx, this.d, mailboxId);
     const now = new Date();
     const [row] = await this.db.insert(messageFailures).values({
       accountId: input.accountId,
@@ -2172,6 +2183,8 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
      * is nullable because NULL means never opened under this build, a different fact from zero.
      */
     const exists = cursor.serverExists;
+    // The mailbox tombstone — `insertMessage`'s note, same key and same order.
+    await fenceErasedMailbox(this.db as unknown as Tx, this.d, mailboxId);
     await this.db.insert(mailboxFolders).values({
       mailboxId, folder,
       uidvalidity: BigInt(cursor.uidValidity), uidnext: BigInt(cursor.uidNext), highestmodseq: BigInt(cursor.highestModseq),

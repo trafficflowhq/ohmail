@@ -57,7 +57,7 @@ export {
 // every such writer fences first. `packages/services/src/erasure-fence.ts#fenceErasedAccount` now
 // calls this and converts the answer to a `ServiceError`.
 export {
-  readAccountErasedAt, readMailboxErasedAt, fenceErased, fencedAccountWrite,
+  readAccountErasedAt, readMailboxErasedAt, fenceErased, fenceErasedMailbox, fencedAccountWrite,
   AccountErasedError, MailboxErasedError, type FenceScope,
 } from "./erasure-fence.js";
 

@@ -2,6 +2,7 @@ import { and, asc, desc, eq, inArray, isNotNull, ne, or, sql, type SQL } from "d
 import { carryDialect, dialect } from "@trafficflow/db/dialect";
 import {
   assertOrganizerRole,
+  fenceErasedMailbox,
   mailboxes, mailboxCredentials, mailboxFolders, folderState, messages, accountSettings,
   isMailboxDisabledReason, isMailboxSyncBlockReason,
   isOrganizerRole, isOrganizerKind, isOrganizerState,
@@ -2436,6 +2437,13 @@ export class MailboxService {
        a sign-out has already overtaken is not brought into memory as ciphertext for a row that is
        about to be refused. `signed-out-fence.ts` carries the argument. */
     await fenceSignedOutMailbox(tx, dialect(ctx.db), mailboxId, origin);
+    /* AND THE ERASURE FENCE, on the same row the line above just took, so it costs no lock. A
+       removal leaves the `mailboxes` row as the tombstone, so the key this row hangs off refuses
+       the ACCOUNT sweep and says nothing about the mailbox's own: without this a credential
+       re-minted for an erased mailbox is a live way back into it. Before the encrypt, the
+       sign-out fence's reason verbatim — a password for a mailbox that is gone is not brought
+       into memory as ciphertext. */
+    await fenceErasedMailbox(tx, dialect(ctx.db), mailboxId);
     const { ciphertext, keyVersion } = await kp.encrypt(pass);
     const meta = Object.keys(metaIn).length > 0 ? metaIn : undefined;
     const now = ctx.now();
