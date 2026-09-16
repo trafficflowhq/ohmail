@@ -968,12 +968,10 @@ export const CLOCK_CORRECTION_TOLERANCE_MS = 1_000;
  * two clocks advance together unless something SETS the wall one, so a step is `|Δwall − Δmono|`
  * over the tolerance.
  *
- * A COUNT AND NOT A ONE-SHOT: a process organizes SEVERAL mailboxes and a correction is about all
- * of them, so a boolean spent by the first reader would leave every other mailbox refusing for
- * ever. Each runtime latches the count it has acted on.
- *
- * Generous on purpose — a resumed laptop reads as a correction, and the BOUND is what makes that
- * safe: a spurious count buys one renewal, exactly as an honest one does.
+ * A COUNT AND NOT A ONE-SHOT: a process organizes SEVERAL mailboxes, so a boolean spent by the
+ * first reader would leave every other one refusing for ever. Each runtime latches the count it
+ * has acted on. Generous on purpose — a resumed laptop reads as a correction, and the BOUND makes
+ * that safe: a spurious count buys one renewal, exactly as an honest one does.
  */
 export function makeClockCorrectionWatch(opts: {
   wall?: () => number; mono?: () => number; toleranceMs?: number;
