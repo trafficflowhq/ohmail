@@ -2816,7 +2816,16 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends flatpak
+          # THE RUNTIMES GO SYSTEM-WIDE; THE BUILDER DOES NOT. flatpak-builder runs inside the
+          # org.flatpak.Builder sandbox and resolves the runtime, the sdk and every sdk-extension
+          # from in there. That sandbox reaches /var/lib/flatpak; it cannot be relied on to read
+          # the per-user installation, and on this runner's flatpak it does not — not even with
+          # FLATPAK_USER_DIR handed to it, which is why every build here died `Failed to init:
+          # Unable to find sdk` while the install step above reported success. System-wide is the
+          # install this repository's README gives a reader, and it is the one measured working.
           flatpak remote-add --user --if-not-exists flathub \
+            https://dl.flathub.org/repo/flathub.flatpakrepo
+          sudo flatpak remote-add --system --if-not-exists flathub \
             https://dl.flathub.org/repo/flathub.flatpakrepo
 
           M=apps/desktop/flatpak/app.ohmail.Desktop.yml
@@ -2826,7 +2835,8 @@ jobs:
           ' "$M")"
           echo "the manifest asks for GNOME $RUNTIME_VERSION"
 
-          flatpak install -y --user flathub org.flatpak.Builder \
+          flatpak install -y --user flathub org.flatpak.Builder
+          sudo flatpak install -y --system flathub \
             "org.gnome.Platform//$RUNTIME_VERSION" "org.gnome.Sdk//$RUNTIME_VERSION" \
             org.freedesktop.Sdk.Extension.rust-stable//25.08 \
             org.freedesktop.Sdk.Extension.node22//25.08
@@ -2834,11 +2844,6 @@ jobs:
           # GNOME 49 and 50, read from the Platform's own GL extension versions. It is spelled
           # here rather than derived because a wrong branch is a loud failure: flatpak-builder
           # resolves the extension from the SDK and refuses a build when it is not installed.
-
-          # flatpak-builder runs INSIDE org.flatpak.Builder, whose own XDG_DATA_HOME is not the
-          # user's — so the nested flatpak sees only the system installation and reports the SDK
-          # as not installed. Every step below that reaches the builder passes this.
-          echo "FLATPAK_USER_DIR=$HOME/.local/share/flatpak" >> "$GITHUB_ENV"
 
       # Every tool this job SPAWNS, asserted by name before the subject starts —
       # a missing one otherwise reads as the app failing rather than the runner.
@@ -2880,22 +2885,32 @@ jobs:
       # checkout. What --sandbox would have enforced — that no module carries
       # `build-args` to open a network — is asserted offline in
       # test/flatpak-manifest.test.ts instead.
-      # THE VARIABLE IS PASSED INTO THE SANDBOX, not just exported. `GITHUB_ENV` sets it for the
-      # step's own shell, and `flatpak run` starts a NEW sandbox that does not inherit it — so the
-      # nested flatpak-builder looked for the SDK in its own XDG_DATA_HOME, found none, and died
-      # `Failed to init: Unable to find sdk org.gnome.Sdk version 50` before a single source was
-      # resolved. Every release since this job was added failed there.
       - name: Resolve every declared source
         run: |
-          flatpak run --env=FLATPAK_USER_DIR="$HOME/.local/share/flatpak" \
-            --command=flatpak-builder org.flatpak.Builder \
+          flatpak run --command=flatpak-builder org.flatpak.Builder \
             --user --force-clean --download-only \
             flatpak-build apps/desktop/flatpak/app.ohmail.Desktop.yml
 
+      # WHAT THE BUILDER CAN SEE, ASKED BEFORE THE BUILD DEPENDS ON IT. Stopping at the first
+      # module initialises the build directory — the step that needs the runtime, the sdk and
+      # every sdk-extension — and builds nothing. A ref the builder cannot reach refuses here,
+      # naming the installation it was looked for in, rather than arriving as a bare
+      # `Failed to init` out of a step whose subject is supposed to be the app. `flatpak info`
+      # is not the question to ask: the flatpak inside that sandbox and the builder beside it
+      # disagree about what is installed, and the builder is the one that decides.
+      - name: The runtime the manifest names is visible to the builder
+        run: |
+          M=apps/desktop/flatpak/app.ohmail.Desktop.yml
+          FIRST=$(sed -n 's/^  - name: //p' "$M" | head -1)
+          [ -n "$FIRST" ] || { echo "no module name could be read out of $M" >&2; exit 1; }
+          flatpak run --command=flatpak-builder org.flatpak.Builder \
+            --user --force-clean --disable-download --stop-at="$FIRST" \
+            flatpak-init "$M" \
+            || { echo "the runtime, the sdk or an sdk-extension $M names is not installed where flatpak-builder looks" >&2; exit 1; }
+
       - name: Build the Flatpak, with nothing left to fetch
         run: |
-          flatpak run --env=FLATPAK_USER_DIR="$HOME/.local/share/flatpak" \
-            --command=flatpak-builder org.flatpak.Builder \
+          flatpak run --command=flatpak-builder org.flatpak.Builder \
             --user --force-clean --disable-download \
             --repo=flatpak-repo \
             flatpak-build apps/desktop/flatpak/app.ohmail.Desktop.yml
