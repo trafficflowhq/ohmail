@@ -21,7 +21,8 @@ export { withAccountTx } from "./context.js";
  * truth about itself. */
 export type { CloudDb } from "./context-cloud.js";
 export {
-  SyncService, syncService, SNAPSHOT_WINDOW, SNAPSHOT_DRAFT_PAGE, assertSnapshotWindow,
+  SyncService, syncService, SNAPSHOT_WINDOW, SNAPSHOT_DRAFT_PAGE, SNAPSHOT_FIRST_PAGE_MESSAGES,
+  assertSnapshotWindow,
   STALE_COALESCE_SPAN, COALESCE_SCAN_WINDOW,
   type GetChangesOptions, type GetSnapshotOptions,
 } from "./sync-service.js";
