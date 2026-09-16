@@ -53,6 +53,7 @@ import {
   type NotificationHost,
   type PushSyncOutcome,
 } from "../shell/notification-settings";
+import { isDemoOwned, storageOwner } from "../shell/storage-owner";
 import { useZoneNav } from "../shell/zone-nav";
 import { RulesView, type RuleOutcome } from "./RulesView";
 
@@ -791,6 +792,15 @@ export function SettingsView({
    * prints warnings is one where a real one is not noticed.
    */
   useEffect(() => {
+    /* NOT ON THE DEMO. The landing embeds the real client at `/demo` on the SAME ORIGIN, and the
+       rail's Settings entry is not demo-masked, so this pane mounts inside the visitor's own
+       session over their un-owned `ohmail.notifications.subscription*` keys. Measured: the
+       reconcile sent `DELETE /push/subscriptions/<their row>` and cleared both keys — a
+       cookie-authenticated write from the surface that says nothing leaves the tab. The shell's
+       boot door already refuses this (`AppShell`, `resolvedDemo`); this is its other half. The
+       press below needs no such gate: its switches render only under `!notifications`, and that
+       `view_meta` row exists in the fixture world alone. */
+    if (isDemoOwned(storageOwner())) return;
     let alive = true;
     const wanted = subscriptionWanted(notifyChannels, notifyPermission);
     void applyWakeIntent(notificationHost, wanted, t("notifyClosedBody")).then((o) => {
