@@ -657,7 +657,10 @@ function ComposeSheet({
       return;
     }
     void (async () => {
-      const said = afterWithdraw(await w.actions.withdrawSend(queuedKey!));
+      const key = queuedKey!;
+      // The verdict is read AFTER the withdrawal answers, not before it: a flush can settle
+      // under the await, and the fresher reading is the one this press is owed.
+      const said = afterWithdraw(await w.actions.withdrawSend(key), w.sendOutcome(key));
       if (said === "close") onClose();
       else setAlreadySent(true);
     })();

@@ -40,11 +40,22 @@ export function cancelAct(o: {
 export type CancelSaid = "close" | "already_sent";
 
 /**
- * THE ANSWER, RENDERED. `withdrawn` is the cancellation and the sheet goes. `gone` is a key the
- * queue no longer holds — the flush ledger has already said what became of it, so this press has
- * nothing to add and the sheet goes too. `on_the_wire` withdrew NOTHING: the request has left and
- * this device cannot un-send it, which is a sentence the person is owed rather than a silent close.
+ * What the flush ledger says became of this key — `World.sendOutcome`'s answer, restated here for
+ * the reason {@link WithdrawAnswer} is, and pinned mutually assignable in the same test.
  */
-export function afterWithdraw(outcome: WithdrawAnswer): CancelSaid {
-  return outcome === "on_the_wire" ? "already_sent" : "close";
+export type SendVerdict = "pending" | "confirmed" | "rolled_back" | "unverified" | "unknown";
+
+/**
+ * THE ANSWER, RENDERED. `withdrawn` is the cancellation and the sheet goes. `on_the_wire`
+ * withdrew NOTHING: the request has left and this device cannot un-send it, which is a sentence
+ * the person is owed rather than a silent close.
+ *
+ * `gone` is a key the queue no longer holds, and it means one of two things. A flush that already
+ * DELIVERED it leaves this press nothing to cancel — and closing in silence made the flush's own
+ * toast, which may long since have gone, the only notice the message ever went. So the ledger's
+ * verdict is read at the press: a confirmed send says it was sent, and everything else closes.
+ */
+export function afterWithdraw(outcome: WithdrawAnswer, settled: SendVerdict = "unknown"): CancelSaid {
+  if (outcome === "on_the_wire") return "already_sent";
+  return outcome === "gone" && settled === "confirmed" ? "already_sent" : "close";
 }
