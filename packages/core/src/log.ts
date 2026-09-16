@@ -214,6 +214,11 @@ export const ALLOWED_FIELDS: readonly string[] = [
   // a clock, naming no mailbox and no message — and it is the only number that says which of the
   // two arms a cold start took and what the ordering cost the mail.
   "waitedMs",
+  // AND WHAT ONE BOOTSTRAP PAGE COST THE SERVER (`snapshot_page`), added WITH its call site. One
+  // `Date.now()` delta beside the frame's own `bytes`, which is already above: together they are
+  // the page count, the page size and the server's time per page that a shipped build could not
+  // answer at all. Integers from a clock and a `.length`, naming no mailbox and no message.
+  "pageMs",
   // WHAT THE DRAIN ACTUALLY DID, on the same line and added WITH its call site. `observed` is the
   // number of changes the adapter handed over; `cursorBuilds` the cursor builds the cycles ran,
   // `locatorReads` the ones that went to the store for the whole projection, `locatorRows` the rows

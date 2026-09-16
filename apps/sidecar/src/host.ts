@@ -81,15 +81,24 @@ export function serveOverStdio(opts: StdioHostOptions): StdioHost {
     inFlight++;
     void (async () => {
       try {
+        const startedAt = Date.now();
         const res = await opts.handle(decodeRequest(header, body));
         const framed = await encodeResponse(header.id, res, maxBody);
         await writer.write(framed.header, framed.body);
-        /* THE BOOTSTRAP'S FIRST PAGE HAS LANDED — release the first drain, which has been holding
-           the connection's transactions off it. AFTER the write and not before it, because what
-           the gate promises is a page the window HAS. The route alone decides: a cold start's
-           first snapshot call is page 1 by construction (no cursor), so nothing here has to read
-           the query, which `describeRoute` drops for the reason its header gives. */
-        if (describeRoute(header.url) === SNAPSHOT_ROUTE) noteFirstPageServed();
+        if (describeRoute(header.url) === SNAPSHOT_ROUTE) {
+          /* WHAT THE BOOTSTRAP COST, ONE LINE PER PAGE. The cold-start path logged NOTHING — a
+             `snapshot` grep over a whole run's log read zero — so page count, page size and the
+             server's time per page were invisible on a shipped build and every reading about the
+             start had to come off a rig. Both numbers are already here and cost nothing: the
+             frame is encoded, so `bytes` is a `.length`, and `pageMs` is one clock delta. Counts and
+             durations only; the body is never read and the query never reaches the log. */
+          log("snapshot_page", { pageMs: Date.now() - startedAt, bytes: framed.body.length });
+          /* AND THE FIRST DRAIN IS RELEASED — it has been holding the connection's transactions
+             off this page. AFTER the write, because what the gate promises is a page the window
+             HAS. A cold start's first snapshot call is page 1 by construction (no cursor), so the
+             route alone decides and nothing here reads the query. */
+          noteFirstPageServed();
+        }
       } catch (err) {
         const detail: ErrorHeader = {
           v: PROTOCOL_VERSION,
