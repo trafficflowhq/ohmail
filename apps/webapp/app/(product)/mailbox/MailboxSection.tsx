@@ -41,6 +41,7 @@ import {
    stage lives in the shared shell above every pane, so a person who opens it from here keeps the
    app behind it and lands back in this pane when they leave. */
 import { goFirstRun } from "../../shell/routing";
+import { useCeremonyGeneration } from "../ceremony-generation";
 import {
   ApiError,
   apiConfigured,
@@ -660,6 +661,14 @@ export function MailboxSection() {
   /** The pane can be navigated away from mid-ceremony; nothing may set state after that. */
   const alive = useRef(true);
   useEffect(() => () => { alive.current = false; }, []);
+
+  /**
+   * THE CEREMONY'S GENERATION, the same one the account erase runs on. Back used to leave the
+   * verify in flight, so a response landing after the press still removed, edited, connected or
+   * took over a mailbox — the ceremony was over and the closure did not know. Both factor paths
+   * capture it before their first `await` and `finishCeremony` is the one door that compares.
+   */
+  const ceremony = useCeremonyGeneration();
 
   /**
    * LATEST WINS — a response is applied only if it is NEWER than what is displayed.
@@ -1435,6 +1444,8 @@ export function MailboxSection() {
   };
 
   const fail = (err: unknown): void => {
+    // A failed ceremony is over: end it, so a response landing later cannot act on it either.
+    ceremony.end();
     if (!alive.current) return;
     setError(messageOf(err));
     // The window closed mid-ceremony. Back to the FACTOR step, with the typed credentials
@@ -1634,9 +1645,17 @@ export function MailboxSection() {
    * PATCHes, else it creates. `takeoverFor` is read FIRST and the four are mutually exclusive by
    * construction — each is entered from a resting list.
    */
-  const finishCeremony = (): Promise<void> =>
-    (takeoverFor ? finishTakeover(takeoverFor)
+  const finishCeremony = async (gen: number): Promise<void> => {
+    // THE ONE DOOR. A verify that lands after Back performs nothing and says so — the mailbox
+    // write is reversible, which is why this was a row and not the erase's fix, but "reversible"
+    // is not "asked for": nobody consented to a take-over they backed out of.
+    if (!ceremony.claim(gen)) {
+      setBusy(false);
+      return;
+    }
+    await (takeoverFor ? finishTakeover(takeoverFor)
       : removing ? removeMailbox() : editing ? saveEdit() : connect());
+  };
 
   const submitPassword = (e: React.FormEvent): void => {
     e.preventDefault();
@@ -1669,12 +1688,15 @@ export function MailboxSection() {
     if (!challenge) return;
     setBusy(true);
     setError(null);
+    // BEFORE the first await: this closure's identity is the ceremony it started in, never
+    // whichever one is current when its response happens to land.
+    const gen = ceremony.begin();
     void (async () => {
       try {
         const { options } = await auth.webauthnAssertOptions({ loginToken: challenge.loginToken });
         const credential = await assertPasskey(options);
         await auth.webauthnAssertVerify({ loginToken: challenge.loginToken, credential });
-        await finishCeremony();
+        await finishCeremony(gen);
       } catch (err) {
         fail(err);
       }
@@ -1686,6 +1708,9 @@ export function MailboxSection() {
     if (!challenge) return;
     setBusy(true);
     setError(null);
+    // Same capture as the passkey path — a SEPARATE path, so a fix to one of them would be
+    // half-applied by construction.
+    const gen = ceremony.begin();
     void (async () => {
       try {
         if (method === "recovery_code") {
@@ -1694,7 +1719,7 @@ export function MailboxSection() {
           await auth.totpVerify({ loginToken: challenge.loginToken, code: code.trim() });
         }
         setCode("");
-        await finishCeremony();
+        await finishCeremony(gen);
       } catch (err) {
         fail(err);
       }
@@ -2402,6 +2427,12 @@ export function MailboxSection() {
       ) : null}
 
       {error ? <p className="acct-warn" role="alert">{error}</p> : null}
+      {/* The check came back after Back was pressed and was thrown away. Not an alert — the
+          person got what they asked for — but it must be SAID: the pane they return to looks
+          exactly like one where nothing was ever started. */}
+      {ceremony.discarded ? (
+        <p className="acct-warn" role="status">{t("cancelledNothingChanged")}</p>
+      ) : null}
       {/* A settled outcome, not an alert. `role="status"` so it is announced without interrupting. */}
       {notice ? <p className="acct-lead" role="status">{notice}</p> : null}
 
@@ -2853,9 +2884,13 @@ export function MailboxSection() {
                 list that row is on, and the ask is dropped with it rather than left standing
                 against the next factor somebody verifies for something else. */}
             <Button onClick={() => {
+              // THE BUMP COMES FIRST — it is what makes a request already in flight discard its
+              // result; everything after it is housekeeping. `busy` is released here too, or a
+              // ceremony left mid-request leaves Continue disabled with nothing to re-enable it.
+              ceremony.end();
               if (takeoverFor) setTakeoverFor(null);
               setStage(takeoverFor ? "list" : removing ? "remove" : editing ? "edit" : "form");
-              setPassword(""); setError(null);
+              setPassword(""); setError(null); setBusy(false);
             }}>
               {t("back")}
             </Button>
@@ -2918,7 +2953,12 @@ export function MailboxSection() {
                 the mailbox form is untouched and is still waiting behind it. */}
             <button
               type="button" className="join-alt"
-              onClick={() => { setChallenge(null); setCode(""); setError(null); setStage("password"); }}
+              onClick={() => {
+                // Same rule as the password step above, and this is the press the row was
+                // filed against: a verify already on the wire must not write a mailbox.
+                ceremony.end();
+                setChallenge(null); setCode(""); setError(null); setBusy(false); setStage("password");
+              }}
             >
               {t("back")}
             </button>

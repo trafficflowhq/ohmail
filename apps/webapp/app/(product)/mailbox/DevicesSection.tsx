@@ -103,6 +103,13 @@ export function DevicesSection() {
    */
   const [stepUp, setStepUp] = useState<{ kind: Exclude<Busy, null>; fn: () => Promise<void> } | null>(null);
   /**
+   * A factor landed after the prompt's Cancel and was discarded, so the parked verb never ran.
+   * Said HERE rather than in the prompt: Cancel hands the pane back, so by the time the response
+   * lands there is no prompt left to read a sentence off, and a device list that looks unchanged
+   * is exactly what it looks like when a verb DID run and changed nothing.
+   */
+  const [stepUpDiscarded, setStepUpDiscarded] = useState(false);
+  /**
    * May the plain-browser remainder collapse into one group with a bulk sign-out?
    * Hosted/self-host only, decided by the server's own `/hello` flavor: on a DESKTOP-HOST
    * door the device-less non-current session is the host's own launch session and the bulk
@@ -169,6 +176,7 @@ export function DevicesSection() {
       void (async () => {
         setBusy(kind);
         setError(null);
+        setStepUpDiscarded(false);
         try {
           await fn();
           if (alive.current) setStepUp(null);
@@ -292,6 +300,11 @@ export function DevicesSection() {
           {error}
         </p>
       ) : null}
+      {stepUpDiscarded ? (
+        <p className="acct-warn" role="status">
+          {t("stepUpCancelledNothingRan")}
+        </p>
+      ) : null}
 
       {stepUp ? (
         // The inline ceremony. It REPLACES the add-a-device block below while it runs (one
@@ -304,6 +317,7 @@ export function DevicesSection() {
             if (parked) run(parked.kind, parked.fn);
           }}
           onCancel={() => setStepUp(null)}
+          onDiscarded={() => setStepUpDiscarded(true)}
         />
       ) : null}
 

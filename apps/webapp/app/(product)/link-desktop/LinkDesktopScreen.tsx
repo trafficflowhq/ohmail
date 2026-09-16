@@ -40,6 +40,7 @@ import { pendApiOwner } from "../../api-client";
 import { readOwner } from "../../shell/owner-cookie";
 import Link from "next/link";
 import { useTranslations } from "next-intl";
+import { useCeremonyGeneration } from "../ceremony-generation";
 import { Button, Icon } from "@ohmail/ui";
 import {
   ApiError,
@@ -108,6 +109,14 @@ export function LinkDesktopScreen({ challenge: commitment = "" }: { challenge?: 
   /** The page can be navigated away from mid-flight; nothing may set state after that. */
   const alive = useRef(true);
   useEffect(() => () => { alive.current = false; }, []);
+
+  /**
+   * THE CEREMONY'S GENERATION, the same one the account erase runs on. Cancelling the
+   * re-assertion cleared the screen and left the verify in flight, so a response landing after
+   * the press still minted a pairing code — a credential nobody had asked for, on a page whose
+   * job is to show one to whoever is looking. `afterFactor` is the one door that compares.
+   */
+  const ceremony = useCeremonyGeneration();
 
   /**
    * Begin the in-place re-assertion. Prefill the address from the live session when there is one
@@ -202,7 +211,13 @@ export function LinkDesktopScreen({ challenge: commitment = "" }: { challenge?: 
   };
 
   /** A verified factor lands the session step-up fresh; the mint the visitor came for is retried. */
-  const afterFactor = (): void => {
+  const afterFactor = (gen: number): void => {
+    // THE ONE DOOR. A cancelled re-assertion mints nothing: the code is one-use and revocable,
+    // which is why this was a row, but a credential minted after Cancel is one nobody asked for.
+    if (!ceremony.claim(gen)) {
+      setBusy(false);
+      return;
+    }
     if (!alive.current) return;
     setChallenge(null);
     setCode("");
@@ -213,12 +228,15 @@ export function LinkDesktopScreen({ challenge: commitment = "" }: { challenge?: 
     if (!challenge) return;
     setBusy(true);
     setError(null);
+    // BEFORE the first await: this closure's identity is the ceremony it started in, never
+    // whichever one is current when its response happens to land.
+    const gen = ceremony.begin();
     void (async () => {
       try {
         const { options } = await auth.webauthnAssertOptions({ loginToken: challenge.loginToken });
         const credential = await assertPasskey(options);
         await auth.webauthnAssertVerify({ loginToken: challenge.loginToken, credential });
-        afterFactor();
+        afterFactor(gen);
       } catch (err) {
         if (!alive.current) return;
         setError(messageOf(err));
@@ -232,6 +250,9 @@ export function LinkDesktopScreen({ challenge: commitment = "" }: { challenge?: 
     if (!challenge) return;
     setBusy(true);
     setError(null);
+    // Same capture as the passkey path — a SEPARATE path, so a fix to one of them would be
+    // half-applied by construction.
+    const gen = ceremony.begin();
     void (async () => {
       try {
         if (method === "recovery_code") {
@@ -239,7 +260,7 @@ export function LinkDesktopScreen({ challenge: commitment = "" }: { challenge?: 
         } else {
           await auth.totpVerify({ loginToken: challenge.loginToken, code: code.trim() });
         }
-        afterFactor();
+        afterFactor(gen);
       } catch (err) {
         if (!alive.current) return;
         setError(messageOf(err));
@@ -250,6 +271,11 @@ export function LinkDesktopScreen({ challenge: commitment = "" }: { challenge?: 
 
   /** Abandon the ceremony and return to the code screen. Password never lingers in state. */
   const cancelReauth = (): void => {
+    // THE BUMP COMES FIRST — it is what makes a verify already in flight discard its result;
+    // everything after it is housekeeping. `busy` goes with it, or a ceremony cancelled
+    // mid-verify leaves the next press disabled with nothing left to re-enable it.
+    ceremony.end();
+    setBusy(false);
     setPassword("");
     setCode("");
     setChallenge(null);
@@ -366,6 +392,9 @@ export function LinkDesktopScreen({ challenge: commitment = "" }: { challenge?: 
     <Shell title={t("title")}>
       <p className="sub">{t("lead")}</p>
       {error ? <p className="join-error" role="alert">{error}</p> : null}
+      {/* The check came back after Cancel and was thrown away. Said, because this screen looks
+          identical whether a code was minted a second ago or never at all. */}
+      {ceremony.discarded ? <p className="join-hint" role="status">{t("cancelledNothingMinted")}</p> : null}
 
       {minted ? (
         <>

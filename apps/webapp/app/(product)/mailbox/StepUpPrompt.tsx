@@ -15,18 +15,24 @@
  * read `SecuritySection` trusts, so the prompt never offers a ceremony the account cannot finish.
  */
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useTranslations } from "next-intl";
 import { Button } from "@ohmail/ui";
 import { ApiError, auth, assertPasskey, messageOf, webauthnAvailable } from "../../api-client";
+import { useCeremonyGeneration } from "../ceremony-generation";
 
 interface Props {
   /** The re-verification succeeded — retry the verb that was refused. */
   onVerified: () => void;
   onCancel: () => void;
+  /**
+   * A factor landed after Cancel and was discarded — the parked verb did NOT run. The host says
+   * so, not this prompt: Cancel hands the pane back, so by then there is nothing here to read.
+   */
+  onDiscarded: () => void;
 }
 
-export function StepUpPrompt({ onVerified, onCancel }: Props) {
+export function StepUpPrompt({ onVerified, onCancel, onDiscarded }: Props) {
   const t = useTranslations("devices");
 
   /**
@@ -52,46 +58,55 @@ export function StepUpPrompt({ onVerified, onCancel }: Props) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const alive = useRef(true);
-  useEffect(() => {
-    alive.current = true;
-    return () => {
-      alive.current = false;
-    };
-  }, []);
+  /**
+   * THE CEREMONY'S GENERATION, the same one the account erase runs on, in place of the unmount
+   * latch this used to rely on. Unmount closed the window only because the host happens to drop
+   * the prompt on Cancel — a pane need not go away for the ceremony to be over, and the parked
+   * verb is somebody's device or session either way. Cancel bumps, `finish` compares.
+   */
+  const ceremony = useCeremonyGeneration();
 
   useEffect(() => {
     void (async () => {
       try {
         const { user } = await auth.session();
-        if (!alive.current) return;
         const e = { webauthn: user.twofaEnrolled.webauthn, totp: user.twofaEnrolled.totp };
         setEnrolled(e);
         // The sign-in screen's preference verbatim: a passkey when one exists AND this
         // browser can run the ceremony; the code otherwise.
         setMethod(e.webauthn && webauthnAvailable() ? "webauthn" : "totp");
       } catch (err) {
-        if (alive.current) setError(messageOf(err));
+        setError(messageOf(err));
       }
     })();
   }, []);
 
   const finish = useCallback(
     (fn: () => Promise<void>) => {
+      setBusy(true);
+      setError(null);
+      // BEFORE the first await: this closure's identity is the ceremony it started in, never
+      // whichever one is current when its response happens to land.
+      const gen = ceremony.begin();
       void (async () => {
-        setBusy(true);
-        setError(null);
         try {
           await fn();
-          if (alive.current) onVerified();
+          // THE ONE DOOR. A factor that lands after Cancel runs no parked verb and says so.
+          if (!ceremony.claim(gen)) {
+            setBusy(false);
+            onDiscarded();
+            return;
+          }
+          onVerified();
         } catch (err) {
-          if (alive.current) setError(refusalText(err));
-        } finally {
-          if (alive.current) setBusy(false);
+          // A failed ceremony is over: end it, so a second response cannot act either.
+          ceremony.end();
+          setError(refusalText(err));
+          setBusy(false);
         }
       })();
     },
-    [onVerified, refusalText],
+    [ceremony, onDiscarded, onVerified, refusalText],
   );
 
   const withPasskey = () =>
@@ -106,7 +121,7 @@ export function StepUpPrompt({ onVerified, onCancel }: Props) {
     if (busy || code.trim().length === 0) return;
     finish(async () => {
       await auth.stepUpTotp({ code: code.trim() });
-      if (alive.current) setCode("");
+      setCode("");
     });
   };
 
@@ -125,7 +140,9 @@ export function StepUpPrompt({ onVerified, onCancel }: Props) {
             <Button variant="primary" icon="shield" onClick={withPasskey} disabled={busy}>
               {busy ? t("working") : t("stepUpPasskey")}
             </Button>
-            <Button variant="ghost" onClick={onCancel}>
+            {/* THE BUMP COMES FIRST — it is what makes a factor already in flight discard its
+                result; handing the pane back is what happens after. */}
+            <Button variant="ghost" onClick={() => { ceremony.end(); onCancel(); }}>
               {t("cancel")}
             </Button>
           </div>
@@ -162,7 +179,8 @@ export function StepUpPrompt({ onVerified, onCancel }: Props) {
                 <Button variant="primary" type="submit" disabled={busy || code.trim().length === 0}>
                   {busy ? t("working") : t("stepUpVerify")}
                 </Button>
-                <Button variant="ghost" onClick={onCancel}>
+                {/* Same press, same rule — see the passkey arm above. */}
+                <Button variant="ghost" onClick={() => { ceremony.end(); onCancel(); }}>
                   {t("cancel")}
                 </Button>
               </span>
