@@ -19,7 +19,7 @@ import {
   type RequestEnvelope, type RequestRecord, type AckRecord, type OrganizerKind,
   type RequestRefusalReason,
 } from "@trafficflow/core/adapters/organizer-lease";
-import type { MailboxAdapter } from "@trafficflow/core/adapters/imap";
+import { epochOf, epochVerdict, type MailboxAdapter } from "@trafficflow/core/adapters/imap";
 
 /**
  * The dispatch table — one entry per kind this build can actually carry out (mail 0094). Each entry
@@ -559,8 +559,12 @@ export async function applyMetaRequests(
      * be in it, which is harmless — and the entry goes, so the next cycle starts from the top. */
     if (remembered !== null) {
       const seen = generationNow();
-      const same = seen !== null && remembered.generation !== null
-        && BigInt(seen) === BigInt(remembered.generation);
+      /* Through `epoch.ts`, not a second `BigInt` compare beside the door — `meta-memo.ts` already
+       * holds this comparison as `sameEpoch(epochOf(a), epochOf(b))`, and two spellings of one
+       * question is the shape the three cleanup paths drifted apart in. It also answers a case the
+       * hand-written pair could not: a `0` or an out-of-range value is a generation NOBODY NAMED,
+       * and an unnamed generation may not be read as agreement with another one. */
+      const same = epochVerdict(epochOf(seen), epochOf(remembered.generation)) === "usable";
       if (!same) {
         /* ── AND THIS CYCLE RECORDS NOTHING ────────────────────────────────────────────────
          *

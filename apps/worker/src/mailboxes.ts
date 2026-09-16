@@ -15,7 +15,10 @@ import {
 import { makeDrizzleRepo, type DrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import type { OrganizerIntent } from "@trafficflow/core/adapters/organizer-lease";
 import { asDatabaseFault, markDatabaseFaults } from "./db-fault.js";
-import type { SyncWriteFence } from "./sync.js";
+// The RULE the fence answers with, from the module that owns the refusal it becomes. This
+// direction only: `sync.ts` must never import this file, which reaches `@trafficflow/db/cloud`
+// and would carry the hosted half into the engine bundle `apps/sidecar` builds from `sync.ts`.
+import { mailboxIsGoneForWrites, type FenceVerdict, type SyncWriteFence } from "./sync.js";
 import { carryDialect, dialect } from "@trafficflow/db/dialect";
 
 // The always-on worker reads its per-mailbox credentials from `mailbox_credentials`
@@ -780,8 +783,12 @@ export async function clearOwedRetroFences(db: WorkerDb, mailboxId: string): Pro
  * `audit_log`) with the SAME leadership definition and the SAME two-statement shape, for the same
  * EvalPlanQual reason: a bare `SELECT … FOR UPDATE` on the MAILBOX row absorbs the lock wait (two
  * workers contending for one mailbox meet HERE, at a statement allowed to wait), then the leadership
- * check is its own statement with a fresh snapshot. The row's DISABLED status is deliberately NOT part
- * of this fence, unlike `lifecycleWhere`: a refusal here quiesces the whole instance (the right response to a lost shard, the wrong one to one mailbox switched off). `lost` is the synchronous tripwire.
+ * check is its own statement with a fresh snapshot. The row's status is READ BACK from that same
+ * statement and reported as the third outcome (`removed`) rather than judged here: the lock is already
+ * held, so the removal question every fenced writer used to ask as a second statement costs nothing,
+ * and {@link sync.refuseRemovedMailbox} stays the one place that decides what a status means. A
+ * LOST SHARD and a GONE MAILBOX are different verdicts — a zero-row read used to report the second as
+ * the first. `lost` is the synchronous tripwire.
  */
 export function makeSyncWriteFence(
   db: WorkerDb, mailboxId: string, fence: LeaderFence, lost: () => boolean = () => false,
@@ -805,7 +812,7 @@ export function makeSyncWriteFence(
     },
     async transaction<T>(
       fn: (repo: DrizzleRepo) => Promise<T>,
-    ): Promise<{ fenced: true } | { fenced: false; result: T }> {
+    ): Promise<FenceVerdict<T>> {
       if (lost()) return { fenced: true };
       // The other half of the sync loop's database surface. `SyncDeps.repo` is wrapped where the
       // worker builds it; this is the seam that does not go through it — the fence's own `BEGIN`, its
@@ -817,9 +824,15 @@ export function makeSyncWriteFence(
       // wrapper and classifies to the message domain.
       return asDatabaseFault("fence.transaction", () => db.transaction(async (tx) => {
         const w = tx as unknown as WorkerDb;
-        const held = await w.select({ id: mailboxes.id }).from(mailboxes)
+        // `status` rides the statement that was already taking this row — the whole of the third
+        // outcome's cost. Under EvalPlanQual the value is the one the row carries AFTER any lock
+        // wait this statement absorbed, which is why a removal that held the row first is read as
+        // its tombstone rather than as the state it had when this transaction began.
+        const held = await w.select({ id: mailboxes.id, status: mailboxes.status }).from(mailboxes)
           .where(eq(mailboxes.id, mailboxId)).for("update");
-        if (held.length === 0) return { fenced: true as const };
+        if (held.length === 0) return { fenced: false as const, removed: null };
+        const status = held[0]!.status;
+        if (mailboxIsGoneForWrites(status)) return { fenced: false as const, removed: status };
         const still = await w.select({ shardIndex: workerHeartbeats.shardIndex })
           .from(workerHeartbeats).where(leaderRow());
         if (still.length === 0) return { fenced: true as const };

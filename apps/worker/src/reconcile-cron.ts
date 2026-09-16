@@ -15,7 +15,7 @@ import {
   accountInShard, clearOrganizerStandDown, loadMailboxById, makeSyncWriteFence,
   markMailboxStoodDown, stampMailboxSyncNow, type LeaderFence,
 } from "./mailboxes.js";
-import { LeaderFencedError, MailboxRemovedError, runSyncCycle, type SyncDeps } from "./sync.js";
+import { LeaderFencedError, refusalIsRemoval, runSyncCycle, type SyncDeps } from "./sync.js";
 import { isSharedDatabaseFault } from "./dead-letter.js";
 import { applyMetaRequests } from "./request-drain.js";
 import { OrganizerProfileSync } from "./profile.js";
@@ -485,7 +485,7 @@ export async function runReconcileCron(
         // And the fourth: the mailbox was REMOVED mid-cycle. The drain appends and expunges records
         // in the customer's own `ohmail/_meta`, which is the last thing to do to a mailbox somebody
         // has just disconnected — the records are nobody's to acknowledge any more.
-        && !(cycleError instanceof MailboxRemovedError);
+        && !refusalIsRemoval(cycleError);
       if (mayStillWrite) {
         try {
           await applyMetaRequests(
@@ -518,7 +518,7 @@ export async function runReconcileCron(
          refused with nothing written, and there is no successor to hand anything to. Reported as
          a skip because a throw here exits 1 and pages somebody for a mailbox a customer chose to
          disconnect. */
-      if (err instanceof MailboxRemovedError) {
+      if (refusalIsRemoval(err)) {
         log.info(cronEvent("reconcile", "mailbox_removed"), {
           mailboxId, accountId: row.accountId,
           reason: "this mailbox was removed while the sweep was reading it; the pending writes "

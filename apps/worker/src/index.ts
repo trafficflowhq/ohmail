@@ -56,7 +56,7 @@ import {
 } from "./health.js";
 import { acquireLeaderLock, leaderLockKeyFor, LockLostError, type LeaderLock } from "./leader-lock.js";
 import { startApiCron, type ApiCronHandle, type ApiCronTargetHealth } from "./api-cron.js";
-import { runSyncCycle, LeaderFencedError, MailboxRemovedError, type SyncDeps } from "./sync.js";
+import { runSyncCycle, LeaderFencedError, refusalIsRemoval, type SyncDeps } from "./sync.js";
 import {
   applyMetaRequests, driveOutstandingRequests, settleOwnOutstandingRequests,
 } from "./request-drain.js";
@@ -3762,7 +3762,7 @@ export async function startWorkerWithLock(
              from "your mailbox is broken" about a mailbox somebody deliberately removed — and the
              quarantine write is fenced on the row anyway, so the counter would climb against a
              state nothing can reach. The next roster pass drops it; nothing here needs to act. */
-          if (err instanceof MailboxRemovedError) {
+          if (refusalIsRemoval(err)) {
             log.info("sync_cycle_mailbox_removed", {
               mailboxId: rt.mailboxId, accountId: rt.accountId,
               reason: "this mailbox was removed while the cycle was reading it, so the pending "

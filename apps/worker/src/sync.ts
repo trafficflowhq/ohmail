@@ -11,8 +11,11 @@ import {
 import { LeaseUnavailableError } from "@trafficflow/core/adapters/organizer-lease";
 // The role vocabulary lives in `@trafficflow/db` (mail 0083) because both the worker and the
 // services layer need one spelling of it and the worker may not import services at runtime —
-// `stand-down-sends.ts`'s reason, and the module reaches `schema-mail.js` alone. A type-only
-// import, so nothing of the db package enters this file's runtime graph.
+// `stand-down-sends.ts`'s reason, and the module reaches `schema-mail.js` alone. The one VALUE is
+// the erasure refusal the ingest repository raises: `apps/sidecar/src/engine.ts` already imports
+// this barrel beside this file, so it adds no module to the engine bundle. `@trafficflow/db/cloud`
+// is the half that may not be named here.
+import { MailboxErasedError } from "@trafficflow/db";
 import type { FilingRefusalClass, OrganizerRole } from "@trafficflow/db";
 import type { WorkerRepo, DrizzleRepo, PendingFolderState, PendingFlagState } from "@trafficflow/core/adapters/drizzle-repo";
 import { ClassifierFaultError } from "./classifier-fault.js";
@@ -70,6 +73,19 @@ export class MailboxRemovedError extends Error {
   }
 }
 
+/**
+ * THE FENCE'S THIRD OUTCOME — the mailbox is not there to write into. Its opening statement takes
+ * the mailbox row `FOR UPDATE` already, so reading `status` off that row costs nothing and answers
+ * the removal question for every fenced writer at once; the row stays locked for the whole
+ * transaction, so a removal that arrives after it either waits for our commit or is already the
+ * tombstone we read. The verdict carries the STATUS rather than a decision — {@link
+ * refuseRemovedMailbox} is still the one place that says what a status means for a write.
+ */
+export type FenceVerdict<T> =
+  | { fenced: true; removed?: undefined }
+  | { fenced: false; removed: string | null }
+  | { fenced: false; removed?: undefined; result: T };
+
 /** See the block above. Implemented by the hosted worker; absent everywhere else. */
 export interface SyncWriteFence {
   /** TRUE once this process has observed losing its lease — synchronous, checked before work. */
@@ -78,9 +94,11 @@ export interface SyncWriteFence {
   stillLeader(): Promise<boolean>;
   /**
    * Run one write group inside a transaction that has verified — AFTER absorbing any lock
-   * wait — that this process still leads its shard. `fenced` ⇒ nothing was written.
+   * wait — that this process still leads its shard AND that the mailbox is still there. `fenced`
+   * ⇒ nothing was written; `removed` ⇒ nothing was written either, and it is the mailbox that has
+   * gone rather than the lease.
    */
-  transaction<T>(fn: (repo: DrizzleRepo) => Promise<T>): Promise<{ fenced: true } | { fenced: false; result: T }>;
+  transaction<T>(fn: (repo: DrizzleRepo) => Promise<T>): Promise<FenceVerdict<T>>;
 }
 
 export interface SyncDeps {
@@ -514,6 +532,13 @@ async function underFence<T>(deps: FenceScope, fn: (repo: DrizzleRepo) => Promis
   }
   const cache = deps.knownSet;
   const out = await fence.transaction(cache ? (r) => fn(watchKnownSet(r, cache)) : fn);
+  if (out.removed !== undefined) {
+    // The mailbox went, not the lease. The memo goes for the same reason it goes on a handover —
+    // an in-memory copy of a mailbox's known-set outliving the mailbox is the thing a successor,
+    // or a re-attach of the same address, must never be served from.
+    deps.knownSet?.drop("mailbox-removed");
+    throw removedMailboxError(out.removed);
+  }
   if (out.fenced) {
     deps.knownSet?.drop("fenced");
     throw new LeaderFencedError("the heartbeat no longer names this instance as the shard leader — the write was refused");
@@ -587,22 +612,37 @@ function openPage(at: CyclePageCursor, pass: CyclePass): void {
 
 /**
  * Rethrow a REFUSAL out of a catch arm that would otherwise swallow it or read it as a message fault.
- * Four classes the arms cannot tell from an ordinary failure: `LeaderFencedError` is proof this process
- * no longer leads the shard, `MailboxRemovedError` that the mailbox is gone, and the permit's own two —
- * `OrganizerStandDownError` (another install holds this mailbox now) and `LeaseUnavailableError` (the
- * lease could not be read, which is not a stand-down and equally not evidence about a message). None is
- * evidence about the message or the pass, all four mean every later write in this cycle would be
- * illegitimate, and all are terminal for it — `index.ts` and `reconcile-cron.ts` read them as a skip,
- * not a failing mailbox. ONE PLACE DECIDES, because the swallowing arms are many: three reconcile groups
- * logged a removal as bookkeeping that "did not commit" and carried on writing into a mailbox that had
- * gone, and `fileOne`/`reconcileFlags` recorded a stand-down as the MESSAGE's refusal — a deferral, an
- * audit row blaming the mail server, and the pass filing every row behind it on somebody else's mailbox.
+ * FIVE classes the arms cannot tell from an ordinary failure: `LeaderFencedError` is proof this process
+ * no longer leads the shard, `MailboxRemovedError` that the mailbox is gone, `MailboxErasedError` that
+ * it was ERASED (the ingest repository's own fence, raised where the erasure stamp is read under the
+ * write's lock — a different door to the same fact, and it was read as a message fault until it was
+ * named here), and the permit's own two — `OrganizerStandDownError` (another install holds this mailbox
+ * now) and `LeaseUnavailableError` (the lease could not be read, which is not a stand-down and equally
+ * not evidence about a message). None is evidence about the message or the pass, all five mean every
+ * later write in this cycle would be illegitimate, and all are terminal for it — `index.ts` and
+ * `reconcile-cron.ts` read them as a skip, not a failing mailbox. ONE PLACE DECIDES, because the
+ * swallowing arms are many: three reconcile groups logged a removal as bookkeeping that "did not
+ * commit" and carried on writing into a mailbox that had gone, and `fileOne`/`reconcileFlags` recorded
+ * a stand-down as the MESSAGE's refusal. A CLASS ADDED HERE KILLS EVERY ARM BELOW ITS CALL that named
+ * it: the two arms that name a removal are above their `rethrowRefusal`, and `refusalIsRemoval` is
+ * what they ask, so a class gained here reaches their sentence rather than being rethrown past it.
  */
 function rethrowRefusal(err: unknown): void {
   if (
     err instanceof LeaderFencedError || err instanceof MailboxRemovedError
+    || err instanceof MailboxErasedError
     || err instanceof OrganizerStandDownError || err instanceof LeaseUnavailableError
   ) throw err;
+}
+
+/**
+ * THE MAILBOX IS NOT THERE — either door. The cycle's own fence raises `MailboxRemovedError` from the
+ * status it read; the ingest repository raises `MailboxErasedError` from the erasure stamp it read
+ * under the same lock. A caller that names one and not the other has an arm that goes dead the day
+ * the other one arrives, which is what this predicate exists to stop.
+ */
+export function refusalIsRemoval(err: unknown): boolean {
+  return err instanceof MailboxRemovedError || err instanceof MailboxErasedError;
 }
 
 /**
@@ -620,12 +660,32 @@ async function assertMailboxStillHere(repo: WorkerRepo, mailboxId: string): Prom
 }
 
 /**
- * THE ONE PLACE THAT DECIDES what a status means for a write — the read above and the folded
- * read inside the change-log allocation both end here, so the two cannot drift into two answers.
+ * THE ONE RULE ABOUT WHAT A MAILBOX STATUS MEANS FOR A WRITE — `disabled` is a removal or a
+ * plan-disable, a missing row is the erasure sweep's answer, and everything else may be written to.
+ * `error` is admitted deliberately: it says ohmail cannot currently REACH the mailbox, the ordinary
+ * state a recovering cycle commits from. Exported because the lease fence answers it from the row
+ * its own opening statement holds — the rule travels, the refusal does not.
+ */
+export function mailboxIsGoneForWrites(status: string | null): boolean {
+  return status === null || status === "disabled";
+}
+
+/**
+ * THE ONE PLACE THAT DECIDES — the read above, the folded read inside the change-log allocation and
+ * the lease fence's `FOR UPDATE` all end here, so the three cannot drift into three answers.
  */
 function refuseRemovedMailbox(status: string | null): void {
-  if (status !== null && status !== "disabled") return;
-  throw new MailboxRemovedError(
+  if (!mailboxIsGoneForWrites(status)) return;
+  throw removedMailboxError(status);
+}
+
+/**
+ * THE REFUSAL'S ONE SENTENCE, built from the status that earned it. Split out for the fence, which
+ * has already applied the rule above to pick its `removed` outcome and would otherwise ask it twice
+ * — and where a conditional throw is not a refusal the compiler can see.
+ */
+function removedMailboxError(status: string | null): MailboxRemovedError {
+  return new MailboxRemovedError(
     `this mailbox is ${status === null ? "gone" : status} — the write is refused rather than `
     + "committed into a mailbox that has been removed",
   );
@@ -639,10 +699,17 @@ function refuseRemovedMailbox(status: string | null): void {
  * asking at the allocation cannot invert the lock order against `MailboxService.delete`. Every
  * other shape asks FIRST — a repair holds a `messages` row well before the allocation, and an
  * erasing removal waiting on it would deadlock (measured: 40P01, the erasure as victim). A lost
- * upsert is asked afterwards all the same, so every commit asks exactly once.
+ * upsert is asked afterwards all the same, so every commit asks exactly once — and on a hosted
+ * worker `alreadyAsked` makes that once the lease fence's own opening statement, which costs nothing.
  */
-async function commitFenced(plan: ChangePlan, txRepo: DrizzleRepo, deps: CommitDeps): Promise<void> {
+async function commitFenced(
+  plan: ChangePlan, txRepo: DrizzleRepo, deps: CommitDeps, alreadyAsked: boolean,
+): Promise<void> {
   const mailboxId = deps.mailboxId;
+  // THE LEASE FENCE ASKED IT, ON A ROW IT STILL HOLDS. Its `FOR UPDATE` is the first statement of
+  // this transaction and the lock is held to the commit, so no removal can land between its answer
+  // and these writes — a second question here would be a second statement for an answer we have.
+  if (alreadyAsked) { await commitChange(plan, deps); return; }
   if (plan.outcome !== "new") {
     await assertMailboxStillHere(txRepo, mailboxId);
     await commitChange(plan, deps);
@@ -667,11 +734,12 @@ async function commitFenced(plan: ChangePlan, txRepo: DrizzleRepo, deps: CommitD
  * mailbox just removed; a check at the head of the cycle would not close it, which is why the question
  * belongs INSIDE the writing transaction. ASKED FIRST IS THE LOCK ORDER: `MailboxService.delete` takes
  * the mailbox row `FOR UPDATE` first, so a writer holding a message row and then asking would be its
- * deadlock partner (40P01), not its refusal. ONE READ PER TRANSACTION, not per row.
+ * deadlock partner (40P01), not its refusal. ONE READ PER TRANSACTION, not per row — and NONE where
+ * there is a lease fence, whose own opening `FOR UPDATE` is that read, taken first and held longer.
  */
 async function fencedLiveGroup<T>(deps: LiveScope, fn: (repo: WorkerRepo) => Promise<T>): Promise<T> {
   return fencedGroup(deps, async (repo) => {
-    await assertMailboxStillHere(repo, deps.mailboxId);
+    if (deps.fence === undefined) await assertMailboxStillHere(repo, deps.mailboxId);
     return fn(repo);
   });
 }
@@ -1111,7 +1179,7 @@ async function syncCycleWithin(
         // question and {@link assertMailboxStillHere} for what it is.
         await commitFenced(plan, txRepo, {
           repo: txRepo, routing: txRepo, accountId, mailboxId, storageCap,
-        });
+        }, deps.fence !== undefined);
       });
     });
   }
@@ -1128,11 +1196,12 @@ async function syncCycleWithin(
   for (const ch of batch.flagChanges) {
     await attempt(ch, async () => {
       await fencedIngest(deps, async (txRepo) => {
-        // THE SAME QUESTION AS THE INGEST ABOVE, for the same reason. A flag write updates a row
-        // rather than creating one, so a removed mailbox's sweep has usually taken the row out
-        // from under it already — but "usually" is the wrong word for a write, and the two
-        // transactions may not be ordered differently just because one of them is smaller.
-        await assertMailboxStillHere(txRepo, mailboxId);
+        // THE SAME QUESTION AS THE INGEST ABOVE, for the same reason, and asked in the same one
+        // place. A flag write updates a row rather than creating one, so a removed mailbox's sweep
+        // has usually taken the row out from under it already — but "usually" is the wrong word for
+        // a write, and the two transactions may not be ordered differently just because one of them
+        // is smaller. Unfenced only: with a lease fence this transaction opened on the answer.
+        if (deps.fence === undefined) await assertMailboxStillHere(txRepo, mailboxId);
         const outcome = await txRepo.applyExternalFlag(mailboxId, ch.locator, ch.seen ?? false);
         if (!outcome?.changed) return;
         await txRepo.recordChange({
@@ -1251,7 +1320,7 @@ async function syncCycleWithin(
       // landing between `listJunkFiledHusks` and a rewrite refuses here — and reported as
       // `junk_restore_pass_failed` it would read as a pass that broke, on a mailbox that is
       // simply gone. Once per pass: the first refusal leaves the pass, so there is no second.
-      if (err instanceof MailboxRemovedError) {
+      if (refusalIsRemoval(err)) {
         log?.info("junk_restore_mailbox_removed", {
           mailboxId, accountId,
           reason: "the mailbox was removed while this pass was reading it, so the husk rewrite "
@@ -1272,7 +1341,7 @@ async function syncCycleWithin(
   try {
     ({ owesMore } = await reconcileMailbox(deps, at));
   } catch (err) {
-    if (err instanceof MailboxRemovedError) {
+    if (refusalIsRemoval(err)) {
       log?.info("reconcile_mailbox_removed", {
         mailboxId, accountId,
         reason: "the mailbox was removed while the reconcile pass was reading it, so its moves, "
@@ -1424,13 +1493,17 @@ async function retryFailedMessages(
         // same gap and this commit needs the same question asked inside the same transaction —
         // {@link commitFenced} puts it on whichever statement this plan's shape already sends.
         await fencedIngest(deps, (txRepo) =>
-          commitFenced(plan, txRepo, { repo: txRepo, routing: txRepo, accountId, mailboxId, storageCap }),
+          commitFenced(
+            plan, txRepo,
+            { repo: txRepo, routing: txRepo, accountId, mailboxId, storageCap },
+            deps.fence !== undefined,
+          ),
         );
       } catch (err) {
         // BOTH REFUSALS STOP THE CYCLE where the two arms below return, and the removal is NAMED
         // before it leaves — which is why it is read here rather than left to `rethrowRefusal`,
         // whose job is the arms that have nothing to say about the class.
-        if (err instanceof MailboxRemovedError) {
+        if (refusalIsRemoval(err)) {
           /* THE MAILBOX WENT WHILE THIS MESSAGE WAS BEING RE-READ — terminal for the cycle, as it
              is where the ingest raises it, and NOT the outage arm below. Two passes still to come
              in this cycle write to the mailbox and neither asks this question (the junk restore's
