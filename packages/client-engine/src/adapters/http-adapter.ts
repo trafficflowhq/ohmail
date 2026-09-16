@@ -272,11 +272,40 @@ export class HttpAdapter implements EngineAdapter {
    * for the same row and the map cannot outlive the sends it belongs to.
    */
   private readonly revisionForKey = new Map<string, string>();
+  /**
+   * THE LAST ROW VERSION THIS CLIENT WAS TOLD, per draft id — what a send falls back to when its
+   * own PUT failed. Every successful save already answers with the row's revision and the autosave
+   * used to discard it; remembering it is what lets such a press vouch for a version this client
+   * SAW rather than for nothing, so another window's row is refused instead of delivered. It is
+   * never a fresh read: a revision nobody showed this client is a version it cannot vouch for.
+   * Bounded at {@link DRAFT_REVISIONS_KEPT}, oldest evicted — an unbounded map on a long-lived
+   * shell is its own defect, and a draft older than the last few dozen saved is one whose press
+   * refuses and asks for a save, which is the safe answer.
+   */
+  private readonly revisionForDraft = new Map<string, string>();
+  /** How many drafts' revisions are kept. Far above any one composing session's rows. */
+  private static readonly DRAFT_REVISIONS_KEPT = 64;
 
   /** One send key's per-request memory, dropped together — the two maps have one lifetime. */
   private forgetSendKey(key: string): void {
     this.draftForKey.delete(key);
     this.revisionForKey.delete(key);
+  }
+
+  /**
+   * Record a revision the server named for a row — insertion-ordered, oldest dropped at the cap.
+   * A non-string or empty value is no observation and is ignored: an API that predates the field
+   * leaves this client exactly where it was.
+   */
+  private noteDraftRevision(draftId: string, revision: unknown): void {
+    if (typeof revision !== "string" || revision.length === 0) return;
+    this.revisionForDraft.delete(draftId);
+    this.revisionForDraft.set(draftId, revision);
+    while (this.revisionForDraft.size > HttpAdapter.DRAFT_REVISIONS_KEPT) {
+      const oldest = this.revisionForDraft.keys().next();
+      if (oldest.done) break;
+      this.revisionForDraft.delete(oldest.value);
+    }
   }
   /**
    * Keys whose `POST /drafts` went out and came back unreadable.
@@ -1477,7 +1506,9 @@ export class HttpAdapter implements EngineAdapter {
           });
           if (!res.ok) throw await this.rejectionOf(res);
           const seq = this.noteSeq(res);
-          const dto = await readJsonOrAmbiguous<{ id?: string; updatedAt?: string; createdAt?: string }>(res, "draft save");
+          const dto = await readJsonOrAmbiguous<{
+            id?: string; updatedAt?: string; createdAt?: string; contentRevision?: unknown;
+          }>(res, "draft save");
           if (!dto.id) {
             /**
              * Parsed, but without the id it promised: the row may exist and this client cannot
@@ -1497,6 +1528,9 @@ export class HttpAdapter implements EngineAdapter {
               },
             );
           }
+          // THE VERSION THIS CLIENT WAS TOLD, kept — see `revisionForDraft`. The row was just
+          // written from this screen, so it is a version this client vouched for by writing it.
+          this.noteDraftRevision(dto.id, dto.contentRevision);
           return {
             changes: seq === null ? [] : [{
               type: "draft", op: "create", id: dto.id, seq,
@@ -1516,7 +1550,10 @@ export class HttpAdapter implements EngineAdapter {
         });
         if (!res.ok) throw await this.rejectionOf(res);
         const seq = this.noteSeq(res);
-        const dto = (await res.json()) as { id?: string; updatedAt?: string };
+        const dto = (await res.json()) as { id?: string; updatedAt?: string; contentRevision?: unknown };
+        // THE AUTOSAVE'S OWN OBSERVATION. This answer names the version the row is now at, and a
+        // send whose own PUT fails carries it rather than nothing — the whole of the fallback.
+        this.noteDraftRevision(m.draftId, dto.contentRevision);
         return {
           changes: seq === null || !dto.id ? [] : [{
             type: "draft", op: "update", id: dto.id, seq, updatedAt: dto.updatedAt ?? "",
@@ -1664,25 +1701,41 @@ export class HttpAdapter implements EngineAdapter {
     if (draftId && !this.draftForKey.has(idempotencyKey)) {
       this.draftForKey.set(idempotencyKey, draftId);
       const wantsBcc = (m.bcc?.length ?? 0) > 0;
-      let echoed: { bcc?: unknown; mailboxId?: unknown; contentRevision?: unknown } | null = null;
-      try {
-        const put = await this.request("PUT", `/drafts/${encodeURIComponent(draftId)}`, {
-          body: {
-            subject: m.subject ?? "",
-            ...(m.html ? { html: m.html } : { body: m.body }),
-            to: m.to ?? [],
-            cc: m.cc ?? [],
-            bcc: m.bcc ?? [],
-            // THE SENDING IDENTITY, AT PRESS TIME. The row was born at the FIRST autosave,
-            // under whatever the From picker held then; `m.mailboxId` is what the From line
-            // resolved when Send was pressed. Carrying it re-homes the row while it is still
-            // `draft`, so the send that follows dials the identity on screen rather than the
-            // frozen one — the wrong-From incident this line exists to close.
-            ...(m.mailboxId ? { mailboxId: m.mailboxId } : {}),
-          },
-        });
-        if (put.ok) echoed = (await put.json()) as { bcc?: unknown; mailboxId?: unknown; contentRevision?: unknown };
-      } catch { /* see above — the row stands, and the send is what matters */ }
+      // `draftId` is a `let` and a closure does not keep its narrowing; the row is fixed here.
+      const row = draftId;
+      type PutEcho = { bcc?: unknown; mailboxId?: unknown; contentRevision?: unknown };
+      /** The save, expressed ONCE — the retry below is this same request, never a second copy. */
+      const writeTheRow = async (): Promise<PutEcho | null> => {
+        try {
+          const put = await this.request("PUT", `/drafts/${encodeURIComponent(row)}`, {
+            body: {
+              subject: m.subject ?? "",
+              ...(m.html ? { html: m.html } : { body: m.body }),
+              to: m.to ?? [],
+              cc: m.cc ?? [],
+              bcc: m.bcc ?? [],
+              // THE SENDING IDENTITY, AT PRESS TIME. The row was born at the FIRST autosave,
+              // under whatever the From picker held then; `m.mailboxId` is what the From line
+              // resolved when Send was pressed. Carrying it re-homes the row while it is still
+              // `draft`, so the send that follows dials the identity on screen rather than the
+              // frozen one — the wrong-From incident this line exists to close.
+              ...(m.mailboxId ? { mailboxId: m.mailboxId } : {}),
+            },
+          });
+          return put.ok ? ((await put.json()) as PutEcho) : null;
+        } catch { /* see above — the row stands, and the send is what matters */ }
+        return null;
+      };
+      let echoed = await writeTheRow();
+      /**
+       * THE SAVE FAILED AND THIS CLIENT HAS NEVER SEEN A VERSION OF THIS ROW — one more try.
+       *
+       * With a remembered revision the press can vouch for what it last saw and the failure costs
+       * nothing but a stale row; with none it can vouch for nothing at all, and that is the press
+       * that used to go out unstated. So the one case that cannot be answered any other way buys
+       * one repeat of the same request. A PUT is idempotent, so the repeat is free of consequence.
+       */
+      if (echoed === null && !this.revisionForDraft.has(row)) echoed = await writeTheRow();
 
       // ── THE VERSION-SKEW GUARD, ON THIS PATH TOO ────────────────────────────────────────
       //
@@ -1725,6 +1778,29 @@ export class HttpAdapter implements EngineAdapter {
       // field echoes none and the send goes as it always did.
       if (typeof echoed?.contentRevision === "string" && echoed.contentRevision.length > 0) {
         this.revisionForKey.set(idempotencyKey, echoed.contentRevision);
+        this.noteDraftRevision(row, echoed.contentRevision);
+      } else if (echoed === null) {
+        /**
+         * NOTHING SAVED, SO NOTHING FRESH TO VOUCH WITH — and a press that vouches for nothing is
+         * admitted as unstated by the send route, which is how the other window's words used to
+         * leave under it. The last version this client was SHOWN stands in instead: it is a row
+         * this screen wrote and saw, so the server refuses when that row has since moved. A fresh
+         * read would be the wrong answer — it would vouch for text nobody here has looked at.
+         *
+         * With not even that, the send is refused rather than guessed at. The two guards above
+         * already refuse a Bcc or a picked From the save could not confirm; this is the remaining
+         * press — an ordinary reply — and it is told to save first rather than sent blind.
+         */
+        const observed = this.revisionForDraft.get(row);
+        if (observed) this.revisionForKey.set(idempotencyKey, observed);
+        else {
+          this.forgetSendKey(idempotencyKey);
+          throw new MutationRejectedError(
+            "This message was not sent: it could not be saved first, so ohmail cannot tell whether "
+              + "the draft is still the one on this screen. Try again.",
+            { code: "draft_unsaved", retryable: false },
+          );
+        }
       }
     }
     if (!draftId && (createAttemptedBefore || this.createAttempted.has(idempotencyKey))) {
@@ -1821,6 +1897,7 @@ export class HttpAdapter implements EngineAdapter {
       // row's is, so the field is on every send this client makes rather than on most of them.
       if (typeof draft.contentRevision === "string" && draft.contentRevision.length > 0) {
         this.revisionForKey.set(idempotencyKey, draft.contentRevision);
+        this.noteDraftRevision(draftId, draft.contentRevision);
       }
     }
 
