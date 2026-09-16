@@ -2,17 +2,12 @@ import type { MutationResult } from "./engine.js";
 import type { MutationRejectedError } from "./types.js";
 
 /**
- * WHAT ONE PRESS ANSWERED, AS A SURFACE SAYS IT.
- *
- * Four engine statuses, three things a person can be told, and the mapping is HERE so that no
- * surface writes its own. `applied` happened; `refused` did not and says why; `queued` is the
- * one this module exists for — the press stands and the act has not occurred, which read as a
- * completion on every surface that folded the status to a boolean.
- *
- * The two waits stay apart inside `queued` (engine.ts's own rule): `retry` is this client's
- * outbox and the next drive may land it; `organizer` is the SERVER's record for the install that
- * organizes the mailbox, which nothing here advances. They differ in what a reader can do about
- * them, so they differ in the sentence.
+ * WHAT ONE PRESS ANSWERED, AS A SURFACE SAYS IT. Four engine statuses, three things a person can
+ * be told, mapped HERE so that no surface writes its own. `queued` is the one this module exists
+ * for: the press stands and the act has not occurred, which read as a completion on every surface
+ * that folded the status to a boolean. The two waits stay apart inside it (engine.ts's own rule)
+ * — `retry` is this client's outbox and the next drive may land it; `organizer` is the SERVER's
+ * record, which nothing here advances.
  */
 export type PressVerdict =
   | { kind: "applied" }

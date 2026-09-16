@@ -4238,14 +4238,10 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
         }
         /**
          * EVERY OTHER ENDING SAYS WHY, AND THE SWITCH IS TOTAL. `if (res.status !== "confirmed") return;`
-         * stood here and swallowed three of the four {@link MutationStatus} values while the engine had
-         * already put the row back with the rejection's own sentence on the result for this surface to say
-         * — the silent comeback the comment above records being fixed once, for ONE code. The `never` arm
-         * is the point: a fifth answer cannot be added without this site being made to answer for it.
-         *
-         * It switches on the VERDICT rather than on the status, and the four sentences are unchanged:
-         * `pressVerdict` is now the one place the four statuses are enumerated, so a second reading of
-         * them here would be the thing this file already refuses everywhere else.
+         * stood here and swallowed three of the four endings while the engine had already put the row
+         * back with the rejection's own sentence on the result for this surface to say. The `never` arm
+         * is the point: a fourth answer cannot be added without this site being made to answer for it.
+         * It switches on the VERDICT, because `pressVerdict` is the one place the statuses are read.
          */
         const v = pressVerdict(res);
         switch (v.kind) {
