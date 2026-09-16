@@ -285,6 +285,10 @@ tauri-plugin-single-instance = { version = "2", features = ["deep-link"], option
 # like everything else here, and nothing may be copyleft but this project's own AGPL-3.0.
 [target.'cfg(target_os = "linux")'.dependencies]
 webkit2gtk = { version = "=2.0.2", features = ["v2_38"] }
+# GTK, only to INITIALISE it. The webview budget's pressure half must be asked for after GTK is up
+# and before the first web context exists, and that seam is above the runtime's own `gtk::init`.
+# Same `0.18` the graph already resolves for wry and webkit2gtk, so no new code is compiled.
+gtk = "0.18"
 
 [dev-dependencies]
 # The signature-verification biting test signs nothing at test time — it verifies

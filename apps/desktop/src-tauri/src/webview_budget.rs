@@ -130,9 +130,23 @@ mod gtk_sink {
 /// behind it is process-global and is read when the first web context is created — after that a
 /// caller is talking to a context that has already taken its settings. There is no per-window
 /// form of it: the crate's other spelling is a builder property, and the builder belongs to wry.
+///
+/// IT INITIALISES GTK ITSELF, and that is not tidiness. `MemoryPressureSettings::new` asserts GTK
+/// is up and PANICS if it is not — measured on the guest, "GTK has not been initialized", every
+/// launch, no window at all — and at the top of `main` it is not: the runtime initialises it while
+/// it builds. `gtk::init` is idempotent and the runtime calls it again a moment later, so doing it
+/// here buys the one seam where this setting can still be read: after GTK, before the first web
+/// context. A failure to initialise is reported and is not fatal — an app that will not start
+/// because it could not ask for a memory budget has turned a saving into an outage.
 pub fn apply_process_pressure() {
     #[cfg(target_os = "linux")]
-    gtk_sink::pressure(PRESSURE);
+    {
+        if let Err(e) = gtk::init() {
+            eprintln!("ohmail: no memory-pressure budget was asked for: {e}");
+            return;
+        }
+        gtk_sink::pressure(PRESSURE);
+    }
 }
 
 /// Ask WebKitGTK for this window's budget. Off Linux this is nothing yet.
