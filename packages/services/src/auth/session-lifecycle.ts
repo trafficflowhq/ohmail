@@ -705,7 +705,9 @@ export class SessionLifecycle {
       // only on the surface with the race (`grace`): within `refreshReuseGraceMs`, on a live
       // family within its cap, a re-presentation is re-rotated off the same family. Older — or
       // ANY re-presentation on a strict surface — is a kept, replayed token: theft, and it
-      // revokes. `config.ts` states the bounded residual.
+      // revokes. `config.ts` states the bounded residual. The window's meaning and value are
+      // untouched; what changed is that the arm CONVERGES rather than minting per presentation —
+      // see {@link convergeGrace}.
       if (existing.consumedAt) {
         const consumedMsAgo = now.getTime() - existing.consumedAt.getTime();
         // A RETRY OF AN UNANSWERED ATTEMPT IS NOT A REUSE. A lost rotation response leaves the
@@ -723,12 +725,8 @@ export class SessionLifecycle {
           if (replayed) return replayed;
         }
         if (grace && consumedMsAgo <= this.cfg.refreshReuseGraceMs) {
-          const [session] = await db.select().from(sessions)
-            .where(eq(sessions.id, existing.sessionId)).limit(1);
-          const renewable = session != null && session.revokedAt == null
-            && (ttls.absoluteTtlMs == null
-              || now.getTime() - session.createdAt.getTime() <= ttls.absoluteTtlMs);
-          if (renewable) return this.mintRotation(ctx, db, existing, now, ttls);
+          const converged = await this.convergeGrace(ctx, existing, now, ttls);
+          if (converged) return converged;
         }
         // The lost-response recovery, past the grace window, cookie surface only. A rotation is
         // two halves: consume + mint, and the response carrying the new token into the jar. When
@@ -865,6 +863,57 @@ export class SessionLifecycle {
       accessToken: newAccess, refreshToken: newRefresh, tokenType: "Bearer",
       expiresIn: Math.floor(this.cfg.accessTtlMs / 1000),
     };
+  }
+
+  /**
+   * ONE LIVE TAIL, however many presentations of one consumed token arrive inside the grace
+   * window — the cookie surface's convergence, and the shape {@link replayRotation} already gives
+   * the native attempt arm. This used to MINT per presentation, so five retries of one lost
+   * answer left six live credentials on one family: five orphans nobody holds, each able to
+   * rotate a line of its own for ninety days, none of them ever colliding with the reuse
+   * detector. Now every presentation consumes whatever live tails the family has — kill-stamped
+   * (`expires_at = consumed_at`, the signature {@link recoverLostRotation} classifies by, so a
+   * convergence never reads as a second holder's spend) — and mints one replacement, under the
+   * session lock so concurrent presentations queue instead of racing. The LAST answer is
+   * therefore the live one, which is the one the shared jar keeps; a jar left holding an earlier
+   * answer converges again on its next presentation inside the window. `null` only where the
+   * session is gone or capped: the caller falls through exactly as it did before.
+   */
+  private async convergeGrace(
+    ctx: ServiceContext,
+    existing: typeof refreshTokens.$inferSelect,
+    now: Date,
+    ttls: SurfaceTtls,
+  ): Promise<OAuthTokens | null> {
+    return this.inTransaction(ctx, async (txCtx) => {
+      const tx = asTx(txCtx);
+      const [session] = await dialect(ctx.db).forUpdate(tx.select().from(sessions)
+        .where(eq(sessions.id, existing.sessionId)).limit(1));
+      // The reading this arm has always taken: live session, inside any absolute cap.
+      const renewable = session != null && session.revokedAt == null
+        && (ttls.absoluteTtlMs == null
+          || now.getTime() - session.createdAt.getTime() <= ttls.absoluteTtlMs);
+      if (!renewable) return null;
+      // Unbounded by design: a herd can leave two live tails for an instant (the hot path claims
+      // its token without this lock, so its insert can land after a converger swept), and the
+      // next presentation collapses whatever it finds rather than the one row it expected.
+      await tx.update(refreshTokens)
+        .set({ consumedAt: now, expiresAt: now })
+        .where(and(
+          eq(refreshTokens.familyId, existing.familyId),
+          isNull(refreshTokens.consumedAt),
+          isNull(refreshTokens.revokedAt),
+        ));
+      // Audited IN the convergence's transaction, {@link replayRotation}'s rule and for its
+      // reason: a spent token buying a credential is never invisible, and a bookkeeping fault
+      // rolls the convergence back rather than admitting it silently. The same event as the
+      // native arm's — one name for one act, which is what the replay alert rule counts.
+      const [user] = await tx.select().from(users)
+        .where(eq(users.id, existing.userId)).limit(1);
+      await this.audit(tx, user ?? null, "refresh_replayed", undefined, txCtx,
+        `family=${existing.familyId} session=${existing.sessionId} surface=cookie`);
+      return this.mintRotation(txCtx, tx, existing, now, ttls);
+    });
   }
 
   /**
