@@ -2546,6 +2546,7 @@
     "pullTitle": "Erster Durchlauf",
     "pullLead": "ohmail liest das Postfach und sortiert, was ins Fenster fällt. Du kannst diesen Bildschirm verlassen — die Statusleiste trägt die Zähler weiter.",
     "screened": "Bisher sortiert",
+    "counterBasis": "Bisher sortiert und Historie z\u00e4hlen die Mail auf diesem Ger\u00e4t, nicht das ganze Postfach.",
     "history": "Unter Historie gelistet",
     "remaining": "Noch zu lesen",
     "etaSoon": "Wird berechnet, wie lange das dauert …",

@@ -150,6 +150,13 @@
   font-size:calc(12px + var(--type-up));
   color: var(--ink3);
 }
+/* The counters' basis line — quieter than the counters and above the bar, so the number is read
+   first and the sentence qualifies it rather than competing with it. */
+.ob-basis {
+  margin: 6px 0 0;
+  font-size:calc(12px + var(--type-up));
+  color: var(--ink3);
+}
 
 /* The guided decision. The real `DecisionBar` sits inside this card and is un-stuck from the
    viewport bottom it is fixed to in the Screener — inside a dialog there is nothing below it

@@ -2546,6 +2546,7 @@
     "pullTitle": "First pull",
     "pullLead": "ohmail is reading the mailbox and filing what falls inside the window. You can leave this screen — the status bar carries these counters.",
     "screened": "Screened so far",
+    "counterBasis": "Screened and History count the mail on this device, not the whole mailbox.",
     "history": "Listed under History",
     "remaining": "Still to read",
     "etaSoon": "Working out how long this takes…",

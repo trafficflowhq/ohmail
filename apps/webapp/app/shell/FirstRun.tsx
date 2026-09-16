@@ -1298,6 +1298,12 @@ export function FirstRun({
                 <div className="ob-counter"><b>{num(remaining)}</b><span>{t("remaining")}</span></div>
               ) : null}
             </div>
+            {/* WHAT THE FIRST TWO COUNTERS ARE ABOUT. Both are projections over the mirror ON
+                SCREEN — `screened` is its row count minus what History lists — and every client
+                keeps a window, so on a large mailbox they are a difference of two bounded
+                populations standing beside a third counter that is about the import. The pair
+                is worth showing and is not worth guessing at, so it says which it is. */}
+            <p className="ob-basis">{t("counterBasis")}</p>
             {remaining !== null ? (
               <div className="ob-track" role="progressbar" aria-valuemin={0}
                 aria-valuemax={pulled + remaining} aria-valuenow={pulled}>
