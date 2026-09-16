@@ -357,18 +357,14 @@ export function isOwnSent(m: Pick<EngineMessage, "folder">): boolean {
 }
 
 /**
- * IS THIS A CALENDAR CLIENT'S ACKNOWLEDGEMENT RATHER THAN SOMETHING A PERSON SAID — an
- * "Accepted:" the account's own Calendar app sent back after the person accepted an invitation.
+ * IS THIS A CALENDAR CLIENT'S ACKNOWLEDGEMENT RATHER THAN SOMETHING A PERSON SAID — the
+ * "Accepted:" the account's own Calendar app sends back.
  *
- * Two arms, because the fact lives in two places and only one of them is mirrored: the top-level
- * `Content-Type: …; method=REPLY` the server reads for us ({@link EngineMessage.itipReplyHeader}),
- * and the subject a calendar client writes, which this side already holds. The subject arm is
- * OWN-SENT only — a received "Accepted: …" is a person telling you something and keeps an
- * ordinary face. DISPLAY ONLY: nothing here reaches threading, naming or a merge.
- *
- * The error it can make is bounded by where it is read: a person's own mail that genuinely opens
- * "Accepted:" loses the FACE of its conversation and stays a member of it. Never hidden, never
- * unthreaded — the cheaper direction.
+ * Two arms, since only one of the fact's two homes is mirrored: the top-level `method=REPLY`
+ * header ({@link EngineMessage.itipReplyHeader}), and the subject, trusted OWN-SENT only — a
+ * received "Accepted: …" is a person telling you something. DISPLAY ONLY: nothing here reaches
+ * threading, naming or a merge, and the worst error is own mail that genuinely opens "Accepted:"
+ * losing its conversation's FACE while staying a member of it.
  */
 export function isItipAcknowledgement(m: Pick<EngineMessage, "folder" | "subject" | "itipReplyHeader">): boolean {
   if (m.itipReplyHeader === true) return true;
