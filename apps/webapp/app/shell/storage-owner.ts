@@ -63,9 +63,11 @@ export function isDemoOwned(owner: string | null): boolean {
  * parent's, and the shell reads the scratch buffer in one of them. Browser only, because this
  * module's state is per DOCUMENT in a browser and per PROCESS on a server, where concurrent renders
  * would share it; nothing on the server reads a storage key.
- *
- * NOTHING CLEARS THE LATCH AT UNMOUNT, deliberately. A reset in a cleanup would run AFTER the
- * incoming shell's render has already set the value for the door being navigated to, clobbering
+ */
+
+/**
+ * AND NOTHING CLEARS THE LATCH AT UNMOUNT, deliberately: a reset in a cleanup runs AFTER the
+ * incoming shell's render has set the value for the door being navigated to, and would clobber
  * it. Unreachable in the product — nothing owner-keyed runs outside a shell's own tree — and
  * reachable only in a test that mounts a demo shell and then asserts on product keys, which is
  * what {@link resetStorageOwnerForTest} is for.
