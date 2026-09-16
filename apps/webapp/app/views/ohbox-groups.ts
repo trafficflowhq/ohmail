@@ -66,15 +66,12 @@ function latestOf(members: readonly EngineMessage[]): EngineMessage {
 }
 
 /**
- * THE MEMBER WHOSE WORDS THE ROW SHOWS — the newest member that a PERSON wrote.
+ * THE MEMBER WHOSE WORDS THE ROW SHOWS — the newest one a PERSON wrote.
  *
- * A row names what a human said. A calendar client's acknowledgement is newest by send time the
- * moment it is sent, so unheld it takes the conversation's face and the row reads "Accepted: …"
- * over the message somebody actually wrote. Held out here, it stays an ordinary member — the
- * conversation keeps its count and its history, and only the face is decided differently.
- *
- * All-acknowledgement conversations fall back to {@link latestOf}: a face is owed whatever the
- * members are, and a row with no face is not a row.
+ * A calendar client's acknowledgement is newest by send time the moment it is sent, so unheld it
+ * takes the conversation's face and the row reads "Accepted: …" over what somebody wrote. Held
+ * out here it stays an ordinary member: the count, the history and the open target are untouched.
+ * All-acknowledgement conversations fall back to {@link latestOf} — a row with no face is not a row.
  */
 function facingMemberOf(members: readonly EngineMessage[]): EngineMessage {
   const human = members.filter((m) => !isItipAcknowledgement(m));

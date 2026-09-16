@@ -135,18 +135,13 @@ export function icsMethodOfContentType(contentType: string): string | null {
 }
 
 /**
- * The subject prefixes a calendar client writes on an ACKNOWLEDGEMENT it sends back — "Accepted:",
- * "Angenommen:", "Mit Vorbehalt:". A THIRD table, display-only, and deliberately neither of
- * `threading.ts`'s two: the naming table decides what a thread is CALLED and the continuation
- * table decides irreversible MERGES, and an acknowledgement is evidence for neither. Nothing here
- * reaches `baseSubject`, `conversationJoinVerdict` or any ingest path; the only consumer is the
- * list's choice of which member's words to show as a conversation's face.
- *
- * Longest token first so the alternation never stops at a prefix of a longer token
- * ("Mit Vorbehalt angenommen" before "Mit Vorbehalt"). The error this table can make is bounded
- * by where it is read: a person's own mail that genuinely opens "Accepted:" loses the FACE of its
- * conversation and stays a member of it, which is the cheaper direction — the row is never hidden,
- * never unthreaded and never merged.
+ * The subject prefixes a calendar client writes on an ACKNOWLEDGEMENT it sends back. A THIRD
+ * table, display-only, and neither of `threading.ts`'s two: the naming table decides what a thread
+ * is CALLED, the continuation table decides irreversible MERGES, and an acknowledgement is
+ * evidence for neither — nothing here reaches `baseSubject`, `conversationJoinVerdict` or ingest.
+ * Longest token first, so the alternation never stops at a prefix of a longer one. The worst error
+ * is bounded: own mail that genuinely opens "Accepted:" loses its conversation's FACE and stays a
+ * member of it — never hidden, never unthreaded, never merged.
  */
 const ACKNOWLEDGEMENT_PREFIX_TOKENS = [
   "tentatively accepted",   // en, Outlook's three-word form

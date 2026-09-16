@@ -602,11 +602,10 @@ export function ohboxView(reader: EntityReader): OhboxView {
    * replies the away responder sent on the person's behalf. Writing a message is finishing with
    * it, which is why own-sent mail joins this block at all; an automatic reply is the case
    * where that reasoning fails — nobody finished with anything — and the send-date fallback put
-   * one "Re: …" row per answered message at the top. A calendar client's acknowledgement
-   * ({@link isItipAcknowledgement}) is held out for the same reason and is the same class of
-   * message: a machine wrote it, so nobody finished with anything. `!== true`, never `=== false`: the field
-   * is absent on older mirrors/servers and absent must mean "the person's". Nothing is hidden;
-   * the replies stay in the Sent folder view.
+   * one "Re: …" row per answered message at the top. A calendar acknowledgement
+   * ({@link isItipAcknowledgement}) is the same class and is held out for the same reason.
+   * `!== true`, never `=== false`: the field is absent on older mirrors/servers and absent must
+   * mean "the person's". Nothing is hidden; both stay in the Sent folder view.
    */
   const sent = all.filter(
     (m) => isOwnSent(m) && m.autoReplyByUs !== true && !isItipAcknowledgement(m),

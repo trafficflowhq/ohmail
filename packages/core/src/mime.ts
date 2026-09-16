@@ -123,15 +123,11 @@ export interface CalendarHeaderFacts {
 /**
  * IS THIS A MEETING INVITATION WHOSE EVENT WE CANNOT SHOW?
  *
- * TRUE when the message SAYS it is a calendar message — Microsoft's `Content-Class`, or any
- * top-level `Content-Type` carrying RFC 6047's `method=` — and yet carries no calendar part for
- * the card to render. That is the Outlook Web Access shape: the event goes out as a link and the
- * body is OWA's boilerplate about it, so a reader gets the boilerplate AS the message with no
- * time, no place and nothing saying an invitation is what they are looking at.
- *
- * Both halves are read from what is already stored, so the answer is fixed at ingest and cannot
- * change under a reader. It claims nothing about the event itself: no link is parsed and nothing
- * is fetched.
+ * TRUE when the message SAYS it is calendar mail — Microsoft's `Content-Class`, or a top-level
+ * `Content-Type` carrying RFC 6047's `method=` — and carries no calendar part for the card to
+ * render. The Outlook Web Access shape: the event goes out as a link, so the reader gets OWA's
+ * boilerplate AS the message. Both halves come from what ingest already stored, so the answer
+ * cannot change under a reader; no link is parsed and nothing is fetched.
  */
 export function invitationWithoutEvent(m: CalendarHeaderFacts): boolean {
   const saysCalendar =
