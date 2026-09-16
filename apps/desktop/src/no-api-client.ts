@@ -97,6 +97,18 @@ export const apiOwnerBinding: () => { kind: "public" } = () => ({ kind: "public"
 export const apiOwnerHolds: (path: string, opts?: { ceremony?: boolean }) => boolean = () => true;
 
 /**
+ * The hosted gate's three refusal states, for the shared shell's types. This door always
+ * `holds` — it has no cookie jar to lose a marker from — so the verdict is a constant and the
+ * code list is empty: a surface classifying a refusal here would be classifying nothing.
+ */
+export type OwnerVerdict = "holds" | "absent" | "signed-out" | "mismatch";
+
+export const apiOwnerVerdict: (path: string, opts?: { ceremony?: boolean }) => OwnerVerdict =
+  () => "holds";
+
+export const ownerRefusalCodes: () => readonly string[] = () => [];
+
+/**
  * WITHDRAW THE CONFIRMATION — a no-op, for the same reason the four above are.
  *
  * The hosted client calls this when a response could not name the account it was for. This door
