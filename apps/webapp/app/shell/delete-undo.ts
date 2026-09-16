@@ -96,6 +96,14 @@ export interface DeleteUndoCopy {
    * namespace) so the Screener and the delete key say one sentence.
    */
   noUndo: string;
+  /**
+   * THE SERVER RECORDED THE PRESS FOR THE INSTALL THAT ORGANIZES THE MAILBOX — nothing is in the
+   * bin, and the window's own "Deleted" was raised seconds before the wire answered. Optional
+   * because only the DELETE window can reach it: the restore window's dispatch has its own
+   * vocabulary and answers no organizer wait.
+   */
+  queued?: string;
+  queuedMany?: (count: number) => string;
   /** The same three for a press over MORE THAN ONE message. Optional; see above. */
   deletedMany?: (count: number) => string;
   undoneMany?: (count: number) => string;
@@ -235,15 +243,25 @@ export function createDeleteUndo(deps: DeleteUndoDeps): DeleteUndo {
        leave a press that is half on the wire and no longer written down anywhere. */
     let outstanding = ids.length;
     let refused = 0;
+    /* WAITING ON THE ORGANIZER — counted apart from the refusals, because it is a different
+       thing to be told. The press-time sentence says "Deleted" the moment the row is hidden;
+       where the server only RECORDED the request, nothing is in the bin and the window owes the
+       correction. A refusal outranks it: a press with both endings is a press that failed. */
+    let waiting = 0;
     const settled = () => {
       outstanding -= 1;
       if (outstanding > 0) return;
       disarmDeleteIntent(pressId);
-      if (refused > 0) deps.toast(say(deps.copy.failed, deps.copy.failedMany, refused));
+      if (refused > 0) { deps.toast(say(deps.copy.failed, deps.copy.failedMany, refused)); return; }
+      if (waiting > 0 && deps.copy.queued) deps.toast(say(deps.copy.queued, deps.copy.queuedMany, waiting));
     };
     for (const messageId of ids) {
       void deps.mutate(messageId, pressId).then(
-        (res) => { if (res.status === "rolled_back") refused += 1; settled(); },
+        (res) => {
+          if (res.status === "rolled_back") refused += 1;
+          else if (res.status === "awaiting_organizer") waiting += 1;
+          settled();
+        },
         () => { refused += 1; settled(); },
       );
     }

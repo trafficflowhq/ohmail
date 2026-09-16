@@ -1348,6 +1348,10 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
       undo: t("screener.toastUndo"),
       undone: t("ohbox.deleteUndone"),
       failed: t("ohbox.deleteFailed"),
+      /* THE ONE SENTENCE THIS ROW WAS WAITING FOR — the key has been in both catalogues since the
+         202 work and nothing read it, so a reader install's delete kept saying "Deleted". */
+      queued: t("screening.deleteQueuedForOrganizer"),
+      queuedMany: (count) => t("ohbox.deleteQueuedMany", { count }),
       /* SAID WHEN THE JAR REFUSED THE RECORD — the press acts at once and offers no undo.
          `session` rather than `ohbox`: it is the same sentence the Screener says. */
       noUndo: t("session.noUndoHere"),

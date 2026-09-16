@@ -525,6 +525,7 @@
     "toastDeletedMany": "{count, plural, one {Moved to Trash.} other {# messages moved to Trash.}}",
     "deleteUndoneMany": "{count, plural, one {Not deleted — the message is where it was.} other {Not deleted — # messages are where they were.}}",
     "deleteFailedMany": "{count, plural, one {That delete could not be saved — the message is where it was.} other {# of those deletes could not be saved — the messages are where they were.}}",
+    "deleteQueuedMany": "{count, plural, one {1 message is} other {# messages are}} queued for the organizer — they are deleted on its next pass.",
     "deleteReplayRetrying": "{count, plural, one {Deleting that message did not finish. Retrying…} other {Deleting # messages did not finish. Retrying…}}",
     "deleteReplayFailed": "{count, plural, one {That delete could not be completed — the message is where it was.} other {# of those deletes could not be completed — the messages are where they were.}}",
     "bulkDeleteAsk": "{count, plural, one {Delete this message?} other {Delete # messages?}}",
