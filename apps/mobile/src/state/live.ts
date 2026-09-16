@@ -283,8 +283,17 @@ export type WorldPileState = "reply_later" | "set_aside" | "bubbled_up" | "resur
 export type WorldMail = Mail & {
   attachments?: WorldAttachment[];
   bodyState?: BodyState;
-  /** Where the message physically is — what the move panel leaves out of its list. */
+  /** Where the message physically is — the folder a `move` mutation is measured against. */
   folder: Folder;
+  /**
+   * WHERE THE MESSAGE IS SHOWN — the projection's own answer, which is the sender's routing.
+   *
+   * A newsletter ruled to `ohmail/Reads` sits physically in the INBOX, so the two fields
+   * disagree for exactly the mail a pile presents. The move panel leaves this one out of its
+   * list and `move()` retargets the rules holding the sender HERE — reading `folder` for either
+   * offered the place the row is already in and retargeted at the filed one.
+   */
+  presentedFolder: Folder;
   /**
    * THE MAILBOX THE MESSAGE ARRIVED IN — and therefore THE SENDING MAILBOX of every compose
    * this screen can start: a reply's From is `Engine.enrich`'s own `parent.mailboxId` and the
@@ -376,13 +385,15 @@ function toMail(reader: EntityReader, m: EngineMessage, v: WorldView): WorldMail
     ...(physical === FOLDER_OF_VIEW.screener ? { gateHeld: true as const } : {}),
     id: m.id,
     place: placeOfFolder(m.folder),
-    // The PHYSICAL folder, not the presented one: this reader is the projection, which
-    // re-homes a decided sender's mail for display while `physicalFolder` keeps the real
-    // location. The move panel excludes where the message actually IS, and `move()` reads
-    // the raw mirror — a presented folder here offered a destination the move then refused.
+    // BOTH LOCATIONS, because the two verbs want different ones: a `move` mutation is measured
+    // against the physical folder, and the panel and the routing retarget against the presented
+    // one. This reader is the projection, so `m.folder` IS the presented place and
+    // `physicalFolder` keeps the real location. Carrying only one of them is what left the phone
+    // offering the pile a row is already in and retargeting the rule at the filed folder.
     // (`physicalFolderOf` answers `physicalFolder ?? folder`, both `Folder` values on the
     // wire; its `string` return is the DTO's optional field being untyped, not a new shape.)
     folder: physical as Folder,
+    presentedFolder: m.folder,
     mailboxId: m.mailboxId,
     ...(() => {
       const label = mailboxLabelOf(v.mailboxes, m.mailboxId);
@@ -526,11 +537,15 @@ export type MoveTarget = "ohbox" | "reads" | "receipts" | "screened" | "spam";
 export const MOVE_TARGETS: readonly MoveTarget[] = ["ohbox", "reads", "receipts", "screened", "spam"];
 
 /**
- * The destinations the move panel offers for a message — every target except where the
- * message already is (the webapp panel's own filter: `FOLDER_OF_VIEW[v] !== message.folder`).
+ * The destinations the move panel offers for a message — every target except the one it is
+ * SHOWN in. A pile is the sender's routing: a newsletter ruled to Reads sits in the INBOX, so
+ * filtering on the physical folder hid Ohbox from the very row the reported press was made on
+ * and offered Reads, which it was already in. It takes the ROW and not a folder so that the
+ * wrong one cannot be handed to it — both fields are `Folder` and a caller passing `m.folder`
+ * type-checked. The webapp panel's filter reads the projection for the same reason.
  */
-export function moveTargetsFor(folder: Folder): MoveTarget[] {
-  return MOVE_TARGETS.filter((t) => FOLDER_OF_VIEW[t] !== folder);
+export function moveTargetsFor(row: Pick<WorldMail, "presentedFolder">): MoveTarget[] {
+  return MOVE_TARGETS.filter((t) => FOLDER_OF_VIEW[t] !== row.presentedFolder);
 }
 
 /** The move panel's label for a destination — the webapp's `PLACE_LABEL`. */
@@ -1509,8 +1524,14 @@ export interface LiveWorldActions {
   resurfaceDone(messageId: string): Promise<boolean>;
   /** Mark read / Mark unread — the DELIBERATE `mark_seen` (no `via`), so a read spends a pin. */
   markSeen(messageId: string, unread: boolean): Promise<boolean>;
-  /** Move THIS message to a view — `POST /messages/:id/move`, the same verb every list uses. */
-  move(messageId: string, dest: MoveTarget): Promise<boolean>;
+  /**
+   * Move THIS message to a view — the sender's routing first, `POST /messages/:id/move` only
+   * where the mail really is filed elsewhere. The ROW and not an id: the presented place is the
+   * one fact this module cannot re-derive (its reader is the raw mirror), and an id would let a
+   * caller press without it. The webapp's `moveToPlace(m, view)` takes the message for the same
+   * reason.
+   */
+  move(row: WorldMail, dest: MoveTarget): Promise<boolean>;
   /**
    * DELETE — `message_delete` (`DELETE /messages/:id`, mail 0065): the message rides to the
    * provider's native `\Trash` on the server, NEVER an expunge, and the optimistic tombstone
@@ -1982,29 +2003,33 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
    * MOVE — the place a pile shows is the sender's ROUTING, and the sentence comes from the ANSWER.
    *
    * A newsletter presented in Reads sits physically in the INBOX, so a bare INBOX→INBOX move is a
-   * local 404 with nothing sent: the rules holding this sender at the presented place are what
-   * gets retargeted. And where this phone only READS, the server records the press for the
+   * local 404 with nothing sent: the rules holding this sender at the PRESENTED place are what
+   * gets retargeted, and that place comes in on the row the panel was drawn from — this module's
+   * own reader is the raw mirror and cannot tell it from the filed folder. And where this phone
+   * only READS, the server records the press for the
    * organizing install and answers 202 — nothing moved, so "Moved" there would be false.
    * `watched` loses the fact the MOVE carries, so that one is awaited raw, the way
    * `liveDecidedElsewhere` above already does and for the same reason.
    */
-  const move = async (messageId: string, dest: MoveTarget): Promise<boolean> => {
-    const presented = messageOf(messageId);
-    // The RAW mirror for the location, exactly as `release` reads it: a projection would answer
-    // with a presentation, and a move is about where the mail actually is.
+  const move = async (row: WorldMail, dest: MoveTarget): Promise<boolean> => {
+    const messageId = row.id;
+    // The RAW mirror for the LOCATION, exactly as `release` reads it: a move is about where the
+    // mail actually is. The PRESENTED place is the caller's, because only the projection knows
+    // it — `messageOf` here is the raw mirror too, so reading it for both made the two values
+    // one and the retarget landed on the filed folder (measured at the K32 landing).
     const raw = engine.read();
     const m = raw.get<EngineMessage>("message", messageId);
     const folder = FOLDER_OF_VIEW[dest];
-    if (!m || !presented || !folder) {
+    if (!m || !folder) {
       toast(refuse("liveSaveFailed"));
       return false;
     }
     /* The plan as DATA first: nothing reaches `engine.mutate` until the list is known non-empty
        and no request of ours is still waiting on the organizer for this message. The move goes
        LAST so that, reading back, it is the first queued answer found and names its own holder. */
-    const writes: EngineMutation[] = presented.folder === folder
+    const writes: EngineMutation[] = row.presentedFolder === folder
       ? []
-      : holdingRules(raw, m.from.address, presented.folder as Folder).map((r) => ({
+      : holdingRules(raw, m.from.address, row.presentedFolder).map((r) => ({
         kind: "rule_update",
         ruleId: r.id,
         destination: folder,
@@ -2438,7 +2463,8 @@ export interface WorldActions {
   resurfaceNow(messageId: string): void;
   resurfaceDone(messageId: string): void;
   markSeen(messageId: string, unread: boolean): void;
-  move(messageId: string, dest: MoveTarget): void;
+  /** The row, not an id — see {@link LiveWorldActions.move}. */
+  move(row: WorldMail, dest: MoveTarget): void;
   /** Delete — to the provider's native Trash, never an expunge. See {@link LiveWorldActions.deleteMessage}. */
   deleteMessage(messageId: string): void;
   /**
@@ -2499,7 +2525,7 @@ export function stableActions(current: () => WorldActions): WorldActions {
     resurfaceNow: (id) => void current().resurfaceNow(id),
     resurfaceDone: (id) => void current().resurfaceDone(id),
     markSeen: (id, unread) => void current().markSeen(id, unread),
-    move: (id, dest) => void current().move(id, dest),
+    move: (row, dest) => void current().move(row, dest),
     deleteMessage: (id) => void current().deleteMessage(id),
     sendReply: (id, body, all, sig, sendAt) => current().sendReply(id, body, all, sig, sendAt),
     sendForward: (id, to, body, sig) => current().sendForward(id, to, body, sig),

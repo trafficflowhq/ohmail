@@ -1030,7 +1030,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
           resurfaceNow: (id) => void acts.resurfaceNow(id),
           resurfaceDone: (id) => void acts.resurfaceDone(id),
           markSeen: (id, unread) => void acts.markSeen(id, unread),
-          move: (id, dest) => void acts.move(id, dest),
+          move: (row, dest) => void acts.move(row, dest),
           deleteMessage: (id) => void acts.deleteMessage(id),
           sendReply: (id, body, all, sig, sendAt) => acts.sendReply(id, body, all, sig, sendAt),
           sendForward: (id, to, body, sig) => acts.sendForward(id, to, body, sig),

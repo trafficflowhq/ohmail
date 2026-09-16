@@ -339,11 +339,14 @@ export function MessageActions({
         <Txt variant="sectionLabel" tone="ink3" style={{ paddingHorizontal: 14, paddingBottom: 6 }}>
           {Copy.moveLabel}
         </Txt>
-        {moveTargetsFor(m.folder).map((target) => (
+        {/* The place the row is SHOWN in is what a person means by "where it is" — a newsletter
+            ruled to Reads is offered the Ohbox, which the filed folder hid. `move` gets the row
+            so the retarget names the same place the list did. */}
+        {moveTargetsFor(m).map((target) => (
           <SheetRow
             key={target}
             label={`→ ${moveTargetLabel(target)}`}
-            onPress={() => { close(); a.move(m.id, target); }}
+            onPress={() => { close(); a.move(m, target); }}
           />
         ))}
         <CancelRow onPress={close} />
