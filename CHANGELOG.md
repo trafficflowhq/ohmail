@@ -101,6 +101,23 @@ retry and nothing else.
 
 ### An "Accepted:" your calendar app sent is no longer the face of a conversation
 
+### A first import reports itself on every door
+
+A desktop signed into the hosted service keeps its own copy of the mailbox and pulls into it. While
+that first pull runs, the progress sentence was counting the slice the window keeps on screen
+rather than the copy being filled, so on a large mailbox the number stopped at the slice's size
+while the pull carried on. The copy now answers for itself.
+
+The first-run screen's "Screened so far" and "Listed under History" count the mail on this device.
+They sat beside "Still to read", which is about the import, with nothing saying they were different
+questions. They now say so.
+
+### A self-hosted server and the mail worker now hold about 47 MB less memory once they have settled
+
+### Move on the phone offers the place a message is shown in, and files the sender there
+
+### Opening a large mailbox puts mail on the list sooner: the first page is a viewport rather than five hundred messages, and the first sync of a launch waits for it instead of holding the database while the list is empty
+
 ## [0.19.1] — 2026-09-16
 
 ### Reopening the app no longer holds the text of every reply you have sent
