@@ -2,7 +2,6 @@ import { and, asc, desc, eq, inArray, isNotNull, ne, or, sql, type SQL } from "d
 import { carryDialect, dialect } from "@trafficflow/db/dialect";
 import {
   assertOrganizerRole,
-  fenceErasedMailbox,
   mailboxes, mailboxCredentials, mailboxFolders, folderState, messages, accountSettings,
   isMailboxDisabledReason, isMailboxSyncBlockReason,
   isOrganizerRole, isOrganizerKind, isOrganizerState,
@@ -16,7 +15,7 @@ import {
 import { withAccountTx, type ServiceContext } from "./context.js";
 import { ServiceError } from "./errors.js";
 import { accountMailboxesProbe, refuseOverAccountMailboxes } from "./read-bounds.js";
-import { fenceErasedAccount } from "./erasure-fence.js";
+import { fenceErasedAccount, fenceErasedMailboxOnly } from "./erasure-fence.js";
 import { fenceSignedOutMailbox, type CredentialOrigin } from "./signed-out-fence.js";
 import { sweepMailboxData, type MailboxSweepResult } from "./mailbox-erasure.js";
 /* The DEFAULT policy is registered rather than imported, so the paid gate is not an import edge
@@ -2443,7 +2442,7 @@ export class MailboxService {
        re-minted for an erased mailbox is a live way back into it. Before the encrypt, the
        sign-out fence's reason verbatim — a password for a mailbox that is gone is not brought
        into memory as ciphertext. */
-    await fenceErasedMailbox(tx, dialect(ctx.db), mailboxId);
+    await fenceErasedMailboxOnly(tx, dialect(ctx.db), mailboxId);
     const { ciphertext, keyVersion } = await kp.encrypt(pass);
     const meta = Object.keys(metaIn).length > 0 ? metaIn : undefined;
     const now = ctx.now();

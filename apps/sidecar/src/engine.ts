@@ -23,8 +23,10 @@ import {
   accountSettings, closeStoodDownAppointments, exportPendingMovesOnStandDown,
   RELEASED_ORGANIZER_SEND_SENTENCE,
   mailboxCredentials, mailboxes,
-  // The erasure fence's mailbox arm — one module for both doors, the sign-out fence's rule.
-  fenceErasedMailbox,
+  // The erasure fence's mailbox arm and its refusal class — one module for both doors, the
+  // sign-out fence's rule. The class is read by the seal's catch arm, which treats an erased
+  // mailbox exactly as it treats a signed-out one.
+  fenceErasedMailbox, MailboxErasedError,
   // Mail 0083 — the role vocabulary and the machine-name bound. One spelling for the sidecar's
   // gate, the worker's gate and the eleven service write doors; see `db/src/organizer-role.ts`.
   organizerDisplayName, isOrganizerRole, capabilitiesColumn,
@@ -2553,9 +2555,18 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         } catch (err) {
           /* THE FENCE'S OWN REFUSAL IS NOT A FAILED LAUNCH — nothing was written, so there is
              nothing to undo and the mailbox comes up with no stored password, which is what
-             signing out asked for. Any other fault still stops the attach. */
-          if ((err as { code?: string }).code !== "signed_out") throw err;
-          log("stored_login_seal_discarded", {
+             signing out asked for. The ERASURE fence's refusal is the same answer for the same
+             reason and is named FIRST, ahead of the code test: a class that fell through to the
+             `throw` would stop the whole attach — every other mailbox with it — over one mailbox
+             somebody removed. Any other fault still stops it. */
+          if (err instanceof MailboxErasedError) {
+            log("stored_login_seal_discarded", {
+              mailboxId: mb.id,
+              reason: "this mailbox was erased before the launch finished sealing its password, "
+                + "so no password was stored and nothing dials on it",
+            });
+          } else if ((err as { code?: string }).code !== "signed_out") throw err;
+          else log("stored_login_seal_discarded", {
             mailboxId: mb.id,
             reason: "this install had signed out of this mailbox before the launch finished "
               + "sealing its password, so no password was stored and nothing dials on it",

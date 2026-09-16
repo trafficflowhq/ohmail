@@ -3,9 +3,10 @@ import { dialect } from "@trafficflow/db/dialect";
 // `@trafficflow/core/mail`, NOT the default barrel — `folders.ts`'s rule, same reason: this
 // module is imported beside it and must never pull the classifier/drafter graph anywhere.
 import { folderNameError } from "@trafficflow/core/mail";
-import { assertOrganizerRole, claimIdempotencyKey, readIdempotencyKey, fenceErasedMailbox, folderOps, folderState, mailboxFolders, mailboxes, messages, recordChange, type Tx } from "@trafficflow/db";
+import { assertOrganizerRole, claimIdempotencyKey, readIdempotencyKey, folderOps, folderState, mailboxFolders, mailboxes, messages, recordChange, type Tx } from "@trafficflow/db";
 import type { ServiceContext } from "./context.js";
 import { ServiceError, IdempotencyRaceLost } from "./errors.js";
+import { fenceErasedMailboxOnly } from "./erasure-fence.js";
 import { folderInventoryProbe, refuseOverFolderInventory } from "./read-bounds.js";
 import type { MoveIdempotency } from "./message-service.js";
 import { foldersEnabled, userFolderById, userFolderExclusion, type UserFolderRow } from "./folders.js";
@@ -93,7 +94,7 @@ export class FolderOpsService {
          the ACCOUNT sweep, which deletes the parent, and says nothing about the mailbox's own
          erasure, which leaves the row standing as the tombstone. The refusal above keys on
          `status`, a different column with its own meanings (a stand-down writes it too). */
-      await fenceErasedMailbox(tx, dialect(ctx.db), mailboxId);
+      await fenceErasedMailboxOnly(tx, dialect(ctx.db), mailboxId);
       await recheckIdempotency(tx, ctx, opts.idempotency);
       await this.assertNoOpOverlap(tx, mailboxId, [name]);
       const inserted = await tx.insert(mailboxFolders)

@@ -3,8 +3,9 @@ import { dirname, join } from "node:path";
 import { and, asc, desc, eq, gt, inArray, isNull, ne, notInArray, sql } from "drizzle-orm";
 import { dialect, type Dialect } from "@trafficflow/db/dialect";
 import { recordChange, recordChanges, accountSettings, CAPABILITY_REQUESTS,
-  // The erasure fence's mailbox arm — the replay writes rows one mailbox owns.
-  fenceErasedMailbox,
+  // The erasure fence's own read — the replay writes rows one mailbox owns, and SKIPS rather
+  // than throws on an erased one; see the folder arm for why a throw is the wrong verb here.
+  readMailboxErasedAt,
 } from "@trafficflow/db";
 import {
   approvals, attachments, drafts, flagState, folderState, mailboxCredentials, mailboxFolders,
@@ -972,9 +973,15 @@ async function applyUpsert(
       /* AND THE MAILBOX'S OWN TOMBSTONE. `known` holds tombstones too — attributing mail to a
          different mailbox is the one thing this may never do — so membership is not liveness: a
          mailbox erased on THIS install keeps its row, and this row's key to it refuses only the
-         account sweep. Asked inside the page's transaction, which is where the local erasure
-         commits its own deletes. */
-      await fenceErasedMailbox(tx, dia, f.mailboxId);
+         account sweep. Asked inside the page's transaction, which is where a local erasure
+         commits its own deletes.
+
+         SKIPPED, NOT THROWN, which is the arm above's verb and had to be measured rather than
+         assumed: `applyPage` is called with no catch anywhere above it and the cursor moves only
+         after it returns, so a throw would re-pull the same page for ever — one erased mailbox
+         would stop the mirror for every other mailbox on the device. A skip is what the unknown
+         mailbox already gets. */
+      if (await readMailboxErasedAt(tx, dia, f.mailboxId) !== null) return false;
       await tx.insert(mailboxFolders).values({
         id: ch.id, mailboxId: f.mailboxId, folder: f.name, updatedAt: now,
       }).onConflictDoUpdate({
@@ -1021,12 +1028,12 @@ async function applyUpsert(
           .values({ id: m.threadId, accountId: world.accountId, updatedAt: now })
           .onConflictDoNothing({ target: threads.id });
       }
-      /* And the tombstone — the folder arm's note, same key. AFTER the stub and immediately
-         before the mail: a thread row belongs to the ACCOUNT, and this arm asks about the
-         MAILBOX, so fencing the stub on it would be a refusal aimed at the wrong erasure (the
-         census prints exactly that). Nothing is written either way — a refusal here takes the
-         whole page's transaction, stub included. */
-      await fenceErasedMailbox(tx, dia, m.mailboxId);
+      /* And the tombstone — the folder arm's note, same key and same verb. AFTER the stub and
+         immediately before the mail: a thread row belongs to the ACCOUNT, and this arm asks about
+         the MAILBOX, so guarding the stub on it would be a refusal aimed at the wrong erasure
+         (the census prints exactly that). A skipped message leaves its stub, which is what an
+         un-arrived thread already leaves. */
+      if (await readMailboxErasedAt(tx, dia, m.mailboxId) !== null) return false;
       const display = {
         /* THE ATTRIBUTION, AND IT IS IN THE CONFLICT SET FOR A REASON. This object is both the
            insert's display half and the `onConflictDoUpdate` set; `mailbox_id` used to be in
@@ -1189,9 +1196,9 @@ async function applyUpsert(
           .values({ id: d.threadId, accountId: world.accountId, updatedAt: now })
           .onConflictDoNothing({ target: threads.id });
       }
-      // And the tombstone — the message arm's note, same key and same placement: a draft is the
+      // And the tombstone — the message arm's note, same key, verb and placement: a draft is the
       // person's own unsent words, and an erased mailbox is not where they go back.
-      await fenceErasedMailbox(tx, dia, d.mailboxId);
+      if (await readMailboxErasedAt(tx, dia, d.mailboxId) !== null) return false;
       // `in_reply_to_message_id` has an FK; keep it only when the parent is mirrored. A draft
       // whose parent is absent still lands (user writing is never dropped) but lands DEGRADED —
       // reported as `"partial"` below so the stale-resume freshen's supersession ledger never

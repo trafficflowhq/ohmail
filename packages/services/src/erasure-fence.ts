@@ -1,5 +1,6 @@
 import {
-  AccountErasedError, MailboxErasedError, fenceErased, type FenceScope, type Tx,
+  AccountErasedError, MailboxErasedError, fenceErased, fenceErasedMailbox,
+  type FenceScope, type Tx,
 } from "@trafficflow/db";
 import type { Dialect, LockMode } from "@trafficflow/db/dialect";
 import { ServiceError } from "./errors.js";
@@ -28,6 +29,25 @@ export async function fenceErasedAccount(
 export async function fenceErasedScope(tx: Tx, d: Dialect, scope: FenceScope): Promise<void> {
   try {
     await fenceErased(tx, d, scope);
+  } catch (err) {
+    throw asServiceRefusal(err);
+  }
+}
+
+/**
+ * THE MAILBOX ARM ALONE, with the same 410 on it — `fenceErasedMailbox` is to this what
+ * `fenceErased`'s account half is to {@link fenceErasedAccount}.
+ *
+ * For a writer whose row hangs off a NOT NULL key to `mailboxes`: the ACCOUNT sweep deletes that
+ * parent, so the account erasure is refused by the key and the mailbox's own stamp is the only
+ * question left. It reads ONE row, so a caller already holding it adds no lock and cannot invert
+ * the account-then-mailbox order the fence and both sweeps share.
+ */
+export async function fenceErasedMailboxOnly(
+  tx: Tx, d: Dialect, mailboxId: string, mode: LockMode = "share",
+): Promise<void> {
+  try {
+    await fenceErasedMailbox(tx, d, mailboxId, mode);
   } catch (err) {
     throw asServiceRefusal(err);
   }
