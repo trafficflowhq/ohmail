@@ -273,8 +273,22 @@ export const READ_ROUTES: ReadRoute[] = [
   },
   {
     method: "GET",
+    /**
+     * `?counts=1` fills `messageCount` from THIS MIRROR'S OWN `messages` table — the store this
+     * install's pull writes into, and the import's numerator on the Cloud-mirror door. Not a
+     * window: the mirror replays the account's whole change log, so the number keeps climbing
+     * where the renderer's projection pins at its policy floor. Distinct from the
+     * `hostedMessageCount` `cloud-engine.ts` decorates onto the same rows — that is the hosted
+     * account's count, the denominator this pair is quoted against. Spelled `=== "1"` exactly as
+     * `packages/api/src/routes/mailboxes.ts` spells it, so `?counts=0` turns the aggregate OFF
+     * rather than on; absent means nobody asked, never `0`.
+     */
     pattern: "/mailboxes",
-    handler: async (_req, ctx) => json({ items: await mailboxService.list(ctx) }),
+    handler: async (req, ctx) => json({
+      items: await mailboxService.list(ctx, {
+        counts: new URL(req.url).searchParams.get("counts") === "1",
+      }),
+    }),
   },
   {
     method: "GET",
