@@ -542,18 +542,13 @@ export interface LeaseSelf {
    */
   pendingNonce?: string | null;
   /**
-   * THIS PROCESS HAS SEEN ITS OWN CLOCK CORRECTED SINCE IT LAST WROTE — a ONE-SHOT, set by the
-   * caller and spent by the cycle that reads it.
+   * THIS PROCESS HAS SEEN ITS OWN CLOCK CORRECTED SINCE IT LAST WROTE — supplied by the caller,
+   * because only a process can observe its own clock being set.
    *
-   * Both stamps on a claim are immutable, so a record written under a wrong clock goes on
-   * measuring that clock for ever. A LAUNCH escapes it because `lastNonce` is `null` and the
-   * reading is nobody's; a process that keeps running does not, and the person who corrects their
-   * clock and does not restart is refused by the record they just fixed. This is that same arm,
-   * made reachable while running. It is NOT `lastNonce = null`: that would re-enter
-   * {@link bearsOurNonce}'s "trust anything wearing my id" on a live install, which is the clone
-   * defence switched off to close a clock bug. Only the caller can observe a correction, so the
-   * bound lives there; one correction buys ONE renewal so a record measurable under the current
-   * clock can exist, never a standing exemption.
+   * Both stamps on a claim are immutable, so a record written under a wrong clock refuses for
+   * ever. A LAUNCH escapes that on `lastNonce === null`; this is the same arm made reachable while
+   * running. NOT `lastNonce = null`, which would re-enter {@link bearsOurNonce}'s "trust anything
+   * wearing my id" on a live install. One correction buys ONE renewal, never a standing exemption.
    */
   clockCorrected?: boolean;
   protocol?: number;
@@ -969,24 +964,16 @@ export function writtenByThisProcess(self: LeaseSelf, nonce: string): boolean {
 export const CLOCK_CORRECTION_TOLERANCE_MS = 1_000;
 
 /**
- * HAS THIS PROCESS'S WALL CLOCK BEEN SET SINCE THE LAST TIME ANYBODY ASKED — a watch, and the
- * ONE-SHOT behind {@link LeaseSelf.clockCorrected}.
+ * HAS THIS PROCESS'S WALL CLOCK BEEN SET — the watch behind {@link LeaseSelf.clockCorrected}. The
+ * two clocks advance together unless something SETS the wall one, so a step is `|Δwall − Δmono|`
+ * over the tolerance.
  *
- * The wall clock and the monotonic clock advance together unless something SETS the wall clock, so
- * a step is `|Δwall − Δmono|` over the tolerance. Only a process can see this about itself, which
- * is why it lives beside the field rather than inside the gate: the gate is handed a fact.
+ * A COUNT AND NOT A ONE-SHOT: a process organizes SEVERAL mailboxes and a correction is about all
+ * of them, so a boolean spent by the first reader would leave every other mailbox refusing for
+ * ever. Each runtime latches the count it has acted on.
  *
- * A COUNT AND NOT A ONE-SHOT, because a process organizes SEVERAL mailboxes and a correction is
- * about all of them. A boolean spent by the first reader would give one mailbox its renewal and
- * leave every other one refusing for ever — the same defect with a smaller blast radius. So this
- * counts corrections and each runtime latches the count it has already acted on, which is
- * once-per-correction PER MAILBOX. Re-basing on every call is what keeps one step counted once.
- *
- * DELIBERATELY GENEROUS. A suspended laptop resumes with the monotonic clock behind the wall clock
- * on every platform that excludes sleep from it, and that reads as a correction here. It is not
- * worth telling apart: a spurious `true` buys ONE renewal under the clock this install has now,
- * which is what an honest correction buys, and an install whose clock is still wrong is refused at
- * the cycle after it either way.
+ * Generous on purpose — a resumed laptop reads as a correction, and the BOUND is what makes that
+ * safe: a spurious count buys one renewal, exactly as an honest one does.
  */
 export function makeClockCorrectionWatch(opts: {
   wall?: () => number; mono?: () => number; toleranceMs?: number;
