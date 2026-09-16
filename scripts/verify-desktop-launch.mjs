@@ -45,7 +45,7 @@ if (RUN_AS_SCRIPT && (!appPath || args.includes("--help"))) {
  * symptom was "no frame could be captured" — a sentence about the capture, for a defect in the
  * reader. 11 bits_per_pixel · 12 bytes_per_line · 13 visual_class · 14-16 the masks · 19 ncolors.
  * The arithmetic that settles it: header 107 + 256x12 colormap + 1400x900x4 == the file size. */
-function readXwd(file) {
+export function readXwd(file) {
   const buf = readFileSync(file);
   const w = (i) => buf.readUInt32BE(i * 4);
   const headerSize = w(0);
@@ -61,13 +61,29 @@ function readXwd(file) {
     throw new Error(`xwd: ${bitsPerPixel} bits per pixel is not a shape this reads`);
   }
   const pixels = headerSize + ncolors * 12;
+  const stride = bitsPerPixel >>> 3;
+  /* THE HEADER IS CHECKED AGAINST THE FILE, because every reading below trusts it. A capture
+   * cut short — a killed `xwd`, a full disk, a redirection that lost its tail — leaves rows the
+   * header still describes, and reading past the end yields `undefined`: every comparison against
+   * it is NaN, no edges are counted, and the verdict is NOT RENDERED. That is a sentence about
+   * the app for a defect here, which is the class this file exists to keep out of a release
+   * reading. Both refusals are the header's own arithmetic: the described pixel area has to be
+   * in the file, and a row has to be wide enough for the pixels on it. */
+  if (bytesPerLine < pixmapWidth * stride) {
+    throw new Error(
+      `xwd: ${bytesPerLine} bytes per line is short of ${pixmapWidth} pixels at ${stride} bytes each`);
+  }
+  const described = pixels + bytesPerLine * pixmapHeight;
+  if (described > buf.length) {
+    throw new Error(
+      `xwd: the header describes ${described} bytes and the file holds ${buf.length} — the capture is truncated`);
+  }
   const shiftOf = (mask) => { let s = 0; while (s < 32 && !((mask >>> s) & 1)) s++; return s; };
   const chan = {
     r: shiftOf(redMask) >>> 3,
     g: shiftOf(greenMask) >>> 3,
     b: shiftOf(blueMask) >>> 3,
   };
-  const stride = bitsPerPixel >>> 3;
   return {
     width: pixmapWidth,
     height: pixmapHeight,
@@ -135,7 +151,16 @@ if (RUN_AS_SCRIPT) {
    * needing an app that crashes on its first render. */
   const frameOnly = opt("frame", null);
   if (frameOnly) {
-    const v = frameVerdict(readXwd(frameOnly));
+    /* A capture this cannot read is rc 2, never rc 1: rc 1 is the app's verdict, and a reader
+     * refusal wearing it reads as a window that rendered nothing. */
+    let img;
+    try {
+      img = readXwd(frameOnly);
+    } catch (e) {
+      process.stderr.write(`frame ${frameOnly}: NOT READ — ${e instanceof Error ? e.message : String(e)}\n`);
+      process.exit(2);
+    }
+    const v = frameVerdict(img);
     process.stdout.write(`frame ${frameOnly}: ${v.rendered ? "RENDERED" : "NOT RENDERED"} — ${v.why}\n`);
     process.exit(v.rendered ? 0 : 1);
   }
