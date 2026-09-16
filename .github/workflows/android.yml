@@ -834,9 +834,16 @@ jobs:
           set -euo pipefail
           TAG="${GITHUB_REF_NAME}"
           # The release is normally cut first, with its own notes; this create is the fallback
-          # so a bare tag push still ends with a downloadable artifact.
+          # so a bare tag push still ends with the signed pair attached to a page.
+          #
+          # A DRAFT, not a prerelease. A prerelease is PUBLISHED, and a published release PINS
+          # its tag: at 0.17.0 the android tag could not be moved while a prerelease page
+          # referenced it, and retagging meant deleting a page somebody could already have
+          # downloaded from. A draft pins nothing, so the tag stays movable until the release
+          # is final. `release-page.sh finalize <desktop tag> --android-tag <this tag>` is what
+          # publishes it, in the same step that takes the desktop page out of prerelease.
           if ! gh release view "$TAG" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
-            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --prerelease --verify-tag \
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --draft --verify-tag \
               --title "$TAG" \
               --notes "Android APK and App Bundle for $TAG. Built and signed by this repository's Actions from the tagged tree."
           fi
