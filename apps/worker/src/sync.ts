@@ -614,18 +614,14 @@ function openPage(at: CyclePageCursor, pass: CyclePass): void {
  * Rethrow a REFUSAL out of a catch arm that would otherwise swallow it or read it as a message fault.
  * FIVE classes the arms cannot tell from an ordinary failure: `LeaderFencedError` is proof this process
  * no longer leads the shard, `MailboxRemovedError` that the mailbox is gone, `MailboxErasedError` that
- * it was ERASED (the ingest repository's own fence, raised where the erasure stamp is read under the
- * write's lock — a different door to the same fact, and it was read as a message fault until it was
- * named here), and the permit's own two — `OrganizerStandDownError` (another install holds this mailbox
- * now) and `LeaseUnavailableError` (the lease could not be read, which is not a stand-down and equally
- * not evidence about a message). None is evidence about the message or the pass, all five mean every
- * later write in this cycle would be illegitimate, and all are terminal for it — `index.ts` and
- * `reconcile-cron.ts` read them as a skip, not a failing mailbox. ONE PLACE DECIDES, because the
- * swallowing arms are many: three reconcile groups logged a removal as bookkeeping that "did not
- * commit" and carried on writing into a mailbox that had gone, and `fileOne`/`reconcileFlags` recorded
- * a stand-down as the MESSAGE's refusal. A CLASS ADDED HERE KILLS EVERY ARM BELOW ITS CALL that named
- * it: the two arms that name a removal are above their `rethrowRefusal`, and `refusalIsRemoval` is
- * what they ask, so a class gained here reaches their sentence rather than being rethrown past it.
+ * it was ERASED (the ingest repository's own fence — a different door to the same fact, read as a
+ * message fault until it was named here), and the permit's own two — `OrganizerStandDownError`
+ * (another install holds this mailbox) and `LeaseUnavailableError` (the lease could not be read).
+ * None is evidence about the message or the pass, all five are terminal for the cycle, and `index.ts`
+ * and `reconcile-cron.ts` read them as a skip. ONE PLACE DECIDES, because the swallowing arms are
+ * many: three reconcile groups logged a removal as bookkeeping and carried on writing into a mailbox
+ * that had gone, and `fileOne`/`reconcileFlags` recorded a stand-down as the MESSAGE's refusal. A
+ * class added here kills every arm BELOW its call that named a class by hand — `refusalIsRemoval`.
  */
 function rethrowRefusal(err: unknown): void {
   if (
@@ -695,12 +691,11 @@ function removedMailboxError(status: string | null): MailboxRemovedError {
  * ONE PLANNED MESSAGE, COMMITTED BEHIND THE FENCE — the only door the ingest commits through. A
  * `new` message FOLDS the fence into the change-log allocation the branch already sends, so it pays
  * no round trip for it. Sound THERE AND ONLY THERE: that branch's first write is the `messages`
- * INSERT, whose foreign key takes the mailbox row before anything else in the transaction, so
- * asking at the allocation cannot invert the lock order against `MailboxService.delete`. Every
- * other shape asks FIRST — a repair holds a `messages` row well before the allocation, and an
- * erasing removal waiting on it would deadlock (measured: 40P01, the erasure as victim). A lost
- * upsert is asked afterwards all the same, so every commit asks exactly once — and on a hosted
- * worker `alreadyAsked` makes that once the lease fence's own opening statement, which costs nothing.
+ * INSERT, whose foreign key takes the mailbox row before anything else, so asking at the allocation
+ * cannot invert the lock order against `MailboxService.delete`. Every other shape asks FIRST — a
+ * repair holds a `messages` row well before the allocation, and an erasing removal waiting on it
+ * would deadlock (measured: 40P01, the erasure as victim). Exactly once per commit, and where there
+ * is a lease fence `alreadyAsked` makes that once its own opening statement, at no cost.
  */
 async function commitFenced(
   plan: ChangePlan, txRepo: DrizzleRepo, deps: CommitDeps, alreadyAsked: boolean,
@@ -730,12 +725,11 @@ async function commitFenced(
  * EVERY OTHER WRITE THE CYCLE MAKES, BEHIND THE SAME FENCE — {@link commitFenced} is the door for a
  * PLANNED message and this is the door for everything else: junk restores, locators, `folder_state`,
  * `flag_state`, audit rows, delete evidence, cursors, failure records. Two passes used to write without
- * asking, planning from reads taken outside every transaction, so a removal in that gap committed into a
- * mailbox just removed; a check at the head of the cycle would not close it, which is why the question
- * belongs INSIDE the writing transaction. ASKED FIRST IS THE LOCK ORDER: `MailboxService.delete` takes
- * the mailbox row `FOR UPDATE` first, so a writer holding a message row and then asking would be its
- * deadlock partner (40P01), not its refusal. ONE READ PER TRANSACTION, not per row — and NONE where
- * there is a lease fence, whose own opening `FOR UPDATE` is that read, taken first and held longer.
+ * asking, planning from reads taken outside every transaction, so a removal in that gap committed into
+ * a mailbox just removed; a check at the head of the cycle would not close it. ASKED FIRST IS THE LOCK
+ * ORDER: `MailboxService.delete` takes the mailbox row `FOR UPDATE` first, so a writer holding a
+ * message row and then asking would be its deadlock partner (40P01). ONE READ PER TRANSACTION and
+ * NONE under a lease fence, whose own opening `FOR UPDATE` is that read, taken first and held longer.
  */
 async function fencedLiveGroup<T>(deps: LiveScope, fn: (repo: WorkerRepo) => Promise<T>): Promise<T> {
   return fencedGroup(deps, async (repo) => {

@@ -778,17 +778,13 @@ export async function clearOwedRetroFences(db: WorkerDb, mailboxId: string): Pro
 
 /**
  * The same fence, over the mail-bearing writes — `SyncDeps.fence` for one mailbox. `applyFenced`
- * covers the two LIFECYCLE writes; this covers everything `runSyncCycle` persists (`messages` and
- * instances, folder cursors, `change_log`, `folder_state`/`flag_state`, `message_failures`,
- * `audit_log`) with the SAME leadership definition and the SAME two-statement shape, for the same
- * EvalPlanQual reason: a bare `SELECT … FOR UPDATE` on the MAILBOX row absorbs the lock wait (two
- * workers contending for one mailbox meet HERE, at a statement allowed to wait), then the leadership
- * check is its own statement with a fresh snapshot. The row's status is READ BACK from that same
- * statement and reported as the third outcome (`removed`) rather than judged here: the lock is already
- * held, so the removal question every fenced writer used to ask as a second statement costs nothing,
- * and {@link sync.refuseRemovedMailbox} stays the one place that decides what a status means. A
- * LOST SHARD and a GONE MAILBOX are different verdicts — a zero-row read used to report the second as
- * the first. `lost` is the synchronous tripwire.
+ * covers the two LIFECYCLE writes; this covers everything `runSyncCycle` persists, with the SAME
+ * leadership definition and the SAME two-statement shape, for the same EvalPlanQual reason: a bare
+ * `SELECT … FOR UPDATE` on the MAILBOX row absorbs the lock wait, then the leadership check is its
+ * own statement with a fresh snapshot. That first statement READS `status` off the row it already
+ * holds and reports it as the third outcome (`removed`), so the removal question costs every fenced
+ * writer nothing and `sync.ts` still decides what a status means. A LOST SHARD and a GONE MAILBOX
+ * are different verdicts; a zero-row read reported the second as the first. `lost` is the tripwire.
  */
 export function makeSyncWriteFence(
   db: WorkerDb, mailboxId: string, fence: LeaderFence, lost: () => boolean = () => false,
