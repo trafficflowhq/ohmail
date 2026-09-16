@@ -551,7 +551,7 @@ describe("the Rust side", () => {
    * describe would stay green while the shell grew a capability. Adding a file therefore fails
    * this test until somebody decides which rules it lives under.
    */
-  it("is these twenty files and no others", () => {
+  it("is these twenty-one files and no others", () => {
     const files = fs.readdirSync(path.join(APP, "src-tauri/src")).sort();
     expect(files).toEqual([
       // Which door this install came in by, and the environment each one composes. Compiled only
@@ -599,6 +599,12 @@ describe("the Rust side", () => {
       "omarchy.rs",
       "omarchy_core.rs",
       "omarchy_core_tests.rs",
+      // GENERATED, and the only file here nobody edits. The renderer ceiling `vitals.rs` reports
+      // against, written out of the project's one budget table — it was a literal in `vitals.rs`
+      // while two gates read a different number, so the log line a person sees and the line a gate
+      // reddens on were not the same. It declares a constant and nothing else: no capability, no
+      // syscall, no Tauri. Gated with `vitals.rs`, its only reader, so the preview carries neither.
+      "perf_budgets.rs",
       "updater.rs",
       "updater_tests.rs",
       // WHAT THE RENDERER COSTS. `engine_vitals` measures the sidecar, which is the process that
@@ -663,6 +669,11 @@ describe("the Rust side", () => {
     // and no mailbox to grow — must carry neither. It also writes to the engine's own log, which
     // is the other reason it cannot be compiled without it.
     expect(main).toMatch(/#\[cfg\(feature = "local-engine"\)\]\s*\nmod vitals;/);
+    // `perf_budgets.rs` behind the same gate as its only reader. It is a generated constant and no
+    // capability at all, so the reason is narrower: compiled without `vitals.rs` it would be dead
+    // code in the published preview, and a module nothing can reach is a module that should not be
+    // in the binary a stranger downloads.
+    expect(main).toMatch(/#\[cfg\(feature = "local-engine"\)\]\s*\nmod perf_budgets;/);
     // `default` exists and is empty. A missing `[features]` block would also match "not
     // enabled", and would be a different fact.
     expect(cargo).toMatch(/^default = \[\]$/m);
