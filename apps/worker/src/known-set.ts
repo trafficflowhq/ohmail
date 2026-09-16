@@ -590,20 +590,14 @@ export class KnownSetCache {
   }
 
   /**
-   * The read. Serves the memo when it is warm and the mailbox matches; otherwise reads through and
-   * remembers.
+   * The read: the memo when it is warm and the mailbox matches, otherwise a read-through. The
+   * mailbox check is not decoration — `SyncDeps.repo` is ONE object shared by every mailbox this
+   * worker serves, so a cache handed to the wrong runtime must answer from the database.
    *
-   * The mailbox check is not defensive decoration — `SyncDeps.repo` is ONE object shared by every
-   * mailbox this worker serves, so a cache handed to the wrong runtime must answer with the
-   * database rather than with another mailbox's UIDs. Getting that wrong would let one account's
-   * IMAP server decide what another account's sync loop treats as already-known, which is the
-   * boundary every mailbox-scoped statement in `drizzle-repo.ts` exists to hold.
-   *
-   * THIS IS WHERE EVICTION HAPPENS — on the insertion, in the middle of the pass, not at the end
-   * of one. `offer` puts the projection past the doorkeeper and then charges what it may retain,
-   * evicting the least recently used memos of OTHER mailboxes until the process fits its budget.
-   * Two projections are not retained at all and read cold instead: one too big for the whole
-   * budget, and one missing for the first time this roster round while the budget is full.
+   * EVICTION HAPPENS HERE, on the insertion, mid-pass. `offer` puts the projection past the
+   * doorkeeper and charges what it may retain, evicting the least recently used memos of OTHER
+   * mailboxes. Two are not retained and read cold instead: one too big for the whole budget, one
+   * missing for the first time this round with the budget full.
    */
   async list(
     read: (mailboxId: string) => Promise<KnownLocator[]>, mailboxId: string,
