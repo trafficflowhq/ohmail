@@ -407,7 +407,12 @@ export type SmtpSizeOutcome =
 export type SmtpSizeFailure =
   /** The server refused the credentials (nodemailer `EAUTH`). */
   | "auth_refused"
-  /** Never got a usable connection: timeout, DNS, refused socket. */
+  /**
+   * Never got a usable connection: timeout, DNS, refused socket — or this deployment's own host
+   * policy refusing the submission address before a socket existed. Not a sixth member for that
+   * last one: `mailboxes.smtp_size_probe_code` carries a CHECK constraint over this exact set
+   * (`mailboxes_smtp_size_probe_code_closed`, mail 0063), so widening the union is a migration.
+   */
   | "unreachable"
   /** The connection was made and TLS would not come up on the floor this product requires. */
   | "tls_refused"
@@ -438,6 +443,11 @@ export function classifySmtpSizeFailure(err: unknown): SmtpSizeFailure {
     case "EAUTH": return "auth_refused";
     case "ETIMEDOUT": case "ETIMEOUT": case "ECONNECTION": case "ESOCKET": case "EDNS":
       return "unreachable";
+    // A dial host guard's refusal, by the closed token the guard's own header states it raises —
+    // the only one here that is OURS, and a string because the guard lives in a host that core
+    // cannot import. Without this arm a policy refusal reads `unknown`, which is the one answer we
+    // provably know to be wrong: no connection was attempted, and that is what `unreachable` says.
+    case "MAILBOX_HOST_REFUSED": return "unreachable";
     case "ETLS": return "tls_refused";
     default: return "unknown";
   }

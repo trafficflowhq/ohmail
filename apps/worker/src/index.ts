@@ -101,7 +101,7 @@ import {
   startPushWake, pushEndpointGuardFromEnv, vapidFromEnv, type RunningPushWake,
 } from "./push-wake.js";
 import { driverWriteRaceReason } from "./driver-write-race.js";
-import { recordSmtpMaxSize, smtpSizeDial } from "./smtp-size.js";
+import { makeSmtpSizeDial, recordSmtpMaxSize } from "./smtp-size.js";
 import type { Tx, OrganizerRole, OrganizerState } from "@trafficflow/db";
 import {
   loadEnabledMailboxes, loadMailboxCreds, loadMailboxById, bootstrapEnvCreds, BootstrapRefusedError,
@@ -2113,7 +2113,9 @@ export async function startWorkerWithLock(
             announced: mb.smtpMaxSizeBytes,
             smtp: creds.smtp,
             attempted: smtpSizeAttempted,
-            dial: smtpSizeDial,
+            // The same policy object the attach below dials under, threaded rather than re-read:
+            // the probe and the connection must not disagree about one operator's network.
+            dial: makeSmtpSizeDial(dialHostGuard),
           });
           if (learned.outcome === "learned") {
             await recordSmtpMaxSize(db, mb.mailboxId, learned.maxMessageBytes);

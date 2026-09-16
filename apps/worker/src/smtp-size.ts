@@ -4,6 +4,7 @@ import type { makeDb } from "@trafficflow/db/cloud";
 import {
   WORKER_NET_TIMEOUTS, verifySmtpLogin, type SmtpSizeDial,
 } from "@trafficflow/core/adapters/imap";
+import { checkedDial, type DialHostGuard } from "./dial-host-guard.js";
 
 /**
  * THE SYNC HOST'S HALF of the `SIZE` back-fill. The rule is `learnSmtpMaxSize` in
@@ -16,8 +17,22 @@ import {
  * 0063's `smtp_size_probed_at`/`smtp_size_probe_code`: here every dial fails on a blocked port, so stamping
  * would write `unreachable` fleet-wide and suppress the one host whose egress works; its bound stays the in-memory one-dial-per-mailbox-per-process guard. */
 
-/** The production dial from this host: a real SMTP login on the TLS floor, on the worker's timeouts. */
-export const smtpSizeDial: SmtpSizeDial = (smtp) => verifySmtpLogin(smtp, WORKER_NET_TIMEOUTS);
+/**
+ * The production dial from this host: a real SMTP login on the TLS floor, on the worker's timeouts,
+ * under the DEPLOYMENT'S OWN POLICY. This is the organizer's fifth dial and it was the one that
+ * handed a stored submission name to a fresh socket with no check and no pin, three lines above
+ * the attach that checks. Same helper, same call shape and same refusal class as the four adapter
+ * sites (`dial-host-guard.ts`). A FACTORY and not a constant, because a guard that can be omitted
+ * is a guard: the policy is threaded from the composition root, and `checkedDial` refuses a
+ * missing one by name. The refusal reaches `learnSmtpMaxSize`'s catch and becomes a closed code —
+ * a probe that may not dial costs this mailbox its ceiling and nothing else.
+ */
+export function makeSmtpSizeDial(guard: DialHostGuard | undefined): SmtpSizeDial {
+  return async (smtp) => verifySmtpLogin(
+    { ...smtp, ...(await checkedDial(guard, smtp.host, "smtp")) },
+    WORKER_NET_TIMEOUTS,
+  );
+}
 
 /**
  * Record what the server announced — and ONLY over a row that still announces nothing.
