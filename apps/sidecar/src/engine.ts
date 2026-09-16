@@ -137,7 +137,7 @@ import {
 // the mailbox (its empty-folder arm claims). One method, no way to write. See
 // `notePeekedHolder`.
 import {
-  answerLeasePeek, deriveRequestKey, type LeasePeekIo,
+  answerLeasePeek, deriveRequestKey, makeClockCorrectionWatch, type LeasePeekIo,
   type LeasePeekAnswer, type LeaseOp, type OrganizerKind,
   type OrganizerIntent,
 } from "@trafficflow/core/adapters/organizer-lease";
@@ -1915,6 +1915,12 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
      */
     const installId = config.installId?.trim() || world.accountId;
     /**
+     * THIS PROCESS'S OWN CLOCK, WATCHED — one watch for the install, because a clock correction is
+     * a fact about the machine and not about a mailbox. Each runtime latches the count it has
+     * acted on, so every mailbox gets the renewal a correction licenses and none gets two.
+     */
+    const clockCorrections = makeClockCorrectionWatch();
+    /**
      * What this install calls itself, to every other install reading the claim. The fallback is the
      * desktop's, and only the desktop's: `hostname()` is the one thing a desktop process knows
      * about its machine without asking its shell. It is not available anywhere else — a phone has
@@ -3366,6 +3372,11 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
        * down over its own write. Set before the append, cleared by the read that answered.
        */
       let leasePendingNonce: string | null = null;
+      /* THE CORRECTION COUNT THIS MAILBOX HAS ALREADY ACTED ON. Seeded with the CURRENT count
+         rather than 0: a runtime attaching now has no record of its own to re-admit — its first
+         gate runs with `lastNonce` null, which is the launch arm — so a difference here would be
+         an admission nobody had a correction for. */
+      let seenClockCorrections = clockCorrections();
       /**
        * WHAT THIS INSTALL'S WRITES RIDE ON. Written by every gate run and asked at every
        * destructive write inside the cycle, so a takeover landing mid-drain stops the remaining
@@ -4186,6 +4197,10 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
            claim's heartbeat — the lapse bound below compares against what a reader of the folder
            can actually see, not against a second clock reading taken after the round trip. */
         const gateAskedAt = now();
+        /* ASKED ONCE PER GATE, and compared against what this mailbox has acted on. A person who
+           corrects a wrong clock without restarting is refused for ever without this: both stamps
+           on the claim we wrote are immutable, so the record goes on measuring the old clock. */
+        const correctionsNow = clockCorrections();
         const leaseArgs = {
           adapter,
           mailboxId: mb.id,
@@ -4193,6 +4208,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
             installId, kind: organizerKind, displayName: machineName, lastNonce: leaseNonce,
             /* BOTH VALUES: an install recognises its own claim whatever happened to the response. */
             pendingNonce: leasePendingNonce,
+            ...(correctionsNow !== seenClockCorrections ? { clockCorrected: true } : {}),
           },
           hasRequestKey: requestKey !== null,
           // An explicit human choice, and the ONLY thing that distinguishes "this mailbox's last
@@ -4215,6 +4231,10 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           log,
         };
         const outcome = await readMailboxLease({ ...leaseArgs, now: gateAskedAt });
+        /* SPENT BY THE GATE THAT READ IT, and only once it RETURNED: a cycle that threw on the
+           network never offered the correction to the lease, and spending it there would lose the
+           one renewal it licenses until the person set their clock again. */
+        seenClockCorrections = correctionsNow;
         if (outcome.organize) {
           leaseNonce = outcome.nonce;
           /* THE ANSWER ARRIVED, so nothing is pending — the widening is one value and it is dropped

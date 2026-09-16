@@ -127,7 +127,8 @@ import {
 // lease every cycle to keep `organizer_state` and the holder columns honest, and looking must
 // never write a claim: `readLeasePeek` takes the read-only IO and creates nothing.
 import {
-  readLeasePeek, answerLeasePeek, deriveRequestKey, type OrganizerIntent,
+  readLeasePeek, answerLeasePeek, deriveRequestKey, makeClockCorrectionWatch,
+  type OrganizerIntent,
 } from "@trafficflow/core/adapters/organizer-lease";
 
 /** How often the leader runs the global maintenance pass (expired-idempotency-key sweep). */
@@ -348,6 +349,12 @@ interface MailboxRuntime {
    * carries the rule; this is where the worker keeps its half.
    */
   leasePendingNonce: string | null;
+  /**
+   * HOW MANY CLOCK CORRECTIONS THIS MAILBOX HAS ALREADY ACTED ON — latched per mailbox against the
+   * process-wide watch, because a correction is a fact about the MACHINE and every mailbox it
+   * organizes needs the one renewal it licenses. See `makeClockCorrectionWatch`.
+   */
+  seenClockCorrections: number;
   /**
    * WHAT THIS MAILBOX'S WRITES RIDE ON — the permit the last gate took, or the named reason there
    * is none. Written by `mayOrganize` on both arms and handed to `runSyncCycle`, so every
@@ -1174,8 +1181,14 @@ export async function startWorkerWithLock(
     const organizerInstallId = config.organizer?.installId ?? cloudInstallId(environment);
     const organizerDisplayName = config.organizer?.displayName ?? CLOUD_DISPLAY_NAME;
     const organizerStaleAfterMs = config.organizer?.staleAfterMs;
+    /* ONE WATCH FOR THE PROCESS — a wall clock that was SET, which is the one thing that can make
+       a claim this worker wrote stop being evidence about the clock it has now. */
+    const clockCorrections = makeClockCorrectionWatch();
 
-    function leaseSelfFor(rt: { leaseNonce: string | null; leasePendingNonce: string | null }): LeaseSelf {
+    function leaseSelfFor(
+      rt: { leaseNonce: string | null; leasePendingNonce: string | null; seenClockCorrections: number },
+      correctionsNow: number,
+    ): LeaseSelf {
       return {
         installId: organizerInstallId,
         kind: "cloud",
@@ -1184,6 +1197,9 @@ export async function startWorkerWithLock(
         /* BOTH VALUES, because an install recognises its own claim whatever happened to the
            response — see {@link LeaseSelf.pendingNonce}. */
         pendingNonce: rt.leasePendingNonce,
+        /* AND WHETHER OUR OWN RECORD IS STILL EVIDENCE ABOUT THIS CLOCK. Without it a corrected
+           clock clears only at the next launch, and a long-lived worker never launches. */
+        ...(correctionsNow !== rt.seenClockCorrections ? { clockCorrected: true } : {}),
       };
     }
 
@@ -1324,6 +1340,7 @@ export async function startWorkerWithLock(
       nonce: {
         leaseNonce: string | null;
         leasePendingNonce: string | null;
+        seenClockCorrections: number;
         leasePermit: OrganizerWriteAuthority;
       },
       adapter: MailboxAdapter,
@@ -1563,9 +1580,11 @@ export async function startWorkerWithLock(
       // The instant the gate ASKED, captured once: the permit's TTL is measured from the look, and
       // a second clock reading taken after the round trip would date the receipt in the future.
       const gateAskedAt = new Date();
+      /* ASKED ONCE PER GATE and compared against what this mailbox has acted on. */
+      const correctionsNow = clockCorrections();
       const leaseArgs = {
         adapter,
-        self: leaseSelfFor(nonce),
+        self: leaseSelfFor(nonce, correctionsNow),
         mailboxId: mb.mailboxId,
         hasRequestKey,
         // The no-seize-back rule. The stamp is what tells "the user just added this
@@ -1591,6 +1610,9 @@ export async function startWorkerWithLock(
         ...leaseArgs, now: gateAskedAt,
         onNonceMinted: (minted: string) => { nonce.leasePendingNonce = minted; },
       });
+      /* SPENT BY THE GATE THAT READ IT, and only once it RETURNED — a cycle that threw never
+         offered the correction to the lease. */
+      nonce.seenClockCorrections = correctionsNow;
 
       if (outcome.organize) {
         nonce.leaseNonce = outcome.nonce;
@@ -2212,6 +2234,9 @@ export async function startWorkerWithLock(
         const leaseState = {
           leaseNonce: null as string | null,
           leasePendingNonce: null as string | null,
+          /* SEEDED AT THE CURRENT COUNT: this mailbox has no record of its own yet, so its first
+             gate runs the launch arm and a difference here would be an admission nobody earned. */
+          seenClockCorrections: clockCorrections(),
           // Until the gate runs there is no permit; the attach's own gate call replaces this.
           leasePermit: { noLease: "not_supplied" } as OrganizerWriteAuthority,
         };
@@ -2475,6 +2500,7 @@ export async function startWorkerWithLock(
           requestKey: deriveRequestKey({ auth: creds.imap.auth, address: mb.address }),
           failures: 0, lastSuccessAt: null, leaseNonce: leaseState.leaseNonce,
           leasePendingNonce: leaseState.leasePendingNonce,
+          seenClockCorrections: leaseState.seenClockCorrections,
           leasePermit: leaseState.leasePermit,
           lease: leaseRow,
           // Mail 0083. Mutable, and re-read by every cycle — see the fields.

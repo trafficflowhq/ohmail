@@ -541,6 +541,21 @@ export interface LeaseSelf {
    * own-role resumption working. Nothing is persisted and no row gains a column.
    */
   pendingNonce?: string | null;
+  /**
+   * THIS PROCESS HAS SEEN ITS OWN CLOCK CORRECTED SINCE IT LAST WROTE — a ONE-SHOT, set by the
+   * caller and spent by the cycle that reads it.
+   *
+   * Both stamps on a claim are immutable, so a record written under a wrong clock goes on
+   * measuring that clock for ever. A LAUNCH escapes it because `lastNonce` is `null` and the
+   * reading is nobody's; a process that keeps running does not, and the person who corrects their
+   * clock and does not restart is refused by the record they just fixed. This is that same arm,
+   * made reachable while running. It is NOT `lastNonce = null`: that would re-enter
+   * {@link bearsOurNonce}'s "trust anything wearing my id" on a live install, which is the clone
+   * defence switched off to close a clock bug. Only the caller can observe a correction, so the
+   * bound lives there; one correction buys ONE renewal so a record measurable under the current
+   * clock can exist, never a standing exemption.
+   */
+  clockCorrected?: boolean;
   protocol?: number;
 }
 
@@ -940,6 +955,56 @@ export function ownClockReading(
 export function writtenByThisProcess(self: LeaseSelf, nonce: string): boolean {
   if (self.lastNonce === null) return false;
   return nonce === self.lastNonce || (self.pendingNonce != null && nonce === self.pendingNonce);
+}
+
+/**
+ * HOW FAR THE TWO CLOCKS MAY DRIFT APART BEFORE IT IS A CORRECTION AND NOT DRIFT.
+ *
+ * NTP SLEWS at about half a millisecond per second, so a minute between polls moves the wall clock
+ * about 30 ms against the monotonic one. A correction worth re-admitting for is the one a person
+ * makes to answer this module's own refusal, which is larger than {@link clockSkewBoundMs} —
+ * seconds at the shortest window, minutes at the default. A second sits an order of magnitude
+ * above the drift and two below the smallest correction that could matter.
+ */
+export const CLOCK_CORRECTION_TOLERANCE_MS = 1_000;
+
+/**
+ * HAS THIS PROCESS'S WALL CLOCK BEEN SET SINCE THE LAST TIME ANYBODY ASKED — a watch, and the
+ * ONE-SHOT behind {@link LeaseSelf.clockCorrected}.
+ *
+ * The wall clock and the monotonic clock advance together unless something SETS the wall clock, so
+ * a step is `|Δwall − Δmono|` over the tolerance. Only a process can see this about itself, which
+ * is why it lives beside the field rather than inside the gate: the gate is handed a fact.
+ *
+ * A COUNT AND NOT A ONE-SHOT, because a process organizes SEVERAL mailboxes and a correction is
+ * about all of them. A boolean spent by the first reader would give one mailbox its renewal and
+ * leave every other one refusing for ever — the same defect with a smaller blast radius. So this
+ * counts corrections and each runtime latches the count it has already acted on, which is
+ * once-per-correction PER MAILBOX. Re-basing on every call is what keeps one step counted once.
+ *
+ * DELIBERATELY GENEROUS. A suspended laptop resumes with the monotonic clock behind the wall clock
+ * on every platform that excludes sleep from it, and that reads as a correction here. It is not
+ * worth telling apart: a spurious `true` buys ONE renewal under the clock this install has now,
+ * which is what an honest correction buys, and an install whose clock is still wrong is refused at
+ * the cycle after it either way.
+ */
+export function makeClockCorrectionWatch(opts: {
+  wall?: () => number; mono?: () => number; toleranceMs?: number;
+} = {}): () => number {
+  const wall = opts.wall ?? ((): number => Date.now());
+  const mono = opts.mono ?? ((): number => performance.now());
+  const tolerance = opts.toleranceMs ?? CLOCK_CORRECTION_TOLERANCE_MS;
+  let lastWall = wall();
+  let lastMono = mono();
+  let corrections = 0;
+  return (): number => {
+    const w = wall();
+    const m = mono();
+    if (Math.abs((w - lastWall) - (m - lastMono)) > tolerance) corrections += 1;
+    lastWall = w;
+    lastMono = m;
+    return corrections;
+  };
 }
 
 /**
@@ -3811,7 +3876,10 @@ export async function runLeaseGate(input: LeaseGateInput): Promise<LeaseGateResu
    * RESIDUAL: a process running across a correction clears only at its next launch. An install
    * whose clock is wrong still writes one claim per launch and then stops.
    */
-  const staleReading = clockReading !== null && !writtenByThisProcess(self, clockReading.nonce);
+  /* AND A CORRECTION MAKES OUR OWN RECORD STALE TOO — see {@link LeaseSelf.clockCorrected}. The
+     record is still ours; it is no longer EVIDENCE about the clock this install has now. */
+  const staleReading = clockReading !== null
+    && (!writtenByThisProcess(self, clockReading.nonce) || self.clockCorrected === true);
   const skew = staleReading ? null : clockSkewRefusal({
     skewMs: clockReading?.skewMs ?? null, staleAfterMs: staleWindowMs,
   });
