@@ -32,8 +32,7 @@ export const MANAGE_LINK_PATH = "/account/manage-link";
  * status frame carries the door's KIND (`flavor`), and a server somebody runs themselves can
  * operate a program while a managed door whose program is absent answers `metered: false`; the
  * engine's own `/health` is about the session; `/hello`'s wire shape is frozen. DEFINED ON THE
- * DOOR and re-exported here — the suggest transport asks the same route, and one route spelled
- * in two modules is one that drifts.
+ * DOOR and re-exported here — the suggest transport asks it too, and one route spelled twice drifts.
  */
 export { ACCOUNT_ACCESS_PATH };
 
