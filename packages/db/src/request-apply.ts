@@ -805,8 +805,14 @@ export async function applyRuleRequest(
       if (Object.keys(diff).length > 0) await tx.update(rulesTbl)
         .set({ ...diff, ...retro, updatedAt: now })
         .where(and(eq(rulesTbl.id, existing.id), eq(rulesTbl.accountId, accountId)));
+      /* `op: "update"`, BECAUSE THAT IS WHAT THIS BRANCH DID. It answered `"create"` — the word
+         the REQUEST used — for a request that reconciled a row somebody else already had, and
+         the delta it records one line down is an `update`. Nothing was told the wrong word
+         today (`request-drain.ts` reduces the result to `applied`), but a seam that answers what
+         it was asked instead of what it did is one reader away from saying "created" about a
+         rule that existed. */
       return {
-        applied: true, op: "create", ruleId: existing.id,
+        applied: true, op: "update", ruleId: existing.id,
         lastSeq: (await recordRuleDelta(ledger(tx), accountId, [existing.id], "update"))[0]!,
       };
     }
