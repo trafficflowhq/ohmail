@@ -106,6 +106,92 @@ export const CALENDAR_FALLBACK_FILENAME = "invite.ics";
  */
 export const ICS_PARSE_MAX_CHARS = 512 * 1024;
 
+/**
+ * Microsoft's message-level "this is a meeting message" marker (`Content-Class:`). It is the one
+ * POSITIVE signal an Outlook Web Access invitation carries when its mail system sent the event as
+ * a LINK instead of a part, which is the shape that leaves a reader looking at OWA boilerplate
+ * with no event anywhere. Compared lowercased and trimmed; the header name itself is matched
+ * case-insensitively by the caller, since Exchange writes `Content-class`.
+ */
+export const CALENDAR_MESSAGE_CONTENT_CLASS = "urn:content-classes:calendarmessage";
+
+/**
+ * The `method=` parameter of a Content-Type, uppercased — RFC 6047's iTIP marker
+ * (`text/calendar; method=REPLY`). Returns `null` when the parameter is absent.
+ *
+ * It is read from the HEADER and never from {@link IcsEventPreview}, because the parameter is the
+ * only form of the method that survives storage: the stored part metadata keeps the BASE type
+ * alone, and the .ics bytes that carry `METHOD:` are fetched on demand and never persisted.
+ */
+export function icsMethodOfContentType(contentType: string): string | null {
+  for (const raw of contentType.split(";").slice(1)) {
+    const eq = raw.indexOf("=");
+    if (eq < 0) continue;
+    if (raw.slice(0, eq).trim().toLowerCase() !== "method") continue;
+    const v = raw.slice(eq + 1).trim().replace(/^"|"$/g, "").trim();
+    return v === "" ? null : v.toUpperCase();
+  }
+  return null;
+}
+
+/**
+ * The subject prefixes a calendar client writes on an ACKNOWLEDGEMENT it sends back — "Accepted:",
+ * "Angenommen:", "Mit Vorbehalt:". A THIRD table, display-only, and deliberately neither of
+ * `threading.ts`'s two: the naming table decides what a thread is CALLED and the continuation
+ * table decides irreversible MERGES, and an acknowledgement is evidence for neither. Nothing here
+ * reaches `baseSubject`, `conversationJoinVerdict` or any ingest path; the only consumer is the
+ * list's choice of which member's words to show as a conversation's face.
+ *
+ * Longest token first so the alternation never stops at a prefix of a longer token
+ * ("Mit Vorbehalt angenommen" before "Mit Vorbehalt"). The error this table can make is bounded
+ * by where it is read: a person's own mail that genuinely opens "Accepted:" loses the FACE of its
+ * conversation and stays a member of it, which is the cheaper direction — the row is never hidden,
+ * never unthreaded and never merged.
+ */
+const ACKNOWLEDGEMENT_PREFIX_TOKENS = [
+  "tentatively accepted",   // en, Outlook's three-word form
+  "mit vorbehalt angenommen", // de, the long form
+  "vorläufig angenommen",   // de, Apple's form
+  "provisionally accepted", // en, Apple's form
+  "geaccepteerd",           // nl accepted
+  "mit vorbehalt",          // de tentative
+  "tentativement",          // fr tentative
+  "provvisorio",            // it tentative
+  "provisional",            // es tentative
+  "angenommen",             // de accepted
+  "abgelehnt",              // de declined
+  "accettato",              // it accepted
+  "rifiutato",              // it declined
+  "geweigerd",              // nl declined
+  "voorlopig",              // nl tentative
+  "rechazada",              // es declined
+  "recusada",               // pt declined
+  "tentative",              // en tentative
+  "aceptada",               // es accepted
+  "acceptée", "acceptee",   // fr accepted (accented and the ASCII form clients also emit)
+  "refusée", "refusee",     // fr declined
+  "accepted",               // en accepted
+  "declined",               // en declined
+  "aceite",                 // pt accepted
+] as const;
+
+/**
+ * One acknowledgement prefix: the token, an optional abbreviating dot, optional space before the
+ * colon (fr Outlook writes "Acceptée :"), and either the ASCII or the fullwidth colon. The same
+ * anatomy the naming table uses, so the two read alike; the token must be the ENTIRE word before
+ * the colon, which is what keeps "Accepted payment terms" — no colon — and "Tentative agenda:"
+ * apart from a calendar client's output.
+ */
+export const ACKNOWLEDGEMENT_PREFIX_PATTERN =
+  `^(?:${ACKNOWLEDGEMENT_PREFIX_TOKENS.join("|")})\\.?\\s*[:：]`;
+
+const ACKNOWLEDGEMENT_PREFIX_RE = new RegExp(ACKNOWLEDGEMENT_PREFIX_PATTERN, "i");
+
+/** Does this subject open with an acknowledgement prefix? See {@link ACKNOWLEDGEMENT_PREFIX_TOKENS}. */
+export function isAcknowledgementSubject(subject: string): boolean {
+  return ACKNOWLEDGEMENT_PREFIX_RE.test(subject.trim());
+}
+
 /* ── Windows → IANA zone names ─────────────────────────────────────────────────────────────── */
 
 /**

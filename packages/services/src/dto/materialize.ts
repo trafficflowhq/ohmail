@@ -3,6 +3,7 @@ import { foldersEnabled, userFolderById, type UserFolderRow } from "../folders.j
 import { draftBodyOverCeiling, type EmailAddress } from "@trafficflow/core/mail";
 import {
   accountSettings, autoReplyByUsWhere, awayReplies, mailboxes,
+  invitationWithoutEventWhere, itipReplyHeaderWhere,
   messages, folderState, messageStates, threads, routingDecisions, approvals, rules, drafts,
   tags, messageTags,
   type EntityType,
@@ -201,6 +202,17 @@ export function messageRowToDTO(
    * known" and every consumer must render exactly like `null` — see `MessageDTO.awayRepliedAt`.
    */
   awayRepliedAt?: string | null,
+  /**
+   * TRUE ⇒ a meeting invitation whose event we cannot show, decided by `invitationWithoutEventWhere`
+   * in the batch below. A SEVENTH PARAMETER for the fifth's reason: the fact needs the stored
+   * headers and parts, and this function is pure. Omitted ⇒ the key is ABSENT from the DTO.
+   */
+  invitationWithoutEvent?: boolean,
+  /**
+   * TRUE ⇒ the top-level `Content-Type` declares `method=REPLY`, decided by `itipReplyHeaderWhere`
+   * in the batch below. An EIGHTH PARAMETER for the seventh's reason. Omitted ⇒ key ABSENT.
+   */
+  itipReplyHeader?: boolean,
 ): MessageDTO {
   const loc = (m.nativeLocator as { folder?: string } | null) ?? null;
   const folder = (fs?.desiredFolder ?? loc?.folder ?? "INBOX") as Folder;
@@ -271,6 +283,10 @@ export function messageRowToDTO(
     // does not know", `null` is "it was asked and the responder never answered this message".
     // Both render nothing, which is what makes absent safe for a client older than the field.
     ...(awayRepliedAt === undefined ? {} : { awayRepliedAt }),
+    // Spread-in for `autoReplyByUs`'s reason: absent must look exactly like "this server predates
+    // the field", which is what makes the consumers' `=== true` test correct for both.
+    ...(invitationWithoutEvent === undefined ? {} : { invitationWithoutEvent }),
+    ...(itipReplyHeader === undefined ? {} : { itipReplyHeader }),
   };
 }
 
@@ -350,6 +366,26 @@ export async function materializeMessages(
       isNotNull(awayReplies.sentAt),
     ));
   const awayRepliedBy = new Map(wrRows.map((r) => [r.messageId, iso(r.sentAt)]));
+  /**
+   * THE TWO CALENDAR FACTS — one query each per page, on `owned` for the auto-reply flag's reason
+   * (the receipt reader carries them too, so a `delete` echo cannot disagree with the row the
+   * client holds). Both read stored headers and parts only; neither needs the .ics bytes, which
+   * are never persisted. `packages/core/src/mime.ts` holds the TS half of each definition.
+   */
+  const invRows = await db.select({ id: messages.id }).from(messages)
+    .where(and(
+      inArray(messages.id, owned),
+      eq(messages.accountId, accountId),
+      invitationWithoutEventWhere(dialect(db), { id: sql`${messages.id}` }),
+    ));
+  const invitationIds = new Set(invRows.map((r) => r.id));
+  const itipRows = await db.select({ id: messages.id }).from(messages)
+    .where(and(
+      inArray(messages.id, owned),
+      eq(messages.accountId, accountId),
+      itipReplyHeaderWhere(dialect(db), { id: sql`${messages.id}` }),
+    ));
+  const itipReplyIds = new Set(itipRows.map((r) => r.id));
 
   const fsBy = new Map(fsRows.map((r) => [r.messageId, r]));
   const stBy = new Map(stRows.map((r) => [r.messageId, r]));
@@ -365,6 +401,8 @@ export async function materializeMessages(
       // `?? null` and never `undefined`: the batch ASKED, so "no ledger row" is a known answer
       // and says so on the wire. Absent is reserved for a caller that did not ask.
       awayRepliedBy.get(m.id) ?? null,
+      invitationIds.has(m.id),
+      itipReplyIds.has(m.id),
     ));
   }
   return out;

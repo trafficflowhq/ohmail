@@ -162,6 +162,21 @@ export interface MessageDTO {
    * stamp. Absent reads like `null`.
    */
   awayRepliedAt?: ISODateTime | null;
+  /**
+   * TRUE ⇒ the message SAYS it is a meeting invitation and carries no calendar part for the card
+   * to render — the Outlook Web Access shape, where the event went out as a link and the body is
+   * boilerplate about it. Server-computed from stored headers and parts (`invitationWithoutEvent`
+   * in core's `mime.ts`, `invitationWithoutEventWhere` in SQL). OPTIONAL: absent means "not
+   * known", read as "say nothing", which is what every mirror did before the field.
+   */
+  invitationWithoutEvent?: boolean;
+  /**
+   * TRUE ⇒ this message's own top-level `Content-Type` declares `method=REPLY` — one arm of "is
+   * this a calendar acknowledgement rather than something a person said". The other arm is the
+   * subject a calendar client writes, which the client composes itself. Server-computed because
+   * the header is not mirrored. Absent means "not known"; consumers test `=== true`.
+   */
+  itipReplyHeader?: boolean;
 }
 
 /**

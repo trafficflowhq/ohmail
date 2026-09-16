@@ -313,6 +313,21 @@ export interface EngineMessage extends EngineMessageExtras {
    * substantiate is worse than no mark. Fixture rows leave it absent.
    */
   awayRepliedAt?: ISODateTime | null;
+  /**
+   * TRUE ⇒ ohmail can tell this is a meeting invitation and cannot show the
+   * event: the message declares itself a calendar message and carries no
+   * calendar part. The reading surface says so in one line rather than
+   * rendering the sender's boilerplate as the message. Server-computed;
+   * absent means "not known" and says nothing, as every older mirror did.
+   */
+  invitationWithoutEvent?: boolean;
+  /**
+   * TRUE ⇒ the top-level `Content-Type` declares `method=REPLY`. One arm of
+   * {@link isItipAcknowledgement}, which is what holds a machine's calendar
+   * acknowledgement out of a conversation's face; the other arm is the
+   * subject, which this side already holds. Absent means "not known".
+   */
+  itipReplyHeader?: boolean;
 }
 
 /**

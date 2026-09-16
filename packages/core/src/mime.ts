@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { simpleParser, type AddressObject, type Attachment } from "mailparser";
 import { canonicalId } from "./identity.js";
 import type { NormalizedMessage, EmailAddress, AttachmentMeta } from "./types.js";
+import { CALENDAR_MESSAGE_CONTENT_CLASS, icsMethodOfContentType, isCalendarMime } from "./ics.js";
 
 /**
  * What a decoded U+0000 becomes: U+FFFD REPLACEMENT CHARACTER, the code point Unicode
@@ -103,6 +104,55 @@ export function referencesCid(html: string | null, contentId: string | null): bo
 /** How many of `attachments` the user could download. See {@link isRealFile}. */
 export function countRealFiles(attachments: readonly AttachmentMeta[]): number {
   return attachments.reduce((n, a) => (isRealFile(a) ? n + 1 : n), 0);
+}
+
+/** The header values at one name, from the lowercased map {@link normalizeMime} builds. */
+function headerValues(headers: Readonly<Record<string, string[]>>, name: string): readonly string[] {
+  const v = headers[name];
+  return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
+}
+
+/** What a message needs to carry for the two calendar facts below — the stored half, never bytes. */
+export interface CalendarHeaderFacts {
+  /** `message_bodies.headers`: lowercased header name → the raw value of each header LINE. */
+  headers: Readonly<Record<string, string[]>>;
+  /** The message's parts, by content type alone. Empty is a real answer, not "unknown". */
+  attachments: readonly { contentType: string }[];
+}
+
+/**
+ * IS THIS A MEETING INVITATION WHOSE EVENT WE CANNOT SHOW?
+ *
+ * TRUE when the message SAYS it is a calendar message — Microsoft's `Content-Class`, or any
+ * top-level `Content-Type` carrying RFC 6047's `method=` — and yet carries no calendar part for
+ * the card to render. That is the Outlook Web Access shape: the event goes out as a link and the
+ * body is OWA's boilerplate about it, so a reader gets the boilerplate AS the message with no
+ * time, no place and nothing saying an invitation is what they are looking at.
+ *
+ * Both halves are read from what is already stored, so the answer is fixed at ingest and cannot
+ * change under a reader. It claims nothing about the event itself: no link is parsed and nothing
+ * is fetched.
+ */
+export function invitationWithoutEvent(m: CalendarHeaderFacts): boolean {
+  const saysCalendar =
+    headerValues(m.headers, "content-class")
+      .some((v) => v.trim().toLowerCase() === CALENDAR_MESSAGE_CONTENT_CLASS)
+    || headerValues(m.headers, "content-type").some((v) => icsMethodOfContentType(v) !== null);
+  if (!saysCalendar) return false;
+  return !m.attachments.some((a) => isCalendarMime(a.contentType));
+}
+
+/**
+ * DOES THIS MESSAGE'S OWN HEADER DECLARE IT AN iTIP REPLY — `Content-Type: …; method=REPLY` at the
+ * TOP LEVEL, the single-part RFC 6047 shape.
+ *
+ * Header-only on purpose: a multipart acknowledgement keeps its method on the calendar PART, and
+ * a part's parameters do not survive storage (the stored content type is the base type, and the
+ * .ics bytes carrying `METHOD:` are never persisted). So this answers one arm; the other arm is
+ * the subject a calendar client writes, which the list composes where it needs it.
+ */
+export function itipReplyByHeaders(m: Pick<CalendarHeaderFacts, "headers">): boolean {
+  return headerValues(m.headers, "content-type").some((v) => icsMethodOfContentType(v) === "REPLY");
 }
 
 function addrList(field: AddressObject | AddressObject[] | undefined): EmailAddress[] {
