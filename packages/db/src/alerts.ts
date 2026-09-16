@@ -139,7 +139,14 @@ export type AlertKind =
    * stops being one broken client and starts being a population. Escalated from the per-account
    * `session_reuse_revoked` signal, which stays firing underneath.
    */
-  | "credential_replay_wide";
+  | "credential_replay_wide"
+  /**
+   * One account's clients answered off already-consumed refresh tokens repeatedly inside the
+   * window — `auth_events` (`event = 'refresh_replayed'`, written by the rotation's retry and
+   * convergence arms). One or two is a dropped answer; a burst is a client that cannot ADOPT what
+   * it is given, spending rotations it never keeps, and nothing else in this file can see it.
+   */
+  | "session_refresh_replayed";
 
 /**
  * One at-cap account, as rule 5 reads it: counted bytes at or over the account's cap.
@@ -314,6 +321,15 @@ export interface AlertThresholds {
    */
   reuseWideAccounts: number;
   /**
+   * How far back the refresh-replay rule looks in `auth_events`, and how many replays on ONE
+   * account inside it stop being the network and start being a broken client. An hour and five: a
+   * healthy client rotates about four times an hour at the fifteen-minute access window, so five
+   * replays in an hour is a client replaying more often than it rotates — while one or two is a
+   * dropped answer, which is the case the retry arm exists to make cheap and must not page.
+   */
+  refreshReplayedWindowMs: number;
+  refreshReplayedThreshold: number;
+  /**
    * Accounts at the storage cap before the signal escalates to an incident. Five: the rolling
    * window should trim an account before it ever reaches the cap, so one or two are the trim
    * lagging, and five at once is the evict pass not running.
@@ -349,6 +365,8 @@ export const DEFAULT_ALERT_THRESHOLDS: AlertThresholds = {
   aiCircuitOpenMs: 10 * 60 * 1000,
   alertDriverDarkMs: 30 * 60 * 1000,
   reuseWideAccounts: 3,
+  refreshReplayedWindowMs: 60 * 60 * 1000,
+  refreshReplayedThreshold: 5,
   storageCapWideAccounts: 5,
   syncLagWideAccounts: 3,
   syncLagWideFraction: 0.2,
@@ -1288,6 +1306,62 @@ export async function evaluateAlerts(db: Tx, opts: EvaluateOptions = {}): Promis
         cls: "incident",
         affectedAccounts: byAccount.size,
         fixHref: "/accounts",
+      });
+    }
+  } catch (err) {
+    const code = (err as { code?: string })?.code ?? (err as { cause?: { code?: string } })?.cause?.code;
+    if (code !== "42501") throw err;
+  }
+
+  // 9c. A CLIENT THAT CANNOT ADOPT ITS OWN ROTATIONS. `refresh_replayed` is written every time a
+  // presentation is answered off an already-consumed token: a bearer client retrying an attempt
+  // whose answer was lost, and a browser's grace convergence. Each one is legitimate and each one
+  // spends a rotation the client did not keep, so a burst on one account is a client stuck
+  // re-presenting a token it never manages to replace — invisible to every other rule here,
+  // because nothing is revoked and nothing fails. Keyed per account for rule 9's reason: the
+  // family id and the surface live in the un-granted `device` column, so the trail is where an
+  // investigation reads WHICH client family it was. Only 42501 is swallowed.
+  try {
+    const replayCut = new Date(now.getTime() - t.refreshReplayedWindowMs);
+    const replayRows = await db
+      .select({ accountId: authEvents.accountId, at: authEvents.at })
+      .from(authEvents)
+      .where(and(eq(authEvents.event, "refresh_replayed"), gt(authEvents.at, replayCut)));
+    const replayed = new Map<string, { count: number; oldest: Date }>();
+    for (const r of replayRows) {
+      const key = r.accountId ?? "unknown";
+      const cur = replayed.get(key);
+      if (!cur) replayed.set(key, { count: 1, oldest: r.at });
+      else {
+        cur.count += 1;
+        if (r.at < cur.oldest) cur.oldest = r.at;
+      }
+    }
+    for (const [accountId, agg] of replayed) {
+      if (agg.count < t.refreshReplayedThreshold) continue;
+      alerts.push({
+        key: `session_refresh_replayed:${accountId}`,
+        kind: "session_refresh_replayed",
+        // WARNING: nobody has lost anything. What is wrong is that a client keeps buying its
+        // credential with a token it already spent, which is one dropped answer away from the
+        // shape that DOES cost a session — an id-less or wrong-named presentation, swept.
+        severity: "warning",
+        title: `A client replayed ${agg.count} refresh rotations on one account`,
+        detail:
+          `${agg.count} refresh presentations on account ${accountId} were answered off a token ` +
+          `that had already been consumed, within the last ` +
+          `${humanAge(Math.round(t.refreshReplayedWindowMs / 1000))} (cut: ` +
+          `${t.refreshReplayedThreshold}). Each one is a retry of a rotation whose answer never ` +
+          `reached the client, or a browser converging two tabs — legitimate, and answered. This ` +
+          `many says a client cannot adopt what it is given: a broken keystore or jar write, a ` +
+          `release that drops the answer, or a network that never lets one land. The account's ` +
+          `auth trail (auth_events) carries the family and the client surface on each row.`,
+        count: agg.count,
+        oldestSeconds: secondsBetween(now, agg.oldest),
+        // A SIGNAL: no session died and no mail is at risk. It is a question for daylight.
+        cls: "signal",
+        affectedAccounts: 1,
+        fixHref: accountId === "unknown" ? "/accounts" : `/accounts/${accountId}`,
       });
     }
   } catch (err) {
