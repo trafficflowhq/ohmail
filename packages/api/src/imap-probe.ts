@@ -760,12 +760,15 @@ export function makeImapProbe(deps: ApiDeps, opts: ImapProbeOptions = {}): (i: I
       // Give the slot back exactly once, after the last rung's socket is down — every ending in
       // `dialOnce` now waits for that. Best-effort by necessity, never silent: a lost release
       // leaves the counter one high until the 90 s stale window reclaims it, which is the
-      // bounded direction. `err` is a DATABASE error and carries no credential; the probe's
-      // own throw is never logged.
+      // bounded direction. The THROWN VALUE goes over, not its text: the logger reduces it to
+      // `errorClass` + `errorCode`, so a database error's prose never reaches the line, and the
+      // class and code that say WHICH failure it was survive — `String(err)` blanked both and
+      // fed the message to `errorText` instead. Not only a database error: `imapAdmission` is
+      // inside the try and throws `ServiceError` when the host wired no port.
       try {
         await imapAdmission(deps).release(deps.db, key, deps.now());
       } catch (err) {
-        deps.logger?.warn?.("imap_probe_slot_release_failed", { err: String(err) });
+        deps.logger?.warn?.("imap_probe_slot_release_failed", { err });
       }
     }
   };
@@ -986,7 +989,7 @@ export function makeSmtpProbe(deps: ApiDeps, opts: SmtpProbeOptions = {}): SmtpP
       try {
         await imapAdmission(deps).release(deps.db, key, deps.now());
       } catch (err) {
-        deps.logger?.warn?.("smtp_probe_slot_release_failed", { err: String(err) });
+        deps.logger?.warn?.("smtp_probe_slot_release_failed", { err });
       }
     }
   };

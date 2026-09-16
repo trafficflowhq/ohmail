@@ -331,7 +331,7 @@ export const mailboxOAuthRoutes: Route[] = [
        * this is not a cron. */
       await pruneOAuthCeremonies(deps.db, { now: deps.now() })
         .catch((err: unknown) => {
-          (deps.logger ?? silentLogger).warn?.("oauth_ceremony_prune_failed", { err: String(err) });
+          (deps.logger ?? silentLogger).warn?.("oauth_ceremony_prune_failed", { err });
         });
 
       const authorizeUrl = buildMicrosoftAuthorizeUrl({

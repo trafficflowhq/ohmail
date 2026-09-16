@@ -206,7 +206,7 @@ export const mailboxDeviceOAuthRoutes: Route[] = [
        * reason to refuse somebody's connect. See `pruneDeviceCeremonies` for why this is not a cron. */
       await pruneDeviceCeremonies(deps.db, { now: deps.now() })
         .catch((err: unknown) => {
-          (deps.logger ?? silentLogger).warn?.("oauth_device_prune_failed", { err: String(err) });
+          (deps.logger ?? silentLogger).warn?.("oauth_device_prune_failed", { err });
         });
 
       /*

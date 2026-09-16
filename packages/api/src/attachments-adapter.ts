@@ -278,7 +278,7 @@ async function openImapUnderCap(
       try {
         await imapAdmission(deps).release(deps.db, mailboxId, deps.now?.() ?? new Date());
       } catch (err) {
-        deps.logger?.warn?.("imap_slot_release_failed", { mailboxId, err: String(err) });
+        deps.logger?.warn?.("imap_slot_release_failed", { mailboxId, err });
       }
     };
 

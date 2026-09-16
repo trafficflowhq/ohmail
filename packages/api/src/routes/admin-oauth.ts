@@ -84,10 +84,12 @@ function staffConfigRoute(name: string, run: StaffRun): Handler {
       const out = await run(body, staff, deps);
       return json(out.status, out.body);
     } catch (err) {
-      // `raw`: nothing above this catches. The error is logged as a STRING and the body it came from
-      // is not — a save carries the plaintext client secret, so an `err` object echoed with its
-      // request context would be the one place this file could leak it.
-      log.error("admin_oauth_failed", { err: String(err) });
+      // `raw`: nothing above this catches, and the THROWN VALUE goes over — not its text. This
+      // comment used to say the opposite, that stringifying was the safe form because a save
+      // carries the plaintext client secret. It is the other way round: the logger never echoes
+      // the object, it reduces it to `errorClass` + `errorCode`, and `String(err)` was the one
+      // form that put the message — which can quote the body it failed on — into `errorText`.
+      log.error("admin_oauth_failed", { err });
       return json(503, { error: { code: "admin_oauth_failed" } });
     }
   };
@@ -242,7 +244,7 @@ async function saveConfig(
     after = await readConfig({}, staff, deps);
   } catch (err) {
     (deps.logger ?? silentLogger).child({ route: "/admin/oauth/microsoft/save" })
-      .error("admin_oauth_reread_failed", { err: String(err) });
+      .error("admin_oauth_reread_failed", { err });
     return {
       status: 200,
       body: { ok: true, saved: true, reread: false, action: "admin.oauth.microsoft.save", actor: staff.email },
