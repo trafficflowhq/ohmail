@@ -511,7 +511,6 @@
     "refusedPress": "Nichts geändert — das ging nicht durch. Bitte noch einmal versuchen.",
     "moveLabel": "verschieben nach",
     "moveCancel": "Abbrechen",
-    "toastMoved": "Verschoben: {place}.",
     "moveGone": "Nichts verschoben — diese Nachricht ist nicht mehr da.",
     "actionDelete": "Löschen",
     "deleteAsk": "Diese Nachricht löschen?",

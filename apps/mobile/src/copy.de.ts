@@ -916,11 +916,11 @@ export const DE: Deck = {
    * CASE-NEUTRAL, and this one diverges from the web client's German ON PURPOSE.
    *
    * "Nach Belege verschoben." is wrong — "nach" wants a case the place name cannot carry, and the
-   * places have gender and number ("die Belege", "die Ohbox"). The web catalogue says the same
-   * thing (`ohbox.toastMoved`), and matching it was the argument for leaving this alone. That
-   * argument does not survive review: a matching translation on another surface is evidence of a
-   * SHARED DEFECT, not evidence that the sentence is correct. The colon takes no case, so this
-   * reads for every destination. The web client's twin is filed to be fixed the same way.
+   * places have gender and number ("die Belege", "die Ohbox"). The web catalogue said the same
+   * thing and matching it was the argument for leaving this alone; a matching translation on
+   * another surface is evidence of a SHARED DEFECT, not that the sentence is correct. The colon
+   * takes no case, so this reads for every destination. The web twin was repaired the same way
+   * and has since been retired with its caller, so this is the only home of the sentence.
    */
   toastMoved: (place: string) => `Verschoben: ${place}.`,
   toastMoveAlready: (place: string) => `Schon in ${place}.`,

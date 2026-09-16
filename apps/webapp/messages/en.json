@@ -511,7 +511,6 @@
     "refusedPress": "Nothing changed — that did not go through. Try it again.",
     "moveLabel": "move to",
     "moveCancel": "Cancel",
-    "toastMoved": "Moved to {place}.",
     "moveGone": "Nothing moved — that message is no longer here.",
     "actionDelete": "Delete",
     "deleteAsk": "Delete this message?",
