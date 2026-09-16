@@ -13,9 +13,12 @@ use std::process::Command;
 
 /// The cap the engine is spawned with, or `None` while no measurement asks for one.
 ///
-/// Set from the engine's own settled reading, never copied from the renderer's — the two
-/// processes were measured apart because they allocate differently.
-pub const ENGINE_ARENA_MAX: Option<&str> = None;
+/// Two, from the engine's own settled reading on main: 462.0 MB capped against 509.1 MB
+/// uncapped over a 15-minute tail, 47.2 MB saved at twenty-two times the larger arm's own
+/// spread, one arena block instead of seven, and idle CPU identical. Never copied from the
+/// renderer's, which measured the same cap as a pure redistribution — the two processes
+/// allocate differently and were measured apart for that reason.
+pub const ENGINE_ARENA_MAX: Option<&str> = Some("2");
 
 /// The variable glibc reads. Named once, here.
 pub const ARENA_MAX_VAR: &str = "MALLOC_ARENA_MAX";
