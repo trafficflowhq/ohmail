@@ -58,14 +58,11 @@ export interface MutationOutcome {
   providerMessageId?: string | null;
   /**
    * THIS SEND WAS ANSWERED FROM A RESERVATION THIS KEY ALREADY HELD — the server's statement
-   * that the press delivered nothing new. Present only on `mail_send` with status `sent`, and
-   * only where the server names it; a server that predates the field names none and every
-   * surface reads that as the ordinary send it has always been.
-   *
-   * It exists because the two cases are otherwise one answer on the wire. A second press under
-   * a resumed key either finds a reservation (the earlier message is what went) or does not
-   * (this press's own words go), and no client can tell those apart from a 200 that is the same
-   * shape either way — which is how a confirmation came to name the wrong message.
+   * that the press delivered nothing new. Present only on `mail_send` with status `sent` and
+   * only where the server names it; absence reads as the ordinary send it always was. It exists
+   * because the two cases are otherwise one answer: a second press under a resumed key either
+   * finds a reservation (the earlier message went) or does not (its own words go), and a 200 is
+   * the same shape either way — which is how a confirmation came to name the wrong message.
    */
   firstSend?: { status: string; at: string } | null;
   /**

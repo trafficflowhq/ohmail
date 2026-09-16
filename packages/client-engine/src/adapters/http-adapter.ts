@@ -1785,13 +1785,10 @@ export class HttpAdapter implements EngineAdapter {
         /**
          * NOTHING SAVED, SO NOTHING FRESH TO VOUCH WITH — and a press that vouches for nothing is
          * admitted as unstated by the send route, which is how the other window's words used to
-         * leave under it. The last version this client was SHOWN stands in instead: it is a row
-         * this screen wrote and saw, so the server refuses when that row has since moved. A fresh
-         * read would be the wrong answer — it would vouch for text nobody here has looked at.
-         *
-         * With not even that, the send is refused rather than guessed at. The two guards above
-         * already refuse a Bcc or a picked From the save could not confirm; this is the remaining
-         * press — an ordinary reply — and it is told to save first rather than sent blind.
+         * leave under it. The last version this client was SHOWN stands in instead: a row this
+         * screen wrote and saw, so a row that has since moved is refused. A fresh read would
+         * vouch for text nobody here has looked at. With not even that the send is refused; the
+         * guards above already cover a Bcc or a picked From, and this is the ordinary reply.
          */
         const observed = this.revisionForDraft.get(row);
         if (observed) this.revisionForKey.set(idempotencyKey, observed);
@@ -2016,6 +2013,7 @@ export class HttpAdapter implements EngineAdapter {
       // to materialise an optimistic Sent overlay on confirm and to reconcile it against the real
       // row when a later drain ingests it (`OhmailEngine.dispatch`). A missing/empty value simply
       // means no overlay — the send still confirmed.
+
       // WHOSE SEND THIS WAS, when the server says it was not this one's. Shape-checked rather
       // than forwarded: a malformed value would otherwise reach a surface as a fact about
       // somebody's mail, and absence is the only other state — there is nothing to guess at.

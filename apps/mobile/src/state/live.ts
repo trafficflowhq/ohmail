@@ -1290,17 +1290,11 @@ export function sendIntentOf(m: EngineMutation): string | null {
 }
 
 /**
- * DOES THIS PRESS SAY SOMETHING DIFFERENT FROM THE ONE STILL STANDING?
- *
- * Over the fields THIS PRESS STATED, and no others. The queued mutation has been through the
- * engine's enrichment — a reply's recipients, mailbox and subject are derived there — and the
- * press being compared has not, so a blanket comparison reads every derived field as a change
- * and calls an unaltered retry a different message. A field this press leaves unstated is one
- * enrichment derives the same way both times, so it is not a difference.
- *
- * The miss that admits is conservative by design: a press that DROPS a field the standing one
- * stated (a reply-all, then a plain reply) reads as unchanged and gets the ordinary sentence
- * where the fuller one was owed. Quiet, never false.
+ * DOES THIS PRESS SAY SOMETHING DIFFERENT FROM THE ONE STILL STANDING? Over the fields THIS
+ * PRESS STATED, and no others: the queued mutation has been through the engine's enrichment and
+ * the press has not, so a blanket comparison reads every derived field as a change and calls an
+ * unaltered retry a different message. What that admits is a press DROPPING a field the standing
+ * one stated, which reads as unchanged and gets the ordinary sentence — quiet, never false.
  */
 export function sendTextDiffers(standing: EngineMutation, pressed: EngineMutation): boolean {
   if (standing.kind !== "mail_send" || pressed.kind !== "mail_send") return false;
@@ -1315,15 +1309,11 @@ export function sendTextDiffers(standing: EngineMutation, pressed: EngineMutatio
 
 /**
  * KEYS WHOSE SEND WAS RESUMED OVER DIFFERENT WORDS — half of the two facts the sentence needs.
- *
- * A second press under a standing key SUPERSEDES the queued mutation, so by the time anything
- * settles the earlier text is nowhere left to read. Only the moment of the resume sees both
- * versions, so it writes this down. The OTHER half is the server's `firstSend`, which says the
- * answer came from a reservation this key already held — without it the press's own words are
- * what went, and this mark alone would name the wrong message.
- *
- * Keyed by ENGINE so a session swap takes its marks with it rather than answering for the next
- * account's keys, and so nothing outlives the process it belongs to.
+ * A second press supersedes the queued mutation, so by the time anything settles the earlier
+ * text is nowhere left to read; only the moment of the resume sees both versions. The other half
+ * is the server's `firstSend`: without it this press's own words are what went, and this mark
+ * alone would name the wrong message. Keyed by ENGINE so a session swap takes its marks with
+ * it rather than answering for the next account's keys.
  */
 const resumedOverOtherText = new WeakMap<OhmailEngine, Set<string>>();
 
