@@ -95,6 +95,15 @@ export function startEngineVitals(
       rss: m?.rss ?? null,
       heapUsed: m?.heapUsed ?? null,
       external: m?.external ?? null,
+      /* THE TWO THAT MAKE A STEP READABLE FROM THE LINE ALONE. A measured idle install rose 95 MB
+         in `rss` at about an hour of uptime while `heapUsed` FELL, and the three numbers above
+         could only say what that was not. `heapTotal` is what the JavaScript engine has RESERVED
+         rather than what it holds, which is where a heap expansion lands while `heapUsed` drops;
+         `arrayBuffers` is the backing store of the WASM memory and every buffer beside it, which
+         separates the store growing from a native allocation. Neither is derivable from the other
+         three. */
+      heapTotal: m?.heapTotal ?? null,
+      arrayBuffers: m?.arrayBuffers ?? null,
       /* WHICH of the two this line is. Without it a run of nulls is indistinguishable from a
          sampler that is broken, and the difference decides whether anybody investigates. */
       memoryReading: m ? "process" : "unavailable_in_this_runtime",

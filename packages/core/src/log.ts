@@ -405,6 +405,13 @@ export const ALLOWED_FIELDS: readonly string[] = [
   // `storeBytes` is the WASM heap the local store runs Postgres inside — a FLOOR, so the reading
   // worth acting on is one that grows with the mailbox.
   "rss", "heapUsed", "external", "uptimeMs", "storeBytes",
+  // …and the two that make a STEP readable from the line alone. `heapTotal` is what the JavaScript
+  // engine has RESERVED rather than what it holds, which is where a heap expansion lands while
+  // `heapUsed` falls; `arrayBuffers` is the backing store of the WASM memory and every buffer beside
+  // it, which separates the store growing from a native allocation. A measured idle install rose
+  // 95 MB in `rss` while `heapUsed` fell, and the five fields above could only say what that was
+  // not. Integers from the runtime, naming nothing a person wrote.
+  "heapTotal", "arrayBuffers",
   // WHERE THAT READING CAME FROM, added WITH the line that emits it. `engine_vitals` runs on every
   // door, and one of them — the engine running inside a phone app rather than in a Node process —
   // has no memory reading at all. The three numbers above are then null, and a run of nulls is
