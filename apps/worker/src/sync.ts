@@ -611,15 +611,14 @@ function openPage(at: CyclePageCursor, pass: CyclePass): void {
 }
 
 /**
- * Rethrow a REFUSAL out of a catch arm that would otherwise swallow it or read it as a message fault.
- * FIVE classes, none of them evidence about the message: `LeaderFencedError` (this process no longer
+ * Rethrow a REFUSAL out of a catch arm that would otherwise read it as a message fault. FIVE
+ * classes, none of them evidence about the message: `LeaderFencedError` (this process no longer
  * leads the shard), `MailboxRemovedError` (the mailbox is gone), `MailboxErasedError` (the ingest
  * repository's fence — a second door to the same fact, read as a message fault until it was named
- * here), `OrganizerStandDownError` (another install holds this mailbox) and `LeaseUnavailableError`.
- * All five are terminal for the cycle and both callers read them as a skip. ONE PLACE DECIDES: three
- * reconcile groups once logged a removal as bookkeeping and carried on writing into a mailbox that
- * had gone. A class added here kills every arm BELOW its call that named one by hand — hence
- * {@link refusalIsRemoval}.
+ * here), `OrganizerStandDownError` (another install holds it) and `LeaseUnavailableError`. All five
+ * are terminal for the cycle and both callers read them as a skip. ONE PLACE DECIDES: three
+ * reconcile groups once logged a removal as bookkeeping and went on writing into a mailbox that had
+ * gone. A class added here kills every arm BELOW its call naming one by hand — {@link refusalIsRemoval}.
  */
 function rethrowRefusal(err: unknown): void {
   if (
