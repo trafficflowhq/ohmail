@@ -414,12 +414,30 @@ export function useHashRoute(): Route {
   return useMemo(() => parseHash(hash), [hash]);
 }
 
+/**
+ * WHICH VIEW A SWITCH IS ASKING FOR — the one spelling both ends of the mark use.
+ *
+ * The verbs below start the mark with the key of the hash they are about to write; the shell ends
+ * it with the key of the route it has rendered (`AppShell`). Both go through this function over a
+ * parsed route, so the two cannot spell one place two ways — and the open message is left out
+ * deliberately: reading a message inside a list is not a switch.
+ */
+export function switchKeyOf(route: Route): string {
+  return canonicalHash({ ...route, messageId: null });
+}
+
+/** The key for a hash a verb is about to write, normalised exactly as the rendered route will be. */
+function switchKeyForHash(hash: string): string {
+  return switchKeyOf(parseHash(hash));
+}
+
 export function go(view: Exclude<ViewId, "tag" | "folder">): void {
-  /* THE SWITCH MARK STARTS AT THE NAVIGATION AND ENDS AT THE NEXT PAINT — one call site per
-     verb, and the paint side schedules itself (`beginSwitch`). Here rather than in the controls
+  /* THE SWITCH MARK STARTS AT THE NAVIGATION AND ENDS WHEN THAT VIEW IS ON SCREEN — one call
+     site per verb, and the end is the shell's (`useSwitchEnd`). Here rather than in the controls
      because the rail, the palette, the number keys and a deep link all arrive through these. */
-  beginSwitch();
-  window.location.hash = `#/${view}`;
+  const next = `#/${view}`;
+  beginSwitch(switchKeyForHash(next));
+  window.location.hash = next;
 }
 
 /**
@@ -455,13 +473,15 @@ export function nameFirstRunMailbox(mailboxId: string): void {
 }
 
 export function goTag(tagId: string): void {
-  beginSwitch();
-  window.location.hash = `#/tag/${tagId}`;
+  const next = `#/tag/${tagId}`;
+  beginSwitch(switchKeyForHash(next));
+  window.location.hash = next;
 }
 
 export function goFolder(folderId: string): void {
-  beginSwitch();
-  window.location.hash = `#/folder/${folderId}`;
+  const next = `#/folder/${folderId}`;
+  beginSwitch(switchKeyForHash(next));
+  window.location.hash = next;
 }
 
 /**
@@ -473,19 +493,22 @@ export function goFolder(folderId: string): void {
  * `addressHref` also use, so the link a control renders and the hash this writes cannot differ.
  */
 export function goAddress(address: string): void {
-  beginSwitch();
-  window.location.hash = addressHash(address);
+  const next = addressHash(address);
+  beginSwitch(switchKeyForHash(next));
+  window.location.hash = next;
 }
 
 export function goScreener(segment: ScreenerSegmentId): void {
-  beginSwitch();
-  window.location.hash = segment === "waiting" ? "#/screener" : `#/screener/${segment}`;
+  const next = segment === "waiting" ? "#/screener" : `#/screener/${segment}`;
+  beginSwitch(switchKeyForHash(next));
+  window.location.hash = next;
 }
 
 /** The first pile keeps the bare `#/triage`, so every link that already exists still lands. */
 export function goTriage(pile: TriagePileId): void {
-  beginSwitch();
-  window.location.hash = pile === "reply" ? "#/triage" : `#/triage/${pile}`;
+  const next = pile === "reply" ? "#/triage" : `#/triage/${pile}`;
+  beginSwitch(switchKeyForHash(next));
+  window.location.hash = next;
 }
 
 /**

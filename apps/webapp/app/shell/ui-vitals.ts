@@ -9,8 +9,16 @@
  * to put an id, an address, a subject, a folder name or a query. There is no flag: an instrument
  * that has to be turned on is off during the incident.
  */
-import { useEffect } from "react";
+import { useEffect, useLayoutEffect } from "react";
 import { takeClientEngineVitals } from "@ohmail/client-engine";
+
+/**
+ * `useLayoutEffect` in a browser, `useEffect` on the server — `attachments.ts`'s module-scope
+ * choice, for its two reasons: hooks must be the same hook on every render, and a bare
+ * `useLayoutEffect` in a server render is a `console.error`. The layout phase is the point
+ * here: it is the commit that put the new view's rows in the document.
+ */
+const useCommitEffect = typeof window === "undefined" ? useEffect : useLayoutEffect;
 
 /** The three interactions worth a percentile — the ones a person waits through. */
 export type UiInteraction = "open" | "switch" | "search";
@@ -166,7 +174,14 @@ export function recordInteraction(kind: UiInteraction, ms: number): void {
 
 /** Keyed by message id so a second open while the first is still loading cannot end the wrong one. */
 const pendingOpen = new Map<string, number>();
-let pendingSwitch: number | null = null;
+/**
+ * The switch in flight: when it was asked for, and WHICH view has to be on screen to end it.
+ *
+ * The key is the route key of the view the press asked for ({@link beginSwitch}), so the commit
+ * of the view somebody is LEAVING can never end the mark, and a second press before the first
+ * view arrived owns the reading rather than being dropped in silence.
+ */
+let pendingSwitch: { key: string; at: number } | null = null;
 let pendingSearch: number | null = null;
 
 /**
@@ -185,31 +200,65 @@ export function beginOpen(messageId: string): void {
   pendingOpen.set(messageId, at);
 }
 
-/** That message's body is painted. Silent when nothing was pending — a body can arrive unasked. */
+/**
+ * That message's body is committed — record the open after the paint that shows it. Silent when
+ * nothing was pending: a body can arrive unasked.
+ *
+ * The caller is a LAYOUT effect on a terminal body state (`MessagePane`), so this runs in the
+ * commit that put the text in the document; the paint is the other frame a reader waits through,
+ * and it is the same rule the switch mark ends on.
+ */
 export function endOpen(messageId: string): void {
   const started = pendingOpen.get(messageId);
   if (started === undefined) return;
   pendingOpen.delete(messageId);
-  const at = nowMs();
-  if (at !== null) recordInteraction("open", at - started);
+  afterPaint(() => {
+    const at = nowMs();
+    if (at !== null) recordInteraction("open", at - started);
+  });
 }
 
 /**
- * A view or folder switch was asked for. There is no second call site: the switch ends at the next
- * PAINT, which this schedules itself. Two frames, because one `requestAnimationFrame` callback
- * runs BEFORE the paint it belongs to — the second fires after the pixels are up.
+ * A view or folder switch was asked for, naming the view the press asks FOR (its route key).
+ *
+ * It used to end itself two frames later, which is the paint of the frame the press landed in —
+ * the OLD view. The end is now {@link endSwitch}, called from the commit that puts the target
+ * view on screen. A second press before the first view committed OWNS the reading: the abandoned
+ * view is never going to be on screen, so its reading would be about a wait nobody had.
  */
-export function beginSwitch(): void {
+export function beginSwitch(viewKey: string): void {
   const at = nowMs();
   if (at === null) return;
-  if (pendingSwitch !== null) return; // a switch already in flight owns the reading
-  pendingSwitch = at;
+  pendingSwitch = { key: viewKey, at };
+}
+
+/**
+ * That view is committed — record the switch after the paint that shows it.
+ *
+ * Silent unless the pending mark named THIS view: the outgoing view's last commit, a re-render of
+ * a view nobody navigated to, and the first view of a session all pass through here with nothing
+ * pending or with another key, and none of them is a switch somebody waited through.
+ */
+export function endSwitch(viewKey: string): void {
+  const pending = pendingSwitch;
+  if (pending === null || pending.key !== viewKey) return;
+  pendingSwitch = null;
   afterPaint(() => {
-    const started = pendingSwitch;
-    pendingSwitch = null;
     const ended = nowMs();
-    if (started !== null && ended !== null) recordInteraction("switch", ended - started);
+    if (ended !== null) recordInteraction("switch", ended - pending.at);
   });
+}
+
+/**
+ * THE SWITCH ENDS WHERE THE NEW VIEW DOES: pass the target view's route key once its first row —
+ * or the empty state that IS its answer — is being committed, and `null` while what is on screen
+ * is still a placeholder. A layout effect, so the mark is taken in the commit that put the rows in
+ * the document rather than a render later; {@link endSwitch} then waits for the paint.
+ */
+export function useSwitchEnd(viewKey: string | null): void {
+  useCommitEffect(() => {
+    if (viewKey !== null) endSwitch(viewKey);
+  }, [viewKey]);
 }
 
 /** A search was submitted; {@link endSearch} runs when its first results are on screen. */

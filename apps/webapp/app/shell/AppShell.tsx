@@ -255,10 +255,10 @@ import { senderHitOf } from "./sender-hit";
 import { forwardEnvelopePlan, forwardSend } from "./forward-send";
 import {
   go, goFolder, goScreener, goSettings, goTag, goTriage, nameFirstRunMailbox, reflectMessage,
-  useHashRoute,
+  switchKeyOf, useHashRoute,
   type Route, type ScreenerSegmentId, type TriagePileId,
 } from "./routing";
-import { beginSearch, markStartup, useUiVitals } from "./ui-vitals";
+import { beginSearch, markStartup, useSwitchEnd, useUiVitals } from "./ui-vitals";
 import { HistoryView } from "../views/HistoryView";
 import { SeedReviewView } from "../views/SeedReviewView";
 import { OhboxView, type OhboxReplyDone } from "../views/OhboxView";
@@ -6901,6 +6901,43 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
       : route.view === "folder" && !openFolder
         ? "ohbox"
         : route.view;
+
+  /**
+   * THE SWITCH MARK ENDS AT THE VIEW THE PRESS ASKED FOR, ON SCREEN — the other end of
+   * `beginSwitch`, which the six navigation verbs start (`routing.ts`). It used to end two frames
+   * after the press, which is the paint of the frame the press landed in: the view somebody was
+   * LEAVING. `null` while the target still shows a placeholder, so a spinner never ends a switch;
+   * each arm below is the condition its own view branches on — its rows, or `settled`, which is
+   * what makes an empty list that view's answer rather than a list that has not arrived.
+   */
+  const viewOnScreen =
+    effectiveView === "ohbox"
+      ? mailState.settled
+        || ohbox.resurfaced.length + ohbox.newForYou.length + ohbox.previouslySeen.length > 0
+      : effectiveView === "reads"
+        ? mailState.settled || partition.fresh.length + partition.seen.length > 0
+      : effectiveView === "receipts" ? mailState.settled || receipts.length > 0
+      : effectiveView === "screener" ? mailState.settled || screener.waiting.length > 0
+      : effectiveView === "triage"
+        ? mailState.settled
+          || piles.replyLater.length + piles.setAside.length + piles.resurface.length > 0
+      : effectiveView === "tag" ? mailState.settled || (tagGroup?.messages.length ?? 0) > 0
+      : effectiveView === "history" ? mailState.settled || history.length > 0
+      : effectiveView === "drafts" ? mailState.settled || drafts.length + scheduled.length > 0
+      /* The two views whose rows come off the SERVER rather than out of the mirror answer in
+         their own vocabulary — `FolderView`'s empty gate and `TrashView`'s: rows, rows fetched
+         past the window, or nothing more coming. `settled` says nothing about either. */
+      : effectiveView === "folder"
+        ? folderMessages.length > 0 || folderOlder.items.length > 0
+          || folderOlder.exhausted || !folderOlder.available
+      : effectiveView === "trash"
+        ? trashPage.items.length > 0 || trashPage.exhausted || trashPage.error !== null
+          || !trashPage.available
+      /* search · address · compose · settings · seed · first-run: the view IS its content, and
+         Search's results are the SEARCH mark's subject — ending a switch on them would charge
+         one wait to two budgets. */
+      : true;
+  useSwitchEnd(viewOnScreen ? switchKeyOf(route) : null);
 
   const frFinished = fr != null && fr.step >= fr.items.length;
   const frItem = fr && !frFinished ? fr.items[fr.step] : undefined;
