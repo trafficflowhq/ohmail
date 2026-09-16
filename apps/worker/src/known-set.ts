@@ -1,6 +1,7 @@
 import { epochOf, sameEpoch } from "@trafficflow/core/adapters/imap";
 import type { KnownEntry } from "@trafficflow/core/adapters/imap-types";
 import type { KnownLocator, WorkerRepo } from "@trafficflow/core/adapters/drizzle-repo";
+import { KnownSetDoorkeeper } from "./known-set-doorkeeper.js";
 
 /**
  * THE KNOWN-SET, HELD IN MEMORY FOR AS LONG AS NOTHING COULD HAVE CHANGED IT. `buildCursor` reads
@@ -151,8 +152,34 @@ export function estimateRetainedBytes(rows: ReadonlyArray<KnownLocator>): number
 export class KnownSetBudget {
   private readonly charged = new Map<KnownSetCache, number>();
   private total = 0;
+  /** The admission policy in front of this LRU — see {@link KnownSetDoorkeeper}. */
+  readonly doorkeeper = new KnownSetDoorkeeper();
 
   constructor(readonly limitBytes: number) {}
+
+  /**
+   * What the memos may hold: the budget less what the doorkeeper's own memory costs. The
+   * doorkeeper remembers mailbox ids, not projections, so this is a fraction of a percent of the
+   * budget at its bound — but a bound that does not charge for its own bookkeeping is not one.
+   */
+  get spendableBytes(): number { return this.limitBytes - this.doorkeeper.chargedBytes; }
+
+  /** The loop's per-turn signal, forwarded so the doorkeeper can find the round boundary. */
+  beginCycle(mailboxId: string): void { this.doorkeeper.beginCycle(mailboxId); }
+
+  /**
+   * THE DOOR. A projection that fits without evicting anybody goes straight through — the
+   * doorkeeper is a policy for a CROWDED budget, and a roster the budget holds whole may not pay
+   * for one that does not. Only when admission would cost another mailbox its memo is the
+   * second-miss rule asked; a refusal leaves this mailbox reading cold for this round, which is
+   * one database read and exactly what it paid before the memo existed.
+   */
+  offer(cache: KnownSetCache, bytes: number): boolean {
+    const held = this.charged.get(cache) ?? 0;
+    if (this.total - held + bytes <= this.spendableBytes) return this.admit(cache, bytes);
+    if (!this.doorkeeper.admits(cache.mailboxId)) return false;
+    return this.admit(cache, bytes);
+  }
 
   /** Heap bytes currently charged across every memo in this process. */
   get chargedBytes(): number { return this.total; }
@@ -175,9 +202,9 @@ export class KnownSetBudget {
    */
   admit(cache: KnownSetCache, bytes: number): boolean {
     this.release(cache);
-    if (bytes > this.limitBytes) return false;
+    if (bytes > this.spendableBytes) return false;
     for (const victim of this.charged.keys()) {
-      if (this.total + bytes <= this.limitBytes) break;
+      if (this.total + bytes <= this.spendableBytes) break;
       // `drop` calls back into `release`, which is what removes the entry and the bytes. Deleting
       // the entry the iterator is on is defined behaviour for a Map iterator.
       victim.drop("evicted: the process locator budget");
@@ -369,6 +396,9 @@ export class KnownSetCache {
     this.cycleHits = 0;
     this.appendedThisCycle = 0;
     this.movedThisCycle = 0;
+    // The loop calls this once per mailbox per pass, which is the only marker of a roster round
+    // this module can see — the scheduler keeps no pass counter the memo could read.
+    this.budget.beginCycle(this.mailboxId);
   }
 
   /** Whether the memo currently holds a set. Read by the guards, not by the loop. */
@@ -570,10 +600,10 @@ export class KnownSetCache {
    * boundary every mailbox-scoped statement in `drizzle-repo.ts` exists to hold.
    *
    * THIS IS WHERE EVICTION HAPPENS — on the insertion, in the middle of the pass, not at the end
-   * of one. `admit` charges what this projection may retain and evicts the least recently used
-   * memos of OTHER mailboxes until the process fits its budget; a projection too big for the whole
-   * budget is not retained at all and this mailbox reads cold every cycle, which costs one read
-   * rather than everybody else's memory.
+   * of one. `offer` puts the projection past the doorkeeper and then charges what it may retain,
+   * evicting the least recently used memos of OTHER mailboxes until the process fits its budget.
+   * Two projections are not retained at all and read cold instead: one too big for the whole
+   * budget, and one missing for the first time this roster round while the budget is full.
    */
   async list(
     read: (mailboxId: string) => Promise<KnownLocator[]>, mailboxId: string,
@@ -596,13 +626,15 @@ export class KnownSetCache {
     }
     const rows = await read(mailboxId);
     const wants = estimateRetainedBytes(rows);
-    if (this.budget.admit(this, wants)) {
+    if (this.budget.offer(this, wants)) {
       this.entries = [...rows];
       this.retainedBytes = wants;
     } else {
       this.entries = null;
       this.retainedBytes = 0;
-      this.droppedBy = "not admitted: one projection over the whole process locator budget";
+      this.droppedBy = wants > this.budget.spendableBytes
+        ? "not admitted: one projection over the whole process locator budget"
+        : "not admitted: a first miss this roster round, with the process locator budget full";
     }
     this.tupleIndex = null;
     this.shape = null;
