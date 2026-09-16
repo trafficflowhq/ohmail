@@ -389,6 +389,12 @@ export const ALLOWED_FIELDS: readonly string[] = [
   // the account is gone — and it is the one away counter with NO ledger row behind it, because
   // every table the pass writes is one the Art. 17 sweep empties. A `++` integer carrying no mail.
   "refusedErased",
+  // `refusedNotOrganizer` is the eighth, added WITH its call sites: candidates left WHOLE because
+  // the install no longer held their mailbox. Its own name beside `refusedErased` on the same
+  // rule — one says the account is gone, this says the standing to answer is — and it is the
+  // number that says a handover happened mid-pass rather than a submission server being broken.
+  // A `++` integer over rows the pass itself drew, carrying no mail.
+  "refusedNotOrganizer",
   // `mirrorDraining` is the OTHER half of the same `shutdown` line, and it is here because
   // `inFlight` alone was misleading rather than merely incomplete: the Cloud mirror's pull is not a
   // stdio request, so `inFlight` reads 0 in exactly the case where the mirror is what the quit is

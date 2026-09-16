@@ -4669,19 +4669,29 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
               + "its own pass, and mail continues to arrive either way",
           });
         };
-        const askLease = async (): Promise<void> => {
-          if ("check" in permit) {
-            try {
-              await permit.check();
-              return;
-            } catch (err) {
-              if (!leaseStoodDown(permit)) return;
-              refuse();
-              throw err;
-            }
+        /** The permit's own bounded re-read, once, with the refusal kept for whoever wants to throw it. */
+        const askPermit = async (): Promise<{ err: unknown } | null> => {
+          if (!("check" in permit)) {
+            refuse();
+            return { err: new Error("no organizer lease permit authorises this away reply") };
           }
-          refuse();
-          throw new Error("no organizer lease permit authorises this away reply");
+          try {
+            await permit.check();
+            return null;
+          } catch (err) {
+            if (!leaseStoodDown(permit)) return null;
+            refuse();
+            return { err };
+          }
+        };
+        /* THE SAME QUESTION, BEFORE THE RESERVATION IS SPENT — the pass's own `stillOrganizing`.
+           A refusal at the send boundary leaves a reservation the loser can never offer again;
+           asked here, the candidate stays whole and the install that holds the mailbox answers
+           it. The boundary ask below stays as the last word before a delivery. */
+        const stillOurs = async (): Promise<boolean> => (await askPermit()) === null;
+        const askLease = async (): Promise<void> => {
+          const refusal = await askPermit();
+          if (refusal !== null) throw refusal.err;
         };
         const sendUnderLease: OpenSendAdapter = async (
           mailboxId: string,
@@ -4707,6 +4717,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
               stopped || gen !== generation || conn !== adapter
               || leaseLost || leaseStoodDown(permit),
             openSendAdapter: sendUnderLease,
+            stillOrganizing: stillOurs,
             mailboxIds: [mb.id],
             now,
           });
@@ -4716,6 +4727,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
               unverified: r.unverified, throttled: r.throttled, suppressed: r.suppressed,
               deferredAccounts: r.deferredAccounts, deferredCandidates: r.deferredCandidates,
               capped: r.capped, refusedErased: r.refusedErased,
+              refusedNotOrganizer: r.refusedNotOrganizer,
             });
           }
         } catch (err) {

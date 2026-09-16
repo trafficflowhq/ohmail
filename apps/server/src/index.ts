@@ -219,6 +219,7 @@ async function main(): Promise<void> {
                 unverified: a.unverified, throttled: a.throttled, suppressed: a.suppressed,
                 deferredAccounts: a.deferredAccounts, deferredCandidates: a.deferredCandidates,
                 capped: a.capped, refusedErased: a.refusedErased,
+                refusedNotOrganizer: a.refusedNotOrganizer,
               });
             }
           } catch (err) {

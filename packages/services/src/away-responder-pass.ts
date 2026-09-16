@@ -1,7 +1,7 @@
 import { and, asc, eq, exists, gt, gte, inArray, isNotNull, isNull, ne, or, sql } from "drizzle-orm";
 import {
   awayReplies, awayResponders, awaySenderState, folderState, mailboxes, messageBodies, messages,
-  AccountErasedError, MailboxErasedError, fenceErased, readAccountErasedAt,
+  AccountErasedError, MailboxErasedError, fenceErased,
   type Tx,
 } from "@trafficflow/db";
 import {
@@ -69,6 +69,17 @@ export const AWAY_THROTTLES = ["always", "per_message", "per_day", "per_week"] a
 export type AwayThrottle = (typeof AWAY_THROTTLES)[number];
 
 /**
+ * THE DIAL'S OWN DEADLINE — one budget entered at the top of a send and covering both of its
+ * segments (the SMTP transaction and the Sent append), because a ceiling composed per segment is
+ * no ceiling: each transport deadline bounds INACTIVITY, and a server answering one byte at a
+ * time breaches none of them. Thirty seconds sits ABOVE the 25 s socket deadline either segment
+ * may legitimately spend once, so the transport's own honest error still arrives first and this
+ * is the backstop, and below the 60 s serverless ceiling. It is what makes the erasure window
+ * between the reservation and the dial a duration somebody can look up.
+ */
+export const AWAY_DIAL_MS = 30_000;
+
+/**
  * How many ids a reply's `References` may carry. Twenty is past what any client renders and well
  * short of anything a server refuses; the root is always kept, so a longer thread loses its middle
  * rather than its identity.
@@ -96,6 +107,15 @@ export interface AwayResponderPassDeps {
   /** The send transport — `makeSendAdapter` on the hosted and self-hosted hosts, the local dial on the desktop. */
   openSendAdapter: OpenSendAdapter;
   /**
+   * HAS THIS INSTALL BEEN TOLD IT STILL HOLDS THIS MAILBOX? — asked BEFORE the reservation is
+   * spent, injected for the reason {@link accountEligible} is. `cancelled` is the CHEAP half (a
+   * cached latch read between rows); this is the re-read, and the difference is what the defect
+   * was made of — a handover that lands mid-pass is not in the cache when the next candidate is
+   * drawn. `false` leaves the candidate WHOLE: no ledger row, no spent throttle, nobody recorded
+   * as answered. Absent resolves to "yes", which is every hosted caller unchanged.
+   */
+  stillOrganizing?: (mailboxId: string) => Promise<boolean>;
+  /**
    * May this account's automation still fire? — the suspension gate, INJECTED: the fact lives in
    * the cloud half (`account_suspensions`) and this pass ships in the desktop engine bundle,
    * which may not name a cloud table. The hosted route and self-host clock inject the real read;
@@ -121,6 +141,8 @@ export interface AwayResponderPassDeps {
   /** Test seams. */
   batch?: number;
   sendsPerRun?: number;
+  /** Test seam. Default {@link AWAY_DIAL_MS}. */
+  dialMs?: number;
 }
 
 export interface AwayResponderPassResult {
@@ -148,7 +170,11 @@ export interface AwayResponderPassResult {
    * Nothing is decided and no reservation is spent.
    */
   deferredCandidates: number;
-  /** True ⇒ the send budget was reached and there was more to answer. */
+  /**
+   * True ⇒ THE PASS STOPPED WITH MORE TO ANSWER. Three things set it and the sentence used to
+   * name one: the send budget, the caller's `cancelled`, and a mailbox this install was told it
+   * no longer holds. All three mean the same thing to a reader — come back next run.
+   */
   capped: boolean;
   /**
    * CORRESPONDENTS newly marked unreachable this run, because a bounce for an earlier reply came
@@ -174,6 +200,16 @@ export interface AwayResponderPassResult {
    * it is an erasure that landed while a pass was in flight, working as designed.
    */
   refusedErased: number;
+  /**
+   * CANDIDATES LEFT WHOLE because this install no longer holds their mailbox — nothing written,
+   * nothing spent, nothing sent.
+   *
+   * Its own counter for the reason every counter here has one: `deferredCandidates` says a
+   * mailbox had no path to send BY, and this says this install had no standing to send AT ALL.
+   * They end in the same state on purpose — the candidate is offered again — and an operator
+   * reading one as the other would read a handover as a broken submission server.
+   */
+  refusedNotOrganizer: number;
 }
 
 /** One live responder, as the probe reads it. */
@@ -229,7 +265,7 @@ export async function runAwayResponderPass(
   const result: AwayResponderPassResult = {
     accounts: 0, examined: 0, sent: 0, unverified: 0, throttled: 0, suppressed: 0,
     deferredAccounts: 0, deferredCandidates: 0, capped: false, undeliverableMarked: 0,
-    expired: 0, refusedErased: 0,
+    expired: 0, refusedErased: 0, refusedNotOrganizer: 0,
   };
 
   /* NONE MEANS NONE, decided before a single row is read. See the field's own note. */
@@ -534,9 +570,13 @@ async function answerForAccount(
            the user's name from an install that no longer organizes the mailbox. Beside the
            budget check because it answers the same question — may this pass send one more? */
         if (deps.cancelled?.()) { result.capped = true; return; }
-        await answerOne(
-          db, responder, candidate, ownAddresses, textHash, transport, result, now, log,
+        const verdict = await answerOne(
+          db, deps, responder, candidate, ownAddresses, textHash, transport, result, now, log,
         );
+        // `break`, never `return`: the refusal is about THIS mailbox. The `finally` below closes
+        // the transport and the next group is walked, which is what an account holding one
+        // mailbox somebody else took and one it still holds needs.
+        if (verdict === "stop") { result.capped = true; break; }
       }
     } finally {
       // ALWAYS, including the send-budget return above: a leaked authenticated socket on the send
@@ -774,6 +814,33 @@ const isErasedRefusal = (err: unknown): boolean =>
 const subjectOf = (err: unknown): string =>
   err instanceof MailboxErasedError ? "mailbox" : "account";
 
+/** The deadline breached — the send did not finish, and whether it was delivered is unknown. */
+class AwayDialTimeout extends Error {
+  constructor(readonly ms: number) {
+    super(`the submission server did not finish this send within ${ms} ms`);
+    this.name = "AwayDialTimeout";
+  }
+}
+
+/**
+ * ONE BUDGET OVER THE WHOLE SEND, entered at the top rather than composed per segment. A breach
+ * is deliberately NOT a cancellation: the work keeps its own socket and the caller's `finally`
+ * closes it, because what this bounds is how long a RESERVATION may sit unresolved, not how long
+ * a server may be given to answer. `packages/api/src/send-adapter.ts` records that racing an
+ * adapter operation teaches a caller who wants a VERDICT nothing; the verdict here is the
+ * reservation's own ending, and that ending is `unverified` either way.
+ */
+async function withDeadline<T>(work: Promise<T>, ms: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([work, new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new AwayDialTimeout(ms)), ms);
+    })]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
 /**
  * One candidate: decide, reserve, send, finalize — the order is the correctness argument. (1)
  * ELIGIBILITY, no network: a suppression writes its ledger row and stops. (2) THE RESERVATION,
@@ -785,10 +852,11 @@ const subjectOf = (err: unknown): string =>
  * re-run — and at-most-once is the requirement.
  */
 async function answerOne(
-  db: Db, responder: LiveResponder, candidate: Candidate, ownAddresses: ReadonlySet<string>,
+  db: Db, deps: AwayResponderPassDeps, responder: LiveResponder, candidate: Candidate,
+  ownAddresses: ReadonlySet<string>,
   textHash: string, transport: () => Promise<SendAdapter | null>,
   result: AwayResponderPassResult, now: () => Date, log: Logger,
-): Promise<void> {
+): Promise<"go on" | "stop"> {
   const sender = awayNormalizeAddress(candidate.fromAddress);
 
   // ── 1. WHO. The whole suppression set, in one pure function. ─────────────────────────────
@@ -816,11 +884,11 @@ async function answerOne(
         reason: `the ${subjectOf(err)} was erased before this suppressed candidate's ledger row ` +
           "was written; no row is recorded and nothing was sent",
       });
-      return;
+      return "go on";
     }
     result.examined += 1;
     result.suppressed += 1;
-    return;
+    return "go on";
   }
 
   // The transport, resolved BETWEEN the verdict and the reservation — both halves load-bearing:
@@ -832,7 +900,31 @@ async function answerOne(
   const adapter = await transport();
   if (!adapter) {
     result.deferredCandidates += 1;
-    return;
+    return "go on";
+  }
+
+  /* ── 2b. THE LEASE, ASKED BEFORE THE RESERVATION IS SPENT ────────────────────────────────
+   * An away reply is reserved only by an install that has been TOLD it holds the mailbox. Asked
+   * after the transport — a candidate with no send path must not cost a lease read — and before
+   * `reserve`, because a refusal AFTER it leaves a SPENT reservation on the install that lost:
+   * the send boundary's own ask lands in the SMTP catch arm, which keeps the claim because an
+   * SMTP throw is ambiguous, and a refusal taken before any dial is not ambiguous at all. This
+   * writes nothing, so the candidate stays offerable — here, and on the install that now holds
+   * the mailbox.
+   */
+  if (deps.stillOrganizing && !(await deps.stillOrganizing(candidate.mailboxId))) {
+    result.refusedNotOrganizer += 1;
+    log.info("away_reply_refused_not_organizer", {
+      accountId: responder.accountId, mailboxId: candidate.mailboxId, messageId: candidate.id,
+      reason: "another install holds this mailbox now, so no reservation was taken and nothing " +
+        "was sent; this message is still unanswered and the install that holds the mailbox " +
+        "answers it from its own pass",
+    });
+    /* AND THIS MAILBOX'S PAGE ENDS HERE. The answer is about the MAILBOX and not about this
+       candidate, so asking again for the next row spends an IMAP round trip on an answer already
+       given — and it is about THIS mailbox alone, so another mailbox on the same account is still
+       walked. The caller's `cancelled` latch says the same thing from the other side and stays. */
+    return "stop";
   }
 
   // ── 3. THE RESERVATION AND THE ATOMIC THROTTLE ───────────────────────────────────────────
@@ -855,7 +947,7 @@ async function answerOne(
         reason: `the ${subjectOf(err)} was erased after this candidate was read; no reply is ` +
           "sent and no row is written — the reservation rolled back with the fence",
       });
-      return;
+      return "go on";
     }
     throw err;
   }
@@ -863,35 +955,43 @@ async function answerOne(
   if (reservation === "owned_elsewhere") {
     // Another runner holds this message's only reservation. It writes the ledger row and sends (or
     // does not); this one has nothing to decide and nothing to report about it.
-    return;
+    return "go on";
   }
   result.examined += 1;
   if (reservation === "throttled") {
     result.throttled += 1;
-    return;
+    return "go on";
   }
 
-  /* ── 3b. THE PRE-DIAL RE-READ, as late as the fence can be asked ─────────────────────────
-   * The reservation COMMITTED, and erasure can still land between that commit and this dial. A
-   * send is irreversible — there is no rolling back mail that reached somebody — so the fence is
-   * asked once more immediately before the dial rather than trusting the reservation's answer.
-   * This read is a NARROWING, not an interlock: outside a transaction the share lock releases at
-   * once, so the residual window is the dial itself, and `changes/` states it. A refusal writes
-   * nothing — the sweep has already taken the `pending` row this pass reserved.
+  /* ── 3b. THE PRE-DIAL RE-READ, the fence itself and not half of it ───────────────────────
+   * The reservation COMMITTED, and an erasure can still land between that commit and this dial;
+   * a send is irreversible, so the fence is asked once more rather than trusted. THE SAME DOOR
+   * the reservation asks, in its own transaction: this read used to be `readAccountErasedAt`
+   * alone, and a MAILBOX erased in exactly this window was answered — its row survives its own
+   * sweep as a tombstone, so the account's stamp says nothing about it. One transaction for both
+   * arms keeps `fenceErased`'s lock order and reads the two rows as one answer. A refusal writes
+   * nothing: the sweep has already taken the `pending` row this pass reserved.
    */
-  if (await readAccountErasedAt(db as unknown as Tx, dialect(db), responder.accountId) != null) {
+  try {
+    await (db as unknown as Tx).transaction(async (tx) => {
+      await fenceErased(tx, dialect(db), {
+        accountId: responder.accountId, mailboxId: candidate.mailboxId,
+      });
+    });
+  } catch (err) {
+    if (!isErasedRefusal(err)) throw err;
     result.refusedErased += 1;
     log.warn("away_reply_refused_erased", {
       accountId: responder.accountId, mailboxId: candidate.mailboxId, messageId: candidate.id,
-      reason: "the account was erased between the reservation and the dial; nothing was sent and " +
-        "the reserved row went with the sweep",
+      reason: `the ${subjectOf(err)} was erased between the reservation and the dial; nothing ` +
+        "was sent and the reserved row went with the sweep",
     });
-    return;
+    return "go on";
   }
 
-  // ── 4. THE SEND ──────────────────────────────────────────────────────────────────────────
+  // ── 4. THE SEND, UNDER ONE DEADLINE ──────────────────────────────────────────────────────
   try {
-    await adapter.send({
+    await withDeadline(adapter.send({
       from: candidate.ownAddress,
       // The address as STORED, not the normalised one: the normalisation exists to compare
       // addresses, and an envelope is addressed with what the sender actually wrote.
@@ -916,13 +1016,15 @@ async function answerOne(
       // refuses to reply to. A responder that demands it of others and does not set it is the loop
       // viewed from the other end.
       headers: { "Auto-Submitted": "auto-replied" },
-    });
+    }), deps.dialMs ?? AWAY_DIAL_MS);
   } catch (err) {
     // THE CLAIM STAYS. SMTP is not transactional, so a throw means the delivery is AMBIGUOUS — it
     // may have reached the server before the failure. Releasing the claim would let the next run
     // send a second copy of a reply that was delivered. The interactive send path answers the same
     // ambiguity by probing Sent and NEVER resending; `unverified` is the conservative half of that
-    // answer, which is the half an unattended pass can hold on its own.
+    // answer, which is the half an unattended pass can hold on its own. A BREACHED DEADLINE ends
+    // here too and for the same reason: a send that did not finish is ambiguous in exactly the way
+    // a throw is, and the one thing it may not do is leave the reservation open for ever.
     await finalize(db, candidate, responder.accountId, "unverified", scrub(err), null, now());
     result.unverified += 1;
     log.error("away_reply_send_failed", {
@@ -932,7 +1034,7 @@ async function answerOne(
         "ambiguous and a resend risks a duplicate reply to this correspondent; no further reply " +
         "is sent for this message, ever",
     });
-    return;
+    return "go on";
   }
 
   // ── 5. THE FINALIZE, compare-and-swap ────────────────────────────────────────────────────
@@ -942,6 +1044,7 @@ async function answerOne(
     accountId: responder.accountId, mailboxId: candidate.mailboxId, messageId: candidate.id,
     throttle: responder.throttle,
   });
+  return "go on";
 }
 
 /**
