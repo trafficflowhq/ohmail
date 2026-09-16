@@ -1310,13 +1310,10 @@ export function MessageActionBar({
  * WHAT THE READING SURFACE SAYS WHEN THE MESSAGE HAS LEFT — one sentence, in the shape every
  * resting column already uses, and a way to follow the mail.
  *
- * The IMAP mailbox is the master, so another client moving a message out of every watched folder
- * is legitimate and ohmail is right to drop the row. What was not legitimate is the silence: the
- * pane simply blanked, which is character-for-character what it renders when nothing is open, so
- * a person watching their open message and their half-written answer disappear together had no
- * way to tell a removal from a bug. ohmail's own Trash list structurally cannot hold the row
- * (it inner-joins the folder ohmail's own delete verb writes), so the one place it can still be
- * read is the LIVE Trash window over the provider's own folder — which is what the link opens.
+ * The mailbox is the master, so another client's move is legitimate and dropping the row is right.
+ * The SILENCE was not: the pane blanked, which is character-for-character what it renders when
+ * nothing is open. ohmail's own Trash list structurally cannot hold the row (it inner-joins the
+ * folder only ohmail's delete verb writes), so the link opens the LIVE Trash window instead.
  */
 export interface MessageGoneProps {
   /**

@@ -3404,17 +3404,13 @@ export class OhmailEngine {
   }
 
   /**
-   * WHICH MESSAGES THIS PAGE TAKES AWAY — told to whoever asked, before the write.
+   * WHICH MESSAGES THIS PAGE TAKES AWAY — told to whoever asked, BEFORE the write, which is the
+   * whole of why this hangs off {@link noteApplied}: a listener's business is with what the row
+   * still lets it derive (its mailbox, a reply's audience, the subject), and after the apply the
+   * row is a tombstone carrying none of it. The webapp's reply-lane promotion is the consumer.
    *
-   * BEFORE is the whole of why this hangs off {@link noteApplied}: a listener's business is with
-   * what the removed row still lets it derive — the mailbox it came from, who a reply to it would
-   * have gone to, the subject — and after the apply the row is a tombstone carrying none of that.
-   * The webapp's reply-lane promotion is the consumer: a half-written answer keyed on a message
-   * another mail client moved out of every watched folder has to become a draft row with an
-   * audience, and this is the last instant anything can name one.
-   *
-   * Deduped, and NOT gated on the row being live here: the lane is keyed on the id, so a message
-   * this device had already evicted is still a message somebody may be answering.
+   * Deduped, and NOT gated on the row being live: the lane is keyed on the id, so a message this
+   * device had already evicted is still one somebody may be answering.
    */
   private noteMessagesRemoved(changes: SyncChange[]): void {
     if (this.removalListeners.size === 0) return;

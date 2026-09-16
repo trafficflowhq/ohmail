@@ -570,15 +570,12 @@ export type LanePromotion = "promoted" | "empty" | "unplaceable" | "refused";
 /**
  * PROMOTE, NEVER DROP — a half-written reply whose parent another mail client has taken away.
  *
- * The inline reply has no autosave: it is `localStorage` keyed on the parent's id, and the only
- * reader is the editor that opens ON that parent. So a message moved out of every watched folder
- * by another client does not delete the words — it makes them unreachable, which is the same loss
- * with a better alibi. This turns them into a server draft row carrying `inReplyToMessageId` of
- * the dead id (legal: the FK is nullable and the delete is soft), and only THEN drops the lane.
+ * The inline reply has no autosave and its only reader is the editor that opens ON the parent, so
+ * a delete does not remove the words: it makes them unreachable. This turns them into a draft row
+ * carrying `inReplyToMessageId` of the dead id (legal: the FK is nullable, the delete is soft).
  *
- * THE ORDER IS THE INVARIANT. The lane is cleared after the row is confirmed and never before, so
- * a refused save, a jar that cannot be read or a parent nothing can place leaves the text exactly
- * where it was — unreachable, as it is today, rather than gone.
+ * THE ORDER IS THE INVARIANT: the lane clears after the row is confirmed and never before, so a
+ * refusal leaves the text where it was — unreachable, as today, rather than gone.
  */
 export async function promoteOrphanedReplyLane(
   lane: string,

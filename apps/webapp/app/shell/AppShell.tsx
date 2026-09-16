@@ -3216,16 +3216,13 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
   /* ── a parent another mail client took away ───────────────────────────────────────────── */
 
   /**
-   * WHAT A DEAD PARENT STILL LETS A PROMOTED LANE NAME — the mailbox to create the row in, the
-   * subject and the audience. `null` ⇒ nothing can place it, and the lane is then left exactly as
-   * it is rather than cleared, which is the invariant this whole path exists for.
+   * WHAT A DEAD PARENT STILL LETS A PROMOTED LANE NAME — the mailbox, the subject, the audience.
+   * `null` ⇒ nothing can place it, and the lane is left exactly as it is rather than cleared.
    *
-   * The audience is the PLAIN reply's, never reply-all: the lane holds a body and an editor meta
-   * and has never held recipients, so widening one nobody asked for would put somebody's
-   * half-written sentence in front of a room. Without a parent (a window that loads after the
-   * tombstone) there is no audience and no subject to derive at all — the row carries the words,
-   * which is the thing that cannot be recovered any other way, and the compose form is where the
-   * rest is filled in.
+   * The audience is the PLAIN reply's, never reply-all: the lane has never held recipients, so
+   * widening one nobody asked for would put a half-written sentence in front of a room. With no
+   * parent at all (a window that loads after the tombstone) there is neither audience nor subject
+   * to derive — the row carries the words, and the compose form is where the rest is filled in.
    */
   const promotionPlanFor = useStableCallback(
     (lane: string, parentId: string, parent: EngineMessage | null): LanePromotionPlan | null => {
@@ -3272,16 +3269,13 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
   const orphanScanDone = useRef(false);
 
   /**
-   * THE TWO WAYS A LANE IS ORPHANED, AND THEY PARTITION THE CASES.
+   * THE TWO WAYS A LANE IS ORPHANED, AND THEY PARTITION THE CASES. A window that is OPEN when the
+   * delete arrives learns it from the removal signal; a window that was closed then — a second
+   * tab, tomorrow's reload — learns it from the mirror it hydrates, which is this scan.
    *
-   * A window that is OPEN when the delete arrives learns it from the removal signal. A window
-   * that was closed then — a second tab, tomorrow's reload — learns it from the mirror it
-   * hydrates, and that is this scan: once per mount, on the first publish after hydration.
-   *
-   * IT ASKS FOR A TOMBSTONE AND NEVER FOR ABSENCE. The mirror is a window over the account and
-   * `prune` removes rather than tombstones, so a parent that is merely not here is ordinary mail
-   * outside this device's window — promoting on that would turn every small mirror into a
-   * draft-making machine.
+   * IT ASKS FOR A TOMBSTONE AND NEVER FOR ABSENCE: `prune` removes rather than tombstones, so a
+   * parent that is merely not here is ordinary mail outside this device's window, and promoting on
+   * that would turn every small mirror into a draft-making machine.
    */
   useEffect(() => {
     const scan = (): void => {
