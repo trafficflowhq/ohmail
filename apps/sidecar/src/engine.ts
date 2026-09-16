@@ -3446,9 +3446,14 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           unreadableSince: null, releaseRequestedAt: null, claimed: false }
         /* THE STOP IS NOT KNOWN AT ATTACH — it is the ROW's, and the first pass's own read is what
            puts it here. `null` is "nothing has said", which is what an unasked question answers.
-           `claimed` follows `organizing` here and for the same reason: the row said organizer and
-           nothing has said otherwise yet. The gate's first pass replaces both. */
-        : { organizing: true, reason: null, heldBy: null, unreadableSince: null,
+           AND NEITHER IS THE ORGANIZING. `claimed` is the ROW's INSTRUCTION and stands; `organizing`
+           is a PASS's DECLARATION and no pass has made one, so this is `starting`, which the record
+           already names. As `true` it was a declaration nobody made: the mask below can only
+           WITHHOLD what a pass declared, and a launch whose dial is refused records the death, arms
+           the poll timer and rethrows without ever reaching the gate — every term of the mask then
+           read true over a mailbox this install had never asked the lease about. Only the gate
+           turns this on. */
+        : { organizing: false, reason: null, heldBy: null, unreadableSince: null,
           releaseRequestedAt: null, claimed: true };
       /**
        * The exit from a stand-down — a human asked for this machine, once. Written by the
@@ -6297,7 +6302,13 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
              the loop's clock, which a synchronous prologue does not refresh — measured as a 299
              against a 300 ms bound. */
           if (!wedged) {
-            const politely = Promise.resolve().then(() => (organizer.organizing
+            /* `claimed` AND NOT `organizing` — the field that means "a claim of ours may be in the
+               folder". The gate takes the claim a full round trip before it declares `organizing`
+               (see the CLAIM IS OURS FROM HERE block), so a stop landing inside that window read
+               the ATTACH DEFAULT rather than anything this pass knew, and reached the right answer
+               by accident. No reachable state has `organizing` true with `claimed` false, so this
+               releases in exactly the cases it released in before, and in the window as well. */
+            const politely = Promise.resolve().then(() => (organizer.claimed
               ? releaseOwnClaim(
                 adapter, installId, mb.id, { current: leaseNonce, pending: leasePendingNonce }, log,
                 "this install is stopping and its claim could not be removed; it ages out of "
