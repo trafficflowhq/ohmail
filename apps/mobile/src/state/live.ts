@@ -2002,14 +2002,12 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
   /**
    * MOVE — the place a pile shows is the sender's ROUTING, and the sentence comes from the ANSWER.
    *
-   * A newsletter presented in Reads sits physically in the INBOX, so a bare INBOX→INBOX move is a
-   * local 404 with nothing sent: the rules holding this sender at the PRESENTED place are what
-   * gets retargeted, and that place comes in on the row the panel was drawn from — this module's
-   * own reader is the raw mirror and cannot tell it from the filed folder. And where this phone
-   * only READS, the server records the press for the
-   * organizing install and answers 202 — nothing moved, so "Moved" there would be false.
-   * `watched` loses the fact the MOVE carries, so that one is awaited raw, the way
-   * `liveDecidedElsewhere` above already does and for the same reason.
+   * A newsletter presented in Reads sits in the INBOX, so a bare INBOX→INBOX move is a local 404
+   * with nothing sent: what gets retargeted is the rules holding this sender at the PRESENTED
+   * place, which rides in on the row — this module's reader is the raw mirror and cannot tell it
+   * from the filed folder. Where this phone only READS the server answers 202 and nothing has
+   * moved, so "Moved" would be false; `watched` loses that fact, so the answers are awaited raw,
+   * as `liveDecidedElsewhere` already does.
    */
   const move = async (row: WorldMail, dest: MoveTarget): Promise<boolean> => {
     const messageId = row.id;
