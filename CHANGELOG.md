@@ -13,15 +13,6 @@ See [Status](README.md#status--read-this-first).
 
 ## [Unreleased]
 
-### Resurfaced conversations appear once, with a badge when new mail arrived since
-
-Mail you park comes back a message at a time, so a conversation you had put away returned as
-several rows — and a reply that had arrived in the meantime stood again under New. Resurfaced now
-shows one row per conversation, opening on its newest message. Where new mail arrived after you
-asked to see the conversation again, the row says how many; reading it clears the badge and leaves
-the conversation where it is until you are done with it. Mail arriving in a conversation whose
-return time has not come yet brings it back now rather than at its appointed hour.
-
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
