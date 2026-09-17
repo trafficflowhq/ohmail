@@ -1,3 +1,4 @@
+import { epochOf, sameEpoch } from "@trafficflow/core/adapters/imap";
 import type { KnownEntry } from "@trafficflow/core/adapters/imap-types";
 import type { KnownLocator, WorkerRepo } from "@trafficflow/core/adapters/drizzle-repo";
 
@@ -503,7 +504,10 @@ export class KnownSetCache {
        derivation, which costs the grouping and not the read. */
     const rowEpoch = this.shape.rowEpochs.get(locator.folder);
     if (rowEpoch === null || rowEpoch === undefined) { this.shape = null; return; }
-    if (rowEpoch !== locator.uidValidity) return;   // a foreign epoch — `knownFor` filters it out
+    /* THROUGH THE DOOR, not by text. `knownFor` filters the derived array with `sameEpoch`, so a
+       text comparison here can disagree with it on the two spellings of one epoch and leave the
+       array short of a row the next derivation would hold. */
+    if (!sameEpoch(epochOf(rowEpoch), epochOf(locator.uidValidity))) return;   // a foreign epoch
     const arr = this.shape.byFolder.get(`${locator.folder}\u0000${rowEpoch}`);
     if (arr === undefined) { this.shape = null; return; }
     arr.push({ uid: locator.uid, messageId: locator.messageId, seen: locator.seen });
