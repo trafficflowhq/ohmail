@@ -1,13 +1,10 @@
 /**
  * WHICH TABLES HAVE NO ACCOUNT OF THEIR OWN, AND WHOSE THEY BORROW.
  *
- * Most tables carry an `account_id` and a composite key holds it to its parent's. These do not,
- * and that is the point: a column that is not there cannot disagree with the parent, and no
- * account-scoped read reaches such a row except through the parent it hangs from. What each one
- * owes instead is a single-column key, so the parent is not merely assumed to be there.
- *
- * `account-scope-is-declared.test.ts` derives both lists from the two schemas and refuses a table
- * that appears in neither — the declaration is the census's subject, never its source.
+ * A column that is not there cannot disagree with the parent, and no account-scoped read reaches
+ * such a row except through the parent it hangs from. What each owes instead is a single-column
+ * key, so the parent is not merely assumed. `account-scope-is-declared.test.ts` derives both lists
+ * from the schemas and refuses a table in neither.
  */
 
 /** A table whose account scope is its parent's, named with the reference that carries it. */
