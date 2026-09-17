@@ -132,13 +132,12 @@ export const screenerRoutes: Route[] = [
     },
   },
   /**
-   * The junk window (§16.2) — three routes, all `connection`: each opens an IMAP socket to the
+   * The junk window (§16.2). The two READS are `connection`: each opens an IMAP socket to the
    * user's own provider (through the admission-capped `openMailboxImap`), and an unverified
-   * account must not make this service dial. All gated on the folders flag (409 off). The window
-   * never writes mirror rows; a plain rescue writes exactly the `sync_requested_at` doorbell
-   * (`junk-window.test.ts` counts the tables). The `allow` variant runs `allowSender` before the
-   * move in its own transaction — which is why every refusal on that path belongs above it: a
-   * request refused after `allowSender` would leave the screening changed by a failed call.
+   * account must not make this service dial. The two COMMANDS — the rescue and the sweep — are
+   * `work`: they record what the person asked for and the organizer executes it, because the API
+   * never opens IMAP to apply organization. All gated on the folders flag (409 off). The window
+   * never writes mirror rows (`junk-window.test.ts` counts the tables).
    * Static-beats-param: `/screener/junk` outranks `/screener/:id`.
    */
   {
@@ -216,16 +215,17 @@ export const screenerRoutes: Route[] = [
     },
   },
   {
-    // "Not junk" — ONE user-commanded move out of \Junk back to INBOX (the imap-types
-    // carve-out's second write), then the doorbell; re-entry is the worker's NORMAL ingest.
-    // A message the provider expunged first answers 410 — the rescue fails honestly.
-    // `allow: { sender }` is the SECOND VERB — "Not junk, always allow": the sender's spam rule
-    // is disabled and their allow minted BEFORE the move, in one transaction (junk-window.ts'
-    // header for why both halves, and why rules-first). Same route, never a parallel one.
+    // "Not junk" — the user's command to move ONE message out of \Junk back to INBOX, RECORDED
+    // here (`junk_rescues`) with the doorbell and executed by the organizer under its lease; the
+    // message then re-enters through the worker's NORMAL ingest. 202, because nothing has moved
+    // yet. `work` and not `connection`: this opens no socket.
+    // `allow: { sender }` is the SECOND VERB — "Not junk, always allow": the sender's spam rule is
+    // disabled and their allow minted in the SAME transaction as the command, so an interrupted
+    // request leaves neither. Same route, never a parallel one.
     method: "POST",
     pattern: "/screener/junk/rescue",
     relay: true,
-    cost: "connection",
+    cost: "work",
     handler: async (req, deps) => {
       const ctx = serviceContext(deps, req);
       const body = await readBody<{ mailboxId?: unknown; uid?: unknown; uidValidity?: unknown; allow?: unknown }>(req);
@@ -243,9 +243,12 @@ export const screenerRoutes: Route[] = [
         }
         allow = { sender };
       }
+      // 202 AND NOT 200: the press is recorded, the move has not happened, and the surface's
+      // sentence is "will be moved" rather than "moved" — the screener decision's own rule one
+      // route down, for the same reason.
       return jsonResponse(await rescueJunk(deps, ctx, {
         mailboxId, uid, uidValidity, ...(allow !== undefined ? { allow } : {}),
-      }));
+      }), { status: 202 });
     },
   },
   {
