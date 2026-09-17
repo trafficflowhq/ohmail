@@ -27,6 +27,19 @@ WORKDIR /app
 # ── Build: the locked tree, then one file ────────────────────────────────────────────────
 FROM base AS build
 COPY . .
+
+# WHICH ALLOW-LIST BUILT THIS CONTEXT. The lockfile above reaches it through the sibling
+# `apps/server/Dockerfile.dockerignore`, and only BuildKit reads a per-Dockerfile list. The legacy
+# builder falls back to the root one — the managed worker's context, which admits no lockfile — so
+# npm answers EUSAGE over a lockfile this repository does commit, and the reader goes looking for a
+# missing file instead of a missing builder. The builder is named here, before npm is asked.
+RUN test -f package-lock.json || { \
+      echo "REFUSED: package-lock.json is not in this build context."; \
+      echo "  It IS committed at the repository root. This image's context list is the sibling"; \
+      echo "  apps/server/Dockerfile.dockerignore, which only BuildKit reads."; \
+      echo "  The legacy builder cannot build this image: install the buildx component"; \
+      echo "  (https://docs.docker.com/go/buildx/) and build again."; \
+      exit 1; }
 # The committed lockfile IS the resolution: the tree this bundle is built from is the tree
 # this repository's own CI typechecks.
 RUN npm ci --no-audit --no-fund
