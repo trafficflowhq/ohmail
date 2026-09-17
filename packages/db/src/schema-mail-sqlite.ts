@@ -531,7 +531,7 @@ export const folderOps = sqliteTable("folder_ops", {
 }, (t) => ({ uqFolder: unique().on(t.folderId) }));
 
 /**
- * The junk rescue's desired state (mail 0116) — the server twin's device half. A
+ * The junk rescue's desired state (mail 0117) — the server twin's device half. A
  * standalone phone serves `screenerRoutes` through its own local door, so the press records a row
  * here and the engine's sync cycle drains it: the same table, the same pass, one implementation.
  * `uidvalidity` is `int64` for the reason every other epoch here is — it is COMPARED, and a double

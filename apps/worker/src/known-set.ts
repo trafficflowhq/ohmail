@@ -272,7 +272,7 @@ export const KNOWN_SET_NEUTRAL: ReadonlySet<string> = new Set([
   // re-spells `message_instances.folder` for a whole subtree and the second deletes instance
   // rows — both move exactly what this projection remembers, so they must drop the memo.
   "listFolderOps", "completeFolderCreate", "failFolderOp", "deferFolderOp", "listFolderSubtree",
-  // the junk-rescue pass (mail 0116): its read joins `junk_rescues` to `mailboxes` and its three
+  // the junk-rescue pass (mail 0117): its read joins `junk_rescues` to `mailboxes` and its three
   // writes touch `junk_rescues` alone — a table this projection (message_instances + a couple of
   // `messages` columns + flag_state.observed_seen) does not join at all. The MOVE the pass issues
   // does drop the memo, and correctly: it goes through the ordinary ingest, not through these.

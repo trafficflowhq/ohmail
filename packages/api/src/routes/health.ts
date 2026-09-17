@@ -733,7 +733,7 @@ export const MAIL_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // one transaction, so a facet's columns arrive together. Deploy order migration → API.
   ["unsubscribe_examined", "message_id"],
   ["unsubscribe_drain_state", "cursor_at"],
-  // mail 0116_junk_rescues — one column on the new `junk_rescues` table; probing a column proves
+  // mail 0117_junk_rescues — one column on the new `junk_rescues` table; probing a column proves
   // the table. Its absence is the loud kind on the write side and the SILENT kind on the read
   // side, which is why it is here: the rescue route INSERTs on every "not junk" press, so a
   // too-early API 42P01s the press and the person is told the move failed — but the WORKER's pass
@@ -1017,7 +1017,7 @@ export const MAIL_EXPECTED_MARKERS =
 // 0067/0068 (the device-sync alert's withdrawn SECURITY DEFINER carrier and its retirement)
 // add no column and get no marker: a function's absence is the ALERT RULE's own isolated,
 // tolerated state, not a schema fault a serving API should 503 over.
-export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0116_junk_rescues";
+export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0117_junk_rescues";
 
 
 /* `CLOUD_SCHEMA_MARKER_JOURNAL_TAG` moved to `./health-cloud.js`: it is the NAME of a cloud
