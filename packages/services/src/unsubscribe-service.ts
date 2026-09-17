@@ -1028,17 +1028,19 @@ export class UnsubscribeService {
       sweep.remaining += one.remaining;
     }
 
+    // THE PASS HAS LOOKED, AND THIS IS WHERE IT SAYS HOW FAR — once, after the posting loop, never
+    // per page. A run that dies above resumes from the last END; a run that dies BELOW keeps what
+    // it looked at, because the count that follows is a report and a report that failed does not
+    // unlook a window. Before the count deliberately: when a budget is truly spent something has
+    // to give, and a missing cursor makes the next run repeat this one's head — the defect — while
+    // a missing count already has an honest answer, `null`.
+    await this.recordStop(tx, walk.stoppedAt, budget, opts.now());
+
     // WHAT IS STILL OWED, COUNTED RATHER THAN INFERRED — the reserve this budget holds back exists
     // for this one read. It is `null`, never 0, when the counting walk did not reach the end of
     // the window: a zero that is really "I stopped looking" is the sentence that told an operator
     // this pass was keeping up while it had not looked at the backlog at all.
     const remaining = await this.owedCount(tx, since, budget);
-
-    // THE PASS ENDS HERE, AND THE CURSOR IS WRITTEN ONCE — never per page, and never before the
-    // pass has finished. A run that dies anywhere above resumes from the last END: it repeats work
-    // it had already done, which is cheap, instead of claiming to have looked past a page it never
-    // posted for, which is the fairness this cursor exists to give.
-    await this.recordStop(tx, walk.stoppedAt, budget, opts.now());
 
     return { accounts: visited, sweep, remaining, elapsedMs: budget.elapsedMs() };
   }
@@ -1062,13 +1064,20 @@ export class UnsubscribeService {
     }
   }
 
-  /** Where the pass stopped, written once — see {@link cursorOf} for why it may be skipped. */
+  /**
+   * Where the pass stopped, written once. Bounded by the CLOSING RESERVE as a floor rather than by
+   * what is left, and that floor is the whole point: a walk cut by the budget is exactly the run
+   * whose position matters, and it reaches here with `leftMs()` at zero — bounded by that, the
+   * cursor would only ever be written by runs that finished comfortably, which are the runs that
+   * need it least. The reserve exists to pay for the pass's closing work; this is the first of it.
+   */
   private async recordStop(
     tx: Tx, stoppedAt: ScanCursor | null, budget: DrainBudget, now: Date,
   ): Promise<void> {
     try {
       await withDeadline(
-        writeDrainCursor(tx, UNSUB_DRAIN_PASS, stoppedAt, now), budget.leftMs(),
+        writeDrainCursor(tx, UNSUB_DRAIN_PASS, stoppedAt, now),
+        Math.max(budget.leftMs(), UNSUB_DRAIN_CLOSE_RESERVE_MS),
         "the drain cursor write");
     } catch (err) {
       if (err instanceof ServiceError && err.code === "unsubscribe_budget_spent") return;
