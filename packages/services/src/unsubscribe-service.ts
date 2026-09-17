@@ -889,7 +889,17 @@ export class UnsubscribeService {
    */
   private async walkWindow(
     tx: Tx, since: Date, accountId: string | null,
-    opts: { want: number; budget: DrainBudget; count?: boolean; from?: ScanCursor | null },
+    opts: {
+      want: number; budget: DrainBudget; count?: boolean; from?: ScanCursor | null;
+      /**
+       * WHAT THIS WALK MAY SPEND, and why it is not always the whole budget. The WORK walk stops
+       * at the POSTING boundary: reading candidates it cannot pay to post for buys nothing, and
+       * spending the closing reserve on them left the pass unable to pay for its own closing
+       * write — so a run cut mid-window could not say where it stopped, which is the one case the
+       * cursor exists for. The counting walk keeps the whole budget; it IS closing work.
+       */
+      leftMs?: () => number;
+    },
   ): Promise<{
     eligible: ScannedRow[]; eligibleSeen: number; exhausted: boolean; chunks: number;
     stoppedAt: ScanCursor | null;
@@ -903,8 +913,9 @@ export class UnsubscribeService {
     let after: ScanCursor | null = opts.from ?? null;
     let lastRead: ScanCursor | null = opts.from ?? null;
 
+    const leftMs = opts.leftMs ?? (() => opts.budget.leftMs());
     while (chunks < UNSUB_DRAIN_SCAN_CHUNKS) {
-      const left = opts.budget.leftMs();
+      const left = leftMs();
       if (left <= 0) break;
       let chunk;
       try {
@@ -992,6 +1003,7 @@ export class UnsubscribeService {
     const from = await this.cursorOf(tx, budget);
     const walk = await this.walkWindow(tx, since, null, {
       want: accounts * perAccount, budget, from,
+      leftMs: () => budget.postingLeftMs(),
     });
 
     const byAccount = new Map<string, string[]>();
@@ -1065,19 +1077,17 @@ export class UnsubscribeService {
   }
 
   /**
-   * Where the pass stopped, written once. Bounded by the CLOSING RESERVE as a floor rather than by
-   * what is left, and that floor is the whole point: a walk cut by the budget is exactly the run
-   * whose position matters, and it reaches here with `leftMs()` at zero — bounded by that, the
-   * cursor would only ever be written by runs that finished comfortably, which are the runs that
-   * need it least. The reserve exists to pay for the pass's closing work; this is the first of it.
+   * Where the pass stopped, written once, bounded by what is left — which is a real allowance and
+   * not zero, because the WORK walk stops at the posting boundary and leaves the closing reserve
+   * behind it. Bounded by a FLOOR instead, the route spent its whole budget and then the reserve
+   * on top against a database that never answers, and its own ceiling case refused by 2 seconds.
    */
   private async recordStop(
     tx: Tx, stoppedAt: ScanCursor | null, budget: DrainBudget, now: Date,
   ): Promise<void> {
     try {
       await withDeadline(
-        writeDrainCursor(tx, UNSUB_DRAIN_PASS, stoppedAt, now),
-        Math.max(budget.leftMs(), UNSUB_DRAIN_CLOSE_RESERVE_MS),
+        writeDrainCursor(tx, UNSUB_DRAIN_PASS, stoppedAt, now), budget.leftMs(),
         "the drain cursor write");
     } catch (err) {
       if (err instanceof ServiceError && err.code === "unsubscribe_budget_spent") return;
