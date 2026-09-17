@@ -9,22 +9,29 @@
  */
 
 /**
- * Nothing but arithmetic: it answers "which slice is on screen" from the scroller's own
- * `scrollTop`/`clientHeight`, and the caller renders that slice between two spacers, so scroll
- * height, scrollbar and position are what they would have been with every row mounted.
- *
- * ROWS OF ONE HEIGHT ARE A REQUIREMENT THE CALLER OWES, not an observation. One row is measured
- * and every unrendered row is reserved at that height, so a list of uneven rows — the Ohbox, where
- * a row with a preview line is three lines and one without is two — drifts: the reserved height
- * runs ahead of the real rows and the list moves on by more than a row per row of scrolling, which
- * is mail cut off the top rather than scrolled out of it. Lists at or below
- * {@link FULL_RANGE_MAX_ROWS} are rendered whole for that reason. ABOVE it the drift is still
- * here, and only per-index measured heights can close it. `clientHeight` of 0
- * (pre-layout, jsdom) reads as {@link FALLBACK_VIEWPORT_PX} — over-render, never hide mail. No
- * dependency, no absolute rows: rows stay normal children in document order, so selection styling,
+ * It answers "which slice is on screen" from the scroller's own `scrollTop`/`clientHeight`, and
+ * the caller renders that slice between two spacers, so scroll height, scrollbar and position are
+ * what they would have been with every row mounted. Lists at or below
+ * {@link FULL_RANGE_MAX_ROWS} render whole; `clientHeight` of 0 reads as
+ * {@link FALLBACK_VIEWPORT_PX} — over-render, never hide mail.
+ */
+
+/**
+ * ROWS NEED NOT BE OF ONE HEIGHT. Every item the caller stamps with `data-index` is measured as
+ * it renders, and the reserved height is the prefix sum of those measurements — the running mean
+ * for indices nobody has drawn yet, never one row's height for all of them. No dependency, no
+ * absolute rows: rows stay normal children in document order, so selection styling,
  * `useSeenOnScroll`'s `[data-id]` contract and focus order work as before.
  */
-import { useCallback, useEffect, useLayoutEffect, useState, type RefObject } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type RefObject,
+} from "react";
 
 /** The first frame's guess at a mail row's height. Replaced by a measurement immediately. */
 export const ESTIMATED_ROW_PX = 80;
@@ -37,9 +44,8 @@ const OVERSCAN_ROWS = 8;
 
 /**
  * Lists no longer than this are rendered whole: a few screens of rows cost little to mount, and
- * the spacer arithmetic cannot be honest about rows of uneven height. Above it the window still
- * runs — an unbounded render is the cost this product has already paid once — so an uneven list
- * longer than this still drifts until the window carries per-index measured heights.
+ * arithmetic that reserves nothing cannot be wrong about anything. Above it the window runs on
+ * measured heights — an unbounded render is the cost this product has already paid once.
  */
 export const FULL_RANGE_MAX_ROWS = 500;
 
@@ -52,14 +58,16 @@ export interface ListWindow {
   padTop: number;
   /** Pixels to reserve below it. */
   padBottom: number;
-  /** The row height in force — measured once a row has been laid out, else the estimate. */
+  /** The height in force for an unmeasured row — the mean of what has been measured. */
   rowHeight: number;
+  /** Where index `i` starts, in scroller pixels: the prefix sum of the measured heights. */
+  offsetOf: (index: number) => number;
 }
 
 export interface UseListWindowOptions {
   /** The element that scrolls — `ListPane`'s own, via its `scrollerRef` prop. */
   scrollerRef: RefObject<HTMLElement | null>;
-  /** How many rows the list holds in total. */
+  /** How many items the list holds in total — rows, and any group header given its own index. */
   count: number;
   /** First-frame row height, before one has been measured. */
   estimate?: number;
@@ -67,9 +75,10 @@ export interface UseListWindowOptions {
 }
 
 /**
- * The window for a scroller holding `count` equal-height rows.
+ * The window for a scroller holding `count` items of any heights.
  *
- * Recomputes on scroll (once per animation frame), on resize, and whenever `count` changes.
+ * Recomputes on scroll (once per animation frame), on resize, whenever `count` changes, and
+ * whenever a measured height moves — a preview line arriving grows its row and the sums follow.
  */
 export function useListWindow({
   scrollerRef,
@@ -80,6 +89,10 @@ export function useListWindow({
   const [scrollTop, setScrollTop] = useState(0);
   const [viewport, setViewport] = useState(0);
   const [measured, setMeasured] = useState(0);
+  /** index → the height that index was last drawn at. Never cleared: a row keeps its size. */
+  const heights = useRef<Map<number, number>>(new Map());
+  /** Bumped when a measurement moves, which is what makes the sums below recompute. */
+  const [samples, setSamples] = useState(0);
 
   const sample = useCallback(() => {
     const el = scrollerRef.current;
@@ -112,42 +125,96 @@ export function useListWindow({
     };
   }, [scrollerRef, sample]);
 
-  const rowHeight = measured > 0 ? measured : estimate;
-  const height = viewport > 0 ? viewport : FALLBACK_VIEWPORT_PX;
-  const visible = Math.ceil(height / rowHeight);
-
-  const start = Math.max(0, Math.min(count, Math.floor(scrollTop / rowHeight) - overscan));
-  const end = Math.min(count, start + visible + overscan * 2);
-
   /**
-   * The real row height, off the first rendered row; `useLayoutEffect` so corrected spacers are in
-   * place before paint. Measure only a row whose identity does not depend on `rowHeight`: the
-   * leading row is `all[start]` and `start` is `floor(scrollTop / rowHeight)`, so measuring a
-   * scrolled window's leading row couples the measurement to its own output — two adjacent rows
-   * differing by 1px make it oscillate, React throws "Maximum update depth exceeded", and Next
-   * shows the "Application error" page (reported live from Receipts; jsdom never exercised it).
+   * THE HEIGHT OF A ROW NOBODY HAS DRAWN. The mean of the measurements, so a list of two- and
+   * three-line rows reserves the average of the two rather than the first one's height for all of
+   * them. A caller that stamps no `data-index` measures nothing and falls back to the one row
+   * this hook reads itself, which is what every equal-height list did before the cache.
    */
+  const mean = useMemo(() => {
+    let sum = 0;
+    let n = 0;
+    for (const h of heights.current.values()) {
+      sum += h;
+      n += 1;
+    }
+    if (n > 0) return sum / n;
+    return measured > 0 ? measured : estimate;
+    // `samples` is the signal that the map behind this changed.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [samples, measured, estimate]);
+
+  /** `prefix[i]` = where item `i` starts. `prefix[count]` is the list's whole height. */
+  const prefix = useMemo(() => {
+    const p = new Float64Array(count + 1);
+    for (let i = 0; i < count; i += 1) p[i + 1] = p[i]! + (heights.current.get(i) ?? mean);
+    return p;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [count, mean, samples]);
+
+  const offsetOf = useCallback(
+    (index: number): number => prefix[Math.max(0, Math.min(count, index))] ?? 0,
+    [prefix, count],
+  );
+
+  const height = viewport > 0 ? viewport : FALLBACK_VIEWPORT_PX;
+  /** The last index that starts at or before `px` — the row under that line of the scroller. */
+  const indexAt = (px: number): number => {
+    let lo = 0;
+    let hi = count;
+    while (lo < hi) {
+      const mid = (lo + hi + 1) >> 1;
+      if (prefix[mid]! <= px) lo = mid;
+      else hi = mid - 1;
+    }
+    return lo;
+  };
+
+  const start = Math.max(0, Math.min(count, indexAt(scrollTop) - overscan));
+  const end = Math.min(count, indexAt(scrollTop + height) + 1 + overscan);
 
   /**
-   * The `start === 0` gate breaks the cycle — at the top the leading row is deterministic;
-   * `measured === 0` lets a list that opens scrolled take exactly ONE measurement. Equal-height
-   * rows are the module's stated premise, and the freeze errs toward reserving too much, never
-   * toward hiding mail.
+   * MEASURE WHAT IS ON SCREEN, BY INDEX. `useLayoutEffect` so corrected spacers are in place
+   * before paint. Keying on the item's own `data-index` is what breaks the cycle the single
+   * measurement had: a height read here can never depend on the `start` it feeds, so two rows
+   * differing by a pixel cannot make it oscillate (that was "Maximum update depth exceeded" and
+   * Next's error page, reported live from Receipts). A row that grows later is re-measured on
+   * the next pass and the sums follow it.
    */
   useLayoutEffect(() => {
     const el = scrollerRef.current;
-    const row = el?.querySelector<HTMLElement>(".row");
-    const h = row?.offsetHeight ?? 0;
-    if (h > 0 && Math.abs(h - measured) >= 1 && (measured === 0 || start === 0)) setMeasured(h);
+    if (!el) return;
+    let moved = false;
+    for (const node of el.querySelectorAll<HTMLElement>("[data-index]")) {
+      const i = Number(node.dataset.index);
+      const h = node.offsetHeight;
+      if (!Number.isInteger(i) || i < 0 || i >= count || h <= 0) continue;
+      const was = heights.current.get(i);
+      if (was === undefined || Math.abs(was - h) >= 1) {
+        heights.current.set(i, h);
+        moved = true;
+      }
+    }
+    if (moved) setSamples((n) => n + 1);
+
+    /* The pre-cache fallback, for a list that stamps no index: one row's height, taken only at
+       the top where the leading row's identity does not depend on the height it produces. */
+    if (heights.current.size > 0) return;
+    const row = el.querySelector<HTMLElement>(".row");
+    const rh = row?.offsetHeight ?? 0;
+    if (rh > 0 && Math.abs(rh - measured) >= 1 && (measured === 0 || start === 0)) setMeasured(rh);
   });
 
-  if (count <= FULL_RANGE_MAX_ROWS) return { start: 0, end: count, padTop: 0, padBottom: 0, rowHeight };
+  if (count <= FULL_RANGE_MAX_ROWS) {
+    return { start: 0, end: count, padTop: 0, padBottom: 0, rowHeight: mean, offsetOf };
+  }
 
   return {
     start,
     end,
-    padTop: start * rowHeight,
-    padBottom: Math.max(0, (count - end) * rowHeight),
-    rowHeight,
+    padTop: prefix[start] ?? 0,
+    padBottom: Math.max(0, (prefix[count] ?? 0) - (prefix[end] ?? 0)),
+    rowHeight: mean,
+    offsetOf,
   };
 }
