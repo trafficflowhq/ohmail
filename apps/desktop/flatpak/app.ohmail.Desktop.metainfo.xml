@@ -74,6 +74,13 @@
   </screenshots>
 
   <releases>
+    <release version="0.19.2" date="2026-09-17">
+      <description>
+        <ul>
+          <li>Scrolling the Ohbox no longer hides the messages at the top</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.19.1" date="2026-09-16">
       <description>
         <ul>
@@ -210,45 +217,6 @@
           <li>A draft you open is the draft you wrote</li>
           <li>The app waits the time the server asks for</li>
           <li>A self-hosted server records its own failed requests</li>
-        </ul>
-      </description>
-    </release>
-    <release version="0.16.2" date="2026-09-11">
-      <description>
-        <ul>
-          <li>A phone that organizes its own mailbox keeps it</li>
-          <li>Your piles travel again between your computers</li>
-          <li>A message you move back into the Ohbox stays there</li>
-          <li>The Screener asks only about senders still worth a decision</li>
-          <li>Connecting a mailbox sets the point the Screener counts from</li>
-          <li>A waiting sender says why no suggestion is coming</li>
-          <li>The app reports how much memory it is holding</li>
-          <li>A long mail-server command is not cut off by the connection check</li>
-          <li>A mailbox that changes hands mid-pass stops the old computer within seconds</li>
-          <li>A computer whose clock is wrong stops claiming mailboxes</li>
-          <li>A pending stop can be changed your mind about</li>
-          <li>A stop that cannot be confirmed no longer says "stopping" for ever</li>
-          <li>A mailbox that sends more than one pass can take is no longer called broken</li>
-          <li>An oversized or slow folder no longer stalls the app</li>
-          <li>A sender cannot write their way into your threads, or to the top of your suggestions</li>
-          <li>Mail filed while a mailbox changes hands</li>
-          <li>Away replies</li>
-          <li>Sync now says what it did</li>
-          <li>When this browser cannot keep your decisions, ohmail says so</li>
-          <li>A Screener decision is decided in one window, not two</li>
-          <li>A send nobody could confirm can always be answered for</li>
-          <li>Releases are checked more before they reach you</li>
-          <li>A mailbox an older version paused</li>
-          <li>The Android download points at the current release</li>
-          <li>A message you move teaches the rule that filed it</li>
-          <li>A large mailbox's first sync no longer pulls everything at once</li>
-          <li>Opening a list of mail no longer costs a round of database work per message</li>
-          <li>A self-hosted install listens only where you told it to</li>
-          <li>A desktop signed in to your own server forwards only the requests it should</li>
-          <li>A release writes every self-host image's version tag before any latest tag moves</li>
-          <li>The self-host boot check can pass a healthy stack again</li>
-          <li>A self-hosted install can sit behind a TLS terminator it does not own</li>
-          <li>Two self-hosted stacks on one machine no longer adopt each other</li>
         </ul>
       </description>
     </release>

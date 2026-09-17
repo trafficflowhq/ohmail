@@ -20,6 +20,16 @@ Signed installers — a real Apple Developer ID and an Authenticode certificate.
 
 ## [0.19.2] — 2026-09-17
 
+### Scrolling the Ohbox no longer hides the messages at the top
+
+Scrolling the Ohbox cut messages off the top of the list instead of scrolling them out of view, and
+left a blank band under the header. To keep a long list quick the app draws only the messages around
+what you are looking at and sets aside a single height for the rest — and Ohbox messages are not all
+one height, so the list ran ahead of the messages in it and stepped over some without ever showing
+them. A list of up to 500 rows is now drawn whole, which is the size an Ohbox usually is, and scrolling
+it moves it by exactly what you scrolled. A longer list still behaves as it did in 0.19.1;
+that half is not fixed yet.
+
 ## [0.19.1] — 2026-09-16
 
 ### Reopening the app no longer holds the text of every reply you have sent
@@ -6712,7 +6722,8 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.19.1...HEAD
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.19.2...HEAD
+[0.19.2]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.19.2
 [0.19.1]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.19.1
 [0.19.0]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.19.0
 [0.18.0]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.18.0
