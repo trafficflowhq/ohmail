@@ -1427,7 +1427,13 @@ jobs:
             exit 0
           fi
 
-          gh release edit "$RELEASE_TAG" --repo "$REPO" --prerelease=false
+          # ── THE FLAG COMES OFF AND LATEST IS GRANTED IN ONE REQUEST ──────
+          # Taking the prerelease flag off does not move `/releases/latest`. Measured at 0.19.2
+          # and 0.19.3: the page read `prerelease: false` while the address clients resolve kept
+          # answering the PREVIOUS tag, until somebody ran `gh release edit --latest` by hand.
+          # So `--latest` travels with the flag, in one request, on the one path that has the
+          # feeds behind it — every path above this one leaves a prerelease and never asks.
+          gh release edit "$RELEASE_TAG" --repo "$REPO" --prerelease=false --latest
           AFTER="$(read_state)" || {
             echo "promoted=no" >> "$GITHUB_OUTPUT"
             echo "reason=the release state could not be read back after the edit" >> "$GITHUB_OUTPUT"
@@ -1441,6 +1447,33 @@ jobs:
             echo "LATEST-NOT-GRANTED $RELEASE_TAG: the flag is still on after the edit." >&2
             exit 1
           fi
+
+          # ── AND LATEST IS READ FROM THE ADDRESS THAT DECIDES IT ──────────
+          # `isLatest` is not a field `gh release view` answers with, so the request above is
+          # verified where it counts: the endpoint a client resolving
+          # `/releases/latest/download/<feed>` is served from. A flag that came off while that
+          # endpoint still names another tag is the 0.19.2 state, reported as a promotion.
+          read_latest_tag() {
+            local attempt
+            local answer
+            for attempt in 1 2 3 4 5; do
+              if answer="$(gh api "repos/$REPO/releases/latest" --jq .tag_name 2>/dev/null)" && [ -n "$answer" ]; then
+                printf '%s' "$answer"
+                return 0
+              fi
+              sleep 5
+            done
+            return 1
+          }
+          LATEST_TAG="$(read_latest_tag)" || LATEST_TAG=""
+          if [ "$LATEST_TAG" != "$RELEASE_TAG" ]; then
+            echo "promoted=no" >> "$GITHUB_OUTPUT"
+            echo "reason=/releases/latest does not resolve to this release" >> "$GITHUB_OUTPUT"
+            echo "LATEST-NOT-GRANTED $RELEASE_TAG: the prerelease flag is off and /releases/latest answers ${LATEST_TAG:-nothing}." >&2
+            echo "Installed clients read that release's feeds. Repair with: gh release edit $RELEASE_TAG --repo $REPO --latest" >&2
+            exit 1
+          fi
+
           echo "promoted=yes" >> "$GITHUB_OUTPUT"
           echo "LATEST-GRANTED $RELEASE_TAG"
 
@@ -1457,11 +1490,20 @@ jobs:
           set -uo pipefail
           state() { if [ -e "feeds-state/$1/$2" ]; then printf yes; else printf no; fi; }
           PAGE="$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json isPrerelease,isDraft 2>/dev/null || true)"
+          # Latest is asked of the endpoint that decides it, never inferred from the prerelease
+          # flag being off: at 0.19.2 and 0.19.3 the flag was off and this address named the
+          # previous tag, and a summary reading the flag called that release Latest.
+          LATEST_TAG="$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq .tag_name 2>/dev/null || true)"
           if [ -n "$PAGE" ]; then
             case "$(printf '%s' "$PAGE" | jq -r '"\(.isDraft) \(.isPrerelease)"')" in
               "true "*)      PAGE_STATE="\`$RELEASE_TAG\` is a draft." ;;
               "false true")  PAGE_STATE="\`$RELEASE_TAG\` is a **prerelease** — \`/releases/latest\` resolves to the previous release and serves its feeds, so installed clients keep an update path." ;;
-              *)             PAGE_STATE="\`$RELEASE_TAG\` is **Latest**." ;;
+              *)
+                if [ "$LATEST_TAG" = "$RELEASE_TAG" ]; then
+                  PAGE_STATE="\`$RELEASE_TAG\` is **Latest**."
+                else
+                  PAGE_STATE="LATEST-NOT-GRANTED \`$RELEASE_TAG\` is published and \`/releases/latest\` answers \`${LATEST_TAG:-nothing}\` — installed clients read that release's feeds."
+                fi ;;
             esac
           else
             PAGE_STATE="The state of \`$RELEASE_TAG\` could not be read from this run."
