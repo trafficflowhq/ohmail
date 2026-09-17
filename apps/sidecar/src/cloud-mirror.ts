@@ -8,10 +8,11 @@ import { recordChange, recordChanges, accountSettings, CAPABILITY_REQUESTS,
   readMailboxErasedAt,
 } from "@trafficflow/db";
 import {
-  approvals, attachments, drafts, flagState, folderState, mailboxCredentials, mailboxFolders,
+  approvals, attachments, awayReplies, drafts, flagState, folderOps, folderState,
+  mailboxCredentials, mailboxFolders, mailboxProfileMirror,
   mailboxes, messageBodies, messageFailures, messageInstances, messageStates, messages, messageTags,
-  outboundSends, routingDecisions, rules, tags, threadNotes, threads, trackerEvents,
-  unsubscribeRecords,
+  organizerRequests, outboundSends, routingDecisions, rules, tags, threadNotes, threads,
+  trackerEvents, unsubscribeRecords,
 } from "@trafficflow/db/mail";
 import { BODIES_IDS_MAX } from "@trafficflow/services/mail";
 // THE SHARED DRAIN POLICY — the ONE definition of "is this mirror behind", of the three
@@ -782,12 +783,25 @@ function mailboxRow(world: LocalWorld, m: MailboxDTO, now: Date) {
 }
 
 /**
+ * Every table the MIGRATIONS key to `mailboxes` — the set {@link mailboxReferenced} must probe.
+ * Hand-kept lists of foreign keys go stale silently, so `cloud-mirror-mailbox-refs.test.ts`
+ * derives the same set from the migration SQL and refuses a difference. It was SEVEN until mail
+ * 0118 added four more in SQL the ORM schema does not declare.
+ */
+export const MAILBOX_REFERENCE_TABLES: readonly string[] = [
+  "messages", "drafts", "message_instances", "message_failures", "unsubscribe_records",
+  "mailbox_folders", "mailbox_credentials", "folder_ops", "away_replies",
+  "mailbox_profile_mirror", "organizer_requests",
+];
+
+/**
  * Does anything still point at this mailbox row? The guard on deleting a retired one.
  *
- * Seven tables carry `mailbox_id` foreign keys (`schema-mail.ts`). Only two of them can hold rows
- * on the Cloud door — `messages` and `drafts`, both written by this file — but the other five are
- * checked anyway: this runs on a database that may have been a STANDALONE install before the door
- * was switched, and a delete that trips a foreign key aborts the whole refresh transaction.
+ * Only two of these tables can hold rows on the Cloud door — `messages` and `drafts`, both written
+ * by this file — but every one is checked: this runs on a database that may have been a STANDALONE
+ * install before the door was switched, and a delete that trips a foreign key aborts the whole
+ * refresh transaction. An upgraded install whose responder had answered anybody is exactly that
+ * case, and `away_replies.mailbox_id` is not moved by the re-key that moves the messages.
  */
 async function mailboxReferenced(tx: Tx, id: string): Promise<boolean> {
   const hit = async (rows: Promise<readonly unknown[]>): Promise<boolean> => (await rows).length > 0;
@@ -798,6 +812,10 @@ async function mailboxReferenced(tx: Tx, id: string): Promise<boolean> {
   if (await hit(tx.select({ x: unsubscribeRecords.id }).from(unsubscribeRecords).where(eq(unsubscribeRecords.mailboxId, id)).limit(1))) return true;
   if (await hit(tx.select({ x: mailboxFolders.id }).from(mailboxFolders).where(eq(mailboxFolders.mailboxId, id)).limit(1))) return true;
   if (await hit(tx.select({ x: mailboxCredentials.mailboxId }).from(mailboxCredentials).where(eq(mailboxCredentials.mailboxId, id)).limit(1))) return true;
+  if (await hit(tx.select({ x: folderOps.id }).from(folderOps).where(eq(folderOps.mailboxId, id)).limit(1))) return true;
+  if (await hit(tx.select({ x: awayReplies.id }).from(awayReplies).where(eq(awayReplies.mailboxId, id)).limit(1))) return true;
+  if (await hit(tx.select({ x: mailboxProfileMirror.mailboxId }).from(mailboxProfileMirror).where(eq(mailboxProfileMirror.mailboxId, id)).limit(1))) return true;
+  if (await hit(tx.select({ x: organizerRequests.id }).from(organizerRequests).where(eq(organizerRequests.mailboxId, id)).limit(1))) return true;
   return false;
 }
 
