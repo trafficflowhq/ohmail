@@ -840,20 +840,34 @@ export class UnsubscribeService {
       .limit(UNSUB_DRAIN_SCAN_PAGE)
       .as("scan_page");
 
+    // THE HEADER PROBE IS THE SEAM'S, NOT THE SERVER'S. `jsonb_exists` is a Postgres function, and
+    // this statement is the FIRST the drain runs — so on the device store the whole pass threw
+    // `no such function: jsonb_exists` and the phone ran no unsubscribe pass at all while saying it
+    // did. `jsonHasAny` asks each store the same question in its own terms; one key per call,
+    // because the two are an AND and that member is an OR.
+    const d = dialect(tx);
+    const hasUnsubscribe = await d.jsonHasAny(messageBodies.headers, ["list-unsubscribe"]);
+    const hasOneClickPost = await d.jsonHasAny(messageBodies.headers, ["list-unsubscribe-post"]);
+
     const rows = await withDeadline(
       tx.select({
         messageId: page.messageId,
         at: page.at,
         accountId: page.accountId,
-        eligible: sql<boolean>`(
+        // A VERDICT WORD, not a driver boolean. The server answers `true` here and the device
+        // store answers the integer 1, so `=== true` below read every candidate and acted on
+        // none — a pass that runs to its end and does nothing, which looks exactly like a
+        // mailbox with nothing owed. `case when` collapses both, and NULL (an absent join) is
+        // `no` on both, as it was.
+        eligible: sql<string>`(case when (
           ${unsubscribeRecords.id} is null
           and ${unsubscribeExamined.messageId} is null
           and ${accountSettings.blockAutoUnsubscribeAt} is null
           and ${mailboxes.status} <> 'disabled'
           and ${messageBodies.messageId} is not null
-          and jsonb_exists(${messageBodies.headers}, 'list-unsubscribe')
-          and jsonb_exists(${messageBodies.headers}, 'list-unsubscribe-post')
-        )`,
+          and ${hasUnsubscribe}
+          and ${hasOneClickPost}
+        ) then 'yes' else 'no' end)`,
       })
         .from(page)
         // EVERY join is LEFT, including the body one that used to be INNER: the caller needs the
@@ -873,7 +887,7 @@ export class UnsubscribeService {
 
     return {
       rows: rows.map((r) => ({
-        messageId: r.messageId, accountId: r.accountId, at: r.at, eligible: r.eligible === true,
+        messageId: r.messageId, accountId: r.accountId, at: r.at, eligible: r.eligible === "yes",
       })),
       read: rows.length,
     };
