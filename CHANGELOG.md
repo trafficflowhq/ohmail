@@ -18,6 +18,8 @@ See [Status](README.md#status--read-this-first).
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
 [Roadmap](README.md#roadmap).
 
+## [0.19.2] — 2026-09-17
+
 ## [0.19.1] — 2026-09-16
 
 ### Reopening the app no longer holds the text of every reply you have sent
@@ -1433,7 +1435,7 @@ set an out-of-office and no out-of-office would ever be sent.
 
 - The setup chooser has a fourth door, **Another computer**, meant to take the pairing link the
   first machine hands out under Settings → Devices. It does not work, and did not in this version:
-  it is marked unavailable from 0.19.1 and is due in 0.19.2. Pairing a **phone** or a browser to a
+  it is marked unavailable from 0.19.1 and is due in a later version. Pairing a **phone** or a
   computer running ohmail, which is the other half of Settings → Devices, works and is unaffected.
 - A pairing link works once and is checked before it is used, so a link that is not one, a plain
   unencrypted address, a changed key and something that is not ohmail are refused before the setup
