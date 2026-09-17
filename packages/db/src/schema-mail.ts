@@ -483,6 +483,7 @@ export const mailboxFolders = pgTable("mailbox_folders", {
    * never zero. A reader writes it exactly like an organizer: counting is a read.
    */
   serverExists: integer("server_exists"),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
   /**
    * WHERE A BUDGETED FIRST SYNC STOPPED — the lowest UID this folder still owed when the pass's
    * byte budget ran out, and the epoch that UID belongs to. At most one row per mailbox carries
@@ -490,11 +491,11 @@ export const mailboxFolders = pgTable("mailbox_folders", {
    * held this in memory, so a restart began again at INBOX and a mailbox whose first folders hold
    * large messages could re-spend the whole budget on them every pass. Two columns and not the
    * row's own `uidvalidity`: the stopped folder's cursor is deliberately not advanced, so that
-   * one is last pass's epoch or NULL, never the one the server stated at the stop.
+   * one is last pass's epoch or NULL, never the one the server stated at the stop. DECLARED LAST
+   * because they arrive by ALTER: a store built by replaying the journal holds them there.
    */
   budgetStopUid: bigint("budget_stop_uid", { mode: "bigint" }),
   budgetStopUidvalidity: bigint("budget_stop_uidvalidity", { mode: "bigint" }),
-  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
 }, (t) => ({ uq: unique().on(t.mailboxId, t.folder) }));
 
 /**

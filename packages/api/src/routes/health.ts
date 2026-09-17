@@ -713,6 +713,16 @@ export const MAIL_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // `AwayResponderService.get` selects the row whole as well, so the away settings screen fails
   // with it. No worker half: the worker only pokes the route. Deploy order migration → API.
   ["away_responders", "last_considered_at"],
+  // mail 0115_first_sync_budget_stop — two columns on `mailbox_folders`: where a budgeted first
+  // sync stopped. ONE marker for the pair, on 0083's argument (one migration is one transaction,
+  // so one probe detects both) and probed on the whole-row rule: `MailboxService.toDTO` does
+  // `select().from(mailbox_folders)` for every mailbox, so an API deployed ahead of the migration
+  // 42703s `GET /mailboxes` — the shell's own 30 s poll, and the read every surface boots from.
+  // The worker half degrades rather than failing: its cursor build reads the same rows through
+  // the repo, so the same absence would take the sync cycle with it. Deploy order:
+  // migration → API → worker. No CHECK marker (two nullable integers close no set), no INDEX
+  // marker (nothing looks a stop up — it rides the folder rows a cursor build already reads).
+  ["mailbox_folders", "budget_stop_uid"],
 ] as const;
 
 /**
@@ -989,7 +999,7 @@ export const MAIL_EXPECTED_MARKERS =
 // 0067/0068 (the device-sync alert's withdrawn SECURITY DEFINER carrier and its retirement)
 // add no column and get no marker: a function's absence is the ALERT RULE's own isolated,
 // tolerated state, not a schema fault a serving API should 503 over.
-export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0114_away_rotation_stamp";
+export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0115_first_sync_budget_stop";
 
 
 /* `CLOUD_SCHEMA_MARKER_JOURNAL_TAG` moved to `./health-cloud.js`: it is the NAME of a cloud
