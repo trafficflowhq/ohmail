@@ -12,7 +12,7 @@
 import { and, eq, inArray, isNotNull, sql, type SQL } from "drizzle-orm";
 import { dialect } from "@trafficflow/db/dialect";
 import {
-  attachments, awayReplies, awayResponderSent,
+  approvals, attachments, awayReplies, awayResponderSent,
   drafts, flagState, folderOps, folderState, junkRescues, mailboxFolders, messageBodies,
   messageFailures, messageInstances, messageStates, messageTags, messages, outboundSends,
   recordMailboxRemoved, routingDecisions, trackerEvents, unsubscribeExamined, unsubscribeRecords,
@@ -33,11 +33,14 @@ export const WIPED_TABLES: readonly string[] = [
   "outbound_sends",
   "drafts",
   "message_tags",
+  "away_responder_sent",
+  "away_replies",
   "unsubscribe_examined",
   "unsubscribe_records",
   "attachments",
   "tracker_events",
   "message_states",
+  "approvals",
   "routing_decisions",
   "message_bodies",
   "flag_state",
@@ -128,6 +131,10 @@ export async function deleteMailboxRows(db: Tx, mailboxId: string): Promise<void
   await db.delete(attachments).where(inArray(attachments.messageId, ownMessages));
   await db.delete(trackerEvents).where(inArray(trackerEvents.messageId, ownMessages));
   await db.delete(messageStates).where(inArray(messageStates.messageId, ownMessages));
+  /* `approvals` before `routing_decisions`, the server's order: it references both, and mail 0118
+     keys it to the messages too — the Cloud door writes these rows, so without this the same page
+     transaction that removes a mailbox throws on `approvals_message_id_account_fk`. */
+  await db.delete(approvals).where(inArray(approvals.messageId, ownMessages));
   await db.delete(routingDecisions).where(inArray(routingDecisions.messageId, ownMessages));
   await db.delete(messageBodies).where(inArray(messageBodies.messageId, ownMessages));
   await db.delete(flagState).where(inArray(flagState.messageId, ownMessages));

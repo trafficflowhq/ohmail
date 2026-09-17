@@ -617,8 +617,11 @@ async function markUndeliverableFromBounces(
       .from(awayReplies)
       .innerJoin(messages, and(
         eq(messages.accountId, awayReplies.accountId),
-        // NOT the message the reply answered — that one is the parent, not a bounce.
-        ne(messages.id, awayReplies.messageId),
+        /* NOT the message the reply answered — that one is the parent, not a bounce. A `ne`
+           against NULL is UNKNOWN and would drop the whole ledger row, so a reply whose parent
+           was expunged (mail 0118 nulls the pointer) would stop being watched for bounces: with
+           no parent there is nothing to exclude. */
+        or(isNull(awayReplies.messageId), ne(messages.id, awayReplies.messageId)),
       ))
       .innerJoin(messageBodies, eq(messageBodies.messageId, messages.id))
       .where(and(
