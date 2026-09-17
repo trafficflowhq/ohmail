@@ -6,9 +6,10 @@ import { silentLogger, type Logger } from "@trafficflow/core";
  * ENFORCED SYNC — the worker half of `mailboxes.sync_requested_at` (mail 0049). The API stamps it the
  * instant it finalizes a write the user is watching; this pass is the doorbell's other end — a short scan,
  * far more often than the 60 s poll, that kicks an out-of-band cycle for any stamped mailbox this process
- * serves and clears the stamp. EXACTLY ONE write site rings it: `SendService.finalizeSent` (an earlier
- * comment naming a folder move was false — filing writers commit desired state and stop, so filed mail
- * waits ~105 s for its turn, a real gap left open deliberately). NOT a leader-locked backstop — it runs
+ * serves and clears the stamp. FIVE write sites ring it, each finalizing a write somebody is watching:
+ * `SendService.finalizeSent`, the junk rescue and the junk sweep press, the folder-op service and the
+ * mailbox service's own resync. Ordinary FILING does not — those writers commit desired state and stop,
+ * so filed mail waits ~105 s for its turn, a real gap left open deliberately. NOT a leader-locked backstop — it runs
  * only inside a live worker over its own attached mailboxes (producer: the ~3 s timer in `index.ts`). The
  * clear is COMPARE-AND-CLEAR (`WHERE sync_requested_at = <observed>`) so a second stamp mid-flight is
  * preserved; and compared as TEXT (`::text` / `= <that>::timestamptz`) because `timestamptz` microseconds never survive a JS millisecond `Date` — measured 2026-08-26, an SQL `now()` stamp kicked every 3 s for 10+ min. Pure/hermetic, proven on real Postgres. */
