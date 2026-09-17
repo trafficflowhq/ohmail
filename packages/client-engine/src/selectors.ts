@@ -631,7 +631,17 @@ export function ohboxView(reader: EntityReader): OhboxView {
    * the two sources could disagree.
    */
   const parked = parkedMessageIds(reader);
-  const held = (m: EngineMessage): boolean => !pinned.has(m.id) && !parked.has(m.id);
+  /**
+   * EVERY MEMBER OF A RESURFACED CONVERSATION LEAVES THE TWO GROUPS BELOW. The pin is per message,
+   * the ROW is per conversation ({@link resurfacedThreads}), and exactly-once is judged on what is
+   * rendered: the reply that pulled a thread forward stands in that row, so it may not also stand
+   * in "New for you". Widened from `pinned.has(m.id)` alone — which held out only the pinned member
+   * and let its conversation double.
+   */
+  const inRow = new Set<string>();
+  for (const row of resurfacedThreads(reader)) for (const m of row.members) inRow.add(m.id);
+  const held = (m: EngineMessage): boolean =>
+    !pinned.has(m.id) && !inRow.has(m.id) && !parked.has(m.id);
 
   return {
     resurfaced: resurfaced.filter((m) => !parked.has(m.id)),
@@ -656,6 +666,176 @@ export function ohboxView(reader: EntityReader): OhboxView {
       "",
     ).sort(byLastReadDesc),
   };
+}
+
+/**
+ * ONE ROW PER CONVERSATION UNDER RESURFACED.
+ *
+ * The pin stays PER MESSAGE on the wire (one carrier — `resurface-one-source`); this folds it, so a
+ * conversation parked as five messages comes back as one row instead of five. Two ways in: a member
+ * whose WINNING state is `resurfaced`, or PULL-FORWARD — a `bubbled_up` member whose conversation
+ * has been written to since its pin went up, which brings the thread back NOW and writes nothing.
+ * {@link OhboxView.resurfaced} is untouched and still per message: this is ADDITIVE, and the two
+ * answer different questions ("which messages carry the pin" vs "which conversations are back").
+ */
+export interface ResurfacedThreadRow {
+  /** Stable row identity: the thread, or the lone message for a row with no conversation. */
+  key: string;
+  threadId: string | null;
+  /** Every mirror message of the conversation, newest arrival first. */
+  members: EngineMessage[];
+  /** The members carrying the claim — `resurfaced` and `bubbled_up` alike. */
+  pinned: EngineMessage[];
+  /** What opening the row lands on: the NEWEST member by {@link arrivalMs}. */
+  openTarget: EngineMessage;
+  count: number;
+  /** Whether {@link count} is the server's thread length or the windowed mirror's. */
+  countFromThread: boolean;
+  /** When the pin was raised — the newest `setAt` among {@link pinned}. */
+  resurfacedAt: string | null;
+  /** Unread members that arrived after {@link resurfacedAt} — what the badge counts. */
+  newSince: EngineMessage[];
+  badge: boolean;
+  /** True when a `bubbled_up` conversation is standing here because new mail arrived in it. */
+  pulledForward: boolean;
+}
+
+/**
+ * THE INSTANT A ROW DATES A MESSAGE BY — the `Date:` header, else the arrival.
+ *
+ * The cutline's rule, under one name: `Date:` is sender-written and nullable, so a row with no
+ * header would sort as the epoch and a conversation's newest message could be its oldest.
+ * {@link EngineMessage.arrivedAt} is when the mailbox recorded it. `null` only when the row carries
+ * neither, which no server this engine talks to produces.
+ */
+export function arrivalMs(m: Pick<EngineMessage, "date" | "arrivedAt">): number | null {
+  const header = m.date == null ? Number.NaN : new Date(m.date).getTime();
+  if (Number.isFinite(header)) return header;
+  const arrived = m.arrivedAt == null ? Number.NaN : new Date(m.arrivedAt).getTime();
+  return Number.isFinite(arrived) ? arrived : null;
+}
+
+/**
+ * Mail that says a person wrote — the exclusions both the pull-forward and the badge apply. The
+ * account's own reply, an away responder's answer and a calendar client's acknowledgement are all
+ * things the conversation did to itself; counting them would pull a thread forward on the strength
+ * of the user having just dealt with it, which is the pass fighting the spend.
+ */
+function isFromSomeone(m: EngineMessage): boolean {
+  return !isOwnSent(m) && m.autoReplyByUs !== true && !isItipAcknowledgement(m);
+}
+
+const msOf = (iso: string | null): number | null => {
+  if (iso === null) return null;
+  const t = Date.parse(iso);
+  return Number.isNaN(t) ? null : t;
+};
+
+const rowsCache = new WeakMap<EntityReader, { v: number; rows: ResurfacedThreadRow[] }>();
+
+/**
+ * The Resurfaced block, one row per conversation. One pass builds the by-thread map (per-row
+ * {@link threadOf} would be O(mirror × rows)); the result is memoized on the reader's version,
+ * because both this list and {@link ohboxView}'s hold-out read it.
+ */
+export function resurfacedThreads(reader: EntityReader): ResurfacedThreadRow[] {
+  const v = reader.version();
+  const hit = rowsCache.get(reader);
+  if (hit && hit.v === v) return hit.rows;
+
+  const claims = winningStates(reader);
+  const byKey = new Map<string, EngineMessage[]>();
+  for (const m of messagesByDateDesc(reader)) {
+    const key = m.threadId ?? `msg:${m.id}`;
+    const held = byKey.get(key);
+    if (held) held.push(m);
+    else byKey.set(key, [m]);
+  }
+
+  const rows: ResurfacedThreadRow[] = [];
+  for (const [key, group] of byKey) {
+    const pinned = group.filter((m) => {
+      const s = claims.get(m.id)?.state as string | undefined;
+      return s === "resurfaced" || s === "bubbled_up";
+    });
+    if (pinned.length === 0) continue;
+    const hasResurfaced = pinned.some((m) => (claims.get(m.id)?.state as string | undefined) === "resurfaced");
+
+    // The newest pin decides the row's "since": a conversation asked about twice is asked about
+    // from the later ask, so re-parking a thread clears a badge the first pin had earned.
+    let sinceMs: number | null = null;
+    let resurfacedAt: string | null = null;
+    for (const m of pinned) {
+      const setAt = claims.get(m.id)?.setAt ?? null;
+      const t = msOf(setAt);
+      if (t === null) continue;
+      if (sinceMs === null || t > sinceMs) { sinceMs = t; resurfacedAt = setAt; }
+    }
+
+    const newSince = group.filter((m) => {
+      if (!m.unread || !isFromSomeone(m)) return false;
+      const t = arrivalMs(m);
+      return t !== null && sinceMs !== null && t > sinceMs;
+    });
+    // PULL-FORWARD: a conversation whose time has not come stands here anyway once somebody has
+    // written into it. Read state is not the question — a read reply still means the thread moved
+    // on — so this asks arrival, where the badge asks arrival AND unread.
+    const written = group.some((m) => {
+      if (!isFromSomeone(m)) return false;
+      const t = arrivalMs(m);
+      return t !== null && sinceMs !== null && t > sinceMs;
+    });
+    if (!hasResurfaced && !written) continue;
+
+    let openTarget = group[0]!;
+    let openMs = arrivalMs(openTarget);
+    for (const m of group) {
+      const t = arrivalMs(m);
+      if (t === null) continue;
+      if (openMs === null || t > openMs || (t === openMs && m.id > openTarget.id)) {
+        openTarget = m;
+        openMs = t;
+      }
+    }
+
+    const thread = key.startsWith("msg:")
+      ? undefined
+      : reader.get<{ messageIds?: unknown }>("thread", key);
+    const ids = Array.isArray(thread?.messageIds) ? thread.messageIds : null;
+
+    rows.push({
+      key,
+      threadId: key.startsWith("msg:") ? null : key,
+      members: group,
+      pinned,
+      openTarget,
+      count: ids ? ids.length : group.length,
+      countFromThread: ids !== null,
+      resurfacedAt,
+      newSince,
+      badge: newSince.length > 0,
+      pulledForward: !hasResurfaced,
+    });
+  }
+
+  // Newest claim on attention first, and that is either ask ({@link resurfacedAt}) or arrival —
+  // which is what makes the pull-forward visible: a thread written to a minute ago outranks a pin
+  // raised this morning.
+  const rankOf = (r: ResurfacedThreadRow): number => {
+    let best = msOf(r.resurfacedAt) ?? 0;
+    for (const m of r.members) {
+      const t = arrivalMs(m);
+      if (t !== null && t > best) best = t;
+    }
+    return best;
+  };
+  rows.sort((a, b) => {
+    const d = rankOf(b) - rankOf(a);
+    return d !== 0 ? d : (a.key < b.key ? 1 : a.key > b.key ? -1 : 0);
+  });
+
+  rowsCache.set(reader, { v, rows });
+  return rows;
 }
 
 /** How many participant circles a row shows at most — three overlapping avatars. */

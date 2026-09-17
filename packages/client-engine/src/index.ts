@@ -265,6 +265,13 @@ export {
   // `pileOfState`, which both `triagePiles` and `parkedMessageIds` read.
   parkedMessageIds,
   pileOfState,
+  // ONE ROW PER CONVERSATION under Resurfaced, derived from the per-message pin already on the
+  // wire — additive beside `ohboxView.resurfaced`, which stays per message. Exported because both
+  // the web app and the phone render the same rows from it.
+  resurfacedThreads,
+  // The instant a row dates a message by (`Date:` else arrival) — exported so the surfaces order
+  // and open by the rule the selector sorts by, rather than each re-spelling it.
+  arrivalMs,
   winningStates,
   // The park fact's one carrier, stamped onto every message the mirror hands out. `read()`
   // applies it; exported so a guard can drive the projection directly and so an embedder
@@ -295,6 +302,7 @@ export {
   unreadCounts,
   type EngineCounts,
   type OhboxView,
+  type ResurfacedThreadRow,
   type FeedPartition,
   type ReceiptsDayGroup,
   type ScreenerSegments,
