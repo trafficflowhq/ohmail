@@ -233,7 +233,7 @@ export async function deleteAccount(ctx: ServiceContext): Promise<DeleteAccountR
     await drop("attachments", tx.delete(attachments).where(eq(attachments.accountId, accountId)));
     await drop("tracker_events", tx.delete(trackerEvents).where(eq(trackerEvents.accountId, accountId)));
     await drop("message_states", tx.delete(messageStates).where(eq(messageStates.accountId, accountId)));
-    // BEFORE `routing_decisions`, since mail 0116 gave `routing_decision_id` a real key.
+    // BEFORE `routing_decisions`, since mail 0118 gave `routing_decision_id` a real key.
     await drop("approvals", tx.delete(approvals).where(eq(approvals.accountId, accountId)));
     // `routing_decisions` is also where a BOUGHT SCREENER SUGGESTION lives — same table, told
     // apart by `input_provenance` (see `screener-suggestion.ts`). One delete covers both.
@@ -264,7 +264,7 @@ export async function deleteAccount(ctx: ServiceContext): Promise<DeleteAccountR
     // ── 3. Notes, then their parents ────────────────────────────────────────────
     await drop("thread_notes", tx.delete(threadNotes).where(eq(threadNotes.accountId, accountId)));
     await drop("contact_notes", tx.delete(contactNotes).where(eq(contactNotes.accountId, accountId)));
-    // BEFORE `messages`, since mail 0116 — the composite account key on `message_id` is a real
+    // BEFORE `messages`, since mail 0118 — the composite account key on `message_id` is a real
     // reference now, where this table carried a bare id nothing checked. The reasons below are
     // unchanged; only the position is newly load-bearing.
     // BEFORE the responder itself, and both go. `away_responder_sent.sender` is a correspondent's
@@ -305,7 +305,7 @@ export async function deleteAccount(ctx: ServiceContext): Promise<DeleteAccountR
     // — Junk never enters the mirror — so nothing else would take them.
     await drop("junk_rescues", tx.delete(junkRescues).where(inArray(junkRescues.mailboxId, ownMailboxIds)));
     await drop("mailbox_folders", tx.delete(mailboxFolders).where(inArray(mailboxFolders.mailboxId, ownMailboxIds)));
-    // BEFORE `mailboxes`, since mail 0116 — the composite account key on `mailbox_id` is a real
+    // BEFORE `mailboxes`, since mail 0118 — the composite account key on `mailbox_id` is a real
     // reference now. Both rows still OUTLIVE the mailbox everywhere else: nothing but an account
     // erasure deletes a mailbox row, a removal leaves the tombstone.
     // The reader's outstanding decisions (mail 0088). Its `payload` carries whatever the person
