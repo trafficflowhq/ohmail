@@ -524,18 +524,14 @@ export const folderOps = pgTable("folder_ops", {
 }, (t) => ({ uqFolder: unique().on(t.folderId) }));
 
 /**
- * "NOT JUNK", as a COMMAND the organizer executes — the junk rescue's desired state. The API never
- * opens IMAP to APPLY organization: a move defers to the organizer through desired state, so no
- * request can leave a mailbox half-moved. Junk is structurally outside the mirror
- * (FOLDERS-SPEC.md §16.2), so `folder_state` — which is `messages`-row-bound — cannot carry this
- * move at all. The press records a COORDINATE here, rings the doorbell, and the worker's
- * `junkRescuePass` moves it to INBOX inside the mailbox's serial cycle and DELETES the row.
+ * "NOT JUNK", as a COMMAND the organizer executes. The API never opens IMAP to APPLY organization,
+ * and Junk is structurally outside the mirror (FOLDERS-SPEC.md §16.2) — so `folder_state`, which is
+ * `messages`-row-bound, cannot carry this move at all. The press records a COORDINATE here and the
+ * worker's `junkRescuePass` moves it to INBOX and DELETES the row.
  *
- * `folder_ops`' precedent, not `junk_sweep_requested_at`'s: a repo-read pass reaches every
- * composition that runs the sync, the desktop and standalone doors included. No `kind` column —
- * the table is the kind and INBOX is the destination. No foreign key to `messages`: a
- * provider-filed junk message has no row, which is the whole reason this table exists.
- * NEVER granted to the staff role: coordinates only, on `message_failures`' argument.
+ * `folder_ops`' precedent: a repo-read pass reaches every composition that runs the sync. No
+ * `kind` column — the table is the kind and INBOX is the destination — and no foreign key to
+ * `messages`, which is the whole reason it exists. Never granted to the staff role.
  */
 export const junkRescues = pgTable("junk_rescues", {
   id: uuid("id").defaultRandom().primaryKey(),

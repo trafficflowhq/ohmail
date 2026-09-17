@@ -565,23 +565,14 @@ function normalizeAllowAddress(address: string): string {
 }
 
 /**
- * "ALWAYS ALLOW THIS SENDER" — the rule half of the second verb. Everything the standard
- * yes-decision writes for a sender's admission — the promoted allow rule, the `contacts` row, the
- * `rule` change rows — and the one thing it cannot assume: that the sender's spam rule is switched
- * off first, since deny outranks allow at equal priority and the new rule would otherwise never win.
+ * "ALWAYS ALLOW THIS SENDER" — the rule half of the second verb: the promoted allow rule, the
+ * `contacts` row, the change rows, and the one thing it cannot assume — that the sender's spam
+ * rule is switched off first, since deny outranks allow at equal priority.
  *
- * IT TAKES THE CALLER'S TRANSACTION AND NEVER OPENS ITS OWN. It used to, and the rescue then ran
- * two sequenced transactions — the rule committed, the command recorded after — so an interrupted
- * request left somebody's screening changed with no move behind it. That gap is the whole reason
- * the partial-outcome vocabulary existed; one transaction ends both.
- *
- * AND IT FENCES AT THE TOP OF ITS OWN BODY. `contacts` and `rules` hang off the account alone and
- * `accounts` survives Art. 17 erasure, so a write in flight across a deletion would recreate a
- * correspondent's address under the pseudonymous row. The caller's `withAccountTx` already asked —
- * this reads a row that transaction holds, so it adds no lock and costs one statement on a press,
- * and it makes the refusal a property of THIS function rather than of every caller it might grow.
- *
- * Not a route of its own — it exists only beside the rescue, which is its one caller.
+ * IT TAKES THE CALLER'S TRANSACTION. It used to open its own, and the rescue then ran two
+ * sequenced transactions, so an interruption left a rule standing with no move behind it. It
+ * fences at the top of its own body anyway — `contacts` and `rules` hang off the account alone
+ * and `accounts` survives erasure — which the caller already asked, so this takes no lock.
  */
 async function allowSender(
   tx: LedgerTx, accountId: string, address: string, nowAt: Date,
@@ -653,19 +644,12 @@ export interface JunkRescueQueued {
 /**
  * "NOT JUNK" — the rescue (§16.2/G3): the user's command to move ONE message out of Junk back to
  * INBOX, RECORDED and handed to the organizer. The API never opens IMAP to APPLY organization, so
- * this writes a `junk_rescues` row and rings the doorbell; the worker's
- * `junkRescuePass` makes the move inside the mailbox's serial cycle, under the epoch guard and the
- * organizer lease, and deletes the row. Answered 202: nothing has moved yet.
+ * this writes a `junk_rescues` row and rings the doorbell; `junkRescuePass` makes the move under
+ * the epoch guard and the lease, and deletes the row. Answered 202: nothing has moved yet.
  *
- * With `allow` — the second verb — {@link allowSender} runs in THE SAME TRANSACTION, for the
- * sender the caller names (the row's own `from`, which the client has in hand and the server
- * cannot learn without a fetch). One transaction, so an interruption leaves NEITHER the rule nor
- * the command: the partial outcome the old two-transaction shape could produce — somebody's
- * screening changed with no move behind it — is now unrepresentable.
- *
- * A RE-PRESS RESETS THE ONE COMMAND rather than queueing a second move: the UNIQUE is the
- * locator, the conflict arm puts the row back to `pending` and clears the schedule, and `attempts`
- * is deliberately LEFT — pressing again does not buy a fresh ladder, it buys the next rung.
+ * With `allow`, {@link allowSender} runs in THE SAME TRANSACTION, so an interruption leaves
+ * NEITHER half. A RE-PRESS resets the ONE command rather than queueing a second move — the UNIQUE
+ * is the locator — and `attempts` is left: a second press buys the next rung, not a fresh ladder.
  */
 export async function rescueJunk(
   deps: ApiDeps, ctx: ServiceContext,

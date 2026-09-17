@@ -12,14 +12,12 @@ import {
 
 /**
  * THE JUNK-RESCUE PASS — "Not junk", executed where organization belongs (FOLDERS-SPEC.md §16.2).
- * The API records the press (`junk_rescues`, mail 0115) and rings the doorbell; this pass, once per
- * cycle per mailbox at the top — before the cursor is built, so the same cycle's `changesSince`
- * ingests the new INBOX UID with its bytes and refills any husk — moves the message and DELETES the
- * row. Driven from the REPO inside the sync cycle, never through an injected port: the hosted
- * worker, the desktop engine and the standalone phone all run this file, which is what a queued
- * command rendering "Will be moved to your inbox" requires of every door that can record one.
- * Per-message `move`, never `moveMany`: each press earns its own verdict. The epoch guard is the
- * adapter's own unconditional one, so a recreated folder's reused UID moves nothing.
+ * The API records the press (`junk_rescues`, mail 0115); this pass runs once per cycle per mailbox
+ * at the top — before the cursor is built, so the same cycle's `changesSince` ingests the arrival
+ * with its bytes — and moves the message, then DELETES the row. Driven from the REPO, never through
+ * an injected port: the hosted worker, the desktop engine and the standalone phone all run this
+ * file, which is what a queued command rendering "Will be moved to your inbox" requires of every
+ * door that can record one. Per-message `move`, never `moveMany`: each press earns its own verdict.
  */
 
 /** Rescues one cycle may attempt. A person presses these one at a time; the bound is for a backlog. */

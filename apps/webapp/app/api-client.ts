@@ -2522,15 +2522,13 @@ export const screener = {
     ),
 
   /**
-   * "Not junk": the command to move one message out of \Junk back to the inbox — the un-training
-   * gesture. 202: the press is RECORDED and the organizer makes the move on its next cycle, after
-   * which the message re-enters through the NORMAL pipeline (a first-time sender waits in the
-   * Screener; an allowed one lands in the Ohbox). The server opens no mail connection here.
+   * "Not junk": the command to move one message out of \Junk back to the inbox. 202 — the press is
+   * RECORDED and the organizer makes the move on its next cycle, after which the message re-enters
+   * through the NORMAL pipeline. The server opens no mail connection here.
    *
-   * `allow: { sender }` is the SECOND verb — "Not junk, always allow": the server disables the
-   * sender's spam-promoting rule and mints their allow in the SAME transaction as the command, so
-   * the rescued message and every later one skip the gate, and an interruption leaves neither.
-   * Same route; the server never forks a parallel rescue path.
+   * `allow: { sender }` is the SECOND verb: the sender's spam-promoting rule off and their allow
+   * minted in the SAME transaction as the command, so every later message from them skips the gate
+   * and an interruption leaves neither half. Same route, never a parallel one.
    */
   junkRescue: (mailboxId: string, uid: number, uidValidity: string, opts: { allow?: { sender: string } } = {}) =>
     api<JunkRescueWire>("/screener/junk/rescue", {
