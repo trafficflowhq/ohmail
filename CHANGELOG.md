@@ -171,6 +171,13 @@ row says so and the press can be tried again.
   in tables that point at it, and refuses rather than finishing if anything is left pointing at
   something that is gone.
 
+### Rebuilding a self-hosted image from a clone says which builder it needs
+
+Each image recipe describes its build context in a file next to it, and only BuildKit reads one of
+those. Built with Docker's older builder the context lost the lockfile, and npm then reported a file
+this repository does carry as missing. Each recipe now refuses with that sentence and names the
+buildx component to install.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See

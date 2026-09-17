@@ -7,7 +7,11 @@
 # BUILT HERE, FROM THIS TREE, BY THIS REPOSITORY'S OWN ACTIONS. The recipes build from the
 # published source with the committed npm lockfile (`npm ci` inside each Dockerfile), so the
 # images are provably produced from the code in front of you, by CI whose logs are public.
-# Anyone can rebuild any of them from a clone: `docker build -f apps/server/Dockerfile .`
+# Anyone can rebuild any of them from a clone, with BuildKit:
+#   `docker build -f apps/server/Dockerfile .`
+# Each recipe's build context is its own sibling `<Dockerfile>.dockerignore`, and only BuildKit
+# reads a per-Dockerfile list; the legacy builder falls back to the root one and the build refuses
+# by name. Install the buildx component if `docker buildx version` does not answer.
 #
 # RELEASE TAGS ONLY (plus a manual dispatch), deliberately: publishing images is a release
 # act, so it runs on the release cadence and costs nothing between. The repository guard on
