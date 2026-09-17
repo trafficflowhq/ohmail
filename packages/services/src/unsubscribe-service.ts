@@ -989,7 +989,7 @@ export class UnsubscribeService {
     // AND IT RESUMES WHERE THE LAST RUN STOPPED. The walk restarted at the head of the window at
     // every tick, so a candidate this pass can look at and never act on — a `-Post` header over a
     // `mailto:` route is the shape — held the head and the rows behind it were reached by nobody.
-    const from = await readDrainCursor(tx, UNSUB_DRAIN_PASS);
+    const from = await this.cursorOf(tx, budget);
     const walk = await this.walkWindow(tx, since, null, {
       want: accounts * perAccount, budget, from,
     });
@@ -1038,9 +1038,42 @@ export class UnsubscribeService {
     // pass has finished. A run that dies anywhere above resumes from the last END: it repeats work
     // it had already done, which is cheap, instead of claiming to have looked past a page it never
     // posted for, which is the fairness this cursor exists to give.
-    await writeDrainCursor(tx, UNSUB_DRAIN_PASS, walk.stoppedAt, opts.now());
+    await this.recordStop(tx, walk.stoppedAt, budget, opts.now());
 
     return { accounts: visited, sweep, remaining, elapsedMs: budget.elapsedMs() };
+  }
+
+  /**
+   * THE CURSOR IS ADVISORY, AND BOTH OF ITS STATEMENTS ARE BOUNDED BY WHAT IS LEFT — the rule
+   * UD-R4-01 states, applied to the two reads and writes this pass gained. A run that cannot pay
+   * for the read starts at the head, which is what every run did before this cursor existed; a run
+   * that cannot pay for the write leaves the cursor where it was, which is what a run killed
+   * anywhere above does. Neither costs correctness: the marks and the claim decide what is acted
+   * on, and the cursor only decides WHERE a bounded run looks first. Anything that is not the
+   * budget refusing belongs to the caller.
+   */
+  private async cursorOf(tx: Tx, budget: DrainBudget): Promise<ScanCursor | null> {
+    try {
+      return await withDeadline(
+        readDrainCursor(tx, UNSUB_DRAIN_PASS), budget.leftMs(), "the drain cursor read");
+    } catch (err) {
+      if (err instanceof ServiceError && err.code === "unsubscribe_budget_spent") return null;
+      throw err;
+    }
+  }
+
+  /** Where the pass stopped, written once — see {@link cursorOf} for why it may be skipped. */
+  private async recordStop(
+    tx: Tx, stoppedAt: ScanCursor | null, budget: DrainBudget, now: Date,
+  ): Promise<void> {
+    try {
+      await withDeadline(
+        writeDrainCursor(tx, UNSUB_DRAIN_PASS, stoppedAt, now), budget.leftMs(),
+        "the drain cursor write");
+    } catch (err) {
+      if (err instanceof ServiceError && err.code === "unsubscribe_budget_spent") return;
+      throw err;
+    }
   }
 
   /**
