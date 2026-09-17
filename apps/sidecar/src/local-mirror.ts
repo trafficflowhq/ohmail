@@ -32,6 +32,7 @@ export const WIPED_TABLES: readonly string[] = [
   "outbound_sends",
   "drafts",
   "message_tags",
+  "unsubscribe_examined",
   "unsubscribe_records",
   "attachments",
   "tracker_events",
