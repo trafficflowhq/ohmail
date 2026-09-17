@@ -79,6 +79,13 @@ export interface Mail {
    */
   gateHeld?: true;
   /**
+   * HOW MANY UNREAD MESSAGES ARRIVED SINCE THE PIN WENT UP — a resurfaced conversation's badge,
+   * absent everywhere else. Set only by `liveOhbox`, from the engine's own `resurfacedThreads`,
+   * so the phone and the web app answer the question once. Absent and zero are ONE state: a
+   * conversation nobody wrote to has nothing to say, and a "0 new" chip on every pin is noise.
+   */
+  newSince?: number;
+  /**
    * The rest of the conversation, oldest → newest, excluding this message.
    * Rendered in full in the reading view — never summarised into a count.
    */

@@ -460,6 +460,8 @@
     "meta": "{count, number} ungelesen",
     "newForYou": "Neu",
     "previouslySeen": "Gesehen",
+    "newSince": "{count, plural, one {# neu} other {# neu}}",
+    "newSinceTitle": "{count, plural, one {# Nachricht, seit das wieder aufgetaucht ist} other {# Nachrichten, seit das wieder aufgetaucht ist}}",
     "resurfacedGroup": "Wieder aufgetaucht",
     "tail": "Ältere Post bleibt auf deinem Server — such sie über die Suche.",
     "olderTitle": "Älter",

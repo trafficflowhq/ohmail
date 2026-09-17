@@ -11,7 +11,7 @@ import { useCallback, useEffect, useId, useMemo, useRef, useState, type MouseEve
 import { useTranslations } from "next-intl";
 import { useRowBadgeCopy } from "../shell/row-copy";
 import { isOwnSent, isResurfaced, presentsUnread } from "@ohmail/client-engine";
-import type { EngineMessage, TagDTO } from "@ohmail/client-engine";
+import type { EngineMessage, ResurfacedThreadRow, TagDTO } from "@ohmail/client-engine";
 import {
   Doorbell,
   Icon,
@@ -26,7 +26,9 @@ import {
 import { MarkAllRead } from "../components/MarkAllRead";
 import { ShortcutHint } from "../shell/ShortcutHint";
 import { readColumnHidden } from "../shell/narrow";
-import { groupSection, sendTimeOf, singletonGroup, type OhboxRowGroup } from "./ohbox-groups";
+import {
+  groupResurfaced, groupSection, sendTimeOf, type OhboxRowGroup,
+} from "./ohbox-groups";
 import { PLACE_LABEL, avatarOf, resurfaceLabel, rowAddress, rowStamp, senderName, sentAvatarOf, sentRowRecipient, tagsOfMessage, hueOf } from "../shell/format";
 import { useKeyBindings, type KeyBinding } from "../shell/keymap";
 import { useZoneNav } from "../shell/zone-nav";
@@ -148,7 +150,7 @@ export function OhboxView({
   replyDone,
   noticeSection,
   standingNotice,
-  resurfaced = [],
+  resurfacedRows = [],
   newForYou,
   previouslySeen,
   threadParticipants,
@@ -206,11 +208,13 @@ export function OhboxView({
   /** Fixture world or a real mailbox — decides the "older mail" tail. See its use below. */
   demo: boolean;
   /**
-   * RESURFACED MAIL, PINNED ABOVE EVERYTHING — bubbled-up items the worker has flipped back
-   * (see `bubbleUpPass`). Rendered in a group of its own under a quiet label, never folded into
-   * "New for you". Optional and defaulted to `[]`: several tests mount this view without it.
+   * RESURFACED CONVERSATIONS, PINNED ABOVE EVERYTHING — one row each, from the engine's
+   * `resurfacedThreads`. Rows and not messages: the pin is per message on the wire, and a
+   * conversation parked as five came back as five rows. The flat member list this view places and
+   * slides is derived below, so there is one source for which messages are up here. Optional and
+   * defaulted to `[]`: several tests mount this view without it.
    */
-  resurfaced?: EngineMessage[];
+  resurfacedRows?: ResurfacedThreadRow[];
   newForYou: EngineMessage[];
   previouslySeen: EngineMessage[];
   /**
@@ -354,6 +358,16 @@ export function OhboxView({
   const [dismissed, setDismissed] = useState<Set<string>>(() => new Set());
   const [promoted, setPromoted] = useState<Set<string>>(() => new Set());
   const [settling, setSettling] = useState<Set<string>>(() => new Set());
+  /**
+   * EVERY MESSAGE THE PINNED BLOCK STANDS FOR — the rows' members, flattened. The session order,
+   * the slide and `upper` all work per MESSAGE (a member is released one at a time), so the rows
+   * are folded back at render; deriving this here rather than taking it as a second prop keeps
+   * one answer to "which messages are up there".
+   */
+  const resurfaced = useMemo(
+    () => resurfacedRows.flatMap((r) => r.members),
+    [resurfacedRows],
+  );
   const resurfacedOrder = useRef<string[]>([]);
   const newOrder = useRef<string[]>([]);
   /** Slides in flight, id → timer handle. Cancelled by `promote` and by unmount. */
@@ -496,17 +510,18 @@ export function OhboxView({
    * One row per conversation, per section. Five unread replies in one thread were five rows in
    * "New for you". `groupSection` (`ohbox-groups.ts`) folds each section's DISPLAY list — after
    * session placement, so a fold never fights the session order — into one row per `threadId`.
-   * New and Earlier fold independently; resurfaced rows stay per-message (each pin is its own
-   * "you asked to see this again"); the server-paged Older tail is not this client's to fold.
-   * Messages remain the unit of everything but the rows: the meta count, mark-all-read,
-   * read-state and the pick set keep message semantics — a grouped row is a rendering and a
-   * keyboard stop, not a new entity.
+   * New and Earlier fold by that rule; RESURFACED folds by the engine's row, which also carries
+   * the badge and the server's count ({@link groupResurfaced}); the server-paged Older tail is
+   * not this client's to fold. Messages remain the unit of everything but the rows: the meta
+   * count, mark-all-read, read-state and the pick set keep message semantics — a grouped row is
+   * a rendering and a keyboard stop, not a new entity.
    */
   const groupedNew = groupSection(displayNew);
   const groupedPrev = groupSection(displayPrev);
+  const groupedResurfaced = groupResurfaced(resurfacedRows, displayResurfaced);
   /** The rows on screen, top to bottom — what j/k walk and what a pick range spans. */
   const navRows: OhboxRowGroup[] = [
-    ...displayResurfaced.map(singletonGroup),
+    ...groupedResurfaced,
     ...groupedNew,
     ...groupedPrev,
   ];
@@ -577,7 +592,7 @@ export function OhboxView({
   useEffect(() => {
     if (!selectedId) return;
     const idx = rowIndexOf(selectedId);
-    const rowIdx = idx - displayResurfaced.length;
+    const rowIdx = idx - groupedResurfaced.length;
     if (idx < 0 || rowIdx < 0) return;
     const winIdx = windowIndexOf(rowIdx);
     if (winIdx >= win.start && winIdx < win.end) return;
@@ -1679,6 +1694,31 @@ export function OhboxView({
     ) : null;
 
   /**
+   * DONE ON A CONVERSATION — the same release over every member carrying a pin. The row says one
+   * conversation, so one press must answer all of it: releasing the lead and leaving two siblings
+   * pinned would put the row straight back with a smaller count. `bulk.run("done", ids)` and not a
+   * loop over {@link doneFor}: the shell clears the bookings and spends the pins in one batch with
+   * one sentence, where N presses would be N toasts for one act. A single-member row goes the same
+   * way — one seam, and nothing decides by counting members.
+   */
+  const doneForRow = (g: OhboxRowGroup): ReactNode => {
+    const pinned = g.resurfaced?.pinned ?? [];
+    if (pinned.length === 0) return null;
+    return (
+      <button
+        type="button"
+        className="rsf-done"
+        aria-label={t("rowDoneAria")}
+        title={t("rowDoneAria")}
+        onClick={() => bulk.run("done", pinned.map((m) => m.id))}
+      >
+        <Icon name="check" size={12} />
+        {t("actionDone")}
+      </button>
+    );
+  };
+
+  /**
    * READ-STATE AS PRESENTED — {@link presentsUnread} minus the armed read (see `armedRead`). Used by exactly the
    * surfaces that SHOW read-state: the row's dot/ink and the open message's verb. Everything that acts on or counts
    * read-state (`unreadIds`, mark-all-read, the dwell's and the commit's re-judgements, the slide) keeps reading the
@@ -1833,8 +1873,11 @@ export function OhboxView({
    * re-files under "Earlier" as one row. A row that animated on each member would be five slides, four ending where
    * they started.
    */
-  const groupRow = (g: OhboxRowGroup, windowIndex?: number) => {
-    if (g.members.length === 1) return row(g.members[0]!, windowIndex);
+  const groupRow = (g: OhboxRowGroup, windowIndex?: number, actions?: ReactNode) => {
+    /* The slot travels through the singleton arm too: a conversation with one message on screen
+       is still a conversation the reader asked to see again, and a Done that appeared only once
+       a second member arrived would be a control that comes and goes with the mail. */
+    if (g.members.length === 1) return rowWith(g.members[0]!, actions, windowIndex);
     const target = g.openTarget;
     const shown = g.latest;
     const voices = groupVoices(g);
@@ -1896,7 +1939,19 @@ export function OhboxView({
         unread={g.members.some(effUnread)}
         seen={!g.members.some(effUnread)}
         selected={selected != null && g.members.some((m) => m.id === selected.id)}
-        threadCount={g.members.length}
+        /* The conversation's length as the SERVER knows it where a Resurfaced row has its thread
+           row — a windowed mirror holding three of nine would otherwise say three. */
+        threadCount={g.resurfaced?.count ?? g.members.length}
+        newSinceLabel={
+          g.resurfaced && g.resurfaced.newSince > 0
+            ? t("newSince", { count: g.resurfaced.newSince })
+            : undefined
+        }
+        newSinceTitle={
+          g.resurfaced && g.resurfaced.newSince > 0
+            ? t("newSinceTitle", { count: g.resurfaced.newSince })
+            : undefined
+        }
         /* the Me → recipient rule wins the LEAD circle and the sender line — not the strip,
            which still names the conversation's people: see the singleton row above. */
         participants={participants}
@@ -1908,6 +1963,7 @@ export function OhboxView({
         stateNote={stateNoteOf(target)}
         tags={tagsOfMessage(shown, tags).map((tag) => ({ name: tag.name, hue: hueOf(tag) }))}
         picked={pickState(g.members.every((m) => picked.has(m.id)))}
+        actions={actions}
         onClick={() => {
           if (readColumnHidden() && picked.size > 0) {
             // The same contract as the singleton row above — and a folded row toggles all of
@@ -2113,11 +2169,11 @@ export function OhboxView({
             membership rather than the read flag (see `earlierIds`). A GLANCE — the two-second
             dwell — records the reading and spends no pin, so the row does not move or change:
             the fix for the reported flip-flop. Each row carries "Done" — see `doneFor`. */}
-        {displayResurfaced.length > 0 ? (
+        {groupedResurfaced.length > 0 ? (
           <>
             <ListGroupLabel>{t("resurfacedGroup")}</ListGroupLabel>
             <ListRows multiSelectable ariaLabel={t("resurfacedGroup")}>
-              {displayResurfaced.map((m) => rowWith(m, doneFor(m)))}
+              {groupedResurfaced.map((g) => groupRow(g, undefined, doneForRow(g)))}
             </ListRows>
           </>
         ) : null}

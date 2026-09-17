@@ -1320,6 +1320,8 @@ const TABLE = {
 
   /** The Ohbox pin group — resurfaced mail, above everything. */
   groupResurfaced: "Resurfaced",
+  /** The badge on a resurfaced conversation somebody has written to since the pin went up. */
+  newSinceResurfaced: (n: number) => `${n} new`,
   /** One plain sentence for any rejected write; the optimistic view has rolled back. */
   liveSaveFailed: "That change could not be saved. Try it again.",
   liveDecided: (dest: string, target: string) =>

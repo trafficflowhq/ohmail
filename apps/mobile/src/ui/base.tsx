@@ -221,11 +221,15 @@ export function Badge({
 }: {
   children?: ReactNode;
   icon?: IconName;
-  tone?: "neutral" | "accent" | "place";
+  /* `new` is the only SOLID one, and that is its job: "somebody wrote since you asked to see
+     this again" has to be tellable apart from the soft chips beside it and from the unread dot.
+     The web row's `.badge.new` is the same decision on the same fact. */
+  tone?: "neutral" | "accent" | "place" | "new";
 }) {
   const t = useTheme();
-  const bg = tone === "accent" ? t.c.accentSoft : tone === "place" ? t.c.tint : t.c.tint2;
-  const fg = tone === "accent" ? t.c.accentInk : t.c.ink3;
+  const bg = tone === "new" ? t.c.accent
+    : tone === "accent" ? t.c.accentSoft : tone === "place" ? t.c.tint : t.c.tint2;
+  const fg = tone === "new" ? t.c.onAccent : tone === "accent" ? t.c.accentInk : t.c.ink3;
   return (
     <View
       style={{

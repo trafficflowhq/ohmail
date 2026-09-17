@@ -81,6 +81,10 @@ export function MailRow({ m, onPress }: { m: Mail; onPress: () => void }) {
             </Badge>
           ) : null}
           {thread > 1 ? <Badge>{thread}</Badge> : null}
+          {/* NEW SINCE YOU ASKED TO SEE THIS AGAIN — a resurfaced conversation that has been
+              written to. Not the unread dot: the dot says "not read", this says the conversation
+              moved on while it was waiting, and a row can have either without the other. */}
+          {m.newSince ? <Badge tone="new">{Copy.newSinceResurfaced(m.newSince)}</Badge> : null}
           {/* WHERE IT ACTUALLY IS — a History row only. Not a pile label: History is not a
               folder, and the only honest badge is the server's own (the webapp row's `place`). */}
           {m.historyPlace ? <Badge tone="place">{m.historyPlace}</Badge> : null}

@@ -42,6 +42,9 @@
 .badge.shield{color:var(--accent-ink);background:var(--accent-soft)}
 .badge.place{background:var(--tint);font-weight:550}
 .badge.ai{color:var(--accent-ink);background:var(--accent-soft);font-weight:550}
+/* the only SOLID badge: "new since you asked to see this again" has to be tellable apart
+   from the soft-filled variants above and from the 5px unread dot beside it. */
+.badge.new{color:var(--on-accent);background:var(--accent);font-weight:600}
 
 /* ── THE 44px TOUCH TARGET ON PHONES ────────────────────────────────────────────────────────
    44px is the thumb's number and the one both platforms publish. It is the size of the PRESSABLE

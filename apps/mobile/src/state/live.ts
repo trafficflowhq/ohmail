@@ -65,6 +65,7 @@ import {
   type WallClockVerdict,
   type WithdrawOutcome,
   type ZonedComposition,
+  resurfacedThreads,
 } from "@ohmail/client-engine";
 import { Copy } from "../copy";
 import { refuse, type Refusal, type RefusalArg } from "../refusal";
@@ -728,7 +729,17 @@ export function liveOhbox(pres: EntityReader, v: WorldView): WorldOhbox {
   const map = (list: EngineMessage[]) => list.map((m) => toMail(pres, m, v));
   const fresh = map(box.newForYou);
   const seen = map(box.previouslySeen);
-  const resurfaced = map(box.resurfaced);
+  /**
+   * ONE ROW PER CONVERSATION, from the engine's own `resurfacedThreads` — the same rows the web
+   * app draws. The pin is per message, so `box.resurfaced` lists a conversation parked as five
+   * messages five times; the row is what the reader asked to see again. The row opens on its
+   * newest member and carries the badge for what arrived since.
+   */
+  const rows = resurfacedThreads(pres);
+  const resurfaced = rows.map((r) => {
+    const mail = toMail(pres, r.openTarget, v);
+    return r.newSince.length > 0 ? { ...mail, newSince: r.newSince.length } : mail;
+  });
   return {
     resurfaced,
     fresh,
@@ -741,7 +752,10 @@ export function liveOhbox(pres: EntityReader, v: WorldView): WorldOhbox {
        Ohbox meta counts genuine unread for exactly that reason, so the phone would also be the
        one surface reporting a different number for the same mailbox. A pinned row is drawn
        unread because it is pinned; it is not NEW mail, and neither list claims it is. */
-    unread: fresh.length + box.resurfaced.filter((m) => m.unread).length,
+    /* Every MEMBER of every pinned conversation, not the rows: the count is about the mailbox,
+       and folding five unread replies into one row does not make them one message. */
+    unread: fresh.length
+      + rows.reduce((n, r) => n + r.members.filter((m) => m.unread).length, 0),
     total: resurfaced.length + fresh.length + seen.length,
   };
 }

@@ -128,7 +128,7 @@ export function Chip({
   );
 }
 
-export type BadgeVariant = "default" | "shield" | "place" | "ai";
+export type BadgeVariant = "default" | "shield" | "place" | "ai" | "new";
 
 export interface BadgeProps {
   variant?: BadgeVariant;

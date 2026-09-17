@@ -814,6 +814,7 @@ export const DE: Deck = {
   /* ------------------------------------------------- world (phone-specific) */
 
   groupResurfaced: "Wieder aufgetaucht",
+  newSinceResurfaced: (n: number) => `${n} neu`,
   liveSaveFailed: "Diese Änderung ließ sich nicht speichern. Versuch es nochmal.",
   liveDecided: (dest: string, target: string) =>
     `${dest} — künftige Post von ${target} wird automatisch dorthin einsortiert.`,

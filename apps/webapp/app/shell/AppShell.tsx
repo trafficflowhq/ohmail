@@ -25,6 +25,7 @@ import {
   consentPartition,
   isResurfaced,
   ohboxView,
+  resurfacedThreads,
   physicalFolderOf,
   presentationReader,
   feedPartition,
@@ -2022,6 +2023,10 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
    * made it, so every callback here reads through a ref
    * (`stable-callback.ts` is the account of that mechanism). */
   const ohbox = useMemo(() => ohboxView(presented), [presented, derived]);
+  /* One row per resurfaced conversation, and the badge for what arrived since the pin went up —
+     the same derivation the phone reads. `ohbox.resurfaced` stays per message and is what
+     `held()` inside the selector holds out; this is the shape the list renders. */
+  const resurfacedRows = useMemo(() => resurfacedThreads(presented), [presented, derived]);
   const partition = useMemo(() => feedPartition(presented, "reads"), [presented, derived]);
   /**
    * Receipts is a FLAT list, exactly as Reads is — no day headings.
@@ -5187,6 +5192,31 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
         });
         return true;
       }
+      if (action === "done") {
+        /**
+         * THE CONVERSATION'S RELEASE — the row's Done, over every member carrying a pin. Two
+         * halves in order, the same two the single-message arm runs: the BOOKINGS go first
+         * (`bubbled_up` rows have a schedule to clear, and a read left under one is a message
+         * read out of a pile it is still in), then ONE deliberate `mark_seen` over the whole set
+         * spends the pins in a single transaction. A refused clear stops the read: half a release
+         * is worse than none, and a reader install cannot triage at all.
+         */
+        const rows = ids
+          .map((id) => reader.get<EngineMessage>("message", id))
+          .filter((m): m is EngineMessage => m != null);
+        const booked = rows.filter((m) => m.triage?.state === "bubbled_up").map((m) => m.id);
+        void (async () => {
+          if (booked.length > 0) {
+            const applied = await mutateSetAndReport(
+              booked.map((messageId) => ({ kind: "triage_set" as const, messageId, state: "none" as const })),
+              () => null,
+            );
+            if (applied === 0) return;
+          }
+          if (await markSeen(ids, false)) toast(t("ohbox.toastResurfaceDone"));
+        })();
+        return true;
+      }
       if (action === "later" || action === "aside" || action === "resurface") {
         const state = action === "later" ? "reply_later" : action === "aside" ? "set_aside" : "bubbled_up";
         // The same default the single-message verb uses — the picker's first dated preset, at
@@ -7530,7 +7560,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
                       : <>{offer}{organizer}</>;
                   })()
                 }
-                resurfaced={ohbox.resurfaced}
+                resurfacedRows={resurfacedRows}
                 newForYou={ohbox.newForYou}
                 previouslySeen={ohbox.previouslySeen}
                 threadParticipants={participantsOf}

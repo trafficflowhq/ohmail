@@ -144,6 +144,13 @@ export type BulkAction =
   | "later"
   | "aside"
   | "resurface"
+  /**
+   * DONE OVER A SET — the release a Resurfaced conversation's own button presses. Here and not
+   * beside the per-message `resurface_done` because a row stands for every member carrying a pin:
+   * one press clears every booking and spends every pin in one batch, with one sentence. Never
+   * offered by the selection bar; the row is its only caller.
+   */
+  | "done"
   | "read"
   | "unread"
   | "delete"

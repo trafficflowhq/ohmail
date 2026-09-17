@@ -49,6 +49,21 @@ export interface MessageRowProps {
    */
   memberIds?: string[];
   /**
+   * NEW SINCE YOU ASKED TO SEE THIS AGAIN — the whole face the host wrote ("2 new"), or absent.
+   *
+   * Copy, so it is the host's: this row language is shared by three surfaces and a count needs a
+   * word in the reader's language beside it. Distinct from the unread dot ON PURPOSE — the dot
+   * says "not read", this says "somebody wrote while this was waiting", and a conversation can be
+   * either without the other. Absent ⇒ no chip, which is every row outside Resurfaced.
+   */
+  newSinceLabel?: string;
+  /**
+   * The SENTENCE that face stands for ("2 messages since this came back") — the badge's title and
+   * what the row speaks. A face of two words cannot say which "new" it means; this can, so the
+   * hover and the screen reader get the fact and the strip keeps its width.
+   */
+  newSinceTitle?: string;
+  /**
    * Its slot in a windowed list's index space, stamped as `data-index`. `useListWindow` measures
    * every stamped item as it renders and reserves the REAL height of the rows it has not drawn,
    * so a list whose rows are two lines or three scrolls by rows instead of hiding them. Absent ⇒
@@ -233,6 +248,8 @@ export function MessageRow(props: MessageRowProps) {
   const {
     id,
     memberIds,
+    newSinceLabel,
+    newSinceTitle,
     windowIndex,
     from,
     address,
@@ -302,6 +319,12 @@ export function MessageRow(props: MessageRowProps) {
           <Avatar key={`${p.initials}-${i}`} initials={p.initials} hue={p.hue} size="s" />
         ))}
       </span>,
+    );
+  if (newSinceLabel)
+    keep.push(
+      <Badge key="newsince" variant="new" className="bdg-new" title={newSinceTitle}>
+        {newSinceLabel}
+      </Badge>,
     );
   if (hasAttachment) keep.push(<Badge key="attach" icon="clip" />);
   if (props.protectedLabel !== undefined)
@@ -479,6 +502,9 @@ export function MessageRow(props: MessageRowProps) {
   if (hasAttachment && spoken) said.push(spoken.attachment);
   if (typeof props.protectedLabel === "string") said.push(props.protectedLabel);
   if (heldCount !== undefined && heldCount > 1 && typeof heldLabel === "string") said.push(heldLabel);
+  /* The SENTENCE where there is one: "2 new" read aloud in a list is a number and a word with
+     no referent, and the badge's own title is the phrase the host already wrote. */
+  if (newSinceLabel) said.push(newSinceTitle ?? newSinceLabel);
   if (stateNote) said.push(stateNote);
   // The row SAYS what ohmail checked, not only draws it: a chip nobody can hear is a fact
   // withheld from the reader who most needs it.

@@ -1,4 +1,6 @@
-import { isItipAcknowledgement, type EngineMessage } from "@ohmail/client-engine";
+import {
+  arrivalMs, isItipAcknowledgement, type EngineMessage, type ResurfacedThreadRow,
+} from "@ohmail/client-engine";
 
 /*
  * Conversation rows for the Ohbox list. Five unread replies in one conversation used to be five
@@ -8,7 +10,9 @@ import { isItipAcknowledgement, type EngineMessage } from "@ohmail/client-engine
  * separately, AFTER session placement, so a thread with unread mail in New and read history in
  * Earlier shows one row in each — the sections answer different questions, and collapsing across
  * them would make a conversation's unread row disappear because its history was long. Resurfaced
- * rows and the server-paged "Older" tail are deliberately not grouped.
+ * rows fold too, by the ENGINE's row ({@link groupResurfaced}) rather than this module's rule —
+ * the pin is per message and the conversation is the unit the reader asked to see again. Only the
+ * server-paged "Older" tail is left whole: it is not this client's to fold.
  */
 
 /*
@@ -46,6 +50,14 @@ export interface OhboxRowGroup {
   openTarget: EngineMessage;
   /** How many members are unread — the row's dot, and (via the member count) its `⤷ N`. */
   unreadCount: number;
+  /**
+   * PRESENT ONLY ON A RESURFACED ROW, and its presence is what says this row is one. The three
+   * facts arrive together from `resurfacedThreads` or not at all — a row cannot have a badge and
+   * no pin, or a server count and no badge — so they are ONE field rather than three optionals
+   * that could disagree. `count` is the conversation's length as the server knows it, `newSince`
+   * how many unread messages arrived after the pin went up, `pinned` what Done acts on.
+   */
+  resurfaced?: { count: number; newSince: number; pinned: EngineMessage[] };
 }
 
 /**
@@ -114,4 +126,63 @@ export function groupSection(rows: readonly EngineMessage[]): OhboxRowGroup[] {
     }
   }
   return order.map((key) => toGroup(key, membersOf.get(key)!));
+}
+
+/**
+ * THE RESURFACED BLOCK, FOLDED — the engine's rows laid over the section's own display order.
+ *
+ * The fold is the ENGINE's ({@link ResurfacedThreadRow}): which conversations are back, what
+ * opening one lands on and what arrived since are one derivation, and the phone reads the same.
+ * This maps it onto the rows actually on screen, because the block keeps its session placement
+ * and its slide — a member released by Done is still displayed for the length of that slide while
+ * the engine has already dropped its row. Such a row falls back to {@link toGroup}, which is the
+ * right degradation: no badge, no pin, its own members counted.
+ */
+export function groupResurfaced(
+  rows: readonly ResurfacedThreadRow[],
+  displayed: readonly EngineMessage[],
+): OhboxRowGroup[] {
+  const rowOf = new Map(rows.map((r) => [r.key, r]));
+  const order: string[] = [];
+  const membersOf = new Map<string, EngineMessage[]>();
+  for (const m of displayed) {
+    const key = m.threadId ?? `msg:${m.id}`;
+    const members = membersOf.get(key);
+    if (members) members.push(m);
+    else {
+      membersOf.set(key, [m]);
+      order.push(key);
+    }
+  }
+  return order.map((key) => {
+    const members = membersOf.get(key)!;
+    const row = rowOf.get(key);
+    if (!row) return toGroup(key, members);
+    // The engine's open target, but only while it is still on screen: during a slide the
+    // displayed members are a subset, and a target the row cannot show is a click going nowhere.
+    const shown = new Set(members.map((m) => m.id));
+    return {
+      key,
+      members,
+      latest: facingMemberOf(members),
+      openTarget: shown.has(row.openTarget.id) ? row.openTarget : newestOf(members),
+      unreadCount: members.filter((m) => m.unread).length,
+      resurfaced: {
+        count: row.count,
+        newSince: row.newSince.length,
+        pinned: row.pinned.filter((m) => shown.has(m.id)),
+      },
+    };
+  });
+}
+
+/** The newest member by {@link arrivalMs} — the engine's rule, for the fallback above. */
+function newestOf(members: readonly EngineMessage[]): EngineMessage {
+  let best = members[0]!;
+  let bestMs = arrivalMs(best);
+  for (const m of members) {
+    const t = arrivalMs(m);
+    if (t !== null && (bestMs === null || t > bestMs)) { best = m; bestMs = t; }
+  }
+  return best;
 }

@@ -460,6 +460,8 @@
     "meta": "{count, number} unread",
     "newForYou": "New",
     "previouslySeen": "Earlier",
+    "newSince": "{count, plural, one {# new} other {# new}}",
+    "newSinceTitle": "{count, plural, one {# message since this came back} other {# messages since this came back}}",
     "resurfacedGroup": "Resurfaced",
     "tail": "Older mail stays on your server — find it in Search.",
     "olderTitle": "Older",
