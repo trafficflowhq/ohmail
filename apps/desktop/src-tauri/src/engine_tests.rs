@@ -402,7 +402,7 @@ fn a_missing_mailbox_is_named_and_nothing_is_started() {
     let plan = plan(&|k| env.get(k).cloned(), Some(res()), Some(Path::new("/data")), &fs_with(&packaged()));
     assert_eq!(
         plan,
-        Plan::Inert(EngineState::NotConfigured { missing: vec!["OHMAIL_IMAP_HOST".to_string()] })
+        Plan::Inert(EngineState::NotConfigured { missing: vec!["OHMAIL_IMAP_HOST".to_string()], door: None })
     );
 }
 
@@ -416,7 +416,7 @@ fn without_a_key_nothing_is_started() {
     let plan = plan(&|k| env.get(k).cloned(), Some(res()), Some(Path::new("/data")), &fs_with(&packaged()));
     assert_eq!(
         plan,
-        Plan::Inert(EngineState::NotConfigured { missing: vec!["OHMAIL_KEK".to_string()] })
+        Plan::Inert(EngineState::NotConfigured { missing: vec!["OHMAIL_KEK".to_string()], door: None })
     );
 }
 
@@ -459,7 +459,7 @@ fn an_empty_credential_counts_as_missing() {
     let plan = plan(&|k| env.get(k).cloned(), Some(res()), Some(Path::new("/data")), &fs_with(&packaged()));
     assert_eq!(
         plan,
-        Plan::Inert(EngineState::NotConfigured { missing: vec!["OHMAIL_IMAP_USER".to_string()] })
+        Plan::Inert(EngineState::NotConfigured { missing: vec!["OHMAIL_IMAP_USER".to_string()], door: None })
     );
 }
 
@@ -469,7 +469,7 @@ fn with_no_data_directory_from_either_source_nothing_is_started() {
     let plan = plan(&|k| env.get(k).cloned(), Some(res()), None, &fs_with(&packaged()));
     assert_eq!(
         plan,
-        Plan::Inert(EngineState::NotConfigured { missing: vec![DATA_DIR_VAR.to_string()] })
+        Plan::Inert(EngineState::NotConfigured { missing: vec![DATA_DIR_VAR.to_string()], door: None })
     );
 }
 
@@ -2323,10 +2323,12 @@ fn the_cloud_door_asks_for_the_service_and_the_address_rather_than_a_mail_server
         Some(res()),
         Some(Path::new("/data")),
         &REQUIRED_CLOUD_VARS,
+        None,
         &fs_with(&packaged()),
     );
     match plan {
-        Plan::Inert(EngineState::NotConfigured { missing }) => {
+        Plan::Inert(EngineState::NotConfigured { missing, door }) => {
+            assert_eq!(door, None, "the hosted door's variables name it themselves");
             assert_eq!(
                 missing,
                 vec![
@@ -2355,9 +2357,153 @@ fn the_hosted_session_is_never_something_the_shell_refuses_to_start_without() {
         ("OHMAIL_KEK", &"0".repeat(64)),
     ]);
     assert!(matches!(
-        plan_with(&|k| env.get(k).cloned(), Some(res()), Some(Path::new("/data")), &REQUIRED_CLOUD_VARS, &fs_with(&packaged())),
+        plan_with(&|k| env.get(k).cloned(), Some(res()), Some(Path::new("/data")), &REQUIRED_CLOUD_VARS, None, &fs_with(&packaged())),
         Plan::Spawn(_)
     ));
+}
+
+// ── THE PAIRED-COMPUTER DOOR'S OWN LIST ─────────────────────────────────────────────────────
+//
+// The door that opens another computer could not be walked from a fresh install: the only shape
+// `config::parse` admits for it — a pinned link with NO mailbox address, because which mailbox
+// this install reads is the host's answer at the redeem — was refused by a required list that
+// demanded the address of every cloud launch. These four hold the split: the door launches, the
+// pin is still owed, the report says which door it is about, and one function picks the list.
+
+/// The composition the Shell performs, so these read the PRODUCTION environment rather than a
+/// hand-written map that could agree with the door by accident: `config::env_for` plus the key,
+/// which the Shell pushes separately because the keystore is outside `env_for`'s arguments.
+fn composed_for(door: &Config) -> HashMap<String, String> {
+    let mut env: HashMap<String, String> = crate::config::env_for(door, Path::new("/data"))
+        .into_iter()
+        .map(|(k, v)| (k.to_string_lossy().into_owned(), v.to_string_lossy().into_owned()))
+        .collect();
+    env.insert(KEK_VAR.to_string(), "0".repeat(64));
+    env
+}
+
+/// A fixture fingerprint — 43 base64url characters, the shape `isPairPin` admits. Not a secret and
+/// not anybody's key: a hash of a public key, and this one is of nothing at all.
+const FIXTURE_PIN: &str = "A2Z_abcdefghijklmnopqrstuvwxyz0123456789-xyz";
+
+fn paired_door(pin: Option<&str>) -> Config {
+    Config::Cloud(crate::config::CloudDoor {
+        cloud_url: "https://desk.tail1234.ts.net".to_string(),
+        address: None,
+        flavor: Some(crate::config::DESKTOP_HOST_FLAVOR.to_string()),
+        host_pin: pin.map(str::to_string),
+    })
+}
+
+#[test]
+fn the_paired_door_launches_without_a_mailbox_address() {
+    // THE READING THAT MADE THE DOOR UNWALKABLE, FLIPPED. Before the split this exact door — the
+    // only one `config::parse` admits for this flavor — answered `Inert(NotConfigured { missing:
+    // ["OHMAIL_MAILBOX_ADDRESS"] })`, so the third step of the ceremony relaunched the engine
+    // Inert and the door was refused at step one instead. A pairing link names a COMPUTER.
+    let door = paired_door(Some(FIXTURE_PIN));
+    let env = composed_for(&door);
+    assert!(
+        !env.contains_key("OHMAIL_MAILBOX_ADDRESS"),
+        "the paired door composes no address — that is the fact the list had to stop demanding",
+    );
+    let plan = plan_with(
+        &|k| env.get(k).cloned(),
+        Some(res()),
+        Some(Path::new("/data")),
+        required_vars_for(&door),
+        door_label_for(&door),
+        &fs_with(&packaged()),
+    );
+    assert!(matches!(plan, Plan::Spawn(_)), "{plan:?}");
+}
+
+#[test]
+fn the_paired_door_is_still_refused_without_its_pin() {
+    // THE PIN TOOK THE ADDRESS'S PLACE RATHER THAN MERELY BEING REMOVED, so the list is the same
+    // length and the same strength. A paired door that reached a launch unpinned would open
+    // connections nothing authenticates — the one thing this door's whole ceremony exists to
+    // prevent — so the absence is a refusal here as the address is on every other cloud door.
+    let door = paired_door(None);
+    let env = composed_for(&door);
+    match plan_with(
+        &|k| env.get(k).cloned(),
+        Some(res()),
+        Some(Path::new("/data")),
+        required_vars_for(&door),
+        door_label_for(&door),
+        &fs_with(&packaged()),
+    ) {
+        Plan::Inert(EngineState::NotConfigured { missing, .. }) => {
+            assert_eq!(missing, vec!["OHMAIL_HOST_PIN".to_string()]);
+        }
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
+fn the_missing_report_names_the_paired_door_and_never_the_address() {
+    // A list naming a PIN is a fact about exactly one door, and a person reading the log or the
+    // window should not have to know that to read it. The address is the negative half: reporting
+    // it would send somebody looking for a mailbox nobody can name yet.
+    let door = paired_door(None);
+    let env = composed_for(&door);
+    match plan_with(
+        &|k| env.get(k).cloned(),
+        Some(res()),
+        Some(Path::new("/data")),
+        required_vars_for(&door),
+        door_label_for(&door),
+        &fs_with(&packaged()),
+    ) {
+        Plan::Inert(EngineState::NotConfigured { missing, door }) => {
+            assert_eq!(door.as_deref(), Some(PAIRED_DOOR_LABEL));
+            assert!(
+                !missing.iter().any(|m| m == "OHMAIL_MAILBOX_ADDRESS"),
+                "the paired door reported an address as missing: {missing:?}",
+            );
+        }
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
+fn one_function_picks_the_list_and_the_label_for_every_door() {
+    // ONE PLACE. The `match` this replaced was on the MODE alone, which is why the paired door sat
+    // on the hosted door's list: a reader extending the cloud arm had nothing to see. Both halves
+    // are asked here, because a list chosen correctly and labelled as another door is a report
+    // about the wrong ceremony.
+    let hosted = Config::Cloud(crate::config::CloudDoor {
+        cloud_url: "https://api.ohmail.app".to_string(),
+        address: Some("someone@ohmail.app".to_string()),
+        flavor: None,
+        host_pin: None,
+    });
+    let local = Config::Local(crate::config::LocalDoor {
+        imap_host: "imap.example.org".to_string(),
+        imap_user: "someone".to_string(),
+        imap_port: 993,
+        imap_secure: true,
+        smtp: None,
+        address: None,
+    });
+    let paired = paired_door(Some(FIXTURE_PIN));
+
+    assert_eq!(required_vars_for(&local), &REQUIRED_ENGINE_VARS[..]);
+    assert_eq!(required_vars_for(&hosted), &REQUIRED_CLOUD_VARS[..]);
+    assert_eq!(required_vars_for(&paired), &REQUIRED_PAIRED_CLOUD_VARS[..]);
+
+    assert_eq!(door_label_for(&local), None);
+    assert_eq!(door_label_for(&hosted), None);
+    assert_eq!(door_label_for(&paired), Some(PAIRED_DOOR_LABEL));
+
+    // AND THE TWO CLOUD LISTS DIFFER BY EXACTLY THE TWO VALUES THE DOORS DIFFER BY. A split that
+    // dropped the address without putting the pin in its place would pass every assertion above
+    // and launch an unpinned paired door, which is the failure this whole file is about.
+    assert!(!REQUIRED_PAIRED_CLOUD_VARS.contains(&"OHMAIL_MAILBOX_ADDRESS"));
+    assert!(REQUIRED_PAIRED_CLOUD_VARS.contains(&"OHMAIL_HOST_PIN"));
+    assert!(!REQUIRED_CLOUD_VARS.contains(&"OHMAIL_HOST_PIN"));
+    assert_eq!(REQUIRED_PAIRED_CLOUD_VARS.len(), REQUIRED_CLOUD_VARS.len());
 }
 
 #[test]

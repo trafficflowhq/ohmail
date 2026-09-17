@@ -165,6 +165,36 @@ pub const REQUIRED_ENGINE_VARS: [&str; 3] = ["OHMAIL_IMAP_HOST", "OHMAIL_IMAP_US
 pub const REQUIRED_CLOUD_VARS: [&str; 3] =
     ["OHMAIL_CLOUD_URL", "OHMAIL_MAILBOX_ADDRESS", "OHMAIL_KEK"];
 
+/// The same list for the PAIRED-COMPUTER door, where the address is nobody's to know yet.
+///
+/// A pairing link names a COMPUTER, and which mailbox this install ends up reading is the host's
+/// answer at the redeem — so demanding `OHMAIL_MAILBOX_ADDRESS` here refused the only door shape
+/// `config::parse` admits for this flavor, and the door could not be walked from a fresh install
+/// at all. The PIN takes the address's place rather than merely being removed: it is the positive
+/// fact the shell writes for this door and no other, so the list is the same length and the same
+/// strength, and an install whose pin went missing is still refused instead of launching unpinned.
+pub const REQUIRED_PAIRED_CLOUD_VARS: [&str; 3] =
+    ["OHMAIL_CLOUD_URL", "OHMAIL_HOST_PIN", "OHMAIL_KEK"];
+
+/// What the "missing" report calls the paired door, in the vocabulary `config::parse` already
+/// refuses in, so one ceremony is described by one phrase on both sides of the bridge.
+pub const PAIRED_DOOR_LABEL: &str = "the door that opens another computer";
+
+/// Which list a door cannot start without — ONE place, so a `match` somebody extends later cannot
+/// leave the paired door on the list that demands an address it structurally does not have.
+pub fn required_vars_for(config: &Config) -> &'static [&'static str] {
+    match config.mode() {
+        Mode::Local => &REQUIRED_ENGINE_VARS,
+        Mode::Cloud if config.is_desktop_host() => &REQUIRED_PAIRED_CLOUD_VARS,
+        Mode::Cloud => &REQUIRED_CLOUD_VARS,
+    }
+}
+
+/// The door a "missing" report is about, or `None` where the variable names say it themselves.
+pub fn door_label_for(config: &Config) -> Option<&'static str> {
+    if config.is_desktop_host() { Some(PAIRED_DOOR_LABEL) } else { None }
+}
+
 /// How many times the engine may be started before the shell gives up: one start and three
 /// restarts.
 ///
@@ -373,7 +403,12 @@ pub enum EngineState {
     /// There is an engine, and nothing to point it at — or no key to seal a credential under.
     /// Naming the variables beats starting a process that fails, or one that runs and then
     /// refuses to remember the password somebody just typed.
-    NotConfigured { missing: Vec<String> },
+    NotConfigured {
+        missing: Vec<String>,
+        /// Which door the list is about. `Some` only where the variable names alone would not
+        /// say — a pin is owed by exactly one door, and a URL and a key are owed by three.
+        door: Option<String>,
+    },
     /// The operating system's keystore would not give up this install's key, or take a new one.
     ///
     /// Distinct from every other refusal because the recovery is the user's rather than ours —
@@ -592,7 +627,7 @@ pub fn plan(
     data_dir_fallback: Option<&Path>,
     look: &dyn Fn(&Path) -> Found,
 ) -> Plan {
-    plan_with(get, resources, data_dir_fallback, &REQUIRED_ENGINE_VARS, look)
+    plan_with(get, resources, data_dir_fallback, &REQUIRED_ENGINE_VARS, None, look)
 }
 
 /// [`plan`], with the list of variables the door in question cannot start without.
@@ -606,6 +641,8 @@ pub fn plan_with(
     resources: Option<&Path>,
     data_dir_fallback: Option<&Path>,
     required: &[&str],
+    /// The door the list belongs to, named in the refusal — see [`door_label_for`].
+    door: Option<&str>,
     look: &dyn Fn(&Path) -> Found,
 ) -> Plan {
     let engine = match get(ENGINE_PATH_VAR).filter(|v| !v.trim().is_empty()) {
@@ -661,7 +698,10 @@ pub fn plan_with(
     }
 
     if !missing.is_empty() {
-        return Plan::Inert(EngineState::NotConfigured { missing });
+        return Plan::Inert(EngineState::NotConfigured {
+            missing,
+            door: door.map(str::to_string),
+        });
     }
 
     // THE PROGRAM IS THE RUNTIME AND THE ENGINE IS ITS ARGUMENT — on every platform, deliberately.
@@ -1174,6 +1214,7 @@ impl ShellPaths {
                 let Some(root) = self.app_data.as_deref() else {
                     return Plan::Inert(EngineState::NotConfigured {
                         missing: vec![DATA_DIR_VAR.to_string()],
+                        door: None,
                     });
                 };
                 let mut env = config::env_for(config, root);
@@ -1192,11 +1233,14 @@ impl ShellPaths {
                         .map(|(_, v)| v.clone())
                         .or_else(|| std::env::var(name).ok())
                 };
-                let required: &[&str] = match config.mode() {
-                    Mode::Local => &REQUIRED_ENGINE_VARS,
-                    Mode::Cloud => &REQUIRED_CLOUD_VARS,
-                };
-                match plan_with(&get, resources, None, required, &look) {
+                match plan_with(
+                    &get,
+                    resources,
+                    None,
+                    required_vars_for(config),
+                    door_label_for(config),
+                    &look,
+                ) {
                     Plan::Spawn(mut launch) => {
                         // `plan_with` decided WHETHER and WHERE; the environment is composed here,
                         // whole, replacing the single data-directory pair it put there.
@@ -1727,6 +1771,7 @@ impl Shell {
         // which on a developer's machine is the door the person just left.
         self.replace(Plan::Inert(EngineState::NotConfigured {
             missing: vec![config::CONFIG_FILE_NAME.to_string()],
+            door: None,
         }));
         Ok(self.status())
     }
@@ -2616,8 +2661,12 @@ impl Engine {
                 (EngineState::Absent { .. }, _) => {
                     return Err("there is no local engine in this build".to_string())
                 }
-                (EngineState::NotConfigured { missing }, _) => {
-                    return Err(format!("the engine has not been configured: nothing set {}", missing.join(", ")))
+                (EngineState::NotConfigured { missing, door }, _) => {
+                    let what = missing.join(", ");
+                    return Err(match door {
+                        Some(door) => format!("the engine has not been configured: {door} has nothing set {what}"),
+                        None => format!("the engine has not been configured: nothing set {what}"),
+                    });
                 }
                 (EngineState::NoKey { reason }, _) => return Err(reason.clone()),
                 (EngineState::Starting { .. }, _) => {
@@ -2914,9 +2963,12 @@ fn log_state(state: &EngineState) {
         EngineState::Absent { looked_for } => {
             log_line(format_args!("no engine in this build ({looked_for}); the window is the interface preview"));
         }
-        EngineState::NotConfigured { missing } => {
-            log_line(format_args!("not started — nothing set {}", missing.join(", ")));
-        }
+        EngineState::NotConfigured { missing, door } => match door {
+            Some(door) => {
+                log_line(format_args!("not started — {door} has nothing set {}", missing.join(", ")));
+            }
+            None => log_line(format_args!("not started — nothing set {}", missing.join(", "))),
+        },
         EngineState::NoKey { reason } => log_line(format_args!("not started — {reason}")),
         EngineState::Starting { attempt } => {
             log_line(format_args!("starting (attempt {attempt} of {MAX_STARTS})"));
@@ -3504,8 +3556,8 @@ fn status_json(engine: &Engine) -> serde_json::Value {
         EngineState::Absent { looked_for } => {
             serde_json::json!({ "state": "absent", "lookedFor": looked_for })
         }
-        EngineState::NotConfigured { missing } => {
-            serde_json::json!({ "state": "not_configured", "missing": missing })
+        EngineState::NotConfigured { missing, door } => {
+            serde_json::json!({ "state": "not_configured", "missing": missing, "door": door })
         }
         EngineState::NoKey { reason } => serde_json::json!({ "state": "no_key", "reason": reason }),
         EngineState::Starting { attempt } => {
