@@ -1,4 +1,4 @@
-import { closeSync, existsSync, fstatSync, linkSync, mkdirSync, openSync, readFileSync, readdirSync, rmSync, statSync, writeSync } from "node:fs";
+import { closeSync, existsSync, fstatSync, fsyncSync, linkSync, mkdirSync, openSync, readFileSync, readdirSync, rmSync, statSync, writeSync } from "node:fs";
 import { join } from "node:path";
 import { uptime as osUptime } from "node:os";
 import { PGlite, type Transaction as PgliteTransaction } from "@electric-sql/pglite";
@@ -7,7 +7,7 @@ import { migrate } from "drizzle-orm/pglite/migrator";
 import { readMigrationFiles, type MigrationConfig, type MigrationMeta } from "drizzle-orm/migrator";
 import { mailSchema } from "@trafficflow/db/mail";
 import { MAIL_JOURNAL, adoptBaseline, adoptReissuedOriginals, readJournalOf } from "@trafficflow/db/journal";
-import { brandDialect } from "@trafficflow/db/dialect";
+import { INGEST_FOLD_WAL_BYTES, brandDialect, dialect } from "@trafficflow/db/dialect";
 import { createStoreScheduler, currentStoreLane, scheduleStoreLanes, type StoreLaneCensus } from "./store-lanes.js";
 import type { Diagnostic } from "./log.js";
 
@@ -120,6 +120,21 @@ export interface OpenLocalDb {
    */
   checkpoint(): Promise<number>;
   /**
+   * Take one only once the log has GROWN past {@link INGEST_FOLD_WAL_BYTES} since the last fold —
+   * the gate the drain's per-cycle call goes through. See {@link walGrownSince} for the pointer it
+   * reads and why it is the insert one.
+   */
+  foldIfLogGrew(): Promise<StoreFold>;
+  /**
+   * WHICH RUN OF THIS STORE THE ROWS BEHIND IT BELONG TO — see {@link readStoreGeneration}.
+   *
+   * Handed to the doors so every `/sync` cursor carries it and every read checks it. `null` for a
+   * store that cannot lose a committed row (the phone's, the hosted Postgres): absent means "no
+   * generation to state", which is a different answer from a generation that happens to be its
+   * first, and only the second admits a cursor that names none.
+   */
+  storeGeneration: number | null;
+  /**
    * The store's own memory in bytes — the WASM heap Postgres runs inside, which `heapUsed` cannot
    * see and `external` can only lump together with everything else off the JavaScript heap.
    *
@@ -226,6 +241,11 @@ export interface OpenLocalDbOptions {
   /** How often to checkpoint while open. Production takes {@link CHECKPOINT_INTERVAL_MS}. */
   checkpointIntervalMs?: number;
   /**
+   * The {@link INGEST_FOLD_WAL_BYTES} window, injectable so a test can cross it in seconds rather
+   * than by writing sixty-four megabytes of log.
+   */
+  ingestFoldWalBytes?: number;
+  /**
    * Told which {@link LocalDbOpenPhase} the open is entering, just before it does. Best-effort
    * narration for a window that is waiting; never awaited and never load-bearing. `migrating`
    * arrives once per migration with its {@link MigrationProgress}, which is what lets the window
@@ -269,6 +289,14 @@ export class DataDirLockedError extends Error {
 export const LOCK_FILE = "sidecar.lock";
 
 /**
+ * WHICH RUN OF THIS STORE A CLIENT'S CURSOR BELONGS TO — `<dataDir>/store-generation.json`.
+ *
+ * A file and not a row, because it has to be readable BEFORE the database is and has to survive
+ * the very transactions it is about. See {@link readStoreGeneration} for the whole argument.
+ */
+export const STORE_GENERATION_FILE = "store-generation.json";
+
+/**
  * HOW OLD AN EMPTY LOCK FILE HAS TO BE before it is read as a crash rather than as a launch.
  *
  * A build that created the lock and wrote its record a statement later could be killed between
@@ -286,6 +314,17 @@ export const EMPTY_LOCK_STALE_AFTER_MS = 60_000;
  * that would have honoured it, so it keeps its number rather than inventing one.
  */
 export const CHECKPOINT_INTERVAL_MS = 5 * 60_000;
+
+
+/** What {@link OpenLocalDb.foldIfLogGrew} did, so a caller can count folds rather than calls. */
+export interface StoreFold {
+  /** Whether this call took a checkpoint. */
+  folded: boolean;
+  /** The log's growth since the last fold, or `null` when the pointer could not be read. */
+  grewBytes: number | null;
+  /** Segments reclaimed — {@link checkpointWal}'s answer, `0` when nothing folded. */
+  dropped: number;
+}
 
 /**
  * The bloat gate: `message_bodies` is rewritten when its on-disk size exceeds this many times the
@@ -563,6 +602,62 @@ async function applyMigrations(
  * the MIDDLE of a run, and a mail app is open for days (an install up for hours held tens of GB of
  * `pg_wal`). So only the interval is added; an explicit `CHECKPOINT` (77 ms/131 MB) never throws.
  */
+/**
+ * WHICH RUN OF THIS STORE A CLIENT'S CURSOR BELONGS TO — minted at an open that could have lost
+ * rows, unchanged across one that could not.
+ *
+ * The ingest does not wait for the flush, so a kill costs the store its last commits; those rows
+ * come back from the mailbox AT THE SAME change-log seqs, and a client parked above that point
+ * would never be served them (`sync-cursor-store-generation.test.ts`). A record still `open` is a
+ * run that never closed. A FILE, because it is read before the database is; and an unparseable one
+ * takes `Date.now()` rather than a count that could re-issue a generation.
+ */
+function readStoreGeneration(dataDir: string): number {
+  const path = join(dataDir, STORE_GENERATION_FILE);
+  if (!existsSync(path)) return 1;
+  try {
+    const raw: unknown = JSON.parse(readFileSync(path, "utf8"));
+    const rec = raw as { generation?: unknown; open?: unknown };
+    const gen = typeof rec.generation === "number" && Number.isSafeInteger(rec.generation) && rec.generation >= 1
+      ? rec.generation
+      : null;
+    if (gen === null || typeof rec.open !== "boolean") return Date.now();
+    return rec.open ? gen + 1 : gen;
+  } catch {
+    return Date.now();
+  }
+}
+
+/** Write the record and make it durable, because it is the only witness of its own run. */
+function writeStoreGeneration(dataDir: string, generation: number, open: boolean): void {
+  const fd = openSync(join(dataDir, STORE_GENERATION_FILE), "w");
+  try {
+    writeSync(fd, JSON.stringify({ generation, open }));
+    fsyncSync(fd);
+  } finally {
+    closeSync(fd);
+  }
+}
+
+/**
+ * The log this store has GENERATED since `since`, in bytes, and where that pointer now stands.
+ *
+ * `pg_current_wal_insert_lsn()` and never `pg_current_wal_lsn()`. The ingest's commits do not wait
+ * for the flush ({@link INGEST_SYNCHRONOUS_COMMIT}), so the WRITE pointer sits still inside
+ * `wal_buffers` while commit after commit piles up behind it — a gate reading it would see a log
+ * that never grows and would never fold, which is the same bug as having no gate. The insert
+ * pointer is every record the store has generated, which is what a kill takes. Both values come
+ * out of ONE statement so they cannot be read either side of a fold.
+ */
+async function walGrownSince(client: PGlite, since: string): Promise<{ grew: number; at: string }> {
+  const { rows } = await client.query<{ grew: string; at: string }>(
+    "SELECT (pg_current_wal_insert_lsn() - $1::pg_lsn)::bigint::text AS grew, "
+    + "pg_current_wal_insert_lsn()::text AS at",
+    [since],
+  );
+  return { grew: Number(rows[0]!.grew), at: rows[0]!.at };
+}
+
 async function checkpointWal(
   client: PGlite,
   pgDataDir: string,
@@ -894,6 +989,11 @@ export async function openLocalDb(dataDir: string, opts: OpenLocalDbOptions = {}
   const log = opts.log;
   mkdirSync(dataDir, { recursive: true });
   const unlock = lockDataDir(dataDir);
+  /* BEFORE `new PGlite`, because the record has to be read before recovery can hide what it is
+     about — a store that replays a crash's log looks exactly like one that closed cleanly once
+     it is up. Written back `open: true` immediately, so a kill from here on is seen as one. */
+  const storeGeneration = readStoreGeneration(dataDir);
+  writeStoreGeneration(dataDir, storeGeneration, true);
   const pgDataDir = join(dataDir, PGDATA_SUBDIR);
   let client: PGlite;
   try {
@@ -953,8 +1053,39 @@ export async function openLocalDb(dataDir: string, opts: OpenLocalDbOptions = {}
     await reclaimBodyBloat(client, log, opts.onPhase);
     const compactMs = Date.now() - tCompact;
     let closed = false;
-    const checkpoint = async (): Promise<number> =>
-      (closed ? 0 : checkpointWal(client, pgDataDir, log, () => !closed));
+    /**
+     * The insert pointer as the last fold left it, or `null` for "unknown" — which is what an
+     * unreadable pointer leaves behind, and {@link foldIfLogGrew} FOLDS on it rather than skipping.
+     * Every checkpoint this handle takes resets it, the periodic one included, so the window is
+     * measured from the last fold of any kind and not from the last gated one.
+     */
+    let foldedAt: string | null = null;
+    const checkpoint = async (): Promise<number> => {
+      if (closed) return 0;
+      const dropped = await checkpointWal(client, pgDataDir, log, () => !closed);
+      foldedAt = closed ? null : await walGrownSince(client, "0/0").then((r) => r.at).catch(() => null);
+      return dropped;
+    };
+    const foldWindow = opts.ingestFoldWalBytes ?? INGEST_FOLD_WAL_BYTES;
+    /**
+     * THE GATE IS THE DIALECT'S, THE SEGMENT CENSUS IS THIS MODULE'S. `foldLog` decides whether
+     * the log has earned a fold and issues it in the store's own spelling — so the phone's SQLite
+     * is bounded by the same number of bytes rather than by nothing — and the reclaimed-segment
+     * count stays here, where the data directory is. An unreadable mark folds rather than
+     * skipping, which is the safe side of a question about what a crash would replay.
+     */
+    const foldIfLogGrew = async (): Promise<StoreFold> => {
+      if (closed) return { folded: false, grewBytes: 0, dropped: 0 };
+      const before = walSegments(pgDataDir);
+      const out = await dialect(db).foldLog(db, foldWindow, foldedAt)
+        .catch(() => ({ folded: false as const, grewBytes: null, at: null }));
+      foldedAt = out.at;
+      if (!out.folded) return { folded: false, grewBytes: out.grewBytes, dropped: 0 };
+      return { folded: true, grewBytes: out.grewBytes, dropped: before - walSegments(pgDataDir) };
+    };
+    // WHERE THE WINDOW STARTS — the pointer as the open leaves it, so the first cycle's gate
+    // measures the mail that cycle took and not the migrator and compaction behind it.
+    foldedAt = await walGrownSince(client, "0/0").then((r) => r.at).catch(() => null);
 
     /* The checkpointer this database does not otherwise have. `unref` so it can never be the reason
        a process stays alive, and a fresh timer per tick rather than `setInterval` so a slow
@@ -977,6 +1108,8 @@ export async function openLocalDb(dataDir: string, opts: OpenLocalDbOptions = {}
       timings: { pgliteOpenMs, adoptBaselineMs, migrateMs, compactMs },
       migrations,
       checkpoint,
+      foldIfLogGrew,
+      storeGeneration,
       storeBytes: () => storeHeapBytes(client),
       laneCensus: () => lanes.census(),
       close: async () => {
@@ -987,6 +1120,11 @@ export async function openLocalDb(dataDir: string, opts: OpenLocalDbOptions = {}
         try {
           // Postgres takes its own shutdown checkpoint here, which is why there is not one of ours.
           await client.close();
+          /* AND ONLY THEN is the run recorded as closed — after the shutdown checkpoint, so the
+             record cannot say "nothing was lost" about a store that was still flushing. A throw
+             above leaves it `open: true` and the next launch mints a new generation, which is the
+             safe side of a question about somebody's mail. */
+          writeStoreGeneration(dataDir, storeGeneration, false);
         } finally {
           unlock();
         }

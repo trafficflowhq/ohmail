@@ -1766,6 +1766,11 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
       db,
       now,
       requestId: "",
+      /* WHICH RUN OF THIS STORE the cursors this door hands out belong to. Spread, because a
+         store that cannot lose a committed row states nothing and the field must then be absent
+         rather than a number. `depsForHost` spreads this container, so the paired phone's door
+         states the same run as the window's. */
+      ...(opened.storeGeneration === null ? {} : { storeGeneration: opened.storeGeneration }),
       /**
        * A route fault on this door has a sink — the same omission as `SidecarConfig.logger`'s.
        * `withErrorEnvelope` writes the one line describing an unhandled route fault (`request_unhandled`)
@@ -4994,18 +4999,16 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           cycles++;
           if (!hasBacklog) inboundDrained = true;
           if (!hasBacklog && !owesFiling) { drained = true; break; }
-          /* AND FOLD THE LOG IN PER CYCLE, NOT ONLY WHEN THE DRAIN ENDS. A first import is ONE
-             drain of up to a hundred cycles, so the checkpoint below it bounded nothing while that
-             ran: the log grows WITH the import — 14.8 KiB a message, linear, about a gigabyte over
-             a large mailbox — and a kill in that window takes all of it. Reached only when there
-             is MORE backlog, so a settled mailbox takes exactly the one checkpoint it always did.
-             It does not cost, it PAYS: inside the ingest's relaxed transaction the checkpoint is
-             the only flush there is, so an unfolded log leaves the buffer pool wholly dirty and
-             every eviction writes a page and flushes ahead of it — 22.2 ms a message against 33.5
-             and a peak of 8 MiB against 58, two reps in opposite orders
-             (`test/rigs/checkpoint-churn-rig.mjs`). */
-          await opened.checkpoint();
-          checkpoints += 1;
+          /* AND FOLD THE LOG IN WHILE THE DRAIN RUNS, ONCE PER {@link INGEST_FOLD_WAL_BYTES} OF IT.
+             A first import is ONE drain of up to a hundred cycles, so the checkpoint below it
+             bounds nothing while that runs: the log grows WITH the import, 14.8 KiB a message, and
+             a kill in that window takes all of it. Asking per CYCLE bounded that — and cost more
+             than the flush it stood in for, because a fold's price is the store's own dirty pages
+             and files and so grows with the mailbox: 374 of them over one large import, 56.2 ms
+             a message, a third of the throughput folding behind the drain instead. A cycle is not
+             a quantity of anything; what a crash replays is bytes, and `foldIfLogGrew` is that
+             question asked in bytes. */
+          if ((await opened.foldIfLogGrew()).folded) checkpoints += 1;
           // Yield, so a backlog drain cannot starve the request handler sharing this event loop.
           await new Promise((r) => setTimeout(r, 0));
         }

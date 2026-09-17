@@ -23,7 +23,7 @@ import { drizzle as drizzleSqliteProxy } from "drizzle-orm/sqlite-proxy";
 /* The two tables a relaunch reads to find out where this mailbox lives. The barrel, like
    `engine.ts` — the device twin is substituted at the module the barrel itself reaches. */
 import { mailboxCredentials, mailboxes, organizerDisplayName } from "@trafficflow/db";
-import { brandDialect, deliverLocalNotifyAtCommit } from "@trafficflow/db/dialect";
+import { INGEST_FOLD_WAL_BYTES, brandDialect, deliverLocalNotifyAtCommit, dialect } from "@trafficflow/db/dialect";
 import { migrateSqlite } from "@trafficflow/db/sqlite-migrate";
 import type { LeasePeekAnswer, OrganizerKind, StandDownReason } from "@trafficflow/core/adapters/organizer-lease";
 /* THE WORKER'S SOCKET PROFILE, not a third one. See {@link startPhoneEngine}. */
@@ -525,6 +525,9 @@ export async function openPhoneStore(
   /* OUTSIDE the transaction gate, so an announcement is delivered after the write is durable
      and without holding the next writer's turn — the contract's "delivered when the
      transaction commits", which this store has to keep for itself. */
+  /* The arming mark for the fold below — `null` until the store has been told the bound, and
+     this store's own from then on. See `Dialect.foldLog`. */
+  let foldMark: string | null = null;
   const branded = brandDialect(
     deliverLocalNotifyAtCommit(oneTransactionAtATime(db, transactionWaitMs)), "sqlite",
   ) as unknown as LocalDb;
@@ -541,6 +544,22 @@ export async function openPhoneStore(
     // On this store the journal is the platform's and there is nothing for a caller to reclaim, so
     // this answers zero rather than pretending to have flushed something.
     checkpoint: async () => 0,
+    /* AND THE GATED FORM THE DRAIN CALLS PER CYCLE — the SAME bound in bytes as the desktop's,
+       through the same seam. This store's SQLite has its own checkpointer and counts pages, so
+       `foldLog` arms it once at `INGEST_FOLD_WAL_BYTES / page_size` and the store folds itself
+       from then on; `dropped` is `0` because nothing here reclaims a segment a caller could
+       count. Answering a flat `false` instead would have left the phone's log bounded by nothing
+       while the desktop's was bounded in bytes. */
+    foldIfLogGrew: async () => {
+      const out = await dialect(branded).foldLog(branded, INGEST_FOLD_WAL_BYTES, foldMark)
+        .catch(() => ({ folded: false as const, grewBytes: null, at: foldMark }));
+      foldMark = out.at;
+      return { folded: out.folded, grewBytes: out.grewBytes, dropped: 0 };
+    },
+    /* NO GENERATION TO STATE, which is not the same as a first one: this store's writes go
+       through the platform's SQLite and cannot be rolled back by a kill, so no cursor of its can
+       be left naming rows that came back at the same seqs. See `OpenLocalDb.storeGeneration`. */
+    storeGeneration: null,
     // THE CONTRACT'S DEFINED ANSWER FOR A RUNTIME WITH NO STORE HEAP, not a made-up figure:
     // `OpenLocalDb.storeBytes` documents `0` as exactly that. The desktop's number is the WASM
     // heap Postgres runs inside, and this store has none — SQLite is the platform's, on disk and

@@ -1093,4 +1093,11 @@ export interface SnapshotResponse {
   changes: SyncChange[];
   nextCursor: string | null;
   window: SnapshotWindow;
+  /**
+   * WHICH RUN OF THE STORE `asOfSeq` BELONGS TO — stated because the client MINTS its own `/sync`
+   * cursor from `asOfSeq`, so a snapshot that does not say leaves that cursor naming no run. A
+   * store that cannot lose a committed row states nothing, and a client that sees nothing mints
+   * the shape it always did. See `SyncService.decodeCursor`.
+   */
+  storeGeneration?: number;
 }

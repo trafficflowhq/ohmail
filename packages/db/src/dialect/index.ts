@@ -216,6 +216,28 @@ export type SearchCorpus = "mail" | "kb";
  * the reason, because a no-op whose justification lives somewhere else is a bug waiting for a
  * reader who does not know why it is safe.
  */
+/**
+ * HOW MUCH WRITE-AHEAD LOG MAY STAND BEHIND THE LAST FOLD WHILE MAIL IS COMING IN — the loss
+ * window in bytes, and the ONE bound both stores take ({@link Dialect.foldLog}).
+ *
+ * Beside the seam because a bound one store read and the other did not is what this seam exists
+ * to prevent, and because the phone's bundle substitutes the desktop store's module away. A
+ * fold's price is the store's dirty pages and files, so it grows with the mailbox and does not
+ * fall by taking more of them — per drain CYCLE it cost 56.2 ms a message. At the 14.8 KiB of log
+ * a message an import writes, this window is about 108 seconds of importing, re-fetched not lost.
+ */
+export const INGEST_FOLD_WAL_BYTES = 64 * 1024 * 1024;
+
+/** What one {@link Dialect.foldLog} call did, and where the log stands after it. */
+export interface LogFold {
+  /** Whether this call folded the log in. */
+  folded: boolean;
+  /** Growth since `since`, in bytes, or `null` where the store cannot say. */
+  grewBytes: number | null;
+  /** The mark to pass as `since` next time; `null` when it could not be read. */
+  at: string | null;
+}
+
 export interface Dialect {
   readonly name: DialectName;
 
@@ -416,6 +438,18 @@ export interface Dialect {
    * seam exists to prevent. Positional is the shape both can produce honestly.
    */
   exec(db: unknown, statement: SQL): Promise<unknown[][]>;
+
+  /**
+   * BOUND THE WRITE-AHEAD LOG TO `bytes` OF GROWTH BETWEEN FOLDS — each store in its own
+   * spelling, the same bound in bytes, because the two must not be bounded differently.
+   *
+   * PGlite runs Postgres standalone with NO checkpointer, so nothing folds unless asked: this
+   * reads the growth since `since` from the INSERT pointer — the write pointer sits still while
+   * the ingest's commits do not wait for the flush, so a gate on it would never fire — and takes
+   * a `CHECKPOINT` past the bound. SQLite has its own checkpointer and takes the bound as a page
+   * count, armed once. `since` is this seam's opaque mark, `null` first time.
+   */
+  foldLog(db: unknown, bytes: number, since: string | null): Promise<LogFold>;
 
   readonly search: {
     /** Word-based search over one {@link SearchCorpus}'s indexed text. */

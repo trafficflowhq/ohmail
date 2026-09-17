@@ -149,6 +149,19 @@ export function pgDialect(): Dialect {
       return sql`${column} ?| array[${sql.join(members, sql`, `)}]::text[]`;
     },
 
+    foldLog: async (db, bytes, since) => {
+      const run = async (statement: SQL): Promise<unknown[][]> => pgDialect().exec(db, statement);
+      if (since !== null) {
+        const [row] = await run(sql`select (pg_current_wal_insert_lsn() - ${since}::pg_lsn)::bigint::text as grew`);
+        const grew = Number(row?.[0]);
+        if (Number.isFinite(grew) && grew < bytes) return { folded: false, grewBytes: grew, at: since };
+      }
+      await run(sql`CHECKPOINT`);
+      const [now] = await run(sql`select pg_current_wal_insert_lsn()::text as at`);
+      const at = typeof now?.[0] === "string" ? now[0] : null;
+      return { folded: true, grewBytes: null, at };
+    },
+
     exec: async (db, statement) => {
       const handle = db as { execute: (s: SQL) => Promise<unknown> };
       const result = (await handle.execute(statement)) as

@@ -626,6 +626,13 @@ export interface ApiDeps {
   db: Db;
   now: () => Date;
   requestId: string;
+  /**
+   * WHICH RUN OF A LOSSY STORE THIS HOST IS SERVING — the desktop sidecar's local PGlite states
+   * one; the hosted Postgres and the phone's SQLite state nothing, because neither can lose a row
+   * it committed. Threaded onto every `ServiceContext` so `/sync` can stamp it into its cursors
+   * and refuse one from an earlier run. See `apps/sidecar/src/db.ts`.
+   */
+  storeGeneration?: number | null;
   session: ResolvedSession | null;
   authConfig: AuthConfig;
   keyProvider: KeyProvider;

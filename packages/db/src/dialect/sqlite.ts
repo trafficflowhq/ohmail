@@ -299,6 +299,23 @@ export function sqliteDialect(): Dialect {
       )`;
     },
 
+    /**
+     * ARMED ONCE, then the store's own checkpointer holds the bound. SQLite has one and it counts
+     * PAGES, so the bytes become `bytes / page_size` pages — the same quantity the server's arm
+     * measures in log bytes, asked of the only unit this store's knob takes. There is no reading
+     * of the current log to gate on (`pragma wal_checkpoint` IS the checkpoint, so asking would
+     * be doing), which is why the mark is the arming rather than a position.
+     */
+    foldLog: async (db, bytes, since) => {
+      if (since !== null) return { folded: false, grewBytes: null, at: since };
+      const [row] = await sqliteDialect().exec(db, sql`pragma page_size`);
+      const pageSize = Number(row?.[0]);
+      const size = Number.isFinite(pageSize) && pageSize > 0 ? pageSize : 4096;
+      const pages = Math.max(1, Math.ceil(bytes / size));
+      await sqliteDialect().exec(db, sql.raw(`pragma wal_autocheckpoint = ${pages}`));
+      return { folded: false, grewBytes: null, at: `pages:${pages}` };
+    },
+
     exec: async (db, statement) => {
       const handle = db as { all?: (s: SQL) => Promise<unknown[]>; run?: (s: SQL) => Promise<unknown> };
       if (typeof handle.all === "function") {

@@ -3365,7 +3365,10 @@ export class OhmailEngine {
         this.noteApplied(page.changes);
         await this.store.applyResponse({
           changes: { creates: page.changes, updates: [], moves: [], deletes: [] },
-          cursor: encodeSeqCursor(page.asOfSeq),
+          /* The run of the server's store goes into the cursor with the seq, from the LAST page
+             — the one whose cursor is committed. A server that states none mints the cursor this
+             client has always minted. See `SyncSnapshotPage.storeGeneration`. */
+          cursor: encodeSeqCursor(page.asOfSeq, page.storeGeneration),
           hasMore: false,
           serverTime: this.now().toISOString(),
         });

@@ -57,6 +57,16 @@ export interface ServiceContext {
    * default origin". Never trusted for identity — only for origin binding.
    */
   origin?: string;
+  /**
+   * WHICH RUN OF A LOSSY STORE THIS REQUEST IS BEING ANSWERED FROM — the desktop's local PGlite
+   * mints one at every launch that could have lost committed rows (`apps/sidecar/src/db.ts`), and
+   * `/sync` stamps it into every cursor and checks it on every read.
+   *
+   * ABSENT means a store that cannot lose a committed row — the hosted Postgres, the phone's
+   * SQLite — which is a different answer from a generation that happens to be its first: only the
+   * second admits a cursor issued before the field existed. See `SyncService.decodeCursor`.
+   */
+  storeGeneration?: number | null;
 }
 
 /**

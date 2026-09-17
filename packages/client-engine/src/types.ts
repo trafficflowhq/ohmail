@@ -173,6 +173,14 @@ export interface SyncSnapshotPage {
    * ceiling, which is what that server does.
    */
   window: { days: number; minRows: number; maxRows?: number };
+  /**
+   * WHICH RUN OF THE SERVER'S STORE `asOfSeq` BELONGS TO, when that store can lose a committed
+   * row and re-derive it at the same seq (the desktop's local one). It travels into the cursor
+   * this client mints from `asOfSeq` — {@link encodeSeqCursor} — so the server can refuse a
+   * cursor belonging to a run that ended. ABSENT from a server that states none, and a cursor
+   * minted without it is the shape this client has always sent.
+   */
+  storeGeneration?: number;
 }
 
 // ── entity DTO mirrors ─────────────────────────────────────────────────────
@@ -1524,9 +1532,17 @@ function b64decodeAscii(s: string): string {
   return out;
 }
 
-/** Encode a numeric seq as an opaque base64url cursor (server-shape parity). */
-export function encodeSeqCursor(seq: number): Cursor {
-  return b64encodeAscii(String(seq)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+/**
+ * Encode a numeric seq as an opaque base64url cursor (server-shape parity), carrying the run of
+ * the server's store it belongs to when the server stated one ({@link SyncSnapshotPage}).
+ *
+ * The generation goes IN the cursor because the cursor is the one value every surface already
+ * round-trips unread. A server that states none produces exactly the bytes this client has always
+ * sent, so the hosted wire does not move.
+ */
+export function encodeSeqCursor(seq: number, generation?: number | null): Cursor {
+  const body = generation == null ? String(seq) : `${generation}.${seq}`;
+  return b64encodeAscii(body).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
 /** Decode a base64url seq cursor; returns null when malformed ("0" ⇒ 0). */
@@ -1534,8 +1550,11 @@ export function decodeSeqCursor(cursor: Cursor): number | null {
   if (cursor === "0" || cursor === "") return 0;
   try {
     const raw = b64decodeAscii(cursor.replace(/-/g, "+").replace(/_/g, "/"));
-    if (!/^\d+$/.test(raw)) return null;
-    return Number(raw);
+    // The generation, when present, is IN FRONT of the seq — the server's own spelling. A reader
+    // that wants the position wants the seq; nobody on this side compares generations.
+    const m = /^(?:\d+\.)?(\d+)$/.exec(raw);
+    if (m === null) return null;
+    return Number(m[1]);
   } catch {
     return null;
   }

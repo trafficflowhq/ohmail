@@ -225,10 +225,45 @@ type SnapshotCursor = MessageSnapshotCursor | DraftsSnapshotCursor;
  * change per entity within a bounded window), sound precisely BECAUSE this reader projects
  * current state rather than history: the skipped rows are superseded copies of the same upsert.
  */
+/** A decoded `/sync` cursor: where in the log, and which run of the store issued it. */
+export interface SyncCursor {
+  seq: bigint;
+  /** `null` ⇒ the cursor names no run, which only a first-generation store admits. */
+  generation: number | null;
+}
+
 export class SyncService {
-  /** Opaque base64 of the per-account high-water seq. */
-  encodeCursor(seq: bigint): string {
-    return Buffer.from(seq.toString(10), "utf8").toString("base64url");
+  /**
+   * Opaque base64 of the per-account high-water seq, and — where the store has one — the run of
+   * that store the seq belongs to, in front of it.
+   *
+   * IN the cursor rather than beside it, because a cursor is the one value every client already
+   * round-trips unread: a second wire field would have to be carried by the desktop mirror, the
+   * phone and a browser, and any one of them dropping it would be a cursor that still LOOKS
+   * valid. A store with no generation encodes exactly what it always did, so the hosted wire does
+   * not move. See {@link decodeCursor} for what the two shapes mean to a reader.
+   */
+  encodeCursor(seq: bigint, generation?: number | null): string {
+    const body = generation == null ? seq.toString(10) : `${generation}.${seq.toString(10)}`;
+    return Buffer.from(body, "utf8").toString("base64url");
+  }
+
+  /**
+   * THE CURSOR IS REFUSED WHEN IT NAMES A RUN OF THE STORE THAT IS OVER.
+   *
+   * A store whose ingest does not wait for the flush gives back its last commits' seqs after a
+   * kill, so rows re-derived from the mailbox land BELOW a parked cursor and are never served.
+   * The horizon check below catches a client that polls inside that window; this catches the one
+   * that does not. A cursor naming no run is admitted by a FIRST generation — the run no crash
+   * has ended — which is how a cursor issued before this field existed survives the upgrade.
+   */
+  private assertSameStoreRun(cursor: number | null, store: number | null): void {
+    if (cursor === store) return;
+    if (cursor === null && store === 1) return;
+    throw new ServiceError(
+      "cursor_expired", 410,
+      "sync cursor belongs to an earlier run of this store; re-bootstrap with since=0",
+    );
   }
 
   /**
@@ -241,17 +276,22 @@ export class SyncService {
    * not the range — `9999999999999999999` exceeds the column — so the value is checked against
    * `MAX_BIGSERIAL` too.
    */
-  decodeCursor(cursor: string): bigint {
+  decodeCursor(cursor: string): SyncCursor {
     try {
       if (cursor.length > SYNC_CURSOR_MAX_CHARS) throw new Error("cursor too long");
       const dec = Buffer.from(cursor, "base64url").toString("utf8");
-      if (!/^\d{1,19}$/.test(dec)) throw new Error("non-numeric cursor");
+      // ONE parser for both shapes, so the generation cannot be admitted by one reader and
+      // dropped by another. The generation is bounded like the seq, and by the same rule.
+      const m = /^(?:(\d{1,19})\.)?(\d{1,19})$/.exec(dec);
+      if (m === null) throw new Error("non-numeric cursor");
+      const generation = m[1] === undefined ? null : Number(m[1]);
+      if (generation !== null && !Number.isSafeInteger(generation)) throw new Error("generation out of range");
       // The digit count bounds the PARSE and the RANGE bounds the value — nineteen digits reaches
       // `9999999999999999999`, which is past what a `bigserial` holds. The same pair the snapshot
       // cursor's `s` carries, and for the same reason.
-      const seq = BigInt(dec);
+      const seq = BigInt(m[2]!);
       if (seq > MAX_BIGSERIAL) throw new Error("seq out of range");
-      return seq;
+      return { seq, generation };
     } catch {
       throw new ServiceError("cursor_expired", 410, "sync cursor is malformed or expired; re-bootstrap with since=0");
     }
@@ -364,7 +404,13 @@ export class SyncService {
     const limit = clampPageLimit(opts.limit, DEFAULT_LIMIT, MAX_LIMIT);
 
     // since omitted / "0" ⇒ bootstrap (full replay from seq 0).
-    const sinceSeq = opts.since && opts.since !== "0" ? this.decodeCursor(opts.since) : 0n;
+    const storeGeneration = ctx.storeGeneration ?? null;
+    const parsed = opts.since && opts.since !== "0" ? this.decodeCursor(opts.since) : null;
+    /* BEFORE EVERY OTHER QUESTION, because every other question is about a log this cursor may
+       not belong to: a seq compared against the bounds of the wrong run is a comparison of two
+       unrelated numbers. See {@link assertSameStoreRun}. */
+    if (parsed !== null) this.assertSameStoreRun(parsed.generation, storeGeneration);
+    const sinceSeq = parsed?.seq ?? 0n;
 
     // BOTH ENDS OF THE CURSOR WINDOW, FROM ONE READ. A resuming cursor must name a point INSIDE
     // this account's log; two ways out, and only the first used to be checked. BELOW the floor —
@@ -400,7 +446,7 @@ export class SyncService {
       if (sinceSeq === maxSeq) {
         return {
           changes: { creates: [], updates: [], moves: [], deletes: [] },
-          cursor: this.encodeCursor(sinceSeq),
+          cursor: this.encodeCursor(sinceSeq, storeGeneration),
           hasMore: false,
           serverTime: ctx.now().toISOString(),
         };
@@ -618,7 +664,7 @@ export class SyncService {
 
     return {
       changes: { creates, updates, moves, deletes },
-      cursor: this.encodeCursor(cursorSeq),
+      cursor: this.encodeCursor(cursorSeq, storeGeneration),
       hasMore,
       serverTime: ctx.now().toISOString(),
     };
@@ -1021,7 +1067,13 @@ export class SyncService {
       });
     }
 
-    return { asOfSeq: seq, changes, nextCursor, window: SNAPSHOT_WINDOW };
+    /* Spread, not `?? undefined`: a store with no generation must leave the field ABSENT, which
+       is the answer a client reads as "mint the shape you always did". */
+    const gen = ctx.storeGeneration ?? null;
+    return {
+      asOfSeq: seq, changes, nextCursor, window: SNAPSHOT_WINDOW,
+      ...(gen === null ? {} : { storeGeneration: gen }),
+    };
   }
 }
 
