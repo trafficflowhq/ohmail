@@ -266,8 +266,9 @@ export function DoorChooser({
                 setProvedLink(null);
                 setMismatch(false);
                 /* THE SECOND WAY IN, and the one somebody actually arrives by. It gets the
-                   same answer as the tile: routing it to a pane that cannot finish is the
-                   dead end, whichever field the link was pasted into. */
+                   same answer as the tile, whichever field the link was pasted into — which
+                   since 0.19.2 is the pane, because the door completes. The refusal below is
+                   what the two ways in share if it ever cannot: one answer, not two. */
                 if (!PAIRED_DOOR_AVAILABLE) {
                   setProblem(DOOR_COPY.doorHostUnavailable);
                   return;
@@ -478,11 +479,11 @@ function Doors({ onPick, onCancel }: { onPick: (step: Step) => void; onCancel?: 
         {/* SECOND, and the order is still "nearest first": this computer, then another of yours,
             then a server you run, then ours. A paired desktop is nearer than a server — it is a
             machine in the same house — and it is the door somebody arrives at holding a link. */}
-        {/* LISTED AND MARKED, NOT REMOVED. The door cannot be completed from any state a new
-            install is in — `PAIRED_DOOR_AVAILABLE` in `doors.ts` carries the three readings —
-            so it says so HERE, at step one, rather than at the third. A tile taken off the
-            screen is a product that quietly got smaller, and a person who arrived holding a
-            pairing link would find nothing to explain it. */}
+        {/* LISTED, AND WALKABLE SINCE 0.19.2 — `PAIRED_DOOR_AVAILABLE` in `doors.ts` carries what
+            each of the three readings that blocked it answers with. The mark and the disabled
+            state stay wired to that one line rather than being deleted with it: a door that
+            cannot be walked says so at step one instead of at the third, and it would have to be
+            rebuilt from nothing the next time that is true. */}
         <button
           type="button"
           className="door-tile"

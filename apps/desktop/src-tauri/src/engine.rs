@@ -204,6 +204,36 @@ pub fn door_label_for(config: &Config) -> Option<&'static str> {
 /// every attempt, and retrying it forever burns CPU, fills the log and hides the cause.
 pub const MAX_STARTS: u32 = 4;
 
+/// How often the candidate walk looks to see whether its engine is serving yet.
+const CANDIDATE_POLL: Duration = Duration::from_millis(50);
+
+/// What an install that already HAS a door is told when it asks for a candidate walk.
+///
+/// A refusal and not a fallback: there the engine is already running and answers the same question
+/// through the same route, and starting a second one against an unproven address is the hazard the
+/// probe-before-configure order exists to prevent.
+pub const CANDIDATE_HAS_A_DOOR: &str =
+    "this install already has a door, so the engine it is running is what answers about another \
+     computer — a candidate is only started where there is none";
+
+/// The refusal a walk that ran out of time gives, naming the segment it ran out in.
+///
+/// ONE BUDGET, entered at the top of the walk and spent down through launching, checking and
+/// redeeming. A ceiling per segment is no ceiling: four segments with a clock each left a press
+/// pending at two minutes of virtual time with nothing it awaited carrying an end-to-end bound.
+/// And the segment is named because "it took too long" sends somebody to check a network when what
+/// ran out was a database opening on their own machine.
+/// The three segments the walk's one budget is spent in, named in the refusal. Constants because
+/// the window renders the same three words and a second spelling would name a segment that is not
+/// the one that ran out.
+pub const SEGMENT_LAUNCH: &str = "starting up";
+pub const SEGMENT_PROBE: &str = "checking that computer";
+pub const SEGMENT_REDEEM: &str = "finishing the pairing";
+
+pub fn out_of_time(segment: &str) -> String {
+    format!("ohmail ran out of time {segment}. Try the pairing link again.")
+}
+
 /// A run that served for at least this long, and actually served, is treated as healthy: the
 /// restart budget resets. Without this an app left open for a week would spend its fourth restart
 /// on the fourth unrelated crash and then refuse to come back.
@@ -1189,6 +1219,15 @@ impl ShellPaths {
     /// serves, accepts a password and then cannot store it, which is the failure that looks like
     /// the product working right up until it does not.
     pub fn plan_now(&self, config: Option<&Config>) -> Plan {
+        self.plan_now_in(config, None)
+    }
+
+    /// [`ShellPaths::plan_now`], with the engine's data directory replaced.
+    ///
+    /// `Some(dir)` is the CANDIDATE walk and nothing else: an engine started to answer one question
+    /// about an address somebody pasted, in a directory of its own, so a refusal is undone by
+    /// removing that directory. Every other caller passes `None` and gets the door's own mirror.
+    pub fn plan_now_in(&self, config: Option<&Config>, dir: Option<&Path>) -> Plan {
         let from_env = std::env::var(KEK_VAR).ok().filter(|v| !v.trim().is_empty());
         let key = match from_env {
             Some(key) => Ok(key),
@@ -1217,7 +1256,13 @@ impl ShellPaths {
                         door: None,
                     });
                 };
-                let mut env = config::env_for(config, root);
+                let mut env = match dir {
+                    Some(dir) => match config::env_for_in(config, root, dir) {
+                        Ok(env) => env,
+                        Err(reason) => return Plan::Inert(EngineState::Failed { reason, last: None }),
+                    },
+                    None => config::env_for(config, root),
+                };
                 env.push((OsString::from(KEK_VAR), OsString::from(key)));
 
                 // The composed environment answers first and the process's own second, so the
@@ -1337,6 +1382,23 @@ impl Shell {
     /// an injected poll, never through this.
     pub(crate) fn inert_for_tests() -> Shell {
         Shell::around(Engine::inert(EngineState::Stopped))
+    }
+
+    /// The same inert shell, ROOTED at a real data directory — what the candidate walk's controls
+    /// need, because every refusal it gives is about the configuration file it finds there and the
+    /// directory it would put a candidate in.
+    #[cfg(test)]
+    pub(crate) fn rooted_for_tests(app_data: &Path) -> Shell {
+        Shell {
+            paths: ShellPaths {
+                app_data: Some(app_data.to_path_buf()),
+                resources: None,
+                downloads: None,
+            },
+            engine: Mutex::new(Arc::new(Engine::inert(EngineState::Stopped))),
+            host_spawn: Mutex::new(None),
+            leaving: Mutex::new(Leaving::NotStarted),
+        }
     }
 
     /// The same shell around a RUNNING engine, for the quit tests: what `begin_stop` and
@@ -1590,6 +1652,153 @@ impl Shell {
             Plan::Spawn(launch) => Engine::spawn(launch),
             Plan::Inert(state) => Engine::inert(state),
         });
+    }
+
+    /// Ask the computer at a pasted address whether it is the one the link came from — from an
+    /// install that has no door, and therefore no engine to ask.
+    ///
+    /// ── WHY THE ENGINE AND NOT THIS PROCESS ─────────────────────────────────────────────────
+    ///
+    /// The pin is a TLS fingerprint, and judging one means SEEING a certificate: one handshake
+    /// with verification off that writes zero bytes, the key hashed, the leaf kept only if it
+    /// matched, and the greeting then fetched over the verified connection. All of that exists,
+    /// once, in the engine, and the hash has exactly one spelling in this repository on purpose —
+    /// two would agree the day they were written and break the pairing the day either moved. So
+    /// the shell does not learn to dial; it starts the engine that already knows how, in a
+    /// directory of its own, and asks.
+    ///
+    /// ── AND NOTHING OF THIS INSTALL'S IS TOUCHED ────────────────────────────────────────────
+    ///
+    /// The candidate gets `engine-candidate`, never `engine-cloud`, and no `config.json` is
+    /// written: a refused candidate is undone by removing one directory. This path is refused
+    /// outright on an install that HAS a door — there the engine is already running and answers
+    /// the same question through the same route.
+    ///
+    /// The budget is the WALK's, entered before the link was parsed and spent down through
+    /// launching, probing and redeeming; what arrives here is what is left, and a refusal names
+    /// the segment that ran out rather than reporting a machine that did not answer.
+    pub fn probe_candidate(
+        &self,
+        origin: &str,
+        pin: &str,
+        left: Duration,
+    ) -> Result<serde_json::Value, String> {
+        if self.paths.config().is_some() {
+            return Err(CANDIDATE_HAS_A_DOOR.to_string());
+        }
+        let root = self.paths.app_data.as_deref().ok_or_else(|| {
+            "this computer named no place for the app to keep its settings".to_string()
+        })?;
+        let dir = config::candidate_data_dir(root);
+
+        // THE CANDIDATE DOOR, composed here and never written: the origin and the pin from the
+        // link, and no address, because which mailbox this install would read is the host's answer
+        // at the redeem. `config::parse` admits exactly this shape for this flavor.
+        let candidate = Config::Cloud(config::CloudDoor {
+            cloud_url: origin.to_string(),
+            address: None,
+            flavor: Some(config::DESKTOP_HOST_FLAVOR.to_string()),
+            host_pin: Some(pin.to_string()),
+        });
+
+        let outcome = self.walk_candidate(&candidate, &dir, left);
+
+        // TORN DOWN EITHER WAY, and that is not tidiness. On a refusal the directory is the whole
+        // of what the candidate wrote; on an admit the window configures the real door next, whose
+        // engine opens `engine-cloud` — leaving this one would be a second mirror of the same
+        // machine, growing beside the first with nothing ever reading it.
+        self.replace(Plan::Inert(EngineState::NotConfigured {
+            missing: vec![config::CONFIG_FILE_NAME.to_string()],
+            door: None,
+        }));
+        match fs::remove_dir_all(&dir) {
+            Ok(()) => {}
+            Err(err) if err.kind() == io::ErrorKind::NotFound => {}
+            Err(err) => log_line(format_args!(
+                "the candidate's directory could not be removed ({err}); it holds no door, and the \
+                 next candidate replaces it"
+            )),
+        }
+        outcome
+    }
+
+    /// The segments of the walk this process owns. Split out so the teardown above runs on every
+    /// path out of it, including the early refusals.
+    fn walk_candidate(
+        &self,
+        candidate: &Config,
+        dir: &Path,
+        left: Duration,
+    ) -> Result<serde_json::Value, String> {
+        let (origin, pin) = match candidate {
+            Config::Cloud(c) => (c.cloud_url.clone(), c.host_pin.clone().unwrap_or_default()),
+            Config::Local(_) => return Err("a candidate is a cloud door".to_string()),
+        };
+        if left == Duration::ZERO {
+            return Err(out_of_time(SEGMENT_LAUNCH));
+        }
+        let started = Instant::now();
+        self.replace(self.paths.plan_now_in(Some(candidate), Some(dir)));
+
+        // SEGMENT ONE — the launch. Polled rather than waited on a condition variable: the ready
+        // announcement sets the state without notifying, and a one-off launch does not justify
+        // changing how the supervisor wakes.
+        let engine = self.engine();
+        loop {
+            match engine.state() {
+                EngineState::Serving { .. } => break,
+                EngineState::Failed { reason, .. } => return Err(reason),
+                EngineState::Absent { looked_for } => {
+                    return Err(format!("there is no local engine in this build ({looked_for})"))
+                }
+                EngineState::NotConfigured { missing, .. } => {
+                    return Err(format!(
+                        "the candidate could not be started: nothing set {}",
+                        missing.join(", ")
+                    ))
+                }
+                _ => {}
+            }
+            if started.elapsed() >= left {
+                return Err(out_of_time(SEGMENT_LAUNCH));
+            }
+            thread::sleep(CANDIDATE_POLL);
+        }
+
+        // SEGMENT TWO — the question, on what the walk has left after the launch.
+        if started.elapsed() >= left {
+            return Err(out_of_time(SEGMENT_PROBE));
+        }
+        let body = serde_json::json!({
+            "origin": origin,
+            "flavor": config::DESKTOP_HOST_FLAVOR,
+            /* THE PIN, WHICH IS NOT A SECRET — a hash of a public key, printed on the other
+               machine's screen for somebody to carry across a room. It goes in the body and never
+               into a log line. The TOKEN is not here at all: it is spent once, at the redeem, and
+               a probe that carried it would spend it on a step nobody has agreed to yet. */
+            "hostPin": pin,
+        });
+        let answer = engine.request(EngineRequest {
+            method: "POST".to_string(),
+            url: "/cloud/probe".to_string(),
+            headers: vec![("content-type".to_string(), "application/json".to_string())],
+            body: body.to_string().into_bytes(),
+        })?;
+        if started.elapsed() >= left {
+            return Err(out_of_time(SEGMENT_PROBE));
+        }
+
+        // THE ENGINE'S OWN ANSWER, PASSED THROUGH. Every refusal it can give is a `kind` the window
+        // already turns into a sentence, and a second classification here would describe something
+        // this function did not observe.
+        Ok(serde_json::json!({
+            "status": answer.status,
+            "body": serde_json::from_slice::<serde_json::Value>(&answer.body)
+                .unwrap_or(serde_json::Value::Null),
+            /* What the walk has left, so the REDEEM is bounded by the same clock rather than
+               starting a fresh one — a ceiling composed per segment is no ceiling. */
+            "leftMs": left.saturating_sub(started.elapsed()).as_millis() as u64,
+        }))
     }
 
     /// Write down which door this install comes in by, and restart the engine behind it.
@@ -3633,6 +3842,24 @@ fn engine_configure<R: tauri::Runtime>(
     shell.configure(&config)
 }
 
+/// Ask the engine about a computer this install might pair with, from an install that has none.
+///
+/// The window holds the walk's CLOCK — it was started before the link was parsed and it bounds the
+/// redeem too — so what crosses here is what is left of it, and the answer carries back what
+/// remains. A budget composed per segment is no budget; see [`out_of_time`].
+///
+/// The pin is not a secret and the token is not here: see [`Shell::probe_candidate`].
+#[cfg(feature = "local-engine")]
+#[tauri::command(async)]
+fn host_candidate_probe(
+    shell: tauri::State<'_, Arc<Shell>>,
+    origin: String,
+    pin: String,
+    budget_ms: u64,
+) -> Result<serde_json::Value, String> {
+    shell.probe_candidate(&origin, &pin, Duration::from_millis(budget_ms))
+}
+
 /// Forget the account on this install: clear the sealed credential, stop the engine, forget the
 /// door. The mirror and this install's key stay. See [`Shell::logout`].
 ///
@@ -5023,9 +5250,9 @@ fn announce_link<R: tauri::Runtime>(app: &tauri::AppHandle<R>, raw: &str) {
 #[cfg(feature = "local-engine")]
 const LOCAL_ENGINE_CAPABILITY: &str = r#"{
   "identifier": "local-engine",
-  "description": "The window may ask the shell about the local engine, send it one request at a time, choose which mailbox this install is for, sign out of it, post one notification, set the icon's badge, report its own startup and interaction timings as numbers the shell turns into a log line, open one of a fixed list of ohmail.app pages in the user's own browser (naming the page and, for the sign-in page alone, a 43-character commitment the shell validates and appends itself), hand the shell ONE http/https address a person clicked in a message for that same browser to open, hand it the BYTES of one attachment and a display name so the shell can write that file under its own directory and open it in this computer's usual viewer, or save that same file into this computer's Downloads folder (the shell picks the folder and composes every part of the name; a name already taken is numbered, never overwritten), and listen for the shell's own events — including the handoff code an ohmail:// activation carried. It may also drive HOST MODE, entirely through this shell's own commands: read its state, probe the user's own tailnet (tailscale status), arm or disarm publishing the engine's loopback door to that tailnet (tailscale serve — never funnel, pinned by test), read and set this install's start-at-login registration, and open Tailscale's download page — one more constant address the shell owns, the window still naming no URL. It may also CLAIM a mailto: activation the shell is holding (take-once, so a link seeds one compose form and never two), and ask about the OS's DEFAULT MAIL APP through two commands that name nothing: a read of the current handler's state, and a request that takes each platform's own sanctioned path — macOS's consent dialog, the Windows Settings page (one more constant address), xdg-settings on Linux — never a registry write. It may read the app's UPDATE state, press the same button the menu item is, and ask for the check the app makes at launch — a read of the installed version and of what the last check found, a press that checks or restarts into an already-verified payload, and a scheduled check that is silent unless it finds something (a press is a person asking and is answered out loud, which is right for a button and wrong once a day for ever); it may not name a feed, see a payload or install anything, and the request, the signature check and the version guard stay in the shell. It may ask for the DESKTOP'S OWN THEME through one read-only command: on an Omarchy system the shell answers the active theme's raw material (the theme's colors.toml, the system's font and gap facts — paths the SHELL names, never the window), and everywhere else it answers nothing. Nothing else: no filesystem path the window may name, no arbitrary shell command, no network, and no other Tauri core API.",
+  "description": "The window may ask the shell about the local engine, send it one request at a time, choose which mailbox this install is for, sign out of it, ask the engine whether the computer at a pasted pairing link's address is the one that link came from (the window hands over the ORIGIN and the PIN the link carried and no token; on an install that has no door the shell starts an engine for that CANDIDATE in a directory of its own, asks it, and removes that directory afterwards, configuring nothing), post one notification, set the icon's badge, report its own startup and interaction timings as numbers the shell turns into a log line, open one of a fixed list of ohmail.app pages in the user's own browser (naming the page and, for the sign-in page alone, a 43-character commitment the shell validates and appends itself), hand the shell ONE http/https address a person clicked in a message for that same browser to open, hand it the BYTES of one attachment and a display name so the shell can write that file under its own directory and open it in this computer's usual viewer, or save that same file into this computer's Downloads folder (the shell picks the folder and composes every part of the name; a name already taken is numbered, never overwritten), and listen for the shell's own events — including the handoff code an ohmail:// activation carried. It may also drive HOST MODE, entirely through this shell's own commands: read its state, probe the user's own tailnet (tailscale status), arm or disarm publishing the engine's loopback door to that tailnet (tailscale serve — never funnel, pinned by test), read and set this install's start-at-login registration, and open Tailscale's download page — one more constant address the shell owns, the window still naming no URL. It may also CLAIM a mailto: activation the shell is holding (take-once, so a link seeds one compose form and never two), and ask about the OS's DEFAULT MAIL APP through two commands that name nothing: a read of the current handler's state, and a request that takes each platform's own sanctioned path — macOS's consent dialog, the Windows Settings page (one more constant address), xdg-settings on Linux — never a registry write. It may read the app's UPDATE state, press the same button the menu item is, and ask for the check the app makes at launch — a read of the installed version and of what the last check found, a press that checks or restarts into an already-verified payload, and a scheduled check that is silent unless it finds something (a press is a person asking and is answered out loud, which is right for a button and wrong once a day for ever); it may not name a feed, see a payload or install anything, and the request, the signature check and the version guard stay in the shell. It may ask for the DESKTOP'S OWN THEME through one read-only command: on an Omarchy system the shell answers the active theme's raw material (the theme's colors.toml, the system's font and gap facts — paths the SHELL names, never the window), and everywhere else it answers nothing. Nothing else: no filesystem path the window may name, no arbitrary shell command, no network, and no other Tauri core API.",
   "windows": ["main"],
-  "permissions": ["allow-engine-status", "allow-engine-request", "allow-engine-configure", "allow-engine-logout", "allow-notify", "allow-set-badge", "allow-ui-vitals", "allow-open-link", "allow-open-external", "allow-open-attachment", "allow-save-attachment", "allow-host-state", "allow-tailscale-status", "allow-tailscale-serve-arm", "allow-tailscale-serve-disarm", "allow-autostart-get", "allow-autostart-set", "allow-open-tailscale-download", "allow-mailto-claim", "allow-default-mail-status", "allow-default-mail-request", "allow-omarchy-theme", "allow-update-state", "allow-update-press", "allow-update-poll", "core:event:allow-listen"]
+  "permissions": ["allow-engine-status", "allow-engine-request", "allow-engine-configure", "allow-engine-logout", "allow-host-candidate-probe", "allow-notify", "allow-set-badge", "allow-ui-vitals", "allow-open-link", "allow-open-external", "allow-open-attachment", "allow-save-attachment", "allow-host-state", "allow-tailscale-status", "allow-tailscale-serve-arm", "allow-tailscale-serve-disarm", "allow-autostart-get", "allow-autostart-set", "allow-open-tailscale-download", "allow-mailto-claim", "allow-default-mail-status", "allow-default-mail-request", "allow-omarchy-theme", "allow-update-state", "allow-update-press", "allow-update-poll", "core:event:allow-listen"]
 }"#;
 
 /// The commands `build.rs` declared to the ACL manifest, baked in at compile time.
@@ -5147,6 +5374,8 @@ pub fn attach<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R
             engine_request,
             engine_configure,
             engine_logout,
+            // The paired door's first step, on an install with no engine to ask — see the command.
+            host_candidate_probe,
             notify,
             set_badge,
             // The window's own performance numbers, into the engine's log. The shell composes the

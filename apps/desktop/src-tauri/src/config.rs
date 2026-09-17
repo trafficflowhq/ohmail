@@ -176,6 +176,21 @@ impl Config {
 /// What the file is called inside the app's data directory.
 pub const CONFIG_FILE_NAME: &str = "config.json";
 
+/// Where a CANDIDATE door's engine keeps its scratch: its own directory, beside the two real ones
+/// and never either of them.
+///
+/// The paired door's first step asks whether the computer at a pasted address is the one the link
+/// came from, and a fresh install has no engine to ask. So the shell starts one FOR THE CANDIDATE
+/// — and it is pointed here rather than at `engine-cloud`, so that a refused candidate has written
+/// nothing a real door will ever read and the whole of it can be removed by removing one
+/// directory. A candidate is a question about somebody else's machine, not a door.
+pub const CANDIDATE_DIR_NAME: &str = "engine-candidate";
+
+/// The candidate engine's directory under the app's data root.
+pub fn candidate_data_dir(root: &Path) -> PathBuf {
+    root.join(CANDIDATE_DIR_NAME)
+}
+
 /// The hosted service's own base — the address every build before the self-hosted door used.
 ///
 /// Named here for ONE purpose: deciding whether a cloud door is the managed service or somebody's
@@ -596,6 +611,34 @@ pub fn data_dir(root: &Path, mode: Mode) -> PathBuf {
 ///
 /// Everything else is settings the shell holds and the engine reads. There is deliberately no
 /// password and no token: see the header.
+/// [`env_for`] with the engine's data directory replaced — the candidate walk's one use.
+///
+/// The override is applied BY NAME rather than by position, so it cannot silently stop working the
+/// day the data directory stops being the first pair composed; a composition that carried no data
+/// directory at all would be a candidate engine pointed at the real mirror, so its absence is a
+/// refusal rather than an append.
+pub fn env_for_in(
+    config: &Config,
+    root: &Path,
+    dir: &Path,
+) -> Result<Vec<(OsString, OsString)>, String> {
+    let key = OsString::from(crate::engine::DATA_DIR_VAR);
+    let mut env = env_for(config, root);
+    let mut replaced = 0;
+    for pair in env.iter_mut() {
+        if pair.0 == key {
+            pair.1 = dir.as_os_str().to_os_string();
+            replaced += 1;
+        }
+    }
+    if replaced != 1 {
+        return Err(format!(
+            "the candidate environment named the engine's data directory {replaced} times"
+        ));
+    }
+    Ok(env)
+}
+
 pub fn env_for(config: &Config, root: &Path) -> Vec<(OsString, OsString)> {
     let pair = |k: &str, v: String| (OsString::from(k), OsString::from(v));
     let dir = data_dir(root, config.mode());

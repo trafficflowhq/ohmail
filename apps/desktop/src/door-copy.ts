@@ -63,11 +63,12 @@ const EN = {
   doorHostSay: (machine: string) =>
     `ohmail on another computer of yours organizes; this ${machine} works through it. While that `
     + "computer is off, this one shows its copy and can change nothing.",
-  /* ── THE MARK ON THAT TILE, AND THE WHOLE OF WHAT THIS DOOR DOES IN 0.19.1 ───────────────
-     The door could not be completed from any state a new install is in — `PAIRED_DOOR_AVAILABLE`
-     in `doors.ts` carries the three readings. Said at step one, plainly, with nothing after it:
-     a person holding a pairing link needs to know it will not work here, not to be walked to a
-     field and refused by the shell. */
+  /* ── THE MARK THAT IS NOT ON THAT TILE ANY MORE ──────────────────────────────────────────
+     The door completes from a fresh install since 0.19.2, so `PAIRED_DOOR_AVAILABLE` is true and
+     nothing renders this. It is KEPT rather than deleted: the sentence is what the tile says if
+     the door ever cannot be walked again, and the three readings that made it false are in
+     `doors.ts`. A sentence removed the day it stops being shown is one somebody rewrites badly
+     under pressure the day it is needed. */
   doorHostUnavailable: "Pairing with another computer isn't available in this version yet.",
   doorServerName: "Your own server",
   doorServerLead: "Self-hosted ohmail Cloud.",

@@ -73,6 +73,20 @@ function shell(): TauriInternals {
   return internals as TauriInternals;
 }
 
+/**
+ * Call one of the shell's own commands by name.
+ *
+ * This module owns `shell()` and the one sentence for "there is no shell", so a caller that needs
+ * a command rather than a request asks here instead of composing a third answer to the same
+ * question. It names no command: the caller does, and `build.rs` decides which exist.
+ */
+export async function invokeShell(
+  command: string,
+  payload?: Record<string, unknown>,
+): Promise<unknown> {
+  return shell().invoke(command, payload);
+}
+
 /** Whether this page is running inside the shell at all. */
 export function bridgeAvailable(): boolean {
   const host = globalThis as { __TAURI_INTERNALS__?: Partial<TauriInternals> };

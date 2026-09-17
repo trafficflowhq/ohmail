@@ -2395,6 +2395,174 @@ fn paired_door(pin: Option<&str>) -> Config {
     })
 }
 
+// ── THE CANDIDATE WALK: NOTHING OF THIS INSTALL'S IS TOUCHED ────────────────────────────────
+//
+// The paired door's first step asks an engine, and a fresh install has none — so where there is no
+// door the shell starts one FOR THE CANDIDATE. The order is what changed; the pin ceremony did not
+// move and nothing learned to dial twice. What has to hold is that a candidate cannot cost anybody
+// anything: the four things `doors.ts` names — the settings file, the previous door, its mirror and
+// its session — are byte-identical across a refused walk, and the candidate's own directory is
+// removed. The first is measured on a data directory that HAS a door, which is also the state
+// where the walk is refused outright.
+
+/// THE KEY COMES FROM THE ENVIRONMENT IN THESE CASES, AND THAT IS NOT A CONVENIENCE.
+///
+/// `plan_now_in` reads `OHMAIL_KEK` first and only then asks the platform keystore. On a headless
+/// guest the keystore is the Secret Service, SSH never PAM-unlocks the login keyring, and the first
+/// request raises a MODAL `gcr-prompter`: the test binary then sits there for ever with no output
+/// and no error — measured, at nineteen minutes, with the prompter alive beside it. So these cases
+/// take the branch a shipped install takes when something has already given it a key, and what they
+/// are about — which directory a candidate is pointed at, and what a refusal leaves behind — is
+/// unchanged by where the key came from.
+fn with_key_in_env() {
+    std::env::set_var(KEK_VAR, "0".repeat(64));
+}
+
+/// A scratch app-data directory for one case, removed by the case that made it.
+fn candidate_root(name: &str) -> PathBuf {
+    let dir = std::env::temp_dir()
+        .join(format!("ohmail-candidate-{}-{name}", std::process::id()));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).expect("scratch root");
+    dir
+}
+
+/// Every file under a root, with its bytes — the reading a refused walk must not move.
+fn bytes_under(root: &Path) -> Vec<(PathBuf, Vec<u8>)> {
+    let mut out: Vec<(PathBuf, Vec<u8>)> = Vec::new();
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        let Ok(entries) = fs::read_dir(&dir) else { continue };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                stack.push(path);
+            } else if let Ok(bytes) = fs::read(&path) {
+                out.push((path, bytes));
+            }
+        }
+    }
+    out.sort_by(|a, b| a.0.cmp(&b.0));
+    out
+}
+
+#[test]
+fn a_candidate_is_refused_outright_on_an_install_that_has_a_door() {
+    // WHERE THERE IS AN ENGINE, THE ENGINE ANSWERS. Not a fallback and not a preference: starting a
+    // second engine against an unproven address on an install that has a mirror is the hazard the
+    // probe-before-configure order exists to prevent, and the running engine answers the same
+    // question through the same route.
+    with_key_in_env();
+    let root = candidate_root("has-a-door");
+    let door = Config::Cloud(crate::config::CloudDoor {
+        cloud_url: "https://api.ohmail.app".to_string(),
+        address: Some("someone@ohmail.app".to_string()),
+        flavor: None,
+        host_pin: None,
+    });
+    crate::config::write(&root.join(crate::config::CONFIG_FILE_NAME), &door).expect("write door");
+    // The mirror and the session, as files, so "byte-identical" is measured rather than argued.
+    let mirror = root.join("engine-cloud");
+    fs::create_dir_all(&mirror).expect("mirror dir");
+    fs::write(mirror.join("mirror.db"), b"the previous door's copy of somebody's mail").unwrap();
+    fs::write(mirror.join("cloud-tokens.seal"), b"the sealed session").unwrap();
+
+    let before = bytes_under(&root);
+    assert!(before.len() >= 3, "the fixture wrote nothing to compare: {before:?}");
+
+    let shell = Shell::rooted_for_tests(&root);
+    let out = shell.probe_candidate("https://192.168.1.24:8443", &"a".repeat(43), Duration::from_secs(30));
+
+    assert_eq!(out.unwrap_err(), CANDIDATE_HAS_A_DOOR);
+    assert_eq!(bytes_under(&root), before, "a refused candidate moved something");
+    assert!(
+        !crate::config::candidate_data_dir(&root).exists(),
+        "a candidate directory was made on an install that has a door",
+    );
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn a_refused_candidate_takes_its_own_directory_with_it() {
+    // THE TEARDOWN IS THE UNDO, and it runs on every path out of the walk rather than on the happy
+    // one. This shell has no resources directory, so the walk refuses at the launch — which is the
+    // state that matters: a candidate that fails before it ever serves still has to leave nothing.
+    // The directory is pre-filled, because a removal proves nothing over a directory that was never
+    // made — that would pass just as well for a teardown that does not run.
+    with_key_in_env();
+    let root = candidate_root("refused");
+    let candidate = crate::config::candidate_data_dir(&root);
+    fs::create_dir_all(&candidate).expect("candidate dir");
+    fs::write(candidate.join("mirror.db"), b"whatever a candidate wrote before it was refused").unwrap();
+    assert!(candidate.exists());
+
+    let shell = Shell::rooted_for_tests(&root);
+    let out = shell.probe_candidate("https://192.168.1.24:8443", &"a".repeat(43), Duration::from_secs(30));
+
+    assert!(out.is_err(), "the fixture's shell has no engine, so the walk cannot admit");
+    assert!(!candidate.exists(), "the candidate's directory outlived its refusal");
+    // …and the walk left no settings file behind either: a candidate is not a door.
+    assert!(!root.join(crate::config::CONFIG_FILE_NAME).exists());
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn a_walk_with_nothing_left_refuses_naming_the_segment() {
+    // ONE BUDGET, and the refusal names the segment it ran out in — "it took too long" sends
+    // somebody to check a network when what ran out was a database opening on their own machine.
+    // The three segments are constants because the window renders the same three words.
+    with_key_in_env();
+    let root = candidate_root("out-of-time");
+    let shell = Shell::rooted_for_tests(&root);
+    let out = shell.probe_candidate("https://192.168.1.24:8443", &"a".repeat(43), Duration::ZERO);
+
+    let err = out.unwrap_err();
+    assert!(err.contains(SEGMENT_LAUNCH), "{err}");
+    assert!(!err.contains(SEGMENT_REDEEM), "the refusal named a segment that did not run: {err}");
+    assert_eq!(err, out_of_time(SEGMENT_LAUNCH));
+    // THE THREE ARE DISTINCT. A single sentence for all of them would pass every assertion above
+    // and tell everyone to look in the same wrong place.
+    assert_ne!(out_of_time(SEGMENT_LAUNCH), out_of_time(SEGMENT_PROBE));
+    assert_ne!(out_of_time(SEGMENT_PROBE), out_of_time(SEGMENT_REDEEM));
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn the_candidate_environment_names_its_own_directory_and_no_address() {
+    // WHAT THE CANDIDATE ENGINE IS ACTUALLY POINTED AT, composed the way the walk composes it.
+    // `engine-candidate`, never `engine-cloud` — a candidate written into the real mirror's
+    // directory would be the whole hazard back, with a teardown that removes somebody's mail.
+    let root = Path::new("/data");
+    let door = paired_door(Some(FIXTURE_PIN));
+    let dir = crate::config::candidate_data_dir(root);
+    let env = crate::config::env_for_in(&door, root, &dir).expect("composed");
+    let map: HashMap<String, String> = env
+        .iter()
+        .map(|(k, v)| (k.to_string_lossy().into_owned(), v.to_string_lossy().into_owned()))
+        .collect();
+
+    assert_eq!(map.get(DATA_DIR_VAR).map(String::as_str), dir.to_str());
+    assert!(map[DATA_DIR_VAR].ends_with("engine-candidate"));
+    assert_ne!(map[DATA_DIR_VAR], crate::config::data_dir(root, Mode::Cloud).to_string_lossy());
+    assert_eq!(map.get("OHMAIL_MODE").map(String::as_str), Some("cloud"));
+    assert!(!map.contains_key("OHMAIL_MAILBOX_ADDRESS"));
+    assert!(map.contains_key("OHMAIL_HOST_PIN"));
+}
+
+#[test]
+fn the_candidate_environment_refuses_a_composition_naming_no_data_directory() {
+    // THE OVERRIDE IS BY NAME, not by position, and its absence is a REFUSAL rather than an append:
+    // a candidate engine with no data directory of its own would open the real mirror, which is the
+    // one outcome this whole arrangement exists to make impossible.
+    let door = paired_door(Some(FIXTURE_PIN));
+    let composed = crate::config::env_for(&door, Path::new("/data"));
+    assert_eq!(
+        composed.iter().filter(|(k, _)| k == DATA_DIR_VAR).count(),
+        1,
+        "the composition named the data directory a number of times the override does not expect",
+    );
+}
+
 #[test]
 fn the_paired_door_launches_without_a_mailbox_address() {
     // THE READING THAT MADE THE DOOR UNWALKABLE, FLIPPED. Before the split this exact door — the

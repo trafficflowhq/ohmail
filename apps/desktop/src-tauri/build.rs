@@ -26,6 +26,13 @@ const WINDOW_COMMANDS: &[&str] = &[
     "engine_request",
     "engine_configure",
     "engine_logout",
+    // THE CANDIDATE WALK'S ONE STEP IN THIS PROCESS. The paired door's first question — is the
+    // computer at this address the one the pairing link came from — is answered by the ENGINE,
+    // whose pin ceremony is the only one in this repository; a fresh install has no engine, so
+    // this starts one for the CANDIDATE in a directory of its own and asks. It takes the origin
+    // and the pin from the link and NO token: the token is spent once, at the redeem, over
+    // `engine_request`. Nothing is configured, and the candidate's directory is removed after.
+    "host_candidate_probe",
     // The two pieces of native chrome the WINDOW drives: what is unread is a fact about
     // mail, so the client decides and the shell performs.
     "notify",

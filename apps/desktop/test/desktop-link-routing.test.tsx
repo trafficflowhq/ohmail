@@ -107,21 +107,19 @@ const LINK = `https://192.168.1.24:8443/pair#k1.${PIN}.tok_pasted`;
 
 describe("a pinned pairing link in the self-hosted address field", () => {
   /**
-   * RE-DERIVED 2026-09-15, because half this case's premise died with a ruling and the other
-   * half is the whole reason the routing exists.
+   * RE-DERIVED TWICE, and the second time is a return rather than a new claim.
    *
-   * What it asserted was "the paired door opens". That door refuses at step one now — it cannot
-   * be completed from any state a new install is in (`PAIRED_DOOR_AVAILABLE`) — so opening it
-   * would be the dead end the ruling removed. What the routing is FOR survives untouched and is
-   * what this case holds: the link is RECOGNISED as a pairing link before anything is dialled,
-   * so it is answered by the paired door's own sentence rather than by the self-hosted door's
-   * refusals — the worst of which tells somebody to install a root certificate — and it costs
-   * zero fetches, so the previous door's mirror is untouched.
+   * It asserted "the paired door OPENS". On 2026-09-15 that door could not be completed from any
+   * state a new install is in, so opening it was a dead end and the case was re-derived onto the
+   * half that survived: the link is RECOGNISED before anything is dialled, so it is answered by
+   * the paired door rather than by the self-hosted door's refusals — the worst of which tells
+   * somebody to install a root certificate — at a cost of zero fetches.
    *
-   * The name changed with the assertion. A case renamed and left asserting the old thing is how
-   * a guard keeps passing for a property nobody holds any more.
+   * The door completes now, so the pane is the right destination again and this case says so.
+   * What never changed, through both derivations, is what the routing is FOR: recognising `k1.`
+   * before a dial, and never blaming a certificate for a pairing link.
    */
-  it("is answered by the paired door's own sentence, and dials nothing", async () => {
+  it("opens the paired door's pane, and dials nothing on the way", async () => {
     const shell = refusingShell();
     const el = await openServerDoor();
     /* The premise: we really are on the self-hosted door. */
@@ -131,24 +129,19 @@ describe("a pinned pairing link in the self-hosted address field", () => {
     await type(el, "server-address", "mila@example.com");
     await submit(el);
 
-    /* THE PAIRED DOOR'S ANSWER, on the door the person is standing at. */
-    expect(el.textContent, "the link was not recognised as a pairing link")
-      .toContain(DOOR_COPY.doorHostUnavailable);
-    /* AND NOT ITS PANE — reaching `#host-link` is the dead end. */
-    expect(el.querySelector("#host-link"), "the window walked into the paired door's form")
-      .toBeNull();
-    /* AND THE REFUSAL SAYS NOTHING ABOUT CERTIFICATES — the advice this routing exists to
-       prevent. SCOPED TO `.join-error`, and that scope is the re-derivation, not a weakening:
-       the self-hosted door's standing hint under its address field mentions a root certificate
-       at rest, before anything has been typed, so a whole-screen read of those words was only
-       ever answering "did the window navigate away". What the routing prevents is the door's
-       REFUSAL blaming a certificate for a pairing link, which is this element. */
-    const refusal = el.querySelector(".join-error");
-    expect(refusal?.textContent, "the link produced no refusal at all")
-      .toBe(DOOR_COPY.doorHostUnavailable);
-    expect(refusal?.textContent, "the certificate advice was given for a pairing link")
-      .not.toMatch(/root certificate/i);
-    /* ZERO FETCHES. Nothing was configured, so the previous door's mirror is untouched. */
+    /* THE PANE, which is the paired door's own field for the link. */
+    expect(el.querySelector("#host-link"), "the link was not recognised as a pairing link")
+      .toBeTruthy();
+    /* AND NOT THE OLD SENTENCE: a door that completes and still says it cannot is a false state. */
+    expect(el.textContent).not.toContain(DOOR_COPY.doorHostUnavailable);
+    /* NO CERTIFICATE ADVICE for a pairing link — the refusal this routing exists to prevent.
+       SCOPED TO `.join-error`, and that scope is not a weakening: the self-hosted door's standing
+       hint under its address field mentions a root certificate at rest, before anything has been
+       typed, so a whole-screen read of those words only ever answered "did the window move". */
+    expect(el.querySelector(".join-error")?.textContent ?? "",
+      "the certificate advice was given for a pairing link").not.toMatch(/root certificate/i);
+    /* ZERO FETCHES. The link is recognised in the window; nothing was configured, so the previous
+       door's mirror is untouched — which is the whole reason the recognition precedes the dial. */
     expect(shell.calls, "the window dialled before recognising the link").toEqual([]);
   });
 

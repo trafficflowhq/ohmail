@@ -830,6 +830,12 @@ describe("the Rust side", () => {
       "engine_request",
       "engine_configure",
       "engine_logout",
+      // The paired door's first step on an install that has no engine to ask: the shell starts one
+      // for the CANDIDATE door, in a directory of its own, asks it the same `/cloud/probe` a
+      // running engine would answer, and removes that directory. It takes the origin and the pin
+      // from the link and no token — the token is single-use and is spent at the redeem, over
+      // `engine_request`. Nothing is configured by it.
+      "host_candidate_probe",
       // The two the WINDOW drives rather than the shell — a notice in the operating system's
       // notification centre, and the count on the dock icon.
       "notify",
@@ -1422,9 +1428,24 @@ describe("the Rust side", () => {
      * data directory and a constant — so there is no path from a value in the window to a file
      * this module can delete. Change the sweep to take a caller-supplied path, or point it
      * anywhere but `attachment_root`, and this goes red. */
+    /* THE SECOND `remove_dir_all` IS THE CANDIDATE WALK'S TEARDOWN, and the pin moved with the
+     * reason rather than being raised to make a run green. The paired door's first step starts an
+     * engine for a CANDIDATE — an address somebody pasted, unproven — in a directory of its own,
+     * and removing that directory is how a refused candidate is undone. It is held to exactly the
+     * standard the sweep is: the path is composed from the app's own data directory and a CONSTANT
+     * name in `config.rs`, never from anything the window said, and the removal names that one
+     * variable. A candidate directory derived from the origin, the pin, or any other value off the
+     * wire would put a window-supplied component into a path this module deletes. */
     expect(engine.match(/fs::read_dir/g)).toHaveLength(1);
     expect(engine.match(/fs::remove_file/g)).toHaveLength(1);
-    expect(engine.match(/fs::remove_dir_all/g)).toHaveLength(1);
+    expect(engine.match(/fs::remove_dir_all/g)).toHaveLength(2);
+    expect(engine).toMatch(/let dir = config::candidate_data_dir\(root\);/);
+    expect(engine.match(/fs::remove_dir_all\(&dir\)/g)).toHaveLength(1);
+    const configRs = read("src-tauri/src/config.rs");
+    expect(configRs).toMatch(/const CANDIDATE_DIR_NAME: &str = "engine-candidate";/);
+    expect(configRs).toMatch(
+      /pub fn candidate_data_dir\(root: &Path\) -> PathBuf \{\s*root\.join\(CANDIDATE_DIR_NAME\)\s*\}/,
+    );
     expect(engine).toMatch(/fn sweep_attachments\(root: &Path, keep: Duration\)/);
     expect(engine).toMatch(/let Ok\(entries\) = fs::read_dir\(root\)/);
     expect(engine.match(/sweep_attachments\(&root, ATTACHMENT_KEEP\)/g)).toHaveLength(1);
