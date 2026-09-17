@@ -29,11 +29,10 @@ export type LocalDb = PgliteDatabase<typeof mailSchema>;
  * this database or any other (`local-store-durability.test.ts` says so, from both sides).
  *
  * It does NOT make the write asynchronous: the log is opened `O_DSYNC` ({@link WAL_SYNC_METHOD}),
- * so a write is on the disk when it returns and what a kill takes is what is still in
- * `wal_buffers` — not, as this note used to say, everything since the last checkpoint. What it
- * stops is a commit FORCING the partial page out, which makes the writes bigger and fewer. And the
- * scope is the TRANSACTION and not the session: gone session-wide, a statement that dirties
- * hundreds of buffers pays the flush at every eviction instead, 2 474 ms against 77 ms.
+ * so a kill takes what is in `wal_buffers`, not everything since the last checkpoint. It stops a
+ * commit FORCING the partial page out, making the writes bigger and fewer, and an import is
+ * bandwidth-limited by exactly that. The scope is the TRANSACTION: gone session-wide, a statement
+ * dirtying hundreds of buffers pays the flush at every eviction instead, 2 474 ms against 77 ms.
  */
 const INGEST_SYNCHRONOUS_COMMIT = "off";
 
