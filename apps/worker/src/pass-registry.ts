@@ -55,6 +55,19 @@ export const WORKER_PASSES: readonly WorkerPass[] = [
     fence: "the visit's leased adapter + sync write fence",
   },
   {
+    name: "junk_rescue",
+    module: `${W}/junk-rescue.ts`, entry: "junkRescuePass",
+    // "visit" alone, and that IS the dual-mode claim rather than a narrowing of it: the pass runs
+    // inside `runSyncCycle`, which the desktop engine imports as `@trafficflow/worker/sync` — one
+    // implementation per invariant, reached by every composition that syncs. `sidecar-drain` names
+    // a pass the engine calls SEPARATELY, and this is not one.
+    triggers: ["visit"],
+    cadence: "command-driven: a \"not junk\" press records a junk_rescues row; every visit works the due ones off, before the change scan so the same cycle ingests the arrival",
+    budget: "JUNK_RESCUES_PER_CYCLE per visit, one move each; JUNK_RESCUE_MAX_ATTEMPTS then the row answers `refused`",
+    owns: "a queued \"not junk\" reaches the real mailbox exactly once, and the API never opens IMAP to apply it",
+    fence: "the visit's leased adapter + a fresh organizer-lease read before every move; every row write through the fenced group",
+  },
+  {
     name: "junk_restore",
     module: `${W}/junk-restore.ts`, entry: "junkRestorePass",
     triggers: ["visit"],

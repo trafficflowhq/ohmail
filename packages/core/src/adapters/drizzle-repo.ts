@@ -1,6 +1,6 @@
 import { and, asc, desc, eq, inArray, isNotNull, isNull, lte, or, sql, type SQL, type SQLWrapper } from "drizzle-orm";
 import type { AnyPgColumn } from "drizzle-orm/pg-core";
-import { accountStorage, changeLog, fenceErasedMailbox, MailboxErasedError, messages, messageInstances, messageFailures, folderOps, folderState, flagState, mailboxes, mailboxCredentials, mailboxFolders, threads, rules as rulesTbl, contacts as contactsTbl, auditLog, messageBodies, attachments as attachmentsTbl, routingDecisions, approvals, graduations, recordRouteOverride, routeOverrideActionId, awayReplies, awaySenderState, recordChange as recordChangeTx, recordChanges as recordChangesTx, type MailboxMustBeLive, bodyBytesOf, reserveBodyBytes, reserveBodyBytesEvicting, releaseBodyBytes, type ChangeInput, type LedgerTx, type Tx, type EntityType, auditAction, ACCOUNT_THREAD_STRUCTURE_LOCK_CLASS, dueNow as sharedDueNow, type FilingRefusalClass } from "@trafficflow/db";
+import { accountStorage, changeLog, fenceErasedMailbox, MailboxErasedError, messages, messageInstances, messageFailures, folderOps, junkRescues, folderState, flagState, mailboxes, mailboxCredentials, mailboxFolders, threads, rules as rulesTbl, contacts as contactsTbl, auditLog, messageBodies, attachments as attachmentsTbl, routingDecisions, approvals, graduations, recordRouteOverride, routeOverrideActionId, awayReplies, awaySenderState, recordChange as recordChangeTx, recordChanges as recordChangesTx, type MailboxMustBeLive, bodyBytesOf, reserveBodyBytes, reserveBodyBytesEvicting, releaseBodyBytes, type ChangeInput, type LedgerTx, type Tx, type EntityType, auditAction, ACCOUNT_THREAD_STRUCTURE_LOCK_CLASS, dueNow as sharedDueNow, type FilingRefusalClass } from "@trafficflow/db";
 import type {
   RepoPort, RoutingPort, ExternalOverrideInput, ExternalOverrideOutcome,
   StoredMessage, InsertedMessage, InsertMessageInput, FolderStateRow, FlagStateRow,
@@ -208,6 +208,31 @@ export interface FolderOpRow {
 }
 
 /**
+ * ONE PENDING "NOT JUNK" (`junk_rescues`, mail 0115) — a COORDINATE, never a message row. Junk
+ * lives outside the mirror (FOLDERS-SPEC.md §16.2), so there is nothing to join: the press
+ * recorded the Junk folder as it stood and the UID under its epoch, and the pass moves exactly
+ * that to INBOX.
+ */
+export interface PendingJunkRescue {
+  id: string;
+  accountId: string;
+  mailboxId: string;
+  /** The source folder the press named — `mailboxes.junk_folder` then, never re-derived now. */
+  folder: string;
+  /** The epoch the UID belongs to, as a decimal string: a UID means nothing outside it. */
+  uidValidity: string;
+  uid: number;
+  attempts: number;
+  /**
+   * The mailbox was switched OFF under "Use folders" since the press (FOLDERS-SPEC.md §17), so
+   * the command is VOID — an opted-out mailbox performs no move. Read on the join this select
+   * already makes, never as a second query, and stated rather than filtered out: the pass deletes
+   * the row so the window stops saying "queued" for ever.
+   */
+  foldersOff: boolean;
+}
+
+/**
  * What a landed IMAP move may write back — {@link WorkerRepo.completeFolderState}'s argument,
  * deliberately not a {@link FolderStateRow}. A FolderStateRow states an intent; a completion
  * records where the message physically IS after a move that was decided earlier, possibly by
@@ -406,6 +431,32 @@ export interface WorkerRepo extends RepoPort, RoutingPort {
   failFolderOp(op: Pick<FolderOpRow, "id" | "accountId" | "folderId">, error: string): Promise<void>;
   /** A transient miss: count the attempt, keep the command pending for the next cycle. */
   deferFolderOp(opId: string, attempts: number): Promise<void>;
+  /* ── THE JUNK RESCUE'S DESIRED STATE (`junk_rescues`, mail 0115) ─────────────────────────────
+   * `folder_ops`' shape at this seam too, and REQUIRED on this port rather than optional: an
+   * optional method lets a fake repo skip the pass in silence, which is how a queued command
+   * comes to be drained on one composition and not another. `apps/worker/src/junk-rescue.ts`
+   * drives these; the API records the press and never opens IMAP. */
+  /**
+   * The mailbox's DUE pending rescues, oldest press first — the same due predicate every other
+   * deferred mutation uses (NULL `next_attempt_at` is due now). `limit` is the per-cycle bound;
+   * the caller asks for one more than it will spend so "there is more" is a fact rather than a
+   * guess from a full page.
+   */
+  listPendingJunkRescues(mailboxId: string, limit?: number): Promise<PendingJunkRescue[]>;
+  /**
+   * The command is finished with: the move landed, the message was already gone, or the mailbox
+   * opted out. The row is DELETED — `folder_ops`' rule, and for its reason: a queue of completed
+   * commands is a queue every cycle walks past.
+   */
+  resolveJunkRescue(id: string): Promise<void>;
+  /** A refusal with retries left: count it, schedule it, and record the CLASS the server gave. */
+  deferJunkRescue(id: string, attempts: number, nextAttemptAt: Date, errorClass: FilingRefusalClass): Promise<void>;
+  /**
+   * The ladder ran out. `status='refused'` and the row STAYS — unlike every other terminal state
+   * here — because the person pressed a button and is owed the answer; the window renders it and
+   * a fresh press resets the row.
+   */
+  refuseJunkRescue(id: string, attempts: number, errorClass: FilingRefusalClass): Promise<void>;
   listKnownLocators(mailboxId: string): Promise<KnownLocator[]>;
   /**
    * Record that a locator disappeared — the worker's half of the move-evidence rule. On
@@ -2671,6 +2722,59 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
   async deferFolderOp(opId: string, attempts: number): Promise<void> {
     await this.db.update(folderOps).set({ attempts, updatedAt: new Date() })
       .where(eq(folderOps.id, opId));
+  }
+
+  async listPendingJunkRescues(mailboxId: string, limit?: number): Promise<PendingJunkRescue[]> {
+    const base = this.db.select({
+      id: junkRescues.id, accountId: junkRescues.accountId, mailboxId: junkRescues.mailboxId,
+      folder: junkRescues.folder, uidvalidity: junkRescues.uidvalidity, uid: junkRescues.uid,
+      attempts: junkRescues.attempts,
+      // One more column on a join this select has to make anyway — never a second query, which
+      // would spend the round trip it exists to save (`listPendingFolderStates`' rule).
+      foldersDisabledAt: mailboxes.foldersDisabledAt,
+    }).from(junkRescues).innerJoin(mailboxes, eq(mailboxes.id, junkRescues.mailboxId))
+      .where(and(
+        eq(junkRescues.mailboxId, mailboxId), eq(junkRescues.status, "pending"),
+        dueNow(junkRescues.nextAttemptAt),
+      ))
+      // ORDERED WHETHER OR NOT IT IS LIMITED, on the filing queue's rule: a LIMIT over physical
+      // row order is a queue that can starve, and the ordering costs nothing unlimited. By the
+      // PRESS, so the oldest command a person is still waiting on goes first.
+      .orderBy(asc(junkRescues.requestedAt), asc(junkRescues.id));
+    const rows = await (limit != null ? base.limit(limit) : base);
+    return rows.map((r) => ({
+      id: r.id, accountId: r.accountId, mailboxId: r.mailboxId, folder: r.folder,
+      // `String(bigint)` and never a Number: a UIDVALIDITY above 2^53 would come back one or two
+      // away from the epoch the guard compares against, which is a stranger moved to the inbox.
+      uidValidity: r.uidvalidity != null ? String(r.uidvalidity) : "0",
+      uid: r.uid, attempts: r.attempts,
+      foldersOff: r.foldersDisabledAt !== null,
+    }));
+  }
+
+  async resolveJunkRescue(id: string): Promise<void> {
+    await this.db.delete(junkRescues).where(eq(junkRescues.id, id));
+  }
+
+  async deferJunkRescue(
+    id: string, attempts: number, nextAttemptAt: Date, errorClass: FilingRefusalClass,
+  ): Promise<void> {
+    await this.db.update(junkRescues)
+      .set({ attempts, nextAttemptAt, lastErrorClass: errorClass, updatedAt: new Date() })
+      .where(eq(junkRescues.id, id));
+  }
+
+  async refuseJunkRescue(
+    id: string, attempts: number, errorClass: FilingRefusalClass,
+  ): Promise<void> {
+    // The schedule is CLEARED with the terminal status: a refused row is not due at any instant,
+    // and a stale `next_attempt_at` beside it would read as a retry somebody is waiting for.
+    await this.db.update(junkRescues)
+      .set({
+        status: "refused", attempts, nextAttemptAt: null,
+        lastErrorClass: errorClass, updatedAt: new Date(),
+      })
+      .where(eq(junkRescues.id, id));
   }
 
   /**
