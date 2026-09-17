@@ -74,6 +74,13 @@
   </screenshots>
 
   <releases>
+    <release version="0.19.5" date="2026-09-17">
+      <description>
+        <ul>
+          <li>The Ohbox list no longer slides under the cursor after a jump</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.19.3" date="2026-09-17">
       <description>
         <ul>
@@ -159,38 +166,6 @@
           <li>A decision you made while a pass was running is no longer overwritten by it</li>
           <li>A page you did not ask for</li>
           <li>Removing a mailbox waits for the mail it is still reading</li>
-        </ul>
-      </description>
-    </release>
-    <release version="0.18.0" date="2026-09-13">
-      <description>
-        <ul>
-          <li>ohmail builds as a Flatpak</li>
-          <li>The desktop app reports what it costs and how it feels</li>
-          <li>Stopping and starting again on a phone is one instruction</li>
-          <li>The Linux build measures start time and memory</li>
-          <li>The Screener works out its list once per change</li>
-          <li>A Screener decision that waited too long says so</li>
-          <li>A phone never takes a mailbox your computer is organizing</li>
-          <li>A rule applies to the mail that arrives after it</li>
-          <li>Quitting hands the mailbox back</li>
-          <li>Organizing a mailbox no longer fails while another one is being disconnected</li>
-          <li>A draft has a size limit</li>
-          <li>A large mailbox's first sync is bounded on the server as well</li>
-          <li>The desktop is stricter about the server address it stores</li>
-          <li>The reading screen's actions fit every phone width, in both languages</li>
-          <li>The phone asks for the notification it organizes behind</li>
-          <li>When a phone is organizing a mailbox, the app says so</li>
-          <li>How long a first import took</li>
-          <li>Links and buttons open your browser again on Linux</li>
-          <li>A slow credit check no longer reads as "AI unavailable"</li>
-          <li>Asking a phone to organize while your mail server is unreachable says so</li>
-          <li>Deleting your account closes every door behind it</li>
-          <li>Deleting your account clears the address you signed up with</li>
-          <li>Signing out removes every stored mailbox password</li>
-          <li>Removing a two-factor method signs out your other sessions</li>
-          <li>A server fault while renewing your session no longer signs you out</li>
-          <li>A message is never acted on under an id your mail server cannot vouch for</li>
         </ul>
       </description>
     </release>

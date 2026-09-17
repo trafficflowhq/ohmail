@@ -228,6 +228,14 @@ questions. They now say so.
 
 ### Opening a large mailbox puts mail on the list sooner: the first page is a viewport rather than five hundred messages, and the first sync of a launch waits for it instead of holding the database while the list is empty
 
+## [0.19.5] — 2026-09-17
+
+### The Ohbox list no longer slides under the cursor after a jump
+
+After jumping down a long Ohbox — with the scrollbar, End, or a search hit — the rows at the top
+of the window could slide away before you scrolled them out, as the list measured rows further
+down for the first time. The list now holds its rows still while it measures the ones around you.
+
 ## [0.19.3] — 2026-09-17
 
 ### Long lists scroll their rows out of view instead of hiding them
@@ -236,8 +244,8 @@ A long list draws only the messages around what you are looking at and sets asid
 rest. It used to set aside one height for every message it had not drawn, and messages are not all
 one height — one showing a line of its text is taller than one that is not — so a long list ran
 ahead of the messages in it and stepped over some without ever showing them. The list now measures
-every row it draws and sets aside the heights it actually saw, so scrolling moves it by exactly
-what you scrolled however long it is. 0.19.2 fixed this for short lists; this fixes the rest.
+every row it draws and sets aside the heights it actually saw, so a list of any length scrolls
+without stepping over messages. 0.19.2 fixed this for short lists; this fixes the rest.
 
 ## [0.19.2] — 2026-09-17
 
@@ -6943,7 +6951,8 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.19.3...HEAD
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.19.5...HEAD
+[0.19.5]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.19.5
 [0.19.3]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.19.3
 [0.19.2]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.19.2
 [0.19.1]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.19.1
