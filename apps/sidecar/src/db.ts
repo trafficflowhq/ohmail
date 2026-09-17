@@ -43,12 +43,11 @@ const INGEST_SYNCHRONOUS_COMMIT = "off";
  * …AND ONE TRANSACTION IN EVERY THIS MANY STILL WAITS, BECAUSE SOMETHING HAS TO DRAIN THE LOG.
  *
  * With no walwriter and no checkpointer, a durable commit is the only thing that writes the log
- * out in bulk. Relax every transaction a drain opens and it makes none, and each eviction then
- * flushes the log itself — one 8 KiB page per write where two fit, which is what an import is
- * bandwidth-limited by. Measured on one corpus: 8 439 bytes a write and 32.98 transactions a
- * second without, 17 806 and 56.90 with. It NARROWS what a kill takes, to this many transactions
- * rather than everything in `wal_buffers`, and sixteen over the forty-four that reads the same
- * census for that reason.
+ * out in bulk. Relax every transaction a drain opens and it makes none, so each eviction flushes
+ * the log itself — one 8 KiB page a write where two fit, which is what an import is bound by.
+ * Measured on one corpus: 8 439 bytes a write and 32.98 transactions a second without, 17 806 and
+ * 56.90 with. It NARROWS what a kill takes, to this many transactions rather than everything in
+ * `wal_buffers` — sixteen over the forty-four that reads the same census, for that reason.
  */
 export const INGEST_DURABLE_COMMIT_EVERY = 16;
 
