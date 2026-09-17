@@ -4999,19 +4999,16 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           cycles++;
           if (!hasBacklog) inboundDrained = true;
           if (!hasBacklog && !owesFiling) { drained = true; break; }
-          /* AND FOLD THE LOG IN WHILE THE DRAIN RUNS, ONCE PER {@link INGEST_FOLD_WAL_BYTES} OF IT.
-             A first import is ONE drain of up to a hundred cycles, so the checkpoint below it
-             bounds nothing while that runs: the log grows WITH the import, 14.8 KiB a message, and
-             a kill in that window takes all of it. Asking per CYCLE bounded that — and cost more
-             than the flush it stood in for, because a fold's price is the store's own dirty pages
-             and files and so grows with the mailbox: 374 of them over one large import, 56.2 ms
-             a message, a third of the throughput folding behind the drain instead. A cycle is not
-             a quantity of anything; what a crash replays is bytes, and `foldIfLogGrew` is that
-             question asked in bytes. */
-          if ((await opened.foldIfLogGrew()).folded) checkpoints += 1;
           // Yield, so a backlog drain cannot starve the request handler sharing this event loop.
           await new Promise((r) => setTimeout(r, 0));
         }
+        /* AND FOLD THE LOG IN, ONCE, WHERE THE DRAIN ENDS. Inside the loop it cost what it was
+           meant to save: a checkpoint re-logs every page touched after it as a full page image,
+           11.4 MB a fold on a warm import, so the log grew by half again a message and the store
+           spent its time writing it — 23.11 transactions a second against 38.53 with this line
+           here. What a kill replays is bounded between folds by the store's own five-minute
+           checkpointer, measured at 751 ms a whole interval deep. See {@link INGEST_FOLD_WAL_BYTES}. */
+        if (cycles > 0 && (await opened.foldIfLogGrew()).folded) checkpoints += 1;
         /* ONE LINE PER DRAIN, WRITTEN AT THE DRAIN'S END — a settled mailbox emits it every poll
            interval, so it stays quiet; a slow or spinning drain is the line that shows it.
            `slowestMs` above the poll interval is the signal to chase. It reports the WHOLE drain,

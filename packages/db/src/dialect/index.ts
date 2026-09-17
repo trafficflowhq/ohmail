@@ -217,49 +217,30 @@ export type SearchCorpus = "mail" | "kb";
  * reader who does not know why it is safe.
  */
 /**
- * HOW MUCH WRITE-AHEAD LOG MAY STAND BEHIND THE LAST FOLD WHILE MAIL IS COMING IN — the loss
- * window in bytes, and the ONE bound both stores take ({@link Dialect.foldLog}).
- *
- * Beside the seam because a bound one store read and the other did not is what this seam exists to
- * prevent, and because the phone's bundle substitutes the desktop store's module away. A fold's
- * price is the store's dirty pages and files, so it grows with the mailbox and does not fall by
- * taking more — per drain CYCLE it cost 56.2 ms a message. It bounds the REPLAY a launch owes
- * after a kill and how dirty the pool may get, NOT the loss window: the log is opened `O_DSYNC`.
+ * HOW MUCH WRITE-AHEAD LOG MAY STAND BEHIND THE LAST FOLD — the one bound both stores take
+ * ({@link Dialect.foldLog}), asked where a DRAIN ENDS and never inside one: a fold re-logs every
+ * page touched after it as a full page image, 11.4 MB a fold on a warm import, so one per cycle
+ * cost a third of the throughput. It bounds the REPLAY a launch owes after a kill, NOT the loss
+ * window — the log is opened `O_DSYNC`. Between folds that bound is the store's own five-minute
+ * checkpointer: a kill a whole interval deep reopened to its first row in 751 ms.
  */
 export const INGEST_FOLD_WAL_BYTES = 64 * 1024 * 1024;
 
-/**
- * …AND HOW MUCH MAY STAND BEHIND THE LAST TIME IT WAS WRITTEN OUT — the smaller of the two bounds
- * this one mechanism carries, and the one that decides the import's speed.
- *
- * PGlite has no WAL writer, so nothing writes the log ahead of the pages it protects: every
- * eviction then flushes it one page at a time, which measured 8 636 bytes a write against 16 863
- * and a third of the throughput. Forcing it out at this interval put the write back to 18 067
- * bytes and the pages that had to wait for a flush from 32.8 % to 0.99 %. It is a WRITE and not a
- * fold: nothing becomes durable that was not already, and the loss window is untouched.
- */
-export const INGEST_WRITE_WAL_BYTES = 768 * 1024;
-
-/** Where the log stood at each of the two things {@link Dialect.foldLog} does. Opaque to callers. */
+/** Where the log stood at the last fold {@link Dialect.foldLog} took. Opaque to callers. */
 export interface LogMark {
-  /** …at the last FOLD, against {@link INGEST_FOLD_WAL_BYTES}. */
+  /** …against {@link INGEST_FOLD_WAL_BYTES}. */
   folded: string | null;
-  /** …at the last forced WRITE, against {@link INGEST_WRITE_WAL_BYTES}. */
-  wrote: string | null;
 }
 
-/** The two bounds, together, because a store may never take one without the other. */
+/** The bound, carried rather than read, so both stores take the one the caller states. */
 export interface LogBounds {
   foldBytes: number;
-  writeBytes: number;
 }
 
 /** What one {@link Dialect.foldLog} call did, and where the log stands after it. */
 export interface LogFold {
   /** Whether this call folded the log in — a checkpoint. */
   folded: boolean;
-  /** Whether this call forced the log OUT without folding it. */
-  wrote: boolean;
   /** Growth since the last fold, in bytes, or `null` where the store cannot say. */
   grewBytes: number | null;
   /** The mark to pass back next time; carried whole. */
@@ -468,15 +449,12 @@ export interface Dialect {
   exec(db: unknown, statement: SQL): Promise<unknown[][]>;
 
   /**
-   * BOUND THE WRITE-AHEAD LOG — ONE mechanism carrying TWO bounds, because a store standing
-   * behind one of them and not the other is the shape this seam exists to prevent.
+   * FOLD THE WRITE-AHEAD LOG IN once it has grown past `foldBytes`, and say what that did.
    *
-   * PGlite runs Postgres standalone with neither a checkpointer NOR a WAL writer, so nothing
-   * folds or writes the log unless asked. Both are read from the INSERT pointer — the write
-   * pointer sits still while the ingest's commits do not wait for the flush, so a gate on it
-   * would never fire. Past `foldBytes` it takes a `CHECKPOINT`; past `writeBytes` it forces the
-   * log OUT with a durable commit, which flushes to its own commit record and pads nothing.
-   * SQLite has both of those processes, so its arm arms the fold and the write is a NO-OP there.
+   * PGlite runs Postgres standalone with no checkpointer, so nothing folds the log unless asked.
+   * The growth is read from the INSERT pointer: the write pointer sits still while the ingest's
+   * commits do not wait for the flush, so a gate on it would never fire. SQLite has a
+   * checkpointer of its own, so that arm arms it once in pages and answers the identity after.
    */
   foldLog(db: unknown, bounds: LogBounds, mark: LogMark): Promise<LogFold>;
 

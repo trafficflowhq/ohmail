@@ -24,7 +24,7 @@ import { drizzle as drizzleSqliteProxy } from "drizzle-orm/sqlite-proxy";
    `engine.ts` — the device twin is substituted at the module the barrel itself reaches. */
 import { mailboxCredentials, mailboxes, organizerDisplayName } from "@trafficflow/db";
 import {
-  INGEST_FOLD_WAL_BYTES, INGEST_WRITE_WAL_BYTES, brandDialect, deliverLocalNotifyAtCommit,
+  INGEST_FOLD_WAL_BYTES, brandDialect, deliverLocalNotifyAtCommit,
   dialect, type LogMark,
 } from "@trafficflow/db/dialect";
 import { migrateSqlite } from "@trafficflow/db/sqlite-migrate";
@@ -530,7 +530,7 @@ export async function openPhoneStore(
      transaction commits", which this store has to keep for itself. */
   /* The arming mark for the fold below — `null` until the store has been told the bound, and
      this store's own from then on. See `Dialect.foldLog`. */
-  let foldMark: LogMark = { folded: null, wrote: null };
+  let foldMark: LogMark = { folded: null };
   const branded = brandDialect(
     deliverLocalNotifyAtCommit(oneTransactionAtATime(db, transactionWaitMs)), "sqlite",
   ) as unknown as LocalDb;
@@ -543,11 +543,11 @@ export async function openPhoneStore(
        journal entries this open applied; the phone's schema is the platform's, brought up to date
        outside this handle, so a `0` here would be a reading nobody took. See `OpenLocalDb`. */
     migrations: null,
-    // A write-ahead checkpoint is a PGlite concept the engine calls per cycle and behind the drain.
+    // A write-ahead checkpoint is a PGlite concept the engine calls where a drain ends.
     // On this store the journal is the platform's and there is nothing for a caller to reclaim, so
     // this answers zero rather than pretending to have flushed something.
     checkpoint: async () => 0,
-    /* AND THE GATED FORM THE DRAIN CALLS PER CYCLE — the SAME bound in bytes as the desktop's,
+    /* AND THE GATED FORM THE DRAIN'S END CALLS — the SAME bound in bytes as the desktop's,
        through the same seam. This store's SQLite has its own checkpointer and counts pages, so
        `foldLog` arms it once at `INGEST_FOLD_WAL_BYTES / page_size` and the store folds itself
        from then on; `dropped` is `0` because nothing here reclaims a segment a caller could
@@ -555,10 +555,10 @@ export async function openPhoneStore(
        while the desktop's was bounded in bytes. */
     foldIfLogGrew: async () => {
       const out = await dialect(branded)
-        .foldLog(branded, { foldBytes: INGEST_FOLD_WAL_BYTES, writeBytes: INGEST_WRITE_WAL_BYTES }, foldMark)
-        .catch(() => ({ folded: false as const, wrote: false, grewBytes: null, mark: foldMark }));
+        .foldLog(branded, { foldBytes: INGEST_FOLD_WAL_BYTES }, foldMark)
+        .catch(() => ({ folded: false as const, grewBytes: null, mark: foldMark }));
       foldMark = out.mark;
-      return { folded: out.folded, wrote: out.wrote, grewBytes: out.grewBytes, dropped: 0 };
+      return { folded: out.folded, grewBytes: out.grewBytes, dropped: 0 };
     },
     /* NO GENERATION TO STATE, which is not the same as a first one: this store's writes go
        through the platform's SQLite and cannot be rolled back by a kill, so no cursor of its can

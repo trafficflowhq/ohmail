@@ -8,7 +8,7 @@ import { readMigrationFiles, type MigrationConfig, type MigrationMeta } from "dr
 import { mailSchema } from "@trafficflow/db/mail";
 import { MAIL_JOURNAL, adoptBaseline, adoptReissuedOriginals, readJournalOf } from "@trafficflow/db/journal";
 import {
-  INGEST_FOLD_WAL_BYTES, INGEST_WRITE_WAL_BYTES, brandDialect, dialect,
+  INGEST_FOLD_WAL_BYTES, brandDialect, dialect,
   type LogBounds, type LogMark,
 } from "@trafficflow/db/dialect";
 import { createStoreScheduler, currentStoreLane, scheduleStoreLanes, type StoreLaneCensus } from "./store-lanes.js";
@@ -271,8 +271,6 @@ export interface OpenLocalDbOptions {
    * than by writing sixty-four megabytes of log.
    */
   ingestFoldWalBytes?: number;
-  /** The {@link INGEST_WRITE_WAL_BYTES} window, injectable for the same reason. */
-  ingestWriteWalBytes?: number;
   /**
    * Told which {@link LocalDbOpenPhase} the open is entering, just before it does. Best-effort
    * narration for a window that is waiting; never awaited and never load-bearing. `migrating`
@@ -348,8 +346,6 @@ export const CHECKPOINT_INTERVAL_MS = 5 * 60_000;
 export interface StoreFold {
   /** Whether this call took a checkpoint. */
   folded: boolean;
-  /** Whether it forced the log OUT instead — the smaller bound, which folds nothing. */
-  wrote: boolean;
   /** The log's growth since the last fold, or `null` when the pointer could not be read. */
   grewBytes: number | null;
   /** Segments reclaimed — {@link checkpointWal}'s answer, `0` when nothing folded. */
@@ -1092,19 +1088,18 @@ export async function openLocalDb(dataDir: string, opts: OpenLocalDbOptions = {}
      * Every checkpoint this handle takes resets it, the periodic one included, so the window is
      * measured from the last fold of any kind and not from the last gated one.
      */
-    let logMark: LogMark = { folded: null, wrote: null };
+    let logMark: LogMark = { folded: null };
     const checkpoint = async (): Promise<number> => {
       if (closed) return 0;
       const dropped = await checkpointWal(client, pgDataDir, log, () => !closed);
-      /* A CHECKPOINT IS BOTH THINGS — it folds the log AND writes it — so it resets both marks.
-         Leaving the write mark behind would force the smaller door again for nothing. */
+      // Every checkpoint resets the window, the periodic one included, so the next gate measures
+      // from the last fold of ANY kind rather than from the last gated one.
       const at = closed ? null : await walGrownSince(client, "0/0").then((r) => r.at).catch(() => null);
-      logMark = { folded: at, wrote: at };
+      logMark = { folded: at };
       return dropped;
     };
     const bounds: LogBounds = {
       foldBytes: opts.ingestFoldWalBytes ?? INGEST_FOLD_WAL_BYTES,
-      writeBytes: opts.ingestWriteWalBytes ?? INGEST_WRITE_WAL_BYTES,
     };
     /**
      * THE GATE IS THE DIALECT'S, THE SEGMENT CENSUS IS THIS MODULE'S. `foldLog` decides whether
@@ -1114,18 +1109,18 @@ export async function openLocalDb(dataDir: string, opts: OpenLocalDbOptions = {}
      * skipping, which is the safe side of a question about what a crash would replay.
      */
     const foldIfLogGrew = async (): Promise<StoreFold> => {
-      if (closed) return { folded: false, wrote: false, grewBytes: 0, dropped: 0 };
+      if (closed) return { folded: false, grewBytes: 0, dropped: 0 };
       const before = walSegments(pgDataDir);
       const out = await dialect(db).foldLog(db, bounds, logMark)
-        .catch(() => ({ folded: false as const, wrote: false, grewBytes: null, mark: { folded: null, wrote: null } }));
+        .catch(() => ({ folded: false as const, grewBytes: null, mark: { folded: null } }));
       logMark = out.mark;
-      if (!out.folded) return { folded: false, wrote: out.wrote, grewBytes: out.grewBytes, dropped: 0 };
-      return { folded: true, wrote: false, grewBytes: out.grewBytes, dropped: before - walSegments(pgDataDir) };
+      if (!out.folded) return { folded: false, grewBytes: out.grewBytes, dropped: 0 };
+      return { folded: true, grewBytes: out.grewBytes, dropped: before - walSegments(pgDataDir) };
     };
-    /* WHERE BOTH WINDOWS START — the pointer as the open leaves it, so the first cycle's gate
-       measures the mail that cycle took and not the migrator and compaction behind it. */
+    /* WHERE THE WINDOW STARTS — the pointer as the open leaves it, so the first drain's gate
+       measures the mail that drain took and not the migrator and compaction behind it. */
     const opened = await walGrownSince(client, "0/0").then((r) => r.at).catch(() => null);
-    logMark = { folded: opened, wrote: opened };
+    logMark = { folded: opened };
 
     /* The checkpointer this database does not otherwise have. `unref` so it can never be the reason
        a process stays alive, and a fresh timer per tick rather than `setInterval` so a slow

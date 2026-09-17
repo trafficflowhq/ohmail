@@ -161,33 +161,9 @@ export function pgDialect(): Dialect {
         return Number.isFinite(grew) ? grew : null;
       };
       const grew = mark.folded === null ? null : await grownSince(mark.folded);
-      if (grew === null || grew >= bounds.foldBytes) {
-        /* A CHECKPOINT WRITES THE LOG AS WELL AS FOLDING IT, so it resets both marks — carrying
-           the write mark forward here would force one again immediately for nothing. */
-        await run(sql`CHECKPOINT`);
-        const now = await at();
-        return { folded: true, wrote: false, grewBytes: grew, mark: { folded: now, wrote: now } };
-      }
-      const sinceWrite = mark.wrote === null ? null : await grownSince(mark.wrote);
-      if (sinceWrite !== null && sinceWrite < bounds.writeBytes) {
-        return { folded: false, wrote: false, grewBytes: grew, mark };
-      }
-      /* THE WRITE DOOR. `pg_current_xact_id()` takes a transaction id and nothing else, so the
-         commit that follows writes ONE commit record — and waiting for that record's flush carries
-         every byte of log pending behind it out in one write. Nothing the product owns is touched
-         and nothing becomes durable that was not; a segment switch would do the same and pad the
-         rest of a segment, a third more log for the same work. IT SETS NOTHING: the wait is the
-         SESSION default, which one file owns and one suite asserts is `on` — the desktop store
-         relaxes its INGEST transactions and this is not one of them. */
-      await run(sql`begin`);
-      try {
-        await run(sql`select pg_current_xact_id()`);
-        await run(sql`commit`);
-      } catch (err) {
-        await run(sql`rollback`).catch(() => { /* the door is best-effort; the fold is the bound */ });
-        throw err;
-      }
-      return { folded: false, wrote: true, grewBytes: grew, mark: { folded: mark.folded, wrote: await at() } };
+      if (grew !== null && grew < bounds.foldBytes) return { folded: false, grewBytes: grew, mark };
+      await run(sql`CHECKPOINT`);
+      return { folded: true, grewBytes: grew, mark: { folded: await at() } };
     },
 
     exec: async (db, statement) => {
