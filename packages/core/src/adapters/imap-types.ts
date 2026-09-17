@@ -685,7 +685,24 @@ export interface PersistedFolderCursor {
    * on it and it may go backwards.
    */
   serverExists?: number;
+  /**
+   * WHERE A BUDGETED PASS STOPPED IN THIS FOLDER — {@link BudgetStop} without the folder name,
+   * because the row already names it, so a stop cannot be stored against the wrong one.
+   *
+   * Written by the caller from {@link ChangeBatch.budgetStop} at pass end and handed back as
+   * {@link ImapCursor.budgetStop}; the adapter reads it THERE and never here, exactly as it
+   * writes {@link serverExists} and never reads it. Absent is "this folder is not where the last
+   * pass stopped", which is every folder but at most one.
+   */
+  budgetStop?: FolderBudgetStop;
 }
+/**
+ * The pass-budget stop as ONE FOLDER'S row holds it — the lowest UID that folder still owes and
+ * the epoch that UID belongs to. Split from {@link BudgetStop} rather than reused whole: the
+ * folder is the row's own key, and a shape that can name a different one can be stored against
+ * the wrong row.
+ */
+export interface FolderBudgetStop { uidValidity: string; uid: number; }
 /**
  * One UID the adapter must not re-fetch, plus the `\Seen` state the database last observed for
  * it (`flag_state.observed_seen`, or the ingest-time flags before any flag row exists).

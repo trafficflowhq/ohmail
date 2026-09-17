@@ -6,7 +6,7 @@ import {
 import {
   WATCHED_FOLDERS, MessageGoneError, parseRef, FILING_BATCH_MAX,
   epochOf, epochVerdict, sameEpoch, UNKNOWN_EPOCH, type Epoch,
-  type ImapCursor, type KnownEntry, type MailboxAdapter, type PersistedFolderCursor,
+  type BudgetStop, type ImapCursor, type KnownEntry, type MailboxAdapter, type PersistedFolderCursor,
 } from "@trafficflow/core/adapters/imap";
 import { LeaseUnavailableError } from "@trafficflow/core/adapters/organizer-lease";
 // The role vocabulary lives in `@trafficflow/db` (mail 0083) because both the worker and the
@@ -420,7 +420,29 @@ export async function buildCursor(
   // A derivation is remembered only when it was built from a READ — a pass that reused the last
   // one has nothing new to say, and rewriting it would stamp old arrays with a new generation.
   if (readOwed) memo?.rememberFolders(fresh, rowEpochs, epochs);
-  return { folders };
+  /**
+   * WHERE THE LAST PASS'S BUDGET RAN OUT (mail 0115) — read out of the rows this function already
+   * has, so the resume costs no query. The adapter keeps its own copy for the life of one
+   * attachment; this is the copy that survives a restart, and the adapter prefers it. At most one
+   * row carries the pair, which is a property of the writer rather than of this read.
+   */
+  const stopped = folderRows.find((r) => r.budgetStop !== undefined);
+  return {
+    folders,
+    ...(stopped?.budgetStop === undefined
+      ? {}
+      : { budgetStop: { folder: stopped.folder, ...stopped.budgetStop } }),
+  };
+}
+
+/**
+ * Do two budget stops name the same place? A cycle that answers YES writes nothing — the stored
+ * stop and the one this pass reports are the same fact, and an idle tick may not spend a write on
+ * restating it (`idle-cycle-is-a-comparison.test.ts`'s rule). Absent on both sides is equal.
+ */
+function sameStop(a: BudgetStop | undefined, b: BudgetStop | undefined): boolean {
+  if (a === undefined || b === undefined) return a === b;
+  return a.folder === b.folder && a.uid === b.uid && sameEpoch(epochOf(a.uidValidity), epochOf(b.uidValidity));
 }
 
 /**
@@ -1287,6 +1309,17 @@ async function syncCycleWithin(
   for (const [folder, fc] of Object.entries(batch.newCursor.folders)) {
     if (deferred.has(folder)) continue;
     await fencedLiveGroup(deps, (r) => r.upsertMailboxFolder(mailboxId, folder, epochAware(fc, observedEpochs.get(folder))));
+  }
+
+  // WHERE THE BUDGET STOPPED — written once, HERE, at pass end (mail 0115). Not per page and not
+  // inside the commit loop: a stop written while the pass is still walking names a folder the
+  // pass then goes past, and a crash would leave that wrong place behind. Written for a DEFERRED
+  // folder too, because a stop acknowledges nothing — it is where the next pass should lead, and
+  // every folder from it kept its stored cursor either way. A pass that reached the end reports
+  // none and the stored one is CLEARED, so a finished first sync stops leading with a folder that
+  // owes nothing.
+  if (!sameStop(cursor.budgetStop, batch.budgetStop)) {
+    await fencedLiveGroup(deps, (r) => r.setMailboxBudgetStop(mailboxId, batch.budgetStop ?? null));
   }
 
   // AFTER the cursor writes, and skipped entirely when anything is deferred — see

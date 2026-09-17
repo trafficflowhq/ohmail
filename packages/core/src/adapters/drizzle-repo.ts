@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray, isNull, lte, or, sql, type SQL, type SQLWrapper } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNotNull, isNull, lte, or, sql, type SQL, type SQLWrapper } from "drizzle-orm";
 import type { AnyPgColumn } from "drizzle-orm/pg-core";
 import { accountStorage, changeLog, fenceErasedMailbox, MailboxErasedError, messages, messageInstances, messageFailures, folderOps, folderState, flagState, mailboxes, mailboxCredentials, mailboxFolders, threads, rules as rulesTbl, contacts as contactsTbl, auditLog, messageBodies, attachments as attachmentsTbl, routingDecisions, approvals, graduations, recordRouteOverride, routeOverrideActionId, awayReplies, awaySenderState, recordChange as recordChangeTx, recordChanges as recordChangesTx, type MailboxMustBeLive, bodyBytesOf, reserveBodyBytes, reserveBodyBytesEvicting, releaseBodyBytes, type ChangeInput, type LedgerTx, type Tx, type EntityType, auditAction, ACCOUNT_THREAD_STRUCTURE_LOCK_CLASS, dueNow as sharedDueNow, type FilingRefusalClass } from "@trafficflow/db";
 import type {
@@ -34,12 +34,21 @@ import { effectForDestination } from "../rules.js";
 // The Sent shape's single source — the stale-residue cleanup must never take a Sent row (its
 // export in imap-types.ts carries the watermark argument).
 import { SENT_SHAPED_CANONICAL } from "./imap-types.js";
+/* The stop's two shapes, imported rather than respelt: `BudgetStop` is what a pass REPORTS (it
+   names the folder), `FolderBudgetStop` what one folder's row HOLDS (the row names it). */
+import type { BudgetStop, FolderBudgetStop } from "./imap-types.js";
 import { providerAuthservIds } from "../authserv-ids.js";
 
 export interface PersistedFolderCursor {
   uidValidity: string; uidNext: number; highestModseq: string;
   /** Mail 0083 — the folder's `EXISTS`. Absent ⇒ the stored value is LEFT ALONE, not nulled. */
   serverExists?: number;
+  /**
+   * Mail 0115 — where a budgeted pass stopped IN THIS FOLDER, or absent for every folder but the
+   * one. Written only by {@link WorkerRepo.setMailboxBudgetStop}; the cursor upsert leaves the
+   * two columns alone, so a cursor round trip can never move a stop.
+   */
+  budgetStop?: FolderBudgetStop;
 }
 /**
  * One message this mailbox already stores, as the adapter's known-set needs it.
@@ -349,6 +358,15 @@ export interface WorkerRepo extends RepoPort, RoutingPort {
   lockAccountThreadStructure(accountId: string): Promise<void>;
   getMailboxFolders(mailboxId: string): Promise<Array<{ folder: string } & PersistedFolderCursor>>;
   upsertMailboxFolder(mailboxId: string, folder: string, cursor: PersistedFolderCursor): Promise<void>;
+  /**
+   * WHERE A BUDGETED PASS STOPPED, for this whole mailbox — `null` clears it (mail 0115).
+   *
+   * At most one folder row of a mailbox carries the pair, and this call is what makes that true:
+   * it clears the mailbox's rows and then sets the named one. Separate from {@link
+   * upsertMailboxFolder} because the stopped folder's CURSOR must not be written — the pass took
+   * nothing there and an advanced cursor would skip the mail it owes.
+   */
+  setMailboxBudgetStop(mailboxId: string, stop: BudgetStop | null): Promise<void>;
   /* ── USER-COMMANDED FOLDER OPERATIONS (`folder_ops`, mail 0074; FOLDERS-SPEC.md stage 2) ─────
    * The worker's repo half (apps/worker/src/folder-ops.ts drives these, fenced). The API
    * records commands; these apply their database consequences beside the IMAP writes. */
@@ -2179,6 +2197,13 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
       // to `upsertMailboxFolder`, which is harmless only because the writer skips an absent one.
       // Carrying it keeps the cursor a faithful round trip of the row.
       ...(r.serverExists == null ? {} : { serverExists: r.serverExists }),
+      // Mail 0115, on the line above's rule: carried on the READ so `buildCursor` can hand the
+      // stop back as `ImapCursor.budgetStop` and the pass resumes where the last one ran out.
+      // BOTH columns or neither — a uid whose epoch did not survive the read names a different
+      // message, so a half-written pair is dropped here rather than presented as a fact.
+      ...(r.budgetStopUid == null || r.budgetStopUidvalidity == null
+        ? {}
+        : { budgetStop: { uidValidity: String(r.budgetStopUidvalidity), uid: Number(r.budgetStopUid) } }),
     }));
   }
 
@@ -2205,6 +2230,32 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
         highestmodseq: BigInt(cursor.highestModseq), updatedAt: new Date(),
         ...(exists === undefined ? {} : { serverExists: exists }),
       },
+    });
+  }
+
+  /**
+   * Mail 0115 — see {@link WorkerRepo.setMailboxBudgetStop}. Two statements, in this order: the
+   * clear, then the set. A process that dies between them leaves NO stop, which is the state
+   * every mailbox was in before the column existed — the next pass begins at INBOX and loses one
+   * pass's lead, never a message. `updated_at` is deliberately not touched by the clear: the
+   * cursor did not move, and the surfaces reading that stamp are about the cursor.
+   */
+  async setMailboxBudgetStop(mailboxId: string, stop: BudgetStop | null): Promise<void> {
+    // The mailbox tombstone — `upsertMailboxFolder`'s note, same key and same order.
+    await fenceErasedMailbox(this.db as unknown as Tx, this.d, mailboxId);
+    await this.db.update(mailboxFolders)
+      .set({ budgetStopUid: null, budgetStopUidvalidity: null })
+      .where(and(eq(mailboxFolders.mailboxId, mailboxId), isNotNull(mailboxFolders.budgetStopUid)));
+    if (stop === null) return;
+    // UPSERT, because the stopped folder is one this pass took NOTHING from: it may have no row
+    // at all yet, and a row whose three cursor columns stay NULL is exactly the cold state the
+    // adapter already reads for a folder with no row.
+    await this.db.insert(mailboxFolders).values({
+      mailboxId, folder: stop.folder,
+      budgetStopUid: BigInt(stop.uid), budgetStopUidvalidity: BigInt(stop.uidValidity),
+    }).onConflictDoUpdate({
+      target: [mailboxFolders.mailboxId, mailboxFolders.folder],
+      set: { budgetStopUid: BigInt(stop.uid), budgetStopUidvalidity: BigInt(stop.uidValidity) },
     });
   }
 

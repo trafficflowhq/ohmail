@@ -806,6 +806,13 @@
       "when": 1791602600018,
       "tag": "0114_away_rotation_stamp",
       "breakpoints": true
+    },
+    {
+      "idx": 115,
+      "version": "7",
+      "when": 1791602600019,
+      "tag": "0115_first_sync_budget_stop",
+      "breakpoints": true
     }
   ]
 }

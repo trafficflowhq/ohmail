@@ -224,5 +224,12 @@ export const SQLITE_JOURNAL: readonly SqliteJournalEntry[] = [
     "statements": [
       "ALTER TABLE \"away_responders\" ADD COLUMN \"last_considered_at\" integer NOT NULL DEFAULT 0;"
     ]
+  },
+  {
+    "name": "0115_first_sync_budget_stop.sql",
+    "statements": [
+      "ALTER TABLE \"mailbox_folders\" ADD COLUMN \"budget_stop_uid\" integer;",
+      "ALTER TABLE \"mailbox_folders\" ADD COLUMN \"budget_stop_uidvalidity\" integer;"
+    ]
   }
 ] as const;
