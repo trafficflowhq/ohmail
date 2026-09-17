@@ -1,18 +1,12 @@
 /**
- * THE PAINT HALF OF THE OMARCHY THEME FEED — the part that runs BEFORE THE FIRST FRAME.
+ * THE PAINT HALF OF THE OMARCHY FEED - the part that runs BEFORE THE FIRST FRAME.
  *
- * `boot-stamp.ts` is a blocking script in the document head, so everything it can reach is
- * paint-blocking with it. That is the whole reason this file exists apart from `omarchy.ts`:
- * the feed's other half imports the mapping law (`packages/tokens/omarchy/mapping.js`, the
- * palette walks and every contrast floor), and dragging that into the head would hold the first
- * paint for a computation no launch needs before it. Split, the blocking path is the fence, the
- * selector forms and one `localStorage` read.
- *
- * Values land in ONE <style> element scoped to `:root[data-face="ohmarchy"]` — inline
- * properties on <html> would repaint every face. SCHEME x FACE STAYS ORTHOGONAL
- * (OHMARCHY-CONTRACT.md): the element uses the SAME FIVE SELECTOR FORMS as
- * `packages/tokens/src/ohmarchy.css`, written by one exported builder the landing demo's
- * explorer calls too.
+ * Apart from `omarchy.ts` because `boot-stamp.ts` is a blocking script and everything it reaches
+ * is paint-blocking with it: the other half imports the mapping law, which no launch needs
+ * before its first frame. Here it is the fence, the selector forms and one storage read. Values
+ * land in ONE <style> scoped to `:root[data-face="ohmarchy"]` - inline properties on <html>
+ * would repaint every face - and SCHEME x FACE STAYS ORTHOGONAL (OHMARCHY-CONTRACT.md): the
+ * five selector forms `packages/tokens/src/ohmarchy.css` uses, written by one shared builder.
  */
 import {
   fencedTokens,

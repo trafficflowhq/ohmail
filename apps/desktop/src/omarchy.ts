@@ -1,15 +1,12 @@
 /**
- * THE OMARCHY THEME FEED, from the window's side: raw theme material in, ohmail token values for
- * the ohmarchy face out. PULL is the `omarchy_theme` command asked once at start (an event
- * emitted before this bundle runs is an event nobody hears); PUSH is the `omarchy:theme` event
- * over the receive-only listen grant. Raw text down, nothing up.
+ * THE OMARCHY THEME FEED, from the window's side: raw theme material in, ohmail token values
+ * out. PULL is the `omarchy_theme` command asked once at start (an event emitted before this
+ * bundle runs is an event nobody hears); PUSH is the `omarchy:theme` event over the receive-only
+ * listen grant. Raw text down, nothing up.
  *
- * THE PAINT HALF IS A SEPARATE MODULE. `omarchy-paint.ts` holds the fence, the selector forms
- * and the cached palette, because the window's pre-paint stamp is a BLOCKING script and only
- * that half may be in it. This file is the half that reaches the mapping law — every palette
- * walk and contrast floor in `packages/tokens/omarchy/mapping.js` — and nothing in a launch
- * needs that before the first frame. The names the rest of the app already imported from here
- * are re-exported below, so the split is a fact about the bundle and not about the callers.
+ * This is the half that reaches the mapping law, so it is the half that may NOT be
+ * paint-blocking: `omarchy-paint.ts` holds the fence, the forms and the cached palette, and its
+ * names are re-exported here so the split is a fact about the bundle, not about the callers.
  */
 
 /*

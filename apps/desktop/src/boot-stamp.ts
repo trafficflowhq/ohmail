@@ -1,25 +1,12 @@
 /**
- * THE PRE-PAINT STAMP — THE FIRST FRAME IS THE PERSON'S FACE AND SCHEME.
+ * THE PRE-PAINT STAMP - the first frame is the person's face and scheme.
  *
- * This module is the window's BLOCKING head script (`<script src="./boot-stamp.js">`, no
- * `type="module"`, no `defer`, no `async`), built to its own IIFE file by the boot-stamp plugin
- * in `vite.config.ts`. Everything here runs before the body is parsed, so the attributes and the
- * cached palette are standing when the first frame is composed.
- *
- * It used to sit at the top of `main.tsx`, which the document loads as a MODULE script, and
- * module scripts are deferred: the stamp ran after the document had parsed, one paint late.
- * Measured on the Omarchy guest against the released 0.19.1 AppImage, 2026-09-17: the window's
- * first held colour was #fafaf9, the PAPER face's light canvas, for 278 ms, and only then the
- * ohmarchy face's #f2efe4 — a quarter of a second of every launch in a face the person did not
- * choose, since a Linux desktop gets the ohmarchy face by default.
- *
- * Not inline, though an inline script is the usual shape: this window's CSP is `script-src
- * 'self'` in two homes (the `<meta>` in index.html and the header in `tauri.conf.json`), and an
- * inline script would need a hash kept in step with this file in both of them. A same-origin
- * file is allowed by the policy as it stands and blocks the parser identically.
- *
- * The mapping law is deliberately NOT reachable from here — see `omarchy-paint.ts` for the
- * split and what it costs.
+ * The window's BLOCKING head script (`<script src="./boot-stamp.js">`, no module, defer or
+ * async), built to its own file by the boot-stamp plugin in `vite.config.ts`. It ran from
+ * `main.tsx` before, which the document loads as a module script and therefore defers: measured
+ * on the Omarchy guest, 278 ms of the paper face's canvas at the start of every launch. Not
+ * inline because `script-src 'self'` lives in two homes and a hash would have to be kept in step
+ * with this file in both. The mapping law is out of reach here - `omarchy-paint.ts` says why.
  */
 import { paintCachedOmarchyPalette } from "./omarchy-paint.js";
 
