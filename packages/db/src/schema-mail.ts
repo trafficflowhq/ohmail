@@ -1536,9 +1536,9 @@ export const awayResponders = pgTable("away_responders", {
  * off-and-on. Stated: ANY edit is a new episode, so a mid-trip typo fix may answer a
  * correspondent twice — deliberate, because twice is recoverable and never is not. Written BEFORE
  * the send: SMTP is not transactional, so claiming first costs a crash ONE unsent reply. `ON
- * CONFLICT DO NOTHING` returning zero rows IS the already-answered branch. `sender` is the
- * lowercased envelope author; the key to `messages` (mail 0118) is `ON DELETE SET NULL` — an
- * expunge must not un-answer a sender, and `sender` is on the row.
+ * CONFLICT DO NOTHING` returning zero rows IS the already-answered branch. `sender`, the
+ * lowercased envelope author, is on the row — which is why the key to `messages` (mail 0118) may
+ * SET NULL: an expunge must not un-answer a sender.
  */
 export const awayResponderSent = pgTable("away_responder_sent", {
   id: uuid("id").defaultRandom().primaryKey(),
@@ -1567,8 +1567,8 @@ export const awayResponderSent = pgTable("away_responder_sent", {
  * candidate set, so the window shrinks; and `UNIQUE (account_id, message_id)` is the structural
  * half of at-most-once — two runners race the INSERT, one gets a row. Written BEFORE the send:
  * `pending` commits with the throttle reservation, and the finalize is a compare-and-swap on
- * `outcome='pending'`. The key on `message_id` (mail 0118) is `ON DELETE SET NULL`, never RESTRICT:
- * an expunge must not un-answer a correspondent, and `sender` is on the row, so it does not.
+ * `outcome='pending'`. The key on `message_id` (mail 0118) SETs NULL, never RESTRICTs: `sender` is
+ * on the row, so an expunge does not un-answer a correspondent.
  */
 export const awayReplies = pgTable("away_replies", {
   id: uuid("id").defaultRandom().primaryKey(),

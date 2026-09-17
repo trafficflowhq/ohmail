@@ -1512,8 +1512,8 @@ export const awayResponderSent = sqliteTable("away_responder_sent", {
  * candidate set, so the window shrinks; and `UNIQUE (account_id, message_id)` is the structural
  * half of at-most-once — two runners race the INSERT, one gets a row. Written BEFORE the send:
  * `pending` commits with the throttle reservation, and the finalize is a compare-and-swap on
- * `outcome='pending'`. `message_id` is provenance and nullable: an expunge must not un-answer a
- * correspondent, and `sender` is on the row, so it does not.
+ * `outcome='pending'`. `message_id` is provenance and nullable: `sender` is on the row, so an
+ * expunge does not un-answer a correspondent.
  */
 export const awayReplies = sqliteTable("away_replies", {
   id: text("id").default(UUID_V4).primaryKey(),
