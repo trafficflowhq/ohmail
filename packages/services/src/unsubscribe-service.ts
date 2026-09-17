@@ -1085,10 +1085,16 @@ export class UnsubscribeService {
   private async recordStop(
     tx: Tx, stoppedAt: ScanCursor | null, budget: DrainBudget, now: Date,
   ): Promise<void> {
+    // NOTHING TO PAY WITH MEANS NOTHING IS ISSUED. `withDeadline` does not cancel — it stops
+    // WAITING — so a write started with no budget goes to the database while the invocation is
+    // already returning, and a platform kill decides whether it lands. A cursor the pass cannot
+    // vouch for is worse than the one it already has. Measured: the row appeared anyway, which is
+    // a race a test can read either way.
+    const left = budget.leftMs();
+    if (left <= 0) return;
     try {
       await withDeadline(
-        writeDrainCursor(tx, UNSUB_DRAIN_PASS, stoppedAt, now), budget.leftMs(),
-        "the drain cursor write");
+        writeDrainCursor(tx, UNSUB_DRAIN_PASS, stoppedAt, now), left, "the drain cursor write");
     } catch (err) {
       if (err instanceof ServiceError && err.code === "unsubscribe_budget_spent") return;
       throw err;
