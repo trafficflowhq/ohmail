@@ -60,12 +60,22 @@ export function pairLink(origin: string, token: string, pin: string | null): str
  * shape or whose token half is empty. Refusing a malformed pinned link is the point: the
  * alternative is redeeming the token with NO pin, the unencrypted pairing this shape exists to
  * make impossible.
+ *
+ * AND NO ADDRESS. A link names an ORIGIN and, where the origin's identity is the pin, that pin;
+ * which mailbox it opens is the host's answer at the redeem and is not the link's to carry.
+ * `https://someone@host/pair#…` parsed as the origin `https://someone@host` — an address inside
+ * the host — while the engine's own `normalizeOrigin` refuses credentials, so the two ends
+ * disagreed about what had been pasted and the door would configure a base no dial could reach.
  */
 export function parsePairLink(text: string): PairLink | null {
   const m = /^(https?):\/\/([^/?#\s]+)(\/[^?#\s]*)?(\?[^#\s]*)?(?:#(\S+))?$/i.exec(text.trim());
   if (!m) return null;
   const [, scheme, host, path, query, fragment] = m;
   if (query !== undefined) return null;
+  // Userinfo is the one address-shaped thing this grammar could carry, and it is refused before
+  // the origin is composed rather than stripped: a link that named one was written by something
+  // other than the Devices pane, and quietly dropping the half we do not want would admit it.
+  if (host!.includes("@")) return null;
   // The scheme match is case-insensitive (a QR encoder may upcase) and `normalize` lower-cases
   // the result, so one server stays one profile. The PATH comparison stays exact — /pair is a
   // route, and routes are case-sensitive.
