@@ -641,7 +641,7 @@ pub fn plan_with(
     resources: Option<&Path>,
     data_dir_fallback: Option<&Path>,
     required: &[&str],
-    /// The door the list belongs to, named in the refusal — see [`door_label_for`].
+    // The door the list belongs to, named in the refusal — see `door_label_for`.
     door: Option<&str>,
     look: &dyn Fn(&Path) -> Found,
 ) -> Plan {
