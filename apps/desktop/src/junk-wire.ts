@@ -12,8 +12,9 @@
 import type { JunkWire } from "../../webapp/app/shell/junk-window";
 
 /**
- * Thrown for every non-2xx answer down the pipe; carries the status so the door can read a 410,
- * and the server's error CODE so it can read a partial outcome (`junk_rescue_move_failed`).
+ * Thrown for every non-2xx answer down the pipe; carries the status so the body read can tell a
+ * 410 (the row is gone from Junk) from a refusal, and the server's error CODE so a door can name
+ * one. The rescue raises neither now — it records a command and touches no mail server.
  */
 export class JunkBridgeError extends Error {
   constructor(readonly status: number, readonly code: string | null, message: string) {
