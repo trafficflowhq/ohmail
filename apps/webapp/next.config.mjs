@@ -149,9 +149,9 @@ export const VERSION_VAR = "NEXT_PUBLIC_APP_VERSION";
  * one: a `package.json` with no `version` is a workspace that cannot state what it is, and that
  * is a build failure rather than a string to substitute.
  *
- * The root manifest and not this app's: `apps/webapp/package.json` carries `0.0.0` because it is
- * a private workspace member that is never published, and the release number belongs to the
- * product rather than to one of the four things built from it.
+ * The root manifest and not this app's own, which carries `0.0.0` because it is a private
+ * workspace member that is never published, and the release number belongs to the product rather
+ * than to one of the four things built from it.
  */
 export function appVersion() {
   const root = fileURLToPath(new URL("../../package.json", import.meta.url));
