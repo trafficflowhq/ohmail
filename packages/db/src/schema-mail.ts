@@ -1566,8 +1566,7 @@ export const awayResponderSent = pgTable("away_responder_sent", {
  * candidate set, so the window shrinks; and `UNIQUE (account_id, message_id)` is the structural
  * half of at-most-once — two runners race the INSERT, one gets a row. Written BEFORE the send:
  * `pending` commits with the throttle reservation, and the finalize is a compare-and-swap on
- * `outcome='pending'`. `message_id` is provenance and nullable (mail 0118 SETs it NULL, never
- * RESTRICTs): `sender` is on the row, so an expunge un-answers nobody.
+ * `outcome='pending'`. `message_id` is nullable — 0118 SETs it NULL, and `sender` stays.
  */
 export const awayReplies = pgTable("away_replies", {
   id: uuid("id").defaultRandom().primaryKey(),
