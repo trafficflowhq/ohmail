@@ -247,5 +247,24 @@ export const SQLITE_JOURNAL: readonly SqliteJournalEntry[] = [
       "CREATE TABLE \"junk_rescues\" (\n  \"id\" text PRIMARY KEY NOT NULL DEFAULT (lower(hex(randomblob(4))) || '-' || lower(hex(randomblob(2))) || '-4' ||\n  substr(lower(hex(randomblob(2))), 2) || '-' ||\n  substr('89ab', 1 + (abs(random()) % 4), 1) ||\n  substr(lower(hex(randomblob(2))), 2) || '-' || lower(hex(randomblob(6)))),\n  \"account_id\" text NOT NULL,\n  \"mailbox_id\" text NOT NULL REFERENCES \"mailboxes\"(\"id\"),\n  \"folder\" text NOT NULL,\n  \"uidvalidity\" integer NOT NULL,\n  \"uid\" integer NOT NULL,\n  \"status\" text NOT NULL DEFAULT 'pending',\n  \"attempts\" integer NOT NULL DEFAULT 0,\n  \"next_attempt_at\" integer,\n  \"last_error_class\" text,\n  \"requested_at\" integer NOT NULL DEFAULT (CAST(unixepoch('subsec') * 1000 AS INTEGER)),\n  \"updated_at\" integer NOT NULL DEFAULT (CAST(unixepoch('subsec') * 1000 AS INTEGER)),\n  CONSTRAINT \"junk_rescues_locator_uq\" UNIQUE (\"mailbox_id\", \"folder\", \"uidvalidity\", \"uid\"),\n  CONSTRAINT \"junk_rescues_status_closed\" CHECK (\"status\" in ('pending', 'refused'))\n);",
       "CREATE INDEX \"junk_rescues_due_idx\" ON \"junk_rescues\" (\"mailbox_id\",\"next_attempt_at\") WHERE \"status\" = 'pending';"
     ]
+  },
+  {
+    "name": "0118_account_isolation.sql",
+    "statements": [
+      "CREATE UNIQUE INDEX \"mailboxes_id_account_uq\" ON \"mailboxes\" (\"id\", \"account_id\");",
+      "CREATE UNIQUE INDEX \"messages_id_account_uq\" ON \"messages\" (\"id\", \"account_id\");",
+      "CREATE UNIQUE INDEX \"threads_id_account_uq\" ON \"threads\" (\"id\", \"account_id\");",
+      "CREATE UNIQUE INDEX \"contacts_id_account_uq\" ON \"contacts\" (\"id\", \"account_id\");",
+      "CREATE UNIQUE INDEX \"tags_id_account_uq\" ON \"tags\" (\"id\", \"account_id\");",
+      "CREATE UNIQUE INDEX \"drafts_id_account_uq\" ON \"drafts\" (\"id\", \"account_id\");",
+      "CREATE UNIQUE INDEX \"outbound_sends_id_account_uq\" ON \"outbound_sends\" (\"id\", \"account_id\");",
+      "CREATE UNIQUE INDEX \"routing_decisions_id_account_uq\" ON \"routing_decisions\" (\"id\", \"account_id\");",
+      "CREATE UNIQUE INDEX \"rules_id_account_uq\" ON \"rules\" (\"id\", \"account_id\");",
+      "CREATE UNIQUE INDEX \"workflows_id_account_uq\" ON \"workflows\" (\"id\", \"account_id\");",
+      "CREATE UNIQUE INDEX \"users_id_account_uq\" ON \"users\" (\"id\", \"account_id\");",
+      "CREATE UNIQUE INDEX \"devices_id_account_uq\" ON \"devices\" (\"id\", \"account_id\");",
+      "CREATE UNIQUE INDEX \"sessions_id_account_uq\" ON \"sessions\" (\"id\", \"account_id\");",
+      "CREATE UNIQUE INDEX \"mailbox_folders_id_mailbox_uq\" ON \"mailbox_folders\" (\"id\", \"mailbox_id\");"
+    ]
   }
 ] as const;
