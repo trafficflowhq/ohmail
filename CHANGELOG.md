@@ -13,6 +13,31 @@ See [Status](README.md#status--read-this-first).
 
 ## [Unreleased]
 
+### A rule you make no longer moves mail you filed yourself or set aside
+
+Choosing where a sender's mail goes moves up to fifty of their messages at once, and the rest
+follow in the background. The background pass has always left your own folders alone, along with
+mail you had set aside, replied to or muted — the fifty did not, so a message you had filed in
+Archive, or a receipt you had put aside, could be pulled into the sender's new place by the same
+press. Both halves choose the same mail now, on the web, the computer and the phone. On the phone
+those fifty are the newest messages — the ones on screen — instead of whichever fifty the mailbox
+listed first, and a move the rule makes is recorded, so it can be undone.
+
+### Every time you pick survives the clock change
+
+On the two nights a year the clocks move, an hour can be missing or happen twice. Resurface times
+already handled it; the date picker and Send later do too now. Each day in the picker states the
+time it would actually book, and a send you schedule for an hour that does not exist tells you
+which hour it will go at instead — before you press. The computer and the phone resolve it the
+same way.
+
+### The mail engine starts with a smaller allocator
+
+Its memory grew in steps that nothing in it was holding: the C library gives every busy thread its
+own pool, and the pools kept what they were lent. It starts with two now, which gives back about
+45 MB at rest and costs no measurable time. The same change gives nothing on the window's own
+process, so it is asked for where it was measured to help and nowhere else.
+
 ### Move organizing to another computer while away replies are going out and the message that stops is still answered later, not written off.
 
 The away responder asked whether it still held the mailbox at the last moment before each reply
