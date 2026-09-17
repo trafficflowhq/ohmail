@@ -1028,17 +1028,17 @@ export class UnsubscribeService {
       sweep.remaining += one.remaining;
     }
 
-    // THE PASS ENDS HERE, AND THE CURSOR IS WRITTEN ONCE — never per page. A run killed mid-walk
-    // resumes from the last END, which costs at most one repeat of the work it had already done;
-    // a cursor written per page would leave a killed run claiming to have looked at a page it
-    // never posted for. The count below is a report about the whole window and cannot move it.
-    await writeDrainCursor(tx, UNSUB_DRAIN_PASS, walk.stoppedAt, opts.now());
-
     // WHAT IS STILL OWED, COUNTED RATHER THAN INFERRED — the reserve this budget holds back exists
     // for this one read. It is `null`, never 0, when the counting walk did not reach the end of
     // the window: a zero that is really "I stopped looking" is the sentence that told an operator
     // this pass was keeping up while it had not looked at the backlog at all.
     const remaining = await this.owedCount(tx, since, budget);
+
+    // THE PASS ENDS HERE, AND THE CURSOR IS WRITTEN ONCE — never per page, and never before the
+    // pass has finished. A run that dies anywhere above resumes from the last END: it repeats work
+    // it had already done, which is cheap, instead of claiming to have looked past a page it never
+    // posted for, which is the fairness this cursor exists to give.
+    await writeDrainCursor(tx, UNSUB_DRAIN_PASS, walk.stoppedAt, opts.now());
 
     return { accounts: visited, sweep, remaining, elapsedMs: budget.elapsedMs() };
   }

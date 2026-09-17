@@ -14,7 +14,7 @@ import { dialect } from "@trafficflow/db/dialect";
 import {
   attachments, drafts, flagState, folderOps, folderState, mailboxFolders, messageBodies,
   messageFailures, messageInstances, messageStates, messageTags, messages, outboundSends,
-  recordMailboxRemoved, routingDecisions, trackerEvents, unsubscribeRecords,
+  recordMailboxRemoved, routingDecisions, trackerEvents, unsubscribeExamined, unsubscribeRecords,
   type LedgerTx, type Tx,
 } from "@trafficflow/db";
 
@@ -110,6 +110,8 @@ export async function deleteMailboxRows(db: Tx, mailboxId: string): Promise<void
 
   // ── THE MESSAGES' OWN CHILDREN ────────────────────────────────────────────────────────────
   await db.delete(messageTags).where(inArray(messageTags.messageId, ownMessages));
+  // The per-message marks hang off the record by foreign key, so they go first.
+  await db.delete(unsubscribeExamined).where(inArray(unsubscribeExamined.messageId, ownMessages));
   await db.delete(unsubscribeRecords).where(eq(unsubscribeRecords.mailboxId, mailboxId));
   await db.delete(attachments).where(inArray(attachments.messageId, ownMessages));
   await db.delete(trackerEvents).where(inArray(trackerEvents.messageId, ownMessages));
