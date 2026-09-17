@@ -1519,9 +1519,11 @@ export const awayReplies = sqliteTable("away_replies", {
   /** The mailbox the message ARRIVED in — the identity the reply is sent from. */
   mailboxId: text("mailbox_id").notNull(),
   /**
-   * The message that triggered it — PROVENANCE, nullable like its Postgres twin. This store
-   * carries no foreign keys, so nothing nulls it here; it is nullable so a row whose pointer the
-   * server dropped on an expunge is representable, and so the twins stay one schema.
+   * The message that triggered it — PROVENANCE, nullable like its Postgres twin so the two stay
+   * ONE schema. The sqlite STORE keeps NOT NULL, because SQLite has no `DROP NOT NULL` and a
+   * table rebuild is what the sqlite 0118 refuses; nothing can violate it there, measured: this
+   * store has no keys to null it, `away_replies` is not a synced entity so no mirrored row
+   * carries one, and both writers supply the id.
    */
   messageId: text("message_id"),
   /** The lowercased envelope author. Never a display name. */
