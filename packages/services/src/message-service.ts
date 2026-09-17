@@ -780,18 +780,24 @@ export class MessageService {
       let last: bigint | null = null;
 
       if (body.unread !== undefined) {
+        // ONE instant for this decision, read once. The reading stamp, the row's `updated_at`
+        // and the `\Seen` intent are one event; three `ctx.now()` calls made them three times
+        // that disagree whenever the calls cross a millisecond, and a client then reads a row
+        // whose `updatedAt` is later than the reading that caused it. `screener-apply.ts` has
+        // always written the three from one `now`.
+        const at = ctx.now();
         await tx.update(messages).set({
           unread: body.unread,
           // WHEN reading happened, stamped by the statement that decides THAT it happened.
           // Marking unread clears it: the message has no reading to be ordered by any more, and
           // leaving the old instant behind would file a message the user deliberately put back
           // into "Earlier" as recently finished with. See `messages.lastReadAt`.
-          lastReadAt: body.unread ? null : ctx.now(),
-          updatedAt: ctx.now(),
+          lastReadAt: body.unread ? null : at,
+          updatedAt: at,
         }).where(and(eq(messages.id, id), eq(messages.accountId, ctx.accountId)));
         // The read model AND the intent, in the same transaction. Writing only `messages.unread`
         // was the original bug: the flag never reached the mailbox, so it survived nothing.
-        await upsertDesiredSeen(tx, id, !msg.unread, !body.unread, ctx.now());
+        await upsertDesiredSeen(tx, id, !msg.unread, !body.unread, at);
         last = await recordChange(tx, {
           accountId: ctx.accountId, entityType: "message", entityId: id, op: "update", meta: null,
         });
@@ -916,11 +922,14 @@ export class MessageService {
       // selection marked read in a single gesture is one reading event, so its members must not
       // spread themselves across the order by however long the transaction took: they tie, and
       // the sort's own id tiebreak keeps them in a stable order among themselves.
-      const readAt = unread ? null : ctx.now();
+      // `updatedAt` and the `\Seen` intent are that same event and take that same instant; while
+      // they were minted per row, one gesture stamped its rows however far apart they landed.
+      const at = ctx.now();
+      const readAt = unread ? null : at;
       for (const id of ids) {
-        await tx.update(messages).set({ unread, lastReadAt: readAt, updatedAt: ctx.now() })
+        await tx.update(messages).set({ unread, lastReadAt: readAt, updatedAt: at })
           .where(and(eq(messages.id, id), eq(messages.accountId, ctx.accountId)));
-        await upsertDesiredSeen(tx, id, observedById.get(id) ?? false, !unread, ctx.now());
+        await upsertDesiredSeen(tx, id, observedById.get(id) ?? false, !unread, at);
         last = await recordChange(tx, {
           accountId: ctx.accountId, entityType: "message", entityId: id, op: "update", meta: null,
         });
