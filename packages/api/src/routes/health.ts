@@ -794,6 +794,14 @@ export const SCHEMA_INDEX_MARKERS: ReadonlyArray<string> = [
   // raise at request rate. Absent, nothing raises and every test stays green; the only symptom
   // is every user's every request paying for every session the deployment has ever minted.
   "sessions_access_token_hash_idx",
+  // mail 0118_account_isolation. The one entry here whose absence is NOT silent, listed for the
+  // OPPOSITE reason to the five above: these fourteen unique indexes exist to be REFERENCED by the
+  // composite account keys the same migration adds, so a database without them carries no
+  // account-scoped foreign key either and a cross-account parent goes unguarded. It is probed here
+  // because `pg_indexes` is the only catalog that can see any part of that migration — both
+  // constraint probes below are scoped `contype = 'c'`, so a FOREIGN KEY is invisible to all five
+  // marker classes, which is why the cloud half of the same change gets no marker at all.
+  "messages_id_account_uq",
 ];
 
 /**
@@ -1017,7 +1025,7 @@ export const MAIL_EXPECTED_MARKERS =
 // 0067/0068 (the device-sync alert's withdrawn SECURITY DEFINER carrier and its retirement)
 // add no column and get no marker: a function's absence is the ALERT RULE's own isolated,
 // tolerated state, not a schema fault a serving API should 503 over.
-export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0117_junk_rescues";
+export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0118_account_isolation";
 
 
 /* `CLOUD_SCHEMA_MARKER_JOURNAL_TAG` moved to `./health-cloud.js`: it is the NAME of a cloud
