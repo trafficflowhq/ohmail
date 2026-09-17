@@ -23,6 +23,15 @@
  * absolute rows: rows stay normal children in document order, so selection styling,
  * `useSeenOnScroll`'s `[data-id]` contract and focus order work as before.
  */
+
+/**
+ * AND THE CONTENT HOLDS STILL UNDER THE READER. An estimate is frozen once its row stands above
+ * the rendered slice, so a later measurement cannot re-price the rows already scrolled past —
+ * that moved the spacer under a fixed `scrollTop`, and the rows at the top edge left before they
+ * reached it (reported live on 0.19.3, after any jump). When a measurement moves the offset of
+ * the item under the top edge, `scrollTop` moves by exactly that delta in the same layout
+ * effect, before paint: the scroller's `overflow-anchor` is off (app.css), so this is the anchor.
+ */
 import {
   useCallback,
   useEffect,
@@ -91,6 +100,16 @@ export function useListWindow({
   const [measured, setMeasured] = useState(0);
   /** index → the height that index was last drawn at. Never cleared: a row keeps its size. */
   const heights = useRef<Map<number, number>>(new Map());
+  /**
+   * index → the estimate an undrawn index was reserved at once it stood above the slice. Read
+   * before the mean and replaced only by a measurement, so the rows the reader scrolled past keep
+   * the price the spacer already paid for them.
+   */
+  const frozen = useRef<Map<number, number>>(new Map());
+  /** Every unmeasured index below this has a frozen estimate; the freezing pass resumes here. */
+  const frozenUpTo = useRef(0);
+  /** The item under the top edge at the last commit, where the DOM had it, and at which count. */
+  const anchor = useRef<{ index: number; offset: number; count: number } | null>(null);
   /** Bumped when a measurement moves, which is what makes the sums below recompute. */
   const [samples, setSamples] = useState(0);
 
@@ -126,10 +145,11 @@ export function useListWindow({
   }, [scrollerRef, sample]);
 
   /**
-   * THE HEIGHT OF A ROW NOBODY HAS DRAWN. The mean of the measurements, so a list of two- and
-   * three-line rows reserves the average of the two rather than the first one's height for all of
-   * them. A caller that stamps no `data-index` measures nothing and falls back to the one row
-   * this hook reads itself, which is what every equal-height list did before the cache.
+   * THE HEIGHT OF A ROW NOBODY HAS DRAWN AND NOBODY HAS SCROLLED PAST. The mean of the
+   * measurements, so a list of two- and three-line rows reserves the average of the two rather
+   * than the first one's height for all of them; an index above the slice keeps its `frozen`
+   * price instead. A caller that stamps no `data-index` measures nothing and falls back to the
+   * one row this hook reads itself, which is what every equal-height list did before the cache.
    */
   const mean = useMemo(() => {
     let sum = 0;
@@ -147,7 +167,9 @@ export function useListWindow({
   /** `prefix[i]` = where item `i` starts. `prefix[count]` is the list's whole height. */
   const prefix = useMemo(() => {
     const p = new Float64Array(count + 1);
-    for (let i = 0; i < count; i += 1) p[i + 1] = p[i]! + (heights.current.get(i) ?? mean);
+    for (let i = 0; i < count; i += 1) {
+      p[i + 1] = p[i]! + (heights.current.get(i) ?? frozen.current.get(i) ?? mean);
+    }
     return p;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [count, mean, samples]);
@@ -170,8 +192,10 @@ export function useListWindow({
     return lo;
   };
 
-  const start = Math.max(0, Math.min(count, indexAt(scrollTop) - overscan));
-  const end = Math.min(count, indexAt(scrollTop + height) + 1 + overscan);
+  const windowed = count > FULL_RANGE_MAX_ROWS;
+  const start = windowed ? Math.max(0, Math.min(count, indexAt(scrollTop) - overscan)) : 0;
+  const end = windowed ? Math.min(count, indexAt(scrollTop + height) + 1 + overscan) : count;
+  const padTop = windowed ? (prefix[start] ?? 0) : 0;
 
   /**
    * MEASURE WHAT IS ON SCREEN, BY INDEX. `useLayoutEffect` so corrected spacers are in place
@@ -192,27 +216,63 @@ export function useListWindow({
       const was = heights.current.get(i);
       if (was === undefined || Math.abs(was - h) >= 1) {
         heights.current.set(i, h);
+        frozen.current.delete(i);
         moved = true;
       }
     }
     if (moved) setSamples((n) => n + 1);
 
-    /* The pre-cache fallback, for a list that stamps no index: one row's height, taken only at
-       the top where the leading row's identity does not depend on the height it produces. */
-    if (heights.current.size > 0) return;
-    const row = el.querySelector<HTMLElement>(".row");
-    const rh = row?.offsetHeight ?? 0;
-    if (rh > 0 && Math.abs(rh - measured) >= 1 && (measured === 0 || start === 0)) setMeasured(rh);
+    if (heights.current.size === 0) {
+      /* The pre-cache fallback, for a list that stamps no index: one row's height, taken only at
+         the top where the leading row's identity does not depend on the height it produces. */
+      const row = el.querySelector<HTMLElement>(".row");
+      const rh = row?.offsetHeight ?? 0;
+      if (rh > 0 && Math.abs(rh - measured) >= 1 && (measured === 0 || start === 0)) setMeasured(rh);
+      return;
+    }
+
+    /* FREEZE what this commit reserved above the slice: the same `mean` the prefix priced it at,
+       so the sums do not move, and the next mean cannot reach these indices. */
+    for (let i = frozenUpTo.current; i < start; i += 1) {
+      if (!heights.current.has(i) && !frozen.current.has(i)) frozen.current.set(i, mean);
+    }
+    if (start > frozenUpTo.current) frozenUpTo.current = start;
+
+    /* COMPENSATE. Where the DOM has item `i` of the slice: the spacer, then the drawn heights
+       before it — measured this commit, so this is the true position, not the render's prefix.
+       If the item that was under the top edge moved, `scrollTop` follows it by the same delta,
+       and the slice is re-derived from the moved position in the same synchronous re-render. */
+    const priced = (i: number): number => heights.current.get(i) ?? frozen.current.get(i) ?? mean;
+    const drawnOffset = (i: number): number => {
+      let y = padTop;
+      for (let j = start; j < i; j += 1) y += priced(j);
+      return y;
+    };
+    const a = anchor.current;
+    if (a && a.count === count && a.index >= start && a.index < end) {
+      const delta = drawnOffset(a.index) - a.offset;
+      if (Math.abs(delta) >= 0.5) {
+        el.scrollTop += delta;
+        setScrollTop(el.scrollTop);
+      }
+    }
+    let idx = start;
+    let off = padTop;
+    while (idx + 1 < end && off + priced(idx) <= el.scrollTop) {
+      off += priced(idx);
+      idx += 1;
+    }
+    anchor.current = { index: idx, offset: off, count };
   });
 
-  if (count <= FULL_RANGE_MAX_ROWS) {
+  if (!windowed) {
     return { start: 0, end: count, padTop: 0, padBottom: 0, rowHeight: mean, offsetOf };
   }
 
   return {
     start,
     end,
-    padTop: prefix[start] ?? 0,
+    padTop,
     padBottom: Math.max(0, (prefix[count] ?? 0) - (prefix[end] ?? 0)),
     rowHeight: mean,
     offsetOf,
