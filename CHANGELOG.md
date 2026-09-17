@@ -13,6 +13,30 @@ See [Status](README.md#status--read-this-first).
 
 ## [Unreleased]
 
+### A first sync of a big mailbox picks up where it left off
+
+A first sync works through a large mailbox in passes, and each pass carries a memory budget it
+spends folder by folder. Where a pass ran out was only ever remembered for as long as the
+connection lasted, so a restart began again at the inbox and a mailbox whose first folders hold
+large messages could spend every pass on them. That position is now kept, and the progress line
+says which folder the sync is continuing at until it has been all the way through.
+
+### A sync that is outstanding but not moving now says so standing still
+
+The sync line's spinner and its travelling bar ran for as long as a sync was outstanding, so a
+mailbox that was stuck looked like one that was catching up. They now appear while mail is
+actually being fetched and are still between fetches; the line keeps its sentence, its colour and
+its track. A window left in the background also stops asking the server questions nobody is
+waiting for, and asks again on the way back.
+
+### The app opens in your own theme
+
+The window stamped your theme and look a moment after the first frame, so every launch began with
+the app's default light look — about a quarter of a second of the wrong colours on Linux, where
+the app picks the Omarchy look for itself. The stamp now runs before anything is drawn. The
+landing page's demo follows the page's light or dark too, instead of writing a theme's colours
+with no scheme.
+
 ### A rule you make no longer moves mail you filed yourself or set aside
 
 Choosing where a sender's mail goes moves up to fifty of their messages at once, and the rest
