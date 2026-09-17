@@ -7,8 +7,8 @@
  * working app. So "alive" is not the question — the verdict is a captured frame with content in it: (1) a
  * window exists with real geometry (a WebView that cannot initialise leaves one 1×1) and (2) the frame is
  * RENDERED (a band across it carries edges on many rows). Both, because either alone passes the failure the
- * other catches. DISPLAY comes from the caller (runnable outside CI); the capture is `xwd -root` (an
- * app-window capture is black here, the compositor draws elsewhere). */
+ * other catches. The capture route is the SESSION's: `grim` under Wayland, `xwd -root` on an X server (an
+ * app-window capture is black there, the compositor draws elsewhere). */
 import { execFileSync, spawn } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
@@ -30,8 +30,8 @@ const opt = (name, dflt) => {
 if (RUN_AS_SCRIPT && (!appPath || args.includes("--help"))) {
   process.stderr.write(
     "usage: verify-desktop-launch.mjs <app> [--home <dir>] [--timeout <s>] [--out <dir>]\n" +
-    "       [--frame <file.xwd>]   verdict on an existing capture, no launch\n" +
-    "DISPLAY must name a running X server.\n");
+    "       [--frame <file>]       verdict on an existing capture (.xwd or a binary .ppm), no launch\n" +
+    "With an X server DISPLAY must name a running one; under Wayland WAYLAND_DISPLAY is enough.\n");
   process.exit(2);
 }
 
@@ -141,8 +141,91 @@ export function frameVerdict(img, { minEdgeRows = 8, minEdges = 200, delta = 24 
   };
 }
 
+/* ── THE BINARY PIXMAP READER, for the frame grim writes ─────────────────────────────────────────────────
+ * Two magic bytes, the width and height, the maximum value, then w*h*3 bytes — the whole format:
+ * no colormap, no masks,
+ * nothing to get one slot late. Comments are admitted anywhere in the header because the format
+ * allows them. It answers in the same shape as the xwd reader, so the verdict is untouched. */
+export function readPpm(buf) {
+  let i = 0;
+  const ws = (b) => b === 0x20 || b === 0x0a || b === 0x0d || b === 0x09;
+  const token = () => {
+    while (i < buf.length && ws(buf[i])) i += 1;
+    if (buf[i] === 0x23) { while (i < buf.length && buf[i] !== 0x0a) i += 1; return token(); }
+    const from = i;
+    while (i < buf.length && !ws(buf[i])) i += 1;
+    return buf.toString("ascii", from, i);
+  };
+  const magic = token();
+  /* The magic compared as the two bytes it is, so the format is stated once, above. */
+  if (magic.length !== 2 || magic.charCodeAt(0) !== 0x50 || magic.charCodeAt(1) !== 0x36) {
+    throw new Error(`ppm: ${magic || "an empty file"} is not a binary pixmap frame`);
+  }
+  const width = Number(token());
+  const height = Number(token());
+  const max = Number(token());
+  if (!(width > 0) || !(height > 0)) throw new Error(`ppm: a ${width}x${height} frame is not a shape this reads`);
+  if (max !== 255) throw new Error(`ppm: a maximum value of ${max} is not a shape this reads`);
+  const data = buf.subarray(i + 1);           /* exactly one whitespace byte closes the header */
+  if (data.length < width * height * 3) {
+    throw new Error(`ppm: ${data.length} bytes of pixels for a ${width}x${height} frame`);
+  }
+  return {
+    width,
+    height,
+    pixel(x, y) {
+      const at = (y * width + x) * 3;
+      return [data[at], data[at + 1], data[at + 2]];
+    },
+  };
+}
+
+/** A capture read by what it IS, so one `--frame` flag serves both routes. */
+export function readFrame(file) {
+  const buf = readFileSync(file);
+  return buf.length >= 2 && buf[0] === 0x50 && buf[1] === 0x36 ? readPpm(buf) : readXwd(file);
+}
+
 if (RUN_AS_SCRIPT) {
+  /* ── THE CAPTURE ROUTE, CHOSEN FROM THE SESSION AND PRINTED ────────────────────────────────
+   * `xwd -root` is an X-server read and the Omarchy guest is Wayland: with an Xwayland running and
+   * DISPLAY=:0 it answers BadMatch on X_GetImage and writes a ZERO-byte file, because the
+   * compositor's root is not a capturable X drawable. Measured on the guest 2026-09-17, and it
+   * is why the rust stage printed LAUNCH: NOT RUN at K41 and K43 over an app that renders.
+   * Every tool the chosen route SPAWNS is asserted by name HERE, before the app is launched: a
+   * check that finds its tool missing afterwards has already spent the launch. */
+  const has = (t) => {
+    try { execFileSync("sh", ["-c", `command -v ${t}`], { stdio: "ignore" }); return true; }
+    catch { return false; }
+  };
+  const waylandSession = Boolean(process.env.WAYLAND_DISPLAY) || process.env.XDG_SESSION_TYPE === "wayland";
+  const ROUTES = {
+    grim: { tools: ["grim"], ext: "ppm", why: "the session is Wayland" },
+    xwd: { tools: ["xwd", "xwininfo"], ext: "xwd", why: "the session is not Wayland" },
+  };
+  let route = waylandSession ? "grim" : "xwd";
+  let routeWhy = ROUTES[route].why;
+  if (RUN_AS_SCRIPT && !ROUTES[route].tools.every(has)) {
+    const other = route === "grim" ? "xwd" : "grim";
+    if (ROUTES[other].tools.every(has)) {
+      routeWhy = `${ROUTES[route].tools.filter((t) => !has(t)).join(", ")} is not on PATH, so the other route is taken`;
+      route = other;
+    } else {
+      process.stderr.write(
+        "LAUNCH-TOOLS-MISSING: neither capture route can run here — " +
+        `grim [${ROUTES.grim.tools.filter((t) => !has(t)).join(", ") || "present"}], ` +
+        `xwd [${ROUTES.xwd.tools.filter((t) => !has(t)).join(", ") || "present"}]. ` +
+        "Nothing was launched; this is a missing tool, not a product reading.\n");
+      process.exit(3);
+    }
+  }
+
   function capture(out) {
+    if (route === "grim") {
+      const buf = execFileSync("grim", ["-t", "ppm", "-"], { maxBuffer: 1 << 29, stdio: ["ignore", "pipe", "inherit"] });
+      writeFileSync(out, buf);
+      return readPpm(buf);
+    }
     execFileSync("xwd", ["-root", "-silent", "-out", out], { stdio: ["ignore", "ignore", "inherit"] });
     return readXwd(out);
   }
@@ -152,10 +235,11 @@ if (RUN_AS_SCRIPT) {
   const frameOnly = opt("frame", null);
   if (frameOnly) {
     /* A capture this cannot read is rc 2, never rc 1: rc 1 is the app's verdict, and a reader
-     * refusal wearing it reads as a window that rendered nothing. */
+     * refusal wearing it reads as a window that rendered nothing. The reader is the ROUTE's
+     * one, so a Wayland guest's ppm is read as a ppm and a truncated one still refuses. */
     let img;
     try {
-      img = readXwd(frameOnly);
+      img = readFrame(frameOnly);
     } catch (e) {
       process.stderr.write(`frame ${frameOnly}: NOT READ — ${e instanceof Error ? e.message : String(e)}\n`);
       process.exit(2);
@@ -165,7 +249,8 @@ if (RUN_AS_SCRIPT) {
     process.exit(v.rendered ? 0 : 1);
   }
 
-  if (!process.env.DISPLAY) {
+  process.stdout.write(`capture route: ${route} (${routeWhy})\n`);
+  if (route === "xwd" && !process.env.DISPLAY) {
     process.stderr.write("DISPLAY is not set — start an X server and point this at it.\n");
     process.exit(2);
   }
@@ -202,9 +287,19 @@ if (RUN_AS_SCRIPT) {
   let geometry = null;
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-  /* The window list off the root, so a 1×1 window is a named failure rather than a blank frame
-   * with no explanation. `xwininfo` is in the same package as `xwd`. */
+  /* The window list, so a 1×1 window is a named failure rather than a blank frame with no
+   * explanation. An X server has a root to enumerate (`xwininfo` ships with `xwd`); Wayland has none, and
+   * the compositor answers for its own clients instead. When neither can, this half DID NOT RUN
+   * and says so below — it is never treated as a window that appeared. */
   function windows() {
+    if (route === "grim") {
+      try {
+        const out = execFileSync("hyprctl", ["-j", "clients"], { encoding: "utf8", env });
+        return JSON.parse(out).map((c) => ({ w: Number(c.size?.[0] ?? 0), h: Number(c.size?.[1] ?? 0) }));
+      } catch {
+        return null;
+      }
+    }
     try {
       const out = execFileSync("xwininfo", ["-root", "-children"], { encoding: "utf8", env });
       return [...out.matchAll(/^\s+0x[0-9a-f]+ .*?(\d+)x(\d+)\+/gm)]
@@ -220,12 +315,13 @@ if (RUN_AS_SCRIPT) {
    * flake. Every capture is kept: a red that cannot be looked at is half a diagnosis. */
   let shots = 0;
   let captureError = null;
+  let windowsRead = false;
   while (Date.now() < deadline) {
     await sleep(2000);
     if (child.exitCode !== null) break;
     const wins = windows();
-    if (wins && wins.length) geometry = wins;
-    const shot = join(outDir, `frame-${String(++shots).padStart(2, "0")}.xwd`);
+    if (wins) { windowsRead = true; if (wins.length) geometry = wins; }
+    const shot = join(outDir, `frame-${String(++shots).padStart(2, "0")}.${ROUTES[route].ext}`);
     let img;
     try {
       img = capture(shot);
@@ -253,24 +349,33 @@ if (RUN_AS_SCRIPT) {
   if (child.exitCode !== null && child.exitCode !== 0) {
     fail.push(`the app exited with ${child.exitCode} before a frame was rendered`);
   }
+  /* A WINDOW LIST NOBODY COULD READ IS NOT AN ABSENT WINDOW. Under Wayland with no compositor to
+   * ask, this half has no answer, and calling that "no window appeared" would refuse every
+   * rendered app on such a guest. It is reported NOT RUN and the frame carries the verdict. */
+  const notRun = [];
   if (!big.length) {
-    fail.push(
-      geometry?.length
-        ? `every window is 1×1 (${geometry.map((w) => `${w.w}x${w.h}`).join(", ")}) — the WebView did not initialise`
-        : "no window ever appeared on the display");
+    if (!windowsRead) {
+      notRun.push(`the window list could not be read on the ${route} route, so the geometry half DID NOT RUN`);
+    } else {
+      fail.push(
+        geometry?.length
+          ? `every window is 1×1 (${geometry.map((w) => `${w.w}x${w.h}`).join(", ")}) — the WebView did not initialise`
+          : "no window ever appeared on the display");
+    }
   }
   if (!verdict?.rendered) {
     fail.push(verdict ? verdict.why
       : `no frame could be read${captureError ? ` — every capture failed with ${captureError}` : ""}`);
   }
 
-  process.stdout.write(`\nlaunch check · ${appPath}\n  captures ${shots} in ${outDir}\n  log ${log}\n`);
+  process.stdout.write(`\nlaunch check · ${appPath}\n  route ${route} (${routeWhy})\n  captures ${shots} in ${outDir}\n  log ${log}\n`);
+  for (const n of notRun) process.stdout.write(`  NOT RUN: ${n}\n`);
   if (fail.length) {
     process.stderr.write(`\nthe packaged app did not render:\n${fail.map((f) => `  · ${f}`).join("\n")}\n`);
     if (text.trim()) process.stderr.write(`\n--- the app's own output (last 40 lines) ---\n${text.trim().split("\n").slice(-40).join("\n")}\n`);
     process.exit(1);
   }
   process.stdout.write(
-    `  windows ${big.map((w) => `${w.w}x${w.h}`).join(", ")}\n` +
+    `  windows ${big.length ? big.map((w) => `${w.w}x${w.h}`).join(", ") : "not read on this route"}\n` +
     `  the window rendered: ${verdict.why}, ${verdict.colours} distinct colours\n`);
 }
