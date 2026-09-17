@@ -9,20 +9,13 @@
  */
 
 /**
- * Nothing but arithmetic: it answers "which slice is on screen" from the scroller's own
- * `scrollTop`/`clientHeight`, and the caller renders that slice between two spacers, so scroll
- * height, scrollbar and position are what they would have been with every row mounted.
- *
- * ROWS OF ONE HEIGHT ARE A REQUIREMENT THE CALLER OWES, not an observation. One row is measured
- * and every unrendered row is reserved at that height, so a list of uneven rows — the Ohbox, where
- * a row with a preview line is three lines and one without is two — drifts: the reserved height
- * runs ahead of the real rows and the list moves on by more than a row per row of scrolling, which
- * is mail cut off the top rather than scrolled out of it. Lists at or below
- * {@link FULL_RANGE_MAX_ROWS} are rendered whole for that reason. ABOVE it the drift is still
- * here, and only per-index measured heights can close it. `clientHeight` of 0
- * (pre-layout, jsdom) reads as {@link FALLBACK_VIEWPORT_PX} — over-render, never hide mail. No
- * dependency, no absolute rows: rows stay normal children in document order, so selection styling,
+ * Nothing but arithmetic: which slice is on screen, from the scroller's own `scrollTop` and
+ * `clientHeight`, rendered between two spacers so scroll height, scrollbar and position are what
+ * they would be with every row mounted. Rows stay children in document order, so selection styling,
  * `useSeenOnScroll`'s `[data-id]` contract and focus order work as before.
+ * ROWS OF ONE HEIGHT ARE THE CALLER'S REQUIREMENT: every unrendered row is reserved at one
+ * measured height, so an uneven list drifts and cuts mail off the top. At or below
+ * {@link FULL_RANGE_MAX_ROWS} the full range renders; only per-index measured heights close it.
  */
 import { useCallback, useEffect, useLayoutEffect, useState, type RefObject } from "react";
 
