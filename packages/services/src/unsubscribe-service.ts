@@ -985,10 +985,10 @@ export class UnsubscribeService {
     // The account ceiling and the per-account ceiling are applied to what the walk YIELDS, so an
     // account with a long run of candidates cannot spend the whole batch, and the walk asks for
     // exactly as much as those two ceilings admit.
-    //
-    // AND IT RESUMES WHERE THE LAST RUN STOPPED. The walk restarted at the head of the window at
-    // every tick, so a candidate this pass can look at and never act on — a `-Post` header over a
-    // `mailto:` route is the shape — held the head and the rows behind it were reached by nobody.
+
+    // AND IT RESUMES WHERE THE LAST RUN STOPPED. The walk restarted at the head at every tick, so
+    // a candidate this pass can look at and never act on — a `-Post` over a `mailto:` route is the
+    // shape — held the head and the rows behind it were reached by nobody.
     const from = await this.cursorOf(tx, budget);
     const walk = await this.walkWindow(tx, since, null, {
       want: accounts * perAccount, budget, from,
