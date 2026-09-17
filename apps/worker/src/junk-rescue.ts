@@ -12,7 +12,7 @@ import {
 
 /**
  * THE JUNK-RESCUE PASS — "Not junk", executed where organization belongs (FOLDERS-SPEC.md §16.2).
- * The API records the press (`junk_rescues`, mail 0115); this pass runs once per cycle per mailbox
+ * The API records the press (`junk_rescues`, mail 0116); this pass runs once per cycle per mailbox
  * at the top — before the cursor is built, so the same cycle's `changesSince` ingests the arrival
  * with its bytes — and moves the message, then DELETES the row. Driven from the REPO, never through
  * an injected port: the hosted worker, the desktop engine and the standalone phone all run this

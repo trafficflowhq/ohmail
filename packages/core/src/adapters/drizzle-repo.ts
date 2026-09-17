@@ -208,7 +208,7 @@ export interface FolderOpRow {
 }
 
 /**
- * ONE PENDING "NOT JUNK" (`junk_rescues`, mail 0115) — a COORDINATE, never a message row. Junk
+ * ONE PENDING "NOT JUNK" (`junk_rescues`, mail 0116) — a COORDINATE, never a message row. Junk
  * lives outside the mirror (FOLDERS-SPEC.md §16.2), so there is nothing to join: the press
  * recorded the Junk folder as it stood and the UID under its epoch, and the pass moves exactly
  * that to INBOX.
@@ -431,7 +431,7 @@ export interface WorkerRepo extends RepoPort, RoutingPort {
   failFolderOp(op: Pick<FolderOpRow, "id" | "accountId" | "folderId">, error: string): Promise<void>;
   /** A transient miss: count the attempt, keep the command pending for the next cycle. */
   deferFolderOp(opId: string, attempts: number): Promise<void>;
-  /* ── THE JUNK RESCUE'S DESIRED STATE (`junk_rescues`, mail 0115) ─────────────────────────────
+  /* ── THE JUNK RESCUE'S DESIRED STATE (`junk_rescues`, mail 0116) ─────────────────────────────
    * `folder_ops`' shape at this seam too, and REQUIRED on this port rather than optional: an
    * optional method lets a fake repo skip the pass in silence, which is how a queued command
    * comes to be drained on one composition and not another. `apps/worker/src/junk-rescue.ts`
