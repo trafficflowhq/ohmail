@@ -44,6 +44,7 @@ export const WIPED_TABLES: readonly string[] = [
   "message_instances",
   "message_failures",
   "folder_ops",
+  "junk_rescues",
   "mailbox_folders",
   "messages",
 ];
