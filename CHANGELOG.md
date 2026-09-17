@@ -13,6 +13,39 @@ See [Status](README.md#status--read-this-first).
 
 ## [Unreleased]
 
+### Move organizing to another computer while away replies are going out and the message that stops is still answered later, not written off.
+
+The away responder asked whether it still held the mailbox at the last moment before each reply
+left — after the reply had already been written down as answered. A computer that lost the mailbox
+mid-run stopped correctly, and the message it stopped on stayed marked answered: if the computer
+that took over answered nobody, that person was never replied to. The question is asked before
+anything is written down now, and a reply nobody sent is still owed. Deleting a single mailbox also
+stops a reply already prepared for it, the way deleting an account does, and a mail server that
+accepts a reply and then stops answering no longer holds it open indefinitely.
+
+### An install no longer says it organizes a mailbox before the lease has answered
+
+When ohmail started up it showed the last thing it knew from its own records — "this computer
+organizes this mailbox" — before asking the mailbox itself. If the first connection failed, nothing
+ever asked: the screen said the mailbox was being organized while no mail was being filed and no
+other computer could take over. It says nothing about organizing until the mailbox has answered.
+Quitting while ohmail cannot read who organizes a mailbox hands your claim back now, instead of
+leaving it there for another computer to wait out. On the phone, ohmail no longer takes over a
+mailbox while it is in your pocket with nothing running to organize it.
+
+### A corrected clock no longer keeps refusing until the app is restarted
+
+When a computer's clock is badly wrong, ohmail will not organize a mailbox from it — two machines
+cannot agree who has a mailbox if they cannot agree what time it is. Correcting the clock used to
+clear that only at the next start, so the message stayed up about a clock you had just fixed. It
+clears while ohmail is running now. A clock that is still wrong is still refused.
+
+### A window that is already up to date asks the mailbox one question instead of two
+
+Checking for changes reads how far your account has got and then asked for whatever came after it.
+When nothing has, the first read has already said so. The second question is no longer asked and
+the answer is unchanged.
+
 ### A change waiting for the installation that organizes your mailbox says so on every screen
 
 When another installation organizes a mailbox, this one reads it: a press here is recorded for that
