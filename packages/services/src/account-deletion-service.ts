@@ -233,10 +233,11 @@ export async function deleteAccount(ctx: ServiceContext): Promise<DeleteAccountR
     await drop("attachments", tx.delete(attachments).where(eq(attachments.accountId, accountId)));
     await drop("tracker_events", tx.delete(trackerEvents).where(eq(trackerEvents.accountId, accountId)));
     await drop("message_states", tx.delete(messageStates).where(eq(messageStates.accountId, accountId)));
+    // BEFORE `routing_decisions`, since mail 0116 gave `routing_decision_id` a real key.
+    await drop("approvals", tx.delete(approvals).where(eq(approvals.accountId, accountId)));
     // `routing_decisions` is also where a BOUGHT SCREENER SUGGESTION lives — same table, told
     // apart by `input_provenance` (see `screener-suggestion.ts`). One delete covers both.
     await drop("routing_decisions", tx.delete(routingDecisions).where(eq(routingDecisions.accountId, accountId)));
-    await drop("approvals", tx.delete(approvals).where(eq(approvals.accountId, accountId)));
     // BEFORE `messages` AND before `mailboxes` — this table FKs BOTH, `ON DELETE no action`, and
     // every sync writes it. It is the row that says WHERE a message physically is on the server
     // (folder, uidvalidity, uid), one per copy, so it is mail-locator data and it goes.
@@ -263,6 +264,22 @@ export async function deleteAccount(ctx: ServiceContext): Promise<DeleteAccountR
     // ── 3. Notes, then their parents ────────────────────────────────────────────
     await drop("thread_notes", tx.delete(threadNotes).where(eq(threadNotes.accountId, accountId)));
     await drop("contact_notes", tx.delete(contactNotes).where(eq(contactNotes.accountId, accountId)));
+    // BEFORE `messages`, since mail 0116 — the composite account key on `message_id` is a real
+    // reference now, where this table carried a bare id nothing checked. The reasons below are
+    // unchanged; only the position is newly load-bearing.
+    // BEFORE the responder itself, and both go. `away_responder_sent.sender` is a correspondent's
+    // email address — somebody else's personal data, held because we sent them mail — so it is not
+    // optional here. The catalog sweep in `account-deletion.test.ts` enumerates every table with an
+    // `account_id` column and fails on any surviving row, which is what makes this a red test rather
+    // than a quiet retention if a future table is added and forgotten.
+    await drop("away_responder_sent", tx.delete(awayResponderSent).where(eq(awayResponderSent.accountId, accountId)));
+    // The 0087 pair, and they are here for `away_responder_sent`'s reason stated one line up
+    // rather than for tidiness: `away_replies.sender` and `away_sender_state.sender` are
+    // CORRESPONDENTS' email addresses — somebody else's personal data, held because we sent them
+    // mail — and `away_replies` additionally records that a named person wrote to this account and
+    // when. That is exactly the class the catalog sweep in `account-deletion.test.ts` enumerates,
+    // so both go, and both were red in that sweep until they did.
+    await drop("away_replies", tx.delete(awayReplies).where(eq(awayReplies.accountId, accountId)));
     await drop("messages", tx.delete(messages).where(eq(messages.accountId, accountId)));
     await drop("threads", tx.delete(threads).where(eq(threads.accountId, accountId)));
     await drop("contacts", tx.delete(contacts).where(eq(contacts.accountId, accountId)));
@@ -288,30 +305,9 @@ export async function deleteAccount(ctx: ServiceContext): Promise<DeleteAccountR
     // — Junk never enters the mirror — so nothing else would take them.
     await drop("junk_rescues", tx.delete(junkRescues).where(inArray(junkRescues.mailboxId, ownMailboxIds)));
     await drop("mailbox_folders", tx.delete(mailboxFolders).where(inArray(mailboxFolders.mailboxId, ownMailboxIds)));
-    await drop("mailboxes", tx.delete(mailboxes).where(eq(mailboxes.accountId, accountId)));
-
-    // ── 5. Automation, knowledge, preferences ───────────────────────────────────
-    await drop("workflow_runs", tx.delete(workflowRuns).where(eq(workflowRuns.accountId, accountId)));
-    await drop("workflows", tx.delete(workflows).where(eq(workflows.accountId, accountId)));
-    await drop("workflow_proposals", tx.delete(workflowProposals).where(eq(workflowProposals.accountId, accountId)));
-    await drop("kb_entries", tx.delete(kbEntries).where(eq(kbEntries.accountId, accountId)));
-    await drop("snippets", tx.delete(snippets).where(eq(snippets.accountId, accountId)));
-    await drop("notify_rules", tx.delete(notifyRules).where(eq(notifyRules.accountId, accountId)));
-    // BEFORE the responder itself, and both go. `away_responder_sent.sender` is a correspondent's
-    // email address — somebody else's personal data, held because we sent them mail — so it is not
-    // optional here. The catalog sweep in `account-deletion.test.ts` enumerates every table with an
-    // `account_id` column and fails on any surviving row, which is what makes this a red test rather
-    // than a quiet retention if a future table is added and forgotten.
-    await drop("away_responder_sent", tx.delete(awayResponderSent).where(eq(awayResponderSent.accountId, accountId)));
-    // The 0087 pair, and they are here for `away_responder_sent`'s reason stated one line up
-    // rather than for tidiness: `away_replies.sender` and `away_sender_state.sender` are
-    // CORRESPONDENTS' email addresses — somebody else's personal data, held because we sent them
-    // mail — and `away_replies` additionally records that a named person wrote to this account and
-    // when. That is exactly the class the catalog sweep in `account-deletion.test.ts` enumerates,
-    // so both go, and both were red in that sweep until they did.
-    await drop("away_replies", tx.delete(awayReplies).where(eq(awayReplies.accountId, accountId)));
-    await drop("away_sender_state", tx.delete(awaySenderState).where(eq(awaySenderState.accountId, accountId)));
-    await drop("away_responders", tx.delete(awayResponders).where(eq(awayResponders.accountId, accountId)));
+    // BEFORE `mailboxes`, since mail 0116 — the composite account key on `mailbox_id` is a real
+    // reference now. Both rows still OUTLIVE the mailbox everywhere else: nothing but an account
+    // erasure deletes a mailbox row, a removal leaves the tombstone.
     // The reader's outstanding decisions (mail 0088). Its `payload` carries whatever the person
     // decided about a sender — on a `screener.decide` that is a CORRESPONDENT'S ADDRESS and the
     // verdict passed on them, which is the same class as the two rows above it and is held for a
@@ -328,6 +324,17 @@ export async function deleteAccount(ctx: ServiceContext): Promise<DeleteAccountR
     // cache has to outlive the mailbox row it names), so nothing cascades it and this line is the
     // only thing that removes it.
     await drop("mailbox_profile_mirror", tx.delete(mailboxProfileMirror).where(eq(mailboxProfileMirror.accountId, accountId)));
+    await drop("mailboxes", tx.delete(mailboxes).where(eq(mailboxes.accountId, accountId)));
+
+    // ── 5. Automation, knowledge, preferences ───────────────────────────────────
+    await drop("workflow_runs", tx.delete(workflowRuns).where(eq(workflowRuns.accountId, accountId)));
+    await drop("workflows", tx.delete(workflows).where(eq(workflows.accountId, accountId)));
+    await drop("workflow_proposals", tx.delete(workflowProposals).where(eq(workflowProposals.accountId, accountId)));
+    await drop("kb_entries", tx.delete(kbEntries).where(eq(kbEntries.accountId, accountId)));
+    await drop("snippets", tx.delete(snippets).where(eq(snippets.accountId, accountId)));
+    await drop("notify_rules", tx.delete(notifyRules).where(eq(notifyRules.accountId, accountId)));
+    await drop("away_sender_state", tx.delete(awaySenderState).where(eq(awaySenderState.accountId, accountId)));
+    await drop("away_responders", tx.delete(awayResponders).where(eq(awayResponders.accountId, accountId)));
     await drop("rules", tx.delete(rules).where(eq(rules.accountId, accountId)));
     await drop("graduations", tx.delete(graduations).where(eq(graduations.accountId, accountId)));
     await drop("learning_signals", tx.delete(learningSignals).where(eq(learningSignals.accountId, accountId)));

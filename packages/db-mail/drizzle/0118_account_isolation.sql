@@ -13,6 +13,15 @@
 -- already reaches its account through `(mailbox_id, account_id)`, so pinning the folder to the
 -- op's mailbox closes the account half transitively AND the same-account, wrong-mailbox case an
 -- account key would still admit.
+--
+-- The one SET NULL names its column. On a composite key the bare form nulls EVERY referencing
+-- column, `account_id` among them, and that column is NOT NULL — so deleting a draft failed
+-- outright. `SET NULL ("draft_id")` drops the pointer and leaves the send its account.
+--
+-- ONE pair of the thirty-nine takes NO key here: `outbound_send_fingerprints.mailbox_id`. A key
+-- makes every insert take a KEY SHARE lock on the mailbox row, and five production paths hold
+-- that row FOR UPDATE — so a send would wait behind a stand-down, a dedup or a resync. Its
+-- account is already pinned through `send_id`, so no read can reach it under another account.
 
 CREATE UNIQUE INDEX "mailboxes_id_account_uq" ON "mailboxes" ("id", "account_id");--> statement-breakpoint
 CREATE UNIQUE INDEX "messages_id_account_uq" ON "messages" ("id", "account_id");--> statement-breakpoint
@@ -72,10 +81,9 @@ ALTER TABLE "drafts" ADD CONSTRAINT "drafts_thread_id_account_fk" FOREIGN KEY ("
 ALTER TABLE "drafts" DROP CONSTRAINT "drafts_in_reply_to_message_id_messages_id_fk";--> statement-breakpoint
 ALTER TABLE "drafts" ADD CONSTRAINT "drafts_in_reply_to_message_id_account_fk" FOREIGN KEY ("in_reply_to_message_id", "account_id") REFERENCES "messages" ("id", "account_id");--> statement-breakpoint
 ALTER TABLE "outbound_sends" DROP CONSTRAINT "outbound_sends_draft_id_drafts_id_fk";--> statement-breakpoint
-ALTER TABLE "outbound_sends" ADD CONSTRAINT "outbound_sends_draft_id_account_fk" FOREIGN KEY ("draft_id", "account_id") REFERENCES "drafts" ("id", "account_id") ON DELETE SET NULL;--> statement-breakpoint
+ALTER TABLE "outbound_sends" ADD CONSTRAINT "outbound_sends_draft_id_account_fk" FOREIGN KEY ("draft_id", "account_id") REFERENCES "drafts" ("id", "account_id") ON DELETE SET NULL ("draft_id");--> statement-breakpoint
 ALTER TABLE "outbound_send_fingerprints" DROP CONSTRAINT "outbound_send_fingerprints_send_id_fkey";--> statement-breakpoint
 ALTER TABLE "outbound_send_fingerprints" ADD CONSTRAINT "outbound_send_fingerprints_send_id_account_fk" FOREIGN KEY ("send_id", "account_id") REFERENCES "outbound_sends" ("id", "account_id") ON DELETE CASCADE;--> statement-breakpoint
-ALTER TABLE "outbound_send_fingerprints" ADD CONSTRAINT "outbound_send_fingerprints_mailbox_id_account_fk" FOREIGN KEY ("mailbox_id", "account_id") REFERENCES "mailboxes" ("id", "account_id");--> statement-breakpoint
 ALTER TABLE "workflow_runs" DROP CONSTRAINT "workflow_runs_workflow_id_workflows_id_fk";--> statement-breakpoint
 ALTER TABLE "workflow_runs" ADD CONSTRAINT "workflow_runs_workflow_id_account_fk" FOREIGN KEY ("workflow_id", "account_id") REFERENCES "workflows" ("id", "account_id");--> statement-breakpoint
 ALTER TABLE "away_replies" ADD CONSTRAINT "away_replies_mailbox_id_account_fk" FOREIGN KEY ("mailbox_id", "account_id") REFERENCES "mailboxes" ("id", "account_id");--> statement-breakpoint
