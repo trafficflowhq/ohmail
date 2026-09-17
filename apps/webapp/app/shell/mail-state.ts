@@ -642,6 +642,16 @@ export interface MailboxFacts {
    */
   serverMessageCount?: number;
   /**
+   * WHERE A BUDGETED FIRST SYNC IS CONTINUING (mail 0115) — the folder the last pass's byte budget
+   * stopped at, from the PERSISTED stop and not the adapter's in-memory copy, because the fact
+   * has to survive the restart it is about. The `importing` arm names it; a first sync of a
+   * mailbox with many large-first folders runs in bounded passes and pauses between them, and the
+   * count stepping and then sitting still said nothing about why. Optional AND nullable on {@link
+   * junkFolder}'s rule: absent is an API that cannot say, `null` is "no pass stopped", and both
+   * render nothing.
+   */
+  firstSyncStopFolder?: string | null;
+  /**
    * The biggest message this mailbox's submission server said it will accept, in bytes — its
    * own `SIZE` announcement, recorded at connect. `deriveMailState` never reads it; it is here
    * because `compose-from.ts` needs it and this is the narrowed shape `GET /mailboxes` arrives
@@ -1194,6 +1204,15 @@ export interface MailState {
    */
   filing: FilingReport | null;
   /**
+   * `importing` only — the FOLDER a budgeted first sync is continuing at, or `null` when no pass
+   * stopped, when no mailbox can say, or when more than one says (mail 0115).
+   *
+   * That last case is why this is derived here and not in the strip: the sentence names a folder
+   * and has no room to say whose mailbox it is, so two accounts mid-first-sync name none rather
+   * than one of them arbitrarily. `null` in every other state.
+   */
+  continuesAtFolder: string | null;
+  /**
    * May an empty list be stated as a settled fact? Reported: a slow connection showed "Nothing in your
    * Ohbox" before the product finished looking — "empty", "not loaded yet" and "the read failed" had
    * one rendering. A qualification each pane owns, not a strip key (a sentence that flashes for 200 ms
@@ -1220,6 +1239,7 @@ const QUIET: MailState = {
   screenerCandidate: false,
   pending: 0,
   filing: null,
+  continuesAtFolder: null,
   // Overwritten for every state by `deriveMailState`'s wrapper — see {@link MailState.settled}.
   // `true` here so that a `QUIET` used directly as a resting value never withholds a pane's
   // ordinary empty state.
@@ -1808,9 +1828,18 @@ function climb(input: MailStateInputs): MailState {
   // arm quotes — so the pair can never render a fraction already passed;
   // `null` means no sentence may name a total.
   const totalIfAhead = deviceHoldings(mailboxes, pulled)?.total ?? null;
+  /**
+   * WHERE THE FIRST SYNC IS CONTINUING — see {@link MailState.continuesAtFolder}. Exactly one
+   * connected mailbox may answer: the folder name is the whole sentence, so two of them naming
+   * different folders leaves the strip with no way to say which mailbox each belongs to.
+   */
+  const stopped = connected
+    .map((m) => m.firstSyncStopFolder)
+    .filter((f): f is string => typeof f === "string" && f !== "");
+  const continuesAtFolder = stopped.length === 1 ? stopped[0]! : null;
 
   if (isImporting(growth, sync.bootstrapping, now)) {
-    return { ...QUIET, key: "importing", clock: true, count: pulled, total: totalIfAhead };
+    return { ...QUIET, key: "importing", clock: true, count: pulled, total: totalIfAhead, continuesAtFolder };
   }
 
   /**
@@ -1853,7 +1882,7 @@ function climb(input: MailStateInputs): MailState {
   // it to the partial-mailbox case (`awaiting` owns the empty one);
   // `clock: true` is load-bearing — the release is driven by time alone.
   if (mirrored > 0 && connected.some((m) => importFloorSpeaks(m, growth, sync, now))) {
-    return { ...QUIET, key: "importing", clock: true, count: pulled, total: totalIfAhead };
+    return { ...QUIET, key: "importing", clock: true, count: pulled, total: totalIfAhead, continuesAtFolder };
   }
 
   // ── 3. THE SCREENER POINTER — a candidate, for the OHBOX to finish ─────────────────────

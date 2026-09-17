@@ -1003,6 +1003,13 @@ export interface MailboxDTO {
    * nothing there.
    */
   serverMessageCount?: number;
+  /**
+   * WHERE A BUDGETED FIRST SYNC IS CONTINUING (mail 0115) — the folder the last pass's byte budget
+   * stopped at. A first sync runs in bounded passes; the strip's count stepped and then sat still
+   * with nothing saying why. Optional (an older API omits it) and nullable (no pass stopped);
+   * every absence is the same instruction to the renderer: say nothing.
+   */
+  firstSyncStopFolder?: string | null;
 }
 
 /**

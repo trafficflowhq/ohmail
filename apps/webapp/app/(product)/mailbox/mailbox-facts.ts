@@ -115,6 +115,11 @@ export function toMailboxFacts(m: MailboxDTO): MailboxFacts {
     // yet" — which is the state of every mailbox for the first minute of its life — into the
     // sentence "your mail server holds nothing", printed underneath a pull that is running.
     serverMessageCount: m.serverMessageCount,
+    // WHERE A BUDGETED FIRST SYNC IS CONTINUING (mail 0115). FORWARDED UNTOUCHED on the rule
+    // above: absent is an API that cannot say and `null` is "no pass stopped", and while both
+    // leave the sentence unrendered today, a `?? null` here would be the seam destroying the
+    // distinction rather than a reader choosing not to use it.
+    firstSyncStopFolder: m.firstSyncStopFolder,
     // What this mailbox's submission server said it will accept. FORWARDED UNTOUCHED, on
     // the same rule as the two lines above: the field is optional, an older API omits it, and a
     // `?? null` here would erase the difference between "this API cannot say" and "the server

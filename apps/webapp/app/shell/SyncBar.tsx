@@ -479,6 +479,14 @@ function speech(state: MailState, t: Translate, tm: Translate, cloud: boolean): 
       const counted = state.total !== null
         ? t("importingOf", { count: state.count, total: state.total })
         : t("importingCount", { count: state.count });
+      // WHERE THE FIRST SYNC IS CONTINUING (mail 0115). A first sync of a mailbox with many large
+      // folders runs in bounded passes: the count stepped, then sat still, and nothing said why.
+      // The clause is appended to the count rather than given its own line, because it is the
+      // same fact — how far along this is — and `mail-state.ts` withholds the folder unless
+      // exactly one mailbox names one.
+      const detail = state.continuesAtFolder === null
+        ? counted
+        : `${counted} · ${t("importingContinuesAt", { folder: state.continuesAtFolder })}`;
       return {
         tone: "busy", role: "status", warn: false, busy: true,
         // "Syncing", not "Importing your mailbox". The client can see its own mirror growing;
@@ -492,10 +500,10 @@ function speech(state: MailState, t: Translate, tm: Translate, cloud: boolean): 
         // by design — the moving count alone is what distinguishes working from hung, exactly as
         // before. `mail-state.ts` withholds the total unless it is strictly above the count, so
         // this line can never render a fraction that has already been passed.
-        detail: counted,
+        detail,
         // ONE derivation for both faces: the line a person reads and the sentence a person hears
         // are the same string, so no wording change can reach one and miss the other.
-        say: `${t("importing")} ${counted}`,
+        say: `${t("importing")} ${detail}`,
         progress: state.total !== null ? state.count / state.total : null,
         link: null,
       };

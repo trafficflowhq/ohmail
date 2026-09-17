@@ -2742,6 +2742,7 @@
     "importing": "Deine Post wird synchronisiert.",
     "importingCount": "{count, plural, one {1 Nachricht bisher} other {# Nachrichten bisher}}",
     "importingOf": "{count, number} von {total, number} Nachrichten",
+    "importingContinuesAt": "erste Synchronisierung läuft bei {folder} weiter",
     "awaiting": "Verbunden. Die erste Synchronisierung ist noch nicht durch.",
     "awaitingSlow": "Verbunden. Die erste Synchronisierung ist immer noch nicht durch.",
     "awaitingWhere": "{address} · verbunden {minutes, plural, =0 {vor wenigen Augenblicken} one {vor 1 Minute} other {vor # Minuten}}",

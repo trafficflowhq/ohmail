@@ -52,6 +52,14 @@ export interface PhoneMailbox {
    * knows where it went. `null` is "no Junk folder, or nothing has attached yet" — both silent.
    */
   junkFolder: string | null;
+  /**
+   * WHERE A BUDGETED FIRST SYNC IS CONTINUING — `MailboxDTO.firstSyncStopFolder`, the folder the
+   * last pass's byte budget stopped at. A first sync of a large mailbox runs in bounded passes
+   * and pauses between them; without this the chrome shows a mirror that fills in steps and says
+   * nothing about why it pauses. `null` is "no pass stopped, or this server cannot say" — both
+   * silent, on {@link junkFolder}'s rule.
+   */
+  firstSyncStopFolder: string | null;
 }
 
 /** A `{kind,name}` holder, kept only when the wire really names one. */
@@ -121,6 +129,11 @@ export async function readMailboxes(session: ConnectedSession): Promise<PhoneMai
         /* An empty string is not a folder name. A server that predates the field sends nothing
            here, which lands as `null` — the same instruction as "no Junk folder": say nothing. */
         junkFolder: typeof r.junkFolder === "string" && r.junkFolder !== "" ? r.junkFolder : null,
+        /* Same normalisation, same reason: an empty string is not a folder name, and a server
+           that predates the field sends nothing — both land as `null`, which says nothing. */
+        firstSyncStopFolder: typeof r.firstSyncStopFolder === "string" && r.firstSyncStopFolder !== ""
+          ? r.firstSyncStopFolder
+          : null,
       });
     }
     return out;

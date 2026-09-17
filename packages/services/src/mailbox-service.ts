@@ -2590,6 +2590,12 @@ export class MailboxService {
      * that reads as "the server holds no mail". A sum over OPENED folders, so it grows as the
      * first cycle walks the tree — stated on the DTO field.
      */
+    /**
+     * WHERE A BUDGETED FIRST SYNC IS CONTINUING (mail 0115) — read off the rows just read, so it
+     * costs no query. At most one row of a mailbox carries the stop (the writer clears the others
+     * in the same call), and the read is ordered by folder, so the answer is one name or none.
+     */
+    const firstSyncStopFolder = fRows.find((f) => f.budgetStopUid != null)?.folder ?? null;
     let serverExistsSum = 0;
     let serverExistsSeen = false;
     for (const f of fRows) {
@@ -2829,6 +2835,8 @@ export class MailboxService {
          sentence "your mail server holds nothing". That is the one number on this DTO whose
          wrong value is a claim about somebody's mailbox rather than about this build. */
       ...(serverExistsSeen ? { serverMessageCount: serverExistsSum } : {}),
+      /* The sentence's own fact — `null` when no pass stopped, which is every settled mailbox. */
+      firstSyncStopFolder,
       folders,
       createdAt: m.createdAt.toISOString(),
     };

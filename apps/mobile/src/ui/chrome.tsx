@@ -14,7 +14,7 @@ import { Copy } from "../copy";
 import { sayArg } from "../refusal";
 import { useTheme } from "../theme";
 import { useWorld, useWorldToast } from "../state/world";
-import { connectionSaid } from "../state/live";
+import { connectionSaid, firstSyncContinuesSaid } from "../state/live";
 import { Icon } from "./Icon";
 import { Wordmark } from "./Icon";
 import { Tap, Txt, useTopPad } from "./base";
@@ -34,13 +34,20 @@ export function TopBar({ trailing }: { trailing?: React.ReactNode }) {
   // "Catching up" only while it is TRUE: a failed round with nothing scheduled drops the
   // activity claim and states the age alone (`staleAsOfIdle`) — the web ladder makes the same
   // call by ranking its failure arms above the stale arm.
-  const boot = useWorld().boot;
+  const world = useWorld();
+  const boot = world.boot;
   const stale = boot.staleAsOf;
   /* THE CONNECTION OUTRANKS THE FRESHNESS LABEL, and replaces it rather than stacking under it:
      a link that is gone is WHY the mirror is stale, so two lines would say one thing twice and
      the weaker of them would be the one claiming "catching up". The wording and which verdicts
      are silent are `connectionSaid`'s, shared with the Settings panel. */
   const outage = connectionSaid(boot.connection);
+  /* AND BELOW BOTH: where a budgeted first sync is continuing (`live.ts#firstSyncContinuesSaid`).
+     Ranked under the freshness label rather than over it, which is the browser ladder's own order
+     — a stale mirror is the larger fact, and this explains a mirror that is filling in steps
+     while nothing is wrong. Off the MAILBOX rows, so it is the stop the server wrote down and not
+     an engine's memory of one. */
+  const continuing = firstSyncContinuesSaid(world.mailboxes.rows);
   return (
     <View>
       <View
@@ -74,6 +81,15 @@ export function TopBar({ trailing }: { trailing?: React.ReactNode }) {
           style={{ paddingHorizontal: 16, paddingBottom: 4 }}
         >
           {boot.syncFailure !== null ? Copy.staleAsOfIdle(stale) : Copy.staleAsOf(stale)}
+        </Txt>
+      ) : continuing !== null ? (
+        <Txt
+          variant="meta"
+          tone="ink3"
+          accessibilityRole="text"
+          style={{ paddingHorizontal: 16, paddingBottom: 4 }}
+        >
+          {continuing}
         </Txt>
       ) : null}
       {/* BELOW the freshness label and independent of it: a change can be abandoned while the

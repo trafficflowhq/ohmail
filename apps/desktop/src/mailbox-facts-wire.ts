@@ -67,6 +67,13 @@ interface MailboxWire {
    * that rule).
    */
   serverMessageCount?: number;
+  /**
+   * WHERE A BUDGETED FIRST SYNC IS CONTINUING (mail 0115) — the folder the last pass's byte
+   * budget stopped at, from the store rather than from the engine's memory, because it is the
+   * restart the fact is about. Absent is an engine that predates the column, `null` is "no pass
+   * stopped"; both leave the strip's sentence unrendered.
+   */
+  firstSyncStopFolder?: string | null;
   /** When this install was told it may organize this mailbox (mail 0083); null pre-consent. */
   organizeConsentedAt?: string | null;
   /**
@@ -209,6 +216,10 @@ export async function readMailboxFactsVia(
     // `test/desktop-facts-census.test.ts` derives the required set from `MailboxFacts` itself
     // and fails on any key this map does not forward.
     ...("serverMessageCount" in m ? { serverMessageCount: m.serverMessageCount } : {}),
+    /* WHERE THE FIRST SYNC IS CONTINUING (mail 0115), by the same `in` spread: absent is an
+       engine that predates the column and `null` is "no pass stopped". Unforwarded, the one
+       surface that watches a large local import runs in silence between its passes. */
+    ...("firstSyncStopFolder" in m ? { firstSyncStopFolder: m.firstSyncStopFolder } : {}),
     ...("organizeConsentedAt" in m ? { organizeConsentedAt: m.organizeConsentedAt } : {}),
     // THE ORGANIZER NOTICE'S PAIR, ITS RELEASE STAMP AND THE HOLDER'S ANSWER, forwarded by the
     // same `in` spread as every optional field here. The notice is a comparison of two instants

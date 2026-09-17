@@ -296,6 +296,8 @@ export const DE: Deck = {
 
   firstSyncNothingReadable: "Aus diesem Postfach konnte noch nichts gelesen werden.",
 
+  firstSyncContinuesAt: (folder: string) => `Erste Synchronisierung läuft bei ${folder} weiter`,
+
   pairingBusy: "Wird gekoppelt…",
   pairedOk: "Gekoppelt. Deine Post wird synchronisiert.",
 

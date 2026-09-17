@@ -500,6 +500,12 @@ const TABLE = {
      keeps asking, and a mailbox that later reads stops saying this. */
   firstSyncNothingReadable: "Nothing could be read from this mailbox yet.",
 
+  /* WHERE A BUDGETED FIRST SYNC IS CONTINUING — the browser strip says the same thing beside its
+     count (`sync.importingContinuesAt`). A first sync of a large mailbox runs in bounded passes:
+     the mirror fills in steps, and between them nothing was said at all. The folder is the
+     person's own, spelt as their server spells it. */
+  firstSyncContinuesAt: (folder: string) => `First sync continues at ${folder}`,
+
   pairingBusy: "Pairing…",
   pairedOk: "Paired. Syncing your mail.",
 

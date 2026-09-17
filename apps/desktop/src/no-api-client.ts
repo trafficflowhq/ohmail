@@ -221,6 +221,7 @@ export interface MailboxDTO {
     junkFolder?: string | null;
     messageCount?: number;
     serverMessageCount?: number;
+    firstSyncStopFolder?: string | null;
 }
 
 export interface SubscriptionStatus {

@@ -755,6 +755,17 @@ export interface MailboxDTO {
    * no mail — an uncounted server has no answer at all.
    */
   serverMessageCount?: number;
+  /**
+   * WHERE A BUDGETED FIRST SYNC IS CONTINUING (mail 0115) — the folder the last pass's byte budget
+   * stopped at, or `null` when no pass stopped. A first sync of a mailbox with many large-first
+   * folders runs in bounded passes and pauses between them; the strip showed a count that stepped
+   * and then sat still, with nothing saying why. This is what the sentence "First sync continues
+   * at …" is rendered from, and it is the PERSISTED stop rather than the adapter's in-memory copy
+   * — the fact has to survive the restart it is about. `null` covers both say-nothing cases (no
+   * stop, or no pass has run) on {@link junkFolder}'s rule. The path is the account's own folder
+   * name and goes to the account's own clients; it is not on the admin projection.
+   */
+  firstSyncStopFolder?: string | null;
   folders?: MailboxFolderSummary[];
   createdAt: ISODateTime;
   // NOTE: intentionally NO credential field — creds are envelope-encrypted at rest

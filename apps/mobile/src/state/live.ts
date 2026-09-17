@@ -2958,6 +2958,23 @@ export function firstSyncSaid(verdict: FirstSyncSay | null): string | null {
   return verdict === "nothingReadable" ? Copy.firstSyncNothingReadable : null;
 }
 
+/**
+ * WHERE A BUDGETED FIRST SYNC IS CONTINUING, said — `MailboxDTO.firstSyncStopFolder` off the
+ * mailbox rows, the browser strip's twin (`mail-state.ts#continuesAtFolder`, rendered as
+ * `sync.importingContinuesAt`). ONE rule, and it is the reason this is a derivation rather than
+ * a field a screen reads: exactly one mailbox may name a folder, because the sentence has no room
+ * to say whose it is and a folder name against the wrong mailbox is a lie. `null` everywhere else,
+ * and every one of those cases is silence.
+ */
+export function firstSyncContinuesSaid(
+  mailboxes: readonly { firstSyncStopFolder?: string | null }[],
+): string | null {
+  const named = mailboxes
+    .map((m) => m.firstSyncStopFolder)
+    .filter((f): f is string => typeof f === "string" && f !== "");
+  return named.length === 1 ? Copy.firstSyncContinuesAt(named[0]!) : null;
+}
+
 
 /* Re-exported so the world layer and the suite spell the vocabulary identically. `FolderEntity`
  * rides through here because `live.ts` is the one state module on the engine's import
