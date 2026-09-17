@@ -153,6 +153,24 @@ nothing else about it changes.
 A migration that has already run is verified against the SQL that ran, proved from the
 repository's history, so a reworded comment no longer reads as a changed migration.
 
+### "Not junk" is handed to whichever install organizes your mailbox
+
+Pressing "Not junk" used to make the move from the server, in the same request. It is now recorded
+and made by the install that organizes the mailbox, on its next pass — the row stays in the Junk
+list and says it is on its way, and it leaves when the message really is out of Junk. "Not junk,
+always allow" writes the sender's rule in the same step, so a request that is interrupted can no
+longer leave the rule standing with the message unmoved. If your mail server refuses the move, the
+row says so and the press can be tried again.
+
+### Account isolation
+
+- Mail, drafts, contacts, folders and sign-in records that belong to one account can no longer
+  be stored against another. The separation is now refused by the database rather than kept by
+  every part of the program remembering it.
+- On a local or phone install, a migration that changes one table's shape no longer removes rows
+  in tables that point at it, and refuses rather than finishing if anything is left pointing at
+  something that is gone.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
