@@ -363,7 +363,17 @@ export interface RepoPort {
    * is silent: the instance table is what `listKnownLocators` reads, so a stale primary makes the
    * adapter treat a dead UID as known and never fetch the one that replaced it.
    */
-  updateLocator(messageId: string, locator: NativeLocator): Promise<void>;
+  /**
+   * Repoint a message's PRIMARY instance at `locator`.
+   *
+   * `from` is where it was, and it is for the READER of this call rather than for the write:
+   * the known-set memo holds the projection this moves a row of, and it is handed a row id the
+   * projection does not carry, so without `from` it cannot find the entry and must throw the
+   * whole mailbox away — once a cycle, for every cycle of an import. Optional so no implementor
+   * breaks; ABSENT is the old behaviour (drop), and `test/update-locator-passes-from.test.ts`
+   * refuses a call site in `src` that omits it.
+   */
+  updateLocator(messageId: string, locator: NativeLocator, from?: NativeLocator): Promise<void>;
   /**
    * Clear `messages.deleted_at` because the message RE-APPEARED in a watched folder (mail 0065) —
    * a restore from Trash or Junk in the user's own client, a second delivery, or our own

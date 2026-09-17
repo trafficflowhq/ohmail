@@ -204,7 +204,7 @@ export async function applyReconcileAction(
         );
         return { locator, state: pending, deferred: true };
       }
-      await repo.updateLocator(messageId, newLocator);
+      await repo.updateLocator(messageId, newLocator, locator);
       const next: FolderStateRow = {
         desiredFolder: action.to,
         observedFolder: action.to,
@@ -1447,16 +1447,16 @@ export async function commitChange(plan: ChangePlan, deps: CommitDeps): Promise<
     // known-set, and nothing would ever repair the row — every move, reply and attachment read
     // pinned to a missing message. (`unexpungedSource` is excluded because its source instance
     // demonstrably still exists — the primary cannot be gone.)
-    await repo.updateLocator(e.messageId, e.arrivalLocator);
+    await repo.updateLocator(e.messageId, e.arrivalLocator, e.storedLocator);
   } else if (e.unexpungedSource || secondCopyInSameEpoch) {
     await repo.recordInstance(e.messageId, e.arrivalLocator);
   } else if (sameFolderSameEpochCopy && arrivalIsNewer) {
-    await repo.updateLocator(e.messageId, e.arrivalLocator);
+    await repo.updateLocator(e.messageId, e.arrivalLocator, e.storedLocator);
     await repo.recordInstance(e.messageId, e.storedLocator);
   } else if (sameFolderSameEpochCopy) {
     await repo.recordInstance(e.messageId, e.arrivalLocator);
   } else {
-    await repo.updateLocator(e.messageId, e.arrivalLocator);
+    await repo.updateLocator(e.messageId, e.arrivalLocator, e.storedLocator);
   }
 
   // A re-appearance un-deletes, whoever authored it (mail 0065). The server demonstrably holds

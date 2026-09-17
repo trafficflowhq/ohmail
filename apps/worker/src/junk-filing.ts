@@ -179,7 +179,7 @@ export async function completeFiling(
   special: SpecialFolderMap,
 ): Promise<boolean> {
   const physical = newLoc.folder;
-  await r.updateLocator(p.messageId, newLoc);
+  await r.updateLocator(p.messageId, newLoc, p.nativeLocator ?? undefined);
   if (!parksLocator(p, physical, special)) {
     const claimed = await settle(r, accountId, p, physical, { observedFolder: p.desiredFolder, lastSetBy: "us" });
     /* THE MOVE DID NOT GO TO TRASH, SO THE MESSAGE IS NOT DELETED — see

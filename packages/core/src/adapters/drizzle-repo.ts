@@ -1602,7 +1602,9 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
    * fail silently: a stale primary makes the adapter treat a dead UID as known and never fetch
    * the live one.
    */
-  async updateLocator(messageId: string, locator: NativeLocator): Promise<void> {
+  /* `from` is not read here and that is the point: it is the memo's, and it travels on the call
+     rather than in a second port so there is ONE way to move a locator. See the port's doc. */
+  async updateLocator(messageId: string, locator: NativeLocator, _from?: NativeLocator): Promise<void> {
     // THE FACT FIRST, ITS MIRROR SECOND. `native_locator` mirrors the primary instance, so writing
     // the mirror before the fact leaves the two disagreeing for as long as the second write does
     // not happen — and it can refuse (the tuple belongs to another message). In this order a
