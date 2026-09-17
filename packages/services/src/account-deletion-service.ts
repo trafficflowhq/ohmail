@@ -49,6 +49,7 @@ import {
   ACCOUNT_THREAD_STRUCTURE_LOCK_CLASS,
   trackerEvents,
   unsubscribeRecords,
+  unsubscribeExamined,
   users,
   workflowProposals,
   workflowRuns,
@@ -223,6 +224,8 @@ export async function deleteAccount(ctx: ServiceContext): Promise<DeleteAccountR
     // folders in someone else's mailbox. `unsubscribe_records` goes before `messages` and
     // `mailboxes` too: it FKs both, so a missed line fails erasure LOUDLY rather than retaining a
     // list of what somebody unsubscribed from.
+    // Child before parent: the marks reference the record by foreign key.
+    await drop("unsubscribe_examined", tx.delete(unsubscribeExamined).where(eq(unsubscribeExamined.accountId, accountId)));
     await drop("unsubscribe_records", tx.delete(unsubscribeRecords).where(eq(unsubscribeRecords.accountId, accountId)));
     await drop("message_tags", tx.delete(messageTags).where(eq(messageTags.accountId, accountId)));
     await drop("tags", tx.delete(tags).where(eq(tags.accountId, accountId)));

@@ -2,7 +2,9 @@ import { and, asc, eq, gt, gte, inArray, isNull, or, sql } from "drizzle-orm";
 import { dialect } from "@trafficflow/db/dialect";
 import {
   assertOrganizerRole,
-  accountSettings, mailboxes, messages, messageBodies, folderState, unsubscribeRecords, type Tx,
+  accountSettings, mailboxes, messages, messageBodies, folderState, unsubscribeRecords,
+  unsubscribeExamined, readDrainCursor, writeDrainCursor, UNSUB_DRAIN_PASS,
+  type DrainCursor, type Tx,
 } from "@trafficflow/db";
 import {
   authVerdictFromHeaders, oneClickUnsubscribeUri, unsubscribeHeaderState,
@@ -305,8 +307,11 @@ export interface DrainBudget {
   elapsedMs(): number;
 }
 
-/** Where a walk stopped, as the pair the chunk is ordered by. */
-interface ScanCursor { at: Date; messageId: string }
+/**
+ * Where a walk stopped, as the pair the chunk is ordered by — and it IS the stored position, one
+ * type, so the walk's cursor and the durable one cannot drift apart.
+ */
+type ScanCursor = DrainCursor;
 
 /** One row a chunk read, with the verdict the chunk computed rather than filtered on. */
 interface ScannedRow { messageId: string; accountId: string; at: Date; eligible: boolean }
@@ -603,6 +608,14 @@ export class UnsubscribeService {
     // the same list can still be acted on. The absence of a row means "not yet considered", and
     // that is the only thing it is allowed to mean.
     const held = await this.claim(ctx, row, messageId);
+    // THE MESSAGE IS EXAMINED, AND THE AUTOMATIC PASS SAYS SO ONCE — here, BEFORE the outcomes
+    // that return. Every automatic outcome from this point is settled for THIS message while that
+    // record stands: a list already left, a claim this pass may not re-attempt, or a send it is
+    // about to make and will never make twice. Without it the second message of a left list cost
+    // five statements an hour for ever, one of them a write to `messages`, and was counted as
+    // still owed. A person's press writes nothing here — it is not the pass, and a marker it left
+    // would be a look nobody took.
+    if (mode === "automatic") await this.markExamined(ctx, messageId, held.id);
     // A CLAIM IS NOT AN OUTCOME. The row is written BEFORE the request, so its mere EXISTENCE says
     // only that somebody got as far as trying; reading it as "done" told a person their
     // unsubscribe had been sent when a DNS failure had stopped it, while the mail kept arriving.
@@ -834,6 +847,7 @@ export class UnsubscribeService {
         accountId: page.accountId,
         eligible: sql<boolean>`(
           ${unsubscribeRecords.id} is null
+          and ${unsubscribeExamined.messageId} is null
           and ${accountSettings.blockAutoUnsubscribeAt} is null
           and ${mailboxes.status} <> 'disabled'
           and ${messageBodies.messageId} is not null
@@ -847,6 +861,10 @@ export class UnsubscribeService {
         // and an inner join would silently shorten the chunk to the rows that happened to qualify.
         .leftJoin(messageBodies, eq(messageBodies.messageId, page.messageId))
         .leftJoin(unsubscribeRecords, eq(unsubscribeRecords.messageId, page.messageId))
+        // THE PER-MESSAGE MARKER. The record row is keyed `(mailbox, list)`, so the second message
+        // of a list already left matches nothing above it and was a candidate at every tick. This
+        // join is what makes the candidate set shrink for a list, not just for a message.
+        .leftJoin(unsubscribeExamined, eq(unsubscribeExamined.messageId, page.messageId))
         .leftJoin(accountSettings, eq(accountSettings.accountId, page.accountId))
         .leftJoin(mailboxes, eq(mailboxes.id, page.mailboxId))
         .orderBy(asc(page.at), asc(page.messageId)),
@@ -871,13 +889,19 @@ export class UnsubscribeService {
    */
   private async walkWindow(
     tx: Tx, since: Date, accountId: string | null,
-    opts: { want: number; budget: DrainBudget; count?: boolean },
-  ): Promise<{ eligible: ScannedRow[]; eligibleSeen: number; exhausted: boolean; chunks: number }> {
+    opts: { want: number; budget: DrainBudget; count?: boolean; from?: ScanCursor | null },
+  ): Promise<{
+    eligible: ScannedRow[]; eligibleSeen: number; exhausted: boolean; chunks: number;
+    stoppedAt: ScanCursor | null;
+  }> {
     const eligible: ScannedRow[] = [];
     let eligibleSeen = 0;
     let exhausted = false;
     let chunks = 0;
-    let after: ScanCursor | null = null;
+    // WHERE A PREVIOUS RUN STOPPED, or the head of the window. `lastRead` starts there so a walk
+    // that reads nothing past the cursor leaves it where it was rather than winding it back.
+    let after: ScanCursor | null = opts.from ?? null;
+    let lastRead: ScanCursor | null = opts.from ?? null;
 
     while (chunks < UNSUB_DRAIN_SCAN_CHUNKS) {
       const left = opts.budget.leftMs();
@@ -900,12 +924,30 @@ export class UnsubscribeService {
       // THE CURSOR ADVANCES PAST WHAT THE CHUNK REJECTED — this is the monotonic progress the
       // single cut did not have. The last row READ, never the last row taken.
       const last = chunk.rows[chunk.rows.length - 1];
-      if (last !== undefined) after = { at: last.at, messageId: last.messageId };
+      if (last !== undefined) {
+        after = { at: last.at, messageId: last.messageId };
+        lastRead = after;
+      }
       if (chunk.read < UNSUB_DRAIN_SCAN_PAGE) { exhausted = true; break; }
       if (!opts.count && eligible.length >= opts.want) break;
     }
 
-    return { eligible, eligibleSeen, exhausted, chunks };
+    /**
+     * WHERE THIS WALK STOPPED — the position a later run resumes AFTER, and the three states it
+     * can be in. It is read off the RESULT and never off which `break` fired: with a window
+     * smaller than one page the walk exhausts and takes its fill in the same chunk, and a rule
+     * keyed on the break would call that a lap.
+     *
+     * Took its fill ⇒ the last row TAKEN: everything after it was read but not looked at.
+     * Stopped short (budget, chunk ceiling) ⇒ the last row READ.
+     * Reached the end of the window without filling ⇒ `null`: the lap is over, start at the head.
+     */
+    const took = eligible[eligible.length - 1];
+    const stoppedAt = took !== undefined && eligible.length >= opts.want
+      ? { at: took.at, messageId: took.messageId }
+      : (exhausted ? null : lastRead);
+
+    return { eligible, eligibleSeen, exhausted, chunks, stoppedAt };
   }
 
   /**
@@ -943,8 +985,13 @@ export class UnsubscribeService {
     // The account ceiling and the per-account ceiling are applied to what the walk YIELDS, so an
     // account with a long run of candidates cannot spend the whole batch, and the walk asks for
     // exactly as much as those two ceilings admit.
+    //
+    // AND IT RESUMES WHERE THE LAST RUN STOPPED. The walk restarted at the head of the window at
+    // every tick, so a candidate this pass can look at and never act on — a `-Post` header over a
+    // `mailto:` route is the shape — held the head and the rows behind it were reached by nobody.
+    const from = await readDrainCursor(tx, UNSUB_DRAIN_PASS);
     const walk = await this.walkWindow(tx, since, null, {
-      want: accounts * perAccount, budget,
+      want: accounts * perAccount, budget, from,
     });
 
     const byAccount = new Map<string, string[]>();
@@ -980,6 +1027,12 @@ export class UnsubscribeService {
       sweep.failed += one.failed;
       sweep.remaining += one.remaining;
     }
+
+    // THE PASS ENDS HERE, AND THE CURSOR IS WRITTEN ONCE — never per page. A run killed mid-walk
+    // resumes from the last END, which costs at most one repeat of the work it had already done;
+    // a cursor written per page would leave a killed run claiming to have looked at a page it
+    // never posted for. The count below is a report about the whole window and cannot move it.
+    await writeDrainCursor(tx, UNSUB_DRAIN_PASS, walk.stoppedAt, opts.now());
 
     // WHAT IS STILL OWED, COUNTED RATHER THAN INFERRED — the reserve this budget holds back exists
     // for this one read. It is `null`, never 0, when the counting walk did not reach the end of
@@ -1077,6 +1130,17 @@ export class UnsubscribeService {
       id: existing.id, fresh: false, state: existing.state,
       updatedAt: existing.updatedAt instanceof Date ? existing.updatedAt : new Date(existing.updatedAt),
     };
+  }
+
+  /**
+   * MARK THIS MESSAGE EXAMINED against the record it was judged by. `ON CONFLICT DO NOTHING`
+   * because two runs may reach the same message, and the first mark is the true one; the marker
+   * carries the record so an erasure that takes the list takes the look with it.
+   */
+  private async markExamined(ctx: ServiceContext, messageId: string, recordId: string): Promise<void> {
+    await asTx(ctx).insert(unsubscribeExamined).values({
+      messageId, recordId, accountId: ctx.accountId, createdAt: ctx.now(),
+    }).onConflictDoNothing({ target: unsubscribeExamined.messageId });
   }
 
   /** Record the outcome on a claim we own. Never widens the claim, never releases it. */

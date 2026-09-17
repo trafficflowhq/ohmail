@@ -728,7 +728,15 @@ export const folderState = sqliteTable("folder_state", {
   lastErrorClass: text("last_error_class"),
   // Mail 0099: the pile a trashed message came from, so an untrash knows where to put it back.
   trashedFrom: text("trashed_from"),
-}, (t) => ({ uqMessage: unique().on(t.messageId) }));
+}, (t) => ({
+  uqMessage: unique().on(t.messageId),
+  // THE DRAIN'S WINDOW, INDEXED (UD-R4-02 / DB-R10-01). Its walk asks `desired_folder IN (…)` and
+  // `updated_at >= since` and orders by `(updated_at, message_id)` — the cursor pair. With no
+  // covering index the page's construction sorts the whole store's folder state before the LIMIT
+  // applies, which is the read that cost the 0.19.0 drain its whole invocation.
+  ixDesiredUpdated: index("folder_state_desired_updated_idx")
+    .on(t.desiredFolder, t.updatedAt, t.messageId),
+}));
 
 /**
  * Read-state desired state — `folder_state` for the `\Seen` flag (mail 0024): the API may never
@@ -1881,6 +1889,43 @@ export const unsubscribeRecords = sqliteTable("unsubscribe_records", {
 }));
 
 /**
+ * ONE ROW PER MESSAGE THE AUTOMATIC PASS HAS ALREADY LOOKED AT, beside the list-keyed record it
+ * was judged against. `unsubscribe_records` is keyed `(mailbox, list)`, so the SECOND message of
+ * a list already left has no row of its own: the drain re-read it, re-wrote its author verdict
+ * and re-attempted its claim at every tick, and counted it as still owed. This is the per-message
+ * half of that key. The absence of a row means "not yet considered", exactly as it does over
+ * there. Deleted with its record by both erasure sweeps.
+ */
+export const unsubscribeExamined = sqliteTable("unsubscribe_examined", {
+  messageId: text("message_id").primaryKey().references(() => messages.id),
+  /** The list record this message was judged against — evidence for why it is not looked at again. */
+  recordId: text("record_id").notNull().references(() => unsubscribeRecords.id),
+  accountId: text("account_id").notNull(),
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).default(NOW_MS).notNull(),
+}, (t) => ({
+  ixRecord: index("unsubscribe_examined_record_idx").on(t.recordId),
+}));
+
+/**
+ * WHERE THE DRAIN'S WINDOW WALK STOPPED, so the next run resumes there instead of at the head.
+ * One row per named pass. A NULL pair means "start at the head" — the state after a lap that
+ * reached the end of the window, and the state of every store before this table existed.
+ * `cursorMessageId` is a POSITION in the walk's `(updated_at, message_id)` order and not a row
+ * this table is about: the message it names may since have been deleted, and the comparison then
+ * skips nothing. No foreign key for that reason, and no account — the pass is store-wide.
+ */
+export const unsubscribeDrainState = sqliteTable("unsubscribe_drain_state", {
+  pass: text("pass").primaryKey(),
+  cursorAt: integer("cursor_at", { mode: "timestamp_ms" }),
+  cursorMessageId: text("cursor_message_id"),
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" }).default(NOW_MS).notNull(),
+}, (t) => ({
+  // Half a cursor is a position in nothing: both sides of the pair, or neither.
+  ckPair: check("unsubscribe_drain_state_cursor_pair",
+    sql`(${t.cursorAt} is null) = (${t.cursorMessageId} is null)`),
+}));
+
+/**
  * One row per account that has CHANGED something — and no row for anyone who has not. Absence is
  * a legal state meaning "all defaults": every reader treats a missing row that way, nothing is
  * backfilled, and the row is created lazily on first write (mail 0035). Deliberately GENERAL:
@@ -2121,5 +2166,5 @@ export const outboundSendFingerprints = sqliteTable("outbound_send_fingerprints"
  * install passes THIS one and nothing else — see `apps/sidecar/src/db.ts`.
  */
 export const mailSchema = {
-  mailboxes, mailboxCredentials, mailboxFolders, messages, messageInstances, messageFailures, folderState, flagState, rules, contacts, auditLog, accountSyncState, changeLog, threads, messageBodies, routingDecisions, approvals, messageStates, graduations, learningSignals, accounts, users, devices, sessions, refreshTokens, pairingTokens, idempotencyKeys, trackerEvents, contactNotes, threadNotes, snippets, notifyRules, awayResponders, awayResponderSent, attachments, kbEntries, drafts, outboundSends, workflows, workflowRuns, workflowProposals, tags, messageTags, unsubscribeRecords, accountSettings,
+  mailboxes, mailboxCredentials, mailboxFolders, messages, messageInstances, messageFailures, folderState, flagState, rules, contacts, auditLog, accountSyncState, changeLog, threads, messageBodies, routingDecisions, approvals, messageStates, graduations, learningSignals, accounts, users, devices, sessions, refreshTokens, pairingTokens, idempotencyKeys, trackerEvents, contactNotes, threadNotes, snippets, notifyRules, awayResponders, awayResponderSent, attachments, kbEntries, drafts, outboundSends, workflows, workflowRuns, workflowProposals, tags, messageTags, unsubscribeRecords, unsubscribeExamined, unsubscribeDrainState, accountSettings,
 };

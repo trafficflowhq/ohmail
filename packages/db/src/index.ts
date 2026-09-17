@@ -18,6 +18,9 @@ export * from "./schema-mail.js";
 // the worker's pass both count by. A pure predicate over the mail schema, nothing more.
 export { junkSweepCandidateWhere, JUNK_SWEEP_SOURCE_PILE } from "./junk-sweep.js";
 export { autoReplyByUsWhere } from "./auto-reply-by-us.js";
+export {
+  readDrainCursor, writeDrainCursor, UNSUB_DRAIN_PASS, type DrainCursor,
+} from "./unsubscribe-drain-cursor.js";
 export { invitationWithoutEventWhere, itipReplyHeaderWhere } from "./calendar-facts.js";
 
 // The ONE spelling of every predicate over `folder_state`'s pending set — `dueNow` for the

@@ -231,5 +231,14 @@ export const SQLITE_JOURNAL: readonly SqliteJournalEntry[] = [
       "ALTER TABLE \"mailbox_folders\" ADD COLUMN \"budget_stop_uid\" integer;",
       "ALTER TABLE \"mailbox_folders\" ADD COLUMN \"budget_stop_uidvalidity\" integer;"
     ]
+  },
+  {
+    "name": "0116_unsub_drain_cursor.sql",
+    "statements": [
+      "CREATE TABLE IF NOT EXISTS \"unsubscribe_examined\" (\n\t\"message_id\" text PRIMARY KEY NOT NULL,\n\t\"record_id\" text NOT NULL,\n\t\"account_id\" text NOT NULL,\n\t\"created_at\" integer DEFAULT (CAST(unixepoch('subsec') * 1000 AS INTEGER)) NOT NULL,\n\tFOREIGN KEY (\"message_id\") REFERENCES \"messages\"(\"id\"),\n\tFOREIGN KEY (\"record_id\") REFERENCES \"unsubscribe_records\"(\"id\")\n);",
+      "CREATE INDEX IF NOT EXISTS \"unsubscribe_examined_record_idx\" ON \"unsubscribe_examined\" (\"record_id\");",
+      "CREATE TABLE IF NOT EXISTS \"unsubscribe_drain_state\" (\n\t\"pass\" text PRIMARY KEY NOT NULL,\n\t\"cursor_at\" integer,\n\t\"cursor_message_id\" text,\n\t\"updated_at\" integer DEFAULT (CAST(unixepoch('subsec') * 1000 AS INTEGER)) NOT NULL,\n\tCONSTRAINT \"unsubscribe_drain_state_cursor_pair\" CHECK ((\"cursor_at\" IS NULL) = (\"cursor_message_id\" IS NULL))\n);",
+      "CREATE INDEX IF NOT EXISTS \"folder_state_desired_updated_idx\" ON \"folder_state\" (\"desired_folder\",\"updated_at\",\"message_id\");"
+    ]
   }
 ] as const;

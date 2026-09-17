@@ -5,7 +5,7 @@ import {
   messageFailures, messageInstances, messageStates, messageTags, messages, organizerRequests,
   eraseIdempotentResponses, mailboxes, outboundSendFingerprints, outboundSends, recordChanges,
   recordMailboxRemoved, routingDecisions, threadNotes, threads, trackerEvents,
-  unsubscribeRecords, type LedgerTx,
+  unsubscribeRecords, unsubscribeExamined, type LedgerTx,
 } from "@trafficflow/db";
 import { rowsAffected as n } from "./rows-affected.js";
 
@@ -130,6 +130,10 @@ export async function sweepMailboxData(
     .where(inArray(awayResponderSent.messageId, ownMessageIds)));
   await drop("away_replies", tx.delete(awayReplies)
     .where(eq(awayReplies.mailboxId, mailboxId)));
+  // The per-message marks hang off the record by foreign key, so they go first or the delete
+  // below is refused. Keyed by MESSAGE, like the bodies further down.
+  await drop("unsubscribe_examined", tx.delete(unsubscribeExamined)
+    .where(inArray(unsubscribeExamined.messageId, ownMessageIds)));
   await drop("unsubscribe_records", tx.delete(unsubscribeRecords)
     .where(eq(unsubscribeRecords.mailboxId, mailboxId)));
   await drop("message_instances", tx.delete(messageInstances)
