@@ -9,10 +9,14 @@ import {
  * Grouping is per section, not per mailbox: the caller groups "New for you" and "Earlier"
  * separately, AFTER session placement, so a thread with unread mail in New and read history in
  * Earlier shows one row in each — the sections answer different questions, and collapsing across
- * them would make a conversation's unread row disappear because its history was long. Resurfaced
- * rows fold too, by the ENGINE's row ({@link groupResurfaced}) rather than this module's rule —
- * the pin is per message and the conversation is the unit the reader asked to see again. Only the
- * server-paged "Older" tail is left whole: it is not this client's to fold.
+ * them would make a conversation's unread row disappear because its history was long.
+ */
+
+/*
+ * Resurfaced folds too, by the ENGINE's row ({@link groupResurfaced}) rather than this module's
+ * rule: the pin is per message and the conversation is what the reader asked to see again, so the
+ * fold, the badge and the open target are one derivation the phone reads as well. Only the
+ * server-paged "Older" tail is left whole — it is not this client's to fold.
  */
 
 /*
