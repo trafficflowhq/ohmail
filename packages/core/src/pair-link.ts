@@ -53,19 +53,13 @@ export function pairLink(origin: string, token: string, pin: string | null): str
 
 /**
  * Parse `${origin}/pair#${fragment}`. A hand regex rather than `new URL`, so node tests and
- * Hermes parse identically. Refused, deliberately: a non-http(s) scheme (nothing else can be
- * redeemed against); any path but `/pair` (a token in the path would ride access logs); ANY query
- * string — `?token=` is the regression the fragment rule exists to prevent; an empty fragment; a
- * `k<n>` fragment this build does not understand, and a `k1` one whose fingerprint is the wrong
- * shape or whose token half is empty. Refusing a malformed pinned link is the point: the
- * alternative is redeeming the token with NO pin, the unencrypted pairing this shape exists to
- * make impossible.
- *
- * AND NO ADDRESS. A link names an ORIGIN and, where the origin's identity is the pin, that pin;
- * which mailbox it opens is the host's answer at the redeem and is not the link's to carry.
- * `https://someone@host/pair#…` parsed as the origin `https://someone@host` — an address inside
- * the host — while the engine's own `normalizeOrigin` refuses credentials, so the two ends
- * disagreed about what had been pasted and the door would configure a base no dial could reach.
+ * Hermes parse identically. Refused, deliberately: a non-http(s) scheme; any path but `/pair` (a
+ * token in the path would ride access logs); ANY query string — `?token=` is the regression the
+ * fragment rule exists to prevent; an empty fragment; a `k<n>` this build cannot read, and a `k1`
+ * whose fingerprint is the wrong shape or whose token half is empty. Refusing a malformed pinned
+ * link is the point: the alternative is redeeming with NO pin. AND NO ADDRESS: userinfo in the
+ * host parsed as part of the origin while the engine's `normalizeOrigin` refuses credentials, so
+ * the door accepted a link no dial could use.
  */
 export function parsePairLink(text: string): PairLink | null {
   const m = /^(https?):\/\/([^/?#\s]+)(\/[^?#\s]*)?(\?[^#\s]*)?(?:#(\S+))?$/i.exec(text.trim());

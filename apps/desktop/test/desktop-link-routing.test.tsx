@@ -107,17 +107,12 @@ const LINK = `https://192.168.1.24:8443/pair#k1.${PIN}.tok_pasted`;
 
 describe("a pinned pairing link in the self-hosted address field", () => {
   /**
-   * RE-DERIVED TWICE, and the second time is a return rather than a new claim.
-   *
-   * It asserted "the paired door OPENS". On 2026-09-15 that door could not be completed from any
-   * state a new install is in, so opening it was a dead end and the case was re-derived onto the
-   * half that survived: the link is RECOGNISED before anything is dialled, so it is answered by
-   * the paired door rather than by the self-hosted door's refusals — the worst of which tells
-   * somebody to install a root certificate — at a cost of zero fetches.
-   *
-   * The door completes now, so the pane is the right destination again and this case says so.
-   * What never changed, through both derivations, is what the routing is FOR: recognising `k1.`
-   * before a dial, and never blaming a certificate for a pairing link.
+   * RE-DERIVED TWICE, and the second time is a return rather than a new claim. It asserted "the
+   * paired door OPENS"; on 2026-09-15 that door could not be completed, so opening it was a dead
+   * end and the case moved to the half that survived — the link is RECOGNISED before a dial. The
+   * door completes now, so the pane is the right destination again. What never changed is what
+   * the routing is FOR: recognising `k1.` before dialling, and never blaming a certificate for a
+   * pairing link.
    */
   it("opens the paired door's pane, and dials nothing on the way", async () => {
     const shell = refusingShell();
