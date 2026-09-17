@@ -12,7 +12,8 @@
 import { and, eq, inArray, isNotNull, sql, type SQL } from "drizzle-orm";
 import { dialect } from "@trafficflow/db/dialect";
 import {
-  attachments, drafts, flagState, folderOps, folderState, junkRescues, mailboxFolders, messageBodies,
+  attachments, awayReplies, awayResponderSent,
+  drafts, flagState, folderOps, folderState, junkRescues, mailboxFolders, messageBodies,
   messageFailures, messageInstances, messageStates, messageTags, messages, outboundSends,
   recordMailboxRemoved, routingDecisions, trackerEvents, unsubscribeExamined, unsubscribeRecords,
   type LedgerTx, type Tx,
@@ -112,6 +113,15 @@ export async function deleteMailboxRows(db: Tx, mailboxId: string): Promise<void
 
   // ── THE MESSAGES' OWN CHILDREN ────────────────────────────────────────────────────────────
   await db.delete(messageTags).where(inArray(messageTags.messageId, ownMessages));
+  /* THE AWAY LEDGER, before the messages it names. Both tables carry a CORRESPONDENT's address,
+     held because this mailbox answered them, so a removed mailbox's ledger leaves with it — the
+     server's erasure does exactly this and in this order (`mailbox-erasure.ts`). A REMOVAL is not
+     an expunge: the whole mailbox goes, so there is no correspondent left to un-answer. Without
+     these two the wipe threw on `away_replies_message_id_account_fk` before the receipt was
+     written, and the mailbox could not be removed at all once the responder had replied to
+     anybody. `away_replies` is keyed on the mailbox as well as the message. */
+  await db.delete(awayResponderSent).where(inArray(awayResponderSent.messageId, ownMessages));
+  await db.delete(awayReplies).where(eq(awayReplies.mailboxId, mailboxId));
   // The per-message marks hang off the record by foreign key, so they go first.
   await db.delete(unsubscribeExamined).where(inArray(unsubscribeExamined.messageId, ownMessages));
   await db.delete(unsubscribeRecords).where(eq(unsubscribeRecords.mailboxId, mailboxId));

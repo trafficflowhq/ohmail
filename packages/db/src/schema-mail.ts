@@ -1537,14 +1537,15 @@ export const awayResponders = pgTable("away_responders", {
  * correspondent twice — deliberate, because twice is recoverable and never is not. Written BEFORE
  * the send: SMTP is not transactional, so claiming first costs a crash ONE unsent reply. `ON
  * CONFLICT DO NOTHING` returning zero rows IS the already-answered branch. `sender` is the
- * lowercased envelope author; no FK to `messages` — an expunge must not un-answer a sender.
+ * lowercased envelope author; the key to `messages` (mail 0118) is `ON DELETE SET NULL` — an
+ * expunge must not un-answer a sender, and `sender` is on the row.
  */
 export const awayResponderSent = pgTable("away_responder_sent", {
   id: uuid("id").defaultRandom().primaryKey(),
   accountId: uuid("account_id").notNull(),
   sender: text("sender").notNull(),
   responderUpdatedAt: timestamp("responder_updated_at", { withTimezone: true }).notNull(),
-  /** The message that triggered it, as evidence. Nullable, NO foreign key — see the header. */
+  /** The message that triggered it, as evidence. Nullable; the key SETs it NULL — see the header. */
   messageId: uuid("message_id"),
   /** The minted `<uuid@domain>` of the reply we sent, so a Sent-folder copy is attributable. */
   mintedMessageId: text("minted_message_id"),
@@ -1566,15 +1567,22 @@ export const awayResponderSent = pgTable("away_responder_sent", {
  * candidate set, so the window shrinks; and `UNIQUE (account_id, message_id)` is the structural
  * half of at-most-once — two runners race the INSERT, one gets a row. Written BEFORE the send:
  * `pending` commits with the throttle reservation, and the finalize is a compare-and-swap on
- * `outcome='pending'`. No FK on `message_id`: an expunge must not un-answer a correspondent.
+ * `outcome='pending'`. The key on `message_id` (mail 0118) is `ON DELETE SET NULL`, never RESTRICT:
+ * an expunge must not un-answer a correspondent, and `sender` is on the row, so it does not.
  */
 export const awayReplies = pgTable("away_replies", {
   id: uuid("id").defaultRandom().primaryKey(),
   accountId: uuid("account_id").notNull(),
   /** The mailbox the message ARRIVED in — the identity the reply is sent from. */
   mailboxId: uuid("mailbox_id").notNull(),
-  /** The message that triggered it. NO foreign key — see the header. */
-  messageId: uuid("message_id").notNull(),
+  /**
+   * The message that triggered it — PROVENANCE, and nullable since mail 0118. The composite key
+   * to `messages (id, account_id)` is `ON DELETE SET NULL ("message_id")`, so an expunge drops the
+   * pointer and leaves the row. `away_replies_message_uq` (account_id, message_id) is unaffected:
+   * NULLs do not collide, and at-most-once for a message that no longer exists is moot. Every
+   * writer supplies it; a NULL can only arrive by that key.
+   */
+  messageId: uuid("message_id"),
   /** The lowercased envelope author. Never a display name. */
   sender: text("sender").notNull(),
   /**

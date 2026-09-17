@@ -1482,14 +1482,15 @@ export const awayResponders = sqliteTable("away_responders", {
  * correspondent twice — deliberate, because twice is recoverable and never is not. Written BEFORE
  * the send: SMTP is not transactional, so claiming first costs a crash ONE unsent reply. `ON
  * CONFLICT DO NOTHING` returning zero rows IS the already-answered branch. `sender` is the
- * lowercased envelope author; no FK to `messages` — an expunge must not un-answer a sender.
+ * lowercased envelope author; `message_id` is provenance and nullable — an expunge must not
+ * un-answer a sender, and `sender` is on the row.
  */
 export const awayResponderSent = sqliteTable("away_responder_sent", {
   id: text("id").default(UUID_V4).primaryKey(),
   accountId: text("account_id").notNull(),
   sender: text("sender").notNull(),
   responderUpdatedAt: integer("responder_updated_at", { mode: "timestamp_ms" }).notNull(),
-  /** The message that triggered it, as evidence. Nullable, NO foreign key — see the header. */
+  /** The message that triggered it, as evidence. Nullable — see the header. */
   messageId: text("message_id"),
   /** The minted `<uuid@domain>` of the reply we sent, so a Sent-folder copy is attributable. */
   mintedMessageId: text("minted_message_id"),
@@ -1511,15 +1512,20 @@ export const awayResponderSent = sqliteTable("away_responder_sent", {
  * candidate set, so the window shrinks; and `UNIQUE (account_id, message_id)` is the structural
  * half of at-most-once — two runners race the INSERT, one gets a row. Written BEFORE the send:
  * `pending` commits with the throttle reservation, and the finalize is a compare-and-swap on
- * `outcome='pending'`. No FK on `message_id`: an expunge must not un-answer a correspondent.
+ * `outcome='pending'`. `message_id` is provenance and nullable: an expunge must not un-answer a
+ * correspondent, and `sender` is on the row, so it does not.
  */
 export const awayReplies = sqliteTable("away_replies", {
   id: text("id").default(UUID_V4).primaryKey(),
   accountId: text("account_id").notNull(),
   /** The mailbox the message ARRIVED in — the identity the reply is sent from. */
   mailboxId: text("mailbox_id").notNull(),
-  /** The message that triggered it. NO foreign key — see the header. */
-  messageId: text("message_id").notNull(),
+  /**
+   * The message that triggered it — PROVENANCE, nullable like its Postgres twin. This store
+   * carries no foreign keys, so nothing nulls it here; it is nullable so a row whose pointer the
+   * server dropped on an expunge is representable, and so the twins stay one schema.
+   */
+  messageId: text("message_id"),
   /** The lowercased envelope author. Never a display name. */
   sender: text("sender").notNull(),
   /**

@@ -18,6 +18,13 @@
 -- column, `account_id` among them, and that column is NOT NULL — so deleting a draft failed
 -- outright. `SET NULL ("draft_id")` drops the pointer and leaves the send its account.
 --
+-- THE AWAY LEDGER'S two `message_id` keys take `ON DELETE SET NULL ("message_id")`, because that
+-- column is PROVENANCE: the ledger row must outlive the message it answered, or an expunge
+-- un-answers a correspondent and a mailbox removal fails on the wipe. The row keeps `sender` and
+-- `outcome`, which is what "this person was answered" is made of. `away_replies.message_id` drops
+-- NOT NULL for it, and each key is preceded by the UPDATE that nulls rows already pointing at a
+-- message this account no longer has — ADD CONSTRAINT fails on existing violations.
+--
 -- ONE pair of the thirty-nine takes NO key here: `outbound_send_fingerprints.mailbox_id`. A key
 -- makes every insert take a KEY SHARE lock on the mailbox row, and five production paths hold
 -- that row FOR UPDATE — so a send would wait behind a stand-down, a dedup or a resync. Its
@@ -87,8 +94,11 @@ ALTER TABLE "outbound_send_fingerprints" ADD CONSTRAINT "outbound_send_fingerpri
 ALTER TABLE "workflow_runs" DROP CONSTRAINT "workflow_runs_workflow_id_workflows_id_fk";--> statement-breakpoint
 ALTER TABLE "workflow_runs" ADD CONSTRAINT "workflow_runs_workflow_id_account_fk" FOREIGN KEY ("workflow_id", "account_id") REFERENCES "workflows" ("id", "account_id");--> statement-breakpoint
 ALTER TABLE "away_replies" ADD CONSTRAINT "away_replies_mailbox_id_account_fk" FOREIGN KEY ("mailbox_id", "account_id") REFERENCES "mailboxes" ("id", "account_id");--> statement-breakpoint
-ALTER TABLE "away_replies" ADD CONSTRAINT "away_replies_message_id_account_fk" FOREIGN KEY ("message_id", "account_id") REFERENCES "messages" ("id", "account_id");--> statement-breakpoint
-ALTER TABLE "away_responder_sent" ADD CONSTRAINT "away_responder_sent_message_id_account_fk" FOREIGN KEY ("message_id", "account_id") REFERENCES "messages" ("id", "account_id");--> statement-breakpoint
+ALTER TABLE "away_replies" ALTER COLUMN "message_id" DROP NOT NULL;--> statement-breakpoint
+UPDATE "away_replies" SET "message_id" = NULL WHERE NOT EXISTS (SELECT 1 FROM "messages" m WHERE m."id" = "away_replies"."message_id" AND m."account_id" = "away_replies"."account_id");--> statement-breakpoint
+ALTER TABLE "away_replies" ADD CONSTRAINT "away_replies_message_id_account_fk" FOREIGN KEY ("message_id", "account_id") REFERENCES "messages" ("id", "account_id") ON DELETE SET NULL ("message_id");--> statement-breakpoint
+UPDATE "away_responder_sent" SET "message_id" = NULL WHERE "message_id" IS NOT NULL AND NOT EXISTS (SELECT 1 FROM "messages" m WHERE m."id" = "away_responder_sent"."message_id" AND m."account_id" = "away_responder_sent"."account_id");--> statement-breakpoint
+ALTER TABLE "away_responder_sent" ADD CONSTRAINT "away_responder_sent_message_id_account_fk" FOREIGN KEY ("message_id", "account_id") REFERENCES "messages" ("id", "account_id") ON DELETE SET NULL ("message_id");--> statement-breakpoint
 ALTER TABLE "organizer_requests" ADD CONSTRAINT "organizer_requests_mailbox_id_account_fk" FOREIGN KEY ("mailbox_id", "account_id") REFERENCES "mailboxes" ("id", "account_id");--> statement-breakpoint
 ALTER TABLE "mailbox_profile_mirror" ADD CONSTRAINT "mailbox_profile_mirror_mailbox_id_account_fk" FOREIGN KEY ("mailbox_id", "account_id") REFERENCES "mailboxes" ("id", "account_id");--> statement-breakpoint
 ALTER TABLE "devices" DROP CONSTRAINT "devices_user_id_users_id_fk";--> statement-breakpoint
