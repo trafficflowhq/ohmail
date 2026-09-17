@@ -28,21 +28,45 @@ export type LocalDb = PgliteDatabase<typeof mailSchema>;
  * THE INGEST'S OWN TRANSACTION DOES NOT WAIT FOR THE FLUSH — that transaction, and nothing else on
  * this database or any other (`local-store-durability.test.ts` says so, from both sides).
  *
- * NOT `fsync = off`: the log is still written and still ordered, so a killed store reopens and
- * recovers a PREFIX of it. What the ingest loses is what it committed since the last CHECKPOINT —
- * PGlite is one process with no background writer, so the checkpointer {@link
- * CHECKPOINT_INTERVAL_MS} arms is the only flush between commits — and that is safe because the
- * mailbox is the master: `sync.ts` writes a folder's cursor AFTER the messages it acknowledges, so
- * a lost tail takes its cursor with it and the next cycle re-fetches. `local-db.test.ts` kills a
- * mid-ingest store and reads that back off the reopened directory.
- *
- * THE SCOPE IS THE TRANSACTION AND NOT THE SESSION, and that is the whole of this constant's
- * history. The commit flush is also what keeps the log drained: with it gone session-wide, a
- * statement that dirties hundreds of buffers pays the WAL-before-data flush at every eviction
- * instead — measured 2 474 ms against 77 ms for identical work (same blocks, same log bytes, same
- * syscalls), which is the shape of the store's own compaction and of a mailbox erase.
+ * It does NOT make the write asynchronous: the log is opened `O_DSYNC` ({@link WAL_SYNC_METHOD}),
+ * so a write is on the disk when it returns and what a kill takes is what is still in
+ * `wal_buffers` — not, as this note used to say, everything since the last checkpoint. What it
+ * stops is a commit FORCING the partial page out, which makes the writes bigger and fewer. And the
+ * scope is the TRANSACTION and not the session: gone session-wide, a statement that dirties
+ * hundreds of buffers pays the flush at every eviction instead, 2 474 ms against 77 ms.
  */
 const INGEST_SYNCHRONOUS_COMMIT = "off";
+
+/**
+ * HOW THE LOG IS WRITTEN, AND THE ONE PROPERTY THIS STORE'S DURABILITY RESTS ON.
+ *
+ * PGlite's emulated filesystem implements NO flush — 500 inserts issue 509 writes and zero
+ * fsync-class calls, and an explicit `CHECKPOINT` issues 42 and zero — so nothing here is durable
+ * because somebody flushed it. It is durable because Postgres' Linux default opens the log
+ * `O_DSYNC` and the write itself reaches the disk. Change it and a rule, a draft or a send-lock
+ * claim stops surviving a power loss while every test still passes, because a process kill leaves
+ * the page cache intact. So the value is asserted at every open rather than assumed.
+ */
+const WAL_SYNC_METHOD = "open_datasync";
+
+/** Thrown when the store would open with a log this build cannot vouch for. See {@link WAL_SYNC_METHOD}. */
+export class ForeignWalSyncMethodError extends Error {
+  constructor(readonly found: string) {
+    super(
+      `the local store would open with wal_sync_method = ${found}, not ${WAL_SYNC_METHOD}: this `
+      + "store has no fsync behind it, so that descriptor is the whole of its durability and a "
+      + "rule, a draft or a send-lock claim would stop surviving a power loss",
+    );
+    this.name = "ForeignWalSyncMethodError";
+  }
+}
+
+/** Read it back from the server and refuse anything else — never from a config file. */
+async function assertWalSyncMethod(client: PGlite): Promise<void> {
+  const rows = await client.query<Record<string, string>>("show wal_sync_method");
+  const found = String(Object.values(rows.rows[0] ?? {})[0]);
+  if (found !== WAL_SYNC_METHOD) throw new ForeignWalSyncMethodError(found);
+}
 
 /**
  * Put {@link INGEST_SYNCHRONOUS_COMMIT} inside the ingest's transactions, in place on the client
@@ -1011,6 +1035,9 @@ export async function openLocalDb(dataDir: string, opts: OpenLocalDbOptions = {}
     // name the wrong phase. The total is identical either way: the same promise is awaited, once,
     // a few microseconds earlier.
     await client.waitReady;
+    /* BEFORE ANY WRITE, because this is the property every other durability claim in this file
+       rests on and a wrong one is invisible to every test. See {@link WAL_SYNC_METHOD}. */
+    await assertWalSyncMethod(client);
     /**
      * THE FAIR SHARE, IN FRONT OF THE HANDLE AND BEFORE ANYTHING ELSE HOLDS IT.
      *

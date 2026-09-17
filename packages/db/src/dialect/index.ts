@@ -220,11 +220,11 @@ export type SearchCorpus = "mail" | "kb";
  * HOW MUCH WRITE-AHEAD LOG MAY STAND BEHIND THE LAST FOLD WHILE MAIL IS COMING IN — the loss
  * window in bytes, and the ONE bound both stores take ({@link Dialect.foldLog}).
  *
- * Beside the seam because a bound one store read and the other did not is what this seam exists
- * to prevent, and because the phone's bundle substitutes the desktop store's module away. A
- * fold's price is the store's dirty pages and files, so it grows with the mailbox and does not
- * fall by taking more of them — per drain CYCLE it cost 56.2 ms a message. At the 14.8 KiB of log
- * a message an import writes, this window is about 108 seconds of importing, re-fetched not lost.
+ * Beside the seam because a bound one store read and the other did not is what this seam exists to
+ * prevent, and because the phone's bundle substitutes the desktop store's module away. A fold's
+ * price is the store's dirty pages and files, so it grows with the mailbox and does not fall by
+ * taking more — per drain CYCLE it cost 56.2 ms a message. It bounds the REPLAY a launch owes
+ * after a kill and how dirty the pool may get, NOT the loss window: the log is opened `O_DSYNC`.
  */
 export const INGEST_FOLD_WAL_BYTES = 64 * 1024 * 1024;
 
