@@ -30,20 +30,20 @@
 -- that row FOR UPDATE — so a send would wait behind a stand-down, a dedup or a resync. Its
 -- account is already pinned through `send_id`, so no read can reach it under another account.
 
-CREATE UNIQUE INDEX "mailboxes_id_account_uq" ON "mailboxes" ("id", "account_id");--> statement-breakpoint
-CREATE UNIQUE INDEX "messages_id_account_uq" ON "messages" ("id", "account_id");--> statement-breakpoint
-CREATE UNIQUE INDEX "threads_id_account_uq" ON "threads" ("id", "account_id");--> statement-breakpoint
-CREATE UNIQUE INDEX "contacts_id_account_uq" ON "contacts" ("id", "account_id");--> statement-breakpoint
-CREATE UNIQUE INDEX "tags_id_account_uq" ON "tags" ("id", "account_id");--> statement-breakpoint
-CREATE UNIQUE INDEX "drafts_id_account_uq" ON "drafts" ("id", "account_id");--> statement-breakpoint
-CREATE UNIQUE INDEX "outbound_sends_id_account_uq" ON "outbound_sends" ("id", "account_id");--> statement-breakpoint
-CREATE UNIQUE INDEX "routing_decisions_id_account_uq" ON "routing_decisions" ("id", "account_id");--> statement-breakpoint
-CREATE UNIQUE INDEX "rules_id_account_uq" ON "rules" ("id", "account_id");--> statement-breakpoint
-CREATE UNIQUE INDEX "workflows_id_account_uq" ON "workflows" ("id", "account_id");--> statement-breakpoint
-CREATE UNIQUE INDEX "users_id_account_uq" ON "users" ("id", "account_id");--> statement-breakpoint
-CREATE UNIQUE INDEX "devices_id_account_uq" ON "devices" ("id", "account_id");--> statement-breakpoint
-CREATE UNIQUE INDEX "sessions_id_account_uq" ON "sessions" ("id", "account_id");--> statement-breakpoint
-CREATE UNIQUE INDEX "mailbox_folders_id_mailbox_uq" ON "mailbox_folders" ("id", "mailbox_id");--> statement-breakpoint
+CREATE UNIQUE INDEX IF NOT EXISTS "mailboxes_id_account_uq" ON "mailboxes" ("id", "account_id");--> statement-breakpoint
+CREATE UNIQUE INDEX IF NOT EXISTS "messages_id_account_uq" ON "messages" ("id", "account_id");--> statement-breakpoint
+CREATE UNIQUE INDEX IF NOT EXISTS "threads_id_account_uq" ON "threads" ("id", "account_id");--> statement-breakpoint
+CREATE UNIQUE INDEX IF NOT EXISTS "contacts_id_account_uq" ON "contacts" ("id", "account_id");--> statement-breakpoint
+CREATE UNIQUE INDEX IF NOT EXISTS "tags_id_account_uq" ON "tags" ("id", "account_id");--> statement-breakpoint
+CREATE UNIQUE INDEX IF NOT EXISTS "drafts_id_account_uq" ON "drafts" ("id", "account_id");--> statement-breakpoint
+CREATE UNIQUE INDEX IF NOT EXISTS "outbound_sends_id_account_uq" ON "outbound_sends" ("id", "account_id");--> statement-breakpoint
+CREATE UNIQUE INDEX IF NOT EXISTS "routing_decisions_id_account_uq" ON "routing_decisions" ("id", "account_id");--> statement-breakpoint
+CREATE UNIQUE INDEX IF NOT EXISTS "rules_id_account_uq" ON "rules" ("id", "account_id");--> statement-breakpoint
+CREATE UNIQUE INDEX IF NOT EXISTS "workflows_id_account_uq" ON "workflows" ("id", "account_id");--> statement-breakpoint
+CREATE UNIQUE INDEX IF NOT EXISTS "users_id_account_uq" ON "users" ("id", "account_id");--> statement-breakpoint
+CREATE UNIQUE INDEX IF NOT EXISTS "devices_id_account_uq" ON "devices" ("id", "account_id");--> statement-breakpoint
+CREATE UNIQUE INDEX IF NOT EXISTS "sessions_id_account_uq" ON "sessions" ("id", "account_id");--> statement-breakpoint
+CREATE UNIQUE INDEX IF NOT EXISTS "mailbox_folders_id_mailbox_uq" ON "mailbox_folders" ("id", "mailbox_id");--> statement-breakpoint
 ALTER TABLE "messages" DROP CONSTRAINT "messages_mailbox_id_mailboxes_id_fk";--> statement-breakpoint
 ALTER TABLE "messages" ADD CONSTRAINT "messages_mailbox_id_account_fk" FOREIGN KEY ("mailbox_id", "account_id") REFERENCES "mailboxes" ("id", "account_id");--> statement-breakpoint
 ALTER TABLE "messages" DROP CONSTRAINT "messages_thread_id_threads_id_fk";--> statement-breakpoint
