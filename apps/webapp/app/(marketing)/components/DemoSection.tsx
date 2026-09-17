@@ -13,23 +13,25 @@ import { useTranslations } from "next-intl";
 import { Kbd, useTheme } from "@ohmail/ui";
 import { useModGlyph } from "../../shell/mod-glyph";
 import { Reveal } from "./Reveal";
-import { OMARCHY_DEMO_THEMES } from "./omarchy-demo-themes";
+import { omarchyRuleText } from "@ohmail/tokens/omarchy-rule";
+import { OMARCHY_DEMO_THEMES, type OmarchyDemoTheme } from "./omarchy-demo-themes";
 
 const DEMO_SRC = "/demo";
 
-/* The theme explorer's feed: picking an Omarchy theme injects that theme's mapped token values into
-   the iframe's document as ONE rule scoped to `:root[data-face="ohmarchy"]` — the desktop's live
-   theme feed's shape (apps/desktop/src/omarchy.ts), for the same reasons: scoped, inert the moment
-   the face comes off. `!important` per declaration is that module's cascade argument, holding
-   identically here: the demo document's system-dark token block is a (0,3,0) selector and would
-   silently outrank this rule's (0,2,0) on every slot both define. The values are the committed,
-   law-derived set (omarchy-demo-themes.ts, generated and pinned by test), so no fence is needed —
-   nothing user-authored ever reaches this rule. */
+/* The theme explorer's feed: picking an Omarchy theme injects that theme's mapped token values
+   into the iframe's document, through THE SAME WRITER the desktop's live theme feed uses
+   (`@ohmail/tokens/omarchy-rule`). It used to be a second spelling of that rule with the SCHEME
+   AXIS MISSING — one `:root[data-face="ohmarchy"]` block — so a dark theme picked while the page
+   was in light rendered dark inside a light page, and the demo contradicted the control beside
+   it. The builder writes the theme's own scheme and, from the law's derivation of the scheme the
+   theme does not have, the other one; the page stamps `data-theme` on the frame's <html>, so the
+   frame now follows the page on both axes. `!important` per declaration and the fence are the
+   builder's, argued there. */
 const DEMO_THEME_STYLE_ID = "ohmail-omarchy-demo";
 
-function applyDemoTheme(doc: Document, tokens: Record<string, string> | null): void {
+function applyDemoTheme(doc: Document, theme: OmarchyDemoTheme | null): void {
   const prev = doc.getElementById(DEMO_THEME_STYLE_ID);
-  if (tokens === null) {
+  if (theme === null) {
     prev?.remove();
     return;
   }
@@ -39,8 +41,7 @@ function applyDemoTheme(doc: Document, tokens: Record<string, string> | null): v
     style.id = DEMO_THEME_STYLE_ID;
     doc.head.appendChild(style);
   }
-  const lines = Object.entries(tokens).map(([name, value]) => `  ${name}: ${value} !important;`);
-  style.textContent = `:root[data-face="ohmarchy"] {\n${lines.join("\n")}\n}`;
+  style.textContent = omarchyRuleText(theme.tokens, theme.mode, theme.counterpart);
 }
 
 /** Layout effects are a client-only concern; on the server they would only
@@ -565,9 +566,7 @@ export function DemoSection() {
     const doc = docOf(frameRef.current);
     if (!doc || !loaded) return;
     const picked =
-      demoTheme === null
-        ? null
-        : (OMARCHY_DEMO_THEMES.find((th) => th.slug === demoTheme)?.tokens ?? null);
+      demoTheme === null ? null : (OMARCHY_DEMO_THEMES.find((th) => th.slug === demoTheme) ?? null);
     try {
       applyDemoTheme(doc, picked);
     } catch {

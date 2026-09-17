@@ -29,11 +29,30 @@ export async function generateModuleText() {
   // UMD side effect: registers globalThis.OHMARCHY_MAP (same move as map.ts / the gallery).
   await import(here("../../../packages/tokens/omarchy/mapping.js"));
   const MAP = globalThis.OHMARCHY_MAP;
+  /* THE SCHEME THE THEME DOES NOT HAVE, from the law's own derivation rather than a second
+     recipe here — an Omarchy theme states one mode and the demo's rule now carries both. The
+     `.ts` is imported directly (node strips the types; its only value import is the real
+     `mapping.js`), which is how several scripts in this repository reach a source module. */
+  const { counterpartPalette } = await import(here("../../../packages/tokens/omarchy/counterpart.ts"));
   const index = JSON.parse(readFileSync(here(`${FIXTURES}/index.json`), "utf8"));
 
   const themes = index.themes.map(({ slug }) => {
     const fixture = JSON.parse(readFileSync(here(`${FIXTURES}/${slug}.json`), "utf8"));
     const mapped = MAP.mapTheme(fixture);
+    /* A counterpart that the colour math cannot derive is `null`, and the rule then emits
+       nothing for that scheme — the static ohmarchy block for it stands, which is the law's
+       own answer. The FLOORS are asserted by the pin test, where `clearsCounterpartFloors`
+       is reachable: for a committed fixture set a counterpart under a floor is a defect to
+       fix, not a fallback to take silently. */
+    const other = counterpartPalette(fixture);
+    let counterpart = null;
+    if (other !== null) {
+      try {
+        counterpart = MAP.mapTheme(other).tokens;
+      } catch {
+        counterpart = null;
+      }
+    }
     return {
       slug: fixture.slug,
       name: fixture.name,
@@ -46,6 +65,7 @@ export async function generateModuleText() {
         accent: fixture.colors.accent,
       },
       tokens: mapped.tokens,
+      counterpart,
     };
   });
 
@@ -58,9 +78,13 @@ export async function generateModuleText() {
 export interface OmarchyDemoTheme {
   slug: string;
   name: string;
+  /** The scheme the theme itself states; \`tokens\` belong to it. */
   mode: "light" | "dark";
   swatch: { bg: string; fg: string; accent: string };
   tokens: Record<string, string>;
+  /** The other scheme, derived by the law from this theme's own colours, or null when the
+   *  derivation could not be made — the static face block for that scheme then stands. */
+  counterpart: Record<string, string> | null;
 }
 
 export const OMARCHY_DEMO_THEMES: readonly OmarchyDemoTheme[] = ${JSON.stringify(themes, null, 2)};
