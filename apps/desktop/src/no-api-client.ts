@@ -793,7 +793,8 @@ export const screener: {
 } = absent;
 
 export interface JunkRescueWire {
-    status: "rescued";
+    status: "queued";
+    rescueId: string;
     allowed?: { disabledRuleIds: string[]; createdRuleId: string | null };
 }
 
@@ -830,6 +831,7 @@ export interface JunkItemWire {
     messageIdHeader: string | null;
     seen: boolean;
     origin: "verdict" | "provider";
+    rescue?: "queued" | "refused";
 }
 
 export interface JunkMailboxWire {

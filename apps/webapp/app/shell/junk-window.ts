@@ -12,13 +12,13 @@
  */
 
 /**
- * The rescue and its second verb: "Not junk" is ONE server-side move out of Junk, and the message
- * re-enters through the NORMAL pipeline; the row leaves on success. A 410 (the provider removed it
- * first) also removes the row but says what happened; any other failure keeps the row and says so —
- * a row that silently vanished on a failed rescue would be this window inventing the provider's
- * state. "Not junk, always allow" is the same press plus one statement about the SENDER (the
- * server switches off the spam-promoting rule and mints the allow before the move); on a 410 the
- * allow still stands, so that sentence says both.
+ * The rescue and its second verb: "Not junk" RECORDS a command and the organizer makes the move on
+ * its next cycle, so the press answers 202 and the row STAYS — marked `rescue: "queued"`, which is
+ * the truth until the message is actually out of Junk. It leaves the window when the next read no
+ * longer finds it there. A press that never reached the queue keeps the row and says so; a row the
+ * mail server refused comes back `rescue: "refused"` and a fresh press tries once more. "Not junk,
+ * always allow" is the same command plus one statement about the SENDER, written in the same
+ * transaction — so there is no outcome where one half stands without the other.
  */
 
 /**
@@ -65,10 +65,11 @@ export interface JunkWire {
   sweepRequest(): Promise<JunkSweepWire>;
   /**
    * A wire's 410 — the row is gone from Junk — must be recognisable above the seam: the
-   * browser's client throws `ApiError` with the status, a host wire answers this predicate.
+   * browser's client throws `ApiError` with the status, a host wire answers this predicate. Only
+   * the BODY read raises one now; the rescue records a command and never touches the server.
    */
   isGone(err: unknown): boolean;
-  /** The server's error CODE, when the wire carried one — `junk_rescue_move_failed` is read above the seam. */
+  /** The server's error CODE, when the wire carried one. */
   codeOf(err: unknown): string | null;
 }
 
@@ -306,10 +307,11 @@ export function useJunkWindow(active: boolean, toast: ToastFn, hostWire?: JunkWi
           return;
         }
         setItems((cur) => {
-          // Appended, never re-sorted: the reader asked for OLDER, below what they have — and
-          // never a row this session already rescued.
+          // Appended, never re-sorted: the reader asked for OLDER, below what they have. A row
+          // this session PRESSED is not filtered out — it is still in Junk until the organizer
+          // moves it, and the server's answer already says `rescue: "queued"` about it.
           const have = new Set(cur.map(junkKeyOf));
-          return [...cur, ...page.items.filter((i) => !have.has(junkKeyOf(i)) && !dropped.current.has(junkKeyOf(i)))];
+          return [...cur, ...page.items.filter((i) => !have.has(junkKeyOf(i)))];
         });
         setNextCursor(page.nextCursor);
       },
@@ -362,14 +364,6 @@ export function useJunkWindow(active: boolean, toast: ToastFn, hostWire?: JunkWi
    * ask that ran, whatever generation is current on screen.
    */
   const pendingTerms = useRef(new Set<string>());
-  /**
-   * Rows this session RESCUED. A server answer that fetched a row before its move landed must
-   * not put it back on screen — the filter runs at every place rows enter (search answers,
-   * older pages).
-   */
-  const dropped = useRef(new Set<string>());
-  const notDropped = useCallback((rows: JunkItemWire[]) => rows.filter((r) => !dropped.current.has(junkKeyOf(r))), []);
-
   const localKept = useMemo(
     () => (query.trim().length === 0 ? items : items.filter((i) => junkRowMatches(i, query))),
     [items, query],
@@ -383,7 +377,7 @@ export function useJunkWindow(active: boolean, toast: ToastFn, hostWire?: JunkWi
     void wire.search(term).then(
       (page) => {
         pendingTerms.current.delete(term);
-        const answer = { items: notDropped(page.items), mailboxes: page.mailboxes, truncated: page.truncated };
+        const answer = { items: page.items, mailboxes: page.mailboxes, truncated: page.truncated };
         answers.current.set(term, answer);
         // The answer reaches the SCREEN iff its term is what is typed right now — a person who
         // left the term and came back mid-flight sees it settle (a generation
@@ -404,7 +398,7 @@ export function useJunkWindow(active: boolean, toast: ToastFn, hostWire?: JunkWi
         setSearchPhase("failed");
       },
     );
-  }, [query, wire, notDropped]);
+  }, [query, wire]);
 
   const setQuery = useCallback((q: string) => {
     setQueryState(q);
@@ -416,7 +410,7 @@ export function useJunkWindow(active: boolean, toast: ToastFn, hostWire?: JunkWi
     const term = q.trim();
     const held = term.length > 0 ? answers.current.get(term) : undefined;
     if (held !== undefined) {
-      setHits(notDropped(held.items));
+      setHits(held.items);
       setSearchBoxes(held.mailboxes);
       setTruncated(held.truncated);
       setSearchPhase("done");
@@ -426,7 +420,7 @@ export function useJunkWindow(active: boolean, toast: ToastFn, hostWire?: JunkWi
     setSearchBoxes([]);
     setTruncated(false);
     setSearchPhase(term.length === 0 ? "idle" : pendingTerms.current.has(term) ? "searching" : "local");
-  }, [notDropped]);
+  }, []);
 
   useEffect(() => {
     // The automatic kick — ONLY while the segment is on screen, ONLY from `local` (a failed ask
@@ -447,10 +441,16 @@ export function useJunkWindow(active: boolean, toast: ToastFn, hostWire?: JunkWi
   }, [items, query, localKept, hits]);
 
   /* ── THE RESCUE (both verbs) ───────────────────────────────────────────────────────────── */
-  const dropRow = useCallback((key: string) => {
-    dropped.current.add(key);
-    setItems((cur) => cur.filter((i) => junkKeyOf(i) !== key));
-    setHits((cur) => cur.filter((i) => junkKeyOf(i) !== key));
+  /**
+   * THE ROW STAYS AND SAYS WHAT IT IS WAITING FOR. Recorded, not applied: the message is still in
+   * Junk when the answer comes back, so removing the row would be this window claiming a move the
+   * server has not made. The next read drops it, because by then it really is gone from Junk.
+   */
+  const markQueued = useCallback((key: string) => {
+    const stamp = (i: JunkItemWire): JunkItemWire =>
+      junkKeyOf(i) === key ? { ...i, rescue: "queued" as const } : i;
+    setItems((cur) => cur.map(stamp));
+    setHits((cur) => cur.map(stamp));
   }, []);
 
   const rescue = useCallback((item: JunkItemWire, opts: { allow?: boolean } = {}) => {
@@ -460,31 +460,18 @@ export function useJunkWindow(active: boolean, toast: ToastFn, hostWire?: JunkWi
     void wire.rescue(item.mailboxId, item.uid, item.uidValidity, allow ? { allow: { sender: item.from.address } } : {}).then(
       () => {
         setBusy((cur) => { const n = new Set(cur); n.delete(key); return n; });
-        // CONFIRMED first, removed second — the row leaves only for a move that happened.
-        dropRow(key);
-        toast(t(allow ? "junkRescuedAllowed" : "junkRescued"));
+        markQueued(key);
+        toast(t(allow ? "junkRescueQueuedAllowed" : "junkRescueQueued"));
       },
-      (err: unknown) => {
+      () => {
         setBusy((cur) => { const n = new Set(cur); n.delete(key); return n; });
-        if (wire.isGone(err)) {
-          // The provider (or another client) removed it first. It IS out of Junk — the row
-          // goes — but the sentence says what happened rather than claiming our move did it.
-          // With the second verb the allow was written BEFORE the move and stands: said too.
-          dropRow(key);
-          toast(t(allow ? "junkRescueGoneAllowed" : "junkRescueGone"));
-          return;
-        }
-        // The PARTIAL outcome: the server committed the allow, then the move failed for another
-        // reason (a timeout, a refusal). The row stays — it IS still in Junk — and the sentence
-        // says the rules changed anyway, so the person is not left believing nothing happened.
-        if (allow && wire.codeOf(err) === "junk_rescue_move_failed") {
-          toast(t("junkRescueFailedAllowed"));
-          return;
-        }
+        // The command was not recorded — nothing changed, on either half. ONE sentence, because
+        // there is no longer a partial outcome to describe: the allow and the command commit
+        // together or not at all.
         toast(t("junkRescueFailed"));
       },
     );
-  }, [toast, t, wire, dropRow]);
+  }, [toast, t, wire, markQueued]);
 
   const rescuing = useCallback((item: JunkItemWire) => busy.has(junkKeyOf(item)), [busy]);
 

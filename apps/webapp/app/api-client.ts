@@ -2522,14 +2522,15 @@ export const screener = {
     ),
 
   /**
-   * "Not junk": ONE server-side move out of \Junk back to the inbox — the un-training gesture —
-   * after which the message re-enters through the NORMAL pipeline (a first-time sender waits in
-   * the Screener; an allowed one lands in the Ohbox). 410 when the provider removed it first.
+   * "Not junk": the command to move one message out of \Junk back to the inbox — the un-training
+   * gesture. 202: the press is RECORDED and the organizer makes the move on its next cycle, after
+   * which the message re-enters through the NORMAL pipeline (a first-time sender waits in the
+   * Screener; an allowed one lands in the Ohbox). The server opens no mail connection here.
    *
    * `allow: { sender }` is the SECOND verb — "Not junk, always allow": the server disables the
-   * sender's spam-promoting rule and mints their allow BEFORE the move, in one transaction, so
-   * the rescued message and every later one skip the gate. Same route; the server never forks a
-   * parallel rescue path. On a 410 the allow still stands — the press was about the sender.
+   * sender's spam-promoting rule and mints their allow in the SAME transaction as the command, so
+   * the rescued message and every later one skip the gate, and an interruption leaves neither.
+   * Same route; the server never forks a parallel rescue path.
    */
   junkRescue: (mailboxId: string, uid: number, uidValidity: string, opts: { allow?: { sender: string } } = {}) =>
     api<JunkRescueWire>("/screener/junk/rescue", {
@@ -2553,8 +2554,10 @@ export const screener = {
 };
 
 export interface JunkRescueWire {
-  status: "rescued";
-  /** Present only for the second verb: what the allow half did. */
+  /** The command is recorded. Nothing has moved yet — the organizer's next cycle makes the move. */
+  status: "queued";
+  rescueId: string;
+  /** Present only for the second verb: what the allow half did, in the command's own transaction. */
   allowed?: { disabledRuleIds: string[]; createdRuleId: string | null };
 }
 
@@ -2592,6 +2595,12 @@ export interface JunkItemWire {
   seen: boolean;
   /** Who filed it: our recorded verdict/sweep, or the mail server's own filter. */
   origin: "verdict" | "provider";
+  /**
+   * A standing "not junk" command on this row: `"queued"` — recorded, waiting for the organizer;
+   * `"refused"` — the mail server would not take the move, and a fresh press tries once more.
+   * ABSENT means no command — the row leaves the window when the move lands.
+   */
+  rescue?: "queued" | "refused";
 }
 
 export interface JunkMailboxWire {

@@ -2526,8 +2526,10 @@ function JunkRows({
       avatarInitial={(i.from.name ?? i.from.address).trim().charAt(0).toUpperCase() || "?"}
       avatarHue={avatarHue(i.from.address)}
       /* THE ORIGIN MARKER (§16.2): who filed this into Junk. The same badge slot the
-         mirror's spam rows use for their detection label. */
-      detection={t(i.origin === "verdict" ? "junkOriginVerdict" : "junkOriginProvider")}
+         mirror's spam rows use for their detection label — and a STANDING "not junk" command
+         takes it over, because what is going to happen to a row outranks who filed it. The row
+         stays in the window until the organizer's move lands, so this is what says why. */
+      detection={t(junkRowLabel(i))}
       dull
       selected={junkKeyOf(i) === activeKey}
       onClick={() => onSelect(junkKeyOf(i))}
@@ -2709,6 +2711,17 @@ function JunkSweepOffer({ sweep }: { sweep: JunkWindowControl["sweep"] }) {
  * inbox, after which the message re-enters through the NORMAL pipeline (the note says exactly
  * where it can land).
  */
+/**
+ * What the row's badge says: a standing command if there is one, otherwise who filed it. A queued
+ * rescue is a promise about this message and a refused one is the mail server's answer to it —
+ * both outrank the origin, which is background once the person has pressed.
+ */
+function junkRowLabel(i: JunkItemWire): string {
+  if (i.rescue === "queued") return "junkRescueQueued";
+  if (i.rescue === "refused") return "junkRescueRefused";
+  return i.origin === "verdict" ? "junkOriginVerdict" : "junkOriginProvider";
+}
+
 function JunkPreview({
   item,
   junk,
@@ -2727,25 +2740,33 @@ function JunkPreview({
         <button type="button" className="scn-back" onClick={onBack}>
           <Icon name="chev" className="chev" /> {t("back")}
         </button>
-        <div className="d-btns">
-          <Button onClick={() => junk.rescue(item)} disabled={busy}>
-            {t("junkNotJunk")}
-          </Button>
-          {/* THE SECOND VERB (§16.2): the same move, plus one statement about the SENDER — their
-              spam rule off and their allow minted before the move, so this and every later
-              message from them skips the gate. A second button, not a modifier on the first:
-              the two are different statements and each press should say which one it made. */}
-          <Button variant="ghost" onClick={() => junk.rescue(item, { allow: true })} disabled={busy}>
-            {t("junkAllow")}
-          </Button>
-        </div>
+        {/* A COMMAND ALREADY STANDS, so there is nothing to press: the sentence is the state,
+            not a toast that has scrolled away. A REFUSED one keeps the verbs — the mail server
+            would not take it and a fresh press earns one more attempt. */}
+        {item.rescue === "queued" ? (
+          <div className="d-btns"><span className="d-note">{t("junkRescueQueued")}</span></div>
+        ) : (
+          <div className="d-btns">
+            <Button onClick={() => junk.rescue(item)} disabled={busy}>
+              {t("junkNotJunk")}
+            </Button>
+            {/* THE SECOND VERB (§16.2): the same command, plus one statement about the SENDER —
+                their spam rule off and their allow minted in the command's own transaction, so
+                this and every later message from them skips the gate. A second button, not a
+                modifier on the first: the two are different statements and each press should say
+                which one it made. */}
+            <Button variant="ghost" onClick={() => junk.rescue(item, { allow: true })} disabled={busy}>
+              {t("junkAllow")}
+            </Button>
+          </div>
+        )}
         <div className="d-sub">
           <span className="d-note">{t("junkNotJunkNote")} {t("junkAllowNote")}</span>
         </div>
       </div>
       <div className="scn-mails">
         <div className="scn-caption">
-          {t(item.origin === "verdict" ? "junkOriginVerdict" : "junkOriginProvider")}
+          {t(junkRowLabel(item))}
         </div>
         <HeldMail
           /* REMOUNTED PER ASK: the stall face (`useBodyStalled`) keys on its mount, so a retry
