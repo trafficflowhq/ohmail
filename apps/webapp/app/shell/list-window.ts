@@ -11,9 +11,15 @@
 /**
  * Nothing but arithmetic: it answers "which slice is on screen" from the scroller's own
  * `scrollTop`/`clientHeight`, and the caller renders that slice between two spacers, so scroll
- * height, scrollbar and position are what they would have been with every row mounted. The row
- * height is measured, not assumed: `estimate` is only the first frame's guess, and every mail row
- * is a fixed three lines, so one measurement is the height of all of them. `clientHeight` of 0
+ * height, scrollbar and position are what they would have been with every row mounted.
+ *
+ * ROWS OF ONE HEIGHT ARE A REQUIREMENT THE CALLER OWES, not an observation. One row is measured
+ * and every unrendered row is reserved at that height, so a list of uneven rows — the Ohbox, where
+ * a row with a preview line is three lines and one without is two — drifts: the reserved height
+ * runs ahead of the real rows and the list moves on by more than a row per row of scrolling, which
+ * is mail cut off the top rather than scrolled out of it. Lists at or below
+ * {@link FULL_RANGE_MAX_ROWS} are rendered whole for that reason. ABOVE it the drift is still
+ * here, and only per-index measured heights can close it. `clientHeight` of 0
  * (pre-layout, jsdom) reads as {@link FALLBACK_VIEWPORT_PX} — over-render, never hide mail. No
  * dependency, no absolute rows: rows stay normal children in document order, so selection styling,
  * `useSeenOnScroll`'s `[data-id]` contract and focus order work as before.
@@ -28,6 +34,14 @@ export const FALLBACK_VIEWPORT_PX = 1200;
 
 /** Rows rendered above and below the viewport, so a scroll reveals mail rather than a gap. */
 const OVERSCAN_ROWS = 8;
+
+/**
+ * Lists no longer than this are rendered whole: a few screens of rows cost little to mount, and
+ * the spacer arithmetic cannot be honest about rows of uneven height. Above it the window still
+ * runs — an unbounded render is the cost this product has already paid once — so an uneven list
+ * longer than this still drifts until the window carries per-index measured heights.
+ */
+export const FULL_RANGE_MAX_ROWS = 500;
 
 export interface ListWindow {
   /** First index to render, inclusive. */
@@ -126,6 +140,8 @@ export function useListWindow({
     const h = row?.offsetHeight ?? 0;
     if (h > 0 && Math.abs(h - measured) >= 1 && (measured === 0 || start === 0)) setMeasured(h);
   });
+
+  if (count <= FULL_RANGE_MAX_ROWS) return { start: 0, end: count, padTop: 0, padBottom: 0, rowHeight };
 
   return {
     start,
