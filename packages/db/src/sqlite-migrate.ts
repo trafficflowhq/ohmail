@@ -67,17 +67,41 @@ export async function migrateSqlite(
   const applied: string[] = [];
   for (const entry of journal) {
     if (seen.has(entry.name)) continue;
-    await target.run("BEGIN");
+    /* THE DOCUMENTED TABLE-ALTERING DANCE, and the reason every entry pays for it.
+       This store cannot ALTER a constraint, so a constraint change is a table rebuild: create,
+       copy, DROP, rename. With foreign keys ON, `DROP TABLE` performs an implicit DELETE FROM —
+       so every ON DELETE CASCADE child of the table being rebuilt loses its rows, silently, to a
+       migration. Measured on the shipped journal: a fingerprint row seeded before 0095 is gone
+       after it. The pragma is a NO-OP inside a transaction, so it is issued here, outside it. */
+    await target.run("PRAGMA foreign_keys=OFF");
     try {
-      for (const statement of entry.statements) await target.run(statement);
-      await target.run(
-        `INSERT INTO ${SQLITE_MIGRATIONS_TABLE} (name, applied_at) ` +
-          `VALUES ('${entry.name.replace(/'/g, "''")}', CAST(unixepoch('subsec') * 1000 AS INTEGER))`,
-      );
-      await target.run("COMMIT");
-    } catch (cause) {
-      await target.run("ROLLBACK").catch(() => {});
-      throw new Error(`the SQLite journal stopped at ${entry.name}: ${String(cause)}`, { cause });
+      await target.run("BEGIN");
+      try {
+        for (const statement of entry.statements) await target.run(statement);
+        await target.run(
+          `INSERT INTO ${SQLITE_MIGRATIONS_TABLE} (name, applied_at) ` +
+            `VALUES ('${entry.name.replace(/'/g, "''")}', CAST(unixepoch('subsec') * 1000 AS INTEGER))`,
+        );
+        /* BEFORE the commit, not after: a check that runs afterwards can only report damage it
+           can no longer undo. The rows are the whole database's, because an entry that left a
+           reference dangling did not necessarily touch the table now holding it. */
+        const dangling = await target.all<Record<string, unknown>>("PRAGMA foreign_key_check");
+        if (dangling.length > 0) {
+          const where = [...new Set(dangling.map((r) => String(r.table ?? "?")))].sort().join(", ");
+          throw new Error(
+            `left ${dangling.length} dangling reference(s) in ${where} — the entry ran with ` +
+            "foreign keys off and did not put back what it took apart",
+          );
+        }
+        await target.run("COMMIT");
+      } catch (cause) {
+        await target.run("ROLLBACK").catch(() => {});
+        throw new Error(`the SQLite journal stopped at ${entry.name}: ${String(cause)}`, { cause });
+      }
+    } finally {
+      /* Restored on EVERY exit. A throw that left them off would hand the caller a store whose
+         keys are advisory, which is worse than the migration having failed. */
+      await target.run("PRAGMA foreign_keys=ON").catch(() => {});
     }
     applied.push(entry.name);
   }

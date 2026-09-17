@@ -42,7 +42,9 @@ export const webauthnCredentials = pgTable("webauthn_credentials", {
 // or a loginToken (assertion) AND to the origin/RP-ID they were issued for.
 export const webauthnChallenges = pgTable("webauthn_challenges", {
   id: uuid("id").defaultRandom().primaryKey(),
-  userId: uuid("user_id"),                         // set for registration ceremonies
+  /* Cloud 0038 — the key this column never had, so the parent is no longer merely assumed to be
+     there. Still NULLABLE: an assertion ceremony names a login token and no user at all. */
+  userId: uuid("user_id").references(() => users.id),
   loginTokenId: uuid("login_token_id"),            // set for assertion ceremonies
   challenge: text("challenge").notNull(),          // base64url
   type: text("type").notNull(),                    // 'registration' | 'authentication'

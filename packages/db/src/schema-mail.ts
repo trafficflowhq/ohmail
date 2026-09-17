@@ -392,6 +392,7 @@ export const mailboxes = pgTable("mailboxes", {
    */
   signedOutAt: timestamp("signed_out_at", { withTimezone: true }),
 }, (t) => ({
+  ixIdAccount: uniqueIndex("mailboxes_id_account_uq").on(t.id, t.accountId),
   // ONE ACTIVE MAILBOX PER ADDRESS (mail 0021). PARTIAL, because `delete` is a soft delete to
   // `status='disabled'` and a plain unique would make reconnecting a disconnected address fail
   // forever against its own tombstone. On `lower(address)` because nothing normalizes this
@@ -496,7 +497,9 @@ export const mailboxFolders = pgTable("mailbox_folders", {
    */
   budgetStopUid: bigint("budget_stop_uid", { mode: "bigint" }),
   budgetStopUidvalidity: bigint("budget_stop_uidvalidity", { mode: "bigint" }),
-}, (t) => ({ uq: unique().on(t.mailboxId, t.folder) }));
+}, (t) => ({
+  ixIdMailbox: uniqueIndex("mailbox_folders_id_mailbox_uq").on(t.id, t.mailboxId),
+  uq: unique().on(t.mailboxId, t.folder) }));
 
 /**
  * User-commanded folder operations — mail 0074 (FOLDERS-SPEC.md stage 2). The folder verbs are
@@ -633,6 +636,7 @@ export const messages = pgTable("messages", {
     sql`to_tsvector('english', coalesce(subject, '') || ' ' || coalesce(from_address, ''))`,
   ),
 }, (t) => ({
+  ixIdAccount: uniqueIndex("messages_id_account_uq").on(t.id, t.accountId),
   uqDedup: unique().on(t.mailboxId, t.dedupKey),
   ixThread: index("messages_account_thread_idx").on(t.accountId, t.threadId),
   // ── Mail 0026 — the THREADING key ──
@@ -887,6 +891,7 @@ export const rules = pgTable("rules", {
    */
   releaseHeldAt: timestamp("release_held_at", { withTimezone: true }),
 }, (t) => ({
+  ixIdAccount: uniqueIndex("rules_id_account_uq").on(t.id, t.accountId),
   /**
    * The owed-work probe, run once per account per worker cycle. Without it that is a full scan
    * of `rules` on every cycle for every account; partial, so the index holds only the rules that
@@ -905,7 +910,9 @@ export const contacts = pgTable("contacts", {
   // address the pipeline recorded; the user may later name it. ──
   name: text("name"),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
-}, (t) => ({ uq: unique().on(t.accountId, t.address) }));
+}, (t) => ({
+  ixIdAccount: uniqueIndex("contacts_id_account_uq").on(t.id, t.accountId),
+  uq: unique().on(t.accountId, t.address) }));
 
 export const auditLog = pgTable("audit_log", {
   id: uuid("id").defaultRandom().primaryKey(),
@@ -986,6 +993,7 @@ export const threads = pgTable("threads", {
    */
   rootMessageIdHeader: text("root_message_id_header"),
 }, (t) => ({
+  ixIdAccount: uniqueIndex("threads_id_account_uq").on(t.id, t.accountId),
   ix: index("threads_account_last_message_idx").on(t.accountId, t.lastMessageAt),
   // Declared here to keep the TS schema honest; the index is created by mail 0026 and a test
   // diffs this declaration against the real catalog.
@@ -1081,7 +1089,9 @@ export const routingDecisions = pgTable("routing_decisions", {
   status: text("status").notNull(),                     // auto_applied|pending_approval|approved|rejected
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
-}, (t) => ({ ix: index("routing_decisions_account_message_idx").on(t.accountId, t.messageId) }));
+}, (t) => ({
+  ixIdAccount: uniqueIndex("routing_decisions_id_account_uq").on(t.id, t.accountId),
+  ix: index("routing_decisions_account_message_idx").on(t.accountId, t.messageId) }));
 
 export const approvals = pgTable("approvals", {
   id: uuid("id").defaultRandom().primaryKey(),
@@ -1228,6 +1238,7 @@ export const users = pgTable("users", {
   emailVerifiedAt: timestamp("email_verified_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 }, (t) => ({
+  ixIdAccount: uniqueIndex("users_id_account_uq").on(t.id, t.accountId),
   uqEmail: unique().on(t.accountId, t.email),
   /**
    * The login identity, and the only constraint that actually enforces it (migration 0021).
@@ -1254,7 +1265,9 @@ export const devices = pgTable("devices", {
   // NULL = never completed a drain. Stamped by the API's sync route alone, throttled in the
   // statement; the `device_sync_stale` alert reads it. Never projected into a DTO.
   lastSyncedAt: timestamp("last_synced_at", { withTimezone: true }),
-}, (t) => ({ ixUser: index("devices_user_idx").on(t.userId) }));
+}, (t) => ({
+  ixIdAccount: uniqueIndex("devices_id_account_uq").on(t.id, t.accountId),
+  ixUser: index("devices_user_idx").on(t.userId) }));
 
 export const sessions = pgTable("sessions", {
   id: uuid("id").defaultRandom().primaryKey(),
@@ -1283,6 +1296,7 @@ export const sessions = pgTable("sessions", {
   // `last_seen_at` (still requesting + not converging = a wedged mirror). Never in a DTO.
   lastSyncedAt: timestamp("last_synced_at", { withTimezone: true }),
 }, (t) => ({
+  ixIdAccount: uniqueIndex("sessions_id_account_uq").on(t.id, t.accountId),
   ixUser: index("sessions_user_idx").on(t.userId),
   ixFamily: index("sessions_family_idx").on(t.familyId),
   // mail 0080 — THE AUTHENTICATION LOOKUP. `resolveSession` matches on this column on every
@@ -1851,6 +1865,7 @@ export const drafts = pgTable("drafts", {
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
 }, (t) => ({
+  ixIdAccount: uniqueIndex("drafts_id_account_uq").on(t.id, t.accountId),
   ixAccount: index("drafts_account_updated_idx").on(t.accountId, t.updatedAt),
   uqWfDedup: unique("drafts_workflow_dedup_key_unique").on(t.workflowDedupKey),   // per-step idempotency
   // Mail 0077 — the worker's due scan (`status = 'scheduled' AND send_at <= now()`), partial so
@@ -1899,6 +1914,7 @@ export const outboundSends = pgTable("outbound_sends", {
   resolvedAt: timestamp("resolved_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 }, (t) => ({
+  ixIdAccount: uniqueIndex("outbound_sends_id_account_uq").on(t.id, t.accountId),
   uqKey: unique().on(t.accountId, t.idempotencyKey),         // the per-account idempotency reservation gate
 }));
 
@@ -1962,7 +1978,9 @@ export const workflows = pgTable("workflows", {
   deletedAt: timestamp("deleted_at", { withTimezone: true }),      // soft-delete marker
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
-}, (t) => ({ ixAccount: index("workflows_account_idx").on(t.accountId) }));
+}, (t) => ({
+  ixIdAccount: uniqueIndex("workflows_id_account_uq").on(t.id, t.accountId),
+  ixAccount: index("workflows_account_idx").on(t.accountId) }));
 
 export const workflowRuns = pgTable("workflow_runs", {
   id: uuid("id").defaultRandom().primaryKey(),
@@ -2023,6 +2041,7 @@ export const tags = pgTable("tags", {
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
 }, (t) => ({
+  ixIdAccount: uniqueIndex("tags_id_account_uq").on(t.id, t.accountId),
   // ONE TAG PER NAME PER ACCOUNT, case-insensitively. On `lower(name)` and not on
   // `name`, because nothing lowercases this column on write — it is the label the
   // user typed and it is shown back to them verbatim — so "Invoices" and "invoices"
