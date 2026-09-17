@@ -18,6 +18,8 @@ See [Status](README.md#status--read-this-first).
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
 [Roadmap](README.md#roadmap).
 
+## [0.19.3] — 2026-09-17
+
 ## [0.19.2] — 2026-09-17
 
 ### Scrolling the Ohbox no longer hides the messages at the top
@@ -6722,7 +6724,8 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.19.2...HEAD
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.19.3...HEAD
+[0.19.3]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.19.3
 [0.19.2]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.19.2
 [0.19.1]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.19.1
 [0.19.0]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.19.0
