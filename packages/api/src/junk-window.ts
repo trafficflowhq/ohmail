@@ -1,7 +1,7 @@
 import { and, eq, inArray, isNull, ne, sql, type SQL } from "drizzle-orm";
 import { dialect } from "@trafficflow/db/dialect";
 import {
-  assertOrganizerRole,
+  assertOrganizerRole, fenceErased,
   contacts, folderState, junkRescues, junkSweepCandidateWhere, mailboxes, messages,
   recordRuleDelta, rules as rulesTbl, type LedgerTx, type Tx,
 } from "@trafficflow/db";
@@ -573,16 +573,22 @@ function normalizeAllowAddress(address: string): string {
  * IT TAKES THE CALLER'S TRANSACTION AND NEVER OPENS ITS OWN. It used to, and the rescue then ran
  * two sequenced transactions — the rule committed, the command recorded after — so an interrupted
  * request left somebody's screening changed with no move behind it. That gap is the whole reason
- * the partial-outcome vocabulary existed; one transaction ends both. The caller's `withAccountTx`
- * is the FENCED door (`contacts` and `rules` hang off the account alone, and `accounts` survives
- * Art. 17 erasure, so an unfenced write in flight across a deletion would recreate a
- * correspondent's address under the pseudonymous row).
+ * the partial-outcome vocabulary existed; one transaction ends both.
  *
- * Exported for the test; not a route of its own — it exists only beside the rescue.
+ * AND IT FENCES AT THE TOP OF ITS OWN BODY. `contacts` and `rules` hang off the account alone and
+ * `accounts` survives Art. 17 erasure, so a write in flight across a deletion would recreate a
+ * correspondent's address under the pseudonymous row. The caller's `withAccountTx` already asked —
+ * this reads a row that transaction holds, so it adds no lock and costs one statement on a press,
+ * and it makes the refusal a property of THIS function rather than of every caller it might grow.
+ *
+ * Not a route of its own — it exists only beside the rescue, which is its one caller.
  */
-export async function allowSender(
+async function allowSender(
   tx: LedgerTx, accountId: string, address: string, nowAt: Date,
 ): Promise<AllowSenderOutcome> {
+  // `dialect(tx)` and not the caller's handle: the brand travels to a transaction object, and
+  // reading it from the tx is what keeps this true on a device store as well as a server.
+  await fenceErased(tx as unknown as Tx, dialect(tx as unknown as Parameters<typeof dialect>[0]), { accountId });
   const addr = normalizeAllowAddress(address);
   // 1. The spam-promoting rules for THIS address, switched off. `.returning()` so the change
   //    rows describe exactly the rows that flipped — an already-disabled rule is not re-announced.
@@ -686,6 +692,9 @@ export async function rescueJunk(
   const sender = args.allow !== undefined ? normalizeAllowAddress(args.allow.sender) : null;
   const nowAt = deps.now?.() ?? ctx.now();
 
+  /* THE MAILBOX ARM TOO, not the account alone: `junk_rescues` is keyed by mailbox and a mailbox
+     erasure leaves the account standing, so an account-only fence would let a command be recorded
+     against a mailbox whose mirror has just been swept. */
   return withAccountTx(ctx, async (tx) => {
     const allowed = sender !== null
       ? await allowSender(tx, accountId, sender, nowAt)
@@ -719,7 +728,7 @@ export async function rescueJunk(
     return allowed !== undefined
       ? { status: "queued" as const, rescueId: row!.id, allowed }
       : { status: "queued" as const, rescueId: row!.id };
-  }, { db: deps.db });
+  }, { db: deps.db, mailboxId: args.mailboxId });
 }
 
 /* ══════════════════════════════════════════════════════════════════════════════════════════
