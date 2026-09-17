@@ -1,4 +1,6 @@
-import type { SchemaMarker, CheckDefinitionMarker, FunctionDefinitionMarker } from "./health.js";
+import type {
+  SchemaMarker, CheckDefinitionMarker, FunctionDefinitionMarker, ForeignKeyMarker,
+} from "./health.js";
 
 /**
  * Where the both-halves schema census is registered, and why registered rather than imported. The
@@ -30,6 +32,12 @@ export interface SchemaCensus {
    * probe are both blind to. Cloud `0014` is why this field exists; cloud `0013` named the gap.
    */
   functionDefinitions: ReadonlyArray<FunctionDefinitionMarker>;
+  /**
+   * FOREIGN KEYS probed by DEFINITION — the shape a migration takes when its whole DDL is keys,
+   * which the five fields above are all blind to (both constraint probes are scoped
+   * `contype = 'c'`). Cloud `0038` is why this field exists.
+   */
+  foreignKeys: ReadonlyArray<ForeignKeyMarker>;
   expected: number;
   through: string;
 }

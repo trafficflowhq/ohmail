@@ -797,10 +797,10 @@ export const SCHEMA_INDEX_MARKERS: ReadonlyArray<string> = [
   // mail 0118_account_isolation. The one entry here whose absence is NOT silent, listed for the
   // OPPOSITE reason to the five above: these fourteen unique indexes exist to be REFERENCED by the
   // composite account keys the same migration adds, so a database without them carries no
-  // account-scoped foreign key either and a cross-account parent goes unguarded. It is probed here
-  // because `pg_indexes` is the only catalog that can see any part of that migration — both
-  // constraint probes below are scoped `contype = 'c'`, so a FOREIGN KEY is invisible to all five
-  // marker classes, which is why the cloud half of the same change gets no marker at all.
+  // account-scoped foreign key either and a cross-account parent goes unguarded. The index is this
+  // migration's probe; the keys themselves are the subject of the sixth class below
+  // (`SCHEMA_FK_MARKERS`), which the CLOUD half of the same change — foreign keys and nothing
+  // else — is what forced into existence.
   "messages_id_account_uq",
 ];
 
@@ -967,6 +967,28 @@ export type CheckDefinitionMarker = readonly [conname: string, definitionSubstri
  */
 export type FunctionDefinitionMarker = readonly [proname: string, bodySubstring: string];
 
+/**
+ * A FOREIGN KEY probed by its DEFINITION — the SIXTH marker class: `[conname,
+ * definitionSubstring]` against `pg_get_constraintdef` at `contype = 'f'`. The five classes above
+ * cannot see one at all: both constraint probes are scoped `contype = 'c'`, and neither
+ * `information_schema.columns` nor `pg_indexes` can see a constraint. By DEFINITION rather than by
+ * name, because the dangerous shape here is a key recreated under its own name over FEWER columns
+ * — the account column dropped out of it — which is the isolation guard gone with every name probe
+ * still green. Cloud 0038 is why this class exists; mail 0095 is the shape that predicted it.
+ */
+export type ForeignKeyMarker = readonly [conname: string, definitionSubstring: string];
+
+/**
+ * The MAIL tier's foreign-key markers. EMPTY today, and kept rather than deferred: no mail
+ * migration's ONLY probeable object is a key — mail 0118 adds the fourteen unique indexes its
+ * composite keys reference, and `SCHEMA_INDEX_MARKERS` probes one of those. The class is what
+ * makes the invariant hold: every DDL shape a migration can add now has a marker class that can
+ * see it, so the anti-drift gate refuses the tag rather than exempting the migration.
+ */
+export const SCHEMA_FK_MARKERS: ReadonlyArray<ForeignKeyMarker> = [
+
+] as const;
+
 /* `EXPECTED_MARKERS` — the BOTH-HALVES count — moved to `./health-cloud.js` with the list it
  * derives from. {@link MAIL_EXPECTED_MARKERS} below is what this module can compute on its own. */
 
@@ -1010,7 +1032,7 @@ export const MAIL_CHECK_DEFINITION_MARKERS: ReadonlyArray<CheckDefinitionMarker>
 
 export const MAIL_EXPECTED_MARKERS =
   MAIL_SCHEMA_MARKERS.length + SCHEMA_INDEX_MARKERS.length + SCHEMA_CHECK_MARKERS.length +
-  MAIL_CHECK_DEFINITION_MARKERS.length;
+  MAIL_CHECK_DEFINITION_MARKERS.length + SCHEMA_FK_MARKERS.length;
 
 /**
  * The newest entry of the MAIL journal, which {@link MAIL_SCHEMA_MARKERS} is reconciled to; a
@@ -1048,7 +1070,7 @@ export type HealthProbe =
   | { kind: "unreachable"; dbLatencyMs: number; errorCode: string | null }
   | { kind: "empty"; dbLatencyMs: number }
   /**
-   * Reachable, and the schema census does not apply to this store. The census reads five Postgres
+   * Reachable, and the schema census does not apply to this store. The census reads four Postgres
    * catalogs; a device store has none of them — its catalog is `sqlite_master`, a different
    * question, and its schema is guaranteed by a different journal run by a different migrator.
    * This arm exists because the store read as unreachable, measured on a working phone: `/health`
@@ -1103,6 +1125,13 @@ export async function probeDatabase(
    * desktop engine, so the names arrive as a parameter rather than living here.
    */
   functionDefinitionMarkers: ReadonlyArray<FunctionDefinitionMarker> = [],
+  /**
+   * FOREIGN KEYS probed by DEFINITION beyond {@link SCHEMA_FK_MARKERS} — the sixth class, and it
+   * EXTENDS rather than replaces, like `extraIndexMarkers` and for the same reason: the shared
+   * list is the mail tier's and a hosted caller may not silently drop it. Defaults to none; every
+   * entry today names a Cloud table (`CLOUD_FK_MARKERS` in `health-cloud.ts`).
+   */
+  extraForeignKeyMarkers: ReadonlyArray<ForeignKeyMarker> = [],
 ): Promise<HealthProbe> {
   const started = Date.now();
   /**
@@ -1159,13 +1188,14 @@ export async function probeDatabase(
     }
   }
   const indexMarkers = [...SCHEMA_INDEX_MARKERS, ...extraIndexMarkers];
+  const fkMarkers = [...SCHEMA_FK_MARKERS, ...extraForeignKeyMarkers];
   const expected =
     columnMarkers.length + indexMarkers.length + SCHEMA_CHECK_MARKERS.length +
-    checkDefinitionMarkers.length + functionDefinitionMarkers.length;
+    checkDefinitionMarkers.length + functionDefinitionMarkers.length + fkMarkers.length;
   try {
     /* A DECLARED POSTGRES-ONLY ARM, and the declaration is the honest form of what this already
-       was. The whole statement asks five Postgres CATALOGS — `information_schema.columns`,
-       `pg_indexes`, `pg_constraint`, `pg_proc` — whether this deployment's schema and its
+       was. The whole statement asks four Postgres CATALOGS in six subselects —
+       `information_schema.columns`, `pg_indexes`, `pg_constraint`, `pg_proc` — whether this deployment's schema and its
        extension are what the code expects. There is no second spelling of that question: the
        device store's catalog is `sqlite_master` and `pragma table_info`, which is a different
        question, and the branch above answers it and RETURNS on every path, so nothing reaches
@@ -1220,7 +1250,7 @@ export async function probeDatabase(
                        )
                        : sql`false`
                      })) as check_def_markers,
-                 -- The FUNCTION-BODY half: a FIFTH catalog, because a migration whose entire
+                 -- The FUNCTION-BODY half: the FIFTH probe and a fourth catalog, because one whose
                  -- content is a CREATE OR REPLACE FUNCTION changes nothing the four probes
                  -- above can see — not a column, not an index, not a constraint name, and not
                  -- a constraint DEFINITION (a function is pg_proc). prosrc is the body as
@@ -1236,19 +1266,37 @@ export async function probeDatabase(
                          sql` or `,
                        )
                        : sql`false`
-                     })) as function_def_markers`),
+                     })) as function_def_markers,
+                 -- The FOREIGN-KEY half: a SIXTH question, and the same catalog as the two CHECK
+                 -- probes above, which are scoped contype = 'c' and so cannot see a key at all —
+                 -- a migration whose whole DDL is foreign keys was invisible to every other
+                 -- class. Read by DEFINITION, never by name: a key recreated under its own name
+                 -- over fewer columns is the account scope gone with the name still present.
+                 -- A literal FALSE when the list is empty, like the two probes above.
+                 (select count(*) from pg_constraint c
+                    join pg_class t on t.oid = c.conrelid
+                    join pg_namespace n on n.oid = t.relnamespace
+                   where n.nspname = 'public' and c.contype = 'f'
+                     and (${fkMarkers.length > 0
+                       ? sql.join(
+                         fkMarkers.map(([name, needle]) =>
+                           pgOnly(sql`(c.conname = ${name} and position(${needle} in pg_get_constraintdef(c.oid)) > 0)`)),
+                         sql` or `,
+                       )
+                       : sql`false`
+                     })) as fk_markers`),
     );
     const dbLatencyMs = Date.now() - started;
     const row = rowsOf<{
       one: number; pg_trgm: boolean; schema_markers: number | string; index_markers: number | string;
       check_markers: number | string; check_def_markers: number | string;
-      function_def_markers: number | string;
+      function_def_markers: number | string; fk_markers: number | string;
     }>(result)[0];
     if (!row || Number(row.one) !== 1) return { kind: "empty", dbLatencyMs };
-    // One total across all five probes — see `SCHEMA_INDEX_MARKERS` for why they are not five.
+    // One total across all six probes — see `SCHEMA_INDEX_MARKERS` for why they are not six.
     const markersFound =
       Number(row.schema_markers) + Number(row.index_markers) + Number(row.check_markers) +
-      Number(row.check_def_markers) + Number(row.function_def_markers);
+      Number(row.check_def_markers) + Number(row.function_def_markers) + Number(row.fk_markers);
     return {
       kind: "probed",
       dbLatencyMs,
@@ -1414,6 +1462,7 @@ export const healthRoutes: Route[] = [
         fullCensus ? fullCensus.checkDefinitions : MAIL_CHECK_DEFINITION_MARKERS,
         fullCensus ? fullCensus.indexMarkers : [],
         fullCensus ? fullCensus.functionDefinitions : [],
+        fullCensus ? fullCensus.foreignKeys : [],
       );
       if (probe.kind === "unreachable") {
         return healthResponse(503, {

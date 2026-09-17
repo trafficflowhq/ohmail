@@ -1,8 +1,8 @@
 import {
   MAIL_SCHEMA_MARKERS, SCHEMA_INDEX_MARKERS, SCHEMA_CHECK_MARKERS,
-  MAIL_CHECK_DEFINITION_MARKERS,
+  MAIL_CHECK_DEFINITION_MARKERS, SCHEMA_FK_MARKERS,
   MAIL_SCHEMA_MARKER_JOURNAL_TAG, type SchemaMarker, type CheckDefinitionMarker,
-  type FunctionDefinitionMarker,
+  type FunctionDefinitionMarker, type ForeignKeyMarker,
 } from "./health.js";
 import { registerSchemaCensus } from "./health-census.js";
 
@@ -219,6 +219,23 @@ export const CLOUD_FUNCTION_MARKERS: ReadonlyArray<FunctionDefinitionMarker> = [
 ] as const;
 
 /**
+ * The CLOUD foreign keys probed by DEFINITION — the SIXTH marker class. See {@link
+ * ForeignKeyMarker} for why the definition and not the name.
+ */
+export const CLOUD_FK_MARKERS: ReadonlyArray<ForeignKeyMarker> = [
+  // cloud 0038_account_isolation — three foreign keys and nothing else, which is the migration
+  // this class exists for: no column, no index, no CHECK, nothing the other five can see. ONE
+  // marker, and it is the LAST statement, on the rule the entries above state — only the last
+  // object's presence implies every object over it. It is also the key the ERASURE ORDER depends
+  // on: `deleteAccount` clears `auth_events` in the step before `users`, so that order is now
+  // enforced by the database rather than by the comment beside it. The needle is the COMPOSITE
+  // reference and never the name alone — the same name over `user_id` by itself proves a parent
+  // exists and says nothing about whose account it is. Absent, nothing raises and every suite is
+  // green while an auth event may name another account's user: the silent shape, at its sharpest.
+  ["auth_events_user_id_account_fk", "REFERENCES users(id, account_id)"],
+] as const;
+
+/**
  * The columns whose presence means "this database carries THIS application's schema" — both
  * halves, concatenated. The PUBLISHED shape (`schemaMarkers.found/expected/through`) and the
  * probe SQL read this and only this, so the split changed neither.
@@ -247,7 +264,7 @@ export const CHECK_DEFINITION_MARKERS: ReadonlyArray<CheckDefinitionMarker> = [
 export const EXPECTED_MARKERS =
   SCHEMA_MARKERS.length + SCHEMA_INDEX_MARKERS.length + CLOUD_INDEX_MARKERS.length +
   SCHEMA_CHECK_MARKERS.length + CHECK_DEFINITION_MARKERS.length +
-  CLOUD_FUNCTION_MARKERS.length;
+  CLOUD_FUNCTION_MARKERS.length + SCHEMA_FK_MARKERS.length + CLOUD_FK_MARKERS.length;
 
 /** Alias that names the role rather than the shape, for the composition root. */
 export const CLOUD_TIER_MARKERS = SCHEMA_MARKERS;
@@ -262,10 +279,11 @@ export const CLOUD_TIER_MARKERS = SCHEMA_MARKERS;
  * a column marker; an added column fails write-shaped. The exceptions carry no marker and the
  * journal accounting is their record: a data-only migration has no DDL to probe, and a table drop
  * means "these tables are gone", which an untaken drop leaves costing disk only. An index
- * migration is probed by its INDEX marker alone; a CHECK on a new object takes nothing extra. The
- * tag asserts reconciliation against the newest entry.
+ * migration is probed by its INDEX marker alone; a CHECK on a new object takes nothing extra; a
+ * FOREIGN-KEY-only migration is probed by its KEY marker, which is what 0038 added the class for.
+ * The tag asserts reconciliation against the newest entry.
  */
-export const CLOUD_SCHEMA_MARKER_JOURNAL_TAG = "0037_refund_obligations";
+export const CLOUD_SCHEMA_MARKER_JOURNAL_TAG = "0038_account_isolation";
 
 /** The journal entries {@link SCHEMA_MARKERS} was last reconciled against (asserted by a test). */
 export const SCHEMA_MARKER_JOURNAL_TAG =
@@ -279,6 +297,7 @@ registerSchemaCensus({
   checkDefinitions: CHECK_DEFINITION_MARKERS,
   indexMarkers: CLOUD_INDEX_MARKERS,
   functionDefinitions: CLOUD_FUNCTION_MARKERS,
+  foreignKeys: CLOUD_FK_MARKERS,
   expected: EXPECTED_MARKERS,
   through: SCHEMA_MARKER_JOURNAL_TAG,
 });

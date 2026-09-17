@@ -415,8 +415,10 @@ export async function deleteAccount(ctx: ServiceContext): Promise<DeleteAccountR
     await drop("recovery_codes", tx.delete(recoveryCodes).where(inArray(recoveryCodes.userId, ownUserIds)));
     await drop("totp_secrets", tx.delete(totpSecrets).where(inArray(totpSecrets.userId, ownUserIds)));
     await drop("webauthn_credentials", tx.delete(webauthnCredentials).where(inArray(webauthnCredentials.userId, ownUserIds)));
-    // Nullable userId and no FK — an unconsumed ceremony would otherwise outlive
-    // the user it was started for.
+    // Nullable userId, and since cloud 0038 a real key to `users` — so this delete is no longer
+    // only about an unconsumed ceremony outliving the user it was started for: without it the
+    // `users` delete below is refused outright. NULL rows are left, which is the key's own
+    // reading of them.
     await drop("webauthn_challenges", tx.delete(webauthnChallenges)
       .where(and(isNotNull(webauthnChallenges.userId), inArray(webauthnChallenges.userId, ownUserIds))));
     await drop("credentials", tx.delete(credentials).where(inArray(credentials.userId, ownUserIds)));
@@ -457,7 +459,9 @@ export async function deleteAccount(ctx: ServiceContext): Promise<DeleteAccountR
 
     // auth_events carries ip + device per login. Account-scoped rows go with the
     // account; user-scoped rows that predate the account (unknown-email attempts)
-    // are already anonymous, and there is no key to find them by.
+    // are already anonymous, and there is no key to find them by. It stays BEFORE the `users`
+    // delete below, and since cloud 0038 that order is the database's rather than this file's:
+    // the composite key refuses the parent while a row still names it.
     await drop("auth_events", tx.delete(authEvents).where(eq(authEvents.accountId, accountId)));
 
     // ── 8. The users themselves ─────────────────────────────────────────────────

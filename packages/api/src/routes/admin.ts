@@ -14,7 +14,7 @@ import { healthFault, probeDatabase } from "./health.js";
 // is a hosted surface and the local route table does not mount it.
 import {
   EXPECTED_MARKERS, SCHEMA_MARKER_JOURNAL_TAG, CLOUD_TIER_MARKERS,
-  CHECK_DEFINITION_MARKERS, CLOUD_INDEX_MARKERS, CLOUD_FUNCTION_MARKERS,
+  CHECK_DEFINITION_MARKERS, CLOUD_INDEX_MARKERS, CLOUD_FUNCTION_MARKERS, CLOUD_FK_MARKERS,
 } from "./health-cloud.js";
 import type { ApiDeps } from "../deps.js";
 import type { Handler, Route, RouteParams } from "../router.js";
@@ -63,7 +63,7 @@ async function apiHealthFor(req: Request, deps: ApiDeps): Promise<ApiHealth> {
   // definition list is both halves (`CHECK_DEFINITION_MARKERS`; mail 0100 widens a mail CHECK).
   const probe = await probeDatabase(
     deps.db, CLOUD_TIER_MARKERS, CHECK_DEFINITION_MARKERS, CLOUD_INDEX_MARKERS,
-    CLOUD_FUNCTION_MARKERS,
+    CLOUD_FUNCTION_MARKERS, CLOUD_FK_MARKERS,
   );
   const base = {
     host,
