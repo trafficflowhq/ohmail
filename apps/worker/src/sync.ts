@@ -553,7 +553,19 @@ async function underFence<T>(deps: FenceScope, fn: (repo: DrizzleRepo) => Promis
     throw new LeaderFencedError("the leader lease is gone — this write is refused before it is attempted");
   }
   const cache = deps.knownSet;
-  const out = await fence.transaction(cache ? (r) => fn(watchKnownSet(r, cache)) : fn);
+  /* THE WRITE GROUP'S BRACKET, HERE TOO. The fence opens the transaction itself, so the memo's own
+     `transaction` wrapper never sees this one — and it is the group nearly every ingest write is
+     inside. Without the bracket the cursor would believe rows a refused or rolled-back group never
+     committed. `removed`/`fenced` below drop the memo anyway; this covers the throw. */
+  cache?.enterWrite();
+  let out;
+  try {
+    out = await fence.transaction(cache ? (r) => fn(watchKnownSet(r, cache)) : fn);
+  } catch (e) {
+    cache?.leaveWrite(false);
+    throw e;
+  }
+  cache?.leaveWrite(out.removed === undefined && !out.fenced);
   if (out.removed !== undefined) {
     // The mailbox went, not the lease. The memo goes for the same reason it goes on a handover —
     // an in-memory copy of a mailbox's known-set outliving the mailbox is the thing a successor,

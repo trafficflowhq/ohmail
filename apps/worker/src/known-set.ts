@@ -26,6 +26,14 @@ export interface KnownSetCensus {
   bytesSaved: number;
   /** Why the memo was last dropped, or `null` if it never has been. */
   droppedBy: string | null;
+  /**
+   * Rows the INGEST added to the memo this cycle instead of dropping it — see
+   * {@link KnownSetCache.noteInserted}. During a first import this is the whole batch, and a
+   * cycle that appends is a cycle that did not re-read the mailbox.
+   */
+  appended: number;
+  /** Rows the filing move REPOINTED in the memo this cycle instead of dropping it. */
+  moved: number;
   /** Heap bytes this memo is charged against the process budget, 0 when it holds nothing. */
   retainedBytes: number;
   /** Heap bytes every memo in this process is charged, and the budget they share. */
@@ -302,7 +310,19 @@ export class KnownSetCache {
   /** The process-wide byte budget this memo competes in. */
   private readonly budget: KnownSetBudget;
 
-  private entries: ReadonlyArray<KnownLocator> | null = null;
+  private entries: KnownLocator[] | null = null;
+  /**
+   * Locators the ingest has written inside a write group that has NOT committed yet, and how deep
+   * that group is nested. A row appended before its transaction commits is a UID this process
+   * would treat as already known after a rollback — the message would never be fetched again, and
+   * "never fetched again" is mail lost. So they wait here, and a group that does not commit drops
+   * the memo rather than believing any of them.
+   */
+  private pending: KnownLocator[] = [];
+  private pendingMoves: Array<[KnownLocator | { folder: string; ref: string }, KnownLocator]> = [];
+  private writeDepth = 0;
+  private appendedThisCycle = 0;
+  private movedThisCycle = 0;
   private lastRows = 0;
   private lastBytes = 0;
   private retainedBytes = 0;
@@ -341,6 +361,8 @@ export class KnownSetCache {
   beginCycle(): void {
     this.cycleReads = 0;
     this.cycleHits = 0;
+    this.appendedThisCycle = 0;
+    this.movedThisCycle = 0;
   }
 
   /** Whether the memo currently holds a set. Read by the guards, not by the loop. */
@@ -380,6 +402,111 @@ export class KnownSetCache {
     return this.tupleIndex.has(
       `${locator.folder}\u0000${locator.ref.slice(0, sep)}:${locator.ref.slice(sep + 1)}`,
     );
+  }
+
+  /**
+   * THE CURSOR THE INGEST MAINTAINS AS IT WRITES. The memo cannot help during an import: every
+   * cycle writes, `insertMessage` is dirty, so every cycle drops and re-reads the WHOLE
+   * projection — a cost quadratic in the mailbox, paid by the row on a hosted install. The ingest
+   * does not have to guess what changed: it wrote it, and every projected column is on the input.
+   *
+   * Three rules, each a way this could lose mail rather than time: only on `created: true`; never
+   * before the write group COMMITS ({@link pending} — a rolled-back row appended here is a UID
+   * never fetched again); and a read while a group is open takes the drop path.
+   */
+  noteInserted(locator: KnownLocator): void {
+    if (this.entries === null) return;              // cold: the next read is the truth
+    if (this.writeDepth > 0) { this.pending.push(locator); return; }
+    this.append(locator);
+  }
+
+  /**
+   * A message's primary instance MOVED, from a locator the caller names to one it names. Buffered
+   * and believed exactly as an insert is — see {@link noteInserted} — and for the same reason.
+   *
+   * The memo stays EQUAL to the projection rather than becoming a superset of it: the entry is
+   * rewritten in place, keeping the `messageId` header and the `seen` baseline it already carried,
+   * because the move changed where the message is and not what it is. An entry the memo cannot
+   * find at `from` is a set that has stopped describing the mailbox, and that takes the drop.
+   */
+  noteMoved(from: KnownLocator | { folder: string; ref: string }, to: KnownLocator): void {
+    if (this.entries === null) return;
+    if (this.writeDepth > 0) { this.pendingMoves.push([from, to]); return; }
+    this.moveOne(from, to);
+  }
+
+  private moveOne(from: KnownLocator | { folder: string; ref: string }, to: KnownLocator): void {
+    if (this.entries === null) return;
+    const key = locatorKeyOf(from);
+    if (key === null) { this.drop("updateLocator: a locator this cannot read"); return; }
+    const i = this.entries.findIndex((e) => `${e.folder}\u0000${e.uidValidity}:${e.uid}` === key);
+    if (i < 0) { this.drop("updateLocator: the memo does not hold the locator it moved from"); return; }
+    const was = this.entries[i]!;
+    // What the message IS travels with it; only where it is changes.
+    this.entries[i] = { ...to, messageId: was.messageId, seen: was.seen };
+    this.movedThisCycle += 1;
+    // The index and the derivation both key on the locator, so both have to follow. The
+    // derivation is per folder AND epoch, and a move crosses folders — rebuilding one folder's
+    // array from the entries is the mailbox's size, so it goes and the grouping is re-derived
+    // from a set that never left memory. The READ is what this is about.
+    this.tupleIndex = null;
+    this.shape = null;
+  }
+
+  /** A write group opened. Appends made inside it wait for {@link leaveWrite}. */
+  enterWrite(): void { this.writeDepth += 1; }
+
+  /**
+   * A write group closed. `committed` is the only thing that licenses believing what it buffered;
+   * anything else drops, because a memo holding rows no transaction wrote is worse than a cold one.
+   */
+  leaveWrite(committed: boolean): void {
+    this.writeDepth = Math.max(0, this.writeDepth - 1);
+    if (this.writeDepth > 0) return;
+    const buffered = this.pending;
+    const moves = this.pendingMoves;
+    this.pending = [];
+    this.pendingMoves = [];
+    if (!committed) {
+      if (buffered.length > 0 || moves.length > 0) this.drop("a write group that did not commit");
+      return;
+    }
+    for (const l of buffered) this.append(l);
+    for (const [from, to] of moves) this.moveOne(from, to);
+  }
+
+  /**
+   * Add one committed row to the warm set. The entries array is MUTATED rather than copied: a copy
+   * per message is linear in the mailbox and would replace one quadratic cost with another. It is
+   * safe because {@link list} already hands callers a copy.
+   *
+   * `gen` is deliberately NOT bumped. It stamps the derivation against the set it was taken from,
+   * and this keeps the two in step — the entry goes into both, or the derivation goes.
+   */
+  private append(locator: KnownLocator): void {
+    if (this.entries === null) return;
+    this.entries.push(locator);
+    this.lastRows += 1;
+    this.lastBytes += estimateWireBytes([locator]);
+    this.appendedThisCycle += 1;
+    if (this.tupleIndex !== null) {
+      this.tupleIndex.add(`${locator.folder}\u0000${locator.uidValidity}:${locator.uid}`);
+    }
+    const wants = this.retainedBytes + estimateRetainedBytes([locator]);
+    if (!this.budget.admit(this, wants)) { this.drop("grew past the process locator budget"); return; }
+    this.retainedBytes = wants;
+    if (this.shape === null) return;
+    /* THE DERIVATION FOLLOWS ONLY WHERE ITS INPUT IS A FACT. A folder whose ROW names an epoch
+       resolved to that epoch whatever the entries said, so one more entry cannot change the
+       answer; a folder whose row names none resolved by `soleEpochOf` over the entries, and one
+       more entry can turn a known epoch into "several". That one keeps its rows and loses its
+       derivation, which costs the grouping and not the read. */
+    const rowEpoch = this.shape.rowEpochs.get(locator.folder);
+    if (rowEpoch === null || rowEpoch === undefined) { this.shape = null; return; }
+    if (rowEpoch !== locator.uidValidity) return;   // a foreign epoch — `knownFor` filters it out
+    const arr = this.shape.byFolder.get(`${locator.folder}\u0000${rowEpoch}`);
+    if (arr === undefined) { this.shape = null; return; }
+    arr.push({ uid: locator.uid, messageId: locator.messageId, seen: locator.seen });
   }
 
   /**
@@ -443,6 +570,13 @@ export class KnownSetCache {
     read: (mailboxId: string) => Promise<KnownLocator[]>, mailboxId: string,
   ): Promise<KnownLocator[]> {
     if (mailboxId !== this.mailboxId) return read(mailboxId);
+    /* A READ INSIDE AN OPEN WRITE GROUP TAKES THE OLD PATH. The group has written rows this memo
+       does not hold, and its own statements would see them; serving the memo here would answer a
+       question about the mailbox with a set that is behind the transaction asking. It costs one
+       read, which is exactly what every cycle used to cost. */
+    if (this.pending.length > 0 || this.pendingMoves.length > 0) {
+      this.drop("a read inside an uncommitted write group");
+    }
     if (this.entries !== null) {
       this.cycleHits++;
       this.bytesSaved += this.lastBytes;
@@ -478,11 +612,79 @@ export class KnownSetCache {
       bytes: this.lastBytes,
       bytesSaved: this.bytesSaved,
       droppedBy: this.droppedBy,
+      appended: this.appendedThisCycle,
+      moved: this.movedThisCycle,
       retainedBytes: this.retainedBytes,
       processRetainedBytes: this.budget.chargedBytes,
       processBudgetBytes: this.budget.limitBytes,
     };
   }
+}
+
+/**
+ * The memo's own key for a locator, in either spelling the call sites use — a `KnownLocator`
+ * (folder + uid + uidValidity) or a `NativeLocator` (folder + `uidvalidity:uid`). `null` for a
+ * shape this cannot read, and an unreadable shape always takes the DROP path.
+ */
+export function locatorKeyOf(l: unknown): string | null {
+  const o = l as { folder?: unknown; ref?: unknown; uid?: unknown; uidValidity?: unknown } | null;
+  if (typeof o?.folder !== "string") return null;
+  if (typeof o.ref === "string") {
+    const sep = o.ref.indexOf(":");
+    if (sep <= 0) return null;
+    return `${o.folder}\u0000${o.ref.slice(0, sep)}:${o.ref.slice(sep + 1)}`;
+  }
+  if (typeof o.uid === "number" && typeof o.uidValidity === "string") {
+    return `${o.folder}\u0000${o.uidValidity}:${o.uid}`;
+  }
+  return null;
+}
+
+/**
+ * What one `insertMessage` added to the projection, or `null` when the memo may not follow it.
+ *
+ * `null` for a conflict (`created` false — another ingest owns the row and every child row of it)
+ * and for any shape this cannot read: an unparseable locator takes the DROP path, never the keep
+ * path. The four projected columns all come from the call — the locator, the Message-ID header as
+ * ingest stores it, and `seen`, which at insert time has no `flag_state` row and so IS
+ * `!(unread ?? true)`, the same coalesce `listKnownLocators` computes.
+ */
+interface InsertMessageArgs {
+  canonical?: { messageIdHeader?: string | null };
+  nativeLocator?: { folder?: unknown; ref?: unknown };
+  unread?: boolean;
+}
+
+/**
+ * The DESTINATION of a move, in the memo's own shape. The header and the read-state baseline are
+ * NOT here: they travel with the entry the memo already holds, because a move changes where a
+ * message is and not what it is. `null` for a locator this cannot read.
+ */
+export function movedLocator(to: unknown): KnownLocator | null {
+  const key = locatorKeyOf(to);
+  if (key === null) return null;
+  const o = to as { folder: string; ref: string };
+  const sep = o.ref.indexOf(":");
+  const uid = Number(o.ref.slice(sep + 1));
+  if (!Number.isInteger(uid) || uid <= 0) return null;
+  return { folder: o.folder, uid, uidValidity: o.ref.slice(0, sep), messageId: null, seen: null };
+}
+
+export function insertedLocator(input: InsertMessageArgs, out: unknown): KnownLocator | null {
+  if (typeof (out as { created?: unknown } | null)?.created !== "boolean") return null;
+  if ((out as { created: boolean }).created !== true) return null;
+  const loc = input?.nativeLocator;
+  if (typeof loc?.folder !== "string" || typeof loc.ref !== "string") return null;
+  const sep = loc.ref.indexOf(":");
+  if (sep <= 0) return null;
+  const uid = Number(loc.ref.slice(sep + 1));
+  if (!Number.isInteger(uid) || uid <= 0) return null;
+  const messageId = input.canonical?.messageIdHeader;
+  return {
+    folder: loc.folder, uid, uidValidity: loc.ref.slice(0, sep),
+    messageId: typeof messageId === "string" ? messageId : null,
+    seen: !(input.unread ?? true),
+  };
 }
 
 /**
@@ -501,10 +703,51 @@ export function watchKnownSet<T extends object>(repo: T, cache: KnownSetCache): 
       if (typeof value !== "function" || typeof prop !== "string") return value;
 
       if (prop === "transaction") {
-        return (fn: (r: object) => unknown, ...rest: unknown[]): unknown =>
-          (value as (...a: unknown[]) => unknown).call(
-            obj, (r: object) => fn(watchKnownSet(r, cache)), ...rest,
-          );
+        /* The write group's own bracket: what the ingest appends inside it is believed only when
+           this promise RESOLVES. Nested groups are counted, not flushed — see `enterWrite`. */
+        return (fn: (r: object) => unknown, ...rest: unknown[]): unknown => {
+          cache.enterWrite();
+          let settled = false;
+          const leave = (ok: boolean): void => { if (!settled) { settled = true; cache.leaveWrite(ok); } };
+          try {
+            const out = (value as (...a: unknown[]) => unknown).call(
+              obj, (r: object) => fn(watchKnownSet(r, cache)), ...rest,
+            );
+            if (out instanceof Promise) return out.then((v) => { leave(true); return v; },
+              (e: unknown) => { leave(false); throw e; });
+            leave(true);
+            return out;
+          } catch (e) { leave(false); throw e; }
+        };
+      }
+
+      /* `insertMessage` IS the cursor. Dirty by name — it adds a projected row — but the one write
+         whose effect on the projection is fully known at the call site, so the memo follows it
+         instead of forgetting the mailbox. Only `created: true`: a conflict means another ingest
+         owns the row. See `KnownSetCache.noteInserted` for why the append waits for the commit. */
+      /* `updateLocator` IS the other half of the cursor, and the one that decides whether an
+         organizer's import re-reads. It repoints a message's primary instance; the memo cannot
+         find the entry from a row id, so the call carries WHERE IT WAS and the memo moves it —
+         exactly, keeping the header and the read-state baseline. A caller with no `from` gets
+         today's behaviour, which is the drop. */
+      if (prop === "updateLocator") {
+        return async (messageId: string, to: { folder: string; ref: string }, from?: { folder: string; ref: string }): Promise<unknown> => {
+          const moved = from !== undefined && locatorKeyOf(from) !== null ? movedLocator(to) : null;
+          if (moved === null) cache.drop(prop);
+          const out = await (value as (...a: unknown[]) => Promise<unknown>).call(obj, messageId, to, from);
+          if (moved !== null) cache.noteMoved(from!, moved);
+          return out;
+        };
+      }
+
+      if (prop === "insertMessage") {
+        return async (input: InsertMessageArgs): Promise<unknown> => {
+          const out = await (value as (a: unknown) => Promise<unknown>).call(obj, input);
+          const added = insertedLocator(input, out);
+          if (added === null) cache.drop(prop);
+          else cache.noteInserted(added);
+          return out;
+        };
       }
 
       if (prop === "listKnownLocators") {

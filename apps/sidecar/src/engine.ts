@@ -117,6 +117,7 @@ import { runSyncCycle, type CycleCensus, type SyncDeps } from "@trafficflow/work
    `runSyncCycle` alone, because a second value out of the loop's module would be a second piece of
    the pipeline running here. This is per-attachment state, not a piece of the pipeline. */
 import { KnownSetCache } from "@trafficflow/worker/known-set";
+import { startTailProgress } from "./drain-tail-progress.js";
 
 // The ORGANIZER LEASE, from the same package and for the same reason: two readings of one decision
 // table is how a LOCAL install and the CLOUD service come to disagree about who organizes a
@@ -5028,7 +5029,12 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
             cursorFolders: census.cursorFolders, checkpoints,
           });
         };
+        /* AND THE TAIL SAYS SO WHILE IT RUNS. Everything below is written after the last cycle and
+           before the drain line, so on a first import it is the window nobody could see into. A
+           tail that finishes inside the interval writes nothing. */
+        const tail = startTailProgress(log);
         try {
+          tail.phase("suggest-new");
           /* AFTER THE CYCLES, AND THAT ORDER IS THE FEATURE. The senders this asks about are the ones
              the cycles above just brought in, so running it first would spend a whole drain behind the
              mail it is about. It is also OUTSIDE the loop for `resurfaceDue`'s reason turned round: a
@@ -5044,6 +5050,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
              of the mail somebody is waiting for, every launch, to correct a display name they have
              been reading past for months. Before the checkpoint below for `suggestNew`'s reason: the
              rows it writes belong in the same fold. */
+          tail.phase("name-repair");
           await onceForTheAccount(backfillStoredNames);
           /* REJOIN THE CONVERSATIONS A FORWARD SPLIT, the same pass the hosted worker runs
              (`@trafficflow/worker/thread-join-heal`) for the reason every pass above is the
@@ -5055,6 +5062,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
              pay per drain. After the name repair, before the stamp, so its change rows fold into
              the same checkpoint. A failure is CONTAINED like every pass above: threads stay
              split, mail keeps arriving, the next gated drain asks again. */
+          tail.phase("thread-join-heal");
           if (Date.now() - lastJoinHealAt >= LOCAL_JOIN_HEAL_EVERY_MS) {
             lastJoinHealAt = Date.now();
             try {
@@ -5090,6 +5098,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
              checkpoint ordering is indifferent, and the tail keeps all the maintenance in one
              place. A failure is CONTAINED like every pass above: episodes already stamped stand,
              mail keeps arriving, the next gated drain asks again. */
+          tail.phase("inbound-quiet");
           if (Date.now() - lastInboundQuietAt >= LOCAL_INBOUND_QUIET_EVERY_MS) {
             lastInboundQuietAt = Date.now();
             try {
@@ -5113,6 +5122,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
              complete with half of it still on its way — while outbound filing the reconciler still
              owes (the OTHER reason the loop keeps going) is not import and must not withhold the
              stamp. See `sync-stamp.ts`. */
+          tail.phase("stamp");
           if (cycles > 0) {
             const stamps = await stampSynced(db, mb.id, now(), inboundDrained);
             /* HOW LONG THE FIRST IMPORT TOOK, from the stamps that just decided it — the number
@@ -5131,6 +5141,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
              tail pass writing mail writes a change row, so the mark is the comparison; an
              unreadable mark takes the fold rather than skipping it. `inbound_quiet` writes no
              change row and says so itself. AWAITED, and `checkpoint()` never throws. */
+          tail.phase("checkpoint");
           const markAtEnd = await changeLogMark();
           const tailWrote = markAtStart === null || markAtEnd === null || markAtEnd !== markAtStart;
           if (cycles > 0 && (census.observed > 0 || tailWrote)) {
@@ -5156,6 +5167,9 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
             }
           }
         } finally {
+          // The timer goes before the drain line whatever happened, including a throw — a tail
+          // that died would otherwise keep saying it was running until the process ended.
+          tail.end();
           writeDrainLine();
         }
         return cycles;
