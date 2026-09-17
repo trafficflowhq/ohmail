@@ -233,7 +233,7 @@ export function JoinScreen({ initialCode, billingReturn, publicSignup = false }:
       // PLAN BEFORE MAILBOX. `POST /mailboxes` is refused until the account is entitled to
       // one, so asking for a mailbox first is asking for something the server will not give.
       // The port's own verdict is the question — `canAddMailbox`, not a row somewhere.
-      const may = await account.access().then((a) => !a.metered || a.canAddMailbox)
+      const may = await account.access({ fresh: true }).then((a) => !a.metered || a.canAddMailbox)
         .catch(() => null);
       /* UNREADABLE FAILS OPEN, like every other unknown in this funnel: sending somebody to an
          account page they may not need is worse than letting the mailbox step's own refusal
@@ -285,7 +285,7 @@ export function JoinScreen({ initialCode, billingReturn, publicSignup = false }:
        */
       if (!await sameAccount()) return;
       if (cancelled) return;
-      const may = await account.access().then((a) => !a.metered || a.canAddMailbox)
+      const may = await account.access({ fresh: true }).then((a) => !a.metered || a.canAddMailbox)
         .catch(() => null);
       if (cancelled) return;
       if (may === true) { setStep("mailbox"); return; }

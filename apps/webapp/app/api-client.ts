@@ -11,7 +11,7 @@
 
 import { csrfToken as readCsrfToken } from "./csrf";
 import { isRecoverable, mayRefreshFor, resumeSession, withSessionCookieLock } from "./session-refresh";
-import { readOwnerMarker, rememberOwner } from "./shell/owner-cookie";
+import { readOwner, readOwnerMarker, rememberOwner } from "./shell/owner-cookie";
 
 /** The `/api` prefix the same-origin rewrite serves, or `null` on a build with no API armed. */
 export const API_BASE: string | null = process.env.NEXT_PUBLIC_API_BASE ?? null;
@@ -2248,6 +2248,35 @@ export const away = {
     api<AwayResponderSaveWire>("/away-responder", { method: "PUT", body: next }),
 };
 
+/**
+ * THE ACCESS READ, SHARED FOR THE SESSION — one request where there were one per mount.
+ *
+ * Keyed by the account marker, so a sign-in as somebody else in the same page load cannot be
+ * handed the previous account's verdict. A REJECTION is never held: a billing endpoint having a
+ * bad minute must not become this session's permanent answer. A `fresh` reader that arrives
+ * while a read is already in flight joins it rather than issuing a second.
+ */
+let accessHeld: { owner: string | null; answer: Promise<AccountAccess>; settled: boolean } | null = null;
+
+function accessRead(fresh: boolean): Promise<AccountAccess> {
+  const owner = readOwner();
+  const held = accessHeld;
+  if (held !== null && held.owner === owner && (!fresh || !held.settled)) return held.answer;
+  const answer = api<AccountAccess>("/account/access");
+  const entry = { owner, answer, settled: false };
+  accessHeld = entry;
+  void answer.then(
+    () => { entry.settled = true; },
+    () => { entry.settled = true; if (accessHeld === entry) accessHeld = null; },
+  );
+  return answer;
+}
+
+/** Forget the held verdict — for a test, and for any act that changes what the account may do. */
+export function forgetAccess(): void {
+  accessHeld = null;
+}
+
 export const account = {
   /**
    * `DELETE /account` — Art. 17 erasure. `stepUp`-gated, and unlike `POST /mailboxes` there is no window in which a
@@ -2283,7 +2312,15 @@ export const account = {
    * back is "may you add another mailbox, and how many does the plan hold". `metered: false` is
    * a host with no such program, where both answers are "no limit".
    */
-  access: () => api<AccountAccess>("/account/access"),
+  /**
+   * `fresh` re-asks; without it the session's one answer is handed back. The default is the
+   * SHARED read because the asking is per MOUNT — five surfaces ask this, several of them every
+   * time a pane opens, which the plane's logs read as an access read about every twenty seconds
+   * for one signed-in account. Pass `fresh` where the verdict GATES something a person is about
+   * to be refused: the Mailboxes pane's return to the list (the entitlement is mutable from
+   * outside this tab) and the connect presses. See {@link accessRead}.
+   */
+  access: (opts?: { fresh?: boolean }) => accessRead(opts?.fresh === true),
   manageLink: async (): Promise<{ url: string } | null> => {
     try {
       return await api<{ url: string }>("/account/manage-link", { method: "POST", body: {} });

@@ -119,6 +119,14 @@ export const ownerRefusalCodes: () => readonly string[] = () => [];
 export const reResolveApiOwner: () => void = () => {};
 
 /**
+ * Forget the held account-access verdict. A no-op here: the Cloud client holds that answer for the
+ * session and this door reads no account limits at all, so there is nothing to forget. Exported
+ * because the shared shell's module graph names it and the desktop bundle aliases this file over
+ * the real client.
+ */
+export const forgetAccess: () => void = () => {};
+
+/**
  * The account-header negotiation, for the shared shell's types. Always `null` here — "nobody has
  * asked" — which is the honest value: this door has no `/hello` to ask and no answers to check,
  * so the About pane's disclosure row is correctly absent rather than wrongly present.

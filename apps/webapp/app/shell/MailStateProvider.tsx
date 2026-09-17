@@ -22,6 +22,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { documentHidden } from "./document-hidden";
 import { useDemoMode, useEngine, useFreshness, useSyncStatus } from "./engine";
 import { SYNC_FAILURE_STREAK, syncMayRead } from "./sync-scheduler";
 import {
@@ -427,7 +428,13 @@ export function MailStateProvider({
        read belongs to the identity effect below, which is where "we have a new question" is
        expressed; this effect now owns nothing but the timer. */
     const cadence = probedFreshness?.state === "stale" ? MAIL_CLOCK_MS : FACTS_POLL_MS;
-    const id = setInterval(() => void readFreshness(), cadence);
+    const id = setInterval(() => {
+      // Nobody is looking, so nothing is owed — the facts poll's own rule, asked through the one
+      // guard. A hidden window kept this ticking every five seconds behind everything else on
+      // the machine to refresh a label nobody could read.
+      if (documentHidden()) return;
+      void readFreshness();
+    }, cadence);
     return () => clearInterval(id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [readFreshness, probedFreshness?.state]);
@@ -451,7 +458,7 @@ export function MailStateProvider({
   useEffect(() => {
     if (!now.probe) return;
     const id = setInterval(() => {
-      if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
+      if (documentHidden()) return;
       void read();
     }, FACTS_POLL_MS);
     return () => clearInterval(id);

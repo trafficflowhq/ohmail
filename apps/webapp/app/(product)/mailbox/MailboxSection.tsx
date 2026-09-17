@@ -895,7 +895,11 @@ export function MailboxSection() {
    */
   const loadGate = useCallback(async (): Promise<void> => {
     try {
-      const a = await account.access();
+      /* FRESH, and the docblock above this effect says why: the entitlement is mutable from
+         outside this tab, and a stale HARD BLOCK with the connect button removed is the one
+         failure this read may not introduce. Every other reader takes the session's shared
+         answer (`api-client.ts`). */
+      const a = await account.access({ fresh: true });
       if (!alive.current) return;
       /* AN UNMETERED HOST HAS NOTHING TO BLOCK ON, and it says so rather than sending numbers:
          `metered: false` becomes an unbounded allow, so the pure gate below takes the same path

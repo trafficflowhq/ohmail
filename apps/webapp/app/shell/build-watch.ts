@@ -21,6 +21,7 @@ import {
   writeAskMemory,
   type UpdateOffer,
 } from "./app-update";
+import { documentHidden } from "./document-hidden";
 
 /** Where the origin answers which build it is serving. */
 export const BUILD_PATH = "/version";
@@ -127,7 +128,12 @@ export function startBuildWatch(options: BuildWatchOptions): () => void {
     if (document.visibilityState === "visible") void ask();
   };
   document.addEventListener("visibilitychange", onVisible);
-  const timer = setInterval(() => void ask(), every);
+  const timer = setInterval(() => {
+    // The one guard, the third caller. A hidden tab is not being served a page, so a newer build
+    // is nothing it can act on; the `visibilitychange` listener above asks the moment it is.
+    if (documentHidden()) return;
+    void ask();
+  }, every);
   /* NOT at arm time. A document that has just loaded IS the build the origin served a moment
      ago, so the first useful question is one interval away. */
 

@@ -329,7 +329,10 @@ const CLOUD_WIRE: SuggestWire = {
   // `null`, not `false` — "it did not say" must not read as "it said no".
   aiAvailable: async () => {
     try {
-      const a = await account.access();
+      // FRESH: this read takes a refusal DOWN, so an answer from before the refusal was made
+      // would clear one that still stands. It is asked per press, never per mount, so it is not
+      // the cadence the shared read exists to collapse.
+      const a = await account.access({ fresh: true });
       // BOTH ANSWERS READ STRICTLY, because the third state is the one that matters: `metered`
       // absent is a server that did not say, and `!a.metered` would have read that as "no
       // program here, AI is on" — a body of `{}` clearing a true refusal.
