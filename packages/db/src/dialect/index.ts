@@ -228,14 +228,42 @@ export type SearchCorpus = "mail" | "kb";
  */
 export const INGEST_FOLD_WAL_BYTES = 64 * 1024 * 1024;
 
+/**
+ * …AND HOW MUCH MAY STAND BEHIND THE LAST TIME IT WAS WRITTEN OUT — the smaller of the two bounds
+ * this one mechanism carries, and the one that decides the import's speed.
+ *
+ * PGlite has no WAL writer, so nothing writes the log ahead of the pages it protects: every
+ * eviction then flushes it one page at a time, which measured 8 636 bytes a write against 16 863
+ * and a third of the throughput. Forcing it out at this interval put the write back to 18 067
+ * bytes and the pages that had to wait for a flush from 32.8 % to 0.99 %. It is a WRITE and not a
+ * fold: nothing becomes durable that was not already, and the loss window is untouched.
+ */
+export const INGEST_WRITE_WAL_BYTES = 768 * 1024;
+
+/** Where the log stood at each of the two things {@link Dialect.foldLog} does. Opaque to callers. */
+export interface LogMark {
+  /** …at the last FOLD, against {@link INGEST_FOLD_WAL_BYTES}. */
+  folded: string | null;
+  /** …at the last forced WRITE, against {@link INGEST_WRITE_WAL_BYTES}. */
+  wrote: string | null;
+}
+
+/** The two bounds, together, because a store may never take one without the other. */
+export interface LogBounds {
+  foldBytes: number;
+  writeBytes: number;
+}
+
 /** What one {@link Dialect.foldLog} call did, and where the log stands after it. */
 export interface LogFold {
-  /** Whether this call folded the log in. */
+  /** Whether this call folded the log in — a checkpoint. */
   folded: boolean;
-  /** Growth since `since`, in bytes, or `null` where the store cannot say. */
+  /** Whether this call forced the log OUT without folding it. */
+  wrote: boolean;
+  /** Growth since the last fold, in bytes, or `null` where the store cannot say. */
   grewBytes: number | null;
-  /** The mark to pass as `since` next time; `null` when it could not be read. */
-  at: string | null;
+  /** The mark to pass back next time; carried whole. */
+  mark: LogMark;
 }
 
 export interface Dialect {
@@ -440,16 +468,17 @@ export interface Dialect {
   exec(db: unknown, statement: SQL): Promise<unknown[][]>;
 
   /**
-   * BOUND THE WRITE-AHEAD LOG TO `bytes` OF GROWTH BETWEEN FOLDS — each store in its own
-   * spelling, the same bound in bytes, because the two must not be bounded differently.
+   * BOUND THE WRITE-AHEAD LOG — ONE mechanism carrying TWO bounds, because a store standing
+   * behind one of them and not the other is the shape this seam exists to prevent.
    *
-   * PGlite runs Postgres standalone with NO checkpointer, so nothing folds unless asked: this
-   * reads the growth since `since` from the INSERT pointer — the write pointer sits still while
-   * the ingest's commits do not wait for the flush, so a gate on it would never fire — and takes
-   * a `CHECKPOINT` past the bound. SQLite has its own checkpointer and takes the bound as a page
-   * count, armed once. `since` is this seam's opaque mark, `null` first time.
+   * PGlite runs Postgres standalone with neither a checkpointer NOR a WAL writer, so nothing
+   * folds or writes the log unless asked. Both are read from the INSERT pointer — the write
+   * pointer sits still while the ingest's commits do not wait for the flush, so a gate on it
+   * would never fire. Past `foldBytes` it takes a `CHECKPOINT`; past `writeBytes` it forces the
+   * log OUT with a durable commit, which flushes to its own commit record and pads nothing.
+   * SQLite has both of those processes, so its arm arms the fold and the write is a NO-OP there.
    */
-  foldLog(db: unknown, bytes: number, since: string | null): Promise<LogFold>;
+  foldLog(db: unknown, bounds: LogBounds, mark: LogMark): Promise<LogFold>;
 
   readonly search: {
     /** Word-based search over one {@link SearchCorpus}'s indexed text. */

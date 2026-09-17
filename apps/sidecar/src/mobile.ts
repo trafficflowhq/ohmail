@@ -23,7 +23,10 @@ import { drizzle as drizzleSqliteProxy } from "drizzle-orm/sqlite-proxy";
 /* The two tables a relaunch reads to find out where this mailbox lives. The barrel, like
    `engine.ts` — the device twin is substituted at the module the barrel itself reaches. */
 import { mailboxCredentials, mailboxes, organizerDisplayName } from "@trafficflow/db";
-import { INGEST_FOLD_WAL_BYTES, brandDialect, deliverLocalNotifyAtCommit, dialect } from "@trafficflow/db/dialect";
+import {
+  INGEST_FOLD_WAL_BYTES, INGEST_WRITE_WAL_BYTES, brandDialect, deliverLocalNotifyAtCommit,
+  dialect, type LogMark,
+} from "@trafficflow/db/dialect";
 import { migrateSqlite } from "@trafficflow/db/sqlite-migrate";
 import type { LeasePeekAnswer, OrganizerKind, StandDownReason } from "@trafficflow/core/adapters/organizer-lease";
 /* THE WORKER'S SOCKET PROFILE, not a third one. See {@link startPhoneEngine}. */
@@ -527,7 +530,7 @@ export async function openPhoneStore(
      transaction commits", which this store has to keep for itself. */
   /* The arming mark for the fold below — `null` until the store has been told the bound, and
      this store's own from then on. See `Dialect.foldLog`. */
-  let foldMark: string | null = null;
+  let foldMark: LogMark = { folded: null, wrote: null };
   const branded = brandDialect(
     deliverLocalNotifyAtCommit(oneTransactionAtATime(db, transactionWaitMs)), "sqlite",
   ) as unknown as LocalDb;
@@ -551,10 +554,11 @@ export async function openPhoneStore(
        count. Answering a flat `false` instead would have left the phone's log bounded by nothing
        while the desktop's was bounded in bytes. */
     foldIfLogGrew: async () => {
-      const out = await dialect(branded).foldLog(branded, INGEST_FOLD_WAL_BYTES, foldMark)
-        .catch(() => ({ folded: false as const, grewBytes: null, at: foldMark }));
-      foldMark = out.at;
-      return { folded: out.folded, grewBytes: out.grewBytes, dropped: 0 };
+      const out = await dialect(branded)
+        .foldLog(branded, { foldBytes: INGEST_FOLD_WAL_BYTES, writeBytes: INGEST_WRITE_WAL_BYTES }, foldMark)
+        .catch(() => ({ folded: false as const, wrote: false, grewBytes: null, mark: foldMark }));
+      foldMark = out.mark;
+      return { folded: out.folded, wrote: out.wrote, grewBytes: out.grewBytes, dropped: 0 };
     },
     /* NO GENERATION TO STATE, which is not the same as a first one: this store's writes go
        through the platform's SQLite and cannot be rolled back by a kill, so no cursor of its can

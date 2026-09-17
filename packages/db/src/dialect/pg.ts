@@ -149,17 +149,45 @@ export function pgDialect(): Dialect {
       return sql`${column} ?| array[${sql.join(members, sql`, `)}]::text[]`;
     },
 
-    foldLog: async (db, bytes, since) => {
+    foldLog: async (db, bounds, mark) => {
       const run = async (statement: SQL): Promise<unknown[][]> => pgDialect().exec(db, statement);
-      if (since !== null) {
+      const at = async (): Promise<string | null> => {
+        const [row] = await run(sql`select pg_current_wal_insert_lsn()::text as at`);
+        return typeof row?.[0] === "string" ? row[0] : null;
+      };
+      const grownSince = async (since: string): Promise<number | null> => {
         const [row] = await run(sql`select (pg_current_wal_insert_lsn() - ${since}::pg_lsn)::bigint::text as grew`);
         const grew = Number(row?.[0]);
-        if (Number.isFinite(grew) && grew < bytes) return { folded: false, grewBytes: grew, at: since };
+        return Number.isFinite(grew) ? grew : null;
+      };
+      const grew = mark.folded === null ? null : await grownSince(mark.folded);
+      if (grew === null || grew >= bounds.foldBytes) {
+        /* A CHECKPOINT WRITES THE LOG AS WELL AS FOLDING IT, so it resets both marks — carrying
+           the write mark forward here would force one again immediately for nothing. */
+        await run(sql`CHECKPOINT`);
+        const now = await at();
+        return { folded: true, wrote: false, grewBytes: grew, mark: { folded: now, wrote: now } };
       }
-      await run(sql`CHECKPOINT`);
-      const [now] = await run(sql`select pg_current_wal_insert_lsn()::text as at`);
-      const at = typeof now?.[0] === "string" ? now[0] : null;
-      return { folded: true, grewBytes: null, at };
+      const sinceWrite = mark.wrote === null ? null : await grownSince(mark.wrote);
+      if (sinceWrite !== null && sinceWrite < bounds.writeBytes) {
+        return { folded: false, wrote: false, grewBytes: grew, mark };
+      }
+      /* THE WRITE DOOR. `pg_current_xact_id()` takes a transaction id and nothing else, so the
+         commit that follows writes ONE commit record — and waiting for that record's flush carries
+         every byte of log pending behind it out in one write. Nothing the product owns is touched
+         and nothing becomes durable that was not; a segment switch would do the same and pad the
+         rest of a segment, a third more log for the same work. IT SETS NOTHING: the wait is the
+         SESSION default, which one file owns and one suite asserts is `on` — the desktop store
+         relaxes its INGEST transactions and this is not one of them. */
+      await run(sql`begin`);
+      try {
+        await run(sql`select pg_current_xact_id()`);
+        await run(sql`commit`);
+      } catch (err) {
+        await run(sql`rollback`).catch(() => { /* the door is best-effort; the fold is the bound */ });
+        throw err;
+      }
+      return { folded: false, wrote: true, grewBytes: grew, mark: { folded: mark.folded, wrote: await at() } };
     },
 
     exec: async (db, statement) => {

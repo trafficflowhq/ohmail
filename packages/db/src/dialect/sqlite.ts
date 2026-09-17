@@ -306,14 +306,18 @@ export function sqliteDialect(): Dialect {
      * of the current log to gate on (`pragma wal_checkpoint` IS the checkpoint, so asking would
      * be doing), which is why the mark is the arming rather than a position.
      */
-    foldLog: async (db, bytes, since) => {
-      if (since !== null) return { folded: false, grewBytes: null, at: since };
+    foldLog: async (db, bounds, mark) => {
+      /* THE WRITE HALF IS A NO-OP HERE AND THAT IS NOT AN OVERSIGHT. The desktop's door exists
+         because PGlite runs with no WAL writer, so nothing carries the log out ahead of the pages
+         it protects. This store has one, and its writes are not `O_DSYNC` besides, so forcing a
+         commit would buy a flush nobody was waiting on. Said here rather than left to a reader. */
+      if (mark.folded !== null) return { folded: false, wrote: false, grewBytes: null, mark };
       const [row] = await sqliteDialect().exec(db, sql`pragma page_size`);
       const pageSize = Number(row?.[0]);
       const size = Number.isFinite(pageSize) && pageSize > 0 ? pageSize : 4096;
-      const pages = Math.max(1, Math.ceil(bytes / size));
+      const pages = Math.max(1, Math.ceil(bounds.foldBytes / size));
       await sqliteDialect().exec(db, sql.raw(`pragma wal_autocheckpoint = ${pages}`));
-      return { folded: false, grewBytes: null, at: `pages:${pages}` };
+      return { folded: false, wrote: false, grewBytes: null, mark: { folded: `pages:${pages}`, wrote: null } };
     },
 
     exec: async (db, statement) => {
