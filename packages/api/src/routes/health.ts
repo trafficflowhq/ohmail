@@ -723,6 +723,16 @@ export const MAIL_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // migration → API → worker. No CHECK marker (two nullable integers close no set), no INDEX
   // marker (nothing looks a stop up — it rides the folder rows a cursor build already reads).
   ["mailbox_folders", "budget_stop_uid"],
+  // mail 0116_unsub_drain_cursor — two new tables, one marker each on the column an API route
+  // reads. `unsubscribe_examined` is filtered by `message_id` where the drain joins it to decide
+  // what it has already seen, and the mailbox erasure deletes by the same column; account deletion
+  // takes the table by `account_id`, so one probe on the pair's own migration covers both readers.
+  // `unsubscribe_drain_state` is read whole by `readDrainCursor` on every drain run, which is an
+  // API route (`internal.ts`), so an API deployed ahead of the migration 42703s the drain and the
+  // erasure fence rather than degrading. One probe per table on 0083's argument: one migration is
+  // one transaction, so a facet's columns arrive together. Deploy order migration → API.
+  ["unsubscribe_examined", "message_id"],
+  ["unsubscribe_drain_state", "cursor_at"],
 ] as const;
 
 /**
@@ -999,7 +1009,7 @@ export const MAIL_EXPECTED_MARKERS =
 // 0067/0068 (the device-sync alert's withdrawn SECURITY DEFINER carrier and its retirement)
 // add no column and get no marker: a function's absence is the ALERT RULE's own isolated,
 // tolerated state, not a schema fault a serving API should 503 over.
-export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0115_first_sync_budget_stop";
+export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0116_unsub_drain_cursor";
 
 
 /* `CLOUD_SCHEMA_MARKER_JOURNAL_TAG` moved to `./health-cloud.js`: it is the NAME of a cloud
