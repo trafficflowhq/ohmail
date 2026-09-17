@@ -48,6 +48,13 @@ export interface MessageRowProps {
    * attribute — a singleton row keeps rendering byte-for-byte as before.
    */
   memberIds?: string[];
+  /**
+   * Its slot in a windowed list's index space, stamped as `data-index`. `useListWindow` measures
+   * every stamped item as it renders and reserves the REAL height of the rows it has not drawn,
+   * so a list whose rows are two lines or three scrolls by rows instead of hiding them. Absent ⇒
+   * no attribute, and the window falls back to one measured height for all of them.
+   */
+  windowIndex?: number;
   from: string;
   address?: string;
   time?: string;
@@ -226,6 +233,7 @@ export function MessageRow(props: MessageRowProps) {
   const {
     id,
     memberIds,
+    windowIndex,
     from,
     address,
     time,
@@ -490,6 +498,7 @@ export function MessageRow(props: MessageRowProps) {
       type="button"
       className={cls}
       data-id={id}
+      data-index={windowIndex}
       data-ids={memberIds && memberIds.length > 0 ? memberIds.join(" ") : undefined}
       data-unseen={unread ? "1" : undefined}
       aria-label={`${from}: ${subject}`}

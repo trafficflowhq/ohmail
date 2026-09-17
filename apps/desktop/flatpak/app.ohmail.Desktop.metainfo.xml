@@ -74,6 +74,13 @@
   </screenshots>
 
   <releases>
+    <release version="0.19.3" date="2026-09-17">
+      <description>
+        <ul>
+          <li>Long lists scroll their rows out of view instead of hiding them</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.19.2" date="2026-09-17">
       <description>
         <ul>
@@ -184,39 +191,6 @@
           <li>Removing a two-factor method signs out your other sessions</li>
           <li>A server fault while renewing your session no longer signs you out</li>
           <li>A message is never acted on under an id your mail server cannot vouch for</li>
-        </ul>
-      </description>
-    </release>
-    <release version="0.17.0" date="2026-09-12">
-      <description>
-        <ul>
-          <li>A large mailbox no longer costs the desktop window the whole mailbox</li>
-          <li>A first import reports what it has actually pulled</li>
-          <li>A phone asks for a mailbox only when you ask it to</li>
-          <li>A phone that loses its network says so</li>
-          <li>A connection that dies without saying so is replaced</li>
-          <li>The phone names the computer organizing your mailbox</li>
-          <li>A phone keeps re-claiming its mailbox after the first minutes</li>
-          <li>The object store images come from Quay</li>
-          <li>A self-hosted install's front door reports its version</li>
-          <li>Your own address is never a row in your Screener</li>
-          <li>Settings rows tell screen readers their state</li>
-          <li>The updater says what it checked and what it decided</li>
-          <li>Sign out other web sessions, with an age cutoff</li>
-          <li>Trash also lists what your mail server deleted</li>
-          <li>Building from source is pinned end to end</li>
-          <li>The phone shows History</li>
-          <li>The phone shows the same waiting senders as the web</li>
-          <li>The door chooser clears the status bar</li>
-          <li>The doorbell shows four faces and a count</li>
-          <li>A storage write your browser refuses is reported</li>
-          <li>The phone's chooser counts its own doors</li>
-          <li>Organizing on a phone, when the app is not in front of you</li>
-          <li>Send later on a phone</li>
-          <li>A .deb or .rpm install no longer offers an update it cannot install</li>
-          <li>A draft you open is the draft you wrote</li>
-          <li>The app waits the time the server asks for</li>
-          <li>A self-hosted server records its own failed requests</li>
         </ul>
       </description>
     </release>

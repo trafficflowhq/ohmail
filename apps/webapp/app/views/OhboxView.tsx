@@ -531,13 +531,29 @@ export function OhboxView({
    * pinned set rendered whole at the top.
    */
   const listScrollerRef = useRef<HTMLDivElement>(null);
-  // The window counts ROWS — grouped conversations — because rows are what get mounted.
-  const win = useListWindow({ scrollerRef: listScrollerRef, count: groupedNew.length + groupedPrev.length });
+  /**
+   * ONE INDEX SPACE FOR BOTH GROUPS AND THE LABEL BETWEEN THEM: "New", its rows, "Earlier", its
+   * rows. The label is an item with its own measured height, so it is reserved where it stands
+   * instead of appearing and vanishing with the slice — which shifted everything below it by a
+   * label each time the window crossed the boundary. `useListWindow` measures whatever carries
+   * `data-index`, so both labels and every mounted row are in the sums.
+   */
   const newCount = groupedNew.length;
-  const newFrom = Math.min(win.start, newCount);
-  const newTo = Math.min(win.end, newCount);
-  const prevFrom = Math.max(0, win.start - newCount);
-  const prevTo = Math.max(0, win.end - newCount);
+  const prevCount = groupedPrev.length;
+  const newBase = newCount > 0 ? 1 : 0;
+  const prevLabelAt = newBase + newCount;
+  const prevBase = prevLabelAt + (prevCount > 0 ? 1 : 0);
+  const win = useListWindow({ scrollerRef: listScrollerRef, count: prevBase + prevCount });
+  const clamp = (i: number, hi: number): number => Math.min(Math.max(i, 0), hi);
+  const newFrom = clamp(win.start - newBase, newCount);
+  const newTo = clamp(win.end - newBase, newCount);
+  const prevFrom = clamp(win.start - prevBase, prevCount);
+  const prevTo = clamp(win.end - prevBase, prevCount);
+  const showNewLabel = newCount > 0 && win.start === 0;
+  const showPrevLabel = prevCount > 0 && win.start <= prevLabelAt && win.end > prevLabelAt;
+  /** A row's place among `[...groupedNew, ...groupedPrev]`, in the window's own index space. */
+  const windowIndexOf = (rowIdx: number): number =>
+    rowIdx < newCount ? newBase + rowIdx : prevBase + (rowIdx - newCount);
   /**
    * THE OPEN MESSAGE, or `null` — never "the first one, then".
    *
@@ -561,11 +577,12 @@ export function OhboxView({
   useEffect(() => {
     if (!selectedId) return;
     const idx = rowIndexOf(selectedId);
-    const winIdx = idx - displayResurfaced.length;
-    if (idx < 0 || winIdx < 0) return;
+    const rowIdx = idx - displayResurfaced.length;
+    if (idx < 0 || rowIdx < 0) return;
+    const winIdx = windowIndexOf(rowIdx);
     if (winIdx >= win.start && winIdx < win.end) return;
     const el = listScrollerRef.current;
-    if (el) el.scrollTop = Math.max(0, winIdx * win.rowHeight - el.clientHeight / 2);
+    if (el) el.scrollTop = Math.max(0, win.offsetOf(winIdx) - el.clientHeight / 2);
     // Deliberately only the selection: the window's own fields are read at fire time, and
     // re-running on every scroll-driven window change would re-scroll the list under the user.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1691,11 +1708,12 @@ export function OhboxView({
   const pickState = (on: boolean): boolean | undefined => (picked.size > 0 ? on : undefined);
 
   /**
-   * `actions` is threaded only by the pin group's own mapper below — `row` itself stays unary
-   * because it is passed straight to `.map(row)` in two places, where a second parameter would
-   * silently receive the INDEX.
+   * `actions` and `windowIndex` are threaded only by the mappers that have them. NEVER pass `row`
+   * or `groupRow` straight to `.map`: the array index would arrive as `windowIndex` and stamp a
+   * `data-index` from another list's counting, which the window would then measure as its own.
+   * Every call site wraps them in a lambda for that reason.
    */
-  const rowWith = (m: EngineMessage, actions?: ReactNode) => {
+  const rowWith = (m: EngineMessage, actions?: ReactNode, windowIndex?: number) => {
     // the conversation's people, computed by the shell's bound selector and never in the row.
     // Only for a threaded row; `[]` for a single-sender thread or none, and the row then leads
     // with the one full-size circle it always did.
@@ -1708,6 +1726,7 @@ export function OhboxView({
       spoken={rowBadge.spoken}
       key={m.id}
       id={m.id}
+      windowIndex={windowIndex}
       from={sent ? sent.label : senderName(m)}
       address={sent ? undefined : rowAddress(m)}
       {...(sent ? sent.avatar : avatarOf(m))}
@@ -1769,7 +1788,7 @@ export function OhboxView({
   };
 
   /** The plain row, exactly as it always rendered — safe under `.map(row)`. */
-  const row = (m: EngineMessage) => rowWith(m);
+  const row = (m: EngineMessage, windowIndex?: number) => rowWith(m, undefined, windowIndex);
 
   /**
    * THE VOICES A GROUPED ROW SPEAKS FOR — one message per distinct sender, newest first. The unread members while the
@@ -1814,8 +1833,8 @@ export function OhboxView({
    * re-files under "Earlier" as one row. A row that animated on each member would be five slides, four ending where
    * they started.
    */
-  const groupRow = (g: OhboxRowGroup) => {
-    if (g.members.length === 1) return row(g.members[0]!);
+  const groupRow = (g: OhboxRowGroup, windowIndex?: number) => {
+    if (g.members.length === 1) return row(g.members[0]!, windowIndex);
     const target = g.openTarget;
     const shown = g.latest;
     const voices = groupVoices(g);
@@ -1851,6 +1870,7 @@ export function OhboxView({
         spoken={rowBadge.spoken}
         key={`t:${g.key}`}
         id={target.id}
+        windowIndex={windowIndex}
         /* The fold SHOWS every member, so anything locating "the row where message X is"
            (the shell's flash after a search jump) must be able to match this row on any of
            them — `data-id` alone named only the lead. See MessageRow.memberIds. */
@@ -2102,18 +2122,20 @@ export function OhboxView({
           </>
         ) : null}
         {win.padTop > 0 ? <div aria-hidden style={{ height: win.padTop }} /> : null}
-        {groupedNew.length > 0 && newTo > newFrom ? (
-          <>
-            {/* `group`: the landing demo's callout anchors — see ListGroupLabel */}
-            <ListGroupLabel group="new">{t("newForYou")}</ListGroupLabel>
-            <ListRows multiSelectable ariaLabel={t("newForYou")}>{groupedNew.slice(newFrom, newTo).map(groupRow)}</ListRows>
-          </>
+        {/* `group`: the landing demo's callout anchors — see ListGroupLabel */}
+        {showNewLabel ? <ListGroupLabel group="new" index={0}>{t("newForYou")}</ListGroupLabel> : null}
+        {newTo > newFrom ? (
+          <ListRows multiSelectable ariaLabel={t("newForYou")}>
+            {groupedNew.slice(newFrom, newTo).map((g, k) => groupRow(g, newBase + newFrom + k))}
+          </ListRows>
         ) : null}
-        {groupedPrev.length > 0 && prevTo > prevFrom ? (
-          <>
-            <ListGroupLabel group="earlier">{t("previouslySeen")}</ListGroupLabel>
-            <ListRows multiSelectable ariaLabel={t("previouslySeen")}>{groupedPrev.slice(prevFrom, prevTo).map(groupRow)}</ListRows>
-          </>
+        {showPrevLabel ? (
+          <ListGroupLabel group="earlier" index={prevLabelAt}>{t("previouslySeen")}</ListGroupLabel>
+        ) : null}
+        {prevTo > prevFrom ? (
+          <ListRows multiSelectable ariaLabel={t("previouslySeen")}>
+            {groupedPrev.slice(prevFrom, prevTo).map((g, k) => groupRow(g, prevBase + prevFrom + k))}
+          </ListRows>
         ) : null}
         {win.padBottom > 0 ? <div aria-hidden style={{ height: win.padBottom }} /> : null}
         {/* the account's own sent mail rides "Earlier" now, but only the most recent slice of
@@ -2137,7 +2159,7 @@ export function OhboxView({
         {older.items.length > 0 ? (
           <>
             <ListGroupLabel>{t("olderTitle")}</ListGroupLabel>
-            <ListRows multiSelectable ariaLabel={t("olderTitle")}>{older.items.map(row)}</ListRows>
+            <ListRows multiSelectable ariaLabel={t("olderTitle")}>{older.items.map((m) => row(m))}</ListRows>
           </>
         ) : null}
         {/* The tail says three true things by client. The demo keeps its own sentence (no

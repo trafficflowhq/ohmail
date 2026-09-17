@@ -116,9 +116,14 @@ export function ListPane({
  * SHIPPED UI that the landing demo's annotations (and tests) can point leaders at without
  * matching translated text. Purely an attribute; nothing styles or branches on it.
  */
-export function ListGroupLabel({ children, group }: { children: ReactNode; group?: string }) {
+export function ListGroupLabel({
+  children,
+  group,
+  /** Its slot in a windowed list's index space, so `useListWindow` measures the label too. */
+  index,
+}: { children: ReactNode; group?: string; index?: number }) {
   return (
-    <div className="grouplabel" data-group={group}>
+    <div className="grouplabel" data-group={group} data-index={index}>
       {children}
     </div>
   );
