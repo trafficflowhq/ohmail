@@ -40,6 +40,22 @@ export type LocalDb = PgliteDatabase<typeof mailSchema>;
 const INGEST_SYNCHRONOUS_COMMIT = "off";
 
 /**
+ * …AND ONE TRANSACTION IN EVERY THIS MANY STILL WAITS, BECAUSE SOMETHING HAS TO DRAIN THE LOG.
+ *
+ * There is no walwriter and no checkpointer here, so a durable commit is the only thing that ever
+ * writes the log out in bulk. Relax every transaction a drain opens and it makes none: each buffer
+ * eviction then flushes the log itself, one 8 KiB page per write where two fit, and an import is
+ * bandwidth-limited by exactly that ({@link INGEST_SYNCHRONOUS_COMMIT}). Measured on one corpus,
+ * same tree, same host: 8 439 bytes a write and 32.98 transactions a second with the cadence
+ * removed, 17 806 and 56.90 with it. It NARROWS what a kill can take — the log of at most this
+ * many transactions, where before it was everything still in `wal_buffers` — and sixteen rather
+ * than the forty-four that reads the same census, for that reason. The cadence was the build
+ * before the removal fence's by accident, its bookkeeping being bare autocommit statements; it is
+ * stated here so no writer changing shape can take it away again.
+ */
+export const INGEST_DURABLE_COMMIT_EVERY = 16;
+
+/**
  * HOW THE LOG IS WRITTEN, AND THE ONE PROPERTY THIS STORE'S DURABILITY RESTS ON.
  *
  * PGlite's emulated filesystem implements NO flush — 500 inserts issue 509 writes and zero
@@ -73,7 +89,8 @@ async function assertWalSyncMethod(client: PGlite): Promise<void> {
 /**
  * Put {@link INGEST_SYNCHRONOUS_COMMIT} inside the ingest's transactions, in place on the client
  * this module constructed — so drizzle, the compaction pass and the checkpointer all reach the same
- * object. `SET LOCAL` reverts at the commit, so the setting can never outlive the transaction that
+ * object, and one in {@link INGEST_DURABLE_COMMIT_EVERY} keeps the default so the log is drained.
+ * `SET LOCAL` reverts at the commit, so the setting can never outlive the transaction that
  * asked for it, and the lane is read INSIDE the transaction because that is where the drain's async
  * context is live (`store-lanes.ts`). Unnamed work is interactive and keeps Postgres' default,
  * which covers the migrator, the compaction and every window read without depending on where in
@@ -81,13 +98,17 @@ async function assertWalSyncMethod(client: PGlite): Promise<void> {
  */
 function relaxIngestCommits(client: PGlite): void {
   const inner = client.transaction.bind(client);
+  /* Counted per STORE, not per drain: the cadence is about the log this one client writes. */
+  let sinceDurable = 0;
   Object.defineProperty(client, "transaction", {
     configurable: true,
     writable: true,
     value: function relaxed<T>(cb: (tx: PgliteTransaction) => Promise<T>): Promise<T | undefined> {
       return inner(async (tx) => {
         if (currentStoreLane() === "ingest") {
-          await tx.exec(`set local synchronous_commit = ${INGEST_SYNCHRONOUS_COMMIT}`);
+          sinceDurable += 1;
+          if (sinceDurable >= INGEST_DURABLE_COMMIT_EVERY) sinceDurable = 0;
+          else await tx.exec(`set local synchronous_commit = ${INGEST_SYNCHRONOUS_COMMIT}`);
         }
         return cb(tx);
       });
