@@ -22,6 +22,15 @@
          file the installers use, emitted into the bundle by Vite. -->
     <link rel="icon" type="image/png" href="./src-tauri/icons/32x32.png" />
     <title>ohmail</title>
+    <!-- THE FIRST FRAME IS THE PERSON'S FACE AND SCHEME. A BLOCKING classic script: no
+         type="module", no defer, no async, so it runs before the body is parsed and the
+         stamps are standing when the first frame is composed. The app bundle below is a
+         module script and therefore deferred, which is what put a quarter of a second of
+         the wrong face at the start of every Linux launch (measured, 278 ms). Not inline
+         because this window's CSP is script-src 'self' in two homes and a hash would have
+         to be kept in step with the file in both; same-origin needs neither. Built by the
+         boot-stamp plugin in vite.config.ts from src/boot-stamp.ts. -->
+    <script src="./boot-stamp.js"></script>
   </head>
   <body class="mo-canvas app-body">
     <div id="root"></div>

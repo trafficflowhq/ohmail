@@ -2,96 +2,49 @@
  * THE OMARCHY THEME FEED, from the window's side: raw theme material in, ohmail token values for
  * the ohmarchy face out. PULL is the `omarchy_theme` command asked once at start (an event
  * emitted before this bundle runs is an event nobody hears); PUSH is the `omarchy:theme` event
- * over the receive-only listen grant. Raw text down, nothing up. Values land in ONE <style>
- * element scoped to `:root[data-face="ohmarchy"]` — inline properties on <html> would repaint
- * every face. SCHEME × FACE STAYS ORTHOGONAL (OHMARCHY-CONTRACT.md): the element uses the SAME
- * FIVE SELECTOR FORMS as `packages/tokens/src/ohmarchy.css`, so the live theme and the static
- * face agree by construction.
+ * over the receive-only listen grant. Raw text down, nothing up.
+ *
+ * THE PAINT HALF IS A SEPARATE MODULE. `omarchy-paint.ts` holds the fence, the selector forms
+ * and the cached palette, because the window's pre-paint stamp is a BLOCKING script and only
+ * that half may be in it. This file is the half that reaches the mapping law — every palette
+ * walk and contrast floor in `packages/tokens/omarchy/mapping.js` — and nothing in a launch
+ * needs that before the first frame. The names the rest of the app already imported from here
+ * are re-exported below, so the split is a fact about the bundle and not about the callers.
  */
 
 /*
- * Every declaration carries `!important` — a cascade decision: the static follow-the-system
- * dark block's selector has specificity (0,3,0), outranking this rule's (0,2,0), so on a dark
- * desktop the static values would silently win; the live theme is BY DESIGN the top of the
- * token cascade, and no token stylesheet declares importance of its own. The fallback is
- * "keep what you have", never "render what you got": a payload that fails validation leaves
- * the last good set (or the static defaults) standing — broken chrome is the one forbidden
- * output. Values are fenced before they become CSS — a theme file is USER-AUTHORED, `}` could
- * write arbitrary rules — so names must match the token grammar; a failing pair is dropped.
+ * The fallback is "keep what you have", never "render what you got": a payload that fails
+ * validation leaves the last good set (or the static defaults) standing — broken chrome is the
+ * one forbidden output. Values are fenced before they become CSS — a theme file is
+ * USER-AUTHORED, `}` could write arbitrary rules — so names must match the token grammar; a
+ * failing pair is dropped. The fence and the cascade argument live with the rule builder.
  */
 
 import { mapOmarchyThemePair, type OmarchyThemeRaw } from "../../../packages/tokens/omarchy/map.js";
-/* The ONE scheme crossfade, shared with `ThemeProvider`'s stamp — a second animation of the
-   same change would be two fades over one paint. Reached by path for the same reason the
-   mapping is: `@ohmail/ui` publishes one entry and this module wants one function from it. */
-import { withSchemeTransition } from "../../../packages/ui/src/theme/scheme-transition.js";
+import {
+  applyOmarchyTokens,
+  cacheOmarchyPalette,
+  OMARCHY_PALETTE_VERSION,
+  resetOmarchyPaintForTests,
+} from "./omarchy-paint.js";
+
+export {
+  applyOmarchyTokens,
+  cacheOmarchyPalette,
+  fencedTokens,
+  omarchyRuleText,
+  paintCachedOmarchyPalette,
+  OMARCHY_FACE_ATTRIBUTE,
+  OMARCHY_FACE_VALUE,
+  OMARCHY_LIVE_ATTRIBUTE,
+  OMARCHY_PALETTE_KEY,
+} from "./omarchy-paint.js";
 
 /** The event the shell emits when the desktop theme changed and went quiet. */
 export const OMARCHY_THEME_EVENT = "omarchy:theme";
 
 /** The command that answers the active theme's raw material, or null off-Omarchy. */
 const OMARCHY_THEME_COMMAND = "omarchy_theme";
-
-/**
- * The appearance attribute the live rule is scoped under. The theme machinery (3a) stamps
- * `data-face="ohmarchy"` when the ohmarchy face is chosen; until it does, the feed's rule
- * matches nothing and the window renders exactly as before this module existed.
- */
-export const OMARCHY_FACE_ATTRIBUTE = "data-face";
-export const OMARCHY_FACE_VALUE = "ohmarchy";
-
-/** The marker the feed sets on <html> once a live token set is standing. Signal, not style. */
-export const OMARCHY_LIVE_ATTRIBUTE = "data-omarchy";
-
-/** The one style element the feed owns. */
-const STYLE_ID = "ohmail-omarchy-live";
-
-/**
- * THE LAST GOOD PALETTE, KEPT FOR THE NEXT LAUNCH — beside `ohmail.face`, which is what the
- * pre-paint stamp already reads. The feed cannot answer before the window paints: the command
- * is a round trip to the shell, so the first frames wore the STATIC face block, whose light
- * side is flexoki-light's warm cream `#f2efe4`. On a dark desktop that is a pale flash before
- * the theme lands, and it is the whole of the reported flicker. Writing this row makes the
- * theme's own canvas available BEFORE the first paint; the pull then fades whatever changed.
- */
-export const OMARCHY_PALETTE_KEY = "ohmail.omarchy.palette";
-/** `v` is the record's shape, so a version this bundle does not know is ignored, not guessed. */
-const PALETTE_VERSION = 1;
-
-interface CachedPalette {
-  v: number;
-  mode: "light" | "dark";
-  native: Record<string, string>;
-  counterpart: Record<string, string> | null;
-}
-
-const isTokenBag = (v: unknown): v is Record<string, string> =>
-  v !== null && typeof v === "object" && !Array.isArray(v);
-
-/** A token name: a custom property, or the one standard property the mapping emits. */
-const TOKEN_NAME = /^(--[a-z0-9-]{1,64}|color-scheme)$/;
-/** Characters that could restructure a stylesheet - close the block, open a rule, start
- *  an at-rule, escape, open a comment, or leave a bracket hanging - banned from values
- *  wholesale, control characters included. `/` goes as a CHARACTER because no real token
- *  value carries one and an embedded comment-opener would swallow every later declaration
- *  in the rule; square brackets likewise. */
-// eslint-disable-next-line no-control-regex
-const VALUE_BANNED = /[{}<>;@\\/[\]\u0000-\u001f\u007f]/;
-const VALUE_MAX = 512;
-const TOKENS_MAX = 200;
-
-/** Parens must pair and nest: CSS error recovery inside an unmatched opening paren ignores
- *  semicolons, so a value ending rgba( would eat the rest of the rule — the whole theme,
- *  not one slot. Parens are not simply banned because they are real: the tag washes are
- *  rgba(...) values. */
-function parensBalanced(value: string): boolean {
-  let depth = 0;
-  for (const ch of value) {
-    if (ch === "(") depth += 1;
-    else if (ch === ")" && --depth < 0) return false;
-  }
-  return depth === 0;
-}
 
 interface TauriInternals {
   invoke(command: string, payload?: Record<string, unknown>, options?: unknown): Promise<unknown>;
@@ -136,84 +89,6 @@ export function themeRawOfPayload(payload: unknown): OmarchyThemeRaw | null {
   };
 }
 
-/** The fence: names to the token grammar, values free of structural characters, the set
- *  bounded. Dropping is correct — the mapping's real outputs never trip this, so anything
- *  that does was never a token value. */
-export function fencedTokens(tokens: Record<string, string>): [string, string][] {
-  const out: [string, string][] = [];
-  for (const [name, value] of Object.entries(tokens)) {
-    if (out.length >= TOKENS_MAX) break;
-    if (!TOKEN_NAME.test(name)) continue;
-    if (typeof value !== "string" || value.length === 0 || value.length > VALUE_MAX) continue;
-    if (VALUE_BANNED.test(value) || !parensBalanced(value)) continue;
-    out.push([name, value]);
-  }
-  return out;
-}
-
-/** The face, as every form below starts. `:root` because the feed writes on <html> alone. */
-const FACE = `:root[${OMARCHY_FACE_ATTRIBUTE}="${OMARCHY_FACE_VALUE}"]`;
-/**
- * The scheme forms, `ohmarchy.css`'s own. The no-explicit-theme form is written with the two
- * `:not()`s rather than `:not([data-theme])` so it matches the static stylesheet's arity and
- * import order keeps deciding exactly as it did before this axis existed. The DESCENDANT form
- * is what lets a subtree be forced light inside a dark page (the dark reader's per-message
- * light rendering) — dropping it would leave those subtrees on the static palette.
- */
-const AUTO_FORM = `${FACE}:not([data-theme="light"]):not([data-theme="dark"])`;
-const schemeForms = (scheme: "light" | "dark"): string =>
-  `${FACE}[data-theme="${scheme}"],\n${FACE} [data-theme="${scheme}"]`;
-
-const OTHER: Record<"light" | "dark", "light" | "dark"> = { light: "dark", dark: "light" };
-
-/** One block: the fenced set as `!important` declarations under the given selector list. */
-function block(selector: string, tokens: Record<string, string>): string {
-  // `!important` per declaration — the module header carries the cascade argument.
-  const lines = fencedTokens(tokens).map(([name, value]) => `  ${name}: ${value} !important;`);
-  return `${selector} {\n${lines.join("\n")}\n}`;
-}
-
-/**
- * THE ONE WRITER OF THE SELECTOR FORMS. Pure text, so the headless render rig
- * (`scripts/scheme-under-ohmarchy-render.mjs`) reads what the window writes rather than a
- * second copy of the rule. A null counterpart emits nothing for the other scheme, and the
- * static face block for it stands.
- */
-export function omarchyRuleText(
-  native: Record<string, string>,
-  mode: "light" | "dark",
-  counterpart: Record<string, string> | null,
-): string {
-  const blocks = [block(AUTO_FORM, native), block(schemeForms(mode), native)];
-  if (counterpart !== null) blocks.push(block(schemeForms(OTHER[mode]), counterpart));
-  return blocks.join("\n");
-}
-
-/** Write the token sets as the scoped rules. Exported for the feed and the tests; the style
- *  element is created on first use and reused for the window's life. */
-export function applyOmarchyTokens(
-  tokens: Record<string, string>,
-  mode: "light" | "dark" = "dark",
-  counterpart: Record<string, string> | null = null,
-): void {
-  const doc = typeof document === "undefined" ? null : document;
-  if (!doc) return;
-  let style = doc.getElementById(STYLE_ID) as HTMLStyleElement | null;
-  if (!style) {
-    style = doc.createElement("style");
-    style.id = STYLE_ID;
-    doc.head.appendChild(style);
-  }
-  /* The style write goes INSIDE the transition: this is the other thing that repaints every
-     token at once — the first pull re-skins from the static defaults to the live theme, and
-     `omarchy theme set` restages the whole palette. Both were hard cuts. */
-  const el = style;
-  withSchemeTransition(() => {
-    el.textContent = omarchyRuleText(tokens, mode, counterpart);
-  });
-  doc.documentElement.setAttribute(OMARCHY_LIVE_ATTRIBUTE, "live");
-}
-
 /* The feed's whole state: whether it started, so two mounts cannot double-listen. The last
    good set needs no variable — it IS the standing style element, which a failed update
    simply does not touch. */
@@ -238,47 +113,6 @@ export const omarchySchemeSource = {
   },
 };
 
-/**
- * Keep the mapped palette for the next launch. Best effort in both directions: a blocked jar
- * costs the next launch its pre-paint theme and nothing else, which is exactly the state every
- * launch was in before this row existed.
- */
-function cacheOmarchyPalette(payload: CachedPalette): void {
-  try {
-    localStorage.setItem(OMARCHY_PALETTE_KEY, JSON.stringify(payload));
-  } catch {
-    /* no jar — the next launch wears the static face for a frame, as it always did */
-  }
-}
-
-/**
- * PAINT THE CACHED THEME BEFORE THE FIRST FRAME. Called by the window's pre-paint block, beside
- * the face stamp it depends on, and instant by construction: the crossfade is not armed until a
- * frame after the provider mounts. The cached values go through `applyOmarchyTokens`, so they
- * meet the SAME fence the live ones do — a row somebody edited in the jar cannot restructure the
- * stylesheet — and the selector forms have one writer.
- */
-export function paintCachedOmarchyPalette(): void {
-  let raw: string | null = null;
-  try {
-    raw = localStorage.getItem(OMARCHY_PALETTE_KEY);
-  } catch {
-    return; // blocked jar: the static face stands, as before
-  }
-  if (raw === null) return;
-  let cached: CachedPalette;
-  try {
-    cached = JSON.parse(raw) as CachedPalette;
-  } catch {
-    return;
-  }
-  if (cached?.v !== PALETTE_VERSION) return;
-  if (cached.mode !== "light" && cached.mode !== "dark") return;
-  if (!isTokenBag(cached.native)) return;
-  const counterpart = isTokenBag(cached.counterpart) ? cached.counterpart : null;
-  applyOmarchyTokens(cached.native, cached.mode, counterpart);
-}
-
 /** Handle one payload — from the pull or the push. Every failure keeps the standing set. */
 function handlePayload(payload: unknown): void {
   const raw = themeRawOfPayload(payload);
@@ -287,7 +121,7 @@ function handlePayload(payload: unknown): void {
   if (mapped === null) return;
   applyOmarchyTokens(mapped.native.tokens, mapped.mode, mapped.counterpart?.tokens ?? null);
   cacheOmarchyPalette({
-    v: PALETTE_VERSION,
+    v: OMARCHY_PALETTE_VERSION,
     mode: mapped.mode,
     native: mapped.native.tokens,
     counterpart: mapped.counterpart?.tokens ?? null,
@@ -327,9 +161,5 @@ export function resetOmarchyFeedForTests(): void {
   feedStarted = false;
   liveMode = null;
   modeWatchers.clear();
-  const style = typeof document === "undefined" ? null : document.getElementById(STYLE_ID);
-  style?.remove();
-  if (typeof document !== "undefined") {
-    document.documentElement.removeAttribute(OMARCHY_LIVE_ATTRIBUTE);
-  }
+  resetOmarchyPaintForTests();
 }

@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { defineConfig, type Plugin } from "vite";
+import { build as viteBuild, defineConfig, type Plugin } from "vite";
 import react from "@vitejs/plugin-react";
 import { UPDATER_HTML, UPDATER_JS } from "./src/updater-window";
 
@@ -477,6 +477,75 @@ function shellMessagesOnly(): Plugin {
 }
 
 /**
+ * THE BLOCKING PRE-PAINT SCRIPT — `src/boot-stamp.ts` compiled to its own `boot-stamp.js`.
+ *
+ * The document head loads it as a CLASSIC script (`<script src="./boot-stamp.js">`, no
+ * `type="module"`, no `defer`, no `async`), which blocks the parser, so the theme, face and
+ * cached-palette stamps are standing before the first frame. The app bundle stays a module
+ * script and stays deferred, which is what it should be: the whole point of the split is that
+ * the paint-blocking file is one storage read and a stylesheet write, and the mapping law and
+ * React are on the other side of it.
+ *
+ * Built HERE rather than as a second Vite input because `inlineDynamicImports` allows exactly
+ * one input, and emitted from a `.ts` under `src` rather than sitting in `public/` because the
+ * publish payload ships `apps/desktop/src` (`scripts/publish-desktop.mjs`) — the same reason
+ * the updater page is emitted from a module instead of a folder.
+ *
+ * Vite logs `<script src="./boot-stamp.js"> can't be bundled without type="module"` for the tag
+ * in `index.html`. That is the warning saying out loud what this plugin is for; the URL is left
+ * untouched by the HTML build and resolves against `index.html` in the bundle.
+ */
+const BOOT_STAMP_FILE = "boot-stamp.js";
+
+async function bootStampCode(): Promise<string> {
+  const out = await viteBuild({
+    configFile: false,
+    logLevel: "warn",
+    root: r("."),
+    build: {
+      write: false,
+      minify: true,
+      lib: {
+        entry: r("./src/boot-stamp.ts"),
+        formats: ["iife"],
+        name: "__ohmailBootStamp",
+        fileName: () => BOOT_STAMP_FILE,
+      },
+    },
+  });
+  const bundle = Array.isArray(out) ? out[0] : out;
+  const chunk = "output" in bundle ? bundle.output.find((o) => o.type === "chunk") : undefined;
+  if (!chunk || chunk.type !== "chunk") {
+    throw new Error("boot-stamp: the pre-paint build produced no chunk");
+  }
+  return chunk.code;
+}
+
+function bootStamp(): Plugin {
+  return {
+    name: "ohmail:boot-stamp",
+    async generateBundle() {
+      this.emitFile({ type: "asset", fileName: BOOT_STAMP_FILE, source: await bootStampCode() });
+    },
+    /* The dev server serves the same file from the same source, so `ui:dev` renders the launch
+       the installers render rather than a second arrangement nobody ships. Rebuilt per request:
+       this is a handful of statements and the dev server asks for it once per reload. */
+    configureServer(server) {
+      server.middlewares.use((req, res, next) => {
+        if (!req.url || req.url.split("?")[0] !== `/${BOOT_STAMP_FILE}`) return next();
+        bootStampCode().then(
+          (code) => {
+            res.setHeader("Content-Type", "text/javascript");
+            res.end(code);
+          },
+          (err: unknown) => next(err),
+        );
+      });
+    },
+  };
+}
+
+/**
  * Emit the auto-updater's progress page (`updater.html` + `updater.js`) into the bundle.
  *
  * These are NOT a Vite input and NOT under a `public/` folder, both deliberately: an extra HTML
@@ -592,7 +661,7 @@ export default defineConfig({
   base: HOST_CLIENT ? "/" : "./",
   plugins: [
     shellMessagesOnly(),
-    ...(HOST_CLIENT ? [hostIndexName()] : [updaterProgressPage()]),
+    ...(HOST_CLIENT ? [hostIndexName()] : [updaterProgressPage(), bootStamp()]),
     react(),
     {
       /* The webview loads the bundle as an ES module, where `import.meta` is valid; the smoke test
@@ -720,6 +789,7 @@ export default defineConfig({
          end in `/`, and the character before `api-client` there is `-`. */
       { find: /^(?:.*\/)?api-client$/, replacement: r("./src/no-api-client.ts") },
 
+      { find: "@ohmail/tokens/omarchy-rule", replacement: r("../../packages/tokens/omarchy/rule.ts") },
       { find: "@ohmail/tokens/tokens.css", replacement: r("../../packages/tokens/src/tokens.css") },
       { find: "@ohmail/tokens/faces.css", replacement: r("../../packages/tokens/src/faces.css") },
       { find: "@ohmail/tokens/ohmarchy.css", replacement: r("../../packages/tokens/src/ohmarchy.css") },

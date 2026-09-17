@@ -24,7 +24,7 @@ import "../../webapp/app/app.css";
 import "../../webapp/app/zero-layout.css";
 
 import { bridgeAvailable, connectLocalEngine } from "./bridge-fetch.js";
-import { omarchySchemeSource, paintCachedOmarchyPalette, startOmarchyFeed } from "./omarchy.js";
+import { omarchySchemeSource, startOmarchyFeed } from "./omarchy.js";
 import { startUpdateCadence } from "./update-cadence.js";
 import { DesktopGate } from "./DesktopGate.js";
 import { DOOR_COPY } from "./door-copy.js";
@@ -122,47 +122,18 @@ void startOmarchyFeed();
    it hands back is dropped deliberately: this window's life IS the cadence's life. */
 startUpdateCadence();
 
-/* The pre-paint theme stamp. `themeInitScript()` from @ohmail/ui exists for
-   server-rendered pages, which inline it as a <script>; the desktop CSP forbids
-   inline scripts, so the same contract is executed here from the bundle instead:
-   an explicit preference is stamped on <html>, absent means follow the system. */
-try {
-  const stored = localStorage.getItem("ohmail.theme");
-  if (stored === "light" || stored === "dark") document.documentElement.dataset.theme = stored;
-} catch {
-  /* storage blocked — tokens.css falls back to prefers-color-scheme */
-}
-/* …and the FACE/LAYOUT halves of the same contract (review-caught: the axis went opt-in and
-   the desktop is a host that DID wire the controls — the shared Settings Look row — and
-   carries the Omarchy live feed, whose CSS is scoped to [data-face="ohmarchy"]). The
-   provider re-resolves after mount; this stamp only kills the pre-paint flash. Each storage
-   read sits in its own try so a blocked jar still reaches the Linux detection. */
-{
-  let face: string | null = null;
-  try { face = localStorage.getItem("ohmail.face"); } catch { /* blocked — fall through */ }
-  if (face !== "paper" && face !== "ohmarchy") {
-    try { face = localStorage.getItem("ohmail.face.account"); } catch { /* fall through */ }
-  }
-  if (face !== "paper" && face !== "ohmarchy") {
-    face = /Linux/.test(navigator.platform ?? "") && !/Android|CrOS/.test(navigator.userAgent ?? "")
-      ? "ohmarchy" : "paper";
-  }
-  if (face === "ohmarchy") document.documentElement.dataset.face = "ohmarchy";
-  /* …and the THEME ITSELF, from the last launch. The feed cannot answer before the window
-     paints — its command is a round trip to the shell — so without this the first frames wear
-     the static face block, whose light side is a warm cream, and a dark desktop opens on a pale
-     flash. The cached set carries all three scheme states, so the stamp above decides which one
-     shows, and the feed's first pull then fades whatever actually changed. */
-  if (face === "ohmarchy") paintCachedOmarchyPalette();
-  let layout: string | null = null;
-  try { layout = localStorage.getItem("ohmail.layout"); } catch { /* blocked */ }
-  if (layout === "zero") document.documentElement.dataset.layout = "zero";
-}
-/* …and the THREE COLUMNS' widths, from the same store and for the same reason. This window's
-   localStorage is the app's own data directory, which is where the face pin above already
-   survives a relaunch — so a rail somebody widened is the width the next launch opens at,
-   without a round trip to the sidecar (window chrome is not a mailbox fact). Before
-   `createRoot`, so the first frame is already the right shape. */
+/* THE PRE-PAINT STAMP IS NOT HERE ANY MORE. This file is loaded as a MODULE script, and module
+   scripts are DEFERRED — the theme, face and cached-palette stamps ran after the document had
+   parsed, so the first frame was the app's own default face rather than the person's (measured
+   on the Omarchy guest: 278 ms of the paper canvas before the ohmarchy one). They live in
+   `boot-stamp.ts`, which the document head loads as a blocking script ahead of this bundle.
+   What stays here is everything that cannot be paint-blocking: the columns stamp reaches React
+   through `persisted-ui.ts`, and a framework in the head would cost every launch more than the
+   reflow it saves. */
+/* THE THREE COLUMNS' widths, from the device's own store. This window's localStorage is the
+   app's own data directory, which is where the face pin the boot stamp reads already survives a
+   relaunch — so a rail somebody widened is the width the next launch opens at, without a round
+   trip to the sidecar (window chrome is not a mailbox fact). Before `createRoot`. */
 stampColumns();
 
 /**

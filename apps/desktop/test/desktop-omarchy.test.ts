@@ -198,15 +198,21 @@ describe("the feed's start", () => {
    * racing `ThemeProvider`. `data-theme` appears in this module only inside selector text.
    */
   it("the feed writes no scheme attribute — selector text only", () => {
-    /* From the repo root under the root vitest config, from the package under its own. */
-    const fromRoot = resolve(process.cwd(), "apps/desktop/src/omarchy.ts");
-    const path = existsSync(fromRoot) ? fromRoot : resolve(process.cwd(), "src/omarchy.ts");
-    const src = readFileSync(path, "utf8");
-    expect(src).not.toMatch(/dataset\s*\.\s*theme/);
-    expect(src).not.toMatch(/(set|remove|toggle)Attribute\(\s*["'`]data-theme/);
-    /* The positive control that the needle above can fire at all: the module DOES write the
-       live marker attribute, by exactly the spelling the scan looks for. */
-    expect(src).toMatch(/setAttribute\(OMARCHY_LIVE_ATTRIBUTE/);
+    /* From the repo root under the root vitest config, from the package under its own. BOTH
+       halves of the split: the feed and the paint module it writes through. */
+    const at = (rel: string): string => {
+      const fromRoot = resolve(process.cwd(), `apps/desktop/${rel}`);
+      return existsSync(fromRoot) ? fromRoot : resolve(process.cwd(), rel);
+    };
+    const feed = readFileSync(at("src/omarchy.ts"), "utf8");
+    const paint = readFileSync(at("src/omarchy-paint.ts"), "utf8");
+    for (const src of [feed, paint]) {
+      expect(src).not.toMatch(/dataset\s*\.\s*theme/);
+      expect(src).not.toMatch(/(set|remove|toggle)Attribute\(\s*["'`]data-theme/);
+    }
+    /* The positive control that the needle above can fire at all: the paint half DOES write
+       the live marker attribute, by exactly the spelling the scan looks for. */
+    expect(paint).toMatch(/setAttribute\(OMARCHY_LIVE_ATTRIBUTE/);
   });
 
   it("off-Omarchy — a null answer — applies nothing and marks nothing", async () => {

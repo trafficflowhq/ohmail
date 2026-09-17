@@ -54,6 +54,7 @@
          prosemirror-state, likewise `model/`), present in the npm and pnpm layouts alike. */
       "@tiptap/pm/state": ["./node_modules/@tiptap/pm/state"],
       "@tiptap/pm/model": ["./node_modules/@tiptap/pm/model"],
+      "@ohmail/tokens/omarchy-rule": ["../../packages/tokens/omarchy/rule.ts"],
       "@ohmail/tokens": ["../../packages/tokens/src/index.ts"],
       "@ohmail/fixtures": ["../../packages/fixtures/src/index.ts"],
       /* The durable-write door as a LEAF, and it must be listed BEFORE nothing in particular
