@@ -240,5 +240,12 @@ export const SQLITE_JOURNAL: readonly SqliteJournalEntry[] = [
       "CREATE TABLE IF NOT EXISTS \"unsubscribe_drain_state\" (\n\t\"pass\" text PRIMARY KEY NOT NULL,\n\t\"cursor_at\" integer,\n\t\"cursor_message_id\" text,\n\t\"updated_at\" integer DEFAULT (CAST(unixepoch('subsec') * 1000 AS INTEGER)) NOT NULL,\n\tCONSTRAINT \"unsubscribe_drain_state_cursor_pair\" CHECK ((\"cursor_at\" IS NULL) = (\"cursor_message_id\" IS NULL))\n);",
       "CREATE INDEX IF NOT EXISTS \"folder_state_desired_updated_idx\" ON \"folder_state\" (\"desired_folder\",\"updated_at\",\"message_id\");"
     ]
+  },
+  {
+    "name": "0117_junk_rescues.sql",
+    "statements": [
+      "CREATE TABLE \"junk_rescues\" (\n  \"id\" text PRIMARY KEY NOT NULL DEFAULT (lower(hex(randomblob(4))) || '-' || lower(hex(randomblob(2))) || '-4' ||\n  substr(lower(hex(randomblob(2))), 2) || '-' ||\n  substr('89ab', 1 + (abs(random()) % 4), 1) ||\n  substr(lower(hex(randomblob(2))), 2) || '-' || lower(hex(randomblob(6)))),\n  \"account_id\" text NOT NULL,\n  \"mailbox_id\" text NOT NULL REFERENCES \"mailboxes\"(\"id\"),\n  \"folder\" text NOT NULL,\n  \"uidvalidity\" integer NOT NULL,\n  \"uid\" integer NOT NULL,\n  \"status\" text NOT NULL DEFAULT 'pending',\n  \"attempts\" integer NOT NULL DEFAULT 0,\n  \"next_attempt_at\" integer,\n  \"last_error_class\" text,\n  \"requested_at\" integer NOT NULL DEFAULT (CAST(unixepoch('subsec') * 1000 AS INTEGER)),\n  \"updated_at\" integer NOT NULL DEFAULT (CAST(unixepoch('subsec') * 1000 AS INTEGER)),\n  CONSTRAINT \"junk_rescues_locator_uq\" UNIQUE (\"mailbox_id\", \"folder\", \"uidvalidity\", \"uid\"),\n  CONSTRAINT \"junk_rescues_status_closed\" CHECK (\"status\" in ('pending', 'refused'))\n);",
+      "CREATE INDEX \"junk_rescues_due_idx\" ON \"junk_rescues\" (\"mailbox_id\",\"next_attempt_at\") WHERE \"status\" = 'pending';"
+    ]
   }
 ] as const;

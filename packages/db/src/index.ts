@@ -147,6 +147,10 @@ export {
   type OrganizedBy, type OrganizerRoleRow, type RequestEligibility, type RequestRefusalReason,
 } from "./organizer-role.js";
 
+/* The junk rescue's two states (`junk_rescues`) — one constant, narrowed at the write door and
+   spelled out by the CHECK on both stores. Reaches nothing. */
+export { JUNK_RESCUE_STATUSES, isJunkRescueStatus, type JunkRescueStatus } from "./junk-rescue-status.js";
+
 /* Mail 0094 — the appliers for the request kinds that are not a Screener decision. Same shape and
    same reason as `screener-apply.js` beside it: ONE transactional core, reached from the
    organizer's own door and from the request drain, so the two cannot drift into two answers about

@@ -25,6 +25,7 @@ import {
   mailboxCredentials,
   mailboxProfileMirror,
   folderOps,
+  junkRescues,
   mailboxFolders,
   mailboxes,
   messageBodies,
@@ -282,6 +283,10 @@ export async function deleteAccount(ctx: ServiceContext): Promise<DeleteAccountR
     // erasure receipt counts them and the ruling is written where the census looks — a
     // rename target is the user's own words, not residue to leave to a side effect.
     await drop("folder_ops", tx.delete(folderOps).where(inArray(folderOps.mailboxId, ownMailboxIds)));
+    // The junk rescues beside them, and for the same reason: each row is a command the person
+    // pressed, naming their Junk folder and one coordinate in it. No foreign key to `messages`
+    // — Junk never enters the mirror — so nothing else would take them.
+    await drop("junk_rescues", tx.delete(junkRescues).where(inArray(junkRescues.mailboxId, ownMailboxIds)));
     await drop("mailbox_folders", tx.delete(mailboxFolders).where(inArray(mailboxFolders.mailboxId, ownMailboxIds)));
     await drop("mailboxes", tx.delete(mailboxes).where(eq(mailboxes.accountId, accountId)));
 

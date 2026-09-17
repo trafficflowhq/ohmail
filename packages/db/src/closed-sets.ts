@@ -7,6 +7,7 @@ import {
   ORGANIZER_STATES, isOrganizerState, ORGANIZER_INTENTS, isOrganizerIntent,
   type OrganizerKind,
 } from "./organizer-role.js";
+import { JUNK_RESCUE_STATUSES, isJunkRescueStatus } from "./junk-rescue-status.js";
 
 /**
  * THE CLOSED SETS THE TWO STORES CARRY, AND WHICH OF THEM MAY BE A CHECK ON A DEVICE.
@@ -99,6 +100,16 @@ export const CLOSED_SETS: readonly ClosedSet[] = [
     why: "the lease's occupancy as a reader cycle last saw it, and a lease is held or it is not. "
       + "NULL is the third answer — 'we have not looked' — so a new state would be a new reading "
       + "of the lease rather than a member.",
+  },
+  {
+    constraint: "junk_rescues_status_closed",
+    table: "junk_rescues", column: "status", nullable: false,
+    members: JUNK_RESCUE_STATUSES, isMember: isJunkRescueStatus,
+    kind: "immutable",
+    why: "a queued 'not junk' is outstanding or the server would not take it after the backoff "
+      + "ladder ran out; a LANDED rescue leaves no row at all, so there is no third state to "
+      + "record. A fourth answer would be a different design rather than a wider set. NOT NULL, "
+      + "so it has no null arm.",
   },
 ];
 

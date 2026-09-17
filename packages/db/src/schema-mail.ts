@@ -523,6 +523,47 @@ export const folderOps = pgTable("folder_ops", {
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
 }, (t) => ({ uqFolder: unique().on(t.folderId) }));
 
+/**
+ * "NOT JUNK", as a COMMAND the organizer executes — the junk rescue's desired state. The API never
+ * opens IMAP to APPLY organization: a move defers to the organizer through desired state, so no
+ * request can leave a mailbox half-moved. Junk is structurally outside the mirror
+ * (FOLDERS-SPEC.md §16.2), so `folder_state` — which is `messages`-row-bound — cannot carry this
+ * move at all. The press records a COORDINATE here, rings the doorbell, and the worker's
+ * `junkRescuePass` moves it to INBOX inside the mailbox's serial cycle and DELETES the row.
+ *
+ * `folder_ops`' precedent, not `junk_sweep_requested_at`'s: a repo-read pass reaches every
+ * composition that runs the sync, the desktop and standalone doors included. No `kind` column —
+ * the table is the kind and INBOX is the destination. No foreign key to `messages`: a
+ * provider-filed junk message has no row, which is the whole reason this table exists.
+ * NEVER granted to the staff role: coordinates only, on `message_failures`' argument.
+ */
+export const junkRescues = pgTable("junk_rescues", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  accountId: uuid("account_id").notNull(),
+  mailboxId: uuid("mailbox_id").notNull().references(() => mailboxes.id),
+  /** `mailboxes.junk_folder` AS IT STOOD AT THE PRESS — the source the move reads, never re-derived. */
+  folder: text("folder").notNull(),
+  uidvalidity: bigint("uidvalidity", { mode: "bigint" }).notNull(),
+  uid: integer("uid").notNull(),
+  /** 'pending' | 'refused' — CHECK-closed by the migration. A refused row STAYS, so the window says so. */
+  status: text("status").notNull().default("pending"),
+  attempts: integer("attempts").notNull().default(0),
+  /** NULL ⇒ due now, the `folder_state` backoff pair's rule (see its block below). */
+  nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true }),
+  /** `RECONCILE_REFUSAL_CLASSES` member or NULL — a CLASS, never the provider's own words. */
+  lastErrorClass: text("last_error_class"),
+  requestedAt: timestamp("requested_at", { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+}, (t) => ({
+  uqLocator: unique("junk_rescues_locator_uq").on(t.mailboxId, t.folder, t.uidvalidity, t.uid),
+  // IMMUTABLE, so it is on BOTH stores: a rescue is outstanding or the server would not take it,
+  // and a landed one leaves no row — a third member would be a different design, not a wider set.
+  ckStatus: check("junk_rescues_status_closed", sql`${t.status} in ('pending', 'refused')`),
+  // The PARTIAL `(mailbox_id, next_attempt_at) WHERE status = 'pending'` due probe is created BY
+  // THE MIGRATION: drizzle's `index()` has no partial form, and a non-partial index would make
+  // every cycle walk the mailbox's whole refused history.
+}));
+
 export const messages = pgTable("messages", {
   id: uuid("id").defaultRandom().primaryKey(),
   accountId: uuid("account_id").notNull(),

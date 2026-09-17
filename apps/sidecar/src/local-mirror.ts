@@ -12,7 +12,7 @@
 import { and, eq, inArray, isNotNull, sql, type SQL } from "drizzle-orm";
 import { dialect } from "@trafficflow/db/dialect";
 import {
-  attachments, drafts, flagState, folderOps, folderState, mailboxFolders, messageBodies,
+  attachments, drafts, flagState, folderOps, folderState, junkRescues, mailboxFolders, messageBodies,
   messageFailures, messageInstances, messageStates, messageTags, messages, outboundSends,
   recordMailboxRemoved, routingDecisions, trackerEvents, unsubscribeExamined, unsubscribeRecords,
   type LedgerTx, type Tx,
@@ -127,6 +127,9 @@ export async function deleteMailboxRows(db: Tx, mailboxId: string): Promise<void
   await db.delete(messageFailures).where(eq(messageFailures.mailboxId, mailboxId));
   /* `folder_ops` before `mailbox_folders`: it references both, and the folder row is the parent. */
   await db.delete(folderOps).where(eq(folderOps.mailboxId, mailboxId));
+  /* The queued junk rescues too: they name this mailbox's Junk folder and coordinates in it, and
+     they hang off no message row — Junk never enters the mirror. */
+  await db.delete(junkRescues).where(eq(junkRescues.mailboxId, mailboxId));
   await db.delete(mailboxFolders).where(eq(mailboxFolders.mailboxId, mailboxId));
   await db.delete(messages).where(eq(messages.mailboxId, mailboxId));
 }

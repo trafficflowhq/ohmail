@@ -530,6 +530,38 @@ export const folderOps = sqliteTable("folder_ops", {
   updatedAt: integer("updated_at", { mode: "timestamp_ms" }).default(NOW_MS).notNull(),
 }, (t) => ({ uqFolder: unique().on(t.folderId) }));
 
+/**
+ * The junk rescue's desired state (mail JUNKRESCUEMIG) — the server twin's device half. A
+ * standalone phone serves `screenerRoutes` through its own local door, so the press records a row
+ * here and the engine's sync cycle drains it: the same table, the same pass, one implementation.
+ * `uidvalidity` is `int64` for the reason every other epoch here is — it is COMPARED, and a double
+ * loses the low bits.
+ */
+export const junkRescues = sqliteTable("junk_rescues", {
+  id: text("id").default(UUID_V4).primaryKey(),
+  accountId: text("account_id").notNull(),
+  mailboxId: text("mailbox_id").notNull().references(() => mailboxes.id),
+  /** `mailboxes.junk_folder` as it stood at the press — the source the move reads. */
+  folder: text("folder").notNull(),
+  uidvalidity: int64("uidvalidity").notNull(),
+  uid: integer("uid").notNull(),
+  /** 'pending' | 'refused' — CHECK-closed, and IMMUTABLE: see `CLOSED_SETS`. */
+  status: text("status").notNull().default("pending"),
+  attempts: integer("attempts").notNull().default(0),
+  /** NULL ⇒ due now. */
+  nextAttemptAt: integer("next_attempt_at", { mode: "timestamp_ms" }),
+  /** `RECONCILE_REFUSAL_CLASSES` member or NULL — a class, never provider text. */
+  lastErrorClass: text("last_error_class"),
+  requestedAt: integer("requested_at", { mode: "timestamp_ms" }).default(NOW_MS).notNull(),
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" }).default(NOW_MS).notNull(),
+}, (t) => ({
+  uqLocator: unique("junk_rescues_locator_uq").on(t.mailboxId, t.folder, t.uidvalidity, t.uid),
+  // The same CHECK as the server twin, spelled identically — the set is immutable, so it may be
+  // on a store that cannot drop one.
+  ckStatus: check("junk_rescues_status_closed", sql`${t.status} in ('pending', 'refused')`),
+  // The partial due probe is created BY THE MIGRATION, exactly as the server twin's is.
+}));
+
 export const messages = sqliteTable("messages", {
   id: text("id").default(UUID_V4).primaryKey(),
   accountId: text("account_id").notNull(),

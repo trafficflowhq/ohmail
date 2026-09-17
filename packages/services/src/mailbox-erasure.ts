@@ -1,7 +1,7 @@
 import { and, asc, eq, exists, gt, inArray, isNotNull, isNull, ne, notExists, sql } from "drizzle-orm";
 import {
   approvals, attachments, awayReplies, awayResponderSent, drafts, flagState, folderOps,
-  folderState, mailboxCredentials, mailboxFolders, mailboxProfileMirror, messageBodies,
+  folderState, junkRescues, mailboxCredentials, mailboxFolders, mailboxProfileMirror, messageBodies,
   messageFailures, messageInstances, messageStates, messageTags, messages, organizerRequests,
   eraseIdempotentResponses, mailboxes, outboundSendFingerprints, outboundSends, recordChanges,
   recordMailboxRemoved, routingDecisions, threadNotes, threads, trackerEvents,
@@ -186,6 +186,10 @@ export async function sweepMailboxData(
   // passed on them. Neither of the last two has a foreign key, so nothing else ever removes
   // them. `folder_ops` precedes the inventory it would cascade from, so the receipt counts it.
   await drop("folder_ops", tx.delete(folderOps).where(eq(folderOps.mailboxId, mailboxId)));
+  // `junk_rescues` is the same kind of row as `folder_ops` — a command the person pressed, holding
+  // their Junk folder's NAME and a coordinate in it — and it has no foreign key to `messages`
+  // (Junk never enters the mirror), so nothing else ever removes it.
+  await drop("junk_rescues", tx.delete(junkRescues).where(eq(junkRescues.mailboxId, mailboxId)));
   await drop("mailbox_folders", tx.delete(mailboxFolders)
     .where(eq(mailboxFolders.mailboxId, mailboxId)));
   await drop("message_failures", tx.delete(messageFailures)
