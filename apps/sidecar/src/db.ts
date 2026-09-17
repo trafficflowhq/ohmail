@@ -42,16 +42,13 @@ const INGEST_SYNCHRONOUS_COMMIT = "off";
 /**
  * …AND ONE TRANSACTION IN EVERY THIS MANY STILL WAITS, BECAUSE SOMETHING HAS TO DRAIN THE LOG.
  *
- * There is no walwriter and no checkpointer here, so a durable commit is the only thing that ever
- * writes the log out in bulk. Relax every transaction a drain opens and it makes none: each buffer
- * eviction then flushes the log itself, one 8 KiB page per write where two fit, and an import is
- * bandwidth-limited by exactly that ({@link INGEST_SYNCHRONOUS_COMMIT}). Measured on one corpus,
- * same tree, same host: 8 439 bytes a write and 32.98 transactions a second with the cadence
- * removed, 17 806 and 56.90 with it. It NARROWS what a kill can take — the log of at most this
- * many transactions, where before it was everything still in `wal_buffers` — and sixteen rather
- * than the forty-four that reads the same census, for that reason. The cadence was the build
- * before the removal fence's by accident, its bookkeeping being bare autocommit statements; it is
- * stated here so no writer changing shape can take it away again.
+ * With no walwriter and no checkpointer, a durable commit is the only thing that writes the log
+ * out in bulk. Relax every transaction a drain opens and it makes none, and each eviction then
+ * flushes the log itself — one 8 KiB page per write where two fit, which is what an import is
+ * bandwidth-limited by. Measured on one corpus: 8 439 bytes a write and 32.98 transactions a
+ * second without, 17 806 and 56.90 with. It NARROWS what a kill takes, to this many transactions
+ * rather than everything in `wal_buffers`, and sixteen over the forty-four that reads the same
+ * census for that reason.
  */
 export const INGEST_DURABLE_COMMIT_EVERY = 16;
 
