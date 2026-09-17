@@ -24,7 +24,7 @@ const TOKEN_NAME = /^(--[a-z0-9-]{1,64}|color-scheme)$/;
  *  value carries one and an embedded comment-opener would swallow every later declaration
  *  in the rule; square brackets likewise. */
 // eslint-disable-next-line no-control-regex
-const VALUE_BANNED = /[{}<>;@\\/[\]-]/;
+const VALUE_BANNED = /[{}<>;@\\/[\]\x00-\x1f\x7f]/;
 const VALUE_MAX = 512;
 const TOKENS_MAX = 200;
 
