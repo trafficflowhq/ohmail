@@ -101,6 +101,10 @@ describe("the desktop mailbox-facts seam", () => {
          LEAF, so a seam that forwarded a truncated path would still look right in one test and
          wrong on any server that keeps Junk under INBOX. */
       junkFolder: "INBOX/Junk",
+      /* WHERE A BUDGETED FIRST SYNC IS CONTINUING (mail 0115) — the local engine's own column,
+         nested for `junkFolder`'s reason: the strip renders the path the server states, and a
+         seam that truncated it would look right here and wrong on any server with a tree. */
+      firstSyncStopFolder: "cust/001",
       /* Why sending is not set up — the local door records it when only the SUBMISSION dial is
          refused, so a mailbox can be receiving perfectly with no way to send. A member of the
          probe taxonomy, so the value here is one a real engine answers with. */
