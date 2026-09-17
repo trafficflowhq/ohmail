@@ -45,6 +45,7 @@ import {
   SYNC_SETTLED,
   type SyncStatus,
 } from "./sync-scheduler";
+import { markDrain } from "./drain-mark";
 
 /**
  * Whose mailbox is this? Three-valued, and that is the fix: a single `null` once meant both "the server says no full
@@ -640,6 +641,9 @@ export function EngineProvider({
     // (visible only) and survives the stream's absence byte-identically.
     return startSyncScheduler(engine, {
       onStatus: onSyncStatus,
+      // The strip's moving marks, and nothing else, read this — see `drain-mark.ts` for why it
+      // is a store rather than a field on the status this component holds.
+      onDraining: markDrain,
       ...(syncsWhileHidden() ? { visibility: null } : {}),
       wake: cloudWakeStream(),
     });

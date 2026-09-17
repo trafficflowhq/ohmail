@@ -29,6 +29,7 @@ import { Spinner } from "@ohmail/ui";
 import { useTranslations } from "next-intl";
 import { apiConfigured } from "../api-client";
 import { useMailState } from "./MailStateProvider";
+import { useDrainInFlight } from "./drain-mark";
 // The strip names a mailbox in every arm that has one, and every one of those is a sentence a
 // person reads — so the address is decoded for display (`idn.ts`). `MailState` itself keeps the
 // stored form, which is what the settings link and the probe compare against.
@@ -154,6 +155,10 @@ export function SyncBar({ variant = "shell", hostOffline = false }: {
   // a failure mode the other has renamed.
   const tm = useTranslations("mailboxes");
   const { state } = useMailState();
+  /* WHETHER ANYTHING IS ACTUALLY RUNNING — before the early returns, because a hook may not sit
+     behind one. The busy STATES say a sync is outstanding; this says a drain is in flight now,
+     and only it may move a mark (`drain-mark.ts`). */
+  const draining = useDrainInFlight();
 
   if (!stripSpeaks(state.key)) return null;
   /* THE ONE ARM THAT YIELDS. Placed before `speech()` rather than inside it so the suppression is
@@ -166,6 +171,12 @@ export function SyncBar({ variant = "shell", hostOffline = false }: {
   // time — so it is the seam the `stopped` sentence branches on. See `speech()`'s `stopped` arm.
   const cloud = apiConfigured();
   const s = speech(state, t, tm, cloud);
+  /* THE MOVING MARKS — the spinner and the travelling sliver — and the one condition both may
+     mean. A busy state with no drain in flight is a sync that is outstanding and not moving:
+     it keeps its sentence, its tone and its track, and says so standing still. Both marks are
+     gated together because the frames they cost are bought by the first one (measured on the
+     Omarchy guest: one 1 952, two 1 953 milli-cores), so stopping one of a pair saves nothing. */
+  const marks = s.busy && draining;
 
   if (variant === "rail") {
     return (
@@ -175,7 +186,7 @@ export function SyncBar({ variant = "shell", hostOffline = false }: {
         aria-live={s.role === "status" ? "polite" : undefined}
       >
         <div className="rs-line">
-          <Glyph warn={s.warn} busy={s.busy} />
+          <Glyph warn={s.warn} busy={marks} />
           <b>{s.title}</b>
         </div>
         {/* The volatile half, on its own line at rail width: an address plus an elapsed count
@@ -188,13 +199,14 @@ export function SyncBar({ variant = "shell", hostOffline = false }: {
         ) : null}
         {/* THE PROGRESS LINE, and it is indeterminate on purpose. `/sync` answers `hasMore` as a
             boolean, so the total is unknowable until the drain ends; a filled track or a
-            percentage would be invented. A travelling sliver says a process is running and
-            claims nothing about how far along it is — the same knowledge the spinner carries,
-            in the shape a compact row has space for. `aria-hidden`: the region already says it
-            in words. `prefers-reduced-motion` stops the travel and leaves the track (app.css). */}
+            percentage would be invented. The TRACK is the affordance and stands for as long as
+            the sync is outstanding; the travelling sliver inside it is the motion and exists
+            only while a drain is in flight, so a bar moving over a sync making no progress
+            cannot be rendered. `aria-hidden`: the region already says it in words.
+            `prefers-reduced-motion` stops the travel and leaves the track (app.css). */}
         {s.busy ? (
           <span className="rs-track" aria-hidden="true">
-            <i />
+            {marks ? <i /> : null}
           </span>
         ) : null}
         {s.link ? <a href={s.link.href}>{s.link.label}</a> : null}
@@ -209,7 +221,7 @@ export function SyncBar({ variant = "shell", hostOffline = false }: {
       role={s.role}
       aria-live={s.role === "status" ? "polite" : undefined}
     >
-      <Glyph warn={s.warn} busy={s.busy} />
+      <Glyph warn={s.warn} busy={marks} />
       <b>{s.title}</b>
       {s.detail ? (
         <span className="num" aria-live="off">
@@ -529,14 +541,14 @@ function speech(state: MailState, t: Translate, tm: Translate, cloud: boolean): 
 }
 
 /**
- * The strip's leading mark — an envelope, a warning, or, while work is genuinely in flight, a spinner. `importing`
- * and `awaiting` report WORK and can sit for minutes; a static ✉ beside a number that changes every eight seconds
- * reads as a frozen screen (reported from live use on a full mailbox). The spinner is the one element continuously
- * true: a process is running, with no claim about how far along. Indeterminate on purpose, even now that a total
- * exists: `/sync` answers `hasMore` as a boolean, so the shape of the drain is unknowable from the loop; {@link
- * MailState.total} is a different fact measured at a different moment. Two numbers may be quoted side by side — "N of
- * M" reads as two measurements — but never turned into one percentage or filled track, which claims a continuous
- * progression the client cannot see.
+ * The strip's leading mark — an envelope, a warning, or, while a drain is in flight, a spinner. `importing` and
+ * `awaiting` report WORK and can sit for minutes, and while that work is running the spinner is the one element
+ * continuously true: a process is running, with no claim about how far along. Between drains it is UNMOUNTED rather
+ * than stilled, because a mark that is present and not moving is a second way of saying nothing that costs frames to
+ * say. Indeterminate on purpose, even now that a total exists: `/sync` answers `hasMore` as a boolean, so the shape
+ * of the drain is unknowable from the loop; {@link MailState.total} is a different fact measured at a different
+ * moment. Two numbers may be quoted side by side — "N of M" reads as two measurements — but never turned into one
+ * percentage or filled track, which claims a continuous progression the client cannot see.
  */
 
 /**

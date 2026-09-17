@@ -913,6 +913,11 @@ input.tag-manage-input { /* by element: the row is the width, the field gives */
   overflow: hidden;
   background: var(--hair);
 }
+/* The sliver is the MOTION; the track around it is the affordance. `SyncBar` mounts this element
+   only while a drain is in flight, so the animation below cannot run over a sync that is making
+   no progress — and one infinite animation buys the whole 60 Hz pipeline (1.7 cores in the
+   desktop's web process, Omarchy guest), which is why it is mounted by a fact rather than
+   stilled by a class. */
 .rail-sync .rs-track i {
   position: absolute;
   inset: 0 auto 0 0;

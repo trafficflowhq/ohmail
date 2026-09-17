@@ -1018,6 +1018,14 @@ export const WAKE_STREAM_CLOSED = 2;
 export interface SyncSchedulerOptions {
   /** Called on every settled tick and on the first one, with the value the UI renders. */
   onStatus?: (status: SyncStatus) => void;
+  /**
+   * A DRAIN IS IN FLIGHT — `true` as a tick takes the loop, `false` as it lets go, one pair per
+   * tick and never nested (a tick that finds one running returns before this fires). It is not a
+   * field on {@link SyncStatus} deliberately: that value is deduped so a healthy tab does not
+   * re-render the shell on every cycle, and a bit that moves twice a cycle would end the dedup.
+   * Its consumer is the strip's moving marks, which may mean nothing else.
+   */
+  onDraining?: (inFlight: boolean) => void;
   pollMs?: number;
   backoffBaseMs?: number;
   backoffCapMs?: number;
@@ -1451,6 +1459,7 @@ export function startSyncScheduler(
     if (stopped || running) return;
     if (terminal && !revalidating) return;
     running = true;
+    options.onDraining?.(true);
     try {
       if (!hydrated) {
         // `engine.hydrate()` and NOT `engine.store.load()`, which is what stood here. The two
@@ -1639,6 +1648,9 @@ export function startSyncScheduler(
       arm(pacedBackoff());
     } finally {
       running = false;
+      // The mark goes down wherever the tick ends — an early return, a refusal, a teardown
+      // racing the drain — because the strip may not keep moving over a loop that let go.
+      options.onDraining?.(false);
       publish();
       if (pendingWake) {
         pendingWake = false;
