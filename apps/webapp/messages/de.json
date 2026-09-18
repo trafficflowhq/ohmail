@@ -1141,6 +1141,8 @@
     "cancelConfirm": "Nachricht verwerfen",
     "cancelKeep": "Weiterschreiben",
     "cancelAlreadySent": "Schon gesendet. Zu spät zum Abbrechen.",
+    "closeNotSaved": "Dieser Entwurf konnte nicht gespeichert werden und bleibt hier offen.",
+    "closeNotSavedReason": "Dieser Entwurf konnte nicht gespeichert werden: {reason}. Er bleibt hier offen.",
     "keyLeave": "Schreiben verlassen",
     "keyCloseConfirm": "Weiterschreiben",
     "keySend": "Nachricht senden",

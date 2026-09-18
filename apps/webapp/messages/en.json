@@ -1141,6 +1141,8 @@
     "cancelConfirm": "Discard message",
     "cancelKeep": "Keep writing",
     "cancelAlreadySent": "Already sent. Too late to cancel.",
+    "closeNotSaved": "This draft couldn't be saved, so it stayed open here.",
+    "closeNotSavedReason": "This draft couldn't be saved: {reason}. It stayed open here.",
     "keyLeave": "Leave Compose",
     "keyCloseConfirm": "Keep writing",
     "keySend": "Send the message",

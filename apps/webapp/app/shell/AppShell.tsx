@@ -123,7 +123,7 @@ import { AutoSuggestRow } from "./AutoSuggestRow";
 import { ScreeningSection } from "./ScreeningSection";
 import { DormancyRow } from "./DormancyRow";
 import {
-  useComposeAutosave, reopenWouldOverwrite, type ComposeFate,
+  useComposeAutosave, reopenWouldOverwrite, type ComposeFate, type ComposeFlush,
 } from "./compose-autosave";
 import { RemoteImagesRow } from "./RemoteImagesRow";
 import { TrackingPixelsRow } from "./TrackingPixelsRow";
@@ -2641,6 +2641,13 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
    */
   const composeRef = useRef<ComposeFields>(EMPTY_COMPOSE);
   composeRef.current = compose;
+  /**
+   * WHY THE COMPOSER IS STILL HERE after a press that asked it to close — `closeCompose`'s
+   * sentence, standing in the composer's own note row rather than passing as a toast, because
+   * the composer staying open is otherwise indistinguishable from a key that never registered.
+   * Cleared by the next edit and by every exit that succeeds.
+   */
+  const [composeCloseRefusal, setComposeCloseRefusal] = useState<string | null>(null);
   useEffect(() => {
     const saved = readComposeDraft();
     if (saved.to || saved.subject || saved.body) setCompose(saved);
@@ -4313,6 +4320,8 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
   const onComposeFields = useStableCallback((next: ComposeFields) => {
     setCompose(next);
     writeComposeDraft(next);
+    // The close's refusal was about the text as it stood; an edit makes it a stale sentence.
+    setComposeCloseRefusal(null);
   });
   /**
    * A SECOND PRESS AFTER `unverified` IS A FRESH SEND, AND IT HAS TO BUILD A FRESH ROW. The warning's contract
@@ -4403,6 +4412,42 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
       void autosave.discard();
       setCompose(EMPTY_COMPOSE);
       clearComposeDraft();
+      setComposeCloseRefusal(null);
+      go("ohbox");
+    })();
+  });
+
+  /**
+   * LEAVING THE COMPOSER SAVES WHAT IS IN IT FIRST — Escape and the close control, the two exits
+   * that are NOT a discard. "Saved to your drafts after a moment" was false for the length of the
+   * debounce: typed text plus Escape inside those two seconds cancelled the armed save with its
+   * timer and the account never heard about the message. The pending save runs and is AWAITED
+   * here, so a write the server refuses can keep the composer standing with a sentence rather
+   * than closing over a message nothing holds. `autosave.flush` is the same write the pause makes
+   * and answers `nothing` for the refusals the composer already states, which is why only
+   * `failed` stops the exit. Every other way out — the rail, a `g` jump, the browser's Back, the
+   * shell unmounting — takes the hook's own belt, which cannot stay open and does not need to.
+   */
+  const closing = useRef(false);
+  const closeCompose = useStableCallback(() => {
+    if (closing.current) return;
+    closing.current = true;
+    void (async () => {
+      let flushed: ComposeFlush = { kind: "nothing" };
+      try {
+        flushed = await autosave.flush();
+      } finally {
+        closing.current = false;
+      }
+      if (flushed.kind === "failed") {
+        setComposeCloseRefusal(
+          flushed.reason === null
+            ? t("compose.closeNotSaved")
+            : t("compose.closeNotSavedReason", { reason: flushed.reason }),
+        );
+        return;
+      }
+      setComposeCloseRefusal(null);
       go("ohbox");
     })();
   });
@@ -8032,6 +8077,10 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
                 onSend={sendCompose}
                 onSendLater={sendCompose}
                 onCancel={cancelCompose}
+                /* LEAVING SAVES FIRST — see `closeCompose`. Escape and the close control take
+                   this; every other exit takes the autosave hook's own belt. */
+                onClose={closeCompose}
+                closeNote={composeCloseRefusal}
                 /* THE HELD COMPOSE'S WAY OUT — the row this form is holding, and the same
                    callback the Drafts list's verbs dispatch. A held message with no row of its
                    own has nothing the server could resolve. */

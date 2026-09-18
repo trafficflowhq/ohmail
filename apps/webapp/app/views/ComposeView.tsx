@@ -18,7 +18,6 @@ import type { Editor } from "@tiptap/react";
 import { Button, Chip, Icon, Kbd, TextField, formatFileSize, useToast } from "@ohmail/ui";
 import { DRAFT_BODY_MAX_BYTES } from "@trafficflow/core/outbound-text";
 import { chordKeys, useBinding, useKeyBindings, useModGlyph, useWritingSurface } from "../shell/keymap";
-import { go } from "../shell/routing";
 import { displayAddress } from "../shell/idn";
 import { canCancel, canSend, sendStateFor, sendVerb, type SendState } from "../shell/mail-send";
 import { RichEditor } from "../shell/RichEditor";
@@ -74,6 +73,8 @@ export function ComposeView({
   onSend,
   onSendLater,
   onCancel,
+  onClose,
+  closeNote = null,
   heldResolve = null,
 }: {
   engine: OhmailEngine;
@@ -147,6 +148,17 @@ export function ComposeView({
    * whether there is anything worth asking about — see `cancel` below.
    */
   onCancel: () => void;
+  /**
+   * LEAVE, KEEPING THE MESSAGE — Escape and the close control, the exits that are not a discard.
+   * The shell flushes the pending autosave before it navigates, so what is on screen is on the
+   * account before this view is gone; it may refuse to leave, and then {@link closeNote} says so.
+   */
+  onClose: () => void;
+  /**
+   * WHY THE COMPOSER IS STILL HERE after a press that asked it to close — the shell's sentence
+   * for a draft that could not be saved. `null` while nothing is owed.
+   */
+  closeNote?: string | null;
   /**
    * THE HELD SEND'S WAY OUT, or `null` when this form holds no unconfirmed row.
    *
@@ -413,7 +425,9 @@ export function ComposeView({
       run: () => {
         if (sendLaterOpen) closeSendLater();
         else if (confirmCancel) keepWriting();
-        else go("ohbox");
+        // LEAVING SAVES WHAT IS TYPED — `onClose` flushes the pending autosave and only then
+        // navigates. It used to be a bare `go("ohbox")`, which threw away the armed save.
+        else onClose();
       },
     },
     /* ── WITH THE SEND-LATER PICKER OPEN, ⌘↵ SCHEDULES (the ohmarchy keymap, Phase 1) ──
@@ -1041,6 +1055,11 @@ export function ComposeView({
                   back to a tab and the message is held. */}
               {held ? (
                 <span className="send-note" role="status">{held.sentence}</span>
+              ) : null}
+              {/* THE CLOSE THAT DID NOT HAPPEN, and why — a composer that stayed open after
+                  Escape is otherwise a key that looks like it never registered. */}
+              {closeNote !== null ? (
+                <span className="send-note" role="status">{closeNote}</span>
               ) : null}
               {/* The scratch buffer, stated exactly as strongly as it is true: this browser, not
                   the mailbox. Drafts kept on the server are not built yet — AND NOT AT ALL past
