@@ -1,4 +1,4 @@
-import { faultDetail, refuse, type Refusal } from "../refusal";
+import { faultDetail, refuse, sayArg, type Refusal } from "../refusal";
 import type { ConnectedSession } from "./pairing.js";
 /* THE ONE BASE EVERY REQUEST IS COMPOSED OFF — see `request-base.ts`. */
 import { requestBase } from "./request-base";
@@ -278,4 +278,55 @@ export async function organizeHere(
      would not store, 404 an engine older than the local spelling; none is a state this app can
      mend, and all are sentences a person can act on — which an Ohbox that never fills is not. */
   return { kind: "refused", reason: refuse("organizeHereRefused", res.status) };
+}
+
+/** What a re-supplied password settled. `refused` carries the server's own words. */
+export type ResupplyOutcome =
+  /** The password was tried, accepted and sealed; this mailbox dials with it from now. */
+  | { kind: "sealed" }
+  /** Nothing was written down — the detail is the engine's sentence, shown as it came. */
+  | { kind: "refused"; detail: string };
+
+/**
+ * GIVE THIS MAILBOX THE PASSWORD IT IS REFUSED WITH — `PATCH /local/mailboxes/:id`, the door in
+ * this process, and the reason a password change stopped meaning removing the mailbox.
+ *
+ * The body carries the password and nothing else: the server, port and username live in the
+ * credential this mailbox was proved against, and no surface on this phone is told them. The
+ * shared `PATCH /mailboxes/:id` is step-up gated and a standalone install stamps its second
+ * factor once at boot, so it is the same permanent 403 `organizeHere` names above. The engine
+ * tries the password before it stores it, so a refusal leaves this phone exactly as it was.
+ */
+export async function resupplyPassword(
+  session: ConnectedSession,
+  mailboxId: string,
+  password: string,
+): Promise<ResupplyOutcome> {
+  let res: Response;
+  try {
+    res = await session.fetch(
+      `${requestBase(session)}/local/mailboxes/${encodeURIComponent(mailboxId)}`,
+      {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        /* The ONE thing this request is. Never logged, never kept here, never in a refusal. */
+        body: JSON.stringify({ imap: { pass: password } }),
+      },
+    );
+  } catch (err) {
+    /* The transport's own words, rendered HERE so the sentence beside the field is in the
+       language that is active now — a store fault classifies, anything else quotes. */
+    return { kind: "refused", detail: sayArg(faultDetail(err)) };
+  }
+  if (res.ok) return { kind: "sealed" };
+  /* The engine's own sentence, which is the one beside the field — it names the mail server's
+     answer, and a status number in its place would be a thing nobody can act on. */
+  const said = await res.json().then(
+    (b) => (b as { error?: { message?: unknown } }).error?.message,
+    () => undefined,
+  );
+  return {
+    kind: "refused",
+    detail: typeof said === "string" && said !== "" ? said : String(res.status),
+  };
 }

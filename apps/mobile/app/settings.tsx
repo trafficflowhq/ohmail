@@ -27,6 +27,9 @@ import { useWorld } from "../src/state/world";
 import { connectionSaid, firstSyncSaid } from "../src/state/live";
 import { Button, Chip, Panel, Rule, Screen, Scroller, Section, TapRow, Txt } from "../src/ui/base";
 import { Sheet, SheetRow } from "../src/ui/Sheet";
+import { Field } from "../src/ui/Field";
+import { useConnection } from "../src/net/connection";
+import { resupplyPassword } from "../src/net/mailboxes";
 import { phoneEngineStart } from "../src/engine/engine-artifact";
 import {
   onOrganizerState, organizeRefusal, organizerHandedBack, organizerInstruction,
@@ -43,6 +46,7 @@ import {
   claimHere,
   claimNoteLine,
   type PhoneClaim,
+  maySignInAgain,
   mayStartHere,
   mayStopHere,
   pressSaidLine,
@@ -356,6 +360,17 @@ function ThisPhonePanel() {
      another press — so a stop the server refused and then honoured left its sentence under
      "Nothing organizes this mailbox" with the Start verb beside it (measured on a device). */
   const [said, setSaid] = useState<PressSaid>(null);
+  /* THE RE-SUPPLY SHEET, its field, and what the last send answered — one record, cleared by the
+     next press. The password lives here until the door answers and nowhere else: not in a log,
+     not in a refusal, not in this app's store. */
+  const [resupplying, setResupplying] = useState(false);
+  const [newPassword, setNewPassword] = useState("");
+  const [revealed, setRevealed] = useState(false);
+  const [sending, setSending] = useState(false);
+  const [resupplySaid, setResupplySaid] = useState<{ ok: boolean; detail: string } | null>(null);
+  /* The live session, for the one request this panel makes — the door in this process on a
+     standalone install, which is the only place the verb is offered. */
+  const conn = useConnection();
   /**
    * The door's state, live — this panel was correct only at MOUNT. `standaloneHere()` was read in
    * the render and nothing re-rendered, so `Stopping` and `Organizing` stood for minutes over a
@@ -551,6 +566,33 @@ function ThisPhonePanel() {
                     style={{ alignSelf: "flex-start", marginTop: 4 }}
                   />
                 ) : null}
+                {/* ══ THE PASSWORD CHANGED AT THE PROVIDER ═══════════════════════════════════
+                    In every state, because that is when it changes: the server starts refusing
+                    a sync LATER. Until this verb existed the only way back was forgetting this
+                    mailbox and opening it again, which takes its copy of the mail with it.
+                    The door in THIS process only — a paired row's mailbox is another machine's
+                    to re-open. */}
+                {maySignInAgain(here) && row.key === HERE_CARD ? (
+                  <Button
+                    label={Copy.signInAgain}
+                    variant="quiet"
+                    onPress={() => {
+                      setResupplySaid(null);
+                      setNewPassword("");
+                      setRevealed(false);
+                      setResupplying(true);
+                    }}
+                    style={{ alignSelf: "flex-start", marginTop: 4 }}
+                  />
+                ) : null}
+                {/* WHAT THE LAST SEND ANSWERED, beside the verb that made it. */}
+                {resupplySaid === null || row.key !== HERE_CARD ? null : (
+                  <Txt variant="note" tone="ink2" accessibilityRole="alert">
+                    {resupplySaid.ok
+                      ? Copy.signInAgainDone
+                      : Copy.signInAgainFailed(resupplySaid.detail)}
+                  </Txt>
+                )}
               </View>
             </View>
           );
@@ -586,6 +628,63 @@ function ThisPhonePanel() {
             }}
           />
           <SheetRow icon="x" label={Copy.settingsStopHereCancel} onPress={() => setConfirming(null)} />
+        </Sheet>
+      ) : null}
+
+      {/* ONE FIELD, because one field is all this door needs: the server, the port and the
+          username are in the credential this mailbox was proved against, and the engine merges
+          them itself. It tries the password before it stores it, so a refusal leaves this phone
+          exactly as it was — which is why the sheet stays open with the server's own words in it
+          rather than closing on a send that changed nothing. */}
+      {resupplying ? (
+        <Sheet open onClose={() => setResupplying(false)} label={Copy.signInAgain}>
+          <Txt variant="note" tone="ink2" style={{ paddingHorizontal: 14, paddingBottom: 4 }}>
+            {Copy.signInAgainLead}
+          </Txt>
+          <Field
+            value={newPassword}
+            onChange={setNewPassword}
+            label={Copy.signInAgainField}
+            hint={Copy.signInAgainHint}
+            secret
+            revealLabels={{
+              show: Copy.phoneStandaloneShowPassword, hide: Copy.phoneStandaloneHidePassword,
+            }}
+            revealed={revealed}
+            onReveal={setRevealed}
+            {...(resupplySaid !== null && !resupplySaid.ok
+              ? { error: Copy.signInAgainFailed(resupplySaid.detail) }
+              : {})}
+            input={{ autoCapitalize: "none", autoCorrect: false, autoComplete: "off" }}
+          />
+          <SheetRow
+            icon="check"
+            label={sending ? Copy.signInAgainSaving : Copy.signInAgainSave}
+            onPress={() => {
+              const at = conn.state.k === "live" ? conn.state.session : null;
+              const id = here?.id ?? "";
+              if (sending || newPassword === "" || at === null || id === "") return;
+              setSending(true);
+              void resupplyPassword(at, id, newPassword).then((outcome) => {
+                setSending(false);
+                setResupplySaid(
+                  outcome.kind === "sealed"
+                    ? { ok: true, detail: "" }
+                    : { ok: false, detail: outcome.detail },
+                );
+                /* THE SECRET LEAVES THIS SCREEN EITHER WAY, and the sheet closes only on the
+                   answer that made it worth having: a refusal keeps the field so the sentence
+                   beside it has something to be about. */
+                setNewPassword("");
+                if (outcome.kind === "sealed") setResupplying(false);
+              });
+            }}
+          />
+          <SheetRow
+            icon="x"
+            label={Copy.signInAgainCancel}
+            onPress={() => { setNewPassword(""); setResupplying(false); }}
+          />
         </Sheet>
       ) : null}
 

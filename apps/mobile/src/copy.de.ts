@@ -1079,4 +1079,17 @@ export const DE: Deck = {
   screeningNoteRetro: (target: string) =>
     `Wird zur Regel — künftige Post von ${target} wird automatisch dorthin einsortiert. Bis zu 50 Nachrichten werden sofort verschoben; für den Rest wendet ohmail die Regel auf die Post an, die es schon für dich einsortiert hat. Nachrichten, die du beantwortet, selbst einsortiert oder geparkt hast, bleiben unberührt.`,
   screeningRetroToggle: "Auch die Post verschieben, die schon im Postfach liegt",
+
+  connectionSignInRefused: "Der Mailserver hat die Anmeldung abgelehnt.",
+  signInAgain: "Erneut anmelden",
+  signInAgainLead:
+    "Hast du das Passwort dieses Postfachs bei deinem Anbieter geändert? Gib ohmail das neue. Die Post auf diesem Telefon und alles, was ohmail sortiert hat, bleiben unverändert.",
+  signInAgainField: "Neues Passwort",
+  signInAgainHint: "Wird auf diesem Telefon versiegelt und nur an den eigenen Server dieses Postfachs gesendet.",
+  signInAgainSave: "Speichern und anmelden",
+  signInAgainSaving: "Anmeldung läuft…",
+  signInAgainCancel: "Abbrechen",
+  signInAgainDone: "Angemeldet. Dieses Postfach synchronisiert wieder.",
+  signInAgainFailed: (detail: string) =>
+    `Dieses Passwort wurde nicht akzeptiert: ${detail}. Auf diesem Telefon hat sich nichts geändert.`,
 };

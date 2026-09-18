@@ -1719,6 +1719,22 @@ const TABLE = {
   screeningNoteRetro: (target: string) =>
     `Becomes a rule — future mail from ${target} files there automatically. Up to 50 messages move now; for the rest, ohmail applies the rule to the mail it has already filed for you. Messages you have replied to, filed yourself or set aside are left alone.`,
   screeningRetroToggle: "Also move the mail already in your mailbox",
+
+  /* ── A PASSWORD CHANGED AT THE PROVIDER ────────────────────────────────────────────────────
+     The refusal was silent here while nothing could be done about it. Now something can be, so
+     it is said and the verb is beside it. */
+  connectionSignInRefused: "The mail server refused the sign-in.",
+  signInAgain: "Sign in again",
+  signInAgainLead:
+    "Changed this mailbox's password at your provider? Give ohmail the new one. The mail on this phone and everything ohmail has organized stay where they are.",
+  signInAgainField: "New password",
+  signInAgainHint: "Sealed on this phone and sent only to this mailbox's own server.",
+  signInAgainSave: "Save and sign in",
+  signInAgainSaving: "Signing in…",
+  signInAgainCancel: "Cancel",
+  signInAgainDone: "Signed in. This mailbox is syncing again.",
+  signInAgainFailed: (detail: string) =>
+    `That password was not accepted: ${detail}. Nothing on this phone changed.`,
 };
 
 /**

@@ -2901,11 +2901,16 @@ export type ConnectionSay =
  *
  * The top bar and Settings → This phone both render it, and they must not disagree: two copies of
  * this `if` is how one of them ends up still promising a reconnect. `reachable` is the healthy
- * state and `refused` is the door's own refusal — an answered no that nothing is re-dialling — so
- * both are silent here rather than dressed as an outage.
+ * state and says nothing; `refused` is the door's own refusal — an answered no that nothing is
+ * re-dialling — and it is said in its own words rather than dressed as an outage.
  */
 export function connectionSaid(verdict: ConnectionSay | null): string | null {
-  if (verdict === null || verdict.kind === "reachable" || verdict.kind === "refused") return null;
+  if (verdict === null || verdict.kind === "reachable") return null;
+  /* SAID NOW, AND IT WAS SILENT BEFORE. A refused sign-in is not an outage and must never be
+     dressed as one — but it was silent because nothing on this phone could be done about it, and
+     a state with no remedy said nothing rather than saying a thing somebody could not act on.
+     The remedy is beside it now, so the fact is said in the same words every other surface uses. */
+  if (verdict.kind === "refused") return Copy.connectionSignInRefused;
   if (verdict.kind === "needsCredential") return Copy.connectionNeedsPassword;
   return verdict.kind === "lost" ? Copy.connectionLost : Copy.connectionGoneSince(verdict.since);
 }

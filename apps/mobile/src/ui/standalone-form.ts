@@ -261,6 +261,18 @@ export function mayStopHere(claim: PhoneClaim): boolean {
 }
 
 /**
+ * Is the RE-SUPPLY verb offered? On the door in THIS process, once the engine has named the
+ * mailbox it serves — the press addresses that id, and a card with none has nothing to send.
+ *
+ * In EVERY claim state, unlike the two verbs beside it: a password is changed at the provider
+ * BEFORE the server starts refusing, so a verb that appeared only after the refusal would arrive
+ * a sync late. It is about the credential, which no claim state describes.
+ */
+export function maySignInAgain(here: { readonly id: string | null } | null): boolean {
+  return here !== null && here.id !== null && here.id !== "";
+}
+
+/**
  * Is the START verb offered? Only over a mailbox this phone has READ and nothing holds.
  *
  * `free` and nothing else, and each exclusion is a state the verb would lie in: `unknown` has not
