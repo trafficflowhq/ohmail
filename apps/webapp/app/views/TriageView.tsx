@@ -13,7 +13,7 @@
 import { useEffect, useState } from "react";
 import { useTranslations } from "next-intl";
 import { useRowBadgeCopy } from "../shell/row-copy";
-import { rowThread, rowThreadOf } from "../shell/row-thread";
+import { rowThreadOf } from "../shell/row-thread";
 import type { EngineMessage, TagDTO, TriagePileEntry, TriagePiles } from "@ohmail/client-engine";
 import {
   Button,

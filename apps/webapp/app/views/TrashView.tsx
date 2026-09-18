@@ -22,7 +22,7 @@ import { ListPane, ListRows, MessageRow, ReadColumn, Spinner } from "@ohmail/ui"
 import type { TrashWindowItemWire } from "../api-client";
 import { MessagePane, type MessageAction } from "../shell/MessagePane";
 import { useRowBadgeCopy } from "../shell/row-copy";
-import { rowThread, rowThreadOf } from "../shell/row-thread";
+import { rowThreadOf } from "../shell/row-thread";
 import {
   avatarHue, avatarOf, agoStamp, displayTime, hueOf, initialsOf, placeLabel, rowAddress,
   senderName, tagsOfMessage,

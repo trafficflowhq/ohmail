@@ -17,7 +17,7 @@
 import { useEffect, useState } from "react";
 import { useTranslations } from "next-intl";
 import { useRowBadgeCopy } from "../shell/row-copy";
-import { rowThread, rowThreadOf } from "../shell/row-thread";
+import { rowThreadOf } from "../shell/row-thread";
 import { presentsUnread, type EngineMessage, type TagDTO } from "@ohmail/client-engine";
 import { Button, Kbd, ListPane, ListRows, MessageRow, ReadColumn, TagDot, TextField } from "@ohmail/ui";
 import { MessagePane, type MessageAction } from "../shell/MessagePane";

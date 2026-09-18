@@ -19,7 +19,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { useRowBadgeCopy } from "../shell/row-copy";
-import { rowThread, rowThreadOf } from "../shell/row-thread";
+import { rowThreadOf } from "../shell/row-thread";
 import { physicalFolderOf, type EngineMessage, type TagDTO } from "@ohmail/client-engine";
 import { InfoNote, ListPane, ListRows, MessageRow, ReadColumn } from "@ohmail/ui";
 import { MarkAllRead } from "../components/MarkAllRead";
