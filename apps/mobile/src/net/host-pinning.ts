@@ -104,14 +104,16 @@ export function pinnedCount(): number {
 
 /**
  * The sentence for a handshake that failed the pin — the honest half of "a changed key
- * un-pairs". When the desktop's key changes (data directory moved, restored, re-keyed), every
- * request fails at the handshake, and the platform's own words are unreadable and
- * indistinguishable from bad wifi. So the transport error is recognised and replaced —
- * recognised by shape rather than exact string, since the wording differs across Android
- * versions; a failed match degrades to the generic "could not reach" sentence — wrong, but
- * not misleading, which is the right direction to be wrong in.
+ * un-pairs". The platform's own words are unreadable and indistinguishable from bad wifi, so the
+ * shape is recognised and replaced; a missed match degrades to "could not reach" — wrong, but
+ * not misleading. EVERY ALTERNATIVE MUST NAME A TLS TRUST EVENT: this held the bare word
+ * `hostname`, which is how BOTH platforms' DNS failures END ("No address associated with
+ * hostname"; `Code=-1003 "…specified hostname could not be found"`), so a dead address was
+ * reported as a changed key and somebody was sent to spend a fresh pairing code. A pin mismatch
+ * is `Hostname … not verified` — OkHttp's words when `PinnedHosts.hostnameVerifier` refuses.
  */
-const HANDSHAKE = /SSLHandshake|CertPathValidator|Chain validation|Trust anchor|certificate|SSLPeerUnverified|hostname/i;
+const HANDSHAKE =
+  /SSLHandshake|CertPathValidator|Chain validation|Trust anchor|certificate|SSLPeerUnverified|Hostname\s+\S+\s+not verified|Code=-120[1-4]\b/i;
 
 export function isPinFailure(error: unknown): boolean {
   return HANDSHAKE.test(String(error));
