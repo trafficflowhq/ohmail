@@ -297,12 +297,18 @@ export {
   threadOf,
   threadParticipants,
   threadParticipantsIndex,
+  // HOW LONG A CONVERSATION IS, once — the server's length where the mirror holds the thread row.
+  // Exported because both surfaces put that number on a row: the web app through
+  // `resurfacedThreads`, the phone through its own projection.
+  conversationSize,
+  threadSizeIndex,
   threadSubject,
   THREAD_PARTICIPANTS_MAX,
   unreadCounts,
   type EngineCounts,
   type OhboxView,
   type ResurfacedThreadRow,
+  type ThreadSize,
   type FeedPartition,
   type ReceiptsDayGroup,
   type ScreenerSegments,

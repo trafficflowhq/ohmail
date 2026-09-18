@@ -731,6 +731,58 @@ const msOf = (iso: string | null): number | null => {
   return Number.isNaN(t) ? null : t;
 };
 
+/** How long one conversation is, and whether the server said so or the mirror was counted. */
+export interface ThreadSize {
+  count: number;
+  /** True where the mirror holds the thread row and {@link count} is its `messageIds` length. */
+  fromThread: boolean;
+}
+
+const sizeCache = new WeakMap<EntityReader, { v: number; sizes: Map<string, ThreadSize> }>();
+
+/**
+ * HOW MANY MESSAGES EVERY CONVERSATION HOLDS — the server's own length where the mirror holds the
+ * thread row, the members the mirror holds where it does not, and a flag saying which. A windowed
+ * mirror holding three of nine would otherwise put "3" on a row standing for nine.
+ *
+ * One pass, memoized per version, in the shape {@link threadParticipantsIndex} already has for
+ * the same reason: a per-row {@link threadOf} is O(mirror x rows) for a badge. Both surfaces read
+ * it — the web row through {@link resurfacedThreads}, the phone through its own projection.
+ */
+export function threadSizeIndex(reader: EntityReader): ReadonlyMap<string, ThreadSize> {
+  const v = typeof reader.version === "function" ? reader.version() : null;
+  if (v !== null) {
+    const hit = sizeCache.get(reader);
+    if (hit && hit.v === v) return hit.sizes;
+  }
+  const sizes = new Map<string, ThreadSize>();
+  for (const m of reader.list<EngineMessage>("message")) {
+    if (!m.threadId) continue;
+    const held = sizes.get(m.threadId);
+    if (held) held.count += 1;
+    else sizes.set(m.threadId, { count: 1, fromThread: false });
+  }
+  for (const [threadId, size] of sizes) {
+    const thread = reader.get<{ messageIds?: unknown }>("thread", threadId);
+    if (!Array.isArray(thread?.messageIds)) continue;
+    size.count = thread.messageIds.length;
+    size.fromThread = true;
+  }
+  if (v !== null) sizeCache.set(reader, { v, sizes });
+  return sizes;
+}
+
+/**
+ * The conversation this row stands for, or 0 where it stands for one — the same "no conversation
+ * here" contract {@link threadOf} and {@link threadParticipants} answer with, so a surface can
+ * draw and speak the count off one read.
+ */
+export function conversationSize(reader: EntityReader, m: Pick<EngineMessage, "threadId">): number {
+  if (!m.threadId) return 0;
+  const n = threadSizeIndex(reader).get(m.threadId)?.count ?? 0;
+  return n > 1 ? n : 0;
+}
+
 const rowsCache = new WeakMap<EntityReader, { v: number; rows: ResurfacedThreadRow[] }>();
 
 /**
@@ -798,10 +850,10 @@ export function resurfacedThreads(reader: EntityReader): ResurfacedThreadRow[] {
       }
     }
 
-    const thread = key.startsWith("msg:")
-      ? undefined
-      : reader.get<{ messageIds?: unknown }>("thread", key);
-    const ids = Array.isArray(thread?.messageIds) ? thread.messageIds : null;
+    // THE SAME COUNT THE PHONE'S ROWS CARRY — {@link threadSizeIndex}, not a second walk here: two
+    // derivations of one number drift, and this row's badge and a list row's badge are the same
+    // claim about the same conversation. A threadless pin ("msg:" key) stands for itself.
+    const size = key.startsWith("msg:") ? undefined : threadSizeIndex(reader).get(key);
 
     rows.push({
       key,
@@ -809,8 +861,8 @@ export function resurfacedThreads(reader: EntityReader): ResurfacedThreadRow[] {
       members: group,
       pinned,
       openTarget,
-      count: ids ? ids.length : group.length,
-      countFromThread: ids !== null,
+      count: size?.count ?? group.length,
+      countFromThread: size?.fromThread === true,
       resurfacedAt,
       newSince,
       badge: newSince.length > 0,
