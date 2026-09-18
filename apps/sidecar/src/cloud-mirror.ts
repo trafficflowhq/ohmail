@@ -3,6 +3,7 @@ import { dirname, join } from "node:path";
 import { and, asc, desc, eq, gt, inArray, isNull, ne, notInArray, sql } from "drizzle-orm";
 import { dialect, type Dialect } from "@trafficflow/db/dialect";
 import { recordChange, recordChanges, accountSettings, CAPABILITY_REQUESTS,
+  SCREENER_SUGGESTION_PROVENANCE, SCREENER_SUGGESTION_STATUS,
   // The erasure fence's own read — the replay writes rows one mailbox owns, and SKIPS rather
   // than throws on an erased one; see the folder arm for why a throw is the wrong verb here.
   readMailboxErasedAt,
@@ -27,7 +28,8 @@ import {
 } from "@trafficflow/core/drain-policy";
 import type {
   ApprovalDTO, ChangeOp, DraftDTO, EntityType, MailboxDTO, MessageBodyBatchItem, MessageDTO,
-  MessageStateDTO, Page, RoutingDecisionDTO, RuleDTO, SnapshotResponse, SyncChange, SyncResponse,
+  MessageStateDTO, Page, RoutingDecisionDTO, RuleDTO, ScreenerSuggestionDTO, SnapshotResponse,
+  SyncChange, SyncResponse,
   TagDTO, ThreadDTO, WithheldMarker,
 } from "@trafficflow/services/mail";
 import type { LocalDb } from "./db.js";
@@ -81,6 +83,15 @@ export const CLOUD_SYNC_TYPES = [
    * receipt on the LOCAL log, so the window's own mirror drops it by the same rule.
    */
   "mailbox",
+  /**
+   * A BOUGHT SCREENER SUGGESTION — the narrow verdict entity (`change-log.ts`). Applied into the
+   * local `routing_decisions` under its own provenance (skipped when the message is not mirrored,
+   * the FK rule every child row follows) and re-emitted on the LOCAL log, so the window's own
+   * drain carries the chip the second the hosted worker buys it. The local row stores NO
+   * rationale — the wire never carried one — so the local page read's rationale gate has nothing
+   * to say for these rows; the wire's `decision` is what the window renders.
+   */
+  "screener_suggestion",
 ] as const satisfies readonly EntityType[];
 
 /**
@@ -1329,6 +1340,33 @@ async function applyUpsert(
       gen?.routing_decision.add(rd.id);
       return true;
     }
+    case "screener_suggestion": {
+      /* The narrow wire entity, landed as a provenance-scoped `routing_decisions` row — the same
+         table the hosted store keeps it in, so the local page read serves it by the same query.
+         The wire carries no rationale by design and the local row stores none; `created_at` is
+         the wire's `boughtAt`, so a locally re-served entity keeps the hosted purchase time.
+         Marked in `gen.routing_decision`: same table, same phantom sweep. */
+      const s = ch.entity as ScreenerSuggestionDTO | undefined;
+      if (!s) return false;
+      if (!(await messagePresent(tx, s.messageId))) return false;
+      const body = {
+        accountId: world.accountId,
+        messageId: s.messageId,
+        inputProvenance: SCREENER_SUGGESTION_PROVENANCE,
+        matchedRuleId: null,
+        destination: s.destination,
+        confidence: s.confidence ?? null,
+        rationale: null,
+        spam: !!s.spam,
+        status: SCREENER_SUGGESTION_STATUS,
+        createdAt: asDate(s.boughtAt) ?? now,
+        updatedAt: asDate(s.updatedAt) ?? now,
+      };
+      await tx.insert(routingDecisions).values({ id: s.id, ...body })
+        .onConflictDoUpdate({ target: routingDecisions.id, set: body });
+      gen?.routing_decision.add(s.id);
+      return true;
+    }
     default:
       // Forward-compatible: an unknown type (e.g. "folder", which has no local table) is skipped
       // exactly as `apply.ts` tolerates an unknown entity rather than wedging the feed.
@@ -1458,6 +1496,8 @@ async function applyDelete(tx: Tx, ch: SyncChange, detached?: DetachedSurvivor[]
       await tx.delete(approvals).where(eq(approvals.id, ch.id));
       return true;
     case "routing_decision":
+    // A suggestion's tombstone (a re-buy's replaced row, a reset) — the same row identity.
+    case "screener_suggestion":
       await tx.delete(routingDecisions).where(eq(routingDecisions.id, ch.id));
       return true;
     default:

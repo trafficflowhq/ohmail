@@ -27,6 +27,7 @@ import {
   type ScreenerHeldMail,
   type ScreenerSegment,
   type ScreenerSenderDTO,
+  type ScreenerSuggestionEntity,
   type TagDTO,
   type TriageItemDTO,
   type WaterlineMeta,
@@ -1096,6 +1097,12 @@ interface SenderEntry {
   bodies: ReadonlyArray<MessageBodyRecord | undefined>;
   rep: EngineMessage;
   dto: ScreenerSenderDTO;
+  /**
+   * WHICH bought suggestion the cached row's `ai` was derived from (`null` = none). Without it a
+   * purchase arriving on `/sync` left the chip invisible for every sender whose BAG had not
+   * moved — the suggestion is not in the bag, so `sameBag` alone read the row as unchanged.
+   */
+  suggestionId: string | null;
 }
 const senderCache = new WeakMap<EngineMessage, SenderEntry>();
 
@@ -1212,6 +1219,35 @@ const segmentsCache = new WeakMap<EntityReader, { v: number; key: string; out: S
  * is recomputed here, so what the queue subtracts is what a press would release; an empty mirror
  * subtracts nothing, the honest answer for a door that has not replied.
  */
+/**
+ * One bought suggestion, read as a row's `ai`. `hold` renders as the gate whatever folder rides
+ * beside it — the same reading `toSuggestion` gives the wire in the shell. An unknown destination
+ * from a newer server falls to the decision's own side rather than a guessed pile. The wire
+ * carries no model text by design, so `rationale` is empty: the badge renders the verdict, and
+ * the page read (`GET /screener`) stays the richer reader.
+ */
+function suggestionAi(s: ScreenerSuggestionEntity | undefined): ScreenerSenderDTO["ai"] {
+  if (!s) return null;
+  const named = (VIEW_OF_FOLDER as Record<string, OhmailView | undefined>)[s.destination];
+  const dest = s.decision === "hold"
+    ? ("screener" as const)
+    : named ?? (s.decision === "yes" ? ("ohbox" as const) : ("screened" as const));
+  const code = s.reasonCode === "impersonation" || s.reasonCode === "campaign"
+    || s.reasonCode === "auth_fail" || s.reasonCode === "brand_mismatch" ? s.reasonCode : undefined;
+  return {
+    dest,
+    confidence: s.confidence,
+    rationale: "",
+    ...(code
+      ? {
+        reasonCode: code,
+        ...(s.reasonBrand ? { reasonBrand: s.reasonBrand } : {}),
+        ...(typeof s.reasonCount === "number" ? { reasonCount: s.reasonCount } : {}),
+      }
+      : {}),
+  };
+}
+
 function heldReleaseClaim(reader: EntityReader): (key: string) => boolean {
   const senders = new Set<string>();
   const domains = new Set<string>();
@@ -1288,6 +1324,19 @@ export function screenerSegments(
 
   const alreadyDecided = heldReleaseClaim(reader);
 
+  /**
+   * THE NEWEST BOUGHT ADVICE PER SENDER, off the mirror's `screener_suggestion` rows — the
+   * narrow `/sync` entity (owner decision 2026-09-18). A re-buy arrives as a delete + create
+   * pair, so ordinarily there is one row per sender; `boughtAt` breaks the tie inside the one
+   * page where both are momentarily present. This is what fills a WAITING row's `ai` on every
+   * surface that renders these rows — the phone's badge included — the second the delta lands.
+   */
+  const advice = new Map<string, ScreenerSuggestionEntity>();
+  for (const s of reader.list<ScreenerSuggestionEntity>("screener_suggestion")) {
+    const prev = advice.get(s.senderKey);
+    if (!prev || s.boughtAt > prev.boughtAt) advice.set(s.senderKey, s);
+  }
+
   for (const m of reader.list<EngineMessage>("message")) {
     const view = VIEW_OF_FOLDER[m.folder] as OhmailView | undefined;
     const segment = view ? SEGMENT_OF_VIEW[view] : undefined;
@@ -1319,8 +1368,10 @@ export function screenerSegments(
          for them. */
       const anchor = bucket[0];
       const kept = anchor === undefined ? undefined : senderCache.get(anchor);
+      const sug = segment === "waiting" ? advice.get(key) : undefined;
       if (kept !== undefined && kept.segment === segment && kept.day === day
-          && kept.zone === zone && kept.locale === locale && sameBag(reader, kept, bucket)) {
+          && kept.zone === zone && kept.locale === locale
+          && kept.suggestionId === (sug?.id ?? null) && sameBag(reader, kept, bucket)) {
         rows.push({ key, rep: kept.rep, dto: kept.dto });
         continue;
       }
@@ -1344,10 +1395,11 @@ export function screenerSegments(
         initial: (name.trim()[0] ?? "?").toUpperCase(),
         time: messageDisplayTime(rep, now, zone, locale),
         scope: "sender",
-        // DEGRADATION: no classifier runs client-side and `/sync` carries no
-        // suggestion, so a derived row has none. `GET /screener` still returns
-        // `aiSuggestion` for desktop/native and for enrichment later.
-        ai: null,
+        // The advice on record, off the mirror's `screener_suggestion` rows — `/sync` carries
+        // the narrow verdict since the 2026-09-18 reversal of "no model output in /sync".
+        // No classifier runs client-side: this is the server's own purchase, delivered. `GET
+        // /screener` still returns the richer `aiSuggestion` (rationale included) on the page.
+        ai: suggestionAi(sug),
         /* WHY THERE WILL NEVER BE ONE, when that is the answer. `no_ai` mail is kept away from
            every model, so this sender’s row is not waiting for a run to reach it. Read off the
            representative, which is the message a suggestion would have been about. */
@@ -1368,6 +1420,7 @@ export function screenerSegments(
       if (anchor !== undefined) {
         senderCache.set(anchor, {
           segment, day, zone, locale, rep, dto,
+          suggestionId: sug?.id ?? null,
           // The bucket is built in this call and never mutated afterwards, so it is kept rather
           // than copied — one array per sender, the same one the row was derived from.
           bag: bucket,

@@ -146,6 +146,7 @@ export {
   type ScreenerHeldMail,
   type ScreenerSegment,
   type ScreenerSenderDTO,
+  type ScreenerSuggestionEntity,
   type SensitivityFlags,
   type SyncChange,
   SYNC_ENTITY_TYPES,

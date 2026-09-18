@@ -1012,14 +1012,15 @@ export function useScreenerState(
   /**
    * Join one bought suggestion onto a row.
    *
-   * Three guards, and each one is a row this must NOT touch. A fixture row carries the demo's
-   * own `ai` and is not a real sender, so the overlay has nothing true to say about it. A row
-   * that already has an `ai` keeps it — the mirror is never overwritten by this. And a row
-   * with no match is returned UNCHANGED rather than rebuilt, so the identity every `useMemo`
-   * downstream compares stays stable when nothing was bought.
+   * A fixture row (`derived !== true`) carries the demo's own `ai` and is never touched. On a
+   * DERIVED row the session's overlay WINS over the mirror-filled `ai` the selector now serves
+   * (`/sync` carries the narrow verdict since 2026-09-18): a "Suggest again" answers into the
+   * overlay the moment the response lands, and the mirror's previous row would otherwise mask
+   * that fresher answer until the next delta. A row with no match is returned UNCHANGED rather
+   * than rebuilt, so the identity every `useMemo` downstream compares stays stable.
    */
   const withSuggestion = (x: ScreenerSenderDTO): ScreenerSenderDTO => {
-    if (!suggestions || x.ai || x.derived !== true) return x;
+    if (!suggestions || x.derived !== true) return x;
     const found = suggestions.get(senderKey(x.from.address));
     return found ? { ...x, ai: found } : x;
   };
