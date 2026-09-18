@@ -31,21 +31,34 @@ export function AccessLock({ facts }: { facts: AccessRefusedFacts }) {
     setSigningOut(false);
   }, []);
 
+  /* THE SHELL EVERY FULL-SCREEN SENTENCE IN THIS APP STANDS IN — `.gate` / `.gate-card` /
+     `.gate-actions` from `app.css`, the same one the resume splash, the engine's four states and
+     the desktop window's own lock screen use. It laid out in Tailwind utilities instead, in an app
+     that ships no Tailwind, so the sentences were right and the box was not: no card, no centering,
+     no width. `<main>` rather than the siblings' `<div>` — this is the whole page, and the landmark
+     costs nothing that `.gate` cares about. */
   return (
-    <main className="mx-auto flex min-h-screen max-w-xl flex-col justify-center gap-6 px-6 py-16">
-      <h1 className="text-2xl font-semibold">
-        {facts.reason === "suspended" ? t("suspendedTitle") : t("title")}
-      </h1>
-      <p className="text-base leading-relaxed opacity-80">{t("kept")}</p>
-      <div className="flex flex-wrap items-center gap-3">
-        {/* Rendered ONLY when the service supplied a URL. A button that goes nowhere is worse
-            than no button: it is the one control on this screen a person will press. */}
-        {facts.manageUrl
-          ? <a className="btn primary" href={facts.manageUrl}>{t("manage")}</a>
-          : null}
-        <Button onClick={doSignOut} disabled={signingOut}>
-          {t("signOut")}
-        </Button>
+    <main className="gate">
+      <div className="gate-card">
+        {/* oh | mail, split so `.gate-card .wordmark em` can carry accent-ink — the form every
+            gate in this app writes. */}
+        <span className="wordmark">
+          <b>
+            <em>oh</em>mail
+          </b>
+        </span>
+        <h1>{facts.reason === "suspended" ? t("suspendedTitle") : t("title")}</h1>
+        <p>{t("kept")}</p>
+        <div className="gate-actions">
+          {/* Rendered ONLY when the service supplied a URL. A button that goes nowhere is worse
+              than no button: it is the one control on this screen a person will press. */}
+          {facts.manageUrl
+            ? <a className="btn primary" href={facts.manageUrl}>{t("manage")}</a>
+            : null}
+          <Button onClick={doSignOut} disabled={signingOut}>
+            {t("signOut")}
+          </Button>
+        </div>
       </div>
     </main>
   );
