@@ -15,7 +15,7 @@ import {
   resolveCutline, senderIsActiveSql, senderIsDecidedSql, type ResolvedCutline,
   heldRowById, applyScreenerDecision, AccountErasedError, readAccountErasedAt, domainOf,
   readRequestEligibility, decisionCanBeApplied,
-  readOrganizerRole, insertOrganizerRequest, listOutstandingForAccount,
+  listOutstandingForAccount,
   OrganizedElsewhereError, MailboxNotFoundError, ringFilingDoorbell,
   type AppliedScreenerRow, type RequestEligibility, type OrganizedBy,
   type Tx,
@@ -40,7 +40,7 @@ import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
    advertise (mail 0094). Imported rather than spelled as a constant here so that this door and
    the record it writes cannot disagree about what `screener.decide` requires. */
 import { capabilityForKind } from "@trafficflow/core/adapters/organizer-lease";
-import { writeReaderRequest } from "./reader-request.js";
+import { planAccountFanOut, writeReaderRequest, type AccountFanOut, type FanOutTarget } from "./reader-request.js";
 import type { ServiceContext } from "./context.js";
 import { ServiceError, IdempotencyRaceLost } from "./errors.js";
 import { refuseAiSpend, type AiRefusalClass } from "./ai-refusal.js";
@@ -200,10 +200,30 @@ export interface ScreenIdempotency {
 }
 
 
+/** One queued half of an account-wide decision — which mailbox waits, on whom, under which request. */
+export interface ScreenRequestedMailbox {
+  mailboxId: string;
+  requestId: string;
+  holder: OrganizedBy;
+}
+
+/**
+ * WHERE AN ACCOUNT-WIDE DECISION LANDED, PER MAILBOX (0.20). `filed` re-routed now; `requested`
+ * queued on the request road for the named install. A mailbox in neither list either held nothing
+ * from this sender or is held by an install that cannot take requests — those rows stay visibly
+ * held, which is the truthful rendering. Optional on the wire: an older server omits it.
+ */
+export interface ScreenDecisionMailboxes {
+  filed: string[];
+  requested: ScreenRequestedMailbox[];
+}
+
 export interface ScreenDecisionResult {
   messageId: string;
   appliedFolder: Folder;
   createdRuleId: string | null;
+  /** See {@link ScreenDecisionMailboxes}. Absent from an older server; never absent from this one. */
+  mailboxes?: ScreenDecisionMailboxes;
   /**
    * WHAT THIS REQUEST'S UNSUBSCRIBE FAN-OUT DID, and what it left: `done` of `of` is the honest
    * half of a per-request ceiling, since the hourly drain finishes the rest.
@@ -225,6 +245,12 @@ export interface ScreenRequestResult {
   pending: true;
   requestId: string;
   holder: OrganizedBy;
+  /**
+   * The account-wide picture (0.20): `filed` is always empty on this shape (nothing was written
+   * here), and `requested` names EVERY queued mailbox — the primary `requestId`/`holder` above
+   * stay what they always were, the TARGET mailbox's, so an older client reads them unchanged.
+   */
+  mailboxes?: ScreenDecisionMailboxes;
 }
 
 /* ── The explicit suggestion purchase ───────────────────────────────────────────────────── */
@@ -1021,14 +1047,13 @@ export class ScreenerReadService {
   }
 
   /**
-   * DECIDE — branches on the mailbox's role for THIS install. An ORGANIZER writes directly —
-   * `applyAsOrganizer` is `decide`'s old transactional body, sharing its core
-   * (`@trafficflow/db#applyScreenerDecision`) with the organizer's request drain, which applies
-   * the identical decision when a READER made it. A READER never writes here: its decision
-   * becomes a REQUEST — a row in `organizer_requests`, appended to `ohmail/_meta` on its next
-   * cycle — applied on the organizer's next pass. The role is asked PER MAILBOX
-   * (`readRequestEligibility` on `target.mailboxId`), never per account: mailboxes have different
-   * roles, and this decision is about the ONE the held message belongs to.
+   * DECIDE — a decision is about the SENDER and applies ACCOUNT-WIDE (owner ruling, 0.20). The
+   * roles are still asked PER MAILBOX, but the branch is the account's: `planAccountFanOut` splits
+   * every live mailbox into organized-here / request-a-holder, and the write path runs whenever
+   * ANYTHING is organized here — the representative message's own mailbox no longer decides,
+   * because on a mixed account it is whichever mailbox got the sender's newest mail. Where this
+   * install may not write, the decision travels the request road (`organizer_requests` →
+   * `ohmail/_meta` → the holder's drain) and the response names both halves per mailbox.
    */
   async decide(
     ctx: ServiceContext, id: string, b: ScreenBody,
@@ -1053,19 +1078,19 @@ export class ScreenerReadService {
     if (eligibility.status === "disabled") throw new MailboxNotFoundError(v.target.mailboxId);
 
     /**
-     * THE ROLE ALONE DECIDES THIS BRANCH — `capable` MUST NOT APPEAR HERE. `capable` answers a
-     * READER's question about the install HOLDING its mailbox; it says nothing about whether THIS
-     * install may write to a mailbox it organizes, and reading it that way puts a header an
-     * ATTACKER can write in front of the organizer's own press — the highest-traffic decide in
-     * the product. `role === "organizer" && capable` was not wrong TODAY only because `capable`
-     * reduces to `status !== "disabled"` for organizers — a coincidence; the conjunct bought
-     * nothing and would refuse every organizer's press the day `capable` grew a requirement.
-     * Removed rather than left as a trap.
+     * THE ACCOUNT'S ROLES DECIDE THIS BRANCH — `capable` of the target MUST NOT APPEAR HERE.
+     * `capable` answers a READER's question about the install HOLDING its mailbox; it says
+     * nothing about whether THIS install may write to a mailbox it organizes, and reading it that
+     * way puts a header an ATTACKER can write in front of the organizer's own press. The plan is
+     * a PLAIN read, right for choosing a branch; every write below re-reads the role it needs
+     * under a `FOR SHARE` lock (`applyScreenerDecision`, per mailbox). `planAccountFanOut` throws
+     * `OrganizedElsewhereError` itself when nothing anywhere could take this decision.
      */
-    if (eligibility.role === "organizer") {
-      return this.applyAsOrganizer(ctx, id, v, opts);
+    const fanOut = await planAccountFanOut(asTx(ctx), ctx.accountId, "screener.decide");
+    if (fanOut.organized.length > 0) {
+      return this.applyAsOrganizer(ctx, id, v, fanOut, opts);
     }
-    return this.requestAsReader(ctx, id, v, eligibility, opts);
+    return this.requestAsReader(ctx, id, v, eligibility, fanOut, opts);
   }
 
   /**
@@ -1080,37 +1105,33 @@ export class ScreenerReadService {
   private async applyAsOrganizer(
     ctx: ServiceContext, id: string,
     v: {
-      scope: "sender" | "domain"; decision: "yes" | "no"; address: string; appliedFolder: Destination;
-      target: AppliedScreenerRow; applyRetro: boolean;
+      scope: "sender" | "domain"; decision: "yes" | "no"; address: string; domain: string;
+      appliedFolder: Destination; target: AppliedScreenerRow; applyRetro: boolean;
     },
+    fanOut: AccountFanOut,
     opts: { idempotency?: ScreenIdempotency | null },
   ): Promise<ScreenDecisionResult> {
-    const { scope, decision, address, appliedFolder, target, applyRetro } = v;
+    const { scope, decision, address, domain, appliedFolder, target, applyRetro } = v;
     let rerouted: AppliedScreenerRow[] = [];
+    let filed: string[] = [];
 
     const result = await asTx(ctx).transaction(async (tx) => {
-      // THE ROLE IS RE-READ HERE, INSIDE THE WRITE, UNDER THE SHARE LOCK. `decide`'s own
-      // `readRequestEligibility` is a plain read — right for choosing a branch, not evidence
-      // about a write that has not started: under READ COMMITTED the worker's lease gate can
-      // commit a demotion in between, and a now-READER would insert a promoted rule and
-      // `last_set_by: 'us'` move intents; `assertOrganizerRole`'s header records that
-      // interleaving. AFTER the erasure fence, not before: `applyScreenerDecision` takes
-      // `accounts FOR SHARE` first and `deleteAccount` takes the same row first — this
-      // transaction must reach `accounts` before `mailboxes` or the orders cross and deadlock.
+      // THE ERASURE FENCE FIRST — `applyScreenerDecision` takes `accounts FOR SHARE` first and
+      // `deleteAccount` takes the same row first: this transaction must reach `accounts` before
+      // `mailboxes` or the orders cross and deadlock. The single-mailbox role assert that stood
+      // here moved INTO `applyScreenerDecision`, which now locks every held mailbox's role
+      // `FOR SHARE` and writes only where it reads `organizer` — the same demotion interleaving
+      // `assertOrganizerRole`'s header records, closed per mailbox instead of once.
       const erasedAt = await readAccountErasedAt(tx, dialect(ctx.db), ctx.accountId);
       if (erasedAt != null) {
         throw new ServiceError("account_erased", 410,
           "this account has been deleted; its settings cannot be changed");
       }
-      const locked = await readOrganizerRole(tx, dialect(ctx.db), ctx.accountId, target.mailboxId, { lock: true });
-      if (!locked) throw new MailboxNotFoundError(target.mailboxId);
-      if (locked.status === "disabled") throw new MailboxNotFoundError(target.mailboxId);
-      if (locked.role !== "organizer") throw new OrganizedElsewhereError(target.mailboxId, locked.by);
 
       let applied;
       try {
         applied = await applyScreenerDecision(carryDialect(ctx.db, tx) as typeof tx, {
-          accountId: ctx.accountId, mailboxId: target.mailboxId, scope, address, appliedFolder, decision,
+          accountId: ctx.accountId, scope, address, appliedFolder, decision,
           triggeringActionId: `screener:${id}`, now: ctx.now(), applyRetro,
         });
       } catch (err) {
@@ -1124,9 +1145,57 @@ export class ScreenerReadService {
         throw err;
       }
       rerouted = applied.rerouted;
+      filed = [...new Set(applied.rerouted.map((m) => m.mailboxId))];
+
+      /**
+       * THE REQUEST HALF, IN THE SAME TRANSACTION (0.20): the decision travels to every capable
+       * holder — mailboxes with held mail AND mailboxes with none, because the promoted rule is
+       * account-wide and a holder that never hears of it screens this sender again tomorrow. The
+       * plan's `requestTo` is a plain read, so a mailbox the plan called ours that the apply's
+       * lock read as somebody's (demoted mid-flight) is re-asked here rather than silently
+       * covered by nobody. The drain NEVER queues (see `applyScreenerDecision`'s result doc);
+       * only this door does, which bounds the mesh at one hop.
+       */
+      const payload = {
+        scope, address, appliedFolder, decision,
+        match: scope === "domain" ? domain : address, applyRetro,
+      };
+      const holders = new Map<string, OrganizedBy>(
+        fanOut.requestTo.map((t: FanOutTarget) => [t.mailboxId, t.holder]),
+      );
+      for (const h of applied.heldElsewhere) {
+        if (holders.has(h.mailboxId)) continue;
+        const e = await readRequestEligibility(
+          tx, ctx.accountId, h.mailboxId, capabilityForKind("screener.decide"),
+        );
+        if (decisionCanBeApplied(e) && e!.role !== "organizer") holders.set(h.mailboxId, e!.by);
+      }
+      const requested: ScreenRequestedMailbox[] = [];
+      for (const [mailboxId, holder] of holders) {
+        const r = await writeReaderRequest(tx, ctx, {
+          mailboxId, kind: "screener.decide", payload, holder, decidedAt: ctx.now(),
+        });
+        requested.push({ mailboxId, requestId: r.requestId, holder });
+      }
+
+      // NOTHING FILED AND NOTHING QUEUED while the sender's mail is held elsewhere: every
+      // organized mailbox was demoted between the plan and the locks and no holder can take a
+      // request. The old single-mailbox refusal, kept — the throw rolls the promoted rule back,
+      // so a 409 never leaves dead configuration behind.
+      if (filed.length === 0 && requested.length === 0 && applied.heldElsewhere.length > 0) {
+        const h = applied.heldElsewhere[0]!;
+        const e = await readRequestEligibility(
+          tx, ctx.accountId, h.mailboxId, capabilityForKind("screener.decide"),
+        );
+        throw new OrganizedElsewhereError(
+          h.mailboxId, e?.by ?? { kind: null, name: null, since: null },
+          (e?.by.kind ?? null) === null ? "no_organizer" : "organizer_outdated",
+        );
+      }
 
       const dto: ScreenDecisionResult = {
         messageId: id, appliedFolder, createdRuleId: applied.createdRuleId,
+        mailboxes: { filed, requested },
       };
 
       // Store the verbatim response IN this tx so a commit-then-crash retry
@@ -1161,9 +1230,11 @@ export class ScreenerReadService {
      * message; GUARDED ON `rerouted`, so a verdict that moved nothing wakes nobody; BEST-EFFORT —
      * the verdict has committed and the poll is the floor.
      */
-    if (rerouted.length > 0) {
+    // ONE RING PER FILED MAILBOX — an account-wide verdict owes each mailbox its own
+    // ask-the-organizer-sooner stamp, and `filed` is exactly the set that moved.
+    for (const mailboxId of filed) {
       try {
-        await ringFilingDoorbell(ctx.db as unknown as Tx, target.mailboxId, ctx.now());
+        await ringFilingDoorbell(ctx.db as unknown as Tx, mailboxId, ctx.now());
       } catch (err) {
         /* Swallowed for the caller, never for the log — `MessageService.ringFiledMailbox` carries
            the argument in full. The verdict has committed; a throw here costs one rotation and
@@ -1171,7 +1242,7 @@ export class ScreenerReadService {
            same from outside. */
         doorbellLog.warn("filing_doorbell_failed", {
           accountId: ctx.accountId,
-          mailboxId: target.mailboxId,
+          mailboxId,
           err,
           reason: "the Screener's verdict COMMITTED; only the ask-the-organizer-sooner stamp "
             + "failed, so the reroute lands on the next rotation instead of within seconds",
@@ -1194,6 +1265,11 @@ export class ScreenerReadService {
       // it. Until `applyReconcileAction` learned to defer, one recycled folder threw and the
       // reader saw a 500 for a decision that had committed and was converging.
       for (const m of rerouted) {
+        // TARGET MAILBOX ONLY: the injected adapter dials the ONE mailbox this door was opened
+        // for. Another mailbox's rows keep `reconcile_status: 'pending'` and the install that
+        // organizes THAT mailbox moves them on its own rotation — the pre-account-wide behaviour,
+        // per mailbox.
+        if (m.mailboxId !== target.mailboxId) continue;
         await applyReconcileAction(
           { repo, adapter, accountId: ctx.accountId, mailboxId: "" },
           { messageId: m.messageId, locator: m.nativeLocator as NativeLocator, state: { desiredFolder: appliedFolder, observedFolder: m.observedFolder, lastSetBy: "us" } },
@@ -1245,6 +1321,7 @@ export class ScreenerReadService {
       appliedFolder: Destination; target: AppliedScreenerRow; applyRetro: boolean;
     },
     eligibility: RequestEligibility,
+    fanOut: AccountFanOut,
     opts: { idempotency?: ScreenIdempotency | null },
   ): Promise<ScreenRequestResult> {
     if (!eligibility.capable) {
@@ -1287,6 +1364,26 @@ export class ScreenerReadService {
           requestId,
           decidedAt,
         });
+
+        // EVERY OTHER CAPABLE HOLDER GETS THE SAME REQUEST (0.20): the decision is about the
+        // sender, account-wide, and each holder's drain files its own mailbox's bag and learns
+        // the promoted rule. The primary `requestId`/`holder` above stay the target's, so a
+        // client written against the 0.14.1 shape reads exactly what it always did.
+        const requested: ScreenRequestedMailbox[] = [
+          { mailboxId: v.target.mailboxId, requestId, holder: eligibility.by },
+        ];
+        for (const t of fanOut.requestTo) {
+          if (t.mailboxId === v.target.mailboxId) continue;
+          const r = await writeReaderRequest(tx, ctx, {
+            mailboxId: t.mailboxId, kind: "screener.decide",
+            payload: { scope, address, appliedFolder, decision, match, applyRetro },
+            holder: t.holder, decidedAt,
+          });
+          requested.push({ mailboxId: t.mailboxId, requestId: r.requestId, holder: t.holder });
+        }
+        // Set BEFORE the idempotency claim below stores `dto` verbatim — a replay must carry the
+        // same per-mailbox answer the live call did.
+        dto.mailboxes = { filed: [], requested };
 
         // Same replay contract as the organizer's own door — a lost response must not queue a
         // second request for the same press.

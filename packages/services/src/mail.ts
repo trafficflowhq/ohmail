@@ -39,6 +39,7 @@ export { isUuid, requireUuid, requireImapUint32, IMAP_UINT32_MAX } from "./ids.j
 export {
   ScreenerService, makeScreenerService, SCREENER_FOLDER,
   type ScreenerDeps, type ScreenBody, type ScreenDecisionResult, type ScreenIdempotency,
+  type ScreenDecisionMailboxes, type ScreenRequestedMailbox, type ScreenRequestResult,
 } from "./screener-service.js";
 export {
   heldReleaseGroups, heldReleaseSummary, heldReleaseTotal, releaseHeld,

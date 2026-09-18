@@ -1106,6 +1106,19 @@ export class HttpAdapter implements EngineAdapter {
         // they did, and reading it in one place is what stops the next case forgetting.
         const queued = this.queuedAnswer(res, decided);
         if (queued) return queued;
+        // A 200 CAN NOW CARRY A QUEUED HALF (0.20, account-wide decisions): the server filed the
+        // mailboxes it organizes and queued the rest for their holders — `mailboxes.requested`
+        // names them. Surfaced as `pendingWith` on the CONFIRMED outcome, because after the echo
+        // retires the overlay those mailboxes' rows are still held, and nothing else can say why
+        // (`screener-state.ts#markQueued` is the reader). Absent or malformed reads as the
+        // fully-filed decision an older server answers.
+        const requested = (decided as { mailboxes?: { requested?: unknown } } | null)?.mailboxes?.requested;
+        if (Array.isArray(requested) && requested.length > 0) {
+          const named = requested
+            .map((r) => (r as { holder?: { name?: unknown } | null } | null)?.holder?.name)
+            .find((n) => typeof n === "string" && n.trim() !== "");
+          return { changes: [], seq, pendingWith: { name: typeof named === "string" ? named : null } };
+        }
         return { changes: [], seq };
       }
 

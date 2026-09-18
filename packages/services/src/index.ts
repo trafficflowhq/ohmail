@@ -57,6 +57,7 @@ export {
   // imports either name.
   LaneGate, suggestLaneGate, SUGGEST_ADMISSION, admissionDeadline,
   type ScreenerDeps, type ScreenBody, type ScreenDecisionResult, type ScreenIdempotency,
+  type ScreenDecisionMailboxes, type ScreenRequestedMailbox, type ScreenRequestResult,
 } from "./screener-service.js";
 export {
   heldReleaseGroups, heldReleaseSummary, heldReleaseTotal, releaseHeld,

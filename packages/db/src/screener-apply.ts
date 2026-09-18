@@ -3,6 +3,7 @@ import { accountSettings, contacts, folderState, messages, rules as rulesTbl } f
 import { recordChange, recordRuleDelta, type LedgerTx, type Tx } from "./change-log.js";
 import { dialect } from "./dialect/index.js";
 import { AccountErasedError, readAccountErasedAt } from "./erasure-fence.js";
+import { readOrganizerRole } from "./organizer-role.js";
 import { recordLearningSignal } from "./learning-signal.js";
 import { upsertDesiredSeen } from "./flag-intent.js";
 
@@ -178,13 +179,11 @@ function toAppliedScreenerRow(r: {
 
 /**
  * All held mail for the account, optionally narrowed by `extra` and by `mailboxId`. Mirrors
- * `ScreenerReadService.heldRows`. `mailboxId` stays optional on this LEAF only because
- * `heldRowById` looks up by primary key, where a mailbox filter changes nothing.
- * `heldRowsForSender` / `heldRowsForDomain` — the two functions {@link applyScreenerDecision}
- * actually re-routes — REQUIRE it: a decision names the mailbox it was made about, an account may
- * hold several mailboxes with different roles, and a decision about ONE mailbox re-routing a
- * sender's held mail in a DIFFERENT one this install does not organize is exactly the
- * cross-mailbox write the one-organizer rule forbids.
+ * `ScreenerReadService.heldRows`. `mailboxId` is OPTIONAL everywhere since the account-wide
+ * decision ruling (0.20): a decision is about the SENDER, so {@link applyScreenerDecision} reads
+ * the whole account's bag and fences the one-organizer rule PER MAILBOX with a role lock instead
+ * of narrowing the query — a mailbox this install does not organize is returned to the caller as
+ * `heldElsewhere`, never written.
  */
 async function heldRows(
   tx: Tx, accountId: string, extra?: SQL, mailboxId?: string,
@@ -210,23 +209,22 @@ export async function heldRowById(tx: Tx, accountId: string, id: string): Promis
 }
 
 /**
- * Every held row for ONE sender, in ONE mailbox, matched case-insensitively. See `decide`'s own
- * comment for why `lower()`, and this module's own header for why `mailboxId` is
- * required: a decision may re-route mail only in the mailbox it was made about.
+ * Every held row for ONE sender, matched case-insensitively — account-wide unless `mailboxId`
+ * narrows it. See `decide`'s own comment for why `lower()`, and {@link heldRows} for where the
+ * one-organizer fence lives now that the mailbox filter is optional.
  */
 export async function heldRowsForSender(
-  tx: Tx, accountId: string, address: string, mailboxId: string,
+  tx: Tx, accountId: string, address: string, mailboxId?: string,
 ): Promise<AppliedScreenerRow[]> {
   return heldRows(tx, accountId, sql`lower(${messages.fromAddress}) = ${address}`, mailboxId);
 }
 
 /**
- * Every held row for ONE domain, in ONE mailbox — `domainOf`, translated to SQL. See `decide`'s
- * own comment for the three rejected shapes, and {@link heldRowsForSender}'s own note for why
- * `mailboxId` is required.
+ * Every held row for ONE domain — `domainOf`, translated to SQL — account-wide unless `mailboxId`
+ * narrows it. See `decide`'s own comment for the three rejected shapes.
  */
 export async function heldRowsForDomain(
-  tx: Tx, accountId: string, domain: string, mailboxId: string,
+  tx: Tx, accountId: string, domain: string, mailboxId?: string,
 ): Promise<AppliedScreenerRow[]> {
   /* BOTH HALVES THROUGH THE SEAM. `position(x IN y)` and `substring(x FROM n)` are SQL SYNTAX and
      not functions — the argument separator is a KEYWORD — which is why no list of function names
@@ -244,14 +242,6 @@ export async function heldRowsForDomain(
 
 export interface ApplyScreenerDecisionInput {
   accountId: string;
-  /**
-   * The mailbox this decision was MADE about. The held-bag re-route is scoped to
-   * it (`heldRowsForSender`/`heldRowsForDomain` now require it); the promoted rule stays
-   * account-wide, unchanged from before this ruling — `rules` has no `mailboxId` column and a
-   * sender/domain rule has always matched across every mailbox on the account, which is this
-   * function's pre-existing behaviour, not the cross-mailbox write this parameter closes.
-   */
-  mailboxId: string;
   scope: "sender" | "domain";
   /**
    * The representative message's from-address, lower-cased — ALWAYS required regardless of
@@ -270,8 +260,7 @@ export interface ApplyScreenerDecisionInput {
    * Defaults `true`. The organizer's request drain never stamps `screening_baseline_at`, so it
    * passes `false`. `screening_baseline_at` gates which of an account's ALREADY-HELD mail counts
    * as pre-existing versus newly screened (see this function's own comment on the `setWhere`
-   * above); it is account-wide and, unlike the held-bag re-route (mailbox-scoped by `mailboxId`
-   * above), has no per-mailbox fence to fall back on. Request signatures are
+   * above); it is account-wide with no per-mailbox fence to fall back on. Request signatures are
    * still owed — see `apps/worker/src/request-drain.ts`'s own header — so until it lands, the
    * drain path must not be the one thing that can move this account-wide cutoff.
    */
@@ -286,28 +275,43 @@ export interface ApplyScreenerDecisionInput {
   applyRetro?: boolean;
 }
 
+/** A mailbox whose held bag this decision could NOT touch — the caller decides what to do about it. */
+export interface HeldElsewhereMailbox {
+  mailboxId: string;
+  /** How many of the sender's messages are held there, so a response can be honest about scale. */
+  held: number;
+}
+
 export interface ApplyScreenerDecisionResult {
   createdRuleId: string;
   /** The subset of the held bag this decision ACTUALLY re-routed — see `decide`'s own `desired=Screener` guard. */
   rerouted: AppliedScreenerRow[];
   /** The LAST `change_log` seq this call emitted — an HTTP caller re-emits it as `X-Sync-Seq` on an idempotent replay. */
   lastSeq: bigint;
+  /**
+   * Mailboxes holding this sender's mail that this install does NOT organize (role read under
+   * lock, per mailbox). Nothing was written there. The HTTP door turns each into an
+   * `organizer_requests` row and says so in its response; the drain leaves them — the requesting
+   * side already queued its own, and a drain that re-queued would ping-pong two installs.
+   */
+  heldElsewhere: HeldElsewhereMailbox[];
 }
 
 /**
  * THE ONE IMPLEMENTATION. Contacts, the screening baseline, the promoted rule, the held-bag
  * re-route (guarded on `desired_folder = 'ohmail/Screener'`: a row that has already moved on
  * keeps where it went — user always wins), mark-read-on-decide, `change_log` for every write, and
- * the learning signal. See the module header for what stays with each caller. FENCES FIRST, as
- * the first statement of whatever transaction the caller opened: this writes `account_settings`
- * (the baseline stamp), and every such writer fences before touching anything else
- * (`erasure-fence.ts`'s rule).
+ * the learning signal. The bag is read ACCOUNT-WIDE (a decision is about the SENDER) and written
+ * per mailbox behind a `FOR SHARE` role lock — only mailboxes this install organizes move;
+ * the rest return as `heldElsewhere`. FENCES FIRST, as the first statement of whatever
+ * transaction the caller opened: this writes `account_settings` (the baseline stamp), and every
+ * such writer fences before touching anything else (`erasure-fence.ts`'s rule).
  */
 export async function applyScreenerDecision(
   tx: Tx, input: ApplyScreenerDecisionInput,
 ): Promise<ApplyScreenerDecisionResult> {
   const {
-    accountId, mailboxId, scope, address, appliedFolder, decision, triggeringActionId, now,
+    accountId, scope, address, appliedFolder, decision, triggeringActionId, now,
     stampBaseline = true, applyRetro = true,
   } = input;
   const domain = domainOf(address);
@@ -353,11 +357,34 @@ export async function applyScreenerDecision(
   let lastSeq = (await recordRuleDelta(ledger(tx), accountId, [rule!.id], "create"))[0]!;
 
   const heldMail = scope === "domain"
-    ? await heldRowsForDomain(tx, accountId, domain, mailboxId)
-    : await heldRowsForSender(tx, accountId, address, mailboxId);
+    ? await heldRowsForDomain(tx, accountId, domain)
+    : await heldRowsForSender(tx, accountId, address);
 
-  const rerouted: AppliedScreenerRow[] = [];
+  // One bag per mailbox, then each mailbox's role read UNDER LOCK (`FOR SHARE`, the same lock
+  // `assertOrganizerRole` takes) before a single row of it moves — the one-organizer fence that
+  // used to be a `mailbox_id` filter on the query. Mailbox ids are visited in SORTED order so two
+  // concurrent decisions lock in one canonical order against the lease gate's exclusive lock.
+  const byMailbox = new Map<string, AppliedScreenerRow[]>();
   for (const m of heldMail) {
+    const bag = byMailbox.get(m.mailboxId);
+    if (bag) bag.push(m); else byMailbox.set(m.mailboxId, [m]);
+  }
+
+  const d = dialect(tx);
+  const rerouted: AppliedScreenerRow[] = [];
+  const heldElsewhere: HeldElsewhereMailbox[] = [];
+  const writable: AppliedScreenerRow[] = [];
+  for (const mbx of [...byMailbox.keys()].sort()) {
+    const bag = byMailbox.get(mbx)!;
+    const role = await readOrganizerRole(tx, d, accountId, mbx, { lock: true });
+    if (!role || role.status === "disabled" || role.role !== "organizer") {
+      heldElsewhere.push({ mailboxId: mbx, held: bag.length });
+      continue;
+    }
+    writable.push(...bag);
+  }
+
+  for (const m of writable) {
     const [hit] = await tx.insert(folderState).values({
       messageId: m.messageId, desiredFolder: appliedFolder, observedFolder: m.observedFolder,
       lastSetBy: "us", reconcileStatus: "pending", conflict: false,
@@ -398,5 +425,5 @@ export async function applyScreenerDecision(
     label: "positive",
   });
 
-  return { createdRuleId: rule!.id, rerouted, lastSeq };
+  return { createdRuleId: rule!.id, rerouted, lastSeq, heldElsewhere };
 }

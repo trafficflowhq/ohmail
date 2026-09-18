@@ -99,9 +99,12 @@ const KIND_HANDLERS: Readonly<Record<string, KindHandler | undefined>> = {
     const decision = validateRequestPayload(payload);
     if (!decision) return null;
     return async (tx) => {
+      // Account-wide since the 0.20 scope ruling: the apply re-routes every mailbox THIS install
+      // organizes and returns the rest as `heldElsewhere`, which the drain deliberately drops —
+      // the requesting install already queued to every holder it could name, and a drain that
+      // re-queued for mailboxes it reads as foreign would ping-pong two installs for ever.
       await applyScreenerDecision(tx, {
         accountId: ctx.accountId,
-        mailboxId: ctx.mailboxId,
         scope: decision.scope,
         address: decision.address,
         appliedFolder: decision.appliedFolder,

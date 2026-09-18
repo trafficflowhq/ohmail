@@ -76,7 +76,7 @@ export {
   heldRowById, heldRowsForSender, heldRowsForDomain,
   applyScreenerDecision, validateRequestPayload,
   type AppliedScreenerRow, type ApplyScreenerDecisionInput, type ApplyScreenerDecisionResult,
-  type ValidatedRequestPayload,
+  type HeldElsewhereMailbox, type ValidatedRequestPayload,
 } from "./screener-apply.js";
 
 // `organizer_requests` — the reader's own bookkeeping. See the module's own header for why it is
