@@ -1,6 +1,7 @@
 import type { MouseEvent, ReactNode } from "react";
 import { Avatar } from "../primitives/Avatar.js";
 import { Badge, Chip, type TagHueName } from "../primitives/Chip.js";
+import { messageRowDescription, type MessageRowSpoken } from "./row-spoken.js";
 import "./row.css";
 
 export interface MessageRowTag {
@@ -21,19 +22,12 @@ export interface MessageRowTag {
 export const THREAD_CIRCLES_MAX = 3;
 
 /**
- * THE WORDS A ROW IS READ OUT WITH — the two facts it draws as colour and shape and therefore
- * says nothing about. `packages/ui` holds no catalogue (see {@link MessageRowProps.protectedLabel}),
- * so they arrive from the host; the object is memoized there, because a fresh one per render is a
- * prop that defeats any comparator a row is ever given.
+ * THE WORDS A ROW IS READ OUT WITH, and the order every surface speaks its facts in — both live
+ * in `row-spoken.ts` now, because the phone's row read out none of its badges and no test could
+ * see it. `packages/ui` holds no catalogue (see {@link MessageRowProps.protectedLabel}), so the
+ * words still arrive from the host, memoized there.
  */
-export interface MessageRowSpoken {
-  /** The dot and the heavy ink, in a word. */
-  unread: string;
-  /** The quiet ink, in a word — a read row states its readness rather than merely lacking a dot. */
-  read: string;
-  /** The clip badge, which is an icon with no text at all. */
-  attachment: string;
-}
+export type { MessageRowSpoken };
 
 export interface MessageRowProps {
   /** Stable id, stamped as data-id (and used by useSeenOnScroll). */
@@ -489,35 +483,33 @@ export function MessageRow(props: MessageRowProps) {
    * WHAT THE ROW SAYS BESIDE ITS NAME — its stamp, its read state and its capsules, in words.
    *
    * `aria-label` on the button REPLACES everything inside it, so a row was one joined string and
-   * four of the five facts a mail list exists to convey were absent from the tree: when it
-   * arrived, whether it has been read, what is on the badge strip, and the selection above. They
-   * are assembled HERE, out of the very props the row draws from, so the spoken row and the drawn
-   * row cannot come apart; `protectedLabel` and `heldLabel` join only when the host handed words
-   * rather than markup, which is every product surface. No node is added — one attribute.
+   * four of the five facts a mail list exists to convey were absent from the tree. The assembly
+   * itself moved to `row-spoken.ts` the day the phone's row turned out to speak none of its
+   * badges: one order, read by both surfaces, out of the very props this row draws from, so the
+   * spoken row and the drawn row cannot come apart. `protectedLabel` and `heldLabel` join only
+   * where the host handed words rather than markup, which is every product surface.
    */
-  const said: string[] = [];
-  const arrived = timeSpoken ?? time;
-  if (arrived) said.push(arrived);
-  if (spoken) said.push(unread ? spoken.unread : spoken.read);
-  if (hasAttachment && spoken) said.push(spoken.attachment);
-  if (typeof props.protectedLabel === "string") said.push(props.protectedLabel);
-  if (heldCount !== undefined && heldCount > 1 && typeof heldLabel === "string") said.push(heldLabel);
-  /* The SENTENCE where there is one: "2 new" read aloud in a list is a number and a word with
-     no referent, and the badge's own title is the phrase the host already wrote. */
-  if (newSinceLabel) said.push(newSinceTitle ?? newSinceLabel);
-  if (stateNote) said.push(stateNote);
-  // The row SAYS what ohmail checked, not only draws it: a chip nobody can hear is a fact
-  // withheld from the reader who most needs it.
-  if (aiSuggestion?.reason) said.push(aiSuggestion.reason);
-  if (place) said.push(place);
-  /* The SENTENCE, not the face: "Work" alone in a list of capsules says nothing about what is
-     being claimed, and the badge's own title is the phrase the host already wrote. */
-  if (mailbox) said.push(mailboxTitle ?? mailbox);
-  if (destination) said.push(destination);
-  if (detection) said.push(detection);
-  if (amount) said.push(amount);
-  for (const t of tags ?? []) said.push(t.name);
-  const description = said.length > 0 ? said.join(" \u00b7 ") : undefined;
+  const description = messageRowDescription({
+    time,
+    timeSpoken,
+    unread,
+    spoken,
+    hasAttachment,
+    protectedLabel: typeof props.protectedLabel === "string" ? props.protectedLabel : undefined,
+    heldCount,
+    heldLabel: typeof heldLabel === "string" ? heldLabel : undefined,
+    newSinceLabel,
+    newSinceTitle,
+    stateNote,
+    aiReason: aiSuggestion?.reason,
+    place,
+    mailbox,
+    mailboxTitle,
+    destination,
+    detection,
+    amount,
+    tags,
+  });
 
   const rowButton = (
     <button
