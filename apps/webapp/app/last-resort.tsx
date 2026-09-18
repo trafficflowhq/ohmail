@@ -12,6 +12,25 @@ import { reportRenderError } from "./error-report";
  * chosen: the thing that would have said which one is the thing that failed, and a wrong guess
  * here is a person who cannot read their own error page.
  */
+/**
+ * THE SAME SCREEN AS A WHOLE DOCUMENT. Both boundaries below render at DOCUMENT level — this app
+ * has no `app/layout.tsx`, so there is no `<body>` waiting for them — and React appends what they
+ * return to the document node itself, which may hold exactly one element. Returning a bare `<div>`
+ * there throws `HierarchyRequestError: Only one element on document allowed` and the tab stays
+ * BLANK, which is the defect these files exist to remove, arriving by another door: measured in a
+ * real browser on 2026-09-18, with the boundary's own report in the console and nothing on screen.
+ */
+export function LastResortDocument({ digest }: { digest?: string }) {
+  /* `lang="en"` and both languages in the page: the thing that knew the reader's is what failed. */
+  return (
+    <html lang="en">
+      <body style={{ margin: 0 }}>
+        <LastResort digest={digest} />
+      </body>
+    </html>
+  );
+}
+
 export function LastResort({ digest }: { digest?: string }) {
   const [copied, setCopied] = useState(false);
 

@@ -1,20 +1,13 @@
 "use client";
 
-import { LastResort } from "./last-resort";
+import { LastResortDocument } from "./last-resort";
 
 /**
  * LAST RESORT. `error.tsx` covers a throw in a route group's root layout; this covers the one
- * nothing else can — a throw in the boundary above it, or in the document Next is rendering into.
- * It REPLACES the root layout when it fires, so it writes its own `<html>`/`<body>`: there is no
- * document to inherit. `lang="en"` because the thing that knew the reader's language is gone;
- * the page states both languages itself.
+ * nothing else can — a throw in the boundary above it. It REPLACES the root layout when it fires,
+ * so it writes its own document; in this app the root boundary has to do that too, and both go
+ * through the same component rather than keeping two copies of a rule one of them could lose.
  */
 export default function GlobalError({ error }: { error: Error & { digest?: string }; reset: () => void }) {
-  return (
-    <html lang="en">
-      <body style={{ margin: 0 }}>
-        <LastResort digest={error.digest} />
-      </body>
-    </html>
-  );
+  return <LastResortDocument digest={error.digest} />;
 }
