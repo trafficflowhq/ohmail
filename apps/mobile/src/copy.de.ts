@@ -1092,4 +1092,9 @@ export const DE: Deck = {
   signInAgainDone: "Angemeldet. Dieses Postfach synchronisiert wieder.",
   signInAgainFailed: (detail: string) =>
     `Dieses Passwort wurde nicht akzeptiert: ${detail}. Auf diesem Telefon hat sich nichts geändert.`,
+
+  mailRowThreadAria: (n: number) =>
+    `${n} ${n === 1 ? "Nachricht" : "Nachrichten"} in diesem Gespräch`,
+  mailRowNewSinceAria: (n: number) =>
+    `${n} ${n === 1 ? "Nachricht" : "Nachrichten"}, seit das wieder aufgetaucht ist`,
 };

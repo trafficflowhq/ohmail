@@ -1735,6 +1735,13 @@ const TABLE = {
   signInAgainDone: "Signed in. This mailbox is syncing again.",
   signInAgainFailed: (detail: string) =>
     `That password was not accepted: ${detail}. Nothing on this phone changed.`,
+
+  /* THE ROW'S BADGES, SPOKEN — `ui/row-spoken.ts`. A chip's face ("4", "2 new") read out in a
+     list is a number and a word with no referent, so each fact has a sentence of its own here;
+     the web row's own description makes the same substitution. */
+  mailRowThreadAria: (n: number) => `${n} message${n === 1 ? "" : "s"} in this conversation`,
+  mailRowNewSinceAria: (n: number) =>
+    `${n} message${n === 1 ? "" : "s"} since this came back`,
 };
 
 /**

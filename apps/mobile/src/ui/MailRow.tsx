@@ -11,19 +11,24 @@ import { Copy } from "../copy";
 import { useTheme } from "../theme";
 import type { Mail } from "../state/model";
 import { Badge, TapRow, Txt } from "./base";
+import { mailRowSpoken, threadOfRow, trackerShort } from "./row-spoken";
 
 export function MailRow({ m, onPress }: { m: Mail; onPress: () => void }) {
   const t = useTheme();
   const seen = !m.unread;
-  const thread = m.earlier.length > 0 ? m.earlier.length + 1 : 0;
+  const thread = threadOfRow(m);
   const preview = m.protected ? Copy.protectedPreview : (m.snippet ?? firstLine(m.body));
-  const badges = !!m.protected || !!m.trackerNote || thread > 1 || !!m.historyPlace;
+  /* EVERY BADGE INSIDE THE STRIP DECIDES WHETHER THE STRIP IS DRAWN. `newSince` was missing, and
+     a Resurfaced row wears nothing else in a list — so the chip saying somebody wrote since this
+     came back rendered for no row on this phone. `test/mail-row-badges-spoken.test.ts` reads
+     this condition against the badges below rather than trusting the next person to remember. */
+  const badges = !!m.protected || !!m.trackerNote || thread > 1 || !!m.historyPlace || !!m.newSince;
 
   return (
     <TapRow
       onPress={onPress}
       accessibilityRole="button"
-      accessibilityLabel={Copy.mailRowAria(m.from.name, m.subject, m.time, !!m.unread)}
+      accessibilityLabel={mailRowSpoken(m)}
       style={{ paddingHorizontal: 14, paddingVertical: 12 }}
     >
       <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
@@ -93,11 +98,6 @@ export function MailRow({ m, onPress }: { m: Mail; onPress: () => void }) {
       ) : null}
     </TapRow>
   );
-}
-
-/** "1 spy pixel blocked (open-tracker)" → "1 spy pixel blocked". */
-function trackerShort(note: string): string {
-  return note.replace(/\s*\([^)]*\)\s*$/, "");
 }
 
 function firstLine(body: string): string {
