@@ -81,6 +81,7 @@
           <li>A device organizing one mailbox no longer resurfaces mail in a mailbox it has handed to another organizer</li>
           <li>The Flatpak manifest's generated npm sources cover the published lockfile again — fifteen packages were missing, and an offline build resolves only what it declares</li>
           <li>Change a mailbox's password without removing it</li>
+          <li>The Ohbox keeps arrival order on every device</li>
           <li>A message keeps its place in the Ohbox when you read it</li>
           <li>The phone reads out a conversation's badges — thread count, protection, history and new mail</li>
           <li>A device that has handed its mailbox to another organizer no longer resurfaces mail on its own</li>

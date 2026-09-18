@@ -46,13 +46,21 @@ When your mail provider's password changes, Settings → Mailboxes (and Settings
 **Sign in again**: one field, tried against your mail server before anything is stored. The copy on
 your computer, your folders and everything ohmail has organized stay where they are.
 
+### The Ohbox keeps arrival order on every device
+
+Every row in the Ohbox now sits by when its mail arrived, newest first — sent mail at the moment
+you sent it, in the same one timeline. Reading a message never moves it: the read state changes
+how a row looks, not where it sits. Previously the "Earlier" section ordered read mail by when
+you read it, which could stack your sent history and your received history as two separate
+chronologies; on an existing mailbox, read rows return to chronological order and nothing else
+changes.
+
 ### A message keeps its place in the Ohbox when you read it
 
 Rows in the Ohbox now sit by when mail arrived in your mailbox. A sender's written date or a
 calendar invitation's time is still shown, but it no longer decides where a row sits when it
 disagrees with the arrival — so reading a message never files it months away. Mail whose reading
-time is not known sits at its own date instead of below everything you have ever read; on an
-existing mailbox those are the only rows that move.
+time is not known sits at its own date instead of below everything you have ever read.
 
 ### The phone reads out a conversation's badges — thread count, protection, history and new mail
 
