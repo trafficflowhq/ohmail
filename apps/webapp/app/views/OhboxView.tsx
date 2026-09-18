@@ -10,6 +10,7 @@ import * as React from "react";
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import { useTranslations } from "next-intl";
 import { useRowBadgeCopy } from "../shell/row-copy";
+import { rowThread, rowThreadOf } from "../shell/row-thread";
 import { isOwnSent, isResurfaced, presentsUnread } from "@ohmail/client-engine";
 import type { EngineMessage, ResurfacedThreadRow, TagDTO } from "@ohmail/client-engine";
 import {
@@ -154,6 +155,7 @@ export function OhboxView({
   newForYou,
   previouslySeen,
   threadParticipants,
+  threadCountOf,
   threadSubject,
   absoluteTime,
   onToggleTime,
@@ -225,6 +227,12 @@ export function OhboxView({
    * Optional — a view mounted without it leads every row with the one sender's circle.
    */
   threadParticipants?: (threadId: string) => { initials: string; hue: number }[];
+  /**
+   * HOW LONG THE CONVERSATION IS, from the engine's one index (`AppShell`) — 0 where the mirror
+   * knows of no thread, which is a row standing for itself. The view has no reader of its own,
+   * exactly as {@link threadParticipants} has none.
+   */
+  threadCountOf?: (threadId: string) => number;
   /**
    * THE DATE STAMPS — which form they are in, and the press that flips them.
    *
@@ -1782,8 +1790,7 @@ export function OhboxView({
       // the settling class rides the row for the 280 ms it takes to slide down to "Earlier" —
       // read here, answered, or read on another mail client. See `slideOut`.
       className={settling.has(m.id) ? "settling" : undefined}
-      threadCount={m.threadCount}
-      threadLabel={m.threadCount ? rowBadge.thread(m.threadCount) : undefined}
+      {...rowThreadOf(m, threadCountOf, rowBadge.thread)}
       /* An own-sent row's LEAD is the RECIPIENT's and stays that way: the row is about the
          person it went to. The strip beside the subject is NOT suppressed with it — the faces
          name who the CONVERSATION is between, which the reader's own reply is one voice of.
@@ -1909,10 +1916,15 @@ export function OhboxView({
      */
     const sent = sentLabelOf(shown);
     const sentLeads = sent !== null && g.unreadCount === 0;
-    /* The conversation's length as the SERVER knows it where a Resurfaced row has its thread row —
-       a windowed mirror holding three of nine would otherwise say three. Read once: the badge
-       shows it and the row's description says it, and two reads could disagree. */
-    const threadCount = g.resurfaced?.count ?? g.members.length;
+    /* The conversation's length as the SERVER knows it — a windowed mirror holding three of nine
+       would otherwise say three. The engine's index answers for every grouped row (`g.key` IS the
+       thread id here, since a group of more than one can only come from a shared thread); the
+       Resurfaced row's own count is the same number from the same index, and the members in hand
+       are the floor for a mirror that has not got the thread row yet. Read once: the badge shows
+       it and the row's description says it, and two reads could disagree. */
+    const threadCount = Math.max(
+      threadCountOf?.(g.key) ?? 0, g.resurfaced?.count ?? 0, g.members.length,
+    );
     return (
       <MessageRow
         spoken={rowBadge.spoken}
@@ -1944,8 +1956,7 @@ export function OhboxView({
         unread={g.members.some(effUnread)}
         seen={!g.members.some(effUnread)}
         selected={selected != null && g.members.some((m) => m.id === selected.id)}
-        threadCount={threadCount}
-        threadLabel={threadCount > 1 ? rowBadge.thread(threadCount) : undefined}
+        {...rowThread(threadCount, rowBadge.thread)}
         newSinceLabel={
           g.resurfaced && g.resurfaced.newSince > 0
             ? t("newSince", { count: g.resurfaced.newSince })

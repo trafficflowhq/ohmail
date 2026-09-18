@@ -17,6 +17,7 @@
 import { useEffect, useState } from "react";
 import { useTranslations } from "next-intl";
 import { useRowBadgeCopy } from "../shell/row-copy";
+import { rowThread, rowThreadOf } from "../shell/row-thread";
 import { presentsUnread, type EngineMessage, type TagDTO } from "@ohmail/client-engine";
 import { Button, Kbd, ListPane, ListRows, MessageRow, ReadColumn, TagDot, TextField } from "@ohmail/ui";
 import { MessagePane, type MessageAction } from "../shell/MessagePane";
@@ -36,6 +37,7 @@ export function TagView({
   messages,
   tags,
   threadParticipants,
+  threadCountOf,
   absoluteTime,
   onToggleTime,
   now,
@@ -58,6 +60,12 @@ export function TagView({
    * always did. Optional, so a view mounted without it (the demo, most tests) is unchanged.
    */
   threadParticipants?: (threadId: string) => { initials: string; hue: number }[];
+  /**
+   * HOW LONG THE CONVERSATION IS, from the engine's one index (`AppShell`) — 0 where the mirror
+   * knows of no thread, which is a row standing for itself. The view has no reader of its own,
+   * exactly as {@link threadParticipants} has none.
+   */
+  threadCountOf?: (threadId: string) => number;
   /**
    * THE DATE STAMPS — which form they are in, and the press that flips them.
    *
@@ -214,8 +222,7 @@ export function TagView({
                 unread={presentsUnread(m)}
                 seen={!presentsUnread(m)}
                 selected={shown?.id === m.id}
-                threadCount={m.threadCount}
-                threadLabel={m.threadCount ? rowBadge.thread(m.threadCount) : undefined}
+                {...rowThreadOf(m, threadCountOf, rowBadge.thread)}
                 hasAttachment={m.hasAttachments}
                 protectedLabel={m.protected != null ? rowBadge.protectedLabel : undefined}
                 tags={tagsOfMessage(m, tags).map((x) => ({ name: x.name, hue: hueOf(x) }))}

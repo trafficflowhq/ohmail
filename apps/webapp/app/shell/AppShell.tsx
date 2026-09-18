@@ -41,6 +41,7 @@ import {
   tagsCrossView,
   threadOf,
   threadParticipantsIndex,
+  threadSizeIndex,
   threadSubject,
   parkedMessageIds,
   triagePiles,
@@ -2755,6 +2756,14 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
     return out;
   }, [presented, derived]);
   const participantsOf = useStableCallback((threadId: string) => participantIndex.get(threadId) ?? NO_PARTICIPANTS);
+  /**
+   * HOW LONG EACH CONVERSATION IS — the same journey as the circles beside it, for the same
+   * reason: the views have no reader, and a per-row walk of the mirror is O(mirror x rows) for a
+   * capsule. The engine's index answers the server's own length where the thread row has synced,
+   * so a windowed mirror holding three of nine does not put "3" on a row standing for nine.
+   */
+  const threadSizes = useMemo(() => threadSizeIndex(presented), [presented, derived]);
+  const threadCountOf = useStableCallback((threadId: string) => threadSizes.get(threadId)?.count ?? 0);
   /**
    * THE CONVERSATION'S STORED NAME, for the Ohbox's grouped rows — bound here for the same
    * reason `participantsOf` is: the view has no reader of its own. The mirror's thread row
@@ -7564,6 +7573,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
                 newForYou={ohbox.newForYou}
                 previouslySeen={ohbox.previouslySeen}
                 threadParticipants={participantsOf}
+                threadCountOf={threadCountOf}
                 absoluteTime={absoluteTime}
                 onToggleTime={toggleAbsoluteTime}
                 threadSubject={threadSubjectOf}
@@ -7762,6 +7772,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
             {effectiveView === "triage" ? (
               <TriageView
                 threadParticipants={participantsOf}
+                threadCountOf={threadCountOf}
                 absoluteTime={absoluteTime}
                 onToggleTime={toggleAbsoluteTime}
                 piles={piles}
@@ -7796,6 +7807,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
             {effectiveView === "tag" && tagGroup ? (
               <TagView
                 threadParticipants={participantsOf}
+                threadCountOf={threadCountOf}
                 absoluteTime={absoluteTime}
                 onToggleTime={toggleAbsoluteTime}
                 tag={tagGroup.tag}
@@ -7826,6 +7838,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
             {effectiveView === "folder" && openFolder ? (
               <FolderView
                 threadParticipants={participantsOf}
+                threadCountOf={threadCountOf}
                 absoluteTime={absoluteTime}
                 onToggleTime={toggleAbsoluteTime}
                 folder={openFolder}
@@ -7859,6 +7872,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
             {effectiveView === "history" ? (
               <HistoryView
                 threadParticipants={participantsOf}
+                threadCountOf={threadCountOf}
                 absoluteTime={absoluteTime}
                 onToggleTime={toggleAbsoluteTime}
                 messages={history}
@@ -8058,6 +8072,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
                 }
                 tags={tags}
                 threadParticipants={participantsOf}
+                threadCountOf={threadCountOf}
                 now={now}
                 /* The URL's open message (`#/trash/m/<id>`) — a link into one deleted message,
                    which is the reveal target the window has to mount. */

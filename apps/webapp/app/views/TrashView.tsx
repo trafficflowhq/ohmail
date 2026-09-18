@@ -22,6 +22,7 @@ import { ListPane, ListRows, MessageRow, ReadColumn, Spinner } from "@ohmail/ui"
 import type { TrashWindowItemWire } from "../api-client";
 import { MessagePane, type MessageAction } from "../shell/MessagePane";
 import { useRowBadgeCopy } from "../shell/row-copy";
+import { rowThread, rowThreadOf } from "../shell/row-thread";
 import {
   avatarHue, avatarOf, agoStamp, displayTime, hueOf, initialsOf, placeLabel, rowAddress,
   senderName, tagsOfMessage,
@@ -71,6 +72,7 @@ export function TrashView({
   live,
   tags,
   threadParticipants,
+  threadCountOf,
   now,
   locateId,
   onOpen,
@@ -87,6 +89,12 @@ export function TrashView({
   live?: TrashWindowControl;
   tags: TagDTO[];
   threadParticipants?: (threadId: string) => { initials: string; hue: number }[];
+  /**
+   * HOW LONG THE CONVERSATION IS, from the engine's one index (`AppShell`) — 0 where the mirror
+   * knows of no thread, which is a row standing for itself. The view has no reader of its own,
+   * exactly as {@link threadParticipants} has none.
+   */
+  threadCountOf?: (threadId: string) => number;
   now: Date;
   /** The URL's open message (`#/trash/m/<id>`) — a link into a specific deleted message. */
   locateId?: string | null;
@@ -249,8 +257,7 @@ export function TrashView({
                   unread={presentsUnread(m)}
                   seen={!presentsUnread(m)}
                   selected={shown?.id === m.id}
-                  threadCount={m.threadCount}
-                  threadLabel={m.threadCount ? rowBadge.thread(m.threadCount) : undefined}
+                  {...rowThreadOf(m, threadCountOf, rowBadge.thread)}
                   hasAttachment={m.hasAttachments}
                   protectedLabel={m.protected != null ? rowBadge.protectedLabel : undefined}
                   tags={tagsOfMessage(m, tags).map((x) => ({ name: x.name, hue: hueOf(x) }))}
