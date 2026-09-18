@@ -2816,6 +2816,19 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends flatpak
+
+          # A RUNTIME DIRECTORY, WHICH A CI STEP DOES NOT HAVE EITHER. flatpak allocates an
+          # instance directory under XDG_RUNTIME_DIR for each sandbox it starts, and the nested
+          # `flatpak build` the module build spawns dies `Unable to allocate instance id` without
+          # one — measured in the same container, which went on to build the first module once it
+          # had one. This creates a directory only when the runner has none.
+          if [ -z "${XDG_RUNTIME_DIR:-}" ] || [ ! -d "${XDG_RUNTIME_DIR:-}" ]; then
+            D="/run/user/$(id -u)"
+            sudo install -d -o "$(id -un)" -g "$(id -gn)" -m 700 "$D"
+            echo "XDG_RUNTIME_DIR=$D" >> "$GITHUB_ENV"
+            echo "no runtime directory on this runner; flatpak gets $D"
+          fi
+
           # THE RUNTIMES GO SYSTEM-WIDE, AND THE BUILDER NEEDS A SESSION BUS. flatpak-builder runs
           # inside the org.flatpak.Builder sandbox and asks the HOST's flatpak whether the sdk is
           # there, through the org.freedesktop.Flatpak portal — which a GitHub step has no session
@@ -2866,6 +2879,14 @@ jobs:
       # centre showing a release behind.
       - name: The metainfo's releases are the changelog's
         run: node scripts/appstream-releases.mjs
+
+      # THE GENERATED SOURCES, ASKED OF THE TREE THEY WERE DERIVED FROM. `node-sources.json` is
+      # generated from the ROOT package-lock.json, which only a published checkout has — and this
+      # job runs in one, so it can ask. Without it a file left behind arrives ten minutes later as
+      # an `ENOTCACHED` inside npm, in the middle of a module build, reading like the app failing
+      # to build rather than like a generated file nobody regenerated.
+      - name: The generated sources still cover the lockfiles
+        run: node scripts/flathub-manifest.mjs --check --mirror .
 
       - name: The desktop entry is valid
         run: |
