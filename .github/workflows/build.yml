@@ -2822,9 +2822,9 @@ jobs:
           # bus to reach, so every run died `Failed to init: Unable to find sdk` while this step
           # reported success, and moving the runtimes (per-user with FLATPAK_USER_DIR, then
           # system-wide) changed nothing: the installation was never the variable. Measured in a
-          # noble container on this runner's flatpak 1.14.6 — the same command fails with no session
-          # bus and builds under `dbus-run-session`, with the sdk in either installation. Every
-          # builder run below carries that wrapper; system-wide stays, as the README shows a reader.
+          # noble container on this runner's own flatpak 1.14.6 — the same command fails with no
+          # session bus and builds under `dbus-run-session`, with the runtimes where this step puts
+          # them. Every builder run below carries the wrapper; system-wide stays, as the README shows.
           flatpak remote-add --user --if-not-exists flathub \
             https://dl.flathub.org/repo/flathub.flatpakrepo
           sudo flatpak remote-add --system --if-not-exists flathub \
