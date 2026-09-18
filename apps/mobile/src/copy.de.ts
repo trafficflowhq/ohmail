@@ -1083,7 +1083,7 @@ export const DE: Deck = {
   connectionSignInRefused: "Der Mailserver hat die Anmeldung abgelehnt.",
   signInAgain: "Erneut anmelden",
   signInAgainLead:
-    "Hast du das Passwort dieses Postfachs bei deinem Anbieter geändert? Gib ohmail das neue. Die Post auf diesem Telefon und alles, was ohmail sortiert hat, bleiben unverändert.",
+    "Hast du das Passwort dieses Postfachs bei deinem Anbieter geändert? Gib ohmail das neue. Die Post, die schon auf diesem Telefon ist, bleibt, wo sie ist.",
   signInAgainField: "Neues Passwort",
   signInAgainHint: "Wird auf diesem Telefon versiegelt und nur an den eigenen Server dieses Postfachs gesendet.",
   signInAgainSave: "Speichern und anmelden",

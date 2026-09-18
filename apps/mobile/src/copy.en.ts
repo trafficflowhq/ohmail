@@ -1726,7 +1726,7 @@ const TABLE = {
   connectionSignInRefused: "The mail server refused the sign-in.",
   signInAgain: "Sign in again",
   signInAgainLead:
-    "Changed this mailbox's password at your provider? Give ohmail the new one. The mail on this phone and everything ohmail has organized stay where they are.",
+    "Changed this mailbox's password at your provider? Give ohmail the new one. The mail already on this phone stays where it is.",
   signInAgainField: "New password",
   signInAgainHint: "Sealed on this phone and sent only to this mailbox's own server.",
   signInAgainSave: "Save and sign in",
