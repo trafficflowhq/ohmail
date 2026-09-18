@@ -876,7 +876,8 @@
     "barScopeDomain": "whole domain",
     "barRule": "Becomes a rule — future mail from {target} files automatically.",
     "barHalvesLabel": "What each half of the button does",
-    "barHalves": "The name files the mail waiting here; the ✓ files it and marks it read."
+    "barHalves": "The name files the mail waiting here; the ✓ files it and marks it read.",
+    "noSuggestionComing": "A suggestion is coming for this sender. Choose where their mail goes, or wait a moment."
   },
   "triage": {
     "title": "Triage",

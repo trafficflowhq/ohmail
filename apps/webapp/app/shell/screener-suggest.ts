@@ -395,6 +395,14 @@ export const MAX_SUGGEST_BATCH = 400;
 const HYDRATE_LIMIT = 200;
 
 /**
+ * The floor between two stored-suggestion reads, and the window a queue gain waits before its
+ * read. One number for both on purpose: the read is free but not weightless, and the gain's wait
+ * is what lets a single read catch the purchase the worker makes seconds after a sender arrives —
+ * reading at the gain would ask before the answer exists and nothing would trigger a second look.
+ */
+export const HYDRATE_DEBOUNCE_MS = 10_000;
+
+/**
  * How many senders one automatic batch buys — the opt-in's entire spend per Screener open. Ten,
  * not the endpoint's fifty and not the manual ladder's top: the automatic path spends without a
  * press, so its bound has to be a number somebody can live with being wrong about — a rounding
@@ -538,7 +546,16 @@ export function useScreenerSuggestions(opts: {
    */
   const io = useRef({
     run: 0,
-    hydrated: false,
+    /**
+     * When the last stored-suggestion read STARTED (epoch ms), and the instant the queue last
+     * gained a sender this session had not seen. Together they schedule the re-read below: never
+     * two reads inside {@link HYDRATE_DEBOUNCE_MS}, and a gain waits its whole window — the
+     * purchase it exists to catch happens seconds after the row appears. This replaced a
+     * once-per-session latch (`hydrated`), under which anything the worker bought after the
+     * first open was invisible until a reload.
+     */
+    lastHydrateAt: 0,
+    queueGainAt: 0,
     /**
      * The auto latch — the whole safety of the automatic path. `autoFired` goes true before the request
      * leaves, so a re-render, a StrictMode second pass, or a warming mirror cannot buy a second batch; it
@@ -574,17 +591,17 @@ export function useScreenerSuggestions(opts: {
   });
 
   /**
-   * Bumped once, the first time the control is bound to a non-empty queue.
-   * The automatic batch cannot fire from the first render: the queue comes
-   * from the mirror, and on a cold tab `forSenders` is called with an empty
-   * list several times. An effect keyed only on `active` would look once,
-   * find nothing and never look again — shipping a feature that does
-   * nothing on every real account and works in every pre-warmed test. One
-   * state write per session, guarded by `autoSeen`, purely to give the
-   * effect a dependency that changes when there is something to buy.
+   * Bumped when the ACTIVE queue gains a sender this session has not seen — at most once per
+   * sender, guarded by `seenKeys`, so it can never loop. Two consumers: the automatic batch
+   * (the original job — on a cold tab `forSenders` is called with an empty list several times,
+   * and an effect keyed only on `active` would look once, find nothing and never look again),
+   * and the stored-suggestion re-read below, for which a gain is the signal that an answer may
+   * be about to exist. Gains are counted only while the Screener is on screen: a sender who
+   * arrived while it was away is covered by the activation read, and counting them here would
+   * put the first open's catch-up behind a debounce it does not owe.
    */
   const [queueReady, setQueueReady] = useState(0);
-  const autoSeen = useRef(false);
+  const seenKeys = useRef(new Set<string>());
 
   /** True once the stored-suggestion hydration has SETTLED, either way. See its `finally`. */
   const [hydrateSettled, setHydrateSettled] = useState(false);
@@ -690,23 +707,22 @@ export function useScreenerSuggestions(opts: {
   );
 
   /**
-   * Read what has already been bought — once per session, when the Screener
-   * is first opened. This is what makes a suggestion survive a reload:
-   * without it the chips lived only as long as the tab that bought them,
-   * and the next press re-asked for answers the server already held — free
-   * (a stored answer is served, not re-bought) but silent, so it looked
-   * like the purchase had failed. ONE page: the server's queue is `date
-   * desc` like the list on screen, so a page covers the front of both;
-   * senders past the window have no chip until bought or scrolled to.
+   * Read what has already been bought — on EVERY Screener activation and once per queue GAIN.
+   * A `cost: read` page; it spends nothing. Under the old once-per-session latch anything the
+   * worker bought after the first open was invisible until a reload. NOT A POLL: a read runs
+   * only on a discrete trigger, triggers cannot cause themselves (a read only removes senders
+   * from the unsuggested queue), and no two reads start inside {@link HYDRATE_DEBOUNCE_MS}.
+   * An activation catches up at once; a gain waits its whole window — the purchase it exists to
+   * catch happens seconds after the row appears. ONE page: the server's queue is `date desc`
+   * like the list on screen, so a page covers the front of both.
    */
-  useEffect(() => {
-    if (!active || io.current.hydrated || !link.current.wire.configured()) return;
-    io.current.hydrated = true;
-    let cancelled = false;
-    void (async () => {
+  const readStored = useCallback(
+    async (alive: () => boolean): Promise<void> => {
+      if (!alive()) return;
+      io.current.lastHydrateAt = Date.now();
       try {
         const page = await link.current.wire.list({ limit: HYDRATE_LIMIT });
-        if (cancelled) return;
+        if (!alive()) return;
         if (page.suggestable?.maxPerRequest) setMaxPerRequest(page.suggestable.maxPerRequest);
         /* THE SENDERS THIS PAGE LEFT OUT, and why. `list()` excludes a sender whose decision is
            waiting on another install, so without this field the exclusion is a disappearance: a
@@ -749,13 +765,54 @@ export function useScreenerSuggestions(opts: {
         // the account already owns — but a hydration that FAILED must not block it for ever,
         // because the stored-skip is the server's job anyway and a re-ask for a stored answer is
         // free (`charged: 0`). So both outcomes release the gate; only the ordering is bought.
-        if (!cancelled) setHydrateSettled(true);
+        if (alive()) setHydrateSettled(true);
       }
-    })();
+    },
+    [merge],
+  );
+
+  /**
+   * THE ACTIVATION READ — the catch-up. It runs the moment the Screener comes on screen, on the
+   * microtask queue and never behind a timer tick (the first open's hydration is the path every
+   * surface exercises), delayed only by the spacing floor when the last read was under
+   * {@link HYDRATE_DEBOUNCE_MS} ago. It CONSUMES any pending queue gain: what a gain would have
+   * asked for, this read answers.
+   */
+  useEffect(() => {
+    if (!active || !link.current.wire.configured()) return;
+    let cancelled = false;
+    io.current.queueGainAt = 0;
+    const delay = Math.max(0, io.current.lastHydrateAt + HYDRATE_DEBOUNCE_MS - Date.now());
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    if (delay === 0) void readStored(() => !cancelled);
+    else timer = setTimeout(() => { void readStored(() => !cancelled); }, delay);
     return () => {
       cancelled = true;
+      if (timer !== null) clearTimeout(timer);
     };
-  }, [active, merge]);
+  }, [active, readStored]);
+
+  /**
+   * THE QUEUE-GAIN READ — one look, a full window after a sender this session had not seen
+   * joined the ACTIVE queue. The wait is the point: the purchase this read exists to catch (the
+   * worker's, made on the ingest that minted the row) happens seconds after the row appears, so
+   * reading at the gain would ask before the answer exists and nothing would trigger a second
+   * look. Consumed on arming, so it cannot re-fire; the activation read consumes it too.
+   */
+  useEffect(() => {
+    if (!active || !link.current.wire.configured()) return;
+    const gainAt = io.current.queueGainAt;
+    if (gainAt === 0) return;
+    io.current.queueGainAt = 0;
+    let cancelled = false;
+    const dueAt = Math.max(gainAt, io.current.lastHydrateAt) + HYDRATE_DEBOUNCE_MS;
+    const timer = setTimeout(() => { void readStored(() => !cancelled); },
+      Math.max(0, dueAt - Date.now()));
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [active, queueReady, readStored]);
 
   /**
    * The automatic batch — one per mounted Screener, only when the account opted in. Everything
@@ -847,11 +904,21 @@ export function useScreenerSuggestions(opts: {
     // render is safe here (schedules nothing, changes no output); the
     // alternative — a hook argument — is the cycle `forSenders` exists to avoid.
     io.current.queue = addresses;
-    // One state write, the first time there is anything to buy, so the effect above gets a
-    // dependency that changes when the cold mirror finally has senders in it.
-    if (!autoSeen.current && addresses.length > 0) {
-      autoSeen.current = true;
-      setQueueReady((n) => n + 1);
+    // One state write per RENDER that brings senders this session has not seen, and only while
+    // the Screener is on screen — see `queueReady`. Each key bumps at most once ever, so the
+    // write cannot recur for the same queue and the effects it feeds cannot loop.
+    if (active) {
+      let gained = false;
+      for (const a of addresses) {
+        const k = senderKey(a);
+        if (seenKeys.current.has(k)) continue;
+        seenKeys.current.add(k);
+        gained = true;
+      }
+      if (gained) {
+        io.current.queueGainAt = Date.now();
+        setQueueReady((n) => n + 1);
+      }
     }
     // The ladder is bounded by the PURCHASE ceiling, not the per-request cap — a size larger than
     // one request is delivered as several requests, below.

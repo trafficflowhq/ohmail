@@ -13,6 +13,13 @@ export type NoSuggestionReason =
   /** Nobody has asked about this sender yet, and asking would work. The only "yet". */
   | "pending"
   /**
+   * The account OPTED IN to automatic suggestions and nothing stands in their way, so one is on
+   * its way without anybody pressing anything — the worker buys on ingest and its cycle, and the
+   * open Screener re-reads what was bought. Its own state rather than a reworded `pending`,
+   * because the two make different promises: `pending` offers a press, this names a cadence.
+   */
+  | "coming"
+  /**
    * The account may not spend on suggestions — the allowance is exhausted or the entitlement
    * refuses. One state and one sentence for both: from a row's point of view the fact is the
    * same, and naming a price or a plan is the managed service's business, not this server's.
@@ -35,24 +42,26 @@ export type SuggestStanding = "out_of_credits" | "spend_unavailable";
 /** The catalogue key each reason renders, under the `screener` namespace. */
 export const NO_SUGGESTION_KEY: Record<NoSuggestionReason, string> = {
   pending: "noSuggestion",
+  coming: "noSuggestionComing",
   unavailable: "noSuggestionUnavailable",
   no_auto_ai: "noSuggestionNoAutoAi",
 };
 
 /**
- * Which of the three this row is. Read only where there is no `ai` on the row at all — a row that
- * carries a `noAnswer` already says why the run it was part of could not answer, and that is a
- * nearer and more specific fact than either state below.
- *
- * `noAi` is read FIRST: it says why nothing arrived automatically, which is the question a row
- * that has never been in a run is asking. The standing spend refusal is the account-wide answer
- * for every other such row.
+ * Which of the four this row is. Read only where the row carries no `ai` at all — a `noAnswer`
+ * is a nearer, more specific fact. `noAi` is read FIRST: it says why nothing arrived
+ * automatically, the question a row never in a run is asking. The standing spend refusal
+ * OUTRANKS the opt-in — an account that opted in and then ran out is not owed a "coming" the
+ * next run cannot keep. `autoSuggest` is the opt-in fact, absent on every surface with no
+ * server behind it, and absent must read as NO.
  */
 export function noSuggestionReason(
   sender: { noAi?: true },
   standing: SuggestStanding | null,
+  autoSuggest?: boolean,
 ): NoSuggestionReason {
   if (sender.noAi) return "no_auto_ai";
   if (standing !== null) return "unavailable";
+  if (autoSuggest === true) return "coming";
   return "pending";
 }

@@ -429,6 +429,8 @@ export function useScreenerState(
     out: new Set<string>(),
     pins: [] as ScreenerSenderDTO[],
     overrides: new Set<string>(),
+    /** Spam rows deleted this session, keyed by {@link senderKey} — the identity that survives
+     *  a newer arrival re-minting the row; an id-keyed hide came back with the sender's next spam. */
     hidden: new Set<string>(),
     /** See {@link ScreenerState.refused} — rows whose decision the wire would not take. */
     refused: new Set<string>(),
@@ -905,6 +907,13 @@ export function useScreenerState(
   ) => {
     const id = sender.id;
     if (s.pending.has(id)) return;
+    // THE SENDER, NOT ONLY THE ROW. A newer arrival re-mints a pending sender under a new
+    // representative id, and a press on that row inside the undo window would be two decisions
+    // for one sender. The derivation already hides the re-mint (`pendingKeys`); this is the belt
+    // for a path that holds a stale row — the bulk's timers, a queued keypress.
+    for (const e of s.pending.values()) {
+      if (senderKey(e.sender.from.address) === senderKey(sender.from.address)) return;
+    }
     // A FRESH ATTEMPT CLEARS THE OLD REFUSAL. The note answers "your last decision about this row
     // did not land"; leaving it on a row the reader has just decided again would make it say that
     // about the new one before the wire has been asked. See {@link ScreenerState.refused}.
@@ -1067,9 +1076,32 @@ export function useScreenerState(
      the holding tab releases it: filed (the projection drops the sender) or taken back (undecided
      again). See `intent-windows.ts`. */
   const decidedElsewhere = windows.elsewhere(Date.now(), COMMIT_MS);
-  const visibleWaiting = waiting.filter((x) => (!s.pending.has(x.id) || s.out.has(x.id))
+  /* Declared here because the derivation below reads it; loaded and drained by the boot-replay
+     effect further down, whose docblocks carry the whole contract. */
+  const restoredIntents = useRef<ScreenerIntent[] | null>(null);
+  /* THE PENDING HIDE IS KEYED BY THE SENDER, never by the row id it was pressed under. A derived
+     row's id is the sender's NEWEST held message, so a message arriving inside the undo window
+     re-minted the same sender under an id `s.pending` never named — the row was back on screen
+     while its decision was in flight, and pressing it would have been two decisions for one
+     sender. The pressed row itself still renders while exiting (`s.out` holds its id); the
+     re-mint has no `out` entry, so it stays hidden until the decision settles either way. */
+  const pendingKeys = new Set([...s.pending.values()].map((e) => senderKey(e.sender.from.address)));
+  /* AND SO IS THE BOOT REPLAY'S — the journal's decided senders are out of the derivation from
+     the moment the journal is read, BEFORE any of them can be dispatched. The replay waits for
+     the cross-tab handshake and for the mirror to name each representative, and in that gap a
+     decided sender used to render undecided — "my decision came back" for as long as the mirror
+     took. An entry leaves this set the way it leaves the journal: dispatched (the optimistic
+     overlay takes over), resolved by another tab, or expired at the read. */
+  const restoredKeys = new Set(
+    (restoredIntents.current ?? []).map((r) => senderKey(r.from.address)),
+  );
+  const senderHeld = (x: ScreenerSenderDTO): boolean => {
+    const k = senderKey(x.from.address);
+    return pendingKeys.has(k) || restoredKeys.has(k);
+  };
+  const visibleWaiting = waiting.filter((x) => (!senderHeld(x) || s.out.has(x.id))
     && !decidedElsewhere.has(x.id) && notDecided(x));
-  const undecided = waiting.filter((x) => !s.pending.has(x.id)
+  const undecided = waiting.filter((x) => !senderHeld(x)
     && !decidedElsewhere.has(x.id) && notDecided(x));
   /**
    * THE DECIDED SENDERS, AS ROWS — the same rows the queue would have shown, on the other side of the line. Built
@@ -1179,7 +1211,9 @@ export function useScreenerState(
     /** Restricts the bulk to rows it can honestly speak for. Absent ⇒ every waiting row. */
     only?: (x: ScreenerSenderDTO) => boolean,
   ) => {
-    const items = waiting.filter((x) => !s.pending.has(x.id) && (only ? only(x) : true));
+    // `senderHeld`, not a per-id read: a bulk planned over a queue holding a pending sender's
+    // re-minted row would walk it into a second decision for one sender.
+    const items = waiting.filter((x) => !senderHeld(x) && (only ? only(x) : true));
     if (!items.length || s.bulkBusy) return;
     s.bulkBusy = true;
     const total = items.length;
@@ -1468,7 +1502,10 @@ export function useScreenerState(
 
   const deleteSpam = (row: SpamRow) => {
     if (row.pinned) s.pins = s.pins.filter((p) => p.id !== row.sender.id);
-    else s.hidden.add(row.sender.id);
+    // The ADDRESS, not the row id: a spam sender's derived row is minted on their newest
+    // quarantined message, so a hide keyed on the pressed id came back the moment newer spam
+    // arrived from the same sender — deleted, and back on the next drain.
+    else s.hidden.add(senderKey(row.sender.from.address));
     bump();
     toast(t("toastDeleted", { sender: senderLabel(row.sender) }));
   };
@@ -1503,7 +1540,6 @@ export function useScreenerState(
    * between dispatching into a cold mirror and discarding the decision, and the journal already has a bound that
    * needs neither.
    */
-  const restoredIntents = useRef<ScreenerIntent[] | null>(null);
   /**
    * THE HANDSHAKE, AND WHY THE REPLAY WAITS FOR IT.
    *
@@ -1550,6 +1586,11 @@ export function useScreenerState(
     if (restoredIntents.current === null) {
       const swept = takeScreenerIntents(Date.now());
       restoredIntents.current = swept.live.filter((r) => !s.pending.has(r.id));
+      /* THE HIDE PAINTS AT THE READ, not at the first dispatch: `restoredKeys` above is derived
+         from this ref, and without a bump the decided senders would stand in the queue until the
+         next unrelated render — the exact window this read exists to close. Once per boot: the
+         `null` latch above cannot re-enter, so this cannot loop. */
+      bump();
       /**
        * AND WHAT DIED AT THE HORIZON IS SAID OUT LOUD, ONCE, AT THE READ.
        *
@@ -1606,7 +1647,8 @@ export function useScreenerState(
   const spam: SpamRow[] = [
     ...s.pins.map((p) => ({ sender: p, pinned: true })),
     ...segments.spam
-      .filter((x) => !s.overrides.has(x.id) && !s.hidden.has(x.id) && !pinnedKeys.has(senderKey(x.from.address)))
+      .filter((x) => !s.overrides.has(x.id) && !s.hidden.has(senderKey(x.from.address))
+        && !pinnedKeys.has(senderKey(x.from.address)))
       .map((x) => ({ sender: x, pinned: false })),
   ];
 

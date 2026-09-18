@@ -7742,6 +7742,9 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
                    such row — the refusal used to reach the person as a single toast under the
                    batch that discovered it while every waiting row went on saying "yet". */
                 noSuggestionStanding={suggestions.standing}
+                /* The opt-in fact behind the rows' "a suggestion is coming" — the same read the
+                   hook spends under, so the sentence and the spend cannot disagree. */
+                autoSuggest={consent.autoSuggest}
                 segment={route.screenerSegment}
                 selection={scnSel}
                 onSelect={(segment, id) => setScnSel((s) => ({ ...s, [segment]: id }))}

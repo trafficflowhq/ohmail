@@ -876,7 +876,8 @@
     "barScopeDomain": "ganze Domain",
     "barRule": "Wird zur Regel — künftige Post von {target} wird automatisch einsortiert.",
     "barHalvesLabel": "Was die beiden Hälften des Knopfes tun",
-    "barHalves": "Der Name sortiert die hier wartende Post ein; das ✓ sortiert sie ein und markiert sie als gelesen."
+    "barHalves": "Der Name sortiert die hier wartende Post ein; das ✓ sortiert sie ein und markiert sie als gelesen.",
+    "noSuggestionComing": "Für diesen Absender kommt gleich ein Vorschlag. Wähl, wohin seine Post geht, oder warte kurz."
   },
   "triage": {
     "title": "Triage",

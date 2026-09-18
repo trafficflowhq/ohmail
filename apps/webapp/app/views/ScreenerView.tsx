@@ -534,6 +534,7 @@ export function ScreenerView({
   suggest,
   suggestNode,
   noSuggestionStanding = null,
+  autoSuggest = false,
   segment,
   selection,
   settled,
@@ -571,6 +572,13 @@ export function ScreenerView({
    * reads as "nothing is refusing".
    */
   noSuggestionStanding?: SuggestStanding | null;
+  /**
+   * HAS THIS ACCOUNT OPTED IN to automatic suggestions — the fact that turns a row's "no
+   * suggestion yet" into "a suggestion is coming", so the cadence the opt-in bought is stated
+   * where it is felt. Absent on every host with no such setting (the demo, the desktop shell)
+   * and absent reads as NO, the same rule the hook itself applies.
+   */
+  autoSuggest?: boolean;
   /**
    * WHAT THE ACCOUNT'S AI ALLOWANCE IS DOING — one line under whichever control is offered above. Injected for the
    * same reason both controls are: the answer is a billing read, and this file is compiled into a binary that has no
@@ -1512,6 +1520,7 @@ export function ScreenerView({
             onBack={() => onFull(false)}
             role={state.role}
             standing={noSuggestionStanding}
+            autoSuggest={autoSuggest}
             {...(decisionFor(current as ScreenerSenderDTO) !== undefined
               ? { decision: decisionFor(current as ScreenerSenderDTO)! }
               : {})}
@@ -2067,6 +2076,7 @@ function WaitingPreview({
   role,
   decision,
   standing,
+  autoSuggest,
 }: {
   sender: ScreenerSenderDTO;
   scope: DecisionScope;
@@ -2096,6 +2106,8 @@ function WaitingPreview({
   onBack: () => void;
   /** See `ScreenerViewProps.noSuggestionStanding` — the row's sentence is derived from it. */
   standing: SuggestStanding | null;
+  /** See `ScreenerViewProps.autoSuggest` — the opt-in fact behind the "coming" sentence. */
+  autoSuggest: boolean;
 }) {
   const t = useTranslations("screener");
   const piles = usePileNames();
@@ -2215,12 +2227,14 @@ function WaitingPreview({
             </span>
           </div>
         ) : (
-          /* NO ADVICE, AND WHY NOT — three states, one sentence each. "Yet" belongs to exactly one
-             of them: a sender no run has reached. It is false for `no_ai` mail, which no model
-             will ever see, and false on an account whose spend is refused. `data-why` is the
+          /* NO ADVICE, AND WHY NOT — four states, one sentence each. "Yet" belongs to exactly one
+             of them: a sender no run has reached on an account that has to press. `coming` is the
+             opted-in account's honest version of the same moment — a suggestion is being bought
+             without a press and will appear here. Both are false for `no_ai` mail, which no model
+             sees automatically, and false on an account whose spend is refused. `data-why` is the
              state a test reads, so the assertion is not on a sentence's wording. */
-          <div className="scn-why scn-why-none" data-why={noSuggestionReason(sender, standing)}>
-            <span>{t(NO_SUGGESTION_KEY[noSuggestionReason(sender, standing)])}</span>
+          <div className="scn-why scn-why-none" data-why={noSuggestionReason(sender, standing, autoSuggest)}>
+            <span>{t(NO_SUGGESTION_KEY[noSuggestionReason(sender, standing, autoSuggest)])}</span>
           </div>
         )}
         {sender.held.length > 1 ? (
