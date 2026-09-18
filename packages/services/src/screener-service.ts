@@ -872,14 +872,35 @@ export class ScreenerReadService {
       return outstandingSenders.has(lower) || outstandingDomains.has(domainOf(lower));
     };
     const pageRows = unfiltered.filter((r) => !isDecided(r.fromAddress));
-    const pendingDecisions: ScreenerPendingDecision[] = outstanding.map((o) => ({
-      subject: o.match, scope: o.scope, decidedAt: o.decidedAt.toISOString(),
-      // KEPT, and kept meaning exactly what it always meant, so a client written against the
-      // 0.14.1 shape does not change behaviour: "this install has handed the decision over".
-      sent: o.state === "sent",
-      state: o.state,
-      refusedReason: o.refusedReason,
-    }));
+    /**
+     * ONE ENTRY PER SUBJECT (0.20): an account-wide decision queues one request PER MAILBOX, and
+     * mapping rows 1:1 rendered the same sender N times — the exact double this field's contract
+     * forbids. While ANY of a subject's requests is still in flight the decision IS in flight
+     * (`pending` until every one has travelled, then `sent`), and a refusal is shown only once no
+     * sibling is carrying the decision — beside an excluded sender it would read as a
+     * contradiction; when the last one refuses, the sender is back and the reason shows.
+     */
+    const bySubject = new Map<string, typeof outstanding>();
+    for (const o of outstanding) {
+      const key = `${o.scope}:${o.match}`;
+      const bag = bySubject.get(key);
+      if (bag) bag.push(o); else bySubject.set(key, [o]);
+    }
+    const pendingDecisions: ScreenerPendingDecision[] = [...bySubject.values()].map((bag) => {
+      const inFlight = bag.filter((o) => o.state !== "refused");
+      const rows = inFlight.length > 0 ? inFlight : bag;
+      const o = rows.reduce((a, b) => (a.decidedAt <= b.decidedAt ? a : b));
+      const state = inFlight.length === 0 ? "refused"
+        : inFlight.every((r) => r.state === "sent") ? "sent" : "pending";
+      return {
+        subject: o.match, scope: o.scope, decidedAt: o.decidedAt.toISOString(),
+        // KEPT, and kept meaning exactly what it always meant, so a client written against the
+        // 0.14.1 shape does not change behaviour: "this install has handed the decision over".
+        sent: state === "sent",
+        state,
+        refusedReason: state === "refused" ? o.refusedReason : null,
+      };
+    });
 
     // The account's posture, resolved the same way the worker and the API read it — NULL/absent ⇒
     // {@link resolveOhboxPolicy}'s lenient default. It changes only how a STORED verdict reads as
