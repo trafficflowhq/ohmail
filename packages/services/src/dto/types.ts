@@ -115,18 +115,27 @@ export interface MessageDTO {
    * retired its sender on a mirror the server counted active.
    */
   arrivedAt: ISODateTime;
+  /**
+   * THE INSTANT THE ROW SORTS BY — the sender's {@link date} while it lies within tolerance of
+   * the mailbox's own arrival (`messages.arrived_at`, the IMAP INTERNALDATE), else that arrival
+   * (a header months from arrival took a position months from where the reader watched
+   * the row). Computed in ONE place, `materialize.ts#sortAtOf`; the client keys its date order on
+   * `sortAt ?? date`. ABSENT when the row's arrival was never recorded (every row before mail
+   * 0119, a server older than the field) — absent means "the header decides", the exact order
+   * every mirror had before, so neither side has to deploy first and no history re-sorts.
+   */
+  sortAt?: ISODateTime;
   folder: Folder;
   snippet: string;
   unread: boolean;
   /**
    * When this message stopped being unread, or `null` if that is not known. The order the
-   * client's "Earlier" group is sorted by — reading history, ordered by reading, rather than by
-   * when senders happened to send. `null` covers two rows that cannot be told apart and do not
-   * need to be: never read, and read before the field existed; both sort below every stamped row.
-   * Projected on EVERY message the API emits — list, single, delta and snapshot — because there
-   * is one projection and the sort must work on a mirror built from any of them. A client newer
-   * than the server reads `undefined` and treats it like `null`, so neither side has to deploy
-   * first.
+   * client's "Earlier" group is sorted by — reading history, ordered by reading. `null` covers
+   * two rows that cannot be told apart and do not need to be: never read, and read before the
+   * field existed; both file at the message's own instant (the old below-every-stamped-row rule
+   * lost rows months down the list). Projected on EVERY message the API emits — one projection,
+   * so the sort works on a mirror built from any of them. A client newer than the server reads
+   * `undefined` as `null`, so neither side has to deploy first.
    */
   lastReadAt: ISODateTime | null;
   hasAttachments: boolean;

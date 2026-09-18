@@ -266,5 +266,11 @@ export const SQLITE_JOURNAL: readonly SqliteJournalEntry[] = [
       "CREATE UNIQUE INDEX \"sessions_id_account_uq\" ON \"sessions\" (\"id\", \"account_id\");",
       "CREATE UNIQUE INDEX \"mailbox_folders_id_mailbox_uq\" ON \"mailbox_folders\" (\"id\", \"mailbox_id\");"
     ]
+  },
+  {
+    "name": "0119_messages_arrived_at.sql",
+    "statements": [
+      "ALTER TABLE \"messages\" ADD COLUMN \"arrived_at\" integer;"
+    ]
   }
 ] as const;

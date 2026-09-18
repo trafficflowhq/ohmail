@@ -303,6 +303,14 @@ export interface NewPlan {
   desired: string;
   snippet: string;
   /**
+   * The honest arrival — `Change.internalDate`, the IMAP server's own receive time, `null` where
+   * the adapter could not say. Persisted as `messages.arrived_at` (mail 0119) so the sort clamp
+   * has a truth to clamp against; `created_at` records the INGEST instant, which for a backfill
+   * is the import day. Carried on every `new` plan for the same reason `seen` is: dropping it
+   * here is indistinguishable from the server never knowing.
+   */
+  arrivedAt: Date | null;
+  /**
    * The `\Seen` flag the SERVER reported for this message, carried from `Change.seen`.
    *
    * It used to be dropped here, and dropping it is how "everything is New" happened: the
@@ -764,6 +772,7 @@ export async function planChange(change: Change, deps: PlanDeps): Promise<Change
           arrivalLocator,
           desired: arrivalLocator.folder,
           snippet: bodySnippet(normalized),
+          arrivedAt: change.internalDate ?? null,
           seen: true,
           // Recorded, and routing-inert by construction: this branch reaches no `evaluateRules`
           // call at all, so the user's own Sent mail cannot be demoted by its own provider's
@@ -803,6 +812,7 @@ export async function planChange(change: Change, deps: PlanDeps): Promise<Change
           arrivalLocator,
           desired: arrivalLocator.folder,
           snippet: bodySnippet(normalized),
+          arrivedAt: change.internalDate ?? null,
           seen: change.seen ?? false,
           authVerdict,
           passive: true,
@@ -821,6 +831,7 @@ export async function planChange(change: Change, deps: PlanDeps): Promise<Change
           arrivalLocator,
           desired: arrivalLocator.folder,
           snippet: bodySnippet(normalized),
+          arrivedAt: change.internalDate ?? null,
           seen: change.seen ?? false,
           authVerdict,
           passive: true,
@@ -1000,6 +1011,9 @@ export async function planChange(change: Change, deps: PlanDeps): Promise<Change
         // Unknown degrades to unread, which is the recoverable direction — a real \Seen arrives
         // as an inbound flag change and converges.
         seen: change.seen ?? false,
+        // The gate's cutoff variable above, persisted: one reading of `change.internalDate`
+        // routes AND stamps, so the row and the routing cannot disagree about arrival.
+        arrivedAt,
         // The SAME value `evaluateRules` was handed above. Carrying it rather than recomputing
         // at commit is what makes "the verdict on the row is the verdict that routed" a
         // property of the code and not of two call sites staying in step.
@@ -1222,6 +1236,9 @@ export async function commitChange(plan: ChangePlan, deps: CommitDeps): Promise<
       to: p.normalized.to,
       cc: p.normalized.cc,
       date: p.normalized.date,
+      // The honest arrival the plan carried (INTERNALDATE, or null for "not recorded") — the
+      // truth `materialize.ts#sortAt` clamps the sender-written `date` against (mail 0119).
+      arrivedAt: p.arrivedAt,
       nativeLocator: p.arrivalLocator,
       flags: p.sensitivity.flags,
       snippet: p.snippet,

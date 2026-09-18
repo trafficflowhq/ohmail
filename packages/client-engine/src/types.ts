@@ -271,6 +271,15 @@ export interface EngineMessage extends EngineMessageExtras {
   cc: EmailAddress[];
   date: ISODateTime | null;
   /**
+   * THE INSTANT THE ROW SORTS BY — the server's clamp of {@link date} against the mailbox's own
+   * recorded arrival (`materialize.ts#sortAtOf`, mail 0119): the header while it lies within
+   * tolerance of a KNOWN arrival, else that arrival. OPTIONAL for {@link lastReadAt}'s reason:
+   * absent on every row whose arrival was never recorded and on a server older than the field,
+   * and absent means "the header decides" — the exact order every mirror had before. Every date
+   * comparator reads `sortAt ?? date` through ONE derivation ({@link selectors.ts#tsOf}).
+   */
+  sortAt?: ISODateTime;
+  /**
    * WHEN THE MAILBOX RECORDED THIS MESSAGE — the wire's `arrivedAt` (`messages.created_at`).
    *
    * The cutline dates a message by {@link date} ELSE this, because `Date:` is sender-written and

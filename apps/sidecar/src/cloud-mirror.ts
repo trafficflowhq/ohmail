@@ -1060,6 +1060,13 @@ async function applyUpsert(
         fromAddress: m.from?.address ?? "",
         fromName: m.from?.name ?? null,
         date: asDate(m.date),
+        /* THE SORT INSTANT, carried into the local `arrived_at` so the local door's own
+           `sortAtOf(date, arrived_at)` re-derives exactly the wire's `sortAt` — idempotent by
+           construction: a `sortAt` equal to `date` is within tolerance of itself, and one that
+           was clamped to arrival differs from `date` beyond tolerance and clamps to itself
+           again. Absent on the wire (old server, unrecorded arrival) leaves NULL: the header
+           decides, as it did before the field. In the conflict set for the display half's rule. */
+        arrivedAt: asDate(m.sortAt ?? null),
         nativeLocator: { folder: m.folder },
         noAi: !!m.sensitivity?.no_ai,
         noForward: !!m.sensitivity?.no_forward,
@@ -1068,6 +1075,11 @@ async function applyUpsert(
         sensitivityCategory: m.sensitivity?.category ?? null,
         threadId: m.threadId ?? null,
         unread: !!m.unread,
+        /* THE READING STAMP TRAVELS WITH THE FLAG (owner ruling 2026-09-18: the stamp is the
+           invariant). This set used to carry `unread` alone, so every read row on a paired
+           install was unstamped and "Earlier" there had no reading order at all. In the
+           conflict set: a stamp Cloud cleared (mark-unread) clears here too. */
+        lastReadAt: asDate(m.lastReadAt ?? null),
         snippet: m.snippet ?? "",
         toAddresses: m.to ?? [],
         ccAddresses: m.cc ?? [],

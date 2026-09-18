@@ -595,11 +595,11 @@ export const messages = pgTable("messages", {
    * When this message stopped being unread — the order "Earlier" is sorted by (mail 0047).
    * Written by the same statement that flips {@link unread}: an instant when the flag goes false,
    * NULL when it goes back to true. A record OF the flag, never its source. NULL means "not
-   * known" and must sort BELOW every stamped row: two different rows carry NULL — read before
-   * this column existed, and never read at all — and neither has an honest answer. No backfill
-   * for the same reason: substituting `updated_at` or `date` would hand the reader a manufactured
-   * order they cannot tell from a real one. No index; the sort happens on the client, and the
-   * server's keyset stays `(date, id)`.
+   * known"; the client files such a row at the message's own instant (mail 0119 — the old
+   * below-every-stamped-row rule lost rows at a fixed boundary months down the list). No
+   * backfill: the column records only real readings — the own-instant fallback is the READER's
+   * rule, not a value on disk. No index; the sort happens on the client, and the server's keyset
+   * stays `(date, id)`.
    */
   lastReadAt: timestamp("last_read_at", { withTimezone: true }),
   /**
@@ -635,6 +635,15 @@ export const messages = pgTable("messages", {
   subjectTsv: tsvector("subject_tsv").generatedAlwaysAs(
     sql`to_tsvector('english', coalesce(subject, '') || ' ' || coalesce(from_address, ''))`,
   ),
+  /**
+   * The honest arrival — the IMAP server's INTERNALDATE, NULL where the adapter could not say
+   * (mail 0119). NOT `created_at`, which is when THIS mirror ingested the row and lies by months
+   * for a backfilled mailbox. The one consumer is `materialize.ts`'s `sortAt`: a sender-written
+   * `date` that disagrees with a KNOWN arrival beyond tolerance stops deciding the row's position
+   * (mail 0119). No backfill: NULL means "not recorded" and the header keeps deciding, unchanged.
+   * LAST in the literal, where the migration's ALTER appends it — twin parity compares order.
+   */
+  arrivedAt: timestamp("arrived_at", { withTimezone: true }),
 }, (t) => ({
   ixIdAccount: uniqueIndex("messages_id_account_uq").on(t.id, t.accountId),
   uqDedup: unique().on(t.mailboxId, t.dedupKey),

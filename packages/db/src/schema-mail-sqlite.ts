@@ -597,11 +597,9 @@ export const messages = sqliteTable("messages", {
    * When this message stopped being unread — the order "Earlier" is sorted by (mail 0047).
    * Written by the same statement that flips {@link unread}: an instant when the flag goes false,
    * NULL when it goes back to true. A record OF the flag, never its source. NULL means "not
-   * known" and must sort BELOW every stamped row: two different rows carry NULL — read before
-   * this column existed, and never read at all — and neither has an honest answer. No backfill
-   * for the same reason: substituting `updated_at` or `date` would hand the reader a manufactured
-   * order they cannot tell from a real one. No index; the sort happens on the client, and the
-   * server's keyset stays `(date, id)`.
+   * known"; the client files such a row at the message's own instant (mail 0119). No backfill: the
+   * column records only real readings — the own-instant fallback is the READER's rule, not a
+   * value on disk. No index; the sort happens on the client.
    */
   lastReadAt: integer("last_read_at", { mode: "timestamp_ms" }),
   /**
@@ -633,6 +631,9 @@ export const messages = sqliteTable("messages", {
    */
   authVerdict: text("auth_verdict"),
   updatedAt: integer("updated_at", { mode: "timestamp_ms" }).default(NOW_MS).notNull(),
+  /** The honest arrival (IMAP INTERNALDATE), the pg column's twin — see `schema-mail.ts`.
+   *  LAST, where mail 0119's ALTER appends it: the baseline test compares column ORDER. */
+  arrivedAt: integer("arrived_at", { mode: "timestamp_ms" }),
 }, (t) => ({
   ixIdAccount: uniqueIndex("messages_id_account_uq").on(t.id, t.accountId),
   uqDedup: unique().on(t.mailboxId, t.dedupKey),

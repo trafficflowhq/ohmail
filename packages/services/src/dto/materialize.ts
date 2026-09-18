@@ -177,6 +177,34 @@ export function tagRowToDTO(t: typeof tags.$inferSelect): TagDTO {
  * `sensitive` decides whether a client renders a message's text AT ALL, too consequential to be
  * reachable only through a fixture.
  */
+/**
+ * 48 hours: wide enough that no time-zone spelling, DST shift or ordinarily delayed delivery
+ * (greylisting, a provider outage, a weekend retry queue) ever trips it — those live in minutes
+ * to hours. A `Date:` further than this from a KNOWN arrival is not "when this mail happened":
+ * calendar systems stamp an event's creation era, forwards and re-sends carry the original's
+ * date, and a stranger writes whatever they like. Position follows arrival then; the header is
+ * still what every surface SHOWS.
+ */
+export const SORT_TOLERANCE_MS = 48 * 60 * 60 * 1000;
+
+/**
+ * The row's sorting instant — {@link MessageDTO.sortAt}. `undefined` when arrival was never
+ * recorded (rows before mail 0119): the header keeps deciding, exactly the pre-field order.
+ * With a known arrival: the header while it agrees with arrival within {@link SORT_TOLERANCE_MS}
+ * (the sender's finer, meaningful instant), else the arrival itself. Both directions clamp — a
+ * future-dated header is a lie outright, a months-old one is a calendar stamp or a re-send.
+ * Pure and exported so the clamp is watchable without a database round trip.
+ */
+export function sortAtOf(date: Date | null | undefined, arrivedAt: Date | null | undefined): string | undefined {
+  // `== null`: a hand-built row (several direct-projection tests) leaves the field ABSENT, and
+  // absent must mean exactly what NULL means — "arrival not recorded", never a throw.
+  if (arrivedAt == null || Number.isNaN(arrivedAt.getTime())) return undefined;
+  if (date == null || Number.isNaN(date.getTime())) return arrivedAt.toISOString();
+  return Math.abs(date.getTime() - arrivedAt.getTime()) <= SORT_TOLERANCE_MS
+    ? date.toISOString()
+    : arrivedAt.toISOString();
+}
+
 export function messageRowToDTO(
   m: typeof messages.$inferSelect,
   fs: typeof folderState.$inferSelect | undefined,
@@ -217,6 +245,7 @@ export function messageRowToDTO(
   const loc = (m.nativeLocator as { folder?: string } | null) ?? null;
   const folder = (fs?.desiredFolder ?? loc?.folder ?? "INBOX") as Folder;
   const category = (m.sensitivityCategory as SensitivityFlags["category"]) ?? null;
+  const sortAt = sortAtOf(m.date, m.arrivedAt);
   /**
    * `sensitive` is the POSITIVE match, and only the positive match. Core owns the definition:
    * `sensitive = category !== null`; `no_ai`/`no_kb` fail CLOSED on the whole INDETERMINATE
@@ -248,6 +277,9 @@ export function messageRowToDTO(
     to: (m.toAddresses as EmailAddress[]) ?? [],
     cc: (m.ccAddresses as EmailAddress[]) ?? [],
     date: iso(m.date),
+    // Spread-in so a row with no recorded arrival yields a DTO with the key ABSENT, not
+    // present-and-undefined — the `autoReplyByUs` rule: absent reads "the header decides".
+    ...(sortAt === undefined ? {} : { sortAt }),
     // The arrival, projected on EVERY message the API emits for `lastReadAt`'s reason — the
     // cutline reads it wherever a mirror was built, and a page that omitted it would retire a
     // sender the count keeps. `created_at` is NOT NULL on both stores, so this never manufactures

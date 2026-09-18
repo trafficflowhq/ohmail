@@ -799,6 +799,9 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
       bodyHash: input.canonical.bodyHash,
       dedupKey: input.dedupKey,
       subject: input.subject, fromAddress: input.fromAddress, date: input.date,
+      // `?? null` reproduces the column's own default: no INTERNALDATE means "arrival not
+      // recorded" on disk, and the sort clamp stays off for this row (mail 0119).
+      arrivedAt: input.arrivedAt ?? null,
       // `?? null` reproduces the column's own default (nullable, no default expression) — the
       // recipients' rule one line down, applied to the sender's display name (mail 0057).
       fromName: input.fromName ?? null,

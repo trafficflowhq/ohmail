@@ -153,6 +153,14 @@ export interface InsertMessageInput {
    */
   to?: EmailAddress[];
   cc?: EmailAddress[];
+  /**
+   * The honest arrival — the IMAP server's INTERNALDATE (`messages.arrived_at`, mail 0119).
+   * OPTIONAL, defaulting to NULL, the column's own default: an adapter that cannot say writes
+   * "not recorded", never a manufactured instant, and every fake repo keeps compiling. NOT the
+   * ingest clock — `created_at` already records that, and for a backfilled mailbox the two
+   * differ by months, which is why the sort clamp (`materialize.ts#sortAt`) keys on THIS.
+   */
+  arrivedAt?: Date | null;
   nativeLocator: NativeLocator;
   flags: { no_ai: boolean; no_forward: boolean; no_kb: boolean; priority: boolean };
   snippet?: string;                          // sensitivity-redacted preview (never an OTP)

@@ -61,7 +61,12 @@ const parsedDate = new WeakMap<EngineMessage, number>();
 function tsOf(m: EngineMessage): number {
   let t = parsedDate.get(m);
   if (t === undefined) {
-    t = m.date ? Date.parse(m.date) : 0;
+    // `sortAt ?? date` — the server's arrival-clamped instant when the row carries one, the
+    // sender-written header otherwise (mail 0119). ONE derivation for every date comparator, so
+    // a header months from arrival cannot take a position months from where the reader watched
+    // the row on one surface and not another.
+    const instant = m.sortAt ?? m.date;
+    t = instant ? Date.parse(instant) : 0;
     parsedDate.set(m, t);
   }
   return t;
@@ -290,7 +295,9 @@ export function messagesByDateDesc(reader: EntityReader): readonly EngineMessage
       for (let i = 0; i < hit.all.length; i++) {
         const prev = hit.all[i]!;
         const cur = byId.get(prev.id);
-        if (cur === undefined || cur.date !== prev.date) {
+        // BOTH halves of the sort key ({@link tsOf}): a delta that brings or moves `sortAt`
+        // while `date` stands is an order change the date test alone would repair over.
+        if (cur === undefined || cur.date !== prev.date || cur.sortAt !== prev.sortAt) {
           ok = false;
           break;
         }
@@ -536,30 +543,30 @@ export function parkedMessageIds(reader: EntityReader): Set<string> {
 }
 
 /**
- * "Earlier" is a history of reading, so it is ordered by reading — a date
- * sort files the message you finished with a minute ago under mail finished
- * days ago. Every unstamped row sorts below every stamped one: `lastReadAt`
- * is absent on mail read before the field existed or dated by nothing, and
- * interleaving those BY DATE would make a claim about reading order out of
- * a send time. Two blocks: known, most recently finished first; then
- * unknown, newest first — the boundary moves down on its own as mail is
- * re-read. `id` breaks remaining ties so equal-instant batches cannot reorder per render.
+ * "Earlier" is a history of reading, ordered by reading — a date sort files the message you
+ * finished with a minute ago under mail finished days ago. An UNSTAMPED row files at its own
+ * instant: `lastReadAt` is absent on mail read before the field existed, read in another
+ * client, or whose stamp a settle lost — the old rule (below every stamped row) filed such rows
+ * at a fixed boundary months down the list, lost to the view (mail 0119). The unpark re-homing
+ * (`lastReadAt = date`) already reads a row's own date as its reading instant; this is that
+ * idiom at the comparator. `id` breaks ties so equal-instant batches cannot reorder per render.
  */
 /**
  * The reading instant as a number, or `null` for "not known". Absent, explicitly `null`, and
  * unparseable all mean the same thing to a reader, so they must mean the same thing to the sort
- * — normalising here stops an unparseable stamp ranking as real or reading as the epoch.
- * Own-sent mail is stamped by its SEND time, and that is a reading time: writing a message is
- * finishing with it — without this every sent message was unstamped and sorted below everything
- * ever opened, so a just-sent message was hundreds of rows down. A real stamp still wins over
- * the date, or re-reading your own sent mail could not move it.
+ * — normalising here stops an unparseable stamp ranking as real or reading as the epoch. An
+ * unstamped row answers its OWN instant ({@link tsOf}'s key): for own-sent mail that is the send
+ * time (writing a message is finishing with it), for everything else the moment the mail
+ * happened — the place a reader looks for history, never the basement. A real stamp still wins
+ * over the date, or re-reading a message could not move it.
  */
 function readTimeOf(m: EngineMessage): number | null {
   const raw = m.lastReadAt ?? null;
   if (raw === null) {
-    if (!isOwnSent(m) || m.date === null) return null;
-    const sent = Date.parse(m.date);
-    return Number.isNaN(sent) ? null : sent;
+    const own = m.sortAt ?? m.date;
+    if (own == null) return null;
+    const t = Date.parse(own);
+    return Number.isNaN(t) ? null : t;
   }
   const t = Date.parse(raw);
   return Number.isNaN(t) ? null : t;
@@ -701,14 +708,17 @@ export interface ResurfacedThreadRow {
 }
 
 /**
- * THE INSTANT A ROW DATES A MESSAGE BY — the `Date:` header, else the arrival.
- *
- * The cutline's rule, under one name: `Date:` is sender-written and nullable, so a row with no
- * header would sort as the epoch and a conversation's newest message could be its oldest.
- * {@link EngineMessage.arrivedAt} is when the mailbox recorded it. `null` only when the row carries
- * neither, which no server this engine talks to produces.
+ * THE INSTANT A ROW DATES A MESSAGE BY — the sort instant, else the `Date:` header, else the
+ * arrival. `sortAt` first for {@link tsOf}'s reason (mail 0119): it is the header already clamped
+ * against the mailbox's recorded arrival, so a months-off header cannot decide a pull-forward, a
+ * badge or an open target either. Then the cutline's rule, under one name: `Date:` is
+ * sender-written and nullable, so a row with no header would sort as the epoch.
+ * {@link EngineMessage.arrivedAt} is when the mirror recorded it. `null` only when the row
+ * carries none of the three, which no server this engine talks to produces.
  */
-export function arrivalMs(m: Pick<EngineMessage, "date" | "arrivedAt">): number | null {
+export function arrivalMs(m: Pick<EngineMessage, "sortAt" | "date" | "arrivedAt">): number | null {
+  const sorted = m.sortAt == null ? Number.NaN : new Date(m.sortAt).getTime();
+  if (Number.isFinite(sorted)) return sorted;
   const header = m.date == null ? Number.NaN : new Date(m.date).getTime();
   if (Number.isFinite(header)) return header;
   const arrived = m.arrivedAt == null ? Number.NaN : new Date(m.arrivedAt).getTime();
