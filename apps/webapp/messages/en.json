@@ -3562,5 +3562,14 @@
     "kept": "Your mail and settings are kept. Nothing has been deleted, and your mail is on your own server either way.",
     "manage": "Manage subscription",
     "signOut": "Sign out"
+  },
+  "appError": {
+    "title": "ohmail hit an error.",
+    "body": "Nothing is lost \u2014 your mail is on your mail server. Reload to carry on.",
+    "reload": "Reload",
+    "signOut": "Sign out and back in",
+    "reference": "Error reference",
+    "copy": "Copy",
+    "copied": "Copied"
   }
 }

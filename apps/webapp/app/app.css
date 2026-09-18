@@ -167,6 +167,41 @@ body.reading .shell {
   color: var(--ink3);
 }
 
+/* THE WHOLE-PAGE FAILURE CARD — `(product)/error.tsx`, the boundary above the views. `.view-fail`
+   centres inside the shell's flex column; this one has no shell left around it, so it makes its
+   own ground and then reuses `.view-fail-card` for the card itself. */
+.page-fail {
+  min-height: 100dvh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 48px 24px;
+}
+.page-fail-acts {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 4px;
+}
+.page-fail-fact {
+  font-size: calc(12px + var(--type-up));
+  color: var(--ink3);
+}
+.page-fail-fact code {
+  font-family: ui-monospace, monospace;
+  user-select: all;
+}
+.page-fail-copy {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
 /* The Tag page's header slot — Rename and Delete. It used to carry a reading-layout toggle
    pushed to the right of them; History and Tag are the Ohbox's two-pane shape unconditionally
    now, so there is no toggle and `.view-mode` went with it. Padding matches `.vhead`'s

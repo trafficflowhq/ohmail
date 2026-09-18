@@ -3562,5 +3562,14 @@
     "kept": "Deine Post und deine Einstellungen bleiben. Es wurde nichts gelöscht, und deine Post liegt ohnehin auf deinem eigenen Server.",
     "manage": "Abo verwalten",
     "signOut": "Abmelden"
+  },
+  "appError": {
+    "title": "In ohmail ist ein Fehler aufgetreten.",
+    "body": "Nichts ist verloren \u2014 deine Post liegt auf deinem Mailserver. Lade neu, um weiterzumachen.",
+    "reload": "Neu laden",
+    "signOut": "Abmelden und neu anmelden",
+    "reference": "Fehlerkennung",
+    "copy": "Kopieren",
+    "copied": "Kopiert"
   }
 }
