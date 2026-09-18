@@ -2727,11 +2727,10 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
        * what we do and what the person is told. Unreachable is retried; a refused sign-in will not fix
        * itself, and retrying it every poll produced four LOGIN attempts a minute — which providers throttle
        * and some answer by locking the account, the app turning a wrong password into a lost mailbox. So this
-       * suspends the automatic re-dial. It clears EXPLICITLY, because "every path detaches the runtime"
-       * is true only of `PATCH` for a non-seed mailbox — the seal route excludes the seed and
-       * `forgetStoredLogin` never detaches, so on those paths the flag survived the very act that fixes
-       * it. The sign-out calls it; the seal route reaches it through {@link LocalMailboxRuntime.credentialReplaced}.
-       * Which credential path reaches which is the census in `test/credential-paths-clear-refusal.test.ts`.
+       * suspends the automatic re-dial. It clears EXPLICITLY: "every path detaches the runtime" holds only
+       * for `PATCH` on a NON-seed mailbox, so on the others the flag survived the act that fixes it. The
+       * sign-out calls it, the seal route reaches it through {@link LocalMailboxRuntime.credentialReplaced},
+       * and `test/credential-paths-clear-refusal.test.ts` is the census over which path reaches which.
        */
       let signInRefused = false;
       /**
