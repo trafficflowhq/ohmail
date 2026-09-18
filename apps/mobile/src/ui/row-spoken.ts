@@ -35,11 +35,15 @@ export function trackerShort(note: string): string {
 }
 
 /**
- * How many messages this row stands for — 0 where it stands for one, which in a LIST is every
- * row: only the reading view fills `earlier` (`state/live.ts#liveMessage`). Drawn and spoken from
- * this one read, so the count cannot appear on the strip without being said.
+ * How many messages this row stands for — 0 where it stands for one. Drawn and spoken from this
+ * one read, so the count cannot appear on the strip without being said.
+ *
+ * The projection's count first: it is the conversation's length as the server knows it, and it is
+ * the only answer a LIST row has, since only the reading view fills `earlier`. `earlier` stays as
+ * the fallback for a row built without the projection, where the members in hand are the count.
  */
 export function threadOfRow(m: Mail): number {
+  if (m.threadCount !== undefined) return m.threadCount;
   return m.earlier.length > 0 ? m.earlier.length + 1 : 0;
 }
 

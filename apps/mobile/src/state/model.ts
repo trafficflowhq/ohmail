@@ -86,6 +86,15 @@ export interface Mail {
    */
   newSince?: number;
   /**
+   * HOW MANY MESSAGES THE CONVERSATION HOLDS — absent where this row stands for one message.
+   *
+   * From the engine's own `threadSizeIndex` (the server's thread length where the mirror holds
+   * the thread row), so the number beside a subject is the same one the web app's row shows.
+   * `earlier` cannot answer it in a list: only the reading view fills that, which is why the
+   * count was 0 on every row of every list.
+   */
+  threadCount?: number;
+  /**
    * The rest of the conversation, oldest → newest, excluding this message.
    * Rendered in full in the reading view — never summarised into a count.
    */

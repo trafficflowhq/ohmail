@@ -66,6 +66,7 @@ import {
   type WithdrawOutcome,
   type ZonedComposition,
   resurfacedThreads,
+  conversationSize,
 } from "@ohmail/client-engine";
 import { Copy } from "../copy";
 import { refuse, type Refusal, type RefusalArg } from "../refusal";
@@ -437,6 +438,14 @@ function toMail(reader: EntityReader, m: EngineMessage, v: WorldView): WorldMail
     ...(m.trackerNote ? { trackerNote: m.trackerNote } : {}),
     ...(m.amount ? { amount: m.amount } : {}),
     ...(m.protected ? { protected: m.protected as Mail["protected"] } : {}),
+    /* THE CONVERSATION'S LENGTH, ON EVERY ROW OF EVERY LIST — `conversationSize` answers 0 for a
+       row standing for one message, and the badge and the spoken sentence both read that one
+       number. Before this the count came only from `earlier`, which only the reading view fills,
+       so a phone list showed a conversation of five as a single message. */
+    ...(() => {
+      const thread = conversationSize(reader, m);
+      return thread > 1 ? { threadCount: thread } : {};
+    })(),
     earlier: [],
   };
 }
