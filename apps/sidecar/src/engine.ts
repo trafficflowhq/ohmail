@@ -2727,10 +2727,11 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
        * what we do and what the person is told. Unreachable is retried; a refused sign-in will not fix
        * itself, and retrying it every poll produced four LOGIN attempts a minute — which providers throttle
        * and some answer by locking the account, the app turning a wrong password into a lost mailbox. So this
-       * suspends the automatic re-dial. It clears EXPLICITLY via {@link clearSignInRefusal}, which every
-       * credential path calls: "every path detaches the runtime" is true only of `PATCH` for a non-seed
-       * mailbox — the seal route excludes the seed and `forgetStoredLogin` never detaches, and on those paths
-       * the flag would have survived the very act that fixes it.
+       * suspends the automatic re-dial. It clears EXPLICITLY, because "every path detaches the runtime"
+       * is true only of `PATCH` for a non-seed mailbox — the seal route excludes the seed and
+       * `forgetStoredLogin` never detaches, so on those paths the flag survived the very act that fixes
+       * it. The sign-out calls it; the seal route reaches it through {@link LocalMailboxRuntime.credentialReplaced}.
+       * Which credential path reaches which is the census in `test/credential-paths-clear-refusal.test.ts`.
        */
       let signInRefused = false;
       /**
@@ -6163,6 +6164,23 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         redial: redialIfDead,
         credentialState: async () => (await resolveLogin()).state,
         forgetStoredLogin,
+        /**
+         * THE SEALED PASSWORD WAS REPLACED — see {@link LocalMailboxRuntime.credentialReplaced}.
+         *
+         * The re-read is what re-points this runtime's dial and its request key together; the
+         * clear is what lets a re-dial happen at all, since a refused sign-in suspends it. The
+         * dial is AWAITED so the route answers a verdict about the connection; the cycle behind
+         * it is not — one cycle, forced, because a person is waiting and a first sync is minutes.
+         */
+        async credentialReplaced() {
+          if (stopped) return;
+          await rereadCredential();
+          clearSignInRefusal("the stored password was replaced");
+          await redialIfDead({ force: true });
+          void syncUntilQuiet(1, { force: true }).catch((err: unknown) => {
+            log("mailbox_credential_cycle_failed", { mailboxId: mb.id, err });
+          });
+        },
         async start() {
           // ── A PASSWORD THAT IS THERE AND CANNOT BE USED IS AN OUTAGE ──────────────────────
           //
@@ -7476,6 +7494,22 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                     reason: "the new password is stored and this mailbox uses it from the next "
                       + "launch; until then this mailbox is not polling, and it is kept on the "
                       + "roster so that removing it still releases its claim and takes its mail",
+                  });
+                }
+              } else if (live) {
+                /* THE RUNTIME THE RE-POINT EXCLUDES — the seed, and a one-mailbox install is one.
+                   Its runtime is kept (the arm above says why) so the credential has to reach it
+                   some other way: without this the row holds the new password while this runtime
+                   dials the old, and `signInRefused` suspends the re-dial for ever. Its failure is
+                   logged and not raised — the password IS stored, and answering 500 would tell
+                   somebody the opposite of what the store now says. */
+                try {
+                  await live.credentialReplaced();
+                } catch (err) {
+                  log("local_mailbox_repoint_failed", {
+                    err,
+                    reason: "the new password is stored and this mailbox uses it from the next "
+                      + "launch or the next re-dial; nothing was undone",
                   });
                 }
               }

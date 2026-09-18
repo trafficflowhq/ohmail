@@ -377,6 +377,17 @@ export interface LocalMailboxRuntime {
   credentialState(): Promise<CredentialState>;
   /** Forget this mailbox's sealed password. Answers whether there was one to forget. */
   forgetStoredLogin(): Promise<boolean>;
+  /**
+   * THE SEALED PASSWORD WAS REPLACED — re-read it, drop the refusal, dial now.
+   *
+   * For the runtime the seal route does NOT re-point. It detaches and re-attaches every mailbox
+   * but the seed, and a one-mailbox install IS the seed: without this its new password is stored
+   * while this runtime goes on dialling the old one, and `signInRefused` suspends the re-dial for
+   * ever — the very state the seal was pressed to end. Weaker than a re-attach on purpose: the
+   * adapter, the cursors and the claim are left alone, and a read that does not open leaves this
+   * runtime exactly as it was.
+   */
+  credentialReplaced(): Promise<void>;
 }
 
 /**
