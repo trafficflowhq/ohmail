@@ -70,6 +70,7 @@ import {
   oauthAuthCodes,
   pushSubscriptions,
   recoveryCodes,
+  screenerSuggestOwed,
   totpSecrets,
   waitlist,
   webauthnChallenges,
@@ -345,6 +346,10 @@ export async function deleteAccount(ctx: ServiceContext): Promise<DeleteAccountR
     await drop("audit_log", tx.delete(auditLog).where(eq(auditLog.accountId, accountId)));
     await drop("idempotency_keys", tx.delete(idempotencyKeys).where(eq(idempotencyKeys.accountId, accountId)));
     await drop("push_subscriptions", tx.delete(pushSubscriptions).where(eq(pushSubscriptions.accountId, accountId)));
+    // The worker's suggest-owed mark (cloud 0039): scheduling priority only, but keyed by the
+    // account — and `accounts` is RETAINED as a pseudonymous row, so the FK's cascade never fires
+    // for an erasure. Without this line the mark would outlive the person it schedules work for.
+    await drop("screener_suggest_owed", tx.delete(screenerSuggestOwed).where(eq(screenerSuggestOwed.accountId, accountId)));
     // The account's own preferences — the dormancy dial, the Ohbox posture, and
     // `seed_confirmed_at`, which is the CONSENT EVENT of onboarding — were deleted FIRST, at
     // the top of this transaction: consent to something is a record about a person and there
