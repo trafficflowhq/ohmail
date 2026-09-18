@@ -2815,7 +2815,7 @@ jobs:
       - name: Install flatpak and the runtimes the manifest names
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends flatpak
+          sudo apt-get install -y --no-install-recommends flatpak flatpak-builder
 
           # A RUNTIME DIRECTORY, WHICH A CI STEP DOES NOT HAVE EITHER. flatpak allocates an
           # instance directory under XDG_RUNTIME_DIR for each sandbox it starts, and the nested
@@ -2829,15 +2829,15 @@ jobs:
             echo "no runtime directory on this runner; flatpak gets $D"
           fi
 
-          # THE RUNTIMES GO SYSTEM-WIDE, AND THE BUILDER NEEDS A SESSION BUS. flatpak-builder runs
-          # inside the org.flatpak.Builder sandbox and asks the HOST's flatpak whether the sdk is
-          # there, through the org.freedesktop.Flatpak portal — which a GitHub step has no session
-          # bus to reach, so every run died `Failed to init: Unable to find sdk` while this step
-          # reported success, and moving the runtimes (per-user with FLATPAK_USER_DIR, then
-          # system-wide) changed nothing: the installation was never the variable. Measured in a
-          # noble container on this runner's own flatpak 1.14.6 — the same command fails with no
-          # session bus and builds under `dbus-run-session`, with the runtimes where this step puts
-          # them. Every builder run below carries the wrapper; system-wide stays, as the README shows.
+          # THE BUILDER COMES FROM apt; THE FLATHUB APP KEEPS THE REVIEW TOOLS. flatpak-builder
+          # inside the org.flatpak.Builder sandbox asks the HOST's flatpak over the
+          # org.freedesktop.Flatpak portal, which a CI step has no session bus to reach: every run
+          # here died `Failed to init: Unable to find sdk` while this step reported success, and
+          # moving the runtimes (per-user with FLATPAK_USER_DIR, then system-wide) changed nothing.
+          # A session bus gets it past that, and it then refuses its own finished tree — `Command
+          # 'ohmail' not found` with the binary in files/bin — while the host builder builds the
+          # same manifest from the same tree to a repository. Measured both ways in one container
+          # on this runner's flatpak. The runtimes stay system-wide, as the README shows a reader.
           flatpak remote-add --user --if-not-exists flathub \
             https://dl.flathub.org/repo/flathub.flatpakrepo
           sudo flatpak remote-add --system --if-not-exists flathub \
@@ -2864,10 +2864,11 @@ jobs:
       # a missing one otherwise reads as the app failing rather than the runner.
       - name: The tools this job spawns
         run: |
-          for t in flatpak node dbus-run-session; do
+          for t in flatpak flatpak-builder node dbus-run-session; do
             command -v "$t" >/dev/null || { echo "$t is not installed" >&2; exit 1; }
           done
-          for c in flatpak-builder appstreamcli desktop-file-validate flatpak-builder-lint; do
+          flatpak-builder --version >/dev/null || { echo "flatpak-builder does not run" >&2; exit 1; }
+          for c in appstreamcli desktop-file-validate flatpak-builder-lint; do
             dbus-run-session -- flatpak run --command="$c" org.flatpak.Builder --version >/dev/null 2>&1 \
               || dbus-run-session -- flatpak run --command="$c" org.flatpak.Builder --help >/dev/null \
               || { echo "$c is not in org.flatpak.Builder" >&2; exit 1; }
@@ -2910,8 +2911,7 @@ jobs:
       # test/flatpak-manifest.test.ts instead.
       - name: Resolve every declared source
         run: |
-          dbus-run-session -- flatpak run --command=flatpak-builder org.flatpak.Builder \
-            --user --force-clean --download-only \
+          flatpak-builder --force-clean --download-only \
             flatpak-build apps/desktop/flatpak/app.ohmail.Desktop.yml
 
       # WHAT THE BUILDER CAN SEE, ASKED BEFORE THE BUILD DEPENDS ON IT. Stopping at the first
@@ -2926,15 +2926,13 @@ jobs:
           M=apps/desktop/flatpak/app.ohmail.Desktop.yml
           FIRST=$(sed -n 's/^  - name: //p' "$M" | head -1)
           [ -n "$FIRST" ] || { echo "no module name could be read out of $M" >&2; exit 1; }
-          dbus-run-session -- flatpak run --command=flatpak-builder org.flatpak.Builder \
-            --user --force-clean --disable-download --stop-at="$FIRST" \
+          flatpak-builder --force-clean --disable-download --stop-at="$FIRST" \
             flatpak-init "$M" \
             || { echo "the runtime, the sdk or an sdk-extension $M names is not installed where flatpak-builder looks" >&2; exit 1; }
 
       - name: Build the Flatpak, with nothing left to fetch
         run: |
-          dbus-run-session -- flatpak run --command=flatpak-builder org.flatpak.Builder \
-            --user --force-clean --disable-download \
+          flatpak-builder --force-clean --disable-download \
             --repo=flatpak-repo \
             flatpak-build apps/desktop/flatpak/app.ohmail.Desktop.yml
 
