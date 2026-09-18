@@ -7425,6 +7425,24 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
             try {
               const deps = depsFor();
               const body = (await req.json()) as Record<string, unknown>;
+              /* ONE PASSWORD, BOTH TRANSPORTS — and a caller RE-SUPPLYING one does not know this
+                 mailbox's submission server. The door states both blocks itself and never reaches
+                 this; without it a pass-only body leaves the `smtp` row on the OLD password and
+                 sending breaks silently a fix away from the thing that was fixed. Only where a row
+                 EXISTS: inventing a block refuses `smtp host is required` for a mailbox that sends
+                 through nothing, and `keepingIncoming` is what covers a submission dial that says
+                 no. */
+              const incoming = (body.imap ?? {}) as Record<string, unknown>;
+              if (typeof incoming.pass === "string" && incoming.pass !== "" && body.smtp === undefined) {
+                const [submission] = await db.select({ mailboxId: mailboxCredentials.mailboxId })
+                  .from(mailboxCredentials)
+                  .where(and(
+                    eq(mailboxCredentials.mailboxId, mailboxId),
+                    eq(mailboxCredentials.transport, "smtp"),
+                  ))
+                  .limit(1);
+                if (submission) body.smtp = { pass: incoming.pass };
+              }
               const dto = await keepingIncoming(body, (b) => deps.services!.mailbox.update(
                 {
                   db, accountId: core.accountId, userId: core.userId,
