@@ -74,6 +74,21 @@
   </screenshots>
 
   <releases>
+    <release version="0.20.0" date="2026-09-19">
+      <description>
+        <ul>
+          <li>Resurfaced conversations appear once, with a badge when new mail arrived since</li>
+          <li>A device organizing one mailbox no longer resurfaces mail in a mailbox it has handed to another organizer</li>
+          <li>The Flatpak manifest's generated npm sources cover the published lockfile again — fifteen packages were missing, and an offline build resolves only what it declares</li>
+          <li>Change a mailbox's password without removing it</li>
+          <li>A message keeps its place in the Ohbox when you read it</li>
+          <li>The phone reads out a conversation's badges — thread count, protection, history and new mail</li>
+          <li>A device that has handed its mailbox to another organizer no longer resurfaces mail on its own</li>
+          <li>Conversations show and read out their message count in every list, on the phone and in the web app</li>
+          <li>Screener suggestions arrive while you look</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.19.6" date="2026-09-18">
       <description>
         <ul>
@@ -151,53 +166,6 @@
       <description>
         <ul>
           <li>Scrolling the Ohbox no longer hides the messages at the top</li>
-        </ul>
-      </description>
-    </release>
-    <release version="0.19.1" date="2026-09-16">
-      <description>
-        <ul>
-          <li>Reopening the app no longer holds the text of every reply you have sent</li>
-          <li>Mail the app lets go of takes its leftovers with it</li>
-          <li>A phone or second computer paired to this one keeps less of the mailbox</li>
-          <li>Re-pairing while the app was renewing its access no longer costs you the new pairing</li>
-          <li>Two sentences about where your password and your key go now say what the app does</li>
-          <li>The "Another computer" door says it is not available yet</li>
-          <li>A folder you delete no longer takes a message that arrived while it was being emptied</li>
-          <li>A folder your server recreated no longer shows its old contents</li>
-          <li>A message deleted and restored on another device no longer disappears from this one</li>
-          <li>A message restored from Junk elsewhere no longer opens blank</li>
-          <li>Removing a mailbox stops the writes that were still in flight</li>
-          <li>Erasing an account or a mailbox stops the work already running</li>
-          <li>A message is sent as you last saw it</li>
-          <li>Cancelling a queued send on the phone cancels it</li>
-          <li>Turning off "Also move the mail already in your mailbox" leaves that mail where it is</li>
-          <li>A rule you change on a mailbox another computer organizes now takes effect</li>
-          <li>A change still travelling to your organizer is no longer reported as done</li>
-          <li>Resurfacing a message takes a time, not just a day</li>
-          <li>The unsubscribes a screen-out leaves behind now finish</li>
-          <li>Two computers can no longer both organize a mailbox after a take-over</li>
-          <li>A lost answer no longer stops a mailbox being organized</li>
-          <li>A phone that could not start organizing says so instead of showing it</li>
-          <li>A clock you corrected no longer keeps refusing</li>
-          <li>Removing a mailbox on the phone removes its mail</li>
-          <li>The phone shows the state of the account you are looking at</li>
-          <li>Stop on the phone reaches the mailbox every time you press it</li>
-          <li>A server that serves its API under /api works throughout</li>
-          <li>Cancelling the account-erase check cancels it</li>
-          <li>A recovery code is spent only when it signs you in</li>
-          <li>A temporary fault is no longer reported as an empty AI budget</li>
-          <li>Opening settings no longer requests a subscription-management link each time</li>
-          <li>Turning hosting off stops it, even when the setting cannot be saved</li>
-          <li>The two buttons on a revoked pairing open what they name</li>
-          <li>The window notices when its mail engine stops</li>
-          <li>A crash while ohmail is starting no longer locks you out of your own mail</li>
-          <li>An attachment you open and leave no longer stays in memory</li>
-          <li>A long store upgrade says how far along it is</li>
-          <li>A deletion you confirmed completes after a reload, or says it did not</li>
-          <li>A first sync of a mailbox with many folders no longer loads a message from every one of them</li>
-          <li>A long first import no longer keeps the whole import in the local database's log</li>
-          <li>The demo on the site keeps to itself</li>
         </ul>
       </description>
     </release>

@@ -18,6 +18,72 @@ See [Status](README.md#status--read-this-first).
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
 [Roadmap](README.md#roadmap).
 
+## [0.20.0] — 2026-09-19
+
+### Resurfaced conversations appear once, with a badge when new mail arrived since
+
+Mail you park comes back a message at a time, so a conversation you had put away returned as
+several rows — and a reply that had arrived in the meantime stood again under New. Resurfaced now
+shows one row per conversation, opening on its newest message. Where new mail arrived after you
+asked to see the conversation again, the row says how many; reading it clears the badge and leaves
+the conversation where it is until you are done with it. Mail arriving in a conversation whose
+return time has not come yet brings it back now rather than at its appointed hour.
+
+### A device organizing one mailbox no longer resurfaces mail in a mailbox it has handed to another organizer
+
+Mail you put away until a set hour came back in every mailbox on an account, including one this
+device had stopped organizing. It now comes back only in the mailboxes this device holds; the
+copy that organizes the other one brings its mail back, at the hour you chose.
+
+### The Flatpak manifest's generated npm sources cover the published lockfile again — fifteen packages were missing, and an offline build resolves only what it declares
+
+The CI half of this lane is not a changelog item: it is this repository's own check. The sources
+are, because the README hands a reader the manifest and tells them to build it.
+
+### Change a mailbox's password without removing it
+
+When your mail provider's password changes, Settings → Mailboxes (and Settings → This phone) offer
+**Sign in again**: one field, tried against your mail server before anything is stored. The copy on
+your computer, your folders and everything ohmail has organized stay where they are.
+
+### A message keeps its place in the Ohbox when you read it
+
+Rows in the Ohbox now sit by when mail arrived in your mailbox. A sender's written date or a
+calendar invitation's time is still shown, but it no longer decides where a row sits when it
+disagrees with the arrival — so reading a message never files it months away. Mail whose reading
+time is not known sits at its own date instead of below everything you have ever read; on an
+existing mailbox those are the only rows that move.
+
+### The phone reads out a conversation's badges — thread count, protection, history and new mail
+
+A mail row on the phone read out its sender, subject and time and nothing else, so every badge
+beside them — protection, the conversation's length, the folder a History row sits in, a blocked
+tracker, an amount, and the chip for mail that arrived since you asked to see a conversation
+again — was on screen and unreadable to a screen reader. The row now says all of them, in the
+order the web app uses.
+
+### A device that has handed its mailbox to another organizer no longer resurfaces mail on its own
+
+Mail you put away until a set hour came back on every device that still had the mailbox open,
+including one you had stopped organizing from. That device now leaves the schedule alone: the
+copy that holds the mailbox brings the mail back, once, at the hour you chose.
+
+### Conversations show and read out their message count in every list, on the phone and in the web app
+
+A mail row standing for a conversation of nine showed its length only in the web app's demo — the
+number came from a field real mail never carries — and the phone's lists showed none at all, so a
+conversation of five was indistinguishable from a single message until you opened it. Every list
+on both surfaces now shows it, counted the way the mail server counts it rather than by how much
+of the conversation the device is holding, and a screen reader hears it with the rest of the row.
+
+### Screener suggestions arrive while you look
+
+A suggestion bought after you opened the Screener now appears on the row within seconds, instead
+of waiting for a reload. A sender you decided about stays decided — newer mail from them no longer
+brings the row back while the decision is carried out. On accounts with automatic suggestions
+turned on, suggestions are now bought the moment new mail is held for screening, and a row without
+an answer says one is coming.
+
 ## [0.19.6] — 2026-09-18
 
 ### Removing a mailbox works again after the away responder has replied
@@ -7067,7 +7133,8 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.19.6...HEAD
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.20.0...HEAD
+[0.20.0]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.20.0
 [0.19.6]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.19.6
 [0.19.5]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.19.5
 [0.19.3]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.19.3
