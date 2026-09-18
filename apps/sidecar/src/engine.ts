@@ -4834,8 +4834,13 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         // BEFORE the cycles, not after: a resurface is a local database fact and does not depend on
         // the mailbox being reachable, so it must survive a cycle that throws on a dead connection.
         /* THE INSTALL'S OWN WORK, ONCE. See {@link onceForTheAccount}: another mailbox's drain that
-         is already doing this is doing it for everybody. */
-      await onceForTheAccount(resurfaceDue);
+           is already doing this is doing it for everybody. ORGANIZER ONLY, and the same
+           `if (organizing)` the three passes around it take: the flip writes the triage state the
+           mailbox's real organizer owns, so a stood-down install running it surfaces mail a second
+           time, on a device nobody handed the mailbox to. The gate is the pass's own docblock held
+           to rather than reworded. Literal and on one line, like its neighbours — `reader-drain`
+           reads this file and a source census cannot see through a brace. */
+        if (organizing) await onceForTheAccount(resurfaceDue);
         // Due appointments next, ahead of the cycles: a scheduled send has a clock and must not
         // wait out a backlog drain nor be skipped by an inbound cycle's throw (its SMTP dial fails
         // independently and the pass re-arms the row). ORGANIZER ONLY, per `SyncDeps.role`: a
