@@ -1783,6 +1783,7 @@ export function OhboxView({
       // read here, answered, or read on another mail client. See `slideOut`.
       className={settling.has(m.id) ? "settling" : undefined}
       threadCount={m.threadCount}
+      threadLabel={m.threadCount ? rowBadge.thread(m.threadCount) : undefined}
       /* An own-sent row's LEAD is the RECIPIENT's and stays that way: the row is about the
          person it went to. The strip beside the subject is NOT suppressed with it — the faces
          name who the CONVERSATION is between, which the reader's own reply is one voice of.
@@ -1908,6 +1909,10 @@ export function OhboxView({
      */
     const sent = sentLabelOf(shown);
     const sentLeads = sent !== null && g.unreadCount === 0;
+    /* The conversation's length as the SERVER knows it where a Resurfaced row has its thread row —
+       a windowed mirror holding three of nine would otherwise say three. Read once: the badge
+       shows it and the row's description says it, and two reads could disagree. */
+    const threadCount = g.resurfaced?.count ?? g.members.length;
     return (
       <MessageRow
         spoken={rowBadge.spoken}
@@ -1939,9 +1944,8 @@ export function OhboxView({
         unread={g.members.some(effUnread)}
         seen={!g.members.some(effUnread)}
         selected={selected != null && g.members.some((m) => m.id === selected.id)}
-        /* The conversation's length as the SERVER knows it where a Resurfaced row has its thread
-           row — a windowed mirror holding three of nine would otherwise say three. */
-        threadCount={g.resurfaced?.count ?? g.members.length}
+        threadCount={threadCount}
+        threadLabel={threadCount > 1 ? rowBadge.thread(threadCount) : undefined}
         newSinceLabel={
           g.resurfaced && g.resurfaced.newSince > 0
             ? t("newSince", { count: g.resurfaced.newSince })

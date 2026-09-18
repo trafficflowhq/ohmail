@@ -4,9 +4,9 @@
  * `MessageRow` assembled this inline, which made the order unreadable from anywhere else: the
  * phone's row spoke sender, subject, stamp and read state and NONE of its badges, and nothing
  * could notice. The order lives here so the phone's twin (`apps/mobile/src/ui/row-spoken.ts`)
- * is held against it by a test rather than by somebody remembering. `thread` and `tracker` have
- * their places although this surface emits neither: a kind with no slot is a kind whose place
- * gets invented twice.
+ * is held against it by a test rather than by somebody remembering. `tracker` has its place
+ * although this surface emits it nowhere: a kind with no slot is a kind whose place gets
+ * invented twice.
  */
 export type RowSpokenKind =
   | "arrived"
@@ -77,6 +77,13 @@ export interface MessageRowFacts {
   unread?: boolean;
   spoken?: MessageRowSpoken;
   hasAttachment?: boolean;
+  threadCount?: number;
+  /**
+   * The conversation's length IN WORDS, from the host's catalogue — the badge draws `N` and a
+   * number read out in a list of capsules has no referent. Same contract as `protectedLabel`:
+   * this package holds no catalogue, so the fact is spoken only where the host handed a sentence.
+   */
+  threadLabel?: string;
   protectedLabel?: string;
   heldCount?: number;
   heldLabel?: string;
@@ -99,6 +106,10 @@ export function messageRowFacts(p: MessageRowFacts): RowSpokenFact[] {
   const arrived = p.timeSpoken ?? p.time;
   if (arrived) said.push({ kind: "arrived", text: arrived });
   if (p.spoken) said.push({ kind: "readState", text: p.unread ? p.spoken.unread : p.spoken.read });
+  /* A conversation of one is not a conversation — the row draws no badge for it either. */
+  if (p.threadCount !== undefined && p.threadCount > 1 && p.threadLabel !== undefined) {
+    said.push({ kind: "thread", text: p.threadLabel });
+  }
   if (p.hasAttachment && p.spoken) said.push({ kind: "attachment", text: p.spoken.attachment });
   if (p.protectedLabel !== undefined) said.push({ kind: "protected", text: p.protectedLabel });
   if (p.heldCount !== undefined && p.heldCount > 1 && p.heldLabel !== undefined) {

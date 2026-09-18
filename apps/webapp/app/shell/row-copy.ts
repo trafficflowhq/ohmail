@@ -19,6 +19,11 @@ export interface RowBadgeCopy {
   /** The held chip's whole phrase — the count included, because languages place it differently. */
   held: (count: number) => string;
   /**
+   * The conversation's length as a SENTENCE. The row draws it as a bare number, which is all a
+   * capsule has room for and nothing at all to a reader hearing the row read out.
+   */
+  thread: (count: number) => string;
+  /**
    * THE TWO FACTS A ROW DRAWS IN COLOUR AND SHAPE, IN WORDS — read state and the clip. Same
    * journey as the badges above and one more reason: a screen reader hears no dot and no ink, so
    * "unread" was carried by nothing at all. Memoized WITH the rest, because the row takes it as
@@ -33,6 +38,7 @@ export function useRowBadgeCopy(): RowBadgeCopy {
     () => ({
       protectedLabel: t("rowProtected"),
       held: (count: number) => t("rowHeld", { count }),
+      thread: (count: number) => t("rowThread", { count }),
       spoken: {
         unread: t("rowUnread"),
         read: t("rowRead"),

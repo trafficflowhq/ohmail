@@ -148,6 +148,13 @@ export interface MessageRowProps {
   dull?: boolean;
   threadCount?: number;
   /**
+   * THE COUNT'S WORDS, for the row's description — the badge is `⤷ N` and a bare number read
+   * out among capsules says nothing about what is being counted. Handed by the host like
+   * {@link MessageRowProps.protectedLabel}, and without it the row draws the badge and stays
+   * silent about it, which is what this package having no catalogue means.
+   */
+  threadLabel?: string;
+  /**
    * Thread participants: two or more entries draw overlapping small
    * circles in the badge strip, newest voice first, after the `⤷ N` count
    * — same {@link Avatar}, same address-keyed hue as everywhere else. The
@@ -263,6 +270,7 @@ export function MessageRow(props: MessageRowProps) {
     picked,
     dull,
     threadCount,
+    threadLabel,
     participants,
     hasAttachment,
     tags,
@@ -495,6 +503,8 @@ export function MessageRow(props: MessageRowProps) {
     unread,
     spoken,
     hasAttachment,
+    threadCount,
+    threadLabel,
     protectedLabel: typeof props.protectedLabel === "string" ? props.protectedLabel : undefined,
     heldCount,
     heldLabel: typeof heldLabel === "string" ? heldLabel : undefined,

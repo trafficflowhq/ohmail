@@ -1559,7 +1559,8 @@
     "awayAnsweredAt": "{label}<stamp> · {when}</stamp>",
     "awayAnsweredAria": "Vom Abwesenheitsassistenten beantwortet {whenLong}",
     "deliveredTo": "{label}",
-    "deliveredToTitle": "Zugestellt an {label}"
+    "deliveredToTitle": "Zugestellt an {label}",
+    "rowThread": "{count, plural, one {# Nachricht in diesem Gespräch} other {# Nachrichten in diesem Gespräch}}"
   },
   "nav": {
     "skip": "Zum Inhalt springen",

@@ -1559,7 +1559,8 @@
     "awayAnsweredAt": "{label}<stamp> · {when}</stamp>",
     "awayAnsweredAria": "Answered by the away responder {whenLong}",
     "deliveredTo": "{label}",
-    "deliveredToTitle": "Delivered to {label}"
+    "deliveredToTitle": "Delivered to {label}",
+    "rowThread": "{count, plural, one {# message in this conversation} other {# messages in this conversation}}"
   },
   "nav": {
     "skip": "Skip to content",

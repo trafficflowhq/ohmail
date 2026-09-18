@@ -307,6 +307,7 @@ export function TriageView({
         seen={!m.unread}
         selected={shown?.id === m.id}
         threadCount={m.threadCount}
+        threadLabel={m.threadCount ? rowBadge.thread(m.threadCount) : undefined}
         hasAttachment={m.hasAttachments}
         protectedLabel={m.protected != null ? rowBadge.protectedLabel : undefined}
         tags={tagsOfMessage(m, tags).map((x) => ({ name: x.name, hue: hueOf(x) }))}
