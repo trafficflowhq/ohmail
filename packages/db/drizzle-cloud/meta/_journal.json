@@ -169,6 +169,13 @@
       "when": 1791328224221,
       "tag": "0038_account_isolation",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1791328224222,
+      "tag": "0039_screener_suggest_owed",
+      "breakpoints": true
     }
   ]
 }

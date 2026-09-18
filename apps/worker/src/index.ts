@@ -8,7 +8,8 @@ import {
   type StandDownExport,
 } from "@trafficflow/db";
 import {
-  makeEntitlementsClient, refundObligationsOn, makeOwnedDb, makeChangeWakeHub, type OwnedDb, type ChangeWakeFanout } from "@trafficflow/db/cloud";
+  makeEntitlementsClient, refundObligationsOn, makeOwnedDb, makeChangeWakeHub, type OwnedDb, type ChangeWakeFanout,
+  markScreenerSuggestOwed, owedSuggestAccounts, clearScreenerSuggestOwed } from "@trafficflow/db/cloud";
 import {
   runAlertPass,
   webhookAlertSink,
@@ -188,6 +189,16 @@ export const AWAY_REPLY_REDELIVER_RETRY_MS = 15 * 60 * 1000;
  * chose. See `sync-kick.ts` and `mailboxes.sync_requested_at` (mail 0049).
  */
 export const SYNC_KICK_EVERY_MS = 3_000;
+
+/**
+ * The suggest-owed mark writer's per-account pacing (cloud 0039) — how often one account's held
+ * ingests may write the durable mark. Thirty seconds, half the poll interval: a first import
+ * holding hundreds of senders costs a handful of upserts instead of one per message, while an
+ * account quiet for a cycle always gets its mark through. A paced-away write is covered by the
+ * in-process hint (same cycle) and by the cycle itself (the backstop), so this is a cost dial,
+ * never a correctness one. A `const` for {@link SYNC_KICK_EVERY_MS}'s reason.
+ */
+export const SUGGEST_OWED_MARK_GAP_MS = 30_000;
 
 /** Live scheduling counters for the health endpoint. */
 export interface WorkerStats {
@@ -799,6 +810,41 @@ export async function startWorkerWithLock(
     const awayReplySweep = makeAwayReplySweep();
     /** Starts DUE. Only paces the RETRY; the gate is the sweep's. */
     let lastAwayReplySweepAt = 0;
+    /**
+     * ACCOUNTS WHOSE INGEST HELD A SENDER THIS PROCESS'S CYCLE HAS NOT VISITED YET — the
+     * in-process half of the suggest-owed mark (cloud 0039). The DURABLE half is the table; this
+     * set is what makes the mark visible to the SAME cycle that ingested the hold (the writer is
+     * fire-and-forget, so its commit can land after the owed read). Consumed by the owed-first
+     * serve; a crash loses only the hint, never the row.
+     */
+    const suggestOwedHints = new Set<string>();
+    /**
+     * The mark writer's per-account pacing — one durable upsert per account per
+     * {@link SUGGEST_OWED_MARK_GAP_MS}, so a first import holding hundreds of senders costs a
+     * handful of writes rather than one per message. A paced-away write is covered twice over:
+     * the hint above reaches this cycle, and the 60 s cycle serves every account regardless.
+     */
+    const suggestOwedMarkedAt = new Map<string, number>();
+    /**
+     * Told by ingest that it HELD a first-contact sender ({@link SyncDeps.onScreenerHold}).
+     * Fire-and-forget by design — the cycle is the backstop for a lost mark — and it may never
+     * throw into the sync cycle, so the write's failure is one log line. Gated on the opt-in
+     * INSIDE the statement (`markScreenerSuggestOwed` reads `auto_suggest_at` in the same
+     * INSERT … SELECT), so an opted-out account costs one indexed read and gains no row.
+     */
+    const noteScreenerHold = (accountId: string): void => {
+      suggestOwedHints.add(accountId);
+      const last = suggestOwedMarkedAt.get(accountId) ?? 0;
+      if (Date.now() - last < SUGGEST_OWED_MARK_GAP_MS) return;
+      suggestOwedMarkedAt.set(accountId, Date.now());
+      void markScreenerSuggestOwed(db as unknown as Tx, accountId).catch((err: unknown) => {
+        log.warn("screener_suggest_owed_mark_failed", {
+          accountId, err,
+          reason: "the durable suggest-owed mark could not be written; the in-process hint " +
+            "still serves this cycle and the 60 s cycle remains the backstop — latency, not loss",
+        });
+      });
+    };
     /**
      * Where each account's LAST gated heal run stopped, kept only while it stopped on its
      * BUDGET. An account holding more duplicate-name groups than one run's cap would otherwise
@@ -3405,6 +3451,9 @@ export async function startWorkerWithLock(
              * `role` and for its reason — written by `mayOrganize` on both arms at THIS cycle's
              * gate, so it is the current receipt and never the attach-time one on `rt.deps`. */
             writeAuthority: rt.leasePermit,
+            // Told when this pass HOLDS a first-contact sender at the gate — the suggest-owed
+            // mark's writer ({@link SyncDeps.onScreenerHold}), fire-and-forget by design.
+            onScreenerHold: noteScreenerHold,
             // The cap is refreshed per cycle like the screening posture beside it, so an
             // upgrade's headroom (or a downgrade's new ceiling) applies without a re-attach.
             storageCap: await storageCapFor(rt.accountId),
@@ -4026,6 +4075,72 @@ export async function startWorkerWithLock(
         });
       }
       const passAccounts = accountsOf(passMailboxes);
+
+      // ── SERVE THE SUGGEST-OWED ACCOUNTS FIRST (cloud 0039) ──────────────────────────────
+      // Accounts whose ingest HELD a first-contact sender since their last suggest visit, served
+      // at the TOP of the pass sections — the section chain is why a suggestion trailed a landing
+      // by over a minute while every piece was healthy. Two sources, union'd: the durable table
+      // (survives a crash) and the in-process hints (visible to the SAME cycle that ingested).
+      // Intersected with THIS shard's served set; per account, auto-apply still runs BEFORE the
+      // buy (the suggest section's load-bearing order). The mark is cleared only up to the read
+      // instant, so a hold landing mid-serve keeps its row; the unconditional suggest section
+      // below stays as the backstop. All four spend bounds live in the pass, untouched here.
+      {
+        const owedReadAt = new Date();
+        let owedRows: Array<{ accountId: string; owedAt: Date }> = [];
+        try {
+          owedRows = await owedSuggestAccounts(db as unknown as Tx);
+        } catch (err) {
+          noteIfSharedDatabaseFault(err);
+          log.warn("screener_suggest_owed_read_failed", {
+            err,
+            reason: "the owed marks could not be read; every opted-in account is still served " +
+              "by the suggest section below this cycle — latency, not loss",
+          });
+        }
+        const servedHere = new Set(passAccounts);
+        const owed: string[] = [];
+        for (const r of owedRows) {
+          if (servedHere.has(r.accountId) && !owed.includes(r.accountId)) owed.push(r.accountId);
+        }
+        for (const a of suggestOwedHints) {
+          if (servedHere.has(a) && !owed.includes(a)) owed.push(a);
+        }
+        for (const accountId of owed) {
+          if (stopped) return;
+          suggestOwedHints.delete(accountId);
+          try {
+            const applied = await screenerAutoApplyPass(db as unknown as Tx, { accountId, log }, new Date());
+            if (applied.ran && applied.moved > 0) {
+              log.info("screener_auto_apply_pass", { accountId, moved: applied.moved, capped: applied.capped });
+            }
+            const screening = await screeningFor(accountId);
+            const { ran, bought, charged, stopped: why, capped } = await screenerAutoSuggestPass(
+              db as unknown as Tx,
+              {
+                accountId, log,
+                classifier: classifierCircuit?.port(),
+                ...(spend ? { credits: spend } : {}),
+                ...(obligations ? { obligations } : {}),
+                ...(screening.ohboxBar ? { ohboxBar: screening.ohboxBar } : {}),
+              },
+            );
+            if (ran && (bought > 0 || why)) {
+              log.info("screener_suggest_owed_served", { accountId, bought, charged, stopped: why, capped });
+            }
+            // Cleared after ANY non-throwing pass, opted-in or not: a stale mark for an account
+            // that opted out would otherwise lead every cycle for ever.
+            await clearScreenerSuggestOwed(db as unknown as Tx, accountId, owedReadAt);
+          } catch (err) {
+            noteIfSharedDatabaseFault(err);
+            log.error("screener_suggest_owed_serve_failed", {
+              accountId, err,
+              reason: "the owed serve failed before its mark was cleared, so the next cycle " +
+                "retries it; nothing is marked twice and the suggest section below still runs",
+            });
+          }
+        }
+      }
 
       // The bubble-up resurfacing pass, in the loop and time-gated. It lives here rather than a platform
       // cron because `runBubbleUpCron` takes `acquireLeaderLock(…, leaderLockKeyFor(shardIndex))` — the

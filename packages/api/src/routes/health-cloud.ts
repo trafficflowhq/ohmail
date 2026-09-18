@@ -167,6 +167,15 @@ export const CLOUD_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // way to find out. With the marker the deployment says `503 schema_incomplete` and names the
   // migration instead, before a single person presses Draft.
   ["credit_refund_obligations", "last_fault"],
+  // cloud 0039_screener_suggest_owed — `owed_at` is the table's LAST column, on the rule above,
+  // and the column the reads touch: the cycle's owed-first serve orders by it and the retire
+  // predicates on it (`account_id` is the PK and exists the moment the table does).
+  //
+  // The loudness is the SWALLOWED kind: the mark's writer is best-effort by design — the cycle
+  // is the backstop — so a worker ahead of the migration logs `screener_suggest_owed_mark_failed`
+  // per held ingest and the suggest cadence quietly falls back to the cycle, which is precisely
+  // the symptom the table exists to remove. `503 schema_incomplete` at the deploy gate names it.
+  ["screener_suggest_owed", "owed_at"],
 ] as const;
 
 /**
@@ -283,7 +292,7 @@ export const CLOUD_TIER_MARKERS = SCHEMA_MARKERS;
  * FOREIGN-KEY-only migration is probed by its KEY marker, which is what 0038 added the class for.
  * The tag asserts reconciliation against the newest entry.
  */
-export const CLOUD_SCHEMA_MARKER_JOURNAL_TAG = "0038_account_isolation";
+export const CLOUD_SCHEMA_MARKER_JOURNAL_TAG = "0039_screener_suggest_owed";
 
 /** The journal entries {@link SCHEMA_MARKERS} was last reconciled against (asserted by a test). */
 export const SCHEMA_MARKER_JOURNAL_TAG =

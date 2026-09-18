@@ -233,6 +233,16 @@ export interface SyncDeps {
    */
   fence?: SyncWriteFence;
   /**
+   * TOLD AFTER THIS CYCLE COMMITS A HOLD — a NEW message this organizer routed to the Screener.
+   * The hosted worker passes it to write the suggest-owed mark (cloud 0039), so its cycle serves
+   * this account's suggest pass FIRST instead of at the cadence tail. ABSENT ⇒ nothing is noted,
+   * right for every other composition: the standalone engine's pass runs at its own drain tail,
+   * and the reconcile backstop must not re-mark what ingest marked. Called AFTER the commit
+   * settles, never inside the transaction, and it may not throw into the cycle — the worker's
+   * callback is fire-and-forget; the 60 s cycle is the backstop for a lost mark.
+   */
+  onScreenerHold?: (accountId: string) => void;
+  /**
    * THE ORGANIZER LEASE THIS CYCLE WRITES UNDER — a permit, or the named reason there is none. The
    * fence above answers worker-to-worker; this answers install-to-install, and only this one can
    * stop a process writing to a mailbox its owner has moved to another machine. REQUIRED, on
@@ -723,6 +733,22 @@ function removedMailboxError(status: string | null): MailboxRemovedError {
     `this mailbox is ${status === null ? "gone" : status} — the write is refused rather than `
     + "committed into a mailbox that has been removed",
   );
+}
+
+/** Where held first-contact senders wait — the queue `screener-auto-suggest.ts` reads. */
+const SCREENER_HOLD_FOLDER = "ohmail/Screener";
+
+/**
+ * DID THIS PLAN HOLD A SENDER AT THE GATE — a NEW message this ORGANIZER routed to the Screener.
+ * `passive !== true` is load-bearing: a reader's adoption of a previous organizer's placement is
+ * not a hold this install made, and marking on it would put a mailbox nobody here organizes at
+ * the front of the suggest queue. Read AFTER the commit settles, so a refused transaction never
+ * marks. One place decides; both ingest sites (the ordinary loop and the written-off retry) ask it.
+ */
+function planHeldAtGate(plan: ChangePlan): boolean {
+  return plan.outcome === "new"
+    && plan.new?.desired === SCREENER_HOLD_FOLDER
+    && plan.new.passive !== true;
 }
 
 /**
@@ -1248,6 +1274,9 @@ async function syncCycleWithin(
           repo: txRepo, routing: txRepo, accountId, mailboxId, storageCap,
         }, deps.fence !== undefined);
       });
+      // AFTER the commit settles, outside the transaction — a hold that committed owes the
+      // account a suggest visit ({@link SyncDeps.onScreenerHold}); a refused commit threw above.
+      if (planHeldAtGate(plan)) deps.onScreenerHold?.(accountId);
     });
   }
 
@@ -1577,6 +1606,9 @@ async function retryFailedMessages(
             deps.fence !== undefined,
           ),
         );
+        // The retry is the SAME two-phase ingest, so a held sender it commits owes the same
+        // visit — the path beside the one above, fixed together ({@link SyncDeps.onScreenerHold}).
+        if (planHeldAtGate(plan)) deps.onScreenerHold?.(accountId);
       } catch (err) {
         // BOTH REFUSALS STOP THE CYCLE where the two arms below return, and the removal is NAMED
         // before it leaves — which is why it is read here rather than left to `rethrowRefusal`,

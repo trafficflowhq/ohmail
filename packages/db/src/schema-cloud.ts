@@ -794,6 +794,20 @@ export const creditRefundObligations = pgTable("credit_refund_obligations", {
  * Spread into `schema` by `./schema.js` for every consumer that wants both halves. A local
  * install passes THIS one and nothing else — see `apps/sidecar/src/db.ts`.
  */
+/**
+ * AN ACCOUNT OWED A SUGGEST VISIT — the mark ingest writes when it HOLDS a first-contact sender
+ * on an opted-in account, and the worker's cycle reads to serve that account FIRST (cloud 0039).
+ * Scheduling priority only: the 60 s cycle remains the backstop, so a lost row costs latency and
+ * never a suggestion, and none of the pass's four spend bounds lives here. CLOUD because it is
+ * the HOSTED worker's queue — a standalone install's pass runs at its drain tail, already
+ * ingest-driven, and the device store has no cycle to prioritise. `ON CONFLICT DO NOTHING` keeps
+ * the FIRST unserved hold's instant, so the owed order is arrival order.
+ */
+export const screenerSuggestOwed = pgTable("screener_suggest_owed", {
+  accountId: uuid("account_id").primaryKey().references(() => accounts.id, { onDelete: "cascade" }),
+  owedAt: timestamp("owed_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
 export const cloudSchema = {
   credentials, webauthnCredentials, webauthnChallenges, totpSecrets, recoveryCodes, loginTokens,
   oauthAuthCodes, authEvents, authThrottle, pushSubscriptions,
@@ -801,5 +815,5 @@ export const cloudSchema = {
   waitlist, staffUsers, staffSessions, staffAuditLog,
   mailboxOauthCeremonies, mailboxOauthDeviceCeremonies,
   oauthProviderConfig, attachmentStaging, invites,
-  creditRefundObligations,
+  creditRefundObligations, screenerSuggestOwed,
 };

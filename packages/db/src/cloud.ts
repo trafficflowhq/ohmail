@@ -285,3 +285,14 @@ export {
   makeEntitlementsClient, ENTITLEMENTS_CALL_BUDGET_MS, ACCESS_TTL_MS,
   type EntitlementsClientConfig, type EntitlementsFetch, type CallFault, type EntitlementsPath,
 } from "./entitlements-client.js";
+
+/**
+ * THE SUGGEST-OWED MARK (cloud 0039) — ingest's "this account is owed a suggest visit", the
+ * cycle's owed-first read, and the retire after the visit. Cloud entry point because the table is
+ * the hosted worker's scheduling priority; the standalone engine's pass is drain-driven and never
+ * imports this.
+ */
+export {
+  markScreenerSuggestOwed, owedSuggestAccounts, clearScreenerSuggestOwed,
+  type SuggestOwedRow,
+} from "./screener-suggest-owed.js";
