@@ -128,6 +128,9 @@ const APPLY_ORDER: readonly EntityType[] = [
      feed emits this type only as a delete — so its place in the upsert order is inert. */
   "mailbox",
   "settings", "folder", "tag", "thread", "message", "message_state", "rule", "draft", "approval", "routing_decision",
+  // After `message`: the suggestion's upsert FK-skips when its message is not mirrored, so it
+  // must be given the page's own message first — the same reason every child follows its parent.
+  "screener_suggestion",
 ];
 
 const DEFAULT_PAGE_LIMIT = 500;

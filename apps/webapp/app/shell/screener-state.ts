@@ -337,18 +337,36 @@ export const APPLY_PILE_ORDER: readonly DecisionDestination[] = [
   "ohbox", "reads", "receipts", "screened", "spam",
 ];
 
+/**
+ * Join one bought suggestion onto a row.
+ *
+ * A fixture row (`derived !== true`) carries the demo's own `ai` and is never touched. On a
+ * DERIVED row the session's overlay WINS over the mirror-filled `ai` the selector now serves
+ * (`/sync` carries the narrow verdict since 2026-09-18): a "Suggest again" answers into the
+ * overlay the moment the response lands, and the mirror's previous row would otherwise mask
+ * that fresher answer until the next delta. A row with no match is returned UNCHANGED rather
+ * than rebuilt, so the identity every `useMemo` downstream compares stays stable.
+ */
+export function joinSuggestion(
+  x: ScreenerSenderDTO, overlay: SuggestionOverlay | undefined,
+): ScreenerSenderDTO {
+  if (!overlay || x.derived !== true) return x;
+  const found = overlay.get(senderKey(x.from.address));
+  return found ? { ...x, ai: found } : x;
+}
+
 export function useScreenerState(
   engine: OhmailEngine,
   version: number,
   toast: ToastFn,
   /**
-   * Suggestions bought for this account, keyed by sender — `shell/screener-suggest.ts`.
+   * Suggestions bought THIS SESSION, keyed by sender — `shell/screener-suggest.ts`.
    *
-   * OPTIONAL, and absent means exactly what it meant before there was anything to pass:
-   * every derived row's `ai` stays null and the surface says so. It is joined on here rather
-   * than inside `screenerSegments` because the mirror is a record of mail and this is not
-   * mail — the engine has no business holding it, and a client-engine that did would have to
-   * persist and evict it.
+   * OPTIONAL, and absent leaves each row with whatever the mirror said. Since 2026-09-18 the
+   * mirror DOES hold a suggestion (the narrow `screener_suggestion` entity, cascade-bound in
+   * `mirror-bounds.ts` — the wire ruling reversed the earlier "the engine has no business
+   * holding it"), so `screenerSegments` fills a derived row's `ai` itself; this overlay is the
+   * fresher layer a purchase's own response lands in, and it wins ({@link joinSuggestion}).
    */
   suggestions?: SuggestionOverlay,
   /**
@@ -1009,21 +1027,7 @@ export function useScreenerState(
     });
   };
 
-  /**
-   * Join one bought suggestion onto a row.
-   *
-   * A fixture row (`derived !== true`) carries the demo's own `ai` and is never touched. On a
-   * DERIVED row the session's overlay WINS over the mirror-filled `ai` the selector now serves
-   * (`/sync` carries the narrow verdict since 2026-09-18): a "Suggest again" answers into the
-   * overlay the moment the response lands, and the mirror's previous row would otherwise mask
-   * that fresher answer until the next delta. A row with no match is returned UNCHANGED rather
-   * than rebuilt, so the identity every `useMemo` downstream compares stays stable.
-   */
-  const withSuggestion = (x: ScreenerSenderDTO): ScreenerSenderDTO => {
-    if (!suggestions || x.derived !== true) return x;
-    const found = suggestions.get(senderKey(x.from.address));
-    return found ? { ...x, ai: found } : x;
-  };
+  const withSuggestion = (x: ScreenerSenderDTO): ScreenerSenderDTO => joinSuggestion(x, suggestions);
 
   const waiting = useMemo(() => {
     const overridden = segments.spam.filter((x) => s.overrides.has(x.id));
