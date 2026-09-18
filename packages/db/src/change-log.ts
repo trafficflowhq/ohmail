@@ -93,7 +93,17 @@ export type EntityType =
    * two acts that take a mailbox's mail off the store emit it (`wipeLocalMirror`,
    * `sweepMailboxData`).
    */
-  | "mailbox";
+  | "mailbox"
+  /**
+   * A BOUGHT SCREENER SUGGESTION — the narrow verdict entity (owner decision 2026-09-18,
+   * reversing "no model output in /sync": the entity carries the chip's fields, never the
+   * model's text — see `storeScreenerSuggestion`). The entity id is the `routing_decisions`
+   * ROW id; a re-buy emits a delete for the replaced row and a create for the new one in the
+   * same transaction, so a mirror never holds two live rows for one purchase. Materialized by
+   * `materializeScreenerSuggestion` (`packages/services/src/dto/materialize.ts`), which is
+   * provenance-scoped: a pipeline decision's id materializes null under this type.
+   */
+  | "screener_suggestion";
 
 export type ChangeOp = "create" | "update" | "move" | "delete";
 

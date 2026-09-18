@@ -85,6 +85,13 @@ export const SYNC_ENTITY_TYPES = [
    * mirror cascades from it: every row keyed by that mailbox goes, in the same apply.
    */
   "mailbox",
+  /**
+   * A bought Screener suggestion — the narrow verdict entity ({@link ScreenerSuggestionEntity}).
+   * Keyed by the stored row's id; a re-buy arrives as a delete + create pair in one page, so the
+   * mirror never holds two live rows for one purchase. A surface groups by `senderKey` — the
+   * suggestion is ABOUT a sender, bought from one message — and renders the newest `boughtAt`.
+   */
+  "screener_suggestion",
 ] as const;
 
 export type SyncEntityType = (typeof SYNC_ENTITY_TYPES)[number];
@@ -118,6 +125,31 @@ export type MirrorEntityType =
 type SyncTypesAreKnown = SyncEntityType extends KnownMirrorEntityType ? true : never;
 const _syncTypesAreKnown: SyncTypesAreKnown = true;
 void _syncTypesAreKnown;
+
+/**
+ * A bought Screener suggestion as `/sync` delivers it — the server's `ScreenerSuggestionDTO`
+ * (`packages/services/src/dto/types.ts`), spelled here as the CLIENT reads it: `destination` and
+ * `reasonCode` stay open strings so an older client tolerates a newer server's vocabulary rather
+ * than throw. THE VERDICT ONLY, never the model's text: `decision` arrives derived (posture, the
+ * rationale gate, the sender check), so a client cannot misderive it, and there is no `rationale`
+ * field on this wire by design.
+ */
+export interface ScreenerSuggestionEntity {
+  id: string;
+  /** The message the advice was bought about; the mirror cascades on it. */
+  messageId: string;
+  /** `lower(from_address)` — the per-sender key a surface groups by; newest `boughtAt` wins. */
+  senderKey: string;
+  decision: "yes" | "no" | "hold";
+  destination: string;
+  spam: boolean;
+  confidence: number;
+  reasonCode?: string;
+  reasonBrand?: string;
+  reasonCount?: number;
+  boughtAt: ISODateTime;
+  updatedAt: ISODateTime;
+}
 
 // ── /sync wire shapes (contract §3.1) ──────────────────────────────────────
 

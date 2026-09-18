@@ -27,7 +27,7 @@
 export const MIRROR_ENTITY_TYPES = [
   // The `/sync` feed's vocabulary (contract §3.1).
   "message", "thread", "routing_decision", "approval", "draft", "rule", "message_state",
-  "folder", "tag", "mailbox",
+  "folder", "tag", "mailbox", "screener_suggestion",
   // Client-local: the demo world, view metadata, hydrated bodies, the held-release derivation.
   "screener_sender", "triage_item", "view_meta", "message_body", "held_release_group",
   // Client-local and DURABLE: the outbox and its abandoned half.
@@ -132,6 +132,13 @@ export const MIRROR_BOUNDS: Record<KnownMirrorEntityType, MirrorBound> = {
     growsWith: "the mailboxes the account connected",
     why: "one row per connected mailbox; a removal arrives as the one op this type has and "
       + "cascades every row keyed by it",
+  },
+  screener_suggestion: {
+    by: "cascade",
+    via: "messageId",
+    why: "advice bought about one message: it goes when that message goes, and a re-buy arrives "
+      + "as a delete + create pair so one purchase is one live row; a chip for a sender whose "
+      + "message left the window is re-served free by the activation re-read, never re-bought",
   },
   screener_sender: {
     by: "person",

@@ -1,11 +1,16 @@
 import { and, asc, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
 import { foldersEnabled, userFolderById, type UserFolderRow } from "../folders.js";
-import { draftBodyOverCeiling, type EmailAddress } from "@trafficflow/core/mail";
+import {
+  capSuggestion, draftBodyOverCeiling, resolveOhboxPolicy, senderCheckAll,
+  type CheckedSuggestion, type EmailAddress,
+} from "@trafficflow/core/mail";
+import { reasonDetail, suggestionAdvice } from "../screener-advice.js";
 import {
   accountSettings, autoReplyByUsWhere, awayReplies, mailboxes,
   invitationWithoutEventWhere, itipReplyHeaderWhere,
   messages, folderState, messageStates, threads, routingDecisions, approvals, rules, drafts,
   tags, messageTags,
+  SCREENER_SUGGESTION_PROVENANCE,
   type EntityType,
 } from "@trafficflow/db";
 import { dialect } from "@trafficflow/db/dialect";
@@ -14,7 +19,7 @@ import type { Db } from "../context.js";
 import type {
   FolderDTO, SettingsDTO,
   Folder, MessageDTO, MessageStateDTO, ThreadDTO, RoutingDecisionDTO, ApprovalDTO, RuleDTO,
-  DraftDTO, DraftStatus, SensitivityFlags, TriageState, TagDTO,
+  DraftDTO, DraftStatus, ScreenerSuggestionDTO, SensitivityFlags, TriageState, TagDTO,
 } from "./types.js";
 
 const iso = (d: Date | null | undefined): string | null => (d ? d.toISOString() : null);
@@ -707,6 +712,71 @@ export async function materializeRoutingDecision(db: Db, accountId: string, id: 
   return r ? routingDecisionRowToDTO(r) : null;
 }
 
+/**
+ * A bought suggestion as the delta serves it — the VERDICT, derived exactly as the page derives
+ * it (`screener-advice.ts`), never the stored `rationale`. Provenance-scoped: a change row that
+ * named a pipeline decision's id materializes NOTHING here, so a mistyped change can never
+ * smuggle a `routing_decision` (with the model's text) out under this type. The sender check
+ * runs over the ONE message the advice was bought about — `campaign` is a set-scoped signal, so
+ * the page read can name it where this cannot; the page stays the richer reader, and the
+ * activation re-read remains the backstop that serves it.
+ */
+export async function materializeScreenerSuggestion(
+  db: Db, accountId: string, id: string,
+): Promise<ScreenerSuggestionDTO | null> {
+  const [r] = await db.select({
+    id: routingDecisions.id,
+    messageId: routingDecisions.messageId,
+    destination: routingDecisions.destination,
+    confidence: routingDecisions.confidence,
+    rationale: routingDecisions.rationale,
+    spam: routingDecisions.spam,
+    createdAt: routingDecisions.createdAt,
+    updatedAt: routingDecisions.updatedAt,
+    fromAddress: messages.fromAddress,
+    fromName: messages.fromName,
+    subject: messages.subject,
+    snippet: messages.snippet,
+    authVerdict: messages.authVerdict,
+  }).from(routingDecisions)
+    .innerJoin(messages, and(
+      eq(messages.id, routingDecisions.messageId),
+      eq(messages.accountId, accountId),
+    ))
+    .where(and(
+      eq(routingDecisions.id, id),
+      eq(routingDecisions.accountId, accountId),
+      eq(routingDecisions.inputProvenance, SCREENER_SUGGESTION_PROVENANCE),
+    )).limit(1);
+  if (!r) return null;
+  const [pref] = await db.select({ ohboxPolicy: accountSettings.ohboxPolicy })
+    .from(accountSettings).where(eq(accountSettings.accountId, accountId)).limit(1);
+  const policy = resolveOhboxPolicy(pref?.ohboxPolicy ?? null);
+  const [signals] = senderCheckAll([{
+    fromAddress: r.fromAddress, fromName: r.fromName, subject: r.subject,
+    snippet: r.snippet, authVerdict: r.authVerdict,
+  }]);
+  // Normalise, cap, re-derive — the same order the page read runs (`withSenderCheck`).
+  const first = suggestionAdvice(r.destination, r.spam, r.rationale ?? "", policy);
+  const checked: CheckedSuggestion = {
+    destination: first.destination, confidence: r.confidence ?? 0,
+    rationale: r.rationale ?? "", spam: first.spam,
+  };
+  const capped = signals?.reasonCode ? capSuggestion(checked, signals) : checked;
+  return {
+    id: r.id,
+    messageId: r.messageId,
+    senderKey: r.fromAddress.toLowerCase(),
+    ...suggestionAdvice(capped.destination, capped.spam, capped.rationale, policy),
+    confidence: capped.confidence,
+    ...(signals && capped.reasonCode
+      ? { reasonCode: capped.reasonCode, ...reasonDetail(signals) }
+      : {}),
+    boughtAt: r.createdAt.toISOString(),
+    updatedAt: (r.updatedAt ?? r.createdAt).toISOString(),
+  };
+}
+
 export async function materializeApproval(db: Db, accountId: string, id: string): Promise<ApprovalDTO | null> {
   const [a] = await db.select().from(approvals)
     .where(and(eq(approvals.id, id), eq(approvals.accountId, accountId))).limit(1);
@@ -844,6 +914,7 @@ export function materialize(db: Db, accountId: string, type: EntityType, id: str
     case "message_state": return materializeMessageState(db, accountId, id);
     case "thread": return materializeThread(db, accountId, id);
     case "routing_decision": return materializeRoutingDecision(db, accountId, id);
+    case "screener_suggestion": return materializeScreenerSuggestion(db, accountId, id);
     case "approval": return materializeApproval(db, accountId, id);
     case "rule": return materializeRule(db, accountId, id);
     case "draft": return materializeDraft(db, accountId, id);

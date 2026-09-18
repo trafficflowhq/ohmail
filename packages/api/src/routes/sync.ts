@@ -34,6 +34,10 @@ const VALID_TYPE_LIST = ([
    * mailbox stays in the mirror and on the screen, the tag drought's shape exactly.
    */
   "mailbox",
+  // A bought Screener suggestion — the narrow verdict entity (`change-log.ts`). The desktop's
+  // Cloud mirror and the phone both name their types, so a member missing here would starve
+  // exactly the two surfaces the entity exists to reach.
+  "screener_suggestion",
 ] as const) satisfies readonly EntityType[];
 const VALID_TYPES = new Set<EntityType>(VALID_TYPE_LIST);
 

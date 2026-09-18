@@ -55,7 +55,7 @@ export interface ScreenerItem {
   aiSuggestion: {                 // AI pre-suggestion (reuses the injected classifier)
     // `hold` ⇒ the model declined to place this sender, so the decision belongs to the person
     // reading the Screener. A surface may show it; a BULK control may never act on it. See
-    // `screener-service.ts`'s SCREEN_DISPOSITION for why this is three-valued and not two.
+    // `screener-advice.ts`'s SCREEN_DISPOSITION for why this is three-valued and not two.
     //
     // THIS FIELD IS THE BULK-ACTIONABLE VERDICT AND NOTHING ELSE. It is deliberately still
     // three-valued after `destination` was added beside it: every bulk control reads `decision`,
@@ -402,6 +402,33 @@ export interface RoutingDecisionDTO {
   spam: boolean;
   status: "auto_applied" | "pending_approval" | "approved" | "rejected";
   createdAt: ISODateTime;
+  updatedAt: ISODateTime;
+}
+
+/**
+ * A bought Screener suggestion as `/sync` carries it — THE VERDICT, NEVER THE MODEL'S TEXT. The
+ * 2026-09-18 ruling reversed "no model output in /sync" for exactly these fields: the chip's
+ * facts, so every device shows a purchase the second it lands. `rationale` (the model's own
+ * sentence) stays OFF the wire by design — `decision` is derived server-side (posture, the
+ * rationale gate, the sender check), so the client renders a verdict it could not misderive.
+ * The entity id is the stored row's id (a re-buy tombstones the old row and creates a new one);
+ * `senderKey` is the grouping key — a suggestion is ABOUT a sender, bought from one message.
+ */
+export interface ScreenerSuggestionDTO {
+  id: string;
+  /** The message the advice was bought about; the client mirror cascades on it. */
+  messageId: string;
+  /** `lower(from_address)` of that message — the per-sender key every client groups by. */
+  senderKey: string;
+  decision: "yes" | "no" | "hold";
+  destination: Destination;
+  spam: boolean;
+  confidence: number;
+  reasonCode?: SenderReasonCode;
+  reasonBrand?: string;
+  reasonCount?: number;
+  /** When the suggestion was bought (the stored row's creation). */
+  boughtAt: ISODateTime;
   updatedAt: ISODateTime;
 }
 

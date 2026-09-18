@@ -31,10 +31,13 @@ import type {
   SenderSignals,
 } from "@trafficflow/core/mail";
 import {
-  applyReconcileAction, askScreeningQuestion, capSuggestion, CLASSIFY_DESTINATIONS, createLogger,
+  applyReconcileAction, askScreeningQuestion, capSuggestion, createLogger,
   effectForDestination,
-  rationaleHoldsAtGate, resolveOhboxPolicy, senderCheckAll, senderFacts,
+  resolveOhboxPolicy, senderCheckAll, senderFacts,
 } from "@trafficflow/core/mail";
+/* The verdict derivation moved to its own leaf when `materializeScreenerSuggestion` became its
+   third reader — one reading for the page, the purchase and the `/sync` entity. */
+import { reasonDetail, suggestionAdvice } from "./screener-advice.js";
 import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
 /* `capabilityForKind` — the ONE map from a request kind to the capability its holder must
    advertise (mail 0094). Imported rather than spelled as a constant here so that this door and
@@ -495,7 +498,8 @@ export interface ScreenerSuggestion {
   sender: string;
   messageId: string;
   /**
-   * `hold` is the model declining to place this sender — see {@link SCREEN_DISPOSITION}. It is
+   * `hold` is the model declining to place this sender — see `screener-advice.ts`'s
+   * `SCREEN_DISPOSITION`. It is
    * advice a surface may show and a BULK control may never act on.
    *
    * It stays three-valued now that {@link ScreenerSuggestion.destination} sits beside it, and that
@@ -2248,47 +2252,6 @@ interface ClassifierResultLike {
 }
 
 /**
- * WHAT EACH ROUTING DESTINATION MEANS TO THE SCREENER. `Record<Destination, …>`, NOT a lookup
- * with a default, because the default is what broke: adding a folder to `Destination` without
- * deciding what it means for a stranger at the gate is now a COMPILE error, not a silent "yes".
- * This replaces a DENYLIST (`screenedOut`) answering `false` (⇒ admit) for everything unnamed —
- * and `ohmail/Screener` was unnamed, though the taxonomy DEFINES it as right for a first-contact
- * sender. "Hold this one for a human" rendered as "Ohbox"; with "Apply all" that is a consent
- * gate granting consent in bulk. A denylist is the wrong shape for a question whose safe answer
- * is "don't act".
- */
-const SCREEN_DISPOSITION: Record<Destination, ScreenerSuggestion["decision"]> = {
-  "INBOX": "yes",
-  "ohmail/Reads": "yes",        // posture may tighten this to "no" — see below
-  "ohmail/Receipts": "yes",     // idem
-  "ohmail/Screened": "no",
-  "ohmail/Quarantine": "no",
-  // NOT "no". The model declined to place this sender, it did not decline the sender. Turning that
-  // into a decline would auto-screen-out real first-contact people on the same bulk control that
-  // used to auto-admit them — a different wrong answer, not a fix.
-  "ohmail/Screener": "hold",
-};
-
-/**
- * The Yes/No/Hold reading of a classifier verdict UNDER THE ACCOUNT'S OHBOX POSTURE — ONE
- * definition, read at both the fresh (`suggest`) and stored (`storedSuggestions`) sites, so a
- * suggestion cannot read one way fresh and another on the next page load. "hold" is advice with
- * no action — a surface may show it, a BULK control may never act on it. POSTURE TIGHTENS "YES":
- * under `people_only` a first-contact sender filed into `ohmail/Reads`/`ohmail/Receipts` reads
- * "no" — the two piles `pipeline.ts`'s demotion moves; the lenient default demotes nobody. THE
- * RATIONALE IS CROSS-CHECKED: prose concluding "hold at the Screener" beside a `destination` past
- * the gate downgrades to "hold" (`rationaleHoldsAtGate`).
- */
-/**
- * ONE stored row, read as advice — the decision AND the answer the decision collapses. Both
- * callers go through here (`suggest` fresh, `storedSuggestions` off disk), so a suggestion cannot
- * read one way when bought and another on the next page load; that shared-ness makes a change
- * here retroactive — stored rows re-read through it with no backfill. `destination` is normalised
- * against the taxonomy for the reason `suggestionDecision` is total over strings: this reads a
- * `text` column a past version or a hand-run migration may have written. An unrecognised label
- * becomes the gate, which is `hold` — never a guess.
- */
-/**
  * THE SENDER CHECK OVER A SET OF HELD ROWS, keyed by message. One call for the whole page or the
  * whole purchase, because `campaign` — one subject arriving from unrelated strangers — is a fact
  * about the SET and invisible to a check that sees one message at a time. The set is therefore
@@ -2312,21 +2275,6 @@ function senderSignalsByMessage(rows: readonly ScreenerRow[]): Map<string, Sende
  * this shipped be corrected on the screen the person is looking at rather than re-bought. With no
  * signal the advice object is returned UNTOUCHED, which is nearly every sender.
  */
-/**
- * THE REASON'S OWN WORDS — ohmail's, never the sender's: the brand comes out of the curated
- * dictionary and the count out of the page we just measured, so a surface may render both.
- * Built in one place because two paths emit them and a second spelling is a second answer.
- */
-function reasonDetail(signals: SenderSignals): { reasonBrand?: string; reasonCount?: number } {
-  if (signals.reasonCode === "impersonation" && signals.impersonation) {
-    return { reasonBrand: signals.impersonation.brand };
-  }
-  if (signals.reasonCode === "campaign" && signals.campaign) {
-    return { reasonCount: signals.campaign.count };
-  }
-  return {};
-}
-
 function withSenderCheck(
   advice: ScreenerItem["aiSuggestion"], signals: SenderSignals | undefined, ohboxPolicy: OhboxPolicy,
 ): ScreenerItem["aiSuggestion"] {
@@ -2341,35 +2289,6 @@ function withSenderCheck(
     rationale: capped.rationale,
     ...(capped.reasonCode ? { reasonCode: capped.reasonCode, ...reasonDetail(signals) } : {}),
   };
-}
-
-function suggestionAdvice(
-  destination: string, spam: boolean, rationale: string, ohboxPolicy: OhboxPolicy,
-): Pick<ScreenerSuggestion, "decision" | "destination" | "spam"> {
-  const dest: Destination = CLASSIFY_DESTINATIONS.includes(destination as Destination)
-    ? (destination as Destination)
-    : "ohmail/Screener";
-  return {
-    decision: suggestionDecision(dest, spam, rationale, ohboxPolicy),
-    destination: dest,
-    spam: spam === true,
-  };
-}
-
-function suggestionDecision(
-  destination: string, spam: boolean, rationale: string, ohboxPolicy: OhboxPolicy,
-): ScreenerSuggestion["decision"] {
-  // Spam is the model's own hard "no" and outranks everything, including the label.
-  if (spam) return "no";
-  // A label outside the taxonomy is not advice. `coerceClassifierResult` already maps an unknown
-  // one to the gate, but this is read from a STORED row too — a column, written by a past version
-  // or a hand-run migration, is a `string` and this must be total over strings, not over the union.
-  const disposition = SCREEN_DISPOSITION[destination as Destination] ?? "hold";
-  if (disposition !== "yes") return disposition;
-  if (rationaleHoldsAtGate(rationale)) return "hold";
-  if (ohboxPolicy === "people_only"
-    && (destination === "ohmail/Reads" || destination === "ohmail/Receipts")) return "no";
-  return "yes";
 }
 
 /**

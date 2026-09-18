@@ -1,6 +1,6 @@
 import { and, eq, inArray, sql, type SQL } from "drizzle-orm";
 import { messages, routingDecisions } from "./schema-mail.js";
-import type { Tx } from "./change-log.js";
+import { recordChanges, type Tx } from "./change-log.js";
 import type { Dialect } from "./dialect/index.js";
 
 /**
@@ -47,22 +47,23 @@ export interface ScreenerSuggestionRow {
 }
 
 /**
- * Persist ONE bought suggestion, in its OWN transaction — per message, not per batch, and the
- * callers depend on that: a run of N senders is N model round trips, and a host that dies at
- * sender 40 with one pending write would lose every result the account already paid for. Per
- * message, a death costs only the writes that had not happened yet — and the money already spent
- * buys those back for free, because the ledger source is the message. No `recordChange`: a
- * suggestion is advice ABOUT mail, not a change TO it; a `change_log` row would put model output
- * into `/sync` and make every client's delta stream carry something nobody asked for.
+ * Persist ONE bought suggestion, in its OWN transaction — per message, not per batch: a host that
+ * dies at sender 40 loses only the writes that had not happened yet, and the money already spent
+ * buys those back for free, because the ledger source is the message. This DOES `recordChanges`
+ * now — the 2026-09-18 ruling reversed "no model output in /sync": what rides the delta is the
+ * NARROW verdict entity (`materializeScreenerSuggestion`), never the stored `rationale`, so every
+ * device shows a purchase the second it commits (the NOTIFY at commit is the wake). The replaced
+ * rows' deletes and the new row's create share one seq allocation, so a mirror never holds two
+ * live rows for one purchase.
  */
 export async function storeScreenerSuggestion(db: Tx, row: ScreenerSuggestionRow): Promise<void> {
   await db.transaction(async (tx) => {
-    await tx.delete(routingDecisions).where(and(
+    const removed = await tx.delete(routingDecisions).where(and(
       eq(routingDecisions.accountId, row.accountId),
       eq(routingDecisions.messageId, row.messageId),
       eq(routingDecisions.inputProvenance, SCREENER_SUGGESTION_PROVENANCE),
-    ));
-    await tx.insert(routingDecisions).values({
+    )).returning({ id: routingDecisions.id });
+    const [inserted] = await tx.insert(routingDecisions).values({
       accountId: row.accountId,
       messageId: row.messageId,
       inputProvenance: SCREENER_SUGGESTION_PROVENANCE,
@@ -71,7 +72,17 @@ export async function storeScreenerSuggestion(db: Tx, row: ScreenerSuggestionRow
       rationale: row.rationale,
       spam: row.spam,
       status: SCREENER_SUGGESTION_STATUS,
-    });
+    }).returning({ id: routingDecisions.id });
+    await recordChanges(tx, [
+      ...removed.map((d) => ({
+        accountId: row.accountId, entityType: "screener_suggestion" as const,
+        entityId: d.id, op: "delete" as const,
+      })),
+      {
+        accountId: row.accountId, entityType: "screener_suggestion" as const,
+        entityId: inserted!.id, op: "create" as const,
+      },
+    ]);
   });
 }
 
