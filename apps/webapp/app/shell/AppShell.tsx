@@ -4420,13 +4420,11 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
   /**
    * LEAVING THE COMPOSER SAVES WHAT IS IN IT FIRST — Escape and the close control, the two exits
    * that are NOT a discard. "Saved to your drafts after a moment" was false for the length of the
-   * debounce: typed text plus Escape inside those two seconds cancelled the armed save with its
-   * timer and the account never heard about the message. The pending save runs and is AWAITED
-   * here, so a write the server refuses can keep the composer standing with a sentence rather
-   * than closing over a message nothing holds. `autosave.flush` is the same write the pause makes
-   * and answers `nothing` for the refusals the composer already states, which is why only
-   * `failed` stops the exit. Every other way out — the rail, a `g` jump, the browser's Back, the
-   * shell unmounting — takes the hook's own belt, which cannot stay open and does not need to.
+   * debounce: Escape inside those two seconds cancelled the armed save with its timer. The write
+   * is AWAITED here so a refusal can keep the composer standing with a sentence rather than close
+   * over a message nothing holds; `flush` is the pause's own write and answers `nothing` for the
+   * refusals the composer already states, so only `failed` stops the exit. Every other way out
+   * takes the hook's belt, which cannot stay open and does not need to.
    */
   const closing = useRef(false);
   const closeCompose = useStableCallback(() => {
