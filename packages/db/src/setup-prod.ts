@@ -759,9 +759,10 @@ export async function setupProdDatabase(
       sql`select indexname from pg_indexes where schemaname = 'public' and tablename = 'messages'
           and indexname in ('messages_subject_trgm_idx', 'messages_from_address_trgm_idx')`,
     );
-    // The two `ensureHotPathIndexes` builds, read back by name. `indisvalid` as well as
-    // existence: a failed CONCURRENTLY build leaves an index `pg_indexes` lists quite happily
-    // and the planner refuses to use, which is the one state that would otherwise report OK.
+    // Every `ensureHotPathIndexes` build, read back by name — the list is DERIVED from the specs,
+    // never typed here. `indisvalid` as well as existence: a failed CONCURRENTLY build leaves an
+    // index `pg_indexes` lists quite happily and the planner refuses to use, which is the one
+    // state that would otherwise report OK.
     const wantedIdx = [...HOT_PATH_INDEXES, ...DEFERRED_HOT_PATH_INDEXES.map((d) => d.name)];
     const hotIdx = await rows<{ indexname: string }>(
       db,

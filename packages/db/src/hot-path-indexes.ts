@@ -5,10 +5,12 @@ import {
 
 /**
  * The hot-path indexes, built CONCURRENTLY outside the migrator — `concurrent-index.ts` owns the
- * how, this file owns the WHICH. Two are built at any size: the profile-import "already
- * resolved?" probe on `audit_log` (runs on every candidate, and an audit log only grows) and the
+ * how, this file owns the WHICH. Three are built at any size: the profile-import "already
+ * resolved?" probe on `audit_log` (runs on every candidate, and an audit log only grows), the
  * storage-eviction victim read on `messages` (a Sort — no index offers `coalesce(date,
- * created_at), id` order). Both scan today, measured with `EXPLAIN`.
+ * created_at), id` order), and the newest-first walk every list page and every sync-snapshot page
+ * takes over the same table (a second Sort, on a different key). All three scan today, measured
+ * with `EXPLAIN`.
  */
 
 /**
@@ -36,6 +38,22 @@ export const HOT_PATH_INDEX_SPECS: readonly ConcurrentIndexSpec[] = [
     table: "messages",
     ddl: sql`create index concurrently if not exists "messages_account_date_order_idx"
       on public.messages using btree ("account_id",(coalesce("date","created_at")),"id")`,
+  },
+  {
+    // THE READING ORDER — `date desc nulls last, id desc` within one account, which is
+    // `MSG_ORDER` in message-service.ts and the same clause in sync-service.ts's snapshot walk.
+    // `nulls last` is spelled here because it is NOT free: an index declared `date desc` is NULLS
+    // FIRST, and the planner then reads rows FROM it and sorts them anyway — measured, plan kept
+    // the Sort. PARTIAL on `deleted_at is null`, which both readers carry verbatim: tombstones
+    // accumulate for ever (the expunge reaper only stamps) while the living set is what every
+    // page walks. Unconditional, unlike the spec below, because `messages` is the one table a
+    // deployment grows past any ceiling in its first sync — the deferral protects a table that
+    // might stay small, and this is not one.
+    name: "messages_account_msg_order_idx",
+    table: "messages",
+    ddl: sql`create index concurrently if not exists "messages_account_msg_order_idx"
+      on public.messages using btree ("account_id","date" desc nulls last,"id" desc)
+      where "deleted_at" is null`,
   },
   {
     // THE DEFERRED ONE, and the deferral is now a condition rather than a note: it builds itself
