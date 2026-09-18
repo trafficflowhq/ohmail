@@ -2472,7 +2472,16 @@
     "sendingUnsettledReason_unknown": "der Postausgangsserver hat die Verbindung abgelehnt",
     "desktopManageOnHost": "Postfächer werden auf {host} verwaltet",
     "desktopManageOnHostWhy": "Ein Postfach verbinden oder sein Passwort ändern passiert in ohmail auf {host}. Dieser Computer zeigt, was {host} hat.",
-    "desktopHoldsCountHost": "Dieser Computer hat {count} der {total} Nachrichten, die {host} für dich hat. Der Rest wird von {host} geladen, sobald du ihn abrufst."
+    "desktopHoldsCountHost": "Dieser Computer hat {count} der {total} Nachrichten, die {host} für dich hat. Der Rest wird von {host} geladen, sobald du ihn abrufst.",
+    "signInAgainAction": "Erneut anmelden",
+    "signInAgainTitle": "Erneut bei {address} anmelden",
+    "signInAgainWhy": "Hast du das Passwort dieses Postfachs bei deinem Anbieter geändert? Trag das neue hier ein. Die Kopie auf diesem Computer, deine Ordner und alles, was ohmail sortiert hat, bleiben genau so, wie sie sind.",
+    "signInAgainPassword": "Neues Passwort",
+    "signInAgainHint": "Wird auf diesem Computer versiegelt und nur an den eigenen Server dieses Postfachs gesendet. Server und Benutzername bleiben unverändert.",
+    "signInAgainConfirm": "Speichern und anmelden",
+    "signInAgainWorking": "Anmeldung läuft…",
+    "signInAgainCancel": "Abbrechen",
+    "signInAgainDone": "Angemeldet. Dieses Postfach synchronisiert wieder."
   },
   "onboarding": {
     "rail_mailbox": "Postfach",

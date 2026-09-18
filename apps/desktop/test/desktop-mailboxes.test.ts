@@ -95,6 +95,14 @@ vi.mock("../../webapp/app/shell/MailStateProvider", async () => {
 let bridgeReply: () => Response | Promise<Response> = () => new Response(null, { status: 202 });
 /** Every request the pane put down the pipe, in order. */
 let bridged: { url: string; method: string }[] = [];
+/**
+ * WHAT A WRITE CARRIED — its own list, and that is not tidiness.
+ *
+ * Every exact-equality assertion in this file compares against `{ url, method }`, so a third key
+ * on {@link bridged} would redden eighty-odd cases that are about something else. A body matters
+ * to exactly one press, and it matters completely there: the password is the request.
+ */
+let sentBodies: { url: string; body: string }[] = [];
 
 /**
  * THE PANE'S REQUESTS MINUS ITS STANDING POLL — what a PRESS did, which is what these cases judge.
@@ -161,8 +169,9 @@ vi.mock("../src/bridge-fetch.js", async () => {
   );
   return {
     ...real,
-    bridgeFetch: async (url: string, init?: { method?: string }) => {
+    bridgeFetch: async (url: string, init?: { method?: string; body?: unknown }) => {
       bridged.push({ url, method: init?.method ?? "GET" });
+      if (typeof init?.body === "string") sentBodies.push({ url, body: init.body });
       return bridgeReply();
     },
     /* THE RETRYING READ, which is what the pane's two roster polls take. Recorded on the SAME
@@ -314,6 +323,7 @@ beforeEach(() => {
   FRESHNESS = { state: "current" };
   refreshed = 0;
   bridged = [];
+  sentBodies = [];
   bridgeReply = () => new Response(null, { status: 202 });
   logoutFails = null;
   SHELL_SINK = true;
@@ -373,9 +383,15 @@ describe("the desktop mailbox pane and a mail server it cannot reach", () => {
     expect(text).toContain("20 minutes ago");
     // …and the sentences it outranks are gone, rather than sitting beside it contradicting it.
     expect(text).not.toContain("Up to date");
-    // No advice, no blame, no account language: this is not a sign-out and must never read as one.
-    expect(text.toLowerCase()).not.toContain("sign in");
-    expect(text.toLowerCase()).not.toContain("signed out");
+    /* No advice, no blame, no account language: this is not a sign-out and must never read as
+       one — ASKED OF THE STATE LINE, which is what the claim is about. Over the whole pane it
+       also read the row's CONTROLS, so `Sign in again` — a verb that has to be offered in every
+       state, because a password is changed before the server starts refusing — tripped a claim
+       about the sentence. A needle names the element it is a claim about. */
+    const said = el.querySelector(".mbx-reach")?.textContent?.toLowerCase() ?? "";
+    expect(said).toContain("can't reach the mail server");
+    expect(said).not.toContain("sign in");
+    expect(said).not.toContain("signed out");
   });
 
   /**
@@ -3981,5 +3997,141 @@ describe("a mailbox whose settings document refuses every read does not read Up 
     text = (await render("local")).textContent ?? "";
     expect(text).toContain(copy.desktopStateUnreachable!);
     expect(text).not.toContain(settingsSentence("profile_gap_too_deep"));
+  });
+});
+
+/**
+ * ═══ A PASSWORD CHANGED AT THE PROVIDER, AND THE ROW CAN TAKE THE NEW ONE ══════════════════
+ *
+ * Measured on the released 0.19.6: the row said `The mail server refused the sign-in.` — true —
+ * and a census over every control on the pane found Add mailbox, Sync now, Run setup, Remove,
+ * Organizing and the hand-back, and nothing that re-supplies a password. Run setup never reaches
+ * the server screen, and Add mailbox with the same address tests green and is then refused as a
+ * mailbox already connected. So the only way back was Remove and Add — which discards this
+ * machine's copy of the mail.
+ *
+ * The count refusal is the case rather than a nicety: two controls with this name would mean a
+ * person picking one of two forms with no way to tell which mailbox each is about, and `includes`
+ * cannot tell "Sign in again" from a second control that merely contains it.
+ *
+ * ── THE MUTATIONS THESE CASES WERE WATCHED AGAINST ────────────────────────────────────────
+ *
+ *  · remove the control from the row's cluster            → the count case goes red at 0;
+ *  · send `{ imap: {} }` instead of the typed password    → the body case goes red;
+ *  · send the press to the first row rather than `shown`  → the two-row case goes red;
+ *  · drop the `signedIn` note                             → the answer case goes red.
+ */
+describe("the row takes a new password without the mailbox being removed", () => {
+  const copy = (messages as unknown as { mailboxes: Record<string, string> }).mailboxes;
+  const reach = (over: Record<string, unknown>): Response => new Response(JSON.stringify({
+    items: [{ mailboxId: "mbx-1", reachable: true, unreachableSince: null, ...over }],
+  }), { status: 200, headers: { "content-type": "application/json" } });
+
+  /** Type into a controlled input the way React hears it. */
+  function type(input: HTMLInputElement, value: string): void {
+    const setter = Object.getOwnPropertyDescriptor(
+      window.HTMLInputElement.prototype, "value",
+    )!.set!;
+    setter.call(input, value);
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  }
+
+  const named = (el: HTMLElement, label: string): HTMLButtonElement[] =>
+    [...el.querySelectorAll("button")].filter((b) => (b.textContent ?? "").trim() === label);
+
+  it("the refused row offers exactly one control by that name", async () => {
+    FACTS = [MAILBOX];
+    bridgeReply = () => reach({ signInRefused: true });
+    const el = await render("local");
+    expect(el.textContent).toContain(copy.desktopStateSignInRefused!);
+    expect(named(el, copy.signInAgainAction!)).toHaveLength(1);
+  });
+
+  it("offers it before the refusal too, because the password changes first", async () => {
+    /* A person changes the password at the provider and THEN the server starts refusing. A
+       control that appeared only after the refusal would arrive a sync too late. */
+    FACTS = [MAILBOX];
+    bridgeReply = () => reach({});
+    const el = await render("local");
+    expect(el.textContent).toContain(copy.desktopStateUpToDate!);
+    expect(named(el, copy.signInAgainAction!)).toHaveLength(1);
+  });
+
+  it("sends the typed password to that row's own mailbox, and nothing else", async () => {
+    FACTS = [MAILBOX, { ...MAILBOX, id: "mbx-2", address: "other@example.test" }];
+    bridgeReply = () => reach({ signInRefused: true });
+    const el = await render("local");
+
+    const rows = addressRows(el);
+    const second = [...rows[1]!.querySelectorAll("button")]
+      .find((b) => (b.textContent ?? "").trim() === copy.signInAgainAction!)!;
+    await act(async () => { second.click(); });
+
+    const field = el.querySelector<HTMLInputElement>("#mbx-new-password")!;
+    expect(field.type).toBe("password");
+    expect(field.value, "the field opened carrying something").toBe("");
+    await act(async () => { type(field, "the-new-one"); });
+    await act(async () => {
+      el.querySelector("form.acct-confirm")!
+        .dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    });
+
+    /* THE ROW THE PRESS WAS ON, not the first one in the pane — the whole reason the form lives
+       under its row. And one request: the seal, and no second door. */
+    expect(pressed()).toEqual([{ url: "/local/mailboxes/mbx-2", method: "PATCH" }]);
+    expect(sentBodies).toEqual([
+      { url: "/local/mailboxes/mbx-2", body: JSON.stringify({ imap: { pass: "the-new-one" } }) },
+    ]);
+  });
+
+  it("says the press landed, on the row it was made on", async () => {
+    FACTS = [MAILBOX];
+    bridgeReply = (): Response =>
+      bridged.at(-1)?.method === "PATCH"
+        ? new Response("{}", { status: 200 })
+        : reach({ signInRefused: true });
+    const el = await render("local");
+    await act(async () => { named(el, copy.signInAgainAction!)[0]!.click(); });
+    await act(async () => {
+      type(el.querySelector<HTMLInputElement>("#mbx-new-password")!, "the-new-one");
+    });
+    await act(async () => {
+      el.querySelector("form.acct-confirm")!
+        .dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    });
+    expect(el.textContent).toContain(copy.signInAgainDone!);
+    /* AND THE FORM IS GONE — a password field left standing after a successful seal invites a
+       second send of a secret the store already has. */
+    expect(el.querySelector("#mbx-new-password")).toBeNull();
+  });
+
+  it("a refused seal says why and keeps the form, with nothing stored", async () => {
+    FACTS = [MAILBOX];
+    bridgeReply = (): Response =>
+      bridged.at(-1)?.method === "PATCH"
+        ? new Response(
+            JSON.stringify({ error: { code: "mailbox_probe_failed", message: "the server said no" } }),
+            { status: 400, headers: { "content-type": "application/json" } },
+          )
+        : reach({ signInRefused: true });
+    const el = await render("local");
+    await act(async () => { named(el, copy.signInAgainAction!)[0]!.click(); });
+    await act(async () => {
+      type(el.querySelector<HTMLInputElement>("#mbx-new-password")!, "still-wrong");
+    });
+    await act(async () => {
+      el.querySelector("form.acct-confirm")!
+        .dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    });
+    expect(el.textContent).toContain("the server said no");
+    expect(el.textContent).not.toContain(copy.signInAgainDone!);
+    expect(el.querySelector("#mbx-new-password")).not.toBeNull();
+  });
+
+  it("the hosted door is not offered it — its own PATCH is behind a second factor", async () => {
+    FACTS = [MAILBOX];
+    bridgeReply = () => reach({});
+    const el = await render("cloud");
+    expect(named(el, copy.signInAgainAction!)).toHaveLength(0);
   });
 });

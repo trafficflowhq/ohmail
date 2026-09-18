@@ -652,7 +652,8 @@ describe("the two connect modes", () => {
         error: {
           code: "same_login",
           message: "this machine already has that mailbox. The server and username you entered "
-            + "open a mailbox that is already connected here.",
+            + "open a mailbox that is already connected here. Use \"Sign in again\" on that "
+            + "mailbox to change its password.",
         },
       }),
     };

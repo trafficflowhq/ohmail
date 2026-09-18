@@ -701,7 +701,8 @@ function isActiveAddressConflict(e: unknown): boolean {
 
 const addressTaken = (): ServiceError => new ServiceError(
   "mailbox_exists", 409,
-  "This mailbox is already connected to your account.",
+  "This mailbox is already connected to your account. To change its password, open it in "
+    + "Settings rather than connecting it again.",
 );
 
 /**

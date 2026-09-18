@@ -22,7 +22,10 @@
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useTranslations } from "next-intl";
-import { Button, Gloss, SettingsActions, SettingsNote, SettingsRow, SettingsSection, SettingsVerdict } from "@ohmail/ui";
+import {
+  Button, Gloss, SettingsActions, SettingsField, SettingsNote, SettingsRow, SettingsSection,
+  SettingsVerdict,
+} from "@ohmail/ui";
 
 import {
   deviceHoldings, holdingsSpeak, readerStandDown, showInboundQuiet, type MailboxFacts,
@@ -795,6 +798,18 @@ export function DesktopMailboxes(
   const [removing, setRemoving] = useState<MailboxFacts | null>(null);
   /** True while the DELETE is in flight, so the destructive button cannot be pressed twice. */
   const [removeBusy, setRemoveBusy] = useState(false);
+  /**
+   * WHICH MAILBOX IS BEING SIGNED IN AGAIN, or `null` when none is — the mailbox itself for
+   * {@link removing}'s reason: the sheet names the address, and a row that leaves `facts`
+   * between the press and the answer must not leave it titled about nothing.
+   */
+  const [signingIn, setSigningIn] = useState<MailboxFacts | null>(null);
+  /** What has been typed. It lives here until the seal answers and is cleared either way. */
+  const [newPassword, setNewPassword] = useState("");
+  /** True while the seal is in flight, so one password is never sent twice. */
+  const [signInBusy, setSignInBusy] = useState(false);
+  /** The mailbox this pane just re-sealed — the sentence saying the press landed. */
+  const [signedIn, setSignedIn] = useState<string | null>(null);
   const cloud = door === "cloud";
   /* PAIRED: a cloud door whose far side is a computer of the person's own. Everything the ENGINE
      does is the cloud door's; what changes is what this pane may claim. */
@@ -836,6 +851,36 @@ export function DesktopMailboxes(
           next.delete(id);
           return next;
         });
+      }
+    })();
+  };
+
+  /**
+   * GIVE THIS MAILBOX THE PASSWORD IT IS REFUSED WITH NOW — `PATCH /local/mailboxes/:id`, the
+   * standalone door's seal, and the reason a password change stopped meaning remove-and-import.
+   * The body carries the password and NOTHING else: the server, port and username come from the
+   * sealed row itself, which is what this mailbox was proved against and what no surface here is
+   * told. The engine tries it before it stores it, so a refusal changes nothing at all.
+   */
+  const signInAgain = (m: MailboxFacts, password: string): void => {
+    setProblem(null);
+    setSignInBusy(true);
+    void (async () => {
+      try {
+        const res = await bridgeFetch(`/local/mailboxes/${encodeURIComponent(m.id)}`, {
+          method: "PATCH",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ imap: { pass: password } }),
+        });
+        if (!res.ok) throw new Error(await reasonOf(res));
+        setSigningIn(null);
+        setNewPassword("");
+        setSignedIn(m.id);
+        refresh();
+      } catch (err) {
+        setProblem(err instanceof Error ? err.message : String(err));
+      } finally {
+        setSignInBusy(false);
       }
     })();
   };
@@ -1886,6 +1931,27 @@ export function DesktopMailboxes(
                   >
                     {queued.has(shown.id) ? t("syncQueued") : t("syncNow")}
                   </Button>
+                  {/* ── SIGN IN AGAIN, IN EVERY STATE — because a password is changed at the
+                      provider BEFORE this mailbox is refused, and a control that appeared only
+                      after the refusal would arrive a sync too late. Until it existed the only
+                      way back from a changed password was Remove and Add — which discards this
+                      machine's copy, an hour and a half of re-import on a large mailbox — since
+                      Add refuses a mailbox already connected and Run setup never asks for a
+                      password. THE STANDALONE DOOR ALONE: the hosted door's own PATCH is behind
+                      the account's second factor, which a desktop session cannot satisfy. */}
+                  {!cloud ? (
+                    <Button
+                      className="mbx-btn"
+                      onClick={() => {
+                        setProblem(null);
+                        setSignedIn(null);
+                        setNewPassword("");
+                        setSigningIn(shown);
+                      }}
+                    >
+                      {t("signInAgainAction")}
+                    </Button>
+                  ) : null}
                   {/* ── RUN SETUP AGAIN, ON THE ROW IT IS ABOUT — one row at the pane's foot
                       was right for one mailbox and wrong for two: the flow writes a consent
                       stamp and a screening window for a NAMED mailbox, and a control at the
@@ -1938,6 +2004,54 @@ export function DesktopMailboxes(
               On a row this machine organizes it is the release; on every other one it is the fact and
               the way back — see `organizerBlock`. */}
           {organizerBlock(shown)}
+          {/* ══ THE PASSWORD THIS MAILBOX IS REFUSED WITH — one field, because one field is
+              all this door needs. The server, the port and the username are in the credential
+              this mailbox was proved against, and the engine merges them itself; asking for
+              them again would be asking somebody to re-type what is already right. Under the
+              row for the confirmation's reason: a machine with two addresses must never show a
+              form with an ambiguous subject. */}
+          {signingIn?.id === shown.id ? (
+            <form
+              className="acct-confirm"
+              aria-label={t("signInAgainTitle", { address: shown.address })}
+              onSubmit={(e) => { e.preventDefault(); signInAgain(shown, newPassword); }}
+            >
+              <h3 className="acct-sub">{t("signInAgainTitle", { address: shown.address })}</h3>
+              <p className="acct-fine">{t("signInAgainWhy")}</p>
+              <SettingsField
+                htmlFor="mbx-new-password"
+                label={t("signInAgainPassword")}
+                hint={t("signInAgainHint")}
+              >
+                <input
+                  id="mbx-new-password"
+                  type="password"
+                  autoComplete="off"
+                  spellCheck={false}
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                  disabled={signInBusy}
+                />
+              </SettingsField>
+              <div className="acct-actions">
+                <Button
+                  type="button"
+                  disabled={signInBusy}
+                  onClick={() => { setSigningIn(null); setNewPassword(""); }}
+                >
+                  {t("signInAgainCancel")}
+                </Button>
+                <Button
+                  variant="primary"
+                  type="submit"
+                  disabled={signInBusy || newPassword === ""}
+                >
+                  {signInBusy ? t("signInAgainWorking") : t("signInAgainConfirm")}
+                </Button>
+              </div>
+            </form>
+          ) : null}
+          {signedIn === shown.id ? <SettingsNote>{t("signInAgainDone")}</SettingsNote> : null}
           {/* ══ THE REMOVAL CONFIRMATION — FIVE CONSEQUENCES, THE FIFTH THIS DOOR'S OWN. The
               hosted pane's panel, verbatim in four statements, true on both doors: organizing
               stops, THE MAIL IS UNTOUCHED (no IMAP connection is opened to delete anything),

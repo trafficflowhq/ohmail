@@ -2472,7 +2472,16 @@
     "sendingUnsettledReason_unknown": "the outgoing server refused the connection",
     "desktopManageOnHost": "Mailboxes are managed on {host}",
     "desktopManageOnHostWhy": "Connecting a mailbox or changing its password happens in ohmail on {host}. This computer shows what {host} holds.",
-    "desktopHoldsCountHost": "This computer holds {count} of the {total} messages {host} holds for you. The rest loads from {host} when you reach it."
+    "desktopHoldsCountHost": "This computer holds {count} of the {total} messages {host} holds for you. The rest loads from {host} when you reach it.",
+    "signInAgainAction": "Sign in again",
+    "signInAgainTitle": "Sign in again to {address}",
+    "signInAgainWhy": "Changed this mailbox's password at your provider? Give ohmail the new one here. The copy on this computer, your folders and everything ohmail has organized stay exactly where they are.",
+    "signInAgainPassword": "New password",
+    "signInAgainHint": "Sealed on this computer and sent only to this mailbox's own server. The server and username stay as they are.",
+    "signInAgainConfirm": "Save and sign in",
+    "signInAgainWorking": "Signing in…",
+    "signInAgainCancel": "Cancel",
+    "signInAgainDone": "Signed in. This mailbox is syncing again."
   },
   "onboarding": {
     "rail_mailbox": "Mailbox",
