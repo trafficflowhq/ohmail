@@ -724,7 +724,7 @@
       "stoppedUnavailable": "Stopped — AI spending is unavailable on this account.",
       "aria": "How many waiting senders to suggest for",
       "autoTitle": "Suggest for new senders automatically",
-      "autoWhat": "While this is on, ohmail gets a suggestion for new senders as their mail arrives, and shows what it thinks and why — at most {count, plural, one {one sender} other {# senders}} at a time. Senders already waiting are covered in batches of the same size when you open the Screener.",
+      "autoWhat": "While this is on, ohmail gets a suggestion for new senders as their mail arrives, and shows what it thinks and why — at most {count, plural, one {one sender} other {# senders}} at a time. The advice reaches every device you are signed in on within seconds. Senders already waiting are covered in batches of the same size when you open the Screener.",
       "autoCost": "Each sender uses one credit of your AI budget. When the budget runs out it stops, and nothing else changes.",
       "autoDecides": "It decides nothing. Every sender still waits for you, and no mail moves until you say so.",
       "autoOff": "Off. New senders wait in the Screener until you decide.",

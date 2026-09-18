@@ -2209,10 +2209,19 @@ function WaitingPreview({
             {sender.ai.noAnswer ? (
               <span>{t(`aiSkip.${sender.ai.noAnswer}`)}</span>
             ) : sender.ai.dest === "screener" ? (
+              /* Advice that arrived over sync carries no model text (the wire is the verdict,
+                 never the rationale), so the quoted clause renders only when there are words to
+                 quote — an em dash into “” read as a broken sentence. The page re-read fills the
+                 richer form in place. */
               <span>
                 {t("aiHolds")}{" "}
-                <span className="conf num">{sender.ai.confidence.toFixed(2)}</span> —{" "}
-                <span className="why">{t("aiWhy", { why: sender.ai.rationale })}</span>
+                <span className="conf num">{sender.ai.confidence.toFixed(2)}</span>
+                {sender.ai.rationale ? (
+                  <>
+                    {" — "}
+                    <span className="why">{t("aiWhy", { why: sender.ai.rationale })}</span>
+                  </>
+                ) : null}
               </span>
             ) : (
               <span>
@@ -2220,8 +2229,13 @@ function WaitingPreview({
                 <b>
                   {piles[sender.ai.dest as DecisionDestination] ?? sender.ai.dest}
                 </b>{" "}
-                <span className="conf num">{sender.ai.confidence.toFixed(2)}</span> —{" "}
-                <span className="why">{t("aiWhy", { why: sender.ai.rationale })}</span>
+                <span className="conf num">{sender.ai.confidence.toFixed(2)}</span>
+                {sender.ai.rationale ? (
+                  <>
+                    {" — "}
+                    <span className="why">{t("aiWhy", { why: sender.ai.rationale })}</span>
+                  </>
+                ) : null}
               </span>
             )}
             </span>

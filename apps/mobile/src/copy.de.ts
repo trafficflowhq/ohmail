@@ -1012,6 +1012,8 @@ export const DE: Deck = {
     "Erster Kontakt. Von diesem Absender hat es noch nichts in die Ohbox geschafft — es hat hier gewartet.",
   senderAiSuggestion: (dest: string, confidence: string, reason: string): string =>
     `Die KI schlägt ${dest} vor, mit ${confidence}: „${reason}“`,
+  senderAiSuggestionNoReason: (dest: string, confidence: string): string =>
+    `Die KI schlägt ${dest} vor, mit ${confidence}.`,
 
   bootBadOrigin: (origin: string) => `keine Server-Adresse: „${origin}“`,
   bootBadApiBase: (base: string) => `keine API-Adresse des Servers: „${base}“`,

@@ -1610,6 +1610,12 @@ const TABLE = {
    */
   senderAiSuggestion: (dest: string, confidence: string, reason: string): string =>
     `${dest} is the AI's suggestion at ${confidence}: “${reason}”`,
+  /**
+   * The same claim for advice that arrived over sync, which carries the verdict and never the
+   * model's text — an empty quotation is not a sentence, so the reason clause goes, not blank.
+   */
+  senderAiSuggestionNoReason: (dest: string, confidence: string): string =>
+    `${dest} is the AI's suggestion at ${confidence}.`,
 
   /* ───────────────────────────── refusals the seams RETURN, and a screen renders ──────────── */
 

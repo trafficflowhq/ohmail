@@ -110,11 +110,18 @@ function SenderBody() {
                 {row.ai ? (
                   <>
                     {" "}
-                    {Copy.senderAiSuggestion(
-                      destDone(row.ai.dest),
-                      row.ai.confidence.toFixed(2),
-                      row.ai.rationale,
-                    )}
+                    {/* Mirror-sourced advice carries no model text; a quoted "" is not a
+                        sentence, so the reason clause goes with the reason. */}
+                    {row.ai.rationale
+                      ? Copy.senderAiSuggestion(
+                          destDone(row.ai.dest),
+                          row.ai.confidence.toFixed(2),
+                          row.ai.rationale,
+                        )
+                      : Copy.senderAiSuggestionNoReason(
+                          destDone(row.ai.dest),
+                          row.ai.confidence.toFixed(2),
+                        )}
                   </>
                 ) : null}
               </Txt>
