@@ -83,6 +83,20 @@ export function LocaleShell({
     [apply, state.locale],
   );
 
+  /**
+   * THE ZONE THE PROVIDER STATES. Without it every `format.dateTime` THROWS `ENVIRONMENT_FALLBACK`,
+   * which next-intl catches and then formats in the environment's zone anyway — Settings → Devices
+   * formats two dates per row, so opening it cost 24 thrown-and-caught errors and 24 console lines
+   * for dates that were already right. This resolves the SAME zone that fallback resolves, so no
+   * rendered time moves: it removes the throw, not the behaviour. `UTC` only where the environment
+   * will not name one, which is the one honest default — never a guess at somebody's zone. A zone
+   * the ACCOUNT states is a different question and is not answered here.
+   */
+  const zone = useMemo(
+    () => Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
+    [],
+  );
+
   const controls = useMemo<LocaleControls>(
     () => ({
       locale: state.locale,
@@ -104,7 +118,7 @@ export function LocaleShell({
 
   return (
     <LocaleContext.Provider value={controls}>
-      <NextIntlClientProvider locale={state.locale} messages={state.messages}>
+      <NextIntlClientProvider locale={state.locale} messages={state.messages} timeZone={zone}>
         {children}
       </NextIntlClientProvider>
     </LocaleContext.Provider>
