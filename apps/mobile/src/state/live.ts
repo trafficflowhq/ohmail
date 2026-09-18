@@ -31,6 +31,7 @@ import {
   receiptsByDay,
   rulesList,
   scheduledSendsList,
+  screenerAdviceAi,
   screenerSegments,
   senderKey,
   threadOf,
@@ -887,6 +888,17 @@ export interface WorldScreener {
 
 const AI_DESTS = new Set<string>(["ohbox", "reads", "receipts", "screened", "spam"]);
 
+/**
+ * A DTO's advice as the row's badge fact — ONE reading for both row builders. A `noAnswer` and a
+ * `hold` render sentences, not a destination badge, so both map to null here; `AI_DESTS` keeps an
+ * unknown destination from a newer server off the badge.
+ */
+function aiOfDto(ai: ScreenerSenderDTO["ai"]): ScreenerRow["ai"] {
+  return ai && !ai.noAnswer && AI_DESTS.has(ai.dest)
+    ? { dest: ai.dest as Destination, confidence: ai.confidence, rationale: ai.rationale }
+    : null;
+}
+
 function rowOf(dto: ScreenerSenderDTO, scope: Scope | undefined): ScreenerRow {
   const held: ScreenerHeld[] = dto.held.map((h) => ({
     id: h.id,
@@ -899,10 +911,7 @@ function rowOf(dto: ScreenerSenderDTO, scope: Scope | undefined): ScreenerRow {
     ...(h.trackerNote ? { trackerNote: h.trackerNote } : {}),
     seen: false,
   }));
-  const ai =
-    dto.ai && !dto.ai.noAnswer && AI_DESTS.has(dto.ai.dest)
-      ? { dest: dto.ai.dest as Destination, confidence: dto.ai.confidence, rationale: dto.ai.rationale }
-      : null;
+  const ai = aiOfDto(dto.ai);
   return {
     id: dto.id,
     routeKey: senderKey(dto.from.address),
@@ -971,7 +980,16 @@ function gateReader(pres: EntityReader, waiting: ReadonlySet<string>): EntityRea
  * named, at its own stamp; the sender screen hydrates nothing further, because there is nothing
  * on this device to hydrate from.
  */
-function rowOfServer(s: ServerWaitingSender, v: WorldView, scope: Scope | undefined): ScreenerRow {
+function rowOfServer(
+  s: ServerWaitingSender, v: WorldView, scope: Scope | undefined,
+  /**
+   * The mirror's advice for this sender, joined in by the caller ({@link screenerAdviceAi} by
+   * `senderKey`) — the route's parse carries none, and the suggestion entity is NOT bounded by
+   * the message window (its cascade follows a removal, never an absence), so a sender this
+   * mirror cannot back can still have a live verdict to badge.
+   */
+  ai: ScreenerRow["ai"] = null,
+): ScreenerRow {
   const name = s.name || s.address;
   const time = messageDisplayTime({ date: s.receivedAt }, v.now, v.zone, v.locale ?? "en");
   return {
@@ -984,7 +1002,7 @@ function rowOfServer(s: ServerWaitingSender, v: WorldView, scope: Scope | undefi
     newestSubject: s.subject,
     dull: false,
     scope: scope ?? "sender",
-    ai: null,
+    ai,
     held: [{ id: s.messageId, subject: s.subject, time, body: s.snippet, bodyState: "snippet", seen: false }],
     screenedOn: "",
     detection: "",
@@ -1037,10 +1055,13 @@ export function liveScreener(
      mirror cannot back is minted. So the count on screen is the number the route answered, and
      the two ends cannot disagree about who is waiting. */
   const derived = new Map(segments.waiting.map((dto) => [senderKey(dto.from.address), dto]));
+  // The mirror's advice, joined onto the rows the derivation cannot back — a minted row's badge
+  // is the same verdict a derived row's is, read through the same selector.
+  const advice = screenerAdviceAi(pres);
   const waiting = server.map((s) => {
     const key = senderKey(s.address);
     const dto = derived.get(key);
-    return dto ? rowOf(dto, scopes[key]) : rowOfServer(s, v, scopes[key]);
+    return dto ? rowOf(dto, scopes[key]) : rowOfServer(s, v, scopes[key], aiOfDto(advice.get(key) ?? null));
   });
   return {
     waiting,

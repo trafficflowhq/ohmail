@@ -1248,6 +1248,33 @@ function suggestionAi(s: ScreenerSuggestionEntity | undefined): ScreenerSenderDT
   };
 }
 
+/**
+ * THE NEWEST BOUGHT ADVICE PER SENDER, off the mirror's `screener_suggestion` rows — the
+ * narrow `/sync` entity (owner decision 2026-09-18). A re-buy arrives as a delete + create
+ * pair, so ordinarily there is one row per sender; `boughtAt` breaks the tie inside the one
+ * page where both are momentarily present.
+ */
+function newestAdviceBySender(reader: EntityReader): Map<string, ScreenerSuggestionEntity> {
+  const advice = new Map<string, ScreenerSuggestionEntity>();
+  for (const s of reader.list<ScreenerSuggestionEntity>("screener_suggestion")) {
+    const prev = advice.get(s.senderKey);
+    if (!prev || s.boughtAt > prev.boughtAt) advice.set(s.senderKey, s);
+  }
+  return advice;
+}
+
+/**
+ * The mirror's advice as a row's `ai`, keyed by sender — for a surface whose waiting rows do
+ * not come through `screenerSegments` (the phone's paired-door server list, whose parse carries
+ * no advice). The SAME `suggestionAi` reading the segments give their own rows; a caller never
+ * re-derives a verdict from `destination` alone.
+ */
+export function screenerAdviceAi(reader: EntityReader): Map<string, ScreenerSenderDTO["ai"]> {
+  const out = new Map<string, ScreenerSenderDTO["ai"]>();
+  for (const [key, s] of newestAdviceBySender(reader)) out.set(key, suggestionAi(s));
+  return out;
+}
+
 function heldReleaseClaim(reader: EntityReader): (key: string) => boolean {
   const senders = new Set<string>();
   const domains = new Set<string>();
@@ -1324,18 +1351,10 @@ export function screenerSegments(
 
   const alreadyDecided = heldReleaseClaim(reader);
 
-  /**
-   * THE NEWEST BOUGHT ADVICE PER SENDER, off the mirror's `screener_suggestion` rows — the
-   * narrow `/sync` entity (owner decision 2026-09-18). A re-buy arrives as a delete + create
-   * pair, so ordinarily there is one row per sender; `boughtAt` breaks the tie inside the one
-   * page where both are momentarily present. This is what fills a WAITING row's `ai` on every
-   * surface that renders these rows — the phone's badge included — the second the delta lands.
-   */
-  const advice = new Map<string, ScreenerSuggestionEntity>();
-  for (const s of reader.list<ScreenerSuggestionEntity>("screener_suggestion")) {
-    const prev = advice.get(s.senderKey);
-    if (!prev || s.boughtAt > prev.boughtAt) advice.set(s.senderKey, s);
-  }
+  // The newest bought advice per sender — see {@link newestAdviceBySender}. This is what fills
+  // a WAITING row's `ai` on every surface that renders these rows — the phone's badge included —
+  // the second the delta lands.
+  const advice = newestAdviceBySender(reader);
 
   for (const m of reader.list<EngineMessage>("message")) {
     const view = VIEW_OF_FOLDER[m.folder] as OhmailView | undefined;
