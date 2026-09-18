@@ -13,6 +13,20 @@ See [Status](README.md#status--read-this-first).
 
 ## [Unreleased]
 
+### Still to come
+
+Signed installers — a real Apple Developer ID and an Authenticode certificate. See
+[Roadmap](README.md#roadmap).
+
+## [0.19.6] — 2026-09-18
+
+### Removing a mailbox works again after the away responder has replied
+
+Removing a mailbox stopped part-way once the away responder had answered anybody: the mail
+stayed on disk and nothing on screen said the removal had not happened. Fixed. The record of who
+was answered now outlives the message it answered, which is what it is for, and a removed
+mailbox takes its own record of that with it.
+
 ### A first sync of a big mailbox picks up where it left off
 
 A first sync works through a large mailbox in passes, and each pass carries a memory budget it
@@ -178,11 +192,6 @@ those. Built with Docker's older builder the context lost the lockfile, and npm 
 this repository does carry as missing. Each recipe now refuses with that sentence and names the
 buildx component to install.
 
-### Still to come
-
-Signed installers — a real Apple Developer ID and an Authenticode certificate. See
-[Roadmap](README.md#roadmap).
-
 ### A mailbox you remove takes its in-flight retries with it
 
 A message that failed to sync is re-read by name on a later pass, and that re-read is refused when
@@ -234,6 +243,106 @@ questions. They now say so.
 ### Move on the phone offers the place a message is shown in, and files the sender there
 
 ### Opening a large mailbox puts mail on the list sooner: the first page is a viewport rather than five hundred messages, and the first sync of a launch waits for it instead of holding the database while the list is empty
+
+### Cancelling a security check now cancels what it was for
+
+Cancel and Back end the check on the mailbox pane, on desktop pairing and at the password prompt, not only at the account erase — an answer that lands after you press no longer goes through.
+
+### The desktop window says once when your account cannot be opened
+
+Where it used to refuse one action at a time, it now shows a single screen, and the Screener's notice about AI clears by itself when access comes back.
+
+### A first import keeps its pace, and a computer that loses power while importing leaves nothing missing
+
+A first sync writes a record of its own work to disk as it goes, and the app was folding that
+record away while the sync was still running. Each fold makes the sync write that record again
+from the beginning for every page it touches afterwards, so a long first sync got slower the
+further it went. The fold now happens when the sync finishes a pass instead of during one, and a
+computer switched off mid-import still opens in well under a second.
+
+A computer that loses power mid-import re-fetches the mail it did not finish — the mailbox is what
+holds your mail, not this copy of it. Until now a phone or a second window that had been reading
+from that computer could be left pointing past mail that came back and never ask for it again.
+Every sync position now says which run of the store it belongs to, and one from a run that ended
+is answered with "start again" instead of a page that quietly skips messages.
+
+### A self-hosted organizer with more mailboxes than it can remember stops re-reading every record
+
+It keeps the mailbox records it is about to need instead of replacing all of them every round. A server whose mailboxes all fit is unaffected.
+
+### The “Another computer” door completes from a fresh install
+
+Open a mailbox another of your computers is serving: paste the pairing link that
+computer printed, and this one checks it really is the machine the link came from
+before anything is configured. Nothing is written if the check fails.
+
+### Moving into Reads or Receipts on a large mailbox is about a third faster
+
+The window's own timing of a view switch now runs until the new view is on screen, so what it reports is what you waited for.
+
+### A deletion you confirmed completes after a reload, even for a message this device no longer keeps
+
+A message that had scrolled out of what this device holds was read as already gone and the delete was dropped. It is carried out now.
+
+### The pass that finishes unsubscribes no longer re-reads the lists it has left
+
+It remembers which messages it has looked at and where it stopped, so it moves on instead of revisiting the same lists every hour, and the count of what is still owed is work that is actually left.
+
+### The unsubscribe pass runs on a phone
+
+A phone organizing a mailbox on its own said it handled unsubscribes and ran none. It finishes them now, like every other install.
+
+### Upgrading no longer stops halfway over a stale push registration
+
+Push registrations record the device they were made from. The upgrade that starts checking those
+records against your devices refused to finish while one named a device that is no longer there,
+leaving the database half-migrated. The stale device is now cleared from the record before the
+check, and the registration itself keeps working.
+
+### The health check verifies your database's account-isolation keys
+
+The health check certifies that a database carries the schema the server expects, and it could not
+see a foreign key at all — so a server started against a database that had never taken the
+account-isolation change reported itself complete. It now reads those keys, and by their definition
+rather than their name, so one narrowed to fewer columns is caught too. A database missing them
+answers `503` and names the migration to run instead of serving.
+
+### A first import is faster again, and a computer switched off during one loses less of it
+
+A first sync writes a record of its own work to disk as it goes, and that record is only written
+out efficiently when the app commits something durably. While mail was coming in, nothing did —
+so the record was written a page at a time, and every page waited for the disk. The app now
+commits one transaction in sixteen durably while importing, which writes the record out in bulk.
+The import is faster for it, and a computer switched off in the middle of one has less of that
+record to lose.
+
+### Marking mail read
+
+- Marking several messages read in one go now records one time for all of them, rather than
+  stamping each message at the moment it was written.
+
+### A release is the latest one once its update feeds are on it
+
+Publishing a release marks it the latest release in the same run that attaches its update feeds, so
+the download link and installed clients see it without a manual step. A run that cannot attach the
+feeds leaves the previous release as the latest one, which still has a working update path.
+
+### A self-hosted install's health check names the unsubscribe drain's two tables
+
+Until they are there the check reports the database as incomplete, instead of passing and letting the unsubscribe pass fail later.
+
+### A first import no longer re-reads the whole mailbox every cycle
+
+While it builds your mirror, the engine keeps a list of what it already has. It threw that list away
+on every message it wrote and on every message it filed, and read the whole thing back on the next
+pass — so the work grew with the mailbox and each message got slower as the import ran. It now keeps
+the list up to date as it writes.
+
+### A long import tail says what it is doing
+
+A drain ends with passes that run over the whole mailbox the first time — the sender-name repair and
+the conversation rejoin. They could take a quarter of an hour without writing a line, which from
+outside looks like nothing happening. The log now names the pass it is in.
 
 ## [0.19.5] — 2026-09-17
 
@@ -6958,7 +7067,8 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.19.5...HEAD
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.19.6...HEAD
+[0.19.6]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.19.6
 [0.19.5]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.19.5
 [0.19.3]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.19.3
 [0.19.2]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.19.2
