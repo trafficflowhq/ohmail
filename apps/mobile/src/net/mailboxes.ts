@@ -25,6 +25,15 @@ export interface PhoneMailbox {
    */
   displayName?: string | null;
   /**
+   * WHAT THE ANSWERING SERVER IS TO THIS MAILBOX — `MailboxDTO.organizerRole`, and the only field
+   * that separates "the server this phone is paired with organizes it" from "nothing organizes
+   * it". Dropped from this reduction, the panel read `organizedBy === null` as nobody and told a
+   * Cloud-paired phone "Nothing organizes this mailbox" about every mailbox the Cloud organizes.
+   * `null` is "this server named no role" — a server older than the column, which is neither
+   * answer and gets no chip rather than a guessed one.
+   */
+  organizerRole: "organizer" | "reader" | null;
+  /**
    * WHO ORGANIZES IT, when it is not the server this phone is paired with — `null` when that
    * server organizes it itself, and `null` when nobody ever has.
    *
@@ -33,6 +42,14 @@ export interface PhoneMailbox {
    * into a name. `name` is the holder's own machine name and is the only part a person reads.
    */
   organizedBy: { kind: string | null; name: string | null } | null;
+  /**
+   * IS THE CLAIM ON THIS MAILBOX THE ANSWERING SERVER'S OWN — `MailboxDTO.organizedByThisInstall`,
+   * the server's own id comparison rather than a category the phone could re-derive. It only ever
+   * ADMITS the paired-server arm and never gates it: on the live hosted service it reads `false`
+   * while the role reads `organizer`, so a rule requiring it would keep the defect it is here to
+   * help close. `false` also where nobody holds the mailbox and where another install does.
+   */
+  organizedByThisInstall: boolean;
   /**
    * Whether that organizer is still renewing (`held`) or stopped and left its claim behind
    * (`stopped`); `null` is "the answering server has not looked", which is every organizer's
@@ -81,6 +98,17 @@ function stateOf(raw: unknown): PhoneMailbox["organizerState"] {
 }
 
 /**
+ * `organizer`/`reader`, or null for anything else. Deliberately NOT the server's own fallback to
+ * `reader`: there the coercion happens beside the column and absent means "this row said nothing",
+ * while here absent means "this SERVER says nothing" — a deployment older than the role. Reading
+ * that as `reader` would put "Nothing organizes this mailbox" over a mailbox such a server may
+ * well be organizing, which is the sentence this field exists to stop.
+ */
+function roleOf(raw: unknown): PhoneMailbox["organizerRole"] {
+  return raw === "organizer" || raw === "reader" ? raw : null;
+}
+
+/**
  * Read the account's mailboxes, or `null` for "could not ask".
  *
  * Rows with no usable `id`/`address` are dropped rather than kept as blanks: every consumer
@@ -123,7 +151,11 @@ export async function readMailboxes(session: ConnectedSession): Promise<PhoneMai
         ...(typeof r.displayName === "string" && r.displayName !== ""
           ? { displayName: r.displayName }
           : {}),
+        organizerRole: roleOf(r.organizerRole),
         organizedBy: holderOf(r.organizedBy),
+        /* The server's own comparison, taken only as `true` — anything else, including a server
+           that predates the field, is "not the answering install's", the safe direction. */
+        organizedByThisInstall: r.organizedByThisInstall === true,
         organizerState: stateOf(r.organizerState),
         status: typeof r.status === "string" && r.status !== "" ? r.status : null,
         /* An empty string is not a folder name. A server that predates the field sends nothing

@@ -210,6 +210,14 @@ export type PhoneClaim =
   /** Read, and no install holds it. `starting` = a start is asked for and not yet confirmed. */
   | { k: "free"; starting: boolean }
   /**
+   * THE SERVER THIS PHONE IS PAIRED WITH ORGANIZES IT — the normal Cloud-paired state, and the
+   * one this panel could not say. It is not `theirs`: that arm names a FOREIGN install and offers
+   * the reader's sentence about somebody else's machine, while this is the very server answering
+   * the request, which organizes whether or not this app is open. Reached only from a paired
+   * roster; the door in this process answers `ours` from its own engine and never this.
+   */
+  | { k: "pairedServer" }
+  /**
    * THIS INSTALL GAVE THE MAILBOX BACK AND HAS NOT TAKEN IT AGAIN — the transitional state.
    *
    * A refinement of `free` and not a sixth unrelated arm: the engine says this install organizes
@@ -240,6 +248,8 @@ export function claimChipLabel(claim: PhoneClaim): string | null {
           : Copy.phoneStateOrganizing;
     case "free":
       return claim.starting ? Copy.phoneStateStarting : Copy.phoneStateNotOrganized;
+    case "pairedServer":
+      return Copy.phoneStatePairedServer;
     case "handedBack":
       return Copy.phoneStateHandedBack;
     case "theirs":
@@ -320,14 +330,37 @@ export function sendLaterOffered(o: { standalone: boolean; forward: boolean }): 
 export function claimFrom(
   read: {
     known: boolean;
+    /**
+     * WHAT THE ANSWERING SERVER SAID IT IS TO THIS MAILBOX — `MailboxDTO.organizerRole`, and the
+     * field this read did not have. REQUIRED, so TypeScript is the census over every caller: made
+     * optional, a caller that forgot it would go on answering `free` from a null holder, which is
+     * exactly the false state ("Nothing organizes this mailbox" over a Cloud-organized mailbox)
+     * and nothing would say so. `null` is a server that named no role.
+     */
+    role: "organizer" | "reader" | null;
+    /** `MailboxDTO.organizedByThisInstall` — see below; it only ever admits the paired arm. */
+    serverHolds: boolean;
     organizer: { name: string; stopped: boolean; kind?: string | null } | null;
   },
 ): PhoneClaim {
   if (!read.known) return { k: "unknown" };
+  /* ══ THE ANSWERING SERVER'S OWN CLAIM, AND IT OUTRANKS EVERY NAME ═══════════════════════════
+   * `organizerRole` is what THIS install is to this mailbox, and on a paired roster this install is
+   * the server that answered. Read FIRST because such a row can still carry a holder, and that
+   * holder is the same server's own claim — `theirs` would call the paired server another install.
+   * `organizedByThisInstall` admits the arm from the other side and is never required for it: on
+   * the live hosted service the role reads `organizer` while that boolean reads `false`. The
+   * webapp's own rule one install further (`app/shell/mail-state.ts#noticeKind`). */
+  if (read.role === "organizer" || read.serverHolds) return { k: "pairedServer" };
   const holder = read.organizer;
-  /* NEVER `starting` ON A PAIRED ROW: this app holds no engine to ask, so there is no start verb
-     here and no transition to be in. */
-  if (holder === null) return { k: "free", starting: false };
+  if (holder === null) {
+    /* NOBODY, AND ONLY BECAUSE THE SERVER SAID SO. A holder-less row is `free` only where the role
+       says `reader`: null alone cannot tell "nobody has ever claimed it" from "the server that
+       answered organizes it". A server that named no role gets no chip rather than a guessed one —
+       `unknown` is already what this panel renders as silence. NEVER `starting` here: this app
+       holds no engine to ask on a paired row. */
+    return read.role === "reader" ? { k: "free", starting: false } : { k: "unknown" };
+  }
   /* THE KIND TRAVELS WITH THE HOLDER, because the sentence under the chip reads it: a mailbox
      another PHONE organizes is organized only while ohmail is open on that phone, which is the one
      thing about a holder that changes what a person should expect of their mail. */
@@ -436,6 +469,12 @@ export function claimNoteLine(claim: PhoneClaim, os: string): string | null {
          the platform rule ("dismiss the notification to stop") is an instruction about a press
          that has already been made. Every other `ours` keeps it. */
       return claim.releasePending ? Copy.phoneStateStopPendingWhy : platformRuleLine(os);
+    case "pairedServer":
+      /* AND THE PLATFORM RULE IS FALSE HERE, which is what made the paired card wrong twice over:
+         "it organizes while its notification is shown" describes THIS phone, and the server that
+         answered the roster organizes whether or not this app is open. Its own sentence says so
+         and says what this phone does instead, in the reader's words the two foreign arms use. */
+      return Copy.phoneStatePairedServerWhy;
     case "handedBack":
       /* AND THIS ONE DOES GET A SENTENCE, where `free` gets none: the chip names a state a person
          has never seen a word for, and what it means for them is that their laptop may take the

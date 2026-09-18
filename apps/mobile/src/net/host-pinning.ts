@@ -134,6 +134,48 @@ export function isNotTls(error: unknown): boolean {
   return NOT_TLS.test(String(error));
 }
 
+/** The deck keys this classifier may name — a clause, never a whole sentence. */
+export type UnreachableClause =
+  | "unreachableDns"
+  | "unreachableRefused"
+  | "unreachableTimeout";
+
+/**
+ * WHY A DIAL THAT REACHED NOTHING REACHED NOTHING — {@link isNotTls}' shape, third dial.
+ *
+ * "Could not reach that address." used to be followed by `String(err)`, so a mistyped address
+ * answered with `java.net.UnknownHostException: Unable to resolve host …: No address associated
+ * with hostname` — the app's own voice for half a sentence and the platform's for the rest. The
+ * three causes a person can act on differently are recognised by shape, like the two dials above,
+ * and anything else ends at the full stop: a class we cannot name is worth no words at all.
+ * Both platforms' wordings, and iOS's documented `NSURLError` constants with their codes.
+ */
+const CLAUSES: readonly { key: UnreachableClause; re: RegExp }[] = [
+  {
+    key: "unreachableDns",
+    re: /UnknownHost|Unable to resolve host|No address associated with hostname|NSURLErrorCannotFindHost|NSURLErrorDNSLookupFailed|Code=-100[36]\b|getaddrinfo|ENOTFOUND/i,
+  },
+  {
+    key: "unreachableRefused",
+    re: /ECONNREFUSED|Connection refused|NSURLErrorCannotConnectToHost|Code=-1004\b|Failed to connect to/i,
+  },
+  {
+    key: "unreachableTimeout",
+    re: /SocketTimeout|ETIMEDOUT|timed out|NSURLErrorTimedOut|Code=-1001\b/i,
+  },
+];
+
+/**
+ * The KEY and not a refusal: `copy.en.ts` imports {@link isPinFailure} from this module, so a
+ * `refuse` here would close the cycle module → refusal → copy → copy.en → module and leave the
+ * deck half-built at import (measured: `Object.keys(EN)` on `undefined`). The sentence is built
+ * by `net/pairing.ts#unreachableSaid`, beside the `Negotiation.detail` this classifies.
+ */
+export function unreachableClause(error: unknown): UnreachableClause | null {
+  const s = String(error);
+  return CLAUSES.find((c) => c.re.test(s))?.key ?? null;
+}
+
 /*
  * The sentence that used to stand here is now `Copy.pinChanged`: prose is translated, and
  * leaving it beside {@link isPinFailure} would have made it the single refusal on the phone

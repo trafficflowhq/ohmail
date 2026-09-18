@@ -26,7 +26,7 @@ import type { ReopenOutcome, StandaloneEngine } from "../engine/standalone-door"
 import { ServerProfileStore, type ServerProfile } from "../state/servers";
 import { BearerManagerRN, type FetchLike, type RefreshVault } from "./bearer";
 import {
-  canPin, isNotTls, isPinFailure, pin as installPin, unpin,
+  canPin, isNotTls, isPinFailure, pin as installPin, unpin, unreachableClause,
 } from "./host-pinning";
 /* Every sentence this module hands back reaches a screen, so they live in the copy deck and are
    translated with everything else. The `throw new Error(…)` messages below do not: they are
@@ -58,6 +58,22 @@ export type Negotiation =
   /* `detail` is a refusal ARGUMENT, not a sentence: it is rendered where it is shown, so a
      language change reaches inside `Copy.unreachable`/`Copy.pairUnreachable` too. */
   | { kind: "unreachable"; detail: RefusalArg };
+
+/**
+ * WHY A DIAL REACHED NOTHING, AS A CLAUSE — `null` where this build cannot name the cause, and
+ * then the sentence ends at its full stop rather than quoting the platform's exception at a
+ * person ({@link Copy.unreachable}). The keys are spelled out because every `refuse` call is read
+ * out of the source by a census, and one it cannot read is one nothing checks. Both producers of
+ * an unreachable sentence come through here — the self-host door and the pairing probe.
+ */
+export function unreachableSaid(detail: RefusalArg): Refusal | null {
+  switch (unreachableClause(detail)) {
+    case "unreachableDns": return refuse("unreachableDns");
+    case "unreachableRefused": return refuse("unreachableRefused");
+    case "unreachableTimeout": return refuse("unreachableTimeout");
+    default: return null;
+  }
+}
 
 export async function negotiate(fetchImpl: FetchLike, origin: string): Promise<Negotiation> {
   let res: Response;
@@ -568,7 +584,13 @@ export async function probePairing(
     if (isNotTls(negotiated.detail)) {
       return refusedProbe(refuse("notEncrypted"));
     }
-    return refusedProbe(refuse("pairUnreachable", negotiated.detail));
+    /* AND EVERY OTHER DIAL IS CLASSIFIED RATHER THAN QUOTED — the same rule as the self-host
+       door's (`ui/Doors.tsx#sentenceFor`), because this is the same dial reached by the other
+       route and a fix that lands on one of a pair ships the other. */
+    const clause = unreachableSaid(negotiated.detail);
+    return refusedProbe(
+      clause === null ? refuse("pairUnreachable") : refuse("pairUnreachableWhy", clause),
+    );
   }
   if (negotiated.kind === "not-ohmail") {
     return refusedProbe(refuse("pairNotOhmail"));

@@ -231,6 +231,18 @@ const TABLE = {
   phoneStateReader: (name: string) => `Organized by ${name}`,
   phoneStateReaderLegacy: "Organized by another install",
   /**
+   * THE NORMAL PAIRED STATE, AND THE PANEL HAD NO WORDS FOR IT. Every mailbox ohmail Cloud
+   * organizes read "Nothing organizes this mailbox" on a paired phone. No machine is named
+   * because none is on the wire — the server that answered is the one organizing — and the
+   * server is not called "ohmail Cloud" here: this phone can be paired with a self-hosted
+   * server or a desktop just as well, and a sentence that names the wrong one is the defect
+   * again in a nicer font. The note says what it means, which is that nothing has to be open.
+   */
+  phoneStatePairedServer: "Organized by the server you paired with",
+  phoneStatePairedServerWhy:
+    "It organizes this mailbox whether or not ohmail is open on this phone. This phone reads it; "
+    + "it moves nothing and screens nothing.",
+  /**
    * AND WHAT THIS PHONE DOES INSTEAD, which the panel used to get wrong: the note under the chip was
    * the platform rule ("It organizes while its notification is shown") in EVERY state, false where
    * another machine holds the mailbox. The second clause is `mailboxes.readerReadsOnly` from the web
@@ -415,7 +427,21 @@ const TABLE = {
     "ohmail.app is not offering device pairing right now — its own descriptor says so. Nothing to do here today.",
   noPairing: "This server does not offer device pairing.",
   notOhmail: "That address answers, but not as an ohmail server.",
-  unreachable: (detail: string) => `Could not reach that address. ${detail}`,
+  /**
+   * A DIAL THAT REACHED NOTHING, AND THE WORDS AFTER THE FULL STOP ARE OURS.
+   *
+   * This took the transport's own text and rendered it verbatim, so a mistyped address answered
+   * "Could not reach that address. Error: fetch failed: java.net.UnknownHostException: Unable to
+   * resolve host …" — the same defect `notEncrypted` below was written against, left standing on
+   * the arm beside it. The cause is classified by shape (`unreachableClause`) into one of the
+   * three clauses under this, and an unclassified one ends here: a class we cannot name is worth
+   * no words, and never the platform's.
+   */
+  unreachable: "Could not reach that address.",
+  unreachableWhy: (clause: string) => `Could not reach that address. ${clause}`,
+  unreachableDns: "That name did not resolve — check the address for a typo.",
+  unreachableRefused: "The address resolved and nothing is listening on that port.",
+  unreachableTimeout: "It did not answer in time.",
   /**
    * AN ADDRESS THAT ANSWERED, AND NOT WITH TLS — see `isNotTls`, which decides it.
    *
@@ -620,7 +646,9 @@ const TABLE = {
   pairEmptyToken: "the pairing code is empty",
   /** A `/hello` that answered with a status rather than a descriptor. Rides `unreachable`'s detail. */
   helloStatus: (status: number) => `the server answered ${status}`,
-  pairUnreachable: (detail: string) => `could not reach that server — ${detail}`,
+  /* The same dial from the pairing probe, and the same rule — see `unreachable`. */
+  pairUnreachable: "could not reach that server",
+  pairUnreachableWhy: (clause: string) => `could not reach that server. ${clause}`,
   pairNotOhmail: "that address answers, but not as an ohmail server",
   pairManagedDeferred: "ohmail.app is not offering device pairing right now — its own descriptor says so",
   pairNoPairing: "this server does not offer device pairing",

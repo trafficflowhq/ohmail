@@ -1074,6 +1074,33 @@ export function liveScreener(
   };
 }
 
+/**
+ * ══ THE WAITING SHELF AFTER A DECIDE THE SERVER CONFIRMED ════════════════════════════════════
+ * On a paired door the shelf IS the cached `GET /screener` answer ({@link liveScreener}), and
+ * nothing moved it at the press: the sender stayed, the count stayed, and the NAME collapsed to
+ * the address — the mirror's dto went with the filing, so the join fell through to `rowOfServer`,
+ * whose name is `s.name || s.address`. One cause, both symptoms; only a manual sync healed it.
+ * This states what the route's next page will hold: it filters DECIDED senders out of every page
+ * (`net/screener.ts`), and a `domain` decide decides every sender at that domain, not only the one
+ * pressed. `null` (nobody answered) stays `null`: it is not an empty shelf. */
+export function waitingAfterDecide(
+  server: readonly ServerWaitingSender[] | null,
+  decided: { address: string; scope: Scope },
+): readonly ServerWaitingSender[] | null {
+  if (server === null) return server;
+  const match = decided.address.trim().toLowerCase();
+  const domain = domainOf(match).toLowerCase();
+  /* A domain decide with no domain to match retires nothing rather than everything — the empty
+     string is every address's suffix and would empty the shelf on a malformed row. */
+  if (decided.scope === "domain" && domain === "") return server;
+  return server.filter((s) => {
+    const addr = s.address.trim().toLowerCase();
+    return decided.scope === "domain"
+      ? domainOf(addr).toLowerCase() !== domain
+      : senderKey(addr) !== senderKey(match);
+  });
+}
+
 export interface WorldPile {
   kind: PileKind;
   title: string;
@@ -1531,6 +1558,15 @@ export interface LiveDeps {
    * 09:00, which is what every build did before the setting existed.
    */
   resurfaceTime?: () => string | null;
+  /**
+   * A DECIDE THE SERVER CONFIRMED, HANDED BACK TO WHOEVER HOLDS THE CACHED QUEUE — the paired
+   * door's waiting shelf is that cache, and without this it kept the decided sender until the
+   * next drain (see {@link waitingAfterDecide}, which is the rule; this only carries the event).
+   * Absent ⇒ nothing is reconciled, which is the standalone door's correct behaviour: there the
+   * shelf is derived from the mirror and the mutation's own optimistic relocation already
+   * retires the sender.
+   */
+  forgetWaiting?: (decided: { address: string; scope: Scope }) => void;
 }
 
 /**
@@ -1935,6 +1971,12 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
        shape of the defect rather than a smaller version of it. The wait is one round trip on a
        press that already blocks on nothing else. */
     const v = await landed;
+    /* ══ AND THE SHELF FOLLOWS THE DECIDE, NOT THE NEXT DRAIN ══════════════════════════════
+       Confirmed only — a queued press has not occurred and a refused one changed nothing, and
+       retiring a row for either would be the same false state pointing the other way. Before
+       the sentences below because both of them are true of a landed decide, including the one
+       recorded for another install: the route filters a DECIDED sender out whoever files it. */
+    if (v.kind === "applied") deps.forgetWaiting?.({ address: row.address, scope });
     /* THE DECIDE'S OWN QUEUED SENTENCE COMES FIRST, because it is the more specific one: a
        CONFIRMED decide against a mailbox somebody else organizes carries the holder on
        `pendingWith`, and that names the install as well as the wait. Everything else goes
@@ -2473,7 +2515,15 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     /* THE SENTENCE FOLLOWS THE ANSWER, not the press: the optimistic "Screened" stood over a
        rule the server had only RECORDED for the organizing install, which is the same claim the
        Screener's own decide stopped making. `saidAll` raises it, or the wait, or the refusal. */
-    return saidAll(await ruled, refuse("liveDecided", destDone(dest), target), refuse("liveDecideFailed", m.from.address));
+    const verdicts = await ruled;
+    /* THE SAME RECONCILIATION AS THE SCREENER'S OWN PRESS, because this is the same mutation by
+       another door: a sender screened from the open message is decided, and the paired shelf's
+       cached answer would have gone on naming them. Only the branch that DECIDED one — the rule
+       ladder's other branch writes rules about mail already past the gate. */
+    if (waiting && verdicts.every((x) => x.kind === "applied")) {
+      deps.forgetWaiting?.({ address: m.from.address, scope });
+    }
+    return saidAll(verdicts, refuse("liveDecided", destDone(dest), target), refuse("liveDecideFailed", m.from.address));
   };
 
   /* ── the folder verbs — see the interface's header for the whole optimism model ─────────── */

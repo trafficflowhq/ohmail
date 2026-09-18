@@ -133,6 +133,13 @@ export const DE: Deck = {
   phoneStateHandedBackWhy: "Ein anderer Computer kann dieses Postfach jetzt übernehmen.",
   phoneStateReader: (name: string) => `Organisiert von ${name}`,
   phoneStateReaderLegacy: "Organisiert von einer anderen Installation",
+  /* Der normale gekoppelte Zustand. Es wird keine Maschine genannt, weil keine auf der Leitung
+     steht — der antwortende Server organisiert selbst —, und der Server heißt hier nicht
+     "ohmail Cloud": dieses Telefon kann ebenso mit einem selbst gehosteten Server gekoppelt sein. */
+  phoneStatePairedServer: "Organisiert vom gekoppelten Server",
+  phoneStatePairedServerWhy:
+    "Er organisiert dieses Postfach, ob ohmail auf diesem Telefon offen ist oder nicht. Dieses "
+    + "Telefon liest es; es verschiebt nichts und sortiert nichts aus.",
   /* Der zweite Satz ist `mailboxes.readerReadsOnly` aus dem Web-Katalog, mit "dieses Telefon"
      statt "dieser Computer"; die Telefon-Variante folgt `blocked_organized_elsewhere_mobile`. */
   phoneStateReaderWhy: (name: string) =>
@@ -247,7 +254,13 @@ export const DE: Deck = {
     "ohmail.app bietet gerade keine Gerätekopplung an — das sagt seine eigene Beschreibung. Hier ist heute nichts zu tun.",
   noPairing: "Dieser Server bietet keine Gerätekopplung an.",
   notOhmail: "Diese Adresse antwortet, aber nicht als ohmail-Server.",
-  unreachable: (detail: string) => `Diese Adresse war nicht erreichbar. ${detail}`,
+  /* Die Ursache wird nach Form erkannt (`unreachableClause`); eine unerkannte endet nach dem
+     Punkt — der Wortlaut der Plattform gehört nicht in einen Satz für Menschen. */
+  unreachable: "Diese Adresse war nicht erreichbar.",
+  unreachableWhy: (clause: string) => `Diese Adresse war nicht erreichbar. ${clause}`,
+  unreachableDns: "Dieser Name wurde nicht aufgelöst — prüfe die Adresse auf einen Tippfehler.",
+  unreachableRefused: "Die Adresse wurde aufgelöst, aber auf diesem Port antwortet nichts.",
+  unreachableTimeout: "Es kam keine Antwort in der vorgesehenen Zeit.",
   notEncrypted:
     "ohmail konnte zu dieser Adresse keine verschlüsselte Verbindung aufbauen und hat "
     + "deshalb nichts gesendet. Meist antwortet der Server auf dem angegebenen Port "
@@ -361,7 +374,8 @@ export const DE: Deck = {
   pairBadAddress: (origin: string) => `keine Serveradresse: „${origin}“`,
   pairEmptyToken: "der Kopplungscode ist leer",
   helloStatus: (status: number) => `der Server hat mit ${status} geantwortet`,
-  pairUnreachable: (detail: string) => `dieser Server war nicht erreichbar — ${detail}`,
+  pairUnreachable: "dieser Server war nicht erreichbar",
+  pairUnreachableWhy: (clause: string) => `dieser Server war nicht erreichbar. ${clause}`,
   pairNotOhmail: "diese Adresse antwortet, aber nicht als ohmail-Server",
   pairManagedDeferred: "ohmail.app bietet gerade keine Gerätekopplung an — das sagt seine eigene Beschreibung",
   pairNoPairing: "dieser Server bietet keine Gerätekopplung an",

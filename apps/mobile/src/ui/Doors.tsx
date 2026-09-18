@@ -16,7 +16,7 @@ import { phoneEngineStart } from "../engine/engine-artifact";
 import { standaloneAvailable } from "../engine/standalone-door";
 import { useConnection } from "../net/connection";
 import type { Negotiation, PickerStep } from "../net/pairing";
-import { MANAGED_ORIGIN, nextStep, stashPairOrigin } from "../net/pairing";
+import { MANAGED_ORIGIN, nextStep, stashPairOrigin, unreachableSaid } from "../net/pairing";
 import { canPin, isNotTls } from "../net/host-pinning";
 import { addressProblem, parseServerAddress } from "../net/server-base";
 import { useTheme } from "../theme";
@@ -42,7 +42,13 @@ export function sentenceFor(n: Negotiation, step?: PickerStep): Refusal {
      unclassified the reason renders as the platform's own `SSLException` text after a full stop
      that already said the wrong thing — `isNotTls` decides, and its sentence names the cause. */
   if (n.kind === "unreachable") {
-    return isNotTls(n.detail) ? refuse("notEncrypted") : refuse("unreachable", n.detail);
+    if (isNotTls(n.detail)) return refuse("notEncrypted");
+    /* AND THE REST OF THE DIAL IS CLASSIFIED TOO, rather than quoted: `n.detail` is the
+       platform's exception and this door is where a person meets it. The clause is a NESTED
+       refusal, so a language switch reaches inside the sentence; an unrecognised fault gets the
+       sentence with nothing after it. */
+    const clause = unreachableSaid(n.detail);
+    return clause === null ? refuse("unreachable") : refuse("unreachableWhy", clause);
   }
   if (n.kind === "not-ohmail") return refuse("notOhmail");
   if (step?.kind === "managed-signin-later") return refuse("managedDeferred");

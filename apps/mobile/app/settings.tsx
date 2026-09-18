@@ -435,8 +435,15 @@ function ThisPhonePanel() {
         key: row.id,
         address: row.address,
         /* NO NAME, AND NO HAND-BACK ON A PAIRED ROW. See {@link claimFrom}: every holder a paired
-           roster can name is another install, so this card names it and offers no verb. */
-        claim: claimFrom({ known: w.mailboxes.known, organizer: holderFor(row) }),
+           roster can name is another install, so this card names it and offers no verb — and the
+           ROLE is what says whether the server that answered organizes it itself, which this
+           composed read did not carry and no holder can stand in for. */
+        claim: claimFrom({
+          known: w.mailboxes.known,
+          role: row.organizerRole,
+          serverHolds: row.organizedByThisInstall,
+          organizer: holderFor(row),
+        }),
       }));
   if (cards.length === 0) return null;
 
@@ -487,7 +494,12 @@ function ThisPhonePanel() {
                     `announceRestricted` writes; the deck's own note says this app organizes while
                     it is open instead, which contradicts the rule line above it, so it sits
                     directly under it rather than somewhere else on the screen. */}
-                {organizerRestrictedSaid() ? (
+                {/* AND THE SAME GATE, FOR THE SAME REASON — see the notifications note below.
+                    "It organizes while the app is open, and hands the mailbox back when you
+                    leave" is this phone's engine, and on a paired row nothing of the sort
+                    happens: the fix that reaches one of a pair and not the other ships the
+                    other. */}
+                {organizerRestrictedSaid() && row.key === HERE_CARD ? (
                   <Txt variant="note" tone="ink2">{Copy.organizerRestricted}</Txt>
                 ) : null}
                 {/* AND THE OTHER CAUSE, WHICH IS NOT BATTERY SAVER. Both declines used to reach
@@ -495,7 +507,13 @@ function ThisPhonePanel() {
                     first install, where `POST_NOTIFICATIONS` starts denied and the service
                     refuses to start behind a notification nobody can see. This one names what is
                     off and carries the only act left: Android never re-asks after a refusal. */}
-                {organizerNotificationsOffSaid() ? (
+                {/* ══ AND ONLY OVER THE DOOR IN THIS PROCESS ═══════════════════════════════════
+                    "organizing runs only while the app is open" is a statement about THIS
+                    phone's engine. Gated on the record alone it also rendered on every PAIRED
+                    row, under a chip about a server that organizes whether or not the app is
+                    open — a second false sentence beneath the first. One card can be this
+                    phone's, and it is the one the start verb above is offered on. */}
+                {organizerNotificationsOffSaid() && row.key === HERE_CARD ? (
                   <View style={{ gap: 2 }}>
                     <Txt variant="note" tone="ink2">{Copy.organizerNotificationsOff}</Txt>
                     <Button

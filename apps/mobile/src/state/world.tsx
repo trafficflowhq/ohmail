@@ -74,6 +74,7 @@ import {
   readerZone,
   soleMessageMailbox,
   stableActions,
+  waitingAfterDecide,
   type FolderEntity,
   type ScreenerRow,
   type AbandonedMutation,
@@ -900,6 +901,12 @@ export function WorldProvider({ children }: { children: ReactNode }) {
         // identity-stable while the consent read that carries the time lands later, so the
         // horizon-less verbs must ask at every use rather than capture a boot-time null.
         resurfaceTime: () => resurfaceTimeNow.current,
+        /* THE CACHED QUEUE, RECONCILED AT THE DECIDE. `setScreenerServer` is `useState`'s own
+           setter and identity-stable, and the update is FUNCTIONAL — this facade is built once
+           per session by design, so a captured value would reconcile against the queue as it
+           stood at construction. The rule itself is `waitingAfterDecide`, beside the shelf it
+           describes; nothing here decides who leaves. */
+        forgetWaiting: (decided) => setScreenerServer((prev) => waitingAfterDecide(prev, decided)),
       })
       : null),
     [engine, showToast, zone],
