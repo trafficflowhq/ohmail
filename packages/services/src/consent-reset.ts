@@ -2,7 +2,7 @@ import { and, eq, sql, type SQL } from "drizzle-orm";
 import { dialect } from "@trafficflow/db/dialect";
 import {
   assertAccountOrganizes,
-  accountSettings, contacts, folderState, learningSignals, messages, recordRuleDelta,
+  accountSettings, contacts, folderState, learningSignals, messages, recordChanges, recordRuleDelta,
   routingDecisions, rules, type Tx,
 } from "@trafficflow/db";
 import type { ServiceContext } from "./context.js";
@@ -131,6 +131,14 @@ export async function resetScreeningState(ctx: ServiceContext): Promise<ResetRes
     const suggestionRows = await tx.delete(routingDecisions)
       .where(and(eq(routingDecisions.accountId, ctx.accountId), eq(routingDecisions.status, "suggestion")))
       .returning({ id: routingDecisions.id });
+    // Suggestions ride `/sync` (the narrow verdict entity), so their reset must too — without
+    // these tombstones every mirror keeps rendering advice this account just discarded.
+    if (suggestionRows.length > 0) {
+      await recordChanges(tx, suggestionRows.map((r) => ({
+        accountId: ctx.accountId, entityType: "screener_suggestion" as const,
+        entityId: r.id, op: "delete" as const,
+      })));
+    }
 
     const learningRows = await tx.delete(learningSignals)
       .where(and(eq(learningSignals.accountId, ctx.accountId), eq(learningSignals.kind, "screener")))
