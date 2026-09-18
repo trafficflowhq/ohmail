@@ -6177,7 +6177,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           clearSignInRefusal("the stored password was replaced");
           await redialIfDead({ force: true });
           void syncUntilQuiet(1, { force: true }).catch((err: unknown) => {
-            log("mailbox_credential_cycle_failed", { mailboxId: mb.id, err });
+            log("mailbox_relogin_cycle_failed", { mailboxId: mb.id, err });
           });
         },
         async start() {
