@@ -2816,13 +2816,15 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends flatpak
-          # THE RUNTIMES GO SYSTEM-WIDE; THE BUILDER DOES NOT. flatpak-builder runs inside the
-          # org.flatpak.Builder sandbox and resolves the runtime, the sdk and every sdk-extension
-          # from in there. That sandbox reaches /var/lib/flatpak; it cannot be relied on to read
-          # the per-user installation, and on this runner's flatpak it does not — not even with
-          # FLATPAK_USER_DIR handed to it, which is why every build here died `Failed to init:
-          # Unable to find sdk` while the install step above reported success. System-wide is the
-          # install this repository's README gives a reader, and it is the one measured working.
+          # THE RUNTIMES GO SYSTEM-WIDE, AND THE BUILDER NEEDS A SESSION BUS. flatpak-builder runs
+          # inside the org.flatpak.Builder sandbox and asks the HOST's flatpak whether the sdk is
+          # there, through the org.freedesktop.Flatpak portal — which a GitHub step has no session
+          # bus to reach, so every run died `Failed to init: Unable to find sdk` while this step
+          # reported success, and moving the runtimes (per-user with FLATPAK_USER_DIR, then
+          # system-wide) changed nothing: the installation was never the variable. Measured in a
+          # noble container on this runner's flatpak 1.14.6 — the same command fails with no session
+          # bus and builds under `dbus-run-session`, with the sdk in either installation. Every
+          # builder run below carries that wrapper; system-wide stays, as the README shows a reader.
           flatpak remote-add --user --if-not-exists flathub \
             https://dl.flathub.org/repo/flathub.flatpakrepo
           sudo flatpak remote-add --system --if-not-exists flathub \
@@ -2849,12 +2851,12 @@ jobs:
       # a missing one otherwise reads as the app failing rather than the runner.
       - name: The tools this job spawns
         run: |
-          for t in flatpak node; do
+          for t in flatpak node dbus-run-session; do
             command -v "$t" >/dev/null || { echo "$t is not installed" >&2; exit 1; }
           done
           for c in flatpak-builder appstreamcli desktop-file-validate flatpak-builder-lint; do
-            flatpak run --command="$c" org.flatpak.Builder --version >/dev/null 2>&1 \
-              || flatpak run --command="$c" org.flatpak.Builder --help >/dev/null \
+            dbus-run-session -- flatpak run --command="$c" org.flatpak.Builder --version >/dev/null 2>&1 \
+              || dbus-run-session -- flatpak run --command="$c" org.flatpak.Builder --help >/dev/null \
               || { echo "$c is not in org.flatpak.Builder" >&2; exit 1; }
           done
 
@@ -2867,12 +2869,12 @@ jobs:
 
       - name: The desktop entry is valid
         run: |
-          flatpak run --command=desktop-file-validate org.flatpak.Builder \
+          dbus-run-session -- flatpak run --command=desktop-file-validate org.flatpak.Builder \
             apps/desktop/flatpak/app.ohmail.Desktop.desktop
 
       - name: The metainfo is valid
         run: |
-          flatpak run --command=appstreamcli org.flatpak.Builder validate --no-net \
+          dbus-run-session -- flatpak run --command=appstreamcli org.flatpak.Builder validate --no-net \
             apps/desktop/flatpak/app.ohmail.Desktop.metainfo.xml
 
       # TWO PASSES, and the second one is the proof. The first resolves every declared
@@ -2887,7 +2889,7 @@ jobs:
       # test/flatpak-manifest.test.ts instead.
       - name: Resolve every declared source
         run: |
-          flatpak run --command=flatpak-builder org.flatpak.Builder \
+          dbus-run-session -- flatpak run --command=flatpak-builder org.flatpak.Builder \
             --user --force-clean --download-only \
             flatpak-build apps/desktop/flatpak/app.ohmail.Desktop.yml
 
@@ -2903,14 +2905,14 @@ jobs:
           M=apps/desktop/flatpak/app.ohmail.Desktop.yml
           FIRST=$(sed -n 's/^  - name: //p' "$M" | head -1)
           [ -n "$FIRST" ] || { echo "no module name could be read out of $M" >&2; exit 1; }
-          flatpak run --command=flatpak-builder org.flatpak.Builder \
+          dbus-run-session -- flatpak run --command=flatpak-builder org.flatpak.Builder \
             --user --force-clean --disable-download --stop-at="$FIRST" \
             flatpak-init "$M" \
             || { echo "the runtime, the sdk or an sdk-extension $M names is not installed where flatpak-builder looks" >&2; exit 1; }
 
       - name: Build the Flatpak, with nothing left to fetch
         run: |
-          flatpak run --command=flatpak-builder org.flatpak.Builder \
+          dbus-run-session -- flatpak run --command=flatpak-builder org.flatpak.Builder \
             --user --force-clean --disable-download \
             --repo=flatpak-repo \
             flatpak-build apps/desktop/flatpak/app.ohmail.Desktop.yml
@@ -2961,9 +2963,9 @@ jobs:
       # It is the closest thing to the review the submission gets.
       - name: flatpak-builder-lint
         run: |
-          flatpak run --command=flatpak-builder-lint org.flatpak.Builder \
+          dbus-run-session -- flatpak run --command=flatpak-builder-lint org.flatpak.Builder \
             manifest apps/desktop/flatpak/app.ohmail.Desktop.yml
-          flatpak run --command=flatpak-builder-lint org.flatpak.Builder \
+          dbus-run-session -- flatpak run --command=flatpak-builder-lint org.flatpak.Builder \
             repo flatpak-repo
 
       # The permission set, asserted against the built metadata rather than
@@ -2981,15 +2983,23 @@ jobs:
             grep -q "$want" "$META" || { echo "the built app is missing $want" >&2; exit 1; }
           done
 
+      # A SUMMARY THAT CANNOT SAY "IT DID NOT BUILD" IS A CLAIM, NOT A READING. This step runs
+      # on a failed job too, and the sentence below stated a build on every one of them while
+      # the job had never once concluded success.
       - name: Run summary
         if: always()
         run: |
           {
             echo '### Linux · Flatpak'
             echo
-            echo 'Built `app.ohmail.Desktop` from the committed manifest with no network access,'
-            echo 'asserted the shipped layout, and ran the Flathub linter. Not a release asset:'
-            echo 'Flathub builds and signs its own copy.'
+            if [ "${{ job.status }}" = success ]; then
+              echo 'Built `app.ohmail.Desktop` from the committed manifest with no network access,'
+              echo 'asserted the shipped layout, and ran the Flathub linter. Not a release asset:'
+              echo 'Flathub builds and signs its own copy.'
+            else
+              echo 'FLATPAK: FAILED — the manifest was not built. The step that refused says why in'
+              echo 'the log; nothing was asserted here about the shipped layout or the linter.'
+            fi
           } >> "$GITHUB_STEP_SUMMARY"
 
   # ==========================================================================
