@@ -74,6 +74,65 @@
   </screenshots>
 
   <releases>
+    <release version="0.19.6" date="2026-09-18">
+      <description>
+        <ul>
+          <li>Removing a mailbox works again after the away responder has replied</li>
+          <li>A first sync of a big mailbox picks up where it left off</li>
+          <li>A sync that is outstanding but not moving now says so standing still</li>
+          <li>The app opens in your own theme</li>
+          <li>A rule you make no longer moves mail you filed yourself or set aside</li>
+          <li>Every time you pick survives the clock change</li>
+          <li>The mail engine starts with a smaller allocator</li>
+          <li>Move organizing to another computer while away replies are going out and the message that stops is still answered later, not written off.</li>
+          <li>An install no longer says it organizes a mailbox before the lease has answered</li>
+          <li>A corrected clock no longer keeps refusing until the app is restarted</li>
+          <li>A window that is already up to date asks the mailbox one question instead of two</li>
+          <li>A change waiting for the installation that organizes your mailbox says so on every screen</li>
+          <li>Filing a message while your mailbox was being read no longer loses the filing</li>
+          <li>Opening Settings in the demo on the site no longer turns off the notifications your signed-in browser is registered for</li>
+          <li>A mailbox you erased cannot be filled or unlocked again</li>
+          <li>A send that could not be saved first is refused rather than sent blind</li>
+          <li>A self-hosted install's outgoing-size probe checks the address it dials, like every other connection the organizer makes</li>
+          <li>Setting up a self-hosted database no longer stops on a reworded comment</li>
+          <li>"Not junk" is handed to whichever install organizes your mailbox</li>
+          <li>Account isolation</li>
+          <li>Rebuilding a self-hosted image from a clone says which builder it needs</li>
+          <li>A mailbox you remove takes its in-flight retries with it</li>
+          <li>A dropped connection during a background renewal no longer leaves extra sessions behind</li>
+          <li>An iCloud mailbox's organizer keeps answering your other computer's presses</li>
+          <li>A discard that cannot happen now says why, and a held message points at the question that frees it</li>
+          <li>A reply you were writing is saved as a draft if the message it answers is moved or deleted in another mail app</li>
+          <li>A message another mail app moves or deletes now says so where it was, instead of the pane going blank</li>
+          <li>The web Screener can show and release mail held behind rules you already made</li>
+          <li>A sender you sent to Spam counts as decided everywhere</li>
+          <li>A browser that loses track of your account recovers on the next page load instead of refusing everything</li>
+          <li>A meeting invitation with no event says so</li>
+          <li>An "Accepted:" your calendar app sent is no longer the face of a conversation</li>
+          <li>A first import reports itself on every door</li>
+          <li>A self-hosted server and the mail worker now hold about 47 MB less memory once they have settled</li>
+          <li>Move on the phone offers the place a message is shown in, and files the sender there</li>
+          <li>Opening a large mailbox puts mail on the list sooner: the first page is a viewport rather than five hundred messages, and the first sync of a launch waits for it instead of holding the database while the list is empty</li>
+          <li>Cancelling a security check now cancels what it was for</li>
+          <li>The desktop window says once when your account cannot be opened</li>
+          <li>A first import keeps its pace, and a computer that loses power while importing leaves nothing missing</li>
+          <li>A self-hosted organizer with more mailboxes than it can remember stops re-reading every record</li>
+          <li>The “Another computer” door completes from a fresh install</li>
+          <li>Moving into Reads or Receipts on a large mailbox is about a third faster</li>
+          <li>A deletion you confirmed completes after a reload, even for a message this device no longer keeps</li>
+          <li>The pass that finishes unsubscribes no longer re-reads the lists it has left</li>
+          <li>The unsubscribe pass runs on a phone</li>
+          <li>Upgrading no longer stops halfway over a stale push registration</li>
+          <li>The health check verifies your database's account-isolation keys</li>
+          <li>A first import is faster again, and a computer switched off during one loses less of it</li>
+          <li>Marking mail read</li>
+          <li>A release is the latest one once its update feeds are on it</li>
+          <li>A self-hosted install's health check names the unsubscribe drain's two tables</li>
+          <li>A first import no longer re-reads the whole mailbox every cycle</li>
+          <li>A long import tail says what it is doing</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.19.5" date="2026-09-17">
       <description>
         <ul>
@@ -139,33 +198,6 @@
           <li>A first sync of a mailbox with many folders no longer loads a message from every one of them</li>
           <li>A long first import no longer keeps the whole import in the local database's log</li>
           <li>The demo on the site keeps to itself</li>
-        </ul>
-      </description>
-    </release>
-    <release version="0.19.0" date="2026-09-14">
-      <description>
-        <ul>
-          <li>Reopening the app no longer grows its cache of mail</li>
-          <li>A change you make on one computer reaches the one that organizes the mailbox</li>
-          <li>Search answers while you type</li>
-          <li>Attachments land in your Downloads folder</li>
-          <li>The attachment loader no longer spins</li>
-          <li>Mail written as one line per block no longer arrives double-spaced</li>
-          <li>A signature you set on one device now shows up when you write from another</li>
-          <li>Mail from someone you had already written to no longer waits in the Screener</li>
-          <li>Reads names which of your addresses a message came to</li>
-          <li>Applying a new rule to past mail is its own choice</li>
-          <li>Every screen that says another install organizes a mailbox says what to press</li>
-          <li>Organizing a mailbox is recorded the moment it is claimed</li>
-          <li>Choosing another computer to organize a mailbox stops the previous one sooner</li>
-          <li>Taking a mailbox back works from the mailbox page</li>
-          <li>A mailbox whose settings ohmail could not read is no longer stuck</li>
-          <li>A mailbox whose saved password this computer cannot open says so</li>
-          <li>Signing out holds even when a password was being saved</li>
-          <li>A filing whose copy landed and whose delete was refused is no longer recorded as finished</li>
-          <li>A decision you made while a pass was running is no longer overwritten by it</li>
-          <li>A page you did not ask for</li>
-          <li>Removing a mailbox waits for the mail it is still reading</li>
         </ul>
       </description>
     </release>
