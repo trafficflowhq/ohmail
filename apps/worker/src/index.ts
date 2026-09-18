@@ -111,7 +111,7 @@ import {
   markMailboxSyncBlocked, clearMailboxSyncBlock,
   classifyMailboxError, mailboxErrorDetail,
   stampMailboxSyncNow, stampInitialImportComplete, makeSyncWriteFence, type LeaderFence,
-  accountsOf, loadServedAccounts, accountInShard,
+  accountsOf, organizedMailboxIdsOf, accountInShard,
   type EnabledMailbox, type MailboxDisabledReason, type MailboxErrorPhase,
   type MailboxSyncBlockReason,
 } from "./mailboxes.js";
@@ -748,6 +748,10 @@ export async function startWorkerWithLock(
     let lockLost = false;
     let lastCycleAt: Date | null = null;
     let dutyAccounts: string[] = [];
+    /* THE ROSTER ROWS BEHIND `dutyAccounts`, kept because a per-account pass that writes mail state
+       needs to know WHICH MAILBOXES of that account this process organizes — an account id cannot
+       say. Written in the same statement as `dutyAccounts`, so the two never disagree. */
+    let dutyMailboxes: readonly EnabledMailbox[] = [];
     // Time-gate for the global maintenance pass; starts "due" so a fresh leader sweeps once.
     let lastMaintenanceAt = 0;
     /**
@@ -2907,6 +2911,7 @@ export async function startWorkerWithLock(
       }
 
       dutyAccounts = accountsOf(served);
+      dutyMailboxes = served;
 
       // The roster invariant, checking what is actually SERVED rather than what was selected.
       // Every mailbox of the shard's duty must be in exactly one accounted-for bucket:
@@ -4005,10 +4010,13 @@ export async function startWorkerWithLock(
       // ENABLED MAILBOXES, so a fully-disabled account gets no drain, time scan or bubble-up flip
       // (the intended semantics — a suspended account's automation must not keep firing). FALLBACK, not
       // failure: a database fault degrades to the old narrower list. cycle() has exactly ONE preemption point.
-      let passAccounts = dutyAccounts;
+      /* THE ROWS, and the accounts DERIVED from them — `loadServedAccounts` is exactly
+         `accountsOf(await loadEnabledMailboxes(…))` and threw the rows away, which is the mailbox
+         scope the bubble-up pass below now needs. One read, same shard predicate, same fallback. */
+      let passMailboxes = dutyMailboxes;
       try {
-        passAccounts = await asDatabaseFault("cycle.loadServedAccounts",
-          () => loadServedAccounts(db, selection));
+        passMailboxes = await asDatabaseFault("cycle.loadServedAccounts",
+          () => loadEnabledMailboxes(db, selection));
       } catch (err) {
         noteIfSharedDatabaseFault(err);
         log.error("served_accounts_load_failed", {
@@ -4017,6 +4025,7 @@ export async function startWorkerWithLock(
             "over the ATTACHED duty only, so an account past the mailbox cap is skipped once",
         });
       }
+      const passAccounts = accountsOf(passMailboxes);
 
       // The bubble-up resurfacing pass, in the loop and time-gated. It lives here rather than a platform
       // cron because `runBubbleUpCron` takes `acquireLeaderLock(…, leaderLockKeyFor(shardIndex))` — the
@@ -4037,8 +4046,14 @@ export async function startWorkerWithLock(
             // pass's own header explains why (an unscoped pass under a shard-specific lock
             // would let shard 0 mutate shard 1's rows), and per-account isolation keeps one
             // account's failure from skipping the rest.
+            /* AND PER MAILBOX, from the roster rows this cycle read: Cloud holds the lease one
+               mailbox at a time, so an account whose second mailbox is organized by somebody's
+               desktop gets that mailbox's rows left alone. Read here rather than assumed — an
+               account this process reads entirely yields an empty set and flips nothing. */
             const { flipped } = await asDatabaseFault("cycle.bubbleUpPass",
-              () => bubbleUpPass(db as unknown as Tx, new Date(), { accountId }));
+              () => bubbleUpPass(db as unknown as Tx, new Date(), {
+                accountId, mailboxIds: organizedMailboxIdsOf(passMailboxes, accountId),
+              }));
             if (flipped > 0) log.info("bubble_up_flipped", { accountId, flipped });
           } catch (err) {
             noteIfSharedDatabaseFault(err);

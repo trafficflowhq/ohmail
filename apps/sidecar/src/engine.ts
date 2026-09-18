@@ -2043,6 +2043,18 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
     };
 
     /**
+     * WHICH MAILBOXES THIS INSTALL ORGANIZES AT THIS MOMENT — the scope handed to every pass that
+     * writes mail state for the whole account at once. One source: the answer each runtime's own gate
+     * (`mayOrganize`) wrote, read through the accessor that can only WITHHOLD it — a stop, a hand-back
+     * or a poll timer not yet armed take a mailbox out, nothing puts one in — so a booking due at
+     * launch waits for the first poll rather than flipping inside the launch drain, which is the
+     * price of a source that cannot over-claim (`resurface-launch-window.test.ts` pins both halves).
+     * Computed per call and never cached: an install that organizes nothing writes nothing.
+     */
+    const organizedMailboxIds = (): string[] =>
+      runtimes.all().filter((rt) => rt.organizer.organizing).map((rt) => rt.mailboxId);
+
+    /**
      * Scheduled resurfacing — the local half of a feature that was hosted-only by accident. A message put
      * away until Friday at nine carries `state='bubbled_up'` and a `bubbleUpAt`; on Cloud the hosted worker
      * flips it, and a standalone install has no worker, so the row sat there while the shortcut promised
@@ -2055,7 +2067,11 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
     const resurfaceDue = async (): Promise<void> => {
       try {
         const { flipped } = await bubbleUpPass(
-          db as unknown as Tx, now(), { accountId: world.accountId },
+          /* THE SET, READ AT THE CALL — a mailbox handed over since the last drain is out of this
+             one, and an install organizing none of its mailboxes flips nothing rather than
+             everything. `world.accountId` stays beside it: the account is still the shard. */
+          db as unknown as Tx, now(),
+          { accountId: world.accountId, mailboxIds: organizedMailboxIds() },
         );
         // Only when something moved: a settled mailbox emits this line never, which is the same
         // rule the drain summary below follows.

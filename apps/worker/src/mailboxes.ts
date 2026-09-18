@@ -375,6 +375,21 @@ export function accountsOf(mbs: readonly EnabledMailbox[]): string[] {
   return [...new Set(mbs.map((m) => m.accountId))];
 }
 
+/**
+ * THE MAILBOXES OF ONE ACCOUNT THIS HOST ORGANIZES — the scope an account-wide pass that writes mail
+ * state is given, because the organizer lease is per MAILBOX. The role is the lease as the hosted store
+ * records it (`mailboxes.organizer_role`, NOT NULL and coerced to `reader` at the read above), so a
+ * mailbox this process merely READS for another organizer is out of the set, and an account it reads
+ * entirely yields an EMPTY set — which means no rows rather than every row.
+ */
+export function organizedMailboxIdsOf(
+  mbs: readonly EnabledMailbox[], accountId: string,
+): string[] {
+  return mbs
+    .filter((m) => m.accountId === accountId && m.organizerRole === "organizer")
+    .map((m) => m.mailboxId);
+}
+
 /** The accounts this process is responsible for — the outer loop of every per-account pass. */
 export async function loadServedAccounts(db: WorkerDb, selection: MailboxSelection = {}): Promise<string[]> {
   return accountsOf(await loadEnabledMailboxes(db, selection));

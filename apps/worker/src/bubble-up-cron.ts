@@ -3,7 +3,7 @@ import { makeOwnedDb } from "@trafficflow/db/cloud";
 import { silentLogger, type Logger } from "@trafficflow/core";
 import { selectionOf, type WorkerConfig } from "./config.js";
 import { acquireLeaderLock, leaderLockKeyFor } from "./leader-lock.js";
-import { loadServedAccounts } from "./mailboxes.js";
+import { accountsOf, loadEnabledMailboxes, organizedMailboxIdsOf } from "./mailboxes.js";
 import { isCliEntry } from "./entry.js";
 import { cronEvent, runCronCli } from "./cron-log.js";
 import { bubbleUpPass } from "./bubble-up-pass.js";
@@ -37,9 +37,15 @@ export async function runBubbleUpCron(
   try {
     const now = new Date();
     let flipped = 0;
-    for (const accountId of await loadServedAccounts(db, selectionOf(config))) {
+    /* THE ROWS, NOT JUST THE ACCOUNTS — the pass is scoped by the mailboxes this host organizes
+       (its own header says why), and a backstop that passed an account alone would flip rows in a
+       mailbox another organizer holds. `accountsOf` over the same rows is the loop this replaced. */
+    const roster = await loadEnabledMailboxes(db, selectionOf(config));
+    for (const accountId of accountsOf(roster)) {
       try {
-        const res = await bubbleUpPass(db as unknown as Tx, now, { accountId });
+        const res = await bubbleUpPass(db as unknown as Tx, now, {
+          accountId, mailboxIds: organizedMailboxIdsOf(roster, accountId),
+        });
         flipped += res.flipped;
       } catch (err) {
         log.error(cronEvent("bubble_up", "account_failed"), { accountId, err });
