@@ -128,14 +128,14 @@ export class TriageService {
       }).returning({ id: messageStates.id });
 
       /**
-       * UN-PARKING RE-HOMES THE ROW AT ITS OWN DATE, NOT AT THE TOP OF "EARLIER". A message that
-       * LEAVES a bottom pile returns to "Earlier" at its CHRONOLOGICAL position. "Earlier" orders
-       * by `lastReadAt`, and both stamps a parked row can carry are wrong: the glance before the
-       * parking press stamps it NOW-ish; a row read in another client carries no stamp —
-       * effectively lost. So leaving a pile disowns the parked interlude: `lastReadAt = date`
-       * (`readTimeOf`'s idiom). Scoped three ways: only the `none` transition; only FROM a bottom
-       * pile (a stray `none` must not move mail never parked); only a READ row — a reading stamp
-       * on unread mail claims a reading that never happened.
+       * UN-PARKING DISOWNS THE PARKED INTERLUDE'S READING STAMP. Since the arrival ruling
+       * (2026-09-18) the Ohbox's ORDER is arrival everywhere, so the stamp positions nothing;
+       * it is still the row's reading STATE, and both stamps a parked row can carry are wrong:
+       * the glance before the parking press stamps it NOW-ish, a row read in another client
+       * carries none. `lastReadAt = date` keeps the state honest. Scoped three ways: only the
+       * `none` transition; only FROM a bottom pile (a stray `none` must not move mail never
+       * parked); only a READ row — a reading stamp on unread mail claims a reading that never
+       * happened.
        */
       const LEFT_PILE = prior !== undefined
         && ["reply_later", "set_aside", "bubbled_up", "muted"].includes(prior.state);

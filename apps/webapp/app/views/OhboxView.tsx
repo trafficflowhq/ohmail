@@ -1679,7 +1679,7 @@ export function OhboxView({
    * always shown where hover does not exist). It dispatches `resurface_done` — the shell's one release arm, shared
    * with the action bar's Done — for THIS row's message, never the selected one, which is why it does not press `⇧I`;
    * the choreography that follows is the existing one (the deliberate `mark_seen` spends the pin first-frame,
-   * `lastReadAt` files the row atop "Earlier", `slideOut` draws the descent).
+   * the row returns to "Earlier" at its arrival slot, `slideOut` draws the descent).
    */
 
   /**

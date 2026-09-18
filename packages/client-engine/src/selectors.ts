@@ -543,49 +543,6 @@ export function parkedMessageIds(reader: EntityReader): Set<string> {
 }
 
 /**
- * "Earlier" is a history of reading, ordered by reading — a date sort files the message you
- * finished with a minute ago under mail finished days ago. An UNSTAMPED row files at its own
- * instant: `lastReadAt` is absent on mail read before the field existed, read in another
- * client, or whose stamp a settle lost — the old rule (below every stamped row) filed such rows
- * at a fixed boundary months down the list, lost to the view (mail 0119). The unpark re-homing
- * (`lastReadAt = date`) already reads a row's own date as its reading instant; this is that
- * idiom at the comparator. `id` breaks ties so equal-instant batches cannot reorder per render.
- */
-/**
- * The reading instant as a number, or `null` for "not known". Absent, explicitly `null`, and
- * unparseable all mean the same thing to a reader, so they must mean the same thing to the sort
- * — normalising here stops an unparseable stamp ranking as real or reading as the epoch. An
- * unstamped row answers its OWN instant ({@link tsOf}'s key): for own-sent mail that is the send
- * time (writing a message is finishing with it), for everything else the moment the mail
- * happened — the place a reader looks for history, never the basement. A real stamp still wins
- * over the date, or re-reading a message could not move it.
- */
-function readTimeOf(m: EngineMessage): number | null {
-  const raw = m.lastReadAt ?? null;
-  if (raw === null) {
-    const own = m.sortAt ?? m.date;
-    if (own == null) return null;
-    const t = Date.parse(own);
-    return Number.isNaN(t) ? null : t;
-  }
-  const t = Date.parse(raw);
-  return Number.isNaN(t) ? null : t;
-}
-
-function byLastReadDesc(a: EngineMessage, b: EngineMessage): number {
-  const ta = readTimeOf(a);
-  const tb = readTimeOf(b);
-  if (ta === null || tb === null) {
-    // Not both known: a stamped row always outranks an unstamped one. Both unstamped falls
-    // through to the date order they had before this field existed.
-    if (ta !== tb) return ta === null ? 1 : -1;
-    return byDateDesc(a, b);
-  }
-  if (ta !== tb) return tb - ta;
-  return a.id < b.id ? 1 : a.id > b.id ? -1 : 0;
-}
-
-/**
  * A mail is in exactly one pile — these three groups plus the three bottom
  * piles are the six. Every group holds out {@link parkedMessageIds}, so
  * filed mail is absent from all of them: putting a message away takes it
@@ -656,22 +613,22 @@ export function ohboxView(reader: EntityReader): OhboxView {
     // order to use and the question the group answers is what came in. Resurfaced rows are held
     // out — they sit pinned above, never doubled here.
     newForYou: inbox.filter((m) => m.unread && held(m)),
-    // "Earlier" is read INBOX mail joined by the account's own sent mail,
-    // ordered by when the reader finished with each — for a sent row that
-    // is its SEND time (`readTimeOf`), so a just-sent message is first.
-    // Pinned ids are held out of BOTH inputs. Collapsed by Message-ID for
-    // the reading pane's reason ({@link collapseTwins}): the optimistic
-    // Sent copy stands beside the ingested row until the END of a drain,
-    // and Exchange re-files its own SMTP copies — the pane collapsed this,
-    // the pile did not. No `openId`: a pile has no open message; a real row
-    // beats a `local: true` one, then reading order.
+    // "Earlier" is read INBOX mail joined by the account's own sent mail, in ARRIVAL order
+    // like every other group — ONE chronology, a sent row at its send instant (its `sortAt`)
+    // among the received rows. Owner ruling 2026-09-18, reversing 2026-08-08's "reading order":
+    // `lastReadAt` is state (the seen pill), never a sort key, so reading a message never moves
+    // it — two sorts here stacked the whole sent history above the unstamped received history.
+    // Pinned ids are held out of BOTH inputs. Collapsed by Message-ID for the reading pane's
+    // reason ({@link collapseTwins}): the optimistic Sent copy stands beside the ingested row
+    // until the END of a drain, and Exchange re-files its own SMTP copies. No `openId`: a pile
+    // has no open message; a real row beats a `local: true` one.
     previouslySeen: collapseTwins(
       [
         ...inbox.filter((m) => !m.unread && held(m)),
         ...sent.filter(held),
       ],
       "",
-    ).sort(byLastReadDesc),
+    ).sort(byDateDesc),
   };
 }
 
