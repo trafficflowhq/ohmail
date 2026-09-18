@@ -741,6 +741,12 @@ export const MAIL_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // every other pass runs and the mailbox looks healthy. The `/health` refusal is what names the
   // file instead. Deploy order migration → API → worker.
   ["junk_rescues", "folder"],
+  // mail 0119_messages_arrived_at — the honest arrival the Ohbox sorts by. The SILENT kind: an
+  // API ahead of the migration writes no arrival at ingest and every row it takes in keeps its
+  // header position for ever, because the column takes no backfill and NULL means "not
+  // recorded". Nothing 42703s and nothing looks wrong — the mailbox just quietly files a batch
+  // of mail by a date its sender wrote. Deploy order migration → API.
+  ["messages", "arrived_at"],
 ] as const;
 
 /**
@@ -1047,7 +1053,7 @@ export const MAIL_EXPECTED_MARKERS =
 // 0067/0068 (the device-sync alert's withdrawn SECURITY DEFINER carrier and its retirement)
 // add no column and get no marker: a function's absence is the ALERT RULE's own isolated,
 // tolerated state, not a schema fault a serving API should 503 over.
-export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0118_account_isolation";
+export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0119_messages_arrived_at";
 
 
 /* `CLOUD_SCHEMA_MARKER_JOURNAL_TAG` moved to `./health-cloud.js`: it is the NAME of a cloud
