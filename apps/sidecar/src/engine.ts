@@ -5008,7 +5008,13 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
            spent its time writing it — 23.11 transactions a second against 38.53 with this line
            here. What a kill replays is bounded between folds by the store's own five-minute
            checkpointer, measured at 751 ms a whole interval deep. See {@link INGEST_FOLD_WAL_BYTES}. */
-        if (cycles > 0 && (await opened.foldIfLogGrew()).folded) checkpoints += 1;
+        /* AND ONLY WHEN THE DRAIN TOOK MAIL. `cycles > 0` is true on every settled poll, so the
+           growth read was asked once per poll of every open mailbox for a log nothing had
+           written — a statement per mailbox per interval, bought for nothing. A drain that wrote
+           without taking mail still folds: the tail's condition below compares the change-log
+           mark across the WHOLE drain, so a cycle that only applied queued commands is caught
+           there, on a read that drain already pays. */
+        if (cycles > 0 && census.observed > 0 && (await opened.foldIfLogGrew()).folded) checkpoints += 1;
         /* ONE LINE PER DRAIN, WRITTEN AT THE DRAIN'S END — a settled mailbox emits it every poll
            interval, so it stays quiet; a slow or spinning drain is the line that shows it.
            `slowestMs` above the poll interval is the signal to chase. It reports the WHOLE drain,
