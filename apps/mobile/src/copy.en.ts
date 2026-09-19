@@ -1592,6 +1592,21 @@ const TABLE = {
   replyUnverified: "We couldn't confirm this send. Check your Sent folder before sending it again.",
   replyAlreadySent: "Too late to cancel. This message has already been sent.",
   replyFailed: "Sending didn't work. Try again.",
+  /* THE COMPOSER'S ATTACHMENTS — the webapp's `compose.attach*` keys, mirrored (the phone has
+     two pickers where the web has one input, so the verb splits in two). The cap sentence's
+     number comes from the ONE shared bound (`composeAttachCap`, client-engine). */
+  attachFile: "Attach files",
+  attachPhoto: "Attach a photo",
+  attachCap: (size: string) => `Up to ${size} total`,
+  attachRefused: (size: string) =>
+    `Some files were not added — they would have put the total over ${size}.`,
+  attachUnreadable: "Some files couldn't be read and were not added.",
+  attachDuplicate: (filenames: string) => `Already attached: ${filenames}`,
+  attachRemove: (filename: string) => `Remove ${filename}`,
+  /* The picker itself refused — said by name, never a press that does nothing. */
+  attachUnavailable: "Files can't be picked on this device right now.",
+  /* The send lock's told refusal — the webapp's `compose.needContent`, byte for byte. */
+  composeNeedContent: "Write something or attach a file.",
   forwardHead: "Forward — you pick who receives it",
   forwardTo: "To",
   forwardToPlaceholder: "name@example.org, …",

@@ -32,6 +32,7 @@ import {
   resurfaceClock,
   resurfaceTimeLabel,
   RESURFACE_HOURS,
+  sizeLabel,
   scheduleLabel,
   SEND_LATER_MIN_LEAD_MS,
   SIG_FOLLOWING,
@@ -61,9 +62,29 @@ import {
 } from "./reader-verbs";
 import { Icon, type IconName } from "./Icon";
 import { sendLaterOffered } from "./standalone-form";
+import {
+  admitPicked,
+  phoneAttachCap,
+  phoneSendNeedsContent,
+  toComposeAttachments,
+  type AttachPickOutcome,
+  type PhoneComposeAttachment,
+} from "../compose/attach";
+/* The expo pickers — a `*-native.ts` twin the suite never imports; every rule is in attach.ts. */
+import { nativeAttachPicker } from "../compose/attach-native";
 import { afterWithdraw, cancelAct } from "./send-cancel";
 import { Segmented } from "./Segmented";
 import { CancelRow, Sheet, SheetRow, useSheetPanelBounds } from "./Sheet";
+
+/**
+ * One pick's verdicts, held as KINDS — the sentence is derived where it is shown, so a refusal
+ * on screen follows a later language switch (`refusal.test.ts`). `filenames` is data.
+ */
+type AttachNote =
+  | { kind: "overCap" }
+  | { kind: "duplicates"; filenames: string }
+  | { kind: "unreadable" }
+  | { kind: "unavailable" };
 
 /** Which surface is up. One at a time — a union, so two sheets cannot stack. */
 type Open =
@@ -708,6 +729,42 @@ function ComposeSheet({
   const [sig, setSig] = useState<SignatureState>(SIG_FOLLOWING);
   const forward = mode === "forward";
   /**
+   * THE ATTACHMENTS — bytes in memory, nothing filed (`ComposeAttachment`'s contract); they ride
+   * the same `mail_send` the webapp composer sends. The admit pipeline, the cap and the
+   * needs-content rule live in `../compose/attach`; the pickers behind their native twin. Notes
+   * are the LAST pick's verdicts (refused-over-cap, duplicates, unreadable, picker refused) —
+   * each said in place, the webapp's `role="status"` rows in this sheet's idiom.
+   */
+  const [attachments, setAttachments] = useState<PhoneComposeAttachment[]>([]);
+  /* KINDS, never sentences: a deck read stored in state freezes in the language it was read in
+     (refusal.test.ts's rule) — the sentence is derived at render time. Filenames are data. */
+  const [attachNotes, setAttachNotes] = useState<AttachNote[]>([]);
+  /** TRUE after a press on a Send that lacks only content — cleared the moment content arrives. */
+  const [needNote, setNeedNote] = useState(false);
+  /* The ONE shared bound (`composeAttachCap`) of the sending mailbox's announced `SIZE` —
+     the same pair the send will enforce. The phone declares no surface: its send rides one
+     JSON request, so the strict constant is the other arm. */
+  const attachCap = phoneAttachCap(w.mailboxes.rows, m.mailboxId);
+  const pick = async (which: "files" | "photos") => {
+    if (phase !== "idle") return;
+    const picker = nativeAttachPicker();
+    const outcome: AttachPickOutcome =
+      which === "files" ? await picker.pickFiles() : await picker.pickPhotos();
+    if (outcome.kind === "cancelled") return;
+    if (outcome.kind === "unavailable") {
+      // The platform refused the picker itself — said by name, never a press that does nothing.
+      setAttachNotes([{ kind: "unavailable" }]);
+      return;
+    }
+    const admit = admitPicked(attachments, outcome.files, attachCap);
+    const notes: AttachNote[] = [];
+    if (admit.overCap > 0) notes.push({ kind: "overCap" });
+    if (admit.duplicates.length > 0) notes.push({ kind: "duplicates", filenames: admit.duplicates.join(", ") });
+    if (outcome.unreadable + admit.unreadable > 0) notes.push({ kind: "unreadable" });
+    setAttachments(admit.next);
+    setAttachNotes(notes);
+  };
+  /**
    * Send later (mail 0077) — the picker, inline in this panel: a panel above the button row,
    * never a second Modal over this one (the webapp `ComposeView`'s decision; on RN it also
    * avoids a Modal in a Modal). Three steps because "a date and time" is two facts and a phone
@@ -721,7 +778,7 @@ function ComposeSheet({
   /* WHETHER THE AFFORDANCE IS THERE AT ALL — one predicate, two reasons (`sendLaterOffered`): a
      forward cannot wear an appointment, and the standalone door keeps none. Withheld rather than
      refused after the pick, and the sentence below says which it is. */
-  const laterOffered = sendLaterOffered({ standalone: w.standalone, forward });
+  const laterOffered = sendLaterOffered({ standalone: w.standalone, forward, hasAttachments: attachments.length > 0 });
   const [openedAt, setOpenedAt] = useState<Date>(() => new Date());
   /** The one refusal this picker can raise, said in place — the webapp's `role="status"` note. */
   const [pastNote, setPastNote] = useState(false);
@@ -757,9 +814,16 @@ function ComposeSheet({
   // commas/semicolons (never bare spaces: `Alice <alice@x.org>` is ONE entry), and a
   // display-named entry is validated on the address its angle brackets carry.
   const recipients = forward ? parseRecipients(to) : [];
-  // A signature never lights Send up on its own — `canSend` reads the body alone, deliberately.
+  /* NOTHING TO SEND — the webapp's `sendNeedsContent`, mirrored: empty body AND no attachments,
+     except a forward (its content is the forwarded message). A signature never lights Send up
+     on its own — the rule reads the body and the files, never the block. */
+  const needsContent = phoneSendNeedsContent({ forward, body, attachmentCount: attachments.length });
   const canSend =
-    phase === "idle" && (forward ? recipients !== null && recipients.length > 0 : body.trim() !== "");
+    phase === "idle" && !needsContent && (forward ? recipients !== null && recipients.length > 0 : true);
+  /* CONTENT IS THE ONE THING MISSING — the webapp's told refusal: Send stays pressable, dressed
+     unlit, and the press earns the sentence instead of doing nothing. Every stronger lock
+     (sending, queued, unverified) keeps the dead press. */
+  const contentOnlyMissing = phase === "idle" && needsContent;
 
   /**
    * WHAT THE BLOCK SHOWS — and exactly what the send appends (`effectiveSignature`, one
@@ -846,9 +910,10 @@ function ComposeSheet({
     // message that is already on its way offers rows for an act that may no longer happen.
     setLater(null);
     setPhase("sending");
+    const files = toComposeAttachments(attachments);
     const result = forward
-      ? await w.actions.sendForward(m.id, recipients ?? [], body, sigText)
-      : await w.actions.sendReply(m.id, body, mode === "replyAll", sigText, sendAt);
+      ? await w.actions.sendForward(m.id, recipients ?? [], body, sigText, files)
+      : await w.actions.sendReply(m.id, body, mode === "replyAll", sigText, sendAt, files);
     if (result.outcome === "sent") {
       onClose();
       return;
@@ -1003,6 +1068,76 @@ function ComposeSheet({
               />
             </View>
           ) : null}
+          {/* ── THE ATTACHMENTS — each row a file with its remove; the two pickers and the cap
+              sentence below, stated from the same value the admit rule refuses against. Yields
+              to the Send-later picker exactly as the signature block does, and freezes with the
+              fields once a send is dispatched. ── */}
+          {later === null ? (
+            <>
+              {attachments.map((file) => (
+                <View
+                  key={`${file.filename}:${file.sizeBytes}`}
+                  style={{
+                    flexDirection: "row",
+                    alignItems: "center",
+                    gap: 8,
+                    backgroundColor: t.c.tint2,
+                    borderRadius: t.radius.card,
+                    paddingHorizontal: 14,
+                    paddingVertical: 8,
+                  }}
+                >
+                  <Icon name="clip" size={13} color={t.c.ink3} />
+                  <Txt variant="caption" tone="ink2" numberOfLines={1} style={{ flex: 1 }}>
+                    {file.filename}
+                  </Txt>
+                  <Txt variant="caption" tone="ink3">
+                    {sizeLabel(file.sizeBytes)}
+                  </Txt>
+                  <Tap
+                    onPress={
+                      phase === "idle"
+                        ? () => setAttachments((list) => list.filter((a) => a !== file))
+                        : undefined
+                    }
+                    accessibilityRole="button"
+                    accessibilityLabel={Copy.attachRemove(file.filename)}
+                    style={{ padding: 8, marginRight: -8 }}
+                  >
+                    <Icon name="x" size={13} color={t.c.ink3} />
+                  </Tap>
+                </View>
+              ))}
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                <Button
+                  label={Copy.attachFile}
+                  icon="clip"
+                  variant="quiet"
+                  onPress={phase === "idle" ? () => void pick("files") : undefined}
+                />
+                <Button
+                  label={Copy.attachPhoto}
+                  variant="quiet"
+                  onPress={phase === "idle" ? () => void pick("photos") : undefined}
+                />
+                <View style={{ flex: 1 }} />
+                <Txt variant="caption" tone="ink3">
+                  {Copy.attachCap(sizeLabel(attachCap))}
+                </Txt>
+              </View>
+              {attachNotes.map((note) => (
+                <Txt key={note.kind} variant="caption" tone="ink2" accessibilityRole="alert">
+                  {note.kind === "overCap"
+                    ? Copy.attachRefused(sizeLabel(attachCap))
+                    : note.kind === "duplicates"
+                      ? Copy.attachDuplicate(note.filenames)
+                      : note.kind === "unreadable"
+                        ? Copy.attachUnreadable
+                        : Copy.attachUnavailable}
+                </Txt>
+              ))}
+            </>
+          ) : null}
           {phase === "queued" || phase === "unverified" ? (
             <Txt variant="caption" tone="ink3">
               {phase === "queued" ? Copy.replyQueued : Copy.replyUnverified}
@@ -1124,6 +1259,21 @@ function ComposeSheet({
               {Copy.scheduledNotOnThisPhone}
             </Txt>
           ) : null}
+          {/* WHY THERE IS NO SEND LATER over attachments — a draft row stores no files, the
+              webapp's own withheld affordance and sentence. Only where attachments are the
+              reason: the standalone and forward absences have their own notes. */}
+          {!w.standalone && !forward && attachments.length > 0 ? (
+            <Txt variant="hint" tone="ink3" style={{ paddingBottom: 2 }}>
+              {Copy.sendLaterUnavailable}
+            </Txt>
+          ) : null}
+          {/* THE TOLD REFUSAL — the press on a Send that lacks only content earned a sentence,
+              and it leaves the moment content arrives (the webapp's `role="status"` rule). */}
+          {needNote && needsContent ? (
+            <Txt variant="caption" tone="ink2" accessibilityRole="alert">
+              {Copy.composeNeedContent}
+            </Txt>
+          ) : null}
           <View style={{ flexDirection: "row", justifyContent: "flex-end", gap: 8 }}>
             <Button label={Copy.replyCancel} variant="quiet" onPress={closeComposer} />
             {/* SEND LATER stands beside Send because it is the same act on a different clock,
@@ -1142,7 +1292,9 @@ function ComposeSheet({
             <Button
               label={phase === "sending" ? Copy.replySending : Copy.replySend}
               variant={canSend ? "solid" : "plain"}
-              onPress={canSend ? () => void send() : undefined}
+              onPress={
+                canSend ? () => void send() : contentOnlyMissing ? () => setNeedNote(true) : undefined
+              }
             />
           </View>
         </View>

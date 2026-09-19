@@ -42,7 +42,7 @@
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { Button, Icon, formatFileSize } from "@ohmail/ui";
-import type { ComposeAttachment } from "@ohmail/client-engine";
+import { COMPOSE_ATTACH_MAX_TOTAL_BYTES, type ComposeAttachment } from "@ohmail/client-engine";
 import {
   DEFAULT_IMAGE_QUALITY_LEVEL,
   IMAGE_QUALITY_LEVELS,
@@ -66,72 +66,17 @@ import { storageOwner } from "../shell/storage-owner";
 const LEVEL_CHOICES: readonly ImageQualityLevel[] = IMAGE_QUALITY_LEVELS;
 
 /**
- * The inline transport's own ceiling on total attachment bytes — a mirror of the constant the
- * hosted send handler enforces, kept as a literal so this bundle pulls in no server module. A fact
- * about the request pipeline, not mail: base64 attachment bytes on one JSON request must clear the
- * hosted API's serverless body limit (~4.5 MB) with room for the envelope and the ~1.33× inflation
- * — 3 MB raw encodes to about 4 MB. No longer what the hosted form promises: a window whose client
- * can stage declares an uncapped surface and the mailbox's own announcement governs; this remains
- * the strict fallback for callers with no declared surface, and the client-engine's
- * `SEND_INLINE_MAX_TOTAL_BYTES` is the same value — pinned by `compose-attach-cap-parity`.
+ * THE BOUND LIVES IN `@ohmail/client-engine` (`attach-cap.ts`) so the phone composer reads the
+ * SAME rule the web and desktop forms state (two surfaces once stated different caps). Re-exported
+ * under the same names — every consumer and the `compose-attach-cap-parity` pin resolve unchanged.
  */
-export const COMPOSE_ATTACH_MAX_TOTAL_BYTES = 3 * 1024 * 1024;
-
-/**
- * The envelope allowance and the encoding expansion — mirrors of the send's, kept as literals for
- * the same reason as the constant above. A server's announced `SIZE` bounds the ENCODED message:
- * headers, MIME boundaries, and every attachment base64-encoded at four characters per three bytes,
- * wrapped at 76 with a CRLF — the expansion is (4/3)·(78/76), inverse exactly 19/26, so 25 MB of
- * files is about 34 MB of message. Stating the face value would be a promise the sending server
- * breaks. Pinned value for value against `attachmentBudgetFor` in the services package.
- */
-export const COMPOSE_ATTACH_MIME_ENVELOPE_BYTES = 64 * 1024;
-
-/**
- * What the hosted window's transport can carry — the staging bucket's per-object ceiling. Uploading
- * straight to object storage removes the request-body limit, not every limit: an object over the
- * bucket's size is refused by the browser's own PUT, after the grant was minted and the person
- * waited, with nothing useful to say. So the window declares this as its surface instead of `null`,
- * and the mint applies the same bound server-side. A per-object limit used as a per-total bound,
- * deliberately: always correct in the safe direction — if the total fits, every file fits.
- */
-export const COMPOSE_ATTACH_STAGED_SURFACE_BYTES = 40 * 1024 * 1024;
-
-/** An announced `SIZE` converted to a budget for RAW attachment bytes. See the constants above. */
-export function composeAttachBudgetFor(announcedMessageBytes: number): number {
-  const forAttachments = announcedMessageBytes - COMPOSE_ATTACH_MIME_ENVELOPE_BYTES;
-  if (forAttachments <= 0) return 1;
-  return Math.max(1, Math.floor((forAttachments * 19) / 26));
-}
-
-/**
- * The ceiling this form may promise — the smaller of what the sending surface can carry and what
- * the sending mailbox's server said it will accept; a mirror of `effectiveAttachmentCap` in the
- * services package (no server module may enter this bundle), pinned by `compose-attach-cap-parity`.
- * `mailboxMax` is the submission server's RFC 1870 `SIZE` from `GET /mailboxes` — without the `min`
- * a 2 MB provider bounces a send this form allowed. `surfaceMax`: ABSENT resolves to the strict
- * constant (an untaught caller gains no allowance by not passing it); `null` is explicitly uncapped
- * (the desktop's one-process door), the mailbox's announcement governing, the constant while
- * unmeasured; a number is that surface's ceiling. `SIZE 0` and non-finite never become a ceiling.
- */
-export function composeAttachCap(
-  mailboxMax: number | null | undefined,
-  surfaceMax?: number | null,
-): number {
-  const usable = (n: number | null | undefined): n is number =>
-    typeof n === "number" && Number.isFinite(n) && n > 0;
-  const surface = surfaceMax === undefined ? COMPOSE_ATTACH_MAX_TOTAL_BYTES : surfaceMax;
-  const bounds: number[] = [];
-  if (usable(surface)) bounds.push(surface);
-  if (mailboxMax === null || mailboxMax === undefined) {
-    // UNPROBED. The strict constant, NOT converted — it already describes raw attachment bytes.
-    bounds.push(COMPOSE_ATTACH_MAX_TOTAL_BYTES);
-  } else if (usable(mailboxMax)) {
-    // A REAL ANNOUNCEMENT, which is about the encoded message. See `composeAttachBudgetFor`.
-    bounds.push(composeAttachBudgetFor(mailboxMax));
-  }
-  return bounds.length > 0 ? Math.min(...bounds) : COMPOSE_ATTACH_MAX_TOTAL_BYTES;
-}
+export {
+  COMPOSE_ATTACH_MAX_TOTAL_BYTES,
+  COMPOSE_ATTACH_MIME_ENVELOPE_BYTES,
+  COMPOSE_ATTACH_STAGED_SURFACE_BYTES,
+  composeAttachBudgetFor,
+  composeAttachCap,
+} from "@ohmail/client-engine";
 
 /**
  * The pristine source of every admitted attachment, keyed by the attachment object itself — at

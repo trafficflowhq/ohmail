@@ -1108,8 +1108,13 @@ export function WorldProvider({ children }: { children: ReactNode }) {
           },
           trashList: (cursor) => acts.trashList(cursor),
           trashRestore: (id) => acts.trashRestore(id),
-          sendReply: (id, body, all, sig, sendAt) => acts.sendReply(id, body, all, sig, sendAt),
-          sendForward: (id, to, body, sig) => acts.sendForward(id, to, body, sig),
+          /* BY REFERENCE, deliberately — the signatures are identical, and a re-declared
+             positional lambda here DROPPED the attachments argument silently: the sheet showed
+             the row, the wire carried nothing, and an attachment-only press was a silent no-op
+             (measured on the iPhone simulator). A reference cannot drop an argument, now or at the
+             next widening; `compose-attach.test.ts` pins the binding and drives the chain. */
+          sendReply: acts.sendReply,
+          sendForward: acts.sendForward,
           withdrawSend: (key) => acts.withdrawSend(key),
           cancelSchedule: (draftId) => acts.cancelSchedule(draftId),
           sendOutcome: (key) => outcomeOf(key),

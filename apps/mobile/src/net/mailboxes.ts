@@ -70,6 +70,14 @@ export interface PhoneMailbox {
    */
   junkFolder: string | null;
   /**
+   * The submission server's RFC 1870 `SIZE` announcement — `MailboxDTO.smtpMaxSizeBytes`, what
+   * the composer's attach cap is derived from (`composeAttachCap`, the one shared bound). `null`
+   * is "never probed, or this server predates the field": the cap falls to the strict constant,
+   * never to unbounded. Zero and negative land as `null` — `SIZE 0` is "no fixed maximum"
+   * (RFC 1870 §6), which is not a ceiling.
+   */
+  smtpMaxSizeBytes: number | null;
+  /**
    * WHERE A BUDGETED FIRST SYNC IS CONTINUING — `MailboxDTO.firstSyncStopFolder`, the folder the
    * last pass's byte budget stopped at. A first sync of a large mailbox runs in bounded passes
    * and pauses between them; without this the chrome shows a mirror that fills in steps and says
@@ -161,6 +169,12 @@ export async function readMailboxes(session: ConnectedSession): Promise<PhoneMai
         /* An empty string is not a folder name. A server that predates the field sends nothing
            here, which lands as `null` — the same instruction as "no Junk folder": say nothing. */
         junkFolder: typeof r.junkFolder === "string" && r.junkFolder !== "" ? r.junkFolder : null,
+        /* A positive finite number or `null` — the cap rule's own admissibility test, applied at
+           the wire so no consumer re-derives it. */
+        smtpMaxSizeBytes:
+          typeof r.smtpMaxSizeBytes === "number" && Number.isFinite(r.smtpMaxSizeBytes) && r.smtpMaxSizeBytes > 0
+            ? r.smtpMaxSizeBytes
+            : null,
         /* Same normalisation, same reason: an empty string is not a folder name, and a server
            that predates the field sends nothing — both land as `null`, which says nothing. */
         firstSyncStopFolder: typeof r.firstSyncStopFolder === "string" && r.firstSyncStopFolder !== ""

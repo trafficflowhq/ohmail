@@ -518,6 +518,16 @@ export {
   type MirrorBound,
 } from "./mirror-bounds.js";
 
+/* The one attach bound every compose surface states — the client mirror of the send service's
+   cap rule, here because the webapp AND the phone composer read it. See its header. */
+export {
+  COMPOSE_ATTACH_MAX_TOTAL_BYTES,
+  COMPOSE_ATTACH_MIME_ENVELOPE_BYTES,
+  COMPOSE_ATTACH_STAGED_SURFACE_BYTES,
+  composeAttachBudgetFor,
+  composeAttachCap,
+} from "./attach-cap.js";
+
 /* The provider presets every connect surface reads. A leaf that imports nothing — see its header
    for why the phone is the reason it lives here. */
 export {

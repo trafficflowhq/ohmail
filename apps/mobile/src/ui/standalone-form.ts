@@ -306,8 +306,19 @@ export function mayStartHere(claim: PhoneClaim): boolean {
  * engine refuses the verb: 409, `composition-passes.ts`). A paired session keeps the offer:
  * there the appointment is kept by the install the phone is paired to, which stays on.
  */
-export function sendLaterOffered(o: { standalone: boolean; forward: boolean }): boolean {
-  return !o.standalone && !o.forward;
+export function sendLaterOffered(o: {
+  standalone: boolean;
+  forward: boolean;
+  /**
+   * A draft row stores no attachment bytes (`ComposeAttachment`'s contract: nothing filed
+   * against the account), so a scheduled send could not carry them — the webapp withholds the
+   * affordance (`sendLaterUnavailable`) and this phone follows. REQUIRED, so TypeScript is the
+   * census over every caller: optional, a surface that gained attachments would keep offering
+   * an appointment the server refuses.
+   */
+  hasAttachments: boolean;
+}): boolean {
+  return !o.standalone && !o.forward && !o.hasAttachments;
 }
 
 /**

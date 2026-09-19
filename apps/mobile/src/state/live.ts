@@ -52,6 +52,7 @@ import {
   type EngineDraft,
   type EngineMessage,
   type EngineMutation,
+  type ComposeAttachment,
   type EntityReader,
   type FeedView,
   type Folder,
@@ -1341,7 +1342,7 @@ export function liveMessage(engine: OhmailEngine, id: string, v: WorldView): Wor
   return row;
 }
 
-function sizeLabel(bytes: number | null | undefined): string {
+export function sizeLabel(bytes: number | null | undefined): string {
   if (bytes == null || !Number.isFinite(bytes)) return "";
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
@@ -1818,13 +1819,16 @@ export interface LiveWorldActions {
     all: boolean,
     sig?: string | null,
     sendAt?: string | null,
+    attachments?: ComposeAttachment[],
   ): Promise<SendResult>;
   /**
    * Forward — `mail_send` with `forwardOf`, recipients the USER typed, the user's note as
    * body. The signature seals into the NOTE; the server appends the quoted original after
    * the body it is handed, so the block sits above the quoted history (`signature.ts`).
+   * `attachments` on either verb ride the same mutation the webapp composer sends —
+   * base64 on `POST /drafts/:id/send`, nothing stored (`ComposeAttachment`'s own contract).
    */
-  sendForward(messageId: string, to: EmailAddress[], body: string, sig?: string | null): Promise<SendResult>;
+  sendForward(messageId: string, to: EmailAddress[], body: string, sig?: string | null, attachments?: ComposeAttachment[]): Promise<SendResult>;
   /**
    * WITHDRAW A QUEUED SEND — Cancel, on the intent. `withdrawn` is the cancellation;
    * `on_the_wire` withdrew nothing and the surface says so; `gone` is a key the queue no longer
@@ -2597,12 +2601,23 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     all: boolean,
     sig: string | null = null,
     sendAt: string | null = null,
+    attachments: ComposeAttachment[] = [],
   ): Promise<SendResult> => {
     const m = messageOf(messageId);
     const text = body.trim();
-    // The empty-body refusal is judged BEFORE the signature joins: a signature must never
-    // light Send up over an empty message (the webapp composer's own rule).
-    if (!m || text === "") return { outcome: "failed" };
+    // The empty refusal is judged BEFORE the signature joins: a signature must never light
+    // Send up over an empty message (the webapp composer's own rule). An attachment IS
+    // content — `sendNeedsContent`'s rule, mirrored. TOLD, both arms: these return before
+    // `sent()` (the one toast site), and a refusal that renders nothing is a silent no-op,
+    // measured on a device. The sheet's own lock makes them belts; a belt still speaks.
+    if (!m) {
+      toast(refuse("replyFailed"));
+      return { outcome: "failed" };
+    }
+    if (text === "" && attachments.length === 0) {
+      toast(refuse("composeNeedContent"));
+      return { outcome: "failed" };
+    }
     // A plain reply leaves the envelope to `Engine.enrich` (to = the sender, the parent's
     // mailbox, thread and subject); reply-all carries the SAME envelope the sheet offered.
     /* THE SAME ADDRESSES THE SHEET WAS DRAWN FROM. Read through the getter at SEND time, not at
@@ -2616,8 +2631,10 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
         ...(env ? { to: env.to, cc: env.cc } : {}),
         // Present ⇒ an appointment, absent ⇒ a delivery. Spread rather than written as
         // `sendAt: sendAt ?? undefined` so an ordinary reply's mutation is byte-identical to
-        // the one this arm built before Send later existed.
+        // the one this arm built before Send later existed. Attachments spread for the same
+        // reason — an unattached reply's wire is the wire it always was.
         ...(sendAt ? { sendAt } : {}),
+        ...(attachments.length > 0 ? { attachments } : {}),
       }, sig)),
       // THE CONFIRMED SENTENCE IS THE WHOLE DIFFERENCE, and it is honest rather than
       // convenient: nothing was sent, an appointment was made, and "Reply sent." over a
@@ -2663,11 +2680,15 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     return status === "confirmed";
   };
 
-  const sendForward = async (messageId: string, to: EmailAddress[], body: string, sig: string | null = null): Promise<SendResult> => {
+  const sendForward = async (messageId: string, to: EmailAddress[], body: string, sig: string | null = null, attachments: ComposeAttachment[] = []): Promise<SendResult> => {
     const m = messageOf(messageId);
     // The `no_forward` refusal is client-side courtesy AND server-side law — the sheet never
-    // offers the verb on such a message, and this arm refuses it too rather than trusting the UI.
-    if (!m || to.length === 0 || m.sensitivity?.no_forward) return { outcome: "failed" };
+    // offers the verb on such a message, and this arm refuses it too rather than trusting the
+    // UI. Told, for the reply belt's reason: a return before `sent()` renders nothing.
+    if (!m || to.length === 0 || m.sensitivity?.no_forward) {
+      toast(refuse("replyFailed"));
+      return { outcome: "failed" };
+    }
     return sent(
       dispatchSend(withSignature({
         kind: "mail_send" as const,
@@ -2679,6 +2700,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
         mailboxId: m.mailboxId,
         body,
         to,
+        ...(attachments.length > 0 ? { attachments } : {}),
       }, sig)),
       Copy.forwarded,
       Copy.forwardEarlierWent,
@@ -2927,8 +2949,9 @@ export interface WorldActions {
     all: boolean,
     sig?: string | null,
     sendAt?: string | null,
+    attachments?: ComposeAttachment[],
   ): Promise<SendResult>;
-  sendForward(messageId: string, to: EmailAddress[], body: string, sig?: string | null): Promise<SendResult>;
+  sendForward(messageId: string, to: EmailAddress[], body: string, sig?: string | null, attachments?: ComposeAttachment[]): Promise<SendResult>;
   /** Withdraw a queued send — Cancel. See {@link LiveWorldActions.withdrawSend}. */
   withdrawSend(key: string): Promise<WithdrawOutcome>;
   /** Cancel a scheduled send — resolves `true` only on the server's CONFIRMED cancellation. */
@@ -2980,8 +3003,8 @@ export function stableActions(current: () => WorldActions): WorldActions {
     deleteMessage: (id, opts) => void current().deleteMessage(id, opts),
     trashList: (cursor) => current().trashList(cursor),
     trashRestore: (id) => current().trashRestore(id),
-    sendReply: (id, body, all, sig, sendAt) => current().sendReply(id, body, all, sig, sendAt),
-    sendForward: (id, to, body, sig) => current().sendForward(id, to, body, sig),
+    sendReply: (id, body, all, sig, sendAt, attachments) => current().sendReply(id, body, all, sig, sendAt, attachments),
+    sendForward: (id, to, body, sig, attachments) => current().sendForward(id, to, body, sig, attachments),
     withdrawSend: (key) => current().withdrawSend(key),
     cancelSchedule: (draftId) => current().cancelSchedule(draftId),
     sendOutcome: (key) => current().sendOutcome(key),

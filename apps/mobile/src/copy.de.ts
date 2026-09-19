@@ -1030,6 +1030,18 @@ export const DE: Deck = {
   replyUnverified: "Wir konnten diesen Versand nicht bestätigen. Schau in deinen Gesendet-Ordner, bevor du nochmal sendest.",
   replyAlreadySent: "Zu spät zum Abbrechen. Diese Nachricht wurde bereits gesendet.",
   replyFailed: "Senden hat nicht geklappt. Versuch es nochmal.",
+  /* Die Anhänge des Editors — `apps/webapp/messages/de.json` (`compose.attach*`) byte für Byte,
+     wo der Satz dort existiert. */
+  attachFile: "Dateien anhängen",
+  attachPhoto: "Ein Foto anhängen",
+  attachCap: (size: string) => `Bis zu ${size} insgesamt`,
+  attachRefused: (size: string) =>
+    `Einige Dateien wurden nicht hinzugefügt — sie hätten das Total über ${size} gebracht.`,
+  attachUnreadable: "Einige Dateien konnten nicht gelesen werden und wurden nicht hinzugefügt.",
+  attachDuplicate: (filenames: string) => `Bereits angehängt: ${filenames}`,
+  attachRemove: (filename: string) => `${filename} entfernen`,
+  attachUnavailable: "Dateien können auf diesem Gerät gerade nicht ausgewählt werden.",
+  composeNeedContent: "Schreib etwas oder häng eine Datei an.",
   forwardHead: "Weiterleiten — du wählst, wer sie bekommt",
   forwardTo: "An",
   forwardToPlaceholder: "name@beispiel.de, …",
