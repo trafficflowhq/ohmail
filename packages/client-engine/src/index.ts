@@ -366,6 +366,9 @@ export {
   type MutationEffect,
 } from "./mutations.js";
 
+// Undo semantics — every verb's undo class, and the wire's own reversal for the "inverse" kinds.
+export { inverseMutations, UNDO_CLASS, type UndoClass } from "./undo.js";
+
 // Adapters.
 export type { EngineAdapter, MutationAnswer, MutationOutcome, MutationQueued, SyncParams } from "./adapters/adapter.js";
 export { DEMO_NOW, FixturesAdapter, parseFixtureTime, type FixturesAdapterOptions } from "./adapters/fixtures-adapter.js";
