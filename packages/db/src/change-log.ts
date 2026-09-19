@@ -445,3 +445,20 @@ export async function seqBounds(tx: Tx, accountId: string): Promise<SeqBounds> {
 export async function minRetainedSeq(tx: Tx, accountId: string): Promise<bigint | null> {
   return (await seqBounds(tx, accountId)).min;
 }
+
+/**
+ * The retention floor alone — the one-row read the BOOTSTRAP path needs (mail 0120). `seqBounds`
+ * carries it for resuming cursors, but a `since=0` replay skips the aggregate and still has to
+ * TAG the sub-floor page cursors it hands out (`SyncService.getChanges`), so this is the counter
+ * row's PK lookup and nothing else. 0 ⇔ nothing pruned, or no counter row (which means no log).
+ */
+export async function prunedThroughSeq(tx: Tx, accountId: string): Promise<bigint> {
+  // No `::text` cast: this read runs on BOTH stores (the sqlite device runs the same service),
+  // and the raw value is normalized through `BigInt` like `seqBounds`' aggregates are.
+  const rows = await tx
+    .select({ f: sql<string | number | null>`${accountSyncState.prunedThroughSeq}` })
+    .from(accountSyncState)
+    .where(eq(accountSyncState.accountId, accountId));
+  const f = rows[0]?.f;
+  return f == null ? 0n : BigInt(f);
+}

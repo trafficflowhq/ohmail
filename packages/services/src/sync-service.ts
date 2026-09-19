@@ -1,6 +1,6 @@
 import { and, asc, desc, eq, exists, gt, inArray, isNull, lt, ne, or, sql } from "drizzle-orm";
 import {
-  approvals, changeLog, drafts, messages, messageStates, messageTags, routingDecisions, seqBounds,
+  approvals, changeLog, drafts, messages, messageStates, messageTags, prunedThroughSeq, routingDecisions, seqBounds,
   rules, tags, type EntityType,
 } from "@trafficflow/db";
 import type { Db, ServiceContext } from "./context.js";
@@ -11,10 +11,12 @@ import { isUuid } from "./ids.js";
 /**
  * The longest `?since=` cursor `/sync` will decode.
  *
- * A `change_log` seq is a `bigserial`, so its whole range is nineteen digits — 32 base64url
- * characters covers that with room and leaves room for nothing else.
+ * A `change_log` seq is a `bigserial`, so each numeric segment is at most nineteen digits. The
+ * widest legal body is `generation.seq~floor` — three nineteen-digit numbers and two separators,
+ * 59 utf8 bytes — which base64url spells in 80 characters, and this bound leaves room for
+ * nothing else.
  */
-export const SYNC_CURSOR_MAX_CHARS = 32;
+export const SYNC_CURSOR_MAX_CHARS = 80;
 
 /**
  * The longest `?cursor=` `/sync/snapshot` will decode.
@@ -230,6 +232,17 @@ export interface SyncCursor {
   seq: bigint;
   /** `null` ⇒ the cursor names no run, which only a first-generation store admits. */
   generation: number | null;
+  /**
+   * The retention floor this cursor was issued UNDER, present only while the cursor sits below
+   * it — i.e. mid-replay over the compacted region (a `since=0` bootstrap paging retained
+   * first rows). The floor arm admits such a cursor as long as the floor has not risen past the
+   * tag: under an unchanged floor the compaction can only delete rows this replay does not need
+   * (each consumed row was materialized at serve time, and every post-serve change writes a NEW
+   * seq the 30-day grace protects), while a RISEN floor means churn this replay had not reached
+   * was deleted — unrecoverable, 410, restart. `null` on every at-or-above-floor cursor, which
+   * is every cursor that existed before this field did — those genuinely predate the prune.
+   */
+  floor: bigint | null;
 }
 
 export class SyncService {
@@ -243,8 +256,12 @@ export class SyncService {
    * valid. A store with no generation encodes exactly what it always did, so the hosted wire does
    * not move. See {@link decodeCursor} for what the two shapes mean to a reader.
    */
-  encodeCursor(seq: bigint, generation?: number | null): string {
-    const body = generation == null ? seq.toString(10) : `${generation}.${seq.toString(10)}`;
+  encodeCursor(seq: bigint, generation?: number | null, floor?: bigint | null): string {
+    const base = generation == null ? seq.toString(10) : `${generation}.${seq.toString(10)}`;
+    // The floor tag rides IN the cursor for the field's own reason (see the docblock above):
+    // every client already round-trips the cursor unread, so a mid-bootstrap resume over a
+    // compacted log survives sidecars and engines that have never heard of retention.
+    const body = floor == null ? base : `${base}~${floor.toString(10)}`;
     return Buffer.from(body, "utf8").toString("base64url");
   }
 
@@ -280,9 +297,9 @@ export class SyncService {
     try {
       if (cursor.length > SYNC_CURSOR_MAX_CHARS) throw new Error("cursor too long");
       const dec = Buffer.from(cursor, "base64url").toString("utf8");
-      // ONE parser for both shapes, so the generation cannot be admitted by one reader and
-      // dropped by another. The generation is bounded like the seq, and by the same rule.
-      const m = /^(?:(\d{1,19})\.)?(\d{1,19})$/.exec(dec);
+      // ONE parser for all three shapes, so neither the generation nor the floor tag can be
+      // admitted by one reader and dropped by another. Both are bounded like the seq.
+      const m = /^(?:(\d{1,19})\.)?(\d{1,19})(?:~(\d{1,19}))?$/.exec(dec);
       if (m === null) throw new Error("non-numeric cursor");
       const generation = m[1] === undefined ? null : Number(m[1]);
       if (generation !== null && !Number.isSafeInteger(generation)) throw new Error("generation out of range");
@@ -291,7 +308,9 @@ export class SyncService {
       // cursor's `s` carries, and for the same reason.
       const seq = BigInt(m[2]!);
       if (seq > MAX_BIGSERIAL) throw new Error("seq out of range");
-      return { seq, generation };
+      const floor = m[3] === undefined ? null : BigInt(m[3]);
+      if (floor !== null && floor > MAX_BIGSERIAL) throw new Error("floor out of range");
+      return { seq, generation, floor };
     } catch {
       throw new ServiceError("cursor_expired", 410, "sync cursor is malformed or expired; re-bootstrap with since=0");
     }
@@ -422,16 +441,25 @@ export class SyncService {
     // FALSE 410 needs `max(seq)` to move backwards, which only account erasure does. `sinceSeq
     // === 0n` skips all of it — an empty log has no ceiling.
     let horizonSeq: bigint | null = null;
+    /** The retention floor, read on EVERY path: the resuming arm needs it for the 410, and the
+     *  bootstrap arm needs it to TAG the sub-floor page cursors it hands out (see below). */
+    let prunedThrough = 0n;
     if (sinceSeq > 0n) {
-      const { min: minSeq, max: maxSeq, prunedThrough } = await seqBounds(db, accountId);
+      const { min: minSeq, max: maxSeq, prunedThrough: floor } = await seqBounds(db, accountId);
+      prunedThrough = floor;
       // THE RETENTION FLOOR (mail 0120), and it is the authoritative one: the pass compacts
       // below `pruned_through_seq` — tombstones included — while RETAINING each live entity's
       // first row, so `min` stays low and only this explicit floor can see the gap. A cursor AT
       // the floor is fine (it has seen everything at or below it); below it, rows it never saw
-      // are gone for ever. The `min` check stays as the belt for the shapes that empty the log
+      // are gone for ever — EXCEPT a cursor carrying a floor TAG at or above the current floor,
+      // which is a post-prune bootstrap mid-replay over the RETAINED sub-floor rows: it has seen
+      // exactly the survivors up to its position, each materialized at serve time, and under an
+      // unmoved floor the compactor deletes nothing such a replay still needs ({@link
+      // SyncCursor.floor}). The `min` check stays as the belt for the shapes that empty the log
       // outright. Raised-before-delete makes the race one-sided: a concurrent prune can only
       // turn this read's empty 200 into the NEXT poll's 410, never serve a gap.
-      if (prunedThrough > 0n && sinceSeq < prunedThrough) {
+      const bootstrapUnderCurrentFloor = parsed?.floor != null && parsed.floor >= prunedThrough;
+      if (prunedThrough > 0n && sinceSeq < prunedThrough && !bootstrapUnderCurrentFloor) {
         throw new ServiceError(
           "cursor_expired", 410,
           "sync cursor is older than the retention horizon; re-bootstrap with since=0",
@@ -465,6 +493,10 @@ export class SyncService {
         };
       }
       horizonSeq = maxSeq;
+    } else {
+      // The bootstrap replay pages through the compacted region, so its outgoing cursors need
+      // the floor tag from page one — one PK-row read, never the aggregate.
+      prunedThrough = await prunedThroughSeq(db, accountId);
     }
 
     const filters = [eq(changeLog.accountId, accountId), gt(changeLog.seq, sinceSeq)];
@@ -680,7 +712,10 @@ export class SyncService {
 
     return {
       changes: { creates, updates, moves, deletes },
-      cursor: this.encodeCursor(cursorSeq, storeGeneration),
+      // A cursor still below the retention floor is a replay over the compacted region — tag it
+      // with the floor it is valid under, so the NEXT page is admitted rather than 410'd (see
+      // {@link SyncCursor.floor}); at or above the floor the cursor is the plain shape it always was.
+      cursor: this.encodeCursor(cursorSeq, storeGeneration, cursorSeq < prunedThrough ? prunedThrough : null),
       hasMore,
       serverTime: ctx.now().toISOString(),
     };

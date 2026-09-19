@@ -179,7 +179,7 @@ export {
 } from "./request-apply.js";
 
 export {
-  allocateSeq, allocateSeqRange, recordChange, recordChanges, recordRuleDelta, ruleDelta, minRetainedSeq, seqBounds,
+  allocateSeq, allocateSeqRange, recordChange, recordChanges, recordRuleDelta, ruleDelta, minRetainedSeq, prunedThroughSeq, seqBounds,
   recordMailboxRemoved,
   CHANGE_LOG_CHANNEL, changeWakePayload, parseChangeWake,
   // The guard that refuses a bare `PgDatabase` where a transaction handle is required. It lives
