@@ -10,12 +10,14 @@
  */
 import { useCallback, useEffect, useRef } from "react";
 import { AppState, View, type NativeScrollEvent, type NativeSyntheticEvent } from "react-native";
-import { router, useFocusEffect } from "expo-router";
+import { useFocusEffect } from "expo-router";
 import { Copy } from "../../src/copy";
 import { usePullToSync } from "../../src/state/pull";
 import { listSurface, metaWhen } from "../../src/state/surface";
 import { GroupedSweepLedger } from "../../src/state/sweep";
 import { useWorld } from "../../src/state/world";
+import { ListDetail, useListDetail } from "../../src/ui/list-detail";
+import { MessageReader } from "../../src/ui/MessageReader";
 import { Empty, Panel, Screen, Scroller, Section, Tail, Txt, Waterline } from "../../src/ui/base";
 import { TopBar } from "../../src/ui/chrome";
 import { MailRow } from "../../src/ui/MailRow";
@@ -39,6 +41,9 @@ export default function ReceiptsScreen() {
   useLocale();
   const w = useWorld();
   const pull = usePullToSync();
+  /* Two panes: a row SELECTS and the reader opens beside the list; one pane: it pushes, as
+     ever. The selection is the route's `open` param — `src/ui/list-detail.tsx` is the rule. */
+  const { open, openRow, close } = useListDetail((id) => `/message/${id}`);
   const { groups, waterlineAboveId, waterLabel, total, meta } = w.receipts;
   const actions = w.actions;
   // Unknown ≠ empty — see `state/surface.ts`.
@@ -82,7 +87,7 @@ export default function ReceiptsScreen() {
     }, [actions]),
   );
 
-  return (
+  const list = (
     <Screen>
       <TopBar />
       <Scroller onScroll={onScroll} scrollEventThrottle={64} refresh={pull}>
@@ -120,7 +125,7 @@ export default function ReceiptsScreen() {
                       {/* The line stands ABOVE the newest receipt already seen at the last
                           visit — this stream's own anchor, independent of Reads'. */}
                       {waterlineAboveId === m.id ? <Waterline label={waterLabel} meta="" /> : null}
-                      <MailRow m={m} onPress={() => router.push(`/message/${m.id}`)} />
+                      <MailRow m={m} onPress={() => openRow(m.id)} />
                     </View>
                   ))}
                 </View>
@@ -131,5 +136,15 @@ export default function ReceiptsScreen() {
         </View>
       </Scroller>
     </Screen>
+  );
+
+  return (
+    <ListDetail
+      open={open}
+      onClose={close}
+      toRoute={(id) => `/message/${id}`}
+      list={list}
+      renderDetail={(id, ctx) => <MessageReader id={id} inPane={ctx.inPane} onClose={ctx.onClose} />}
+    />
   );
 }

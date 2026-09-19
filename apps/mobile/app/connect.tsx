@@ -99,7 +99,7 @@ export default function ConnectScreen() {
   return (
     <Screen>
       <DetailBar title={Copy.connectTitle} />
-      <Scroller>
+      <Scroller bounded>
         {/* The FORM is put away for the confirmation, for the reason the scanner puts the camera
             away: a field that can still be edited beside three facts about what answered would
             let somebody read one computer's key while pairing with another — the desktop's own

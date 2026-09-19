@@ -160,7 +160,7 @@ function SettingsBody() {
   return (
     <Screen>
       <DetailBar title={Copy.settings} />
-      <Scroller>
+      <Scroller bounded>
         <View style={{ paddingHorizontal: 12, paddingTop: 4, paddingBottom: 16 }}>
           <Txt variant="h1">{Copy.settings}</Txt>
         </View>

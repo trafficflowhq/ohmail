@@ -119,10 +119,17 @@ export function Scroller({
   children,
   contentStyle,
   refresh,
+  bounded,
   ...rest
 }: React.ComponentProps<typeof ScrollView> & {
   contentStyle?: StyleProp<ViewStyle>;
   refresh?: { refreshing: boolean; onRefresh: () => void };
+  /**
+   * The flow screens' wide-window bound (settings, onboarding, connect): the content column
+   * caps at a form width and centers, so an iPad or an unfolded phone reads a form instead
+   * of edge-to-edge lines. The mail lists never pass it — their width is the pane's.
+   */
+  bounded?: boolean;
 }) {
   const t = useTheme();
   const insets = useSafeAreaInsets();
@@ -146,6 +153,7 @@ export function Scroller({
           paddingHorizontal: t.space.deckCompact,
           paddingBottom: t.space.tabClearance + insets.bottom,
         },
+        bounded ? { width: "100%", maxWidth: 640, alignSelf: "center" } : null,
         contentStyle,
       ]}
       showsVerticalScrollIndicator={false}

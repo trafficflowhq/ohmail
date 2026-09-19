@@ -1,0 +1,273 @@
+/**
+ * The reading view, as a component two hosts mount: the pushed `/message/[id]` route (one
+ * pane) and the list-detail's reading pane (two panes — the iPad, the unfolded Duo, Android
+ * expanded). Same facts, same verbs either way: why the message landed here (the routing
+ * rationale chip), what was blocked (the spy-pixel count), what is protected (redaction dots,
+ * nothing behind them). Opening marks read through the engine and asks the full body; the
+ * verbs are `MessageActions`, which places itself by posture. The scroll position is written
+ * to `pane-memory` per message, so a fold that remounts this tree resumes where the reader
+ * was — continuity as data, not as tree position.
+ */
+import { useEffect } from "react";
+import { View, type NativeScrollEvent, type NativeSyntheticEvent } from "react-native";
+import { Copy } from "../copy";
+import { useTheme } from "../theme";
+import { useWorld, type WorldMail } from "../state/world";
+import { Chip, Panel, Screen, Scroller, Txt } from "./base";
+import { DetailBar } from "./chrome";
+import { Icon } from "./Icon";
+import { MessageActions } from "./MessageActions";
+import { paneScrollOf, recordPaneScroll } from "./pane-memory";
+
+export function MessageReader({
+  id,
+  inPane = false,
+  onClose,
+}: {
+  id: string;
+  /** Mounted beside its list — no back bar of its own; the pane or the rail carries Back. */
+  inPane?: boolean;
+  /** Leaves the reader: `router.back()` on the route, clearing the selection in a pane. */
+  onClose?: () => void;
+}) {
+  const t = useTheme();
+  const w = useWorld();
+  const m = w.message(id);
+
+  // The open: mark read (watched — the engine owns the overlay and the rollback),
+  // hydrate the full text + conversation + file list.
+  //
+  // KEYED ON THE WORLD, not just the id: `openMessage` is identity-stable by design (so
+  // mirror versions cannot re-fire this), which means a route restored while the session is
+  // still booting would otherwise open against the empty world's no-op and never re-run
+  // when the session goes live — an unread message under an indefinitely loading snippet.
+  const openMessage = w.actions.openMessage;
+  const worldKey = w.worldKey;
+  useEffect(() => {
+    if (id) openMessage(id);
+  }, [id, openMessage, worldKey]);
+
+  if (!m) {
+    return (
+      <Screen>
+        {inPane ? null : <DetailBar />}
+        <Scroller>
+          <Txt variant="note" tone="ink3" style={{ padding: 20 }}>
+            {Copy.messageGone}
+          </Txt>
+        </Scroller>
+      </Screen>
+    );
+  }
+
+  // `withheld` is checked BEFORE the failure arm and never folded into it: the storage cap is an
+  // answer the server gave, so "reopen to try again" would be false. See `Copy.liveBodyWithheld`.
+  const bodyNote =
+    !m.protected && (m.bodyState === "snippet" || m.bodyState === "loading")
+      ? Copy.liveBodyLoading
+      : !m.protected && m.bodyState === "withheld"
+        ? Copy.liveBodyWithheld
+        : !m.protected && m.bodyState === "failed"
+          ? Copy.liveBodyFailed
+          : null;
+
+  /** Continuity: the offset survives the remounts a posture change forces (`pane-memory`). */
+  const scrollKey = `msg:${m.id}`;
+  const onScroll = (e: NativeSyntheticEvent<NativeScrollEvent>) =>
+    recordPaneScroll(scrollKey, e.nativeEvent.contentOffset.y);
+
+  return (
+    <Screen>
+      {/* A message in one of the user's OWN folders is titled by that folder's leaf — the
+          place-name fallback would say "Ohbox" about mail that is not there. A History message
+          is titled History for the same reason: it presents in no pile, so `place` falls to the
+          Ohbox default and would name a place this mail is not in. The row's own chip states
+          where it actually is (`MailRow`, off `historyPlace`). Mail the server is HOLDING AT THE
+          GATE is the third: `Place` has no Screener value, so it fell to the same Ohbox default
+          over the very mail the reader is being asked to decide about (`gateHeld`). History
+          first — a dormant sender's held mail is in both, and History is the surface it was
+          opened from. In a PANE the list is beside this view, so the bar and its Back yield. */}
+      {inPane ? null : (
+        <DetailBar
+          title={m.historyPlace ? Copy.history : m.gateHeld ? Copy.screener : m.folderLeaf ?? placeName(m.place)}
+        />
+      )}
+      {/* `.msg{padding:20px 20px 40px}` in the ≤900px block — the message needs
+          air above the from-line, or the back bar reads as part of the mail. */}
+      <Scroller
+        key={scrollKey}
+        contentStyle={{ paddingHorizontal: 0 }}
+        contentOffset={{ x: 0, y: paneScrollOf(scrollKey) }}
+        onScroll={onScroll}
+        scrollEventThrottle={64}
+      >
+        <View style={{ paddingHorizontal: 20, paddingTop: 18 }}>
+          <View style={{ flexDirection: "row", alignItems: "baseline", gap: 9 }}>
+            <Txt variant="button" style={{ flexShrink: 1 }} numberOfLines={1}>
+              {m.from.name}
+            </Txt>
+            <Txt variant="caption" tone="ink3" numberOfLines={1} style={{ flexShrink: 2 }}>
+              {m.from.address}
+            </Txt>
+            <View style={{ flex: 1 }} />
+            <Txt variant="caption" tone="ink3" tabular>
+              {m.time}
+            </Txt>
+          </View>
+
+          <Txt variant="h2" style={{ marginTop: 14, marginBottom: 14 }}>
+            {m.subject}
+          </Txt>
+
+          <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 7, marginBottom: 20 }}>
+            {m.rationale ? (
+              <Chip icon="route" style={{ maxWidth: "100%" }}>
+                {m.rationale}
+              </Chip>
+            ) : null}
+            {m.trackerNote ? <Chip icon="shield">{m.trackerNote}</Chip> : null}
+            {m.amount ? <Chip>{m.amount}</Chip> : null}
+            {/* The delivery mailbox, in the reader's own chip grammar. A DELIVERY claim off
+                `mailboxId`, never a To/Cc read — this screen shows no recipients at all. */}
+            {m.mailboxLabel ? (
+              <Chip icon="route" style={{ maxWidth: "100%" }}>
+                {Copy.deliveredTo(m.mailboxLabel)}
+              </Chip>
+            ) : null}
+          </View>
+
+          {m.protected ? <ProtectedBlock label={m.protected.label} policy={m.protected.policy} /> : null}
+
+          {!m.protected ? (
+            <>
+              {bodyNote ? (
+                <Txt variant="caption" tone="ink3" style={{ marginBottom: 10 }}>
+                  {bodyNote}
+                </Txt>
+              ) : null}
+              {/* THE READER'S SIZE, NOT THE PANE'S. On a phone the web has no reading column
+                  (`AppShell.tsx`: below 900 it is hidden) — opening a message opens the READER
+                  sheet at 16.5/1.78 (`reader.css:16`). This screen is that reader, so it reads
+                  at `readerBody`. `msgBody` is the desktop pane's role and stays with it. */}
+              <Txt variant="readerBody" style={{ maxWidth: t.layout.proseMax }}>
+                {m.body}
+              </Txt>
+            </>
+          ) : null}
+
+          <AttachmentTiles m={m} />
+
+          {m.earlier.length > 0 ? (
+            <View style={{ marginTop: 34, gap: 12 }}>
+              <Txt variant="caption" tone="ink3">
+                {Copy.earlierInThread(m.earlier.length + 1)}
+              </Txt>
+              {m.earlier.map((h) => (
+                <Panel key={h.id} radius={t.radius.card} style={{ padding: 18 }}>
+                  <View style={{ flexDirection: "row", alignItems: "baseline", gap: 10 }}>
+                    <Txt variant="rowSubject" style={{ flexShrink: 1 }}>
+                      {h.subject}
+                    </Txt>
+                    <View style={{ flex: 1 }} />
+                    <Txt variant="caption" tone="ink3" tabular>
+                      {h.time}
+                    </Txt>
+                  </View>
+                  <Txt variant="streamBody" tone="ink2" style={{ marginTop: 10 }}>
+                    {h.body}
+                  </Txt>
+                </Panel>
+              ))}
+            </View>
+          ) : null}
+
+        </View>
+      </Scroller>
+      {/* The verbs place themselves by posture (`MessageActions`): the compact glass bar at
+          the thumb, the desktop ActionBar pinned at this pane's foot, or the right-edge rail.
+          A confirmed delete leaves this reader at once: the tombstone already dropped the row,
+          and "no longer here" over the reader's own act would read as a failure. */}
+      <MessageActions m={m} onDeleted={onClose} onBack={onClose} />
+    </Screen>
+  );
+}
+
+/**
+ * The attachment strip — the engine's own items, every name already through the
+ * nameless-part fallback: a calendar invite that arrived unnamed reads
+ * `invite.ics`, the same name its download would carry, never an empty label.
+ * Opening the bytes is not supported yet; these tiles state what the mail
+ * carries.
+ */
+function AttachmentTiles({ m }: { m: WorldMail }) {
+  const t = useTheme();
+  // Only ever the world's list — a raw `m.attachment.filename` here would be the empty-label
+  // bug this component exists to close (the world resolves every name through the fallback).
+  const tiles = m.attachments ?? [];
+  if (tiles.length === 0) return null;
+  return (
+    <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 20 }}>
+      {tiles.map((a) => (
+        <View
+          key={a.id}
+          style={[
+            {
+              flexDirection: "row",
+              alignItems: "center",
+              gap: 8,
+              borderRadius: t.radius.pill,
+              backgroundColor: t.c.panel,
+              paddingHorizontal: 15,
+              paddingVertical: 9,
+            },
+            t.lift("l0"),
+          ]}
+        >
+          <Icon name="clip" size={13} color={t.c.ink2} />
+          <Txt variant="button">{a.filename}</Txt>
+          {a.size ? (
+            <Txt variant="caption" tone="ink3">
+              {a.size}
+            </Txt>
+          ) : null}
+        </View>
+      ))}
+    </View>
+  );
+}
+
+/**
+ * The protected block: a tinted pool of light, no frame. Redaction dots stand
+ * where a code would be, and the policy sentence is the product promise
+ * verbatim — not a tooltip, not a settings row.
+ */
+function ProtectedBlock({ label, policy }: { label: string; policy: string }) {
+  const t = useTheme();
+  return (
+    <View
+      style={{
+        borderRadius: t.radius.panel,
+        backgroundColor: t.c.accentSoft,
+        padding: 22,
+        marginBottom: 8,
+        maxWidth: 460,
+      }}
+    >
+      <Icon name="shield" size={17} color={t.c.accentInk} />
+      <View style={{ flexDirection: "row", alignItems: "baseline", gap: 8, marginVertical: 12 }}>
+        <Txt variant="protectedCode">{Copy.protectedRedacted}</Txt>
+        <Txt variant="caption" tone="ink3">
+          {label}
+        </Txt>
+      </View>
+      <Txt variant="note" tone="ink2">
+        <Txt variant="settingsLabel">{Copy.protectedLead}</Txt>
+        {policy.replace(/^Protected/, "")}
+      </Txt>
+    </View>
+  );
+}
+
+function placeName(place: "ohbox" | "reads" | "receipts"): string {
+  return place === "ohbox" ? Copy.ohbox : place === "reads" ? Copy.reads : Copy.receipts;
+}

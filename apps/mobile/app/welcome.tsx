@@ -36,7 +36,7 @@ export default function WelcomeScreen() {
           doors with a factual line each, an address step that can open under the middle one, and
           the travel sentence do not fit a centred column on a small phone. A chooser whose third
           door is below the fold on a 5" screen would be a chooser with two doors. */}
-      <Scroller>
+      <Scroller bounded>
         <View style={{ paddingHorizontal: 16, paddingTop: top, paddingBottom: 14, gap: 12 }}>
           <Wordmark color={t.c.ink} dot={t.c.accent} size={30} />
           <Txt variant="h2">{Copy.welcomeTitle}</Txt>

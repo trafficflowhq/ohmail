@@ -32,6 +32,7 @@ const PATHS = {
   tag: "M2.6 7.4V3.2a.6.6 0 0 1 .6-.6h4.2a1 1 0 0 1 .7.3l5 5a1 1 0 0 1 0 1.4l-4.2 4.2a1 1 0 0 1-1.4 0l-5-5a1 1 0 0 1-.3-.7z",
   plus: "M8 3.6v8.8M3.6 8h8.8",
   chev: "m6 3.8 4.2 4.2L6 12.2",
+  back: "M10 3.8 5.8 8l4.2 4.2",
   pen: "m3.2 12.8.7-2.9 7.2-7.2a1.45 1.45 0 0 1 2.05 2.05l-7.2 7.2-2.75.85zM9.9 3.9l2.1 2.1",
 
   /* — new, same grid, same stroke: the tab bar needs marks the rail never did — */

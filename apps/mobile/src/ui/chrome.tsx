@@ -16,6 +16,7 @@ import { useTheme } from "../theme";
 import { useWorld, useWorldToast } from "../state/world";
 import { connectionSaid, firstSyncContinuesSaid } from "../state/live";
 import { Icon } from "./Icon";
+import { usePaneChrome } from "./pane-chrome";
 import { Tap, Txt, useTopPad } from "./base";
 import { doorbellFaces } from "./doorbell-stack";
 import { UnsavedChanges } from "./UnsavedChanges";
@@ -23,6 +24,7 @@ import { UnsavedChanges } from "./UnsavedChanges";
 /* ----------------------------------------------------------------- top bar */
 
 export function TopBar({ trailing }: { trailing?: React.ReactNode }) {
+  const t = useTheme();
   const top = useTopPad(6);
   // THE FRESHNESS LABEL (INSTANT-ARCH §6.6): while the mirror on screen is stale, every tab
   // says so at the top — "As of Fri 09:00 · catching up" — and says nothing once a
@@ -46,6 +48,10 @@ export function TopBar({ trailing }: { trailing?: React.ReactNode }) {
      while nothing is wrong. Off the MAILBOX rows, so it is the stop the server wrote down and not
      an engine's memory of one. */
   const continuing = firstSyncContinuesSaid(world.mailboxes.rows);
+  /* THE SIDEBAR TOGGLE, top-left of the LIST PANE on the two-pane postures (prototype v5) —
+     provided by the list-detail surface through `pane-chrome`, so every list gets it in the
+     same place without threading a prop. One pane provides nothing and nothing renders. */
+  const pane = usePaneChrome();
   return (
     <View>
       <View
@@ -59,6 +65,17 @@ export function TopBar({ trailing }: { trailing?: React.ReactNode }) {
           gap: 12,
         }}
       >
+        {pane !== null ? (
+          <Tap
+            onPress={pane.openDrawer}
+            accessibilityRole="button"
+            accessibilityLabel={Copy.sidebar}
+            style={{ padding: 10, marginLeft: -10, marginVertical: -6 }}
+          >
+            <Icon name="sidebar" size={17} color={t.c.ink2} />
+          </Tap>
+        ) : null}
+        <View style={{ flex: 1 }} />
         {trailing}
       </View>
       {outage !== null ? (

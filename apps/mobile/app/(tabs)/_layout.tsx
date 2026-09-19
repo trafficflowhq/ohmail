@@ -19,6 +19,7 @@ import { Txt } from "../../src/ui/base";
 import { Sheet } from "../../src/ui/Sheet";
 import { GlassDock, GlassRail, type DockItem, type RailAction } from "../../src/ui/glass";
 import { usePosture } from "../../src/ui/posture";
+import { useReaderRail } from "../../src/ui/reader-rail";
 import { scaffoldPlan } from "../../src/ui/scaffold/plan";
 import { Copy } from "../../src/copy";
 import { useLocale } from "../../src/i18n/LocaleProvider";
@@ -81,6 +82,7 @@ function GlassNav({ state, navigation }: NavProps) {
   const w = useWorld();
   const posture = usePosture();
   const plan = scaffoldPlan(posture, Platform.OS === "ios" ? "ios" : "android");
+  const readerRail = useReaderRail();
   const [searchOpen, setSearchOpen] = useState(false);
 
   /**
@@ -135,6 +137,17 @@ function GlassNav({ state, navigation }: NavProps) {
       </View>
     </Sheet>
   );
+
+  /* THE TWO-PANE iOS POSTURES (the iPad, the unfolded-portrait Duo): no dock, no rail — the
+     destinations live behind the list pane's sidebar toggle as a drawer and the search field
+     sits at the pane's foot (`src/ui/list-detail.tsx`, prototype v5; a bottom dock on an
+     Apple tablet was the expert review's finding). */
+  if (plan.nav === "bars") return null;
+
+  /* THE READER HOLDS THE RAIL (unfolded-landscape Duo, a message open): one rail, and it is
+     carrying back · reply · reply all · forward — the nav yields rather than doubling it.
+     The claim releases when the reader closes and the destinations return here. */
+  if (plan.railCarriesReaderVerbs && readerRail !== null) return null;
 
   if (plan.nav === "rail") {
     /* This component mounts in the navigator's zero-height tab-bar slot at the window's foot,

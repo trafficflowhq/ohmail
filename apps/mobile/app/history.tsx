@@ -10,13 +10,15 @@
  */
 import { useState } from "react";
 import { View } from "react-native";
-import { router } from "expo-router";
+
 import { Copy } from "../src/copy";
 import { usePullToSync } from "../src/state/pull";
 import { listSurface, metaWhen } from "../src/state/surface";
 import { useWorld } from "../src/state/world";
 import { Empty, Panel, Screen, Scroller, Tail, Tap, Txt } from "../src/ui/base";
 import { DetailBar } from "../src/ui/chrome";
+import { ListDetail, useListDetail } from "../src/ui/list-detail";
+import { MessageReader } from "../src/ui/MessageReader";
 import { Gated } from "../src/ui/Gated";
 import { MailRow } from "../src/ui/MailRow";
 import { SkeletonList } from "../src/ui/Skeleton";
@@ -37,6 +39,9 @@ export default function HistoryScreen() {
 function HistoryBody() {
   const w = useWorld();
   const pull = usePullToSync();
+  /* Two panes: a row SELECTS and the reader opens beside the list; one pane: it pushes, as
+     ever. The selection is the route's `open` param — `src/ui/list-detail.tsx` is the rule. */
+  const { open, openRow, close } = useListDetail((id) => `/message/${id}`);
   const [more, setMore] = useState(false);
   const { items, total, meta, pending } = w.history;
   // Unknown ≠ empty (`state/surface.ts`): before this mirror has settled a drain, an empty
@@ -46,7 +51,7 @@ function HistoryBody() {
   // `pending` carries (nothing is retired until the account's own window is known).
   const surface = listSurface({ settled: w.boot.settled, count: total, pending });
 
-  return (
+  const list = (
     <Screen>
       <DetailBar title={Copy.history} />
       <Scroller refresh={pull}>
@@ -102,7 +107,7 @@ function HistoryBody() {
                 NEW half to split off, because an unread message is never here. */}
             <Panel style={{ paddingBottom: 4, marginTop: 8 }}>
               {items.map((m) => (
-                <MailRow key={m.id} m={m} onPress={() => router.push(`/message/${m.id}`)} />
+                <MailRow key={m.id} m={m} onPress={() => openRow(m.id)} />
               ))}
             </Panel>
             <Tail>{Copy.historyTail(total)}</Tail>
@@ -110,5 +115,15 @@ function HistoryBody() {
         )}
       </Scroller>
     </Screen>
+  );
+
+  return (
+    <ListDetail
+      open={open}
+      onClose={close}
+      toRoute={(id) => `/message/${id}`}
+      list={list}
+      renderDetail={(id, ctx) => <MessageReader id={id} inPane={ctx.inPane} onClose={ctx.onClose} />}
+    />
   );
 }

@@ -130,7 +130,7 @@ export default function ScanScreen() {
           is being asked to read is both a distraction and a second scanner: the phase disarms the
           callback, and taking the view down means there is nothing left to re-arm it. */}
       {phase.k === "confirming" ? (
-        <Scroller>
+        <Scroller bounded>
           <PairConfirm
             admission={phase.admission}
             busy={phase.busy}

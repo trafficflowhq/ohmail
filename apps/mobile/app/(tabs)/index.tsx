@@ -8,14 +8,15 @@
  * its own. An empty mailbox renders an honest empty state, never sample mail.
  */
 import { View } from "react-native";
-import { router } from "expo-router";
 import { Copy } from "../../src/copy";
 import { usePullToSync } from "../../src/state/pull";
 import { listSurface, metaWhen } from "../../src/state/surface";
 import { useWorld, type WorldMail } from "../../src/state/world";
 import { Empty, Panel, Screen, Scroller, Section, Tail, Txt } from "../../src/ui/base";
 import { Doorbell, TopBar } from "../../src/ui/chrome";
+import { ListDetail, useListDetail } from "../../src/ui/list-detail";
 import { MailRow } from "../../src/ui/MailRow";
+import { MessageReader } from "../../src/ui/MessageReader";
 import { SkeletonList } from "../../src/ui/Skeleton";
 import { useLocale } from "../../src/i18n/LocaleProvider";
 
@@ -25,6 +26,9 @@ export default function OhboxScreen() {
   useLocale();
   const w = useWorld();
   const pull = usePullToSync();
+  /* Two panes: a row SELECTS and the reader opens beside the list; one pane: it pushes, as
+     ever. The selection is the route's `open` param — `src/ui/list-detail.tsx` is the rule. */
+  const { open, openRow, close } = useListDetail((id) => `/message/${id}`);
   const { resurfaced, fresh, seen, total, meta } = w.ohbox;
   // Unknown ≠ empty: before this mirror has ever settled a drain, a zero-row Ohbox shows
   // the shape of what is coming, never "All quiet" — `state/surface.ts` is the whole rule.
@@ -33,12 +37,12 @@ export default function OhboxScreen() {
   const group = (rows: WorldMail[]) => (
     <View style={{ paddingHorizontal: 6 }}>
       {rows.map((m) => (
-        <MailRow key={m.id} m={m} onPress={() => router.push(`/message/${m.id}`)} />
+        <MailRow key={m.id} m={m} onPress={() => openRow(m.id)} />
       ))}
     </View>
   );
 
-  return (
+  const list = (
     <Screen>
       <TopBar />
       <Scroller refresh={pull}>
@@ -94,6 +98,16 @@ export default function OhboxScreen() {
         </Panel>
       </Scroller>
     </Screen>
+  );
+
+  return (
+    <ListDetail
+      open={open}
+      onClose={close}
+      toRoute={(id) => `/message/${id}`}
+      list={list}
+      renderDetail={(id, ctx) => <MessageReader id={id} inPane={ctx.inPane} onClose={ctx.onClose} />}
+    />
   );
 }
 

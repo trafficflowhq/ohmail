@@ -43,7 +43,7 @@ function ScheduledBody() {
   return (
     <Screen>
       <DetailBar title={Copy.scheduled} />
-      <Scroller refresh={pull}>
+      <Scroller bounded refresh={pull}>
         <View style={{ paddingHorizontal: 12, paddingTop: 4, paddingBottom: 16 }}>
           <Txt variant="h1">{Copy.scheduled}</Txt>
           <Txt variant="meta" tone="ink3" tabular style={{ marginTop: 4 }}>

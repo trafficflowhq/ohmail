@@ -8,7 +8,7 @@
  * on this phone", never "nothing in this folder" (`Copy.folderEmptyTitle`).
  * The tail states the same boundary under a populated list.
  */
-import { router, useLocalSearchParams } from "expo-router";
+import { useLocalSearchParams } from "expo-router";
 import { View } from "react-native";
 import { Copy } from "../../src/copy";
 import { folderLeafOf, folderParentOf } from "../../src/state/folders";
@@ -17,6 +17,8 @@ import { listSurface, metaWhen } from "../../src/state/surface";
 import { useWorld } from "../../src/state/world";
 import { Empty, Panel, Screen, Scroller, Section, Tail, Txt } from "../../src/ui/base";
 import { DetailBar } from "../../src/ui/chrome";
+import { ListDetail, useListDetail } from "../../src/ui/list-detail";
+import { MessageReader } from "../../src/ui/MessageReader";
 import { Gated } from "../../src/ui/Gated";
 import { MailRow } from "../../src/ui/MailRow";
 import { SkeletonList } from "../../src/ui/Skeleton";
@@ -38,6 +40,9 @@ function FolderBody() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const w = useWorld();
   const pull = usePullToSync();
+  /* Two panes: a row SELECTS and the reader opens beside the list; one pane: it pushes, as
+     ever. The selection is the route's `open` param — `src/ui/list-detail.tsx` is the rule. */
+  const { open, openRow, close } = useListDetail((mid) => `/message/${mid}`);
   const folder = w.folders.byId(id ?? "");
 
   // The flag went off, the entity left the mirror, or the URL names a folder this account
@@ -62,7 +67,7 @@ function FolderBody() {
   // drain has touched, but a bootstrap killed before its final page leaves exactly this state.)
   const surface = listSurface({ settled: w.boot.settled, count: total });
 
-  return (
+  const list = (
     <Screen>
       <DetailBar title={leaf} />
       <Scroller refresh={pull}>
@@ -98,7 +103,7 @@ function FolderBody() {
               <Panel style={{ marginBottom: 12 }}>
                 <Section style={{ paddingTop: 14 }}>{Copy.groupNew}</Section>
                 {fresh.map((m) => (
-                  <MailRow key={m.id} m={m} onPress={() => router.push(`/message/${m.id}`)} />
+                  <MailRow key={m.id} m={m} onPress={() => openRow(m.id)} />
                 ))}
               </Panel>
             ) : null}
@@ -106,7 +111,7 @@ function FolderBody() {
               <Panel>
                 <Section style={{ paddingTop: 14 }}>{Copy.groupSeen}</Section>
                 {seen.map((m) => (
-                  <MailRow key={m.id} m={m} onPress={() => router.push(`/message/${m.id}`)} />
+                  <MailRow key={m.id} m={m} onPress={() => openRow(m.id)} />
                 ))}
               </Panel>
             ) : null}
@@ -115,5 +120,15 @@ function FolderBody() {
         )}
       </Scroller>
     </Screen>
+  );
+
+  return (
+    <ListDetail
+      open={open}
+      onClose={close}
+      toRoute={(mid) => `/message/${mid}`}
+      list={list}
+      renderDetail={(mid, ctx) => <MessageReader id={mid} inPane={ctx.inPane} onClose={ctx.onClose} />}
+    />
   );
 }

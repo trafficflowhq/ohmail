@@ -65,7 +65,7 @@ function Limitations({ onGo }: { onGo: () => void }) {
   const t = useTheme();
   const lines = limitationLines(Platform.OS);
   return (
-    <Scroller>
+    <Scroller bounded>
       <View style={{ paddingHorizontal: 20, paddingTop: 8, paddingBottom: 14 }}>
         {/* THE HEADING IS THE FOCUS TARGET (`focusTargetFor("limits")`), because this step is a
             read: a reader who lands mid-list has skipped the sentence that decides. */}
@@ -229,7 +229,7 @@ function Credentials() {
   }, [conn, fields, notify, start]);
 
   return (
-    <Scroller>
+    <Scroller bounded>
       <View style={{ paddingHorizontal: 20, paddingTop: 8, paddingBottom: 4 }}>
         <Txt variant="h1" accessibilityRole="header">
           {Copy.phoneStandaloneFormTitle}

@@ -8,12 +8,36 @@
  * two drifting copies.
  */
 import type { ReactNode } from "react";
-import { KeyboardAvoidingView, Modal, Platform, Pressable, View } from "react-native";
+import {
+  KeyboardAvoidingView, Modal, Platform, Pressable, useWindowDimensions, View, type ViewStyle,
+} from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Copy } from "../copy";
 import { useTheme } from "../theme";
+import { usePosture } from "./posture";
 import { Tap, Txt } from "./base";
 import { Icon, type IconName } from "./Icon";
+
+/**
+ * WHERE A SHEET'S PANEL MAY STAND, per posture: a menu never straddles the hinge (Apple moves
+ * "alerts and menus … away from the bend"; Microsoft: never across the seam). Beside a
+ * VERTICAL two-pane hinge the panel rises over the reading half — the side the verbs live
+ * on — its left edge past the fold; over a HORIZONTAL one (tabletop) it stays inside the
+ * lower half. On any other wide window it is bounded and centered (the form-sheet shape);
+ * compact keeps the full-width thumb sheet, unchanged. Shared with the composer's own modal.
+ */
+export function useSheetPanelBounds(): ViewStyle {
+  const { width: w, height: h } = useWindowDimensions();
+  const posture = usePosture();
+  const hinge = posture.panes === 2 ? posture.hinge : null;
+  if (hinge !== null && hinge.h >= hinge.w) {
+    return { alignSelf: "flex-end", width: Math.max(320, w - (hinge.x + hinge.w)) };
+  }
+  if (hinge !== null) {
+    return { alignSelf: "center", width: "100%", maxWidth: 560, maxHeight: Math.max(280, h - (hinge.y + hinge.h)) };
+  }
+  return { alignSelf: "center", width: "100%", maxWidth: 560 };
+}
 
 /**
  * The bottom sheet: a backdrop press away from dismissal, the panel where the thumb is.
@@ -35,6 +59,7 @@ export function Sheet({
 }) {
   const t = useTheme();
   const insets = useSafeAreaInsets();
+  const bounds = useSheetPanelBounds();
   if (!open) return null;
   const body = (
     <>
@@ -50,6 +75,7 @@ export function Sheet({
             paddingTop: 12,
             paddingBottom: 8 + insets.bottom,
           },
+          bounds,
           t.liftUp("l3"),
         ]}
       >

@@ -18,6 +18,8 @@ import { useTheme } from "../../src/theme";
 import { useWorld, type WorldMail } from "../../src/state/world";
 import { Badge, Empty, Panel, Screen, Scroller, Tail, TapRow, Txt, Waterline } from "../../src/ui/base";
 import { TopBar } from "../../src/ui/chrome";
+import { ListDetail, useListDetail } from "../../src/ui/list-detail";
+import { MessageReader } from "../../src/ui/MessageReader";
 import { FadeOut } from "../../src/ui/FadeOut";
 import { SkeletonList } from "../../src/ui/Skeleton";
 import { useLocale } from "../../src/i18n/LocaleProvider";
@@ -31,6 +33,9 @@ export default function ReadsScreen() {
   useLocale();
   const w = useWorld();
   const pull = usePullToSync();
+  /* Two panes: an issue OPENS BESIDE the stream instead of unclamping in place — list-detail
+     with the selection in the route's `open` param; the compact stream is untouched. */
+  const { open, openRow, close, twoPane } = useListDetail((id) => `/message/${id}`);
   const { items, waterlineAboveId, waterLabel, meta } = w.reads;
   const actions = w.actions;
   // Unknown ≠ empty — the stream shows card silhouettes until this mirror has settled once.
@@ -75,7 +80,7 @@ export default function ReadsScreen() {
     }, [actions]),
   );
 
-  return (
+  const list = (
     <Screen>
       <TopBar />
       <Scroller onScroll={onScroll} scrollEventThrottle={64} refresh={pull}>
@@ -107,8 +112,9 @@ export default function ReadsScreen() {
                   // Expanding an issue is an explicit ask for its full text: the synced row
                   // carries only the snippet until hydration, and a card that said "Read in
                   // full" while showing the preview would be presenting a truncation as the
-                  // mail.
+                  // mail. Beside a reading pane the ask is the pane's own open instead.
                   onExpand={() => actions.hydrateMessage(m.id)}
+                  onOpenBeside={twoPane ? () => openRow(m.id) : undefined}
                 />
               </View>
             ))}
@@ -119,10 +125,29 @@ export default function ReadsScreen() {
       </Scroller>
     </Screen>
   );
+
+  return (
+    <ListDetail
+      open={open}
+      onClose={close}
+      toRoute={(id) => `/message/${id}`}
+      list={list}
+      renderDetail={(id, ctx) => <MessageReader id={id} inPane={ctx.inPane} onClose={ctx.onClose} />}
+    />
+  );
 }
 
 /** One issue. Clamped until tapped; the fade says there is more, not how much. */
-function StreamCard({ m, onExpand }: { m: WorldMail; onExpand: () => void }) {
+function StreamCard({
+  m,
+  onExpand,
+  onOpenBeside,
+}: {
+  m: WorldMail;
+  onExpand: () => void;
+  /** Two panes: the tap opens the issue in the reading pane instead of unclamping the card. */
+  onOpenBeside?: () => void;
+}) {
   const t = useTheme();
   const [open, setOpen] = useState(false);
   const clamped = !open;
@@ -140,12 +165,16 @@ function StreamCard({ m, onExpand }: { m: WorldMail; onExpand: () => void }) {
   return (
     <Panel level="l1" radius={t.radius.card} style={{ marginBottom: 12 }}>
       <TapRow
-        onPress={() =>
+        onPress={() => {
+          if (onOpenBeside !== undefined) {
+            onOpenBeside();
+            return;
+          }
           setOpen((v) => {
             if (!v) onExpand();
             return !v;
-          })
-        }
+          });
+        }}
         accessibilityRole="button"
         accessibilityLabel={Copy.readsCardAria(m.subject, open)}
         style={{ borderRadius: t.radius.card }}

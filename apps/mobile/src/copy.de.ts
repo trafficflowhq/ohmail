@@ -716,6 +716,12 @@ export const DE: Deck = {
   search: "Suche",
   searchLater: "Kommt mit einem späteren Update",
 
+  /* ------------------------------------------------ zwei Bereiche (große Displays) */
+
+  sidebar: "Seitenleiste",
+  paneNothingOpen: "Nichts geöffnet",
+  paneNothingOpenHint: "Hier erscheint die Mail, die du in der Liste auswählst.",
+
   /* -------------------------------------------------------------- settings */
 
   settings: "Einstellungen",

@@ -10,7 +10,7 @@
  */
 import { useState } from "react";
 import { View } from "react-native";
-import { router } from "expo-router";
+import { useLocalSearchParams } from "expo-router";
 import { Copy } from "../../src/copy";
 import { useTheme } from "../../src/theme";
 import { destDone, type ScreenerSeg } from "../../src/state/model";
@@ -19,6 +19,8 @@ import { listSurface, metaWhen } from "../../src/state/surface";
 import { useWorld, type ScreenerRow } from "../../src/state/world";
 import { Badge, Empty, Panel, Screen, Scroller, Tail, TapRow, Txt } from "../../src/ui/base";
 import { TopBar } from "../../src/ui/chrome";
+import { ListDetail, useListDetail } from "../../src/ui/list-detail";
+import { SenderDetail } from "../../src/ui/SenderDetail";
 import { Segmented } from "../../src/ui/Segmented";
 import { SkeletonList } from "../../src/ui/Skeleton";
 import { useLocale } from "../../src/i18n/LocaleProvider";
@@ -46,7 +48,17 @@ export default function ScreenerScreen() {
   useLocale();
   const w = useWorld();
   const pull = usePullToSync();
-  const [seg, setSeg] = useState<ScreenerSeg>("waiting");
+  /* The shelf can arrive as a param: the pushed sender route migrates here when the window
+     gains a second pane, naming the shelf its selection belongs to. */
+  const params = useLocalSearchParams<{ seg?: string }>();
+  const [seg, setSeg] = useState<ScreenerSeg>(
+    params.seg === "screened" || params.seg === "spam" ? params.seg : "waiting",
+  );
+  /* Two panes: a sender row SELECTS and the decision view opens beside the shelves (the
+     prototype's reading slot); one pane: it pushes, as ever. */
+  const { open, openRow, close } = useListDetail(
+    (key) => `/sender/${seg}/${encodeURIComponent(key)}`,
+  );
   const empty = emptyFor(seg);
   const { waiting, screened, spam, meta, waitingPending } = w.screener;
   // Unknown ≠ empty, per SEGMENT: the active shelf's own count against the one settled fact.
@@ -69,7 +81,7 @@ export default function ScreenerScreen() {
     />
   );
 
-  return (
+  const list = (
     <Screen>
       <TopBar />
       <Scroller refresh={pull}>
@@ -83,7 +95,11 @@ export default function ScreenerScreen() {
         <Segmented
           style={{ marginHorizontal: 10, marginBottom: 14 }}
           value={seg}
-          onChange={setSeg}
+          onChange={(v) => {
+            // A routeKey is a fact only on its own shelf — a selection never crosses one.
+            if (open !== null) close();
+            setSeg(v);
+          }}
           segments={[
             // Counts speak only over a settled mirror — a "0" badge beside a shelf that is
             // still rendering its skeleton would be an invented count (`state/surface.ts`).
@@ -100,7 +116,7 @@ export default function ScreenerScreen() {
             ) : (
               <View style={{ paddingHorizontal: 6, paddingTop: 8 }}>
                 {waiting.map((row) => (
-                  <WaitingRow key={row.id} row={row} />
+                  <WaitingRow key={row.id} row={row} onPress={() => openRow(row.routeKey)} />
                 ))}
               </View>
             )
@@ -115,7 +131,7 @@ export default function ScreenerScreen() {
                   {screened.map((row) => (
                     <TapRow
                       key={row.id}
-                      onPress={() => router.push(`/sender/screened/${encodeURIComponent(row.routeKey)}`)}
+                      onPress={() => openRow(row.routeKey)}
                       accessibilityRole="button"
                       style={{ paddingHorizontal: 12, paddingVertical: 12 }}
                     >
@@ -142,7 +158,7 @@ export default function ScreenerScreen() {
                   {spam.map((row) => (
                     <TapRow
                       key={row.id}
-                      onPress={() => router.push(`/sender/spam/${encodeURIComponent(row.routeKey)}`)}
+                      onPress={() => openRow(row.routeKey)}
                       accessibilityRole="button"
                       style={{ paddingHorizontal: 12, paddingVertical: 12 }}
                     >
@@ -164,13 +180,25 @@ export default function ScreenerScreen() {
       </Scroller>
     </Screen>
   );
+
+  return (
+    <ListDetail
+      open={open}
+      onClose={close}
+      toRoute={(key) => `/sender/${seg}/${encodeURIComponent(key)}`}
+      list={list}
+      renderDetail={(key, ctx) => (
+        <SenderDetail seg={seg} routeKey={key} inPane={ctx.inPane} onClose={ctx.onClose} />
+      )}
+    />
+  );
 }
 
-function WaitingRow({ row }: { row: ScreenerRow }) {
+function WaitingRow({ row, onPress }: { row: ScreenerRow; onPress: () => void }) {
   const t = useTheme();
   return (
     <TapRow
-      onPress={() => router.push(`/sender/waiting/${encodeURIComponent(row.routeKey)}`)}
+      onPress={onPress}
       accessibilityRole="button"
       accessibilityLabel={Copy.senderRowAria(row.name, row.address, row.held.length)}
       style={{ paddingHorizontal: 12, paddingVertical: 12 }}

@@ -1102,6 +1102,14 @@ const TABLE = {
   /** More's one honest sentence about it — there is no search screen to route to yet. */
   searchLater: "Arrives in a later update",
 
+  /* ------------------------------------------------- two panes (big screens) */
+
+  /** The list pane's top-left toggle and the drawer it opens — the destinations live there. */
+  sidebar: "Sidebar",
+  /** The reading pane before any row is chosen — a resting state, never an error. */
+  paneNothingOpen: "Nothing open",
+  paneNothingOpenHint: "Mail you choose from the list opens here.",
+
   /* -------------------------------------------------------------- settings */
 
   settings: "Settings",

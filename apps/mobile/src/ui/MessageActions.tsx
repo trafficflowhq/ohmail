@@ -47,11 +47,23 @@ import {
 import { useWorld } from "../state/world";
 import { BAR, PILL } from "./action-bar-layout";
 import { Button, Rule, Tap, Txt } from "./base";
+import { GlassActionBar, GlassPill, type BarVerbSpec } from "./glass";
+import type { RailAction } from "./glass/GlassRail";
+import { usePosture } from "./posture";
+import { scaffoldPlan } from "./scaffold/plan";
+import { publishReaderRail } from "./reader-rail";
+import {
+  readerVerbMode,
+  readerVerbPlacement,
+  railReaderGroups,
+  type ReaderVerbFacts,
+  type ReaderVerbId,
+} from "./reader-verbs";
 import { Icon, type IconName } from "./Icon";
 import { sendLaterOffered } from "./standalone-form";
 import { afterWithdraw, cancelAct } from "./send-cancel";
 import { Segmented } from "./Segmented";
-import { CancelRow, Sheet, SheetRow } from "./Sheet";
+import { CancelRow, Sheet, SheetRow, useSheetPanelBounds } from "./Sheet";
 
 /** Which surface is up. One at a time — a union, so two sheets cannot stack. */
 type Open =
@@ -69,6 +81,7 @@ type Open =
 export function MessageActions({
   m,
   onDeleted,
+  onBack,
 }: {
   m: WorldMail;
   /**
@@ -78,6 +91,8 @@ export function MessageActions({
    * rollback re-lists the row where it was, under the failure toast.
    */
   onDeleted?: () => void;
+  /** Closes the reader — the rail's Back on the unfolded-landscape Duo presses this. */
+  onBack?: () => void;
 }) {
   const t = useTheme();
   const insets = useSafeAreaInsets();
@@ -93,6 +108,73 @@ export function MessageActions({
 
   const a = w.actions;
   const close = () => setOpen(null);
+
+  /**
+   * WHICH PRESENTATION THIS POSTURE TAKES (`reader-verbs.ts`, the census-walked model): the
+   * phone's compact bar, the desktop ActionBar pinned at the reading pane's foot (owner rule
+   * 4 — iPad both orientations, the unfolded-portrait Duo, Android two-pane), or the
+   * right-edge rail on the unfolded-landscape Duo. Junk has no row verb on the ActionBar —
+   * the desktop's own design; it stays behind Move — and only the rail carries it directly.
+   */
+  const posture = usePosture();
+  const plan = scaffoldPlan(posture, Platform.OS === "ios" ? "ios" : "android");
+  const mode = readerVerbMode(plan);
+  const facts: ReaderVerbFacts = {
+    canReplyAll: m.canReplyAll === true,
+    noForward: m.noForward === true,
+    foldersEnabled: w.folders.enabled,
+    junkOffered: moveTargetsFor(m).includes("spam"),
+  };
+  const placement = readerVerbPlacement(mode, facts);
+  const moreHas = (id: ReaderVerbId) => placement.behindMore.includes(id);
+
+  /** The one three-faced read slot — the webapp's read switch, never empty and never two. */
+  const readFace =
+    m.pile === "resurfaced"
+      ? { icon: "check" as IconName, label: Copy.actionDone, press: () => a.resurfaceDone(m.id) }
+      : m.unread
+        ? { icon: "check" as IconName, label: Copy.actionMarkRead, press: () => a.markSeen(m.id, false) }
+        : { icon: "x" as IconName, label: Copy.actionMarkUnread, press: () => a.markSeen(m.id, true) };
+
+  /* THE RAIL CLAIM (unfolded-landscape Duo): the reader's verbs ride the ONE right-edge rail —
+     back · reply · reply all · forward, Done · Park · Junk, ⋯ (prototype v5, Mail's order) —
+     published to the store the rail's renderer reads, released on unmount so the destinations
+     return the moment no message is open. Handlers close over THIS render; the deps re-publish
+     whenever a label, face or admission changes (the locale re-reads the deck's getters). */
+  const pile = m.pile;
+  const unread = m.unread;
+  useEffect(() => {
+    if (mode !== "rail") return;
+    const core = (id: ReaderVerbId): RailAction => {
+      switch (id) {
+        case "reply":
+          return { id, icon: "reply", label: Copy.actionReply, accent: true, fixed: true, onPress: () => setOpen({ compose: "reply" }) };
+        case "replyAll":
+          return { id, icon: "replyall", label: Copy.actionReplyAll, onPress: () => setOpen({ compose: "replyAll" }) };
+        case "forward":
+          return { id, icon: "fwd", label: Copy.actionForward, onPress: () => setOpen({ compose: "forward" }) };
+        case "read":
+          return { id, icon: readFace.icon, label: readFace.label, onPress: readFace.press };
+        case "aside":
+          return { id, icon: "pause", label: Copy.actionSetAside, on: pile === "set_aside", onPress: () => a.pileToggle(m.id, "setAside") };
+        default:
+          // later/resurface/tag/screening/move/delete live behind ⋯ on the rail (`RAIL_MORE`).
+          return { id, icon: "more", label: Copy.actionMore, onPress: () => setOpen("more") };
+      }
+    };
+    const entry = (id: ReturnType<typeof railReaderGroups>[number][number]): RailAction =>
+      id === "back"
+        ? { id, icon: "back", label: Copy.back, fixed: true, onPress: onBack }
+        : id === "junk"
+          ? { id, icon: "junk", label: moveTargetLabel("spam"), onPress: () => void a.move(m, "spam") }
+          : id === "more"
+            ? { id, glyph: "⋯", label: Copy.actionMore, fixed: true, onPress: () => setOpen("more") }
+            : core(id);
+    publishReaderRail(railReaderGroups(facts).map((g) => g.map(entry)));
+    return () => publishReaderRail(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode, m.id, pile, unread, facts.canReplyAll, facts.noForward, facts.foldersEnabled, facts.junkOffered, locale, onBack]);
+
   /**
    * THE HOUR THE CHOOSER IS ASKING ABOUT (mail 0110) — the account's stored time, or the
    * product's 09:00 when there is none, as a `'HH:MM'` that is always real. A local override
@@ -125,28 +207,73 @@ export function MessageActions({
   const tomorrow = tomorrowAt(new Date(), resurfaceTime);
   const nextWeek = nextWeekAt(new Date(), resurfaceTime);
 
+  /**
+   * The ActionBar's verb capsules (mode "bar") — the webapp's `BAR_VERB_ORDER` arrives through
+   * `placement.standing`; the segments (defer, file) abut exactly as the desktop's do. The
+   * handlers are the SAME handlers the compact bar and the sheets press — one verb, one act.
+   */
+  const barSpec = (id: ReaderVerbId): BarVerbSpec => {
+    switch (id) {
+      case "replyAll": return { id, label: Copy.actionReplyAll, onPress: () => setOpen({ compose: "replyAll" }) };
+      case "forward": return { id, label: Copy.actionForward, onPress: () => setOpen({ compose: "forward" }) };
+      case "later": return { id, icon: "clock", label: Copy.actionLater, seg: "defer", onPress: () => a.pileToggle(m.id, "replyLater") };
+      case "aside": return { id, icon: "pause", label: Copy.actionSetAside, seg: "defer", onPress: () => a.pileToggle(m.id, "setAside") };
+      case "resurface": return { id, icon: "up", label: Copy.actionResurface, seg: "defer", onPress: () => (m.pile === "bubbled_up" ? a.resurfaceToggle(m.id) : setOpen("resurface")) };
+      case "tag": return { id, icon: "tag", label: Copy.actionTag, onPress: () => setOpen("tag") };
+      case "screening": return { id, icon: "door", label: Copy.actionScreening, seg: "file", onPress: () => setOpen("screening") };
+      case "move": return { id, icon: "ohbox", label: Copy.actionMove, seg: "file", onPress: () => setOpen("move") };
+      case "delete": return { id, icon: "trash", label: Copy.actionDelete, onPress: () => setOpen("delete") };
+      // reply and read ride their own slots on the bar; they never reach this map.
+      default: return { id, label: Copy.actionReply, onPress: () => setOpen({ compose: "reply" }) };
+    }
+  };
+  const barVerbs: BarVerbSpec[] =
+    mode === "bar" ? placement.standing.filter((v) => v !== "reply" && v !== "read").map(barSpec) : [];
+  const barExtraMore: BarVerbSpec[] = mode === "bar" ? placement.behindMore.map(barSpec) : [];
+
   return (
     <>
-      <View
-        style={[
-          {
-            backgroundColor: t.c.float,
-            borderTopLeftRadius: t.radius.panel,
-            borderTopRightRadius: t.radius.panel,
-            paddingHorizontal: BAR.padH,
-            // Six points of each vertical pad live INSIDE the verb block (below), not here: RN
-            // clips `hitSlop` at parent bounds, so a block measuring exactly the capsules' 38pt
-            // would cut their touch targets under the 48dp `Tap` reaches. Same visual bar,
-            // uncut hit rectangles.
-            paddingTop: 4,
-            paddingBottom: 2 + insets.bottom,
-            flexDirection: "row",
+      {mode === "bar" ? (
+        /* The desktop reader's ActionBar in the glass grammar, pinned at the READING PANE's
+           foot (owner rule 4) and floating over the scroll — the Scroller's tab clearance
+           already keeps the last lines readable above it. */
+        <View
+          pointerEvents="box-none"
+          style={{
+            position: "absolute",
+            left: 0,
+            right: 0,
+            bottom: Math.max(insets.bottom, 12),
             alignItems: "center",
-            gap: BAR.gap,
-          },
-          t.liftUp("l3"),
-          t.liftUp("barEdge"),
-        ]}
+            zIndex: t.zLayer.tabBar,
+          }}
+        >
+          <GlassActionBar
+            reply={{ label: Copy.actionReply, onPress: () => setOpen({ compose: "reply" }) }}
+            verbs={barVerbs}
+            readSwitch={{ label: readFace.label, onPress: readFace.press }}
+            extraMore={barExtraMore}
+          />
+        </View>
+      ) : mode === "rail" ? null : (
+      /* The compact bar, in the glass material (owner: one look on every device) — the same
+         verbs, wrap and More it always carried; only the slab became the translucent pill. */
+      <View pointerEvents="box-none" style={{ paddingHorizontal: 8, paddingBottom: Math.max(insets.bottom, 8) }}>
+      <GlassPill
+        horizontal
+        level="l3"
+        radius={t.radius.panel}
+        contentStyle={{
+          alignSelf: "stretch",
+          alignItems: "center",
+          gap: BAR.gap,
+          paddingHorizontal: BAR.padH,
+          // Six points of each vertical pad live INSIDE the verb block (below), not here: RN
+          // clips `hitSlop` at parent bounds, so a block measuring exactly the capsules' 38pt
+          // would cut their touch targets under the 48dp `Tap` reaches. Same visual bar,
+          // uncut hit rectangles.
+          paddingVertical: 2,
+        }}
       >
         {/* THE VERBS WRAP; More is pinned OUTSIDE the wrap. A scroller stood here and a
             horizontal ScrollView clips: at 1080 px / 420 dpi the fourth verb was cut mid-glyph
@@ -201,22 +328,51 @@ export function MessageActions({
         >
           <Icon name="more" size={16} color={t.c.ink2} />
         </Tap>
+      </GlassPill>
       </View>
+      )}
 
-      {/* ── More: the rest of the bar, one verb per row ─────────────────────────────────── */}
+      {/* ── More: everything not standing on this posture's surface, one verb per row —
+             `placement.behindMore` names the rows, so the sheet and the surface can never
+             carry the same verb twice, and no mode loses one ───────────────────────────── */}
       <Sheet open={open === "more"} onClose={close} label={Copy.actionMore}>
-        {m.canReplyAll ? (
+        {moreHas("replyAll") ? (
           <SheetRow icon="pen" label={Copy.actionReplyAll} onPress={() => setOpen({ compose: "replyAll" })} />
         ) : null}
-        {!m.noForward ? (
+        {moreHas("forward") ? (
           <SheetRow icon="open" label={Copy.actionForward} onPress={() => setOpen({ compose: "forward" })} />
         ) : null}
-        <SheetRow icon="tag" label={Copy.actionTag} onPress={() => setOpen("tag")} />
-        <SheetRow icon="door" label={Copy.actionScreening} onPress={() => setOpen("screening")} />
-        <SheetRow icon="ohbox" label={Copy.actionMove} onPress={() => setOpen("move")} />
-        <Rule inset={14} />
+        {/* The two horizons the rail does not stand (its column carries Done · Park · Junk;
+            Later and Resurface live here, one press away — never gone). */}
+        {moreHas("later") ? (
+          <SheetRow
+            icon="clock"
+            label={Copy.actionLater}
+            on={m.pile === "reply_later"}
+            onPress={() => { close(); a.pileToggle(m.id, "replyLater"); }}
+          />
+        ) : null}
+        {moreHas("resurface") ? (
+          <SheetRow
+            icon="up"
+            label={Copy.actionResurface}
+            on={m.pile === "bubbled_up"}
+            onPress={() => {
+              if (m.pile === "bubbled_up") {
+                close();
+                a.resurfaceToggle(m.id);
+              } else setOpen("resurface");
+            }}
+          />
+        ) : null}
+        {moreHas("tag") ? <SheetRow icon="tag" label={Copy.actionTag} onPress={() => setOpen("tag")} /> : null}
+        {moreHas("screening") ? (
+          <SheetRow icon="door" label={Copy.actionScreening} onPress={() => setOpen("screening")} />
+        ) : null}
+        {moreHas("move") ? <SheetRow icon="ohbox" label={Copy.actionMove} onPress={() => setOpen("move")} /> : null}
+        {moreHas("read") ? <Rule inset={14} /> : null}
         {/* One slot, three faces — the webapp's read switch, never empty and never two. */}
-        {m.pile === "resurfaced" ? (
+        {!moreHas("read") ? null : m.pile === "resurfaced" ? (
           <SheetRow icon="check" label={Copy.actionDone} onPress={() => { close(); a.resurfaceDone(m.id); }} />
         ) : m.unread ? (
           <SheetRow icon="check" label={Copy.actionMarkRead} onPress={() => { close(); a.markSeen(m.id, false); }} />
@@ -230,7 +386,7 @@ export function MessageActions({
             the reader Delete verb ships behind "Use folders" (FOLDERS-SPEC.md §16.3/§16.7 —
             flag-off is the pre-feature reader, "no Delete verb", byte for byte), so with the
             flag off neither the row nor a stale confirm can dispatch. */}
-        {w.folders.enabled ? (
+        {moreHas("delete") ? (
           <>
             <Rule inset={14} />
             <SheetRow icon="trash" label={Copy.actionDelete} onPress={() => setOpen("delete")} />
@@ -508,6 +664,8 @@ function ComposeSheet({
   const t = useTheme();
   const insets = useSafeAreaInsets();
   const w = useWorld();
+  /** The composer never straddles a hinge and stays bounded on wide windows (`Sheet.tsx`). */
+  const panelBounds = useSheetPanelBounds();
   /** The send-later day rows, named by `Intl` in the app's language. */
   const locale = useLocale();
   const [body, setBody] = useState("");
@@ -710,6 +868,7 @@ function ComposeSheet({
               paddingBottom: 12 + insets.bottom,
               gap: 10,
             },
+            panelBounds,
             t.liftUp("l3"),
           ]}
         >

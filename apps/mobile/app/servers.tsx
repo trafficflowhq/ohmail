@@ -33,7 +33,7 @@ export default function ServersScreen() {
   return (
     <Screen>
       <DetailBar title={Copy.serversTitle} />
-      <Scroller>
+      <Scroller bounded>
         <View style={{ paddingHorizontal: 12, paddingTop: 4, paddingBottom: 14 }}>
           <Txt variant="h1">{Copy.serversTitle}</Txt>
           <Txt variant="hint" tone="ink3" style={{ marginTop: 6 }}>
