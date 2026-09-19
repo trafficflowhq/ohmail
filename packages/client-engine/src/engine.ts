@@ -6247,8 +6247,8 @@ export class OhmailEngine {
    */
 
   /**
-   * A minting failure (no `URL.createObjectURL`) degrades to items without byte-backing — the strip still names the
-   * files.
+   * A runtime with no `URL.createObjectURL` still keeps the BYTES — only the browser-facing URL
+   * degrades; an unreadable base64 payload is the one case that seeds metadata alone.
    */
   private seedSentAttachments(
     messageId: string,
@@ -6264,8 +6264,8 @@ export class OhmailEngine {
         : undefined;
       return {
         // A local id, namespaced so it can never collide with a server row id. It is only ever
-        // resolved against this held list; `openAttachment` short-circuits on `ready` + URL, so
-        // the id reaches no wire while the bytes stand.
+        // resolved against this held list; `openAttachment` short-circuits on `ready` with the
+        // bytes (or a URL) in hand, so the id reaches no wire while they stand.
         id: `${messageId}:sent-att:${i}`,
         filename: a.filename?.trim() || `attachment-${i + 1}.bin`,
         mimeType,
@@ -6273,7 +6273,8 @@ export class OhmailEngine {
         state: "ready" as const,
         inline: false,
         contentId: null,
-        ...(minted ? { objectUrl: minted.url, blob: minted.blob } : {}),
+        ...(minted ? { blob: minted.blob } : {}),
+        ...(minted && minted.url !== undefined ? { objectUrl: minted.url } : {}),
       };
     });
     this.sentAttachmentSeeds.set(messageId, { live: true, expiresAtMs, forwardOf, composeItems });
@@ -7364,8 +7365,9 @@ export class OhmailEngine {
 
     const current = this.itemOf(messageId, attachmentId);
     if (!current) return;
-    // Already fetched, and the URL is still live — the bytes are in the tab, nothing to ask for.
-    if (current.state === "ready" && current.objectUrl) return;
+    // Already fetched — the bytes are in hand, nothing to ask for. The blob is the carrier;
+    // the URL alone also satisfies (the compose seed holds a URL wherever it holds bytes).
+    if (current.state === "ready" && (current.blob !== undefined || current.objectUrl)) return;
     // A refusal at the ceiling cannot become a success by asking again.
     if (current.state === "too_large") return;
     if (current.state === "failed" && !opts.retry) return;
@@ -7378,17 +7380,18 @@ export class OhmailEngine {
         // or any second pass, would otherwise leak the old one for the life of the document.
         this.revokeItem(messageId, attachmentId);
         const minted = this.mintObjectUrl(messageId, blob, current.mimeType);
-        // The URL and the typed Blob are stored together: a preview parses the Blob (no
-        // `fetch(blob:)`, which `connect-src 'self'` refuses on the live host), the strip and
-        // `<a download>` use the URL, and both are dropped by `releaseAttachments` at once.
+        // The typed Blob is stored UNCONDITIONALLY — it is the byte carrier a preview parses
+        // and a phone shares; the URL is the browser convenience, present only where the
+        // runtime can mint one. Both are dropped by `releaseAttachments` at once.
         this.patchAttachment(messageId, attachmentId, {
           state: "ready",
-          ...(minted ? { objectUrl: minted.url, blob: minted.blob } : {}),
+          blob: minted.blob,
+          ...(minted.url !== undefined ? { objectUrl: minted.url } : {}),
         });
         // THE READER MOVED ON WHILE THE BYTES WERE ON THE WIRE. The release already dropped the
         // list, so the patch above wrote nothing and no entry carries this URL. The ledger still
         // names it — revoke now rather than hold the whole file until the document dies.
-        if (minted && this.itemOf(messageId, attachmentId)?.objectUrl !== minted.url) {
+        if (minted.url !== undefined && this.itemOf(messageId, attachmentId)?.objectUrl !== minted.url) {
           this.revokeUrl(minted.url);
         }
       })
@@ -7691,16 +7694,16 @@ export class OhmailEngine {
    * Mint a Blob URL, DOWNGRADING the content type of anything a browser would render as a document. See {@link
    * RENDERABLE_MIME}. The re-typing happens at construction because that is the only point that governs every
    * consumer: a call site can forget to check a type, and the two the server sets (`Content-Disposition`, `nosniff`)
-   * describe the RESPONSE and do not survive into a Blob made from its body. Returns `undefined` where there is no
-   * `URL.createObjectURL` — SSR and the node test environment — so a `ready` item there simply carries no URL rather
-   * than throwing inside a render. It returns the typed Blob ALONGSIDE the URL, not just the URL, so the two cannot
-   * diverge: the bytes a preview parses are byte-for-byte the ones the browser would render or save, at the same
-   * downgraded type. Minting and retention are one act for exactly that reason.
+   * describe the RESPONSE and do not survive into a Blob made from its body. The TYPED BLOB is returned ALWAYS;
+   * the URL only where `URL.createObjectURL` exists (SSR, node, and EVERY React Native phone lack it): the URL is
+   * a browser convenience, never the byte carrier — dropping the blob with it left every phone's `ready` item
+   * byte-less while HTTP answered 200, measured on a paired device. The typed Blob rides beside the URL so the
+   * bytes a consumer holds are the ones a browser would render or save, at the same downgraded type.
    */
-  private mintObjectUrl(owner: string, blob: Blob, declaredMime: string): { url: string; blob: Blob } | undefined {
+  private mintObjectUrl(owner: string, blob: Blob, declaredMime: string): { url: string | undefined; blob: Blob } {
     const safeType = RENDERABLE_MIME.has(declaredMime.toLowerCase()) ? declaredMime : "application/octet-stream";
     const typed = blob.type === safeType ? blob : new Blob([blob], { type: safeType });
     const url = this.objectUrls.mint(owner, typed);
-    return url === undefined ? undefined : { url, blob: typed };
+    return { url, blob: typed };
   }
 }
