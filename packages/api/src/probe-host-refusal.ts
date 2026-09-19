@@ -3,14 +3,12 @@ import { ServiceError } from "@trafficflow/services/mail";
 /**
  * THE ADD-TIME HOST REFUSAL, AS THE PERSON WHO TYPED THE ADDRESS READS IT.
  *
- * The SSRF gate refuses a host before any socket opens and says why in its own vocabulary:
- * `@trafficflow/core/net` composes a short reason, `@trafficflow/services` wraps it as a
- * `validation_failed` naming the PARAMETER it was handed, and the connect form printed the
- * result — "u is not a permitted url: host did not resolve" — at a self-hoster who had mistyped
- * their IMAP host, which is the single most likely mistake on that screen. The refusal is right;
- * the sentence is not one. So the gate keeps its refusal and its classes, and the seam that
- * answers a PERSON maps each class to words, exactly as `dial-host-guard.ts` does for the
- * refusal a stored mailbox meets at its next dial.
+ * The SSRF gate says why in its own vocabulary, and `@trafficflow/services` wraps that in a
+ * `validation_failed` naming the PARAMETER it was handed — so the connect form printed
+ * "u is not a permitted url: host did not resolve" at somebody who had mistyped their IMAP host,
+ * the likeliest mistake on that screen. The refusal is right; the sentence is not one. The gate
+ * keeps both, and the seam that answers a PERSON maps each class to words, as `dial-host-guard.ts`
+ * already does for the refusal a stored mailbox meets at its next dial.
  */
 
 /** Which leg was being checked — the person typed two hosts and only one of them is at fault. */
