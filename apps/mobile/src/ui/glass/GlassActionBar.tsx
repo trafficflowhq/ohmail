@@ -15,7 +15,7 @@ import { Copy } from "../../copy";
 import { Icon, type IconName } from "../Icon";
 import { Sheet, SheetRow } from "../Sheet";
 import { Tap } from "../base";
-import { admitVerbs, type BarVerbBox } from "./fold";
+import { BAR_GAP, barAdmitted, nextRoom } from "./fold";
 import { GlassPill } from "./GlassPill";
 
 export interface BarVerbSpec {
@@ -27,7 +27,7 @@ export interface BarVerbSpec {
   onPress: () => void;
 }
 
-const GAP = 4;
+const GAP = BAR_GAP;
 
 export function GlassActionBar({
   reply,
@@ -56,18 +56,13 @@ export function GlassActionBar({
     if (Object.keys(widths.current).length >= need) setMeasured({ ...widths.current });
   };
 
-  const boxes: BarVerbBox[] = verbs.map((v) => ({
-    id: v.id,
-    width: measured?.[v.id] ?? 0,
-    seg: v.seg ?? null,
-  }));
-  const fixedWidth =
-    (reply ? (measured?.["__reply"] ?? 0) + GAP : 0) +
-    (readSwitch ? (measured?.["__read"] ?? 0) + GAP : 0) +
-    (measured?.["__more"] ?? 0) +
-    2 * 6; /* the pill's own padding */
-  const admitted =
-    room === null || measured === null ? 0 : admitVerbs(boxes, room, fixedWidth, GAP);
+  const admitted = barAdmitted({
+    verbs,
+    widths: measured,
+    reply: reply != null,
+    readSwitch: readSwitch != null,
+    room,
+  });
   const standing = verbs.slice(0, admitted);
   const folded = [...verbs.slice(admitted), ...extraMore];
 
@@ -147,7 +142,17 @@ export function GlassActionBar({
   }
 
   return (
-    <View onLayout={(e) => setRoom(e.nativeEvent.layout.width)} style={{ alignItems: "center" }}>
+    /* THE ROOM IS THE MOUNT'S WIDTH — the pane strip the caller spans across the reading
+       pane — so the root STRETCHES to it. Reading the room off a content-sized box is the
+       feedback loop the webapp's `bar-density.ts` names: the row's own width written back as
+       its room admits nothing past the floor (measured on the iPad expanded reader, where
+       only Reply · read · ⋯ ever stood). Every layout reading updates it (`nextRoom`), so a
+       posture flip or rotation re-admits; box-none keeps the strip out of the touch path. */
+    <View
+      pointerEvents="box-none"
+      onLayout={(e) => setRoom((r) => nextRoom(r, e.nativeEvent.layout.width))}
+      style={{ alignSelf: "stretch", alignItems: "center" }}
+    >
       {/* The hidden copy every width is read from — same capsules, absolute, invisible. */}
       <View
         pointerEvents="none"
