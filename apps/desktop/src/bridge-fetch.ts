@@ -277,13 +277,32 @@ interface BridgeInit {
 }
 
 /**
+ * THE TRANSPORT DEADLINE — one bound, every caller, generous on purpose. The engine bounds
+ * its own slow work (an IMAP dial that stalls answers 504 from inside it), so a bridge answer
+ * slower than this means a wedged-but-alive engine — and before the bound, every press awaiting
+ * one stayed pending for ever with no sentence (35+ call sites in `Desktop*.tsx`). The engine's
+ * liveness monitor covers the crash; this covers the process that lives and never answers. The
+ * rejection is NAMED and its message is the sentence a press site's catch renders.
+ */
+export const BRIDGE_DEADLINE_MS = 60_000;
+
+function deadlineError(): Error {
+  const err = new Error(
+    "ohmail Desktop: the local engine did not answer within a minute, so this request was given up.",
+  );
+  err.name = "BridgeDeadlineError";
+  return err;
+}
+
+/**
  * One request to the local engine, and the answer as a `Response`. ABORT IS HONOURED FOR THE
  * CALLER AND NOT FOR THE ENGINE: the client bounds exactly one call with an `AbortSignal` —
  * the attachment list — and races the abort against the answer, so an aborted request has to
  * REJECT here or that race never settles. It does. What it cannot do is cancel the work: the
  * frame protocol carries no cancellation, so the engine finishes and the shell drops the
  * answer — one wasted read on a GET, and saying so beats implying a cancellation that does
- * not happen.
+ * not happen. The deadline above rides the same race; every racer is handed to `Promise.race`,
+ * which keeps a handler on each, so a late loser rejecting is never an unhandled rejection.
  */
 export const bridgeFetch: BridgeFetch = async (url, init) => {
   const options = (init ?? {}) as BridgeInit;
@@ -297,16 +316,26 @@ export const bridgeFetch: BridgeFetch = async (url, init) => {
     body: bodyBytes(options.body),
   });
 
-  const bytes = signal
-    ? await Promise.race([
-        answer,
-        new Promise<never>((_resolve, reject) => {
-          signal.addEventListener("abort", () => reject(abortError()), { once: true });
-        }),
-      ])
-    : await answer;
-
-  return toResponse(asBytes(bytes));
+  let expire: ReturnType<typeof setTimeout> | undefined;
+  const racers: Promise<unknown>[] = [
+    answer,
+    new Promise<never>((_resolve, reject) => {
+      expire = setTimeout(() => reject(deadlineError()), BRIDGE_DEADLINE_MS);
+    }),
+  ];
+  if (signal) {
+    racers.push(
+      new Promise<never>((_resolve, reject) => {
+        signal.addEventListener("abort", () => reject(abortError()), { once: true });
+      }),
+    );
+  }
+  try {
+    const bytes = await Promise.race(racers);
+    return toResponse(asBytes(bytes));
+  } finally {
+    clearTimeout(expire);
+  }
 };
 
 /**

@@ -1,8 +1,8 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { HttpAdapter } from "@ohmail/client-engine";
 
 import {
-  bridgeFetch, createEngineAdapter, engineConfigure, engineLogout, engineStatus,
+  BRIDGE_DEADLINE_MS, bridgeFetch, createEngineAdapter, engineConfigure, engineLogout, engineStatus,
 } from "../src/bridge-fetch.js";
 import { installOfflineGuard, isShellCommandChannel } from "../src/offline-guard.js";
 
@@ -154,6 +154,42 @@ describe("the bridge", () => {
     const pending = bridgeFetch("/messages/m-1/attachments", { signal: controller.signal });
     controller.abort();
     await expect(pending).rejects.toThrow(/aborted/);
+  });
+
+  it("gives up on a never-answering engine at the transport deadline, by NAME", async () => {
+    // A wedged-but-alive engine used to leave every press pending for ever with no sentence:
+    // the bridge carried a deadline for no caller but the one with a signal. The rejection is
+    // NAMED so a press site's catch can render its message as the sentence.
+    vi.useFakeTimers();
+    try {
+      shellAnswering(() => new Promise(() => {}));
+      const pending = bridgeFetch("/mailboxes");
+      const verdict = pending.then(
+        () => "answered",
+        (err: Error) => `${err.name}: ${err.message}`,
+      );
+      await vi.advanceTimersByTimeAsync(BRIDGE_DEADLINE_MS);
+      expect(await verdict).toBe(
+        "BridgeDeadlineError: ohmail Desktop: the local engine did not answer within a minute, "
+        + "so this request was given up.",
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("an answer inside the deadline resolves and leaves NO timer behind", async () => {
+    // The timer is cleared on settle — a deadline that outlives its answer would reject into
+    // nothing per request and keep a long-lived page's timer table growing.
+    vi.useFakeTimers();
+    try {
+      shellAnswering(() => encode(200, "ok"));
+      const res = await bridgeFetch("/health");
+      expect(await res.text()).toBe("ok");
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("refuses a body it cannot send rather than sending the wrong bytes", async () => {
