@@ -2904,8 +2904,12 @@ export interface WorldActions {
   markSeen(messageId: string, unread: boolean): void;
   /** The row, not an id — see {@link LiveWorldActions.move}. */
   move(row: WorldMail, dest: MoveTarget): void;
-  /** Delete — to the provider's native Trash, never an expunge. See {@link LiveWorldActions.deleteMessage}. */
-  deleteMessage(messageId: string): void;
+  /**
+   * Delete — the delayed-commit window, not the wire. `onCommitted` leaves the reader when the
+   * delete COMMITS (the window's close), never at the press: navigating away in the same tick
+   * kills the pill's surface (the device defect the 0.20 review found). See {@link LiveWorldActions.deleteMessage}.
+   */
+  deleteMessage(messageId: string, opts?: { onCommitted?: () => void }): void;
   /**
    * The Trash page and the restore verb — awaited by their screen (the page is the render,
    * the `true` is the row leaving), so like `retryAbandoned` they return their promise.
@@ -2973,7 +2977,7 @@ export function stableActions(current: () => WorldActions): WorldActions {
     resurfaceDone: (id) => void current().resurfaceDone(id),
     markSeen: (id, unread) => void current().markSeen(id, unread),
     move: (row, dest) => void current().move(row, dest),
-    deleteMessage: (id) => void current().deleteMessage(id),
+    deleteMessage: (id, opts) => void current().deleteMessage(id, opts),
     trashList: (cursor) => current().trashList(cursor),
     trashRestore: (id) => current().trashRestore(id),
     sendReply: (id, body, all, sig, sendAt) => current().sendReply(id, body, all, sig, sendAt),

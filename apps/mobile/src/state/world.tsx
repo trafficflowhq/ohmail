@@ -99,7 +99,7 @@ import {
 } from "./live";
 import type { Scope } from "./model";
 import {
-  armHeldDelete, flushHeldDeletes, heldDeleteIds, subscribeHeldDeletes, undoHeldDelete,
+  flushHeldDeletes, heldDeleteIds, runDeleteCeremony, subscribeHeldDeletes,
 } from "./held-delete";
 
 export type {
@@ -425,6 +425,7 @@ const NO_ACTIONS: WorldActions = {
   markSeen: () => undefined,
   move: () => undefined,
   deleteMessage: () => undefined,
+  // The empty world has no reader open to keep, and nothing to delete.
   // Nothing is connected: the Trash screen renders the unavailable sentence off this arm.
   trashList: async () => ({ state: "unavailable" as const }),
   trashRestore: async () => false,
@@ -1086,21 +1087,23 @@ export function WorldProvider({ children }: { children: ReactNode }) {
           resurfaceDone: (id) => void acts.resurfaceDone(id),
           markSeen: (id, unread) => void acts.markSeen(id, unread),
           move: (row, dest) => void acts.move(row, dest),
-          deleteMessage: (id) => {
+          deleteMessage: (id, opts) => {
             /* THE WINDOW, NOT THE WIRE (the 0.20 review; the webapp `delete-undo.ts`'s shape): the
                row leaves every list at the press — the projection subtracts the held set — the
-               pill says "Moved to Trash." with Undo for UNDO_MS, and the mutation dispatches
-               only when the window closes, because there is no un-delete once sent. The commit
-               is the QUIET dispatch (the pill already spoke); a refusal or a queued answer
-               still speaks from the arm itself, and the rows come back with it — nothing hides
-               them any more, and the engine's rollback agrees. */
-            armHeldDelete(id, UNDO_MS, () => void acts.deleteMessage(id, { quiet: true }));
-            showToast(refuse("toastDeleted"), {
-              holdMs: UNDO_MS,
-              undo: () => {
-                // Nothing restored is not an undo — the sentence rides only a window that took.
-                if (undoHeldDelete(id)) showToast(refuse("deleteUndone"));
-              },
+               pill says "Moved to Trash." with Undo for UNDO_MS, and the QUIET mutation dispatches
+               only when the window closes, because there is no un-delete once sent. `onCommitted`
+               is the reader's navigation, threaded to the window's CLOSE, never the press: the
+               reader stays over the pill for the whole window (the device fix — Later/Park keep it
+               and their pills render; delete used to navigate away in the same tick and its pill
+               died with the route). Undo takes the row back and the reader keeps showing it. */
+            runDeleteCeremony({
+              id,
+              windowMs: UNDO_MS,
+              toast: showToast,
+              deleted: refuse("toastDeleted"),
+              undone: refuse("deleteUndone"),
+              dispatchQuiet: () => void acts.deleteMessage(id, { quiet: true }),
+              ...(opts?.onCommitted ? { onCommitted: opts.onCommitted } : {}),
             });
           },
           trashList: (cursor) => acts.trashList(cursor),

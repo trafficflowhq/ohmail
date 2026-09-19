@@ -8,7 +8,7 @@
  * envelope, Forward never on `no_forward`, the read slot holds one of its three faces. The AI
  * drafter is not here — no engine verb, so an absent control, never a dead one.
  */
-import { Fragment, useEffect, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import {
   Keyboard, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, TextInput, View,
 } from "react-native";
@@ -85,10 +85,10 @@ export function MessageActions({
 }: {
   m: WorldMail;
   /**
-   * Called the moment a CONFIRMED delete is dispatched — the optimistic tombstone has already
-   * dropped the row from every view, so the screen behind this bar is about to say "no longer
-   * here" over a message the reader just acted on. The caller navigates away instead; a
-   * rollback re-lists the row where it was, under the failure toast.
+   * Leaves the reader when a confirmed delete COMMITS — the window's close, not the press. The
+   * delete opens an 8 s undo window and the tombstone drops only at its end, so the reader stays
+   * over the pill for the window (like every other verb; navigating away at the press killed the
+   * pill's surface — the device defect the 0.20 review found) and this fires when the delete actually lands.
    */
   onDeleted?: () => void;
   /** Closes the reader — the rail's Back on the unfolded-landscape Duo presses this. */
@@ -108,6 +108,12 @@ export function MessageActions({
 
   const a = w.actions;
   const close = () => setOpen(null);
+
+  /* The reader may leave (the delete committed) OR be gone already (the person backed out during
+     the window). The window still commits the delete either way; only the NAVIGATION is guarded,
+     so a commit after the reader is gone does not over-pop a screen it no longer owns. */
+  const mounted = useRef(true);
+  useEffect(() => () => { mounted.current = false; }, []);
 
   /**
    * WHICH PRESENTATION THIS POSTURE TAKES (`reader-verbs.ts`, the census-walked model): the
@@ -408,7 +414,13 @@ export function MessageActions({
           <SheetRow
             icon="trash"
             label={Copy.actionDelete}
-            onPress={() => { close(); a.deleteMessage(m.id); onDeleted?.(); }}
+            onPress={() => {
+              // Close the confirm sheet and open the window — but DO NOT navigate now: the reader
+              // stays over the pill for the whole window (the review's device fix), leaving only when the
+              // delete commits (`onCommitted`, guarded so a person who backed out is not over-popped).
+              close();
+              a.deleteMessage(m.id, { onCommitted: () => { if (mounted.current) onDeleted?.(); } });
+            }}
           />
           <CancelRow onPress={close} />
         </Sheet>

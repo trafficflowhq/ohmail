@@ -8,6 +8,7 @@
  * stated: leaving the app commits ({@link flushHeldDeletes}, the provider's AppState listener);
  * a hard kill inside the window loses the PRESS, not the mail. The gap row names it.
  */
+import type { RefusalArg } from "../refusal";
 
 interface HeldPress {
   timer: ReturnType<typeof setTimeout>;
@@ -70,4 +71,41 @@ export function flushHeldDeletes(): void {
   for (const [, press] of open) clearTimeout(press.timer);
   publish();
   for (const [, press] of open) press.commit();
+}
+
+/**
+ * What a delete press wires up — the ceremony one place owns so the DEVICE PATH (the world
+ * provider's arm) is the thing a test drives, not a naive double (the 0.20 review's device defect:
+ * the pill never rendered on device because the reader navigated away in the same tick the
+ * window opened — a confirmed delete used to fire `onClose` at once, on the old immediate-
+ * tombstone assumption the delayed commit broke). `onCommitted` is the navigation, and it
+ * belongs to the WINDOW's close, never the press: the reader stays open over the pill for the
+ * whole window (exactly as Later/Park do, whose pills render), and leaves only when the delete
+ * actually commits — or never, if Undo took it back.
+ */
+export interface DeleteCeremony {
+  id: string;
+  windowMs: number;
+  /** The screens' toast — sentence plus the pill's Undo and its hold. */
+  toast: (say: RefusalArg, opts?: { undo?: () => void; holdMs?: number }) => void;
+  deleted: RefusalArg;
+  undone: RefusalArg;
+  /** The QUIET wire dispatch at the window's close — the pill already spoke "Moved to Trash." */
+  dispatchQuiet: () => void;
+  /** Leave the reader when the delete COMMITS (window closed), never at the press, never on Undo. */
+  onCommitted?: () => void;
+}
+
+export function runDeleteCeremony(d: DeleteCeremony): void {
+  armHeldDelete(d.id, d.windowMs, () => {
+    // The window closed: navigate away THEN send, so the reader unmounts before the tombstone
+    // could paint "no longer here". Undo never reaches here — `undoHeldDelete` disarms the timer.
+    d.onCommitted?.();
+    d.dispatchQuiet();
+  });
+  d.toast(d.deleted, {
+    holdMs: d.windowMs,
+    // Nothing restored is not an undo — the sentence rides only a window that took.
+    undo: () => { if (undoHeldDelete(d.id)) d.toast(d.undone); },
+  });
 }
