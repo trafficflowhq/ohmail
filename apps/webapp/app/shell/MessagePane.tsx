@@ -1624,26 +1624,12 @@ export function MessagePane({
    */
 
   /**
-   * Keyed, so the answer for the last message cannot decide this one's strip for the frame between selecting it and
-   * its body reporting; a primitive, so `setState` with an unchanged value hits React's bail-out and a child effect
-   * that reports on every render cannot become a render loop. Unknown reads as FRAMED — today's behaviour — so the
-   * widened list is something a positive signal turns on.
-   */
-  const [bodyRendering, setBodyRendering] = useState("");
-  const onRenderMode = useCallback(
-    (mode: "prose" | "framed") => setBodyRendering(`${message.id}:${mode}`),
-    [message.id],
-  );
-  const nativeBody = bodyRendering === `${message.id}:prose`;
-
-  /**
    * WHAT THE BODY HAD REFUSED, worn by the header. `MessageBody` reports it (`onNotice`) and the
    * focused message's `MessageHeader` below wears it in its right cluster — the same glyph and
    * caption the stream card wears in its head — so the bar above the body keeps only its
-   * controls. Keyed by message exactly as `bodyRendering` is, and for the same reason: this pane
-   * is one instance re-pointed by selection, and the last message's answer must not decide this
-   * one's header for the frame before its body reports. `MessageCard` carries the same block and
-   * the longer argument.
+   * controls. Keyed by message because this pane is one instance re-pointed by selection, and
+   * the last message's answer must not decide this one's header for the frame before its body
+   * reports. `MessageCard` carries the same block and the longer argument.
    */
   const [noticeFor, setNoticeFor] = useState<{ id: string; notice: BlockNotice | null } | null>(null);
   const onNotice = useCallback(
@@ -1723,7 +1709,6 @@ export function MessagePane({
         onRemoteImages={onRemoteImages}
         cidImages={chrome.attachments ? chrome.attachments.cidImagesOf(message.id) : undefined}
         onCidImages={chrome.attachments ? onCidImages : undefined}
-        onRenderMode={onRenderMode}
         onNotice={onNotice}
         />
       </div>
@@ -1740,10 +1725,11 @@ export function MessagePane({
       {focusedBody}
       {attachments ? (
         <AttachmentStrip
-          /* THE MESSAGE'S PICTURES ARE PART OF THE LIST WHERE NOTHING ELSE DRAWS THEM — see
-             `nativeBody` above. The same value goes to `onDownloadAll`, because the head counts
-             what this list holds and the button beneath that count must save the same set. */
-          items={attachments.itemsOf(message.id, { includeInlineImages: nativeBody })}
+          /* EVERY PART IS LISTED, whichever way the body draws — the body may paint an inline
+             logo in place, and it still stays downloadable here, marked and grouped after the
+             real files (the 2026-09-19 ruling). The same opts go to `onDownloadAll`, because the
+             head counts what this list holds and the button must save the same set. */
+          items={attachments.itemsOf(message.id, { includeInlineParts: true })}
           /* SAVING IS THE SECOND VERB NOW — the corner control on a tile that can be looked at,
              and the whole tile on one that cannot. Every attachment can be saved, whatever else
              it can do, so this is never withheld. */
@@ -1767,7 +1753,7 @@ export function MessagePane({
            */
           onPreview={(attachmentId) => chrome.openAttachmentPreview(message.id, attachmentId)}
           canPreview={(item) => isPreviewable(item.mimeType) && !opensInSystemViewer(item.mimeType)}
-          onDownloadAll={() => attachments.downloadAll(message.id, { includeInlineImages: nativeBody })}
+          onDownloadAll={() => attachments.downloadAll(message.id, { includeInlineParts: true })}
           downloadingAll={attachments.downloadingAll(message.id)}
           /* THE EVENT CARD's feed: a calendar part whose decoded text is in hand renders as
              the event it carries (what · when · where · who), in place of its tile. The map

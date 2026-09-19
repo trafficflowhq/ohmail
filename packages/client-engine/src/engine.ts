@@ -1171,11 +1171,11 @@ export interface AttachmentItem {
    * Is this part one the html body REFERENCES (`cid:`) rather than one the sender attached as a
    * file — a signature logo, an embedded screenshot, a newsletter's header image.
    *
-   * Carried rather than filtered away, because whether it is a "file" depends on something this
-   * layer cannot see: HOW THE MESSAGE IS BEING DRAWN. In a framed rendering the html paints it
-   * and listing it too would name the same picture twice. In the app's own frameless typography
-   * no image is drawn at all, so an inline picture is unreachable unless something lists it —
-   * which is what {@link OhmailEngine.attachmentsOf}'s `includeInlineImages` is for.
+   * Carried rather than filtered away: a caller asking "does this message carry an attachment"
+   * wants files only (the default), while a reader's strip lists EVERY part — the body may paint
+   * an inline picture, but it stays downloadable, and the strip says which rows are the body's
+   * own pictures by reading this flag. `includeInlineParts` on
+   * {@link OhmailEngine.attachmentsOf} is the widened read.
    */
   inline: boolean;
   /**
@@ -1283,19 +1283,6 @@ function toAttachmentItem(wire: AttachmentWire): AttachmentItem {
     inline: wire.inline === true,
     contentId: typeof wire.contentId === "string" && wire.contentId !== "" ? wire.contentId : null,
   };
-}
-
-/**
- * Is this part a PICTURE — the only kind of inline part a surface may promote to the strip.
- *
- * `image/*` and nothing wider. An inline `text/calendar` or a `cid:`-referenced stylesheet is not
- * something a reader looking at a frameless rendering is missing, so promoting it would be adding
- * a row nobody asked about. SVG is deliberately included here and refused one layer up by the
- * surface's own preview gate — the same posture every other SVG attachment gets, rather than a
- * second, differently-shaped refusal in this file.
- */
-function isPictureItem(item: AttachmentItem): boolean {
-  return item.mimeType.startsWith("image/");
 }
 
 /**
@@ -7206,24 +7193,21 @@ export class OhmailEngine {
   /**
    * What the surface renders RIGHT NOW for one message. Synchronous, no side effects — separate from {@link
    * OhmailEngine.loadAttachments} because React renders far more often than it should fetch: the render path reads
-   * state, the effect path asks. `includeInlineImages`: the default is FILES ONLY, what every caller has always got —
-   * a `cid:` logo listed beside a real invoice, in a rendering that already paints that logo, is the same picture
-   * named twice. The exception is the rendering that paints NO pictures (the app's own typography over the text
-   * part): there an inline image was in the message and reachable from nowhere. A caller that knows it is drawing the
-   * frameless rendering asks and gets them as ordinary items — same fetch, size ceiling, preview gate and download;
-   * the flag widens what is LISTED and nothing else.
+   * state, the effect path asks. `includeInlineParts`: the default is FILES ONLY, what a caller asking "does this
+   * message carry an attachment" has always got. A reader's strip asks WITH the flag and gets EVERY part — inline
+   * pictures the body paints, and the residue a `cid:` promotion can hide (a PDF the html references is `inline`
+   * and would otherwise be listed nowhere, which is the data-loss direction `mime.ts` refuses). Same fetch, size
+   * ceiling, preview gate and download; the flag widens what is LISTED and nothing else.
    */
 
   /**
    * Filtering here rather than at ingest keeps both answers available at once.
    */
-  attachmentsOf(messageId: string, opts: { includeInlineImages?: boolean } = {}): AttachmentsOutcome {
+  attachmentsOf(messageId: string, opts: { includeInlineParts?: boolean } = {}): AttachmentsOutcome {
     if (!this.attachmentsAvailable()) return { state: "unavailable" };
     const held = this.attachmentLists.get(messageId) ?? { state: "loading" as const };
     if (held.state !== "ready") return held;
-    const shown = held.items.filter(
-      (item) => !item.inline || (opts.includeInlineImages === true && isPictureItem(item)),
-    );
+    const shown = held.items.filter((item) => !item.inline || opts.includeInlineParts === true);
     // Identity preserved when nothing is withheld — the common case is a message with no inline
     // parts at all, and a fresh object per render for it would be churn with no reader.
     return shown.length === held.items.length ? held : { state: "ready", items: shown };
@@ -7481,6 +7465,10 @@ export class OhmailEngine {
       if (wanted.length >= INLINE_IMAGE_MAX_PARTS) break;
       if (seen.has(cid) || have?.has(cid)) continue;
       seen.add(cid);
+      // EXACT match, FIRST wins: `contentId` is stored bracket-stripped and case-preserved
+      // (RFC 5322 id-left is case-significant), so the comparison is `===` and two parts
+      // sharing one Content-ID resolve to the earlier part in wire order — stated, tested,
+      // and the same answer on every open.
       const item = held.items.find((i) => i.contentId === cid);
       if (!item) continue;
       // The declared-type/size gate: don't pay a connection for a part the mint below would

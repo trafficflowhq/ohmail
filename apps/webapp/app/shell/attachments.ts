@@ -39,11 +39,11 @@ export interface AttachmentsChrome {
    * the same empty array, so a failed metadata read drew exactly what an inline-only message draws —
    * nothing, under a paperclip painted from `hasAttachments`. The engine had recorded the failure all
    * along (`AttachmentsOutcome`, with `code` and `retryable`); the seam threw it away, and no longer
-   * does. `includeInlineImages`: files only, unless the caller says it is drawing the frameless
-   * rendering — a parameter, not a setting, because the answer changes per message and per press
-   * (restored sender rendering puts pictures back on screen, and listing them would name each twice).
+   * does. `includeInlineParts`: files only by default; a reader's strip asks with it and gets
+   * EVERY part — the body may paint an inline picture, and it stays listed and downloadable
+   * beside the real files (marked, and ordered after them — see the `ready` arm below).
    */
-  itemsOf(messageId: string, opts?: { includeInlineImages?: boolean }): AttachmentsView;
+  itemsOf(messageId: string, opts?: { includeInlineParts?: boolean }): AttachmentsView;
   /**
    * Fetch (if needed) and SAVE one attachment — the DOWNLOAD path, and the primary one. It
    * backs every tile press in the strip and the overlay's own Download button. The preview
@@ -72,12 +72,12 @@ export interface AttachmentsChrome {
    * names. Not a zip — see the implementation for why the server's archive route is still
    * mounted and no longer called from here.
    *
-   * TAKES THE SAME `includeInlineImages` AS {@link itemsOf}, and must be passed the same value.
+   * TAKES THE SAME `includeInlineParts` AS {@link itemsOf}, and must be passed the same value.
    * "Download all" is a promise about the strip standing in front of the reader — the head even
    * counts it — so a press that enumerated a different list than the one on screen would save a
    * different number of files than the sentence beside the button just claimed.
    */
-  downloadAll(messageId: string, opts?: { includeInlineImages?: boolean }): void;
+  downloadAll(messageId: string, opts?: { includeInlineParts?: boolean }): void;
   downloadingAll(messageId: string): boolean;
   /**
    * THE EMBEDDED IMAGES ALREADY IN HAND for one message — `contentId → data: URI`, straight off
@@ -190,13 +190,13 @@ export function saveBlob(blob: Blob, filename: string, doc: Document): void {
 /**
  * One item out of the engine's per-message list, or `undefined`.
  *
- * `includeInlineImages` unconditionally, and that is not the same decision the LIST makes. This
+ * `includeInlineParts` unconditionally, and that is not the same decision the LIST makes. This
  * resolves an id the caller already holds — it came from a tile the strip drew — so the question
  * is "which part is this", not "what should be shown". Asking the filtered way would make a press
- * on a picture in a frameless rendering find nothing and silently do nothing.
+ * on an inline picture's tile find nothing and silently do nothing.
  */
 function itemOf(engine: OhmailEngine, messageId: string, attachmentId: string): AttachmentItem | undefined {
-  const held = engine.attachmentsOf(messageId, { includeInlineImages: true });
+  const held = engine.attachmentsOf(messageId, { includeInlineParts: true });
   if (held.state !== "ready") return undefined;
   return held.items.find((i) => i.id === attachmentId);
 }
@@ -213,7 +213,7 @@ function itemOf(engine: OhmailEngine, messageId: string, attachmentId: string): 
 function attachmentsFingerprint(engine: OhmailEngine, ids: Iterable<string>): string {
   const parts: string[] = [];
   for (const id of ids) {
-    const held = engine.attachmentsOf(id, { includeInlineImages: true });
+    const held = engine.attachmentsOf(id, { includeInlineParts: true });
     if (held.state === "ready") {
       parts.push(`${id}:ready:${held.items.map((i) => `${i.id}=${i.state}`).join(",")}`);
     } else if (held.state === "failed") {
@@ -533,7 +533,7 @@ export function useMessageAttachments(
    * was written to avoid.
    */
   const itemsOf = useCallback(
-    (id: string, opts: { includeInlineImages?: boolean } = {}): AttachmentsView => {
+    (id: string, opts: { includeInlineParts?: boolean } = {}): AttachmentsView => {
       const held = engine.attachmentsOf(id, opts);
       switch (held.state) {
         case "unavailable":
@@ -541,7 +541,16 @@ export function useMessageAttachments(
         case "loading":
           return held.retrying ? { state: "loading", retrying: true } : { state: "loading" };
         case "ready":
-          return { state: "ready", items: held.items };
+          // FILES FIRST, the body's own pictures after — a stable partition, wire order kept
+          // inside each half. The strip marks inline rows; grouping them behind the real files
+          // keeps the invoice ahead of fifteen template logos. Download-all enumerates through
+          // the ENGINE with the same opts, so the saved set matches this list either way.
+          return {
+            state: "ready",
+            items: opts.includeInlineParts === true
+              ? [...held.items.filter((i) => !i.inline), ...held.items.filter((i) => i.inline)]
+              : held.items,
+          };
         case "failed":
           return {
             state: "failed",
@@ -645,7 +654,7 @@ export function useMessageAttachments(
    * of anchor clicks in a browser, one awaited shell call per file on the desktop.
    */
   const downloadAll = useCallback(
-    (id: string, opts: { includeInlineImages?: boolean } = {}): void => {
+    (id: string, opts: { includeInlineParts?: boolean } = {}): void => {
       void (async () => {
         setDownloadingAll((prev) => {
           const next = new Set(prev);

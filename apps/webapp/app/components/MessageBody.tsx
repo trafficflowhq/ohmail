@@ -17,6 +17,7 @@ import { useOptionalTheme } from "@ohmail/ui";
 import {
   anchorFor,
   BodyText,
+  INLINE_IMAGE_SRC,
   isAttribution,
   MAX_QUOTE_DEPTH,
   type BodyNode,
@@ -227,16 +228,16 @@ const CID_URL = /^cid:/i;
 const INERT_CSS_URL = /^(?:data:|cid:)/i;
 
 /**
- * The only shape a resolved embedded image may take: a base64 `data:` URI
- * of one of the four raster types (`INLINE_IMAGE_MIME`). Enforced HERE, at
- * the write into the document, not only at the mint: the map arrives
- * through a prop, and "the engine is the only caller" is a fact about
- * today's wiring, not a property of this function. A value of any other
- * shape — `javascript:`, `data:text/html`, `data:image/svg+xml`, non-base64
- * characters — reads as absent and the image stays blanked;
- * `test/message-body.test.ts` hands this a hostile map and watches.
+ * The only shape a resolved embedded image may take: a base64 `data:` URI of one of the four
+ * raster types (`INLINE_IMAGE_MIME`). Enforced at the write into the document, not only at the
+ * mint: the map arrives through a prop, and "the engine is the only caller" is a fact about
+ * today's wiring, not a property of this function. A value of any other shape — `javascript:`,
+ * `data:text/html`, `data:image/svg+xml`, non-base64 characters — reads as absent and the image
+ * stays blanked; `test/message-body-cid-images.test.tsx` hands this a hostile map and watches.
+ * ONE value, now HOMED in `BodyText` (the prose sink re-tests it before constructing the app
+ * document's element) and imported here for the frame-document writes — see its docblock there.
  */
-const INLINE_IMAGE_SRC = /^data:image\/(?:png|jpeg|gif|webp);base64,[A-Za-z0-9+/]+={0,2}$/;
+export { INLINE_IMAGE_SRC } from "../shell/BodyText";
 
 /** The Content-ID an `<img src="cid:…">` names — brackets and the scheme stripped — or null. */
 function cidOfSrc(src: string): string | null {
@@ -649,6 +650,14 @@ export function neutraliseCss(
   css: string,
   onRemote: (url: string) => string | null,
   onSheet: (url: string) => void = () => {},
+  /**
+   * How a `url(cid:…)` in an inline STYLE ATTRIBUTE resolves to this message's own bytes, or
+   * `undefined` for "keep it verbatim" — the sheets' behaviour, unchanged: a `<style>` element's
+   * text is exactly what the mutation-XSS rule forbids substituting into, and a style-attribute
+   * value is the one place the serializer quotes and escapes for us ({@link neutraliseStyleAttr}).
+   * `null` from the callback keeps the reference verbatim (still inert — it fetches nothing).
+   */
+  onCid?: (cid: string) => string | null,
 ): string {
   if (css.length === 0) return css;
   let out = "";
@@ -786,8 +795,18 @@ export function neutraliseCss(
         replacement = proxied === null ? "none" : `url("${cssString(proxied)}")`;
       } else if (token === null) {
         replacement = "none"; // unterminated: the browser reads it to EOF, so so do we
+      } else if (CID_URL.test(url) && onCid) {
+        // A `cid:` in an inline style names a part of this very message — same contract as the
+        // `<img>` branch: the callback answers with the gated `data:` URI or `null`, and null
+        // keeps the reference verbatim (inert; it fetches nothing and paints nothing). The
+        // substituted value is written through {@link cssString} like the proxy's, though a
+        // value that passed the gate has nothing to escape.
+        const cid = cidOfSrc(url);
+        const resolved = cid ? onCid(cid) : null;
+        replacement = resolved === null ? css.slice(start, end) : `url("${cssString(resolved)}")`;
       } else if (INERT_CSS_URL.test(url)) {
-        // `data:` and `cid:` stay, verbatim. Nothing is fetched by them.
+        // `data:` (and `cid:` where no resolver was handed in — a `<style>` SHEET) stay,
+        // verbatim. Nothing is fetched by them.
         replacement = css.slice(start, end);
       } else {
         // NOT remote, NOT inert — a relative or protocol-relative reference, which the frame
@@ -817,7 +836,11 @@ export function neutraliseCss(
  * cannot end its own attribute however it is composed. Element TEXT has no such property,
  * which is the whole of {@link CUT}.
  */
-function neutraliseStyleAttr(el: Element, onRemote: (url: string) => string | null): void {
+function neutraliseStyleAttr(
+  el: Element,
+  onRemote: (url: string) => string | null,
+  onCid?: (cid: string) => string | null,
+): void {
   const style = el.getAttribute("style");
   /**
    * The fast path has to know every spelling the scanner knows, or it decides on the scanner's
@@ -829,7 +852,7 @@ function neutraliseStyleAttr(el: Element, onRemote: (url: string) => string | nu
    * nothing the scanner returns the input unchanged.
    */
   if (!style || !/url\(|image-set\(|@import|\\/i.test(style)) return;
-  el.setAttribute("style", neutraliseCss(style, onRemote));
+  el.setAttribute("style", neutraliseCss(style, onRemote, undefined, onCid));
 }
 
 // ── links ──────────────────────────────────────────────────────────────────────────────
@@ -1217,13 +1240,13 @@ function widthAttrPx(v: string | null): number | null {
  */
 
 /**
- * What the reader loses, said plainly: a picture in a non-rigid mail is not drawn. `cid:`
- * images were never drawn in the frame either, so that half costs nothing; a REMOTE picture the
- * reader consented to load is the half that does, and the render branch at the bottom hands
- * those messages back to the frame rather than letting "Show images" become a button that does
- * nothing. Beacons are excluded from that test: a beacon is not a picture — it renders as
- * nothing, and letting one drag a letter into a frame would undo this rule for a thing the
- * reader cannot see.
+ * What the reader loses, said plainly: a REMOTE picture the reader consented to load is not
+ * drawn by the prose path, and the render branch at the bottom hands those messages back to the
+ * frame rather than letting "Show images" become a button that does nothing. `cid:` images no
+ * longer cost anything either way — the walker carries them as gated image runs, so a signature
+ * logo draws in the app's own typography too. Beacons are excluded from the hand-back test: a
+ * beacon is not a picture — it renders as nothing, and letting one drag a letter into a frame
+ * would undo this rule for a thing the reader cannot see.
  */
 
 /**
@@ -1727,10 +1750,12 @@ export function isDesignedLayout(root: Element, styleText: string | readonly str
  * A second, narrower allow-list: the prose rendering has no frame — its elements live in the
  * app's own document — so this walker emits `BodyText`'s node model. The invariant: no sender
  * byte leaves except as the `text` of a text run, and no sender attribute leaves at all (`href`
- * via {@link anchorFor}, `colspan` via {@link boundedSpan}; `style`/`class` never read). Absent
- * on purpose: `img` (the strip lists them) and `style` ({@link RICH_SKIP}); everything else is
- * transparent. `pre` reads as literal text; `blockquote` maps to the text parser's QuoteNode,
- * clamped by {@link MAX_QUOTE_DEPTH}; past {@link MAX_RICH_NODES} it answers `null`.
+ * via {@link anchorFor}, `colspan` via {@link boundedSpan}; `style`/`class` never read; an
+ * `img` leaves only as an {@link INLINE_IMAGE_SRC}-gated src plus its alt text — the message's
+ * own bytes, resolved by the post-pass, never a fetchable url). `style` stays absent ({@link
+ * RICH_SKIP}); everything else is transparent. `pre` reads as literal text; `blockquote` maps
+ * to the text parser's QuoteNode, clamped by {@link MAX_QUOTE_DEPTH}; past
+ * {@link MAX_RICH_NODES} it answers `null`.
  */
 export const MAX_RICH_NODES = 4096;
 
@@ -1747,7 +1772,7 @@ export const MAX_TABLE_SPAN = 20;
 const MAX_WALK_DEPTH = 256;
 
 /** Elements whose CONTENT must not reach the prose — see the header above. */
-const RICH_SKIP = new Set(["style", "img"]);
+const RICH_SKIP = new Set(["style"]);
 
 /** The walk's budget. Decremented per EMITTED node; below zero the whole build is refused. */
 interface RichBudget { left: number }
@@ -1768,7 +1793,9 @@ function textOfInline(nodes: InlineNode[]): string {
   for (const n of nodes) {
     if (n.kind === "text") s += n.text;
     else if (n.kind === "break") s += "\n";
-    else s += textOfInline(n.children);
+    // An image contributes NO words — its alt is a description, not the sender's prose, and
+    // letting it count would make a logo line read as an attribution candidate.
+    else if (n.kind !== "image") s += textOfInline(n.children);
   }
   return s;
 }
@@ -1790,6 +1817,19 @@ function appendInline(node: ChildNode, out: InlineNode[], b: RichBudget, nest: n
   const el = node as Element;
   const tag = el.tagName.toLowerCase();
   if (RICH_SKIP.has(tag)) return;
+  if (tag === "img") {
+    // AN EMBEDDED PICTURE, ALREADY RESOLVED — the walk runs on the post-passed document, so a
+    // `cid:` image the resolve step could serve carries its gated `data:` URI here and every
+    // other image (unresolved cid, blocked remote, beacon) carries {@link BLANK_GIF}, which is
+    // itself a raster data: URI and is therefore excluded BY NAME, or every blanked box would
+    // spend budget on an invisible 1×1. The src is copied, never composed; `BodyText` re-tests
+    // {@link INLINE_IMAGE_SRC} at the element write — one constant, both sinks.
+    const src = el.getAttribute("src") ?? "";
+    if (src !== BLANK_GIF && INLINE_IMAGE_SRC.test(src) && spend(b)) {
+      out.push({ kind: "image", src, alt: el.getAttribute("alt") ?? "" });
+    }
+    return;
+  }
   if (tag === "br") { if (spend(b)) out.push({ kind: "break" }); return; }
   if (tag === "strong" || tag === "b") {
     if (spend(b)) out.push({ kind: "strong", children: inlineOf(el, b, nest) });
@@ -1869,7 +1909,7 @@ function inlineOf(el: Element, b: RichBudget, nest: number): InlineNode[] {
 }
 
 /** The tags the BLOCK walk handles by name. Anything else is a transparent block. */
-const RICH_INLINE = new Set(["br", "strong", "b", "em", "i", "u", "a", "span", "font",
+const RICH_INLINE = new Set(["br", "img", "strong", "b", "em", "i", "u", "a", "span", "font",
   "abbr", "acronym", "bdi", "bdo", "big", "cite", "code", "data", "dfn", "del", "ins",
   "kbd", "label", "mark", "q", "rp", "rt", "ruby", "s", "samp", "small", "strike",
   "sub", "sup", "time", "tt", "var", "wbr"]);
@@ -1906,10 +1946,11 @@ function blocksOf(container: Element, depth: number, b: RichBudget, nest: number
     run = [];
     const words = textOfInline(children).trim();
     if (words.length === 0) {
-      // An empty line the sender wrote, and never the whitespace between two of a builder's divs:
-      // a `br` is the only thing in this run that a person put there. Spent from the budget like
-      // any other node, so `"<div><br></div>".repeat(100000)` is bounded by the same ceiling.
-      if (children.some((n) => n.kind === "break") && spend(b)) {
+      // A wordless run survives only when a person put something in it: a `br` is an empty line
+      // the sender wrote (never the whitespace between two of a builder's divs), and an `image`
+      // is a picture standing on its own line — the signature logo's usual shape. Spent from the
+      // budget like any other node, so `"<div><br></div>".repeat(100000)` stays bounded.
+      if (children.some((n) => n.kind === "break" || n.kind === "image") && spend(b)) {
         out.push({ kind: "rich", attribution: false, spacing: "line", children });
       }
       return;
@@ -2251,6 +2292,21 @@ export function sanitizeMailHtml(html: string, opts: SanitizeOptions = {}): Sani
   };
 
   /**
+   * How a style-attribute `url(cid:…)` resolves: the SAME map and the SAME gate as the `<img>`
+   * branch — exact Content-ID match (case-sensitive, brackets already stripped by
+   * {@link cidOfSrc}), the value admitted only through {@link INLINE_IMAGE_SRC}. An unresolved
+   * one is RECORDED so the same fetch effect asks for it, and stays verbatim — inert — until the
+   * map grows and this pass runs again. It is never counted in `blocked`: a `cid:` is not a
+   * remote image and must not trip the "images blocked" notice.
+   */
+  const cssCid = (cid: string): string | null => {
+    const resolved = cidImages?.get(cid);
+    if (resolved && INLINE_IMAGE_SRC.test(resolved)) return resolved;
+    recordCid(cid);
+    return null;
+  };
+
+  /**
    * THE POST-PASS, ONE ELEMENT AT A TIME. Attributes only — see the header of this function
    * for why that is the line and not a coincidence. It runs over the FINAL document, so what
    * it annotates is what the reader gets, however that element came to be there.
@@ -2263,7 +2319,7 @@ export function sanitizeMailHtml(html: string, opts: SanitizeOptions = {}): Sani
     const pixel =
       tag === "img" && (declaresPixel(node) || BEACON_PATH.test(node.getAttribute("src") ?? ""));
 
-    neutraliseStyleAttr(node, (url) => cssUrl(url, pixel));
+    neutraliseStyleAttr(node, (url) => cssUrl(url, pixel), cssCid);
 
     // A background image is a picture, and dark viewing must not negate it. The dark filter
     // inverts everything under it, and {@link FRAME_CSS} negates `img` back so photographs and
@@ -3183,13 +3239,14 @@ export interface MessageBodyProps {
    */
   onRemoteImages?: (urls: string[]) => void;
   /**
-   * Called — from an effect, never during render — with the Content-IDs the FRAMED document
+   * Called — from an effect, never during render — with the Content-IDs this rendering
    * references and cannot resolve, in document order, so the shell can fetch exactly those
-   * parts. Not called for the frameless rendering (it draws no images; the strip lists them
-   * there) and not called when everything resolved, which is what terminates the loop: fetch
-   * → map grows → re-sanitize → nothing unresolved → silence. Repeat calls with the same ids
-   * must be cheap; the engine's single-flight and its refusal to re-ask a failed part are
-   * what this leans on.
+   * parts. Fired for the frame AND for the frameless rendering with structure (its image runs
+   * draw the resolved bytes in place); only the text-part fallback stays silent — it draws no
+   * images, and the strip lists the parts there. Not called when everything resolved, which is
+   * what terminates the loop: fetch → map grows → re-sanitize → nothing unresolved → silence.
+   * Repeat calls with the same ids must be cheap; the engine's single-flight and its refusal
+   * to re-ask a failed part are what this leans on.
    */
   onCidImages?: (contentIds: string[]) => void;
   /**
@@ -3619,16 +3676,17 @@ export function MessageBody({
   }, [framelessView, onRenderMode]);
 
   /**
-   * ── ASK FOR THE EMBEDDED IMAGES THE FRAME IS SHOWING BLANKED — see {@link MessageBodyProps.onCidImages}
-   * ──────────────────────────────────────────────────────────── Framed renderings only: the frameless path draws no
-   * images at all, and the strip lists the message's pictures there instead — fetching bytes a rendering cannot show
-   * would be pure spend. A reader's "Show original" press flips `framelessView`, this fires, and the frame's blanked
-   * boxes are asked for at that moment. TERMINATION is the `cids` array draining, not any state here: resolved
-   * references stop being reported by the sanitize pass, and the engine refuses to re-fetch what failed. So a re-fire
-   * with an unchanged list — a re-render, an unstable callback — is a cheap no-op by the callee's contract, not by
-   * this effect's memory.
+   * ── ASK FOR THE EMBEDDED IMAGES THIS RENDERING IS SHOWING BLANKED — see {@link MessageBodyProps.onCidImages}
+   * ──────────────────────────────────────────────────────────── Every rendering that can SHOW them: the frame, and
+   * the frameless path when the walker produced structure (its image runs draw the resolved bytes in place — the
+   * signature-logo case, which classifies prose). Only the text-part fallback (`rich === null`) asks for
+   * nothing — it draws no images, so fetching bytes it cannot show would be pure spend; the strip lists the parts
+   * there. TERMINATION is the `cids` array draining, not any state here: resolved references stop being reported by
+   * the sanitize pass, and the engine refuses to re-fetch what failed. So a re-fire with an unchanged list — a
+   * re-render, an unstable callback — is a cheap no-op by the callee's contract, not by this effect's memory.
    */
-  const wantedCids = mail?.state === "ok" && !framelessView ? mail.cids : undefined;
+  const wantedCids =
+    mail?.state === "ok" && (!framelessView || mail.rich !== null) ? mail.cids : undefined;
   useEffect(() => {
     if (wantedCids && wantedCids.length > 0) onCidImages?.(wantedCids);
   }, [wantedCids, onCidImages]);

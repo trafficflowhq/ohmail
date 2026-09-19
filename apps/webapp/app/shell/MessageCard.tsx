@@ -288,26 +288,10 @@ export function MessageCard({
   const stalled = useBodyStalled(message.id, waiting);
 
   /**
-   * ── WHICH RENDERING IS ON SCREEN — the sibling asks the same question the focused pane does ──
-   *
-   * `MessagePane` carries the full argument: mail drawn in the app's own typography paints no
-   * images, so the strip lists the message's pictures exactly when nothing else is drawing them.
-   * The mechanism is a verbatim mirror — one string keyed by message so a re-pointed card cannot
-   * inherit the last message's answer, a primitive so the per-render report hits React's bail-out,
-   * and unknown reads as FRAMED so the widened list is something a positive signal turns on.
-   */
-  const [bodyRendering, setBodyRendering] = useState("");
-  const onRenderMode = useCallback(
-    (mode: "prose" | "framed") => setBodyRendering(`${message.id}:${mode}`),
-    [message.id],
-  );
-  const nativeBody = bodyRendering === `${message.id}:prose`;
-
-  /**
    * WHAT THE BODY HAD REFUSED — reported by the viewer, worn by the header: `MessageBody` says what it refused
    * (`onNotice`: the caption a meta line shows and the whole sentence behind it) and this panel puts it in its own
    * header, the way the stream card puts it in its head — so the sentence leaves the bar above the body and every
-   * surface wears one shape. Keyed by message for the reason `bodyRendering` above is: a panel re-pointed at another
+   * surface wears one shape. Keyed by message because a panel re-pointed at another
    * message must not wear the last message's glyph for the frame between the re-point and the viewer's next report.
    * The setter is built per message so the viewer's effect re-fires once on a re-point and never once per render; the
    * viewer itself reports only when its three strings change, so a message with nothing refused costs no re-render
@@ -404,23 +388,22 @@ export function MessageCard({
             onRemoteImages={onRemoteImages}
             cidImages={chrome.attachments ? chrome.attachments.cidImagesOf(message.id) : undefined}
             onCidImages={chrome.attachments ? onCidImages : undefined}
-            onRenderMode={onRenderMode}
             onNotice={onNotice}
           />
         </div>
         {attachments ? (
           <AttachmentStrip
-            /* Same list discipline as the focused pane: pictures join the list exactly where the
-               frameless rendering draws none, and `onDownloadAll` enumerates the same set the
-               head just counted. */
-            items={attachments.itemsOf(message.id, { includeInlineImages: nativeBody })}
+            /* Same list discipline as the focused pane: every part is listed, inline pictures
+               marked and grouped after the files, and `onDownloadAll` enumerates the same set
+               the head just counted. */
+            items={attachments.itemsOf(message.id, { includeInlineParts: true })}
             onOpen={(attachmentId) => attachments.open(message.id, attachmentId)}
             /* The same preview judgement with the same owner — `isPreviewable` minus the desktop's
                system-viewer types — dispatching THIS panel's message id, so pressing a file on an
                older message never requires first making it the focused one. */
             onPreview={(attachmentId) => chrome.openAttachmentPreview(message.id, attachmentId)}
             canPreview={(item) => isPreviewable(item.mimeType) && !opensInSystemViewer(item.mimeType)}
-            onDownloadAll={() => attachments.downloadAll(message.id, { includeInlineImages: nativeBody })}
+            onDownloadAll={() => attachments.downloadAll(message.id, { includeInlineParts: true })}
             downloadingAll={attachments.downloadingAll(message.id)}
             calendarTextOf={(attachmentId) => attachments.calendarTextsOf(message.id).get(attachmentId)}
           />

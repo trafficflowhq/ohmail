@@ -189,7 +189,27 @@ export interface LinkRun {
   elsewhere: boolean;
   children: InlineNode[];
 }
-export type InlineNode = TextRun | LineBreak | StyledRun | LinkRun;
+/**
+ * A picture that is part of the message itself — a `cid:` part the sanitize pass resolved, or the
+ * sender's own embedded `data:` image. `src` is a value the walker COPIED off the sanitized,
+ * post-passed document, where the only srcs that pass {@link INLINE_IMAGE_SRC} are ones the resolve
+ * step wrote (gated) or the sender's own small-raster bytes; the renderer below re-tests the SAME
+ * constant before constructing the element, so a node built by anything else still cannot put a
+ * `javascript:` or `data:text/html` into the app document. `alt` renders only as a React text node.
+ */
+export interface ImageRun { kind: "image"; src: string; alt: string }
+export type InlineNode = TextRun | LineBreak | StyledRun | LinkRun | ImageRun;
+
+/**
+ * The only shape an embedded image's `src` may take: a base64 `data:` URI of one of the four
+ * raster types. ONE VALUE, ENFORCED AT BOTH SINKS — `MessageBody`'s post-pass tests it before the
+ * attribute write into the frame document, and {@link renderInline} tests it again before
+ * constructing the app-document element — the same arrangement as its `SAFE_HREF`: widen it to
+ * `/./` and both enforcement points open at once, which is what the mutation in
+ * `test/message-body-cid-images.test.tsx` proves it against. It lives HERE because this file is
+ * the prose sink; `MessageBody` imports it rather than keeping a second spelling that could drift.
+ */
+export const INLINE_IMAGE_SRC = /^data:image\/(?:png|jpeg|gif|webp);base64,[A-Za-z0-9+/]+={0,2}$/;
 
 /**
  * A run of rich inline content, and WHAT CONTAINED IT decides its spacing.
@@ -461,6 +481,14 @@ function renderInline(nodes: InlineNode[], keyBase: string): ReactNode[] {
             {node.elsewhere ? <span className="msg-link-host"> ({node.host})</span> : null}
           </a>
         );
+      case "image":
+        // THE GATE AT THE SINK — see {@link INLINE_IMAGE_SRC}. A node whose src fails it draws
+        // nothing (the strip still lists the part); the alt text is the sender's and enters the
+        // document only as a React attribute value. `.msg-img` caps the width at the column
+        // (message-body.css) — the stored size otherwise, which is what a signature logo wants.
+        return INLINE_IMAGE_SRC.test(node.src)
+          ? <img key={key} className="msg-img" src={node.src} alt={node.alt} loading="lazy" decoding="async" />
+          : null;
     }
   });
 }

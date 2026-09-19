@@ -3101,6 +3101,7 @@
     "downloadingAll": "Wird geholt …",
     "preview": "{name} ansehen",
     "download": "{name} herunterladen",
+    "embedded": "eingebettet",
     "idle": "{size} · in deinem Postfach",
     "loading": "Wird aus deinem Postfach geholt …",
     "failed": "Ließ sich nicht holen — versuch es nochmal",

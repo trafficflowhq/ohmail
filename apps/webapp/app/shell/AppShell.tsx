@@ -8509,15 +8509,13 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
           transition never flashes an empty panel. */}
       {previewFor && attachments
         ? (() => {
-            // `includeInlineImages: true` — the overlay's item list MUST be able to find the id it
-            // was opened on, and an INLINE image (a picture attached `Content-Disposition: inline`,
-            // shown in the message body) is a real, clickable tile in the strip whenever the body
-            // renders as text (`MessagePane` lists them with `includeInlineImages: nativeBody`). The
-            // overlay used to build its list WITHOUT inline images, so clicking such a picture found
-            // no matching item — and when the message carried nothing BUT inline images the list was
-            // empty and the overlay silently declined to open. Including them makes every tile the
-            // strip can show openable, and it is the superset in every other case.
-            const view = attachments.itemsOf(previewFor.messageId, { includeInlineImages: true });
+            // `includeInlineParts: true` — the overlay's item list MUST be able to find the id it
+            // was opened on, and an inline part is a real, clickable tile in the strip on every
+            // rendering now (`MessagePane` lists them with the same flag). The overlay used to
+            // build its list WITHOUT inline images, so clicking such a picture found no matching
+            // item — and when the message carried nothing BUT inline images the list was empty
+            // and the overlay silently declined to open.
+            const view = attachments.itemsOf(previewFor.messageId, { includeInlineParts: true });
             const previewItems = view.state === "ready" ? view.items : [];
             if (previewItems.length === 0) return null;
             return (

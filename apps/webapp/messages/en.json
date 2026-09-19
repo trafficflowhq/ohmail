@@ -3101,6 +3101,7 @@
     "downloadingAll": "Fetching…",
     "preview": "Preview {name}",
     "download": "Download {name}",
+    "embedded": "embedded",
     "idle": "{size} · in your mailbox",
     "loading": "Fetching from your mailbox…",
     "failed": "Couldn't fetch — try again",

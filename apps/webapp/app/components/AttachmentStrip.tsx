@@ -41,6 +41,12 @@ export interface AttachmentItem {
   objectUrl?: string;
   /** Present only when state === "failed". */
   error?: string;
+  /**
+   * The body's own picture (a `cid:` part) rather than an attached file. The tile wears a quiet
+   * "embedded" tag so a logo listed here beside the invoice explains itself; everything else —
+   * press, preview, save — is the same. Optional because bare harnesses predate it.
+   */
+  inline?: boolean;
 }
 
 /**
@@ -135,6 +141,13 @@ const EN = {
    * app cannot draw — the same sentence in both places, because it is the same act.
    */
   download: (name: string) => `Download ${name}`,
+  /**
+   * en.json: the tag an inline part's tile wears — a picture the message body draws itself
+   * (a signature logo, a pasted screenshot). One word, beside the filename, so the row beside
+   * a real file explains why it is listed too: it is still downloadable, alone and in
+   * "Download all".
+   */
+  embedded: "embedded",
   /** en.json: "{size} · in your mailbox" — the true thing: not fetched yet. */
   idle: (size: string) => `${size} · in your mailbox`,
   loading: "Fetching from your mailbox…",
@@ -359,6 +372,7 @@ function Tile({
         <span className="att-name">
           <span className="att-stem">{stem}</span>
           {ext ? <span className="att-ext">{ext}</span> : null}
+          {item.inline === true ? <span className="att-inline">{COPY.embedded}</span> : null}
         </span>
         {/* `role="status"` — the transition loading → ready/failed is spoken, the same
             way `ReadingPane`'s bodyNote is. Sizes are tabular so a strip of tiles keeps

@@ -268,6 +268,12 @@ h4.msg-h, h5.msg-h, h6.msg-h { font-size: 1em; }
 
 .msg-hr { border: 0; border-top: 1px solid var(--hair); margin: 14px 0; }
 
+/* An embedded picture — a `cid:` part the resolve step served, drawn at its stored size and
+   capped at the column: a signature logo keeps its real dimensions, a pasted screenshot wider
+   than the letter scales down and keeps its aspect ratio. It stays inline (a logo can sit
+   mid-sentence); `vertical-align: bottom` closes the descender gap under one standing alone. */
+.msg-img { max-width: 100%; height: auto; vertical-align: bottom; border-radius: 2px; }
+
 /* The real destination, said beside a link whose visible label names a different host — the
    framed path's anti-phishing marker, natively. Quiet, and part of the link so it travels
    with it. */

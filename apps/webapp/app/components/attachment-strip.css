@@ -282,6 +282,20 @@
 .att-stem { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .att-ext { flex: none; }
 
+/* The quiet "embedded" tag on a part the body draws itself — the product speaking, so it takes
+   the state line's register, not the filename's: smaller, tinted ground, never truncated. */
+.att-inline {
+  flex: none;
+  margin-inline-start: 6px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--tint2);
+  color: var(--ink3);
+  font-size: 0.72em;
+  font-weight: 500;
+  line-height: 1.6;
+}
+
 /* The product speaking about the object — quieter than the name, same register as
    `.msg-body-state`. Never confusable with the mail. It WRAPS rather than truncates:
    in the 242px split column "Fetching from your mailbox…" clipped to "…from your mai",
