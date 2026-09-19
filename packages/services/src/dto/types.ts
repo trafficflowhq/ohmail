@@ -574,6 +574,17 @@ export interface MailboxDTO {
    */
   releaseRequestedAt: ISODateTime | null;
   /**
+   * WHY the standing ask above has not finished, or `null` (mail 0120). The one value is
+   * `sibling_lapse`: the release was refused because a FRESH claim carries this install's id
+   * under a nonce it never wrote — a restored image or clone — and the request stands until that
+   * claim lapses. Without the discriminator a pane cannot tell this refusal from an ordinary
+   * pending confirm, and it rendered "Stopping…" as a false state at exactly the moment a person
+   * is fighting a clone. Never set while {@link releaseRequestedAt} is `null`; coerced to the
+   * closed set at projection, so a widened column value reads as no refusal rather than a state
+   * no pane has a sentence for.
+   */
+  releaseRefusal: "sibling_lapse" | null;
+  /**
    * THE STANDING PRESS TO ORGANIZE THIS MAILBOX HERE, or `null` — the takeover's pending half,
    * on the same argument as {@link releaseRequestedAt}: the stamp is spent by the gate's next
    * pass, and until then the ask exists only on this column. A client that keeps its own

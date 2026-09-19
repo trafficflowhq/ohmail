@@ -752,6 +752,12 @@ export const MAIL_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // Screener open, so an API ahead of the migration 42703s the read and the release row
   // disappears from a surface that has mail to release. Deploy order migration → API.
   ["account_settings", "held_release_dismissed"],
+  // mail 0121_release_refusal — why a standing stop has not finished. The SILENT kind: the
+  // release pass writes the refusal inside its own guarded UPDATE, and against an un-migrated
+  // database that write 42703s into the arm's catch — the pass carries on exactly as before the
+  // column existed, the pane keeps the ordinary pending sentence, and nothing looks wrong while
+  // the one state the column exists to name goes unnamed. Deploy order migration → API/engine.
+  ["mailboxes", "release_refusal"],
 ] as const;
 
 /**
@@ -1058,7 +1064,7 @@ export const MAIL_EXPECTED_MARKERS =
 // 0067/0068 (the device-sync alert's withdrawn SECURITY DEFINER carrier and its retirement)
 // add no column and get no marker: a function's absence is the ALERT RULE's own isolated,
 // tolerated state, not a schema fault a serving API should 503 over.
-export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0120_held_release_dismissed";
+export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0121_release_refusal";
 
 
 /* `CLOUD_SCHEMA_MARKER_JOURNAL_TAG` moved to `./health-cloud.js`: it is the NAME of a cloud

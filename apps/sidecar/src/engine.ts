@@ -10,6 +10,9 @@ import {
   type ImapConfig, type MailboxAdapter, type CredMetaAuth, type NetTimeouts,
 } from "@trafficflow/core/adapters/imap";
 import { makeDrizzleRepo, type WorkerRepo } from "@trafficflow/core/adapters/drizzle-repo";
+// The release refusal's OWN class, from the one module that throws it: `releaseOwnClaim` tells a
+// live-sibling refusal (`nonce_unknown` — the pane owes the sibling-lapse sentence) from "could not look".
+import { ClaimReleaseError } from "@trafficflow/core/adapters/organizer-lease";
 // The engine's OWN resolution of the Ohbox posture, never a second reading of it. `rules.ts` owns
 // what an absent or unrecognised value means, and both hosts ask it the same question.
 import {
@@ -753,14 +756,14 @@ const LOCAL_IMAP_ADMISSION = {
 };
 
 /**
- * Give this install's claim back, keeping the third answer — one function because a bare `try`/`catch` at a
- * call site collapses two of {@link releaseMailboxClaim}'s three outcomes: it removed N claims of ours; it
- * found none (a complete answer, reads as `0`); or it COULD NOT LOOK — not exotic: the release enumerates our
- * records by asking the server, and a refused search, a short walk or a folder over its ceiling all answer
- * "could not". Swallowing that told a person the mailbox was let go while our claim stood in `ohmail/_meta`,
- * and any other install stood itself down against it for the staleness window. So "could not look" is a value
- * the callers handle (`null`; a number = how many of ours were removed — `0` is an answer). The shape is the
- * worker's own; success is logged by each caller in its own sentence.
+ * Give this install's claim back, keeping every distinct answer apart — one function because a bare
+ * `try`/`catch` at a call site collapses them: a number is how many of ours were removed (`0` is a
+ * complete answer); `null` is COULD NOT LOOK (a refused search, a short walk, a folder over its
+ * ceiling — swallowing it once told a person the mailbox was let go while the claim stood in
+ * `ohmail/_meta`); and `"sibling"` (mail 0120) is a release that accomplished nothing because a
+ * FRESH claim carries this install's id under a nonce it never wrote — a restored image or clone,
+ * a fact the pane owes a sentence, not a "could not look". The sibling arm is tested BEFORE the
+ * catch-all: widening a helper without moving the order makes the new class dead code.
  */
 async function releaseOwnClaim(
   adapter: MailboxAdapter,
@@ -778,13 +781,22 @@ async function releaseOwnClaim(
   reason: string,
   /** The configured window the stale term is measured against — one clock on every tier. */
   staleAfterMs?: number,
-): Promise<number | null> {
+): Promise<number | "sibling" | null> {
   try {
     return await releaseMailboxClaim(adapter, installId, mailboxId, nonce.current, {
       ...(staleAfterMs !== undefined ? { staleAfterMs } : {}),
       ...(nonce.pending != null ? { pendingNonce: nonce.pending } : {}),
     });
   } catch (err) {
+    if (err instanceof ClaimReleaseError && err.code === "nonce_unknown") {
+      log("organizer_claim_release_refused_sibling", {
+        mailboxId,
+        reason: "a fresh claim carries this install's id under a nonce it never wrote — another "
+          + "copy of this computer keeps organizing this mailbox until its claim lapses; the "
+          + "request stands and the lapse bound records the release then",
+      });
+      return "sibling";
+    }
     log("organizer_claim_release_failed", { err, mailboxId, reason });
     return null;
   }
@@ -3990,6 +4002,42 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
               releasedByLapse = true;
             }
           }
+          /* ── THE SIBLING REFUSAL IS ITS OWN ANSWER, AND THE ROW RECORDS IT (mail 0120) ──
+             A fresh claim under this install's id and a nonce it never wrote is a restored image
+             or clone, and the lease's own rule decides what happens: the request STANDS until the
+             sibling's claim lapses (the stale term then releases it on an ordinary poll), and the
+             person is owed the sentence. Deliberately NOT the local lapse flip below — that arm's
+             own log says "stale for longer than any install honours one", which is false about a
+             record the sibling renews — and before this arm the row flipped to "released" ten
+             minutes into a clone fight. The column is the one wire fact the pane needs; the same
+             compare-and-set as the release write, so a press that landed mid-enumeration is not
+             overwritten — the next poll re-reads either way. */
+          if (released === "sibling") {
+            try {
+              await db.update(mailboxes)
+                .set({ releaseRefusal: "sibling_lapse" })
+                .where(and(
+                  eq(mailboxes.id, mb.id),
+                  sql`${mailboxes.takeoverAuthorizedAt} is not distinct from ${dialect(db).tsOrNull(observedTakeoverAt)}`,
+                  sql`${mailboxes.releaseRequestedAt} is not distinct from ${dialect(db).tsOrNull(releaseRequested)}`,
+                ));
+            } catch (err) {
+              log("organizer_release_write_failed", {
+                err,
+                reason: "the sibling refusal could not be recorded on the row; the request still "
+                  + "stands and the next poll asks the server and records it again",
+              });
+            }
+            organizer = {
+              organizing: false, reason: null, heldBy: null,
+              unreadableSince: organizer.unreadableSince,
+              /* Not ours any more in intent: the person pressed stop, and the only thing keeping
+                 the mailbox organized is a claim this install may not delete. */
+              claimed: false,
+              releaseRequestedAt: releaseStamp,
+            };
+            return false;
+          }
           if (released === null && !releasedByLapse) {
             /* The pipeline is told, or a reader's gate gets an organizer's cycle. This record is
                what the PANE renders and what the next pass's gate starts from; the drain of the
@@ -4065,6 +4113,9 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                 // a release that left a becoming authorized would be promoted straight back by the
                 // very next poll — the control undoing itself.
                 releaseRequestedAt: null,
+                // Mail 0120 — the refusal explains a STANDING request; a recorded release leaves
+                // nothing standing to explain.
+                releaseRefusal: null,
                 takeoverAuthorizedAt: null,
                 // AND THE RECORD THAT IT HAPPENED (0.14.1). The ask is gone; without this the
                 // row is byte-identical to a stood-down reader whose winner has since gone away,
@@ -5822,8 +5873,9 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                  NOTHING — the folder held no record of ours the search could see — still said the
                  claim "is given back rather than left to age out". Its two siblings on this door
                  both gate on the count; this one did not, and it is the arm that runs on the
-                 detach a person's removal triggers, which is exactly when the sentence gets read. */
-              if (released !== null && released > 0) {
+                 detach a person's removal triggers, which is exactly when the sentence gets read.
+                 A sibling refusal is not a count either: nothing was given back (mail 0120). */
+              if (typeof released === "number" && released > 0) {
                 log("organizer_claim_released_on_detach", {
                   mailboxId: mb.id,
                   claims: released,
@@ -6457,7 +6509,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
               ).then((released) => {
                 leaseNonce = null;
                 organizer = { ...organizer, organizing: false };
-                if (released !== null && released > 0) {
+                if (typeof released === "number" && released > 0) {
                   log("organizer_claim_released_on_stop", {
                     mailboxId: mb.id,
                     claims: released,
@@ -6510,12 +6562,17 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         async handBack() {
           return serialize(async () => {
             if (stopped) return 0;
-            const released = await releaseOwnClaim(
+            const releasedAnswer = await releaseOwnClaim(
               adapter, installId, mb.id, { current: leaseNonce, pending: leasePendingNonce }, log,
               "this install was asked to hand the mailbox back and the claim could not be "
                 + "removed; it ages out of ohmail/_meta on its own and another install takes the "
                 + "mailbox then",
             );
+            /* A sibling refusal at a hand-back is a COMPLETE answer that none of this runtime's
+               claims stand (`0`), not a "could not look": the record it saw is a clone's, live,
+               and not this install's to remove (mail 0120). The release ROUTE is where that refusal
+               earns the row's `release_refusal`; a hand-back neither makes nor spends a stop. */
+            const released = releasedAnswer === "sibling" ? 0 : releasedAnswer;
             if (released !== null && released > 0) {
               log("organizer_claim_handed_back", {
                 mailboxId: mb.id,
@@ -7694,7 +7751,10 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                     + "install connecting this mailbox stands itself down against a claim "
                     + "nothing holds",
                 );
-                if (released === null) claimReleased = false;
+                /* A sibling refusal fails the promise too (mail 0120): "nothing of ours is left
+                   holding it" is false while a live claim carries this install's id, whichever
+                   copy of this computer wrote it — the other machine will stand down against it. */
+                if (released === null || released === "sibling") claimReleased = false;
                 else if (released > 0) log("organizer_claim_released", { mailboxId, claims: released });
                 /* ── A WIPE THAT DID NOT WIPE FAILS THE REMOVAL, AND THE RUNTIME STAYS ──────
                  * This used to be caught and logged: the person was told the mailbox was gone

@@ -586,6 +586,14 @@ export interface MailboxFacts {
    */
   releaseRequestedAt?: string | null;
   /**
+   * WHY the standing ask has not finished, or `null` (mail 0120). `sibling_lapse` means the
+   * release was refused because a live claim carries this install's id under a nonce it never
+   * wrote — a restored image or clone — and the request stands until that claim lapses. The pane
+   * renders the doc's own sentence for it instead of the ordinary pending one, which is false in
+   * that state. ABSENT is an older engine and withholds nothing but the better sentence.
+   */
+  releaseRefusal?: "sibling_lapse" | null;
+  /**
    * THE STANDING PRESS TO ORGANIZE THIS MAILBOX HERE, or `null` — the takeover's pending half,
    * spent by the gate's next pass. Read to END a pane's own "asked for" note once the row has
    * answered, rather than showing it for ever. ABSENT is an older server and changes nothing.

@@ -2149,7 +2149,14 @@ export function MailboxSection() {
                     label={stranded ? t("stateReading") : t("stateOrganizing")}
                     description={
                       stranded ? t("stateClaimLeftBehind")
-                        : m.releaseRequestedAt ? t("stopOrganizingPending")
+                        /* WHY the stop stands, when the wire can say (mail 0120) — the
+                           desktop pane's arm, on this surface's own pending description: a
+                           refusal against a live same-id sibling (a restored image or clone)
+                           wears the doc's sentence, never the ordinary pending one. */
+                        : m.releaseRequestedAt
+                          ? (m.releaseRefusal === "sibling_lapse"
+                            ? t("stopOrganizingSiblingLapse")
+                            : t("stopOrganizingPending"))
                           : t("stateOrganizingHere")
                     }
                     action={releaseFor === m.id || (!stranded && m.releaseRequestedAt) ? undefined : (

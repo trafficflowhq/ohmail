@@ -278,5 +278,11 @@ export const SQLITE_JOURNAL: readonly SqliteJournalEntry[] = [
     "statements": [
       "ALTER TABLE \"account_settings\" ADD COLUMN \"held_release_dismissed\" text;"
     ]
+  },
+  {
+    "name": "0121_release_refusal.sql",
+    "statements": [
+      "ALTER TABLE \"mailboxes\" ADD COLUMN \"release_refusal\" text;"
+    ]
   }
 ] as const;

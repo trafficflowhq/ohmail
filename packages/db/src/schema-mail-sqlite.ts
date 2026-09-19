@@ -224,6 +224,13 @@ export const mailboxes = sqliteTable("mailboxes", {
    */
   releaseRequestedAt: integer("release_requested_at", { mode: "timestamp_ms" }),
   /**
+   * Mail 0120 — WHY a standing stop has not finished (mail 0120); the pg twin's rule verbatim. Written
+   * `sibling_lapse` by the release pass when a fresh claim carries this install's id under a
+   * nonce it never wrote (a restored image or clone); NULL everywhere else, cleared wherever
+   * {@link releaseRequestedAt} is spent, cancelled or re-made.
+   */
+  releaseRefusal: text("release_refusal"),
+  /**
    * Mail 0088 — and the record that the ceasing HAPPENED. {@link releaseRequestedAt} is the ASK,
    * cleared when honoured; this is what the row keeps afterwards, because a release is otherwise
    * INDISTINGUISHABLE from a stand-down whose winner went away — both are `reader` with a consent

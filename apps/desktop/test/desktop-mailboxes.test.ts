@@ -1622,6 +1622,34 @@ describe("a standing stop request is on the row, and the pane's notes end when t
   });
 
   /**
+   * THE SIBLING-LAPSE REFUSAL SAYS ITS OWN SENTENCE (mail 0120). A stop refused because a
+   * live claim carries this install's id under a nonce it never wrote — a restored image or
+   * clone — used to wear the ordinary pending sentence for ever: a false "in progress" at
+   * exactly the moment a person is fighting a clone. The DTO's `releaseRefusal` discriminates,
+   * and the sentence is the catalogue's own: it names the holder — another
+   * copy of this computer — and what ends the wait. The case above is this one's negative arm
+   * (no refusal ⇒ pending), which is the wire promise that the field appears on that refusal
+   * alone. Mutation watched red: the `releaseRefusal` read dropped from `organizerBlock`.
+   */
+  it("a stop REFUSED by a live sibling says the doc's sentence and the holder, never plain pending", async () => {
+    FACTS = [{
+      ...ORGANIZING,
+      releaseRequestedAt: "2026-09-07T09:00:00.000Z",
+      releaseRefusal: "sibling_lapse",
+    }];
+    const el = await render("local");
+    const said = el.textContent ?? "";
+    expect(said, "the refusal renders as an ordinary pending confirm — the clone-fight false state")
+      .toContain(mailboxCopy.stopOrganizingSiblingLapse!);
+    expect(said, "two sentences about one standing stop")
+      .not.toContain(mailboxCopy.stopOrganizingPending!);
+    // The chip still reads "Stopping" — the request DOES stand; the sentence is what moves.
+    expect(said).toContain(mailboxCopy.chipStopping!);
+    expect(buttonSaying(el, mailboxCopy.stopOrganizingHandBack!),
+      "the pane offers to write the very ask that is already standing").toBeNull();
+  });
+
+  /**
    * THE COUNTERMAND HAS A DOOR NOW — "stop, then change your mind before the release lands".
    *
    * The engine has always had the arm (`organizer_claim_release_yielded_to_press`): a takeover

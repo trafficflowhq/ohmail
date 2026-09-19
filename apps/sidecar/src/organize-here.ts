@@ -191,6 +191,8 @@ export async function authorizeOrganizerTakeover(
            made — the press destroyed one poll later instead of immediately. The hosted door cancels
            it in its own claim-back transaction for exactly this reason. */
         releaseRequestedAt: null,
+        // Mail 0120 — the refusal goes with the request it explains.
+        releaseRefusal: null,
       })
       .where(and(eq(mailboxes.id, row.id), ne(mailboxes.status, "disabled")));
   });
@@ -475,6 +477,8 @@ export async function requestOrganizerTakeover(
         /* Cancelled here for the reason its twin in the CLI arm gives: a request left standing is
            spent by the very next release pass, which destroys the press one poll later. */
         releaseRequestedAt: null,
+        // Mail 0120 — the refusal goes with the request it explains.
+        releaseRefusal: null,
       })
       .where(and(eq(mailboxes.id, row.id), ne(mailboxes.status, "disabled")));
   });

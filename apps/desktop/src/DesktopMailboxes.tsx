@@ -1527,7 +1527,16 @@ export function DesktopMailboxes(
               ? (stopQueued
                 ? t("stopOrganizingQueued")
                 : m.releaseRequestedAt
-                  ? t("stopOrganizingPending")
+                  /* ── WHY the stop stands, when the wire can say (mail 0120) ─────────
+                     A refused release against a live same-id sibling — a restored image or
+                     clone — used to wear the ordinary pending sentence for ever, a false
+                     "in progress" at exactly the moment a person is fighting a clone. The
+                     DTO's `releaseRefusal` is the discriminator and this sentence is the
+                     doc's own (§4): it names the holder — another copy of this computer —
+                     and what ends the wait. Absent (an older engine), pending stands. */
+                  ? (m.releaseRefusal === "sibling_lapse"
+                    ? t("stopOrganizingSiblingLapse")
+                    : t("stopOrganizingPending"))
                   : t("stateOrganizingHere"))
               : role === "released"
                 /* THE ONE SENTENCE THAT DATES SOMETHING THE PERSON HERE DID. A mailbox whose

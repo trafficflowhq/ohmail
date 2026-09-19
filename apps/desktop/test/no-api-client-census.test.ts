@@ -83,7 +83,10 @@ describe("the desktop's refusing api-client stub", () => {
     /* The desktop stub predates these members; each was added to the real wire by a later lane
        and none is read by the shared shell on this tier. They are listed so the away wire's
        parity — the one this case was written for — is a checked claim rather than a hope. */
-    MailboxDTO: ["organizedByThisInstall", "releaseRequestedAt", "takeoverAuthorizedAt"],
+    /* `releaseRefusal` (mail 0120) rides beside the request it explains: the desktop tier reads
+       both through `mailbox-facts-wire.ts`, never through this stub, exactly like its two
+       pinned neighbours. */
+    MailboxDTO: ["organizedByThisInstall", "releaseRequestedAt", "releaseRefusal", "takeoverAuthorizedAt"],
     ConsentStateWire: [
       "folderMailboxesOff", "foldersEnabledAt", "loadTrackingPixelsAt", "onboardingCompletedAt",
       "screeningScope", "signatures", "signaturesHtml", "signatureSources", "themeFace",
@@ -106,7 +109,7 @@ describe("the desktop's refusing api-client stub", () => {
     return out;
   }
 
-  it("mirrors the MEMBERS of every interface it shares, but for the three pinned drifts", () => {
+  it("mirrors the MEMBERS of every interface it shares, but for the pinned drifts", () => {
     const real = interfaceMembers("../../webapp/app/api-client.ts");
     const stub = interfaceMembers("../src/no-api-client.ts");
     // ANTI-VACUITY: a parse that found nothing would agree about everything.

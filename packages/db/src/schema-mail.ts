@@ -201,6 +201,15 @@ export const mailboxes = pgTable("mailboxes", {
    */
   releaseRequestedAt: timestamp("release_requested_at", { withTimezone: true }),
   /**
+   * Mail 0120 — WHY a standing stop has not finished (mail 0120). The release pass writes
+   * `sibling_lapse` when the server holds a fresh claim under this install's id and a nonce it
+   * never wrote — a restored image or clone — so the pane can say the doc's sentence instead of
+   * rendering the refusal as an ordinary pending confirm for ever. The set is closed at the
+   * writer; NULL everywhere else, and every site that spends, cancels or re-makes
+   * {@link releaseRequestedAt} clears it in the same statement.
+   */
+  releaseRefusal: text("release_refusal"),
+  /**
    * Mail 0088 — and the record that the ceasing HAPPENED. {@link releaseRequestedAt} is the ASK,
    * cleared when honoured; this is what the row keeps afterwards, because a release is otherwise
    * INDISTINGUISHABLE from a stand-down whose winner went away — both are `reader` with a consent
