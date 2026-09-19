@@ -48,6 +48,14 @@ RUN test -f package-lock.json || { \
       exit 1; }
 RUN npm ci --no-audit --no-fund
 RUN mkdir -p /tmp/esbuild && cd /tmp/esbuild && npm install --no-save esbuild@0.24.0
+# WHICH COMMIT THIS IMAGE WAS BUILT FROM, through the source this process TRUSTS. `bundle-host.mjs`
+# writes the label into `BUILD_VERSION` beside the bundle, and `build-version.ts` reads that file
+# BEFORE the environment on purpose: a variable set beside a container can name a build the image
+# was never made from, and `buildIdentityErrorOf` reports exactly that. Written into the image at
+# build time, it cannot go out of step. With no arg the label stays the workspace version, which is
+# what a build from a working tree is a build of. The release workflow passes the tagged commit.
+ARG TF_BUILD_VERSION=""
+ENV TF_BUILD_VERSION=${TF_BUILD_VERSION}
 RUN OHMAIL_ESBUILD_FROM=/tmp/esbuild node scripts/bundle-host.mjs worker
 RUN test -f build/host-worker/bin/ohmail-worker.mjs \
  && test -d build/host-worker/drizzle \

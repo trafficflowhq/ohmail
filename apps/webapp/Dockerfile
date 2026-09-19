@@ -73,6 +73,14 @@ RUN [ -d apps/webapp/node_modules/styled-jsx ] \
 # build-time badge fetch never reaches the network from inside a build container.
 ENV OHMAIL_FLAVOR=selfhost \
     NEXT_PUBLIC_GITHUB_STARS=1
+# WHICH COMMIT THIS BUNDLE WAS BUILT FROM. `next.config.mjs` reads the same pair the API reads
+# (`VERCEL_GIT_COMMIT_SHA`, then `TF_BUILD_VERSION`) and inlines the short sha as
+# `NEXT_PUBLIC_BUILD`, which is what the About pane prints and `/version` folds into its token.
+# With neither set it inlines `dev`, so every released image told an operator "build dev." The
+# value is INLINED at `next build`, so the arg has to be in this stage; the runtime stage states
+# it again because `next.config.mjs` is re-evaluated by `next start`.
+ARG TF_BUILD_VERSION=""
+ENV TF_BUILD_VERSION=${TF_BUILD_VERSION}
 # WHERE `next` PHYSICALLY LANDS IS THE LOCKFILE'S DECISION, NOT THIS FILE'S. npm hoists a
 # workspace dependency to the root node_modules only while nothing forces it deeper; a lockfile
 # regeneration moved it to apps/webapp/node_modules and broke a hardcoded ../../node_modules/
@@ -95,6 +103,9 @@ FROM base AS runtime
 ENV NODE_ENV=production \
     OHMAIL_FLAVOR=selfhost \
     NEXT_PUBLIC_GITHUB_STARS=1
+# Stated again for the re-evaluation at `next start` — see the build stage.
+ARG TF_BUILD_VERSION=""
+ENV TF_BUILD_VERSION=${TF_BUILD_VERSION}
 COPY --from=build --chown=node:node /app /app
 USER node
 WORKDIR /app/apps/webapp

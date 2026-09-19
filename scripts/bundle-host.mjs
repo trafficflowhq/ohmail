@@ -101,7 +101,14 @@ if (!version) {
   console.error("the workspace root declares no version — the image's build label cannot be written");
   process.exit(1);
 }
-writeFileSync(join(out, "BUILD_VERSION"), `${version}\n`);
+/* A COMMIT WINS OVER A RELEASE NUMBER, when the build was given one. The version alone cannot tell
+ * two builds of one release apart — the trap the released 0.20.0 images walked into — so the image
+ * recipes pass the tagged commit as `TF_BUILD_VERSION` and it becomes the label. Read here, at the
+ * moment the file is written, and written INTO the layout, so the label can never name a build this
+ * bundle was not made from. Absent (a local build from a working tree), the workspace version is
+ * still the honest answer and the refusal above still guards it. */
+const label = String(process.env.TF_BUILD_VERSION ?? "").trim() || version;
+writeFileSync(join(out, "BUILD_VERSION"), `${label}\n`);
 
 const inputs = Object.keys(result.metafile.inputs).length;
 console.log(`\nhost ${name}: ${inputs} bundled inputs → ${bundlePath}`);

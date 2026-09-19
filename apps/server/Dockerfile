@@ -65,6 +65,14 @@ ENV NODE_OPTIONS="--max-old-space-size=512"
 # an image. The value is the ENGINE's, measured; these processes talk to a real Postgres rather
 # than a WASM one and their own throughput under it is owed.
 ENV MALLOC_ARENA_MAX=2
+# WHICH COMMIT THIS IMAGE WAS BUILT FROM. `config.ts` reads `TF_BUILD_VERSION` for `/health`'s
+# `version`; with nothing set it answers `dev`, which is what every released image answered — so
+# an operator could not tell two builds of one release apart and the registry digest was the only
+# thing that identified one. The release workflow passes the tagged commit as the build argument.
+# Baked HERE, in the runtime stage, so the value names the tree this image was built from; a local
+# `docker build` with no arg keeps `dev`, which is the true answer for a build off a working tree.
+ARG TF_BUILD_VERSION=""
+ENV TF_BUILD_VERSION=${TF_BUILD_VERSION}
 COPY --from=build --chown=node:node /app/build/host-server /app
 USER node
 EXPOSE 8080

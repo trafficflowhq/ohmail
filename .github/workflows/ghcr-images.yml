@@ -214,6 +214,14 @@ jobs:
           labels: |
             org.opencontainers.image.source=https://github.com/trafficflowhq/ohmail
             org.opencontainers.image.licenses=AGPL-3.0
+            org.opencontainers.image.revision=${{ github.sha }}
+          # WHICH COMMIT THE RUNNING IMAGE CAN NAME. The label above is metadata a registry reader
+          # sees; this is the same commit baked into the image, so the server's `/health`, the
+          # organizer's build label and the web app's About pane answer it too. Without it all
+          # three answered `dev` and only the registry digest identified a build. On a tag build
+          # `github.sha` is the tagged commit.
+          build-args: |
+            TF_BUILD_VERSION=${{ github.sha }}
           cache-from: type=gha,scope=${{ matrix.image }}-${{ matrix.arch }}
           cache-to: type=gha,scope=${{ matrix.image }}-${{ matrix.arch }},mode=max
 
