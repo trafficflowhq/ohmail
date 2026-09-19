@@ -7,7 +7,7 @@ import {
   type AwayPile,
 } from "@trafficflow/core/mail";
 import { AWAY_THROTTLES, type AwayThrottle } from "./away-responder-pass.js";
-import { withAccountTx, type ServiceContext } from "./context.js";
+import { bridgeTx, withAccountTx, type ServiceContext } from "./context.js";
 import { ServiceError } from "./errors.js";
 import type { AwayResponderDTO } from "./dto/types.js";
 import { planAccountFanOut } from "./reader-request.js";
@@ -16,7 +16,7 @@ import {
 } from "./profile-request.js";
 import type { Tx } from "@trafficflow/db";
 
-const asTx = (ctx: ServiceContext): Tx => ctx.db as unknown as Tx;
+const asTx = (ctx: ServiceContext): Tx => bridgeTx(ctx.db);
 
 /**
  * A responder save's answer.
@@ -224,7 +224,7 @@ export class AwayResponderService {
      * transaction because the plan, the local write and the request rows are one decision.
      */
     return withAccountTx(ctx, async (tx) => {
-      const plan = await planAccountFanOut(tx as unknown as Tx, ctx.accountId, "profile.update");
+      const plan = await planAccountFanOut(bridgeTx(tx), ctx.accountId, "profile.update");
 
       const travelling = {
         awayResponder: {
@@ -244,7 +244,7 @@ export class AwayResponderService {
         /* NOTHING WRITTEN HERE. The reader's own `away_responders` row is left EXACTLY as it is —
            that is the mutation the ruling's control watches, and keeping the local write beside the
            request is what made the old behaviour a false state rather than a delay. */
-        const travel = await fanOutProfileEdit(tx as unknown as Tx, ctx, plan, travelling);
+        const travel = await fanOutProfileEdit(bridgeTx(tx), ctx, plan, travelling);
         const [current] = await tx.select().from(awayResponders)
           .where(eq(awayResponders.accountId, ctx.accountId)).limit(1);
         return { responder: current ? toDTO(current) : DEFAULT_SHAPE, pending: true, travel };
@@ -271,7 +271,7 @@ export class AwayResponderService {
       const responder = toDTO(row!);
       if (!profileTravelled(plan)) return { responder };
       // The mixed account — written here AND asked of every install holding one of the others.
-      const travel = await fanOutProfileEdit(tx as unknown as Tx, ctx, plan, travelling);
+      const travel = await fanOutProfileEdit(bridgeTx(tx), ctx, plan, travelling);
       return { responder, travel };
     });
   }

@@ -3,12 +3,12 @@ import { dialect } from "@trafficflow/db/dialect";
 import { and, eq } from "drizzle-orm";
 import { assertOrganizerRole, drafts, mailboxes, recordChange, type Tx } from "@trafficflow/db";
 import type { EmailAddress } from "@trafficflow/core/mail";
-import type { ServiceContext } from "./context.js";
+import { bridgeTx, type ServiceContext } from "./context.js";
 import { ServiceError } from "./errors.js";
 import { materializeDraft } from "./dto/materialize.js";
 import type { DraftMutation } from "./drafts-service.js";
 
-const asTx = (ctx: ServiceContext): Tx => ctx.db as unknown as Tx;
+const asTx = (ctx: ServiceContext): Tx => bridgeTx(ctx.db);
 
 /**
  * HOW FAR AHEAD AN APPOINTMENT MAY BE — one year.
@@ -85,7 +85,7 @@ export class ScheduleService {
        * `disabled` refusal — "reconnect it" is actionable, a reader sentence would be true and
        * useless about a mailbox with no credentials.
        */
-      await assertOrganizerRole(tx as unknown as Tx, dialect(ctx.db), ctx.accountId, d.mailboxId);
+      await assertOrganizerRole(bridgeTx(tx), dialect(ctx.db), ctx.accountId, d.mailboxId);
 
       await tx.update(drafts).set({
         status: "scheduled",

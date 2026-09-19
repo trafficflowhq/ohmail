@@ -12,14 +12,14 @@ import {
 // `ai/workflows/`, which calls the drafter; a type import is erased at emit, so naming it here
 // does not put that module — or any prompt — into an artifact built from this file.
 import type { WorkflowInverse } from "@trafficflow/core/mail";
-import { withAccountTx, type ServiceContext } from "./context.js";
+import { bridgeTx, withAccountTx, type ServiceContext } from "./context.js";
 import { ServiceError, IdempotencyRaceLost } from "./errors.js";
 import { refuseBulkMoveOnReader } from "./reader-request.js";
 import { clampLimit, decodeKeysetCursor, encodeListCursor } from "./pagination.js";
 import { requireUuid } from "./ids.js";
 import type { Page, WorkflowDTO, WorkflowRunDTO } from "./dto/types.js";
 
-const asTx = (ctx: ServiceContext): Tx => ctx.db as unknown as Tx;
+const asTx = (ctx: ServiceContext): Tx => bridgeTx(ctx.db);
 
 export interface CreateWorkflowBody {
   name?: unknown;
@@ -91,7 +91,7 @@ export class WorkflowsService {
   }
 
   async get(ctx: ServiceContext, id: string): Promise<WorkflowDTO> {
-    const row = await this.load(ctx.db as unknown as Tx, ctx.accountId, id);
+    const row = await this.load(bridgeTx(ctx.db), ctx.accountId, id);
     if (!row) throw new ServiceError("not_found", 404, "workflow not found");
     return toWorkflowDTO(row);
   }
@@ -299,7 +299,7 @@ export class WorkflowsService {
            mailbox, so neither can block an undo. */
         return inv && inv.tool === "file_message" ? [inv.messageId] : [];
       });
-      await refuseBulkMoveOnReader(tx as unknown as Tx, ctx.accountId, moved);
+      await refuseBulkMoveOnReader(bridgeTx(tx), ctx.accountId, moved);
 
       for (const r of rows) {
         if (r.inverse) await this.applyInverse(tx, ctx, r.inverse as WorkflowInverse);

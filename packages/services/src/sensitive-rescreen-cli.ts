@@ -15,7 +15,7 @@ import { makeOwnedDb } from "@trafficflow/db/cloud";
 import { createLogger } from "@trafficflow/core";
 import { mailboxProviderAuthservIds } from "@trafficflow/core/adapters/drizzle-repo";
 import { runSensitiveRescreen, SENSITIVE_RESCREEN_BATCH } from "./sensitive-rescreen.js";
-import type { Db } from "./context.js";
+import { bridgeDb, type Db } from "./context.js";
 
 /**
  * The pass's own log lines, on stdout, through the SAME structured logger the worker uses.
@@ -260,7 +260,7 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
   const owned = makeOwnedDb(url);
   try {
     // The ONLY difference between the two commands, and it is deliberately this small.
-    await run(owned.db as unknown as Db, args, args.command === "plan");
+    await run(bridgeDb(owned.db), args, args.command === "plan");
     return 0;
   } finally {
     await owned.close();

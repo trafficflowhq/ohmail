@@ -2,7 +2,7 @@ import { eq } from "drizzle-orm";
 import { dialect } from "@trafficflow/db/dialect";
 import { accountSettings, type Tx } from "@trafficflow/db";
 import { resolveOhboxPolicy, type OhboxPolicy } from "@trafficflow/core/mail";
-import type { ServiceContext } from "./context.js";
+import { bridgeTx, type ServiceContext } from "./context.js";
 import { ServiceError } from "./errors.js";
 import { fenceErasedAccount } from "./erasure-fence.js";
 import { planAccountFanOut } from "./reader-request.js";
@@ -10,7 +10,7 @@ import {
   fanOutProfileEdit, profileTravelled, type ProfileTravel,
 } from "./profile-request.js";
 
-const asTx = (ctx: ServiceContext): Tx => ctx.db as unknown as Tx;
+const asTx = (ctx: ServiceContext): Tx => bridgeTx(ctx.db);
 
 // Re-exported so the API surface has one import for the read helpers AND the resolver, and so the
 // engine's resolution (`@trafficflow/core`) stays the single source of truth — see the note on

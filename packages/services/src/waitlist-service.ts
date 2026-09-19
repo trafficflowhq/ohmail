@@ -1,7 +1,7 @@
 import { asc, isNull, sql } from "drizzle-orm";
 import { type Tx } from "@trafficflow/db";
 import { waitlist } from "@trafficflow/db/cloud";
-import type { Db } from "./context.js";
+import { bridgeTx, type Db } from "./context.js";
 import { ServiceError } from "./errors.js";
 import { reserveIpSlot } from "./ip-throttle.js";
 import { issueInvite, liveInvitesFor, markInviteDelivered, revokeInvitesFor } from "./invites.js";
@@ -116,7 +116,7 @@ async function reserveJoinSlot(tx: Tx, ip: string, now: Date): Promise<boolean> 
 /** The tiers the landing form offers. The DB CHECK in 0020 is the same list. */
 const TIERS: readonly WaitlistTier[] = ["desktop", "solo", "plus", "pro", "undecided"];
 
-const asTx = (db: Db): Tx => db as unknown as Tx;
+const asTx = (db: Db): Tx => bridgeTx(db);
 
 export interface WaitlistServiceDeps {
   /** Absent ⇒ this deployment records signups and sends nothing. See the class doc. */

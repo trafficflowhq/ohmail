@@ -1,7 +1,7 @@
 import { and, asc, eq, gt, sql, type SQL } from "drizzle-orm";
 import { dialect } from "@trafficflow/db/dialect";
 import { assertOrganizerRole, messages, messageStates, folderState, claimIdempotencyKey, recordChange, type Tx } from "@trafficflow/db";
-import type { Db, ServiceContext } from "./context.js";
+import { bridgeTx, bridgeDb, type Db, type ServiceContext } from "./context.js";
 import { ServiceError, IdempotencyRaceLost } from "./errors.js";
 import {
   materializeMessage, materializeMessageState, materializeMessagesInOrder,
@@ -9,9 +9,9 @@ import {
 import { clampLimit, decodeListCursor, encodeListCursor } from "./pagination.js";
 import type { MessageDTO, MessageStateDTO, Page, TriageState } from "./dto/types.js";
 
-const asTx = (ctx: ServiceContext): Tx => ctx.db as unknown as Tx;
+const asTx = (ctx: ServiceContext): Tx => bridgeTx(ctx.db);
 /** Materialize inside the ambient tx (reads its uncommitted writes) — same query surface as Db. */
-const asDb = (tx: Tx): Db => tx as unknown as Db;
+const asDb = (tx: Tx): Db => bridgeDb(tx);
 
 export interface TriageSetBody {
   state: TriageState;
@@ -104,7 +104,7 @@ export class TriageService {
        * roles — one organized here, one on somebody's laptop — and this door's question is about
        * the message in front of it.
        */
-      await assertOrganizerRole(tx as unknown as Tx, dialect(ctx.db), ctx.accountId, msg.mailboxId);
+      await assertOrganizerRole(bridgeTx(tx), dialect(ctx.db), ctx.accountId, msg.mailboxId);
 
       // The state being LEFT — read before the upsert overwrites it (serialized by the message
       // row lock above). Only the `none` transition consumes it (the re-homing below).

@@ -13,7 +13,7 @@ import {
   type OrganizerProfileDoc, type ProfileReadResult, type ProfileRuleEntry,
 } from "@trafficflow/core/adapters/organizer-profile";
 import { serializeOrganizerProfile } from "@trafficflow/core/adapters/organizer-profile-store";
-import { withAccountTx, type ServiceContext } from "./context.js";
+import { bridgeTx, withAccountTx, type ServiceContext } from "./context.js";
 import { ServiceError } from "./errors.js";
 import { MAX_BODY_CONTAINS_CHARS, MAX_SUBJECT_CONTAINS_CHARS } from "./rules-service.js";
 import { AWAY_AUDIENCES, nextEnabledAt, type AwayAudience } from "./away-responder-service.js";
@@ -170,7 +170,7 @@ const ruleKey = (r: { kind: string; match: string; subjectContains: string | nul
   [r.kind, r.match.toLowerCase(), (r.subjectContains ?? "").toLowerCase(), (r.bodyContains ?? "").toLowerCase()]
     .join("\u0000");
 
-const asTx = (ctx: ServiceContext): Tx => ctx.db as unknown as Tx;
+const asTx = (ctx: ServiceContext): Tx => bridgeTx(ctx.db);
 
 /**
  * HOW LARGE A DOCUMENT `apply` WILL IMPORT, PER LIST. `apply` walks all four lists in ONE

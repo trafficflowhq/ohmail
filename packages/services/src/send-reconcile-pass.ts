@@ -2,7 +2,7 @@ import { and, eq, lt, ne } from "drizzle-orm";
 import { dialect } from "@trafficflow/db/dialect";
 import { drafts, mailboxes, outboundSends, type Tx } from "@trafficflow/db";
 import { createLogger, type Logger, type OpenSendAdapter, type SendAdapter } from "@trafficflow/core/mail";
-import type { Db, ServiceContext } from "./context.js";
+import { bridgeTx, bridgeDb, type Db, type ServiceContext } from "./context.js";
 import { ServiceError, SettleFailed, TransientDialRefusal } from "./errors.js";
 import { SCHEDULED_SEND_BATCH, SCHEDULED_SEND_EXPIRY_MS } from "./schedule-send-pass.js";
 import { sendService, SEND_STALE_AFTER_MS, type SendService } from "./send-service.js";
@@ -582,7 +582,7 @@ async function claimStale(
   accountEligible: ((accountId: string, db: Db) => Promise<boolean>) | undefined,
 ): Promise<StaleRow[]> {
   const d = dialect(db);
-  return (db as unknown as Tx).transaction(async (tx) => {
+  return bridgeTx(db).transaction(async (tx) => {
     const staleBefore = new Date(now.getTime() - SEND_STALE_AFTER_MS);
     // SKIP LOCKED through the seam, restricted to the send rows: on the server it is what lets
     // several runners share one window instead of queueing, and on the device store it is the
@@ -640,7 +640,7 @@ async function claimStale(
       if (!accountEligible) return true;
       const held = verdicts.get(accountId);
       if (held !== undefined) return held;
-      const answer = await accountEligible(accountId, tx as unknown as Db);
+      const answer = await accountEligible(accountId, bridgeDb(tx));
       verdicts.set(accountId, answer);
       return answer;
     };

@@ -5,7 +5,7 @@ import {
 import type { AdapterPort, Destination, NativeLocator } from "@trafficflow/core/mail";
 import { applyReconcileAction } from "@trafficflow/core/mail";
 import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
-import type { Db, ServiceContext } from "./context.js";
+import { bridgeTx, bridgeDb, type Db, type ServiceContext } from "./context.js";
 import { carryDialect } from "@trafficflow/db/dialect";
 import { ServiceError, IdempotencyRaceLost } from "./errors.js";
 import {
@@ -44,9 +44,9 @@ export interface ListApprovalsOptions {
   limit?: number;
 }
 
-const asTx = (ctx: ServiceContext): Tx => ctx.db as unknown as Tx;
+const asTx = (ctx: ServiceContext): Tx => bridgeTx(ctx.db);
 /** Materialize inside the ambient tx (reads its uncommitted writes) — same query surface as Db. */
-const asDb = (tx: Tx): Db => tx as unknown as Db;
+const asDb = (tx: Tx): Db => bridgeDb(tx);
 
 /**
  * ApprovalService. Lists pending approvals and resolves them. On
@@ -180,10 +180,10 @@ export class ApprovalService {
          * MOVE travels, which keeps a reader's Approvals list usable.
          */
         const route = await routeMailboxWrite(
-          tx as unknown as Tx, ctx.accountId, msg.mailboxId, "message.move",
+          bridgeTx(tx), ctx.accountId, msg.mailboxId, "message.move",
         );
         if (route.route === "request") {
-          movePending = await writeReaderRequest(tx as unknown as Tx, ctx, {
+          movePending = await writeReaderRequest(bridgeTx(tx), ctx, {
             mailboxId: msg.mailboxId, kind: "message.move", holder: route.holder,
             payload: { dedupKey: msg.dedupKey, destination: moveDestinationWord(target) },
           });
@@ -270,7 +270,7 @@ export class ApprovalService {
      * `true` would read as "handled".
      */
     if (approve && msg && target && this.deps.adapter && movePending === null) {
-      const repo = makeDrizzleRepo(ctx.db as unknown as Tx);
+      const repo = makeDrizzleRepo(bridgeTx(ctx.db));
       await applyReconcileAction(
         { repo, adapter: this.deps.adapter, accountId: ctx.accountId, mailboxId: "" },
         { messageId: msg.id, locator: msg.locator, state: { desiredFolder: target, observedFolder: msg.observedFolder, lastSetBy: "us" } },

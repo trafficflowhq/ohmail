@@ -1,7 +1,7 @@
 import { and, desc, eq, lt, or } from "drizzle-orm";
 import { accountSettings, messages, messageBodies, trackerEvents, type Tx } from "@trafficflow/db";
 import { hostOf, isKnownTracker, isBeaconUrl } from "@trafficflow/core/mail";
-import type { ServiceContext } from "./context.js";
+import { bridgeTx, type ServiceContext } from "./context.js";
 import { ServiceError } from "./errors.js";
 import { requireUuid } from "./ids.js";
 import { clampLimit, decodeKeysetCursor, encodeListCursor } from "./pagination.js";
@@ -9,7 +9,7 @@ import { assertPublicHttpUrl, type HostResolver } from "./ssrf-guard.js";
 import { pinnedHttpRequest } from "./pinned-fetch.js";
 import type { Page, TrackerEventDTO } from "./dto/types.js";
 
-const asTx = (ctx: ServiceContext): Tx => ctx.db as unknown as Tx;
+const asTx = (ctx: ServiceContext): Tx => bridgeTx(ctx.db);
 
 /**
  * The INJECTED server-side fetch port (mirrors ClassifierPort). It takes the url and a `pin` —

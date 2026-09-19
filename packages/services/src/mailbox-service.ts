@@ -12,7 +12,7 @@ import {
   ACCOUNT_THREAD_STRUCTURE_LOCK_CLASS,
   type AccessVerdict, type LedgerTx, type MailboxErrorCode, type Tx, type OrganizerIntent,
 } from "@trafficflow/db";
-import { withAccountTx, type ServiceContext } from "./context.js";
+import { bridgeTx, withAccountTx, type ServiceContext } from "./context.js";
 import { ServiceError } from "./errors.js";
 import { accountMailboxesProbe, refuseOverAccountMailboxes } from "./read-bounds.js";
 import { fenceErasedAccount, fenceErasedMailboxOnly } from "./erasure-fence.js";
@@ -33,7 +33,7 @@ import type { MailboxDTO, MailboxFolderSummary } from "./dto/types.js";
 // `dormancy_days` and `screening_scope` cannot disagree with the two cutlines that read them.
 import { DEFAULT_DORMANCY_DAYS, type ScreeningScope } from "@trafficflow/core/mail";
 
-const asTx = (ctx: ServiceContext): Tx => ctx.db as unknown as Tx;
+const asTx = (ctx: ServiceContext): Tx => bridgeTx(ctx.db);
 
 /**
  * The origin of a credential written into a mailbox row this very transaction creates. A sign-out
@@ -1581,7 +1581,7 @@ export class MailboxService {
        * the two-sided argument and states why the account row is read FIRST: it is the head of
        * the global lock order, and a fence in the middle of a writer would be the deadlock pair.
        */
-      await fenceErasedAccount(tx as unknown as Tx, dialect(ctx.db), ctx.accountId);
+      await fenceErasedAccount(bridgeTx(tx), dialect(ctx.db), ctx.accountId);
       /* The account's thread-structure lock, BEFORE the mailbox row and only when erasing.
        * `deleteAccount` takes it before `mailboxes` too, so both sweeps acquire in one order and
        * neither can be the other's deadlock partner; the disconnect path touches no message or

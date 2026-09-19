@@ -1,12 +1,12 @@
 import { and, asc, eq, inArray } from "drizzle-orm";
 import { dialect } from "@trafficflow/db/dialect";
 import { drafts, messages, threadNotes, threads, recordChange, type Tx } from "@trafficflow/db";
-import type { ServiceContext } from "./context.js";
+import { bridgeTx, type ServiceContext } from "./context.js";
 import { ServiceError } from "./errors.js";
 import { materializeThread } from "./dto/materialize.js";
 import type { ThreadDTO } from "./dto/types.js";
 
-const asTx = (ctx: ServiceContext): Tx => ctx.db as unknown as Tx;
+const asTx = (ctx: ServiceContext): Tx => bridgeTx(ctx.db);
 
 /** A thread id's shape, checked before it can reach a `uuid` column as 22P02. */
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;

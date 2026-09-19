@@ -7,7 +7,7 @@ import { dialect } from "@trafficflow/db/dialect";
 import {
   DRAFT_BODY_MAX_BYTES, createLogger, draftBodyOverCeiling, utf8ByteLength, type EmailAddress,
 } from "@trafficflow/core/mail";
-import { withAccountTx, type ServiceContext } from "./context.js";
+import { bridgeTx, withAccountTx, type ServiceContext } from "./context.js";
 import { IdempotencyRaceLost, ServiceError } from "./errors.js";
 import { materializeDraft } from "./dto/materialize.js";
 import type { DraftDTO } from "./dto/types.js";
@@ -48,7 +48,7 @@ export interface DraftCreateIdempotency {
   response: (r: { draftId: string; seq: number; draft: DraftDTO }) => unknown;
 }
 
-const asTx = (ctx: ServiceContext): Tx => ctx.db as unknown as Tx;
+const asTx = (ctx: ServiceContext): Tx => bridgeTx(ctx.db);
 
 /**
  * How many addresses one recipient field may name (`to`, `cc`, `bcc` each). This bounds a STORED

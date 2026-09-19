@@ -6,7 +6,7 @@ import {
 import { dialect } from "@trafficflow/db/dialect";
 import { SCREENER_FOLDER } from "./screener-service.js";
 import { ServiceError } from "./errors.js";
-import { withAccountTx, type ServiceContext } from "./context.js";
+import { bridgeTx, withAccountTx, type ServiceContext } from "./context.js";
 
 /* MAIL HELD AT THE GATE BEHIND A RULE ITS OWNER ALREADY WROTE — counted here, released by a press.
    An install that adopts mail at the screening gate records the placement as one no pass may
@@ -297,7 +297,7 @@ export async function releaseHeld(
   return withAccountTx(ctx, async (t) => {
     // Read the groups INSIDE the transaction that acts on them: the count written to the audit row
     // is then the count the press released, not one measured before somebody else's decision landed.
-    const groups = await heldReleaseGroups(t as unknown as Tx, ctx.accountId);
+    const groups = await heldReleaseGroups(bridgeTx(t), ctx.accountId);
     const named = wanted === undefined
       ? groups
       : groups.filter((g) => wanted.includes(g.ruleId));
@@ -305,7 +305,7 @@ export async function releaseHeld(
     /* READ BEFORE THE WRITE, and that order is load-bearing: the re-arm below puts each rule in
        flight, which is exactly what {@link decidedRule} excludes, so the same count asked
        afterwards would be zero. */
-    const total = await heldReleaseTotal(t as unknown as Tx, ctx.accountId, named);
+    const total = await heldReleaseTotal(bridgeTx(t), ctx.accountId, named);
 
     const now = ctx.now();
     for (const g of named) {

@@ -2,7 +2,7 @@ import { type Tx } from "@trafficflow/db";
 import { carryDialect } from "@trafficflow/db/dialect";
 import { issueInvite } from "./invites.js";
 import { normalizeRecipient } from "./mail/port.js";
-import { runInTransaction, type ServiceContext } from "./context.js";
+import { bridgeTx, runInTransaction, type ServiceContext } from "./context.js";
 import { ServiceError } from "./errors.js";
 import { consumePairingToken, pairingInvalid } from "./pairing.js";
 
@@ -20,7 +20,7 @@ import { consumePairingToken, pairingInvalid } from "./pairing.js";
 /** `asTx` only — the transaction wrapper is `runInTransaction` in `context.ts`, shared so that a
  *  credential report made inside one cannot be released before the commit. There were three
  *  copies of it here and only one of them buffered. */
-const asTx = (ctx: ServiceContext): Tx => ctx.db as unknown as Tx;
+const asTx = (ctx: ServiceContext): Tx => bridgeTx(ctx.db);
 
 /**
  * How long the email-bound invite minted by an invite-grant redeem lives. Deliberately short:

@@ -11,12 +11,12 @@ import {
   UNSUB_DRAIN_CLOSE_RESERVE_MS, UNSUB_DRAIN_RUN_BUDGET_MS,
   type AuthVerdict, type Destination, type UnsubscribeHeaderState,
 } from "@trafficflow/core/mail";
-import type { Db, ServiceContext } from "./context.js";
+import { bridgeTx, type Db, type ServiceContext } from "./context.js";
 import { ServiceError } from "./errors.js";
 import { assertPublicHttpUrl, type HostResolver } from "./ssrf-guard.js";
 import { pinnedHttpRequest } from "./pinned-fetch.js";
 
-const asTx = (ctx: ServiceContext): Tx => ctx.db as unknown as Tx;
+const asTx = (ctx: ServiceContext): Tx => bridgeTx(ctx.db);
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -999,7 +999,7 @@ export class UnsubscribeService {
     // nothing and the run met the platform's kill with its own ceiling still unspent.
     const budget = opts.budget ?? startDrainBudget(opts.budgetMs ?? UNSUB_DRAIN_BUDGET_MS);
     const since = new Date(opts.now().getTime() - UNSUB_DRAIN_WINDOW_MS);
-    const tx = db as unknown as Tx;
+    const tx = bridgeTx(db);
 
     // ONE WALK ACROSS THE WINDOW, oldest first, cursored so a stretch of rows this pass may not
     // act on cannot hide the work behind it. It replaces the grouped account census AND the

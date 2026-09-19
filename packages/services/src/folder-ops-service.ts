@@ -4,7 +4,7 @@ import { dialect } from "@trafficflow/db/dialect";
 // module is imported beside it and must never pull the classifier/drafter graph anywhere.
 import { folderNameError } from "@trafficflow/core/mail";
 import { assertOrganizerRole, claimIdempotencyKey, readIdempotencyKey, folderOps, folderState, mailboxFolders, mailboxes, messages, recordChange, type Tx } from "@trafficflow/db";
-import type { ServiceContext } from "./context.js";
+import { bridgeTx, type ServiceContext } from "./context.js";
 import { ServiceError, IdempotencyRaceLost } from "./errors.js";
 import { fenceErasedMailboxOnly } from "./erasure-fence.js";
 import { folderInventoryProbe, refuseOverFolderInventory } from "./read-bounds.js";
@@ -24,7 +24,7 @@ import type { FolderDTO } from "./dto/types.js";
  * and blocks new commands until dismissed — a refusal cannot be steamrolled by a retry loop.
  */
 
-const asTx = (ctx: ServiceContext): Tx => ctx.db as unknown as Tx;
+const asTx = (ctx: ServiceContext): Tx => bridgeTx(ctx.db);
 
 /** The verb's idempotency claim, inside its transaction — `MessageService.move`'s exact rule:
  *  a retry whose response was lost must replay the stored answer, never re-run a command the

@@ -15,14 +15,14 @@ import type { WorkerRepo } from "@trafficflow/core/adapters/drizzle-repo";
 /** The Sent projection's transaction repo: the ports it writes through, plus the conditional
  *  folder completion `commitChange` requires (the plan is older than the transaction). */
 type SentTxRepo = RepoPort & RoutingPort & Pick<WorkerRepo, "completeFolderState" | "adoptFolderState">;
-import { withAccountTx, type ServiceContext } from "./context.js";
+import { bridgeTx, withAccountTx, type ServiceContext } from "./context.js";
 import { draftContentRevision } from "./draft-revision.js";
 import type { AttachmentAdapter, OpenAdapter } from "./attachments-service.js";
 import { ServiceError, SettleFailed, TransientDialRefusal } from "./errors.js";
 import { sanitizeOutboundHtml } from "./outbound-html.js";
 import { carryDialect, dialect } from "@trafficflow/db/dialect";
 
-const asTx = (ctx: ServiceContext): Tx => ctx.db as unknown as Tx;
+const asTx = (ctx: ServiceContext): Tx => bridgeTx(ctx.db);
 
 /**
  * The default sink for the ONE thing on this path that is reported and never raised — a

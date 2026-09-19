@@ -21,7 +21,7 @@ import {
   pushSubscriptions,
   pruneWebauthnChallenges,
 } from "@trafficflow/db/cloud";
-import type { ServiceContext } from "../context.js";
+import { bridgeTx, type ServiceContext } from "../context.js";
 import { OAuthCodeReplayed, ServiceError } from "../errors.js";
 import { consumeInvite, inviteError, normalizeInviteCode } from "../invites.js";
 import { reserveIpSlot } from "../ip-throttle.js";
@@ -54,7 +54,7 @@ import { newTotpSecret, totpUri, verifyTotp } from "./totp.js";
 import { SessionLifecycle, refuseCrossAccountCredential } from "./session-lifecycle.js";
 
 type Method = "webauthn" | "totp" | "recovery_code";
-const asTx = (ctx: ServiceContext): Tx => ctx.db as unknown as Tx;
+const asTx = (ctx: ServiceContext): Tx => bridgeTx(ctx.db);
 
 /**
  * The platform-qualified desktop kinds — what a CURRENT desktop declares on the two seams where

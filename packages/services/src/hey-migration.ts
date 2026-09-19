@@ -7,10 +7,10 @@ import type {
 } from "@trafficflow/core";
 import { applyReconcileAction, scanFoldersForMigration, reconcile } from "@trafficflow/core";
 import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
-import type { ServiceContext } from "./context.js";
+import { bridgeTx, type ServiceContext } from "./context.js";
 import { refuseBulkMoveOnReader } from "./reader-request.js";
 
-const asTx = (ctx: ServiceContext): Tx => ctx.db as unknown as Tx;
+const asTx = (ctx: ServiceContext): Tx => bridgeTx(ctx.db);
 const domainOf = (addr: string): string => { const i = addr.indexOf("@"); return i >= 0 ? addr.slice(i + 1) : ""; };
 
 export interface MigrateInput {
@@ -238,7 +238,7 @@ export class HeyMigrationService {
     });
     await refuseBulkMoveOnReader(asTx(ctx), ctx.accountId, willMove);
 
-    const repo = makeDrizzleRepo(ctx.db as unknown as Tx);
+    const repo = makeDrizzleRepo(bridgeTx(ctx.db));
     let moved = 0;
     let deferred = 0;
     let superseded = 0;

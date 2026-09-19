@@ -5,10 +5,10 @@ import {
   accountSettings, contacts, folderState, learningSignals, messages, recordChanges, recordRuleDelta,
   routingDecisions, rules, type Tx,
 } from "@trafficflow/db";
-import type { ServiceContext } from "./context.js";
+import { bridgeTx, type ServiceContext } from "./context.js";
 import { fenceErasedAccount } from "./erasure-fence.js";
 
-const asTx = (ctx: ServiceContext): Tx => ctx.db as unknown as Tx;
+const asTx = (ctx: ServiceContext): Tx => bridgeTx(ctx.db);
 
 /**
  * Reset screening state — back to "never screened anybody", keeping the mail. It NEVER MOVES
@@ -97,7 +97,7 @@ export async function resetScreeningState(ctx: ServiceContext): Promise<ResetRes
      * a machine that is not organizing. ACCOUNT-scoped, matching `decide`. Placed after the
      * erasure fence and before the settings lock: this read takes no lock of its own.
      */
-    await assertAccountOrganizes(tx as unknown as Tx, ctx.accountId);
+    await assertAccountOrganizes(bridgeTx(tx), ctx.accountId);
     /**
      * THE GLOBAL LOCK ORDER — `account_settings` FIRST, the sequence row second (the rule and
      * its reproduction live at `recordSettingsChange`, consent-seed.ts). This transaction was

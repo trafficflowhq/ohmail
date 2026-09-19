@@ -2,10 +2,10 @@ import { and, eq } from "drizzle-orm";
 import { claimIdempotencyKey, sessions, type Tx } from "@trafficflow/db";
 import { pushSubscriptions } from "@trafficflow/db/cloud";
 import { SsrfRefusal, type PushEndpointGuard } from "@trafficflow/core/net";
-import { withAccountTx, type ServiceContext } from "./context.js";
+import { bridgeTx, withAccountTx, type ServiceContext } from "./context.js";
 import { ServiceError, IdempotencyRaceLost } from "./errors.js";
 
-const asTx = (ctx: ServiceContext): Tx => ctx.db as unknown as Tx;
+const asTx = (ctx: ServiceContext): Tx => bridgeTx(ctx.db);
 
 /* THE SHAPES AND THE PORT live in `push-types.ts`; the implementation and the table it writes
  * live here. The vocabulary is shared because the routes that describe a registration are the same

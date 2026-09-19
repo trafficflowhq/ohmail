@@ -3,7 +3,7 @@ import { carryDialect } from "@trafficflow/db/dialect";
 import { dialect } from "@trafficflow/db/dialect";
 import { and, desc, eq, gt, gte, inArray, isNotNull, isNull, lt, ne, or, type SQL } from "drizzle-orm";
 import { devices, refreshTokens, sessions, users, type Tx } from "@trafficflow/db";
-import { runInTransaction, type ServiceContext } from "../context.js";
+import { bridgeTx, runInTransaction, type ServiceContext } from "../context.js";
 import { ServiceError } from "../errors.js";
 import { generateToken, hashToken } from "./crypto.js";
 import { surfaceTtls, type SurfaceTtls } from "./config.js";
@@ -59,7 +59,7 @@ export function classifyRefreshFailure(err: unknown): RefreshFailure {
  * one tier's stolen token stays alive on the other.
  */
 
-const asTx = (ctx: ServiceContext): Tx => ctx.db as unknown as Tx;
+const asTx = (ctx: ServiceContext): Tx => bridgeTx(ctx.db);
 
 /** The widest client-chosen attempt id this server will record. */
 const ATTEMPT_ID_MAX_CHARS = 128;

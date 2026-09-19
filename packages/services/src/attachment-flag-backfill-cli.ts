@@ -14,7 +14,7 @@ import { createLogger } from "@trafficflow/core";
 import {
   runAttachmentFlagBackfill, planAttachmentFlagBackfill, ATTACHMENT_FLAG_BATCH,
 } from "./attachment-flag-backfill.js";
-import type { Db } from "./context.js";
+import { bridgeDb, type Db } from "./context.js";
 
 /**
  * Structured, through the same logger the worker uses — `packages/core/src/log.ts` is where the
@@ -114,8 +114,8 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
 
   const owned = makeOwnedDb(url);
   try {
-    if (args.command === "plan") await plan(owned.db as unknown as Db);
-    else await apply(owned.db as unknown as Db, args);
+    if (args.command === "plan") await plan(bridgeDb(owned.db));
+    else await apply(bridgeDb(owned.db), args);
     return 0;
   } finally {
     await owned.close();

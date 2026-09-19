@@ -1,14 +1,14 @@
 import { and, asc, eq, sql } from "drizzle-orm";
 import { dialect } from "@trafficflow/db/dialect";
 import { assertOrganizerRole, assertAccountOrganizes, tags, messages, messageTags, recordChange, type Tx } from "@trafficflow/db";
-import { withAccountTx, type ServiceContext } from "./context.js";
+import { bridgeTx, withAccountTx, type ServiceContext } from "./context.js";
 import { ServiceError } from "./errors.js";
 import { materializeTag } from "./dto/materialize.js";
 import type { TagDTO } from "./dto/types.js";
 
 /** Same shim every write service here uses (`approval-service.ts:43`): a `ServiceContext.db`
  *  is a real transaction host, but the union type does not say so. */
-const asTx = (ctx: ServiceContext): Tx => ctx.db as unknown as Tx;
+const asTx = (ctx: ServiceContext): Tx => bridgeTx(ctx.db);
 
 /**
  * The hues the client can render — `TagHueName` in `packages/ui`, the ten the Blanc token
@@ -113,7 +113,7 @@ export class TagsService {
       // whether this install organizes ANYTHING. On a one-mailbox standalone that collapses to
       // "all refused", which is correct — a definition this install will never apply is a
       // settings screen that accepts an edit and silently does nothing.
-      await assertAccountOrganizes(tx as unknown as Tx, ctx.accountId);
+      await assertAccountOrganizes(bridgeTx(tx), ctx.accountId);
       const inserted = await tx.insert(tags)
         .values({ accountId: ctx.accountId, name, hue, createdAt: now, updatedAt: now })
         .onConflictDoNothing()
@@ -143,7 +143,7 @@ export class TagsService {
       // whether this install organizes ANYTHING. On a one-mailbox standalone that collapses to
       // "all refused", which is correct — a definition this install will never apply is a
       // settings screen that accepts an edit and silently does nothing.
-      await assertAccountOrganizes(tx as unknown as Tx, ctx.accountId);
+      await assertAccountOrganizes(bridgeTx(tx), ctx.accountId);
       const updated = await tx.update(tags).set(patch)
         .where(and(eq(tags.id, id), eq(tags.accountId, ctx.accountId)))
         .returning({ id: tags.id })
@@ -178,7 +178,7 @@ export class TagsService {
       // whether this install organizes ANYTHING. On a one-mailbox standalone that collapses to
       // "all refused", which is correct — a definition this install will never apply is a
       // settings screen that accepts an edit and silently does nothing.
-      await assertAccountOrganizes(tx as unknown as Tx, ctx.accountId);
+      await assertAccountOrganizes(bridgeTx(tx), ctx.accountId);
       // Lock the parent FIRST, through the seam: the lock, not the read, is what a concurrent
       // assign blocks on.
       const locked = await dialect(ctx.db).forUpdate(tx.select({ id: tags.id }).from(tags)
@@ -242,7 +242,7 @@ export class TagsService {
        * configuration, gated on whether the account organizes anything at all. Naming a colour is
        * not a statement about one mailbox; putting that colour on one message is.
        */
-      await assertOrganizerRole(tx as unknown as Tx, dialect(ctx.db), ctx.accountId, msg.mailboxId);
+      await assertOrganizerRole(bridgeTx(tx), dialect(ctx.db), ctx.accountId, msg.mailboxId);
 
       let resolved = tagId;
       let tagSeq: bigint | null = null;

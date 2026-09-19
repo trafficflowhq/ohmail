@@ -2,7 +2,7 @@ import { and, asc, eq, gt, sql } from "drizzle-orm";
 import { messages, attachments, auditLog, recordChange, type Tx, auditAction} from "@trafficflow/db";
 import type { SQL } from "drizzle-orm";
 import { silentLogger, type Logger } from "@trafficflow/core";
-import type { Db } from "./context.js";
+import { bridgeTx, type Db } from "./context.js";
 
 /**
  * The paperclip that opens an empty strip — no migration. `mime.ts` once counted every MIME part
@@ -100,7 +100,7 @@ interface CandidateRow {
 export async function runAttachmentFlagBackfill(
   deps: AttachmentFlagBackfillDeps,
 ): Promise<AttachmentFlagBackfillResult> {
-  const tx = deps.db as unknown as Tx;
+  const tx = bridgeTx(deps.db);
   const log = deps.log ?? silentLogger;
   const batch = deps.batch ?? ATTACHMENT_FLAG_BATCH;
   const maxPages = deps.maxPages ?? ATTACHMENT_FLAG_MAX_PAGES;
@@ -263,7 +263,7 @@ async function selectCandidates(
 export async function planAttachmentFlagBackfill(db: Db): Promise<Array<{
   mailboxId: string; flagged: number; inlineOnly: number; miscounted: number; correct: number;
 }>> {
-  const tx = db as unknown as Tx;
+  const tx = bridgeTx(db);
   const real = realFileCount();
   const rows = await tx.select({
     mailboxId: messages.mailboxId,

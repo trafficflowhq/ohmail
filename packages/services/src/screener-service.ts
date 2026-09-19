@@ -44,7 +44,7 @@ import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
    the record it writes cannot disagree about what `screener.decide` requires. */
 import { capabilityForKind } from "@trafficflow/core/adapters/organizer-lease";
 import { planAccountFanOut, writeReaderRequest, type AccountFanOut, type FanOutTarget } from "./reader-request.js";
-import type { ServiceContext } from "./context.js";
+import { bridgeTx, type ServiceContext } from "./context.js";
 import { ServiceError, IdempotencyRaceLost } from "./errors.js";
 import { refuseAiSpend, type AiRefusalClass } from "./ai-refusal.js";
 import { getScreeningPreference } from "./screening-preference.js";
@@ -775,7 +775,7 @@ function toScreenerRow(r: {
   };
 }
 
-const asTx = (ctx: ServiceContext): Tx => ctx.db as unknown as Tx;
+const asTx = (ctx: ServiceContext): Tx => bridgeTx(ctx.db);
 
 /**
  * The `(date, messageId)` keyset for the Screener's `date desc, messageId desc` order — same
@@ -1259,7 +1259,7 @@ export class ScreenerReadService {
     // ask-the-organizer-sooner stamp, and `filed` is exactly the set that moved.
     for (const mailboxId of filed) {
       try {
-        await ringFilingDoorbell(ctx.db as unknown as Tx, mailboxId, ctx.now());
+        await ringFilingDoorbell(bridgeTx(ctx.db), mailboxId, ctx.now());
       } catch (err) {
         /* Swallowed for the caller, never for the log — `MessageService.ringFiledMailbox` carries
            the argument in full. The verdict has committed; a throw here costs one rotation and
@@ -1280,7 +1280,7 @@ export class ScreenerReadService {
     // folder_state row is left `pending` and the always-on worker drains it later.
     if (this.deps.adapter) {
       const adapter = this.deps.adapter;
-      const repo = makeDrizzleRepo(ctx.db as unknown as Tx);
+      const repo = makeDrizzleRepo(bridgeTx(ctx.db));
       // `rerouted`, never `heldMail`: a row the guard skipped belongs to whoever wrote it, and
       // moving it on IMAP would make the mailbox disagree with the database that declined to
       // claim it — the one place a stale read could still reach the user's server. A STALE SOURCE

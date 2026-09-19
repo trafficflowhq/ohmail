@@ -2,7 +2,7 @@ import { and, asc, eq } from "drizzle-orm";
 import { rules, recordRuleDelta, claimIdempotencyKey, type OrganizedBy, type Tx } from "@trafficflow/db";
 import type { Destination } from "@trafficflow/core/mail";
 import type { RequestKind } from "@trafficflow/core/adapters/organizer-lease";
-import { withAccountTx, type Db, type ServiceContext } from "./context.js";
+import { bridgeTx, bridgeDb, withAccountTx, type Db, type ServiceContext } from "./context.js";
 import { ServiceError, IdempotencyRaceLost } from "./errors.js";
 import { materializeRule } from "./dto/materialize.js";
 import {
@@ -10,9 +10,9 @@ import {
 } from "./reader-request.js";
 import type { Folder, RuleDTO } from "./dto/types.js";
 
-const asTx = (ctx: ServiceContext): Tx => ctx.db as unknown as Tx;
+const asTx = (ctx: ServiceContext): Tx => bridgeTx(ctx.db);
 /** Materialize inside the ambient tx (reads its uncommitted writes) — same query surface as Db. */
-const asDb = (tx: Tx): Db => tx as unknown as Db;
+const asDb = (tx: Tx): Db => bridgeDb(tx);
 
 const KINDS = new Set(["sender", "domain", "header"]);
 /** The six canonical folders a rule may route to (core `Destination`). */
@@ -320,7 +320,7 @@ export class RulesService {
        * travelled, an all-reader account refused where a request could go. `planAccountFanOut`
        * carries the three states.
        */
-      const plan = await planAccountFanOut(tx as unknown as Tx, ctx.accountId, "rule.create");
+      const plan = await planAccountFanOut(bridgeTx(tx), ctx.accountId, "rule.create");
 
       if (!plan.writeLocally) {
         /* NOTHING TO WRITE HERE — every live mailbox is organized elsewhere, and at least one
@@ -328,7 +328,7 @@ export class RulesService {
            `change_log`: a row written here is the dead instruction above, and it would also be
            DUPLICATED when the organizer applies the request and republishes its document. */
         const travel = await fanOutRuleEdit(
-          tx as unknown as Tx, ctx, plan, "rule.create",
+          bridgeTx(tx), ctx, plan, "rule.create",
           ruleRequestPayload(
             { kind, match, subjectContains, bodyContains },
             {
@@ -390,7 +390,7 @@ export class RulesService {
          press, reported separately — never one "saved". */
       if (!travelled(plan)) return { rule, seq: Number(seq) };
       const travel = await fanOutRuleEdit(
-        tx as unknown as Tx, ctx, plan, "rule.create",
+        bridgeTx(tx), ctx, plan, "rule.create",
         ruleRequestPayload(
           { kind, match, subjectContains, bodyContains },
           {
@@ -490,7 +490,7 @@ export class RulesService {
        */
       // The per-mailbox dispatch that replaces the account-wide refusal — see `create`'s own note
       // for why the one question was wrong in both directions.
-      const plan = await planAccountFanOut(tx as unknown as Tx, ctx.accountId, "rule.update");
+      const plan = await planAccountFanOut(bridgeTx(tx), ctx.accountId, "rule.update");
 
       // Read the CURRENT destination before the write, inside the transaction, so "did the
       // destination change" is answered against the row this update replaces, not a caller value
@@ -573,7 +573,7 @@ export class RulesService {
            value they typed would be the false state ruling 6 exists to end. It converges when the
            organizer applies the request and republishes its document. */
         travel = await fanOutRuleEdit(
-          tx as unknown as Tx, ctx, plan, "rule.update",
+          bridgeTx(tx), ctx, plan, "rule.update",
           ruleRequestPayload(keyOf(), travelSet(), patch.applyRetro === undefined ? undefined : applyRetro),
         );
         const unchanged = await materializeRule(asDb(tx), ctx.accountId, id);
@@ -615,7 +615,7 @@ export class RulesService {
       // The mixed account — the row above is the rule here, and the same edit travels.
       if (!travelled(plan)) return { rule, seq: Number(seq) };
       travel = await fanOutRuleEdit(
-        tx as unknown as Tx, ctx, plan, "rule.update",
+        bridgeTx(tx), ctx, plan, "rule.update",
         ruleRequestPayload(keyOf(), travelSet(), patch.applyRetro === undefined ? undefined : applyRetro),
       );
       return { rule, seq: Number(seq), travel };
@@ -645,7 +645,7 @@ export class RulesService {
        *
        * The account-wide refusal is replaced by the per-mailbox dispatch — see `create`'s note.
        */
-      const plan = await planAccountFanOut(tx as unknown as Tx, ctx.accountId, "rule.delete");
+      const plan = await planAccountFanOut(bridgeTx(tx), ctx.accountId, "rule.delete");
 
       /* THE KEY IS READ BEFORE THE ROW GOES, and it has to be: after the DELETE there is nothing
          left to name the rule to the other install. `returning({ id })` was enough while the
@@ -663,14 +663,14 @@ export class RulesService {
            the organizer applies the request. */
         if (!before) throw new ServiceError("not_found", 404, "rule not found");
         const travel = await fanOutRuleEdit(
-          tx as unknown as Tx, ctx, plan, "rule.delete", ruleRequestPayload(before),
+          bridgeTx(tx), ctx, plan, "rule.delete", ruleRequestPayload(before),
         );
         /* THE ANSWER IS WHAT GETS STORED. `claimRequestReplay` stores the object it returns and
            the route sends that same object at 202, so a replay cannot describe an outcome the
            press did not — `create` and `update` answer their queued half through it too. This
            branch used to store the bare `travel` under a status the route then ignored, and the
            retry came back 204: the rule gone, on an install that still had it. */
-        return this.claimRequestReplay(tx as unknown as Tx, ctx, opts, { pending: true, travel });
+        return this.claimRequestReplay(bridgeTx(tx), ctx, opts, { pending: true, travel });
       }
 
       const deleted = await tx.delete(rules)
@@ -703,7 +703,7 @@ export class RulesService {
       // The mixed account: gone here, and asked of every install that holds one of the others.
       if (!travelled(plan)) return { seq: Number(emitted) as number | null };
       const travel = await fanOutRuleEdit(
-        tx as unknown as Tx, ctx, plan, "rule.delete", ruleRequestPayload(before!),
+        bridgeTx(tx), ctx, plan, "rule.delete", ruleRequestPayload(before!),
       );
       return { seq: Number(emitted) as number | null, travel };
     });

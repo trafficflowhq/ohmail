@@ -2,7 +2,7 @@ import { and, eq, inArray, isNotNull, lte, notInArray, sql } from "drizzle-orm";
 import { dialect } from "@trafficflow/db/dialect";
 import { drafts, outboundSends, recordChange, type Tx } from "@trafficflow/db";
 import { createLogger, type Logger, type OpenSendAdapter, type StorageCap } from "@trafficflow/core/mail";
-import type { Db, ServiceContext } from "./context.js";
+import { bridgeTx, bridgeDb, type Db, type ServiceContext } from "./context.js";
 import { ServiceError } from "./errors.js";
 import { sendService, SEND_STALE_AFTER_MS, type SendService } from "./send-service.js";
 
@@ -196,7 +196,7 @@ export async function runScheduledSendPass(
           // alone. Leaving it at 'draft' would also come back — the recovery arm claims a keyed row
           // once it is provably stale — but not for ten minutes, and there is nothing to wait for
           // here: the appointment is still due and the next pass can judge it again.
-          await (db as unknown as Tx).update(drafts)
+          await bridgeTx(db).update(drafts)
             .set({ status: "scheduled", updatedAt: now() })
             .where(and(
               eq(drafts.id, row.id), eq(drafts.status, "draft"), eq(drafts.sendKey, row.sendKey),
@@ -222,7 +222,7 @@ export async function runScheduledSendPass(
         // pre-SMTP window already finalized and explained; re-arming it would resend a message
         // whose refusal is recorded, and the guard on `send_key` is what stops that — the key is
         // already NULL. A `pending` one is the unknown-fate case the recovery arm owns.
-        await (db as unknown as Tx).update(drafts)
+        await bridgeTx(db).update(drafts)
           .set({ status: "scheduled", updatedAt: now() })
           .where(and(
             eq(drafts.id, row.id), eq(drafts.status, "draft"),
@@ -283,7 +283,7 @@ async function claimDue(
      list is a caller saying it has no mailboxes to claim for, and `inArray(col, [])` is not a
      reliable way to say that across drivers. */
   if (mailboxIds !== undefined && mailboxIds.length === 0) return [];
-  return (db as unknown as Tx).transaction(async (tx) => {
+  return bridgeTx(db).transaction(async (tx) => {
     // One eligibility read per distinct account this claim touches, memoised for both arms —
     // and run ON THIS TRANSACTION's handle, never a captured outer one (the deadlock rule on
     // `ScheduledSendPassDeps.accountEligible`).
@@ -292,7 +292,7 @@ async function claimDue(
       if (!accountEligible) return true;
       const held = eligibility.get(accountId);
       if (held !== undefined) return held;
-      const answer = await accountEligible(accountId, tx as unknown as Db);
+      const answer = await accountEligible(accountId, bridgeDb(tx));
       eligibility.set(accountId, answer);
       return answer;
     };
@@ -417,7 +417,7 @@ async function claimDue(
  */
 async function reservationFailed(db: Db, ctx: ServiceContext, row: ClaimedRow): Promise<boolean> {
   try {
-    const found = await (db as unknown as Tx).select({ status: outboundSends.status })
+    const found = await bridgeTx(db).select({ status: outboundSends.status })
       .from(outboundSends)
       .where(and(
         eq(outboundSends.accountId, ctx.accountId),
@@ -435,7 +435,7 @@ async function closeAppointment(
   opts: { includeSending?: boolean } = {},
 ): Promise<boolean> {
   try {
-    return await (db as unknown as Tx).transaction(async (tx) => {
+    return await bridgeTx(db).transaction(async (tx) => {
       const closed = await tx.update(drafts)
         .set({ status: "draft", sendAt: null, sendKey: null, sendError: sentence, updatedAt: ctx.now() })
         .where(and(

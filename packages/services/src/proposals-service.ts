@@ -4,11 +4,11 @@ import {
   assembleWorkflowPatterns, generateProposals,
   type WorkflowPort, type WorkflowPattern, type WorkflowTrigger, type WorkflowStep, type StoredProposal,
 } from "@trafficflow/core";
-import type { ServiceContext } from "./context.js";
+import { bridgeTx, type ServiceContext } from "./context.js";
 import { ServiceError } from "./errors.js";
 import type { WorkflowProposalDTO } from "./dto/types.js";
 
-const asTx = (ctx: ServiceContext): Tx => ctx.db as unknown as Tx;
+const asTx = (ctx: ServiceContext): Tx => bridgeTx(ctx.db);
 
 /**
  * ProposalsService — a THIN account-scoped wrapper over the core proposal engine

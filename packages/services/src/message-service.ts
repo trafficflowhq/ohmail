@@ -8,7 +8,7 @@ import {
 import { dialect } from "@trafficflow/db/dialect";
 import type { Destination, NativeLocator } from "@trafficflow/core/mail";
 import { createLogger, httpsUnsubscribeUri, unsubscribeHeaderState } from "@trafficflow/core/mail";
-import type { Db, ServiceContext } from "./context.js";
+import { bridgeTx, bridgeDb, type Db, type ServiceContext } from "./context.js";
 import { foldersEnabled, userFolderById } from "./folders.js";
 import { ServiceError, IdempotencyRaceLost } from "./errors.js";
 import {
@@ -44,9 +44,9 @@ function withheldOf(reason: string | null | undefined): { withheld: WithheldMark
     : {};
 }
 
-const asTx = (ctx: ServiceContext): Tx => ctx.db as unknown as Tx;
+const asTx = (ctx: ServiceContext): Tx => bridgeTx(ctx.db);
 /** Materialize inside the ambient tx (reads its uncommitted writes) — same query surface as Db. */
-const asDb = (tx: Tx): Db => tx as unknown as Db;
+const asDb = (tx: Tx): Db => bridgeDb(tx);
 
 /** The six canonical folders a message may live in / be moved to (core `Destination`). */
 const FOLDERS: Destination[] = [
@@ -815,10 +815,10 @@ export class MessageService {
          * legitimate IMAP write.
          */
         const route = await routeMailboxWrite(
-          tx as unknown as Tx, ctx.accountId, msg.mailboxId, "message.move",
+          bridgeTx(tx), ctx.accountId, msg.mailboxId, "message.move",
         );
         if (route.route === "request") {
-          pending = await writeReaderRequest(tx as unknown as Tx, ctx, {
+          pending = await writeReaderRequest(bridgeTx(tx), ctx, {
             mailboxId: msg.mailboxId,
             kind: "message.move",
             payload: { dedupKey: msg.dedupKey, destination: moveDestinationWord(folder) },
@@ -827,7 +827,7 @@ export class MessageService {
         } else {
           // The locked re-check, on `move`'s argument exactly — the routing read above takes no
           // lock, so a demotion can commit between the two.
-          await assertOrganizerRole(tx as unknown as Tx, dialect(ctx.db), ctx.accountId, msg.mailboxId);
+          await assertOrganizerRole(bridgeTx(tx), dialect(ctx.db), ctx.accountId, msg.mailboxId);
           const observed = await this.observedFolder(tx, id, msg.nativeLocator);
           // The mailbox that now owes a move, rung AFTER this transaction commits.
           filed = msg.mailboxId;
@@ -988,7 +988,7 @@ export class MessageService {
        * stops one being RECORDED.
        */
       const route = await routeMailboxWrite(
-        tx as unknown as Tx, ctx.accountId, msg.mailboxId, "message.move",
+        bridgeTx(tx), ctx.accountId, msg.mailboxId, "message.move",
       );
       if (route.route === "request") {
         return this.requestMove(tx, ctx, {
@@ -1001,7 +1001,7 @@ export class MessageService {
        * a write that has not started. Under READ COMMITTED the worker's lease gate can commit a
        * demotion between the two, so the share lock is what actually stands between this write and
        * a reader crossing the door. See `assertOrganizerRole`'s own header for the interleaving. */
-      await assertOrganizerRole(tx as unknown as Tx, dialect(ctx.db), ctx.accountId, msg.mailboxId);
+      await assertOrganizerRole(bridgeTx(tx), dialect(ctx.db), ctx.accountId, msg.mailboxId);
 
       // Write DESIRED state only. observedFolder is the worker's truth — read
       // and PRESERVE it (never overwrite on conflict); the worker flips it when the
@@ -1090,7 +1090,7 @@ export class MessageService {
        * `applyMessageMove` resolves it on the organizer, the only place the answer exists.
        */
       const route = await routeMailboxWrite(
-        tx as unknown as Tx, ctx.accountId, msg.mailboxId, "message.move",
+        bridgeTx(tx), ctx.accountId, msg.mailboxId, "message.move",
       );
       if (route.route === "request") {
         return this.requestMove(tx, ctx, {
@@ -1099,7 +1099,7 @@ export class MessageService {
         }, opts);
       }
       // The locked re-check — see `move`'s note on why the plain read above does not replace it.
-      await assertOrganizerRole(tx as unknown as Tx, dialect(ctx.db), ctx.accountId, msg.mailboxId);
+      await assertOrganizerRole(bridgeTx(tx), dialect(ctx.db), ctx.accountId, msg.mailboxId);
 
       const hasCopy = (msg.nativeLocator as NativeLocator | null) !== null;
       let trash: string | null = null;
@@ -1200,7 +1200,7 @@ export class MessageService {
       if (!msg) throw new ServiceError("not_found", 404, "message not found");
 
       // A READER RESTORES NOTHING — see the header. First, so the sentence is the true one.
-      await assertOrganizerRole(tx as unknown as Tx, dialect(ctx.db), ctx.accountId, msg.mailboxId);
+      await assertOrganizerRole(bridgeTx(tx), dialect(ctx.db), ctx.accountId, msg.mailboxId);
 
       const [mb] = await tx.select({ trashFolder: mailboxes.trashFolder }).from(mailboxes)
         .where(eq(mailboxes.id, msg.mailboxId)).limit(1);
@@ -1346,7 +1346,7 @@ export class MessageService {
    */
   private async ringFiledMailbox(ctx: ServiceContext, mailboxId: string): Promise<void> {
     try {
-      await ringFilingDoorbell(ctx.db as unknown as Tx, mailboxId, ctx.now());
+      await ringFilingDoorbell(bridgeTx(ctx.db), mailboxId, ctx.now());
     } catch (err) {
       /* SWALLOWED FOR THE CALLER, NEVER FOR THE LOG. The decision has committed and the poll is
          the floor beneath this either way — so the throw must not reach the person who filed the

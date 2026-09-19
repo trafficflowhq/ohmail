@@ -23,6 +23,23 @@ export interface DbRegistry {
 export type Db = DbRegistry[keyof DbRegistry];
 
 /**
+ * THE ONE DIALECT BRIDGE (review 020, BACKEND L4). Services are written against the pg builder
+ * types while the handle behind `Db` may be PGlite, hosted Postgres or the phone's sqlite-proxy;
+ * `carryDialect` keeps the runtime honest and these two carry the type assertion — once, here,
+ * instead of 118 hand-spelled `as unknown as` casts. The census
+ * (`dialect-bridge-census.test.ts`) pins the raw cast count outside this file at zero, so a new
+ * dialect crossing is a call to a named function, never a fresh assertion.
+ */
+export function bridgeTx(handle: Db | Tx | LedgerTx): Tx {
+  return handle as unknown as Tx;
+}
+
+/** The other direction: a transaction handle asked the query surface `Db` types. */
+export function bridgeDb(handle: Db | Tx | LedgerTx): Db {
+  return handle as unknown as Db;
+}
+
+/**
  * Per-request seam handed to every service method. `accountId`/`userId` are
  * derived from the session or bearer token by the handler — NEVER from the
  * request body. `now` is an injectable clock for deterministic tests.
@@ -113,7 +130,7 @@ export async function withAccountTx<T>(
   const db = opts.db ?? ctx.db;
   try {
     return await fencedAccountWrite(
-      db as unknown as Tx,
+      bridgeTx(db),
       { accountId: ctx.accountId, mailboxId: opts.mailboxId, lock: opts.lock },
       async (tx) => fn(tx as unknown as LedgerTx),
     );

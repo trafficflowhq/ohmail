@@ -6,9 +6,9 @@ import {
   type LearningSignalInput, type LearningKind, type LearningLabel, type ParsedPattern,
 } from "@trafficflow/db";
 import { dialect, type Dialect } from "@trafficflow/db/dialect";
-import { withAccountTx, type ServiceContext } from "./context.js";
+import { bridgeTx, withAccountTx, type ServiceContext } from "./context.js";
 
-const asTx = (ctx: ServiceContext): Tx => ctx.db as unknown as Tx;
+const asTx = (ctx: ServiceContext): Tx => bridgeTx(ctx.db);
 
 // Re-exported rather than re-declared: `packages/db/src/learning-signal.ts` is now the ONE
 // definition (see its own header for why — the worker's request drain needs the write and may

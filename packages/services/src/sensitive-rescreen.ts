@@ -7,7 +7,7 @@ import {
   silentLogger, type Destination, type Logger, type NormalizedMessage, type Rule,
 } from "@trafficflow/core";
 import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
-import type { Db } from "./context.js";
+import { bridgeTx, type Db } from "./context.js";
 
 /**
  * RE-ROUTING MAIL THE CONSENT BYPASS ALREADY MISROUTED (mail 0030). The pipeline used to let the
@@ -202,7 +202,7 @@ interface RescreenRow {
 export async function runSensitiveRescreen(
   deps: SensitiveRescreenDeps,
 ): Promise<SensitiveRescreenResult> {
-  const tx = deps.db as unknown as Tx;
+  const tx = bridgeTx(deps.db);
   const log = deps.log ?? silentLogger;
   const now = deps.now ?? (() => new Date());
   const batch = deps.batch ?? SENSITIVE_RESCREEN_BATCH;

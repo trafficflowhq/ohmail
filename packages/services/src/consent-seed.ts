@@ -6,7 +6,7 @@ import {
   type LedgerTx, type OrganizedBy, type Tx,
 } from "@trafficflow/db";
 import { listMailboxUserFolders, listUserFolders } from "./folders.js";
-import type { ServiceContext } from "./context.js";
+import { bridgeTx, type ServiceContext } from "./context.js";
 import { DEFAULT_DORMANCY_DAYS } from "./consent-cutline.js";
 import { ServiceError } from "./errors.js";
 import { fenceErasedAccount } from "./erasure-fence.js";
@@ -51,7 +51,7 @@ export interface MailboxSignatureResult {
   requestId?: string;
 }
 
-const asTx = (ctx: ServiceContext): Tx => ctx.db as unknown as Tx;
+const asTx = (ctx: ServiceContext): Tx => bridgeTx(ctx.db);
 
 /**
  * The sent-mail seed — consent, read off what the user has already done. The strongest thing
@@ -811,7 +811,7 @@ export async function setAutoSuggest(
   const at = enabled ? ctx.now() : null;
   // The upsert is unchanged and still column-scoped; the transaction exists for the settings
   // change row beside it — see {@link recordSettingsChange}. Both land or neither does.
-  await (ctx.db as unknown as Tx).transaction(async (tx) => {
+  await bridgeTx(ctx.db).transaction(async (tx) => {
     // ── ERASURE FENCE, FIRST — before any settings lock. `deleteAccount` stamps
     // `accounts.erased_at` at the top of its transaction; reading it FOR SHARE here is what
     // stops this write recreating erased rows, and taking it FIRST is what keeps the lock
@@ -843,7 +843,7 @@ export async function setFoldersEnabled(
   ctx: ServiceContext, enabled: boolean,
 ): Promise<{ foldersEnabledAt: string | null }> {
   const at = enabled ? ctx.now() : null;
-  await (ctx.db as unknown as Tx).transaction(async (tx) => {
+  await bridgeTx(ctx.db).transaction(async (tx) => {
     // ── ERASURE FENCE, FIRST — before any settings lock. `deleteAccount` stamps
     // `accounts.erased_at` at the top of its transaction; reading it FOR SHARE here is what
     // stops this write recreating erased rows, and taking it FIRST is what keeps the lock
@@ -890,7 +890,7 @@ export async function setMailboxFoldersEnabled(
   ctx: ServiceContext, mailboxId: string, enabled: boolean,
 ): Promise<{ mailboxId: string; foldersDisabledAt: string | null }> {
   const at = enabled ? null : ctx.now();
-  await (ctx.db as unknown as Tx).transaction(async (tx) => {
+  await bridgeTx(ctx.db).transaction(async (tx) => {
     // ── ERASURE FENCE, FIRST — before any settings lock. `deleteAccount` stamps
     // `accounts.erased_at` at the top of its transaction; reading it FOR SHARE here is what
     // stops this write recreating erased rows, and taking it FIRST is what keeps the lock
@@ -1029,7 +1029,7 @@ export async function setMailboxSignature(
     storedHtml = null;
   }
   let travel: { pending: true; holder: OrganizedBy; requestId: string } | undefined;
-  await (ctx.db as unknown as Tx).transaction(async (tx) => {
+  await bridgeTx(ctx.db).transaction(async (tx) => {
     // ── ERASURE FENCE, FIRST — before any settings lock. `deleteAccount` stamps
     // `accounts.erased_at` at the top of its transaction; reading it FOR SHARE here is what
     // stops this write recreating erased rows, and taking it FIRST is what keeps the lock
@@ -1098,7 +1098,7 @@ export async function setMailboxSignature(
      changed here. Read both back rather than echoing `stored`/`storedHtml`, which would be the
      values they typed for a write that happened on the install holding this mailbox. */
   if (travel !== undefined) {
-    const [row] = await (ctx.db as unknown as Tx)
+    const [row] = await bridgeTx(ctx.db)
       .select({ signature: mailboxes.signature, signatureHtml: mailboxes.signatureHtml })
       .from(mailboxes).where(and(eq(mailboxes.id, mailboxId), eq(mailboxes.accountId, ctx.accountId)))
       .limit(1);
@@ -1270,7 +1270,7 @@ export async function setDormancyDays(
   let pending = false;
   // Column-scoped upsert unchanged; the transaction adds the settings change row — see
   // {@link recordSettingsChange}.
-  await (ctx.db as unknown as Tx).transaction(async (tx) => {
+  await bridgeTx(ctx.db).transaction(async (tx) => {
     // ── ERASURE FENCE, FIRST — before any settings lock. `deleteAccount` stamps
     // `accounts.erased_at` at the top of its transaction; reading it FOR SHARE here is what
     // stops this write recreating erased rows, and taking it FIRST is what keeps the lock
@@ -1383,7 +1383,7 @@ export async function setBlockRemoteImages(
   // {@link recordSettingsChange}. This is one of the two knobs the cross-surface staleness was
   // measured on: an image posture changed in a browser must reach an open desktop pane without
   // a restart.
-  await (ctx.db as unknown as Tx).transaction(async (tx) => {
+  await bridgeTx(ctx.db).transaction(async (tx) => {
     // ── ERASURE FENCE, FIRST — before any settings lock. `deleteAccount` stamps
     // `accounts.erased_at` at the top of its transaction; reading it FOR SHARE here is what
     // stops this write recreating erased rows, and taking it FIRST is what keeps the lock
@@ -1417,7 +1417,7 @@ export async function setBlockTrackingPixels(
   const at = blocked ? null : ctx.now();
   // Column-scoped upsert unchanged; the transaction adds the settings change row — see
   // {@link recordSettingsChange}.
-  await (ctx.db as unknown as Tx).transaction(async (tx) => {
+  await bridgeTx(ctx.db).transaction(async (tx) => {
     // ── ERASURE FENCE, FIRST — before any settings lock. `deleteAccount` stamps
     // `accounts.erased_at` at the top of its transaction; reading it FOR SHARE here is what
     // stops this write recreating erased rows, and taking it FIRST is what keeps the lock
@@ -1453,7 +1453,7 @@ export async function setBlockAutoUnsubscribe(
   const at = blocked ? ctx.now() : null;
   // Column-scoped upsert unchanged; the transaction adds the settings change row — see
   // {@link recordSettingsChange}.
-  await (ctx.db as unknown as Tx).transaction(async (tx) => {
+  await bridgeTx(ctx.db).transaction(async (tx) => {
     // ── ERASURE FENCE, FIRST — before any settings lock. `deleteAccount` stamps
     // `accounts.erased_at` at the top of its transaction; reading it FOR SHARE here is what
     // stops this write recreating erased rows, and taking it FIRST is what keeps the lock
@@ -1510,7 +1510,7 @@ export async function setLocale(
   const stored = locale === null || locale === DEFAULT_LOCALE ? null : locale;
   // Column-scoped upsert unchanged; the transaction adds the settings change row — see
   // {@link recordSettingsChange}.
-  await (ctx.db as unknown as Tx).transaction(async (tx) => {
+  await bridgeTx(ctx.db).transaction(async (tx) => {
     // ── ERASURE FENCE, FIRST — before any settings lock. `deleteAccount` stamps
     // `accounts.erased_at` at the top of its transaction; reading it FOR SHARE here is what
     // stops this write recreating erased rows, and taking it FIRST is what keeps the lock
@@ -1553,7 +1553,7 @@ export async function setThemeFace(
       `themeFace must be one of ${SUPPORTED_THEME_FACES.join(", ")}, or null`,
     );
   }
-  await (ctx.db as unknown as Tx).transaction(async (tx) => {
+  await bridgeTx(ctx.db).transaction(async (tx) => {
     // Erasure fence FIRST — the single lock chain (accounts → settings → sequence row) that
     // every settings writer keeps; `erasure-fence.ts` carries the two-sided argument.
     await fenceErasedAccount(tx, dialect(ctx.db), ctx.accountId);
@@ -1600,7 +1600,7 @@ export async function setResurfaceTime(
       "validation_failed", 400, "resurfaceTime must be 'HH:MM' (24-hour), or null",
     );
   }
-  await (ctx.db as unknown as Tx).transaction(async (tx) => {
+  await bridgeTx(ctx.db).transaction(async (tx) => {
     // Erasure fence FIRST — the single lock chain (accounts → settings → sequence row) that
     // every settings writer keeps; `erasure-fence.ts` carries the two-sided argument.
     await fenceErasedAccount(tx, dialect(ctx.db), ctx.accountId);
@@ -1629,7 +1629,7 @@ export async function setOnboardingCompleted(
   ctx: ServiceContext,
 ): Promise<{ onboardingCompletedAt: string }> {
   const at = ctx.now();
-  await (ctx.db as unknown as Tx).transaction(async (tx) => {
+  await bridgeTx(ctx.db).transaction(async (tx) => {
     // Erasure fence FIRST — the single lock chain (accounts → settings → sequence row) every
     // settings writer keeps; `erasure-fence.ts` carries the two-sided argument.
     await fenceErasedAccount(tx, dialect(ctx.db), ctx.accountId);

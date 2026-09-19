@@ -1,7 +1,7 @@
 import { and, eq, gt, isNull, like, lt, or, sql } from "drizzle-orm";
 import { users, type Tx } from "@trafficflow/db";
 import { authThrottle, loginTokens } from "@trafficflow/db/cloud";
-import type { Db } from "../context.js";
+import { bridgeTx, type Db } from "../context.js";
 import { generateToken, hashToken } from "../auth/crypto.js";
 import { isLoopbackHostname } from "../auth/origins.js";
 import { normalizeRecipient, type MailerPort, type MailSendResult } from "./port.js";
@@ -54,7 +54,7 @@ export interface OperatorAlertContext {
   now: () => Date;
 }
 
-const asTx = (ctx: MailContext): Tx => ctx.db as unknown as Tx;
+const asTx = (ctx: MailContext): Tx => bridgeTx(ctx.db);
 
 /**
  * The `auth_throttle` implementation of {@link RecipientLimiter}, for a caller that legitimately
@@ -71,7 +71,7 @@ export function dbRecipientLimiter(db: Db): RecipientLimiter {
       const nowIso = now.toISOString();
       const rolled = sql`${authThrottle.windowStartedAt} < ${floorIso}::timestamptz`;
 
-      const [row] = await (db as unknown as Tx).insert(authThrottle)
+      const [row] = await bridgeTx(db).insert(authThrottle)
         .values({ key, failures: 1, windowStartedAt: now, updatedAt: now })
         .onConflictDoUpdate({
           target: authThrottle.key,

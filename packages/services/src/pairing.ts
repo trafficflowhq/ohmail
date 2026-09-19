@@ -4,7 +4,7 @@ import { type Tx } from "@trafficflow/db";
 import { pairingTokens } from "@trafficflow/db";
 import { generateToken, hashToken } from "./auth/crypto.js";
 import { PAIRED_DEVICE_KINDS, type PairedDeviceKind } from "./auth/session-lifecycle.js";
-import { runInTransaction, type ServiceContext } from "./context.js";
+import { bridgeTx, runInTransaction, type ServiceContext } from "./context.js";
 import type { OAuthTokens } from "./auth/types.js";
 import { ServiceError } from "./errors.js";
 
@@ -68,7 +68,7 @@ export function pairingInvalid(): ServiceError {
   );
 }
 
-const asTx = (ctx: ServiceContext): Tx => ctx.db as unknown as Tx;
+const asTx = (ctx: ServiceContext): Tx => bridgeTx(ctx.db);
 
 
 export interface PairingTokenMinted {

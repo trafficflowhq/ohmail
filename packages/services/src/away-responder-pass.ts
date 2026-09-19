@@ -10,7 +10,7 @@ import {
   type AwayAudience, type AwaySuppression, type Logger, type OpenSendAdapter, type SendAdapter,
 } from "@trafficflow/core/mail";
 import { dialect } from "@trafficflow/db/dialect";
-import type { Db } from "./context.js";
+import { bridgeTx, type Db } from "./context.js";
 
 /**
  * The away responder's pass — reply-only, throttled per person, on all three hosts. It moved out
@@ -343,14 +343,14 @@ export async function runAwayResponderPass(
 async function expireEndedResponders(
   db: Db, at: Date, mailboxIds: readonly string[] | undefined, log: Logger,
 ): Promise<number> {
-  const rows = await (db as unknown as Tx).update(awayResponders)
+  const rows = await bridgeTx(db).update(awayResponders)
     .set({ enabled: false, enabledAt: null, endsAt: null, updatedAt: at })
     .where(and(
       eq(awayResponders.enabled, true),
       isNotNull(awayResponders.endsAt),
       sql`${awayResponders.endsAt} < ${dialect(db).ts(at)}`,
       ...(mailboxIds === undefined ? [] : [exists(
-        (db as unknown as Tx).select({ one: sql`1` }).from(mailboxes).where(and(
+        bridgeTx(db).select({ one: sql`1` }).from(mailboxes).where(and(
           eq(mailboxes.accountId, awayResponders.accountId),
           inArray(mailboxes.id, [...mailboxIds]),
         )),
@@ -368,7 +368,7 @@ async function expireEndedResponders(
 }
 
 async function healMissingEnabledAt(db: Db, at: Date): Promise<void> {
-  await (db as unknown as Tx).update(awayResponders)
+  await bridgeTx(db).update(awayResponders)
     .set({ enabledAt: at })
     .where(and(eq(awayResponders.enabled, true), isNull(awayResponders.enabledAt)));
 }
@@ -385,7 +385,7 @@ async function healMissingEnabledAt(db: Db, at: Date): Promise<void> {
  */
 async function markConsidered(db: Db, accountIds: readonly string[], at: Date): Promise<void> {
   if (accountIds.length === 0) return;
-  await (db as unknown as Tx).update(awayResponders)
+  await bridgeTx(db).update(awayResponders)
     .set({ lastConsideredAt: at })
     .where(inArray(awayResponders.accountId, [...accountIds]));
 }
@@ -394,7 +394,7 @@ async function liveResponders(
   db: Db, at: Date, mailboxIds: readonly string[] | undefined,
 ): Promise<LiveResponder[]> {
   const d = dialect(db);
-  const rows = await (db as unknown as Tx).select({
+  const rows = await bridgeTx(db).select({
     accountId: awayResponders.accountId,
     body: awayResponders.body,
     audience: awayResponders.audience,
@@ -426,7 +426,7 @@ async function liveResponders(
        * the named mailboxes; absent means every account, the hosted clock's shape.
        */
       ...(mailboxIds === undefined ? [] : [exists(
-        (db as unknown as Tx).select({ one: sql`1` }).from(mailboxes).where(and(
+        bridgeTx(db).select({ one: sql`1` }).from(mailboxes).where(and(
           eq(mailboxes.accountId, awayResponders.accountId),
           inArray(mailboxes.id, [...mailboxIds]),
         )),
@@ -502,7 +502,7 @@ async function answerForAccount(
   // Every address on this account, INCLUDING disabled and errored mailboxes: an address that was
   // ours is still ours, and a responder that answers a former mailbox of its own owner is the same
   // loop as one that answers its current one.
-  const ownRows = await (db as unknown as Tx)
+  const ownRows = await bridgeTx(db)
     .select({ address: mailboxes.address }).from(mailboxes)
     .where(eq(mailboxes.accountId, responder.accountId));
   const ownAddresses = new Set(ownRows.map((m) => awayNormalizeAddress(m.address)));
@@ -609,7 +609,7 @@ async function markUndeliverableFromBounces(
        headers quote one of this account's own minted reply ids, for a correspondent not already
        marked. `->>` on a stored header renders an ARRAY value as its JSON text (`["<id>"]`), which
        a substring test reads correctly — the map is written array-valued by `mime.ts`. */
-    const rows = await (db as unknown as Tx).select({
+    const rows = await bridgeTx(db).select({
       sender: awayReplies.sender,
       headers: messageBodies.headers,
       minted: awayReplies.mintedMessageId,
@@ -658,7 +658,7 @@ async function markUndeliverableFromBounces(
     /* One guarded UPDATE. `IS NULL` in the WHERE as well as in the read above, because two runners
        can reach this with the same row in hand — the first stamp is the one that stands, and the
        count returned is what THIS run actually changed. */
-    const marked = await (db as unknown as Tx).update(awaySenderState)
+    const marked = await bridgeTx(db).update(awaySenderState)
       .set({ undeliverableAt: at })
       .where(and(
         eq(awaySenderState.accountId, accountId),
@@ -700,7 +700,7 @@ async function markUndeliverableFromBounces(
 async function readCandidates(
   db: Db, responder: LiveResponder, mailboxIds: readonly string[] | undefined, batch: number,
 ): Promise<Candidate[]> {
-  const rows = await (db as unknown as Tx).select({
+  const rows = await bridgeTx(db).select({
     id: messages.id,
     mailboxId: messages.mailboxId,
     fromAddress: messages.fromAddress,
@@ -976,7 +976,7 @@ async function answerOne(
    * nothing: the sweep has already taken the `pending` row this pass reserved.
    */
   try {
-    await (db as unknown as Tx).transaction(async (tx) => {
+    await bridgeTx(db).transaction(async (tx) => {
       await fenceErased(tx, dialect(db), {
         accountId: responder.accountId, mailboxId: candidate.mailboxId,
       });
@@ -1064,7 +1064,7 @@ async function reserve(
   db: Db, responder: LiveResponder, candidate: Candidate, sender: string,
   textHash: string, minted: string, at: Date,
 ): Promise<"reserved" | "throttled" | "owned_elsewhere"> {
-  return (db as unknown as Tx).transaction(async (tx) => {
+  return bridgeTx(db).transaction(async (tx) => {
     /* ── THE ERASURE FENCE, THE FIRST STATEMENT ──────────────────────────────────────────────
      * Both rows this transaction writes carry the CORRESPONDENT'S ADDRESS, and both are tables
      * the Art. 17 sweep empties (`account_settings.ts`'s delete list names them). The candidate
@@ -1161,7 +1161,7 @@ async function finalize(
   db: Db, candidate: Candidate, accountId: string,
   outcome: "sent" | "unverified", reason: string | null, minted: string | null, at: Date,
 ): Promise<void> {
-  await (db as unknown as Tx).update(awayReplies)
+  await bridgeTx(db).update(awayReplies)
     .set({
       outcome, reason,
       ...(minted ? { mintedMessageId: minted } : {}),
@@ -1187,7 +1187,7 @@ async function recordDecision(
   db: Db, responder: LiveResponder, candidate: Candidate, sender: string,
   outcome: "suppressed", reason: AwaySuppression, textHash: string, at: Date,
 ): Promise<void> {
-  await (db as unknown as Tx).transaction(async (tx) => {
+  await bridgeTx(db).transaction(async (tx) => {
     await fenceErased(tx, dialect(db), {
       accountId: responder.accountId, mailboxId: candidate.mailboxId,
     });
