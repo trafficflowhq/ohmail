@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { SettingsRow, SettingsSection } from "@ohmail/ui";
 import { account, apiConfigured } from "../../api-client";
+import { SELF_HOST_BUILD } from "../../hello";
 
 /**
  * The subscription pane — one control, and nothing else. Whoever operates this service holds the plan,
@@ -91,7 +92,12 @@ export function useManageOffer(demo: boolean): { manageOffered: boolean; withdra
   const [offered, setOffered] = useState(false);
   useEffect(() => {
     // The landing page's mailbox reaches no server and has no account to ask about.
-    if (demo || !apiConfigured()) return;
+    // SELF_HOST_BUILD: `metered` stopped meaning "subscription page exists" the day the
+    // self-host table declared its explicit mailbox allowance (`routes/self-host.ts`) —
+    // `accessFor` answers non-null there, so this read would offer a Manage control on a
+    // box with nothing to manage. Billing UI never reaches a self-host surface;
+    // compiled away on managed builds like every other SELF_HOST_BUILD branch.
+    if (SELF_HOST_BUILD || demo || !apiConfigured()) return;
     let alive = true;
     void account.access()
       .then((a) => { if (alive) setOffered(a.metered); })

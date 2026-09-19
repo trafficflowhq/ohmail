@@ -627,11 +627,17 @@ export function JoinScreen({ initialCode, billingReturn, publicSignup = false }:
 
       {step === "invite" && (
         <form onSubmit={submitInvite}>
-          {/* Two leads, because the sentence "ohmail is invite-only" is a claim about
-              the deployment and it is false on an open one. The step is still reachable
-              there (a deploy-skew fallback, and an invited user who prefers to redeem), so
-              it needs copy that is true in both. */}
-          <p className="sub">{t(publicSignup ? "step_invite_lead_open" : "step_invite_lead")}</p>
+          {/* Three leads, because the sentence "ohmail is invite-only during the beta" is a
+              claim about the deployment: false on an open one (publicSignup), and false on a
+              self-host box, where invitation is the permanent design, not a beta condition
+              — same compiled flag the login screen's `inviteOnlySelfhost` reads. */}
+          <p className="sub">{t(
+            publicSignup
+              ? "step_invite_lead_open"
+              : SELF_HOST_BUILD
+                ? "step_invite_lead_selfhost"
+                : "step_invite_lead",
+          )}</p>
           <label className="join-label" htmlFor="join-code">{t("inviteLabel")}</label>
           <input
             id="join-code"
