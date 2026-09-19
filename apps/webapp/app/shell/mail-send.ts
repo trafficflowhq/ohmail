@@ -668,14 +668,13 @@ export function canCancel(state: SendState, held: boolean): boolean {
 
 /**
  * The arms: `sending`/`queued` are locked — a second press mints a second Idempotency-Key, a second reservation, a
- * second delivery. An EMPTY message is locked — empty body AND no attachments ({@link sendNeedsContent}: an
- * attachment is content, and the server composes a blank body beside files) — except on a forward, below. `failed`
- * is NOT locked: terminal on the server for that draft, so the only way forward is a fresh deliberate send.
- * `unverified` IS locked, only for the messages an unresolved send names. `duplicate` is NOT locked: the server
- * refused THIS message as a copy of one it holds, so the deliberate choice open to the reader is usually an EDIT —
- * a changed message is admitted — and locking would leave no way to make that change. A COMPOSE additionally needs
- * a recipient and a mailbox, refused here rather than on the wire where `POST /drafts` would already have written a
- * row before the send answered 400.
+ * second delivery. An EMPTY message is locked — empty body AND no attachments ({@link sendNeedsContent}) — except
+ * on a forward, below. `failed` is NOT locked: terminal on the server for that draft, so the only way forward is a
+ * fresh deliberate send. `unverified` IS locked, only for the messages an unresolved send names. `duplicate` is NOT
+ * locked: the server refused THIS message as a copy of one it holds, so the deliberate choice open to the reader is
+ * usually an EDIT — a changed message is admitted — and locking would leave no way to make that change. A COMPOSE
+ * additionally needs a recipient and a mailbox, refused here rather than on the wire where `POST /drafts` would
+ * already have written a row before the send answered 400.
  */
 
 /**
