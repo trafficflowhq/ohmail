@@ -13,7 +13,7 @@ import {
   mailboxCredentials, mailboxFolders, mailboxProfileMirror,
   mailboxes, messageBodies, messageFailures, messageInstances, messageStates, messages, messageTags,
   organizerRequests, outboundSends, routingDecisions, rules, tags, threadNotes, threads,
-  trackerEvents, unsubscribeRecords,
+  trackerEvents, unsubscribeExamined, unsubscribeRecords,
 } from "@trafficflow/db/mail";
 import { BODIES_IDS_MAX } from "@trafficflow/services/mail";
 // THE SHARED DRAIN POLICY — the ONE definition of "is this mirror behind", of the three
@@ -127,10 +127,17 @@ const APPLY_ORDER: readonly EntityType[] = [
      them nothing to find rather than the other way round. It never appears as a non-delete — the
      feed emits this type only as a delete — so its place in the upsert order is inert. */
   "mailbox",
-  "settings", "folder", "tag", "thread", "message", "message_state", "rule", "draft", "approval", "routing_decision",
+  "settings", "folder", "tag", "thread", "message", "message_state", "rule", "draft", "routing_decision",
   // After `message`: the suggestion's upsert FK-skips when its message is not mirrored, so it
   // must be given the page's own message first — the same reason every child follows its parent.
   "screener_suggestion",
+  /* LAST, because an approval references BOTH tables above it: mail 0118 gave
+     `approvals.routing_decision_id` and `approvals.message_id` composite foreign keys, and this
+     entry sat BEFORE `routing_decision` — so a page carrying a decision and its approval applied
+     the approval first and 23503-aborted the whole page. That was the released 0.20.0's
+     first-pull wedge (`approvals_routing_decision_id_account_fk`, measured 2026-09-19). In the
+     REVERSED delete pass, last means the approval's tombstone clears before its holders'. */
+  "approval",
 ];
 
 const DEFAULT_PAGE_LIMIT = 500;
@@ -332,6 +339,13 @@ interface CursorState {
    * every pre-freshen cursor and every mirror that never completed a pull — the honest default.
    */
   lastDrainAt: string | null;
+  /**
+   * Rows a page apply could not store (see {@link QuarantinedRow}): the cursor is PAST them, so
+   * this list is the only copy the install still has. Re-applied after every completed pull;
+   * empty is the healthy steady state, and non-empty is what the engine surfaces as "this copy
+   * could not store some of the account's rows".
+   */
+  quarantine: QuarantinedRow[];
 }
 
 export interface CloudMirrorConfig {
@@ -430,6 +444,13 @@ export interface CloudMirror {
    * to this process, so the honest "as of" is THIS process's stamp against the account, not the window's.
    */
   freshness(): MirrorFreshness;
+  /**
+   * How many rows this mirror could not store — the quarantine's size, with the first held row's
+   * constraint name for a diagnostic reader. `count: 0` is the healthy steady state; anything
+   * else means this copy is missing rows the account holds, and the engine surfaces it as a
+   * mailbox error so the shell renders a sentence instead of a settled-looking app.
+   */
+  quarantined(): { count: number; constraint: string | null };
 }
 
 export const DEFAULT_CLOUD_POLL_MS = 20_000;
@@ -480,6 +501,30 @@ interface CursorFile {
   capMarkerRepair?: unknown;
   /** ISO instant of the last completed pull; absent on every file from before the freshen. */
   lastDrainAt?: unknown;
+  /** The held rows a page apply could not store; absent on every file from before the quarantine. */
+  quarantine?: unknown;
+}
+
+/**
+ * The cursor file's `quarantine` field, validated row by row. A malformed entry is DROPPED, not
+ * a parse failure: failing the whole cursor read over one bad row would re-bootstrap the mirror,
+ * a far larger loss than the row. Every kept entry has the four fields a re-apply needs.
+ */
+function readQuarantine(raw: unknown): QuarantinedRow[] {
+  if (!Array.isArray(raw)) return [];
+  const rows: QuarantinedRow[] = [];
+  for (const item of raw.slice(0, QUARANTINE_MAX)) {
+    const r = item as { ch?: { type?: unknown; id?: unknown; op?: unknown; seq?: unknown }; constraint?: unknown; tableName?: unknown } | null;
+    const ch = r?.ch;
+    if (!ch || typeof ch.type !== "string" || typeof ch.id !== "string"
+      || typeof ch.op !== "string" || typeof ch.seq !== "number") continue;
+    rows.push({
+      ch: ch as unknown as SyncChange,
+      constraint: asIdent(r.constraint),
+      tableName: asIdent(r.tableName),
+    });
+  }
+  return rows;
 }
 
 function readCursor(path: string): CursorState {
@@ -505,6 +550,7 @@ function readCursor(path: string): CursorState {
       // Absent (every pre-freshen file) reads NULL — "not known to be current" — so an upgraded
       // stale install freshens on its first resume, which is the population the port is for.
       lastDrainAt: typeof j.lastDrainAt === "string" && j.lastDrainAt !== "" ? j.lastDrainAt : null,
+      quarantine: readQuarantine(j.quarantine),
     };
   } catch {
     // No file at all is a FRESH install, not an upgraded one: there are no rows to re-key, and the
@@ -518,6 +564,7 @@ function readCursor(path: string): CursorState {
       capMarkerRepair: true,
       // And it has never completed a pull: the bootstrap's own window owns "newest first" here.
       lastDrainAt: null,
+      quarantine: [],
     };
   }
 }
@@ -534,6 +581,9 @@ function writeCursor(path: string, state: CursorState): void {
     folderBackfill: state.folderBackfill,
     capMarkerRepair: state.capMarkerRepair,
     ...(state.lastDrainAt !== null ? { lastDrainAt: state.lastDrainAt } : {}),
+    // Absent when empty, so a healthy install's cursor file is byte-identical to one written
+    // before the field existed — and an old build ignores the key entirely.
+    ...(state.quarantine.length > 0 ? { quarantine: state.quarantine } : {}),
   };
   writeFileSync(path, JSON.stringify(onDisk));
 }
@@ -718,6 +768,77 @@ async function threadPresent(tx: Tx, id: string): Promise<boolean> {
   const rows = await tx.select({ id: threads.id }).from(threads).where(eq(threads.id, id)).limit(1);
   return rows.length > 0;
 }
+
+// The two holders mail 0118 put foreign keys on that this file never had to ask about before:
+// `approvals.routing_decision_id` and `routing_decisions.matched_rule_id` (composite, with the
+// account). Same shape as `messagePresent`, asked inside the page's own transaction.
+async function routingDecisionPresent(tx: Tx, id: string): Promise<boolean> {
+  const rows = await tx.select({ id: routingDecisions.id }).from(routingDecisions)
+    .where(eq(routingDecisions.id, id)).limit(1);
+  return rows.length > 0;
+}
+
+async function rulePresent(tx: Tx, id: string): Promise<boolean> {
+  const rows = await tx.select({ id: rules.id }).from(rules).where(eq(rules.id, id)).limit(1);
+  return rows.length > 0;
+}
+
+/**
+ * WHAT A ROW-LEVEL REFUSAL LOOKS LIKE, named. Postgres class 23 (integrity: 23503 FK, 23505
+ * unique, 23502 not-null) is deterministic per row — replaying the page cannot change the answer,
+ * which is exactly what separates it from the network and token failures the poll's backoff
+ * exists for. The names travel only through an identifier grammar: `constraint` and `table` are
+ * this schema's own identifiers, never anybody's mail.
+ */
+interface IntegrityFacts { code: string; constraint: string | null; tableName: string | null }
+
+const PG_IDENT_RE = /^[A-Za-z_][A-Za-z0-9_$]{0,127}$/;
+const asIdent = (v: unknown): string | null =>
+  typeof v === "string" && PG_IDENT_RE.test(v) ? v : null;
+
+/** The first integrity-class Postgres error in a thrown value's cause chain, or null. */
+function integrityFacts(err: unknown): IntegrityFacts | null {
+  let e = err as Record<string, unknown> | null | undefined;
+  const seen = new Set<unknown>();
+  for (let depth = 0; e && typeof e === "object" && depth < 6 && !seen.has(e); depth++) {
+    seen.add(e);
+    const code = e.code;
+    if (typeof code === "string" && /^23[0-9A-Z]{3}$/.test(code)) {
+      return { code, constraint: asIdent(e.constraint), tableName: asIdent(e.table) };
+    }
+    e = e.cause as Record<string, unknown> | null | undefined;
+  }
+  return null;
+}
+
+/** The two identifier fields for a log line, or nothing — spread into `cfg.log` payloads. */
+export function integrityLogFields(err: unknown): { constraint?: string; table?: string } {
+  const fk = integrityFacts(err);
+  if (!fk) return {};
+  return {
+    ...(fk.constraint ? { constraint: fk.constraint } : {}),
+    ...(fk.tableName ? { table: fk.tableName } : {}),
+  };
+}
+
+/**
+ * A row held aside because its page could not store it — the raw wire change, kept verbatim so a
+ * later pull can re-apply it once its holder has arrived. Persisted in the cursor file: the
+ * cursor has advanced PAST this row's page, so losing the copy across a relaunch would lose the
+ * row for as long as the entity does not change upstream.
+ */
+interface QuarantinedRow { ch: SyncChange; constraint: string | null; tableName: string | null }
+
+/** Sink for rows a quarantined page apply could not store. See {@link applyPage}. */
+interface QuarantineSink { take(ch: SyncChange, facts: IntegrityFacts): void }
+
+/**
+ * How many rows the quarantine may hold. A page is at most {@link DEFAULT_PAGE_LIMIT} changes and
+ * a healthy install quarantines none, so the cap is defence against a pathological feed, not a
+ * budget; past it the newest refusal is dropped WITH its log line, so the count on the surface
+ * can under-state and never lies upward.
+ */
+const QUARANTINE_MAX = 500;
 
 /**
  * A hosted `MailboxDTO` as the local row that mirrors it — minus the two progress stamps.
@@ -1304,11 +1425,23 @@ async function applyUpsert(
     case "approval": {
       const a = ch.entity as ApprovalDTO | undefined;
       if (!a) return false;
+      /* BOTH REFERENCES ARE FOREIGN KEYS since mail 0118, and both holders can be absent here (a
+         message this mirror skipped, a decision in a later page). The draft arm's rule: keep the
+         pointer only when its holder is mirrored, land the row DEGRADED as `"partial"` so the
+         stale-resume ledger leaves the replay free to re-deliver it whole once the holder lands.
+         Writing them unguarded was the released 0.20.0's first-pull 23503 wedge. */
+      const wantsMessage = Boolean(a.messageId);
+      const messageId = a.messageId && (await messagePresent(tx, a.messageId)) ? a.messageId : null;
+      const wantsDecision = Boolean(a.routingDecisionId);
+      const routingDecisionId =
+        a.routingDecisionId && (await routingDecisionPresent(tx, a.routingDecisionId))
+          ? a.routingDecisionId
+          : null;
       const body = {
         accountId: world.accountId,
         kind: a.kind,
-        messageId: a.messageId ?? null,
-        routingDecisionId: a.routingDecisionId ?? null,
+        messageId,
+        routingDecisionId,
         action: a.proposed?.action ?? "",
         summary: a.proposed?.summary ?? "",
         payload: (a.proposed?.payload ?? null) as unknown,
@@ -1320,17 +1453,26 @@ async function applyUpsert(
       await tx.insert(approvals).values({ id: a.id, ...body })
         .onConflictDoUpdate({ target: approvals.id, set: body });
       gen?.approval.add(a.id);
-      return true;
+      return (wantsMessage && messageId === null) || (wantsDecision && routingDecisionId === null)
+        ? "partial"
+        : true;
     }
     case "routing_decision": {
       const rd = ch.entity as RoutingDecisionDTO | undefined;
       if (!rd) return false;
       if (!(await messagePresent(tx, rd.messageId))) return false;
+      // `matched_rule_id` carries a composite FK since mail 0118 — the approval arm's rule, one
+      // pointer instead of two: kept only when the rule is mirrored, else the row lands without
+      // its attribution as `"partial"` and the replay's own copy restores it.
+      const wantsRule = Boolean(rd.matchedRuleId);
+      const matchedRuleId = rd.matchedRuleId && (await rulePresent(tx, rd.matchedRuleId))
+        ? rd.matchedRuleId
+        : null;
       const body = {
         accountId: world.accountId,
         messageId: rd.messageId,
         inputProvenance: rd.inputProvenance,
-        matchedRuleId: rd.matchedRuleId ?? null,
+        matchedRuleId,
         destination: rd.destination,
         confidence: rd.confidence ?? null,
         rationale: rd.rationale ?? null,
@@ -1439,6 +1581,16 @@ async function applyDelete(tx: Tx, ch: SyncChange, detached?: DetachedSurvivor[]
       await tx.delete(flagState).where(eq(flagState.messageId, ch.id));
       await tx.delete(trackerEvents).where(eq(trackerEvents.messageId, ch.id));
       await tx.delete(attachments).where(eq(attachments.messageId, ch.id));
+      /* The examined ledger holds TWO keys into this walk — its own `message_id` and its
+         `record_id` into the records deleted next — so both go first, or this delete is the
+         header's own 23503. Found while fixing the approvals wedge; standalone-era, empty on a
+         pure Cloud-door database, and one seeded row proved the walk incomplete. */
+      await tx.delete(unsubscribeExamined).where(eq(unsubscribeExamined.messageId, ch.id));
+      await tx.delete(unsubscribeExamined).where(inArray(
+        unsubscribeExamined.recordId,
+        tx.select({ id: unsubscribeRecords.id }).from(unsubscribeRecords)
+          .where(eq(unsubscribeRecords.messageId, ch.id)),
+      ));
       await tx.delete(unsubscribeRecords).where(eq(unsubscribeRecords.messageId, ch.id));
       await tx.delete(messages).where(eq(messages.id, ch.id));
       return true;
@@ -1528,6 +1680,14 @@ async function applyPage(
    * arrives.
    */
   appliedKeys?: Set<string>,
+  /**
+   * When present, the page is applied ROW BY ROW under savepoints and a row that fails an
+   * integrity constraint (class 23) is handed here instead of aborting the page — the caller's
+   * second attempt after a whole-page 23503, never the fast path. Everything else about the page
+   * (ordering, recording, the husk sweep) is identical, which is the point of it being a mode of
+   * this function rather than a second one.
+   */
+  quarantine?: QuarantineSink | null,
 ): Promise<number> {
   const changes: SyncChange[] = [
     ...resp.changes.creates, ...resp.changes.updates, ...resp.changes.moves, ...resp.changes.deletes,
@@ -1556,8 +1716,8 @@ async function applyPage(
     let applied = 0;
     /** The messages this page changed upstream — the bodies it re-owes; see the sweep below. */
     const touchedMessages: string[] = [];
-    const record = async (type: EntityType, id: string, op: ChangeOp, move?: SyncChange["move"]): Promise<void> => {
-      await recordChange(tx, {
+    const record = async (t: Tx, type: EntityType, id: string, op: ChangeOp, move?: SyncChange["move"]): Promise<void> => {
+      await recordChange(t, {
         accountId: world.accountId,
         entityType: type,
         entityId: id,
@@ -1566,42 +1726,68 @@ async function applyPage(
       });
     };
 
+    const upsertOne = async (t: Tx, ch: SyncChange): Promise<void> => {
+      const outcome = await applyUpsert(t, dialect(db), world, ch, now, gen, known);
+      if (outcome) {
+        // Every entity keeps its hosted id verbatim — EXCEPT the settings row, whose id IS an
+        // account id, and the one identity the two worlds do not share is the account's own:
+        // the local `materializeSettings` answers only for the LOCAL account and reads a
+        // foreign id as "not this account's" — a null entity, which the local feed then
+        // drains as a DELETE. Re-keyed here so the doorbell that arrived rings instead of
+        // tombstoning the very record it announces.
+        await record(t, ch.type, ch.type === "settings" ? world.accountId : ch.id, ch.op, ch.move);
+        // A PARTIAL apply (a reply draft landed with its parent still unmirrored) is real
+        // enough to record and count, but it is NOT the entity's full state — the ledger
+        // must leave the replay's own copy free to heal it once the parent lands.
+        if (outcome !== "partial") appliedKeys?.add(`${ch.type}:${ch.id}`);
+        if (ch.type === "message") touchedMessages.push(ch.id);
+        applied++;
+      }
+    };
+    const deleteOne = async (t: Tx, ch: SyncChange): Promise<void> => {
+      const detached: DetachedSurvivor[] = [];
+      if (await applyDelete(t, ch, detached)) {
+        await record(t, ch.type, ch.id, "delete");
+        appliedKeys?.add(`${ch.type}:${ch.id}`);
+        // The survivors the delete DETACHED (a draft losing its reply target, a message losing
+        // its thread) changed too, and the feed did not name them — see applyDelete's header.
+        // Batched (not a per-row loop holding the seq counter), and CHUNKED (not one statement
+        // that dies on PGlite's bind-parameter cap) — see DETACHED_BATCH_MAX.
+        await recordDetached(t, world, detached);
+        applied++;
+      }
+    };
+    /**
+     * Run one change directly (the fast path), or — quarantining — under its own SAVEPOINT, so a
+     * row that fails an integrity constraint rolls back alone and is handed to the sink while the
+     * rest of the page lands and the cursor can advance. Only class-23 errors are caught: a
+     * network or resource failure mid-page must still abort the page and retry whole.
+     */
+    const guarded = async (step: (t: Tx) => Promise<void>, ch: SyncChange): Promise<void> => {
+      if (!quarantine) {
+        await step(tx);
+        return;
+      }
+      try {
+        await tx.transaction(async (sp) => { await step(sp as unknown as Tx); });
+      } catch (err) {
+        const facts = integrityFacts(err);
+        if (!facts) throw err;
+        quarantine.take(ch, facts);
+      }
+    };
+
     for (const type of APPLY_ORDER) {
       for (const ch of nonDeletes) {
         if (ch.type !== type) continue;
-        const outcome = await applyUpsert(tx, dialect(db), world, ch, now, gen, known);
-        if (outcome) {
-          // Every entity keeps its hosted id verbatim — EXCEPT the settings row, whose id IS an
-          // account id, and the one identity the two worlds do not share is the account's own:
-          // the local `materializeSettings` answers only for the LOCAL account and reads a
-          // foreign id as "not this account's" — a null entity, which the local feed then
-          // drains as a DELETE. Re-keyed here so the doorbell that arrived rings instead of
-          // tombstoning the very record it announces.
-          await record(type, type === "settings" ? world.accountId : ch.id, ch.op, ch.move);
-          // A PARTIAL apply (a reply draft landed with its parent still unmirrored) is real
-          // enough to record and count, but it is NOT the entity's full state — the ledger
-          // must leave the replay's own copy free to heal it once the parent lands.
-          if (outcome !== "partial") appliedKeys?.add(`${ch.type}:${ch.id}`);
-          if (ch.type === "message") touchedMessages.push(ch.id);
-          applied++;
-        }
+        await guarded((t) => upsertOne(t, ch), ch);
       }
     }
     for (const type of [...APPLY_ORDER].reverse()) {
       for (const ch of deletes) {
         if (ch.type !== type) continue;
         if (supersededInPage(ch)) continue;
-        const detached: DetachedSurvivor[] = [];
-        if (await applyDelete(tx, ch, detached)) {
-          await record(type, ch.id, "delete");
-          appliedKeys?.add(`${ch.type}:${ch.id}`);
-          // The survivors the delete DETACHED (a draft losing its reply target, a message losing
-          // its thread) changed too, and the feed did not name them — see applyDelete's header.
-          // Batched (not a per-row loop holding the seq counter), and CHUNKED (not one statement
-          // that dies on PGlite's bind-parameter cap) — see DETACHED_BATCH_MAX.
-          await recordDetached(tx, world, detached);
-          applied++;
-        }
+        await guarded((t) => deleteOne(t, ch), ch);
       }
     }
     /* A MESSAGE THAT CHANGED UPSTREAM RE-OWES A REFILLABLE HUSK OF ITS BODY. The hosted side
@@ -1803,6 +1989,48 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
   let knownMailboxes: ReadonlySet<string> = EMPTY_MAILBOXES;
   /** The ids the hosted account named last, for the post-drain prune. */
   let hostedMailboxIds: string[] = [];
+  /**
+   * THE QUARANTINE — rows a page could not store, keyed `type:id`, restored from the cursor file
+   * so a relaunch neither forgets the rows nor forgets to say so. The Map is authoritative;
+   * {@link syncQuarantine} mirrors it into `cursor.quarantine`, which every existing cursor write
+   * persists. A row leaves by ONE of two doors: the post-pull retry applies it, or a LATER change
+   * to the same entity lands through the ordinary drain (the held copy is then stale — re-applying
+   * it would regress the row — so {@link landPage} drops it by key).
+   */
+  const quarantine = new Map<string, QuarantinedRow>(
+    cursor.quarantine.map((r) => [`${r.ch.type}:${r.ch.id}`, r]),
+  );
+  const syncQuarantine = (): void => {
+    cursor.quarantine = [...quarantine.values()];
+  };
+  const quarantineSink: QuarantineSink = {
+    take: (ch, facts) => {
+      const key = `${ch.type}:${ch.id}`;
+      const held = quarantine.get(key);
+      // An older seq never replaces a newer held copy; a full quarantine drops the row (counted
+      // by its log line, never silently — see QUARANTINE_MAX for why the cap only under-states).
+      if (held && held.ch.seq > ch.seq) return;
+      if (!held && quarantine.size >= QUARANTINE_MAX) {
+        cfg.log?.("cloud_row_quarantine_full", {
+          count: quarantine.size, kind: ch.type, errorCode: facts.code,
+          ...(facts.constraint ? { constraint: facts.constraint } : {}),
+          reason: "the quarantine is at its cap, so this refused row is dropped; a later change " +
+            "to the entity re-delivers it",
+        });
+        return;
+      }
+      quarantine.set(key, { ch, constraint: facts.constraint, tableName: facts.tableName });
+      syncQuarantine();
+      cfg.log?.("cloud_row_quarantined", {
+        kind: ch.type, errorCode: facts.code,
+        ...(facts.constraint ? { constraint: facts.constraint } : {}),
+        ...(facts.tableName ? { table: facts.tableName } : {}),
+        count: quarantine.size,
+        reason: "this row violates a local constraint, so it is held aside while the rest of its " +
+          "page lands and the cursor advances; it is re-applied after every completed pull",
+      });
+    },
+  };
   /**
    * The hosted account's own message count per mailbox — see {@link CloudMirror.hostedCounts}.
    * Empty until a counted refresh lands, and an empty map is served as "no number", never as 0.
@@ -2032,7 +2260,43 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
       sawDeletes = true;
       hostedCounts = new Map();
     }
-    const applied = await applyPage(cfg.db, cfg.world, body, now(), gen, knownMailboxes, appliedKeys);
+    let applied: number;
+    try {
+      applied = await applyPage(cfg.db, cfg.world, body, now(), gen, knownMailboxes, appliedKeys);
+    } catch (err) {
+      /* A ROW-LEVEL REFUSAL MUST NOT WEDGE THE MIRROR. An integrity error (23503 and kin) is
+         deterministic: the retry-with-backoff above this replays the identical page for ever while
+         the app looks settled — the released 0.20.0's first-pull wedge. So the page is re-applied
+         row by row under savepoints, the refusing rows go to the quarantine (logged with their
+         constraint), and the cursor advances past everything else. Anything non-integrity still
+         throws: the poll's backoff is the right answer for a network or resource failure. */
+      const facts = integrityFacts(err);
+      if (!facts) throw err;
+      cfg.log?.("cloud_page_integrity_refused", {
+        errorCode: facts.code,
+        ...(facts.constraint ? { constraint: facts.constraint } : {}),
+        ...(facts.tableName ? { table: facts.tableName } : {}),
+        reason: "a row of this page violates a local constraint; the page is re-applied row by " +
+          "row so the refusing rows can be quarantined instead of pinning the cursor",
+      });
+      applied = await applyPage(cfg.db, cfg.world, body, now(), gen, knownMailboxes, appliedKeys, quarantineSink);
+    }
+    /* A LANDED PAGE SUPERSEDES ANY OLDER HELD COPY of the entities it names: the held row lost by
+       seq, and re-applying it later would regress what this page just wrote. STRICTLY older — a
+       held copy at the SAME seq is this page's own refused row, which the sink just took and the
+       retry still owes. */
+    if (quarantine.size > 0) {
+      let droppedHeld = false;
+      for (const ch of [...body.changes.creates, ...body.changes.updates, ...body.changes.moves, ...body.changes.deletes]) {
+        const key = `${ch.type}:${ch.id}`;
+        const held = quarantine.get(key);
+        if (held && held.ch.seq < ch.seq) {
+          quarantine.delete(key);
+          droppedHeld = true;
+        }
+      }
+      if (droppedHeld) syncQuarantine();
+    }
     // AFTER the commit: the generation's marks land BEFORE either cursor moves past the page they
     // describe — the ordering {@link BootstrapGen.flush} rests on.
     gen?.flush();
@@ -2935,6 +3199,34 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
       // the zero-tags gate rather than by a special case for it.
       await repairStaleTags();
       await repairStaleFolders(sweep !== null && sweep !== undefined);
+      /* THE QUARANTINE'S WAY BACK IN — after the drain and the sweep (whose generation never
+         marked these rows), before the body pass (a healed message gets its body this same pull).
+         The drain that just ran may have landed the holders the held rows were refused for, so
+         they are re-applied through the same page path; rows that still refuse re-enter through
+         the sink, everything else leaves. This runs on EVERY completed pull, so the shell's
+         "Sync now" press — which ends in `pullOnce` — is also the person-facing retry. */
+      if (quarantine.size > 0) {
+        const held = [...quarantine.values()].map((r) => r.ch);
+        quarantine.clear();
+        const synthetic: SyncResponse = {
+          changes: {
+            creates: held.filter((c) => c.op !== "delete"),
+            updates: [], moves: [],
+            deletes: held.filter((c) => c.op === "delete"),
+          },
+          cursor: cursor.sync, hasMore: false, serverTime: now().toISOString(),
+        };
+        const healed = await applyPage(
+          cfg.db, cfg.world, synthetic, now(), null, knownMailboxes, undefined, quarantineSink,
+        );
+        syncQuarantine();
+        writeCursor(cfg.cursorPath, cursor);
+        cfg.log?.("cloud_quarantine_retry", {
+          count: held.length, applied: healed, failed: quarantine.size,
+          reason: "held rows re-applied after the pull; rows whose holders have arrived land and " +
+            "leave the quarantine",
+        });
+      }
       await backfillBodies();
       // AFTER the body pass, deliberately: `backfillBodies` is what resolves the walk and moves it
       // to `complete`, and the repair defers (without marking) while it is still walking — so
@@ -3055,7 +3347,10 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
         .catch((err: unknown) => {
           // A failed pull is a bad network or an expired token, not a reason to stop being a mirror.
           // The local database keeps serving what it holds; the next attempt resumes from the cursor.
-          cfg.log?.("cloud_pull_failed", { err, reason: "the pull did not complete; the mirror keeps serving what it holds and retries with backoff" });
+          // `integrityLogFields`: a 23xxx failure names its constraint and table on the line —
+          // the released 0.20.0 logged bare `errorCode:"23503"` and the field could not say
+          // which foreign key was wedging every fresh paired desktop.
+          cfg.log?.("cloud_pull_failed", { err, ...integrityLogFields(err), reason: "the pull did not complete; the mirror keeps serving what it holds and retries with backoff" });
           scheduleAfter(true);
         });
     }, delay);
@@ -3082,6 +3377,10 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
     // renderers (the web ladder, the phone's wordmark line, the desktop window over
     // `GET /mirror/freshness`), so a label can never disagree with a freshen.
     freshness: () => mirrorFreshness(cursor.lastDrainAt, now()),
+    quarantined: () => ({
+      count: quarantine.size,
+      constraint: quarantine.values().next().value?.constraint ?? null,
+    }),
     async start() {
       // A first pull that fails is a bad network or an expired token, not a launch failure: the
       // mirror serves what it holds and the poll retries (on backoff). Scheduling regardless is what
@@ -3090,7 +3389,7 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
         await pullOnce();
         scheduleAfter(false);
       } catch (err) {
-        cfg.log?.("cloud_pull_failed", { err, reason: "the first pull did not complete; the mirror serves what it holds and the poll retries with backoff" });
+        cfg.log?.("cloud_pull_failed", { err, ...integrityLogFields(err), reason: "the first pull did not complete; the mirror serves what it holds and the poll retries with backoff" });
         scheduleAfter(true);
       }
     },

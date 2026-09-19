@@ -4135,3 +4135,32 @@ describe("the row takes a new password without the mailbox being removed", () =>
     expect(named(el, copy.signInAgainAction!)).toHaveLength(0);
   });
 });
+
+/* ═══ A STORE THAT CANNOT KEEP UP IS DISCLOSED ON THE PANE, RETRY BESIDE IT ═══════════════════
+ * The released 0.20.0's cloud first-sync wedge (FK 23503 in the PGlite apply) was invisible: the
+ * mirrored rows carry the HOSTED status, healthy, and the app looked settled while bodies never
+ * loaded. The engine now overlays `status: "error", errorCode: "storage"` on the served facts
+ * while its quarantine holds rows (`decorateStoreStuck`, pinned by the sidecar's own
+ * cloud-engine-store-stuck test). This is the pane half: the overlaid row renders its failed
+ * state, and "Sync now" — whose route ends in the mirror's `pullOnce`, which re-applies the
+ * quarantine — stays pressable as the person-facing retry. Mutations watched red: `stateOf`'s
+ * error arm removed → the state case; the row controls withheld on `error` → the retry case.
+ */
+describe("a store that cannot keep up is disclosed, with the retry beside it", () => {
+  it("an error/storage row on the CLOUD door renders the failed state", async () => {
+    FACTS = [{ ...MAILBOX, status: "error", errorCode: "storage" }];
+    const el = await render("cloud");
+    const row = addressRows(el)[0]!;
+    expect(row.textContent, "the wedge stayed invisible — the released 0.20.0 shape")
+      .toContain("Not connecting (storage)");
+  });
+
+  it("and Sync now — the retry that re-pulls — is still offered and reaches the engine", async () => {
+    FACTS = [{ ...MAILBOX, status: "error", errorCode: "storage" }];
+    const el = await render("cloud");
+    const syncNow = buttonExactly(el, "Sync now");
+    expect(syncNow, "a failed row without its retry is a disclosure nobody can act on").not.toBeNull();
+    await act(async () => { syncNow!.click(); });
+    expect(pressed()).toEqual([{ url: "/mailboxes/mbx-1/resync", method: "POST" }]);
+  });
+});

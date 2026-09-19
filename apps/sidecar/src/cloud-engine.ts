@@ -21,7 +21,7 @@ import {
   redeemPairingToken,
   type CloudSignInRequest,
 } from "./cloud-signin.js";
-import { createCloudMirror, CLOUD_SYNC_TYPES, type CloudMirror } from "./cloud-mirror.js";
+import { createCloudMirror, integrityLogFields, CLOUD_SYNC_TYPES, type CloudMirror } from "./cloud-mirror.js";
 import { startCloudWake, type CloudWake } from "./cloud-wake.js";
 import { matchReadRoute } from "./cloud-read.js";
 import { createWriteThroughProxy, type WriteThroughProxy } from "./cloud-proxy.js";
@@ -163,6 +163,37 @@ async function decorateHostedCounts(
     return typeof n === "number" ? { ...(row as object), hostedMessageCount: n } : row;
   });
   return json({ ...(body as object), items: decorated }, res.status);
+}
+
+/**
+ * THE STORE-STUCK DISCLOSURE. The mirrored rows carry the HOSTED account's status — healthy —
+ * so a mirror that cannot STORE what it pulls looked settled: the released 0.20.0's first-sync
+ * 23503 wedge rendered no sentence anywhere. While the mirror holds quarantined rows, every
+ * served row is overlaid `status: "error", errorCode: "storage"` — the closed set's own
+ * "Sync failed — ohmail could not store this mail. This one is on us." — so the strip's
+ * mailbox-error arm and Settings → Mailboxes disclose it through affordances that exist, and
+ * the pane's "Sync now" ends in `pullOnce`, which re-applies the quarantine: the retry.
+ * Derived at read time, never written, so it clears the moment the quarantine empties.
+ */
+async function decorateStoreStuck(
+  res: Response,
+  quarantined: { count: number },
+): Promise<Response> {
+  if (quarantined.count === 0) return res;
+  let body: unknown;
+  try {
+    body = await res.clone().json();
+  } catch {
+    return res;
+  }
+  const items = (body as { items?: unknown })?.items;
+  if (!Array.isArray(items)) return res;
+  const overlaid = items.map((row) =>
+    row && typeof row === "object"
+      ? { ...(row as object), status: "error", errorCode: "storage" }
+      : row,
+  );
+  return json({ ...(body as object), items: overlaid }, res.status);
 }
 
 /**
@@ -1377,6 +1408,7 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
         void live.mirror.start().catch((err: unknown) => {
           log?.("cloud_pull_failed", {
             err,
+            ...integrityLogFields(err),
             reason: "the first pull after signing in did not complete; the mirror retries with backoff",
           });
         });
@@ -1586,6 +1618,7 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
         void live.mirror.start().catch((err: unknown) => {
           log?.("cloud_pull_failed", {
             err,
+            ...integrityLogFields(err),
             reason: "the first pull after pairing did not complete; the mirror retries with backoff",
           });
         });
@@ -1672,7 +1705,9 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
           // its own cadence (`cloud-mirror.ts`), and it travels under a field whose name says so.
           // Absent when the map has nothing for a row — never 0, which would claim an empty account.
           if (req.method === "GET" && path === "/mailboxes") {
-            return await decorateHostedCounts(answer, liveMirror.hostedCounts());
+            const counted = await decorateHostedCounts(answer, liveMirror.hostedCounts());
+            // AFTER the counts: the overlay is the louder fact and must not be decorated away.
+            return await decorateStoreStuck(counted, liveMirror.quarantined());
           }
           return answer;
         } catch (err) {

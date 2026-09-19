@@ -86,6 +86,14 @@ export const ALLOWED_FIELDS: readonly string[] = [
   // logged nowhere.
   "reserveMs", "assembleMs", "openMs", "submitMs", "finalizeMs", "projectMs", "sendId",
   "reason", "detail", "kind", "severity", "phase", "state", "verdict", "configVar",
+  // ── WHICH CONSTRAINT REFUSED A ROW, added WITH the lines that emit them ───────────────────
+  //
+  // The cloud mirror's page apply logged a bare `errorCode:"23503"` while a foreign key wedged
+  // every fresh paired desktop's first sync on the released 0.20.0 — the one fact that names the
+  // defect is the constraint, and this census dropped it. Both values are OUR schema's own
+  // identifiers (they pass the sidecar's identifier grammar before they are handed over), never
+  // anybody's mail. `log-fields.test.ts` drives the REAL logger for them.
+  "constraint", "table",
   // `refusal` is the CLASS of an AI spend refusal — `quantity`, `state` or `fault`, the three
   // words the wire already carries — beside the `verdict` the gate answered and the `reason` it
   // named. Added WITH the two lines that emit it (`screener_suggest_refused`, `draft_refused`),
