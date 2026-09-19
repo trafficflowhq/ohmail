@@ -1537,6 +1537,51 @@ impl Shell {
         self.replace(self.planned(None));
     }
 
+    /// The failure card's "Unlock and retry" press: remove the engine's data-directory lock and
+    /// start it again. See [`engine_unlock_retry`] for who may ask and why.
+    ///
+    /// The engine reclaims provably-stale locks on its own; what reaches this press is the
+    /// residue it may not decide — a record it cannot read (a torn file after a power cut), or a
+    /// live process it cannot tell apart from a second engine. The PERSON can decide that, so the
+    /// press acts only once the shell has GIVEN UP on the engine ([`EngineState::Failed`]): over
+    /// a running engine this would unlink a live lock and put two stores on one directory, which
+    /// is the corruption the lock exists to refuse. The lock's path comes from the shell's own
+    /// plan — the window names no file — and a lock already gone is not an error: whatever
+    /// removed it left nothing for the restart to trip on.
+    pub fn unlock_retry(&self) -> Result<serde_json::Value, String> {
+        if !matches!(self.engine().state(), EngineState::Failed { .. }) {
+            return Err(
+                "the engine has not given up, so there is no stale lock to remove".to_string(),
+            );
+        }
+        let plan = self.planned(None);
+        let Plan::Spawn(launch) = &plan else {
+            return Err("this install has no engine to start; nothing was removed".to_string());
+        };
+        let dir = launch
+            .env
+            .iter()
+            .find(|(k, _)| k.as_os_str() == std::ffi::OsStr::new(DATA_DIR_VAR))
+            .map(|(_, v)| PathBuf::from(v.clone()))
+            .ok_or_else(|| {
+                "the engine's plan names no data directory; nothing was removed".to_string()
+            })?;
+        // The sidecar's own lock file name — `LOCK_FILE` in `apps/sidecar/src/db.ts`; a desktop
+        // test holds the two literals together.
+        let lock = dir.join("sidecar.lock");
+        match fs::remove_file(&lock) {
+            Ok(()) => {}
+            Err(err) if err.kind() == io::ErrorKind::NotFound => {}
+            Err(err) => {
+                return Err(format!(
+                    "the lock could not be removed ({err}); the engine was not restarted"
+                ));
+            }
+        }
+        self.replace(plan);
+        Ok(self.status())
+    }
+
     /// For tests and for the commands: the engine as it is right now.
     pub fn engine(&self) -> Arc<Engine> {
         Arc::clone(&self.engine.lock().expect("shell engine"))
@@ -3911,6 +3956,17 @@ fn engine_logout<R: tauri::Runtime>(
     outcome.map_err(|reason| reason.replace(LOGOUT_UNCHANGED, ""))
 }
 
+/// Remove a data-directory lock the PERSON has judged stale, and start the engine again.
+///
+/// The window may only press this, never aim it: no path, no argument, and the shell refuses it
+/// outright unless the engine has already failed for good — [`Shell::unlock_retry`] carries the
+/// reasoning. Answers the status AFTER the restart has begun, like `engine_configure`.
+#[cfg(feature = "local-engine")]
+#[tauri::command(async)]
+fn engine_unlock_retry(shell: tauri::State<'_, Arc<Shell>>) -> Result<serde_json::Value, String> {
+    shell.unlock_retry()
+}
+
 /// One request, down the pipe and back.
 ///
 /// `async` is load-bearing rather than decoration: Tauri runs a synchronous command on the main
@@ -5250,9 +5306,9 @@ fn announce_link<R: tauri::Runtime>(app: &tauri::AppHandle<R>, raw: &str) {
 #[cfg(feature = "local-engine")]
 const LOCAL_ENGINE_CAPABILITY: &str = r#"{
   "identifier": "local-engine",
-  "description": "The window may ask the shell about the local engine, send it one request at a time, choose which mailbox this install is for, sign out of it, ask the engine whether the computer at a pasted pairing link's address is the one that link came from (the window hands over the ORIGIN and the PIN the link carried and no token; on an install that has no door the shell starts an engine for that CANDIDATE in a directory of its own, asks it, and removes that directory afterwards, configuring nothing), post one notification, set the icon's badge, report its own startup and interaction timings as numbers the shell turns into a log line, open one of a fixed list of ohmail.app pages in the user's own browser (naming the page and, for the sign-in page alone, a 43-character commitment the shell validates and appends itself), hand the shell ONE http/https address a person clicked in a message for that same browser to open, hand it the BYTES of one attachment and a display name so the shell can write that file under its own directory and open it in this computer's usual viewer, or save that same file into this computer's Downloads folder (the shell picks the folder and composes every part of the name; a name already taken is numbered, never overwritten), and listen for the shell's own events — including the handoff code an ohmail:// activation carried. It may also drive HOST MODE, entirely through this shell's own commands: read its state, probe the user's own tailnet (tailscale status), arm or disarm publishing the engine's loopback door to that tailnet (tailscale serve — never funnel, pinned by test), read and set this install's start-at-login registration, and open Tailscale's download page — one more constant address the shell owns, the window still naming no URL. It may also CLAIM a mailto: activation the shell is holding (take-once, so a link seeds one compose form and never two), and ask about the OS's DEFAULT MAIL APP through two commands that name nothing: a read of the current handler's state, and a request that takes each platform's own sanctioned path — macOS's consent dialog, the Windows Settings page (one more constant address), xdg-settings on Linux — never a registry write. It may read the app's UPDATE state, press the same button the menu item is, and ask for the check the app makes at launch — a read of the installed version and of what the last check found, a press that checks or restarts into an already-verified payload, and a scheduled check that is silent unless it finds something (a press is a person asking and is answered out loud, which is right for a button and wrong once a day for ever); it may not name a feed, see a payload or install anything, and the request, the signature check and the version guard stay in the shell. It may ask for the DESKTOP'S OWN THEME through one read-only command: on an Omarchy system the shell answers the active theme's raw material (the theme's colors.toml, the system's font and gap facts — paths the SHELL names, never the window), and everywhere else it answers nothing. Nothing else: no filesystem path the window may name, no arbitrary shell command, no network, and no other Tauri core API.",
+  "description": "The window may ask the shell about the local engine, send it one request at a time, choose which mailbox this install is for, sign out of it, press the failure card's one recovery (the shell removes the engine's own data-directory lock — a path the shell resolves and the window never names — and starts the engine again, refused outright unless the shell has already given up on the engine), ask the engine whether the computer at a pasted pairing link's address is the one that link came from (the window hands over the ORIGIN and the PIN the link carried and no token; on an install that has no door the shell starts an engine for that CANDIDATE in a directory of its own, asks it, and removes that directory afterwards, configuring nothing), post one notification, set the icon's badge, report its own startup and interaction timings as numbers the shell turns into a log line, open one of a fixed list of ohmail.app pages in the user's own browser (naming the page and, for the sign-in page alone, a 43-character commitment the shell validates and appends itself), hand the shell ONE http/https address a person clicked in a message for that same browser to open, hand it the BYTES of one attachment and a display name so the shell can write that file under its own directory and open it in this computer's usual viewer, or save that same file into this computer's Downloads folder (the shell picks the folder and composes every part of the name; a name already taken is numbered, never overwritten), and listen for the shell's own events — including the handoff code an ohmail:// activation carried. It may also drive HOST MODE, entirely through this shell's own commands: read its state, probe the user's own tailnet (tailscale status), arm or disarm publishing the engine's loopback door to that tailnet (tailscale serve — never funnel, pinned by test), read and set this install's start-at-login registration, and open Tailscale's download page — one more constant address the shell owns, the window still naming no URL. It may also CLAIM a mailto: activation the shell is holding (take-once, so a link seeds one compose form and never two), and ask about the OS's DEFAULT MAIL APP through two commands that name nothing: a read of the current handler's state, and a request that takes each platform's own sanctioned path — macOS's consent dialog, the Windows Settings page (one more constant address), xdg-settings on Linux — never a registry write. It may read the app's UPDATE state, press the same button the menu item is, and ask for the check the app makes at launch — a read of the installed version and of what the last check found, a press that checks or restarts into an already-verified payload, and a scheduled check that is silent unless it finds something (a press is a person asking and is answered out loud, which is right for a button and wrong once a day for ever); it may not name a feed, see a payload or install anything, and the request, the signature check and the version guard stay in the shell. It may ask for the DESKTOP'S OWN THEME through one read-only command: on an Omarchy system the shell answers the active theme's raw material (the theme's colors.toml, the system's font and gap facts — paths the SHELL names, never the window), and everywhere else it answers nothing. Nothing else: no filesystem path the window may name, no arbitrary shell command, no network, and no other Tauri core API.",
   "windows": ["main"],
-  "permissions": ["allow-engine-status", "allow-engine-request", "allow-engine-configure", "allow-engine-logout", "allow-host-candidate-probe", "allow-notify", "allow-set-badge", "allow-ui-vitals", "allow-open-link", "allow-open-external", "allow-open-attachment", "allow-save-attachment", "allow-host-state", "allow-tailscale-status", "allow-tailscale-serve-arm", "allow-tailscale-serve-disarm", "allow-autostart-get", "allow-autostart-set", "allow-open-tailscale-download", "allow-mailto-claim", "allow-default-mail-status", "allow-default-mail-request", "allow-omarchy-theme", "allow-update-state", "allow-update-press", "allow-update-poll", "core:event:allow-listen"]
+  "permissions": ["allow-engine-status", "allow-engine-request", "allow-engine-configure", "allow-engine-logout", "allow-engine-unlock-retry", "allow-host-candidate-probe", "allow-notify", "allow-set-badge", "allow-ui-vitals", "allow-open-link", "allow-open-external", "allow-open-attachment", "allow-save-attachment", "allow-host-state", "allow-tailscale-status", "allow-tailscale-serve-arm", "allow-tailscale-serve-disarm", "allow-autostart-get", "allow-autostart-set", "allow-open-tailscale-download", "allow-mailto-claim", "allow-default-mail-status", "allow-default-mail-request", "allow-omarchy-theme", "allow-update-state", "allow-update-press", "allow-update-poll", "core:event:allow-listen"]
 }"#;
 
 /// The commands `build.rs` declared to the ACL manifest, baked in at compile time.
@@ -5374,6 +5430,8 @@ pub fn attach<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R
             engine_request,
             engine_configure,
             engine_logout,
+            // The failure card's one recovery press — see the command for who may ask and why.
+            engine_unlock_retry,
             // The paired door's first step, on an install with no engine to ask — see the command.
             host_candidate_probe,
             notify,

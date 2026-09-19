@@ -557,6 +557,20 @@ const EN = {
     "Your mail is untouched. It is on your own server, or in your hosted account, and this app "
     + "has not changed either.",
   gateTryAgain: "Try again",
+  /* ── A LOCKED LOCAL STORE, in person words ───────────────────────────────────────────────
+     The engine reclaims a provably-stale lock on its own; what reaches this card is the residue
+     it may not decide alone — a record it cannot read (a torn file after a power cut) or a live
+     process it cannot tell apart from a second engine. The person CAN decide, so the card names
+     both possibilities and offers the one press that acts. Never the engine's own JSON line. */
+  gateLockedStore:
+    "Another copy of ohmail may be open on this computer, or the app did not close cleanly last "
+    + "time. If no other copy is open, ohmail can remove the leftover lock and try again.",
+  gateUnlockRetry: "Unlock and retry",
+  /* Any other structured failure names the engine's word for it and where the detail lives —
+     never the raw log line. The word is a pointer a person can report, not a sentence. */
+  gateEngineReported: (name: string) =>
+    `The mail engine could not start (${name}). Quit ohmail and open it again; if it keeps `
+    + "happening, ohmail's log file has the details.",
   gateSessionGone:
     "You were signed out of your hosted account, so this install stopped receiving new mail. "
     + "What was already here is kept; sign in again to reconnect.",
@@ -653,6 +667,7 @@ export const DOOR_COPY: typeof EN = liveCopy("desktopDoor", EN, {
   installSignOutWhyHost: ["host", "machine"],
   installSignOutConfirmWhyHost: ["machine", "host"],
   gateRestart: ["host"],
+  gateEngineReported: ["name"],
   gateUnpaired: ["machine", "host"],
   aboutDoorHostWhy: ["host", "machine"],
   localLead: ["machine"],

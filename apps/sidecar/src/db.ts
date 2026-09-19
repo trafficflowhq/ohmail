@@ -1,6 +1,8 @@
-import { closeSync, existsSync, fstatSync, fsyncSync, linkSync, mkdirSync, openSync, readFileSync, readdirSync, rmSync, statSync, writeSync } from "node:fs";
+import { closeSync, existsSync, fstatSync, fsyncSync, linkSync, mkdirSync, openSync, readFileSync, readdirSync, readlinkSync, rmSync, statSync, writeSync } from "node:fs";
 import { join } from "node:path";
 import { uptime as osUptime } from "node:os";
+import { execFileSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { PGlite, type Transaction as PgliteTransaction } from "@electric-sql/pglite";
 import { drizzle, type PgliteDatabase } from "drizzle-orm/pglite";
 import { migrate } from "drizzle-orm/pglite/migrator";
@@ -778,17 +780,76 @@ interface LockRecord {
    * since the lock was written", which is the common way a pid gets recycled.
    */
   bootAtMs?: number;
+  /**
+   * The writer's executable image, normalized by {@link normalizedImage}. An exe cannot change
+   * under a live pid, so a LIVE process whose image differs from this is a different process —
+   * the one positive identity every platform can answer, where `startTicks` is `/proc`-only.
+   */
+  exe?: string;
+  /**
+   * Minted per record, so two records that agree on every identity field still differ in BYTES —
+   * {@link removeIfUnchanged} compares bytes, and this keeps "same bytes" meaning "same claim".
+   */
+  nonce?: string;
 }
 
-/** This machine's boot, as the two mechanisms see it. Read fresh; neither is cached. */
-function bootIdentity(): { bootId?: string; bootAtMs: number } {
-  let bootId: string | undefined;
+/**
+ * One bounded, silent read of a platform tool's answer. `null` is "could not read" and never an
+ * error: everything built on it treats absence as I-cannot-tell, which refuses rather than acts.
+ */
+function probe(cmd: string, args: readonly string[]): string | null {
   try {
-    const raw = readFileSync("/proc/sys/kernel/random/boot_id", "utf8").trim();
-    if (raw) bootId = raw;
+    const out = execFileSync(cmd, [...args], {
+      encoding: "utf8", timeout: 5_000, windowsHide: true, stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+    return out === "" ? null : out;
   } catch {
-    /* not Linux, or a kernel without it — the portable half below still answers */
+    return null;
   }
+}
+
+/** `reg query`'s answer for Windows' per-boot prefetcher counter → a stable token, or null. */
+export function bootIdFromRegQuery(text: string | null): string | null {
+  const m = text?.match(/\bBootId\b\s+REG_DWORD\s+(0x[0-9a-fA-F]+|\d+)/);
+  return m ? `winboot-${Number(m[1])}` : null;
+}
+
+/**
+ * The OS's per-boot identity, where one exists. Linux mints a kernel UUID, macOS
+ * `kern.bootsessionuuid`, and Windows increments a per-boot counter under the prefetcher's
+ * registry key. All three are values a clock adjustment cannot move — the property that lets a
+ * MISMATCH take a lock away, and exactly what the wall-clock `bootAtMs` lacks. The spawned reads
+ * are cached (a boot id cannot change under a live process); Linux's stays a plain file read.
+ */
+let spawnedBootId: string | null | undefined;
+function osBootId(): string | undefined {
+  if (process.platform === "linux") {
+    try {
+      const raw = readFileSync("/proc/sys/kernel/random/boot_id", "utf8").trim();
+      return raw === "" ? undefined : raw;
+    } catch {
+      return undefined;
+    }
+  }
+  if (spawnedBootId === undefined) {
+    if (process.platform === "darwin") {
+      spawnedBootId = probe("sysctl", ["-n", "kern.bootsessionuuid"]);
+    } else if (process.platform === "win32") {
+      spawnedBootId = bootIdFromRegQuery(probe("reg", [
+        "query",
+        "HKLM\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Memory Management\\PrefetchParameters",
+        "/v", "BootId",
+      ]));
+    } else {
+      spawnedBootId = null;
+    }
+  }
+  return spawnedBootId ?? undefined;
+}
+
+/** This machine's boot, as the two mechanisms see it. `bootAtMs` is read fresh, never cached. */
+function bootIdentity(): { bootId?: string; bootAtMs: number } {
+  const bootId = osBootId();
   return { ...(bootId === undefined ? {} : { bootId }), bootAtMs: Date.now() - osUptime() * 1000 };
 }
 
@@ -812,6 +873,63 @@ function processStartTicks(pid: number): number | null {
 }
 
 /**
+ * An executable path reduced to the name two different readers agree on: lower-cased basename,
+ * Windows' `.exe` stripped, and the ` (deleted)` marker `/proc/<pid>/exe` grows when the binary
+ * is replaced on disk under a live process — without that strip, upgrading Node while an engine
+ * runs would read as "a different process" and take a live lock away.
+ */
+export function normalizedImage(name: string): string {
+  const leaf = name.replace(/ \(deleted\)$/, "").split(/[\\/]/).pop() ?? "";
+  return leaf.toLowerCase().replace(/\.exe$/, "");
+}
+
+/** One `tasklist /FO CSV /NH` row → the image of exactly `pid`, or null on anything else. */
+export function imageFromTasklistCsv(text: string | null, pid: number): string | null {
+  const m = text?.match(/^"([^"]+)","(\d+)"/m);
+  return m && Number(m[2]) === pid ? normalizedImage(m[1]!) : null;
+}
+
+/**
+ * WHAT is running as `pid`, not merely whether something is — the live half of {@link LockRecord.exe}.
+ * Linux answers from `/proc` (the exe link, then argv[0] where the link is another user's);
+ * Windows and macOS ask their own process tools, only ever on the contested path. `null` is
+ * "cannot read", which decides nothing.
+ */
+function processImageOf(pid: number): string | null {
+  if (process.platform === "linux") {
+    try {
+      return normalizedImage(readlinkSync(`/proc/${pid}/exe`));
+    } catch {
+      /* another user's process hides its exe link; argv[0] below is world-readable */
+    }
+    try {
+      const argv0 = readFileSync(`/proc/${pid}/cmdline`, "utf8").split("\0")[0] ?? "";
+      return argv0 === "" ? null : normalizedImage(argv0);
+    } catch {
+      return null;
+    }
+  }
+  if (process.platform === "darwin") {
+    const comm = probe("ps", ["-p", String(pid), "-o", "comm="]);
+    return comm === null ? null : normalizedImage(comm);
+  }
+  if (process.platform === "win32") {
+    return imageFromTasklistCsv(probe("tasklist", ["/FI", `PID eq ${pid}`, "/FO", "CSV", "/NH"]), pid);
+  }
+  return null;
+}
+
+/**
+ * Could this image be a mail engine at all? The engine is always the vendored Node runtime — the
+ * desktop shell's rule is "the program is the runtime and the engine is its argument", on every
+ * platform — so an image naming neither node nor ohmail is positively not one. Deliberately a
+ * CLASS test and not an equality: it must stay true for every spelling the runtime ships under.
+ */
+function couldBeAnEngine(image: string): boolean {
+  return image.includes("node") || image.includes("ohmail");
+}
+
+/**
  * Does `rec` describe THE PROCESS that is currently running as `rec.pid`?
  *
  * Answers `true` whenever it cannot tell, which is the whole design: `false` takes a lock away
@@ -830,10 +948,22 @@ function lockStillOurs(rec: LockRecord, nowBoot: { bootId?: string; bootAtMs: nu
     return false;
   }
   // SAME BOOT (or we could not tell): the pid can still have been recycled within it.
-  if (rec.startTicks === undefined) return true;
-  const live = processStartTicks(rec.pid);
-  if (live === null) return true;           // no `/proc` for it — cannot tell, so do not act
-  return live === rec.startTicks;
+  if (rec.startTicks !== undefined) {
+    const live = processStartTicks(rec.pid);
+    if (live !== null && live !== rec.startTicks) return false;
+  }
+  /* WHAT holds the number, not merely that something does. Two positive arms: a live image that
+   * differs from the recorded one is a different process (an exe cannot change under a pid), and
+   * a live image that could not be an engine at all frees even a LEGACY record, which carries no
+   * identity fields — after a power loss the crashed engine's number usually lands on some system
+   * process, and "cannot tell" there refused every later launch of the only app that can fix it.
+   * Both arms act only on a POSITIVE reading; an unreadable image decides nothing. */
+  const image = processImageOf(rec.pid);
+  if (image !== null) {
+    if (rec.exe !== undefined && image !== rec.exe) return false;
+    if (!couldBeAnEngine(image)) return false;
+  }
+  return true;
 }
 
 /** The identity of THIS process, as it goes into the file. */
@@ -844,6 +974,8 @@ function selfLockRecord(): LockRecord {
     pid: process.pid,
     ...(ticks === null ? {} : { startTicks: ticks }),
     ...boot,
+    exe: normalizedImage(process.execPath),
+    nonce: randomUUID(),
   };
 }
 
@@ -865,6 +997,8 @@ function parseLockRecord(raw: string): LockRecord | null {
         ...(Number.isInteger(o.startTicks) ? { startTicks: o.startTicks as number } : {}),
         ...(typeof o.bootId === "string" && o.bootId ? { bootId: o.bootId } : {}),
         ...(Number.isFinite(o.bootAtMs) ? { bootAtMs: o.bootAtMs as number } : {}),
+        ...(typeof o.exe === "string" && o.exe ? { exe: o.exe } : {}),
+        ...(typeof o.nonce === "string" && o.nonce ? { nonce: o.nonce } : {}),
       };
     } catch {
       return null;
@@ -970,7 +1104,7 @@ function claimLockFile(path: string): void {
  * answers "alive" for a process that never heard of this mailbox. {@link LockRecord} records
  * WHICH process, and a live pid whose identity does not match the record is taken over.
  */
-export function lockDataDir(dataDir: string): () => void {
+export function lockDataDir(dataDir: string, log?: Diagnostic): () => void {
   const path = join(dataDir, LOCK_FILE);
   /* Three passes, not two: a pass that finds the lock REPLACED underneath it removes nothing and
      spends its turn judging the replacement instead, and the O_EXCL retry after a real removal
@@ -1010,12 +1144,19 @@ export function lockDataDir(dataDir: string): () => void {
         }
         throw new DataDirLockedError(dataDir, "a lock file this build cannot read");
       }
-      if (alive(rec.pid) && lockStillOurs(rec, bootIdentity())) {
+      const holderAlive = alive(rec.pid);
+      if (holderAlive && lockStillOurs(rec, bootIdentity())) {
         throw new DataDirLockedError(dataDir, `pid ${rec.pid}`);
       }
       // Stale (or a recycled pid): clear THE FILE THAT WAS JUDGED and try again, so two processes
-      // both finding it stale still resolve to one winner via the O_EXCL race above.
+      // both finding it stale still resolve to one winner via the O_EXCL race above. One sentence
+      // in the log and none for the person — recovering from a crash is the ordinary path.
       if (!removeIfUnchanged(path, held)) continue;
+      log?.("data_dir_lock_reclaimed", {
+        kind: holderAlive ? "owner-replaced" : "owner-gone",
+        reason: "a leftover data-directory lock from a crash or power loss named a process that " +
+          "is provably not the engine that wrote it; reclaimed, and the start continues",
+      });
     }
   }
   throw new DataDirLockedError(dataDir, "another process that keeps re-taking the lock");
@@ -1031,7 +1172,7 @@ export function lockDataDir(dataDir: string): () => void {
 export async function openLocalDb(dataDir: string, opts: OpenLocalDbOptions = {}): Promise<OpenLocalDb> {
   const log = opts.log;
   mkdirSync(dataDir, { recursive: true });
-  const unlock = lockDataDir(dataDir);
+  const unlock = lockDataDir(dataDir, log);
   /* BEFORE `new PGlite`, because the record has to be read before recovery can hide what it is
      about — a store that replays a crash's log looks exactly like one that closed cleanly once
      it is up. Written back `open: true` immediately, so a kill from here on is seen as one. */

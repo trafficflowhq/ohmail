@@ -34,7 +34,7 @@ import {
   unknownSpeaks, type HostConnection,
 } from "../../webapp/app/shell/host-connection";
 import { BootStatus } from "./BootStatus.js";
-import { bridgeAvailable, bridgeFetch } from "./bridge-fetch.js";
+import { bridgeAvailable, bridgeFetch, engineUnlockRetry } from "./bridge-fetch.js";
 import { DoorChooser } from "./DoorChooser.js";
 import { DesktopAbout } from "./DesktopAbout.js";
 import { DesktopMailboxes, readMirrorFreshness } from "./DesktopMailboxes.js";
@@ -678,7 +678,27 @@ export function DesktopGate() {
 
   if (gate.kind === "notice") {
     /* The same card the boot check and the error boundary draw — one apology, three ways of
-       reaching it, differing only in the sentence and the button. See `GateNotice.tsx`. */
+       reaching it, differing only in the sentence and the button. See `GateNotice.tsx`.
+
+       A STRUCTURED failure never renders its log line: `failureClass` picks the person's
+       sentence (`doors.ts#failureClassOf` is where the class is read). For the locked store the
+       press that helps is removing the leftover lock — the shell refuses that unless the engine
+       has already given up, so the press can never take a live engine's lock — and the refresh
+       after it paints whatever the restart then says. */
+    if (gate.failureClass !== undefined) {
+      const locked = gate.failureClass === "DataDirLockedError";
+      return (
+        <GateNotice
+          reason={locked ? DOOR_COPY.gateLockedStore : DOOR_COPY.gateEngineReported(gate.failureClass)}
+          actionLabel={locked ? DOOR_COPY.gateUnlockRetry : DOOR_COPY.gateTryAgain}
+          onAction={
+            locked
+              ? () => void engineUnlockRetry().catch(() => undefined).then(() => void refresh())
+              : () => void refresh()
+          }
+        />
+      );
+    }
     return (
       <GateNotice
         reason={gate.reason}

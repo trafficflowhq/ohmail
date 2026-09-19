@@ -26,6 +26,9 @@ const WINDOW_COMMANDS: &[&str] = &[
     "engine_request",
     "engine_configure",
     "engine_logout",
+    // The failure card's one recovery press: remove the engine's own stale data-directory lock
+    // (the shell resolves the path; the window names none) and start the engine again.
+    "engine_unlock_retry",
     // THE CANDIDATE WALK'S ONE STEP IN THIS PROCESS. The paired door's first question — is the
     // computer at this address the one the pairing link came from — is answered by the ENGINE,
     // whose pin ceremony is the only one in this repository; a fresh install has no engine, so

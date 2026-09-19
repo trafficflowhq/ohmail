@@ -3676,3 +3676,83 @@ fn the_opener_is_handed_the_address_and_not_the_bundle() {
     assert!(!seen.contains("/appdir/usr/bin"), "the AppDir is still first on the child's PATH");
     assert!(seen.contains(&dir.display().to_string()), "the machine's own PATH entries went too");
 }
+
+// ── THE FAILURE CARD'S "UNLOCK AND RETRY" ────────────────────────────────────────────────────
+//
+// The engine reclaims provably-stale data-directory locks on its own; what reaches this press is
+// the residue it may not decide — a record it cannot read, or a live pid it cannot tell apart
+// from a second engine. The person is the authority for that call, so the press exists; and over
+// a running engine it would unlink a LIVE lock and put two stores on one directory, so the first
+// case below is the one that keeps that unrepresentable.
+
+#[test]
+fn the_unlock_press_refuses_while_the_engine_has_not_given_up() {
+    let calm = Shell::around(Engine::inert(EngineState::Stopped));
+    let said = calm
+        .unlock_retry()
+        .expect_err("an engine the shell has not given up on must refuse the press");
+    assert!(said.contains("has not given up"), "the refusal names the wrong thing: {said}");
+}
+
+#[cfg(unix)]
+#[test]
+fn the_unlock_press_removes_the_stale_lock_and_starts_the_engine_again() {
+    use std::os::unix::fs::PermissionsExt;
+    with_key_in_env();
+    let root = candidate_root("unlock-retry");
+    // A stored local door, so the plan is composed entirely from the configuration…
+    let door = Config::Local(crate::config::LocalDoor {
+        imap_host: "mail.example.org".to_string(),
+        imap_user: "someone".to_string(),
+        imap_port: 993,
+        imap_secure: true,
+        smtp: None,
+        address: None,
+    });
+    crate::config::write(&root.join(crate::config::CONFIG_FILE_NAME), &door).expect("write door");
+    // …and REAL resources, so `planned` resolves a spawnable engine without touching the process
+    // environment other tests read: an engine bundle (a readable file is enough) and a "runtime"
+    // that exits at once — the press is about the lock and the restart, not the child.
+    let res = root.join("resources");
+    fs::create_dir_all(res.join("engine").join("bin")).expect("engine dir");
+    fs::write(engine_path_in(&res), "").expect("engine bundle");
+    fs::create_dir_all(res.join(RUNTIME_RESOURCE_DIR)).expect("runtime dir");
+    let node = vendored_node_in(&res);
+    fs::write(&node, "#!/bin/sh\nexit 0\n").expect("fake runtime");
+    fs::set_permissions(&node, fs::Permissions::from_mode(0o755)).expect("exec bit");
+
+    let shell = Shell {
+        paths: ShellPaths { app_data: Some(root.clone()), resources: Some(res), downloads: None },
+        engine: Mutex::new(Arc::new(Engine::inert(EngineState::Failed {
+            reason: "four starts in a row died on the lock".to_string(),
+            last: None,
+        }))),
+        host_spawn: Mutex::new(None),
+        leaving: Mutex::new(Leaving::NotStarted),
+    };
+    // The lock sits where the PLAN says the engine's data directory is — read the way the press
+    // reads it, so the fixture cannot drift from the resolution it exercises.
+    let planned = shell.planned(None);
+    let Plan::Spawn(launch) = &planned else {
+        panic!("the fixture composes an inert plan: {planned:?}");
+    };
+    let dir = launch
+        .env
+        .iter()
+        .find(|(k, _)| k.as_os_str() == std::ffi::OsStr::new(DATA_DIR_VAR))
+        .map(|(_, v)| PathBuf::from(v.clone()))
+        .expect("the plan names no data directory");
+    fs::create_dir_all(&dir).expect("data dir");
+    let lock = dir.join("sidecar.lock");
+    fs::write(&lock, "{\"pid\":1}\n").expect("stale lock");
+
+    let answered = shell.unlock_retry().expect("the press must act once the shell has given up");
+    assert!(!lock.exists(), "the stale lock is still there after the press");
+    assert_ne!(
+        answered.get("state").and_then(|s| s.as_str()),
+        Some("failed"),
+        "the press removed the lock but never re-entered start"
+    );
+    shell.stop();
+    let _ = fs::remove_dir_all(&root);
+}

@@ -48,8 +48,12 @@ export type Gate =
   | { kind: "waiting" }
   /** No door has been chosen. The chooser takes the whole window. */
   | { kind: "choose" }
-  /** There is an engine and something is wrong with it. `reason` is the only thing to go on. */
-  | { kind: "notice"; reason: string }
+  /**
+   * There is an engine and something is wrong with it. `reason` is the shell's own sentence;
+   * `failureClass` is present when that sentence embeds the sidecar's structured log line, and
+   * it is what the pane renders BY — the raw line reaches no person. See {@link failureClassOf}.
+   */
+  | { kind: "notice"; reason: string; failureClass?: string }
   /** A door is chosen and the engine is behind it. The mail client renders. */
   | { kind: "app" };
 
@@ -101,14 +105,30 @@ export function gateFor(shell: Shell): Gate {
           "This computer's keystore would not give up the key this install seals your password " +
             "under.",
       };
-    case "failed":
-      return { kind: "notice", reason: status.reason ?? "The mail engine stopped and did not come back." };
+    case "failed": {
+      const reason = status.reason ?? "The mail engine stopped and did not come back.";
+      const failureClass = failureClassOf(reason);
+      return { kind: "notice", reason, ...(failureClass === null ? {} : { failureClass }) };
+    }
     default:
       // `starting`, `restarting`, `stopped` and `serving`. A door HAS been chosen in every one of
       // them, so the client renders and the sync surface reports the rest — a window that hid the
       // mail every time the engine bounced would hide it for a second on every reconfigure.
       return status.mode ? { kind: "app" } : { kind: "choose" };
   }
+}
+
+/**
+ * The engine's own name for what killed a start, when the failure sentence embeds the sidecar's
+ * JSON log line. The shell quotes the child's last stderr error verbatim, and for a structured
+ * line that quote is a developer object between two person sentences — measured rendering
+ * `{"ts":…,"errorClass":"DataDirLockedError",…}` to the person whose store was locked. The class
+ * is the one field a pane can decide by; the renderer maps it to a sentence of its own and the
+ * raw line reaches nobody.
+ */
+export function failureClassOf(reason: string): string | null {
+  const m = /"errorClass"\s*:\s*"([A-Za-z0-9_$]+)"/.exec(reason);
+  return m?.[1] ?? null;
 }
 
 /**

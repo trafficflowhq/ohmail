@@ -830,6 +830,11 @@ describe("the Rust side", () => {
       "engine_request",
       "engine_configure",
       "engine_logout",
+      // The failure card's one recovery press: remove the engine's own stale data-directory lock
+      // and start it again. No path and no argument — the shell resolves the lock from its own
+      // plan — and it refuses outright unless the shell has already given up on the engine, so a
+      // press can never unlink a live engine's lock.
+      "engine_unlock_retry",
       // The paired door's first step on an install that has no engine to ask: the shell starts one
       // for the CANDIDATE door, in a directory of its own, asks it the same `/cloud/probe` a
       // running engine would answer, and removes that directory. It takes the origin and the pin
@@ -1436,9 +1441,20 @@ describe("the Rust side", () => {
      * name in `config.rs`, never from anything the window said, and the removal names that one
      * variable. A candidate directory derived from the origin, the pin, or any other value off the
      * wire would put a window-supplied component into a path this module deletes. */
+    /* THE SECOND `remove_file` IS THE FAILURE CARD'S "UNLOCK AND RETRY", and the pin moved with
+     * the reason: a data-directory lock whose owner the engine cannot judge (a torn record after
+     * a power cut, a live pid it cannot tell from a second engine) refuses every later start, and
+     * the person is the one authority for that call. The removal is held to the sweep's own
+     * standard — the path is the PLAN's data directory joined with the sidecar's constant lock
+     * name, never a value from the window, and the command refuses outright unless the shell has
+     * already given up on the engine, so it cannot unlink a live engine's lock. Both facts are
+     * asserted below beside the count. */
     expect(engine.match(/fs::read_dir/g)).toHaveLength(1);
-    expect(engine.match(/fs::remove_file/g)).toHaveLength(1);
+    expect(engine.match(/fs::remove_file/g)).toHaveLength(2);
     expect(engine.match(/fs::remove_dir_all/g)).toHaveLength(2);
+    expect(engine).toMatch(/let lock = dir\.join\("sidecar\.lock"\);/);
+    expect(engine.match(/fs::remove_file\(&lock\)/g)).toHaveLength(1);
+    expect(engine).toMatch(/if !matches!\(self\.engine\(\)\.state\(\), EngineState::Failed \{ \.\. \}\) \{/);
     expect(engine).toMatch(/let dir = config::candidate_data_dir\(root\);/);
     expect(engine.match(/fs::remove_dir_all\(&dir\)/g)).toHaveLength(1);
     const configRs = read("src-tauri/src/config.rs");

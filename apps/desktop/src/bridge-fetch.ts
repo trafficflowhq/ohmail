@@ -39,6 +39,7 @@ const REQUEST_COMMAND = "engine_request";
 const STATUS_COMMAND = "engine_status";
 const CONFIGURE_COMMAND = "engine_configure";
 const LOGOUT_COMMAND = "engine_logout";
+const UNLOCK_COMMAND = "engine_unlock_retry";
 
 const NO_SHELL =
   "ohmail Desktop: this window is not running inside the ohmail shell, so there is no local engine " +
@@ -515,6 +516,16 @@ export async function engineConfigure(config: EngineConfig): Promise<EngineStatu
     "changing the door",
     async () => (await shell().invoke(CONFIGURE_COMMAND, { config })) as EngineStatus,
   );
+}
+
+/**
+ * The failure card's one recovery press: remove a data-directory lock the person has judged
+ * stale, and start the engine again. The shell resolves the lock's path from its own plan — the
+ * window names no file — and it refuses unless it has already given up on the engine, so a press
+ * can never unlink a live engine's lock. Answers the status AFTER the restart has begun.
+ */
+export async function engineUnlockRetry(): Promise<EngineStatus> {
+  return (await shell().invoke(UNLOCK_COMMAND)) as EngineStatus;
 }
 
 /**
