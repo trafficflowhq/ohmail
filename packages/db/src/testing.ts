@@ -281,6 +281,7 @@ export async function realPgAvailable(url: string = PG_TEST_URL): Promise<boolea
     await c`select 1`;
     up = true;
   } catch {
+    // The probe's answer — REQUIRE_PG_ENV below decides whether "down" is fatal.
     up = false;
   } finally {
     await c.end({ timeout: 2 }).catch(() => {});
@@ -305,6 +306,7 @@ export async function realPgAvailable(url: string = PG_TEST_URL): Promise<boolea
   try {
     drift = await journalDrift(url);
   } catch (e) {
+    // Captured: the failure to read is itself the drift verdict, refused in the sentence below.
     drift = `its migration journals could not be read at all (${e instanceof Error ? e.message : String(e)}), `
       + "so whether its schema is this tree's is unknown — neither drift nor its absence.";
   }
@@ -400,7 +402,7 @@ export function throwawayDb(logical: string): ThrowawayDb {
     let last: unknown;
     for (let attempt = 1; attempt <= 3; attempt++) {
       // FORCE terminates whatever is still attached, so the drop cannot become a hung fixture.
-      try { await admin.unsafe(`DROP DATABASE IF EXISTS "${name}" WITH (FORCE)`); } catch (e) { last = e; }
+      try { await admin.unsafe(`DROP DATABASE IF EXISTS "${name}" WITH (FORCE)`); } catch (e) { last = e; /* kept for the throw after three attempts */ }
       if (await stateOf(admin, name) === "absent") return;
     }
     throw new Error(`[pg] ${name} survived three DROP attempts${last instanceof Error ? `: ${last.message}` : ""}`);

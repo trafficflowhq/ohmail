@@ -109,6 +109,7 @@ export function gitProvenanceReader(): ProvenanceReader {
         try {
           blob = git(top, ["rev-parse", `${commit}:${rel}`]).trim();
         } catch {
+          // A commit whose blob cannot resolve (shallow or rewritten history) contributes nothing.
           continue;
         }
         if (seen.has(blob)) continue;

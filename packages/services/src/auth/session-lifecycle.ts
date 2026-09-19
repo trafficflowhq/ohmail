@@ -772,6 +772,7 @@ export class SessionLifecycle {
               `family=${existing.familyId} session=${existing.sessionId}`);
           });
         } catch {
+          // The audit write must not block the security action: reuse still revokes the family.
           await this.revokeFamily(db, existing.familyId, now);
         }
         throw new ServiceError("unauthorized", 401, "refresh token reuse detected");

@@ -5308,6 +5308,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           try {
             cycles = await drain(maxCycles, gen, conn, organizing);
           } catch (err) {
+            // Held: the request drain below runs once, then this is rethrown.
             cycleError = err;
           }
 

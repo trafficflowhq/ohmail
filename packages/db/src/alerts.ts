@@ -1939,7 +1939,7 @@ export function webhookAlertSink(url: string | undefined, post: PostJson = nodeP
   const endpoint = url.trim();
 
   let parsed: URL | null = null;
-  try { parsed = new URL(endpoint); } catch { parsed = null; }
+  try { parsed = new URL(endpoint); } catch { parsed = null; /* reported as configError just below */ }
   const configError = parsed === null
     ? "TF_ALERT_WEBHOOK_URL is set but is not a parseable URL (surrounding quotes or whitespace in the value?)"
     : (parsed.protocol !== "http:" && parsed.protocol !== "https:")

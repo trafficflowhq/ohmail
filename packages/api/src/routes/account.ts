@@ -48,6 +48,7 @@ export const accountRoutes: Route[] = [
         try {
           subscription = await port.releaseAccount(ctx.accountId);
         } catch {
+          // Deliberate: the plane failing to cancel must not block erasure — the caller is told.
           subscription = "cancel_failed";
         }
       }

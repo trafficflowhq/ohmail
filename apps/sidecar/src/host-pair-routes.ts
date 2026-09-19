@@ -29,6 +29,7 @@ async function readObjectBody(req: Request): Promise<Record<string, unknown>> {
   try {
     raw = await req.json();
   } catch {
+    // Malformed JSON reads as an empty body; each route's own validation answers.
     raw = undefined;
   }
   return raw !== null && typeof raw === "object" && !Array.isArray(raw)

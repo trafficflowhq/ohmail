@@ -949,6 +949,7 @@ export async function drainExpiredStaging(deps: {
         limit: rows.length,
       });
     } catch (err) {
+      // Counted and handed on — one failed page must not stop the sweep, and `drained` says so.
       failedPages += 1;
       deps.onPageError?.(err, rows);
     }
@@ -1096,6 +1097,7 @@ export async function reconcileStagingOrphans(deps: {
           deleted += gone.length;
         }
       } catch (err) {
+        // Counted and handed on — one failed page must not stop the sweep.
         failedPages += 1;
         deps.onPageError?.(err);
       }

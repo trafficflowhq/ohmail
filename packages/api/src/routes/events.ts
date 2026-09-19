@@ -129,7 +129,7 @@ export const eventsRoutes: Route[] = [
               finish();
               return;
             }
-            try { controller.enqueue(enc.encode(s)); } catch { closed = true; }
+            try { controller.enqueue(enc.encode(s)); } catch { closed = true; /* a gone subscriber; the flag ends the loop */ }
           };
           const finish = (): void => {
             closed = true;

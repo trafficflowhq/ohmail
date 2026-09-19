@@ -267,6 +267,7 @@ export function makeEntitlementsClient(cfg: EntitlementsClientConfig): Entitleme
         body = await Promise.race([res.json(), aborted]);
         bodyIsJson = true;
       } catch {
+        // A non-JSON body is a fact the caller reads: `bodyIsJson` stays false, the status decides.
         body = undefined;
       }
       if (res.status !== 200) await callFault(path, res.status, startedAt);

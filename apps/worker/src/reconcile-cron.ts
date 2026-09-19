@@ -454,6 +454,7 @@ export async function runReconcileCron(
         importDecisionOpen: await profileSync.importDecisionOpenNow(),
       });
     } catch (err) {
+      // Held: the drain below runs first, then the arms decide what the throw means.
       cycleError = err;
     }
 

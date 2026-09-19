@@ -738,6 +738,7 @@ export function dataApiPolicyFromEnv(
     try {
       parsed = new URL(explicit);
     } catch {
+      // Reported just below as an unparseable base URL, with the variable named.
       parsed = null;
     }
     if (!parsed || (parsed.protocol !== "https:" && parsed.protocol !== "http:")) {

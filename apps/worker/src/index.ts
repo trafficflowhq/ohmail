@@ -3479,6 +3479,7 @@ export async function startWorkerWithLock(
               importDecisionOpen: rt.role === "organizer" ? await rt.profile.importDecisionOpenNow() : false,
             });
           } catch (err) {
+            // Held for the split below — a fence is not a fault.
             cycleError = err;
           }
 

@@ -260,6 +260,7 @@ export function assertPublicHttpUrlShape(
   try {
     u = new URL(raw);
   } catch {
+    // Not a swallow: refuse() throws — the parse failure leaves as the gate's own refusal.
     refuse("unparseable");
   }
 
@@ -298,6 +299,7 @@ async function resolveAndClear(host: string, resolver: HostResolver): Promise<st
   try {
     addrs = await resolver.resolve(host);
   } catch {
+    // Not a swallow: refuse() throws — a resolver fault leaves as the gate's own refusal.
     refuse("host did not resolve");
   }
   if (addrs!.length === 0) refuse("host did not resolve");
@@ -352,6 +354,7 @@ export async function resolvePinUnchecked(raw: string, resolver: HostResolver): 
   try {
     u = new URL(raw);
   } catch {
+    // Not a swallow: refuse() throws — the parse failure leaves as the gate's own refusal.
     refuse("unparseable");
   }
   if (u!.protocol !== "https:" && u!.protocol !== "http:") refuse("scheme must be http or https");
@@ -367,6 +370,7 @@ export async function resolvePinUnchecked(raw: string, resolver: HostResolver): 
   try {
     addrs = await resolver.resolve(bare);
   } catch {
+    // Not a swallow: refuse() throws — a resolver fault leaves as the gate's own refusal.
     refuse("host did not resolve");
   }
   if (addrs!.length === 0) refuse("host did not resolve");

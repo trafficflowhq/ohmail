@@ -312,6 +312,7 @@ export function makeAnthropicClient(opts: AnthropicClientOptions): AnthropicLike
               signal: AbortSignal.timeout(timeoutMs),
             });
           } catch (err) {
+            // Held: the transport fault is classified with the response handling below.
             transportError = err;
           }
 

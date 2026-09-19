@@ -962,6 +962,7 @@ export function makeSmtpProbe(deps: ApiDeps, opts: SmtpProbeOptions = {}): SmtpP
             ...(pin ? { pin } : {}),
           }), Math.max(1, budgetLeft()));
         } catch (err) {
+          // Held: the dial's failure is this attempt's verdict, classified below.
           failure = { err };
         }
         if (!failure) {

@@ -1283,7 +1283,7 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
     // escaping. On the quarantine path that matters twice over: the status write happens AFTER
     // the detach, so a teardown that never returns is a mailbox that is never marked.
     if (this.retiredBecause !== null) { this.transporter?.close(); this.established = false; return; }
-    try { await this.client?.logout(); } catch { this.client?.close(); }
+    try { await this.client?.logout(); } catch { this.client?.close(); /* a refused LOGOUT falls back to destroying the socket */ }
     this.transporter?.close();
     this.established = false;
   }

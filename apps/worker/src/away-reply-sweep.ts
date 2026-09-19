@@ -83,6 +83,7 @@ export function makeAwayReplySweep(): AwayReplySweep {
             allExhausted = false;
           }
         } catch (err) {
+          // Counted and handed on — one account's failure must not stop the sweep.
           failed += 1;
           allExhausted = false;
           opts.onError?.(accountId, err);

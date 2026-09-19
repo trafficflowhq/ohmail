@@ -2077,6 +2077,7 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
         try {
           snap = (await res.json()) as SnapshotResponse;
         } catch {
+          // A non-JSON answer is the refusal the branch below classifies.
           snap = null;
         }
       }
@@ -2144,6 +2145,7 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
         try {
           snap = (await res.json()) as SnapshotResponse;
         } catch {
+          // A non-JSON answer defers this freshen — logged just below.
           snap = null;
         }
       }

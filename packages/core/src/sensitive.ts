@@ -324,6 +324,7 @@ function decodeEmbedded(text: string): { decoded: string[]; undecodable: boolean
     try {
       out = Buffer.from(run, "base64").toString("utf8");
     } catch {
+      // Undecodable base64 reads as empty; the declared-block arm below still counts the run.
       out = "";
     }
     if (looksLikeText(out)) {

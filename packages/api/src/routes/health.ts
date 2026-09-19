@@ -1369,6 +1369,7 @@ export const healthRoutes: Route[] = [
         try {
           kek = kekEnvIdentity() ?? null;
         } catch (err) {
+          // Captured: the fault is published beside the verdict as `kekError`.
           kekError = err instanceof Error ? err.message : "invalid KEK environment";
         }
       }

@@ -529,6 +529,7 @@ export async function runSendReconcilePass(
       try {
         await bounded("close", adapter.close(), SEND_RECONCILE_CLOSE_CEILING_MS);
       } catch {
+        // A close that will not settle is abandoned so its admission slot comes back.
         abandon(adapter);
       }
     }));

@@ -33,6 +33,7 @@ export function flushExit(code: number, timeoutMs = 2000): void {
   try {
     process.stdout.write("", () => { clearTimeout(timer); go(); });
   } catch {
+    // A stdout whose write throws synchronously must not block the exit — proceed now.
     go();
   }
 }

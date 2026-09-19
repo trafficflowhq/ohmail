@@ -323,6 +323,7 @@ export async function junkSweepPass(opts: {
         if (res.outcome === "batched") batched = res;
         else if (res.outcome === "moved_unmapped") unmapped = true;
       } catch {
+        // A refused batch answers nothing; the per-message fallback below does the work.
         batched = null;
       }
     }
