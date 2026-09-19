@@ -898,7 +898,10 @@ export const auditLog = sqliteTable("audit_log", {
   payload: text("payload", { mode: "json" }),
   inverse: text("inverse", { mode: "json" }),
   createdAt: integer("created_at", { mode: "timestamp_ms" }).default(NOW_MS).notNull(),
-});
+}, (t) => ({
+  // mail 0120's twin — the pg side's retention-prune index, mirrored for schema parity.
+  ixCreatedAt: index("audit_log_created_at_idx").on(t.createdAt),
+}));
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Delta change-log. The single mechanism every client-visible
@@ -909,6 +912,9 @@ export const auditLog = sqliteTable("audit_log", {
 export const accountSyncState = sqliteTable("account_sync_state", {
   accountId: text("account_id").primaryKey(),           // one row per account; the seq source of truth
   nextSeq: int64("next_seq").notNull().default(sql`0`),
+  // mail 0120's twin — the retention floor `seqBounds` reads on every resuming /sync. No
+  // retention pass runs on a device, so it rests at 0; carried for the reader's arithmetic.
+  prunedThroughSeq: int64("pruned_through_seq").notNull().default(sql`0`),
 });
 
 export const changeLog = sqliteTable("change_log", {

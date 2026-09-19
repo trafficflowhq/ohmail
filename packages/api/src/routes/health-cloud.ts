@@ -212,6 +212,9 @@ export const CLOUD_INDEX_MARKERS: ReadonlyArray<string> = [
   // ceremony on the deployment, and how many that is, is chosen by whoever opened them.
   "webauthn_challenges_open_login_idx",
   "webauthn_challenges_open_user_idx",
+  // Cloud 0040 — the key the fixed-age auth_events retention prune deletes by. Same silent
+  // shape as its neighbours: absent, every maintenance tick scans the whole login ledger.
+  "auth_events_at_idx",
 ] as const;
 
 /**
@@ -292,7 +295,7 @@ export const CLOUD_TIER_MARKERS = SCHEMA_MARKERS;
  * FOREIGN-KEY-only migration is probed by its KEY marker, which is what 0038 added the class for.
  * The tag asserts reconciliation against the newest entry.
  */
-export const CLOUD_SCHEMA_MARKER_JOURNAL_TAG = "0039_screener_suggest_owed";
+export const CLOUD_SCHEMA_MARKER_JOURNAL_TAG = "0040_auth_events_at_idx";
 
 /** The journal entries {@link SCHEMA_MARKERS} was last reconciled against (asserted by a test). */
 export const SCHEMA_MARKER_JOURNAL_TAG =

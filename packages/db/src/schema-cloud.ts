@@ -153,6 +153,9 @@ export const authEvents = pgTable("auth_events", {
   // `(user_id, at)` above serves neither predicate.
   ixReuseAccountAt: index("auth_events_reuse_account_at_idx").on(t.accountId, t.at)
     .where(sql`"event" = 'refresh_reuse_revoked'`),
+  // cloud 0040 — the fixed-age retention prune (`retention.ts`) deletes by a bare age range,
+  // which neither `(user_id, at)` nor the reuse partial serves.
+  ixAt: index("auth_events_at_idx").on(t.at),
 }));
 
 export const authThrottle = pgTable("auth_throttle", {

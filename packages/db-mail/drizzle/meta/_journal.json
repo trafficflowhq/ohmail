@@ -855,6 +855,13 @@
       "when": 1791602600025,
       "tag": "0121_release_refusal",
       "breakpoints": true
+    },
+    {
+      "idx": 122,
+      "version": "7",
+      "when": 1791602600026,
+      "tag": "0122_change_log_retention",
+      "breakpoints": true
     }
   ]
 }

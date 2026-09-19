@@ -758,6 +758,12 @@ export const MAIL_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // column existed, the pane keeps the ordinary pending sentence, and nothing looks wrong while
   // the one state the column exists to name goes unnamed. Deploy order migration → API/engine.
   ["mailboxes", "release_refusal"],
+  // mail 0122_change_log_retention — the retention floor. `seqBounds` reads it on EVERY resuming
+  // `/sync`, so an API deployed ahead of the migration answers 42703 on the whole delta surface:
+  // every open client's poll loop fails at once. The marker makes that deployment name the
+  // missing migration instead of leaving a 500 nobody can attribute. It is the NEWEST entry in
+  // the mail journal. Deploy order migration → API → worker (the pass only raises the floor).
+  ["account_sync_state", "pruned_through_seq"],
 ] as const;
 
 /**
@@ -819,6 +825,12 @@ export const SCHEMA_INDEX_MARKERS: ReadonlyArray<string> = [
   // (`SCHEMA_FK_MARKERS`), which the CLOUD half of the same change — foreign keys and nothing
   // else — is what forced into existence.
   "messages_id_account_uq",
+  // mail 0120_change_log_retention. The silent class again: absent, the hourly audit_log
+  // retention prune's age-range DELETE is a sequential scan of a table every workflow step and
+  // admin act grows — no query wrong, every test green, the maintenance tick just stops being
+  // cheap. The migration's COLUMN marker (`account_sync_state.pruned_through_seq`) is the loud
+  // probe; this one covers its second statement.
+  "audit_log_created_at_idx",
 ];
 
 /**
@@ -1064,7 +1076,7 @@ export const MAIL_EXPECTED_MARKERS =
 // 0067/0068 (the device-sync alert's withdrawn SECURITY DEFINER carrier and its retirement)
 // add no column and get no marker: a function's absence is the ALERT RULE's own isolated,
 // tolerated state, not a schema fault a serving API should 503 over.
-export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0121_release_refusal";
+export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0122_change_log_retention";
 
 
 /* `CLOUD_SCHEMA_MARKER_JOURNAL_TAG` moved to `./health-cloud.js`: it is the NAME of a cloud

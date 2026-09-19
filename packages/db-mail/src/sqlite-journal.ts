@@ -284,5 +284,12 @@ export const SQLITE_JOURNAL: readonly SqliteJournalEntry[] = [
     "statements": [
       "ALTER TABLE \"mailboxes\" ADD COLUMN \"release_refusal\" text;"
     ]
+  },
+  {
+    "name": "0122_change_log_retention.sql",
+    "statements": [
+      "ALTER TABLE \"account_sync_state\" ADD COLUMN \"pruned_through_seq\" integer NOT NULL DEFAULT 0;",
+      "CREATE INDEX \"audit_log_created_at_idx\" ON \"audit_log\" (\"created_at\");"
+    ]
   }
 ] as const;

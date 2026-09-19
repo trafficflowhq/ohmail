@@ -939,7 +939,11 @@ export const auditLog = pgTable("audit_log", {
   payload: jsonb("payload"),
   inverse: jsonb("inverse"),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
-});
+}, (t) => ({
+  // mail 0120 — the fixed-age retention prune (`retention.ts`) deletes by age; without this the
+  // hourly maintenance tick is a full scan of a table every workflow step and admin act grows.
+  ixCreatedAt: index("audit_log_created_at_idx").on(t.createdAt),
+}));
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Delta change-log. The single mechanism every client-visible
@@ -950,6 +954,14 @@ export const auditLog = pgTable("audit_log", {
 export const accountSyncState = pgTable("account_sync_state", {
   accountId: uuid("account_id").primaryKey(),           // one row per account; the seq source of truth
   nextSeq: bigint("next_seq", { mode: "bigint" }).notNull().default(sql`0`),
+  /**
+   * THE RETENTION FLOOR (mail 0120). Every `change_log` seq at or below it may have been
+   * compacted by the retention pass (`retention.ts` — churn, tombstones, dead entities; each
+   * live entity's first row and the user-wins moves stay), so a resuming cursor at or below it
+   * cannot replay exactly and `getChanges` answers 410 cursor_expired. Raised BEFORE any delete,
+   * monotone; 0 = nothing pruned. LAST, physically: both stores APPEND an added column.
+   */
+  prunedThroughSeq: bigint("pruned_through_seq", { mode: "bigint" }).notNull().default(sql`0`),
 });
 
 export const changeLog = pgTable("change_log", {
@@ -965,8 +977,9 @@ export const changeLog = pgTable("change_log", {
   /**
    * THE OHBOX-TIDY USER-WINS PROBE (mail 0043). The backlog re-route pass excludes any message the
    * user has ever moved back INTO the Ohbox — an in-app drag writes exactly this row
-   * (`message-service.ts#move`), and it is the only durable record of that intent that survives
-   * every prune (the change log never is). Without this partial index that `NOT EXISTS` is a full
+   * (`message-service.ts#move`), and it is the only durable record of that intent, which is why
+   * the retention pass EXEMPTS exactly these rows (`retention.ts` — compaction may not eat a
+   * user's "leave it in the Ohbox"). Without this partial index that `NOT EXISTS` is a full
    * scan of the account's whole change log PER CANDIDATE, per page, and the failure mode is a
    * worker cycle that quietly stops finishing — the SILENT class `SCHEMA_INDEX_MARKERS` exists for.
    * Partial on `op='move' AND meta->>'to'='INBOX'`, so it holds only the move-to-Ohbox rows.
