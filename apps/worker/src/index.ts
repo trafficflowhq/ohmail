@@ -90,6 +90,7 @@ import { makeAwayReplySweep } from "./away-reply-sweep.js";
 import { ruleRetroPass } from "./rule-retro.js";
 import { gateReleasePass } from "./gate-release.js";
 import { apiFaultPrunePass } from "./api-fault-prune.js";
+import { retentionPrunePass } from "./retention-prune.js";
 import { ohboxTidyPass } from "./ohbox-tidy.js";
 import { screenerAutoApplyPass } from "./screener-auto.js";
 import { screenerAutoSuggestPass } from "./screener-auto-suggest.js";
@@ -4643,6 +4644,12 @@ export async function startWorkerWithLock(
               "bucket is not being swept",
           });
         }
+
+        // ── RETENTION — change_log compaction plus the audit_log / auth_events fixed-age
+        // prunes. Same slot as its neighbours (the worker is the single elected writer, and a
+        // failure is a logged warning, never a cycle abort — the pass states that itself). The
+        // horizons live in ONE place, `@trafficflow/db/cloud`'s `retention.ts`.
+        await retentionPrunePass(db as unknown as Tx, new Date(), log);
       }
 
       // FRESHNESS HONESTY: advance only when work actually succeeded, or when there was

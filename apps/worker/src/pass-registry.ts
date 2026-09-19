@@ -278,6 +278,15 @@ export const WORKER_PASSES: readonly WorkerPass[] = [
     fence: "leader lock (it rides the alert pass, which holds it)",
   },
   {
+    name: "retention_prune",
+    module: `${W}/retention-prune.ts`, entry: "retentionPrunePass",
+    triggers: ["interval"],
+    cadence: "on the maintenance cadence (MAINTENANCE_EVERY_MS, ~hourly), leader-only",
+    budget: "RETENTION_ACCOUNTS_PER_TICK accounts round-robin, each at most RETENTION_BATCHES_PER_ACCOUNT DELETEs of RETENTION_DELETE_BATCH rows; the audit/auth prunes are indexed range scans, empty when nothing is due",
+    owns: "change_log is compacted below the explicit 410 floor (each live entity's first row and the user-wins moves stay — the desktop mirror's since=0 bootstrap replays complete); audit_log keeps a year and auth_events 180 days, no more — the horizons stated once in db/src/retention.ts",
+    fence: "leader lock (it rides the maintenance block); the floor is raised before anything is deleted",
+  },
+  {
     name: "refund_obligation_drain",
     module: `${W}/refund-obligation-drain.ts`, entry: "refundObligationDrainPass",
     triggers: ["interval"],

@@ -134,6 +134,17 @@ export {
   type ApiFaultInput, type ApiFaultArm, type ApiFaultRouteCount,
 } from "./api-faults.js";
 
+/* Retention (mail 0120 / cloud 0040). CLOUD-ONLY: the prunes are the hosted worker's, and the
+ * module names `auth_events`, which a local install does not have. */
+export {
+  changeLogHorizon, pruneChangeLogForAccount, retentionAccountsAfter,
+  pruneAuditLog, pruneAuthEvents,
+  CHANGE_LOG_RETENTION_GRACE_MS, CHANGE_LOG_HOLDBACK_LIVE_MS,
+  AUDIT_LOG_RETENTION_MS, AUTH_EVENTS_RETENTION_MS,
+  RETENTION_ACCOUNTS_PER_TICK, RETENTION_DELETE_BATCH, RETENTION_BATCHES_PER_ACCOUNT,
+  type ChangeLogPruneResult,
+} from "./retention.js";
+
 /* A spend that bought nothing, as a durable obligation (cloud 0036). CLOUD-ONLY, and the writers
  * reach it through `RefundObligationPort` for the reason `api_faults` does: the table does not
  * exist in a local install and the drafting path is inside the desktop engine's import closure. */

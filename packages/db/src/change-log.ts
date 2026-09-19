@@ -394,23 +394,35 @@ export interface SeqBounds {
   min: bigint | null;
   /** The highest committed seq — the ceiling no legitimate cursor can be above. */
   max: bigint | null;
+  /**
+   * The explicit retention floor (`account_sync_state.pruned_through_seq`, mail 0120): every seq
+   * at or below it may have been COMPACTED by the retention pass (`retention.ts`), so a cursor
+   * BELOW it cannot replay exactly — the deleted rows include tombstones — and is 410'd. NOT
+   * derivable from `min`: compaction retains each live entity's first row below the floor, so
+   * `min` stays low while the gap above it is real. 0 ⇔ nothing pruned (or no counter row).
+   */
+  prunedThrough: bigint;
 }
 
 /**
- * The two horizons of an account's change log, from ONE statement. `SyncService.getChanges` needs
- * both on every resuming request: a cursor below `min` names changes that no longer exist, above
- * `max` changes that never existed — both unrecoverable, both 410, the client re-snapshots. One
- * aggregate rather than two round trips is a correctness property: floor and ceiling come from
- * the same read, so they cannot disagree about which side of the window a cursor sits on. No
- * transaction, no lock: `change_log` is append-only (the sole delete is account erasure), so
- * `max` never falls and `min` only rises — a concurrent writer can only WIDEN the window, turning
- * a would-be 410 into a plain empty 200, never the reverse.
+ * The horizons of an account's change log, from ONE statement. `SyncService.getChanges` needs
+ * them on every resuming request: a cursor below `prunedThrough` (or below `min`) names changes
+ * that no longer exist, above `max` changes that never existed — both unrecoverable, both 410,
+ * the client re-snapshots. One statement rather than round trips is a correctness property: the
+ * floors and the ceiling come from the same read, so they cannot disagree about which side of
+ * the window a cursor sits on. No transaction, no lock: deletes here are the retention pass and
+ * account erasure only, and the pass raises `prunedThrough` BEFORE deleting and never touches a
+ * row above it — so `max` never falls, both floors only rise, and a concurrent writer or pruner
+ * can only turn a would-be empty 200 into a 410 read a moment earlier, never serve a gap.
  */
 export async function seqBounds(tx: Tx, accountId: string): Promise<SeqBounds> {
   const rows = await tx
     .select({
       min: sql<string | null>`min(${changeLog.seq})`,
       max: sql<string | null>`max(${changeLog.seq})`,
+      // A scalar subquery on the counter row's PK — the same read, one round trip. NULL when the
+      // account has no counter row, which also means it has no log.
+      prunedThrough: sql<string | null>`(select ${accountSyncState.prunedThroughSeq} from ${accountSyncState} where ${accountSyncState.accountId} = ${accountId})`,
     })
     .from(changeLog)
     .where(eq(changeLog.accountId, accountId));
@@ -418,6 +430,7 @@ export async function seqBounds(tx: Tx, accountId: string): Promise<SeqBounds> {
   return {
     min: row?.min == null ? null : BigInt(row.min),
     max: row?.max == null ? null : BigInt(row.max),
+    prunedThrough: row?.prunedThrough == null ? 0n : BigInt(row.prunedThrough),
   };
 }
 
