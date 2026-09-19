@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import {
   keyProviderFromEnv, kekEnvIdentity, assertAnthropicKey, msDeviceEnv,
   type KeyProvider, type KekEnvIdentity, type MicrosoftDeviceClient,
@@ -5,7 +6,7 @@ import {
 import { transactionPoolerReason, providerFamily } from "@trafficflow/db";
 import { msOAuthEnv, type MsOAuthBootstrap } from "@trafficflow/db/cloud";
 import { makeAuthConfig, type AuthConfig } from "@trafficflow/services";
-import { DEFAULT_SSE, type SseConfig } from "@trafficflow/api";
+import { DEFAULT_SSE, type SseConfig, type BuildIdentitySource } from "@trafficflow/api";
 
 /**
  * Deployment configuration for the STANDALONE SELF-HOST SERVER — one long-running process an
@@ -169,6 +170,10 @@ export interface ServerConfig {
   kek: KekEnvIdentity | null;
   kekError: string | null;
   version: string;
+  /** Where {@link version} came from — the file the host bundler bakes, the variable, or none. */
+  buildSource: BuildIdentitySource;
+  /** Why {@link version} cannot be trusted as an identity, or null — see {@link buildIdentityError}. */
+  buildError: string | null;
   sse: SseConfig;
   smtp: SmtpConfig | null;
   storage: StorageConfig | null;
@@ -224,6 +229,50 @@ export function poisonedKeyProvider(reason: string): KeyProvider {
 }
 
 const trimmed = (env: NodeJS.ProcessEnv, key: string): string => (env[key] ?? "").trim();
+
+/**
+ * WHICH BUILD THIS IS — the worker's source order minus the platform arm (nothing hosts this
+ * process): the `BUILD_VERSION` file `scripts/bundle-host.mjs` writes into the layout, then
+ * `TF_BUILD_VERSION`, then `dev`. The file wins so a compose-override variable can no longer
+ * silently outrank the identity baked into the image; the variable remains a fallback for a
+ * bundle run outside the recipes, and is REPORTED as such (see {@link buildIdentityError}).
+ */
+const buildVersionFile = (): string => {
+  try {
+    // From the bundled `bin/ohmail-server.mjs` this is the image's `/app/BUILD_VERSION`; from
+    // `src/config.ts` under tsx it is `apps/server/BUILD_VERSION` — absent in a checkout, so a
+    // source run falls through to the variable and then to `dev`, the honest answer there.
+    return readFileSync(new URL("../BUILD_VERSION", import.meta.url), "utf8").trim();
+  } catch {
+    // No file means "not a recipe build" — the next source answers.
+    return "";
+  }
+};
+
+export const buildIdentityOf = (
+  env: NodeJS.ProcessEnv,
+  file: () => string = buildVersionFile,
+): { version: string; source: BuildIdentitySource } => {
+  const fromFile = file().trim();
+  if (fromFile) return { version: fromFile, source: "file" };
+  const variable = trimmed(env, "TF_BUILD_VERSION");
+  if (variable) return { version: variable, source: "variable" };
+  return { version: "dev", source: "none" };
+};
+
+/**
+ * Why the identity cannot be trusted, or null. One arm, unlike the managed host's and the
+ * worker's: `"none"` is NOT reported here, because this process defaults `TF_ENV` to
+ * `production` and an operator running from a working tree answers `dev` honestly — their
+ * siblings' rule would darken every source run over a label. A variable-sourced label is the
+ * hazard: it lives beside the process, not in it, and can name a build this one never was.
+ */
+export const buildIdentityError = (source: BuildIdentitySource): string | null =>
+  source === "variable"
+    ? "build identity came from TF_BUILD_VERSION, not from this build: the BUILD_VERSION file " +
+      "is absent, so `version` names whatever the variable was last set to and may name a build " +
+      "this process was never built from"
+    : null;
 
 function requireEnv(env: NodeJS.ProcessEnv, key: string): string {
   const v = trimmed(env, key);
@@ -449,6 +498,9 @@ export function loadServerConfig(env: NodeJS.ProcessEnv): ServerConfig {
 
   const alertSecret = trimmed(env, "TF_ALERT_SECRET");
 
+  // Resolved once, at boot, like everything else here — /health publishes all three.
+  const build = buildIdentityOf(env);
+
   return {
     origin,
     rpID,
@@ -459,7 +511,9 @@ export function loadServerConfig(env: NodeJS.ProcessEnv): ServerConfig {
     keyProvider,
     kek,
     kekError,
-    version: trimmed(env, "TF_BUILD_VERSION") || "dev",
+    version: build.version,
+    buildSource: build.source,
+    buildError: buildIdentityError(build.source),
     sse: SELF_HOST_SSE,
     smtp: loadSmtpConfig(env),
     storage: loadStorageConfig(env, origin),

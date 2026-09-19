@@ -505,7 +505,10 @@ export function buildDeps(req: Request, rt: ServerRuntime): ApiDeps {
       schemaTier: "all",
       kek: cfg.kek,
       kekError: cfg.kekError,
-      buildError: null,
+      // The identity trio, resolved by config.ts (file over variable over `dev`): `buildSource`
+      // is what lets an ops reader tell a baked label from an operator-typed one.
+      buildSource: cfg.buildSource,
+      buildError: cfg.buildError,
       // "unrecognized" on an operator's own Postgres is healthy and documented as such — the
       // field exists so the connection guards' blind spots are visible, not as a fault.
       dbProvider: providerFamily(cfg.databaseUrl),
