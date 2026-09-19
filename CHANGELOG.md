@@ -35,11 +35,6 @@ Mail you put away until a set hour came back in every mailbox on an account, inc
 device had stopped organizing. It now comes back only in the mailboxes this device holds; the
 copy that organizes the other one brings its mail back, at the hour you chose.
 
-### The Flatpak manifest's generated npm sources cover the published lockfile again — fifteen packages were missing, and an offline build resolves only what it declares
-
-The CI half of this lane is not a changelog item: it is this repository's own check. The sources
-are, because the README hands a reader the manifest and tells them to build it.
-
 ### Change a mailbox's password without removing it
 
 When your mail provider's password changes, Settings → Mailboxes (and Settings → This phone) offer

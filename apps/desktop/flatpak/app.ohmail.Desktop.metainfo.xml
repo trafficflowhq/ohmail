@@ -79,7 +79,6 @@
         <ul>
           <li>Resurfaced conversations appear once, with a badge when new mail arrived since</li>
           <li>A device organizing one mailbox no longer resurfaces mail in a mailbox it has handed to another organizer</li>
-          <li>The Flatpak manifest's generated npm sources cover the published lockfile again — fifteen packages were missing, and an offline build resolves only what it declares</li>
           <li>Change a mailbox's password without removing it</li>
           <li>The Ohbox keeps arrival order on every device</li>
           <li>A message keeps its place in the Ohbox when you read it</li>
