@@ -1406,9 +1406,11 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
         // a real account takes a while, and a sign-in that appears to hang for it looks broken. The
         // mirror reports its own progress through `/health.online` and the next `/sync`.
         void live.mirror.start().catch((err: unknown) => {
+          const fk = integrityLogFields(err);
           log?.("cloud_pull_failed", {
             err,
-            ...integrityLogFields(err),
+            constraint: fk.constraint,
+            table: fk.table,
             reason: "the first pull after signing in did not complete; the mirror retries with backoff",
           });
         });
@@ -1616,9 +1618,11 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
         // NOT AWAITED — a first pull takes a while and a pairing that appears to hang for it looks
         // broken. The mirror reports its own progress through `/health.online`.
         void live.mirror.start().catch((err: unknown) => {
+          const fk = integrityLogFields(err);
           log?.("cloud_pull_failed", {
             err,
-            ...integrityLogFields(err),
+            constraint: fk.constraint,
+            table: fk.table,
             reason: "the first pull after pairing did not complete; the mirror retries with backoff",
           });
         });

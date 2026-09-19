@@ -811,14 +811,14 @@ function integrityFacts(err: unknown): IntegrityFacts | null {
   return null;
 }
 
-/** The two identifier fields for a log line, or nothing — spread into `cfg.log` payloads. */
-export function integrityLogFields(err: unknown): { constraint?: string; table?: string } {
+/**
+ * The two identifier fields for a log line — ALWAYS both keys, null when the thrown value names
+ * none, so every call site writes them as literals the log census can read (a spread is an
+ * unreadable field set there, by design).
+ */
+export function integrityLogFields(err: unknown): { constraint: string | null; table: string | null } {
   const fk = integrityFacts(err);
-  if (!fk) return {};
-  return {
-    ...(fk.constraint ? { constraint: fk.constraint } : {}),
-    ...(fk.tableName ? { table: fk.tableName } : {}),
-  };
+  return { constraint: fk?.constraint ?? null, table: fk?.tableName ?? null };
 }
 
 /**
@@ -2013,7 +2013,7 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
       if (!held && quarantine.size >= QUARANTINE_MAX) {
         cfg.log?.("cloud_row_quarantine_full", {
           count: quarantine.size, kind: ch.type, errorCode: facts.code,
-          ...(facts.constraint ? { constraint: facts.constraint } : {}),
+          constraint: facts.constraint,
           reason: "the quarantine is at its cap, so this refused row is dropped; a later change " +
             "to the entity re-delivers it",
         });
@@ -2023,8 +2023,8 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
       syncQuarantine();
       cfg.log?.("cloud_row_quarantined", {
         kind: ch.type, errorCode: facts.code,
-        ...(facts.constraint ? { constraint: facts.constraint } : {}),
-        ...(facts.tableName ? { table: facts.tableName } : {}),
+        constraint: facts.constraint,
+        table: facts.tableName,
         count: quarantine.size,
         reason: "this row violates a local constraint, so it is held aside while the rest of its " +
           "page lands and the cursor advances; it is re-applied after every completed pull",
@@ -2274,8 +2274,8 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
       if (!facts) throw err;
       cfg.log?.("cloud_page_integrity_refused", {
         errorCode: facts.code,
-        ...(facts.constraint ? { constraint: facts.constraint } : {}),
-        ...(facts.tableName ? { table: facts.tableName } : {}),
+        constraint: facts.constraint,
+        table: facts.tableName,
         reason: "a row of this page violates a local constraint; the page is re-applied row by " +
           "row so the refusing rows can be quarantined instead of pinning the cursor",
       });
@@ -3350,7 +3350,8 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
           // `integrityLogFields`: a 23xxx failure names its constraint and table on the line —
           // the released 0.20.0 logged bare `errorCode:"23503"` and the field could not say
           // which foreign key was wedging every fresh paired desktop.
-          cfg.log?.("cloud_pull_failed", { err, ...integrityLogFields(err), reason: "the pull did not complete; the mirror keeps serving what it holds and retries with backoff" });
+          const fk = integrityLogFields(err);
+          cfg.log?.("cloud_pull_failed", { err, constraint: fk.constraint, table: fk.table, reason: "the pull did not complete; the mirror keeps serving what it holds and retries with backoff" });
           scheduleAfter(true);
         });
     }, delay);
@@ -3389,7 +3390,8 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
         await pullOnce();
         scheduleAfter(false);
       } catch (err) {
-        cfg.log?.("cloud_pull_failed", { err, ...integrityLogFields(err), reason: "the first pull did not complete; the mirror serves what it holds and the poll retries with backoff" });
+        const fk = integrityLogFields(err);
+        cfg.log?.("cloud_pull_failed", { err, constraint: fk.constraint, table: fk.table, reason: "the first pull did not complete; the mirror serves what it holds and the poll retries with backoff" });
         scheduleAfter(true);
       }
     },
