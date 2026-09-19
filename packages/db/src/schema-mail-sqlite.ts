@@ -2016,12 +2016,6 @@ export const accountSettings = sqliteTable("account_settings", {
    */
   autoSuggestAt: integer("auto_suggest_at", { mode: "timestamp_ms" }),
   /**
-   * The dismissed held-release offer (mail 0120) — the pg column's twin; the held-releases door
-   * runs against this store on a device. NULL = never dismissed; the value is the fingerprint of
-   * the exact offer dismissed, written only by this install's own dismiss door.
-   */
-  heldReleaseDismissed: text("held_release_dismissed"),
-  /**
    * WHO REACHES THE OHBOX — the account's posture (mail 0042). NULL / `'people_and_replied'` =
    * today's lenient behaviour; `'people_only'` = demote automated mail from inferred-admission
    * senders out of the Ohbox. The CHECK (enum, closed) lives in the migration. **NULL reads
@@ -2179,6 +2173,14 @@ export const accountSettings = sqliteTable("account_settings", {
   // 09:00. LAST in the declaration because `ALTER TABLE … ADD COLUMN` appends, and
   // `sqlite-baseline.test.ts` compares the store's PRAGMA order with this one.
   resurfaceTime: text("resurface_time"),
+  /**
+   * The dismissed held-release offer (mail 0120) — the pg column's twin; the held-releases door
+   * runs against this store on a device. NULL = never dismissed; the value is the fingerprint of
+   * the exact offer dismissed, written only by this install's own dismiss door. LAST in the
+   * declaration because `ALTER TABLE … ADD COLUMN` appends, and `sqlite-baseline.test.ts`
+   * compares the store's PRAGMA order with this one.
+   */
+  heldReleaseDismissed: text("held_release_dismissed"),
 });
 
 /**
