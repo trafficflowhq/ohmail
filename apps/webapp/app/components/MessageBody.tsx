@@ -1749,13 +1749,12 @@ export function isDesignedLayout(root: Element, styleText: string | readonly str
 /**
  * A second, narrower allow-list: the prose rendering has no frame — its elements live in the
  * app's own document — so this walker emits `BodyText`'s node model. The invariant: no sender
- * byte leaves except as the `text` of a text run, and no sender attribute leaves at all (`href`
- * via {@link anchorFor}, `colspan` via {@link boundedSpan}; `style`/`class` never read; an
- * `img` leaves only as an {@link INLINE_IMAGE_SRC}-gated src plus its alt text — the message's
- * own bytes, resolved by the post-pass, never a fetchable url). `style` stays absent ({@link
- * RICH_SKIP}); everything else is transparent. `pre` reads as literal text; `blockquote` maps
- * to the text parser's QuoteNode, clamped by {@link MAX_QUOTE_DEPTH}; past
- * {@link MAX_RICH_NODES} it answers `null`.
+ * byte leaves except as a text run's `text`, and no sender attribute leaves at all (`href` via
+ * {@link anchorFor}, `colspan` via {@link boundedSpan}; an `img` only as an
+ * {@link INLINE_IMAGE_SRC}-gated src plus alt — the message's own bytes, never a fetchable url).
+ * `style` stays absent ({@link RICH_SKIP}); everything else is transparent. `pre` reads as
+ * literal text; `blockquote` clamps at {@link MAX_QUOTE_DEPTH}; past {@link MAX_RICH_NODES} it
+ * answers `null`.
  */
 export const MAX_RICH_NODES = 4096;
 
