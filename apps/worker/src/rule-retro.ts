@@ -629,12 +629,15 @@ async function selectCandidates(
   ];
   /* 5 — THE USER replied from their own mail client. A MACHINE'S reply is not that.
    * Guarded on a non-empty address list (`in ()` is a syntax error) and skipped for a NULL
-   * `thread_id` (no conversation to search). `and not autoReplyByUsWhere(...)` for `ohbox-tidy.ts`'s
-   * reason: the exclusions above are ways A PERSON acted, and an automatic reply is the one thing here
-   * that looks like their action and is not — so a pressed retro would otherwise skip exactly the mail
-   * the responder answered while they were away. NARROWING only: a real reply is excluded as before.
+   * `thread_id`. `and not autoReplyByUsWhere(...)`: an automatic reply looks like a person's act
+   * and is not, so a pressed retro would otherwise skip exactly the mail the responder answered.
+   * NOT ON A RELEASE RUN: those candidates are all gate-settled rows a person was shown by name
+   * and count before pressing "Release N" — the press outranks a reply somewhere in the thread
+   * (measured: this exclusion kept ALL 57 offered rows on a live account, 101 presses moved zero;
+   * `heldReleaseSummary` never applies it, so skipping it here is what makes the number offered
+   * the number that moves). The message-level exclusions above bind a release run unchanged.
    */
-  if (opts.ownAddresses.length > 0) {
+  if (opts.ownAddresses.length > 0 && !isReleaseRun(rule)) {
     filters.push(sql`not exists (
       select 1 from ${messages} sent
        where sent.account_id = ${messages.accountId}

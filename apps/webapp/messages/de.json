@@ -739,12 +739,13 @@
       "autoFailed": "Diese Einstellung wurde nicht gespeichert. Sie ist unverändert."
     },
     "markAllSpam": "Alles als Spam markieren",
-    "heldReleaseLead": "{count, plural, one {1 zur\u00fcckgehaltene Nachricht von einem Absender, \u00fcber den du l\u00e4ngst entschieden hast} other {# zur\u00fcckgehaltene Nachrichten von Absendern, \u00fcber die du l\u00e4ngst entschieden hast}}",
-    "heldReleaseGroup": "{match} \u2192 {pile} ({count})",
+    "heldReleaseLead": "{count, plural, one {1 Nachricht von einem Absender, \u00fcber den du schon entschieden hast, liegt noch im Screener. Gib sie in ihren Stapel frei.} other {# Nachrichten von Absendern, \u00fcber die du schon entschieden hast, liegen noch im Screener. Gib sie in ihre Stapel frei.}}",
     "heldReleaseAll": "{count} freigeben",
+    "heldReleaseNotNow": "Nicht jetzt",
     "heldReleased": "{count} freigegeben. Deine Regeln legen sie beim n\u00e4chsten Durchlauf ab.",
     "heldReleasedNone": "Nichts freizugeben.",
     "heldReleaseFailed": "Freigabe nicht m\u00f6glich. Versuch es noch einmal.",
+    "heldDismissFailed": "Nicht gespeichert. Versuch es noch einmal.",
     "noSuggestion": "Für diesen Absender liegt noch kein Vorschlag vor. Wähl, wohin seine Post geht.",
     "noSuggestionUnavailable": "KI-Vorschläge sind für dieses Konto nicht verfügbar. Wähl, wohin seine Post geht.",
     "noSuggestionNoAutoAi": "Die Post dieses Absenders bleibt von der automatischen KI ausgenommen. Wähl, wohin seine Post geht.",
@@ -765,9 +766,14 @@
       "brand_mismatch": "Name passt nicht"
     },
     "aiSkip": {
-      "out_of_credits": "Das KI-Budget war aufgebraucht, bevor dieser Absender dran war.",
-      "spend_unavailable": "KI ist für dieses Konto abgeschaltet, dieser Absender wurde also nicht geprüft.",
+      "out_of_credits": "Das KI-Budget war aufgebraucht, bevor dieser Absender dran war. Es füllt sich im nächsten Zyklus — von Hand entscheiden kostet nichts.",
+      "spend_unavailable": "KI ist für dieses Konto abgeschaltet oder nicht verfügbar, dieser Absender wurde also nicht geprüft. Von Hand entscheiden kostet nichts.",
       "model_unavailable": "Das Modell hat für diesen Absender nicht geantwortet. Nochmal fragen kostet nichts."
+    },
+    "aiSkipRow": {
+      "out_of_credits": "Kein Vorschlag — das KI-Budget ist aufgebraucht. Es füllt sich im nächsten Zyklus.",
+      "spend_unavailable": "Kein Vorschlag — KI ist für dieses Konto gerade nicht verfügbar.",
+      "model_unavailable": "Kein Vorschlag — das Modell hat nicht geantwortet. Nochmal fragen kostet nichts."
     },
     "aiWhy": "„{why}“",
     "heldCaption": "{count} zurückgehaltene Nachrichten — alle gezeigt · erster Kontakt {time}",

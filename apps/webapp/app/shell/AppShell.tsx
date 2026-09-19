@@ -971,6 +971,8 @@ export function AppShell({
      * ignores it is free to; a host that cannot see it has no choice.
      */
     resuggestable: string[];
+    /** Waiting senders with no real suggestion (holds included) — the resting sentence's gate. */
+    unanswered: number;
     absorb: (rows: Array<{ address: string; suggestion: SenderSuggestion }>) => void;
   }) => ReactNode;
   /**
@@ -1221,6 +1223,8 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
   screenerSuggest?: (ctx: {
     senders: string[];
     resuggestable: string[];
+    /** Waiting senders with no real suggestion (holds included) — the resting sentence's gate. */
+    unanswered: number;
     absorb: (rows: Array<{ address: string; suggestion: SenderSuggestion }>) => void;
   }) => ReactNode;
   awayTransport?: AwayTransport;
@@ -7777,6 +7781,9 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
                     : suggestions.forSenders(
                         screener.unsuggestedSenders,
                         screener.suggestedSenders,
+                        /* The chips' "none" group, from the same state — the resting sentence may
+                           only claim "all suggested" when this is zero. */
+                        screener.waitingCount - screener.suggestedCount,
                       )
                 }
                 /* THE HOST'S OWN CONTROL, when it has one — see the prop's declaration. It is
@@ -7788,6 +7795,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
                     : screenerSuggest({
                         senders: screener.unsuggestedSenders,
                         resuggestable: screener.suggestedSenders,
+                        unanswered: screener.waitingCount - screener.suggestedCount,
                         absorb: suggestions.absorb,
                       })
                 }

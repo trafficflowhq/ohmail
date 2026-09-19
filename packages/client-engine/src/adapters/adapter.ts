@@ -137,6 +137,10 @@ export interface HeldReleaseWire {
   total: number;
   /** How many groups one press may name. Read rather than hardcoded, so the client cannot drift. */
   max: number;
+  /** This set's identity — what a dismissal names. Absent/"" from a server that predates it. */
+  fingerprint?: string;
+  /** The account already said "not now" to exactly this set. Absent/false from an older server. */
+  dismissed?: boolean;
 }
 
 /** The press's answer: the groups it released and the distinct messages they held. */
@@ -315,6 +319,14 @@ export interface EngineAdapter {
    * RELEASED, not what has already moved, and a second press over the same groups releases nothing.
    */
   releaseHeld?(ruleIds?: readonly string[]): Promise<HeldReleaseResultWire>;
+
+  /**
+   * `POST /screener/held-releases/dismiss` — "not now", persisted per ACCOUNT so the offer stays
+   * away on every device and session until the set changes. `fingerprint` is the identity the
+   * read above answered; a set that moved in between stays offered because the stored value then
+   * matches nothing.
+   */
+  dismissHeldRelease?(fingerprint: string): Promise<void>;
 
   /**
    * `GET /attachments/:id` — ONE attachment's bytes, fetched live from IMAP.

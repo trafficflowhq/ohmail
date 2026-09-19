@@ -1,7 +1,7 @@
 import { and, eq, inArray, isNotNull, isNull, or, sql } from "drizzle-orm";
 import {
-  auditAction, auditLog, destinationIsDecisionSql, folderState, mailboxes, messages,
-  recordRuleDelta, rules as rulesTbl, type LedgerTx, type Tx,
+  accountSettings, auditAction, auditLog, destinationIsDecisionSql, folderState, mailboxes,
+  messages, recordRuleDelta, rules as rulesTbl, type LedgerTx, type Tx,
 } from "@trafficflow/db";
 import { dialect } from "@trafficflow/db/dialect";
 import { SCREENER_FOLDER } from "./screener-service.js";
@@ -59,45 +59,46 @@ export interface HeldReleaseResult {
   total: number;
 }
 
-/** The screen: the groups, and how many distinct messages they hold between them. */
+/** The screen: the groups, how many distinct messages they hold, and the dismissal state. */
 export interface HeldReleaseSummary {
   groups: HeldReleaseGroup[];
   total: number;
+  /** The identity of THIS set — what a dismissal names. Empty groups fingerprint to "". */
+  fingerprint: string;
+  /** True when the account dismissed exactly this set. A changed set re-offers by construction. */
+  dismissed: boolean;
 }
 
 /**
- * THE PREDICATE, IN FULL AND IN ONE PLACE.
- *
- * A row is held-by-a-decided-sender when all of this holds:
- *
- *   · the placement was written by a writer this product knows — an ALLOW-LIST over the three
- *     `last_set_by` values that exist (`'external'`, a pre-0.14.1 reader and a hand file, which
- *     the press is the consent for; `'peer'`, another install of the same account; `'us'`, this
- *     product's own filing), exactly the three the release arm of
- *     `rule-retro.ts#selectCandidates` admits, so the set counted and the set moved are one set.
- *     `'us'` was excluded on the argument that "the ordinary retro reaches those", and MEASURED
- *     it does not: `confirmSeed` writes its rules with `retro_requested_at` NULL, so their
- *     backlog is never owed, and mail this product itself put at the gate before the seed sat
- *     there for months while this screen reported nothing to release. The list is therefore not
- *     the narrowing — the two gate equalities below are — but it stays an allow-list, so a fourth
- *     writer nobody has thought about is excluded by default rather than released in bulk;
- *   · it is STILL AT THE GATE and settled there — desired and observed BOTH `ohmail/Screener`, so
- *     nothing is already in flight for it. Two equalities against the gate rather than
- *     `desired = observed`: identical over this set, and it keeps the pass's twin of this clause
- *     readable as a folder constraint by `mover-candidate-allowlist.census.ts`;
- *   · this install organizes the mailbox it lives in, and the mailbox is not disabled;
- *   · an ENABLED sender or domain rule of this account matches the sender and sends it somewhere
- *     other than the gate;
- *   · that rule's backlog is not ALREADY OPEN. A rule whose retro is owed is being walked right
- *     now, so its mail is not stuck — counting it would offer a press that changes nothing, and
- *     it is what makes a second press find zero.
- *
- * Three user-intent exclusions ride along, the cheap ones `rule-retro` also applies: the person has
- * triaged the message, is replying to it through ohmail, or has decided an AI proposal about it.
- * The pass's FOURTH exclusion — they replied from their own mail client — is deliberately not
- * repeated here: it needs the account's own addresses, and it can only ever make the pass file
- * FEWER rows than this counts, never more. So this number is what the press offers and the rules
- * then narrow, never the other way round.
+ * THE OFFER'S IDENTITY — a hash of the sorted (rule, destination, count) triples, so "the same
+ * offer" is a fact about the SET and never about when it was read. Pure FNV-1a over the joined
+ * triples rather than node:crypto, because this module is loaded by the phone bundle, which has
+ * no node builtins. Not a security boundary: the value only ever meets an equality check against
+ * what the same function produced.
+ */
+export function heldReleaseFingerprint(groups: readonly HeldReleaseGroup[]): string {
+  if (groups.length === 0) return "";
+  const text = groups
+    .map((g) => `${g.ruleId}:${g.destination}:${g.count}`)
+    .sort()
+    .join("\n");
+  let h = 0xcbf29ce484222325n;
+  for (let i = 0; i < text.length; i++) {
+    h ^= BigInt(text.charCodeAt(i));
+    h = (h * 0x100000001b3n) & 0xffffffffffffffffn;
+  }
+  return `v1-${h.toString(16).padStart(16, "0")}`;
+}
+
+/**
+ * THE PREDICATE, IN ONE PLACE. Held-by-a-decided-sender = placed by a KNOWN writer (allow-list
+ * over the three `last_set_by` values; 'us' included — `confirmSeed` rules owe no backlog, so
+ * 'us'-placed pre-seed mail sat unoffered for months), settled AT the gate (desired AND observed
+ * both `ohmail/Screener`; two equalities so the mover census reads a folder constraint), in a
+ * live organized mailbox, matched by an ENABLED sender/domain rule pointing off the gate, that
+ * rule's backlog not already open (an owed rule is in flight — why a second press finds zero).
+ * The user-intent exclusions here are the SAME three a RELEASE run applies — the own-reply arm
+ * once kept ALL 57 offered rows, so it no longer binds one — one set, counted and moved.
  */
 function heldAtGate(accountId: string) {
   return and(
@@ -217,12 +218,49 @@ export async function heldReleaseTotal(
   return Number(row?.n ?? 0);
 }
 
-/** The whole screen in one read: the groups and their distinct total. */
+/** The whole screen in one read: the groups, their distinct total, and the dismissal state. */
 export async function heldReleaseSummary(
   db: Tx, accountId: string,
 ): Promise<HeldReleaseSummary> {
   const groups = await heldReleaseGroups(db, accountId);
-  return { groups, total: await heldReleaseTotal(db, accountId, groups) };
+  const fingerprint = heldReleaseFingerprint(groups);
+  const [row] = await db
+    .select({ dismissed: accountSettings.heldReleaseDismissed })
+    .from(accountSettings)
+    .where(eq(accountSettings.accountId, accountId));
+  return {
+    groups,
+    total: await heldReleaseTotal(db, accountId, groups),
+    fingerprint,
+    // "" (no groups) never reads dismissed: there is no offer to have said "not now" to.
+    dismissed: fingerprint !== "" && (row?.dismissed ?? null) === fingerprint,
+  };
+}
+
+/**
+ * "NOT NOW" — record which exact offer the account dismissed. The fingerprint is the CLIENT'S,
+ * from the read it showed: storing what was on screen (never a re-derivation) means a set that
+ * changed between the read and the press stays offered, because the stored value then matches
+ * nothing. One row per account (`account_settings` upsert), bounded before the write — the
+ * migration's CHECK is the belt. Clearing is not offered: a dismissal is superseded by the set
+ * changing, which is the only honest way back.
+ */
+export async function dismissHeldRelease(
+  ctx: ServiceContext, opts: { fingerprint?: unknown },
+): Promise<{ dismissed: true }> {
+  const fp = opts.fingerprint;
+  if (typeof fp !== "string" || fp.length === 0 || fp.length > 128) {
+    throw new ServiceError("validation_failed", 400, "fingerprint must be a short string");
+  }
+  await withAccountTx(ctx, async (t) => {
+    await t.insert(accountSettings)
+      .values({ accountId: ctx.accountId, heldReleaseDismissed: fp })
+      .onConflictDoUpdate({
+        target: accountSettings.accountId,
+        set: { heldReleaseDismissed: fp },
+      });
+  });
+  return { dismissed: true };
 }
 
 /**

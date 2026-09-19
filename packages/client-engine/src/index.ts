@@ -298,6 +298,8 @@ export {
   scheduledSendsList,
   SENDING_STALE_AFTER_MS,
   rulesList,
+  heldReleaseDismissedOf,
+  heldReleaseFingerprintOf,
   heldReleaseGroups,
   heldReleaseTotalOf,
   screenerAdviceAi,

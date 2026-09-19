@@ -116,6 +116,14 @@ export interface SuggestBatchControl {
    * are eligible to be asked about.
    */
   resuggestable: number;
+  /**
+   * Waiting senders with NO REAL SUGGESTION — the filter chips' "none" group, holds included,
+   * counted by the view's own selector (`hasRealSuggestion`) and handed in. The resting sentence
+   * reads THIS, not `resuggestable`: "all N senders have a suggestion" once rested over a queue
+   * whose chips read "No suggestion 17", because the sentence and the chips counted different
+   * predicates. Defaults to zero, which keeps the sentence — the pre-field behaviour.
+   */
+  unanswered: number;
   /** Which of the two sets the currently open ladder covers. `new` while nothing is open. */
   mode: SuggestMode;
   /**
@@ -246,7 +254,7 @@ export interface ScreenerSuggestions {
    * ladders share one phase, quote and press counter: two calls would mint
    * two controls over one state, each reporting the other's `pricing`. Omitted ⇒ no re-ask is offered.
    */
-  forSenders: (addresses: string[], resuggestable?: string[]) => SuggestBatchControl;
+  forSenders: (addresses: string[], resuggestable?: string[], unanswered?: number) => SuggestBatchControl;
   /**
    * Bind the OPT-IN's quote to the same sender list.
    *
@@ -894,7 +902,9 @@ export function useScreenerSuggestions(opts: {
    * confirm button never becomes pressable. Building a small object per render is cheaper
    * than the class of bug that memoising it invites.
    */
-  const forSenders = (addresses: string[], resuggestable: string[] = []): SuggestBatchControl => {
+  const forSenders = (
+    addresses: string[], resuggestable: string[] = [], unanswered = 0,
+  ): SuggestBatchControl => {
     // The automatic batch's only view of the queue: the UNSUGGESTED list
     // alone, deliberately not widened to `resuggestable`. The automatic
     // path spends without a press; its entire licence is "the cost was
@@ -1041,6 +1051,7 @@ export function useScreenerSuggestions(opts: {
     return {
       available: addresses.length,
       resuggestable: resuggestable.length,
+      unanswered,
       mode,
       pool: target.length,
       sizes,

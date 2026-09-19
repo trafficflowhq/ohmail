@@ -1641,6 +1641,13 @@ export interface HeldReleaseGroupDTO {
    * refresh; a stale row is replaced wholesale, never merged.
    */
   total: number;
+  /**
+   * The whole SET's identity and its dismissal state, carried on each row for `total`'s reason.
+   * `fingerprint` is what a "not now" press names; `dismissed` true means the account already
+   * said it to exactly this set, so no surface offers the row. "" / false from an older server.
+   */
+  fingerprint: string;
+  dismissed: boolean;
 }
 
 export const OUTBOX_TYPE = "outbox_entry";

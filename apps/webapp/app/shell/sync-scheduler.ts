@@ -899,6 +899,11 @@ export function createSyncGate(mirrorOwner: string | null): SyncGate {
         ...(adapter.releaseHeld
           ? { releaseHeld: gatedPress(adapter.releaseHeld.bind(adapter), "releasing mail held at your gate") }
           : {}),
+        /* "NOT NOW" — the third of the pair's verbs, gated like the press: it writes the
+           account's own dismissal record, and the re-read lands in this mirror. */
+        ...(adapter.dismissHeldRelease
+          ? { dismissHeldRelease: gatedPress(adapter.dismissHeldRelease.bind(adapter), "dismissing the held-mail offer") }
+          : {}),
       } satisfies GatedAdapter & { transport: EngineAdapter };
     },
   };

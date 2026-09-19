@@ -4515,11 +4515,30 @@ export class OhmailEngine {
         entity: {
           id: g.ruleId, kind: g.kind, match: g.match,
           destination: g.destination as HeldReleaseGroupDTO["destination"], count: g.count, total: wire.total,
+          // An older door sends neither: "" reads "not dismissable here", false "not dismissed".
+          fingerprint: wire.fingerprint ?? "", dismissed: wire.dismissed === true,
         } satisfies HeldReleaseGroupDTO,
       })),
       before.filter((g) => !keep.has(g.id)).map((g) => ({ type: HELD_RELEASE_TYPE, id: g.id })),
     );
     this.notify();
+  }
+
+  /**
+   * "NOT NOW" — dismiss the offer AS READ. The fingerprint is taken off the mirror rows this
+   * surface showed, never re-derived, so a set that changed since the read stays offered. The
+   * re-read afterwards is what removes the row from every surface of this device; other devices
+   * see it on their next refresh. A door with no dismiss verb, or a mirror with no fingerprint
+   * (an older server), is a no-op — the button that calls this is not offered there.
+   */
+  async dismissHeldRelease(): Promise<void> {
+    const press = this.adapter.dismissHeldRelease;
+    if (!press) return;
+    const [first] = this.read().list<HeldReleaseGroupDTO>(HELD_RELEASE_TYPE);
+    const fingerprint = first?.fingerprint ?? "";
+    if (fingerprint === "") return;
+    await press.call(this.adapter, fingerprint);
+    await this.refreshHeldReleases();
   }
 
   /**

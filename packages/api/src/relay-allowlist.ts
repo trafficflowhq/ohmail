@@ -167,6 +167,7 @@ export const RELAY_ALLOWLIST: readonly RelaySpec[] = [
   { method: "POST", pattern: "/rules" },
   { method: "POST", pattern: "/screener/:id" },
   { method: "POST", pattern: "/screener/held-releases" },
+  { method: "POST", pattern: "/screener/held-releases/dismiss" },
   { method: "POST", pattern: "/screener/junk/rescue" },
   { method: "POST", pattern: "/screener/junk/sweep" },
   { method: "POST", pattern: "/screener/suggest" },

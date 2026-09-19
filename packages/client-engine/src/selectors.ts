@@ -1607,6 +1607,22 @@ export function heldReleaseTotalOf(reader: EntityReader): number {
   return first?.total ?? 0;
 }
 
+/**
+ * WHETHER THE ACCOUNT SAID "NOT NOW" TO THIS EXACT SET — read off the rows for `total`'s reason.
+ * True hides the offer everywhere; a changed set arrives with `dismissed: false` from the server,
+ * because the stored fingerprint no longer matches. False with no rows: no offer, nothing to hide.
+ */
+export function heldReleaseDismissedOf(reader: EntityReader): boolean {
+  const [first] = reader.list<HeldReleaseGroupDTO>(HELD_RELEASE_TYPE);
+  return first?.dismissed === true;
+}
+
+/** This set's identity — "" with no rows or an older server, which reads "not dismissable here". */
+export function heldReleaseFingerprintOf(reader: EntityReader): string {
+  const [first] = reader.list<HeldReleaseGroupDTO>(HELD_RELEASE_TYPE);
+  return first?.fingerprint ?? "";
+}
+
 export function rulesList(reader: EntityReader): RuleDTO[] {
   return reader.list<RuleDTO>("rule").sort((a, b) => {
     const ta = a.createdAt ? Date.parse(a.createdAt) : 0;

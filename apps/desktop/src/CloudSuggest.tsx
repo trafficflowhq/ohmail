@@ -29,11 +29,13 @@ export interface CloudSuggestProps {
   senders: string[];
   /** Waiting senders that already have one — what a re-ask would cover. */
   resuggestable: string[];
+  /** Waiting senders with no real suggestion (holds included) — the resting sentence's gate. */
+  unanswered: number;
   /** Put answers into the one overlay the rows read their chips from. */
   absorb: (rows: Array<{ address: string; suggestion: SenderSuggestion }>) => void;
 }
 
-export function CloudSuggest({ senders, resuggestable, absorb }: CloudSuggestProps) {
+export function CloudSuggest({ senders, resuggestable, unanswered, absorb }: CloudSuggestProps) {
   const toast = useToast();
   const suggestions = useScreenerSuggestions({
     /* Mounted only inside the Screener, so being here IS being active. The flag exists for the
@@ -43,5 +45,5 @@ export function CloudSuggest({ senders, resuggestable, absorb }: CloudSuggestPro
     wire: cloudSuggestWire,
     publish: absorb,
   });
-  return <SuggestControl control={suggestions.forSenders(senders, resuggestable)} />;
+  return <SuggestControl control={suggestions.forSenders(senders, resuggestable, unanswered)} />;
 }

@@ -2191,6 +2191,14 @@ export const accountSettings = pgTable("account_settings", {
    */
   autoSuggestAt: timestamp("auto_suggest_at", { withTimezone: true }),
   /**
+   * The dismissed held-release offer (mail 0120) — the fingerprint of the exact offer the
+   * account said "not now" to (`heldReleaseFingerprint` over the sorted groups). NULL = never
+   * dismissed. The read door compares the CURRENT set's fingerprint to this, so a changed set —
+   * new held mail from a decided sender, a group released — re-offers by construction, and a
+   * matching one stays away on every device. Length CHECK (<= 128) lives in the migration.
+   */
+  heldReleaseDismissed: text("held_release_dismissed"),
+  /**
    * WHO REACHES THE OHBOX — the account's posture (mail 0042). NULL / `'people_and_replied'` =
    * today's lenient behaviour; `'people_only'` = demote automated mail from inferred-admission
    * senders out of the Ohbox. The CHECK (enum, closed) lives in the migration. **NULL reads

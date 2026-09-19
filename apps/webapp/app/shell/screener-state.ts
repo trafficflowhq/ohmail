@@ -15,6 +15,8 @@ import { useTranslations } from "next-intl";
 import {
   FOLDER_OF_VIEW,
   physicalFolderOf,
+  heldReleaseDismissedOf,
+  heldReleaseFingerprintOf,
   heldReleaseGroups,
   heldReleaseTotalOf,
   screenerSegments,
@@ -129,6 +131,13 @@ export interface HeldReleaseOffer {
   releasing: boolean;
   /** Release every group, or just the named rules. Re-reads afterwards and says what it released. */
   release: (ruleIds?: readonly string[]) => void;
+  /**
+   * "NOT NOW" — dismiss this exact set, persisted per account so the offer stays away on every
+   * device and session until the set CHANGES (new held mail from a decided sender re-offers).
+   * `null` where the door cannot persist one (an older server sends no fingerprint), and the
+   * surface then offers no dismiss control rather than a press that forgets by tomorrow.
+   */
+  dismiss: (() => void) | null;
 }
 
 export interface ScreenerState {
@@ -336,6 +345,18 @@ const MARK_SEEN_MAX = 200;
 export const APPLY_PILE_ORDER: readonly DecisionDestination[] = [
   "ohbox", "reads", "receipts", "screened", "spam",
 ];
+
+/**
+ * DOES THIS ROW CARRY A REAL SUGGESTION — the one selector behind every count that claims one.
+ * A hold (`dest: "screener"`, the model declining to place the sender) and a `noAnswer` (the run
+ * could not answer) are both "no suggestion": nothing an apply could file, nothing a header may
+ * count. The filter chips' "none" group, the apply button's count, the accept affordance and the
+ * suggest control's resting sentence ALL read this predicate — a live account's screen once said
+ * "all 19 have a suggestion" over chips reading "No suggestion 17" because two spellings drifted.
+ */
+export function hasRealSuggestion(x: ScreenerSenderDTO): boolean {
+  return x.ai != null && x.ai.noAnswer == null && x.ai.dest !== "screener";
+}
 
 /**
  * Join one bought suggestion onto a row.
@@ -1142,7 +1163,8 @@ export function useScreenerState(
   // Spam IS counted, because the press files it — see `applyAll`. It used to be excluded here to
   // match an exclusion there, and the two together are what left a queue of spam rows on screen
   // after a press that claimed to have applied every suggestion.
-  const suggestedRows = undecided.filter((x) => x.ai != null && x.ai.dest !== "screener");
+  // `hasRealSuggestion` — the ONE selector: a `noAnswer` row is not applyable and not counted.
+  const suggestedRows = undecided.filter(hasRealSuggestion);
   const suggestedCount = suggestedRows.length;
   /**
    * WHICH PILES the press would file into, deduped, in the surface's own reading order. Derived from `suggestedRows`
@@ -1180,10 +1202,19 @@ export function useScreenerState(
    * server's `heldRows` is deliberately NOT widened: that is a wire contract, and widening it changes what the gate
    * means for every caller.
    */
+  /**
+   * `noAnswer` rows are IN the buy list: a sender the run could not answer for (the balance ran
+   * out, the entitlement refused, the model faulted) has no answer, so the honest offer is the
+   * buy button, not the resting "all suggested" sentence the old `ai == null` read produced —
+   * seventeen unanswered rows once rested under "All 19 senders have a suggestion". Asking again
+   * is also the remedy every skip reason names, and a re-ask of an unchanged representative is
+   * served from the store at no charge, so the widened list cannot double-bill.
+   */
   const unsuggestedSenders = [
     ...new Set(
       undecided
-        .filter((x) => x.derived === true && x.ai == null && x.gatePhysical !== false)
+        .filter((x) => x.derived === true && (x.ai == null || x.ai.noAnswer != null)
+          && x.gatePhysical !== false)
         .map((x) => senderKey(x.from.address)),
     ),
   ];
@@ -1204,7 +1235,11 @@ export function useScreenerState(
   const suggestedSenders = [
     ...new Set(
       undecided
-        .filter((x) => x.derived === true && x.ai != null && x.gatePhysical !== false)
+        /* `noAnswer == null`, the buy list's complement: an unanswered sender re-asks as a BUY
+           (the two lists stay disjoint over one queue), while a hold — a real, paid answer — is
+           re-askable here. */
+        .filter((x) => x.derived === true && x.ai != null && x.ai.noAnswer == null
+          && x.gatePhysical !== false)
         .map((x) => senderKey(x.from.address)),
     ),
   ];
@@ -1722,6 +1757,8 @@ export function useScreenerState(
 
   const heldGroups = useMemo(() => heldReleaseGroups(engine.read()), [engine, version]);
   const heldTotal = useMemo(() => heldReleaseTotalOf(engine.read()), [engine, version]);
+  const heldDismissed = useMemo(() => heldReleaseDismissedOf(engine.read()), [engine, version]);
+  const heldFingerprint = useMemo(() => heldReleaseFingerprintOf(engine.read()), [engine, version]);
 
   /* NOT `useCallback`, and the census in `render-scope-census.test.ts` is why. A memoized closure
      declared in this hook shares ONE runtime context with everything else the invocation binds — the
@@ -1742,12 +1779,27 @@ export function useScreenerState(
       .finally(() => { setReleasing(false); });
   };
 
+  /* "Not now", built like the release press and for the press handler's non-memoized reason.
+     The engine reads the fingerprint off its own mirror, so this closure carries nothing. */
+  const pressHeldDismiss = (): void => {
+    if (releasing) return;
+    setReleasing(true);
+    void engine.dismissHeldRelease()
+      .catch(() => { toast(t("heldDismissFailed")); })
+      .finally(() => { setReleasing(false); });
+  };
+
   /* NO ROW WITHOUT MAIL TO RELEASE — and a reader never sees one either, because the server
      answers no groups for a mailbox this install does not organize. The `blocked` check is the
-     belt: a mode that renders an inert press is its own small lie (the bulk strip's argument). */
+     belt: a mode that renders an inert press is its own small lie (the bulk strip's argument).
+     DISMISSED hides it the same way: the account said "not now" to exactly this set, on some
+     device, and the server re-offers by construction the moment the set changes. */
   const heldRelease: HeldReleaseOffer | null =
-    heldTotal > 0 && heldGroups.length > 0 && role.mode !== "blocked"
-      ? { total: heldTotal, groups: heldGroups, releasing, release: pressHeldRelease }
+    heldTotal > 0 && heldGroups.length > 0 && role.mode !== "blocked" && !heldDismissed
+      ? {
+          total: heldTotal, groups: heldGroups, releasing, release: pressHeldRelease,
+          dismiss: heldFingerprint === "" ? null : pressHeldDismiss,
+        }
       : null;
 
   return {

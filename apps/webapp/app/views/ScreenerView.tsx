@@ -42,7 +42,7 @@ import {
   type DecisionScope,
 } from "@ohmail/ui";
 import { messageOf, type JunkItemWire } from "../api-client";
-import { PILE_KEY, PILE_KEY_OF_FOLDER, usePileNames, useDecisionBarCopy } from "../shell/decision-copy";
+import { PILE_KEY, usePileNames, useDecisionBarCopy } from "../shell/decision-copy";
 import { useRowBadgeCopy } from "../shell/row-copy";
 import { avatarHue, displayTime } from "../shell/format";
 import { junkKeyOf, type JunkWindowControl } from "../shell/junk-window";
@@ -57,7 +57,7 @@ import { readColumnHidden, watchNarrow } from "../shell/narrow";
    picked, and `HeldMail` below for why this pile needs it too. */
 import { useBodyStalled } from "../shell/message-chrome";
 import { goScreener, goSettings, type ScreenerSegmentId } from "../shell/routing";
-import { APPLY_PILE_ORDER, type PendingDecision } from "../shell/screener-state";
+import { APPLY_PILE_ORDER, hasRealSuggestion, type PendingDecision } from "../shell/screener-state";
 /* The one role answer, from the module that derives it — see `mail-state.ts#screenerMode`. */
 import type { ScreenerRole } from "../shell/mail-state";
 import type { HeldBodyStall, ScreenerState, SpamRow } from "../shell/screener-state";
@@ -95,11 +95,6 @@ function reasonValues(ai: NonNullable<ScreenerSenderDTO["ai"]>): Record<string, 
     brand: ai.reasonBrand ?? "",
     count: ai.reasonCount === undefined ? "" : String(ai.reasonCount),
   };
-}
-
-function pileNameOfFolder(folder: string, t: (k: string, v?: Record<string, string>) => string): string {
-  const key = PILE_KEY_OF_FOLDER[folder];
-  return key ? t(key) : folder;
 }
 
 function pileList(dests: DecisionDestination[], t: (k: string, v?: Record<string, string>) => string): string {
@@ -161,11 +156,11 @@ const ANCHOR_TOLERANCE_PX = 2;
  * never asked, or the run ran out) and a row nobody has bought advice for are ONE group here,
  * and deliberately: they differ in why, which the row chip and the preview already say, but not
  * in what a reader has to do about them. All three are senders still waiting on a person.
+ * `hasRealSuggestion` is that partition's one spelling — the header, the apply count and these
+ * chips read it, so they cannot disagree by drifting apart.
  */
 function filterGroupOf(w: ScreenerSenderDTO): ScreenerFilterId {
-  const ai = w.ai;
-  if (!ai || ai.noAnswer || ai.dest === "screener") return "none";
-  return ai.dest;
+  return hasRealSuggestion(w) ? (w.ai!.dest as DecisionDestination) : "none";
 }
 
 /**
@@ -178,9 +173,7 @@ function filterGroupOf(w: ScreenerSenderDTO): ScreenerFilterId {
  * "accept the decision not to decide".
  */
 function acceptDestOf(w: ScreenerSenderDTO): DecisionDestination | null {
-  const ai = w.ai;
-  if (!ai || ai.noAnswer || ai.dest === "screener") return null;
-  return ai.dest;
+  return hasRealSuggestion(w) ? (w.ai!.dest as DecisionDestination) : null;
 }
 
 /**
@@ -292,9 +285,17 @@ export function SuggestControl({ control }: { control: SuggestBatchControl }) {
           // THE RESTING STATE — a fact, not a control. `role="status"` because it replaces a
           // button in place when the last sender is answered for, and a surface that changes
           // from an action to a sentence under a keyboard user's cursor has to say so.
-          <span className="scn-sg-all" role="status">
-            {t("suggest.allSuggested", { count: control.resuggestable })}
-          </span>
+          //
+          // ONLY when every waiting sender carries a REAL suggestion (`unanswered === 0`, the
+          // filter chips' own selector): a hold is an answer but not a suggestion, so with any
+          // on screen this sentence would claim what the chip row right below counts against —
+          // the header/filter disagreement measured on a live account. The chips say the
+          // partition; this says nothing.
+          control.unanswered === 0 ? (
+            <span className="scn-sg-all" role="status">
+              {t("suggest.allSuggested", { count: control.resuggestable })}
+            </span>
+          ) : null
         ) : (
           /* A capsule like the apply beside it, not a ghost: it is the way to the strip's other
              verb, and it spends nothing to press — the ask that opens names its price first. */
@@ -1166,29 +1167,28 @@ export function ScreenerView({
           }
           aiSuggestion={
             w.ai
-              ? {
-                  // `screener` is in no pile table — the five there are the five a decision can
-                  // FILE to, and this is the one that files nothing. The `?? w.ai.dest` fallback
-                  // would print the raw view key "screener" in the row.
-                  //
-                  // THREE STATES, THREE CHIPS. A row with an answer names its pile; a row the
-                  // model declined says the decision is yours; a row that never reached a model
-                  // says so. All three used to be two, and the third read as nothing at all —
-                  // which is how mail we never send to AI came to look like mail we forgot.
-                  destLabel: w.ai.noAnswer
-                    ? t("aiNoAnswerChip")
-                    : w.ai.dest === "screener"
+              ? w.ai.noAnswer
+                ? // THE NON-ANSWER, as a sentence and nothing else. This was
+                  // `destLabel: "No answer", confidence: 0` — rendered "→ Keine Antwort 0.00",
+                  // a destination chip for a decision nobody made, over a number that measured
+                  // nothing. The sentence names the reason and the way out (`aiSkipRow.*`).
+                  { note: t(`aiSkipRow.${w.ai.noAnswer}`) }
+                : {
+                    // `screener` is in no pile table — the five there are the five a decision can
+                    // FILE to, and this is the one that files nothing. The `?? w.ai.dest` fallback
+                    // would print the raw view key "screener" in the row.
+                    destLabel: w.ai.dest === "screener"
                       ? t("aiHoldChip")
                       : piles[w.ai.dest as DecisionDestination] ?? w.ai.dest,
-                  confidence: w.ai.confidence,
-                  // WHAT OHMAIL CHECKED, said on the row itself. The chip's own words come from
-                  // the catalogue by CODE — the server sends a code and two facts of its own (a
-                  // brand out of our dictionary, a count we measured), never a sentence, so this
-                  // reads in the reader's language and can never print a stranger's text.
-                  ...(w.ai.reasonCode
-                    ? { reason: t(`aiReasonChip.${w.ai.reasonCode}`, reasonValues(w.ai)) }
-                    : {}),
-                }
+                    confidence: w.ai.confidence,
+                    // WHAT OHMAIL CHECKED, said on the row itself. The chip's own words come from
+                    // the catalogue by CODE — the server sends a code and two facts of its own (a
+                    // brand out of our dictionary, a count we measured), never a sentence, so this
+                    // reads in the reader's language and can never print a stranger's text.
+                    ...(w.ai.reasonCode
+                      ? { reason: t(`aiReasonChip.${w.ai.reasonCode}`, reasonValues(w.ai)) }
+                      : {}),
+                  }
               : undefined
           }
           heldCount={w.held.length}
@@ -1358,21 +1358,15 @@ export function ScreenerView({
                 The press is not a bulk verb and does not live in the strip below — the strip acts
                 on the senders ON SCREEN, and this acts on mail that is not in the list at all. */}
             {segment === "waiting" && state.heldRelease ? (
+              /* ONE SENTENCE, TWO VERBS. The per-rule list is gone: it named addresses and piles
+                 for a press that acts on the whole set anyway, and reading it was the work this
+                 offer exists to save. "Not now" persists per account until the SET changes —
+                 absent only against a server too old to keep one, where a press that forgets
+                 by tomorrow would be worse than no button. */
               <div className="scn-held" role="note">
                 <p className="scn-held-lead">
                   {t("heldReleaseLead", { count: state.heldRelease.total })}
                 </p>
-                <ul className="scn-held-groups">
-                  {state.heldRelease.groups.map((g) => (
-                    <li key={g.id}>
-                      {t("heldReleaseGroup", {
-                        match: g.match,
-                        count: g.count,
-                        pile: pileNameOfFolder(g.destination, t),
-                      })}
-                    </li>
-                  ))}
-                </ul>
                 <Button
                   disabled={state.heldRelease.releasing}
                   aria-busy={state.heldRelease.releasing || undefined}
@@ -1381,6 +1375,15 @@ export function ScreenerView({
                 >
                   {t("heldReleaseAll", { count: state.heldRelease.total })}
                 </Button>
+                {state.heldRelease.dismiss ? (
+                  <Button
+                    variant="ghost"
+                    disabled={state.heldRelease.releasing}
+                    onClick={() => state.heldRelease?.dismiss?.()}
+                  >
+                    {t("heldReleaseNotNow")}
+                  </Button>
+                ) : null}
               </div>
             ) : null}
             {/* A BULK CONTROL MAY NOT OUTLIVE THE THING IT ACTS ON — now the whole of the

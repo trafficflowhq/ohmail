@@ -1,5 +1,5 @@
 import {
-  ServiceError, heldReleaseSummary, releaseHeld, HELD_RELEASE_GROUPS_MAX,
+  ServiceError, dismissHeldRelease, heldReleaseSummary, releaseHeld, HELD_RELEASE_GROUPS_MAX,
   type ScreenBody,
 } from "@trafficflow/services/mail";
 import { serviceContext } from "../context.js";
@@ -47,13 +47,32 @@ export const screenerRoutes: Route[] = [
     cost: "read",
     handler: async (req, deps) => {
       const ctx = serviceContext(deps, req);
-      const { groups, total } = await heldReleaseSummary(ctx.db, ctx.accountId);
+      const { groups, total, fingerprint, dismissed } = await heldReleaseSummary(ctx.db, ctx.accountId);
       // `total` is DISTINCT messages and never the sum of the group counts — a domain rule and a
       // sender rule inside it both claim the same mail, honestly, and adding them up would tell a
       // person they hold more than they do. `max` travels so the client learns the ceiling by
       // READING it rather than carrying a constant of its own that drifts — `GET /screener`'s
-      // `maxPerRequest` argument.
-      return jsonResponse({ groups, total, max: HELD_RELEASE_GROUPS_MAX });
+      // `maxPerRequest` argument. `fingerprint` is this set's identity (what a dismissal names)
+      // and `dismissed` whether the account already said "not now" to exactly this set.
+      return jsonResponse({ groups, total, max: HELD_RELEASE_GROUPS_MAX, fingerprint, dismissed });
+    },
+  },
+  {
+    /**
+     * "NOT NOW" — the offer's dismissal, persisted per account so it holds on every device and
+     * every session until the SET changes (new held mail from a decided sender is a new offer).
+     * The body's `fingerprint` is the one the read above answered, so a set that moved between
+     * the read and the press stays offered. Same door rule as the read: nothing here names a
+     * credential or moves mail.
+     */
+    method: "POST",
+    pattern: "/screener/held-releases/dismiss",
+    relay: true,
+    cost: "work",
+    handler: async (req, deps) => {
+      const ctx = serviceContext(deps, req);
+      const body = await readBody<{ fingerprint?: unknown }>(req);
+      return jsonResponse(await dismissHeldRelease(ctx, { fingerprint: body.fingerprint }));
     },
   },
   {

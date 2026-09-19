@@ -209,10 +209,12 @@ export interface MessageRowProps {
    *
    * `reason` is the sentence a DETERMINISTIC check produced — the sending address against the
    * brand the mail names, one subject from a crowd of strangers, a failed authentication. It sits
-   * beside the chip rather than inside it because it is a different kind of claim: the chip is
-   * advice a model gave, this is something ohmail measured. The host writes the words.
+   * beside the chip rather than inside it: the chip is advice a model gave, this is something
+   * ohmail measured. The `note` shape is a row the run could NOT answer for — one plain sentence,
+   * no arrow and no number, because "→ No answer 0.00" reads as a destination nobody chose over a
+   * confidence that measured nothing. A union, so a note with a confidence is unrepresentable.
    */
-  aiSuggestion?: { destLabel: string; confidence: number; reason?: string };
+  aiSuggestion?: { destLabel: string; confidence: number; reason?: string } | { note: string };
   /** Screener variant: held-mail count chip. */
   heldCount?: number;
   /** The held chip's whole phrase ("2 held"), rendered only when `heldCount > 1`. */
@@ -415,11 +417,17 @@ export function MessageRow(props: MessageRowProps) {
   const chips: ReactNode[] = [];
   if (aiSuggestion)
     chips.push(
-      <Badge key="ai" variant="ai">
-        → {aiSuggestion.destLabel} <span className="num">{aiSuggestion.confidence.toFixed(2)}</span>
-      </Badge>,
+      "note" in aiSuggestion ? (
+        // The non-answer: a sentence, worn plain. No arrow, no number — see the prop.
+        <Badge key="ai">{aiSuggestion.note}</Badge>
+      ) : (
+        <Badge key="ai" variant="ai">
+          → {aiSuggestion.destLabel} <span className="num">{aiSuggestion.confidence.toFixed(2)}</span>
+        </Badge>
+      ),
     );
-  if (aiSuggestion?.reason) chips.push(<Badge key="ai-why">{aiSuggestion.reason}</Badge>);
+  if (aiSuggestion && !("note" in aiSuggestion) && aiSuggestion.reason)
+    chips.push(<Badge key="ai-why">{aiSuggestion.reason}</Badge>);
   /* The chip's whole phrase, from the host — the count is the host's to place, because "2 held"
      and "2 zurückgehalten" do not put the number in the same relation to the word everywhere.
      `heldCount` still decides WHETHER the chip appears; the words are not this file's. */
@@ -511,7 +519,8 @@ export function MessageRow(props: MessageRowProps) {
     newSinceLabel,
     newSinceTitle,
     stateNote,
-    aiReason: aiSuggestion?.reason,
+    // A note row's sentence rides the same spoken slot its visible chip uses — one fact, one line.
+    aiReason: aiSuggestion && "note" in aiSuggestion ? aiSuggestion.note : aiSuggestion?.reason,
     place,
     mailbox,
     mailboxTitle,

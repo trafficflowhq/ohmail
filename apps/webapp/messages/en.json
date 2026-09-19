@@ -739,12 +739,13 @@
       "autoFailed": "That setting did not save. It is unchanged."
     },
     "markAllSpam": "Mark all spam",
-    "heldReleaseLead": "{count, plural, one {1 held message from a sender you already decided} other {# held messages from senders you already decided}}",
-    "heldReleaseGroup": "{match} \u2192 {pile} ({count})",
+    "heldReleaseLead": "{count, plural, one {1 message from a sender you already decided about is still in the Screener. Release it to its pile.} other {# messages from senders you already decided about are still in the Screener. Release them to their piles.}}",
     "heldReleaseAll": "Release {count}",
+    "heldReleaseNotNow": "Not now",
     "heldReleased": "Released {count}. Your rules file them on the next pass.",
     "heldReleasedNone": "Nothing left to release.",
     "heldReleaseFailed": "Could not release that mail. Try again.",
+    "heldDismissFailed": "That didn't save. Try again.",
     "noSuggestion": "No suggestion yet for this sender. Choose where their mail goes.",
     "noSuggestionUnavailable": "AI suggestions are not available for this account. Choose where their mail goes.",
     "noSuggestionNoAutoAi": "This sender’s mail is kept out of automatic AI. Choose where their mail goes.",
@@ -765,9 +766,14 @@
       "brand_mismatch": "Name does not match"
     },
     "aiSkip": {
-      "out_of_credits": "The AI budget ran out before this sender was reached.",
-      "spend_unavailable": "AI is switched off for this account, so this sender was not asked about.",
+      "out_of_credits": "The AI budget ran out before this sender was reached. It refills next cycle — deciding by hand costs nothing.",
+      "spend_unavailable": "AI is switched off or unavailable for this account, so this sender was not asked about. Deciding by hand costs nothing.",
       "model_unavailable": "The model did not answer for this sender. Asking again costs nothing."
+    },
+    "aiSkipRow": {
+      "out_of_credits": "No suggestion — the AI budget ran out. It refills next cycle.",
+      "spend_unavailable": "No suggestion — AI is unavailable for this account right now.",
+      "model_unavailable": "No suggestion — the model did not answer. Asking again costs nothing."
     },
     "aiWhy": "“{why}”",
     "heldCaption": "{count} held messages — all shown · first contact {time}",

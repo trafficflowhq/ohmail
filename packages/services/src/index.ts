@@ -60,7 +60,8 @@ export {
   type ScreenDecisionMailboxes, type ScreenRequestedMailbox, type ScreenRequestResult,
 } from "./screener-service.js";
 export {
-  heldReleaseGroups, heldReleaseSummary, heldReleaseTotal, releaseHeld,
+  dismissHeldRelease, heldReleaseFingerprint, heldReleaseGroups, heldReleaseSummary,
+  heldReleaseTotal, releaseHeld,
   HELD_RELEASE_GROUPS_MAX, HELD_RELEASE_AUDIT_ACTION,
   type HeldReleaseGroup, type HeldReleaseResult, type HeldReleaseSummary,
 } from "./held-release-service.js";

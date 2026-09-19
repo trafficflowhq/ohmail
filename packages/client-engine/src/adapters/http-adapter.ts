@@ -881,17 +881,30 @@ export class HttpAdapter implements EngineAdapter {
   async heldReleases(): Promise<HeldReleaseWire> {
     const res = await this.request("GET", "/screener/held-releases");
     if (!res.ok) throw await this.rejectionOf(res);
-    const wire = (await res.json()) as { groups?: unknown; total?: unknown; max?: unknown };
+    const wire = (await res.json()) as {
+      groups?: unknown; total?: unknown; max?: unknown; fingerprint?: unknown; dismissed?: unknown;
+    };
     const groups = Array.isArray(wire.groups)
       ? wire.groups.map((g) => HttpAdapter.heldGroupOf(g)).filter((g): g is HeldReleaseGroupWire => g !== null)
       : [];
     // A server that does not state the total or the ceiling gets no invented one: zero groups say
     // "nothing to release", and a zero ceiling is read by the caller as "this door cannot press".
+    // An older server sends no fingerprint and no dismissal — "" and false, which read as "this
+    // offer cannot be dismissed here" and "not dismissed", never as an invented identity.
     return {
       groups,
       total: typeof wire.total === "number" && Number.isFinite(wire.total) ? Math.trunc(wire.total) : 0,
       max: typeof wire.max === "number" && Number.isFinite(wire.max) ? Math.trunc(wire.max) : 0,
+      fingerprint: typeof wire.fingerprint === "string" ? wire.fingerprint : "",
+      dismissed: wire.dismissed === true,
     };
+  }
+
+  async dismissHeldRelease(fingerprint: string): Promise<void> {
+    const res = await this.request("POST", "/screener/held-releases/dismiss", {
+      body: { fingerprint },
+    });
+    if (!res.ok) throw await this.rejectionOf(res);
   }
 
   async releaseHeld(ruleIds?: readonly string[]): Promise<HeldReleaseResultWire> {
