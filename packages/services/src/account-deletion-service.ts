@@ -186,6 +186,7 @@ export async function deleteAccount(ctx: ServiceContext): Promise<DeleteAccountR
     // and `messages` in opposite orders for reasons neither can give up, so instead of racing
     // to acquire them, whichever gets here first finishes its whole sweep before the other
     // proceeds. Releases at COMMIT, same as every advisory lock this repo takes for this.
+    // scoped-by: an advisory lock keyed by this account's own id — no row is read or written
     await tx.execute(sql`select pg_advisory_xact_lock(${ACCOUNT_THREAD_STRUCTURE_LOCK_CLASS}, hashtext(${accountId}))`);
 
     // ── 0. THE THREAD-FIRST FENCE. Every live writer of a thread takes thread rows before
@@ -256,10 +257,13 @@ export async function deleteAccount(ctx: ServiceContext): Promise<DeleteAccountR
     // AFTER these three (FK order), so the subquery resolves against rows still present.
     const ownMessageIds = tx.select({ id: messages.id })
       .from(messages).where(eq(messages.accountId, accountId));
+    // scoped-by: ownMessageIds — the account-scoped messages subquery two lines up
     await drop("message_bodies", tx.delete(messageBodies).where(inArray(messageBodies.messageId, ownMessageIds)));
+    // scoped-by: ownMessageIds — the account-scoped messages subquery above
     await drop("folder_state", tx.delete(folderState).where(inArray(folderState.messageId, ownMessageIds)));
     // `folder_state`'s twin for the `\Seen` flag, and it has no `account_id` either — which is
     // why the catalog sweep could never have seen it. Read state is user data.
+    // scoped-by: ownMessageIds — the account-scoped messages subquery above
     await drop("flag_state", tx.delete(flagState).where(inArray(flagState.messageId, ownMessageIds)));
 
     // ── 3. Notes, then their parents ────────────────────────────────────────────

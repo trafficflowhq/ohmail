@@ -613,6 +613,7 @@ export class AuthService extends SessionLifecycle {
       // cap needs a serialized counter row — a write lock on every signup, to enforce a number
       // chosen as a rough limit.
       if (openGate && this.cfg.publicSignupCap !== null) {
+        // scoped-by: a global capacity COUNT at sign-up — a number, no row content crosses accounts
         const [taken] = await tx.select({ n: count() }).from(accounts);
         if ((taken?.n ?? 0) >= this.cfg.publicSignupCap) throw signupCapacityReached();
       }
@@ -633,6 +634,7 @@ export class AuthService extends SessionLifecycle {
         throw openGate ? new AddressAlreadyRegistered() : emailTaken(true);
       }
 
+      // scoped-by: sign-up creates the account itself — there is no prior account to scope by
       const [acct] = await tx.insert(accounts).values({ name: b.displayName }).returning();
       const [user] = await tx.insert(users).values({
         accountId: acct!.id, email, displayName: b.displayName,
@@ -861,6 +863,7 @@ export class AuthService extends SessionLifecycle {
     // throttleReserve}.
     await this.throttleReserve(db, `email:${email}`);
 
+    // scoped-by: pre-auth sign-in — the row is located by the presented email, throttled and timing-hardened above
     const rows = await db.select().from(users).where(eq(users.email, email)).limit(1);
     const user = rows[0];
 

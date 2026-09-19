@@ -116,6 +116,7 @@ export class HeyMigrationService {
           // Already migrated for this key → idempotent no-op (refresh destination if the
           // observation now maps elsewhere; still counts as unchanged — no new row).
           if (existing.destination !== o.destination) {
+            // scoped-by: existing.id comes from the account-scoped rules read above
             await tx.update(rulesTbl)
               .set({ destination: o.destination, updatedAt: ctx.now() })
               .where(eq(rulesTbl.id, existing.id));

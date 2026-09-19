@@ -93,6 +93,7 @@ async function stampDeviceSynced(deps: ApiDeps): Promise<void> {
         eq(sessions.id, sessionId),
         or(isNull(sessions.lastSyncedAt), lt(sessions.lastSyncedAt, cutoff)),
       ));
+    // scoped-by: devices.id comes from the caller's own resolved session row (sessions.id = sessionId)
     await deps.db.update(devices)
       .set({ lastSyncedAt: deps.now() })
       .where(and(

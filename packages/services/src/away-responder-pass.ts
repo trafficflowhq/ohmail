@@ -1140,6 +1140,7 @@ async function reserve(
       // that appears in no Sent folder and never will. The column's whole purpose is to correlate a
       // ledger row with a delivered copy, and a value that correlates with nothing is worse than
       // NULL — it is a thread an operator can pull for as long as they like.
+      // scoped-by: claim[0].id is the ledger row this pass claimed above for its own mailbox
       await tx.update(awayReplies)
         .set({ outcome: "throttled", reason: responder.throttle, sentAt: null, mintedMessageId: null })
         .where(and(eq(awayReplies.id, claim[0]!.id), eq(awayReplies.outcome, "pending")));

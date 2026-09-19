@@ -155,6 +155,7 @@ export class WorkflowsService {
       }).returning();
 
       // Mark the proposal consumed (a second materialize → 404, the row is no longer open).
+      // scoped-by: `proposal` was loaded by (id, accountId) above in this transaction
       await tx.update(workflowProposals).set({ status: "materialized" })
         .where(eq(workflowProposals.id, proposalId));
 
@@ -248,6 +249,7 @@ export class WorkflowsService {
       filters.push(or(lt(workflowRuns.createdAt, c.createdAt),
         and(eq(workflowRuns.createdAt, c.createdAt), lt(workflowRuns.id, c.id)))!);
     }
+    // scoped-by: `filters` above leads with eq(workflowRuns.accountId, ctx.accountId)
     const rows = await ctx.db.select().from(workflowRuns)
       .where(and(...filters))
       .orderBy(desc(workflowRuns.createdAt), desc(workflowRuns.id))
@@ -305,6 +307,7 @@ export class WorkflowsService {
         if (r.inverse) await this.applyInverse(tx, ctx, r.inverse as WorkflowInverse);
       }
 
+      // scoped-by: `run` was loaded by (id, accountId) at the top of this undo
       const [updated] = await tx.update(workflowRuns)
         .set({ status: "undone", reason: "undone", finishedAt: ctx.now() })
         .where(eq(workflowRuns.id, runId))
@@ -338,6 +341,7 @@ export class WorkflowsService {
       const observed = await this.observedFolder(tx, inv.messageId);
       const reconcileStatus = observed === inv.toFolder ? "reconciled" : "pending";
       // Re-set DESIRED to the prior folder — the worker reconciles the physical move.
+      // scoped-by: inv.messageId was just proved this account's (`owned`, two lines up)
       await tx.insert(folderState).values({
         messageId: inv.messageId, desiredFolder: inv.toFolder, observedFolder: observed,
         lastSetBy: "us", reconcileStatus, conflict: false,
@@ -368,9 +372,11 @@ export class WorkflowsService {
 
   /** The observed folder: folder_state truth, else the message's native locator, else INBOX. */
   private async observedFolder(tx: Tx, messageId: string): Promise<string> {
+    // scoped-by: both callers pass a messageId already proved this account's (`owned`)
     const [fs] = await tx.select({ observedFolder: folderState.observedFolder }).from(folderState)
       .where(eq(folderState.messageId, messageId)).limit(1);
     if (fs) return fs.observedFolder;
+    // scoped-by: both callers pass a messageId already proved this account's (`owned`)
     const [m] = await tx.select({ nativeLocator: messages.nativeLocator }).from(messages)
       .where(eq(messages.id, messageId)).limit(1);
     const loc = (m?.nativeLocator as NativeLocator | null) ?? null;

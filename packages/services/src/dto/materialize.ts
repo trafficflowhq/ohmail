@@ -358,7 +358,9 @@ export async function materializeMessages(
   if (rows.length === 0) return out;
 
   const owned = rows.map((r) => r.id);
+  // scoped-by: `owned` is the account-scoped messages read above
   const fsRows = await db.select().from(folderState).where(inArray(folderState.messageId, owned));
+  // scoped-by: `owned` is the account-scoped messages read above
   const stRows = await db.select().from(messageStates).where(inArray(messageStates.messageId, owned));
   const mtRows = await db.select().from(messageTags)
     .where(and(inArray(messageTags.messageId, owned), eq(messageTags.accountId, accountId)));
@@ -653,6 +655,7 @@ export async function materializeThread(db: Db, accountId: string, id: string): 
     .orderBy(asc(messages.date));
 
   const [fs] = msgs[0]
+    // scoped-by: msgs[0] comes from the account-scoped thread read just above
     ? await db.select().from(folderState).where(eq(folderState.messageId, msgs[0].id)).limit(1)
     : [undefined];
 
@@ -695,6 +698,7 @@ export async function materializeThreads(
 
   const firstIds = owned.map((id) => msgsBy.get(id)?.[0]?.id).filter((v): v is string => v != null);
   const fsRows = firstIds.length > 0
+    // scoped-by: firstIds derive from `owned`, the account-scoped thread page above
     ? await db.select().from(folderState).where(inArray(folderState.messageId, firstIds))
     : [];
   const fsBy = new Map(fsRows.map((r) => [r.messageId, r]));

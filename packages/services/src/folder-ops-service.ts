@@ -217,6 +217,7 @@ export class FolderOpsService {
       await recheckIdempotency(tx, ctx, opts.idempotency);
       if (wasCreate) {
         // CASCADE takes the op row with the inventory row.
+        // scoped-by: id was proved this account's by requireSubject(ctx, id) above
         await tx.delete(mailboxFolders).where(eq(mailboxFolders.id, id));
         const s = await recordChange(tx, {
           accountId: ctx.accountId, entityType: "folder", entityId: id, op: "delete", meta: null,
@@ -224,6 +225,7 @@ export class FolderOpsService {
         await claimVerb(tx, ctx, opts.idempotency, { dismissed: true }, s);
         return { dto: null, seq: s === null ? null : Number(s) };
       }
+      // scoped-by: id was proved this account's by requireSubject(ctx, id) above
       await tx.delete(folderOps).where(eq(folderOps.folderId, id));
       const s = await recordChange(tx, {
         accountId: ctx.accountId, entityType: "folder", entityId: id, op: "update", meta: null,

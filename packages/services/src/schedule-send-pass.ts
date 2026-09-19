@@ -376,6 +376,7 @@ async function claimDue(
     );
 
     if (due.length > 0) {
+      // scoped-by: `due` ids come from this pass's own scheduled-and-due scan above (a worker pass serving every account by design)
       await tx.update(drafts)
         .set({ status: "draft", updatedAt: now })
         .where(inArray(drafts.id, due.map((r) => r.id)));

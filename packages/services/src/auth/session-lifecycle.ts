@@ -270,6 +270,7 @@ export class SessionLifecycle {
     const items: Device[] = [];
     for (const s of rows) {
       const dev = s.deviceId
+        // scoped-by: s.deviceId comes from this user's own sessions rows read just above
         ? (await db.select().from(devices).where(eq(devices.id, s.deviceId)).limit(1))[0]
         : undefined;
       items.push({

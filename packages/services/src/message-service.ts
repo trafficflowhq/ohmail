@@ -439,6 +439,7 @@ export class MessageService {
       filters.push(afterKeyset(decodeMsgCursor(opts.cursor)));
     }
 
+    // scoped-by: `filters` above leads with eq(messages.accountId, ctx.accountId)
     const rows = await ctx.db.select({ id: messages.id, date: messages.date }).from(messages)
       .innerJoin(folderState, eq(folderState.messageId, messages.id))
       .where(and(...filters))
@@ -557,6 +558,7 @@ export class MessageService {
   ): Promise<Page<MessageDTO>> {
     const filters = [...args.filters];
     if (args.cursor) filters.push(afterKeyset(decodeMsgCursor(args.cursor)));
+    // scoped-by: the caller's filters pin messages.mailboxId to a mailbox proved this account's (uf)
     const rows = await ctx.db.select({ id: messages.id, date: messages.date }).from(messages)
       .innerJoin(folderState, eq(folderState.messageId, messages.id))
       .where(and(...filters))
@@ -588,6 +590,7 @@ export class MessageService {
       .where(and(eq(messages.id, id), eq(messages.accountId, ctx.accountId))).limit(1);
     if (!msg) throw new ServiceError("not_found", 404, "message not found");
 
+    // scoped-by: id was proved this account's by the messages read above (message_bodies has no account_id)
     const [body] = await ctx.db.select().from(messageBodies)
       .where(eq(messageBodies.messageId, id)).limit(1);
     // The stored `text` and `html` are the FULL original body — returned as-is, never re-derived
@@ -1205,6 +1208,7 @@ export class MessageService {
       const [mb] = await tx.select({ trashFolder: mailboxes.trashFolder }).from(mailboxes)
         .where(eq(mailboxes.id, msg.mailboxId)).limit(1);
       const trash = mb?.trashFolder ?? null;
+      // scoped-by: msg was loaded by (id, accountId) above and the organizer just asserted
       const [fs] = await tx.select({
         desiredFolder: folderState.desiredFolder, trashedFrom: folderState.trashedFrom,
       }).from(folderState).where(eq(folderState.messageId, id)).limit(1);
@@ -1288,6 +1292,7 @@ export class MessageService {
 
   /** The observed folder: the folder_state truth, else the message's native locator, else INBOX. */
   private async observedFolder(tx: Tx, id: string, nativeLocator: unknown): Promise<string> {
+    // scoped-by: every caller passes an id it loaded by (id, accountId) in this transaction
     const [fs] = await tx.select({ observedFolder: folderState.observedFolder }).from(folderState)
       .where(eq(folderState.messageId, id)).limit(1);
     if (fs) return fs.observedFolder;
@@ -1321,6 +1326,7 @@ export class MessageService {
     trashedFrom: string | null,
   ): Promise<void> {
 
+    // scoped-by: every caller passes an id it loaded by (id, accountId) in this transaction
     await tx.insert(folderState).values({
       messageId: id, desiredFolder: folder, observedFolder: observed,
       lastSetBy: "us", reconcileStatus: "pending", conflict: false, trashedFrom,

@@ -445,6 +445,7 @@ export class AttachmentsService {
     if (minSize != null) filters.push(gte(attachments.sizeBytes, minSize));
     if (opts.cursor) filters.push(gt(attachments.id, decodeListCursor(opts.cursor)));
 
+    // scoped-by: `filters` above leads with eq(attachments.accountId, ctx.accountId)
     const rows = await ctx.db.select({
       a: attachments,
       subject: messages.subject,
@@ -534,6 +535,7 @@ export class AttachmentsService {
   }
 
   private async partsWhere(ctx: ServiceContext, where: ReturnType<typeof and>): Promise<ResolvedPart[]> {
+    // scoped-by: all three callers build `where` starting from eq(attachments.accountId, ctx.accountId)
     const rows = await ctx.db.select({
       id: attachments.id,
       filename: attachments.filename,

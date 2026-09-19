@@ -112,26 +112,34 @@ export async function sweepMailboxData(
   //
   // Child before parent throughout. `approvals` precedes `routing_decisions` because it
   // references one, and both precede `messages`.
+  // scoped-by: ownMessageIds — the mailbox-scoped messages subquery at the top of this function
   await drop("approvals", tx.delete(approvals)
     .where(inArray(approvals.messageId, ownMessageIds)));
+  // scoped-by: ownMessageIds — the mailbox-scoped messages subquery at the top of this function
   await drop("routing_decisions", tx.delete(routingDecisions)
     .where(inArray(routingDecisions.messageId, ownMessageIds)));
+  // scoped-by: ownMessageIds — the mailbox-scoped messages subquery at the top of this function
   await drop("attachments", tx.delete(attachments)
     .where(inArray(attachments.messageId, ownMessageIds)));
+  // scoped-by: ownMessageIds — the mailbox-scoped messages subquery at the top of this function
   await drop("message_tags", tx.delete(messageTags)
     .where(inArray(messageTags.messageId, ownMessageIds)));
+  // scoped-by: ownMessageIds — the mailbox-scoped messages subquery at the top of this function
   await drop("message_states", tx.delete(messageStates)
     .where(inArray(messageStates.messageId, ownMessageIds)));
+  // scoped-by: ownMessageIds — the mailbox-scoped messages subquery at the top of this function
   await drop("tracker_events", tx.delete(trackerEvents)
     .where(inArray(trackerEvents.messageId, ownMessageIds)));
   // These two carry a CORRESPONDENT's address — somebody else's personal data, held because this
   // mailbox answered them. `away_replies` is keyed on the mailbox as well as the message.
+  // scoped-by: ownMessageIds — the mailbox-scoped messages subquery at the top of this function
   await drop("away_responder_sent", tx.delete(awayResponderSent)
     .where(inArray(awayResponderSent.messageId, ownMessageIds)));
   await drop("away_replies", tx.delete(awayReplies)
     .where(eq(awayReplies.mailboxId, mailboxId)));
   // The per-message marks hang off the record by foreign key, so they go first or the delete
   // below is refused. Keyed by MESSAGE, like the bodies further down.
+  // scoped-by: ownMessageIds — the mailbox-scoped messages subquery at the top of this function
   await drop("unsubscribe_examined", tx.delete(unsubscribeExamined)
     .where(inArray(unsubscribeExamined.messageId, ownMessageIds)));
   await drop("unsubscribe_records", tx.delete(unsubscribeRecords)
@@ -141,10 +149,13 @@ export async function sweepMailboxData(
   // The bodies and the two read-state tables key off the MESSAGE and carry no `account_id` at
   // all, which is why an account-scoped sweep alone could never see them. Read state is user
   // data.
+  // scoped-by: ownMessageIds — the mailbox-scoped messages subquery at the top of this function
   await drop("message_bodies", tx.delete(messageBodies)
     .where(inArray(messageBodies.messageId, ownMessageIds)));
+  // scoped-by: ownMessageIds — the mailbox-scoped messages subquery at the top of this function
   await drop("folder_state", tx.delete(folderState)
     .where(inArray(folderState.messageId, ownMessageIds)));
+  // scoped-by: ownMessageIds — the mailbox-scoped messages subquery at the top of this function
   await drop("flag_state", tx.delete(flagState)
     .where(inArray(flagState.messageId, ownMessageIds)));
 
@@ -155,6 +166,7 @@ export async function sweepMailboxData(
   // `on delete set null` would otherwise cut the link the sends are selected by.
   await drop("outbound_send_fingerprints", tx.delete(outboundSendFingerprints)
     .where(eq(outboundSendFingerprints.mailboxId, mailboxId)));
+  // scoped-by: ownDraftIds — the mailbox-scoped drafts subquery at the top of this function
   await drop("outbound_sends", tx.delete(outboundSends)
     .where(inArray(outboundSends.draftId, ownDraftIds)));
   await drop("drafts", tx.delete(drafts).where(eq(drafts.mailboxId, mailboxId)));
@@ -262,11 +274,13 @@ async function sweepExclusiveThreads(
       .limit(ERASE_THREAD_PAGE);
     if (page.length === 0) return { threads: removed, notes };
     const ids = page.map((r) => r.id);
+    // scoped-by: ids — the page of this account's exclusively-held threads read just above
     notes += n(await tx.delete(threadNotes).where(inArray(threadNotes.threadId, ids)));
     await tx.update(drafts).set({ threadId: null })
       .where(and(eq(drafts.accountId, accountId), inArray(drafts.threadId, ids)));
     await tx.update(messages).set({ threadId: null })
       .where(and(eq(messages.mailboxId, mailboxId), inArray(messages.threadId, ids)));
+    // scoped-by: ids — the page of this account's exclusively-held threads read just above
     removed += n(await tx.delete(threads).where(inArray(threads.id, ids)));
   }
 }
@@ -306,6 +320,7 @@ async function recordSweepReceipts(
     const where = after === null
       ? eq(messages.mailboxId, mailboxId)
       : and(eq(messages.mailboxId, mailboxId), gt(messages.id, after));
+    // scoped-by: the `where` above pins messages.mailboxId to the erased mailbox
     return tx.select({ id: messages.id }).from(messages)
       .where(where).orderBy(asc(messages.id)).limit(ERASE_RECEIPT_PAGE);
   }, "message");
@@ -314,6 +329,7 @@ async function recordSweepReceipts(
     const where = after === null
       ? eq(drafts.mailboxId, mailboxId)
       : and(eq(drafts.mailboxId, mailboxId), gt(drafts.id, after));
+    // scoped-by: the `where` above pins drafts.mailboxId to the erased mailbox
     return tx.select({ id: drafts.id }).from(drafts)
       .where(where).orderBy(asc(drafts.id)).limit(ERASE_RECEIPT_PAGE);
   }, "draft");

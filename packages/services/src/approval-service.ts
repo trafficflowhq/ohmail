@@ -70,6 +70,7 @@ export class ApprovalService {
     if (opts.status) filters.push(eq(approvals.status, opts.status));
     if (opts.cursor) filters.push(gt(approvals.id, decodeListCursor(opts.cursor)));
 
+    // scoped-by: `filters` above leads with eq(approvals.accountId, ctx.accountId)
     const rows = await ctx.db.select({ id: approvals.id }).from(approvals)
       .where(and(...filters)).orderBy(asc(approvals.id)).limit(limit + 1);
 
@@ -163,6 +164,7 @@ export class ApprovalService {
         throw new ServiceError("unprocessable", 422, "approval already decided");
       }
       if (appr.routingDecisionId) {
+        // scoped-by: appr.routingDecisionId is the FK of the approval row claimed above by (id, accountId, pending)
         await tx.update(routingDecisions)
           .set({ status: approve ? "approved" : "rejected", updatedAt: ctx.now() })
           .where(eq(routingDecisions.id, appr.routingDecisionId));
@@ -193,6 +195,7 @@ export class ApprovalService {
              message that did not move would tell every client to re-render it in a folder it is
              not in. */
         } else {
+          // scoped-by: msg is the account-scoped read above and routeMailboxWrite just proved the organizer
           await tx.insert(folderState).values({
             messageId: msg.id, desiredFolder: target, observedFolder: msg.observedFolder,
             lastSetBy: "us", reconcileStatus: "pending", conflict: false,

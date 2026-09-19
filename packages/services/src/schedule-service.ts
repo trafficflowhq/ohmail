@@ -87,6 +87,7 @@ export class ScheduleService {
        */
       await assertOrganizerRole(bridgeTx(tx), dialect(ctx.db), ctx.accountId, d.mailboxId);
 
+      // scoped-by: d is the draft loaded by (id, accountId) above; the organizer was just asserted
       await tx.update(drafts).set({
         status: "scheduled",
         sendAt,

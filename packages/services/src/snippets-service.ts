@@ -31,6 +31,7 @@ export class SnippetsService {
     const limit = clampLimit(opts.limit);
     const filters = [eq(snippets.accountId, ctx.accountId)];
     if (opts.cursor) filters.push(gt(snippets.id, decodeListCursor(opts.cursor)));
+    // scoped-by: `filters` above leads with eq(snippets.accountId, ctx.accountId)
     const rows = await ctx.db.select().from(snippets)
       .where(and(...filters)).orderBy(asc(snippets.id)).limit(limit + 1);
     const pageRows = rows.slice(0, limit);

@@ -1333,6 +1333,7 @@ export class SendService {
         if (orig.noForward) {
           throw new ServiceError("forbidden", 403, "This message can't be forwarded — it contains sensitive content.");
         }
+        // scoped-by: orig was loaded by (id, accountId) earlier in this send
         const [body] = await tx.select({ text: messageBodies.text, html: messageBodies.html })
           .from(messageBodies).where(eq(messageBodies.messageId, orig.id)).limit(1);
         const quoted = forwardedQuote(
@@ -1348,6 +1349,7 @@ export class SendService {
         // forward's inherited parts as the first `FORWARD_MAX_PARTS` of that list — a capped
         // SELECT with no ORDER BY is free to pick a different subset, and the projection would
         // then name a file the recipient never got while omitting one they did.
+        // scoped-by: orig was loaded by (id, accountId) earlier in this send
         const attRows = await tx.select({
           filename: attachments.filename, contentType: attachments.contentType,
           partId: attachments.partId, contentId: attachments.contentId, inline: attachments.inline,
@@ -1505,6 +1507,7 @@ export class SendService {
           // `sent_at` rides this SAME read, in the same statement and the same transaction: the
           // refusal below has to name an instant, and this is the only column that holds one. See
           // the block at the throw for why the claim's own stamp is not that instant.
+          // scoped-by: held is the fingerprint row claimed earlier in this transaction for this content
           const [prior] = await tx.select({
             status: outboundSends.status, sentAt: outboundSends.sentAt,
           })
@@ -1556,6 +1559,7 @@ export class SendService {
           // RE-POINT rather than insert a second row: one claim per piece of content, carried
           // forward to whichever reservation owns it now. `createdAt` is restamped because it is
           // the window's clock and not the row's birthday.
+          // scoped-by: held is the fingerprint row claimed earlier in this transaction for this content
           await tx.update(outboundSendFingerprints)
             .set({ sendId: inserted[0]!.id, createdAt: claimNow })
             .where(eq(outboundSendFingerprints.id, held.id));
@@ -1928,6 +1932,7 @@ export class SendService {
   ): Promise<number | null> {
     const now = ctx.now();
     const seq = await asTx(ctx).transaction(async (tx) => {
+      // scoped-by: sendId names the reservation this request minted; the status predicate makes the CAS single-winner
       const won = await tx.update(outboundSends)
         .set({ status: "sent", providerMessageId, sentAt: now })
         .where(and(eq(outboundSends.id, sendId), eq(outboundSends.status, "pending")))
@@ -1959,6 +1964,7 @@ export class SendService {
       // embedded as a subquery, it is not this statement. The clause stays INLINE, emitted by the
       // seam: `lockClause` renders exactly this text on the server and nothing on the device
       // store, where one serialized writer means nobody to exclude.
+      // scoped-by: mailboxId was proved this account's when the draft was loaded upstream in this send
       await tx.update(mailboxes).set({ syncRequestedAt: now }).where(sql`${mailboxes.id} in (
         select ${mailboxes.id} from ${mailboxes} where ${mailboxes.id} = ${mailboxId}
         ${dialect(ctx.db).lockClause({ mode: "update", skipLocked: true })}
@@ -1990,6 +1996,7 @@ export class SendService {
       // the reservation it is finalizing — but "the only writer today" is not a property a
       // predicate-free UPDATE preserves, and a `failed` written over a `sent` would be the one
       // thing this whole path exists to prevent, one direction reversed.
+      // scoped-by: sendId names the reservation this request minted; the status predicate makes the CAS single-winner
       const won = await tx.update(outboundSends).set({ status: "failed" })
         .where(and(eq(outboundSends.id, sendId), eq(outboundSends.status, "pending")))
         .returning({ id: outboundSends.id });
@@ -2019,6 +2026,7 @@ export class SendService {
   ): Promise<number | null> {
     const now = ctx.now();
     const seq = await asTx(ctx).transaction(async (tx) => {
+      // scoped-by: sendId names the reservation this request minted; the status predicate makes the CAS single-winner
       const won = await tx.update(outboundSends).set({ status: "unverified" })
         .where(and(eq(outboundSends.id, sendId), eq(outboundSends.status, "pending")))
         .returning({ id: outboundSends.id });

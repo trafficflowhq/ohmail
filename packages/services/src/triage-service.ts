@@ -108,6 +108,7 @@ export class TriageService {
 
       // The state being LEFT — read before the upsert overwrites it (serialized by the message
       // row lock above). Only the `none` transition consumes it (the re-homing below).
+      // scoped-by: msg was loaded by (id, accountId) above; the organizer was just asserted
       const [prior] = await tx.select({ state: messageStates.state, setAt: messageStates.setAt })
         .from(messageStates)
         .where(eq(messageStates.messageId, messageId)).limit(1);
@@ -255,6 +256,7 @@ export class TriageService {
     ];
     if (opts.cursor) filters.push(gt(messageStates.messageId, decodeListCursor(opts.cursor)));
 
+    // scoped-by: `filters` above leads with eq(messageStates.accountId, ctx.accountId)
     const rows = await ctx.db.select({ messageId: messageStates.messageId }).from(messageStates)
       .where(and(...filters)).orderBy(asc(messageStates.messageId)).limit(limit + 1);
 
@@ -296,6 +298,7 @@ export class TriageService {
     if (opts.cursor) filters.push(gt(messages.id, decodeListCursor(opts.cursor)));
 
     // `limit(2)`: the row on screen, plus the sentinel that decides whether a cursor is owed.
+    // scoped-by: `filters` above leads with eq(messages.accountId, ctx.accountId)
     const rows = await ctx.db.select({ id: messages.id }).from(messages)
       .innerJoin(folderState, eq(folderState.messageId, messages.id))
       .where(and(...filters)).orderBy(asc(messages.id)).limit(2);
@@ -303,6 +306,7 @@ export class TriageService {
     if (rows.length === 0) return { current: null, remaining: 0, nextCursor: null };
 
     // The count the caller is owed, as a scalar — never as the length of a materialized pile.
+    // scoped-by: `filters` above leads with eq(messages.accountId, ctx.accountId)
     const [tally] = await ctx.db
       .select({ n: dialect(ctx.db).castInt(sql`count(*)`).mapWith(Number) as unknown as SQL<number> })
       .from(messages)

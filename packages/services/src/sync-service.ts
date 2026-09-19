@@ -476,6 +476,7 @@ export class SyncService {
     /** Coalesced mode only: the lookahead entity's first-seq − 1, `null` ⇒ window consumed. */
     let coalescedCutCursor: bigint | null = null;
     if (coalesced) {
+      // scoped-by: `filters` above leads with eq(changeLog.accountId, accountId)
       const spanRows = db.$with("span").as(
         db.select()
           .from(changeLog)
@@ -483,6 +484,7 @@ export class SyncService {
           .orderBy(asc(changeLog.seq))
           .limit(COALESCE_SCAN_WINDOW),
       );
+      // scoped-by: spanRows is the account-filtered CTE defined just above
       const pageEntities = db.$with("page_entities").as(
         db.select({
           entityType: spanRows.entityType,
@@ -517,6 +519,7 @@ export class SyncService {
       coalescedCutCursor = lookahead === undefined ? null : BigInt(lookahead.firstSeq) - 1n;
       rows = joined.slice(0, limit).map(({ firstSeq: _first, ...row }) => row);
     } else {
+      // scoped-by: `filters` above leads with eq(changeLog.accountId, accountId)
       rows = await db
         .select()
         .from(changeLog)
@@ -932,6 +935,7 @@ export class SyncService {
       ? Math.min(SNAPSHOT_FIRST_PAGE_MESSAGES, limit)
       : limit;
 
+    // scoped-by: `where` above leads with eq(messages.accountId, accountId)
     const rows = await db
       .select({ id: messages.id, date: messages.date })
       .from(messages)

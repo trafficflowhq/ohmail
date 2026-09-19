@@ -76,6 +76,7 @@ export class ContactsService {
     }
     if (opts.cursor) filters.push(gt(contacts.id, decodeListCursor(opts.cursor)));
 
+    // scoped-by: `filters` above leads with eq(contacts.accountId, ctx.accountId)
     const rows = await ctx.db.select().from(contacts)
       .where(and(...filters)).orderBy(asc(contacts.id)).limit(limit + 1);
 
@@ -114,6 +115,7 @@ export class ContactsService {
     const limit = clampLimit(opts.limit);
     const filters = [eq(contactNotes.accountId, ctx.accountId), eq(contactNotes.contactId, contactId)];
     if (opts.cursor) filters.push(gt(contactNotes.id, decodeListCursor(opts.cursor)));
+    // scoped-by: `filters` above leads with eq(contactNotes.accountId, ctx.accountId)
     const rows = await ctx.db.select({ id: contactNotes.id, body: contactNotes.body, updatedAt: contactNotes.updatedAt })
       .from(contactNotes).where(and(...filters)).orderBy(asc(contactNotes.id)).limit(limit + 1);
     return this.notePage(rows, limit, () => ({ kind: "contact", contactId }));
@@ -134,6 +136,7 @@ export class ContactsService {
     const limit = clampLimit(opts.limit);
     const filters = [eq(threadNotes.accountId, ctx.accountId), eq(threadNotes.threadId, threadId)];
     if (opts.cursor) filters.push(gt(threadNotes.id, decodeListCursor(opts.cursor)));
+    // scoped-by: `filters` above leads with eq(threadNotes.accountId, ctx.accountId)
     const rows = await ctx.db.select({ id: threadNotes.id, body: threadNotes.body, updatedAt: threadNotes.updatedAt })
       .from(threadNotes).where(and(...filters)).orderBy(asc(threadNotes.id)).limit(limit + 1);
     return this.notePage(rows, limit, () => ({ kind: "thread", threadId }));

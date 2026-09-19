@@ -72,6 +72,7 @@ function hasTrgm(db: Db): Promise<boolean> {
        and whether THIS deployment has the extension is a fact about the deployment, not about
        the dialect, which is why the seam takes it as an argument rather than guessing it. The
        question has no second spelling: `to_regprocedure` reads a Postgres catalog. */
+    // scoped-by: reads a Postgres catalog only — an extension probe, no account rows
     p = db.execute(pgOnly(sql`select to_regprocedure('word_similarity(text,text)') is not null as ok`))
       .then((r) => Boolean(rowsOf<{ ok: boolean }>(r)[0]?.ok))
       .catch(() => false);
@@ -97,6 +98,7 @@ export class KbService {
     const limit = clampLimit(opts.limit);
     const filters = [eq(kbEntries.accountId, ctx.accountId)];
     if (opts.cursor) filters.push(gt(kbEntries.id, decodeListCursor(opts.cursor)));
+    // scoped-by: `filters` above leads with eq(kbEntries.accountId, ctx.accountId)
     const rows = await ctx.db.select().from(kbEntries)
       .where(and(...filters)).orderBy(asc(kbEntries.id)).limit(limit + 1);
     const pageRows = rows.slice(0, limit);

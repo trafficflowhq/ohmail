@@ -30,6 +30,7 @@ export class NotifyRulesService {
     const limit = clampLimit(opts.limit);
     const filters = [eq(notifyRules.accountId, ctx.accountId)];
     if (opts.cursor) filters.push(gt(notifyRules.id, decodeListCursor(opts.cursor)));
+    // scoped-by: `filters` above leads with eq(notifyRules.accountId, ctx.accountId)
     const rows = await ctx.db.select().from(notifyRules)
       .where(and(...filters)).orderBy(asc(notifyRules.id)).limit(limit + 1);
     const pageRows = rows.slice(0, limit);

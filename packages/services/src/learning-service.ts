@@ -138,6 +138,7 @@ export class LearningService {
       // `enabled = false` in the WHERE, so the returned row is the one whose state CHANGED —
       // the same construction the demotion uses, for the same reason: a delta announcing a rule
       // that already read this way is noise a client cannot tell from a real move.
+      // scoped-by: existing[0].id comes from the account-scoped rules read above
       const flipped = await tx.update(rulesTbl)
         .set({ enabled: true, updatedAt: d.now() })
         .where(and(eq(rulesTbl.id, existing[0]!.id), eq(rulesTbl.enabled, false)))

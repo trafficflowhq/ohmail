@@ -1458,6 +1458,7 @@ export class ScreenerReadService {
     ];
     if (extra) filters.push(extra);
 
+    // scoped-by: `filters` above leads with eq(messages.accountId, ctx.accountId)
     const rows = await ctx.db.select(HELD_COLUMNS).from(messages)
       .innerJoin(folderState, eq(folderState.messageId, messages.id))
       .where(and(...filters))
@@ -1540,6 +1541,7 @@ export class ScreenerReadService {
        they were already ANSWERED. UNCONDITIONAL, unlike `active` — the cutline is a SETTING a
        caller may not have read, and this is not. Their held mail is not hidden by it: the
        held-releases surface and the gate-release pass both reach the rows this excludes. */
+    // scoped-by: `reps` is the account-scoped messages subquery defined above (eq messages.accountId, ctx.accountId)
     const rows = await ctx.db.select().from(reps)
       .where(and(
         eq(reps.rank, 1),

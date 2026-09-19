@@ -1212,6 +1212,7 @@ export async function probeDatabase(
        question, and the branch above answers it and RETURNS on every path, so nothing reaches
        here except a server. Marking it says so at the site instead of leaving a reader to derive
        it, and the census pins how many such arms this file has. */
+    // scoped-by: reads Postgres catalogs only — schema facts, no account rows
     const result = await db.execute(
       pgOnly(sql`select 1 as one,
                  to_regprocedure('word_similarity(text,text)') is not null as pg_trgm,

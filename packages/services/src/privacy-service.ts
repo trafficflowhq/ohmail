@@ -221,6 +221,7 @@ export class PrivacyService {
      * fetched image is never reported "blocked". 403 not 404 (the message is real and owned);
      * `retryable: false` — the remedy is `POST /messages/:id/load-remote`.
      */
+    // scoped-by: requireOwnedMessage(ctx, messageId) above proved the message this account's
     const [body] = await ctx.db
       .select({ loaded: messageBodies.loadedRemoteContent })
       .from(messageBodies)
