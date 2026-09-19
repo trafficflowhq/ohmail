@@ -11,7 +11,8 @@ import { useCallback, useEffect, useId, useMemo, useRef, useState, type MouseEve
 import { useTranslations } from "next-intl";
 import { useRowBadgeCopy } from "../shell/row-copy";
 import { rowThread, rowThreadOf } from "../shell/row-thread";
-import { isOwnSent, isResurfaced, presentsUnread } from "@ohmail/client-engine";
+import { countWhen, isOwnSent, isResurfaced, listSurface, presentsUnread, saysEmpty } from "@ohmail/client-engine";
+import type { ListSurface } from "@ohmail/client-engine";
 import type { EngineMessage, ResurfacedThreadRow, TagDTO } from "@ohmail/client-engine";
 import {
   Doorbell,
@@ -172,6 +173,7 @@ export function OhboxView({
   doorbellHues,
   doorbellCount,
   settled,
+  owed,
   onDoorbell,
   onAction,
   onAddTag,
@@ -319,6 +321,14 @@ export function OhboxView({
    * the lying surface with no error anywhere.
    */
   settled: boolean;
+  /**
+   * Do the account's own facts say mail is still on its way ({@link MailState.owed})? A drain
+   * that completed is not a mailbox that has been read: measured on the managed web, this pane
+   * said "Nothing in your Ohbox." and then a partial count as settled fact while the rail was
+   * saying "Syncing your mail". The two are asked together through `listSurface`; a prop for
+   * `settled`'s reason, and required for it too.
+   */
+  owed: boolean;
   onDoorbell: () => void;
   onAction: (action: MessageAction, message: EngineMessage) => void;
   onAddTag: (messageId: string, anchor: HTMLElement | null) => void;
@@ -540,6 +550,17 @@ export function OhboxView({
   // Selection and read-state follow the MESSAGES on screen, top to bottom.
   const all = [...displayResurfaced, ...displayNew, ...displayPrev];
   const unreadIds = all.filter((m) => m.unread).map((m) => m.id);
+  /**
+   * WHAT THIS PANE MAY SAY ABOUT ITSELF — one reading, shared with the phone
+   * (`@ohmail/client-engine`'s `listSurface`). Every claim below is derived from it: the empty
+   * sentence, the header count, the doorbell's "All clear" and the older-mail tail. They were
+   * four hand-written conditions and they disagreed — the sentence waited for `settled`, the
+   * count spoke the moment one row landed — which is the partial count the review measured.
+   */
+  const listInput = { settled, count: all.length, pending: owed };
+  const surface: ListSurface = listSurface(listInput);
+  /** May this pane state a number, or locate the mail, as fact yet? — `countWhen`'s predicate. */
+  const mayState = countWhen(listInput, true) === true;
   /** Does "Earlier" hold any of the account's own sent mail? Gates the history-window note. */
   const hasOwnSent = displayPrev.some(isOwnSent);
 
@@ -2085,11 +2106,7 @@ export function OhboxView({
            longer than "12 new", and `.vhead .meta` yields before the action does — measured,
            not argued: `scripts/fit-render.mjs` reads this header at 360 and 390 on both faces
            in both languages for self-overflow AND for title, count and action on ONE line. */
-        meta={
-          !settled && all.length === 0
-            ? undefined
-            : t("meta", { count: unreadIds.length })
-        }
+        meta={countWhen(listInput, t("meta", { count: unreadIds.length }))}
         action={
           onMarkAllRead ? (
             <MarkAllRead
@@ -2109,7 +2126,7 @@ export function OhboxView({
                 KNOWN to be waiting, which is a different sentence. The doorbell is withheld
                 entirely rather than reworded — it is an affordance for senders who are
                 waiting, and there is nothing yet to open it for. It returns with the count. */}
-            {!settled && doorbellCount === 0 ? null : (
+            {!mayState && doorbellCount === 0 ? null : (
             <Doorbell
               initials={doorbellInitials}
               hues={doorbellHues}
@@ -2216,7 +2233,7 @@ export function OhboxView({
         {hasOwnSent ? <div className="tail-row">{t("sentNote")}</div> : null}
         {/* The view's own fact — this list is empty — combined with a state derived once, up
             in the shell. `doorbellCount` is the Screener's waiting count, already a prop. */}
-        {all.length === 0 ? <SyncState waiting={doorbellCount} settled={settled} /> : null}
+        {all.length === 0 ? <SyncState waiting={doorbellCount} surface={surface} /> : null}
         {/* MAIL FROM BEYOND WHAT THIS DEVICE KEPT.
 
             Rendered BELOW the local window and under its own group label, because that is what
@@ -2245,7 +2262,7 @@ export function OhboxView({
             backwards past mail still in flight. The cost — a returning tab loses the tail for
             one drain — is cheap: `SyncBar` narrates, and both return with the drained mirror. */}
         {demo ? <div className="tail-row">{t("tail")}</div> : null}
-        {!demo && older.available && settled ? (
+        {!demo && older.available && mayState ? (
           <div className="tail-row" role="status">
             {older.error !== null ? (
               <>
@@ -2801,14 +2818,18 @@ function SelectionPill({
  * the derivation returns the resting value for a fixtures engine — and `settled` is true for
  * them for the same reason: a fixtures engine is permanently settled.
  */
-function SyncState({ waiting, settled }: { waiting: number; settled: boolean }) {
+function SyncState({ waiting, surface }: { waiting: number; surface: ListSurface }) {
   const t = useTranslations("ohbox");
   const { state } = useMailState();
-  const speak = useLoadingGrace(!settled);
+  /* `skeleton` and `pending` are one rendering: a mirror nobody has read and a mirror the
+     account's own facts say is still filling are both "not looked yet" to a reader, and the
+     silhouette plus the grace sentence is the state this pane already had for the first. */
+  const owedYet = !saysEmpty(surface);
+  const speak = useLoadingGrace(owedYet);
 
   /* THE MIRROR HAS NOT BEEN READ, so this list is not empty — it is unknown. Above every arm
      below, because both of them state something about mail that has arrived. */
-  if (!settled) {
+  if (owedYet) {
     return (
       <div className="empty" role="status" aria-busy="true">
         {/* `.mbx-wait` and not a bare span: `.mbx-spin` sizes itself with `width`/`height` and
@@ -2826,7 +2847,7 @@ function SyncState({ waiting, settled }: { waiting: number; settled: boolean }) 
             forbids. `rail` is deliberately off: in a browser tab the rail is real, populated and
             already on screen a few pixels to the left, and a second fake one beside it would be
             describing a layout the reader can see is not there. */}
-        <BootSkeleton active={!settled} />
+        <BootSkeleton active={owedYet} />
       </div>
     );
   }

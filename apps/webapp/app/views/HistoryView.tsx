@@ -20,8 +20,11 @@ import { useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { useRowBadgeCopy } from "../shell/row-copy";
 import { rowThreadOf } from "../shell/row-thread";
-import { physicalFolderOf, type EngineMessage, type TagDTO } from "@ohmail/client-engine";
-import { InfoNote, ListPane, ListRows, MessageRow, ReadColumn } from "@ohmail/ui";
+import {
+  countWhen, listSurface, physicalFolderOf, saysEmpty,
+  type EngineMessage, type TagDTO,
+} from "@ohmail/client-engine";
+import { InfoNote, ListPane, ListRows, MessageRow, ReadColumn, Spinner } from "@ohmail/ui";
 import { MarkAllRead } from "../components/MarkAllRead";
 import { MessagePane, type MessageAction } from "../shell/MessagePane";
 import { useListWindow } from "../shell/list-window";
@@ -29,9 +32,12 @@ import { avatarOf, rowStamp, rowAddress, senderName, tagsOfMessage, hueOf } from
 import { useZoneNav } from "../shell/zone-nav";
 import { useMessageVerbs } from "../shell/message-verbs";
 import { readColumnHidden } from "../shell/narrow";
+import { useLoadingGrace } from "../shell/loading-grace";
 
 
 export function HistoryView({
+  settled,
+  owed,
   messages,
   tags,
   threadParticipants,
@@ -49,6 +55,14 @@ export function HistoryView({
   onMarkAllRead,
   windowed = false,
 }: {
+  /**
+   * The pair every list asks before it states anything about the mailbox — `MailState.settled`
+   * and `MailState.owed`, through `@ohmail/client-engine`'s one reading. History is derived
+   * from the WHOLE mirror, so "Nothing here yet" over an unread one is the Ohbox's own defect
+   * in this pile. Props, because this view is mounted bare in tests.
+   */
+  settled: boolean;
+  owed: boolean;
   messages: readonly EngineMessage[];
   /**
    * THE PEOPLE IN A ROW'S CONVERSATION, for its lead circles — bound to the engine's reader by
@@ -114,6 +128,11 @@ export function HistoryView({
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const scrollerRef = useRef<HTMLDivElement>(null);
   const win = useListWindow({ scrollerRef, count: messages.length });
+  /* The pending pane's sentence, on the shared grace — a fast connection keeps its quiet frame
+     and never flashes a word (`shell/loading-grace.ts`, the Ohbox's own rule). */
+  const speak = useLoadingGrace(
+    !saysEmpty(listSurface({ settled, count: messages.length, pending: owed })),
+  );
 
   /**
    * The message the reading column shows — the user's pick, or the first row so the column is
@@ -203,7 +222,8 @@ export function HistoryView({
     <section className="view split view-history">
       <ListPane
         title={t("title")}
-        meta={messages.length && !windowed ? t("metaCount", { count: messages.length }) : undefined}
+        meta={countWhen({ settled, count: messages.length, pending: owed },
+          messages.length && !windowed ? t("metaCount", { count: messages.length }) : undefined)}
         action={
           onMarkAllRead ? (
             <MarkAllRead
@@ -271,6 +291,18 @@ export function HistoryView({
               {win.padBottom > 0 ? <div aria-hidden style={{ height: win.padBottom }} /> : null}
             </>
           ) : (
+            !saysEmpty(listSurface({ settled, count: messages.length, pending: owed })) ? (
+            /* NOT EMPTY — UNREAD. Before the mirror has been read, and while the account's own
+               facts say mail is still on its way, there is no emptiness to report: the pane
+               says what it is doing and nothing about what it will find (`OhboxView`'s
+               `SyncState`, the same silhouette-free shape). */
+            <div className="empty" role="status" aria-busy="true">
+              <span className="mbx-wait">
+                <Spinner className="mbx-spin" />
+                {speak ? <b>{t("loading")}</b> : null}
+              </span>
+            </div>
+            ) : (
             <div className="empty">
               <span className="glyph">🕰</span>
               <b>{t("emptyTitle")}</b>
@@ -278,6 +310,7 @@ export function HistoryView({
                   arriving at an empty one has learned nothing from the word alone. */}
               {t("emptyHint")}
             </div>
+            )
           )}
         </ListRows>
         {/* WHERE THIS LIST ENDS, ON A CLIENT THAT KEEPS PART OF THE MAILBOX. The Ohbox's own

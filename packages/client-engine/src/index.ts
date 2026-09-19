@@ -27,6 +27,16 @@ export { PRESS_THREW, pressVerdict, tallyVerdicts } from "./press-verdict.js";
 export type { PressAnswer, PressTally, PressVerdict } from "./press-verdict.js";
 
 /**
+ * UNKNOWN IS NOT EMPTY — one reading of what a message list may say about itself, for the phone
+ * (which has rendered every list through it since `surface.ts`) and the web (which enforced the
+ * same rule by hand per view, and the Ohbox missed). Barrel and not a leaf for `press-verdict`'s
+ * reason: both surfaces already compile this package, and a rule a surface cannot import is a
+ * rule a surface writes again — differently.
+ */
+export { countWhen, listSurface, metaWhen, saysEmpty } from "./list-surface.js";
+export type { ListSurface, ListSurfaceInput } from "./list-surface.js";
+
+/**
  * The nameless-attachment naming pair, re-exported from core so every client names a
  * nameless calendar part the same way (`toAttachmentItem` here already does; the mobile
  * app's fixture tiles need the same rule and reach core only through this package).

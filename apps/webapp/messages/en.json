@@ -937,6 +937,7 @@
     "reopenAction": "Review them"
   },
   "history": {
+    "loading": "Loading your mail.",
     "title": "History",
     "metaCount": "{count, plural, one {1 message} other {# messages}}",
     "windowNote": "This device keeps your recent mail. Older mail stays on your server — find it in Search.",

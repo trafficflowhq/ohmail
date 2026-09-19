@@ -794,6 +794,24 @@ export function pulledCount(mirrored: number, mailboxes: readonly MailboxFacts[]
   return Math.max(mirrored, sum);
 }
 
+/**
+ * HAS THIS DEVICE TAKEN IN WHAT THE ACCOUNT HOLDS? The import's end condition from the client's
+ * own side. `initial_import_completed_at` is written by a no-backlog cycle nothing guarantees, so
+ * an unwritten stamp kept "Syncing your mail" on screen for over an hour over a mirror that
+ * already held it all, and an in-progress claim that never settles reads as stuck. The device's
+ * own evidence outranks an unwritten stamp: denominator known and reached means the import is
+ * over. `false` with no denominator on the wire (an older server, counts nobody asked for),
+ * which leaves the floor exactly as it was.
+ */
+export function mirrorCaughtUp(
+  mailboxes: readonly MailboxFacts[] | null,
+  pulled: number,
+): boolean {
+  if (mailboxes === null) return false;
+  const total = hostedTotal(mailboxes);
+  return total !== null && pulled >= total;
+}
+
 export function firstRunProgress(input: { mirrored: number; received: number | null }): number {
   const { mirrored, received } = input;
   if (typeof received !== "number") return mirrored;
@@ -1223,6 +1241,19 @@ export interface MailState {
    * a failing loop from spinning "still loading" for ever.
    */
   settled: boolean;
+  /**
+   * DO THE ACCOUNT'S OWN FACTS SAY MAIL IS STILL ON ITS WAY TO THIS MIRROR? A completed drain is
+   * not a read mailbox: measured on the managed web, this pane stated an emptiness and then a
+   * partial count as settled fact while the rail beside it said the mail was still arriving. So
+   * the lists take the strip's own verdict rather than guessing, through `listSurface`'s
+   * `pending` arm. The KEY, not its conditions — `importing`.
+   */
+  /**
+   * `awaiting` is deliberately NOT here: a connected mailbox that has never completed a cycle
+   * says so in the strip, and the pane's own empty sentence beside it is a ruled behaviour
+   * (`test/signup-copy-and-empty-ohbox.test.ts` owns it, with its mutations).
+   */
+  owed: boolean;
 }
 
 const QUIET: MailState = {
@@ -1244,6 +1275,9 @@ const QUIET: MailState = {
   // `true` here so that a `QUIET` used directly as a resting value never withholds a pane's
   // ordinary empty state.
   settled: true,
+  // Same rule from the other side: a resting value owes nothing, so a pane reading it speaks.
+  // Overwritten for every state by the wrapper — see {@link MailState.owed}.
+  owed: false,
 };
 
 /**
@@ -1609,6 +1643,12 @@ export function deriveMailState(input: MailStateInputs): MailState {
       // on the desktop the sidecar can be current while the window's own mirror is still
       // mid-first-snapshot and empty — upstream freshness settles nothing here.
       || input.engineFreshness.state !== "unknown",
+    // AND THE SECOND HALF OF THE SAME QUESTION — see {@link MailState.owed}. Stamped beside
+    // `settled` and for its reason: it is a property of every state and `climb` has ten
+    // returns. The KEY, so a change to what counts as an import flows through here; a frozen
+    // loop (`stopped`/`failing`) never reaches it, which is right — a list withheld for a loop
+    // that will not run again is the spinner nobody can escape.
+    owed: state.key === "importing",
   };
 }
 
@@ -1881,7 +1921,11 @@ function climb(input: MailStateInputs): MailState {
   // floor is bounded ({@link importFloorSpeaks}); `mirrored > 0` confines
   // it to the partial-mailbox case (`awaiting` owns the empty one);
   // `clock: true` is load-bearing — the release is driven by time alone.
-  if (mirrored > 0 && connected.some((m) => importFloorSpeaks(m, growth, sync, now))) {
+
+  // …and `mirrorCaughtUp` is its END: the account's own total reached means there is no import
+  // left to claim, whatever the stamp says. See that function for the claim this closes.
+  if (mirrored > 0 && !mirrorCaughtUp(mailboxes, pulled)
+      && connected.some((m) => importFloorSpeaks(m, growth, sync, now))) {
     return { ...QUIET, key: "importing", clock: true, count: pulled, total: totalIfAhead, continuesAtFolder };
   }
 

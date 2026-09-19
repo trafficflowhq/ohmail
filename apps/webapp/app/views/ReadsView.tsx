@@ -11,7 +11,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocale, useTranslations } from "next-intl";
-import { presentsUnread } from "@ohmail/client-engine";
+import { countWhen, presentsUnread } from "@ohmail/client-engine";
 import type {
   EngineMessage,
   FeedPartition,
@@ -50,6 +50,8 @@ interface ReadsAiChipMeta {
 }
 
 export function ReadsView({
+  settled,
+  owed,
   partition,
   tags,
   threadParticipants,
@@ -74,6 +76,13 @@ export function ReadsView({
   onAction,
   onMarkAllRead,
 }: {
+  /**
+   * The pair every list asks before it states anything about the mailbox — `MailState.settled`
+   * and `MailState.owed`, through `@ohmail/client-engine`'s one reading. Props for the reason
+   * `OhboxView`'s are: this view is mounted bare in several tests.
+   */
+  settled: boolean;
+  owed: boolean;
   partition: FeedPartition;
   /**
    * THE PEOPLE IN A ROW'S CONVERSATION, for its lead circles — bound to the engine's reader by
@@ -671,7 +680,11 @@ export function ReadsView({
     <section className="view split view-reads">
       <ListPane
         title={t("title")}
-        meta={ts("newSince", { count: newCount })}
+        /* A COUNT IS A CLAIM ABOUT THE PILE, and the mirror is what the pile is read from:
+           "0 new since you were here" over an account still importing is a wrong number stated
+           as fact. One reading for every list (`@ohmail/client-engine`'s `countWhen`). */
+        meta={countWhen({ settled, count: all.length, pending: owed },
+          ts("newSince", { count: newCount }))}
         action={
           onMarkAllRead ? (
             <MarkAllRead
@@ -754,7 +767,10 @@ export function ReadsView({
         ) : null}
         {/* The end-of-pile line is a CLAIM ("that's everything"), so it is only made while the
             pile's last card is actually mounted above it. */}
-        {stream.end >= all.length ? <div className="tail-row">{t("streamTail")}</div> : null}
+        {/* "That's everything" is the same claim in the tail's voice — withheld on the same
+            reading, or a mirror mid-import ends its stream at nothing and says so. */}
+        {stream.end >= all.length && countWhen({ settled, count: all.length, pending: owed }, true)
+          ? <div className="tail-row">{t("streamTail")}</div> : null}
       </StreamShell>
     </section>
   );

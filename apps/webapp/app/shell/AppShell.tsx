@@ -7651,8 +7651,10 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
                 doorbellHues={waitingLive.map((w) => avatarHue(w.from.address))}
                 doorbellCount={screener.waitingCount}
                 /* May this view state its emptiness as a fact yet? Derived once in
-                   `mail-state.ts`; see `MailState.settled`. */
+                   `mail-state.ts`; see `MailState.settled` and `MailState.owed` — the pair the
+                   shared `listSurface` reading asks, never one of them alone. */
                 settled={mailState.settled}
+                owed={mailState.owed}
                 onDoorbell={() => go("screener")}
                 onAction={onMessageAction}
                 onAddTag={openTagPicker}
@@ -7668,6 +7670,10 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
 
             {effectiveView === "reads" ? (
               <ReadsView
+                /* The pair every list states its counts and its emptiness from — see
+                   `MailState.settled` and `MailState.owed`. */
+                settled={mailState.settled}
+                owed={mailState.owed}
                 threadParticipants={participantsOf}
                 /* Which address of yours a row arrived at, above one mailbox — see
                    `mailbox-label.ts`; the view resolves one string per row. */
@@ -7698,6 +7704,10 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
 
             {effectiveView === "receipts" ? (
               <ReceiptsView
+                /* The pair every list states its counts and its emptiness from — see
+                   `MailState.settled` and `MailState.owed`. */
+                settled={mailState.settled}
+                owed={mailState.owed}
                 threadParticipants={participantsOf}
                 absoluteTime={absoluteTime}
                 onToggleTime={toggleAbsoluteTime}
@@ -7791,9 +7801,10 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
                 segment={route.screenerSegment}
                 selection={scnSel}
                 onSelect={(segment, id) => setScnSel((s) => ({ ...s, [segment]: id }))}
-                /* Same flag, same reason — the Screener's "No one's waiting." and its
+                /* Same pair, same reason — the Screener's "No one's waiting." and its
                    "all clear" meta are the same claim the Ohbox was making. */
                 settled={mailState.settled}
+                owed={mailState.owed}
                 hydrateBody={hydrateBody}
                 /* The reading pane's remote-image consent chrome, so a held preview blocks
                    and gates images exactly as the pane does. Absent on the demo. */
@@ -7917,6 +7928,10 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
 
             {effectiveView === "history" ? (
               <HistoryView
+                /* The pair every list states its counts and its emptiness from — see
+                   `MailState.settled` and `MailState.owed`. */
+                settled={mailState.settled}
+                owed={mailState.owed}
                 threadParticipants={participantsOf}
                 threadCountOf={threadCountOf}
                 absoluteTime={absoluteTime}

@@ -12,10 +12,12 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useTranslations } from "next-intl";
 import type {
   BodyState,
+  ListSurface,
   ScreenerSenderDTO,
   UnsubscribeHeaderState,
   UnsubscribeResult,
 } from "@ohmail/client-engine";
+import { countWhen, listSurface, saysEmpty } from "@ohmail/client-engine";
 import {
   AskWell,
   BulkProgress,
@@ -490,9 +492,11 @@ function RowActions({
  * out of it has no way to stay honest as those strings change. It is app copy, so it lives with
  * the app's copy. `test/demo-zero-network.test.ts` now forbids the import class outright.
  */
-function Empty({ segment, settled }: { segment: ScreenerSegmentId; settled: boolean }) {
+function Empty(
+  { segment, surface }: { segment: ScreenerSegmentId; surface: ListSurface },
+) {
   const t = useTranslations("screener");
-  const speak = useLoadingGrace(!settled);
+  const speak = useLoadingGrace(!saysEmpty(surface));
   /**
    * "No one's waiting." is a fact about senders, not about this list — the
    * pane was caught claiming nobody was waiting on a mailbox holding
@@ -503,7 +507,7 @@ function Empty({ segment, settled }: { segment: ScreenerSegmentId; settled: bool
    * situation and nothing else — no invented sender, no placeholder row
    * (`OhboxView`'s `SyncState`, mirrored deliberately).
    */
-  if (!settled) {
+  if (!saysEmpty(surface)) {
     return (
       <div className="empty" role="status" aria-busy="true">
         {/* `.mbx-wait` and not a bare span: `.mbx-spin` sizes itself with `width`/`height` and
@@ -538,6 +542,7 @@ export function ScreenerView({
   segment,
   selection,
   settled,
+  owed,
   onSelect,
   hydrateBody,
   remoteImages,
@@ -607,6 +612,12 @@ export function ScreenerView({
    * prop for the reason it is one on `OhboxView`. See {@link Empty}.
    */
   settled: boolean;
+  /**
+   * Do the account's own facts say mail is still on its way ({@link MailState.owed})? Asked with
+   * `settled` through the shared `listSurface` reading — a drain that completed is not a
+   * mailbox that has been read, and this pane was caught making the Ohbox's own mistake.
+   */
+  owed: boolean;
   onSelect: (segment: ScreenerSegmentId, id: string | null) => void;
   /** Ask for one held message's body. `retry` marks a human asking again. */
   hydrateBody: (id: string, opts?: { retry?: boolean }) => void;
@@ -695,6 +706,15 @@ export function ScreenerView({
         : junkActive
           ? []
           : state.spam;
+
+  /**
+   * WHAT THIS SEGMENT MAY SAY ABOUT ITSELF — the shared reading
+   * (`@ohmail/client-engine`'s `listSurface`), the same one the Ohbox and the phone render
+   * through. `owed` is the half this pane did not ask: a completed drain is not a read mailbox,
+   * and "No one's waiting" over an account still importing is the Ohbox's defect in this pile.
+   */
+  const emptySurface = (count: number): ListSurface =>
+    listSurface({ settled, count, pending: owed });
 
   const idOf = (x: ScreenerSenderDTO | SpamRow) =>
     "pinned" in x ? x.sender.id : x.id;
@@ -1275,11 +1295,10 @@ export function ScreenerView({
            nobody is waiting at the gate. Before the mirror has been read nobody is KNOWN to be
            waiting. Any non-zero count is a real observation whatever the drain is doing, so
            only the zero is withheld — and it returns the moment there is one to state. */
-        meta={
-          !settled && state.waitingCount === 0
-            ? undefined
-            : t("metaWaiting", { count: state.waitingCount })
-        }
+        meta={countWhen(
+          { settled, count: state.waitingCount, pending: owed },
+          t("metaWaiting", { count: state.waitingCount }),
+        )}
         header={
           <div className="scn-head">
             <SegmentedControl<ScreenerSegmentId>
@@ -1460,7 +1479,7 @@ export function ScreenerView({
           {junkActive ? null : items.length ? (
             items.map(row)
           ) : state.decided.length === 0 ? (
-            <Empty segment={segment} settled={settled} />
+            <Empty segment={segment} surface={emptySurface(items.length)} />
           ) : null}
           {/*
               DECIDED, NOT DONE: A sender whose decision is waiting on another install is out of the queue and not
@@ -1504,7 +1523,7 @@ export function ScreenerView({
           // selected. `items.length` (not `current`) is the test: a `waiting` segment can have
           // rows that are all mid-exit — none selectable, so `current` is null while the list is
           // NOT empty — and there the read column keeps its own "nothing selected" state.
-          items.length === 0 ? null : <Empty segment={segment} settled={settled} />
+          items.length === 0 ? null : <Empty segment={segment} surface={emptySurface(items.length)} />
         ) : segment === "waiting" ? (
           <WaitingPreview
             sender={current as ScreenerSenderDTO}

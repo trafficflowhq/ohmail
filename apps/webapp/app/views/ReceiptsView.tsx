@@ -15,7 +15,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocale, useTranslations } from "next-intl";
-import { presentsUnread } from "@ohmail/client-engine";
+import { countWhen, presentsUnread } from "@ohmail/client-engine";
 import type { EngineMessage, MessageBody, TagDTO, WaterlineMeta } from "@ohmail/client-engine";
 import { ListPane, ListRows, MessageRow, Waterline } from "@ohmail/ui";
 import { MarkAllRead } from "../components/MarkAllRead";
@@ -33,6 +33,8 @@ import { useStreamWindow } from "../shell/stream-window";
 import { useBodyStamp } from "../shell/body-slice";
 
 export function ReceiptsView({
+  settled,
+  owed,
   messages,
   waterline = null,
   freshCount,
@@ -58,6 +60,9 @@ export function ReceiptsView({
   onAction,
   onMarkAllRead,
 }: {
+  /** `ReadsView`'s pair, same reading, same reason. */
+  settled: boolean;
+  owed: boolean;
   /** Every receipt, already in display order. Flat — the shell flattens `receiptsByDay`. */
   messages: EngineMessage[];
   /**
@@ -470,7 +475,9 @@ export function ReceiptsView({
         title={t("title")}
         /* The waterline count, and the sentence says so — still unread on the server, the
            badge and never the position. One key with Reads (`stream.newSince`). */
-        meta={ts("newSince", { count: shownNew })}
+        /* The count is withheld until the mirror can be spoken for — `ReadsView`'s note. */
+        meta={countWhen({ settled, count: all.length, pending: owed },
+          ts("newSince", { count: shownNew }))}
         action={
           onMarkAllRead ? (
             <MarkAllRead
@@ -498,8 +505,10 @@ export function ReceiptsView({
         {showWaterline ? <Waterline label={tr("waterline")} meta={wlMeta} /> : null}
         <ListRows ariaLabel={tr("waterline")}>{all.slice(fresh + seenFrom, fresh + seenTo).map(row)}</ListRows>
         {win.padBottom > 0 ? <div aria-hidden style={{ height: win.padBottom }} /> : null}
-        {/* No-collapse rule: every receipt is a real row above. */}
-        <div className="tail-row">{t("tail")}</div>
+        {/* No-collapse rule: every receipt is a real row above — and the line is still a claim
+            about where the pile ends, so it waits for a mirror that can be spoken for. */}
+        {countWhen({ settled, count: all.length, pending: owed }, true)
+          ? <div className="tail-row">{t("tail")}</div> : null}
       </ListPane>
 
       <StreamShell
@@ -539,7 +548,8 @@ export function ReceiptsView({
         ) : null}
         {/* The end-of-pile line is a claim; it is made only while the pile's last card is
             mounted above it. */}
-        {stream.end >= all.length ? <div className="tail-row">{t("tail")}</div> : null}
+        {stream.end >= all.length && countWhen({ settled, count: all.length, pending: owed }, true)
+          ? <div className="tail-row">{t("tail")}</div> : null}
       </StreamShell>
     </section>
   );

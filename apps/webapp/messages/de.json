@@ -937,6 +937,7 @@
     "reopenAction": "Ansehen"
   },
   "history": {
+    "loading": "Deine Post wird geladen.",
     "title": "Historie",
     "metaCount": "{count, plural, one {1 Nachricht} other {# Nachrichten}}",
     "windowNote": "Dieses Gerät behält deine neuere Post. Ältere Post bleibt auf deinem Server — du findest sie über die Suche.",
