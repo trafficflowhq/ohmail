@@ -447,17 +447,16 @@ export class SyncService {
     if (sinceSeq > 0n) {
       const { min: minSeq, max: maxSeq, prunedThrough: floor } = await seqBounds(db, accountId);
       prunedThrough = floor;
-      // THE RETENTION FLOOR (mail 0120), and it is the authoritative one: the pass compacts
-      // below `pruned_through_seq` — tombstones included — while RETAINING each live entity's
-      // first row, so `min` stays low and only this explicit floor can see the gap. A cursor AT
-      // the floor is fine (it has seen everything at or below it); below it, rows it never saw
-      // are gone for ever — EXCEPT a cursor carrying a floor TAG at or above the current floor,
-      // which is a post-prune bootstrap mid-replay over the RETAINED sub-floor rows: it has seen
-      // exactly the survivors up to its position, each materialized at serve time, and under an
-      // unmoved floor the compactor deletes nothing such a replay still needs ({@link
-      // SyncCursor.floor}). The `min` check stays as the belt for the shapes that empty the log
-      // outright. Raised-before-delete makes the race one-sided: a concurrent prune can only
-      // turn this read's empty 200 into the NEXT poll's 410, never serve a gap.
+      // THE RETENTION FLOOR (mail 0120), the authoritative one: the pass compacts below
+      // `pruned_through_seq` — tombstones included — while RETAINING each live entity's first
+      // row, so `min` stays low and only this explicit floor can see the gap. A cursor AT the
+      // floor is fine; below it, rows it never saw are gone — EXCEPT a cursor whose floor TAG is
+      // at or above the current floor, which is a post-prune bootstrap mid-replay over the
+      // retained sub-floor rows: each consumed row was materialized at serve time, and under an
+      // unmoved floor the compactor deletes nothing such a replay needs ({@link SyncCursor.floor}).
+      // The `min` check stays as the belt for the shapes that empty the log outright;
+      // raised-before-delete keeps the race one-sided (an empty 200 becomes the NEXT poll's 410,
+      // never a gap).
       const bootstrapUnderCurrentFloor = parsed?.floor != null && parsed.floor >= prunedThrough;
       if (prunedThrough > 0n && sinceSeq < prunedThrough && !bootstrapUnderCurrentFloor) {
         throw new ServiceError(

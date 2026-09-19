@@ -406,14 +406,12 @@ export interface SeqBounds {
 
 /**
  * The horizons of an account's change log, from ONE statement. `SyncService.getChanges` needs
- * them on every resuming request: a cursor below `prunedThrough` (or below `min`) names changes
- * that no longer exist, above `max` changes that never existed — both unrecoverable, both 410,
- * the client re-snapshots. One statement rather than round trips is a correctness property: the
- * floors and the ceiling come from the same read, so they cannot disagree about which side of
- * the window a cursor sits on. No transaction, no lock: deletes here are the retention pass and
- * account erasure only, and the pass raises `prunedThrough` BEFORE deleting and never touches a
- * row above it — so `max` never falls, both floors only rise, and a concurrent writer or pruner
- * can only turn a would-be empty 200 into a 410 read a moment earlier, never serve a gap.
+ * them on every resuming request: a cursor below `prunedThrough` (or `min`) names changes that
+ * no longer exist, above `max` changes that never existed — both unrecoverable, both 410, the
+ * client re-snapshots; one read, so the three cannot disagree about a cursor. No transaction,
+ * no lock: deletes here are the retention pass and account erasure only, and the pass raises
+ * `prunedThrough` BEFORE deleting and never touches a row above it — `max` never falls, both
+ * floors only rise, so a race turns an empty 200 into a 410 a poll earlier, never a gap.
  */
 export async function seqBounds(tx: Tx, accountId: string): Promise<SeqBounds> {
   const rows = await tx
