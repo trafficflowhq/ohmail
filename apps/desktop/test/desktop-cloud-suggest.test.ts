@@ -148,6 +148,7 @@ describe("the hosted door's suggest control", () => {
               h(CloudSuggest, {
                 senders,
                 resuggestable,
+                unanswered: 0,
                 absorb: (rows) => { absorbed.push(...rows); },
               }),
             ),
