@@ -63,6 +63,7 @@ import {
   type ScreenDest,
   type ScreenerSenderDTO,
   type TagDTO,
+  type TrashRowWire,
   type WallClockVerdict,
   type WithdrawOutcome,
   type ZonedComposition,
@@ -600,6 +601,43 @@ export function moveTargetLabel(target: MoveTarget): string {
     case "screened": return Copy.placeScreened;
     case "spam": return Copy.placeSpam;
   }
+}
+
+/* ── Trash — mail this account deleted, and putting one back ────────────────────────────── */
+
+/** How many rows one Trash page asks for — the webapp `trash-page.ts`'s own ask; the server clamps. */
+export const TRASH_PAGE_LIMIT = 50;
+
+/**
+ * One deleted message as the Trash screen renders it. `mail` is the standard row shape so
+ * `MailRow` draws it like every other list; its `time` slot carries WHEN IT WAS DELETED (the
+ * webapp row's rule — a message date in the deletion slot would be read as a deletion time),
+ * and the empty string where a server predates `trashedAt`: quiet, never a false stamp.
+ */
+export interface WorldTrashRow {
+  mail: Mail;
+  /** The deletion instant in the reader's clock, or `null` for a server too old to say. */
+  deletedWhen: string | null;
+  /** Where a restore would put it, as a word — the webapp's `placeLabel` rule, one namespace over. */
+  restoreLabel: string;
+}
+
+export type WorldTrashPage =
+  | { state: "unavailable" }
+  | { state: "failed"; say: string | null }
+  | { state: "ready"; items: WorldTrashRow[]; nextCursor: string | null };
+
+/**
+ * A restore target as a word: the view's label for one of the product's own folders, the leaf
+ * for one of the mailbox's. The webapp's `placeLabel` is the same two-arm rule — a second
+ * mapping is how two surfaces come to call one folder two things, so this one delegates to
+ * `moveTargetLabel` for every place that IS a move target and names only the two that are not.
+ */
+export function trashRestoreLabel(folder: string): string {
+  const view = VIEW_OF_FOLDER[folder as Folder];
+  if (view === undefined) return folderLeafOf(folder);
+  if (view === "screener") return Copy.screener;
+  return moveTargetLabel(view);
 }
 
 /** The account's tags, from the mirror — the `tag` entity every mobile drain carries. */
@@ -1580,6 +1618,12 @@ export interface LiveDeps {
   /** The reader's zone for the resurface horizons — 09:00 where the reader is. Defaults to the device's. */
   zone?: string;
   /**
+   * The reader's language for the one stamp this facade renders itself (the Trash rows'
+   * deleted-when). A GETTER for `ownAddresses`' reason: the facade is identity-stable while
+   * the language can switch mid-session. Absent ⇒ English, `messageDisplayTime`'s own default.
+   */
+  locale?: () => string;
+  /**
    * THE READER'S OWN ADDRESSES, as a GETTER rather than a value — see
    * {@link WorldView.ownAddresses} for what they are and where they come from.
    *
@@ -1692,6 +1736,23 @@ export interface LiveWorldActions {
    * that cannot happen. The confirm ceremony is the sheet's job; this arm dispatches.
    */
   deleteMessage(messageId: string): Promise<boolean>;
+  /**
+   * One page of mail this account deleted — `OhmailEngine.listTrash`, projected to rows the
+   * Trash screen renders. OFF-MIRROR by construction (a delete tombstones the row in every
+   * mirror), so the screen holds the page and the world never lists it. `say` on the failed
+   * arm carries the server's sentence only where it is written for the person (the webapp
+   * `trash-page.ts` allowlist: the spend gate's 402); everything else is withheld and the
+   * screen says its own.
+   */
+  trashList(cursor: string | null): Promise<WorldTrashPage>;
+  /**
+   * Put one deleted message back where it was — the delete verb's inverse move
+   * (`POST /messages/:id/restore`). Resolves `true` when the server accepted the restore
+   * (still PENDING on the mail server — the toast says "Restoring to …", never "restored");
+   * the rolled-back and unavailable arms speak their own sentence and answer `false`, so the
+   * caller keeps the row.
+   */
+  trashRestore(messageId: string): Promise<boolean>;
   /**
    * Reply (or reply all) — `mail_send` with `inReplyTo`; the engine derives the envelope.
    * `sig` is the signature block's own derived text (`effectiveSignature`, computed once by
@@ -2301,6 +2362,63 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
   };
 
   /**
+   * TRASH — the off-mirror page, projected HERE so the screen stays logic-free: the deletion
+   * stamp in the reader's clock and language, the restore target as the word the move panel
+   * would use. `place` is the row shape's obligation, not a claim — no list groups by it here.
+   */
+  const toTrashRow = (r: TrashRowWire): WorldTrashRow => {
+    const deletedWhen = r.trashedAt
+      ? messageDisplayTime({ date: r.trashedAt }, now(), zone, deps.locale?.() ?? "en")
+      : null;
+    return {
+      mail: {
+        id: r.id,
+        place: "ohbox",
+        from: { name: r.from.name || r.from.address, address: r.from.address },
+        subject: r.subject,
+        time: deletedWhen ?? "",
+        body: "",
+        snippet: r.snippet,
+        unread: presentsUnread(r),
+        ...(r.amount ? { amount: r.amount } : {}),
+        ...(r.protected ? { protected: r.protected as Mail["protected"] } : {}),
+        earlier: [],
+      },
+      deletedWhen,
+      restoreLabel: trashRestoreLabel(r.restoreTo && r.restoreTo !== "" ? r.restoreTo : "INBOX"),
+    };
+  };
+
+  const trashList = async (cursor: string | null): Promise<WorldTrashPage> => {
+    const out = await engine.listTrash({ limit: TRASH_PAGE_LIMIT, ...(cursor ? { cursor } : {}) });
+    if (out.state === "unavailable") return { state: "unavailable" };
+    if (out.state === "failed") {
+      // The webapp's allowlist, kept by value: only the spend gate's sentence is written for
+      // the person holding the mailbox; every other server message is a log line and withheld.
+      return { state: "failed", say: out.code === "payment_required" ? out.error : null };
+    }
+    return { state: "ready", items: out.items.map(toTrashRow), nextCursor: out.nextCursor };
+  };
+
+  /**
+   * The restore stays PENDING on the mail server (the engine's own contract), so the sentence
+   * is "Restoring to …" — the webapp's exact toast — never "restored". The intent id makes a
+   * double press one request end to end (the engine builds `restore:<intent>:<id>` as the
+   * Idempotency-Key); without a uuid source the request simply carries no key, as the engine
+   * documents.
+   */
+  const trashRestore = async (messageId: string): Promise<boolean> => {
+    const intent = deps.uuid?.();
+    const res = await engine.restoreFromTrash(messageId, intent ? { intentId: intent } : {});
+    if (res.state === "restored") {
+      toast(refuse("trashToastRestoring", trashRestoreLabel(res.restoreTo)));
+      return true;
+    }
+    toast(refuse(res.state === "rolled_back" ? "trashToastRestoreFailed" : "trashUnavailable"));
+    return false;
+  };
+
+  /**
    * A send's three honest outcomes — narrower than {@link watched}, deliberately. For triage
    * and moves a standing `queued` view is truthful; for a send, "Reply sent." on a queued send
    * claims a delivery that has not happened. So `confirmed` alone says sent. `queued` first
@@ -2641,7 +2759,8 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     openMessage, hydrateMessage, hydrateHeld, loadInlineImages, openAttachmentBytes,
     sweepFeed, leaveFeed, decide, release, setPile,
     pileToggle, resurfaceToggle, resurfaceAt, resurfaceNow, resurfaceDone, markSeen, move,
-    deleteMessage, sendReply, sendForward, withdrawSend, cancelSchedule, tagToggle, tagCreate, screenSender,
+    deleteMessage, trashList, trashRestore,
+    sendReply, sendForward, withdrawSend, cancelSchedule, tagToggle, tagCreate, screenSender,
     folderCreate, folderRename, folderDelete, folderDismiss,
   };
 }
@@ -2688,6 +2807,12 @@ export interface WorldActions {
   move(row: WorldMail, dest: MoveTarget): void;
   /** Delete — to the provider's native Trash, never an expunge. See {@link LiveWorldActions.deleteMessage}. */
   deleteMessage(messageId: string): void;
+  /**
+   * The Trash page and the restore verb — awaited by their screen (the page is the render,
+   * the `true` is the row leaving), so like `retryAbandoned` they return their promise.
+   */
+  trashList(cursor: string | null): Promise<WorldTrashPage>;
+  trashRestore(messageId: string): Promise<boolean>;
   /**
    * Resolves to the send's result: `sent` closes, `failed` re-arms, `queued` locks the composer.
    * `sendAt` makes it a Send-later appointment instead of a delivery — see
@@ -2750,6 +2875,8 @@ export function stableActions(current: () => WorldActions): WorldActions {
     markSeen: (id, unread) => void current().markSeen(id, unread),
     move: (row, dest) => void current().move(row, dest),
     deleteMessage: (id) => void current().deleteMessage(id),
+    trashList: (cursor) => current().trashList(cursor),
+    trashRestore: (id) => current().trashRestore(id),
     sendReply: (id, body, all, sig, sendAt) => current().sendReply(id, body, all, sig, sendAt),
     sendForward: (id, to, body, sig) => current().sendForward(id, to, body, sig),
     withdrawSend: (key) => current().withdrawSend(key),

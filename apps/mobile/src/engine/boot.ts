@@ -353,7 +353,8 @@ async function verifyAccountId(
  * webapp's sync gate: the wrapper is the whole surface the engine sees, so every capability is
  * forwarded by hand — an absent forward would silently strip it on the live path only.
  */
-type GuardedMobileAdapter = EngineAdapter & Pick<HttpAdapter, "snapshot" | "listMessages">;
+type GuardedMobileAdapter = EngineAdapter
+  & Pick<HttpAdapter, "snapshot" | "listMessages" | "listTrash" | "restoreFromTrash">;
 
 function accountGuarded(
   adapter: HttpAdapter,
@@ -416,6 +417,12 @@ function accountGuarded(
     requestPull: () => adapter.requestPull(),
     unsubscribe: (id) => adapter.unsubscribe(id),
     listMessages: adapter.listMessages.bind(adapter),
+    // Trash — the page read and the restore verb, forwarded on `mutate`'s rule (user-intent,
+    // bounded by the press). The engine resolves `trashAvailable()` from the adapter's OPTIONAL
+    // capabilities, so leaving this pair out of the literal is the `requestPull` defect again:
+    // the phone would read "this transport serves no Trash" on the live path only.
+    listTrash: (opts) => adapter.listTrash(opts),
+    restoreFromTrash: (id, opts) => adapter.restoreFromTrash(id, opts),
     listAttachments: (id) => adapter.listAttachments(id),
     fetchAttachment: (id) => adapter.fetchAttachment(id),
     fetchAllAttachments: (id) => adapter.fetchAllAttachments(id),

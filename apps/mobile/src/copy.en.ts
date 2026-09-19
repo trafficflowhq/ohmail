@@ -1476,6 +1476,33 @@ const TABLE = {
     "It moves to the Trash folder on your own mail server — ohmail never erases mail. Your mail server's Trash rules apply from there.",
   toastDeleted: "Moved to Trash.",
   deleteFailed: "That delete could not be saved — the message is where it was.",
+  /*
+   * TRASH — the place deleted mail can be put back from (the webapp's `trash` namespace,
+   * sentence for sentence where the surface is the same). The rows are off-mirror
+   * (a delete tombstones the row everywhere), so the phone's tail states what the list holds
+   * exactly as the web's foot does, and the reading card states the stored-preview boundary —
+   * this build reads no deleted body from the server.
+   */
+  trashTitle: "Trash",
+  trashEmptyTitle: "Nothing in Trash.",
+  trashEmptyHint: "Mail you delete in ohmail appears here.",
+  trashUnavailable: "Trash is not available here.",
+  trashFoot:
+    "Mail you deleted in ohmail — the only deleted mail ohmail can put back. Mail trashed in other apps stays in your mail server's Trash, and your mail server decides how long Trash keeps it.",
+  trashDeletedAt: (when: string) => `Deleted ${when}`,
+  /** The reading card's sender line — name and address joined; each language owns the join. */
+  trashFromLine: (name: string, address: string) => `${name} · ${address}`,
+  trashRestoresTo: (place: string) => `Restore puts it back in ${place}.`,
+  trashRestore: "Restore",
+  trashRestoring: "Restoring…",
+  trashToastRestoring: (place: string) => `Restoring to ${place}…`,
+  trashToastRestoreFailed: "Couldn't restore — it's still in Trash.",
+  trashNoErase: "ohmail never erases mail — to remove it for good, use your own mail client.",
+  trashListFailed: "Trash couldn't be read just now.",
+  trashRetry: "Try again",
+  trashShowOlder: "Show older",
+  trashRowGone: "That message is no longer in Trash.",
+  trashPreviewNote: "This is the stored preview — restore the message to read all of it.",
   /** The resurface horizon chooser (`ohbox.resurface*`). */
   resurfaceWhen: "Resurface when?",
   resurfaceNow: "Now",

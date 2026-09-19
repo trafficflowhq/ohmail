@@ -982,6 +982,29 @@ export const DE: Deck = {
     `Für den Organizer vorgemerkt — beim nächsten Durchgang: ${place}.`,
   toastDeleteQueued: (holder: string) => `Für ${holder} vorgemerkt — gelöscht wird beim nächsten Durchgang.`,
   toastDeleteQueuedUnknown: "Für den Organizer vorgemerkt — gelöscht wird beim nächsten Durchgang.",
+  /* TRASH — die Sätze des Web-Katalogs (`trash`-Namespace), wo die Fläche dieselbe ist. */
+  trashTitle: "Papierkorb",
+  trashEmptyTitle: "Der Papierkorb ist leer.",
+  trashEmptyHint: "Mails, die du in ohmail löschst, erscheinen hier.",
+  trashUnavailable: "Der Papierkorb ist hier nicht verfügbar.",
+  trashFoot:
+    "Mails, die du in ohmail gelöscht hast — die einzigen gelöschten Mails, die ohmail zurücklegen kann. In anderen Apps gelöschte Mails bleiben im Papierkorb deines Mailservers — und dein Mailserver entscheidet, wie lange er sie behält.",
+  trashDeletedAt: (when: string) => `Gelöscht ${when}`,
+  trashFromLine: (name: string, address: string) => `${name} · ${address}`,
+  /* Nominativ nach Doppelpunkt-freiem „in": Dativ ist hier fest — „legt sie zurück in den …"
+     bräuchte den Artikel des Ortsnamens; die Ortsnamen sind Eigennamen (Ohbox, Reads), also
+     ohne Artikel, wie der Web-Katalog sie in `toastRestoringTo` verwendet. */
+  trashRestoresTo: (place: string) => `Wiederherstellen legt sie zurück in ${place}.`,
+  trashRestore: "Wiederherstellen",
+  trashRestoring: "Wird wiederhergestellt…",
+  trashToastRestoring: (place: string) => `Wird in ${place} wiederhergestellt…`,
+  trashToastRestoreFailed: "Konnte nicht wiederhergestellt werden — sie ist noch im Papierkorb.",
+  trashNoErase: "ohmail löscht nie unwiderruflich — zum endgültigen Entfernen nutze deinen eigenen Mail-Client.",
+  trashListFailed: "Der Papierkorb ließ sich gerade nicht lesen.",
+  trashRetry: "Nochmal versuchen",
+  trashShowOlder: "Ältere zeigen",
+  trashRowGone: "Diese Nachricht ist nicht mehr im Papierkorb.",
+  trashPreviewNote: "Das ist die gespeicherte Vorschau — stelle die Nachricht wieder her, um alles zu lesen.",
   pressQueuedForOrganizer: (holder: string) =>
     `Für ${holder} vorgemerkt — passiert beim nächsten Durchgang.`,
   pressQueuedForOrganizerUnknown: "Für den Organizer vorgemerkt — passiert beim nächsten Durchgang.",

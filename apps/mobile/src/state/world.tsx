@@ -23,6 +23,7 @@ import {
 import { Copy } from "../copy";
 import { refuse, type RefusalArg } from "../refusal";
 import { useLocale } from "../i18n/LocaleProvider";
+import { activeLocale } from "../i18n/locale";
 import { useConnection } from "../net/connection";
 import {
   readFoldersEnabled,
@@ -295,6 +296,12 @@ export interface World {
     junkSaid: { named: string } | "unnamed" | null;
   };
   /**
+   * TRASH — can this client see and restore deleted mail at all (the engine's capability
+   * PAIR). The page itself is off-mirror and rides `actions.trashList`; the world carries only
+   * the gate, so the More row and a deep-linked screen read one answer.
+   */
+  trash: { available: boolean };
+  /**
    * THE ACCOUNT'S STORED SIGNATURES — `{ mailboxId: text }`, from the consent read (`GET
    * /consent`, mail 0075), riding the folders flag's own cadence (boot + after every drain,
    * so a signature saved in the webapp's Settings reaches an open phone). `null` until a read
@@ -406,6 +413,9 @@ const NO_ACTIONS: WorldActions = {
   markSeen: () => undefined,
   move: () => undefined,
   deleteMessage: () => undefined,
+  // Nothing is connected: the Trash screen renders the unavailable sentence off this arm.
+  trashList: async () => ({ state: "unavailable" as const }),
+  trashRestore: async () => false,
   // The empty world cannot send; the composer treats `failed` as the refusal it is.
   sendReply: () => Promise.resolve({ outcome: "failed" as const }),
   sendForward: () => Promise.resolve({ outcome: "failed" as const }),
@@ -475,6 +485,8 @@ function emptyWorld(actions: WorldActions): World {
       // Nothing is connected, so no mailbox has been read and there is no folder to name.
       junkSaid: null,
     },
+    // Nothing is connected — "Trash is not available here", never an empty Trash.
+    trash: { available: false },
     signatures: null,
     // No account, so nothing has chosen a time and nothing can store one. The sheet still
     // chooses — on the product's 09:00, which is what `null` means everywhere.
@@ -899,6 +911,9 @@ export function WorldProvider({ children }: { children: ReactNode }) {
     () => (engine
       ? liveActions({
         engine, toast: showToast, uuid: () => Crypto.randomUUID(), zone,
+        // The register, not the hook's value: this facade is built once per session, and a
+        // captured `locale` would stamp Trash rows in the mount-time language for ever.
+        locale: () => activeLocale(),
         ownAddresses: () => addressesNow.current,
         // A GETTER, like the addresses beside it and for the same reason: this facade is
         // identity-stable while the consent read that carries the time lands later, so the
@@ -1044,6 +1059,8 @@ export function WorldProvider({ children }: { children: ReactNode }) {
           markSeen: (id, unread) => void acts.markSeen(id, unread),
           move: (row, dest) => void acts.move(row, dest),
           deleteMessage: (id) => void acts.deleteMessage(id),
+          trashList: (cursor) => acts.trashList(cursor),
+          trashRestore: (id) => acts.trashRestore(id),
           sendReply: (id, body, all, sig, sendAt) => acts.sendReply(id, body, all, sig, sendAt),
           sendForward: (id, to, body, sig) => acts.sendForward(id, to, body, sig),
           withdrawSend: (key) => acts.withdrawSend(key),
@@ -1226,6 +1243,9 @@ export function WorldProvider({ children }: { children: ReactNode }) {
           junkSaid: junkFolderSaid(mailboxes ?? []),
         };
       })(),
+      // The engine resolves it from the adapter's capability PAIR (list + restore) — a Trash
+      // whose Restore cannot work is not the feature, the engine's own rule.
+      trash: { available: engine.trashAvailable() },
       signatures,
       resurfaceTime,
       remember: rememberResurfaceTime,

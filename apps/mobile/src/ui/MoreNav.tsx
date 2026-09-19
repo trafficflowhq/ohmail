@@ -82,6 +82,14 @@ export function MoreNav({ onNavigate }: { onNavigate?: () => void }) {
         />
       ) : null}
 
+      {/* TRASH — the browser rail's utility-row order (History above Trash), closing the
+          recovery gap the delete confirm names: the mail went to the provider's Trash, and
+          this is where it can be put back from. Gated on the engine's capability PAIR
+          (list + restore, one predicate) — the webapp disables its palette row on the same
+          answer, and a row opening "not available here" teaches nothing on a phone. NO COUNT,
+          like History: a number here would claim attention deleted mail does not want. */}
+      {w.trash.available ? <Nav label={Copy.trashTitle} onPress={() => go("/trash")} chevron /> : null}
+
       {/* Search over the synced mirror is not built yet. Said in words, not a dead row. */}
       <View
         style={{
