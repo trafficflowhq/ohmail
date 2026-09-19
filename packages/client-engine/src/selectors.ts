@@ -543,6 +543,8 @@ export function parkedMessageIds(reader: EntityReader): Set<string> {
   return parked;
 }
 
+const ohboxCache = new WeakMap<EntityReader, { v: number; view: OhboxView }>();
+
 /**
  * A mail is in exactly one pile — these three groups plus the three bottom
  * piles are the six. Every group holds out {@link parkedMessageIds}, so
@@ -554,6 +556,13 @@ export function parkedMessageIds(reader: EntityReader): Set<string> {
  * pins it.
  */
 export function ohboxView(reader: EntityReader): OhboxView {
+  // Memoized on the reader's version like its siblings (`resurfacedThreads`, `screenerSegments`,
+  // `threadSizeIndex`): every uncached call re-filters the whole mirror — measured 2.0 ms at
+  // 10 k rows on an UNCHANGED version — and AppShell's `useMemo` shields only the shell, so any
+  // second caller paid it per render. Same version ⇒ the identical object.
+  const v = reader.version();
+  const hit = ohboxCache.get(reader);
+  if (hit && hit.v === v) return hit.view;
   // The shared date-desc order (`messagesByDateDesc`): a filter of it is newest-first by
   // construction, so the groups below carry no sorts of their own any more.
   const all = messagesByDateDesc(reader);
@@ -608,7 +617,7 @@ export function ohboxView(reader: EntityReader): OhboxView {
   const held = (m: EngineMessage): boolean =>
     !pinned.has(m.id) && !inRow.has(m.id) && !parked.has(m.id);
 
-  return {
+  const view: OhboxView = {
     resurfaced: resurfaced.filter((m) => !parked.has(m.id)),
     // Unread mail is ordered by ARRIVAL, unchanged: nothing has been read, so there is no reading
     // order to use and the question the group answers is what came in. Resurfaced rows are held
@@ -631,6 +640,8 @@ export function ohboxView(reader: EntityReader): OhboxView {
       "",
     ).sort(byDateDesc),
   };
+  ohboxCache.set(reader, { v, view });
+  return view;
 }
 
 /**
@@ -1169,8 +1180,8 @@ function heldOf(
  * memo re-derives on twenty-two dependencies of which the mirror version is one, and the shell
  * keeps one projection across renders that move no version, so a single bump can ask for this
  * several times over. Keyed on the reader WEAKLY and invalidated by the engine's own `version()`
- * stamp, never a deep compare. It does NOT join {@link unreadCounts} to the shell: that caller
- * takes the default locale and zone, a different question and therefore a different key.
+ * stamp, never a deep compare. Locale and zone are IN the key: a caller that only counts rows
+ * takes the defaults — a different question and therefore a different key.
  */
 const segmentsCache = new WeakMap<EntityReader, { v: number; key: string; out: ScreenerSegments }>();
 
@@ -1304,8 +1315,8 @@ export function screenerSegments(
    * Which zone those stamps are read in. Defaults to UTC for the reason {@link receiptsByDay}'s
    * does — this package's own tests assert UTC stamps and there is no reader here to ask. The web
    * app passes the reader's zone at the one call site that renders these rows
-   * (`app/shell/screener-state.ts`); `unreadCounts` below does not, and does not need to, because
-   * it reads `.length` and never a stamp.
+   * (`app/shell/screener-state.ts`); a caller that reads only `.waiting.length` need not,
+   * because a count never reads a stamp.
    */
   zone = "UTC",
   /**
@@ -1715,42 +1726,11 @@ export function scheduledSendsList(reader: EntityReader): EngineDraft[] {
     });
 }
 
-// ── Counts ─────────────────────────────────────────────────────────────────
-
-export interface EngineCounts {
-  ohboxUnread: number;
-  ohboxTotal: number;
-  /** Unread Reads issues (the rail badge). */
-  reads: number;
-  /** Unread receipts. */
-  receipts: number;
-  screenerWaiting: number;
-  replyLater: number;
-  setAside: number;
-  resurface: number;
-}
-
-/**
- * GIVE THIS THE PRESENTED READER, NOT THE MIRROR — it has no production caller today, and that is
- * the only reason it is a note rather than a defect.
- *
- * Every count here groups by folder, so over a raw mirror `screenerWaiting` answers "how much mail
- * is filed in `ohmail/Screener`" rather than "how many senders owe a decision". Those two numbers
- * differed by 1,500 on a real backfilled mailbox, which is the whole subject of the header on
- * {@link screenerSegments}. The shell's own badge comes from `useScreenerState`, which is fed
- * `presentationReader`'s output; a second badge derived from here would silently disagree with it.
+/*
+ * There is deliberately NO bundled counts selector here. `unreadCounts` grouped every badge by
+ * FOLDER, so over a raw mirror its `screenerWaiting` answered "how much mail is filed in
+ * `ohmail/Screener`" rather than "how many senders owe a decision" — a figure the presented
+ * reader contradicts by thousands — and it had no production caller to keep it honest.
+ * Badges come from the presented projections: `useScreenerState` over `presentationReader` for
+ * the Screener, {@link messagesIn}/{@link triagePiles}/{@link screenerSegments} for the rest.
  */
-export function unreadCounts(reader: EntityReader, now: Date = new Date()): EngineCounts {
-  const ohbox = messagesIn(reader, FOLDER_OF_VIEW.ohbox);
-  const piles = triagePiles(reader);
-  return {
-    ohboxUnread: ohbox.filter((m) => m.unread).length,
-    ohboxTotal: ohbox.length,
-    reads: messagesIn(reader, FOLDER_OF_VIEW.reads).filter((m) => m.unread).length,
-    receipts: messagesIn(reader, FOLDER_OF_VIEW.receipts).filter((m) => m.unread).length,
-    screenerWaiting: screenerSegments(reader, now).waiting.length,
-    replyLater: piles.replyLater.length,
-    setAside: piles.setAside.length,
-    resurface: piles.resurface.length,
-  };
-}

@@ -7,7 +7,6 @@
  *   OhmailEngine — bootstrap → drain → apply, optimistic mutation queue
  *                  (user-always-wins), wake-signal hook, local search.
  */
-export const ENGINE_VERSION = "0.1.0";
 
 /**
  * THE DURABLE WRITE DOOR — the one place a browser jar is touched, for every root that has one.
@@ -318,8 +317,6 @@ export {
   threadSizeIndex,
   threadSubject,
   THREAD_PARTICIPANTS_MAX,
-  unreadCounts,
-  type EngineCounts,
   type OhboxView,
   type ResurfacedThreadRow,
   type ThreadSize,

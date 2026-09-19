@@ -965,7 +965,7 @@ export const counts: CountsFixture = {
    * the mail server, so `nadja` and `jonas` are still Ohbox mail while Answer Later is the only
    * place they are listed. Surfaces that apply the one-pile rule derive their own total from
    * what they render (`AppShell` passes `allOhbox.length`, which is eleven); this field is the
-   * folder, and `unreadCounts()` is what it is checked against.
+   * folder, and `messagesIn(r, FOLDER_OF_VIEW.ohbox)` is what it is checked against.
    */
   ohboxTotal: 13,
   reads: 12,
