@@ -1,0 +1,181 @@
+/**
+ * Where the navigation, the panes and the reader's verbs go, per posture — the foldable
+ * prototype's `layout()` classifier, kept as one pure function so the suite can drive every
+ * device × pose (`test/scaffold-plan.test.ts`) and `AppScaffold` only renders what this says.
+ * The ruled design: ONE navigation material with positions per platform — phone: bottom dock
+ * + search pill; Android medium/expanded: leading icon rail; the closed Duo: right rail; the
+ * unfolded Duo landscape: the right-edge rail carrying the reader verbs, panes meeting at the
+ * hinge; unfolded-portrait Duo and iPad: two panes + the pinned ActionBar; a split mirrors the
+ * nav to the app's half; search in the nav always; flat=nothing, half=hairlines, hard=bar.
+ */
+import type { Posture } from "../posture/derive";
+import type { PlatformName } from "../posture/derive";
+
+export type NavKind = "dock" | "rail" | "bars";
+export type NavSide = "bottom" | "left" | "right";
+export type FoldPaint = "none" | "hairlines" | "bar";
+
+export interface ScaffoldPlan {
+  nav: NavKind;
+  navSide: NavSide;
+  panes: 1 | 2;
+  /** Tabletop stacks the panes; everything else sits them side by side. */
+  paneAxis: "row" | "column";
+  /** Two panes with a vertical fold: the list ends at the hinge, the reader begins past it. */
+  snapToHinge: boolean;
+  foldPaint: FoldPaint;
+  /** The whole keep-out band: hinge width + 8dp each side of a soft crease, 0 extra on hardware. */
+  foldGap: number;
+  /** The desktop reader's ActionBar, pinned at the reading pane's foot. */
+  actionBar: boolean;
+  /** The reader verbs ride the right-edge rail instead of the ActionBar (the Mail shape). */
+  railCarriesReaderVerbs: boolean;
+  /** The destinations live behind the list pane's toggle as a drawer (never across a hinge). */
+  drawer: boolean;
+  /** The pane gutter — the prototype's --gap-t/--gap-e per width class. */
+  gutter: number;
+  /** Tabletop only: the rail owns the upper half, so nothing sits on or below the seam. */
+  railUpperHalfOnly: boolean;
+}
+
+const KEEP_OUT = 8;
+
+const gutterOf = (p: Posture): number =>
+  p.sizeClass === "compact" ? 0 : p.sizeClass === "medium" ? 10 : 16;
+
+/**
+ * The keep-out belongs to the SEPARATING postures only (v5 ruling; Android keys it on
+ * `isSeparating`): half-open, the band is the fold plus 8dp each side and the crease is a
+ * hairline pair; FLAT, "it has no width at all" — nothing is drawn, no keep-out, and the two
+ * panes meet at the hinge line with the desktop's own pane gutter (`--gap-tile`, 16dp at
+ * expanded width; 10 at medium). Only real hardware (the Surface Duo 2's hinge) keeps its own
+ * width in every posture.
+ */
+function foldPaintOf(p: Posture): { foldPaint: FoldPaint; foldGap: number } {
+  if (p.fold === "none" || p.hinge === null) return { foldPaint: "none", foldGap: gutterOf(p) };
+  const band = Math.min(p.hinge.w, p.hinge.h);
+  if (p.fold === "hard") return { foldPaint: "bar", foldGap: band };
+  if (p.fold === "half") return { foldPaint: "hairlines", foldGap: band + 2 * KEEP_OUT };
+  return { foldPaint: "none", foldGap: gutterOf(p) };
+}
+
+const clamp = (v: number, lo: number, hi: number): number => Math.min(hi, Math.max(lo, v));
+
+export const RAIL_W = 62;
+
+/**
+ * The two panes' split along the plan's axis, in dp — the FIRST pane's size and the gap
+ * between them. Row mode: list then reader, the list ending at the hinge when one crosses the
+ * window (the seam is the divider); no hinge, the canonical ~42% list. Column mode (tabletop):
+ * the reader above the fold, the list below — the first pane is the reader's height. Null =
+ * one pane; the scaffold renders `children` alone.
+ */
+export function paneSplit(
+  p: Posture,
+  plan: ScaffoldPlan,
+  containerW: number,
+  containerH: number,
+): { first: number; gap: number } | null {
+  if (plan.panes !== 2) return null;
+  const railW = plan.nav === "rail" ? RAIL_W : 0;
+  if (plan.paneAxis === "column") {
+    if (p.hinge === null) return null;
+    const center = p.hinge.y + p.hinge.h / 2;
+    return { first: Math.max(0, Math.round(center - plan.foldGap / 2 - plan.gutter)), gap: plan.foldGap };
+  }
+  const leadEdge = plan.gutter + (plan.navSide === "left" ? railW : 0);
+  if (plan.snapToHinge && p.hinge !== null && p.hinge.h >= p.hinge.w) {
+    const center = p.hinge.x + p.hinge.w / 2;
+    return { first: Math.max(0, Math.round(center - plan.foldGap / 2 - leadEdge)), gap: plan.foldGap };
+  }
+  const inner = containerW - 2 * plan.gutter - railW - plan.gutter;
+  return { first: clamp(Math.round(inner * 0.42), 280, 400), gap: plan.gutter };
+}
+
+export function scaffoldPlan(p: Posture, platform: PlatformName): ScaffoldPlan {
+  const { foldPaint, foldGap } = foldPaintOf(p);
+  const gutter = gutterOf(p);
+  const base: ScaffoldPlan = {
+    nav: "dock",
+    navSide: "bottom",
+    panes: p.panes,
+    paneAxis: "row",
+    snapToHinge: false,
+    foldPaint,
+    foldGap,
+    actionBar: false,
+    railCarriesReaderVerbs: false,
+    drawer: false,
+    gutter,
+    railUpperHalfOnly: false,
+  };
+
+  /* Split View: each app places controls along its OUTER edge (Apple); Android keeps
+     Material's bottom bar in a compact window — no mirroring, as the prototype records. */
+  if (p.split !== "full") {
+    if (platform === "ios" && p.hasFold) {
+      return { ...base, nav: "rail", navSide: p.split, panes: 1 };
+    }
+    return { ...base, panes: 1 };
+  }
+
+  /* Tabletop: half-open, horizontal fold — content above the seam, hands below. The Duo keeps
+     its right rail but only over the upper half; Android takes the dock (Samsung Flex). */
+  if (p.fold === "half" && p.hinge !== null && p.hinge.w >= p.hinge.h) {
+    const duo = platform === "ios" && p.hasFold;
+    return {
+      ...base,
+      nav: duo ? "rail" : "dock",
+      navSide: duo ? "right" : "bottom",
+      panes: 2,
+      paneAxis: "column",
+      snapToHinge: true,
+      railUpperHalfOnly: duo,
+      gutter: 8,
+    };
+  }
+
+  /* One pane. The Duo's outer display keeps controls at the side (Apple, right thumb); a
+     compact-height landscape phone keeps a leading side rail for the vertical room; everything
+     else is the bottom dock in Material's/Apple's position. */
+  if (p.panes === 1) {
+    if (platform === "ios" && p.hasFold) return { ...base, nav: "rail", navSide: "right" };
+    if (p.heightClass === "compact") return { ...base, nav: "rail", navSide: "left" };
+    return base;
+  }
+
+  /* Two panes on the unfolded Duo. A vertical hinge (landscape, flat or book) is the Mail
+     shape: list at the hinge, reader past it, the right-edge rail carrying the reader's verbs,
+     the destinations behind the list toggle. Inner portrait is Apple's exception — horizontal
+     bars, the desktop verb bar pinned at the reader's foot. */
+  if (platform === "ios" && p.hasFold) {
+    if (p.hinge !== null && p.hinge.h >= p.hinge.w) {
+      return {
+        ...base,
+        nav: "rail",
+        navSide: "right",
+        snapToHinge: true,
+        railCarriesReaderVerbs: true,
+        drawer: true,
+      };
+    }
+    return { ...base, nav: "bars", snapToHinge: p.hinge !== null, actionBar: true, drawer: true };
+  }
+
+  /* The iPad (plain iOS, two panes): sidebar toggle + drawer, the pinned ActionBar — HIG; a
+     bottom dock is an Android idiom and leaves this platform (the design review's reading). */
+  if (platform === "ios") {
+    return { ...base, nav: "bars", actionBar: true, drawer: true };
+  }
+
+  /* Android two panes (Fold inner, tablets): the leading icon rail at medium AND expanded,
+     panes snapping to a vertical fold where one crosses the window. */
+  return {
+    ...base,
+    nav: "rail",
+    navSide: "left",
+    snapToHinge: p.hinge !== null && p.hinge.h >= p.hinge.w,
+    actionBar: true,
+    drawer: true,
+  };
+}

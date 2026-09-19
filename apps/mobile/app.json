@@ -4,7 +4,7 @@
     "slug": "ohmail",
     "scheme": "ohmail",
     "version": "0.20.1",
-    "orientation": "portrait",
+    "orientation": "default",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
@@ -12,7 +12,7 @@
       "bundleIdentifier": "app.ohmail",
       "buildNumber": "14",
       "icon": "./assets/icon-ios.png",
-      "supportsTablet": false,
+      "supportsTablet": true,
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false
       },

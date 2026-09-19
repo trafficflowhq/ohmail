@@ -42,6 +42,8 @@ export const ohmarchyPalettes: Record<SchemeName, Palette> = {
     accentHair: "rgba(32,94,166,0.42)",
     onAccent: "#FFFCF0",
     scrim: "rgba(255,252,240,0.5)",
+    glass: "rgba(255,252,240,0.8)",
+    glassBrd: "rgba(16,15,15,0.1)",
     tag: {
       moss: { ink: "#2d7b74", bg: "rgba(58,169,159,0.14)" },
       ochre: { ink: "#69772f", bg: "rgba(135,154,57,0.14)" },
@@ -66,6 +68,8 @@ export const ohmarchyPalettes: Record<SchemeName, Palette> = {
     accentHair: "rgba(122,162,247,0.42)",
     onAccent: "#1a1b26",
     scrim: "rgba(26,27,38,0.5)",
+    glass: "rgba(26,27,38,0.78)",
+    glassBrd: "rgba(169,177,214,0.1)",
     tag: {
       moss: { ink: "#449dab", bg: "rgba(68,157,171,0.14)" },
       ochre: { ink: "#9ece6a", bg: "rgba(158,206,106,0.14)" },

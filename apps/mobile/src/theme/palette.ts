@@ -38,6 +38,10 @@ export interface Palette {
   readonly accentHair: string;
   readonly onAccent: string;
   readonly scrim: string;
+  /** The flying menu's material — a translucent float the canvas shows through (glass pill). */
+  readonly glass: string;
+  /** The glass pill's 1px inset border. */
+  readonly glassBrd: string;
   readonly tag: Readonly<Record<TagHueName, TagPalette>>;
 }
 
@@ -93,6 +97,18 @@ export const authored: Record<SchemeName, Record<string, Oklch>> = {
   },
 };
 
+/**
+ * The glass pair — authored in the foldable prototype (`ohmail-foldable-prototype.html` v4,
+ * 2026-09-19: `--glass`/`--glass-brd`), not in `@ohmail/tokens` or Palette.swift, so it lives
+ * beside `authored` rather than inside it: the fidelity tests pin `authored` to those two
+ * sources and this pair's source is the prototype. One shape per scheme, converted by the
+ * same `css()` as everything else.
+ */
+export const glassAuthored: Record<SchemeName, { glass: Oklch; brd: Oklch }> = {
+  light: { glass: oklch(0.995, 0.003, 87, 0.8), brd: oklch(0.3, 0.02, 60, 0.1) },
+  dark: { glass: oklch(0.255, 0.012, 55, 0.78), brd: oklch(0.95, 0.012, 80, 0.1) },
+};
+
 function build(scheme: SchemeName): Palette {
   const a = authored[scheme];
   return {
@@ -113,6 +129,8 @@ function build(scheme: SchemeName): Palette {
     accentHair: css(a.accentHair),
     onAccent: css(a.onAccent),
     scrim: css(a.scrim),
+    glass: css(glassAuthored[scheme].glass),
+    glassBrd: css(glassAuthored[scheme].brd),
     tag: {
       moss: { ink: css(a.tagMossInk), bg: css(a.tagMossBg) },
       ochre: { ink: css(a.tagOchreInk), bg: css(a.tagOchreBg) },

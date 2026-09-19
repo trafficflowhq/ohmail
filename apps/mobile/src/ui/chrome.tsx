@@ -1,10 +1,10 @@
 /**
- * The persistent chrome: top bar, the Screener doorbell, and the toast.
+ * The persistent chrome: the top strip, the Screener doorbell, and the toast.
  *
- * The desktop shell has a rail and a command dock. A phone has neither, so the
- * wordmark moves into a top bar. (No search affordance yet: search over the
- * synced mirror arrives with a later update, and a control that cannot perform
- * does not render.)
+ * NO WORDMARK in the chrome: the mark lives on welcome and
+ * sign-in, and the space here belongs to the app. The strip still pays the top
+ * inset and carries the factual sentences — freshness, outage, first-sync,
+ * unsaved changes — which are state, not brand.
  */
 import { useEffect, useRef } from "react";
 import { Animated, Easing, View } from "react-native";
@@ -16,7 +16,6 @@ import { useTheme } from "../theme";
 import { useWorld, useWorldToast } from "../state/world";
 import { connectionSaid, firstSyncContinuesSaid } from "../state/live";
 import { Icon } from "./Icon";
-import { Wordmark } from "./Icon";
 import { Tap, Txt, useTopPad } from "./base";
 import { doorbellFaces } from "./doorbell-stack";
 import { UnsavedChanges } from "./UnsavedChanges";
@@ -24,10 +23,9 @@ import { UnsavedChanges } from "./UnsavedChanges";
 /* ----------------------------------------------------------------- top bar */
 
 export function TopBar({ trailing }: { trailing?: React.ReactNode }) {
-  const t = useTheme();
   const top = useTopPad(6);
   // THE FRESHNESS LABEL (INSTANT-ARCH §6.6): while the mirror on screen is stale, every tab
-  // says so under the wordmark — "As of Fri 09:00 · catching up" — and says nothing once a
+  // says so at the top — "As of Fri 09:00 · catching up" — and says nothing once a
   // drain settles. In the shared chrome rather than any screen, the SyncBar lesson: a view can
   // only speak about itself, and the next tab added must get the sentence for free. The world
   // layer derives it (`boot.staleAsOf`, sentence-ready time or null); this renders words.
@@ -53,15 +51,14 @@ export function TopBar({ trailing }: { trailing?: React.ReactNode }) {
       <View
         style={{
           paddingTop: top,
-          paddingBottom: 6,
+          paddingBottom: 2,
           paddingHorizontal: 16,
           flexDirection: "row",
           alignItems: "center",
+          justifyContent: "flex-end",
           gap: 12,
         }}
       >
-        <Wordmark color={t.c.ink} dot={t.c.accent} size={17} />
-        <View style={{ flex: 1 }} />
         {trailing}
       </View>
       {outage !== null ? (

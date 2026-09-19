@@ -12,6 +12,7 @@ import { useMemo } from "react";
 import { Stack } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { SafeAreaProvider } from "react-native-safe-area-context";
+import { PostureProvider } from "../src/ui/posture";
 import { ThemeProvider, resolveFace, useTheme } from "../src/theme";
 import { ConnectionProvider } from "../src/net/connection";
 import { PrefsProvider, usePrefs } from "../src/state/store";
@@ -33,6 +34,9 @@ export default function RootLayout() {
   const kv = useMemo(secureKV, []);
   return (
     <SafeAreaProvider>
+      {/* The posture sits above every screen: one derivation (window + the fold API + the
+          OHMAIL_POSTURE override) that the tab nav and every pane layout read. */}
+      <PostureProvider>
       <LocaleProvider kv={kv}>
       <PrefsProvider kv={kv}>
         {/* The connection layer sits at the root so a live session survives every screen.
@@ -52,6 +56,7 @@ export default function RootLayout() {
         </ConnectionProvider>
       </PrefsProvider>
       </LocaleProvider>
+      </PostureProvider>
     </SafeAreaProvider>
   );
 }

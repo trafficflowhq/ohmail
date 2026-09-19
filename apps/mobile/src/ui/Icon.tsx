@@ -7,7 +7,7 @@
  * `reads`, `receipts` and `more` are new, drawn on the same grid with the same stroke so they
  * sit in the set rather than beside it. They are marked below.
  */
-import Svg, { Circle, Path, type SvgProps } from "react-native-svg";
+import Svg, { Circle, Path, Rect, type SvgProps } from "react-native-svg";
 
 export type IconName = keyof typeof PATHS;
 
@@ -47,6 +47,15 @@ const PATHS = {
   trash: "M3.4 4.6h9.2M6.4 4.6V3.4a.7.7 0 0 1 .7-.7h1.8a.7.7 0 0 1 .7.7v1.2M4.6 4.6l.6 8a.8.8 0 0 0 .8.7h4a.8.8 0 0 0 .8-.7l.6-8M6.7 7.2v3.6M9.3 7.2v3.6",
   /** folder: one of the mailbox's own folders — the tab carries the identity. */
   folder: "M2.5 12.6V4.1a.7.7 0 0 1 .7-.7h3l1.4 1.7h5.2a.7.7 0 0 1 .7.7v6.8a.7.7 0 0 1-.7.7H3.2a.7.7 0 0 1-.7-.7z",
+
+  /* — the glass rail's verbs, verbatim from the foldable prototype's ICONS table — */
+  reply: "M6.2 4.2 2.6 7.6l3.6 3.4M3 7.6h6.2a3.6 3.6 0 0 1 3.6 3.6v1.2",
+  replyall: "M8.4 4.6 5.4 7.6l3 2.8M5.2 4.6l-3 3 3 2.8M5.8 7.6h4.2a3.4 3.4 0 0 1 3.4 3.4v1",
+  fwd: "M9.8 4.2l3.6 3.4-3.6 3.4M13 7.6H6.8a3.6 3.6 0 0 0-3.6 3.6v1.2",
+  junk: "M4.1 4.1l7.8 7.8",
+  filter: "M3 4.6h10M4.8 8h6.4M6.6 11.4h2.8",
+  sidebar: "M6.5 3.2v9.6",
+  mic: "M4 8.2a4 4 0 0 0 8 0M8 12.2v1.4",
 } as const;
 
 /** Icons that need a circle the path cannot carry — kept beside the path data. */
@@ -61,6 +70,13 @@ const CIRCLES: Partial<Record<IconName, { cx: number; cy: number; r: number }[]>
   sun: [{ cx: 8, cy: 8, r: 2.6 }],
   info: [{ cx: 8, cy: 8, r: 5.8 }],
   tag: [{ cx: 5.6, cy: 5.6, r: 0.9 }],
+  junk: [{ cx: 8, cy: 8, r: 5.6 }],
+};
+
+/** Icons that need a rounded rect beside their path — the prototype's `<rect>` halves. */
+const RECTS: Partial<Record<IconName, { x: number; y: number; w: number; h: number; rx: number }[]>> = {
+  sidebar: [{ x: 2.4, y: 3.2, w: 11.2, h: 9.6, rx: 1.8 }],
+  mic: [{ x: 6.2, y: 2.4, w: 3.6, h: 7, rx: 1.8 }],
 };
 
 export interface IconProps extends Omit<SvgProps, "color"> {
@@ -80,6 +96,19 @@ export function Icon({ name, size = 15, color, weight = 1.3, ...rest }: IconProp
           cx={c.cx}
           cy={c.cy}
           r={c.r}
+          stroke={color}
+          strokeWidth={weight}
+          fill="none"
+        />
+      ))}
+      {(RECTS[name] ?? []).map((r, i) => (
+        <Rect
+          key={i}
+          x={r.x}
+          y={r.y}
+          width={r.w}
+          height={r.h}
+          rx={r.rx}
           stroke={color}
           strokeWidth={weight}
           fill="none"
