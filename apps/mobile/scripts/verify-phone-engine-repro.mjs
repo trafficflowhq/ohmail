@@ -28,6 +28,7 @@
  */
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 
 import aliases from "../../sidecar/src/phone/aliases.js";
 import {
@@ -445,7 +446,9 @@ export async function verifyPhoneEngineRepro({ root = REPO, artifact = BUNDLE } 
   return { refusals, notes };
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+/* `pathToFileURL`, never `file://${argv[1]}`: false for any path needing percent-encoding
+ * (a space in the checkout path), and the verifier then verifies nothing at rc 0. */
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   console.log(`verifying the phone engine in ${REPO}`);
   const { refusals, notes } = await verifyPhoneEngineRepro();
   for (const n of notes) console.log(`  ${n}`);

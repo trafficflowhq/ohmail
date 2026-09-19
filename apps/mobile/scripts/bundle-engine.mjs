@@ -35,7 +35,7 @@
 import { createRequire } from "node:module";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 import aliases from "../../sidecar/src/phone/aliases.js";
 
@@ -505,7 +505,10 @@ export function externalsIn(metafile) {
   return [...found].sort();
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+/* `pathToFileURL`, never `file://${argv[1]}`: the raw splice is false for any path needing
+ * percent-encoding (the Mac's "/Volumes/Macintosh SSD/..."), so the build exits 0 having
+ * written nothing — failure shaped as success. Same rule as apps/worker/src/entry.ts. */
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const built = await buildPhoneEngine();
   const node = nodeSpecifiersIn(built.metafile);
   const ext = externalsIn(built.metafile);
