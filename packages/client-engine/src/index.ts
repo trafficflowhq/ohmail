@@ -543,3 +543,29 @@ export {
   takeClientEngineVitals,
   type ClientEngineVitals,
 } from "./client-vitals.js";
+
+/**
+ * The mail renderer's shared rule set — the allow-lists, URI gates, pixel classification and
+ * CSS neutraliser both readers execute. The webapp's `MessageBody.tsx` is the reference
+ * implementation; the phone's sanitizer runs these over its own parse. From the barrel rather
+ * than a leaf: both callers already compile this package's main entry.
+ */
+export {
+  BEACON_PATH,
+  BLANK_GIF,
+  CID_URL,
+  cidOfSrc,
+  declaresPixelAttrs,
+  INERT_CSS_URL,
+  INLINE_IMAGE_SRC,
+  MAIL_ALLOWED_ATTR,
+  MAIL_ALLOWED_TAGS,
+  MAIL_MAX_HTML_CHARS,
+  MAIL_PRESENTATION_ATTR,
+  MAIL_URL_ATTR,
+  mailHostOfUrl,
+  neutraliseCss,
+  REMOTE_URL,
+  SAFE_HREF,
+  tinyDimension,
+} from "./mail-render-rules.js";
