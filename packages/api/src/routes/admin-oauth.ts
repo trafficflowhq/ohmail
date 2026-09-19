@@ -4,7 +4,7 @@ import {
   webRedirectUri, MICROSOFT_PROVIDER, MS_DEFAULT_SCOPES,
 } from "@trafficflow/db/cloud";
 import { MS_TENANT_RE } from "@trafficflow/core";
-import { resolveStaffSession, type StaffIdentity } from "./admin-staff.js";
+import { resolveStaffSession, staffTokenOf, type StaffIdentity } from "./admin-staff.js";
 import { withStaffStepUp } from "../staff-step-up.js";
 import { presentsSecret, secretRouteJson as json } from "../secret-auth.js";
 import type { ApiDeps } from "../deps.js";
@@ -74,7 +74,7 @@ function staffConfigRoute(name: string, run: StaffRun): Handler {
       return json(400, { error: { code: "bad_request" } });
     }
 
-    const staff = await resolveStaffSession(deps.db, str(body.sessionToken) || undefined, deps.now());
+    const staff = await resolveStaffSession(deps.db, staffTokenOf(body), deps.now());
     if (!staff) {
       log.warn("admin_oauth_no_staff_session", {});
       return json(401, { error: { code: "staff_session_required" } });

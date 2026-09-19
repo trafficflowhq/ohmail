@@ -2,7 +2,7 @@ import { silentLogger, SECRET_VALUE_PATTERNS } from "@trafficflow/core";
 import { resyncMailbox } from "@trafficflow/db/cloud";
 import {
 } from "@trafficflow/services";
-import { resolveStaffSession, type StaffIdentity } from "./admin-staff.js";
+import { resolveStaffSession, staffTokenOf, type StaffIdentity } from "./admin-staff.js";
 import { mailboxResyncAnswer } from "../admin-write-wire.js";
 import { withStaffStepUp } from "../staff-step-up.js";
 import { presentsSecret, secretRouteJson as json } from "../secret-auth.js";
@@ -62,7 +62,7 @@ function staffWriteRoute(name: string, run: WriteRun): Handler {
     // The token rides in the body (the proxy forwards the HttpOnly staff cookie there, the same
     // transport totp-begin/confirm use). A caller with only the gate cookie / shared secret has no
     // `sessionToken`, so this is where they are refused. This check is the mutation-watched guard.
-    const staff = await resolveStaffSession(deps.db, str(body.sessionToken) || undefined, deps.now());
+    const staff = await resolveStaffSession(deps.db, staffTokenOf(body), deps.now());
     if (!staff) {
       log.warn("admin_write_no_staff_session", {});
       return json(401, { error: { code: "staff_session_required" } });
@@ -118,7 +118,7 @@ function staffMailboxWriteRoute(name: string, run: MailboxWriteRun): Handler {
       return json(400, { error: { code: "bad_request" } });
     }
 
-    const staff = await resolveStaffSession(deps.db, str(body.sessionToken) || undefined, deps.now());
+    const staff = await resolveStaffSession(deps.db, staffTokenOf(body), deps.now());
     if (!staff) {
       log.warn("admin_write_no_staff_session", {});
       return json(401, { error: { code: "staff_session_required" } });

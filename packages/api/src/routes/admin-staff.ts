@@ -294,6 +294,18 @@ export interface StaffIdentity {
 }
 
 /**
+ * THE ONE READ of a staff write's session token. `withStaffStepUp` judges the token it finds at
+ * `body.sessionToken`; a handler reading the token anywhere else (a header, another field) would
+ * still demand a live session while silently skipping the step-up recency check. So the spelling
+ * lives here alone, the middleware and every step-up-carrying handler call this, and the census
+ * (`staff-token-one-door-census.test.ts`) refuses a second read or a header-fed resolution.
+ */
+export function staffTokenOf(body: Record<string, unknown>): string | undefined {
+  const t = body.sessionToken;
+  return typeof t === "string" && t ? t : undefined;
+}
+
+/**
  * Resolve a presented session token to the person it names, or null. `expires_at` is checked
  * here, in the query, against the request's clock — never against the cookie's `Max-Age`, an
  * attribute the client controls and can strip. `revoked_at` likewise: a sign-out takes effect on
@@ -476,7 +488,7 @@ async function authorizeEnrollment(
   const fromToken = await readEnrollToken(secret, str(body.enrollToken) || undefined, now);
   if (fromToken) return { staffId: fromToken, viaSession: false };
 
-  const session = await resolveStaffSession(deps.db, str(body.sessionToken) || undefined, now);
+  const session = await resolveStaffSession(deps.db, staffTokenOf(body), now);
   if (!session) return null;
 
   // RE-ASSERT THE PASSWORD. Always a full scrypt, against the decoy when the row has somehow
