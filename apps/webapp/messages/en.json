@@ -104,6 +104,7 @@
     "rail_plan": "Plan",
     "step_invite_title": "Redeem your invite",
     "step_invite_lead": "ohmail is invite-only during the beta. Paste the code exactly as your invite mail shows it.",
+    "step_invite_lead_selfhost": "Accounts on this server are created by invitation. Paste the code exactly as your invite mail shows it.",
     "inviteLabel": "Invite code",
     "inviteHint": "It looks like OHMAIL-XXXX-XXXX-XXXX. Spaces and lower case are fine.",
     "inviteMissing": "Paste the code from your invite mail to continue.",
@@ -1246,6 +1247,14 @@
     "faceScopeDevice": "Applies on this device only.",
     "faceApplyAll": "Apply on all devices",
     "faceFailed": "Couldn't save that — try again.",
+    "afterVerb": "After acting on a message",
+    "afterVerbHint": "What the reading pane shows when an action moves the message you had open: the next message, the empty pane, or back to the list.",
+    "afterVerbAria": "After acting on a message",
+    "afterVerbChoice": {
+      "advance": "Next message",
+      "stay": "Nothing",
+      "close": "Back to the list"
+    },
     "imageQuality": "Picture quality",
     "imageQualityHint": "JPEG and PNG attachments are compressed on this device before they're sent, which drops the camera data in them — including location. Lower quality means smaller files. A picture that wouldn't get smaller is sent as it was, and Original never re-encodes.",
     "imageQualityAria": "Picture quality",
@@ -1338,6 +1347,7 @@
       }
     },
     "notificationPrivacy": "Notifications carry no mail content — your device fetches privately.",
+    "badgeRule": "The numbers mean the same thing on every device: the app icon and the Ohbox count unread mail in your Ohbox, the Screener counts first-time senders waiting, and Reads and Receipts count what arrived since you last looked.",
     "notifyMaster": "Notify me on this device",
     "notifyMasterWhy": "Off means ohmail draws nothing here — no notice for any of the events below.",
     "notifyReach": "These apply to this device. Your phone and your other computers keep their own.",

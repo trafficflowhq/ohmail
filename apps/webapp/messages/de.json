@@ -104,6 +104,7 @@
     "rail_plan": "Tarif",
     "step_invite_title": "Einladung einlösen",
     "step_invite_lead": "ohmail ist in der Beta nur mit Einladung zugänglich. Füg den Code genau so ein, wie er in deiner Einladungsmail steht.",
+    "step_invite_lead_selfhost": "Konten auf diesem Server entstehen per Einladung. Füg den Code genau so ein, wie er in deiner Einladungsmail steht.",
     "inviteLabel": "Einladungscode",
     "inviteHint": "Er sieht aus wie OHMAIL-XXXX-XXXX-XXXX. Leerzeichen und Kleinschreibung sind kein Problem.",
     "inviteMissing": "Füg den Code aus deiner Einladungsmail ein, um weiterzumachen.",
@@ -1246,6 +1247,14 @@
     "faceScopeDevice": "Gilt nur auf diesem Gerät.",
     "faceApplyAll": "Auf allen Geräten anwenden",
     "faceFailed": "Das ließ sich nicht speichern — versuch es nochmal.",
+    "afterVerb": "Nach einer Aktion",
+    "afterVerbHint": "Was die Leseansicht zeigt, wenn eine Aktion die geöffnete Nachricht verschiebt: die nächste Nachricht, die leere Ansicht oder zurück zur Liste.",
+    "afterVerbAria": "Nach einer Aktion",
+    "afterVerbChoice": {
+      "advance": "Nächste Nachricht",
+      "stay": "Nichts",
+      "close": "Zurück zur Liste"
+    },
     "imageQuality": "Bildqualität",
     "imageQualityHint": "JPEG- und PNG-Anhänge werden auf diesem Gerät vor dem Senden komprimiert; dabei entfallen die Kameradaten samt Standort. Niedrigere Qualität bedeutet kleinere Dateien. Ein Bild, das dadurch nicht kleiner würde, wird unverändert gesendet, und „Original“ wird nie neu codiert.",
     "imageQualityAria": "Bildqualität",
@@ -1338,6 +1347,7 @@
       }
     },
     "notificationPrivacy": "Benachrichtigungen enthalten keine Inhalte — dein Gerät holt sie privat.",
+    "badgeRule": "Die Zahlen bedeuten auf jedem Gerät dasselbe: App-Symbol und Ohbox zählen ungelesene Post in deiner Ohbox, der Screener zählt wartende Erstabsender, und Reads und Receipts zählen, was seit deinem letzten Blick angekommen ist.",
     "notifyMaster": "Auf diesem Gerät benachrichtigen",
     "notifyMasterWhy": "Aus heißt: ohmail zeigt hier nichts an — keine Meldung zu einem der Ereignisse unten.",
     "notifyReach": "Das gilt für dieses Gerät. Dein Telefon und deine anderen Rechner haben ihre eigenen Einstellungen.",
