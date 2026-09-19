@@ -73,3 +73,35 @@ export function probeHostRefusal(err: unknown, transport: ProbeLeg): unknown {
   const say = hit ? hit.say(name, example) : GENERIC(name);
   return new ServiceError(err.code, err.httpStatus, say, err.details, err.retryable);
 }
+
+/**
+ * THE SAME GATE, AT THE UNSUBSCRIBE PRESS. The URL is never typed by the person — it comes out of
+ * the SENDER's own List-Unsubscribe header — so the gate's `u …` wording named a parameter this
+ * route does not even have. The sentence names the sender's link, and there is nothing for the
+ * person to go and fix: the press failed because the link is unusable, and nothing was sent.
+ */
+const LINK_CLASSES: ReadonlyArray<{ why: string; say: string }> = [
+  {
+    why: "host did not resolve",
+    say: "The unsubscribe address this sender provided points at a server that could not be found. Nothing was sent.",
+  },
+  {
+    why: "host resolves to a non-public address",
+    say: "The unsubscribe address this sender provided points inside a private network, so it was not contacted.",
+  },
+  {
+    why: "host is not public",
+    say: "The unsubscribe address this sender provided points at a private network address, so it was not contacted.",
+  },
+];
+
+/** Every other class — unparseable, scheme, userinfo, an explicit port — is one fact to a person. */
+const LINK_GENERIC =
+  "The unsubscribe address this sender provided is not a usable web address. Nothing was sent.";
+
+/** Re-say a one-click link refusal for the person who pressed Unsubscribe, or hand back whatever this was. */
+export function unsubscribeLinkRefusal(err: unknown): unknown {
+  if (!(err instanceof ServiceError) || !err.message.includes(GATE)) return err;
+  const hit = LINK_CLASSES.find((c) => err.message.endsWith(c.why));
+  return new ServiceError(err.code, err.httpStatus, hit ? hit.say : LINK_GENERIC, err.details, err.retryable);
+}

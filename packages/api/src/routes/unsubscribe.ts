@@ -1,4 +1,5 @@
 import { serviceContext } from "../context.js";
+import { unsubscribeLinkRefusal } from "../probe-host-refusal.js";
 import { jsonResponse } from "../responses.js";
 import type { Route } from "../router.js";
 import { unsubscribes } from "./shared.js";
@@ -20,8 +21,15 @@ export const unsubscribeRoutes: Route[] = [
     relay: true,
     cost: "connection",
     handler: async (req, deps, params) => {
-      const result = await unsubscribes(deps).unsubscribe(serviceContext(deps, req), params.id!);
-      return jsonResponse(result);
+      try {
+        const result = await unsubscribes(deps).unsubscribe(serviceContext(deps, req), params.id!);
+        return jsonResponse(result);
+      } catch (err) {
+        // The SSRF gate's own refusal names `u` — a parameter this route does not have; the URL
+        // came out of the sender's stored headers. Re-said at the seam that answers a person,
+        // the mailbox connect form's arrangement (`probe-host-refusal.ts`).
+        throw unsubscribeLinkRefusal(err);
+      }
     },
   },
 ];

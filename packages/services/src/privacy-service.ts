@@ -323,7 +323,19 @@ export class PrivacyService {
         assertPublicHttpUrl(currentUrl, this.deps.resolver),
         Math.max(1, remaining),
         "remote image host took too long to resolve",
-      );
+      ).catch((err: unknown) => {
+        // On a HOP the gate's wording blames `u` for a Location the caller never sent — re-said
+        // naming the redirect. Hop 0 keeps the gate's own words: `u` IS this route's query
+        // parameter there, and `img-route-ships-with-its-resolver.test.ts` pins that wording.
+        if (hop > 0 && err instanceof ServiceError && err.message.includes("not a permitted url")) {
+          throw new ServiceError(
+            err.code, err.httpStatus,
+            "the image redirected to an address this proxy will not follow",
+            err.details, err.retryable,
+          );
+        }
+        throw err;
+      });
 
       // Fetch server-side, connected ONLY to the pinned address. The port takes the
       // url and the pin → no client header can ride along, and no second DNS lookup
