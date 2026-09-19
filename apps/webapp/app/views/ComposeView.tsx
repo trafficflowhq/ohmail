@@ -19,7 +19,7 @@ import { Button, Chip, Icon, Kbd, TextField, formatFileSize, useToast } from "@o
 import { DRAFT_BODY_MAX_BYTES } from "@trafficflow/core/outbound-text";
 import { chordKeys, useBinding, useKeyBindings, useModGlyph, useWritingSurface } from "../shell/keymap";
 import { displayAddress } from "../shell/idn";
-import { canCancel, canSend, sendStateFor, sendVerb, type SendState } from "../shell/mail-send";
+import { canCancel, canSend, sendRefusal, sendStateFor, sendVerb, type SendState } from "../shell/mail-send";
 import { RichEditor } from "../shell/RichEditor";
 import { SendStatus } from "../shell/SendStatus";
 import { HeldSendResolve } from "../components/HeldSendResolve";
@@ -559,7 +559,22 @@ export function ComposeView({
    * no window in which the file could be dropped silently.
    */
   const [attaching, setAttaching] = useState<readonly string[]>([]);
-  const sendBlocked = !canSend(send, plan.mutation) || held !== null || attaching.length > 0;
+  /**
+   * THE REFUSAL WITH ITS REASON — one reading, three consumers: the lock, the button's stated
+   * reason, and the sentence a refused press earns. `needsContent` is true only when content is
+   * the ONE thing missing; any stronger hold keeps the native `disabled`, so "write something"
+   * is never offered over a send in flight. The button stays pressable in that state so the
+   * press can be TOLD why nothing left — a dead control with no words was the measured
+   * complaint — and the press never reaches the wire: `useMailSend.send` judges the same
+   * predicate again for every caller that is not the button.
+   */
+  const refusal = sendRefusal(send, plan.mutation);
+  const sendBlocked = refusal !== null || held !== null || attaching.length > 0;
+  const needsContent = refusal === "needs_content" && held === null && attaching.length === 0;
+  const [needNote, setNeedNote] = useState(false);
+  useEffect(() => {
+    if (!needsContent) setNeedNote(false);
+  }, [needsContent]);
   const inFlight = send.phase === "sending" || send.phase === "queued" || held !== null;
   /* CANCEL IS NOT AN INPUT, and a queued send is not on the wire — see `canCancel`, which is
      deliberately NOT the same question as `inFlight`. */
@@ -1001,11 +1016,16 @@ export function ComposeView({
             <div className="send-row">
               <Button
                 variant="primary"
-                disabled={sendBlocked}
+                /* Pressable while only content is missing — that press is refused IN WORDS below.
+                   Every other lock keeps the native `disabled`: those presses must stay
+                   impossible, not merely explained. */
+                disabled={sendBlocked && !needsContent}
+                aria-disabled={needsContent || undefined}
+                title={needsContent ? t("needContent") : undefined}
                 aria-busy={send.phase === "sending" || undefined}
                 // See `sendVerb` — the same attribute and the same word as the inline dock.
                 data-send={verb.attr}
-                onClick={() => onSend()}
+                onClick={() => { if (needsContent) { setNeedNote(true); return; } onSend(); }}
               >
                 {t(verb.key)}
                 {/* The verb's chord, from the live registry — the action-bar law (§12): an
@@ -1045,6 +1065,12 @@ export function ComposeView({
               >
                 {t("cancel")}
               </Button>
+              {/* WHY NOTHING LEFT — the sentence the refused press earned. `role="status"`
+                  because the press that reveals it is the press it refuses. Gone the moment
+                  content arrives (`needsContent` flips and the effect clears the note). */}
+              {needNote && needsContent ? (
+                <span className="send-note" role="status">{t("needContent")}</span>
+              ) : null}
               {/* AN EMPTY SUBJECT SENDS — see `composePlan`. Said here, before the press, rather
                   than as a modal after it. */}
               {plan.noSubject && !inFlight ? (

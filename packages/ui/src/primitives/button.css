@@ -20,6 +20,14 @@
 .btn:disabled:active{transform:none}
 .btn.primary:disabled{background:var(--tint2);color:var(--ink3)}
 .btn.primary:disabled:hover{background:var(--tint2)}
+/* aria-disabled wears the same clothes: a control kept pressable so the press can be REFUSED
+   IN WORDS (the empty compose's Send) must still read as "not yet" — same flat fill, no lift —
+   while staying focusable and clickable, which native `disabled` forbids. */
+.btn[aria-disabled="true"]{background:var(--tint2);color:var(--ink3);box-shadow:none;cursor:default}
+.btn[aria-disabled="true"]:hover{transform:none;box-shadow:none;filter:none;background:var(--tint2)}
+.btn[aria-disabled="true"]:active{transform:none}
+.btn.primary[aria-disabled="true"]{background:var(--tint2);color:var(--ink3)}
+.btn.primary[aria-disabled="true"]:hover{background:var(--tint2)}
 .btn kbd{background:transparent;border-color:var(--hair-soft)}
 .btn.primary kbd{border-color:oklch(1 0 0/.32);color:inherit}
 

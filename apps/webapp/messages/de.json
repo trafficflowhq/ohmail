@@ -1100,6 +1100,7 @@
     "attachRefused": "Einige Dateien wurden nicht hinzugefügt — sie hätten das Total über {size} gebracht.",
     "attachUnreadable": "Einige Dateien konnten nicht gelesen werden und wurden nicht hinzugefügt.",
     "stillAttaching": "{count, plural, one {{name} wird noch angehängt.} other {# Dateien werden noch angehängt.}}",
+    "needContent": "Schreib etwas oder häng eine Datei an.",
     "attachRemove": "{filename} entfernen",
     "attachCompressed": "Bilder komprimiert: {from} → {to}",
     "attachQualityLabel": "Qualität",

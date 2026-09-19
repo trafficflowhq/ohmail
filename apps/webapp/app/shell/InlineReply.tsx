@@ -25,7 +25,7 @@ import { Button, Kbd, TextField } from "@ohmail/ui";
 import { ComposeAttach, composeAttachCap } from "../components/ComposeAttach";
 import { rowAddress, senderName } from "./format";
 import { displayAddress } from "./idn";
-import { canSend, sendStateFor, sendVerb, type SendState } from "./mail-send";
+import { sendRefusal, sendStateFor, sendVerb, type SendState } from "./mail-send";
 import { parseRecipients, type MailSend } from "./compose";
 import { forwardEnvelopePlan, forwardSend } from "./forward-send";
 import { HeldSendResolve } from "../components/HeldSendResolve";
@@ -485,12 +485,18 @@ export function InlineReply({
         // `enrich` derives for a reply. Facts can be unreadable (the demo, the desktop's
         // bare panes), and a forward that can never send there would be a dead control.
         mailboxId: from.mailboxId ?? message.mailboxId,
+        // The files, exactly as `AppShell.sendReply` puts them on the wire — the judged
+        // mutation and the sent one must carry the same content or the lock lies about it.
+        ...(attachments.length > 0 ? { attachments: [...attachments] } : {}),
         plan: envPlan,
       })
     : {
         kind: "mail_send",
         inReplyTo: message.id,
         body: value.text,
+        // The files — see the forward arm: a reply holding only an attachment is sendable,
+        // and the lock can only know that from the mutation it judges.
+        ...(attachments.length > 0 ? { attachments: [...attachments] } : {}),
         ...replyEnvelopeOnWire(envPlan),
       };
   /**
@@ -499,7 +505,19 @@ export function InlineReply({
    * the reply holds a message without the file that was chosen for it.
    */
   const [attaching, setAttaching] = useState<readonly string[]>([]);
-  const locked = !canSend(send, wouldSend) || attaching.length > 0;
+  /**
+   * THE REFUSAL WITH ITS REASON — the compose surface's derivation on the surface beside it.
+   * `needsContent` (nothing written, nothing attached) keeps the button pressable so the press
+   * is refused IN WORDS; every stronger hold keeps the native `disabled`. The press never
+   * reaches the wire: `useMailSend.send` judges the same predicate for every caller.
+   */
+  const refusal = sendRefusal(send, wouldSend);
+  const locked = refusal !== null || attaching.length > 0;
+  const needsContent = refusal === "needs_content" && attaching.length === 0;
+  const [needNote, setNeedNote] = useState(false);
+  useEffect(() => {
+    if (!needsContent) setNeedNote(false);
+  }, [needsContent]);
 
   /**
    * THE FROM CONTROL, BUILT ONCE — the same `<select>` whether it stands in the collapsed
@@ -776,17 +794,26 @@ export function InlineReply({
           {tc("stillAttaching", { name: attaching[0]!, count: attaching.length })}
         </p>
       ) : null}
+      {/* WHY NOTHING LEFT — the sentence the refused press earned; gone the moment content
+          arrives. `role="status"`: the press that reveals it is the press it refuses. */}
+      {needNote && needsContent ? (
+        <p className="reply-hint" role="status">{tc("needContent")}</p>
+      ) : null}
 
       <div className="reply-actions">
         <Button
           variant="primary"
-          disabled={locked}
+          /* Pressable while only content is missing — that press is refused in words above.
+             Every other lock keeps the native `disabled`. */
+          disabled={locked && !needsContent}
+          aria-disabled={needsContent || undefined}
+          title={needsContent ? tc("needContent") : undefined}
           aria-busy={send.phase === "sending" || undefined}
           // THE BUTTON CARRIES THE LANE'S PHASE — see `sendVerb`. It is the same attribute and the
           // same word on both send surfaces, because "sent" and "queued" differ by whether the
           // mail is gone and a surface may not reach its own verdict about that.
           data-send={verb.attr}
-          onClick={() => onSend()}
+          onClick={() => { if (needsContent) { setNeedNote(true); return; } onSend(); }}
         >
           {t(verb.key)}
           {/* The verb's chord, from the live registry — the action-bar law (§12): an action

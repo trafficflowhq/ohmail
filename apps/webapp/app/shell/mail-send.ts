@@ -668,8 +668,9 @@ export function canCancel(state: SendState, held: boolean): boolean {
 
 /**
  * The arms: `sending`/`queued` are locked — a second press mints a second Idempotency-Key, a second reservation, a
- * second delivery. An empty body is locked because the server accepts a blank one (`drafts-service.ts:167-171`) and
- * would post it — except on a forward, below. `failed` is NOT locked: terminal on the server for that draft, so the
+ * second delivery. An EMPTY message is locked — empty body AND no attachments, because an attachment is content in
+ * its own right (sending just a screenshot is ordinary mail) and the server composes a blank body beside files
+ * (`send-service.ts`, the blank-note arm) — except on a forward, below. `failed` is NOT locked: terminal on the server for that draft, so the
  * only way forward is a fresh deliberate send. `unverified` IS locked, only for the messages an unresolved send
  * names. `duplicate` is NOT locked: the server refused THIS message as a copy of one it holds, so the deliberate
  * choice open to the reader is usually an EDIT — a changed message is admitted — and locking would leave no way to
@@ -887,7 +888,18 @@ export function heldRowUnverified(
   };
 }
 
-export function canSend(state: SendState, m: MailSend): boolean {
+/**
+ * WHY the press is refused right now, or `null` for an admitted one — {@link canSend} with the
+ * reason kept, so a surface can SAY it instead of presenting a button that is dead for no stated
+ * cause. `"locked"` is the machine's own hold (in flight, the sent beat, an unresolved send
+ * naming this message); `"needs_content"` is a message with nothing to send — no written body,
+ * no attachment, not a forward; `"incomplete"` is a compose still missing a recipient or a
+ * sending mailbox, or a reply whose edited recipients emptied. Order matters: a stronger lock
+ * outranks a missing word, so a surface never offers "write something" over a send in flight.
+ */
+export type SendRefusal = "locked" | "needs_content" | "incomplete";
+
+export function sendRefusal(state: SendState, m: MailSend): SendRefusal | null {
   /**
    * `sent` joins the two locked phases: it is the beat between the confirmation and the surface closing, and a press
    * landing inside it would mint a second key for a message already gone. `unverified` IS LOCKED TOO, and it used not
@@ -898,7 +910,7 @@ export function canSend(state: SendState, m: MailSend): boolean {
    * two reservations for one message is not a race: it is the documented behaviour of pressing the button twice. A
    * second copy in somebody's inbox cannot be taken back, which is why this is a lock rather than a warning.
    */
-  if (state.phase === "sending" || state.phase === "queued" || state.phase === "sent") return false;
+  if (state.phase === "sending" || state.phase === "queued" || state.phase === "sent") return "locked";
   /**
    * THE UNVERIFIED LOCK IS PER MESSAGE, AND IT FAILS CLOSED WHEN NOBODY NAMED ONE: `unverified` locked the whole
    * lane, and for the compose surface a lane is every message this browser will ever write — so one ambiguous
@@ -914,16 +926,31 @@ export function canSend(state: SendState, m: MailSend): boolean {
    * result and not the message — and it refuses, which is the behaviour before this field existed. `unresolved`
    * present is the answered case, and only a match locks.
    */
-  if (unresolvedNames(state, m)) return false;
-  const isForward = typeof m.forwardOf === "string" && m.forwardOf.length > 0;
-  if (!isForward && m.body.trim().length === 0) return false;
+  if (unresolvedNames(state, m)) return "locked";
+  if (sendNeedsContent(m)) return "needs_content";
   if (m.inReplyTo === null) {
-    if (!m.mailboxId) return false;
-    if (!m.to || m.to.length === 0) return false;
+    if (!m.mailboxId) return "incomplete";
+    if (!m.to || m.to.length === 0) return "incomplete";
   } else if (m.to !== undefined && m.to.length === 0) {
-    return false;
+    return "incomplete";
   }
-  return true;
+  return null;
+}
+
+/**
+ * NOTHING TO SEND — no written body, no attachment, and not a forward (whose content is the
+ * forwarded message itself). An attachment IS content: the server posts a blank body beside
+ * files (`send-service.ts`, the blank-note arm), and "here is the screenshot" is ordinary mail.
+ * One rule, two consumers: {@link sendRefusal} refuses on it, and both send surfaces read it to
+ * put the reason on the button and say "Write something or attach a file." on the press.
+ */
+export function sendNeedsContent(m: MailSend): boolean {
+  const isForward = typeof m.forwardOf === "string" && m.forwardOf.length > 0;
+  return !isForward && m.body.trim().length === 0 && (m.attachments?.length ?? 0) === 0;
+}
+
+export function canSend(state: SendState, m: MailSend): boolean {
+  return sendRefusal(state, m) === null;
 }
 
 /**
