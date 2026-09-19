@@ -104,6 +104,33 @@ export function railReaderGroups(f: ReaderVerbFacts): RailEntryId[][] {
   return [["back"], admit(f, ["reply", "replyAll", "forward"]), answer, ["more"]];
 }
 
+/**
+ * HOW EACH VERB IS TAKEN BACK — the undo arm the census refuses a verb without. "inverse":
+ * Undo dispatches the engine's own reversal (`inverseMutations`, read pre-press in
+ * `state/live.ts`). "window": a delayed commit — delete opens `state/held-delete.ts` and Undo
+ * cancels a mutation not yet sent, the only undo that wire can honour. "composer": the press
+ * opens a draft, which has its own doors. "routing-bounded": Move (and Junk, which rides it)
+ * inverts as a plain move and offers nothing where it rewrote the sender's rules — a routing
+ * plan has no wire inverse; the live arm states it at the dispatch. "routing-none": Screening
+ * always rewrites rules. The census cross-checks the mutation-backed arms against the engine's
+ * own `UNDO_CLASS`, so this table cannot drift from the wire.
+ */
+export type VerbUndoArm = "inverse" | "window" | "composer" | "routing-bounded" | "routing-none";
+
+export const VERB_UNDO_ARM: Record<ReaderVerbId, VerbUndoArm> = {
+  reply: "composer",
+  replyAll: "composer",
+  forward: "composer",
+  later: "inverse",
+  aside: "inverse",
+  resurface: "inverse",
+  tag: "inverse",
+  screening: "routing-none",
+  move: "routing-bounded",
+  read: "inverse",
+  delete: "window",
+};
+
 /** Every verb a message admits, mode-independent — what the census demands reachable. */
 export function admissibleVerbs(f: ReaderVerbFacts): ReaderVerbId[] {
   return admit(f, [

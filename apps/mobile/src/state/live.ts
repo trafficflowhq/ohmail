@@ -62,6 +62,7 @@ import {
   type RuleDTO,
   type ScreenDest,
   type ScreenerSenderDTO,
+  inverseMutations,
   type TagDTO,
   type TrashRowWire,
   type WallClockVerdict,
@@ -601,6 +602,35 @@ export function moveTargetLabel(target: MoveTarget): string {
     case "screened": return Copy.placeScreened;
     case "spam": return Copy.placeSpam;
   }
+}
+
+/**
+ * A reader with some messages taken out — what makes a HELD delete look like a delete (the
+ * webapp `delete-undo.ts#hideMessages`, the phone's port). The row leaves every presented list
+ * at the press while the MIRROR keeps it, which is what lets Undo restore it by forgetting an
+ * id. Identity is preserved when nothing is held, so downstream memos keep their inputs.
+ */
+export function hiddenMessagesReader(base: EntityReader, hidden: ReadonlySet<string>): EntityReader {
+  if (hidden.size === 0) return base;
+  return {
+    version: () => base.version(),
+    stampOf: (type) => base.stampOf(type),
+    stampExcept: (ignore) => base.stampExcept(ignore),
+    get<T = unknown>(type: string, id: string): T | undefined {
+      if (type === "message" && hidden.has(id)) return undefined;
+      return base.get<T>(type, id);
+    },
+    list<T = unknown>(type: string): T[] {
+      const rows = base.list<T>(type);
+      if (type !== "message") return rows;
+      return rows.filter((r) => !hidden.has((r as unknown as EngineMessage).id));
+    },
+    entries<T = unknown>(type: string): Array<{ id: string; entity: T; seq: number }> {
+      const rows = base.entries<T>(type);
+      if (type !== "message") return rows;
+      return rows.filter((r) => !hidden.has(r.id));
+    },
+  };
 }
 
 /* ── Trash — mail this account deleted, and putting one back ────────────────────────────── */
@@ -1598,6 +1628,23 @@ export async function flushQueued(engine: OhmailEngine): Promise<Map<string, Flu
   return outcomes;
 }
 
+/**
+ * How long an undo offer stands — the webapp's `UNDO_MS` (`screener-state.ts`), mirrored by
+ * value: this app cannot import the webapp, and two windows for one gesture is how "Undo" comes
+ * to mean two different promises on two surfaces.
+ */
+export const UNDO_MS = 8000;
+
+/**
+ * What rides beside a toast sentence: an undo the pill offers (bounded, consumed at most once —
+ * the callback itself enforces both), and how long the pill holds. Absent members mean what
+ * every toast meant before: a sentence, 3.2 s, no verb.
+ */
+export interface ToastOpts {
+  undo?: () => void;
+  holdMs?: number;
+}
+
 export interface LiveDeps {
   engine: OhmailEngine;
   /** One plain sentence to the reader — the screens' toast. */
@@ -1606,7 +1653,7 @@ export interface LiveDeps {
    * raised, so one already on screen kept the language it was raised in while everything around
    * it followed a switch. The screen writes it out with `sayArg`.
    */
-  toast: (say: RefusalArg) => void;
+  toast: (say: RefusalArg, opts?: ToastOpts) => void;
   now?: () => Date;
   /**
    * RFC 4122 v4 — the id a NEW tag is minted under (`tag_assign.createName`: the server uses the
@@ -1734,8 +1781,10 @@ export interface LiveWorldActions {
    * drops it from every living view at the press. A mailbox with no Trash folder is the
    * server's 422 refusal, which rolls the row back whole — the one honest screen for a delete
    * that cannot happen. The confirm ceremony is the sheet's job; this arm dispatches.
+   * `quiet` is the held window's commit: the pill already said "Moved to Trash." at the press,
+   * so only the confirmed sentence is withheld — refusal and queued speak whatever happens.
    */
-  deleteMessage(messageId: string): Promise<boolean>;
+  deleteMessage(messageId: string, opts?: { quiet?: boolean }): Promise<boolean>;
   /**
    * One page of mail this account deleted — `OhmailEngine.listTrash`, projected to rows the
    * Trash screen renders. OFF-MIRROR by construction (a delete tombstones the row in every
@@ -1848,13 +1897,13 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
    * sentence instead and answers `false`: nothing happened, so no caller may treat it as having.
    * A press on this client's own retry queue answers `true` — the intent stands under its key.
    */
-  const said = (v: PressVerdict, done: RefusalArg | null, failed: RefusalArg): boolean => {
+  const said = (v: PressVerdict, done: RefusalArg | null, failed: RefusalArg, opts?: ToastOpts): boolean => {
     if (v.kind === "refused") { toast(failed); return false; }
     if (v.kind === "queued" && v.wait === "organizer") {
       toast(v.holder ? refuse("pressQueuedForOrganizer", v.holder) : refuse("pressQueuedForOrganizerUnknown"));
       return false;
     }
-    if (done !== null) toast(done);
+    if (done !== null) toast(done, opts);
     return true;
   };
 
@@ -2164,17 +2213,19 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
 
   const setPile = async (messageId: string, kind: PileKind): Promise<boolean> => {
     const state = kind === "replyLater" ? "reply_later" : kind === "setAside" ? "set_aside" : "bubbled_up";
-    const ok = await watched(
-      engine.mutate({
-        kind: "triage_set",
-        messageId,
-        state,
-        ...(kind === "resurface"
-          ? { bubbleUpAt: tomorrowAt(now(), resurfaceAtClock(), zone).at.toISOString() }
-          : {}),
-      }),
-    );
-    return said(ok, refuse("livePileAdded", pileTitle(kind)), refuse("livePileFailed", pileTitle(kind)));
+    const m: EngineMutation = {
+      kind: "triage_set",
+      messageId,
+      state,
+      ...(kind === "resurface"
+        ? { bubbleUpAt: tomorrowAt(now(), resurfaceAtClock(), zone).at.toISOString() }
+        : {}),
+    };
+    // The inverse off the pre-press mirror; this arm speaks on the ANSWER, so the offer rides
+    // the success sentence rather than an optimistic one.
+    const opts = undoable(inverseMutations(engine.read(), m));
+    const ok = await watched(engine.mutate(m));
+    return said(ok, refuse("livePileAdded", pileTitle(kind)), refuse("livePileFailed", pileTitle(kind)), opts);
   };
 
   /* ── the open message's verbs ──────────────────────────────────────────────────────────── */
@@ -2184,9 +2235,34 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     engine.read().get<EngineMessage>("message", id);
 
   /**
+   * ONE UNDO FOR EVERY VERB (the 0.20 review, the phone half) — the pill carries Undo wherever the
+   * engine can build the wire's own reversal (`inverseMutations`, read BEFORE the dispatch).
+   * Undo dispatches the inverses through the ordinary seam, so the overlay, the outbox and the
+   * refusal vocabulary all apply — never a local state hack. Bounded by {@link UNDO_MS} and
+   * consumed at most once: a late press takes nothing back and claims nothing (the Screener's
+   * own rule). `[]` — no wire inverse, or a press that changes nothing — offers no verb.
+   */
+  const undoable = (inv: readonly EngineMutation[]): ToastOpts | undefined => {
+    if (inv.length === 0) return undefined;
+    const at = now().getTime();
+    let fired = false;
+    return {
+      holdMs: UNDO_MS,
+      undo: () => {
+        if (fired || now().getTime() - at > UNDO_MS) return;
+        fired = true;
+        void Promise.all(inv.map((mu) => watched(engine.mutate(mu)))).then((vs) => {
+          saidAll(vs, refuse("toastUndone"), refuse("liveSaveFailed"));
+        });
+      },
+    };
+  };
+
+  /**
    * One triage write, stated in the webapp's own sentence. The toast is spoken on the
    * OPTIMISTIC apply (the webapp's shape — the sentence is the act), and a rollback overrides
-   * it with the one failure sentence.
+   * it with the one failure sentence. The pill carries the way back: the inverse is read off
+   * the PRE-PRESS mirror, the state this press is about to leave.
    */
   const triage = async (
     messageId: string,
@@ -2194,11 +2270,9 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     say: RefusalArg,
     bubbleUpAt?: string,
   ): Promise<boolean> => {
-    toast(say);
-    return said(
-      await watched(engine.mutate({ kind: "triage_set", messageId, state, ...(bubbleUpAt ? { bubbleUpAt } : {}) })),
-      null, refuse("liveSaveFailed"),
-    );
+    const m: EngineMutation = { kind: "triage_set", messageId, state, ...(bubbleUpAt ? { bubbleUpAt } : {}) };
+    toast(say, undoable(inverseMutations(engine.read(), m)));
+    return said(await watched(engine.mutate(m)), null, refuse("liveSaveFailed"));
   };
 
   const pileToggle = async (messageId: string, kind: "replyLater" | "setAside"): Promise<boolean> => {
@@ -2232,10 +2306,15 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
 
   const markSeen = async (messageId: string, unread: boolean): Promise<boolean> => {
     // No `via`: this is the deliberate read, the one that spends a resurface pin on both sides
-    // of the wire — the opposite of the open's glance and the streams' sweep.
+    // of the wire — the opposite of the open's glance and the streams' sweep. The sentence is
+    // new with the undo (the 0.20 review): the flip is visible, but the pill is where the way back
+    // lives, and a verb whose undo has no surface is a verb with no undo.
+    const m: EngineMutation = { kind: "mark_seen", messageIds: [messageId], unread };
+    const inv = inverseMutations(engine.read(), m);
     return said(
-      await watched(engine.mutate({ kind: "mark_seen", messageIds: [messageId], unread })),
-      null, refuse("liveSaveFailed"),
+      await watched(engine.mutate(m)),
+      refuse(unread ? "toastUnread" : "toastRead"), refuse("liveSaveFailed"),
+      undoable(inv),
     );
   };
 
@@ -2244,12 +2323,21 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     if (!m) return false;
     // A SCHEDULED message's release has an extra half: the booking is cleared first (the same
     // un-triage the toggles use), then the same deliberate read files it under Earlier.
+    /* Both halves' inverses, off the pre-press mirror — the webapp release's own composition:
+       the deliberate read's (re-pin a spent pin, unread back) and the booking clear's (re-book
+       at its own date). A row is pinned OR booked, never both, so the reads cannot overlap. */
+    const pre = engine.read();
+    const booked = triageStateOf(pre, m) === "bubbled_up";
+    const inv = [
+      ...inverseMutations(pre, { kind: "mark_seen", messageIds: [messageId], unread: false }),
+      ...(booked ? inverseMutations(pre, { kind: "triage_set", messageId, state: "none" }) : []),
+    ];
     const parts: Promise<PressVerdict>[] = [];
-    if (triageStateOf(engine.read(), m) === "bubbled_up") {
+    if (booked) {
       parts.push(watched(engine.mutate({ kind: "triage_set", messageId, state: "none" })));
     }
     parts.push(watched(engine.mutate({ kind: "mark_seen", messageIds: [messageId], unread: false })));
-    toast(refuse("toastResurfaceDone"));
+    toast(refuse("toastResurfaceDone"), undoable(inv));
     return saidAll(await Promise.all(parts), null, refuse("liveSaveFailed"));
   };
 
@@ -2310,6 +2398,14 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     }
     const waiting = stillWaitingFor(messageId);
     if (waiting) { toast(waiting); return true; }
+    /* THE WAY BACK, only where the wire has one: a plain move inverts (`inverseMutations`),
+       a press that RETARGETS RULES does not — the rewrite is a routing plan with no wire
+       inverse (`UNDO_CLASS.rule_update`; the webapp filed the same boundary as
+       VERB-UNDO-ROUTING-VERBS-HAVE-NO-UNDO), and undoing only the move half would put the
+       mail back under rules that now point elsewhere. Junk rides this arm, so a spam filing
+       that is a plain move carries Undo and a ruled one does not — the same rule, not a case. */
+    const routing = writes.some((w) => w.kind === "rule_update");
+    const inv = routing ? [] : writes.flatMap((w) => inverseMutations(raw, w));
     /* RAW answers, never `watched`: it folds `awaiting_organizer` into landed-or-not, and on a
        mailbox this phone only reads EVERY write here comes back that way, the rule edits included
        (`rule_update` is named in the 202 census). Folding them would say "Moved" over a rule
@@ -2331,7 +2427,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
         : refuse("toastMoveQueuedUnknown", moveTargetLabel(dest)));
       return true;
     }
-    toast(refuse("toastMoved", moveTargetLabel(dest)));
+    toast(refuse("toastMoved", moveTargetLabel(dest)), undoable(inv));
     return true;
   };
 
@@ -2343,7 +2439,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
    * not a read, and the pin arithmetic is the engine's (`spentResurface` rides the same mutation
    * effects).
    */
-  const deleteMessage = async (messageId: string): Promise<boolean> => {
+  const deleteMessage = async (messageId: string, opts?: { quiet?: boolean }): Promise<boolean> => {
     const m = messageOf(messageId);
     if (!m) return false;
     const waiting = stillWaitingFor(messageId);
@@ -2357,7 +2453,9 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
       return true;
     }
     if (!res || res.status === "rolled_back") { toast(refuse("deleteFailed")); return false; }
-    toast(refuse("toastDeleted"));
+    // `quiet` is the held window's commit (the pill said "Moved to Trash." at the press) — it
+    // suppresses ONLY the confirmed sentence; refusal and queued speak above whatever happens.
+    if (!opts?.quiet) toast(refuse("toastDeleted"));
     return true;
   };
 
@@ -2588,11 +2686,12 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
   };
 
   const tagToggle = async (messageId: string, tag: WorldTag, assigned: boolean): Promise<boolean> => {
-    toast(assigned ? refuse("tagTagged", tag.name) : refuse("tagUntagged", tag.name));
-    return said(
-      await watched(engine.mutate({ kind: "tag_assign", messageId, tagId: tag.id, assigned })),
-      null, refuse("liveSaveFailed"),
+    const m: EngineMutation = { kind: "tag_assign", messageId, tagId: tag.id, assigned };
+    toast(
+      assigned ? refuse("tagTagged", tag.name) : refuse("tagUntagged", tag.name),
+      undoable(inverseMutations(engine.read(), m)),
     );
+    return said(await watched(engine.mutate(m)), null, refuse("liveSaveFailed"));
   };
 
   const tagCreate = async (messageId: string, name: string): Promise<boolean> => {
@@ -2602,11 +2701,11 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     // "Invoices" beside "invoices" is the existing tag, toggled on, not a 409.
     const existing = liveTags(engine.read()).find((t) => t.name.toLowerCase() === typed.toLowerCase());
     if (existing) return tagToggle(messageId, existing, true);
-    toast(refuse("tagTagged", typed));
-    return said(
-      await watched(engine.mutate({ kind: "tag_assign", messageId, tagId: deps.uuid(), assigned: true, createName: typed })),
-      null, refuse("liveSaveFailed"),
-    );
+    // The undo UNASSIGNS; the minted tag row stands — deleting it is a different act with its
+    // own verb and its own confirm (`inverseMutations`' tag arm states the same boundary).
+    const m: EngineMutation = { kind: "tag_assign", messageId, tagId: deps.uuid(), assigned: true, createName: typed };
+    toast(refuse("tagTagged", typed), undoable(inverseMutations(engine.read(), m)));
+    return said(await watched(engine.mutate(m)), null, refuse("liveSaveFailed"));
   };
 
   /**

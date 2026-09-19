@@ -1466,9 +1466,9 @@ const TABLE = {
    * delete files the message to the provider's own \Trash and NEVER expunges. The webapp's
    * reading pane carries the verb too now (the §16 UI wave), and its catalogue mirrors these
    * exact sentences (`ohbox.actionDelete` family in `messages/en.json`) —
-   * `test/folders-parity.test.ts` pins the two word for word. There
-   * is no un-delete on the wire, so the ceremony is a confirm, never an undo the product
-   * could not honour.
+   * `test/folders-parity.test.ts` pins the two word for word. There is no un-delete on the
+   * wire, so the confirm stays AND the press opens a window (`state/held-delete.ts`): the
+   * pill's Undo cancels a delete not yet sent — the only undo this wire can honour.
    */
   actionDelete: "Delete",
   deleteAsk: "Delete this message?",
@@ -1476,6 +1476,18 @@ const TABLE = {
     "It moves to the Trash folder on your own mail server — ohmail never erases mail. Your mail server's Trash rules apply from there.",
   toastDeleted: "Moved to Trash.",
   deleteFailed: "That delete could not be saved — the message is where it was.",
+  /*
+   * UNDO (the 0.20 review, the phone half) — the pill's verb and its two settlements, the webapp's
+   * words (`ohbox.undo` / `ohbox.toastUndone` / `ohbox.deleteUndone`). The delete's undo is a
+   * WINDOW (nothing was sent, so "Not deleted" is exact); every other verb's undo dispatches
+   * the wire's own inverse and settles as "Undone." or the ordinary failure sentence.
+   */
+  undo: "Undo",
+  toastUndone: "Undone.",
+  deleteUndone: "Not deleted — the message is where it was.",
+  /** The deliberate read/unread, spoken so the pill has a sentence to ride (silent before the undo work). */
+  toastRead: "Marked as read.",
+  toastUnread: "Marked as unread.",
   /*
    * TRASH — the place deleted mail can be put back from (the webapp's `trash` namespace,
    * sentence for sentence where the surface is the same). The rows are off-mirror

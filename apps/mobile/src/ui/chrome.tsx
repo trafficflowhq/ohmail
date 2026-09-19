@@ -19,6 +19,7 @@ import { Icon } from "./Icon";
 import { usePaneChrome } from "./pane-chrome";
 import { Tap, Txt, useTopPad } from "./base";
 import { doorbellFaces } from "./doorbell-stack";
+import { GlassPill } from "./glass";
 import { UnsavedChanges } from "./UnsavedChanges";
 
 /* ----------------------------------------------------------------- top bar */
@@ -268,12 +269,12 @@ export function Doorbell(
 /* ------------------------------------------------------------------- toast */
 
 /**
- * The toast. Rises once, holds, dismisses itself. Under reduced motion it
- * appears and disappears instantly — Blanc's policy is that a state change
- * becomes instant, never merely slower.
- *
- * One sentence, no undo: a rejection means the engine has already rolled the
- * act back, and a stated act needs no ceremony.
+ * The toast. Rises once, holds, dismisses itself; under reduced motion a state change is
+ * instant, never merely slower. A rejection is one sentence, no verb — the engine already
+ * rolled the act back. A verb the wire can reverse carries Undo (the 0.20 review): the pill
+ * holds for the entry's own window and the press hands back to the callback, which enforces
+ * its own bound and fires at most once — a queued entry rendered late can never take back a
+ * settled press. The material is the glass pill, the one toolbar surface (`glass/GlassPill.tsx`).
  */
 export function Toast() {
   const t = useTheme();
@@ -281,6 +282,8 @@ export function Toast() {
   const { toast, dismiss } = useWorldToast();
   const anim = useRef(new Animated.Value(0)).current;
   const message = toast === null ? undefined : sayArg(toast.say);
+  const undo = toast?.undo;
+  const holdMs = toast?.holdMs ?? 3200;
   // The ID, not the text: the queue can hold two ADJACENT identical sentences (two replies
   // confirmed by one flush), and an effect keyed on the string would never re-arm the
   // dismiss timer for the second — a toast that stands forever and blocks the queue.
@@ -294,7 +297,7 @@ export function Toast() {
       easing: Easing.bezier(...t.motion.easing.spring),
       useNativeDriver: true,
     }).start();
-    const timer = setTimeout(dismiss, 3200);
+    const timer = setTimeout(dismiss, holdMs);
     return () => {
       clearTimeout(timer);
       anim.setValue(0);
@@ -320,26 +323,31 @@ export function Toast() {
         ],
       }}
     >
-      <View
-        style={[
-          {
-            flexDirection: "row",
-            alignItems: "center",
-            gap: 12,
-            alignSelf: "center",
-            maxWidth: "100%",
-            backgroundColor: t.c.float,
-            borderRadius: t.radius.pill,
-            paddingVertical: 10,
-            paddingHorizontal: 18,
-          },
-          t.lift("l2"),
-        ]}
+      <GlassPill
+        horizontal
+        level="l2"
+        style={{ alignSelf: "center", maxWidth: "100%" }}
+        contentStyle={{ alignItems: "center", gap: 12, paddingVertical: 7, paddingHorizontal: 15 }}
       >
         <Txt variant="meta" numberOfLines={2} style={{ flexShrink: 1 }}>
           {message}
         </Txt>
-      </View>
+        {undo ? (
+          <Tap
+            accessibilityRole="button"
+            accessibilityLabel={Copy.undo}
+            onPress={() => {
+              undo();
+              dismiss();
+            }}
+            style={{ paddingVertical: 4, paddingLeft: 4 }}
+          >
+            <Txt variant="button" tone="accent">
+              {Copy.undo}
+            </Txt>
+          </Tap>
+        ) : null}
+      </GlassPill>
     </Animated.View>
   );
 }

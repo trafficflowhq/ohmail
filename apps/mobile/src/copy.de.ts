@@ -982,6 +982,12 @@ export const DE: Deck = {
     `Für den Organizer vorgemerkt — beim nächsten Durchgang: ${place}.`,
   toastDeleteQueued: (holder: string) => `Für ${holder} vorgemerkt — gelöscht wird beim nächsten Durchgang.`,
   toastDeleteQueuedUnknown: "Für den Organizer vorgemerkt — gelöscht wird beim nächsten Durchgang.",
+  /* UNDO — die Worte des Web-Katalogs (`ohbox.undo`-Familie). */
+  undo: "Rückgängig",
+  toastUndone: "Rückgängig gemacht.",
+  deleteUndone: "Nicht gelöscht — die Nachricht ist noch an ihrem Platz.",
+  toastRead: "Als gelesen markiert.",
+  toastUnread: "Als ungelesen markiert.",
   /* TRASH — die Sätze des Web-Katalogs (`trash`-Namespace), wo die Fläche dieselbe ist. */
   trashTitle: "Papierkorb",
   trashEmptyTitle: "Der Papierkorb ist leer.",

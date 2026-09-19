@@ -19,6 +19,7 @@ import {
   useSyncExternalStore,
   type ReactNode,
 } from "react";
+import { AppState } from "react-native";
 
 import { Copy } from "../copy";
 import { refuse, type RefusalArg } from "../refusal";
@@ -76,6 +77,9 @@ import {
   soleMessageMailbox,
   stableActions,
   waitingAfterDecide,
+  hiddenMessagesReader,
+  UNDO_MS,
+  type ToastOpts,
   type FolderEntity,
   type ScreenerRow,
   type AbandonedMutation,
@@ -94,6 +98,9 @@ import {
   type FirstSyncSay,
 } from "./live";
 import type { Scope } from "./model";
+import {
+  armHeldDelete, flushHeldDeletes, heldDeleteIds, subscribeHeldDeletes, undoHeldDelete,
+} from "./held-delete";
 
 export type {
   FolderEntity, MoveTarget, PhoneOrganizer, ScreenerRow, WorldActions, WorldHistory, WorldMail,
@@ -371,9 +378,14 @@ export function useWorld(): World {
   return w;
 }
 
-/** The world's toast — one sentence, no undo (the engine already rolled the act back). */
+/**
+ * The world's toast — one sentence at a time. A rejection carries no verb (the engine already
+ * rolled the act back); a verb the wire can reverse carries `undo` and holds for `holdMs`
+ * (the 0.20 review — the pill is where the way back lives). The callback enforces its own bound and
+ * fires at most once, so a queued entry rendered late can never take back a settled press.
+ */
 export interface WorldToast {
-  toast: { id: number; say: RefusalArg } | null;
+  toast: { id: number; say: RefusalArg; undo?: () => void; holdMs?: number } | null;
   dismiss(): void;
 }
 
@@ -526,12 +538,12 @@ export function WorldProvider({ children }: { children: ReactNode }) {
    * move rendered only the rollback. Each sentence now takes its turn (the Toast's own
    * dismiss timer advances the queue), capped so a burst cannot backlog the screen.
    */
-  const [toastQueue, setToastQueue] = useState<{ id: number; say: RefusalArg }[]>([]);
+  const [toastQueue, setToastQueue] = useState<{ id: number; say: RefusalArg; undo?: () => void; holdMs?: number }[]>([]);
   const toastSeq = useRef(0);
-  const showToast = useCallback((say: RefusalArg) => {
+  const showToast = useCallback((say: RefusalArg, opts?: ToastOpts) => {
     toastSeq.current += 1;
     const id = toastSeq.current;
-    setToastQueue((q) => (q.length >= 4 ? q : [...q, { id, say }]));
+    setToastQueue((q) => (q.length >= 4 ? q : [...q, { id, say, ...(opts ?? {}) }]));
   }, []);
   const dismissToast = useCallback(() => setToastQueue((q) => q.slice(1)), []);
   const worldToast = useMemo<WorldToast>(
@@ -554,7 +566,23 @@ export function WorldProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     setScopes({});
     setToastQueue([]);
+    // Open delete windows commit into the session that armed them (each press captured its own
+    // dispatch) — leaving a session is not asking for the deletes back, the webapp's unmount rule.
+    flushHeldDeletes();
   }, [sessionKey]);
+
+  /* Backgrounding commits every open delete window — the webapp's `pagehide`, in this runtime's
+     vocabulary. A hard kill inside the window loses the PRESS, not the mail (the safe
+     direction); `state/held-delete.ts` states the boundary and the gap row names it. */
+  useEffect(() => {
+    const sub = AppState.addEventListener("change", (s) => {
+      if (s !== "active") flushHeldDeletes();
+    });
+    return () => {
+      sub.remove();
+      flushHeldDeletes();
+    };
+  }, []);
 
   /*
    * ── "USE FOLDERS" — the consent answer, per session ──────────────────────────────────────
@@ -1058,7 +1086,23 @@ export function WorldProvider({ children }: { children: ReactNode }) {
           resurfaceDone: (id) => void acts.resurfaceDone(id),
           markSeen: (id, unread) => void acts.markSeen(id, unread),
           move: (row, dest) => void acts.move(row, dest),
-          deleteMessage: (id) => void acts.deleteMessage(id),
+          deleteMessage: (id) => {
+            /* THE WINDOW, NOT THE WIRE (the 0.20 review; the webapp `delete-undo.ts`'s shape): the
+               row leaves every list at the press — the projection subtracts the held set — the
+               pill says "Moved to Trash." with Undo for UNDO_MS, and the mutation dispatches
+               only when the window closes, because there is no un-delete once sent. The commit
+               is the QUIET dispatch (the pill already spoke); a refusal or a queued answer
+               still speaks from the arm itself, and the rows come back with it — nothing hides
+               them any more, and the engine's rollback agrees. */
+            armHeldDelete(id, UNDO_MS, () => void acts.deleteMessage(id, { quiet: true }));
+            showToast(refuse("toastDeleted"), {
+              holdMs: UNDO_MS,
+              undo: () => {
+                // Nothing restored is not an undo — the sentence rides only a window that took.
+                if (undoHeldDelete(id)) showToast(refuse("deleteUndone"));
+              },
+            });
+          },
           trashList: (cursor) => acts.trashList(cursor),
           trashRestore: (id) => acts.trashRestore(id),
           sendReply: (id, body, all, sig, sendAt) => acts.sendReply(id, body, all, sig, sendAt),
@@ -1118,6 +1162,10 @@ export function WorldProvider({ children }: { children: ReactNode }) {
    * what the MAILBOX does; the half below re-reads the boot facts per render, so the labels still
    * clear in the pass the drain settles in.
    */
+  /* The delete window's held set — a change re-derives the projection (a NEW set per change,
+     the store's own contract), which is how a held row leaves and an undone one returns. */
+  const heldDeletes = useSyncExternalStore(subscribeHeldDeletes, heldDeleteIds);
+
   const projected = useMemo<Omit<World, "boot" | "abandoned" | "face" | "sendOutcome"> | null>(() => {
     if (engine === null || session === null) return null;
     /* THE STANDALONE DOOR HAS NOBODY TO ASK — this app IS the engine there and `GET /consent` is
@@ -1136,10 +1184,16 @@ export function WorldProvider({ children }: { children: ReactNode }) {
       // The SAME posture the partition below is taken under — the shelves read it for the marker.
       screening: posture,
     };
+    /* A HELD DELETE'S ROW LEAVES EVERY LIST AT THE PRESS while the mirror keeps it — the
+       webapp's `hideMessages` composition, over the base BOTH presentations read: the window
+       is what makes the delete look done, and Undo restores the row by forgetting the id.
+       `message(id)` below stays on the unhidden engine, the webapp's own rule — the hiding
+       reader is never used to open a message or behind a mutation. */
+    const base = hiddenMessagesReader(engine.read(), heldDeletes);
     /* ONE partition, both arms (`live.ts#presentedWorld`): `world.reader` is the projection the
        piles group over, `world.history` is the mail the cutline retired. Two calls would be one
        rule read at two clocks — a sender in both lists, or in neither. */
-    const world = presentedWorld(engine.read(), v.now, foldersOn, posture, addressesNow.current);
+    const world = presentedWorld(base, v.now, foldersOn, posture, addressesNow.current);
     const pres = world.reader;
     const ohbox = liveOhbox(pres, v);
     const reads = liveReads(pres, v);
@@ -1150,7 +1204,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
     const screener = liveScreener(pres, v, scopes, screenerServer);
     /* The RAW mirror, not `pres`: the projection deletes History's rows, which is what makes
        History a presentation rather than a folder. See `liveHistory`. */
-    const history = liveHistory(engine.read(), world.history, v);
+    const history = liveHistory(base, world.history, v);
     const piles = livePiles(pres, v);
     const pileTotal = piles.reduce((n, p) => n + p.items.length, 0);
     return {
@@ -1266,7 +1320,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [engine, session, scopes, zone, locale, actions, version, freshBeat,
     foldersOn, foldersPending, foldersStorable, setFoldersEnabled, signatures,
-    resurfaceTime, rememberResurfaceTime, screening, screenerServer]);
+    resurfaceTime, rememberResurfaceTime, screening, screenerServer, heldDeletes]);
 
   /**
    * AND THE WORLD THE SCREENS READ — the projection above plus the facts that move with the

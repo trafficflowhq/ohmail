@@ -380,9 +380,11 @@ export function MessageActions({
           <SheetRow icon="x" label={Copy.actionMarkUnread} onPress={() => { close(); a.markSeen(m.id, true); }} />
         )}
         {/* Delete stands LAST and opens its own confirm — a destructive verb never fires off a
-            scrolled thumb. Move-to-Trash on the server, never an expunge (mail 0065); there is
-            no un-delete on the wire, so the ceremony is a confirm rather than an undo the
-            product could not honour. GATED ON THE FOUNDATION FLAG with the confirm sheet below:
+            scrolled thumb, and the desktop keeps the ask on its button press too. Move-to-Trash
+            on the server, never an expunge (mail 0065); there is no un-delete on the wire, so
+            the confirmed press opens a WINDOW (`world.tsx`'s delete arm over
+            `state/held-delete.ts`) — the pill's Undo cancels a delete not yet sent.
+            GATED ON THE FOUNDATION FLAG with the confirm sheet below:
             the reader Delete verb ships behind "Use folders" (FOLDERS-SPEC.md §16.3/§16.7 —
             flag-off is the pre-feature reader, "no Delete verb", byte for byte), so with the
             flag off neither the row nor a stale confirm can dispatch. */}
