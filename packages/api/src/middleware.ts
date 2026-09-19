@@ -10,7 +10,7 @@ import { errorResponse } from "./responses.js";
 import { lookupIdempotent, storedResponse, type StoredIdempotent } from "./idempotency.js";
 import type { ApiDeps, SessionVia } from "./deps.js";
 import { accessRefusedMayReach, unverifiedMayReach } from "./router.js";
-import { accessFor } from "./routes/shared.js";
+import { accessFor, parseCookies } from "./routes/shared.js";
 import type { Handler, Route } from "./router.js";
 
 /**
@@ -21,18 +21,6 @@ import type { Handler, Route } from "./router.js";
 export type Middleware = (next: Handler, route: Route) => Handler;
 
 const UNSAFE_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
-
-function parseCookies(header: string | null): Record<string, string> {
-  const out: Record<string, string> = {};
-  if (!header) return out;
-  for (const part of header.split(";")) {
-    const eq = part.indexOf("=");
-    if (eq < 0) continue;
-    const k = part.slice(0, eq).trim();
-    if (k) out[k] = part.slice(eq + 1).trim();
-  }
-  return out;
-}
 
 /**
  * Read the session token from a Bearer header (native) or the `tf_session` cookie (web). The
