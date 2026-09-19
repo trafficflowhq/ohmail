@@ -18,6 +18,146 @@ See [Status](README.md#status--read-this-first).
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
 [Roadmap](README.md#roadmap).
 
+## [0.20.1] — 2026-09-19
+
+### Removing a mailbox
+
+- Removing a mailbox failed once the away responder had answered somebody, and the window was
+  never told it had failed. Fixed.
+
+### Closing the composer saves what you typed, immediately
+
+The compose form writes a draft to your account a couple of seconds after you stop typing, and
+leaving it before that — Escape, the close control, the rail, the browser's Back — used to throw
+away what was waiting, while the composer said the message was saved. Closing now writes it first.
+If your account will not take the draft, the composer stays open and says why instead of closing
+over it.
+
+### The Flatpak manifest's generated npm sources cover the published lockfile again — fifteen packages were missing, and an offline build resolves only what it declares
+
+The CI half of this lane is not a changelog item: it is this repository's own check. The sources
+are, because the README hands a reader the manifest and tells them to build it.
+
+### Opening a large mailbox
+
+- Message lists and the first sync are quicker on a large mailbox: a page is read in order
+  instead of sorting every message in the account first.
+
+### The Ohbox waits before it says it is empty
+
+A mailbox that is still arriving is not an empty one. The Ohbox used to say "Nothing in your
+Ohbox." and show a count while the first sync was still running; it now says it is loading until
+the mail has arrived, and the count appears once there is a real one to show. The Screener,
+History, Reads and Receipts follow the same rule, and the "Syncing your mail" line stops once
+your mail is here.
+
+### The phone says who organizes a mailbox, and a Screener decision takes effect at once
+
+Settings names who organizes a mailbox correctly on a paired phone; a Screener decision leaves the
+waiting list at once; connection refusals are written for people.
+
+### A phone names what it could not reach, and the account-locked screen is laid out
+
+An address a phone cannot reach is explained instead of being reported as a changed key, so nobody
+spends a pairing code over a dead name. The screen shown when an account is not active is laid out
+like the rest of the app.
+
+### Self-hosted images report the commit they were built from
+
+A released image answered "dev" when asked which build it was, on `/health` and in
+Settings -> About, so two builds of one release looked identical from inside. Each image now
+carries the commit it was built from and reports it.
+
+### A mail server address that cannot be reached is explained in a sentence
+
+Connecting a mailbox to a server address that cannot be found, or that points inside your own
+network, used to answer with the connection guard's internal wording. It now says which of the two
+servers is at fault and what to check, and a port that carries no mail names the ports that do.
+
+### An error in the web app shows a page, not a blank tab
+
+If something goes wrong drawing a screen, the tab used to go blank — no message and no way back.
+The web app now shows a page saying it hit an error and that your mail is untouched on your mail
+server, with a button to reload, which build you are running, and a reference for the fault.
+
+### A locked build of the desktop app works again
+
+`cargo build --locked` succeeds from a fresh clone again; the lockfile had lost track of one
+dependency the manifest names. It is regenerated — one line, no version of anything moved — and a
+test now refuses any manifest dependency the lockfile does not carry.
+
+### A newly paired desktop finishes its first sync
+
+- On a fresh desktop signed in to ohmail Cloud, the first sync could stop partway — previews
+  arrived, full messages and files never did, and the app looked settled while it silently retried
+  the same failing step. Related records are stored in the right order now, so the first sync
+  completes; a record that still cannot be stored is set aside and retried instead of blocking
+  everything behind it, and the mailbox row says so with Sync now beside it.
+
+### The desktop recovers on its own after a crash or power loss
+
+A hard stop could leave the local mail store's lock file behind, and on some machines the app then
+refused every later start. The engine now removes a leftover lock by itself when the process that
+took it is provably gone, and the refusal card for anything it cannot judge alone says what
+happened in plain words and offers "Unlock and retry" — never a raw log line. Your mail is on your
+mail server either way.
+
+### Pictures embedded in a message display in place
+
+A logo in a signature, a pasted screenshot, a picture the sender embedded — these now display
+where the sender put them, on the web and desktop reader. They are the message's own bytes:
+nothing is fetched for them, and remote images stay blocked exactly as before. Every embedded
+picture is also still listed with the message's files, marked "embedded", and "Download all"
+includes it.
+
+### The self-hosted server's /health says where its version came from
+
+A released image reports the commit it was built from; `/health` now also says whether that label
+was baked into the image or supplied from outside, and reports a label only an environment
+variable vouches for. A compose override of `TF_BUILD_VERSION` no longer silently outranks the
+identity the image was built with.
+
+### A refused unsubscribe link is explained in a sentence
+
+Pressing Unsubscribe on a message whose sender gave an unusable or unsafe unsubscribe address used
+to answer with the connection guard's internal wording. It now says what is wrong with the
+sender's link and that nothing was sent.
+
+### Screener
+
+- A sender the suggestion run could not answer for now says so in plain words — why there is no
+  suggestion and what to do — instead of showing an empty suggestion with a confidence of 0.00,
+  and the header counts only real suggestions, in agreement with the filter chips.
+- The offer to release held mail from senders you already decided about now releases it even when
+  you replied somewhere in those threads, reads as one plain sentence with one press, and can be
+  put away with "Not now" — on every device — until something new is held.
+
+### Send a file with no message text
+
+A message with an attachment sends without any text, on the web and the desktop, in a new message
+and in a reply. One with neither text nor a file is refused with a reason on the button and a
+sentence on the press: "Write something or attach a file." Pasting a screenshot into the composer
+still attaches it.
+
+### Suggestion copy and badges agree on every device
+
+The phone's Screener shows the suggestion badge on every waiting sender of a synced account, a
+freshly synced suggestion no longer shows an empty quote before its reasoning arrives, and the
+auto-suggest setting says when advice appears: as mail arrives, on every signed-in device,
+within seconds.
+
+### A Screener decision covers the sender everywhere
+
+Deciding about a sender now files their held mail in every mailbox of your account at once.
+A mailbox organized by another of your installs is asked to file its share, and the Screener
+shows that it is on its way. Decided senders no longer reappear from a second mailbox.
+
+### Suggestions appear everywhere the moment they are made
+
+A screening suggestion now syncs to every signed-in device as soon as it is bought — the open
+Screener tab, the desktop and the phone show the chip within seconds, instead of on the next
+visit. The synced record carries only the verdict and its confidence, never the model's text.
+
 ## [0.20.0] — 2026-09-19
 
 ### Resurfaced conversations appear once, with a badge when new mail arrived since
@@ -7136,7 +7276,8 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.20.0...HEAD
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.20.1...HEAD
+[0.20.1]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.20.1
 [0.20.0]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.20.0
 [0.19.6]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.19.6
 [0.19.5]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.19.5

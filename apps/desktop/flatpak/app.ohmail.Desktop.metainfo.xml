@@ -74,6 +74,33 @@
   </screenshots>
 
   <releases>
+    <release version="0.20.1" date="2026-09-19">
+      <description>
+        <ul>
+          <li>Removing a mailbox</li>
+          <li>Closing the composer saves what you typed, immediately</li>
+          <li>The Flatpak manifest's generated npm sources cover the published lockfile again — fifteen packages were missing, and an offline build resolves only what it declares</li>
+          <li>Opening a large mailbox</li>
+          <li>The Ohbox waits before it says it is empty</li>
+          <li>The phone says who organizes a mailbox, and a Screener decision takes effect at once</li>
+          <li>A phone names what it could not reach, and the account-locked screen is laid out</li>
+          <li>Self-hosted images report the commit they were built from</li>
+          <li>A mail server address that cannot be reached is explained in a sentence</li>
+          <li>An error in the web app shows a page, not a blank tab</li>
+          <li>A locked build of the desktop app works again</li>
+          <li>A newly paired desktop finishes its first sync</li>
+          <li>The desktop recovers on its own after a crash or power loss</li>
+          <li>Pictures embedded in a message display in place</li>
+          <li>The self-hosted server's /health says where its version came from</li>
+          <li>A refused unsubscribe link is explained in a sentence</li>
+          <li>Screener</li>
+          <li>Send a file with no message text</li>
+          <li>Suggestion copy and badges agree on every device</li>
+          <li>A Screener decision covers the sender everywhere</li>
+          <li>Suggestions appear everywhere the moment they are made</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.20.0" date="2026-09-19">
       <description>
         <ul>
@@ -159,13 +186,6 @@
       <description>
         <ul>
           <li>Long lists scroll their rows out of view instead of hiding them</li>
-        </ul>
-      </description>
-    </release>
-    <release version="0.19.2" date="2026-09-17">
-      <description>
-        <ul>
-          <li>Scrolling the Ohbox no longer hides the messages at the top</li>
         </ul>
       </description>
     </release>
