@@ -43,6 +43,7 @@ import { hueOf } from "../shell/format";
 import { LanguageRow } from "../shell/LanguageRow";
 import { FaceRow, type ApplyFaceAllDevices } from "../shell/FaceRow";
 import { ImageQualityRow } from "../shell/ImageQualityRow";
+import { AfterVerbRow } from "../shell/AfterVerbRow";
 import { PANE_IDS, type PaneId } from "../shell/routing";
 import {
   browserNotificationHost,
@@ -1024,6 +1025,10 @@ export function SettingsView({
                   level is kept in this browser and no host has to supply anything, so a standalone
                   install gets the same dial. See `ImageQualityRow`. */}
               <ImageQualityRow />
+              {/* WHAT THE READING PANE DOES AFTER A VERB — per device like the picture quality
+                  above it and drawn by the shared file for the same reason: no server holds
+                  this preference, so a standalone install gets the same dial. */}
+              <AfterVerbRow />
               {/* HOW AN OPENED MESSAGE IS DRAWN — the same class of question as the theme above
                   it, which is why it is here and not in the Screener pane. Absent on the demo and
                   on a standalone install; see {@link remoteImagesSection}. */}
@@ -1148,6 +1153,13 @@ export function SettingsView({
                   {/* Now TRUE of the code above it: the gate composes every notice on this device
                       from the mirror, and the wake that prompts one carries a closed constant. */}
                   <SettingsNote>{t("notificationPrivacy")}</SettingsNote>
+                  {/* THE BADGE RULE, STATED. The numbers already agree — the engine's own
+                      counts drive the web rail, the phone tabs and the desktop icon — but three
+                      surfaces carried the semantics unwritten, and a number that might mean
+                      different things per device erodes trust in all of them. Unconditional:
+                      the badge is deliberately outside the notification switches (a count on an
+                      icon is not an interruption), so its sentence does not hide behind them. */}
+                  <SettingsNote>{t("badgeRule")}</SettingsNote>
                 </>
               ) : null}
               {notifications ? (

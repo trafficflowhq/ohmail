@@ -43,10 +43,33 @@ body.reading .shell {
    `div.shell` and not `.shell`: `packages/ui/composites/reader.css` declares the same rule
    at the same specificity, so equal weight would leave this to stylesheet order. Below
    901px the prototype's 5% stays exactly as designed — there the shell behind is the list,
-   not a second copy of the message. */
+   not a second copy of the message.
+   THE RAIL STAYS OPERABLE: at these widths the sheet is the reading surface for the
+   views with no reading column (folders, tags, history, triage, trash), and a whole-shell
+   hide made every rail press die on the sheet's backdrop — one click swallowed per
+   cross-navigation. So the hide moves onto the STAGE (the ghost lives there) and the rail
+   keeps its pointer events above the overlay (z 51, under --z-fr), faded to the abar's
+   resting .35 and lifted by hover/focus — the exhale recedes it, never disarms it. A
+   landed press navigates, and the route transition closes the reader itself. */
 @media (min-width: 901px) {
   body.reading div.shell {
+    opacity: 1;
+    transform: none;
+  }
+  body.reading div.shell > :not(.deck),
+  body.reading .deck > :not(.rail) {
     opacity: 0;
+  }
+  body.reading .deck > .rail {
+    opacity: 0.35;
+    transition: opacity 0.3s var(--swift);
+    pointer-events: auto;
+    position: relative;
+    z-index: calc(var(--z-read) + 1);
+  }
+  body.reading .deck > .rail:hover,
+  body.reading .deck > .rail:focus-within {
+    opacity: 1;
   }
 }
 /* THE RAIL'S TRACK, AND THE TWO PROPERTIES THE THREE COLUMNS NOW HANG ON.

@@ -197,7 +197,8 @@ import { KeymapProvider, useCursorPlacer, useKeyBindings, useModGlyph, type KeyB
    claimant, answering for the three views whose cursor it holds. See `cursor-placer.ts`. */
 import { CURSOR_HINT_MS, placeFirstRow, useCursorHint, type CursorHost } from "./cursor-placer";
 import { createSeenBatcher } from "./seen-batch";
-import { readColumnHidden, readColumnHiddenFor, watchZeroPushTier, zeroPushTier } from "./narrow";
+import { readColumnHidden, readColumnHiddenFor, watchNarrow, watchZeroPushTier, zeroPushTier } from "./narrow";
+import type { ActedMarker } from "./after-verb";
 import { ZoneCursor, currentZone, setRailSummon } from "./zone-nav";
 import "./zone-cursor.css";
 import { ColumnHandles } from "./ColumnHandles";
@@ -4970,8 +4971,16 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
     [createTagAlone, renameTag, recolorTag, deleteTag],
   );
 
+  /** The last verb's subject, for the pane's after-verb reaction — see `after-verb.ts`. */
+  const lastActed = useRef<ActedMarker | null>(null);
+
   const onMessageAction = useStableCallback(
     (action: MessageAction, m: EngineMessage) => {
+      /* THE ACTED MARKER: every message verb — key, bar, palette, sheet — funnels through
+         here, so this one write is what lets the Ohbox pane tell "my verb moved the open row"
+         from a drain applying another device's work. A ref: the pane reads it when the row
+         actually leaves, and nothing re-renders for the write itself. */
+      lastActed.current = { id: m.id, at: Date.now() };
       switch (action) {
         case "reply":
           // Inline, in place. This used to be `setReaderOpen(false); go("compose")` —
@@ -6187,6 +6196,18 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
   useEffect(() => {
     setPushTier(zeroPushTier());
     return watchZeroPushTier(setPushTier);
+  }, []);
+
+  /**
+   * NARROW, SUBSCRIBED, for the reader's ARIA claim: the sheet is a full-page modal
+   * only where the layout's reading column is off screen. At desktop widths it stands over
+   * a place-view (folder, tag, history, triage, trash) with the rail operable beside it —
+   * `aria-modal` there tells assistive tech that reachable chrome is unreachable.
+   */
+  const [narrowNow, setNarrowNow] = useState(false);
+  useEffect(() => {
+    setNarrowNow(readColumnHidden());
+    return watchNarrow(setNarrowNow);
   }, []);
 
   /**
@@ -7711,6 +7732,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
                 tags={tags}
                 now={now}
                 selectedId={selectedOhbox?.id ?? null}
+                lastActed={lastActed}
                 /* The column's third answer — see `ohboxGone`. One prop, because "the message
                    this column was showing has been taken away" is one fact. */
                 gone={ohboxGone ? { openTrash: openTrashWindow } : null}
@@ -8564,13 +8586,13 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
         ariaLabel={t("reader.pane")}
         returnHint={t("reader.hintReturn")}
         closeOnEscape={false}
-        /* NON-MODAL exactly at the Zero push tier (review finding, round 1): there the sheet is
-           the reading TILE beside a live, operable ribbon, and `aria-modal` would tell
-           assistive tech that chrome is unreachable. Under 392 the same sheet is the
-           full-screen classic model and stays modal. `pushTier` is SUBSCRIBED (review
-           finding, round 2) — it follows `w` and a resize across the band with the sheet
-           still standing. */
-        modal={!pushTier}
+        /* MODAL ONLY AT NARROW WIDTHS. Full-screen classic under the layout's
+           breakpoint stays modal; the Zero push tier is a TILE beside a live ribbon
+           (review finding, round 1); and at desktop widths the sheet stands over a
+           place-view with the rail operable beside it (app.css keeps its pointer events),
+           so `aria-modal` there would tell assistive tech reachable chrome is not. Both
+           facts are SUBSCRIBED — they follow `w` and resizes with the sheet standing. */
+        modal={narrowNow && !pushTier}
         onClose={() => setReaderFor(null)}
         /* The on-screen back control's accessible name — the stylesheet shows the control at
            phone width, where the esc hint is suppressed for coarse pointers and the backdrop

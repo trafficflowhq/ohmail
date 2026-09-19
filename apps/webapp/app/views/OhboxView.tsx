@@ -28,6 +28,8 @@ import {
 import { MarkAllRead } from "../components/MarkAllRead";
 import { ShortcutHint } from "../shell/ShortcutHint";
 import { readColumnHidden } from "../shell/narrow";
+import { ACTED_FRESH_MS, nextSurvivor, readAfterVerb, type ActedMarker } from "../shell/after-verb";
+import { storageOwner } from "../shell/storage-owner";
 import {
   groupResurfaced, groupSection, sendTimeOf, type OhboxRowGroup,
 } from "./ohbox-groups";
@@ -164,6 +166,7 @@ export function OhboxView({
   now,
   selectedId,
   gone = null,
+  lastActed,
   onSelect,
   onEnterReader,
   onMarkSeen,
@@ -266,7 +269,14 @@ export function OhboxView({
    * {@link MessageGone}.
    */
   gone?: MessageGoneProps | null;
-  onSelect: (id: string) => void;
+  /**
+   * The shell's last-verb marker (`after-verb.ts`): when the row it names leaves `all` while
+   * still selected and the marker is fresh, the pane applies the person's after-verb choice —
+   * advance, stay or close. A ref, so recording a press costs no render.
+   */
+  lastActed?: React.MutableRefObject<ActedMarker | null>;
+  /** `null` clears the selection — the after-verb `close` choice. */
+  onSelect: (id: string | null) => void;
   /**
    * Open the reader ON A MESSAGE.
    *
@@ -608,6 +618,43 @@ export function OhboxView({
    * state the product can be in rather than a message it chose for somebody.
    */
   const selected = all.find((m) => m.id === selectedId) ?? null;
+
+  /**
+   * AFTER A VERB: when MY verb takes the open row out of the list, apply the after-verb
+   * choice instead of always resting on "Nothing open." The order the list held while the row
+   * was still in it is tracked per render (`prevIds`), because by the time the pane can react
+   * the acted row has no index any more. Gated three ways: the shell's marker must name the
+   * selected row (a drain applying another device's work never moves the cursor), the marker
+   * must be fresh, and the reading column must be standing — the narrow sheet keeps its own
+   * grammar. This is a SELECTION, not an arrival fallback: nobody's mail opens unasked; the
+   * person mid-triage asked with the verb itself.
+   */
+  const prevIds = useRef<string[]>([]);
+  /* The previous render's selection, because `selectedId` is DERIVED in the shell
+     (`allOhbox.find`): the render in which the acted row leaves the list is the render in
+     which the prop already reads null — the stale id is not visible from here. */
+  const prevSel = useRef<string | null>(null);
+  useEffect(() => {
+    const before = prevIds.current;
+    const wasSel = prevSel.current;
+    const ids = all.map((m) => m.id);
+    prevIds.current = ids;
+    prevSel.current = selectedId;
+    const acted = lastActed?.current;
+    if (!acted || wasSel !== acted.id || selectedId != null) return;
+    if (ids.includes(acted.id)) return; // the verb left the row in place
+    if (Date.now() - acted.at > ACTED_FRESH_MS) return;
+    if (readColumnHidden()) return;
+    lastActed.current = null;
+    const choice = readAfterVerb(storageOwner());
+    if (choice === "stay") return;
+    if (choice === "close") {
+      onSelect(null);
+      return;
+    }
+    const next = nextSurvivor(before, new Set(ids), acted.id);
+    if (next != null) onSelect(next);
+  });
 
   /**
    * Reveal a selection the window has not mounted — the search jump's landing. `openMessage`
