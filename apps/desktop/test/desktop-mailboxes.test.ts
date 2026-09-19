@@ -4164,3 +4164,55 @@ describe("a store that cannot keep up is disclosed, with the retry beside it", (
     expect(pressed()).toEqual([{ url: "/mailboxes/mbx-1/resync", method: "POST" }]);
   });
 });
+
+/**
+ * ══════════════════════════════════════════════════════════════════════════════════════════
+ *  A DOOR-DERIVED ERROR YIELDS TO THE ROW'S OWN, MORE SPECIFIC READ — the stale-rail review's pane half
+ * ══════════════════════════════════════════════════════════════════════════════════════════
+ *
+ * The LOCAL door now derives `status: "error"` on `GET /mailboxes` from the same connection
+ * state this pane's reach poll reads (`discloseLocalSyncFailures`), so both facts arrive for one
+ * row. The poll's sentences are the better ones — the refusal's own words, the outage's
+ * since-clock — and the generic "Not connecting ({code})" is for the errors that arrive WITHOUT
+ * a reach row: the worker-written hosted quarantine, the cloud door's store-stuck overlay.
+ *
+ * WATCH THEM FAIL: drop the `specific` gate ahead of the error arm in `stateOf` and the first
+ * two cases redden on "Not connecting" over sentences the pane already knows how to say.
+ */
+describe("a door-derived error and the row's own reach read", () => {
+  const copy = (messages as unknown as { mailboxes: Record<string, string> }).mailboxes;
+
+  const reach = (over: Record<string, unknown>): Response => new Response(JSON.stringify({
+    items: [{ mailboxId: "mbx-1", reachable: false, unreachableSince: null, ...over }],
+  }), { status: 200, headers: { "content-type": "application/json" } });
+
+  it("a refused sign-in keeps ITS sentence, not the code", async () => {
+    FACTS = [{ ...MAILBOX, status: "error", errorCode: "auth" }];
+    bridgeReply = () => reach({ signInRefused: true });
+    const text = (await render("local")).textContent ?? "";
+    expect(text, "the server's own refusal was flattened into a code")
+      .toContain(copy.desktopStateSignInRefused!);
+    expect(text, "the generic code rendered beside the specific sentence")
+      .not.toContain("Not connecting");
+  });
+
+  it("a standing outage keeps the unreachable sentence and its clock", async () => {
+    FACTS = [{ ...MAILBOX, status: "error", errorCode: "connect" }];
+    bridgeReply = () => reach({ unreachableSince: new Date(Date.now() - 20 * 60_000).toISOString() });
+    const text = (await render("local")).textContent ?? "";
+    expect(text).toContain(copy.desktopStateUnreachable!);
+    expect(text, "the outage lost its since-clock to the generic code").toContain("20 minutes ago");
+    expect(text).not.toContain("Not connecting");
+  });
+
+  it("POSITIVE CONTROL — an error with NO reach row keeps the generic code", async () => {
+    FACTS = [{ ...MAILBOX, status: "error", errorCode: "storage" }];
+    /* The engine predates the route: silence, no rows — the hosted quarantine's and the cloud
+       overlay's shape, whose only fact IS the code. */
+    bridgeReply = () => new Response(null, { status: 404 });
+    const text = (await render("local")).textContent ?? "";
+    expect(text, "an error the poll knows nothing about lost its sentence")
+      .toContain("Not connecting");
+    expect(text).toContain("storage");
+  });
+});

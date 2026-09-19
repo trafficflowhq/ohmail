@@ -36,7 +36,7 @@ import {
   // The entitlements composition this host declares. From the MAIL barrel — the port is pure
   // types and one literal, and the halves that answer it stay on `@trafficflow/db/cloud`.
   UNMETERED, UNMETERED_ACCESS,
-  type MailboxDisabledReason, type OrganizerRole, type Tx,
+  type MailboxDisabledReason, type MailboxErrorCode, type OrganizerRole, type Tx,
   // The change log's horizons, for the ONE question the idle scheduler asks: did this drain
   // produce anything the window could see? Nothing else on this door writes to the window's
   // mirror, so an unmoved `max` IS "nothing happened" — see `changeLogMark`.
@@ -1339,6 +1339,56 @@ const CONNECTION_ERROR_CODES = new Set([
   "NoConnection", "EIMAPCLOSED", "ECONNRESET", "ECONNREFUSED", "EPIPE",
   "ETIMEDOUT", "ETIMEOUT", "ESOCKET", "EHOSTUNREACH", "ENETUNREACH", "ENOTFOUND",
 ]);
+
+/**
+ * THE LOCAL DOOR'S SYNC-FAILURE DISCLOSURE, derived at read time like the cloud door's
+ * store-stuck overlay. The local store never writes `mailboxes.error_code` (the worker is its
+ * only writer), so a mailbox whose sync had stopped served `connected` rows and the only sentence
+ * anywhere was the strip's blanket "Sync failed. Retrying.", which cannot name a mailbox.
+ * Overlaid, never written, so the existing writer pair clears it: a served cycle ends the outage
+ * (`noteCycleServed`), a replaced password ends a refused sign-in. `auth` is settled the moment
+ * the server refuses; an outage only once it has stood {@link LOCAL_CONNECTION_DEAD_AFTER_MS} —
+ * a blip never paints. A missing password is NOT overlaid: `err_auth` blames the server.
+ */
+async function discloseLocalSyncFailures(
+  res: Response,
+  states: readonly {
+    mailboxId: string;
+    connection: { unreachableSince: Date | null; signInRefused: boolean };
+  }[],
+  at: Date,
+): Promise<Response> {
+  const failures = new Map<string, MailboxErrorCode>();
+  for (const r of states) {
+    if (r.connection.signInRefused) failures.set(r.mailboxId, "auth");
+    else if (r.connection.unreachableSince !== null
+      && at.getTime() - r.connection.unreachableSince.getTime() >= LOCAL_CONNECTION_DEAD_AFTER_MS) {
+      failures.set(r.mailboxId, "connect");
+    }
+  }
+  if (failures.size === 0) return res;
+  let body: unknown;
+  try {
+    body = await res.clone().json();
+  } catch {
+    return res;
+  }
+  const items = (body as { items?: unknown } | null)?.items;
+  if (!Array.isArray(items)) return res;
+  const overlaid = items.map((row) => {
+    const m = row as { id?: unknown; status?: unknown } | null;
+    // Only a row that claims health is overlaid: `disabled` (tombstone, stand-down) is a
+    // louder, truer fact about the row than this install's socket, and stays untouched.
+    const code = m && typeof m.id === "string" && m.status === "connected"
+      ? failures.get(m.id) : undefined;
+    return code !== undefined
+      ? { ...(row as object), status: "error", errorCode: code }
+      : row;
+  });
+  return new Response(JSON.stringify({ ...(body as object), items: overlaid }), {
+    status: res.status, headers: { "content-type": "application/json" },
+  });
+}
 
 /**
  * The budget for the historical-name repair, per drain — see `backfillStoredNames`. Two numbers because they
@@ -7856,6 +7906,12 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         }
         const answered = await app.handle(req, depsFor());
         noteDoorWrite(req, answered);
+        // The mailbox list carries this install's own settled sync verdicts — on `handle`
+        // ALONE, like the local routes above: a paired device renders its own indicator and
+        // the pairing layer answers for the host. See {@link discloseLocalSyncFailures}.
+        if (req.method === "GET" && url.pathname === "/mailboxes") {
+          return await discloseLocalSyncFailures(answered, runtimes.all(), now());
+        }
         return answered;
       },
       // The desktop-host door, present IFF armed — see {@link Sidecar.handleHost}. Spread so a

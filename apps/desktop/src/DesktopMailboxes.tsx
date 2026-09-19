@@ -1273,8 +1273,18 @@ export function DesktopMailboxes(
 
   const stateOf = (m: MailboxFacts): { said: string; when: string | null } => {
     const say = (said: string): { said: string; when: null } => ({ said, when: null });
+    /* Read before the error arm: the LOCAL door derives `status: "error"` from the same
+       connection state this pane's own poll reads (`discloseLocalSyncFailures`), and the poll's
+       sentences are the more specific ones — the refusal's own words, the unreachable arm's
+       since-clock. A row whose own read answered with a specific state keeps that sentence; a
+       worker-written or cloud-door error has no reach row here and keeps the code. */
+    const r = reach.rows[m.id];
     if (m.status === "error") {
-      return say(t("desktopStateError", { code: m.errorCode ?? t("desktopUnknownCode") }));
+      const specific = r?.answered === true
+        && (r.signInRefused || r.credentialBlocked !== null || r.needsCredential || !r.reachable);
+      if (!specific) {
+        return say(t("desktopStateError", { code: m.errorCode ?? t("desktopUnknownCode") }));
+      }
     }
     if (m.status === "disabled") {
       return say(m.disabledReason ? t("desktopStateHandedOver") : t("desktopStateDisconnected"));
@@ -1289,7 +1299,6 @@ export function DesktopMailboxes(
      * It says a fact and nothing else — no "signed out", no "check your connection", no advice.
      * The mailbox is untouched, the password is untouched, and the engine re-dials on its own;
      * a sentence implying the person must act would be asking for work that is not theirs. */
-    const r = reach.rows[m.id];
     /* THE ROW'S OWN ENTRY COULD NOT BE READ — first, because nothing else on `r` means anything
        when this is false, and `reachable: false` sitting under it would announce an outage at a
        mail server this read learned nothing about. Same sentence as the whole-slice arm below:
