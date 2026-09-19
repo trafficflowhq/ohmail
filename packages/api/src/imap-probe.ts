@@ -10,6 +10,7 @@ import {
   type ProbeTlsDetail, type ProbeTlsFailureKind, type ProvenEndpoint,
   type SmtpProbe, type SmtpProbeInput,
 } from "@trafficflow/services/mail";
+import { probeHostRefusal } from "./probe-host-refusal.js";
 import type { ApiDeps } from "./deps.js";
 import { imapAdmission } from "./routes/shared.js";
 
@@ -66,6 +67,21 @@ export function pinFrom(cleared: readonly string[] | null): readonly string[] | 
 }
 
 /**
+ * The guard, asked on behalf of a person. The two probes are the ONE seam where a host refusal is
+ * read by whoever typed the host, so the gate's own words stop here (`probe-host-refusal.ts`);
+ * the dial door has its own mapping and does not come through this function.
+ */
+async function checked(
+  guard: ProbeHostGuard, host: string, port: number | undefined, transport: "imap" | "smtp",
+): Promise<readonly string[] | null> {
+  try {
+    return await guard.check(host, port, transport);
+  } catch (err) {
+    throw probeHostRefusal(err, transport);
+  }
+}
+
+/**
  * The LOCAL policy: dial anything. A desktop install's own mail server may be on a LAN address or
  * a non-standard port, and this process opens sockets only on the user's own machine, so there is
  * no cross-tenant network to protect. Named explicitly (never a default) so that a HOSTED
@@ -90,9 +106,15 @@ export function makeProbeHostGuard(resolver: HostResolver): ProbeHostGuard {
       host: string, port: number | undefined, transport: "imap" | "smtp",
     ): Promise<readonly string[]> {
       if (port !== undefined && !MAIL_PROBE_PORTS[transport].has(port)) {
+        // A SENTENCE, COMPOSED FROM THE SET ITSELF so it cannot drift from what is actually
+        // dialled. This refusal reaches the connect form, where the person can only fix it if
+        // they are told which ports are on offer; the SSRF gate's own refusals are re-said one
+        // module over (`probe-host-refusal.ts`) and this one is already ours, so it passes that
+        // mapping untouched.
+        const ports = [...MAIL_PROBE_PORTS[transport]].sort((a, b) => a - b).join(", ");
         throw new ServiceError(
           "validation_failed", 400,
-          `port ${port} is not a mail port this service will dial`,
+          `Mail is not carried on port ${port}. Use ${ports}.`,
         );
       }
       // Throws on a private/unresolvable/unparseable host — the port must never be opened to one.
@@ -577,7 +599,7 @@ export function makeImapProbe(deps: ApiDeps, opts: ImapProbeOptions = {}): (i: I
     // rung below dials THAT, so the name is never resolved a second time: not between the check
     // and the first dial, and not between rung 993 and rung 143. A DNS answer that changes after
     // this line cannot move any connection this probe opens.
-    const pin = pinFrom(await hostGuard.check(input.imap.host, input.imap.port, "imap"));
+    const pin = pinFrom(await checked(hostGuard, input.imap.host, input.imap.port, "imap"));
 
     const key = probeAdmissionKey(input.accountId, input.address);
 
@@ -912,7 +934,7 @@ export function makeSmtpProbe(deps: ApiDeps, opts: SmtpProbeOptions = {}): SmtpP
     // SSRF/port gate, same as the IMAP probe — refused hosts and non-mail ports never reach a dial,
     // and the permit is the pin every rung of the submission ladder dials. The submission host is
     // its own name and gets its own check, so its pin is separate from the IMAP leg's.
-    const pin = pinFrom(await hostGuard.check(input.smtp.host, input.smtp.port, "smtp"));
+    const pin = pinFrom(await checked(hostGuard, input.smtp.host, input.smtp.port, "smtp"));
 
     const key = smtpProbeAdmissionKey(input.accountId, input.address);
     if (!await imapAdmission(deps).acquire(deps.db, { mailboxId: key, max, now: deps.now() })) throw busy();
