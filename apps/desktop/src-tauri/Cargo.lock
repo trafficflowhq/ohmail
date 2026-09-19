@@ -2566,6 +2566,7 @@ version = "0.20.0"
 dependencies = [
  "base64 0.22.1",
  "getrandom 0.3.4",
+ "gtk",
  "keyring",
  "minisign-verify",
  "semver",
