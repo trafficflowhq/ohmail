@@ -254,7 +254,9 @@ export interface ScreenerSuggestions {
    * ladders share one phase, quote and press counter: two calls would mint
    * two controls over one state, each reporting the other's `pricing`. Omitted ⇒ no re-ask is offered.
    */
-  forSenders: (addresses: string[], resuggestable?: string[], unanswered?: number) => SuggestBatchControl;
+  forSenders: (
+    addresses: string[], resuggestable?: string[], unanswered?: number, queueSettled?: boolean,
+  ) => SuggestBatchControl;
   /**
    * Bind the OPT-IN's quote to the same sender list.
    *
@@ -564,6 +566,14 @@ export function useScreenerSuggestions(opts: {
      */
     lastHydrateAt: 0,
     queueGainAt: 0,
+    /**
+     * Has {@link forSenders} ever been handed a SETTLED queue? The Screener's first derivation
+     * is deferred past first paint (`screener-state.ts`), so the queue's first settled delivery
+     * is the activation set arriving late — the activation read already covers it — and not a
+     * sender gain. Before this flag, that delivery armed `queueGainAt` and bought a debounced
+     * re-read the eager shape never made. False until the first settled delivery, per session.
+     */
+    queueEverSettled: false,
     /**
      * The auto latch — the whole safety of the automatic path. `autoFired` goes true before the request
      * leaves, so a re-render, a StrictMode second pass, or a warming mirror cannot buy a second batch; it
@@ -904,6 +914,13 @@ export function useScreenerSuggestions(opts: {
    */
   const forSenders = (
     addresses: string[], resuggestable: string[] = [], unanswered = 0,
+    /**
+     * Is this delivery a DERIVED queue? True everywhere but the shell's pre-settle renders,
+     * where the deferred first derivation has not run and the list is withheld rather than
+     * empty ({@link ScreenerState.queueSettled}). Defaulted true so every caller that derives
+     * eagerly — the tests' harnesses — keeps the eager contract unchanged.
+     */
+    queueSettled = true,
   ): SuggestBatchControl => {
     // The automatic batch's only view of the queue: the UNSUGGESTED list
     // alone, deliberately not widened to `resuggestable`. The automatic
@@ -926,9 +943,15 @@ export function useScreenerSuggestions(opts: {
         gained = true;
       }
       if (gained) {
-        io.current.queueGainAt = Date.now();
+        /* THE FIRST SETTLED DELIVERY IS THE ACTIVATION SET, NOT A GAIN — the deferred first
+           derivation lands after the mount effects, so the activation read can no longer consume
+           its `queueGainAt` the way it consumes an eager first render's. It still bumps
+           `queueReady` (the automatic batch re-arms on it); only the debounced gain read — a
+           second wire read the eager shape never made here — is withheld. */
+        if (io.current.queueEverSettled) io.current.queueGainAt = Date.now();
         setQueueReady((n) => n + 1);
       }
+      if (queueSettled) io.current.queueEverSettled = true;
     }
     // The ladder is bounded by the PURCHASE ceiling, not the per-request cap — a size larger than
     // one request is delivered as several requests, below.

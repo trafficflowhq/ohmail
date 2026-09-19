@@ -32,8 +32,10 @@ import {
   type OhmailEngine,
   type PressTally,
   type ScreenDest,
+  type ScreenerSegments,
   type ScreenerSenderDTO,
 } from "@ohmail/client-engine";
+import { scheduleFirstDerivation } from "./first-paint";
 import type { SuggestionOverlay } from "./screener-suggest";
 /* THE ONE ROLE ANSWER, imported rather than restated. `mail-state.ts` owns the derivation the
    mailbox pane renders its own state line from, and a second rule shaped like it here is how two
@@ -145,6 +147,14 @@ export interface ScreenerState {
   waiting: ScreenerSenderDTO[];
   /** Waiting minus everything decided — rail badge, doorbell, meta. */
   waitingCount: number;
+  /**
+   * Has the queue's FIRST derivation run? False for the paint renders — the cold pass is
+   * deferred to idle — and true for ever after. While false the three segments are WITHHELD
+   * (empty by fiat, not by derivation), so an empty-state sentence gated on this cannot call
+   * an unknown queue empty, and the suggestion engine classifies the settle's delivery as the
+   * activation set rather than a sender gain (`screener-suggest.ts#forSenders`).
+   */
+  queueSettled: boolean;
   /**
    * How many of those rows actually carry a suggestion. Never assume this
    * tracks `waitingCount`: `selectors.ts` mints `ai: null` for every derived
@@ -376,6 +386,14 @@ export function joinSuggestion(
   return found ? { ...x, ai: found } : x;
 }
 
+/**
+ * The queue BEFORE its first derivation — withheld, not derived-empty. One frozen instance so
+ * the memos downstream see a stable identity across the pre-settle renders.
+ */
+const UNDERIVED_SEGMENTS: ScreenerSegments = Object.freeze({
+  waiting: [], screenedOut: [], spam: [],
+});
+
 export function useScreenerState(
   engine: OhmailEngine,
   version: number,
@@ -508,9 +526,19 @@ export function useScreenerState(
      than leaving yesterday's stamps in English until the next mutation; the zone is resolved once
      per session and is not a dependency. */
   const locale = useAppLocale()?.locale ?? "en";
+  /* THE FIRST DERIVATION WAITS FOR IDLE; every one after it is synchronous in its own render.
+     The cold pass over a warm mirror is the one long task the /mailbox paint still carried
+     (132 ms at 10k held, measured 2026-09-19), and nothing at first paint reads these rows —
+     so until the flip the queue is WITHHELD ({@link ScreenerState.queueSettled}), never
+     derived-empty: the Screener's empty sentence and the suggestion engine's gain counter both
+     key on that distinction (an unknown queue read as empty is the lie this withholds). */
+  const [queueSettled, setQueueSettled] = useState(false);
+  useEffect(() => scheduleFirstDerivation(() => setQueueSettled(true)), []);
   const segments = useMemo(
-    () => screenerSegments(queueReader, undefined, locale, activeFormatZone(), ownAddresses),
-    [queueReader, version, locale, ownAddresses],
+    () => (queueSettled
+      ? screenerSegments(queueReader, undefined, locale, activeFormatZone(), ownAddresses)
+      : UNDERIVED_SEGMENTS),
+    [queueReader, version, locale, ownAddresses, queueSettled],
   );
   const s = store.current;
 
@@ -1806,6 +1834,7 @@ export function useScreenerState(
     heldRelease,
     waiting: visibleWaiting,
     waitingCount,
+    queueSettled,
     suggestedCount,
     suggestedDests,
     unsuggestedSenders,

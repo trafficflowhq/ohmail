@@ -7,6 +7,8 @@
  * @ohmail/client-engine — the shell only owns view state.
  */
 import {
+  Suspense,
+  lazy,
   useEffect,
   useMemo,
   useRef,
@@ -271,18 +273,27 @@ import { ReceiptsView } from "../views/ReceiptsView";
 import { ScreenerView } from "../views/ScreenerView";
 import { SearchView } from "../views/SearchView";
 import { AddressView } from "../views/AddressView";
-import { SettingsView, type MailboxEntity, type NotificationsMeta, type PaneId } from "../views/SettingsView";
+import type { MailboxEntity, NotificationsMeta, PaneId } from "../views/SettingsView";
 import { TagView } from "../views/TagView";
 import { FolderView } from "../views/FolderView";
 import { TrashView } from "../views/TrashView";
 import { useTrashPage } from "./trash-page";
 import { useTrashWindow, type TrashWire } from "./trash-window";
 import { TriageView } from "../views/TriageView";
-import { ComposeView } from "../views/ComposeView";
 import { DraftsView } from "../views/DraftsView";
 import { reconcileWakeRegistration, updateNotifyWords } from "./notification-settings.js";
 import { usePersistedFlag, UI_KEYS } from "./persisted-ui.js";
 import { durableSessionSet } from "./durable";
+
+/* THE TWO PANES THE FIRST PAINT NEVER SHOWS, split out of the first-load bundle. Lazy VALUE,
+   static TYPES: the type imports above cost no bytes, and these factories are the only place
+   the two modules may be named — the import-graph census
+   (`test/first-load-defers-panes.test.ts`) refuses a static path back in. Both mount behind
+   their existing `effectiveView` seams under one `Suspense` each. */
+const ComposeView = lazy(() =>
+  import("../views/ComposeView").then((m) => ({ default: m.ComposeView })));
+const SettingsView = lazy(() =>
+  import("../views/SettingsView").then((m) => ({ default: m.SettingsView })));
 
 interface ReadsAiChipEntity {
   afterId: string;
@@ -7110,7 +7121,10 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
       : effectiveView === "reads"
         ? mailState.settled || partition.fresh.length + partition.seen.length > 0
       : effectiveView === "receipts" ? mailState.settled || receipts.length > 0
-      : effectiveView === "screener" ? mailState.settled || screener.waiting.length > 0
+      /* The screener's settled is TWO facts since the first-derivation deferral: the mirror's,
+         and the queue's own — a skeleton over an underived queue is not the pressed-for view. */
+      : effectiveView === "screener"
+        ? (mailState.settled && screener.queueSettled) || screener.waiting.length > 0
       : effectiveView === "triage"
         ? mailState.settled
           || piles.replyLater.length + piles.setAside.length + piles.resurface.length > 0
@@ -7890,6 +7904,10 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
                         /* The chips' "none" group, from the same state — the resting sentence may
                            only claim "all suggested" when this is zero. */
                         screener.waitingCount - screener.suggestedCount,
+                        /* The queue's first derivation is deferred past first paint, and its
+                           late delivery is the activation set, not a sender gain — the flag is
+                           how `forSenders` tells the two apart. */
+                        screener.queueSettled,
                       )
                 }
                 /* THE HOST'S OWN CONTROL, when it has one — see the prop's declaration. It is
@@ -7916,8 +7934,10 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
                 selection={scnSel}
                 onSelect={(segment, id) => setScnSel((s) => ({ ...s, [segment]: id }))}
                 /* Same pair, same reason — the Screener's "No one's waiting." and its
-                   "all clear" meta are the same claim the Ohbox was making. */
-                settled={mailState.settled}
+                   "all clear" meta are the same claim the Ohbox was making. ANDed with the
+                   queue's own settle: the first derivation is deferred past first paint, and
+                   until it runs the queue is withheld, not empty. */
+                settled={mailState.settled && screener.queueSettled}
                 owed={mailState.owed}
                 hydrateBody={hydrateBody}
                 /* The reading pane's remote-image consent chrome, so a held preview blocks
@@ -8160,6 +8180,9 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
             ) : null}
 
             {effectiveView === "compose" ? (
+              /* Lazy pane: the chunk loads on first open; nothing is painted for the tick it
+                 takes, which is the same absence the branch renders for any other view. */
+              <Suspense fallback={null}>
               <ComposeView
                 engine={engine}
                 draft={draft}
@@ -8216,6 +8239,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
                   return row === null ? null : { draftId: row, onResolve: resolveHeldSend };
                 })()}
               />
+              </Suspense>
             ) : null}
 
             {effectiveView === "drafts" ? (
@@ -8264,6 +8288,8 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
             ) : null}
 
             {effectiveView === "settings" ? (
+              /* Lazy pane — the compose branch above states the shape. */
+              <Suspense fallback={null}>
               <SettingsView
                 applyFaceAllDevices={applyFaceAllDevices}
                 notifications={notifications}
@@ -8562,6 +8588,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
                 pane={route.settingsPane ?? undefined}
                 onSelectPane={goSettings}
               />
+              </Suspense>
             ) : null}
             </ViewBoundary>
           </main>
