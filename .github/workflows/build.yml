@@ -191,8 +191,8 @@ jobs:
         working-directory: apps/desktop/src-tauri
         run: |
           set -euo pipefail
-          cargo test
-          cargo test --features local-engine
+          cargo test --locked
+          cargo test --locked --features local-engine
 
       # ── 2 + 3 · the engine and the runtime it is spawned with ──────────────
       - name: Install the locked dependency tree
@@ -239,7 +239,7 @@ jobs:
       # the header. A red smoke stops this step.
       - name: Build the engine-bearing app (universal), smoking its bundle
         working-directory: apps/desktop
-        run: npm run app:build:engine -- --bundles app,dmg -- --target universal-apple-darwin
+        run: npm run app:build:engine -- --bundles app,dmg -- --target universal-apple-darwin -- --locked
 
       - name: Name the artifacts what the download page links
         run: |
@@ -523,8 +523,8 @@ jobs:
         working-directory: apps/desktop/src-tauri
         run: |
           set -euo pipefail
-          cargo test
-          cargo test --features local-engine
+          cargo test --locked
+          cargo test --locked --features local-engine
 
       - name: Install the locked dependency tree
         run: npm ci --no-audit --no-fund
@@ -551,7 +551,7 @@ jobs:
       # is packaged — see the header.
       - name: Build the engine-bearing app, smoking its bundle
         working-directory: apps/desktop
-        run: npm run app:build:engine -- --bundles nsis
+        run: npm run app:build:engine -- --bundles nsis -- -- --locked
 
       - name: Name the artifact what the download page links
         run: |
@@ -845,8 +845,8 @@ jobs:
         working-directory: apps/desktop/src-tauri
         run: |
           set -euo pipefail
-          cargo test
-          cargo test --features local-engine
+          cargo test --locked
+          cargo test --locked --features local-engine
 
       - name: Install the locked dependency tree
         run: npm ci --no-audit --no-fund
@@ -902,7 +902,7 @@ jobs:
         env:
           NO_STRIP: "true"
         working-directory: apps/desktop
-        run: npm run app:build:engine -- --bundles appimage,deb,rpm
+        run: npm run app:build:engine -- --bundles appimage,deb,rpm -- -- --locked
 
       - name: Name the artifacts what the download page links
         run: |
@@ -1919,8 +1919,8 @@ jobs:
         working-directory: apps/desktop/src-tauri
         run: |
           set -euo pipefail
-          cargo test
-          cargo test --features local-engine
+          cargo test --locked
+          cargo test --locked --features local-engine
 
       - name: Install the locked dependency tree
         run: npm ci --no-audit --no-fund
@@ -1973,7 +1973,7 @@ jobs:
         env:
           NO_STRIP: "true"
         working-directory: apps/desktop
-        run: npm run app:build:engine -- --bundles appimage,deb,rpm
+        run: npm run app:build:engine -- --bundles appimage,deb,rpm -- -- --locked
 
       - name: Name the artifacts what the download page links
         run: |
