@@ -8,6 +8,8 @@
  * inside `WorldProvider`. The engine registers at module scope: the chooser
  * reads the registry at render time, so a later registration shows three doors.
  */
+// FIRST, before anything can hold a Blob: RN's Blob lacks `arrayBuffer()` (see the module).
+import "../src/polyfills/blob-arraybuffer";
 import { useMemo } from "react";
 import { Stack } from "expo-router";
 import { StatusBar } from "expo-status-bar";

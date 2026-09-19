@@ -70,6 +70,7 @@ import {
   conversationSize,
 } from "@ohmail/client-engine";
 import { Copy } from "../copy";
+import { blobToBase64 } from "../mail/blob-base64";
 import { refuse, type Refusal, type RefusalArg } from "../refusal";
 import { folderLeafOf, folderUnreadCounts } from "./folders";
 import type { ScreeningAnswer } from "../net/consent";
@@ -270,11 +271,23 @@ export function presentedOf(
 
 /* ───────────────────────────────────────────────────────────── row mapping */
 
+/** What a tile press gets back: the bytes as base64, or the engine's own refusal by name. */
+export type WorldAttachmentBytes =
+  | { state: "ready"; base64: string; mime: string; filename: string }
+  | { state: "too_large" | "failed" | "unavailable" };
+
 /** One attachment tile: the engine's item (fallback name applied), size as words. */
 export interface WorldAttachment {
   id: string;
   filename: string;
   size: string;
+  /** A part the body references (`cid:`) rather than a file the sender attached — the tile
+      wears the "embedded" tag and sorts after every real file. */
+  inline: boolean;
+  /** The declared type — what the share sheet and the platform viewer are told. */
+  mime: string;
+  /** The byte fetch's honest state, the engine's own: a press asks, a refusal stays said. */
+  state: "idle" | "loading" | "ready" | "too_large" | "failed";
 }
 
 /**
@@ -292,6 +305,19 @@ export type WorldPileState = "reply_later" | "set_aside" | "bubbled_up" | "resur
 export type WorldMail = Mail & {
   attachments?: WorldAttachment[];
   bodyState?: BodyState;
+  /**
+   * The hydrated html part, exactly as `bodyOf` reports it — non-null only on a `full` body
+   * that carries one. Attached by {@link liveMessage} alone (the reading view is its one
+   * consumer); a list row never pays for a document it will not draw.
+   */
+  html?: string | null;
+  /** The body was stored with its remote content already loaded (the account's own switch). */
+  loadedRemoteContent?: boolean;
+  /**
+   * The engine's minted embedded images, `contentId → data: URI` — identity-stable between
+   * mints, so the reader's sanitize memo keys on it. Attached by {@link liveMessage} alone.
+   */
+  inlineImages?: ReadonlyMap<string, string>;
   /** Where the message physically is — the folder a `move` mutation is measured against. */
   folder: Folder;
   /**
@@ -1221,12 +1247,27 @@ export function liveMessage(engine: OhmailEngine, id: string, v: WorldView): Wor
       body: bodyOf(pres, member).text,
       seen: !member.unread,
     }));
-  const atts = engine.attachmentsOf(id);
+  // The reading view's own facts, attached here and not in `toMail`: a list row never pays
+  // for a document it will not draw. `EVERY_PART` is a variable on purpose — the engine's
+  // option has two spellings (`includeInlineParts` widened from `includeInlineImages`), and a
+  // variable, unlike a literal, compiles against either signature, so this call is correct
+  // whichever the engine beside it carries.
+  const hydrated = bodyOf(pres, m);
+  row.html = hydrated.html;
+  row.loadedRemoteContent = hydrated.loadedRemoteContent;
+  row.inlineImages = engine.inlineImagesOf(id);
+  const EVERY_PART = { includeInlineImages: true, includeInlineParts: true };
+  const atts = engine.attachmentsOf(id, EVERY_PART);
   if (atts.state === "ready" && atts.items.length > 0) {
-    row.attachments = atts.items.map((item) => ({
+    // Real files first, the body's own pictures after them — the web strip's partition.
+    const items = [...atts.items].sort((a, b) => Number(a.inline) - Number(b.inline));
+    row.attachments = items.map((item) => ({
       id: item.id,
       filename: item.filename,
       size: sizeLabel(item.sizeBytes),
+      inline: item.inline,
+      mime: item.mimeType,
+      state: item.state,
     }));
   }
   return row;
@@ -1582,6 +1623,19 @@ export type { AbandonedMutation, MutationResult } from "@ohmail/client-engine";
 export interface LiveWorldActions {
   /** Opening a message marks it read and asks for its full text + conversation + files. */
   openMessage(id: string): Promise<boolean>;
+  /**
+   * Ask the engine for the embedded images the OPEN message's document references — the
+   * renderer's own pass supplies the ids, the engine spends bounded connection fetches and
+   * publishes the minted map through {@link WorldMail.inlineImages}. Fire-and-forget; a part
+   * that cannot be minted stays a blank box, which is what every message showed before.
+   */
+  loadInlineImages(messageId: string, contentIds: string[]): void;
+  /**
+   * One attachment's BYTES for the share sheet — `openAttachment` (single-flight, the server's
+   * ceiling respected) and the held Blob read back as base64. The refusals are the engine's
+   * own states, returned rather than thrown: the tile renders each one a sentence.
+   */
+  openAttachmentBytes(messageId: string, attachmentId: string): Promise<WorldAttachmentBytes>;
   /** An explicit re-ask for one message's full text (a card expand, a reopen). */
   hydrateMessage(id: string): void;
   /**
@@ -1810,6 +1864,30 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
       await watched(engine.mutate({ kind: "mark_seen", messageIds: [id], unread: false, via: "glance" })),
       null, refuse("liveSaveFailed"),
     );
+  };
+
+  const loadInlineImages = (messageId: string, contentIds: string[]): void => {
+    if (contentIds.length === 0) return;
+    void engine.loadInlineImages(messageId, contentIds).catch(() => undefined);
+  };
+
+  const openAttachmentBytes = async (messageId: string, attachmentId: string): Promise<WorldAttachmentBytes> => {
+    await engine.openAttachment(messageId, attachmentId, { retry: true }).catch(() => undefined);
+    // A variable, not a literal — correct against either option spelling (see `liveMessage`).
+    const EVERY_PART = { includeInlineImages: true, includeInlineParts: true };
+    const list = engine.attachmentsOf(messageId, EVERY_PART);
+    const item = list.state === "ready" ? list.items.find((i) => i.id === attachmentId) : undefined;
+    if (!item) return { state: "unavailable" };
+    if (item.state === "too_large") return { state: "too_large" };
+    const blob = engine.attachmentBlobOf(messageId, attachmentId);
+    if (item.state !== "ready" || !blob) return { state: "failed" };
+    try {
+      return { state: "ready", base64: await blobToBase64(blob), mime: item.mimeType, filename: item.filename };
+    } catch {
+      // The one non-engine failure: the byte read itself. Same sentence as a failed fetch —
+      // the tile's retry re-asks `openAttachment`, which short-circuits on the held Blob.
+      return { state: "failed" };
+    }
   };
 
   const sweepFeed = async (view: FeedView, passedIds: string[]): Promise<boolean> => {
@@ -2560,7 +2638,8 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     async discardAbandoned(id) {
       await engine.discardAbandoned(id);
     },
-    openMessage, hydrateMessage, hydrateHeld, sweepFeed, leaveFeed, decide, release, setPile,
+    openMessage, hydrateMessage, hydrateHeld, loadInlineImages, openAttachmentBytes,
+    sweepFeed, leaveFeed, decide, release, setPile,
     pileToggle, resurfaceToggle, resurfaceAt, resurfaceNow, resurfaceDone, markSeen, move,
     deleteMessage, sendReply, sendForward, withdrawSend, cancelSchedule, tagToggle, tagCreate, screenSender,
     folderCreate, folderRename, folderDelete, folderDismiss,
@@ -2577,6 +2656,10 @@ export interface WorldActions {
   leaveFeed(place: "reads" | "receipts"): void;
   /** Opening a message marks it read and hydrates its text, thread and files. */
   openMessage(id: string): void;
+  /** The renderer's ask for the embedded images the open document references. */
+  loadInlineImages(messageId: string, contentIds: string[]): void;
+  /** One attachment's bytes for the share sheet — awaited; the tile renders each refusal. */
+  openAttachmentBytes(messageId: string, attachmentId: string): Promise<WorldAttachmentBytes>;
   /** An explicit re-ask for one message's full text (a card expand, a reopen). */
   hydrateMessage(id: string): void;
   /**
@@ -2648,6 +2731,8 @@ export function stableActions(current: () => WorldActions): WorldActions {
     markSeenThrough: (place, ids) => current().markSeenThrough(place, ids),
     leaveFeed: (place) => current().leaveFeed(place),
     openMessage: (id) => current().openMessage(id),
+    loadInlineImages: (id, contentIds) => current().loadInlineImages(id, contentIds),
+    openAttachmentBytes: (id, attachmentId) => current().openAttachmentBytes(id, attachmentId),
     hydrateMessage: (id) => current().hydrateMessage(id),
     retryAbandoned: (id) => current().retryAbandoned(id),
     discardAbandoned: (id) => current().discardAbandoned(id),

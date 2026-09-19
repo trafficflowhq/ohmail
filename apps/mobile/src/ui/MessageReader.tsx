@@ -8,14 +8,16 @@
  * to `pane-memory` per message, so a fold that remounts this tree resumes where the reader
  * was — continuity as data, not as tree position.
  */
-import { useEffect } from "react";
-import { View, type NativeScrollEvent, type NativeSyntheticEvent } from "react-native";
+import { useEffect, useState } from "react";
+import { ActivityIndicator, Pressable, View, type NativeScrollEvent, type NativeSyntheticEvent } from "react-native";
 import { Copy } from "../copy";
 import { useTheme } from "../theme";
 import { useWorld, type WorldMail } from "../state/world";
+import { shareAttachmentBytes } from "../mail/open-attachment-native";
 import { Chip, Panel, Screen, Scroller, Txt } from "./base";
 import { DetailBar } from "./chrome";
 import { Icon } from "./Icon";
+import { MailBodyFrame } from "./MailBodyFrame";
 import { MessageActions } from "./MessageActions";
 import { paneScrollOf, recordPaneScroll } from "./pane-memory";
 
@@ -33,6 +35,8 @@ export function MessageReader({
   const t = useTheme();
   const w = useWorld();
   const m = w.message(id);
+  /** "Show as text" — this reading's own choice, per message; a new open renders rich again. */
+  const [textFor, setTextFor] = useState<string | null>(null);
 
   // The open: mark read (watched — the engine owns the overlay and the rollback),
   // hydrate the full text + conversation + file list.
@@ -145,13 +149,28 @@ export function MessageReader({
                   {bodyNote}
                 </Txt>
               ) : null}
-              {/* THE READER'S SIZE, NOT THE PANE'S. On a phone the web has no reading column
-                  (`AppShell.tsx`: below 900 it is hidden) — opening a message opens the READER
-                  sheet at 16.5/1.78 (`reader.css:16`). This screen is that reader, so it reads
-                  at `readerBody`. `msgBody` is the desktop pane's role and stays with it. */}
-              <Txt variant="readerBody" style={{ maxWidth: t.layout.proseMax }}>
-                {m.body}
-              </Txt>
+              {/* The html part renders in the frame (the web's rules, `MailBodyFrame`); the
+                  text part is the fallback AND the reader's own "Show as text" choice. */}
+              {m.html != null && m.html !== "" && textFor !== m.id ? (
+                <MailBodyFrame m={m} onShowAsText={() => setTextFor(m.id)} />
+              ) : (
+                <>
+                  {m.html != null && m.html !== "" ? (
+                    <View style={{ flexDirection: "row", justifyContent: "flex-end", marginBottom: 10 }}>
+                      <Txt variant="caption" tone="accent" onPress={() => setTextFor(null)} accessibilityRole="button">
+                        {Copy.mailShowOriginal}
+                      </Txt>
+                    </View>
+                  ) : null}
+                  {/* THE READER'S SIZE, NOT THE PANE'S. On a phone the web has no reading column
+                      (`AppShell.tsx`: below 900 it is hidden) — opening a message opens the READER
+                      sheet at 16.5/1.78 (`reader.css:16`). This screen is that reader, so it reads
+                      at `readerBody`. `msgBody` is the desktop pane's role and stays with it. */}
+                  <Txt variant="readerBody" style={{ maxWidth: t.layout.proseMax }}>
+                    {m.body}
+                  </Txt>
+                </>
+              )}
             </>
           ) : null}
 
@@ -194,40 +213,84 @@ export function MessageReader({
 
 /**
  * The attachment strip — the engine's own items, every name already through the
- * nameless-part fallback: a calendar invite that arrived unnamed reads
- * `invite.ics`, the same name its download would carry, never an empty label.
- * Opening the bytes is not supported yet; these tiles state what the mail
- * carries.
+ * nameless-part fallback (`invite.ics`, never an empty label), real files first and the
+ * body's own pictures after them wearing the "embedded" tag (the world sorts). A tile press
+ * OPENS the bytes: one engine fetch under the server's ceiling, then the platform share
+ * sheet — viewer, save and send are the platform's own routes. Each refusal renders a
+ * sentence on the tile it belongs to; a silent failure here is a person pressing a dead tile.
  */
 function AttachmentTiles({ m }: { m: WorldMail }) {
   const t = useTheme();
+  const w = useWorld();
+  const [busy, setBusy] = useState<string | null>(null);
+  // The REFUSAL, not its sentence: a deck read held in state freezes in the language it was
+  // read in; the kind is stored and the sentence resolves where it renders.
+  const [note, setNote] = useState<{ id: string; kind: "too_large" | "failed" | "share" } | null>(null);
   // Only ever the world's list — a raw `m.attachment.filename` here would be the empty-label
   // bug this component exists to close (the world resolves every name through the fallback).
   const tiles = m.attachments ?? [];
   if (tiles.length === 0) return null;
+
+  const open = async (id: string): Promise<void> => {
+    if (busy !== null) return;
+    setBusy(id);
+    setNote(null);
+    const got = await w.actions.openAttachmentBytes(m.id, id);
+    setBusy(null);
+    if (got.state === "ready") {
+      const shared = await shareAttachmentBytes(got.base64, got.mime, got.filename);
+      if (!shared) setNote({ id, kind: "share" });
+      return;
+    }
+    setNote({ id, kind: got.state === "too_large" ? "too_large" : "failed" });
+  };
+
   return (
     <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 20 }}>
       {tiles.map((a) => (
-        <View
-          key={a.id}
-          style={[
-            {
-              flexDirection: "row",
-              alignItems: "center",
-              gap: 8,
-              borderRadius: t.radius.pill,
-              backgroundColor: t.c.panel,
-              paddingHorizontal: 15,
-              paddingVertical: 9,
-            },
-            t.lift("l0"),
-          ]}
-        >
-          <Icon name="clip" size={13} color={t.c.ink2} />
-          <Txt variant="button">{a.filename}</Txt>
-          {a.size ? (
-            <Txt variant="caption" tone="ink3">
-              {a.size}
+        <View key={a.id}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={a.inline ? Copy.attachmentEmbeddedLabel(a.filename) : a.filename}
+            disabled={busy !== null}
+            onPress={() => void open(a.id)}
+            style={[
+              {
+                flexDirection: "row",
+                alignItems: "center",
+                gap: 8,
+                borderRadius: t.radius.pill,
+                backgroundColor: t.c.panel,
+                paddingHorizontal: 15,
+                paddingVertical: 9,
+              },
+              t.lift("l0"),
+            ]}
+          >
+            {busy === a.id ? (
+              <ActivityIndicator size="small" color={t.c.ink2} />
+            ) : (
+              <Icon name="clip" size={13} color={t.c.ink2} />
+            )}
+            <Txt variant="button">{a.filename}</Txt>
+            {a.size ? (
+              <Txt variant="caption" tone="ink3">
+                {a.size}
+              </Txt>
+            ) : null}
+            {a.inline ? (
+              <Txt variant="caption" tone="ink3">
+                {Copy.attachmentEmbedded}
+              </Txt>
+            ) : null}
+          </Pressable>
+          {note?.id === a.id ? (
+            <Txt variant="caption" tone="ink3" accessibilityRole="alert" style={{ marginTop: 4 }}>
+              {note.kind === "too_large"
+                ? Copy.attachmentTooLarge
+                : note.kind === "share"
+                  ? Copy.attachmentShareRefused
+                  : Copy.attachmentOpenFailed}
             </Txt>
           ) : null}
         </View>

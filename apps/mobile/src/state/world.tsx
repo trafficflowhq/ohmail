@@ -383,6 +383,9 @@ const NO_ACTIONS: WorldActions = {
   markSeenThrough: () => undefined,
   leaveFeed: () => undefined,
   openMessage: () => undefined,
+  loadInlineImages: () => undefined,
+  /* The empty world holds no bytes; the tile renders the honest refusal. */
+  openAttachmentBytes: async () => ({ state: "unavailable" as const }),
   hydrateMessage: () => undefined,
   // The empty world has no engine and nothing queued; the resolved promise keeps the facade's
   // shape honest for a caller that awaits it.
@@ -1020,6 +1023,8 @@ export function WorldProvider({ children }: { children: ReactNode }) {
           markSeenThrough: (place, ids) => void acts.sweepFeed(place, ids),
           leaveFeed: (place) => void acts.leaveFeed(place),
           openMessage: (id) => void acts.openMessage(id),
+          loadInlineImages: (id, contentIds) => acts.loadInlineImages(id, contentIds),
+          openAttachmentBytes: (id, attachmentId) => acts.openAttachmentBytes(id, attachmentId),
           hydrateMessage: (id) => acts.hydrateMessage(id),
           retryAbandoned: (id) => acts.retryAbandoned(id),
           discardAbandoned: (id) => acts.discardAbandoned(id),

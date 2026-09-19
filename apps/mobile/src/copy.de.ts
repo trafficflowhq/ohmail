@@ -867,6 +867,34 @@ export const DE: Deck = {
   liveBodyWithheld:
     "Nicht gespeichert — dein Speicherplatz war voll, als sie ankam. Das hier ist die Vorschau; die Nachricht selbst liegt sicher in deinem Postfach auf deinem Mailserver.",
 
+  /* ------------------------------------------------- the mail body's frame */
+
+  mailImagesBlockedOne: "1 externes Bild blockiert.",
+  mailImagesBlockedMany: (n: number) => `${n} externe Bilder blockiert.`,
+  mailPixelOne: "Eines davon ist ein Zählpixel.",
+  mailPixelMany: (n: number) => `${n} davon sind Zählpixel.`,
+  mailPixelOnly: "Ein Zählpixel wurde blockiert.",
+  mailPixelsRefused: (n: number) => `${n} Zählpixel wurden blockiert.`,
+  mailSheetBlockedOne:
+    "Ein externes Stylesheet wurde blockiert; diese Nachricht kann darum schlicht aussehen.",
+  mailSheetBlockedMany: (n: number) =>
+    `${n} externe Stylesheets wurden blockiert; diese Nachricht kann darum schlicht aussehen.`,
+  mailShowImages: "Bilder anzeigen",
+  mailShowAsText: "Als Text anzeigen",
+  mailShowOriginal: "Original anzeigen",
+  mailOversize:
+    "Der HTML-Teil dieser Nachricht ist zu groß, um ihn sicher darzustellen. Die Textfassung wird gezeigt.",
+  mailOpenLinkTitle: "Diesen Link öffnen?",
+  mailOpenLinkOpen: "Öffnen",
+  mailOpenLinkCancel: "Abbrechen",
+  attachmentEmbedded: "eingebettet",
+  attachmentEmbeddedLabel: (name: string) => `${name}, eingebettet`,
+  attachmentOpening: "Wird geöffnet…",
+  attachmentTooLarge: "Diese Datei ist zu groß, um sie hier zu öffnen.",
+  attachmentOpenFailed: "Diese Datei ließ sich nicht öffnen. Tippe, um es nochmal zu versuchen.",
+  attachmentShareRefused: "Nichts auf diesem Telefon kann diese Datei öffnen.",
+  mailFrameLabel: "Nachrichteninhalt",
+
   /* -------------------------------------------------------- message actions */
 
   routedBy: "Warum sie hier gelandet ist",

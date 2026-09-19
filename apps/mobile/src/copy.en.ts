@@ -1398,6 +1398,39 @@ const TABLE = {
   liveBodyWithheld:
     "Not stored — your storage space was full when this arrived. This is the preview; the message itself is safe in your mailbox on your mail server.",
 
+  /* ------------------------------------------------- the mail body's frame */
+
+  /** The blocked-content notice — the web reader's sentences, word for word. */
+  mailImagesBlockedOne: "1 remote image blocked.",
+  mailImagesBlockedMany: (n: number) => `${n} remote images blocked.`,
+  mailPixelOne: "One of them is a tracking pixel.",
+  mailPixelMany: (n: number) => `${n} of them are tracking pixels.`,
+  mailPixelOnly: "A tracking pixel was blocked.",
+  /** Said once images are shown, where the beacons alone were still refused. */
+  mailPixelsRefused: (n: number) => `${n} tracking pixels were blocked.`,
+  mailSheetBlockedOne: "A remote stylesheet was blocked, so this message may look plain.",
+  mailSheetBlockedMany: (n: number) =>
+    `${n} remote stylesheets were blocked, so this message may look plain.`,
+  mailShowImages: "Show images",
+  mailShowAsText: "Show as text",
+  mailShowOriginal: "Show original",
+  mailOversize:
+    "This message's HTML part is too large to render safely. Showing the plain-text version.",
+  /** The link confirm — the destination said out loud before anything leaves the app. */
+  mailOpenLinkTitle: "Open this link?",
+  mailOpenLinkOpen: "Open",
+  mailOpenLinkCancel: "Cancel",
+  /** The attachment strip: the body's own pictures wear this quiet tag. */
+  attachmentEmbedded: "embedded",
+  /** The tile's accessible name when the part is the body's own picture. */
+  attachmentEmbeddedLabel: (name: string) => `${name}, embedded`,
+  attachmentOpening: "Opening…",
+  attachmentTooLarge: "This file is too large to open here.",
+  attachmentOpenFailed: "Couldn't open this file. Tap to try again.",
+  attachmentShareRefused: "Nothing on this phone can open this file.",
+  /** The frame's accessible name — what a screen reader calls the document region. */
+  mailFrameLabel: "Message content",
+
   /* -------------------------------------------------------- message actions */
 
   routedBy: "Why it landed here",
