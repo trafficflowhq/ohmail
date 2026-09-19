@@ -515,6 +515,8 @@
     "pressQueuedOrganizedUnknown": "Queued for the organizer — it happens on the next pass.",
     "pressPartlyRefused": "{count, plural, one {1 message did not change} other {# messages did not change}}.",
     "pressPartlyQueued": "{count, plural, one {1 message is queued for the organizer} other {# messages are queued for the organizer}}.",
+    "undo": "Undo",
+    "toastUndone": "Undone.",
     "refusedPress": "Nothing changed — that did not go through. Try it again.",
     "moveLabel": "move to",
     "moveCancel": "Cancel",
@@ -2700,6 +2702,7 @@
       "screener": "Screener",
       "app": "App"
     },
+    "undo": "Undo last action",
     "goOhbox": "Go to the Ohbox",
     "goReads": "Go to Reads",
     "goReceipts": "Go to Receipts",

@@ -38,6 +38,7 @@ import {
   sendingMailboxId,
   replySubject,
   forwardSubject,
+  inverseMutations,
   tagsCrossView,
   threadOf,
   threadParticipantsIndex,
@@ -216,7 +217,7 @@ import {
   type RosterState,
 } from "./mail-state";
 /* Backspace/Delete → Trash, and the window in which it has not happened yet. See the module. */
-import { deleteKeyBindings, hideMessages, restoreDispatch, useDeleteIntentReplay, useDeleteUndo } from "./delete-undo";
+import { deleteKeyBindings, hideMessages, restoreDispatch, UNDO_MS, useDeleteIntentReplay, useDeleteUndo } from "./delete-undo";
 import { isModalOpen } from "./modal-gate";
 import { useStableCallback } from "./stable-callback";
 import { mailboxLabelKey, mailboxLabelResolver } from "./mailbox-label";
@@ -1537,14 +1538,52 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
   const organizerWaits = (outs: readonly PressVerdict[]): number =>
     outs.filter((o) => o.kind === "queued" && o.wait === "organizer").length;
 
+  /**
+   * ONE UNDO FOR EVERY VERB (the 0.20 review) — the toast carries Undo wherever the engine can build
+   * the wire's own reversal (`inverseMutations`, read BEFORE the dispatch), and `z` presses the
+   * same offer. Undo dispatches the inverses through the ordinary seam, so the overlay, the outbox
+   * and the refusal vocabulary all apply — never a local state hack. Bounded by `UNDO_MS`, the
+   * Screener's own window; a late press takes nothing back and claims nothing (the armed offer is
+   * consumed before it fires, so it fires at most once).
+   */
+  const undoArm = useRef<{ fire: () => void; at: number } | null>(null);
+  const runArmedUndo = useStableCallback((): boolean => {
+    const arm = undoArm.current;
+    if (!arm || Date.now() - arm.at > UNDO_MS) return false;
+    undoArm.current = null;
+    arm.fire();
+    return true;
+  });
+  const toastWithUndo = useStableCallback((sentence: string, inverses: readonly EngineMutation[]) => {
+    if (inverses.length === 0) { toast(sentence); return; }
+    const fire = () => {
+      void Promise.all(inverses.map((mu) => dispatchPress(mu))).then((outs) => {
+        const tally = tallyVerdicts(outs);
+        if (tally.applied > 0) { toast(t("ohbox.toastUndone")); return; }
+        if (tally.refused === 0 && organizerWaits(outs) > 0) { toast(queuedSentence(tally.holder)); return; }
+        toast(refusalSentence(tally.firstRefusal));
+      });
+    };
+    undoArm.current = { fire, at: Date.now() };
+    toast(sentence, {
+      action: t("ohbox.undo"),
+      duration: UNDO_MS,
+      onAction: () => { undoArm.current = null; fire(); },
+    });
+  });
+
   const mutateAndReport = useStableCallback(
-    (mutation: EngineMutation, okSentence: string | null): Promise<boolean> =>
-      dispatchPress(mutation).then((out) => {
+    (mutation: EngineMutation, okSentence: string | null): Promise<boolean> => {
+      /* Read before the dispatch — the inverse names the state this press is about to leave.
+         Skipped on the silent paths (`okSentence === null`): no toast, nothing to carry Undo. */
+      const inverses = okSentence !== null ? inverseMutations(engine.read(), mutation) : [];
+      return dispatchPress(mutation).then((out) => {
         if (out.kind === "refused") { toast(refusalSentence(out.refusal)); return false; }
         if (out.kind === "queued" && out.wait === "organizer") { toast(queuedSentence(out.holder)); return false; }
-        if (okSentence !== null) toast(okSentence);
+        if (okSentence !== null) toastWithUndo(okSentence, inverses);
         return true;
-      }),
+      });
+    },
   );
 
   /**
@@ -1556,8 +1595,12 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
    * organizer is counted separately again, because nothing has happened to it.
    */
   const mutateSetAndReport = useStableCallback(
-    (mutations: readonly EngineMutation[], say: (applied: number) => string | null): Promise<number> =>
-      Promise.all(mutations.map((mu) => dispatchPress(mu))).then((outs) => {
+    (mutations: readonly EngineMutation[], say: (applied: number) => string | null): Promise<number> => {
+      /* One pre-press read for the whole set; the undo covers exactly the mutations that APPLIED
+         — an inverse of a refused press would change state the press never touched. */
+      const preRead = engine.read();
+      const inversesOf = mutations.map((mu) => inverseMutations(preRead, mu));
+      return Promise.all(mutations.map((mu) => dispatchPress(mu))).then((outs) => {
         const tally = tallyVerdicts(outs);
         const waiting = organizerWaits(outs);
         if (tally.applied === 0 && outs.length > 0) {
@@ -1566,14 +1609,22 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
           return 0;
         }
         const sentence = say(tally.applied);
-        if (sentence !== null) toast(sentence);
+        /* Undo only when the WHOLE set applied: on a partial press the extra sentence below is
+           the one left standing (the host renders one toast), and it must not wipe a live offer. */
+        const whole = tally.refused === 0 && waiting === 0;
+        if (sentence !== null && whole) {
+          toastWithUndo(sentence, outs.flatMap((o, i) => (o.kind === "applied" ? inversesOf[i]! : [])));
+        } else if (sentence !== null) {
+          toast(sentence);
+        }
         /* THE PART THAT DID NOT HAPPEN, SAID BESIDE IT. One extra sentence at most, and only
            when the press was partial: a count of what applied is a true number under which four
            refused messages are invisible. */
         if (tally.refused > 0) toast(t("ohbox.pressPartlyRefused", { count: tally.refused }));
         else if (waiting > 0) toast(t("ohbox.pressPartlyQueued", { count: waiting }));
         return tally.applied;
-      }),
+      });
+    },
   );
 
   /** Which mailboxes a set of messages lives in — first-seen order, de-duplicated. An
@@ -5119,9 +5170,19 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
              schedule is intact, so the deliberate read that would file the row is never sent —
              half a release is a message read out of a pile it is still in. */
           const release = async (): Promise<void> => {
+            /* Both halves' inverses, off the pre-press mirror: the deliberate read's (re-pin a
+               spent pin, unread back) and the booking clear's (re-book at its own date). A row
+               is pinned OR booked, never both, so the two reads cannot overlap. */
+            const pre = engine.read();
+            const inverses = [
+              ...inverseMutations(pre, { kind: "mark_seen", messageIds: [m.id], unread: false }),
+              ...(m.triage?.state === "bubbled_up"
+                ? inverseMutations(pre, { kind: "triage_set", messageId: m.id, state: "none" })
+                : []),
+            ];
             if (m.triage?.state === "bubbled_up"
               && !(await mutateAndReport({ kind: "triage_set", messageId: m.id, state: "none" }, null))) return;
-            if (await markSeen([m.id], false)) toast(t("ohbox.toastResurfaceDone"));
+            if (await markSeen([m.id], false)) toastWithUndo(t("ohbox.toastResurfaceDone"), inverses);
           };
           void release();
           break;
@@ -5236,13 +5297,19 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
       }
       if (action === "read" || action === "unread") {
         // The batch mutation, unchanged: one request, one transaction, one intent — and the
-        // sentence now waits for its verdict, like every other press in this file.
+        // sentence now waits for its verdict, like every other press in this file. The inverse
+        // is read before the dispatch, so Undo flips back exactly the ids this press flipped.
+        const inverses = inverseMutations(
+          engine.read(),
+          { kind: "mark_seen", messageIds: ids, unread: action === "unread" },
+        );
         void markSeen(ids, action === "unread").then((ok) => {
           if (ok) {
-            toast(
+            toastWithUndo(
               t(action === "unread" ? "ohbox.toastBulkUnread" : "ohbox.toastBulkRead", {
                 count: ids.length,
               }),
+              inverses,
             );
           }
         });
@@ -5262,6 +5329,14 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
           .filter((m): m is EngineMessage => m != null);
         const booked = rows.filter((m) => m.triage?.state === "bubbled_up").map((m) => m.id);
         void (async () => {
+          /* The single arm's composition over the set — both halves' inverses off the pre-press
+             mirror, so one Undo re-books the booked and re-pins the pinned. */
+          const pre = engine.read();
+          const inverses = [
+            ...inverseMutations(pre, { kind: "mark_seen", messageIds: ids, unread: false }),
+            ...booked.flatMap((messageId) =>
+              inverseMutations(pre, { kind: "triage_set", messageId, state: "none" })),
+          ];
           if (booked.length > 0) {
             const applied = await mutateSetAndReport(
               booked.map((messageId) => ({ kind: "triage_set" as const, messageId, state: "none" as const })),
@@ -5269,7 +5344,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
             );
             if (applied === 0) return;
           }
-          if (await markSeen(ids, false)) toast(t("ohbox.toastResurfaceDone"));
+          if (await markSeen(ids, false)) toastWithUndo(t("ohbox.toastResurfaceDone"), inverses);
         })();
         return true;
       }
@@ -6513,6 +6588,15 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
       group: "app",
       label: t("shortcuts.layout"),
       run: cycleLayout,
+    },
+    /* ONE UNDO KEY FOR EVERY VERB (the 0.20 review): presses the live toast's own offer — the same
+       consumed-once arm the button fires — and does nothing once the window has closed, because
+       claiming an undo that did not happen is the Screener's own forbidden shape. */
+    {
+      chord: "z",
+      group: "app",
+      label: t("shortcuts.undo"),
+      run: () => { runArmedUndo(); },
     },
     {
       chord: "?",

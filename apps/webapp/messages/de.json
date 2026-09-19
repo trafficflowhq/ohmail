@@ -515,6 +515,8 @@
     "pressQueuedOrganizedUnknown": "Für den Organizer vorgemerkt — passiert beim nächsten Durchgang.",
     "pressPartlyRefused": "{count, plural, one {1 Nachricht hat sich nicht geändert} other {# Nachrichten haben sich nicht geändert}}.",
     "pressPartlyQueued": "{count, plural, one {1 Nachricht ist für den Organizer vorgemerkt} other {# Nachrichten sind für den Organizer vorgemerkt}}.",
+    "undo": "Rückgängig",
+    "toastUndone": "Rückgängig gemacht.",
     "refusedPress": "Nichts geändert — das ging nicht durch. Bitte noch einmal versuchen.",
     "moveLabel": "verschieben nach",
     "moveCancel": "Abbrechen",
@@ -2700,6 +2702,7 @@
       "screener": "Screener",
       "app": "App"
     },
+    "undo": "Letzte Aktion rückgängig",
     "goOhbox": "Zur Ohbox",
     "goReads": "Zu Reads",
     "goReceipts": "Zu den Belegen",
