@@ -58,6 +58,7 @@ import {
   type LedgerTx,
 } from "@trafficflow/db";
 import {
+  accountLifecycleNotices,
   attachmentStaging,
   authEvents,
   creditRefundObligations,
@@ -408,6 +409,14 @@ export async function deleteAccount(ctx: ServiceContext): Promise<DeleteAccountR
     // the ledger — filed as PENDING-REFUND-IS-DROPPED-AT-ERASURE.
     await drop("credit_refund_obligations",
       tx.delete(creditRefundObligations).where(eq(creditRefundObligations.accountId, accountId)));
+
+    // The wall's notice ledger (cloud 0040). Deleted, never left to the FK CASCADE: the account
+    // row SURVIVES erasure as the pseudonymous billing subject, so the cascade never fires — and
+    // a reminder about a person's lifecycle must not outlive the person (the refund-obligation
+    // rule, one table over). The nightly pass skips erased accounts by `erased_at`, so nothing
+    // re-inserts one.
+    await drop("account_lifecycle_notices",
+      tx.delete(accountLifecycleNotices).where(eq(accountLifecycleNotices.accountId, accountId)));
 
     // ── 7. Sessions, devices, and every credential the user holds ───────────────
     await drop("refresh_tokens", tx.delete(refreshTokens).where(eq(refreshTokens.accountId, accountId)));
