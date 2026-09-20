@@ -778,7 +778,7 @@ const TABLE = {
     `${name}, ${address}, ${held} held`,
   /** Which of the account's addresses a message arrived at — drawn only above one mailbox. */
   deliveredTo: (label: string) => `Delivered to ${label}`,
-  /** The Reads card's expand affordance, as a badge and as a spoken label. */
+  /** The News card's expand affordance, as a badge and as a spoken label. */
   readsCollapse: "Collapse",
   readsReadInFull: "Read in full",
   readsCardAria: (subject: string, open: boolean) =>
@@ -818,7 +818,7 @@ const TABLE = {
 
   /* --------------------------------------------------------- reads/receipts */
 
-  reads: "Reads",
+  reads: "News",
   receipts: "Receipts",
   waterline: "Seen up to here",
   readsTail: (shown: number) =>
@@ -1533,7 +1533,7 @@ const TABLE = {
   moveCancel: "Cancel",
   /** The place names the move panel files to — the webapp's `PLACE_LABEL` (format.ts PLACE_EN). */
   placeOhbox: "Ohbox",
-  placeReads: "Reads",
+  placeReads: "News",
   placeReceipts: "Receipts",
   placeScreened: "Screened",
   placeSpam: "Spam",

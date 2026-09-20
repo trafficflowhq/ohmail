@@ -83,13 +83,13 @@ that filed it, and a tracking pixel is never requested.
 
 <img src="docs/assets/feature-wall/01-ohbox.gif" alt="The Ohbox: mail from people you said yes to, with the rule that filed each message and the blocked tracking pixel" width="100%">
 
-## Ohbox · Reads · Receipts
+## Ohbox · News · Receipts
 
-Three views instead of one pile: people in the Ohbox, newsletters in Reads with
+Three views instead of one pile: people in the Ohbox, newsletters in News with
 a waterline where you stopped, paperwork in Receipts with its numbers on the
 row. Each is backed by a real folder on your own mail server.
 
-<img src="docs/assets/feature-wall/02-three-views.gif" alt="Switching between the three views: Ohbox, Reads with its seen-waterline, Receipts with amounts" width="100%">
+<img src="docs/assets/feature-wall/02-three-views.gif" alt="Switching between the three views: Ohbox, News with its seen-waterline, Receipts with amounts" width="100%">
 
 ## The AI Screener
 
@@ -552,7 +552,7 @@ Junk                     your provider's own — your spam verdicts file into it
 Sent                     your replies, left where your provider already keeps them
 ohmail/
 ├── Screener             new senders wait here until you decide where they go
-├── Reads                newsletters and things you read when you have a minute
+├── Reads                the News pile: newsletters, things you read when you have a minute
 ├── Receipts             receipts, confirmations, orders
 ├── Screened             senders you keep, but out of the Inbox
 ├── Quarantine           spam the automatic patterns set aside, held for review

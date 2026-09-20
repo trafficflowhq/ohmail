@@ -520,7 +520,7 @@ export const readsWaterline: WaterlineFixture = {
 
 export const readsAiChip: ReadsAiChipFixture = {
   afterId: "f1",
-  label: "Reads — AI 0.87: newsletter fingerprint",
+  label: "News — AI 0.87: newsletter fingerprint",
   confidence: 0.87,
   reason: "newsletter fingerprint",
   approvedLabel: "Approved — saved as a rule",
@@ -928,7 +928,7 @@ export const notificationSettings: NotificationSettingsFixture = {
       description: "Anyone your rules already file",
       enabled: true,
     },
-    { id: "reads", label: "Reads", description: "New newsletter issues", enabled: false },
+    { id: "reads", label: "News", description: "New newsletter issues", enabled: false },
     {
       id: "receipts",
       label: "Receipts",

@@ -73,7 +73,7 @@ export const AWAY_COPY = {
    */
   pilesLabel: "Which mail gets a reply",
   pileOhbox: "Ohbox",
-  pileReads: "Reads",
+  pileReads: "News",
   pileReceipts: "Receipts",
   pileScreener: "Screener",
   pileOhboxNote: "Always answered.",

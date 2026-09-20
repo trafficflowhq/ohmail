@@ -33,18 +33,18 @@ function readerFields(d: Date): ReturnType<typeof zonedFields> {
 }
 
 /**
- * The human name of each client view — the badge on a search hit, the "→ Reads" in a move menu, the
+ * The human name of each client view — the badge on a search hit, the "→ News" in a move menu, the
  * toast. Keys are view ids, never folders. It reads the `place` namespace through `liveCopy` rather
  * than a hook because this is a function library: `screener-state.ts` reads it inside a reducer and
  * `AppShell` inside a toast callback, neither of which can call `useTranslations`. The English
  * strings below are the fallback and the parity oracle. Which of the six translate is a product
- * decision: `Ohbox`, `Screener`, `Spam` and `Reads` keep their names in every language (the first
- * two are what the product IS; `Reads` is a real IMAP folder on the reader's own server, and German
- * has no plain noun for it); `Receipts`/`Screened` translate. `test/locale-catalog.test.ts` enforces.
+ * decision: `Ohbox`, `Screener`, `Spam` and `News` keep their names in every language (the first
+ * two are what the product IS; `News` is the pile's user-facing name on every surface — the IMAP
+ * folder behind it stays `ohmail/Reads`); `Receipts`/`Screened` translate. `test/locale-catalog.test.ts` enforces.
  */
 const PLACE_EN = {
   ohbox: "Ohbox",
-  reads: "Reads",
+  reads: "News",
   receipts: "Receipts",
   screener: "Screener",
   screened: "Screened",

@@ -3,7 +3,7 @@
  * from the English table in `copy.en.ts`, so shape is compiler-checked: a missing key, an extra
  * key or a differing parameter list is a build error; `test/copy-parity.test.ts` adds what a
  * type cannot see. The vocabulary is not invented here: `apps/webapp/messages/de.json` settled
- * it — Ohbox, Reads, Screener, Spam, Tag, paper and ohmarchy stay; Receipts is Belege, screened
+ * it — Ohbox, News, Screener, Spam, Tag, paper and ohmarchy stay; Receipts is Belege, screened
  * out is aussortiert, Park is Parken/Geparkt, Trash is the Papierkorb. Where the phone shares a
  * whole sentence with the web client, this deck carries its German byte for byte. Register: Du,
  * never Sie; plain statements, no slogans. Plurals are a ternary on the number.
@@ -513,7 +513,7 @@ export const DE: Deck = {
 
   /* --------------------------------------------------------- reads/receipts */
 
-  reads: "Reads",
+  reads: "News",
   receipts: "Belege",
   waterline: "Bis hierher gesehen",
   readsTail: (shown: number) =>
@@ -847,7 +847,7 @@ export const DE: Deck = {
   /*
    * ── THE DESTINATION LEADS, BECAUSE GERMAN CANNOT TAKE IT AFTER A PREPOSITION ────────────────
    *
-   * The English is "Released 3 held messages to Reads". Translated literally that is "… nach
+   * The English is "Released 3 held messages to News". Translated literally that is "… nach
    * Belege freigegeben", and it is wrong: the place names have genders and numbers ("die Belege",
    * "die Ohbox"), so any preposition in front of a `${dest}` hole needs a case the hole cannot
    * carry. Naming the destination first and following it with a dash removes the preposition
@@ -950,7 +950,7 @@ export const DE: Deck = {
   moveCancel: "Abbrechen",
 
   placeOhbox: "Ohbox",
-  placeReads: "Reads",
+  placeReads: "News",
   placeReceipts: "Belege",
   placeScreened: "Aussortiert",
   placeSpam: "Spam",
@@ -998,7 +998,7 @@ export const DE: Deck = {
   trashDeletedAt: (when: string) => `Gelöscht ${when}`,
   trashFromLine: (name: string, address: string) => `${name} · ${address}`,
   /* Nominativ nach Doppelpunkt-freiem „in": Dativ ist hier fest — „legt sie zurück in den …"
-     bräuchte den Artikel des Ortsnamens; die Ortsnamen sind Eigennamen (Ohbox, Reads), also
+     bräuchte den Artikel des Ortsnamens; die Ortsnamen sind Eigennamen (Ohbox, News), also
      ohne Artikel, wie der Web-Katalog sie in `toastRestoringTo` verwendet. */
   trashRestoresTo: (place: string) => `Wiederherstellen legt sie zurück in ${place}.`,
   trashRestore: "Wiederherstellen",
