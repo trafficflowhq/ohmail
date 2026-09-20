@@ -31,6 +31,7 @@ import {
   physicalFolderOf,
   presentAt,
   presentationReader,
+  UNDO_CLASS,
   feedPartition,
   receiptsByDay,
   waterlineIdOf,
@@ -4886,7 +4887,14 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
        offering one over the half that happened to land. `delete-undo.ts`'s degradation, same
        words. */
     if (lost) { toast(`${input.sentence} ${t("session.noUndoHere")}`); return; }
-    if (subjects.length === 0) { toastWithUndo(input.sentence, inverses); return; }
+    /* WHETHER A ROUTING PRESS IS UNDOABLE AT ALL IS THE ENGINE'S ANSWER, read from the one
+       table every surface reads (`UNDO_CLASS`), and this press's own `held` is the second
+       question. A boolean decided here would be a second opinion that can disagree with the
+       table — which is the drift the table exists to make impossible. */
+    if (UNDO_CLASS.routing_plan !== "window" || subjects.length === 0) {
+      toastWithUndo(input.sentence, inverses);
+      return;
+    }
     toastWithUndo(input.sentence, inverses, {
       /* EVERY HELD SENDER, and `true` only if at least one window was still open: a press whose
          windows have all closed took nothing back, and the sentence must not say otherwise. */
