@@ -2625,8 +2625,15 @@ describe("the UI bundle's build config", () => {
       path.resolve(APP, "../webapp/app/views/SettingsView.tsx"),
       "utf8",
     );
-    // The nav entry and the pane are both conditional on the node being supplied.
-    expect(settings).toMatch(/desktopSection \? \[\["desktop", desktopSection\.label\]/);
+    // The nav entry and the pane are both conditional on the node being supplied. The tab list
+    // lives in `settings-panes.ts` (one source for the nav and the palette); the view answers
+    // from node presence and hands the host's own label through, and the shared list carries it.
+    expect(settings).toMatch(/desktop: desktopSection \? desktopSection\.label : null,/);
+    const panes = fs.readFileSync(
+      path.resolve(APP, "../webapp/app/views/settings-panes.ts"),
+      "utf8",
+    );
+    expect(panes).toMatch(/w\.desktop !== null \? \[\["desktop", w\.desktop\]/);
     expect(settings).toMatch(/shown === "desktop" \? desktopSection\?\.node : null/);
     // And the shared file knows nothing about how any of it works.
     expect(settings).not.toMatch(/engine_logout|engineLogout|invoke\(|__TAURI/);
