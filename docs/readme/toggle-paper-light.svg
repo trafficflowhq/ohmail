@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 178 40" width="178" height="40" role="img" aria-label="Face switch: paper is active; ohmarchy is one click away">
+  <title>Face switch: paper is active; ohmarchy is one click away</title>
+  <defs>
+  <filter id="lift" x="-40%" y="-60%" width="180%" height="260%">
+    <feDropShadow in="SourceGraphic" dx="0" dy="1" stdDeviation="1" flood-color="#5d402d" flood-opacity="0.05" result="s1"/>
+    <feDropShadow in="SourceGraphic" dx="0" dy="2.5" stdDeviation="3" flood-color="#523524" flood-opacity="0.08" result="s2"/>
+    <feMerge><feMergeNode in="s2"/><feMergeNode in="s1"/><feMergeNode in="SourceGraphic"/></feMerge>
+  </filter></defs>
+  <g filter="url(#lift)"><path d="M77 5 L20 5 A15 15 0 0 0 20 35 L77 35 Z" fill="#ffffff"/></g>
+  <path d="M77 4.5 L20 4.5 A15.5 15.5 0 0 0 20 35.5 L77 35.5" fill="none" stroke="rgba(93,64,45,0.06)" stroke-width="1"/>
+  <text x="43" y="24.5" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, sans-serif" font-size="13" font-weight="600" fill="#251f1b">paper</text>
+  <rect x="77" y="5" width="96" height="30" fill="#f2efe4"/>
+  <rect x="77.5" y="5.5" width="95" height="29" fill="none" stroke="rgba(16,15,15,0.25)" stroke-width="1"/>
+  <text x="125" y="24.3" text-anchor="middle" font-family="'JetBrainsMono Nerd Font', 'JetBrains Mono', ui-monospace, 'Cascadia Mono', Menlo, Consolas, monospace" font-size="12" font-weight="600" fill="#5f5e5a">ohmarchy</text>
+</svg>

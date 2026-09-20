@@ -28,15 +28,15 @@ account.
 
 <div align="center">
 <sub>Choose your theme</sub><br>
-<a href="README.ohmarchy.md"><picture>
-<source media="(prefers-color-scheme: dark)" srcset="docs/readme/toggle-paper-dark.svg">
-<img src="docs/readme/toggle-paper-light.svg" alt="paper / ohmarchy face switch — paper is active; opens this README in the ohmarchy face" width="178" height="40">
+<a href="README.md"><picture>
+<source media="(prefers-color-scheme: dark)" srcset="docs/readme/toggle-ohmarchy-dark.svg">
+<img src="docs/readme/toggle-ohmarchy-light.svg" alt="paper / ohmarchy face switch — ohmarchy is active; opens this README in the paper face" width="178" height="40">
 </picture></a>
 </div>
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/faces/hero-paper-dark.webp">
-  <img src="docs/assets/faces/hero-paper.webp" alt="ohmail's demo mailbox: the folder rail, the Ohbox list, and an open message with the rule that filed it" width="100%">
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/faces/hero-ohmarchy-dark.webp">
+  <img src="docs/assets/faces/hero-ohmarchy.webp" alt="ohmail's demo mailbox in the ohmarchy face: the folder rail, the Ohbox list, and an open message with the rule that filed it" width="100%">
 </picture>
 
 <div align="center"><sub>The demo mailbox — fictional people, fictional brands.</sub></div>
@@ -46,7 +46,10 @@ The first time someone writes to you, they wait at the Screener — not in your
 inbox. The Ohbox holds the people you said yes to, every message names the rule
 that filed it, and a tracking pixel is never requested.
 
-<img src="docs/assets/feature-wall/01-ohbox.gif" alt="The Ohbox: mail from people you said yes to, with the rule that filed each message and the blocked tracking pixel" width="100%">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/feature-wall-ohmarchy/01-ohbox-dark.webp">
+  <img src="docs/assets/feature-wall-ohmarchy/01-ohbox.webp" alt="The Ohbox in the ohmarchy face: an open message with the rule that filed it and the blocked tracking pixel" width="100%">
+</picture>
 
 ## The Screener
 
@@ -80,7 +83,10 @@ you switch that on. ohmail deletes nothing on its own.
 Which model, what it is shown, and what leaves the machine:
 [Model providers and keys](#model-providers-and-keys), under Going deeper.
 
-<img src="docs/assets/feature-wall/03-screener.gif" alt="The Screener: a suggested destination on each waiting sender, one press to accept, the sender files and the rule is saved" width="100%">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/feature-wall-ohmarchy/03-screener-dark.webp">
+  <img src="docs/assets/feature-wall-ohmarchy/03-screener.webp" alt="The Screener in the ohmarchy face: a suggested destination on each waiting sender, one press to accept" width="100%">
+</picture>
 
 ## Ohbox · News · Receipts
 
@@ -134,7 +140,10 @@ Search answers as you type, typo-tolerant, over a local mirror on your own
 machine — scoped by sender, folder or tag when you want it narrow. The full
 archive on your server is one keystroke further.
 
-<img src="docs/assets/feature-wall/06-search.gif" alt="Typing a misspelled query, fuzzy results in about a millisecond, and the hit opening" width="100%">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/feature-wall-ohmarchy/06-search-dark.webp">
+  <img src="docs/assets/feature-wall-ohmarchy/06-search.webp" alt="Search in the ohmarchy face: a query, its results and the refine facets, on this device" width="100%">
+</picture>
 
 ## Dark mode
 
@@ -279,9 +288,9 @@ the app, not by a different download. Prices and the full comparison are at
 [ohmail.app](https://ohmail.app).
 
 <div align="center">
-<a href="README.ohmarchy.md"><picture>
-<source media="(prefers-color-scheme: dark)" srcset="docs/readme/toggle-paper-dark.svg">
-<img src="docs/readme/toggle-paper-light.svg" alt="paper / ohmarchy face switch — paper is active; opens this README in the ohmarchy face" width="178" height="40">
+<a href="README.md"><picture>
+<source media="(prefers-color-scheme: dark)" srcset="docs/readme/toggle-ohmarchy-dark.svg">
+<img src="docs/readme/toggle-ohmarchy-light.svg" alt="paper / ohmarchy face switch — ohmarchy is active; opens this README in the paper face" width="178" height="40">
 </picture></a>
 </div>
 
@@ -302,8 +311,8 @@ line at the top of the page flips every screenshot, and not one sentence. The
 other face, on the same demo mailbox:
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/faces/hero-ohmarchy-dark.webp">
-  <img src="docs/assets/faces/hero-ohmarchy.webp" alt="The same demo mailbox in the ohmarchy face: three tiled panes, mono type, drawn borders" width="100%">
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/faces/hero-paper-dark.webp">
+  <img src="docs/assets/faces/hero-paper.webp" alt="The same demo mailbox in the paper face: light, letter-like, sculpted by shadow rather than line" width="100%">
 </picture>
 
 **Any Omarchy theme, throughout the app.** The face's palette is not
