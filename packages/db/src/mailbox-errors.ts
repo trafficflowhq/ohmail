@@ -107,6 +107,15 @@ export const MAILBOX_SYNC_BLOCK_REASONS = [
    * says that. Self-hosted is where it fires — a deployment's own machine keeps its own time.
    */
   "clock_off",
+  /**
+   * The account's managed subscription ended, so the worker stood the organizer down and stopped
+   * syncing (mail 0124, the wall). The mailbox itself is untouched — the row keeps its
+   * credentials, its consent and its mirror — and the reason clears the moment the account reads
+   * open again. NOT a `disabled_reason`: nothing here is disabled, and `organized_elsewhere:*` is
+   * a closed set about who ELSE organizes. Hosted-only by construction: a self-hosted install
+   * composes no entitlements program, so no account of its ever parks.
+   */
+  "account_closed",
 ] as const;
 
 export type MailboxSyncBlockReason = (typeof MAILBOX_SYNC_BLOCK_REASONS)[number];

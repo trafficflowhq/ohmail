@@ -137,6 +137,13 @@ export interface HealthSnapshot {
    * on a standby. Closed codes and clocks only, a memory read, so `/health` touches no database.
    */
   apiCron: ApiCronTargetHealth[];
+  /**
+   * Whether the parked-accounts reader is composed (mail 0124, the wall). `absent` = no
+   * `config.entitlements`, the self-host truth; the Cloud deploy gate asserts `composed`,
+   * because an absent reader there means a refused account keeps syncing unnoticed. Derived
+   * from config on a standby (nothing is composed yet, and what will be is a config fact).
+   */
+  parkedReader: "composed" | "absent";
   /** Present in the fatal state (a failed takeover, or a LOST leader lock). */
   error?: string;
 }

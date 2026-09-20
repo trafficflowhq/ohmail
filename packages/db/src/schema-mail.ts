@@ -425,7 +425,7 @@ export const mailboxes = pgTable("mailboxes", {
   // honest; the constraint is created by the migration.
   ckSyncBlockedReason: check(
     "mailboxes_sync_blocked_reason_closed",
-    sql`${t.syncBlockedReason} is null or ${t.syncBlockedReason} in ('lease_unreadable', 'awaiting_credentials', 'at_capacity', 'read_limited', 'clock_off')`,
+    sql`${t.syncBlockedReason} is null or ${t.syncBlockedReason} in ('lease_unreadable', 'awaiting_credentials', 'at_capacity', 'read_limited', 'clock_off', 'account_closed')`,
   ),
   // THE THIRD AND FOURTH CLOSED SETS . `organizerRole` has no `is null` arm because
   // the column is NOT NULL — the set really is two members, and spelling a third state that

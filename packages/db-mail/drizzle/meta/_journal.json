@@ -869,6 +869,13 @@
       "when": 1791602600027,
       "tag": "0123_news_pile_check",
       "breakpoints": true
+    },
+    {
+      "idx": 124,
+      "version": "7",
+      "when": 1791602600028,
+      "tag": "0124_sync_blocked_reason_account_closed",
+      "breakpoints": true
     }
   ]
 }

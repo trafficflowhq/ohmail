@@ -1,4 +1,4 @@
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import {
   pruneIdempotencyKeys, pruneSendFingerprints, noticeSinkFor, setNoticeSink, accountSettings, mailboxCredentials, mailboxes,
@@ -9,7 +9,7 @@ import {
 } from "@trafficflow/db";
 import {
   makeEntitlementsClient, refundObligationsOn, makeOwnedDb, makeChangeWakeHub, type OwnedDb, type ChangeWakeFanout,
-  markScreenerSuggestOwed, owedSuggestAccounts, clearScreenerSuggestOwed } from "@trafficflow/db/cloud";
+  markScreenerSuggestOwed, owedSuggestAccounts, clearScreenerSuggestOwed, pushSubscriptions } from "@trafficflow/db/cloud";
 import {
   runAlertPass,
   webhookAlertSink,
@@ -106,7 +106,7 @@ import { driverWriteRaceReason } from "./driver-write-race.js";
 import { makeSmtpSizeDial, recordSmtpMaxSize } from "./smtp-size.js";
 import type { Tx, OrganizerRole, OrganizerState } from "@trafficflow/db";
 import {
-  loadEnabledMailboxes, loadMailboxCreds, loadMailboxById, bootstrapEnvCreds, BootstrapRefusedError,
+  loadEnabledMailboxes, loadRosterMailboxes, loadMailboxCreds, loadMailboxById, bootstrapEnvCreds, BootstrapRefusedError,
   markMailboxFailed, markMailboxReadLimited, markMailboxConnected, markMailboxStoodDown,
   clearOrganizerStandDown,
   markMailboxReleased, refreshOrganizerHolder,
@@ -115,7 +115,7 @@ import {
   stampMailboxSyncNow, stampInitialImportComplete, makeSyncWriteFence, type LeaderFence,
   accountsOf, organizedMailboxIdsOf, accountInShard,
   type EnabledMailbox, type MailboxDisabledReason, type MailboxErrorPhase,
-  type MailboxSyncBlockReason,
+  type MailboxSyncBlockReason, type ParkedAccountsReader,
 } from "./mailboxes.js";
 import { OrganizerProfileSync, syncProfileMirror } from "./profile.js";
 import type { ProfileIo } from "@trafficflow/core/adapters/organizer-profile";
@@ -272,6 +272,13 @@ export interface WorkerStats {
    * `/health` still touches no database.
    */
   apiCron: ApiCronTargetHealth[];
+  /**
+   * WHETHER THE PARKED-ACCOUNTS READER IS COMPOSED (mail 0124, the wall). `absent` is a host
+   * with no `config.entitlements` — the self-host truth, where nobody parks. On the managed
+   * deployment `absent` is the dangerous branch (a refused account keeps syncing while its
+   * owner meets the 402), so the Cloud deploy gate asserts `composed` off this field.
+   */
+  parkedReader: "composed" | "absent";
 }
 
 export interface RunningWorker {
@@ -941,6 +948,13 @@ export async function startWorkerWithLock(
      */
     const readLimited = new Map<string, SyncBlock>();
     /**
+     * Mailboxes of PARKED accounts (mail 0124, the wall) — the fifth arm. At closure scope for
+     * `capDropped`'s reason: the parked set is recomputed from the reader every pass, and a map
+     * rebuilt with it would restart `since` each time. Entries leave the moment the account reads
+     * open again, and `reconcileSyncBlocks`'s clear arm erases the row's reason the same pass.
+     */
+    const parkedBlocked = new Map<string, SyncBlock>();
+    /**
      * Record a block, PRESERVING `since` across passes.
      *
      * A catch arm calls this and does nothing else — no I/O, no decision, no threshold. That is
@@ -1148,6 +1162,28 @@ export async function startWorkerWithLock(
      * (`refund-obligation-composition.test.ts`).
      */
     const obligations = spend ? refundObligationsOn(db as unknown as Tx) : undefined;
+
+    /**
+     * WHICH ACCOUNTS ARE PARKED (mail 0124, the wall) — the roster's reader, composed from the
+     * SAME client the spend sites take and absent on a deployment that meters nothing, which is
+     * the self-host truth: nobody parks. `ok: false ⇒ parked`; the client never throws and a
+     * fault answers last-known/allow — fail-open, the direction the seam documents, because a
+     * faulting reader can only sync MORE and never drop a paying customer. One `access` per
+     * account per pass at bounded concurrency; the client's 60 s cache absorbs the cycle-tail's
+     * second read.
+     */
+    const PARKED_READ_CONCURRENCY = 8;
+    const parkedAccountsReader: ParkedAccountsReader | undefined = isMetered(entitlements)
+      ? async (accountIds): Promise<Set<string>> => {
+          const parked = new Set<string>();
+          for (let i = 0; i < accountIds.length; i += PARKED_READ_CONCURRENCY) {
+            const chunk = accountIds.slice(i, i + PARKED_READ_CONCURRENCY);
+            const verdicts = await Promise.all(chunk.map((id) => entitlements.access(id)));
+            chunk.forEach((id, j) => { if (!verdicts[j]!.ok) parked.add(id); });
+          }
+          return parked;
+        }
+      : undefined;
 
     // The LIVE classifier, behind a per-process circuit breaker. ONE circuit for the process, because
     // the failure domain is the shared API key and endpoint — per-mailbox circuits would each burn
@@ -2776,7 +2812,8 @@ export async function startWorkerWithLock(
         });
       }
 
-      const selected = await loadEnabledMailboxes(db, selection);
+      const roster = await loadRosterMailboxes(db, selection, new Date(), parkedAccountsReader);
+      const selected = roster.served;
       const served = selected.slice(0, maxMailboxes);
       const dropped = selected.slice(maxMailboxes);
       truncated = dropped.length;
@@ -2821,6 +2858,54 @@ export async function startWorkerWithLock(
         }
       } else {
         announced.cap = "";
+      }
+
+      // ── THE WALL: a parked account's mailboxes (mail 0124) ─────────────────────────────
+      //
+      // Their roster removal is `loadRosterMailboxes`' filter above; this is the bookkeeping the
+      // removal alone cannot do. The claim release itself stays the detach loop below — leaving
+      // the duty is the ONE teardown path that releases — and the ROW is stood down here, once
+      // per closure by its own state (`organizer_role = 'organizer'` guards the write), so a
+      // restart mid-park still records the release. Consent is KEPT: organizing resumes only by
+      // the person's explicit press (DUAL-MODE §4, no seize-back).
+      const parkedIds = new Set(roster.parked.map((m) => m.mailboxId));
+      for (const id of [...parkedBlocked.keys()]) if (!parkedIds.has(id)) parkedBlocked.delete(id);
+      for (const m of roster.parked) {
+        noteBlock(parkedBlocked, m.mailboxId, "account_closed");
+        if (m.organizerRole !== "organizer") continue;
+        try {
+          const written = await markMailboxReleased(db, m.mailboxId, { fence, cause: "account_parked" });
+          if (written) {
+            log.warn("organizer_parked_account_released", {
+              mailboxId: m.mailboxId, accountId: m.accountId,
+              reason: "the account's subscription ended, so this install stood the organizer " +
+                "down; the row keeps its credentials, its consent and its mirror, and organizing " +
+                "resumes through an explicit press once the account is open again",
+            });
+          }
+        } catch (err) {
+          log.error("organizer_parked_release_write_failed", {
+            mailboxId: m.mailboxId, accountId: m.accountId, err,
+            reason: "the roster still detaches the runtime and the claim lapses on its own; " +
+              "the row's stand-down is retried next pass",
+          });
+        }
+      }
+      if (roster.parked.length > 0) {
+        // Push rows go every pass — idempotent by construction (`inArray`, the arm omitted when
+        // the parked set is empty), and a parked account cannot re-register: the subscribe route
+        // is `work`, which the 402 gate refuses.
+        const parkedAccounts = [...new Set(roster.parked.map((m) => m.accountId))];
+        try {
+          await db.delete(pushSubscriptions)
+            .where(inArray(pushSubscriptions.accountId, parkedAccounts));
+        } catch (err) {
+          log.error("parked_push_delete_failed", {
+            accounts: parkedAccounts.length, err,
+            reason: "push subscriptions of parked accounts could not be deleted this pass; " +
+              "the delete repeats next pass",
+          });
+        }
       }
 
       const desired = new Map(served.map((m) => [m.mailboxId, m]));
@@ -2980,7 +3065,10 @@ export async function startWorkerWithLock(
       }
 
       // LAST in the pass, and the only place `sync_blocked_reason` is written. See below.
-      await reconcileSyncBlocks(selected);
+      // The parked rows ride along (mail 0124): they are filtered out of `selected` by
+      // construction, and the writer below is what puts `account_closed` on them — and what
+      // clears it, because an un-parked account's rows re-enter `selected` with no bucket.
+      await reconcileSyncBlocks([...selected, ...roster.parked]);
     }
 
     /**
@@ -3000,7 +3088,8 @@ export async function startWorkerWithLock(
         const block = leaseBlocked.get(mb.mailboxId)
           ?? awaitingCreds.get(mb.mailboxId)
           ?? capDropped.get(mb.mailboxId)
-          ?? readLimited.get(mb.mailboxId);
+          ?? readLimited.get(mb.mailboxId)
+          ?? parkedBlocked.get(mb.mailboxId);
         try {
           // `>=`, so a grace of 0 writes on the first observation — which is what the roster guards
           // configure. The narrowing is written inline rather than hoisted into a `due` boolean
@@ -4067,7 +4156,7 @@ export async function startWorkerWithLock(
       let passMailboxes = dutyMailboxes;
       try {
         passMailboxes = await asDatabaseFault("cycle.loadServedAccounts",
-          () => loadEnabledMailboxes(db, selection));
+          () => loadEnabledMailboxes(db, selection, new Date(), parkedAccountsReader));
       } catch (err) {
         noteIfSharedDatabaseFault(err);
         log.error("served_accounts_load_failed", {
@@ -5298,6 +5387,7 @@ export async function startWorkerWithLock(
           // The API-cron schedule's per-target report — a memory read like everything else
           // here. `[]` when the arm is unconfigured, on shards > 0, or after quiescing.
           apiCron: apiCron?.health() ?? [],
+          parkedReader: parkedAccountsReader ? "composed" : "absent",
         };
       },
       stop(): Promise<void> {

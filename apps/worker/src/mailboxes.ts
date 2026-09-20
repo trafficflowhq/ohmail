@@ -237,6 +237,20 @@ export async function loadEnabledMailboxes(
   db: WorkerDb, selection: MailboxSelection = {}, now: Date = new Date(),
   parkedAccounts?: ParkedAccountsReader,
 ): Promise<EnabledMailbox[]> {
+  return (await loadRosterMailboxes(db, selection, now, parkedAccounts)).served;
+}
+
+/**
+ * {@link loadEnabledMailboxes} with the PARKED half visible: the roster pass needs the rows a
+ * parked account keeps — to stand their organizer down once and to write
+ * `sync_blocked_reason = 'account_closed'` — and a loader that filtered them away made the park
+ * indistinguishable from a disabled mailbox. `served` is exactly what `loadEnabledMailboxes`
+ * answers; `parked` is the same projection for the accounts the reader named.
+ */
+export async function loadRosterMailboxes(
+  db: WorkerDb, selection: MailboxSelection = {}, now: Date = new Date(),
+  parkedAccounts?: ParkedAccountsReader,
+): Promise<{ served: EnabledMailbox[]; parked: EnabledMailbox[] }> {
   const { shards, shardIndex } = validateShard(selection);
 
   const filters: SQL[] = [ne(mailboxes.status, "disabled")];
@@ -272,29 +286,31 @@ export async function loadEnabledMailboxes(
   const parked = parkedAccounts && ids.length > 0
     ? await parkedAccounts(ids, now)
     : new Set<string>();
-  return rows
-    .filter((r) => !parked.has(r.accountId))
-    .map((r) => ({
-      accountId: r.accountId, mailboxId: r.id, provider: r.provider, address: r.address, status: r.status,
-      takeoverAuthorizedAt: r.takeoverAuthorizedAt ?? null,
-      // COERCED, never trusted — `join` is the safe direction, as `reader` is below.
-      takeoverIntent: r.takeoverIntent === "takeover" ? "takeover" : "join",
-      disabledReason: r.disabledReason ?? null,
-      // COERCED, never trusted — see the field. `reader` is the safe direction.
-      organizerRole: isOrganizerRole(r.organizerRole) ? r.organizerRole : "reader",
-      organizedByKind: r.organizedByKind ?? null,
-      organizedByName: r.organizedByName ?? null,
-      organizedSince: r.organizedSince ?? null,
-      organizerState: r.organizerState ?? null,
-      organizedByCapabilities: r.organizedByCapabilities ?? null,
-      organizedByInstallId: r.organizedByInstallId ?? null,
-      organizeConsentedAt: r.organizeConsentedAt ?? null,
-      releaseRequestedAt: r.releaseRequestedAt ?? null,
-      syncBlockedReason: r.syncBlockedReason ?? null,
-      retryAfter: r.retryAfter ?? null,
-      retryCount: r.retryCount ?? 0,
-      smtpMaxSizeBytes: r.smtpMaxSizeBytes ?? null,
-    }));
+  const shape = (r: (typeof rows)[number]): EnabledMailbox => ({
+    accountId: r.accountId, mailboxId: r.id, provider: r.provider, address: r.address, status: r.status,
+    takeoverAuthorizedAt: r.takeoverAuthorizedAt ?? null,
+    // COERCED, never trusted — `join` is the safe direction, as `reader` is below.
+    takeoverIntent: r.takeoverIntent === "takeover" ? "takeover" : "join",
+    disabledReason: r.disabledReason ?? null,
+    // COERCED, never trusted — see the field. `reader` is the safe direction.
+    organizerRole: isOrganizerRole(r.organizerRole) ? r.organizerRole : "reader",
+    organizedByKind: r.organizedByKind ?? null,
+    organizedByName: r.organizedByName ?? null,
+    organizedSince: r.organizedSince ?? null,
+    organizerState: r.organizerState ?? null,
+    organizedByCapabilities: r.organizedByCapabilities ?? null,
+    organizedByInstallId: r.organizedByInstallId ?? null,
+    organizeConsentedAt: r.organizeConsentedAt ?? null,
+    releaseRequestedAt: r.releaseRequestedAt ?? null,
+    syncBlockedReason: r.syncBlockedReason ?? null,
+    retryAfter: r.retryAfter ?? null,
+    retryCount: r.retryCount ?? 0,
+    smtpMaxSizeBytes: r.smtpMaxSizeBytes ?? null,
+  });
+  return {
+    served: rows.filter((r) => !parked.has(r.accountId)).map(shape),
+    parked: rows.filter((r) => parked.has(r.accountId)).map(shape),
+  };
 }
 
 /**
@@ -1135,7 +1151,19 @@ export async function markMailboxStoodDown(
  * RELEASED arm and answers `null`. The release request is SPENT here (like `takeover_authorized_at`), or it would answer every later gate and an install asked to stop could never be asked to start. FENCED like every lifecycle write.
  */
 export async function markMailboxReleased(
-  db: WorkerDb, mailboxId: string, opts: { fence?: LeaderFence; now?: Date } = {},
+  db: WorkerDb, mailboxId: string,
+  opts: {
+    fence?: LeaderFence; now?: Date;
+    /**
+     * WHAT AUTHORIZED THIS RELEASE (mail 0124, the wall). The default is the person's standing
+     * request, guarded below by `releaseRequestedAt IS NOT NULL` so a stale write cannot undo a
+     * newer "Organize here" press. `account_parked` is the roster standing Cloud down because the
+     * account's subscription ended: there is no request to spend, so the guard is
+     * `organizer_role = 'organizer'` instead — once per closure by the row's own state, and a row
+     * already a reader (somebody else organizes, or the park already ran) is never touched.
+     */
+    cause?: "release_request" | "account_parked";
+  } = {},
 ): Promise<boolean> {
   return applyFenced(db, mailboxId, opts.fence, (w) => w.update(mailboxes).set({
     organizerRole: "reader",
@@ -1169,14 +1197,17 @@ export async function markMailboxReleased(
     organizerEventAt: opts.now ?? new Date(),
   }).where(and(
     lifecycleWhere(mailboxId, opts.fence),
-    /* THE REQUEST MUST STILL BE STANDING. A worker carries a release decision from the start of
-       its cycle to the write at the end of it, and in between the person can press "Organize
-       here" — which cancels the request and writes a takeover. Without this the stale write won:
-       it cleared the newer takeover and released a mailbox against the person's LAST press, which
-       is the control undoing itself. Requiring the stamp it was authorised by to still be there
-       makes the losing order harmless rather than merely unlikely — the same argument the
-       `FOR UPDATE` on the service side already makes for two presses racing each other. */
-    isNotNull(mailboxes.releaseRequestedAt),
+    /* THE REQUEST MUST STILL BE STANDING (the default cause). A worker carries a release decision
+       from the start of its cycle to the write at the end of it, and in between the person can
+       press "Organize here" — which cancels the request and writes a takeover. Without this the
+       stale write won: it cleared the newer takeover and released a mailbox against the person's
+       LAST press, which is the control undoing itself. Requiring the stamp it was authorised by
+       to still be there makes the losing order harmless rather than merely unlikely — the same
+       argument the `FOR UPDATE` on the service side already makes for two presses racing.
+       The PARK cause has no request to spend; its guard is the role itself (see `cause`). */
+    opts.cause === "account_parked"
+      ? eq(mailboxes.organizerRole, "organizer")
+      : isNotNull(mailboxes.releaseRequestedAt),
   )).returning({ id: mailboxes.id }));
 }
 
