@@ -1,16 +1,11 @@
 /**
  * WHAT THE ACCOUNT DOOR SAYS ABOUT THIS ACCOUNT — the two reads the wall and its strips need.
  *
- * `GET /account/access` is the ONE fresh read (`routes/account.ts`): every other door keeps the
- * 60 s cache, so a strip that must see a reopening within seconds asks here. It sits on the
- * refusal allow-list, so a CLOSED account reaches it and gets the lifecycle, the manage link and
- * the export path back.
- *
- * `GET /account/export` is the settings document — rules, Screener decisions, the knobs a
- * self-hosted install reads when it takes this mailbox over. `cost: "read"`, no credentials, no
- * mail: the mailbox has the mail and always did.
- *
- * Neither is reachable on the standalone door, which has no plane — both answer `null` there
+ * `GET /account/access` is the ONE fresh read: every other door keeps the 60 s cache, so a strip
+ * that must see a reopening within seconds asks here, and it is on the refusal allow-list, so a
+ * CLOSED account reaches it. `GET /account/export` is the settings document — rules, Screener
+ * decisions, the knobs a self-hosted install reads when it takes this mailbox over; no mail.
+ * Neither is reachable on the standalone door, which has no plane: both answer `null` there
  * rather than inventing a state, and the caller draws nothing.
  */
 

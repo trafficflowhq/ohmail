@@ -1,14 +1,12 @@
 /**
  * THE WALL — what an account the service has refused sees instead of its mail, on the phone.
  *
- * Three things it has to do, and the browser's wall does the same three in the same order: say
- * WHAT HAPPENED AND WHEN; say that the MAILBOX IS UNTOUCHED, because a screen that only says no
- * reads as data loss; and leave every door open, because a lock with no way out is a trap. It
- * deletes nothing and wipes nothing of its own.
+ * Three things, in the browser wall's order: say WHAT HAPPENED AND WHEN; say that the MAILBOX IS
+ * UNTOUCHED, because a screen that only says no reads as data loss; and leave every door open,
+ * because a lock with no way out is a trap. It deletes nothing and wipes nothing of its own.
  *
- * It DECIDES nothing: `wall-says.ts` answers the lines and the actions, this renders them. There
- * is no React Native renderer in this workspace, so a screen that chose its own sentences would be
- * a screen nothing measures.
+ * It DECIDES nothing — `wall-says.ts` answers the lines and the actions, this renders them: there
+ * is no React Native renderer here, so a screen choosing its own sentences measures nothing.
  */
 
 import { useCallback, useState } from "react";

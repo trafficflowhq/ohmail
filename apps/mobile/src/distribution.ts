@@ -1,16 +1,12 @@
 /**
  * WHICH WAY THIS COPY WAS DISTRIBUTED, decided at BUILD time and never guessed at runtime.
  *
- * The desktop's `distribution.ts` twin, with its default INVERTED, and the inversion is the whole
- * point: every phone build this project ships goes to a store (App Store, TestFlight, Play), so a
- * phone that does not know what it is IS a store copy. A store copy may not send anybody to a page
- * where a subscription is bought — App Review 3.1.1 and Play's billing rule — so the withholding
- * face has to be the one an unstamped build lands on. A runtime sniff (a receipt, an install
- * source, a bundle id) answers differently under a test, a sideload and a simulator, and the one
- * thing this may never do is show a purchase door because a probe returned the wrong thing.
+ * The desktop's twin with its default INVERTED, which is the point: every phone build this project
+ * ships goes to a store, so a build that does not know what it is IS a store copy. A store copy may
+ * not open a page where a subscription is bought (App Review 3.1.1, Play's billing rule), and a
+ * runtime sniff answers differently under a test, a sideload and a simulator.
  *
- * `sideload` is the flag a developer or an internal build sets deliberately. It changes exactly
- * one surface: whether the wall may offer the button that opens the account page.
+ * `sideload` is set deliberately, and moves one surface: whether the wall offers that button.
  */
 
 /** Every distribution this app knows. `store` is the default and what an unstamped build is. */

@@ -1,16 +1,12 @@
 /**
- * THE ACCOUNT WALL'S ONE SINK — every authenticated request this phone makes rides the paired
- * session's transport, and every hosted door may answer `402 subscription_required`. Handling it
- * where it lands would mean meeting the refusal one failed read at a time, each screen saying its
- * own thing; the shell subscribes here instead and swaps the whole surface for one screen.
+ * THE ACCOUNT WALL'S ONE SINK — every authenticated request rides the paired session's transport,
+ * and any hosted door may answer `402 subscription_required`. Meeting it where it lands would be
+ * one failed read at a time, each screen saying its own thing; the shell subscribes here instead.
  *
- * THE KEY IS THE CODE, never the `reason`: `reason` is display text the API may reword, and the
- * phone already had one place comparing it (`state/live.ts`'s trash page) that never matched the
- * gate's answer. The lock is raised by a notifier and the `Response` is handed back untouched, so
- * nothing that already handles a refusal changes behaviour.
- *
- * A STANDALONE phone has no plane and no bearer, so it can never raise one — the wrap is composed
- * beside the paired door's manager and nowhere else (`net/pairing.ts`).
+ * THE KEY IS THE CODE, never the `reason`, which is display text the API may reword — one place
+ * compared it (`state/live.ts`) and never matched the gate. The `Response` is handed back
+ * untouched. A STANDALONE phone has no plane: the wrap sits beside the paired door's manager
+ * alone (`net/pairing.ts`) and can never raise one.
  */
 
 /** What the entitlements gate answers, and the one code that means this ACCOUNT, not this request. */
@@ -164,13 +160,12 @@ function tell(): void {
 /**
  * RAISE THE WALL — and it does not come down on its own.
  *
- * A LATER 200 CLEARS NOTHING (the browser shell's rule, kept): a refused account's own reads
- * still answer (`/account/access`, the export), and a cached page answering 200 behind the wall
- * would flicker the app back for a person whose account is closed. Signing in again clears it,
- * and nothing else does — {@link clearAccessLock}.
+ * A LATER 200 CLEARS NOTHING (the browser shell's rule): a refused account's own reads still
+ * answer, and a cached page answering 200 behind the wall would flicker the app back for somebody
+ * whose account is closed. Signing in again clears it and nothing else does
+ * ({@link clearAccessLock}).
  *
- * The NEWEST facts win while it stands: a wall already up re-renders with a later closure's date
- * rather than keeping the first one it heard.
+ * The NEWEST facts win while it stands: a later closure's date replaces the first one heard.
  */
 export function raiseAccessLock(facts: AccessRefusedFacts): void {
   locked = facts;
@@ -201,15 +196,12 @@ type FetchLike = (url: string, init?: unknown) => Promise<Response>;
 /**
  * Wrap a paired session's transport so a 402 raises the wall once, for the whole app.
  *
- * The body is READ AND REBUILT rather than cloned, and that is React Native's shape rather than a
- * preference: this runtime's `Response` is `whatwg-fetch`'s, whose `body` property does not exist
- * — a copy made from `res.body` arrives EMPTY and every caller downstream reads a truncated
- * answer. A `Response` built from the TEXT is exact on both runtimes. Only a 402 pays for it; every
- * other answer is handed back the very object the transport returned.
+ * The body is READ AND REBUILT rather than cloned, which is React Native's shape and not a
+ * preference: this runtime's `Response` is `whatwg-fetch`'s, whose `body` property does not exist,
+ * so a copy made from it arrives EMPTY. Only a 402 pays for it.
  *
- * A read that throws says NOTHING: no wall, and the original response is still returned, because a
- * refusal this client could not read is not one it may act on — and the caller's own handling of
- * the 402 must not be replaced by this module's failure.
+ * A read that throws says NOTHING — no wall, the original response returned, the caller's own
+ * handling of the 402 intact.
  */
 export function withAccessLock(inner: FetchLike): FetchLike {
   return async (url, init) => {

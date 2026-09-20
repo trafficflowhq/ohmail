@@ -5,10 +5,8 @@
  * a lie about what has happened. It decides nothing — `lifecycle-strip.ts` answers which notice
  * there is and whether it was put away; this renders it and presses.
  *
- * NO AUTO RE-CLAIM ANYWHERE (DUAL-MODE §4, no seize-back): ohmail released every lease when the
- * account closed and does not take one back on its own. The press that resumes organizing is the
- * one the Settings screen already has, reached by route rather than rebuilt here — it carries the
- * ceremony that door demands.
+ * NO AUTO RE-CLAIM (DUAL-MODE §4): ohmail released every lease when the account closed, and the
+ * press that resumes organizing is the Settings screen's own, reached by route with its ceremony.
  */
 
 import { useCallback, useEffect, useState } from "react";

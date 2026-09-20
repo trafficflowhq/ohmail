@@ -1,9 +1,8 @@
 /**
  * WHAT THE WALL SAYS, as data — every decision the closed-account screen makes, in one pure
  * function the suite drives. There is no React Native renderer in this workspace
- * (`test/mail-row-badges-spoken.test.ts` states the rule), so a screen that decided anything
- * inside its own JSX would be a screen nothing measures; `AccountWall.tsx` renders this list and
- * chooses nothing.
+ * (`test/mail-row-badges-spoken.test.ts` states the rule), so a screen that decided anything in
+ * its own JSX would measure nothing; `AccountWall.tsx` renders this list and chooses nothing.
  *
  * The sentences are the browser wall's, in the same order, because one account must not read two
  * different accounts of itself on two devices. What differs is the LAST step of each action: a
