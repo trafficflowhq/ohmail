@@ -98,7 +98,11 @@ export function noticesDue(lc: AccessLifecycle, now: Date): DueNotice[] {
       out.push({ kind: "trial_two_days", anchor: trialEndsAt, erasureAt: null });
     }
   }
-  if (lc.state === "closed" && closedAt !== null) {
+  // An operator HOLD is not a departure. The closed notice sells re-subscription, which reopens
+  // nothing while staff hold the account, so a suspended closure owes no mail and claims no row —
+  // the hold is communicated by the operator. `erasureAt` is null while suspended (the port's own
+  // contract), so the erasure notice below and the erasure itself cannot fire for one either.
+  if (lc.state === "closed" && closedAt !== null && lc.closedReason !== "suspended") {
     out.push({ kind: "closed", anchor: closedAt, erasureAt });
     if (erasureAt !== null) {
       const ahead = erasureAt.getTime() - now.getTime();
