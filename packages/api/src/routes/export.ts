@@ -8,7 +8,6 @@ import type { Route } from "../router.js";
 
 /**
  * `GET /account/export` — the way out with your configuration (the wall, cloud 0040's slice).
- *
  * ONE document: the organizer profile per mailbox — THE SAME serializer the worker publishes
  * into `ohmail/_meta` (`serializeOrganizerProfile`, v2 canonical), so a self-hosted install that
  * joins the mailbox reads the identical configuration this export hands out — plus the

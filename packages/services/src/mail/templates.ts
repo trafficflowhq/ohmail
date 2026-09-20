@@ -6,8 +6,7 @@
  * is TEXT. (2) Text AND html for every one — the text part is the real message, not a stub. (3)
  * Every interpolation is escaped (`esc`) and every URL validated (`safeUrl`), because template
  * data carries user-controlled strings. (4) Factual microcopy — receipts and security signals, no
- * slogans. English for beta, except the lifecycle notices, which follow the account's own
- * locale (en/de) because they are the one mail a person gets when they stopped paying attention.
+ * slogans. English for beta, except the lifecycle notices, which follow the account's locale.
  */
 
 // ─────────────────────────────────────────────────────────────────────────────

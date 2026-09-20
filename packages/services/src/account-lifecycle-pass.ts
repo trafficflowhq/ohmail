@@ -10,17 +10,14 @@ import type { MailContext } from "./mail/index.js";
 
 /**
  * THE NIGHTLY ACCOUNT-LIFECYCLE PASS (cloud 0040, the wall) — the reminder mails and the erasure.
- *
  * It iterates `accounts WHERE erased_at IS NULL` having at least one user, reads the plane's
  * verdict once per account, and owes at most one mail per FACT: idempotency is DERIVED from the
  * `account_lifecycle_notices` PRIMARY KEY (account, kind, anchor), where `anchor` is the plane's
- * own ISO instant — `trialEndsAt`, `closedAt`, `erasureAt` — never a clock read here. No state
- * machine, no closure table: a re-run inserts nothing, a NEW closure is a new anchor.
- *
- * The ERASURE runs here and in `DELETE /account`, and NOWHERE ELSE: when `erasureAt + 24 h <=
- * now` (a day of slack, so plane↔API clock skew cannot fire an erasure early), the pass stops
- * the money through the port and then calls `deleteAccount` exactly as the route does.
- * `accounts.erased_at` non-null is the skip — the iteration never sees an erased account again.
+ * own ISO instant — never a clock read here. No state machine, no closure table: a re-run
+ * inserts nothing, a NEW closure is a new anchor. The ERASURE runs here and in `DELETE /account`
+ * and NOWHERE ELSE: when `erasureAt + 24 h <= now` (a day of slack, so plane↔API clock skew
+ * cannot fire an erasure early), the pass stops the money through the port and calls
+ * `deleteAccount` exactly as the route does; `accounts.erased_at` non-null is the skip.
  */
 
 /** How far ahead the trial reminder looks — "two days left", the flow's own words. */
