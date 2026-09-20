@@ -132,3 +132,83 @@ export async function fetchWithDeadline(
 ): Promise<Response> {
   return doFetch(url, { ...init, signal: AbortSignal.timeout(timeoutMs) });
 }
+
+
+/** How a key-carrying provider's catalogue is reached and what it may not offer. */
+export interface KeyedCatalogueProbe {
+  fetchImpl: typeof fetch;
+  timeoutMs: number;
+  headers: Record<string, string>;
+  /** The catalogue URL — built from a LITERAL base, never an address anybody configured. */
+  listUrl: string;
+  /** One configured model's URL, by name. */
+  modelUrl: (model: string) => string;
+  /** The configured models; each DISTINCT one is asked for. */
+  models: string[];
+  /**
+   * Ids this endpoint lists but cannot answer a chat request with — dropped from the picker and
+   * refused up front when one is configured. Absent where the whole catalogue is chat.
+   */
+  notChat?: { test: (id: string) => boolean; detail: (model: string) => string };
+}
+
+/**
+ * VERIFY A KEY AND ITS MODELS WITHOUT RUNNING INFERENCE — the shape both key-carrying providers
+ * share. Listing authenticates (a wrong, revoked or empty key is a 401 there) and asking for each
+ * configured model BY NAME is exact, which a list is not: aliases and dated snapshots need not
+ * both appear in one page for both to be valid. Deliberately free — a verification that ran a
+ * real completion would spend the account holder's money every time they pressed Save. An
+ * unreadable catalogue is not a refusal: the models are still asked for by name, which is the
+ * exact test.
+ */
+export async function probeKeyedCatalogue(opts: KeyedCatalogueProbe): Promise<ProbeOutcome> {
+  let models: string[] = [];
+  try {
+    const res = await fetchWithDeadline(opts.fetchImpl, opts.listUrl, {
+      method: "GET", headers: opts.headers, redirect: "error",
+    }, opts.timeoutMs);
+    if (!res.ok) {
+      return {
+        ok: false,
+        reason: statusFailure(res.status),
+        detail: shortDetail(await res.text()),
+        models: [],
+      };
+    }
+    const body = (await res.json()) as { data?: Array<{ id?: unknown }> };
+    models = Array.isArray(body.data)
+      ? body.data
+          .map((m) => m.id)
+          .filter((id): id is string => typeof id === "string")
+          .filter((id) => opts.notChat === undefined || !opts.notChat.test(id))
+      : [];
+  } catch (err) {
+    return { ok: false, reason: failureOf(err), detail: null, models: [] };
+  }
+
+  for (const model of new Set(opts.models)) {
+    // Checked BEFORE the round trip: this one is answerable from the name alone, and a request
+    // that would succeed and still leave the model unusable is worth not making.
+    if (opts.notChat?.test(model)) {
+      return { ok: false, reason: "model_absent", detail: opts.notChat.detail(model), models };
+    }
+    try {
+      const res = await fetchWithDeadline(
+        opts.fetchImpl, opts.modelUrl(model),
+        { method: "GET", headers: opts.headers, redirect: "error" },
+        opts.timeoutMs,
+      );
+      if (!res.ok) {
+        return {
+          ok: false,
+          reason: statusFailure(res.status),
+          detail: `the key cannot reach the model "${model}"`,
+          models,
+        };
+      }
+    } catch (err) {
+      return { ok: false, reason: failureOf(err), detail: null, models };
+    }
+  }
+  return { ok: true, reason: null, detail: null, models };
+}

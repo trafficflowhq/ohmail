@@ -8,8 +8,8 @@ import type {
   ClassifierInput, ClassifierResult, DraftInput, DraftResult,
 } from "@trafficflow/core/mail";
 import {
-  fetchWithDeadline, failureOf, shortDetail, statusFailure,
-  type AiKeyTransportOptions, type AiTransport, type ProbeFailure, type ProbeOutcome,
+  fetchWithDeadline, probeKeyedCatalogue,
+  type AiKeyTransportOptions, type AiTransport, type ProbeOutcome,
 } from "./ai-transport.js";
 
 /**
@@ -160,56 +160,15 @@ export function anthropicTransport(opts: AnthropicTransportOptions): AiTransport
       return coerceDraftResult(raw);
     },
 
-    /**
-     * Verify the key and the two models WITHOUT running inference. Listing models authenticates (a
-     * wrong, revoked or empty key is a 401 here) and asking for each configured model by name is
-     * exact, which a list is not — aliases and dated snapshots need not both appear in one page for
-     * both to be valid. Deliberately free: a verification that ran a real completion would spend the
-     * account holder's money every time they pressed Save, a settings pane charging for being opened.
-     */
+    /** Verify the key and the two models without inference — {@link probeKeyedCatalogue}'s rule. */
     async probe(): Promise<ProbeOutcome> {
-      let models: string[] = [];
-      try {
-        const res = await fetchWithDeadline(opts.fetchImpl, `${ANTHROPIC_BASE}/v1/models?limit=100`, {
-          method: "GET", headers, redirect: "error",
-        }, opts.timeoutMs);
-        if (!res.ok) {
-          return {
-            ok: false,
-            reason: statusFailure(res.status),
-            detail: shortDetail(await res.text()),
-            models: [],
-          };
-        }
-        const body = (await res.json()) as { data?: Array<{ id?: unknown }> };
-        models = Array.isArray(body.data)
-          ? body.data.map((m) => m.id).filter((id): id is string => typeof id === "string")
-          : [];
-      } catch (err) {
-        return { ok: false, reason: failureOf(err), detail: null, models: [] };
-      }
-
-      for (const model of new Set([opts.classifyModel, opts.draftModel])) {
-        try {
-          const res = await fetchWithDeadline(
-            opts.fetchImpl,
-            `${ANTHROPIC_BASE}/v1/models/${encodeURIComponent(model)}`,
-            { method: "GET", headers, redirect: "error" },
-            opts.timeoutMs,
-          );
-          if (!res.ok) {
-            return {
-              ok: false,
-              reason: statusFailure(res.status),
-              detail: `the key cannot reach the model "${model}"`,
-              models,
-            };
-          }
-        } catch (err) {
-          return { ok: false, reason: failureOf(err), detail: null, models };
-        }
-      }
-      return { ok: true, reason: null, detail: null, models };
+      return probeKeyedCatalogue({
+        fetchImpl: opts.fetchImpl, timeoutMs: opts.timeoutMs, headers,
+        listUrl: `${ANTHROPIC_BASE}/v1/models?limit=100`,
+        modelUrl: (m) => `${ANTHROPIC_BASE}/v1/models/${encodeURIComponent(m)}`,
+        models: [opts.classifyModel, opts.draftModel],
+        // No name test: this vendor's catalogue is all chat models.
+      });
     },
   };
 }
