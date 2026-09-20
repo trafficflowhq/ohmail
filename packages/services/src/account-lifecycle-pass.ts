@@ -15,9 +15,8 @@ import type { MailContext } from "./mail/index.js";
  * `account_lifecycle_notices` PRIMARY KEY (account, kind, anchor), where `anchor` is the plane's
  * own ISO instant — never a clock read here. No state machine, no closure table: a re-run
  * inserts nothing, a NEW closure is a new anchor. The ERASURE runs here and in `DELETE /account`
- * and NOWHERE ELSE: when `erasureAt + 24 h <= now` (a day of slack, so plane↔API clock skew
- * cannot fire an erasure early), the pass stops the money through the port and calls
- * `deleteAccount` exactly as the route does; `accounts.erased_at` non-null is the skip.
+ * and NOWHERE ELSE: when `erasureAt + 24 h <= now` (a day of slack against plane↔API clock skew)
+ * it stops the money and calls `deleteAccount` as the route does; `erased_at` is the skip.
  */
 
 /** How far ahead the trial reminder looks — "two days left", the flow's own words. */
