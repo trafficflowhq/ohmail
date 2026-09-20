@@ -18,6 +18,145 @@ See [Status](README.md#status--read-this-first).
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
 [Roadmap](README.md#roadmap).
 
+## [0.21.0] — 2026-09-20
+
+### The README opens with the features, and wears both faces
+
+The install table follows the features. The README gained a twin, `README.ohmarchy.md` — the same
+page wearing the ohmarchy face — and a paper/ohmarchy switch above the first screenshot that links
+the two files, in light and dark.
+
+### Attachments in the phone composer
+
+Replies and forwards on the phone can now carry files and photos, picked from the phone's file
+picker or photo library, each shown with its size and removable before sending. The stated size
+limit is the one the send enforces, derived from the mail server's own announcement — the same
+rule the web and desktop composers read. A message with only an attachment sends without text;
+an empty one is refused with "Write something or attach a file."
+
+### Undo and Trash on the phone
+
+- Every mail verb on the phone shows an Undo in its toast, Delete waits a few seconds before
+  it is sent, and a new Trash view under More lists what you deleted and puts it back with one
+  press.
+
+### The phone shows the whole message
+
+A message on the phone used to be its text alone: no formatting, no embedded pictures, and
+attachment tiles that could not open anything. The reader now renders the html part —
+newsletters keep their layout, a signature logo or a pasted screenshot displays in place at its
+stored size, bounded to the screen — and every attachment opens through the phone's own share
+sheet. The protections are the web reader's, verbatim: remote images are blocked until "Show
+images", tracking pixels stay refused even after it, and a link opens only after a confirm that
+names the real destination. "Show as text" returns any message to the app's own type.
+
+### Upgrading past the held-release migration
+
+- A database that already ran the held-release migration accepts the corrected version of that
+  file instead of stopping the upgrade.
+
+### A replayed mail journal no longer stops on the held-release migration
+
+Self-hosted stores that re-run the mail migration journal failed on the held-release entry, which
+added its length constraint without checking whether the database already had it. It now applies
+cleanly however many times it runs.
+
+### Server hardening — isolation and admin checks held by tests
+
+The rules an internal review verified — account isolation on every query, one home for the
+operations console's second-factor read, the connection-test guard wired in every server build —
+are now enforced by tests. No behaviour changes.
+
+### Storage
+
+- The server prunes sync history, audit entries and sign-in events on a stated schedule; a
+  client away past the horizon re-syncs cleanly.
+
+### A stop blocked by a restored copy of your computer now says so
+
+A "Stop organizing here" refused because a cloned or restored copy of this computer keeps
+renewing its claim used to read as an ordinary "Stopping…" forever. The mailbox settings on the
+desktop and in the browser now say it plainly — another copy of this computer keeps organizing
+this mailbox until its claim lapses — and the stop completes on its own once that copy stops
+renewing.
+
+### A request the local engine never answers ends in a sentence
+
+Presses against the local engine carry a deadline: a wedged-but-alive engine no longer leaves a
+press pending forever — after a minute the pane says the engine did not answer and the request
+was given up.
+
+### Reading on a foldable and on a phone held sideways
+
+- On a foldable's closed face and a phone held sideways the message list no longer runs under the
+  navigation rail, so dates and the Screener pill stay readable.
+
+### The mailbox paints faster on a full account: the Screener queue derives just after the first paint instead of before it, and the Settings and Compose panes load when opened
+
+
+### Upgrades on large databases
+
+- Schema migrations follow an enforced lock-cost rule, so a future upgrade cannot block writes
+  on large tables while a constraint or index is built.
+
+### The tablet reader's toolbar fits its pane
+
+- On a tablet or an unfolded phone, the reader's pinned toolbar now shows every control that
+  fits the pane instead of folding them behind More, and re-fits itself when the device
+  rotates or unfolds.
+
+### The desktop names the mailbox whose sync is failing
+
+A desktop with several mailboxes showed one anonymous "Sync failed. Retrying.", and a mailbox
+whose server had gone away could keep claiming health in Settings. Each mailbox now carries its
+own verdict — a refused sign-in says so at once, a connection dead for more than two minutes says
+the server is unreachable — and the sentence clears by itself when a sync completes. The sync
+strip names the failing mailbox's address.
+
+### Every filing verb can now be taken back
+
+Answer Later, Park, Resurface, Done, tags and the bulk verbs raise one toast: a sentence naming what happened, with Undo beside it. Undo puts the mail back exactly where it was, and `z` presses it from the keyboard while the toast stands.
+
+### After you act on a message the reader moves to the next one, and the reading pane stays reachable while it is open
+
+
+### The phone sends again when it organizes its own mailbox
+
+Sending and replying from a phone that organizes its own mailbox failed before the message left:
+the app refused the name lookup its mail client makes before connecting. The lookup is answered
+now, and the connection is made to the server's name as it always was.
+
+### One navigation on every device
+
+- The phone's navigation is one floating glass dock or rail, placed for how the device is
+  held — the bottom dock with a search pill on phones, a vertical rail on the edge of a
+  folding device — with search one tap away everywhere.
+
+### Mail beside the list on big screens
+
+- On a tablet or an unfolded phone, mail opens beside the list with the same controls the
+  desktop has, and nothing moves when the device folds.
+
+### The desktop build refuses a lockfile that drifted from its manifest
+
+Every cargo step in the release workflow now runs `--locked`, so a release cannot ship what a
+locked build would refuse — a dependency change that missed the lockfile fails in CI instead of
+on a packager's machine.
+
+### The Flathub source check no longer passes over a lockfile it never opened
+
+`flathub-manifest.mjs --check` is how a release finds out whether the generated Flatpak source
+lists still cover every dependency an offline build resolves. Run without a published checkout it
+read only the two lockfiles in this repository, found nothing wrong with either and reported
+success — while the list it could not check was the one a Flathub build installs first. It now
+refuses that reading by name and says which lockfiles it did cover.
+
+### The Reads pile is now called News
+
+Newsletters now land in the News pile — the same pile under a new name, on every
+surface and in both languages. The folder in your mailbox keeps its name, so
+other mail clients see the same folders as before.
+
 ## [0.20.1] — 2026-09-19
 
 ### Removing a mailbox
@@ -7276,7 +7415,8 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.20.1...HEAD
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.21.0...HEAD
+[0.21.0]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.21.0
 [0.20.1]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.20.1
 [0.20.0]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.20.0
 [0.19.6]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.19.6

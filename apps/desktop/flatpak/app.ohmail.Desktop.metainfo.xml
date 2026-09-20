@@ -74,6 +74,35 @@
   </screenshots>
 
   <releases>
+    <release version="0.21.0" date="2026-09-20">
+      <description>
+        <ul>
+          <li>The README opens with the features, and wears both faces</li>
+          <li>Attachments in the phone composer</li>
+          <li>Undo and Trash on the phone</li>
+          <li>The phone shows the whole message</li>
+          <li>Upgrading past the held-release migration</li>
+          <li>A replayed mail journal no longer stops on the held-release migration</li>
+          <li>Server hardening — isolation and admin checks held by tests</li>
+          <li>Storage</li>
+          <li>A stop blocked by a restored copy of your computer now says so</li>
+          <li>A request the local engine never answers ends in a sentence</li>
+          <li>Reading on a foldable and on a phone held sideways</li>
+          <li>The mailbox paints faster on a full account: the Screener queue derives just after the first paint instead of before it, and the Settings and Compose panes load when opened</li>
+          <li>Upgrades on large databases</li>
+          <li>The tablet reader's toolbar fits its pane</li>
+          <li>The desktop names the mailbox whose sync is failing</li>
+          <li>Every filing verb can now be taken back</li>
+          <li>After you act on a message the reader moves to the next one, and the reading pane stays reachable while it is open</li>
+          <li>The phone sends again when it organizes its own mailbox</li>
+          <li>One navigation on every device</li>
+          <li>Mail beside the list on big screens</li>
+          <li>The desktop build refuses a lockfile that drifted from its manifest</li>
+          <li>The Flathub source check no longer passes over a lockfile it never opened</li>
+          <li>The Reads pile is now called News</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.20.1" date="2026-09-19">
       <description>
         <ul>
@@ -179,13 +208,6 @@
       <description>
         <ul>
           <li>The Ohbox list no longer slides under the cursor after a jump</li>
-        </ul>
-      </description>
-    </release>
-    <release version="0.19.3" date="2026-09-17">
-      <description>
-        <ul>
-          <li>Long lists scroll their rows out of view instead of hiding them</li>
         </ul>
       </description>
     </release>
