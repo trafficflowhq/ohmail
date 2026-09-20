@@ -225,7 +225,6 @@ import {
 import { deleteKeyBindings, hideMessages, restoreDispatch, UNDO_MS, useDeleteIntentReplay, useDeleteUndo } from "./delete-undo";
 /* Move/File/Junk → the mail now, the sender's routing after the window. See the module. */
 import { useRoutingUndo } from "./routing-undo";
-import { createIntentWindows, intentWindowsChannel } from "./intent-windows";
 import { isModalOpen } from "./modal-gate";
 import { useStableCallback } from "./stable-callback";
 import { mailboxLabelKey, mailboxLabelResolver } from "./mailbox-label";
@@ -1529,27 +1528,12 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
    * `UNDO_MS`, cancelled by Undo, sent unchanged when the window closes. Demo excluded, for
    * `useDeleteIntentReplay`'s reason.
    */
-  /**
-   * ONE COORDINATOR ON ITS OWN CHANNEL. The journal is per ORIGIN, so a second tab's launch would
-   * otherwise commit a press this one is counting down and leave its Undo reporting success over
-   * a written rule. The channel is the Screener's SUFFIXED: a `BroadcastChannel` reaches every
-   * other channel object in the document, so two coordinators sharing a name would each answer
-   * the other's roll-call with rows it never heard of.
-   */
-  const routingWindows = useMemo(
-    () => (typeof BroadcastChannel === "undefined"
-      ? undefined
-      : createIntentWindows({ channel: `${intentWindowsChannel()}.routing` })),
-    [],
-  );
-  useEffect(() => () => routingWindows?.close(), [routingWindows]);
   const routing = useRoutingUndo({
     read: () => engine.read(),
     /* THROUGH `fileAndRefresh`, LIKE EVERY OTHER FILING DISPATCH — a rule landing re-places the
        sender's mail, so the filing strip's counts are stale until the facts are re-read. */
     send: (m) => fileAndRefresh(engine.mutate(m)),
     toast,
-    windows: routingWindows,
     enabled: !demo,
     copy: useMemo(() => ({
       gone: t("screening.toastRuleSeedGone"),

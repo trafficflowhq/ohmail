@@ -32,6 +32,7 @@ import {
   type ScreenDest,
   type TabWindows,
 } from "@ohmail/client-engine";
+import { createIntentWindows, intentWindowsChannel } from "./intent-windows";
 import { localStorageDoor } from "./durable";
 import { storageOwner } from "./storage-owner";
 import { UNDO_MS } from "./screener-state";
@@ -110,7 +111,12 @@ export interface RoutingUndoDeps {
   send: (m: EngineMutation) => Promise<{ status: MutationStatus }>;
   toast: (sentence: string) => void;
   copy: RoutingUndoCopy;
-  /** The cross-tab coordinator. Absent is "one window on this device", and it is said. */
+  /**
+   * THE CROSS-TAB COORDINATOR, and the hook BUILDS ITS OWN unless a test hands one in. Not a
+   * prop from the shell: a memoized value handed to a hook that keeps memoized closures is
+   * pinned by their frame for as long as they live, which is the mechanism the render-scope
+   * census exists to refuse. Absent here AND in the browser means one window per device, said.
+   */
   windows?: TabWindows | undefined;
   /** The journal's owner, read at BUILD time like every other owner-keyed store. */
   owner?: string | null;
@@ -143,11 +149,26 @@ export function useRoutingUndo(deps: RoutingUndoDeps): RoutingUndo {
    */
   const built = useRef(new Map<string, ScreeningPlan | null>());
 
+  /**
+   * ONE COORDINATOR, ON ITS OWN CHANNEL. The journal is per ORIGIN, so a second tab's launch
+   * would otherwise commit a press this one is counting down and leave its Undo reporting
+   * success over a written rule. The channel is the Screener's SUFFIXED: a `BroadcastChannel`
+   * reaches every other channel object in the document, so two coordinators sharing a name would
+   * each answer the other's roll-call with rows it never heard of.
+   */
+  const coordinator = useMemo<TabWindows | undefined>(
+    () => latest.current.windows
+      ?? (typeof BroadcastChannel === "undefined"
+        ? undefined
+        : createIntentWindows({ channel: `${intentWindowsChannel()}.routing` })),
+    [],
+  );
+
   const window_ = useMemo(() => createRoutingWindow({
     door: localStorageDoor("routing.intents"),
     key: routingIntentsKey(latest.current.owner ?? storageOwner()),
     windowMs: latest.current.windowMs ?? UNDO_MS,
-    ...(latest.current.windows ? { windows: latest.current.windows } : {}),
+    ...(coordinator ? { windows: coordinator } : {}),
     ...(latest.current.now ? { now: () => latest.current.now!() } : {}),
 
     plan: (i) => {
@@ -192,7 +213,7 @@ export function useRoutingUndo(deps: RoutingUndoDeps): RoutingUndo {
       }
       setPlaces(next);
     },
-  }), []);
+  }), [coordinator]);
 
   /**
    * LEAVING COMMITS, and the boot finishes what a killed tab started. `pagehide` rather than

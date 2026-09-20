@@ -12,8 +12,10 @@ import {
   FOLDER_OF_VIEW,
   createRoutingWindow,
   memoryRoutingDoor,
+  presentAt,
   routingIntentsKey,
   type EngineMutation,
+  type EntityReader,
   type Folder,
   type RoutingIntent,
   type RoutingOpen,
@@ -93,4 +95,18 @@ export function undoRouting(subject: string): boolean {
 /** Commit every open window now — backgrounding, and the session teardown. Leaving is not undo. */
 export function flushRouting(): void {
   live?.flush();
+}
+
+/**
+ * THE PROJECTION WITH THE HELD PRESSES SHOWN WHERE THEY WERE FILED — and it lives here rather
+ * than at the provider so the engine package keeps ONE importer on this path. A row's place comes
+ * from its sender's rule, so a press whose rule is waiting would move nothing on screen; the
+ * overlay carries the named rows until the window closes, and returns the base reader unwrapped
+ * when nothing is held. `places` is passed rather than read, so the provider's subscription is
+ * what re-derives the world.
+ */
+export function routingReader(
+  base: EntityReader, places: ReadonlyMap<string, Folder>,
+): EntityReader {
+  return presentAt(base, places);
 }

@@ -20,7 +20,6 @@ import {
   type ReactNode,
 } from "react";
 import { AppState } from "react-native";
-import { presentAt } from "@ohmail/client-engine";
 
 import { Copy } from "../copy";
 import { refuse, type RefusalArg } from "../refusal";
@@ -109,6 +108,7 @@ import {
   flushRouting,
   openRoutingSession,
   routingPlaces,
+  routingReader,
   subscribeRoutingPlaces,
 } from "./held-routing";
 
@@ -1250,7 +1250,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
        under it: a row's place comes from its sender's rule, so the overlay has to sit above the
        reader that applies rules or the rule that has not been sent yet would win. Unwrapped when
        nothing is held, so the ordinary render pays nothing. */
-    const pres = presentAt(world.reader, heldPlaces);
+    const pres = routingReader(world.reader, heldPlaces);
     const ohbox = liveOhbox(pres, v);
     const reads = liveReads(pres, v);
     const receipts = liveReceipts(pres, v);
