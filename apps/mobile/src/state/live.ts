@@ -830,6 +830,8 @@ export interface WorldOhbox {
   resurfaced: WorldMail[];
   fresh: WorldMail[];
   seen: WorldMail[];
+  /** The mailbox's own unread among the presented rows — exactly what mark-all-read flips. */
+  unreadIds: string[];
   unread: number;
   total: number;
 }
@@ -851,22 +853,23 @@ export function liveOhbox(pres: EntityReader, v: WorldView): WorldOhbox {
     const mail = toMail(pres, r.openTarget, v);
     return r.newSince.length > 0 ? { ...mail, newSince: r.newSince.length } : mail;
   });
+  /* THE COUNT IS ABOUT THE MAILBOX; THE BOLD IS ABOUT THE PIN. The rows above have been
+     through `toMail`, whose `unread` is `presentsUnread` and therefore true for every pin —
+     counting THEM would say "1 unread" over a message the mail server calls read. So the set
+     is built from the engine's own facts: new-for-you rows plus every unread MEMBER of every
+     pinned conversation (folding five unread replies into one row does not make them one
+     message). Mark-all-read flips exactly these ids, and `unread` is this list's length, so
+     the number a person presses on and the ids the press dispatches cannot disagree. */
+  const unreadIds = [
+    ...box.newForYou.map((m) => m.id),
+    ...rows.flatMap((r) => r.members.filter((m) => m.unread).map((m) => m.id)),
+  ];
   return {
     resurfaced,
     fresh,
     seen,
-    /* THE COUNT IS ABOUT THE MAILBOX; THE BOLD IS ABOUT THE PIN — and they are allowed to
-       differ, on both surfaces, in the same direction.
-       `box.resurfaced`, not the mapped rows above: those have been through `toMail`, whose
-       `unread` is `presentsUnread` and therefore true for every pin. Counting them would make
-       this line say "1 unread" over a message the mail server calls read — and the shell's own
-       Ohbox meta counts genuine unread for exactly that reason, so the phone would also be the
-       one surface reporting a different number for the same mailbox. A pinned row is drawn
-       unread because it is pinned; it is not NEW mail, and neither list claims it is. */
-    /* Every MEMBER of every pinned conversation, not the rows: the count is about the mailbox,
-       and folding five unread replies into one row does not make them one message. */
-    unread: fresh.length
-      + rows.reduce((n, r) => n + r.members.filter((m) => m.unread).length, 0),
+    unreadIds,
+    unread: unreadIds.length,
     total: resurfaced.length + fresh.length + seen.length,
   };
 }
@@ -875,15 +878,20 @@ export interface WorldReads {
   items: WorldMail[];
   /** The waterline renders directly ABOVE this id — the anchor itself sits below the line. */
   waterlineAboveId: string | null;
+  /** The stream's own `\Seen` unread — exactly what mark-all-read flips (pins never force it). */
+  unreadIds: string[];
   newCount: number;
 }
 
 export function liveReads(pres: EntityReader, v: WorldView): WorldReads {
   const p = readsPartition(pres);
-  const items = [...p.fresh, ...p.seen].map((m) => toMail(pres, m, v));
+  const all = [...p.fresh, ...p.seen];
+  const items = all.map((m) => toMail(pres, m, v));
   return {
     items,
     waterlineAboveId: p.seen[0]?.id ?? null,
+    // The engine rows' own flag, not the mapped rows': `toMail` presents a pinned row unread.
+    unreadIds: all.filter((m) => m.unread).map((m) => m.id),
     // The SELECTOR's count, not a second one computed here. This used to be
     // `items.filter(unread)` — every unread row in the stream, above the line or below it —
     // while the shell's rail counted `fresh.length`; one badge, two derivations, two numbers.
@@ -1420,6 +1428,21 @@ export function planPhoneRouting(
 const MARK_SEEN_MAX = 200;
 
 /**
+ * A `mark_seen` wider than the PATCH cap, split — mark-all-read's inverse can carry more ids
+ * than one request may, and an oversized inverse would be one refused request taking nothing back.
+ */
+function chunkMarkSeen(list: EngineMutation[]): EngineMutation[] {
+  return list.flatMap((mu) => {
+    if (mu.kind !== "mark_seen" || mu.messageIds.length <= MARK_SEEN_MAX) return [mu];
+    const out: EngineMutation[] = [];
+    for (let i = 0; i < mu.messageIds.length; i += MARK_SEEN_MAX) {
+      out.push({ ...mu, messageIds: mu.messageIds.slice(i, i + MARK_SEEN_MAX) });
+    }
+    return out;
+  });
+}
+
+/**
  * How long the LEAVE COMMIT waits for in-flight sweeps before anchoring on the pool as it
  * stands. The leave now also fires on APP BACKGROUND, where the runtime may suspend at any
  * moment — an unbounded await there is a waterline that never dispatches, which loses the
@@ -1799,6 +1822,14 @@ export interface LiveWorldActions {
   resurfaceDone(messageId: string): Promise<boolean>;
   /** Mark read / Mark unread — the DELIBERATE `mark_seen` (no `via`), so a read spends a pin. */
   markSeen(messageId: string, unread: boolean): Promise<boolean>;
+  /**
+   * MARK ALL READ — the webapp's `read-all.ts` on this surface: chunked deliberate
+   * `mark_seen` at the `PATCH /messages` cap, one sentence naming the count, ONE undo for
+   * exactly what the press flipped (pins a deliberate read spends are re-pinned). `feed` is
+   * the streams' second half — the same press commits the waterline above the newest row,
+   * and that anchor offers no undo (`feed_mark_seen` is undo-class "none").
+   */
+  markAllSeen(ids: string[], feed?: { place: FeedView; upToId: string }): Promise<boolean>;
   /**
    * Move THIS message to a view — the sender's routing first, `POST /messages/:id/move` only
    * where the mail really is filed elsewhere. The ROW and not an id: the presented place is the
@@ -2367,6 +2398,31 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
       refuse(unread ? "toastUnread" : "toastRead"), refuse("liveSaveFailed"),
       undoable(inv),
     );
+  };
+
+  /**
+   * MARK ALL READ — see {@link LiveWorldActions.markAllSeen}. The inverse is read BEFORE the
+   * dispatch, off the pre-press mirror, and chunked like the press itself: `inverseMutations`
+   * answers only the ids this press actually flips (mail already read stays read under Undo)
+   * plus the re-pin for every resurfaced pin the deliberate read spends. The sentence is
+   * optimistic (the webapp raises its toast at the press), and only the count it names rides
+   * it — never an id, never an address.
+   */
+  const markAllSeen = async (ids: string[], feed?: { place: FeedView; upToId: string }): Promise<boolean> => {
+    const inv = chunkMarkSeen(inverseMutations(engine.read(), { kind: "mark_seen", messageIds: ids, unread: false }));
+    const parts: Promise<PressVerdict>[] = [];
+    for (let i = 0; i < ids.length; i += MARK_SEEN_MAX) {
+      parts.push(watched(engine.mutate({ kind: "mark_seen", messageIds: ids.slice(i, i + MARK_SEEN_MAX), unread: false })));
+    }
+    /* The waterline commit rides the SAME press (the webapp's ReadsView shape): an empty
+       `messageIds` with the anchor alone, so a fresh-only stream ("2 new", nothing unread)
+       still has a control that clears its line. No undo on this half — the line moves once. */
+    if (feed !== undefined) {
+      parts.push(watched(engine.mutate({ kind: "feed_mark_seen", view: feed.place, messageIds: [], upToId: feed.upToId })));
+    }
+    if (ids.length > 0) toast(refuse("markAllDone", ids.length), undoable(inv));
+    if (parts.length === 0) return true;
+    return saidAll(await Promise.all(parts), null, refuse("liveSaveFailed"));
   };
 
   const resurfaceDone = async (messageId: string): Promise<boolean> => {
@@ -2963,7 +3019,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     openMessage, hydrateMessage, hydrateHeld, loadInlineImages, openAttachmentBytes,
     releaseAttachments,
     sweepFeed, leaveFeed, decide, release, setPile,
-    pileToggle, resurfaceToggle, resurfaceAt, resurfaceNow, resurfaceDone, markSeen, move,
+    pileToggle, resurfaceToggle, resurfaceAt, resurfaceNow, resurfaceDone, markSeen, markAllSeen, move,
     deleteMessage, trashList, trashRestore,
     sendReply, sendForward, withdrawSend, cancelSchedule, tagToggle, tagCreate, screenSender,
     folderCreate, folderRename, folderDelete, folderDismiss,
@@ -3010,6 +3066,8 @@ export interface WorldActions {
   resurfaceNow(messageId: string): void;
   resurfaceDone(messageId: string): void;
   markSeen(messageId: string, unread: boolean): void;
+  /** Mark all read — see {@link LiveWorldActions.markAllSeen}. */
+  markAllSeen(ids: string[], feed?: { place: "reads" | "receipts"; upToId: string }): void;
   /** The row, not an id — see {@link LiveWorldActions.move}. */
   move(row: WorldMail, dest: MoveTarget): void;
   /**
@@ -3086,6 +3144,7 @@ export function stableActions(current: () => WorldActions): WorldActions {
     resurfaceNow: (id) => void current().resurfaceNow(id),
     resurfaceDone: (id) => void current().resurfaceDone(id),
     markSeen: (id, unread) => void current().markSeen(id, unread),
+    markAllSeen: (ids, feed) => void current().markAllSeen(ids, feed),
     move: (row, dest) => void current().move(row, dest),
     deleteMessage: (id, opts) => void current().deleteMessage(id, opts),
     trashList: (cursor) => current().trashList(cursor),

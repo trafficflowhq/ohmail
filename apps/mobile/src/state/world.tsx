@@ -215,6 +215,8 @@ export interface World {
     resurfaced: WorldMail[];
     fresh: WorldMail[];
     seen: WorldMail[];
+    /** What mark-all-read flips — `unread` is this list's length (`live.ts#liveOhbox`). */
+    unreadIds: string[];
     unread: number;
     total: number;
     meta: string;
@@ -223,6 +225,8 @@ export interface World {
   reads: {
     items: WorldMail[];
     waterlineAboveId: string | null;
+    /** The stream's own unread — what mark-all-read flips (`live.ts#liveReads`). */
+    unreadIds: string[];
     waterLabel: string;
     /**
      * THE STREAM'S BADGE — `FeedPartition.newCount` carried through unchanged, so the dock and
@@ -434,6 +438,7 @@ const NO_ACTIONS: WorldActions = {
   resurfaceNow: () => undefined,
   resurfaceDone: () => undefined,
   markSeen: () => undefined,
+  markAllSeen: () => undefined,
   move: () => undefined,
   deleteMessage: () => undefined,
   // The empty world has no reader open to keep, and nothing to delete.
@@ -483,9 +488,9 @@ function emptyWorld(actions: WorldActions): World {
     // Nothing has been asked on the empty world, so `known` is false and the banner is withheld
     // — the same honest-unknown the boot facts keep between a teardown and the redirect.
     mailboxes: { known: false, ownAddresses: [], organizer: null, rows: [] },
-    ohbox: { resurfaced: [], fresh: [], seen: [], unread: 0, total: 0, meta: "" },
+    ohbox: { resurfaced: [], fresh: [], seen: [], unreadIds: [], unread: 0, total: 0, meta: "" },
     doorbell: { initials: [], count: 0 },
-    reads: { items: [], waterlineAboveId: null, waterLabel: Copy.waterline, newCount: 0, meta: "" },
+    reads: { items: [], waterlineAboveId: null, unreadIds: [], waterLabel: Copy.waterline, newCount: 0, meta: "" },
     receipts: { groups: [], waterlineAboveId: null, waterLabel: Copy.waterline, total: 0, newCount: 0, meta: "" },
     screener: { waiting: [], screened: [], spam: [], meta: "", source: "device", waitingPending: false },
     history: { items: [], total: 0, meta: "", pending: false },
@@ -1126,6 +1131,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
           resurfaceNow: (id) => void acts.resurfaceNow(id),
           resurfaceDone: (id) => void acts.resurfaceDone(id),
           markSeen: (id, unread) => void acts.markSeen(id, unread),
+          markAllSeen: (ids, feed) => void acts.markAllSeen(ids, feed),
           move: (row, dest) => void acts.move(row, dest),
           deleteMessage: (id, opts) => {
             /* THE WINDOW, NOT THE WIRE (the 0.20 review; the webapp `delete-undo.ts`'s shape): the

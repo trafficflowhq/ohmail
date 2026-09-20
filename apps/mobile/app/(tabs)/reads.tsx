@@ -21,6 +21,7 @@ import { TopBar } from "../../src/ui/chrome";
 import { ListDetail, useListDetail } from "../../src/ui/list-detail";
 import { MessageReader } from "../../src/ui/MessageReader";
 import { FadeOut } from "../../src/ui/FadeOut";
+import { MarkAllRead } from "../../src/ui/MarkAllRead";
 import { SkeletonList } from "../../src/ui/Skeleton";
 import { useLocale } from "../../src/i18n/LocaleProvider";
 
@@ -36,7 +37,7 @@ export default function ReadsScreen() {
   /* Two panes: an issue OPENS BESIDE the stream instead of unclamping in place — list-detail
      with the selection in the route's `open` param; the compact stream is untouched. */
   const { open, openRow, close, twoPane } = useListDetail((id) => `/message/${id}`);
-  const { items, waterlineAboveId, waterLabel, meta } = w.reads;
+  const { items, waterlineAboveId, waterLabel, meta, unreadIds, newCount } = w.reads;
   const actions = w.actions;
   // Unknown ≠ empty — the stream shows card silhouettes until this mirror has settled once.
   const surface = listSurface({ settled: w.boot.settled, count: items.length });
@@ -85,11 +86,25 @@ export default function ReadsScreen() {
       <TopBar />
       <Scroller onScroll={onScroll} scrollEventThrottle={64} refresh={pull}>
         <View style={{ paddingHorizontal: 12, paddingTop: 8, paddingBottom: 4 }}>
-          <View style={{ flexDirection: "row", alignItems: "baseline", gap: 10 }}>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
             <Txt variant="h1">{Copy.reads}</Txt>
             <Txt variant="meta" tone="ink3" tabular>
               {metaWhen(surface, meta) ?? " "}
             </Txt>
+            <View style={{ flex: 1 }} />
+            {/* The web's ReadsView press, both halves: flip the stream's unread AND commit the
+                waterline above the newest issue — a fresh-only stream ("2 new", nothing
+                unread) still gets its clearing control. */}
+            <MarkAllRead
+              unreadCount={unreadIds.length}
+              freshCount={newCount}
+              onPress={() =>
+                actions.markAllSeen(
+                  unreadIds,
+                  items[0] ? { place: "reads", upToId: items[0].id } : undefined,
+                )
+              }
+            />
           </View>
           <Txt variant="caption" tone="ink3" style={{ marginTop: 4 }}>
             {Copy.streamSeenHint}

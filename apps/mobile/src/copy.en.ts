@@ -1496,6 +1496,14 @@ const TABLE = {
   toastRead: "Marked as read.",
   toastUnread: "Marked as unread.",
   /*
+   * MARK ALL READ — the webapp's `markAll` namespace, sentence for sentence: the
+   * control, its spoken count, and the settled sentence whose pill carries the one undo.
+   */
+  markAll: "Mark all read",
+  markAllAria: (n: number) => `Mark all ${n} unread message${n === 1 ? "" : "s"} read`,
+  markAllAriaFresh: (n: number) => `Mark all ${n} message${n === 1 ? "" : "s"} new since you were here as read`,
+  markAllDone: (n: number) => `Marked ${n} message${n === 1 ? "" : "s"} read`,
+  /*
    * TRASH — the place deleted mail can be put back from (the webapp's `trash` namespace,
    * sentence for sentence where the surface is the same). The rows are off-mirror
    * (a delete tombstones the row everywhere), so the phone's tail states what the list holds

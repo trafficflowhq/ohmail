@@ -16,6 +16,7 @@ import { Empty, Panel, Screen, Scroller, Section, Tail, Txt } from "../../src/ui
 import { Doorbell, TopBar } from "../../src/ui/chrome";
 import { ListDetail, useListDetail } from "../../src/ui/list-detail";
 import { MailRow } from "../../src/ui/MailRow";
+import { MarkAllRead } from "../../src/ui/MarkAllRead";
 import { MessageReader } from "../../src/ui/MessageReader";
 import { SkeletonList } from "../../src/ui/Skeleton";
 import { useLocale } from "../../src/i18n/LocaleProvider";
@@ -30,6 +31,7 @@ export default function OhboxScreen() {
      ever. The selection is the route's `open` param — `src/ui/list-detail.tsx` is the rule. */
   const { open, openRow, close } = useListDetail((id) => `/message/${id}`);
   const { resurfaced, fresh, seen, total, meta } = w.ohbox;
+
   // Unknown ≠ empty: before this mirror has ever settled a drain, a zero-row Ohbox shows
   // the shape of what is coming, never "All quiet" — `state/surface.ts` is the whole rule.
   const surface = listSurface({ settled: w.boot.settled, count: total });
@@ -46,7 +48,11 @@ export default function OhboxScreen() {
     <Screen>
       <TopBar />
       <Scroller refresh={pull}>
-        <ViewHeadOhbox meta={metaWhen(surface, meta)} />
+        <ViewHeadOhbox
+          meta={metaWhen(surface, meta)}
+          unread={w.ohbox.unreadIds.length}
+          onMarkAll={() => w.actions.markAllSeen(w.ohbox.unreadIds)}
+        />
         <Doorbell initials={w.doorbell.initials} count={w.doorbell.count} />
 
         <Panel style={{ paddingBottom: 4 }}>
@@ -111,10 +117,23 @@ export default function OhboxScreen() {
   );
 }
 
-function ViewHeadOhbox({ meta }: { meta: string | undefined }) {
+function ViewHeadOhbox({
+  meta,
+  unread,
+  onMarkAll,
+}: {
+  meta: string | undefined;
+  unread: number;
+  onMarkAll: () => void;
+}) {
   return (
     <View style={{ paddingHorizontal: 10, paddingTop: 8, paddingBottom: 14 }}>
-      <Txt variant="h1">{Copy.ohbox}</Txt>
+      <View style={{ flexDirection: "row", alignItems: "center" }}>
+        <Txt variant="h1">{Copy.ohbox}</Txt>
+        <View style={{ flex: 1 }} />
+        {/* Renders nothing over a cleared list — the component's own rule. */}
+        <MarkAllRead unreadCount={unread} onPress={onMarkAll} />
+      </View>
       {/* Silenced over a skeleton (`metaWhen`): "0 unread of 0" about an unread mirror
           would be an invented count. The line keeps its slot so nothing shifts. */}
       <Txt variant="meta" tone="ink3" tabular style={{ marginTop: 4 }}>

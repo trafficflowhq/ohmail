@@ -989,6 +989,18 @@ export const DE: Deck = {
   toastRoutingUndone: "Die Post ist wieder da, wo sie war, und es wurde keine Regel angelegt.",
   toastRead: "Als gelesen markiert.",
   toastUnread: "Als ungelesen markiert.",
+  /* ALLES ALS GELESEN — der `markAll`-Namespace des Web-Katalogs. */
+  markAll: "Alles als gelesen markieren",
+  markAllAria: (n: number) =>
+    n === 1
+      ? "1 ungelesene Nachricht als gelesen markieren"
+      : `Alle ${n} ungelesenen Nachrichten als gelesen markieren`,
+  markAllAriaFresh: (n: number) =>
+    n === 1
+      ? "1 Nachricht, die seit deinem letzten Besuch neu ist, als gelesen markieren"
+      : `Alle ${n} Nachrichten, die seit deinem letzten Besuch neu sind, als gelesen markieren`,
+  markAllDone: (n: number) =>
+    n === 1 ? "1 Nachricht als gelesen markiert" : `${n} Nachrichten als gelesen markiert`,
   /* TRASH — die Sätze des Web-Katalogs (`trash`-Namespace), wo die Fläche dieselbe ist. */
   trashTitle: "Papierkorb",
   trashEmptyTitle: "Der Papierkorb ist leer.",
