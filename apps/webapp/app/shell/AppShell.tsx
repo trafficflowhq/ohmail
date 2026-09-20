@@ -290,12 +290,13 @@ import { durableSessionSet } from "./durable";
    the two modules may be named — the import-graph census
    (`test/first-load-defers-panes.test.ts`) refuses a static path back in. Both mount behind
    their existing `effectiveView` seams under one `Suspense` each. */
-const ComposeView = lazy(() => {
+const ComposeView = lazy(async () => {
   /* THE EDITOR IN PARALLEL, not after it. Both chunks are needed the moment compose opens, and
      asking for them one after the other is a waterfall of two round trips; `preloadRichEditor`
      is the door's own factory, so this request is the one the `Suspense` inside it awaits. */
   preloadRichEditor();
-  return import("../views/ComposeView").then((m) => ({ default: m.ComposeView }));
+  const mod = await import("../views/ComposeView");
+  return { default: mod.ComposeView };
 });
 const SettingsView = lazy(() =>
   import("../views/SettingsView").then((m) => ({ default: m.SettingsView })));
