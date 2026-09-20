@@ -62,8 +62,44 @@ function connect(options, listener) {
      connection opening, and only this one means the bytes after it are protected. */
   native.on("secureConnect", () => { bridge.emit("secureConnect"); });
   if (typeof listener === "function") bridge.once("secureConnect", listener);
+  if (existing) confirmUpgrade(native, bridge);
   return bridge;
 }
+
+/**
+ * THE UPGRADE'S HANDSHAKE HAS NO EVENT OF ITS OWN.
+ *
+ * The platform emits `secureConnect` for a fresh TLS dial only; a STARTTLS upgrade emits nothing,
+ * so a caller waiting for it waits until its own timeout and the dial dies as "closed" — every
+ * mailbox on a STARTTLS port, measured on a device. The completion is therefore ASKED of the
+ * platform: a peer certificate exists only once the handshake has finished. It is never inferred
+ * from `connect`, which fires before the upgrade has happened and would call plaintext secure.
+ */
+function confirmUpgrade(native, bridge, attempts = UPGRADE_ATTEMPTS, waitMs = UPGRADE_WAIT_MS) {
+  let left = attempts;
+  const ask = () => {
+    Promise.resolve()
+      .then(() => native.getPeerCertificate())
+      .then((cert) => {
+        if (cert && typeof cert === "object" && Object.keys(cert).length > 0) {
+          bridge.emit("secureConnect");
+          return;
+        }
+        left -= 1;
+        if (left <= 0) {
+          bridge.emit("error", new Error("the TLS upgrade produced no peer certificate, so the connection is not secured"));
+          return;
+        }
+        setTimeout(ask, waitMs);
+      })
+      .catch((err) => { bridge.emit("error", err instanceof Error ? err : new Error(String(err))); });
+  };
+  ask();
+}
+
+/** How long the upgrade may take before it is reported as not secured: 20 x 50 ms. */
+const UPGRADE_ATTEMPTS = 20;
+const UPGRADE_WAIT_MS = 50;
 
 function unsupported(name) {
   return () => {
@@ -76,8 +112,9 @@ function unsupported(name) {
 
 module.exports = {
   connect,
-  /* Exported for the guard that drives it with the shape the platform refuses. */
+  /* Exported for the guards that drive them with the shapes the platform produces. */
   withNameOrNoSni,
+  confirmUpgrade,
   TLSSocket: NativeSocketBridge,
   /* `connect` handles both routes, so there is no second entry point to keep in step. */
   createServer: unsupported("createServer"),
