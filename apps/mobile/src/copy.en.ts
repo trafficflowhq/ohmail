@@ -1485,6 +1485,13 @@ const TABLE = {
   undo: "Undo",
   toastUndone: "Undone.",
   deleteUndone: "Not deleted — the message is where it was.",
+  /**
+   * MOVE'S OWN SETTLEMENT, because Move takes back two things. The mail is reversed on the wire
+   * and the sender's RULE was never sent — a window, like the delete's — so the sentence names
+   * both. Only where the cancel actually took: past the window the rule stands and the plain
+   * "Undone." is the true one (`state/live.ts#move`).
+   */
+  toastRoutingUndone: "The mail is back where it was, and no rule was made.",
   /** The deliberate read/unread, spoken so the pill has a sentence to ride (silent before the undo work). */
   toastRead: "Marked as read.",
   toastUnread: "Marked as unread.",

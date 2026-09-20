@@ -986,6 +986,7 @@ export const DE: Deck = {
   undo: "Rückgängig",
   toastUndone: "Rückgängig gemacht.",
   deleteUndone: "Nicht gelöscht — die Nachricht ist noch an ihrem Platz.",
+  toastRoutingUndone: "Die Post ist wieder da, wo sie war, und es wurde keine Regel angelegt.",
   toastRead: "Als gelesen markiert.",
   toastUnread: "Als ungelesen markiert.",
   /* TRASH — die Sätze des Web-Katalogs (`trash`-Namespace), wo die Fläche dieselbe ist. */

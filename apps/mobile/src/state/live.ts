@@ -64,6 +64,8 @@ import {
   type ScreenDest,
   type ScreenerSenderDTO,
   inverseMutations,
+  routingSubject,
+  type RoutingIntent,
   type TagDTO,
   type TrashRowWire,
   type WallClockVerdict,
@@ -78,6 +80,8 @@ import { logAttachmentRefusal } from "../engine/engine-log";
 import { refuse, type Refusal, type RefusalArg } from "../refusal";
 import { ACCESS_REFUSED_CODE } from "../net/access-lock";
 import { folderLeafOf, folderUnreadCounts } from "./folders";
+/* Move/Junk: the mail now, the sender's routing after the window. See the module. */
+import { holdRouting, undoRouting } from "./held-routing";
 import type { ScreeningAnswer } from "../net/consent";
 import type { ServerWaitingSender } from "../net/screener";
 import {
@@ -1394,6 +1398,24 @@ function holdingRules(reader: EntityReader, address: string, folder: Folder): Ru
   );
 }
 
+/**
+ * THE ROUTING HALF OF A MOVE, RE-READ FROM THE MIRROR — what `held-routing.ts` commits when the
+ * window closes, and never a plan replayed from the record. Re-planning is what makes the commit
+ * idempotent: once those rules point at the destination they no longer hold the sender at the
+ * place the press was made FROM, so a second run writes nothing. `from` is that place, which the
+ * destination alone cannot give — this ladder is about the rules holding the mail where it was
+ * SHOWN (`move`'s own note).
+ */
+export function planPhoneRouting(
+  reader: EntityReader, intent: RoutingIntent,
+): EngineMutation[] {
+  const folder = FOLDER_OF_VIEW[intent.dest];
+  if (!folder || intent.from === undefined) return [];
+  return holdingRules(reader, intent.address, intent.from as Folder)
+    .map((r) => ({ kind: "rule_update", ruleId: r.id, destination: folder }));
+}
+
+
 /** `PATCH /messages` id cap per request — the webapp's own batch size. */
 const MARK_SEEN_MAX = 200;
 
@@ -2427,20 +2449,18 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     }
     const waiting = stillWaitingFor(messageId);
     if (waiting) { toast(waiting); return true; }
-    /* THE WAY BACK, only where the wire has one: a plain move inverts (`inverseMutations`),
-       a press that RETARGETS RULES does not — the rewrite is a routing plan with no wire
-       inverse (`UNDO_CLASS.rule_update`; the webapp filed the same boundary as
-       VERB-UNDO-ROUTING-VERBS-HAVE-NO-UNDO), and undoing only the move half would put the
-       mail back under rules that now point elsewhere. Junk rides this arm, so a spam filing
-       that is a plain move carries Undo and a ruled one does not — the same rule, not a case. */
-    const routing = writes.some((w) => w.kind === "rule_update");
-    const inv = routing ? [] : writes.flatMap((w) => inverseMutations(raw, w));
+    /* THE TWO HALVES. The mail moves now and the engine builds its reversal; the rules that
+       decide where this sender's mail goes from here are HELD for the undo window — no rule
+       mutation has a wire inverse, so the way back is to not send it yet (`held-routing.ts`).
+       Junk rides this arm, so a spam filing is undone exactly like any other Move. */
+    const rules = writes.filter((w) => w.kind === "rule_update");
+    const mail = writes.filter((w) => w.kind !== "rule_update");
+    const inv = mail.flatMap((w) => inverseMutations(raw, w));
     /* RAW answers, never `watched`: it folds `awaiting_organizer` into landed-or-not, and on a
-       mailbox this phone only reads EVERY write here comes back that way, the rule edits included
-       (`rule_update` is named in the 202 census). Folding them would say "Moved" over a rule
-       nobody made, which is the defect this verb exists to remove. */
+       mailbox this phone only reads EVERY write here comes back that way (`move` is named in the
+       202 census). Folding them would say "Moved" over a move nobody made. */
     const answers = await Promise.all(
-      writes.map((w) => engine.mutate(w).catch((): MutationResult | null => null)),
+      mail.map((w) => engine.mutate(w).catch((): MutationResult | null => null)),
     );
     if (answers.some((r) => r === null || r.status === "rolled_back")) {
       toast(refuse("liveSaveFailed"));
@@ -2456,7 +2476,41 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
         : refuse("toastMoveQueuedUnknown", moveTargetLabel(dest)));
       return true;
     }
-    toast(refuse("toastMoved", moveTargetLabel(dest)), undoable(inv));
+    if (rules.length === 0) {
+      toast(refuse("toastMoved", moveTargetLabel(dest)), undoable(inv));
+      return true;
+    }
+    const opened = holdRouting({
+      v: 1,
+      id: deps.uuid ? deps.uuid() : `${messageId}:${now().getTime()}`,
+      seedId: messageId,
+      address: m.from.address,
+      scope: "sender",
+      dest: dest as ScreenDest,
+      messageIds: [messageId],
+      from: row.presentedFolder,
+      at: now().getTime(),
+    });
+    if (!opened.held) {
+      /* NO SESSION TO HOLD IT — the rules go now, and the sentence does not offer an undo it
+         cannot honour. `held-delete.ts`'s own degradation. */
+      await Promise.all(rules.map((w) => engine.mutate(w).catch(() => null)));
+      toast(refuse("toastMoved", moveTargetLabel(dest)));
+      return true;
+    }
+    const subject = routingSubject({ scope: "sender", address: m.from.address });
+    toast(refuse("toastMoved", moveTargetLabel(dest)), {
+      holdMs: UNDO_MS,
+      undo: () => {
+        /* BOTH HALVES, ONE PRESS: the rule is cancelled before it is sent and the mail is put
+           back through the engine's own inverse. `undoRouting` answers whether it TOOK, so a
+           late press cannot say no rule was made over a rule that was. */
+        const cancelled = undoRouting(subject);
+        void Promise.all(inv.map((mu) => watched(engine.mutate(mu)))).then((vs) => {
+          saidAll(vs, refuse(cancelled ? "toastRoutingUndone" : "toastUndone"), refuse("liveSaveFailed"));
+        });
+      },
+    });
     return true;
   };
 
@@ -2872,7 +2926,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     return saidAll(verdicts, refuse("liveDecided", destDone(dest), target), refuse("liveDecideFailed", m.from.address));
   };
 
-  /* ── the folder verbs — see the interface's header for the whole optimism model ─────────── */
+/* ── the folder verbs — see the interface's header for the whole optimism model ─────────── */
 
   /** One folder command, spoken about ONLY on rollback — success's feedback is the pending row. */
   const folderVerb = async (m: EngineMutation): Promise<boolean> =>

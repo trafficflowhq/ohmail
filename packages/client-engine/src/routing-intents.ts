@@ -35,6 +35,14 @@ export interface RoutingIntent {
   dest: ScreenDest;
   /** The ids the press NAMED — the overlay's set, and what the mail half moved. */
   messageIds: string[];
+  /**
+   * WHERE THE PRESS WAS MADE FROM, for a surface whose ladder needs it. The phone's Move
+   * retargets the rules holding this sender's mail AT THE PLACE IT WAS SHOWN, so its re-plan
+   * cannot be derived from the destination alone. Optional because the webapp's ladder reads the
+   * sender's whole standing set and has no use for it — and because a row written by a build
+   * that did not carry it must still replay.
+   */
+  from?: string;
   /** Epoch ms at the press, from the caller's clock. */
   at: number;
 }
@@ -89,6 +97,7 @@ export function isRoutingIntent(x: unknown): x is RoutingIntent {
     && typeof r.dest === "string" && r.dest !== "screener"
     && Object.prototype.hasOwnProperty.call(FOLDER_OF_VIEW, r.dest)
     && Array.isArray(r.messageIds) && r.messageIds.every((m) => typeof m === "string")
+    && (r.from === undefined || (typeof r.from === "string" && r.from.length > 0))
     && typeof r.at === "number" && Number.isFinite(r.at);
 }
 

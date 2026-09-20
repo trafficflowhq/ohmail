@@ -20,6 +20,7 @@ import {
   type ReactNode,
 } from "react";
 import { AppState } from "react-native";
+import { presentAt } from "@ohmail/client-engine";
 
 import { Copy } from "../copy";
 import { refuse, type RefusalArg } from "../refusal";
@@ -53,6 +54,7 @@ import {
   connectionSay, firstSyncSay,
   flushQueued,
   liveActions,
+  planPhoneRouting,
   liveFolder,
   liveFolders,
   liveFolderUnread,
@@ -101,6 +103,14 @@ import type { Scope } from "./model";
 import {
   flushHeldDeletes, heldDeleteIds, runDeleteCeremony, subscribeHeldDeletes,
 } from "./held-delete";
+/* The routing window — Move's rule half, held for the same UNDO_MS the delete's press is. */
+import {
+  closeRoutingSession,
+  flushRouting,
+  openRoutingSession,
+  routingPlaces,
+  subscribeRoutingPlaces,
+} from "./held-routing";
 
 export type {
   FolderEntity, MoveTarget, PhoneOrganizer, ScreenerRow, WorldActions, WorldHistory, WorldMail,
@@ -571,6 +581,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
     // Open delete windows commit into the session that armed them (each press captured its own
     // dispatch) — leaving a session is not asking for the deletes back, the webapp's unmount rule.
     flushHeldDeletes();
+    flushRouting();
   }, [sessionKey]);
 
   /* Backgrounding commits every open delete window — the webapp's `pagehide`, in this runtime's
@@ -578,11 +589,12 @@ export function WorldProvider({ children }: { children: ReactNode }) {
      direction); `state/held-delete.ts` states the boundary and the gap row names it. */
   useEffect(() => {
     const sub = AppState.addEventListener("change", (s) => {
-      if (s !== "active") flushHeldDeletes();
+      if (s !== "active") { flushHeldDeletes(); flushRouting(); }
     });
     return () => {
       sub.remove();
       flushHeldDeletes();
+      flushRouting();
     };
   }, []);
 
@@ -927,6 +939,32 @@ export function WorldProvider({ children }: { children: ReactNode }) {
    * stamps in the language they were first derived in — the memo lists it as a dependency for
    * exactly that.
    */
+  /**
+   * THE ROUTING WINDOW'S SESSION. A Move press moves the mail now and HOLDS the sender's rule for
+   * the undo window; the plan is RE-READ from the mirror when the window closes, never replayed
+   * from the record (`held-routing.ts`). One window per engine: a session ending commits what is
+   * open, because leaving is not asking for it back.
+   */
+  useEffect(() => {
+    if (!engine) return undefined;
+    openRoutingSession({
+      windowMs: UNDO_MS,
+      plan: (intent) => planPhoneRouting(engine.read(), intent),
+      dispatch: async (mutations) => {
+        const answers = await Promise.all(
+          mutations.map((mu) => engine.mutate(mu).catch(() => null)),
+        );
+        /* A RULE THE SERVER REFUSED IS SAID. The press's own sentence was raised seconds ago and
+           claimed the mail moved, which is still true — what is not is the rule, and a refusal
+           nobody is told is the shape this window exists to remove. */
+        if (answers.some((r) => r === null || r?.status === "rolled_back")) {
+          showToast(refuse("liveSaveFailed"));
+        }
+      },
+    });
+    return () => { closeRoutingSession(); };
+  }, [engine, showToast]);
+
   const locale = useLocale();
   const acts = useMemo(
     // expo-crypto's v4 — the same generator the engine composition injects (`native.ts`), taken
@@ -1175,6 +1213,10 @@ export function WorldProvider({ children }: { children: ReactNode }) {
   /* The delete window's held set — a change re-derives the projection (a NEW set per change,
      the store's own contract), which is how a held row leaves and an undone one returns. */
   const heldDeletes = useSyncExternalStore(subscribeHeldDeletes, heldDeleteIds);
+  /* AND WHERE A HELD ROUTING PRESS IS SHOWING ITS MAIL. A row's place comes from its sender's
+     rule, so a press whose rule is waiting out the window would move nothing on screen; the
+     overlay carries the named rows until it closes (`@ohmail/client-engine#presentAt`). */
+  const heldPlaces = useSyncExternalStore(subscribeRoutingPlaces, routingPlaces);
 
   const projected = useMemo<Omit<World, "boot" | "abandoned" | "face" | "sendOutcome"> | null>(() => {
     if (engine === null || session === null) return null;
@@ -1204,7 +1246,11 @@ export function WorldProvider({ children }: { children: ReactNode }) {
        piles group over, `world.history` is the mail the cutline retired. Two calls would be one
        rule read at two clocks — a sender in both lists, or in neither. */
     const world = presentedWorld(base, v.now, foldersOn, posture, addressesNow.current);
-    const pres = world.reader;
+    /* AND A HELD ROUTING PRESS SHOWS ITS MAIL WHERE IT WAS FILED, over the PROJECTION and never
+       under it: a row's place comes from its sender's rule, so the overlay has to sit above the
+       reader that applies rules or the rule that has not been sent yet would win. Unwrapped when
+       nothing is held, so the ordinary render pays nothing. */
+    const pres = presentAt(world.reader, heldPlaces);
     const ohbox = liveOhbox(pres, v);
     const reads = liveReads(pres, v);
     const receipts = liveReceipts(pres, v);
@@ -1330,7 +1376,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [engine, session, scopes, zone, locale, actions, version, freshBeat,
     foldersOn, foldersPending, foldersStorable, setFoldersEnabled, signatures,
-    resurfaceTime, rememberResurfaceTime, screening, screenerServer, heldDeletes]);
+    resurfaceTime, rememberResurfaceTime, screening, screenerServer, heldDeletes, heldPlaces]);
 
   /**
    * AND THE WORLD THE SCREENS READ — the projection above plus the facts that move with the
