@@ -16,21 +16,17 @@ import { ImapAdapter } from "@trafficflow/core/adapters/imap";
 import { loadMailboxCreds } from "./mailboxes.js";
 import { checkedDial, dialHostGuardFromEnv } from "./dial-host-guard.js";
 import { redactedRestorePass } from "./redacted-restore.js";
+import { cliFlag, cliOpt, readOperatorMailbox } from "./run-cli.js";
 import {
   CLOUD_DISPLAY_NAME, LeaseUnavailableError, OrganizerStandDownError, acquireLeasePermit,
   assertNoLiveTwin, mailboxHasRequestKey, resolveCloudInstallId,
 } from "./lease.js";
 
 const argv = process.argv.slice(2);
-const flag = (n: string): boolean => argv.includes(`--${n}`);
-const opt = (n: string): string | null => {
-  const i = argv.indexOf(`--${n}`);
-  return i >= 0 && argv[i + 1] && !argv[i + 1]!.startsWith("--") ? argv[i + 1]! : null;
-};
 
-const mailboxId = opt("mailbox");
-const apply = flag("apply");
-const limit = opt("limit") ? Number(opt("limit")) : undefined;
+const mailboxId = cliOpt(argv, "mailbox");
+const apply = cliFlag(argv, "apply");
+const limit = cliOpt(argv, "limit") ? Number(cliOpt(argv, "limit")) : undefined;
 const dbUrl = process.env.TF_DB_URL ?? process.env.DATABASE_URL;
 if (!mailboxId) { console.error("refusing to run without --mailbox <id>"); process.exit(2); }
 if (!dbUrl) { console.error("set TF_DB_URL to the production session URL"); process.exit(2); }
@@ -41,29 +37,9 @@ if (!keyProvider) { console.error("set TF_KEK_V1 — the restore must decrypt IM
 const owned = makeOwnedDb(dbUrl);
 const db = owned.db as unknown as Tx;
 
-const [mb] = await db.select({
-  id: mailboxes.id, accountId: mailboxes.accountId, address: mailboxes.address,
-  /* "STOP ORGANIZING THIS MAILBOX" IS A REFUSAL FOR THIS TOOL TOO (mail 0088). The lease gate below cannot
-   * answer this: a pending release leaves the row `organizer` on purpose (the claim is in the customer's
-   * IMAP folder and expunging it belongs to the process holding that connection), so every lease-shaped
-   * check passes and this runner would take the permit, renew the very claim the person asked removed, and
-   * move their mail. REFUSED rather than honoured, on the reconcile backstop's reasoning: releasing means
-   * expunging a claim, writing the row and closing appointments, and a second copy of that sequence is a
-   * second answer to what stopping means. The always-on gate performs it; this tool declines to act past a
-   * request it can see.
-   */
-  releaseRequestedAt: mailboxes.releaseRequestedAt,
-})
-  .from(mailboxes).where(eq(mailboxes.id, mailboxId)).limit(1);
-if (!mb) { console.error(`no mailbox ${mailboxId}`); await owned.close(); process.exit(2); }
-if (mb.releaseRequestedAt !== null) {
-  console.error(
-    `mailbox ${mailboxId} has been asked to stop being organized here — refusing to write to it. `
-    + "The organizer's next pass releases the claim; run this again afterwards if it is still needed.",
-  );
-  await owned.close();
-  process.exit(2);
-}
+const read = await readOperatorMailbox(db, mailboxId);
+if ("refusal" in read) { console.error(read.refusal); await owned.close(); process.exit(2); }
+const mb = read.mailbox;
 
 const [{ n: candidates }] = await db.select({ n: sql<number>`count(*)::int` })
   .from(messages).innerJoin(messageBodies, eq(messageBodies.messageId, messages.id))
