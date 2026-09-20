@@ -64,6 +64,7 @@ function clockTime(iso: string): string | null {
 const readable = (address: string | null): string | null =>
   address === null ? null : displayAddress(address);
 import { stripSpeaks, type MailState } from "./mail-state";
+import { useBrowserOnline } from "./browser-online";
 /* The one place any surface asks whether a phone holds the mailbox — see `reader-holder.ts`. */
 import { filingElsewhereKey, phoneHolder, phoneHolderKey } from "./reader-holder";
 import { readingAlong } from "./reading-along";
@@ -159,6 +160,8 @@ export function SyncBar({ variant = "shell", hostOffline = false }: {
      behind one. The busy STATES say a sync is outstanding; this says a drain is in flight now,
      and only it may move a mark (`drain-mark.ts`). */
   const draining = useDrainInFlight();
+  // Before the early returns — a hook may not sit behind one.
+  const online = useBrowserOnline();
 
   if (!stripSpeaks(state.key)) return null;
   /* THE ONE ARM THAT YIELDS. Placed before `speech()` rather than inside it so the suppression is
@@ -170,7 +173,15 @@ export function SyncBar({ variant = "shell", hostOffline = false }: {
   // Cloud behind it — the standalone desktop, which folds `NEXT_PUBLIC_API_BASE` away at build
   // time — so it is the seam the `stopped` sentence branches on. See `speech()`'s `stopped` arm.
   const cloud = apiConfigured();
-  const s = speech(state, t, tm, cloud);
+  const spoken = speech(state, t, tm, cloud);
+  /* THE OFFLINE WORD. Both conditions, each necessary: the state must be a fetch-shaped claim —
+     one a dead network makes false — AND the browser must say offline. A failing server is not
+     "offline", and an offline browser over settled content has nothing to correct. The mirror IS
+     usable offline, so the sentence says what the person is looking at, calmly and standing
+     still: nothing is running, so no spinner and no alarm. */
+  const s: Speech = !online && OFFLINE_OUTRANKS.has(state.key)
+    ? { tone: "", role: "status", warn: false, busy: false, title: t("offline"), detail: null, link: null }
+    : spoken;
   /* THE MOVING MARKS — the spinner and the travelling sliver — and the one condition both may
      mean. A busy state with no drain in flight is a sync that is outstanding and not moving:
      it keeps its sentence, its tone and its track, and says so standing still. Both marks are
@@ -237,6 +248,13 @@ export function SyncBar({ variant = "shell", hostOffline = false }: {
 type Translate = (key: string, values?: Record<string, string | number>) => string;
 
 /** Everything either shape needs to know, for one state. */
+/**
+ * The claims a dead network falsifies: an activity ("catching up") or a retry that cannot run.
+ * `stopped` and the blocked family stay — their sentences are about the server or the mailbox,
+ * true whatever this device's network is doing.
+ */
+const OFFLINE_OUTRANKS: ReadonlySet<MailState["key"]> = new Set(["stale", "catchingUp", "failing"]);
+
 interface Speech {
   /** The modifier the tone classes hang off — `""` is the plain accent ground. */
   tone: "" | "stopped" | "warn" | "busy";

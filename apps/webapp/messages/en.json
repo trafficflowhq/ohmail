@@ -2776,6 +2776,7 @@
     "reload": "Reload",
     "catchingUp": "Catching up…",
     "staleAsOf": "As of {time} · catching up",
+    "offline": "Offline — showing what this device holds.",
     "signIn": "Sign in",
     "settings": "Settings → Mailboxes",
     "importing": "Syncing your mail.",

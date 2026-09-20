@@ -2776,6 +2776,7 @@
     "reload": "Neu laden",
     "catchingUp": "Wird nachgeholt …",
     "staleAsOf": "Stand {time} · wird nachgeholt",
+    "offline": "Offline — gezeigt wird, was auf diesem Gerät liegt.",
     "signIn": "Anmelden",
     "settings": "Einstellungen → Postfächer",
     "importing": "Deine Post wird synchronisiert.",
