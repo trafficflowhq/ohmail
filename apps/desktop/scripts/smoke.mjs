@@ -862,7 +862,7 @@ check("a list pane rendered", doc.querySelector(".rows") != null);
    above "an empty shell rendered its chrome". */
 check("body text is substantial", text.length > 400, `${text.length} chars`);
 
-for (const label of ["Ohbox", "Screener", "Reads", "Receipts", "Answer Later", "Search", "Settings"]) {
+for (const label of ["Ohbox", "Screener", "News", "Receipts", "Answer Later", "Search", "Settings"]) {
   check(`rail names "${label}"`, text.includes(label));
 }
 
