@@ -1085,6 +1085,7 @@ export const DE: Deck = {
   composeNewHead: "Neue Nachricht",
   composeSubject: "Betreff",
   composeSubjectPlaceholder: "Worum es geht (optional)",
+  composeBodyPlaceholder: "Schreib deine Nachricht…",
   composeToPlaceholder: "name@beispiel.de, …",
   composeFrom: (address: string) => `Von ${address}`,
   composeSent: "Gesendet.",

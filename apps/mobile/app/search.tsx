@@ -7,7 +7,7 @@
  * settles empty offers the address door — the web's own empty-state sentence — and the door
  * opens the device's address view: All · From them · To them, the engine's `messagesWith`.
  */
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { TextInput, View } from "react-native";
 import { router } from "expo-router";
 import { Copy } from "../src/copy";
@@ -44,11 +44,18 @@ function SearchBody() {
   const [addr, setAddr] = useState<string | null>(null);
   const [dir, setDir] = useState<AddressDirection>("any");
 
-  /* Build the index off the keystroke path, so the first characters meet one that is there. */
-  const warm = w.search.warm;
+  /*
+   * Build the index off the keystroke path, ONCE per visit. `w.search.warm` is a fresh closure
+   * on every world derivation, and a settled build bumps the revision the world memo watches —
+   * so depending on its IDENTITY warmed, re-derived, warmed again and spun the JS thread at
+   * 124% with the screen frozen (measured on the device, 2026-09-20). The ref keeps the latest
+   * closure without making it a dependency.
+   */
+  const warm = useRef(w.search.warm);
+  warm.current = w.search.warm;
   useEffect(() => {
-    warm();
-  }, [warm]);
+    warm.current();
+  }, []);
 
   const trimmed = q.trim();
   const answer = addr === null ? w.search.query(q) : null;

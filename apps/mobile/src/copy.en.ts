@@ -1654,6 +1654,7 @@ const TABLE = {
   composeNewHead: "New mail",
   composeSubject: "Subject",
   composeSubjectPlaceholder: "What it's about (optional)",
+  composeBodyPlaceholder: "Write your message…",
   composeToPlaceholder: "name@example.org, …",
   composeFrom: (address: string) => `From ${address}`,
   composeSent: "Sent.",

@@ -738,6 +738,13 @@ export function ComposeSheet({
    * it names the mailbox it leaves from rather than inheriting one.
    */
   const fresh = mode === "new";
+  /* What the writing area asks for — a reply's own words, a forward's optional note, or, with
+     no parent to answer, a message of its own. */
+  const bodyPlaceholder = fresh
+    ? Copy.composeBodyPlaceholder
+    : forward
+      ? Copy.forwardNotePlaceholder
+      : Copy.replyPlaceholder;
   /** Addressed, so the To field is offered and its entries are the envelope. */
   const addressed = forward || fresh;
   /**
@@ -1062,11 +1069,15 @@ export function ComposeSheet({
             value={body}
             onChangeText={setBody}
             editable={phase === "idle"}
-            placeholder={forward ? Copy.forwardNotePlaceholder : Copy.replyPlaceholder}
+            placeholder={bodyPlaceholder}
             placeholderTextColor={t.c.ink3}
             multiline
-            autoFocus
-            accessibilityLabel={forward ? Copy.forwardNotePlaceholder : Copy.replyPlaceholder}
+            /* THE FIRST KEYSTROKE GOES WHERE THE MESSAGE IS MISSING A FACT. A reply and a
+               forward already know their audience, so the body takes the caret; a mail with no
+               parent does not, and the device showed the caret in the body under "Write your
+               reply…" with the To field empty above it. */
+            autoFocus={!fresh}
+            accessibilityLabel={bodyPlaceholder}
             style={[
               t.type.body,
               {
