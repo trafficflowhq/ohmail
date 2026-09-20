@@ -90,6 +90,7 @@ export const ACCESS_REFUSED_MAY_REACH_ROUTES: ReadonlySet<string> =
   new Set<string>([
     "POST /account/manage-link",
     "GET /account/access",
+    "GET /account/export",
     "GET /consent",
   ]);
 

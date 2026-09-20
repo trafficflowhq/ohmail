@@ -39,6 +39,7 @@ import { workflowsRoutes } from "./workflows.js";
 import { proposalsRoutes } from "./proposals.js";
 import { waitlistRoutes } from "./waitlist.js";
 import { accountRoutes } from "./account.js";
+import { exportRoutes } from "./export.js";
 import { aiSettingsRoutes } from "./ai-settings.js";
 import { screeningRoutes } from "./screening.js";
 import { consentRoutes } from "./consent.js";
@@ -238,6 +239,7 @@ export const apiRoutes: Route[] = [
   ...workflowsRoutes,
   ...proposalsRoutes,
   ...accountRoutes,
+  ...exportRoutes,
   ...aiSettingsRoutes,
   ...screeningRoutes,
   ...consentRoutes,

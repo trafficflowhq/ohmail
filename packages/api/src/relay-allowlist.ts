@@ -36,6 +36,7 @@ export const RELAY_ALLOWLIST: readonly RelaySpec[] = [
   { method: "DELETE", pattern: "/workflows/:id" },
   { method: "GET", pattern: "/account/access" },
   { method: "GET", pattern: "/account/ai" },
+  { method: "GET", pattern: "/account/export" },
   { method: "GET", pattern: "/account/screening" },
   { method: "GET", pattern: "/approvals" },
   { method: "GET", pattern: "/attachments/:id" },
