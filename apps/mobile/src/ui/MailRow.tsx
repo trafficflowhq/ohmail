@@ -229,7 +229,9 @@ const StyleSheetAbsolute = {
 /**
  * The verb under the row, one side each. It fades in with the drag and is fully drawn at the
  * point the verb would fire — the same arithmetic the release reads, so what the reader sees at
- * full strength is what letting go does.
+ * full strength is what letting go does. `decision`/`ink2`, the sheet verbs' own grade: the one
+ * word that names what release does cannot be the canvas's quietest role (caption ink3 read as
+ * near-invisible in dark on the device) — weight carries the emphasis, the ramp stays the signal.
  */
 function SwipeFace({
   side,
@@ -248,8 +250,8 @@ function SwipeFace({
   const opacity = pan.x.interpolate({ inputRange: range, outputRange: outputs, extrapolate: "clamp" });
   return (
     <Animated.View style={{ flexDirection: "row", alignItems: "center", gap: 6, opacity }}>
-      <Icon name={icon} size={13} color={t.c.ink3} />
-      <Txt variant="caption" tone="ink3">{label}</Txt>
+      <Icon name={icon} size={14} color={t.c.ink2} />
+      <Txt variant="decision" tone="ink2">{label}</Txt>
     </Animated.View>
   );
 }
