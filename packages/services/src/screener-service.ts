@@ -1442,20 +1442,14 @@ export class ScreenerReadService {
   }
 
   /**
-   * ONE HELD MESSAGE PER SENDER, AS A WINDOW — the subquery both the page and the purchase read.
+   * ONE HELD MESSAGE PER SENDER, AS A WINDOW — the subquery both the page and the purchase read,
+   * which is what makes them name the same message rather than merely agree about it.
    *
-   * `distinct on (k) … order by k, o` and `row_number() over (partition by k order by o) = 1`
-   * pick the same row: the first in `o` within each `k`. The first spelling exists only on the
-   * server; the second is standard and both stores have it, so the representative is chosen the
-   * same way everywhere instead of by a branch. The ordering lives INSIDE the window, where it
-   * belongs — a leading `k` in an outer ORDER BY satisfies the clause, not the answer.
-   *
-   * ONE EXPRESSION, TWO CALLERS, and that is the point. `list` and `suggest` must name the same
-   * message per sender or the page prices one and the purchase buys another; they used to agree
-   * because two pieces of code were written to the same rule, and now they agree because there is
-   * one rule. `extra` narrows which senders are considered and cannot change WHICH row represents
-   * one — the partition is per sender, so restricting the set leaves every partition's contents
-   * untouched.
+   * `row_number() over (partition by k order by o) = 1` rather than `distinct on`: the second
+   * exists only on the server, and the representative must be chosen the same way on both stores.
+   * The ordering lives INSIDE the window — a leading `k` in an outer ORDER BY satisfies the
+   * clause, not the answer. `extra` narrows which senders are considered and cannot change WHICH
+   * row represents one: the partition is per sender, so a subset leaves every partition intact.
    */
   // `account_id` LEADS the predicate rather than filtering a cross-account result (no cross-account disclosure).
   // The return type is INFERRED: the subquery's row type is what makes `reps.fromAddress` and
@@ -1717,15 +1711,12 @@ export class ScreenerService extends ScreenerReadService {
      */
 
     /**
-     * ONE ROW PER NAMED SENDER, CHOSEN BY POSTGRES — the same window `list` pages, so the page
-     * prices the message the purchase buys rather than merely agreeing with it.
+     * ONE ROW PER NAMED SENDER, CHOSEN BY POSTGRES — the window {@link heldSenderReps} holds.
      *
-     * AND IT IS BOUNDED, which it was not. This read used to be `heldRows(…, in (senders))`: the
-     * whole held bag for up to {@link MAX_SUGGEST_SENDERS} senders, every row carrying its
-     * `subject` and `snippet` over the wire, so one sender with four thousand messages at the
-     * gate materialised four thousand rows to pick ONE. The representative is now decided in the
-     * database and at most one row per named sender comes back — a bound by construction rather
-     * than a limit somebody has to remember to raise. `screener-page.pg.test.ts` reads the SQL.
+     * AND IT IS BOUNDED, which it was not: this read used to take the whole held bag for up to
+     * {@link MAX_SUGGEST_SENDERS} senders, every row carrying its `subject` and `snippet`, to
+     * pick one per sender in JavaScript. At most one row per named sender comes back now — a
+     * bound by construction, not a limit somebody has to remember to raise.
      */
     const { reps } = this.heldSenderReps(
       ctx, inArray(sql`lower(${messages.fromAddress})`, senders),
