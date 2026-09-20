@@ -481,10 +481,19 @@ export const withSpendGate: Middleware = (next, route) => async (req, deps, para
   if (deps.session && !accessRefusedMayReach(route)) {
     const verdict = await accessFor(deps, deps.session.accountId);
     if (verdict && !verdict.ok) {
+      // KEEP status 402 and code `subscription_required`: three shipped clients key their lock
+      // on this code, and renaming it silently disables every one of them. `lifecycle` is the
+      // program's dated block (what happened, the deadline, the erasure forecast); `exportPath`
+      // is the open door out — both ride `details` so the wall can render without a second read.
       return errorResponse(
         "subscription_required", 402,
         "This account is not active. Your mail and settings are kept — nothing has been deleted.",
-        { reason: verdict.reason, ...(verdict.manageUrl ? { manageUrl: verdict.manageUrl } : {}) },
+        {
+          reason: verdict.reason,
+          ...(verdict.manageUrl ? { manageUrl: verdict.manageUrl } : {}),
+          ...(verdict.lifecycle ? { lifecycle: verdict.lifecycle } : {}),
+          exportPath: "/account/export",
+        },
       );
     }
   }

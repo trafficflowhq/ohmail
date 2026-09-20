@@ -79,13 +79,13 @@ export const accountRoutes: Route[] = [
     },
   },
   /**
-   * `GET /account/access` — what the entitlements program says this account may do. The one
-   * client-facing read of the port's verdict: the mailbox pane refuses a connect it knows will be
-   * refused before a step-up ceremony. It answers limits, never a refusal — a refused account
-   * cannot reach a `read` route at all (`withSpendGate` answers 402 first), so `ok: false` is
-   * unreachable by construction. `metered: false` is a host with no program. `canAddMailbox` is
-   * not derivable from the numbers: an account may keep the mailboxes it has and be forbidden
-   * another, and collapsing them is how a refusal offers a plan the customer already holds.
+   * `GET /account/access` — what the entitlements program says this account may do, and since the
+   * wall, THE WALL READING ITSELF: it sits on `ACCESS_REFUSED_MAY_REACH_ROUTES`, so a refused
+   * account reaches it and the `ok: false` arm answers the lifecycle, the manage link and the
+   * export path the wall renders. The ONE explicit `fresh` read — a wall that re-reads on focus
+   * must see a reopening within seconds, not a cached refusal for a minute; every OTHER door
+   * keeps the 60 s cache. `metered: false` is a host with no program. `canAddMailbox` is not
+   * derivable from the numbers: an account may keep the mailboxes it has and be forbidden another.
    */
   {
     method: "GET",
@@ -94,14 +94,16 @@ export const accountRoutes: Route[] = [
     cost: "read",
     handler: async (req, deps) => {
       const ctx = serviceContext(deps, req);
-      const verdict = await accessFor(deps, ctx.accountId);
+      const verdict = await accessFor(deps, ctx.accountId, { fresh: true });
       // `null` = this host declared no program. Not an error, and not a refusal.
       if (verdict === null) return json({ metered: false }, 200);
       if (!verdict.ok) {
-        // Unreachable through this route's own pipeline (see above). Answered rather than
-        // thrown so that a caller which somehow arrives here reads "no, and nowhere to go"
-        // instead of a 500 — the arm is watched by driving the rule through the middleware.
-        return json({ metered: true, canAddMailbox: false, mailboxes: 0, aiEnabled: false }, 200);
+        return json({
+          metered: true, canAddMailbox: false, mailboxes: 0, aiEnabled: false,
+          ...(verdict.lifecycle ? { lifecycle: verdict.lifecycle } : {}),
+          ...(verdict.manageUrl ? { manageUrl: verdict.manageUrl } : {}),
+          exportPath: "/account/export",
+        }, 200);
       }
       return json({
         metered: true,
@@ -113,6 +115,8 @@ export const accountRoutes: Route[] = [
         // from the two above — an account may hold every mailbox it is entitled to and have AI
         // off, or the other way round.
         aiEnabled: verdict.limits.aiEnabled,
+        ...(verdict.lifecycle ? { lifecycle: verdict.lifecycle } : {}),
+        exportPath: "/account/export",
       }, 200);
     },
   },

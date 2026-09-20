@@ -93,9 +93,11 @@ export function accessPortOf(deps: ApiDeps): AccessPort | undefined {
  * the question was never armed on this host, and refusing on it would lock every account out of
  * an install whose operator simply has no entitlements program.
  */
-export async function accessFor(deps: ApiDeps, accountId: string): Promise<AccessVerdict | null> {
+export async function accessFor(
+  deps: ApiDeps, accountId: string, opts?: { fresh?: boolean },
+): Promise<AccessVerdict | null> {
   const e = entitlementsOf(deps);
-  return e === null ? null : accessOf(e, accountId);
+  return e === null ? null : accessOf(e, accountId, opts);
 }
 
 /** The SyncService — falls back to the stateless singleton when the bag omits it. */

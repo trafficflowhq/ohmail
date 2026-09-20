@@ -79,9 +79,19 @@ export const UNVERIFIED_MAY_REACH: ReadonlySet<CostClass> =
 export const ACCESS_REFUSED_MAY_REACH: ReadonlySet<CostClass> =
   new Set<CostClass>(["unauthenticated", "ceremony"]);
 
-/** `<METHOD> <pattern>` of every route reachable while refused DESPITE its cost class. */
+/**
+ * `<METHOD> <pattern>` of every route reachable while refused DESPITE its cost class.
+ * `GET /account/access` is the wall reading itself (`read`); `GET /consent` (`read`) is the
+ * pairing-consent read — the shared shell's first question, and a paired desktop that cannot ask
+ * it renders a spinner instead of the wall. `GET /account/export` (`read`) is the way out with
+ * your configuration — leave-anytime is not suspended by a lapsed subscription.
+ */
 export const ACCESS_REFUSED_MAY_REACH_ROUTES: ReadonlySet<string> =
-  new Set<string>(["POST /account/manage-link"]);
+  new Set<string>([
+    "POST /account/manage-link",
+    "GET /account/access",
+    "GET /consent",
+  ]);
 
 /**
  * True iff a refused account may still reach this route. Takes the route so the pattern
