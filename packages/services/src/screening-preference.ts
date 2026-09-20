@@ -48,7 +48,7 @@ export const OHBOX_BAR_MAX_BYTES = 2048;
  */
 export const DEFAULT_OHBOX_BAR =
   "Keep my Ohbox for real people writing to me and the service mail I actually act on — a delivery, "
-  + "a security alert, something that needs a reply. File the newsletters and promotions in Reads, the "
+  + "a security alert, something that needs a reply. File the newsletters and promotions in News, the "
   + "receipts and confirmations in Receipts, and hold first-time strangers in the Screener.";
 
 /** What a caller stores. All optional: a PATCH may set one axis without touching the others. */
