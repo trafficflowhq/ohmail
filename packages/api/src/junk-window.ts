@@ -18,6 +18,10 @@ import {
   ServiceError, foldersEnabled, isUuid, requireImapUint32, requireUuid, IMAP_UINT32_MAX,
   withAccountTx, type ServiceContext,
 } from "@trafficflow/services/mail";
+import {
+  FOLDER_WINDOW_CURSOR_MAX_CHARS, mergeFolderWindow, mintWindowCursor, parseWindowCursor,
+  requireRealEpoch, type CursorEntry,
+} from "./folder-window.js";
 import { IMAP_DOOR_DEADLINE_MS, withinDoorBudget } from "./imap-door.js";
 import type { ApiDeps } from "./deps.js";
 
@@ -92,55 +96,11 @@ export interface JunkPage {
   nextCursor: string | null;
 }
 
-/** One mailbox's cursor entry: the UIDVALIDITY the watermark belongs to, and the seq below. */
-interface CursorEntry { v: string; s: number }
-
 /**
- * How large a junk-window cursor may be on the wire. The cursor is a caller-supplied base64 JSON
- * object, one entry per mailbox, bounded by nothing until now. Each entry's key must be a mailbox
- * uuid and its epoch a uint32. One ceiling, consulted before the decode, so an arbitrarily long
- * cursor costs a `.length`; it bounds the entry count too, since an entry cannot weigh less than
- * its uuid key. Deliberately no entry-count ceiling: the cursor's size is the account's mailbox
- * count and the self-host imposes no mailbox limit, so any entry ceiling rejects a cursor this
- * function itself minted at some account size — roughly two thousand mailboxes still mint a
- * cursor this refuses.
+ * How large a junk-window cursor may be on the wire — one ceiling for both provider windows,
+ * stated here because `input-bounds-census` reads the bound each route declares by this name.
  */
-export const JUNK_CURSOR_MAX_CHARS = 128 * 1024;
-
-/** The opaque cursor: base64url JSON of {mailboxId → {v, s}}. Malformed input is a 400. */
-function parseCursor(raw: string | undefined): Record<string, CursorEntry> {
-  if (!raw) return {};
-  if (raw.length > JUNK_CURSOR_MAX_CHARS) {
-    throw new ServiceError("validation_failed", 400, "cursor is not a junk-window cursor");
-  }
-  try {
-    const parsed: unknown = JSON.parse(Buffer.from(raw, "base64url").toString("utf8"));
-    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("shape");
-    const entries = Object.entries(parsed);
-    const out: Record<string, CursorEntry> = {};
-    for (const [k, v] of entries) {
-      // The KEY is a mailbox id and the epoch is an IMAP UIDVALIDITY — both were untyped here,
-      // so a cursor could name any string as a mailbox and any decimal string as an epoch, and
-      // both are compared downstream against values from the user's own server.
-      if (!isUuid(k)) throw new Error("shape");
-      const e = v as { v?: unknown; s?: unknown };
-      if (typeof e?.v !== "string" || !/^[1-9][0-9]{0,9}$/.test(e.v) || Number(e.v) > IMAP_UINT32_MAX) {
-        throw new Error("shape");
-      }
-      if (typeof e?.s !== "number" || !Number.isInteger(e.s) || e.s <= 0) throw new Error("shape");
-      out[k] = { v: e.v, s: e.s };
-    }
-    return out;
-  } catch {
-    throw new ServiceError("validation_failed", 400, "cursor is not a junk-window cursor");
-  }
-}
-
-function mintCursor(map: Record<string, CursorEntry>): string | null {
-  return Object.keys(map).length === 0
-    ? null
-    : Buffer.from(JSON.stringify(map), "utf8").toString("base64url");
-}
+export const JUNK_CURSOR_MAX_CHARS = FOLDER_WINDOW_CURSOR_MAX_CHARS;
 
 /** The foundation gate every junk route shares: the window exists only behind "Use folders". */
 async function requireFolders(deps: ApiDeps, accountId: string): Promise<void> {
@@ -191,11 +151,10 @@ export async function listJunk(
   deps: ApiDeps, accountId: string, opts: { cursor?: string } = {},
 ): Promise<JunkPage> {
   await requireFolders(deps, accountId);
-  const before = parseCursor(opts.cursor);
+  const before = parseWindowCursor(opts.cursor, "cursor is not a junk-window cursor");
   const boxes = await junkMailboxesOf(deps, accountId);
 
   const states: JunkMailboxState[] = [];
-  const nextBefore: Record<string, CursorEntry> = {};
 
   const reads = boxes.map(async (box): Promise<{ boxId: string; page: FolderPage | null } | null> => {
     if (box.junkFolder === null) {
@@ -234,79 +193,11 @@ export async function listJunk(
   });
   const pages = (await Promise.all(reads)).filter((p): p is { boxId: string; page: FolderPage } => p !== null);
 
-  // ── The k-way merge: newest date first, per-mailbox seq order enforced by taking each
-  // mailbox's rows through its own pointer. At most FOLDER_PAGE_MAX rows leave, whatever the
-  // mailbox count — the account-level page bound.
-  const lanes = pages.map(({ boxId, page }) => ({
-    boxId,
-    uidValidity: page.uidValidity,
-    rows: page.items, // already newest-first by seq
-    at: 0,
-    tookAny: false,
-    lowestTakenSeq: 0,
-    adapterNext: page.nextBeforeSeq,
-  }));
-  const taken: Array<{ lane: (typeof lanes)[number]; row: FolderPageItem }> = [];
-  const dateOf = (r: FolderPageItem): number => (r.date !== null ? Date.parse(r.date) || 0 : 0);
-  while (taken.length < FOLDER_PAGE_MAX) {
-    let best: (typeof lanes)[number] | null = null;
-    for (const lane of lanes) {
-      if (lane.at >= lane.rows.length) continue;
-      if (best === null || dateOf(lane.rows[lane.at]!) > dateOf(best.rows[best.at]!)) best = lane;
-    }
-    if (best === null) break;
-    const row = best.rows[best.at]!;
-    best.at += 1;
-    best.tookAny = true;
-    best.lowestTakenSeq = row.seq;
-    taken.push({ lane: best, row });
-  }
+  const { taken, nextBefore } = mergeFolderWindow(pages, before);
 
-  // ── Per-mailbox cursors: from the lowest TAKEN seq; a lane with rows left (cut by the cap)
-  // resumes below what was taken; an untouched lane keeps its incoming watermark verbatim.
-  // Every entry carries the epoch it belongs to.
-  for (const lane of lanes) {
-    const leftover = lane.at < lane.rows.length;
-    if (lane.tookAny) {
-      if (leftover || lane.adapterNext !== null) {
-        nextBefore[lane.boxId] = { v: lane.uidValidity, s: lane.lowestTakenSeq };
-      }
-    } else if (lane.rows.length > 0) {
-      // Nothing of this mailbox fit the page: resume exactly where this request began.
-      const held = before[lane.boxId];
-      nextBefore[lane.boxId] = held !== undefined && sameEpoch(epochOf(held.v), epochOf(lane.uidValidity))
-        ? held
-        : { v: lane.uidValidity, s: lane.rows[0]!.seq + 1 };
-    } else if (lane.adapterNext !== null) {
-      nextBefore[lane.boxId] = { v: lane.uidValidity, s: lane.adapterNext };
-    }
-  }
-  /**
-   * WHILE ANY LANE PAGINATES, EVERY READ LANE KEEPS AN EPOCH ENTRY — a DRAINED mailbox
-   * included (round 4's finding). Without one, the next "Show older" re-reads the drained
-   * mailbox cursorless: a folder recreated in the meantime would serve its new-epoch top page
-   * with NO reset stated (there is no held epoch to compare), and the client — which trusts
-   * the stated flag — would append fresh mail under stale rows. The drained entry's watermark
-   * is its own lowest taken seq (the next page below it is empty, so nothing repeats), or the
-   * incoming watermark / the-top for a lane that contributed nothing; what matters is the `v`,
-   * which is what lets the NEXT read detect the recreation and say `reset`.
-   */
-  if (Object.keys(nextBefore).length > 0) {
-    for (const lane of lanes) {
-      if (nextBefore[lane.boxId] !== undefined) continue;
-      const held = before[lane.boxId];
-      const s = lane.tookAny
-        ? lane.lowestTakenSeq
-        : held !== undefined && sameEpoch(epochOf(held.v), epochOf(lane.uidValidity))
-          ? held.s
-          : (lane.rows[0]?.seq ?? 0) + 1;
-      nextBefore[lane.boxId] = { v: lane.uidValidity, s: Math.max(1, s) };
-    }
-  }
-
-  const items: JunkItem[] = taken.map(({ lane, row }) => {
+  const items: JunkItem[] = taken.map(({ boxId, uidValidity, row }) => {
     const { seq: _seq, ...header } = row;
-    return { ...header, mailboxId: lane.boxId, uidValidity: lane.uidValidity, origin: "provider" as const };
+    return { ...header, mailboxId: boxId, uidValidity, origin: "provider" as const };
   });
 
   // ── Origin attribution: the verdict's husk keeps the message-id, and the filing completion
@@ -317,7 +208,7 @@ export async function listJunk(
   // pressed says so instead of offering the press again (§16.2's queued command).
   await attributeRescues(deps, accountId, items);
 
-  return { mailboxes: states, items, nextCursor: mintCursor(nextBefore) };
+  return { mailboxes: states, items, nextCursor: mintWindowCursor(nextBefore) };
 }
 
 /** Longest search term the window accepts — a bound on what is handed to the provider's SEARCH. */
@@ -475,32 +366,6 @@ export async function searchJunk(
  * EPOCH-BOUND: the caller names the UIDVALIDITY its row came from, and a folder renumbered
  * since answers 410 — never the body of whatever message now wears the UID.
  */
-/**
- * A UIDVALIDITY that arrived over the wire is only usable if it is a real epoch — a positive
- * integer, no leading zero, no sign, no exponent, no whitespace. The verbs below build
- * `${uidValidity}:${uid}` from it, and the adapter's epoch guard treats `"0"` as "never claimed
- * an epoch" — correct for the worker's internally minted sentinels, wrong for a number a request
- * chose: `uidValidity=0` would switch the guard off for the caller's own rescue. The boundary
- * that accepts the value refuses it, here rather than per route, so every caller gets one rule.
- * Not `Number(v) > 0`: that accepts `"1e9"`, `" 7 "`, `"0x7"` and `"Infinity"`, and the
- * downstream comparison is a string one.
- */
-function requireRealEpoch(uidValidity: string): void {
-  // ── AND IT IS BOUNDED, because the protocol bounds it ──────────────────────────────────
-  //
-  // `^[1-9][0-9]*$` accepted a decimal string of ANY length. RFC 3501 §2.3.1.1 makes UIDVALIDITY
-  // an unsigned 32-bit integer, so a five-hundred-digit "epoch" is not one — and it survived to
-  // be compared against the server's answer, which is a value the caller chose reaching a socket
-  // conversation with somebody else's mail server. The digit ceiling is checked before the range
-  // so an absurd string costs a `.length` rather than a `Number()`.
-  if (!/^[1-9][0-9]*$/.test(uidValidity) || uidValidity.length > 10
-    || Number(uidValidity) > IMAP_UINT32_MAX) {
-    throw new ServiceError(
-      "validation_failed", 400,
-      `uidValidity must be the row's epoch — an integer between 1 and ${IMAP_UINT32_MAX}`,
-    );
-  }
-}
 
 export async function junkBody(
   deps: ApiDeps, accountId: string,

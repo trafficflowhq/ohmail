@@ -11,6 +11,10 @@ import { normalizeMime } from "@trafficflow/core/mail";
 import {
   ServiceError, foldersEnabled, isUuid, requireImapUint32, requireUuid, IMAP_UINT32_MAX,
 } from "@trafficflow/services/mail";
+import {
+  FOLDER_WINDOW_CURSOR_MAX_CHARS, mergeFolderWindow, mintWindowCursor, parseWindowCursor,
+  requireRealEpoch,
+} from "./folder-window.js";
 import { IMAP_DOOR_DEADLINE_MS, withinDoorBudget } from "./imap-door.js";
 import type { ApiDeps } from "./deps.js";
 
@@ -49,7 +53,7 @@ export const TRASH_READ_TIMEOUT_MS = IMAP_DOOR_DEADLINE_MS;
 export const TRASH_SEARCH_MAX_CHARS = 120;
 
 /** How large a trash-window cursor may be on the wire — {@link JUNK_CURSOR_MAX_CHARS}' argument. */
-export const TRASH_CURSOR_MAX_CHARS = 128 * 1024;
+export const TRASH_CURSOR_MAX_CHARS = FOLDER_WINDOW_CURSOR_MAX_CHARS;
 
 /** One row of the merged window list, origin attributed. */
 export interface TrashItem extends Omit<FolderPageItem, "seq"> {
@@ -101,44 +105,6 @@ export interface TrashSearchPage {
   truncated: boolean;
 }
 
-/** One mailbox's cursor entry: the UIDVALIDITY the watermark belongs to, and the seq below. */
-interface CursorEntry { v: string; s: number }
-
-/** The opaque cursor: base64url JSON of {mailboxId → {v, s}}. Malformed input is a 400. */
-function parseCursor(raw: string | undefined): Record<string, CursorEntry> {
-  if (!raw) return {};
-  // The WIRE ceiling is consulted BEFORE the decode, so an arbitrarily long cursor costs a
-  // `.length` rather than a base64 decode, a `JSON.parse` and a loop. It bounds the entry count
-  // too, because an entry cannot weigh less than its uuid key.
-  if (raw.length > TRASH_CURSOR_MAX_CHARS) {
-    throw new ServiceError("validation_failed", 400, "cursor is not a trash-window cursor");
-  }
-  try {
-    const parsed: unknown = JSON.parse(Buffer.from(raw, "base64url").toString("utf8"));
-    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("shape");
-    const out: Record<string, CursorEntry> = {};
-    for (const [k, v] of Object.entries(parsed)) {
-      // The KEY is a mailbox id and the epoch is an IMAP UIDVALIDITY: both are compared
-      // downstream against values from the user's own server, so both are typed here.
-      if (!isUuid(k)) throw new Error("shape");
-      const e = v as { v?: unknown; s?: unknown };
-      if (typeof e?.v !== "string" || !/^[1-9][0-9]{0,9}$/.test(e.v) || Number(e.v) > IMAP_UINT32_MAX) {
-        throw new Error("shape");
-      }
-      if (typeof e?.s !== "number" || !Number.isInteger(e.s) || e.s <= 0) throw new Error("shape");
-      out[k] = { v: e.v, s: e.s };
-    }
-    return out;
-  } catch {
-    throw new ServiceError("validation_failed", 400, "cursor is not a trash-window cursor");
-  }
-}
-
-function mintCursor(map: Record<string, CursorEntry>): string | null {
-  return Object.keys(map).length === 0
-    ? null
-    : Buffer.from(JSON.stringify(map), "utf8").toString("base64url");
-}
 
 /** The foundation gate every trash-window route shares — the view is part of folders. */
 async function requireFolders(deps: ApiDeps, accountId: string): Promise<void> {
@@ -224,25 +190,6 @@ async function attributeOrigin(
   }
 }
 
-/**
- * A UIDVALIDITY that arrived over the wire is only usable if it is a real epoch — a positive
- * integer, no leading zero, sign, exponent or whitespace, inside the protocol's unsigned 32-bit
- * range (RFC 3501 §2.3.1.1). `"0"` is refused for the Junk window's reason: the adapter's epoch
- * guard treats zero as "this locator never claimed an epoch" — correct for the worker's
- * internally minted sentinels, wrong for a number a request chose, which would switch the guard
- * off for that caller. Not `Number(v) > 0`: that accepts `"1e9"`, `" 7 "`, `"0x7"` and
- * `"Infinity"`, and the downstream comparison is a string one against the server's decimal
- * digits.
- */
-function requireRealEpoch(uidValidity: string): void {
-  if (!/^[1-9][0-9]*$/.test(uidValidity) || uidValidity.length > 10
-    || Number(uidValidity) > IMAP_UINT32_MAX) {
-    throw new ServiceError(
-      "validation_failed", 400,
-      `uidValidity must be the row's epoch — an integer between 1 and ${IMAP_UINT32_MAX}`,
-    );
-  }
-}
 
 /**
  * THE LIST PAGE: each mailbox's next window read IN PARALLEL (deadline-raced), merged into ONE
@@ -258,11 +205,10 @@ export async function listServerTrash(
   deps: ApiDeps, accountId: string, opts: { cursor?: string } = {},
 ): Promise<TrashPage> {
   await requireFolders(deps, accountId);
-  const before = parseCursor(opts.cursor);
+  const before = parseWindowCursor(opts.cursor, "cursor is not a trash-window cursor");
   const boxes = await trashMailboxesOf(deps, accountId);
 
   const states: TrashMailboxState[] = [];
-  const nextBefore: Record<string, CursorEntry> = {};
 
   const reads = boxes.map(async (box): Promise<{ boxId: string; page: FolderPage } | null> => {
     if (box.trashFolder === null) {
@@ -296,76 +242,15 @@ export async function listServerTrash(
   const pages = (await Promise.all(reads))
     .filter((p): p is { boxId: string; page: FolderPage } => p !== null);
 
-  const lanes = pages.map(({ boxId, page }) => ({
-    boxId,
-    uidValidity: page.uidValidity,
-    rows: page.items,                 // already newest-first by seq
-    at: 0,
-    tookAny: false,
-    lowestTakenSeq: 0,
-    adapterNext: page.nextBeforeSeq,
-  }));
-  const taken: Array<{ lane: (typeof lanes)[number]; row: FolderPageItem }> = [];
-  const dateOf = (r: FolderPageItem): number => (r.date !== null ? Date.parse(r.date) || 0 : 0);
-  while (taken.length < FOLDER_PAGE_MAX) {
-    let best: (typeof lanes)[number] | null = null;
-    for (const lane of lanes) {
-      if (lane.at >= lane.rows.length) continue;
-      if (best === null || dateOf(lane.rows[lane.at]!) > dateOf(best.rows[best.at]!)) best = lane;
-    }
-    if (best === null) break;
-    const row = best.rows[best.at]!;
-    best.at += 1;
-    best.tookAny = true;
-    best.lowestTakenSeq = row.seq;
-    taken.push({ lane: best, row });
-  }
+  const { taken, nextBefore } = mergeFolderWindow(pages, before);
 
-  // Per-mailbox cursors: from the lowest TAKEN seq; a lane with rows left (cut by the cap) resumes
-  // below what was taken; an untouched lane keeps its incoming watermark verbatim.
-  for (const lane of lanes) {
-    const leftover = lane.at < lane.rows.length;
-    if (lane.tookAny) {
-      if (leftover || lane.adapterNext !== null) {
-        nextBefore[lane.boxId] = { v: lane.uidValidity, s: lane.lowestTakenSeq };
-      }
-    } else if (lane.rows.length > 0) {
-      const held = before[lane.boxId];
-      nextBefore[lane.boxId] = held !== undefined && sameEpoch(epochOf(held.v), epochOf(lane.uidValidity))
-        ? held
-        : { v: lane.uidValidity, s: lane.rows[0]!.seq + 1 };
-    } else if (lane.adapterNext !== null) {
-      nextBefore[lane.boxId] = { v: lane.uidValidity, s: lane.adapterNext };
-    }
-  }
-  /* WHILE ANY LANE PAGINATES, EVERY READ LANE KEEPS AN EPOCH ENTRY — a DRAINED mailbox included.
-   * Without one the next "Show older" re-reads the drained mailbox cursorless: a folder emptied
-   * and recreated in the meantime would serve its new-epoch top page with NO reset stated (there
-   * is no held epoch to compare), and the client — which trusts the stated flag — would append
-   * fresh rows under stale ones. What matters is the `v`. */
-  if (Object.keys(nextBefore).length > 0) {
-    for (const lane of lanes) {
-      if (nextBefore[lane.boxId] !== undefined) continue;
-      const held = before[lane.boxId];
-      const s = lane.tookAny
-        ? lane.lowestTakenSeq
-        : held !== undefined && sameEpoch(epochOf(held.v), epochOf(lane.uidValidity))
-          ? held.s
-          : (lane.rows[0]?.seq ?? 0) + 1;
-      nextBefore[lane.boxId] = { v: lane.uidValidity, s: Math.max(1, s) };
-    }
-  }
-
-  const items: TrashItem[] = taken.map(({ lane, row }) => {
+  const items: TrashItem[] = taken.map(({ boxId, uidValidity, row }) => {
     const { seq: _seq, ...header } = row;
-    return {
-      ...header, mailboxId: lane.boxId, uidValidity: lane.uidValidity,
-      origin: "provider" as const,
-    };
+    return { ...header, mailboxId: boxId, uidValidity, origin: "provider" as const };
   });
   await attributeOrigin(deps, accountId, items);
 
-  return { mailboxes: states, items, nextCursor: mintCursor(nextBefore) };
+  return { mailboxes: states, items, nextCursor: mintWindowCursor(nextBefore) };
 }
 
 /**
