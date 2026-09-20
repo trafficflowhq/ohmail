@@ -14,13 +14,21 @@ export class ObjectUrlLedger {
 
   /**
    * Create a URL for `blob` and record the debt under `owner`. `undefined` where the runtime has
-   * no `URL.createObjectURL` — SSR and the node test environment — so a caller degrades to an
-   * item without byte-backing rather than throwing inside a render.
+   * no `URL.createObjectURL` (SSR, node) — and where the call itself THROWS: Expo's runtime
+   * installs one that throws `Cannot create URL for blob` whenever the native blob store exports
+   * no URI scheme, which is every Android app without a `blob_provider_authority` resource
+   * (measured on a paired device — the unguarded call landed every attachment `failed`). The
+   * URL is a convenience, never the byte carrier; a mint that cannot mint is no mint.
    */
   mint(owner: string, blob: Blob): string | undefined {
     const U = (globalThis as { URL?: { createObjectURL?: (b: Blob) => string } }).URL;
     if (typeof U?.createObjectURL !== "function") return undefined;
-    const url = U.createObjectURL(blob);
+    let url: string;
+    try {
+      url = U.createObjectURL(blob);
+    } catch {
+      return undefined;
+    }
     let held = this.byOwner.get(owner);
     if (!held) {
       held = new Set<string>();

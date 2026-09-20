@@ -6259,9 +6259,17 @@ export class OhmailEngine {
     const composeItems: AttachmentItem[] = attachments.map((a, i) => {
       const bytes = base64ToBytes(a.contentBase64);
       const mimeType = a.contentType || "application/octet-stream";
-      const minted = bytes
-        ? this.mintObjectUrl(messageId, new Blob([bytes as BlobPart], { type: mimeType }), mimeType)
-        : undefined;
+      // React Native cannot BUILD a Blob from bytes (`createFromParts` throws on any
+      // ArrayBufferView part), so on a phone this seed keeps the metadata-alone posture the
+      // unreadable-base64 case above already has, instead of throwing the send's overlay away.
+      let minted: { url: string | undefined; blob: Blob } | undefined;
+      try {
+        minted = bytes
+          ? this.mintObjectUrl(messageId, new Blob([bytes as BlobPart], { type: mimeType }), mimeType)
+          : undefined;
+      } catch {
+        minted = undefined;
+      }
       return {
         // A local id, namespaced so it can never collide with a server row id. It is only ever
         // resolved against this held list; `openAttachment` short-circuits on `ready` with the
@@ -7506,8 +7514,15 @@ export class OhmailEngine {
       await this.openAttachment(messageId, item.id);
       const blob = this.attachmentBlobOf(messageId, item.id);
       if (!blob) continue;
-      const url = await mintInlineDataUrl(blob);
-      if (url) minted.push([item.contentId!, url]);
+      // PER PART: a byte read that throws (a device FileReader refusal) costs that image its
+      // blank box and nothing else — unguarded, one bad part killed the whole pass and every
+      // image already minted in this walk was lost with it.
+      try {
+        const url = await mintInlineDataUrl(blob);
+        if (url) minted.push([item.contentId!, url]);
+      } catch {
+        /* this part stays the blank box it already was; the others still land below */
+      }
     }
     if (minted.length === 0) return;
 
@@ -7695,7 +7710,8 @@ export class OhmailEngine {
    * RENDERABLE_MIME}. The re-typing happens at construction because that is the only point that governs every
    * consumer: a call site can forget to check a type, and the two the server sets (`Content-Disposition`, `nosniff`)
    * describe the RESPONSE and do not survive into a Blob made from its body. The TYPED BLOB is returned ALWAYS;
-   * the URL only where `URL.createObjectURL` exists (SSR, node, and EVERY React Native phone lack it): the URL is
+   * the URL only where `URL.createObjectURL` exists AND can answer (SSR and node lack it; a React Native phone
+   * carries a runtime-installed one that may throw, and the ledger reads a throw as absence): the URL is
    * a browser convenience, never the byte carrier — dropping the blob with it left every phone's `ready` item
    * byte-less while HTTP answered 200, measured on a paired device. The typed Blob rides beside the URL so the
    * bytes a consumer holds are the ones a browser would render or save, at the same downgraded type.
