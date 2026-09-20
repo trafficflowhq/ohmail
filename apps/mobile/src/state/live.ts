@@ -327,7 +327,7 @@ export type WorldMail = Mail & {
   /**
    * WHERE THE MESSAGE IS SHOWN — the projection's own answer, which is the sender's routing.
    *
-   * A newsletter ruled to `ohmail/Reads` sits physically in the INBOX, so the two fields
+   * A newsletter ruled to `ohmail/News` sits physically in the INBOX, so the two fields
    * disagree for exactly the mail a pile presents. The move panel leaves this one out of its
    * list and `move()` retargets the rules holding the sender HERE — reading `folder` for either
    * offered the place the row is already in and retargeted at the filed one.

@@ -413,7 +413,7 @@ Junk                     your provider's own — your spam verdicts file into it
 Sent                     your replies, left where your provider already keeps them
 ohmail/
 ├── Screener             new senders wait here until you decide where they go
-├── Reads                the News pile: newsletters, things you read when you have a minute
+├── News                 newsletters and things you read when you have a minute
 ├── Receipts             receipts, confirmations, orders
 ├── Screened             senders you keep, but out of the Inbox
 ├── Quarantine           spam the automatic patterns set aside, held for review

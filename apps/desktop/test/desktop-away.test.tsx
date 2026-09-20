@@ -201,7 +201,7 @@ describe("the away responder on the hosted door", () => {
     // an API one deploy older. So the pane sends the scope it is showing.
     //
     // The value is written as a LITERAL rather than imported from `AWAY_PILES_DEFAULT`: this
-    // assertion is about the bytes on the wire, and a default widened to include `ohmail/Reads`
+    // assertion is about the bytes on the wire, and a default widened to include `ohmail/News`
     // would opt every existing responder into Reads without anybody asking — the defect that
     // migration exists to close. Against the constant this test would go green for it.
     expect(puts[0]!.body).toEqual({

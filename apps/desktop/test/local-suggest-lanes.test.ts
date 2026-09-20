@@ -100,7 +100,7 @@ function rig(opts: {
 
 const one = (sender: string) => ({
   sender, messageId: `m-${sender}`, decision: "no" as const,
-  destination: "ohmail/Reads", confidence: 0.9, rationale: "a newsletter",
+  destination: "ohmail/News", confidence: 0.9, rationale: "a newsletter",
 });
 
 const many = (n: number): string[] => Array.from({ length: n }, (_, i) => `s${i}@example.test`);

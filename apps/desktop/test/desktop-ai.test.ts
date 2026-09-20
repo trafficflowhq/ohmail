@@ -223,7 +223,7 @@ describe("the Screener's suggest control on a standalone install", () => {
           status: 200,
           body: JSON.stringify({
             suggestions: asked.map((s) => ({
-              sender: s, messageId: `m-${s}`, decision: "no", destination: "ohmail/Reads",
+              sender: s, messageId: `m-${s}`, decision: "no", destination: "ohmail/News",
               confidence: 0.8, rationale: "a newsletter",
             })),
             skipped: [],
