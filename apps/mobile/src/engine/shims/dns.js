@@ -1,13 +1,12 @@
 /**
  * Name resolution on a phone: the two record lookups the mail client makes before it dials are
- * ANSWERED with the hostname itself; every other member stays a refusal.
- *
- * nodemailer resolves a non-IP submission host BEFORE connecting and dials whatever comes back,
- * keeping the hostname for TLS. Refusing that threw out of `SMTPConnection.connect` and killed
- * the process, so nothing sent from a phone organizing its own mailbox. Handing the HOSTNAME
- * back sends the dial to the name, which the platform's TCP module resolves, and leaves SNI on
- * it. `lookup` STAYS refused: its only other caller in this bundle is the SSRF guard, which
- * reads what it is given as an ADDRESS and fails closed on a throw.
+ * ANSWERED with the hostname itself; every other member stays a refusal. nodemailer resolves a
+ * non-IP submission host BEFORE connecting and dials whatever comes back, keeping the hostname
+ * for TLS. Refusing that threw out of `SMTPConnection.connect` and killed the process, so
+ * nothing sent from a phone organizing its own mailbox. Handing the HOSTNAME back sends the dial
+ * to the name, which the platform's TCP module resolves, and leaves SNI on it. `lookup` STAYS
+ * refused: its only other caller in this bundle is the SSRF guard, which reads what it is given
+ * as an ADDRESS and fails closed on a throw.
  */
 "use strict";
 
