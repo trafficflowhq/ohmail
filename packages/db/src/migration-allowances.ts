@@ -36,6 +36,57 @@ export const MIGRATION_ALLOWANCES: readonly MigrationAllowance[] = [
       "WHEN duplicate_object block); the constraint, its name and its predicate are unchanged, " +
       "so the resulting schema is identical",
   },
+  /* MAIL 0021 and MAIL 0022, both byte-frozen at 0.19.1 and both taking the flat replayable form
+   * here. Each has SEVERAL recorded sides because each file was comment-rewritten after it
+   * shipped, and a row holds whichever bytes that database applied: every historical version whose
+   * EXECUTABLE SQL is the released one is admitted, and the version whose executable SQL is not
+   * (0021's pre-release draft) deliberately is not. `migration-allowance-coverage.test.ts` derives
+   * that set from git and refuses a missing one AND an extra one. */
+  {
+    journal: "mail",
+    tag: "0021_mailbox_address_unique",
+    recorded: "023bda82bb91edc7fc936d6ab78dc5977eacb8721f82f1c9a7e5caedb41ce39e",
+    shipped: "c7618c005d3a633341ef18091c606885b67e8df6620312e237265df7bb107b3f",
+    reason:
+      "a DROP INDEX IF EXISTS added in front of the CREATE UNIQUE INDEX after apply, so the entry " +
+      "is replayable; the index, its name, its columns and its partial predicate are unchanged, " +
+      "and a drop of an index the next statement rebuilds leaves the same schema",
+  },
+  {
+    journal: "mail",
+    tag: "0021_mailbox_address_unique",
+    recorded: "7201608975888466d3fdc2b95ec472a50e272c30b322ad3071100e909aeb2c57",
+    shipped: "c7618c005d3a633341ef18091c606885b67e8df6620312e237265df7bb107b3f",
+    reason:
+      "the same pair, for the earlier comment-only version of this file — a database that applied " +
+      "it before the comments were rewritten records those bytes and would drift identically",
+  },
+  {
+    journal: "mail",
+    tag: "0022_message_body_html_cap",
+    recorded: "f59b8717ffc8e24297395265848cf483494b95e4ec628c7204fddaf693c34483",
+    shipped: "3ddfe517b312e39236fc5c52d51ca6a3ab97ecd7925c7ff5105a9957a309e3b2",
+    reason:
+      "a DROP CONSTRAINT IF EXISTS added in front of the bare ADD CONSTRAINT after apply, so the " +
+      "entry is replayable; the CHECK, its name and its predicate are unchanged, and a drop of a " +
+      "constraint the next statement re-adds leaves the same schema",
+  },
+  {
+    journal: "mail",
+    tag: "0022_message_body_html_cap",
+    recorded: "ab9fcec7894aa422d5e7dfc1c0e911a25b803bb039978963c182f9d2c0efc53a",
+    shipped: "3ddfe517b312e39236fc5c52d51ca6a3ab97ecd7925c7ff5105a9957a309e3b2",
+    reason:
+      "the same pair, for the middle comment-only version of this file — see the entry above",
+  },
+  {
+    journal: "mail",
+    tag: "0022_message_body_html_cap",
+    recorded: "6c8d15b02a2fbaeece3b5aacab167566ae4aa43f43f41468bc278ccb61905d34",
+    shipped: "3ddfe517b312e39236fc5c52d51ca6a3ab97ecd7925c7ff5105a9957a309e3b2",
+    reason:
+      "the same pair, for the first released version of this file — see the two entries above",
+  },
   {
     journal: "mail",
     tag: "0120_held_release_dismissed",
