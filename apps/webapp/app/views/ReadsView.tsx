@@ -744,7 +744,12 @@ export function ReadsView({
       >
         <div className="stream-top">
           <h1>{t("title")}</h1>
-          <span className="meta num">{ts("newSince", { count: newCount })}</span>
+          {/* The ListPane meta's UNGATED TWIN — it stated "Nothing new since you were here" as
+              fact over a mirror still catching up (INCIDENT-021). Same reading, same gate. */}
+          <span className="meta num">
+            {countWhen({ settled, count: all.length, pending: owed },
+              ts("newSince", { count: newCount }))}
+          </span>
         </div>
         <div className="stream-hints">
           <ShortcutHint />

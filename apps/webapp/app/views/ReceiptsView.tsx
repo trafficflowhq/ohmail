@@ -525,7 +525,12 @@ export function ReceiptsView({
       >
         <div className="stream-top">
           <h1>{t("title")}</h1>
-          <span className="meta num">{ts("newSince", { count: shownNew })}</span>
+          {/* The ListPane meta's UNGATED TWIN — `ReadsView`'s note: it stated the zero as fact
+              over a mirror still catching up (INCIDENT-021). Same reading, same gate. */}
+          <span className="meta num">
+            {countWhen({ settled, count: all.length, pending: owed },
+              ts("newSince", { count: shownNew }))}
+          </span>
         </div>
         <div className="stream-hints">
           <ShortcutHint />

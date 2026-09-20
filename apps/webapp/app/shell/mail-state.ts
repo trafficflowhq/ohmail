@@ -1626,6 +1626,17 @@ export interface MailStateInputs {
 }
 
 /**
+ * The states under which a catch-up cannot complete, so an unfinished first drain OWES the
+ * screen nothing: the loop is disarmed (`stopped`, `ownerLost`), confirmed failing, there is no
+ * mailbox to drain, or a banner is already saying why mail is not arriving (`blocked`,
+ * `mailboxError`). Every other key mid-`bootstrapping` means an answer is still on its way, and
+ * an empty pile is withheld rather than stated as a fact ({@link MailState.owed}).
+ */
+export const OWES_NOTHING_KEYS: readonly MailStateKey[] = [
+  "stopped", "ownerLost", "failing", "blocked", "mailboxError", "noMailbox",
+];
+
+/**
  * What to say, from what the client can see — plus whether the panes may
  * call an empty list empty. Pure. The `settled` stamp is applied HERE and
  * not inside the ladder: it is a property of every state and `climb` has
@@ -1653,10 +1664,15 @@ export function deriveMailState(input: MailStateInputs): MailState {
       || input.engineFreshness.state !== "unknown",
     // AND THE SECOND HALF OF THE SAME QUESTION — see {@link MailState.owed}. Stamped beside
     // `settled` and for its reason: it is a property of every state and `climb` has ten
-    // returns. The KEY, so a change to what counts as an import flows through here; a frozen
-    // loop (`stopped`/`failing`) never reaches it, which is right — a list withheld for a loop
-    // that will not run again is the spinner nobody can escape.
-    owed: state.key === "importing",
+    // returns. Two ways mail is still on its way: the mirror is GROWING (`importing`), and this
+    // TAB'S OWN CATCH-UP has not completed once (`bootstrapping`) while the loop can still
+    // finish it — on an established account no growth arm can fire mid-catch-up (the sampler
+    // re-baselines while bootstrapping), so keying on the import alone let a warm tab assert
+    // "Nothing in your Ohbox" over mail that was minutes from the screen (INCIDENT-021). A key
+    // in {@link OWES_NOTHING_KEYS} is a loop that will not run again, and a list withheld for
+    // it is the spinner nobody can escape; a fixture world owes nothing by construction.
+    owed: state.key === "importing"
+      || (input.sync.bootstrapping && !input.demo && !OWES_NOTHING_KEYS.includes(state.key)),
   };
 }
 

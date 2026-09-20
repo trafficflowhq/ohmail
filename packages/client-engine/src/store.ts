@@ -277,6 +277,12 @@ export abstract class BaseMirrorStore implements MirrorStore {
    */
   async load(): Promise<void> {
     await this.readPersisted();
+    // HYDRATION REPLACED THE RECORDS WHOLESALE, so EVERY type moved — the wipe's own stamp rule.
+    // `readPersisted` bumps `ver` without naming types, and every stamp-keyed derivation (the
+    // shell's `useDerivedVersion`, the selectors' date-order cache) then reads a full mirror as
+    // still empty until the next real write: INCIDENT-021, three piles asserting "Nothing here"
+    // over thousands of hydrated rows, healed only when new mail happened to arrive.
+    this.stampAll();
     this.unflushed.clear();
     this.unflushedMeta.clear();
     this.unflushedCursor = null;
