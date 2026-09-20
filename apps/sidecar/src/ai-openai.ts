@@ -8,8 +8,8 @@ import type {
   ClassifierInput, ClassifierResult, DraftInput, DraftResult,
 } from "@trafficflow/core/mail";
 import {
-  fetchWithDeadline, failureOf, shortDetail,
-  type AiTransport, type ProbeFailure, type ProbeOutcome,
+  fetchWithDeadline, failureOf, shortDetail, statusFailure,
+  type AiKeyTransportOptions, type AiTransport, type ProbeFailure, type ProbeOutcome,
 } from "./ai-transport.js";
 
 /**
@@ -40,21 +40,8 @@ export const DEFAULT_OPENAI_MODELS = {
   draft: "gpt-4.1",
 } as const;
 
-export interface OpenAiTransportOptions {
-  apiKey: string;
-  classifyModel: string;
-  draftModel: string;
-  fetchImpl: typeof fetch;
-  timeoutMs: number;
-}
-
-/** What a non-2xx answer was about, without reading its prose. */
-function statusFailure(status: number): ProbeFailure {
-  if (status === 401 || status === 403) return "unauthorized";
-  if (status === 404) return "model_absent";
-  if (status === 408 || status === 504) return "timeout";
-  return "bad_response";
-}
+/** Kept as the name this provider's callers have always used. */
+export type OpenAiTransportOptions = AiKeyTransportOptions;
 
 /**
  * Models this account can reach that cannot answer a chat request. `GET /v1/models` lists the WHOLE

@@ -63,6 +63,32 @@ export interface AiTransport {
   probe(): Promise<ProbeOutcome>;
 }
 
+/**
+ * THE OPTION BAG A KEYED PROVIDER TAKES — Anthropic and OpenAI have always taken the same five,
+ * and each declared them itself until 0.21. The local model server's bag is genuinely different
+ * (a base URL where these have a key) and stays its own.
+ */
+export interface AiKeyTransportOptions {
+  apiKey: string;
+  classifyModel: string;
+  draftModel: string;
+  fetchImpl: typeof fetch;
+  timeoutMs: number;
+}
+
+/**
+ * WHAT A NON-2XX ANSWER WAS ABOUT, without reading its prose — one reading for every provider.
+ * This is the sentence a person is shown when their key does not work, so two copies drifting
+ * means the same 403 reads "your key was refused" on one provider and "the model answered
+ * something we could not read" on the other, and only one of those tells them what to do.
+ */
+export function statusFailure(status: number): ProbeFailure {
+  if (status === 401 || status === 403) return "unauthorized";
+  if (status === 404) return "model_absent";
+  if (status === 408 || status === 504) return "timeout";
+  return "bad_response";
+}
+
 /** Classify a thrown fetch failure without reading its message. */
 export function failureOf(err: unknown): ProbeFailure {
   const name = err instanceof Error ? err.name : "";
