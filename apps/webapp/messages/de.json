@@ -3301,6 +3301,7 @@
     "refused": "ohmail konnte nicht bestätigen, welche Version das verfügbare Update hat — installiert wurde deshalb nichts. Deine Version bleibt unverändert.",
     "managedPackage": "ohmail {version}. Eine Paketinstallation aktualisiert sich nicht selbst — installiere das neuere Paket so, wie du dieses installiert hast.",
     "managedFlatpak": "ohmail {version}. Flatpak-Installationen werden über deine Softwareverwaltung aktualisiert.",
+    "managedAppStore": "ohmail {version}. App-Store-Installationen werden über den App Store aktualisiert.",
     "managedUnpackaged": "ohmail {version}. Dieser Build aktualisiert sich nicht selbst.",
     "lastChecked": "Geprüft {when}",
     "neverChecked": "Noch nicht geprüft",

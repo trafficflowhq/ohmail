@@ -42,6 +42,15 @@ path = "src/main.rs"
 # It is not dead code either way: `cargo test --features local-engine` is what
 # proves the lifecycle, and those tests start real processes.
 default = []
+
+# THE MAC APP STORE BUILD. One thing: `updater.rs`'s `read_facts` answers `store_build: true`, so
+# `classify` names the install `MacAppStore` and the update door — the launch check, the menu
+# press, the daily poll and the failure dialog's retry all arrive at it — refuses before any feed
+# is asked. The store updates this copy; an app that also replaced its own files would be two
+# updaters fighting over one bundle. Nothing else in the binary changes, and the window's own
+# update row is withheld by the bundler's `OHMAIL_DISTRIBUTION=mas` literal rather than by this.
+mas = []
+
 local-engine = [
     "dep:keyring",
     "dep:getrandom",

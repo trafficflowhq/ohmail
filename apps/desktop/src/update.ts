@@ -72,6 +72,7 @@ export const INSTALL_KINDS = [
   "flatpak",
   "windowsSetup",
   "macBundle",
+  "macAppStore",
   "unpackaged",
   "unknown",
 ] as const;
@@ -90,6 +91,7 @@ export const MANAGED_SENTENCE_KEYS: Partial<Record<InstallKind, string>> = {
   rpm: "managedPackage",
   linuxPackage: "managedPackage",
   flatpak: "managedFlatpak",
+  macAppStore: "managedAppStore",
   unpackaged: "managedUnpackaged",
 };
 

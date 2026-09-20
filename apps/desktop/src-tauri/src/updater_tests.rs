@@ -1023,8 +1023,32 @@ fn facts(os: Os) -> Facts {
         appimage: AppImage::None,
         flatpak_info: false,
         system_path: false,
+        store_build: false,
         os,
     }
+}
+
+/// THE STORE BUILD IS THE ONE KIND NOTHING ON DISK CAN SAY, so it is driven here with the machine
+/// facts of the copy it is otherwise identical to — a bundled macOS app — and the control is the
+/// same row with the flag off. Without the control the case would pass for a table that answered
+/// `MacAppStore` for every Mac, which is the wrong app on the download page's copy.
+#[test]
+fn the_store_build_never_replaces_its_own_files_and_the_download_page_copy_still_does() {
+    let machine = Facts { bundled_as: Some(InstallKind::MacBundle), ..facts(Os::Mac) };
+    assert_eq!(classify(Facts { store_build: true, ..machine }), InstallKind::MacAppStore);
+    assert_eq!(classify(machine), InstallKind::MacBundle);
+    assert!(!InstallKind::MacAppStore.self_applies());
+    assert!(InstallKind::MacBundle.self_applies());
+    assert_eq!(InstallKind::MacAppStore.as_str(), "macAppStore");
+    assert_eq!(
+        InstallKind::MacAppStore.menu_sentence(),
+        Some("Updates Come from the App Store"),
+    );
+    // A Flatpak marker cannot talk a store build out of being one: rule 0 is ahead of rule 1.
+    assert_eq!(
+        classify(Facts { store_build: true, flatpak_info: true, ..facts(Os::Linux) }),
+        InstallKind::MacAppStore,
+    );
 }
 
 #[test]

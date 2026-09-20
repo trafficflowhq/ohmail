@@ -14,6 +14,7 @@ import { useTranslations } from "next-intl";
 import { Button } from "@ohmail/ui";
 
 import { engineLogout, type AccessRefusedFacts, type EngineStatus } from "./bridge-fetch.js";
+import { linksOutToBilling } from "./distribution.js";
 
 export function DesktopAccessLock(
   { facts, onSignedOut }: { facts: AccessRefusedFacts; onSignedOut: (status: EngineStatus) => void },
@@ -47,7 +48,11 @@ export function DesktopAccessLock(
               this app holds no plan, no balance and no page of its own to send anybody to. An
               anchor, so the window's link interceptor hands it to the browser where the person
               is already signed in; a button that goes nowhere is worse than no button. */}
-          {facts.manageUrl
+          {/* The Mac App Store build keeps the SENTENCES above and drops this button: it leads to
+              the operator's subscription page, which App Review 3.1.1 does not allow a store copy
+              to offer. The screen still says what happened and still signs out, so the person is
+              told and is not trapped — a lock with no way out is the thing this must never be. */}
+          {facts.manageUrl && linksOutToBilling()
             ? (
               <a
                 className="btn primary"

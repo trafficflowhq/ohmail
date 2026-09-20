@@ -46,6 +46,7 @@ import { GateNotice } from "./GateNotice.js";
 import { DOOR_COPY, machineWord } from "./door-copy.js";
 import { desktopPaneLabel, DesktopSettings } from "./DesktopSettings.js";
 import { DesktopAiAccount } from "./DesktopAiAccount.js";
+import { linksOutToBilling } from "./distribution.js";
 import { DesktopSubscription, useDesktopManageOffer } from "./DesktopSubscription.js";
 import { DesktopAccessLock } from "./DesktopAccessLock.js";
 import { DesktopWebSection } from "./DesktopWebSection.js";
@@ -1291,7 +1292,11 @@ export function DesktopGate() {
            unconditional within it: the flag exists for every hosted account. The standalone door
            has no account and keeps its own local-model form on the Desktop pane instead. */
         {...(accountDoor ? { aiSection: <DesktopAiAccount /> } : {})}
-        {...(accountDoor && manageOffered
+        /* AND NOT ON THE MAC APP STORE BUILD, whatever the door serves: that pane's one press
+           leaves for the operator's subscription page, which App Review 3.1.1 does not allow a
+           store copy to offer. Withholding the NODE withholds the nav entry too, which is the
+           same mechanism the line above uses for a door that serves no page at all. */
+        {...(accountDoor && manageOffered && linksOutToBilling()
           ? { billingSection: <DesktopSubscription onNowhere={withdrawManage} /> }
           : {})}
         {...(accountDoor

@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  THE MAC APP STORE BUILD'S ENTITLEMENTS. Four capabilities and two identifiers, and the list is
+  short on purpose: every entitlement is a question at review, and one that cannot be justified by
+  something the app visibly does is one nobody can answer. The sandbox is the store's requirement;
+  the other three are what a mail client with a local engine cannot work without.
+
+  `__TEAM_ID__` is substituted at build time by the store build script, from the signing
+  certificate's own subject, and the build refuses if any placeholder survives — the team
+  identifier is not written into this repository.
+-->
+<plist version="1.0">
+<dict>
+	<!-- The store's requirement, and the reason the rest of this list is short. -->
+	<key>com.apple.security.app-sandbox</key>
+	<true/>
+	<!-- Outbound only: IMAP and SMTP to the mail server the person typed. This app runs no
+	     server and listens on nothing, so there is no `network.server` here. -->
+	<key>com.apple.security.network.client</key>
+	<true/>
+	<!-- The open and save panels: an attachment saved out, a file attached to a reply. It grants
+	     this app nothing but the file the person picked, which is the whole point of the panel. -->
+	<key>com.apple.security.files.user-selected.read-write</key>
+	<true/>
+	<!-- The one small secret this install keeps: the key the engine seals a mailbox password
+	     with. A sandboxed app gets its own group from the provisioning profile anyway; naming it
+	     makes the grant explicit and reviewable rather than implied. -->
+	<key>keychain-access-groups</key>
+	<array>
+		<string>__TEAM_ID__.app.ohmail</string>
+	</array>
+	<!-- The two identifiers the provisioning profile is validated against. Xcode writes these for
+	     a project it generated; this bundle is built by Tauri, so they are written here. -->
+	<key>com.apple.application-identifier</key>
+	<string>__TEAM_ID__.app.ohmail</string>
+	<key>com.apple.developer.team-identifier</key>
+	<string>__TEAM_ID__</string>
+</dict>
+</plist>

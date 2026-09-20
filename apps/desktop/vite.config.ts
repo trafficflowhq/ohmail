@@ -723,6 +723,14 @@ export default defineConfig({
        the webview's user agent is deliberately not consulted — WebKitGTK may present a Mac UA
        for site compatibility, which would keep the Linux build saying "Mac". */
     __OHMAIL_PLATFORM__: JSON.stringify(process.platform),
+    /* HOW THIS ARTIFACT IS DISTRIBUTED — `direct` for the download page's DMG and every other
+       build, `mas` for the Mac App Store one. A store copy is updated by the store and may not
+       link out to a page where a subscription is bought, so the two surfaces that do either are
+       withheld from it; `src/distribution.ts` owns the rule and the fallback. A DEFINE and not a
+       runtime probe: a path, a receipt or a bundle id read at runtime answers differently under a
+       test, a symlink or a copied app, and a store build that showed those surfaces because a
+       probe returned the wrong thing is the failure this exists to make unrepresentable. */
+    __OHMAIL_DISTRIBUTION__: JSON.stringify((process.env.OHMAIL_DISTRIBUTION ?? "").trim() || "direct"),
   },
 
   resolve: {

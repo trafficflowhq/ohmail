@@ -29,3 +29,10 @@ declare const __OHMAIL_BUILD_SHA__: string;
  */
 declare const __OHMAIL_PLATFORM__: string;
 
+/**
+ * HOW THIS ARTIFACT IS DISTRIBUTED — `direct` (the download page) or `mas` (the Mac App Store),
+ * folded to a literal at build time from `OHMAIL_DISTRIBUTION`, or `direct` where nothing set it.
+ * `src/distribution.ts` is the only consumer and owns the rule that an unknown word reads as
+ * `direct`. Absent (typeof-guarded) where no bundler ran — the test runner importing source.
+ */
+declare const __OHMAIL_DISTRIBUTION__: string;

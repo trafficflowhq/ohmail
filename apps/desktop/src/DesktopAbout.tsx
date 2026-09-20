@@ -15,6 +15,7 @@ import type { EngineStatus } from "./bridge-fetch.js";
 import { BUILD_LABEL } from "./build-id.js";
 import { DOOR_COPY, machineWord } from "./door-copy.js";
 import { hostLabelOf, isDesktopHost } from "./doors.js";
+import { selfUpdates } from "./distribution.js";
 import { DesktopUpdate } from "./DesktopUpdate.js";
 
 /* WHAT THIS INSTALL DOES WITH THE MAILBOX BELOW — "organizes" or "reads". One rule, two
@@ -63,8 +64,10 @@ export function DesktopAbout({ status }: { status: EngineStatus }) {
           (`src-tauri/src/frame.rs`) — so on those it was an affordance nobody could reach.
           `DesktopUpdate` is a subhead and one row and owns no layout: whoever restyles Settings
           next can move the element without rewiring anything, and it renders nothing at all
-          where the shell answers nothing. */}
-      <DesktopUpdate />
+          where the shell answers nothing. Absent outright on the Mac App Store build, which the
+          store updates: there the updater plugin is not compiled in either, so the shell would
+          answer nothing anyway — the flag is the reason a reader can see, and the belt. */}
+      {selfUpdates() ? <DesktopUpdate /> : null}
 
       <SettingsSubhead>{DOOR_COPY.aboutInstallHead}</SettingsSubhead>
 

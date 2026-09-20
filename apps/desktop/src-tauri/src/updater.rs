@@ -236,8 +236,12 @@ pub enum InstallKind {
     Flatpak,
     /// Installed by the Windows setup.
     WindowsSetup,
-    /// The macOS application bundle.
+    /// The macOS application bundle, downloaded from the release page.
     MacBundle,
+    /// The Mac App Store build. Compiled by `--features mas`, never read from the machine: the
+    /// store's copy is a `MacBundle` in every way the filesystem can see, and replacing its own
+    /// files is exactly what the store forbids it to do.
+    MacAppStore,
     /// A Linux binary that is none of the above: built from source, or an AppImage somebody
     /// unpacked and is running from the extracted tree.
     Unpackaged,
@@ -255,6 +259,7 @@ impl InstallKind {
             InstallKind::Flatpak => "flatpak",
             InstallKind::WindowsSetup => "windowsSetup",
             InstallKind::MacBundle => "macBundle",
+            InstallKind::MacAppStore => "macAppStore",
             InstallKind::Unpackaged => "unpackaged",
         }
     }
@@ -279,6 +284,7 @@ impl InstallKind {
                 Some("Updates Come from Your Package Manager")
             }
             InstallKind::Flatpak => Some("Updates Come from Your Software Centre"),
+            InstallKind::MacAppStore => Some("Updates Come from the App Store"),
             InstallKind::Unpackaged => Some("This Build Does Not Update Itself"),
         }
     }
@@ -319,6 +325,10 @@ pub struct Facts {
     pub flatpak_info: bool,
     /// Is the running executable under a system prefix (`/usr` or `/opt`)?
     pub system_path: bool,
+    /// Was this binary compiled for the Mac App Store (`--features mas`)? A COMPILED fact and not
+    /// a machine one, because nothing on disk distinguishes the store's copy from the download
+    /// page's: same bundle layout, same identifier shape, same everything the filesystem sees.
+    pub store_build: bool,
     pub os: Os,
 }
 
@@ -344,7 +354,8 @@ pub enum AppImage {
 
 /// The one decision, as a pure function of what the machine says. The ORDER is the design:
 ///
-///  1. The sandbox marker wins outright — a Flatpak is a Flatpak whatever a bundler wrote, and
+///  0. The store build wins outright — it is a fact about the artifact, not about the machine.
+///  1. The sandbox marker wins next — a Flatpak is a Flatpak whatever a bundler wrote, and
 ///     the software centre is what updates it.
 ///  2. The bundler's record next, for every kind but the AppImage, and ahead of the AppImage fact
 ///     because a packaged install must not be talked into replacing a stranger's file.
@@ -353,6 +364,11 @@ pub enum AppImage {
 ///     say so, and an extracted copy carries the mark while having no image to rewrite.
 ///  4. Under a system prefix with no mark: a distribution built this and owns the files.
 pub fn classify(facts: Facts) -> InstallKind {
+    // 0. The store build wins before anything on disk is consulted: it is the one kind that is a
+    //    property of the artifact rather than of the machine, and the store updates it.
+    if facts.store_build {
+        return InstallKind::MacAppStore;
+    }
     if facts.flatpak_info {
         return InstallKind::Flatpak;
     }
@@ -583,6 +599,7 @@ fn read_facts() -> Facts {
     let mountinfo = std::fs::read_to_string("/proc/self/mountinfo").ok();
     Facts {
         bundled_as: bundled_as(),
+        store_build: cfg!(feature = "mas"),
         appimage: running_image(ImageEnv {
             appimage: appimage.as_deref(),
             // PRESENCE, exactly as the runtime reads it: `APPIMAGE_EXTRACT_AND_RUN=0` extracts

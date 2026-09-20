@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  THE VENDORED NODE RUNTIME'S ENTITLEMENTS, applied by `mas-build.sh` BEFORE `tauri build` stages
+  the binary into `Contents/Resources/runtime/node`. Signing is inside-out: the app's signature
+  seals this one, so a signature applied afterwards breaks the seal it sits inside.
+
+  Two keys and nothing else. `inherit` means this child runs under the PARENT's sandbox — the same
+  network grant, the same container — and Apple's rule is that an inheriting binary carries no
+  other sandbox entitlement, because a child that could widen the sandbox would be a way around it.
+  `lipo` carries no signature across, so this file exists at all only because the universal binary
+  the vendor step writes has none.
+-->
+<plist version="1.0">
+<dict>
+	<key>com.apple.security.app-sandbox</key>
+	<true/>
+	<key>com.apple.security.inherit</key>
+	<true/>
+</dict>
+</plist>
