@@ -1219,7 +1219,7 @@ export const DE: Deck = {
   wallDeleteElsewhere:
     "Zum Löschen deines Kontos brauchst du deinen zweiten Faktor — das passiert auf deiner Kontoseite im Browser. Dein Postfach bleibt unberührt.",
   wallOpenInBrowser:
-    "Öffne ohmail.app im Browser, um wieder ein Abo abzuschliessen oder dein Konto zu löschen.",
+    "Öffne ohmail.app im Browser, um dieses Konto zu verwalten oder zu löschen.",
 
   stripGraceEnds: (date: string) =>
     `Deine Testphase ist abgelaufen. ohmail organisiert noch bis zum ${date}.`,

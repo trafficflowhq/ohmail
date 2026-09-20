@@ -1909,8 +1909,11 @@ const TABLE = {
      the honest control; a button that could only ever be refused is not. */
   wallDeleteElsewhere:
     "Deleting your account needs your second factor, so it happens on your account page in a browser. Your mailbox is not touched.",
+  /* THE STORE FACE'S ONE SENTENCE, and it asks nobody to buy anything: a store copy may not carry
+     a call to action towards a purchase page (App Review 3.1.1), and "open the site to subscribe"
+     is one. It names what a person can do with the account instead. */
   wallOpenInBrowser:
-    "Open ohmail.app in a browser to subscribe again or delete your account.",
+    "Open ohmail.app in a browser to manage or delete this account.",
 
   stripGraceEnds: (date: string) => `Your trial ended. ohmail keeps organizing until ${date}.`,
   stripPaymentFailed: (date: string) =>
