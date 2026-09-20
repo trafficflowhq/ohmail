@@ -13,18 +13,22 @@ import { Component, type ReactNode } from "react";
  */
 export class ViewBoundary extends Component<
   {
-    /** Rendered in place of the children once a child render has thrown. */
-    fallback: ReactNode;
+    /**
+     * Rendered in place of the children once a child render has thrown. The function form is
+     * handed the caught value so the card can name its CLASS — never the message, which can
+     * hold whatever the view was rendering when it threw.
+     */
+    fallback: ReactNode | ((error: unknown) => ReactNode);
     children: ReactNode;
     /** Told what was caught — for a log line, never for control flow. */
     onError?: (error: unknown) => void;
   },
-  { failed: boolean }
+  { failed: boolean; error: unknown }
 > {
-  state = { failed: false };
+  state: { failed: boolean; error: unknown } = { failed: false, error: undefined };
 
-  static getDerivedStateFromError(): { failed: boolean } {
-    return { failed: true };
+  static getDerivedStateFromError(error: unknown): { failed: boolean; error: unknown } {
+    return { failed: true, error };
   }
 
   componentDidCatch(error: unknown): void {
@@ -32,6 +36,8 @@ export class ViewBoundary extends Component<
   }
 
   render(): ReactNode {
-    return this.state.failed ? this.props.fallback : this.props.children;
+    if (!this.state.failed) return this.props.children;
+    const { fallback } = this.props;
+    return typeof fallback === "function" ? fallback(this.state.error) : fallback;
   }
 }

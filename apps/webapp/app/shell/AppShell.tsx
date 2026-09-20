@@ -229,6 +229,7 @@ import { OrganizerNotice, type OrganizerNoticeTransport } from "./OrganizerNotic
 /* The OS-answer seam, threaded to `SettingsView` for the hosts that must inject one. */
 import type { NotificationHost } from "./notification-settings";
 import { ViewBoundary } from "./ViewBoundary";
+import { ViewFailCard } from "./ViewFailCard";
 import {
   formatRecipientChips,
   optionsFromFacts,
@@ -7666,21 +7667,9 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
             <ViewBoundary
               key={effectiveView}
               onError={(error) => console.error("[view] render failed", effectiveView, error)}
-              fallback={
-                <section className="view view-fail">
-                  <div className="view-fail-card">
-                    <h1>{t("viewError.title")}</h1>
-                    <p>{t("viewError.body")}</p>
-                    <Button
-                      onClick={() => {
-                        if (typeof window !== "undefined") window.location.reload();
-                      }}
-                    >
-                      {t("viewError.action")}
-                    </Button>
-                  </div>
-                </section>
-              }
+              /* The card carries the build and the view, and can copy them with the error's
+                 class — the facts a report needs, and nothing a message could leak. */
+              fallback={(error) => <ViewFailCard view={effectiveView} error={error} />}
             >
             {effectiveView === "ohbox" ? (
               <OhboxView

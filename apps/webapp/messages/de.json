@@ -2766,7 +2766,9 @@
   "viewError": {
     "title": "Diese Ansicht wurde nicht geladen.",
     "body": "Beim Zeichnen dieses Bildschirms ist etwas schiefgegangen. An deiner Post wurde nichts verändert.",
-    "action": "Neu laden"
+    "action": "Neu laden",
+    "copyDetails": "Details kopieren",
+    "copied": "Kopiert"
   },
   "sync": {
     "failing": "Synchronisierung fehlgeschlagen. Wird erneut versucht.",

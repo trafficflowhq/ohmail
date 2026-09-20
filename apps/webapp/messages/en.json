@@ -2766,7 +2766,9 @@
   "viewError": {
     "title": "This view didn't load.",
     "body": "Something went wrong drawing this screen. Your mail is untouched.",
-    "action": "Reload"
+    "action": "Reload",
+    "copyDetails": "Copy details",
+    "copied": "Copied"
   },
   "sync": {
     "failing": "Sync failed. Retrying.",
