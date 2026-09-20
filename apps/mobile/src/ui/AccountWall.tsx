@@ -19,7 +19,7 @@ import { useLocale } from "../i18n/LocaleProvider";
 import { Button, Screen, Scroller, Txt } from "./base";
 import { dayStamp } from "./day-stamp";
 import { wallSays, type WallAction, type WallLine } from "./wall-says";
-import { readExport, exportFilename } from "../net/account";
+import { readExport, exportFilename, SELF_HOST_GUIDE } from "../net/account";
 import { shareAttachmentBytes } from "../mail/open-attachment-native";
 import { Buffer } from "buffer";
 import type { AccessRefusedFacts } from "../net/access-lock";
@@ -42,9 +42,6 @@ function say(line: WallLine): string {
     case "wallOpenInBrowser": return Copy.wallOpenInBrowser;
   }
 }
-
-/** Where the self-host guide lives — the same address the download page links to. */
-const SELF_HOST_GUIDE = "https://github.com/trafficflowhq/ohmail/blob/main/docs/self-host/README.md";
 
 export function AccountWall(
   { facts, session }: { facts: AccessRefusedFacts; session: ConnectedSession | null },

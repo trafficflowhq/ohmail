@@ -100,6 +100,19 @@ export async function readExport(
   }
 }
 
+/**
+ * WHERE THE SELF-HOSTING GUIDE IS — the address the wall offers after somebody has their
+ * settings file, and the SAME one the browser's wall and the download page send people to
+ * (`apps/webapp/app/(product)/mailbox/AccessLock.tsx`). Two surfaces, one address: a second
+ * spelling is how one of them quietly rots.
+ *
+ * It lives HERE rather than on the screen because this file is inside the phone's network seam,
+ * which is the one place an address may be written down (`test/privacy.test.ts`). Nothing dials
+ * it — the system browser does, on a press.
+ */
+export const SELF_HOST_GUIDE =
+  "https://github.com/trafficflowhq/ohmail/blob/main/docs/self-host/README.md";
+
 /** The export's filename: dated, so two of them a month apart do not collide in a folder. */
 export function exportFilename(now: Date): string {
   const p = (n: number): string => String(n).padStart(2, "0");
