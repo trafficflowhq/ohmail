@@ -75,7 +75,7 @@ export function toMailboxFacts(m: MailboxDTO): MailboxFacts {
     // the pending sentence, which is what such a server actually reports; `null` is "nothing
     // asked"; a stamp is a press the row has not answered yet.
     releaseRequestedAt: m.releaseRequestedAt,
-    // WHY that ask has not finished (mail 0120): `sibling_lapse` is a clone's live claim, and
+    // WHY that ask has not finished (mail 0121): `sibling_lapse` is a clone's live claim, and
     // absent is an older server — the pending sentence stands, which is what it can truthfully say.
     releaseRefusal: m.releaseRefusal,
     takeoverAuthorizedAt: m.takeoverAuthorizedAt,

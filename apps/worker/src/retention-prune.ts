@@ -6,7 +6,7 @@ import type { Tx } from "@trafficflow/db";
 import type { Logger } from "@trafficflow/core/mail";
 
 /**
- * RETENTION (mail 0120 / cloud 0040) — the pass that ends three tables' unbounded growth. The
+ * RETENTION (mail 0122) — the pass that ends three tables' unbounded growth. The
  * horizons and the deletes live in `@trafficflow/db/cloud`'s `retention.ts` (ONE place); this is
  * the cadence and the rotation. It rides the hourly maintenance block under the leader lock, so
  * exactly one process prunes, visits {@link RETENTION_ACCOUNTS_PER_TICK} accounts per tick

@@ -127,7 +127,7 @@ describe("the desktop mailbox-facts seam", () => {
          pass has not yet confirmed, and the standing "organize here" press the gate has not yet
          spent. Both are the engine's own columns, projected raw. */
       releaseRequestedAt: null,
-      /* WHY a standing stop has not finished (mail 0120) — `sibling_lapse` on the clone
+      /* WHY a standing stop has not finished (mail 0121) — `sibling_lapse` on the clone
          refusal, `null` everywhere else. `null` here because the request above is `null` too:
          the projection never answers a refusal without the request it explains. */
       releaseRefusal: null,

@@ -447,7 +447,7 @@ export class SyncService {
     if (sinceSeq > 0n) {
       const { min: minSeq, max: maxSeq, prunedThrough: floor } = await seqBounds(db, accountId);
       prunedThrough = floor;
-      // THE RETENTION FLOOR (mail 0120), the authoritative one: the pass compacts below
+      // THE RETENTION FLOOR (mail 0122), the authoritative one: the pass compacts below
       // `pruned_through_seq` — tombstones included — while RETAINING each live entity's first
       // row, so `min` stays low and only this explicit floor can see the gap. A cursor AT the
       // floor is fine; below it, rows it never saw are gone — EXCEPT a cursor whose floor TAG is

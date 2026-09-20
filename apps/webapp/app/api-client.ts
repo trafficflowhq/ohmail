@@ -852,7 +852,7 @@ export interface MailboxDTO {
   organizerReleasedAt?: string | null;
   /** The standing "stop organizing here" ask, pending until the organizer's pass confirms it. */
   releaseRequestedAt?: string | null;
-  /** Why that ask has not finished — `sibling_lapse` is a clone's live claim (mail 0120). */
+  /** Why that ask has not finished — `sibling_lapse` is a clone's live claim (mail 0121). */
   releaseRefusal?: "sibling_lapse" | null;
   /** The standing "organize here" press, spent by the gate's next pass. */
   takeoverAuthorizedAt?: string | null;

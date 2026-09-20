@@ -395,7 +395,7 @@ export interface SeqBounds {
   /** The highest committed seq — the ceiling no legitimate cursor can be above. */
   max: bigint | null;
   /**
-   * The explicit retention floor (`account_sync_state.pruned_through_seq`, mail 0120): every seq
+   * The explicit retention floor (`account_sync_state.pruned_through_seq`, mail 0122): every seq
    * at or below it may have been COMPACTED by the retention pass (`retention.ts`), so a cursor
    * BELOW it cannot replay exactly — the deleted rows include tombstones — and is 410'd. NOT
    * derivable from `min`: compaction retains each live entity's first row below the floor, so
@@ -445,7 +445,7 @@ export async function minRetainedSeq(tx: Tx, accountId: string): Promise<bigint 
 }
 
 /**
- * The retention floor alone — the one-row read the BOOTSTRAP path needs (mail 0120). `seqBounds`
+ * The retention floor alone — the one-row read the BOOTSTRAP path needs (mail 0122). `seqBounds`
  * carries it for resuming cursors, but a `since=0` replay skips the aggregate and still has to
  * TAG the sub-floor page cursors it hands out (`SyncService.getChanges`), so this is the counter
  * row's PK lookup and nothing else. 0 ⇔ nothing pruned, or no counter row (which means no log).

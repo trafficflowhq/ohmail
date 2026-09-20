@@ -201,7 +201,7 @@ export const mailboxes = pgTable("mailboxes", {
    */
   releaseRequestedAt: timestamp("release_requested_at", { withTimezone: true }),
   /**
-   * Mail 0120 — WHY a standing stop has not finished (mail 0120). The release pass writes
+   * Mail 0121 — WHY a standing stop has not finished (mail 0121). The release pass writes
    * `sibling_lapse` when the server holds a fresh claim under this install's id and a nonce it
    * never wrote — a restored image or clone — so the pane can say the doc's sentence instead of
    * rendering the refusal as an ordinary pending confirm for ever. The set is closed at the
@@ -951,7 +951,7 @@ export const accountSyncState = pgTable("account_sync_state", {
   accountId: uuid("account_id").primaryKey(),           // one row per account; the seq source of truth
   nextSeq: bigint("next_seq", { mode: "bigint" }).notNull().default(sql`0`),
   /**
-   * THE RETENTION FLOOR (mail 0120). Every `change_log` seq at or below it may have been
+   * THE RETENTION FLOOR (mail 0122). Every `change_log` seq at or below it may have been
    * compacted by the retention pass (`retention.ts` — churn, tombstones, dead entities; each
    * live entity's first row and the user-wins moves stay), so a resuming cursor at or below it
    * cannot replay exactly and `getChanges` answers 410 cursor_expired. Raised BEFORE any delete,

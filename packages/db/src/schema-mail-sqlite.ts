@@ -224,13 +224,6 @@ export const mailboxes = sqliteTable("mailboxes", {
    */
   releaseRequestedAt: integer("release_requested_at", { mode: "timestamp_ms" }),
   /**
-   * Mail 0120 — WHY a standing stop has not finished (mail 0120); the pg twin's rule verbatim. Written
-   * `sibling_lapse` by the release pass when a fresh claim carries this install's id under a
-   * nonce it never wrote (a restored image or clone); NULL everywhere else, cleared wherever
-   * {@link releaseRequestedAt} is spent, cancelled or re-made.
-   */
-  releaseRefusal: text("release_refusal"),
-  /**
    * Mail 0088 — and the record that the ceasing HAPPENED. {@link releaseRequestedAt} is the ASK,
    * cleared when honoured; this is what the row keeps afterwards, because a release is otherwise
    * INDISTINGUISHABLE from a stand-down whose winner went away — both are `reader` with a consent
@@ -416,6 +409,15 @@ export const mailboxes = sqliteTable("mailboxes", {
    * that no longer matches and fails at the first query.
    */
   erasedAt: integer("erased_at", { mode: "timestamp_ms" }),
+  /**
+   * Mail 0121 — WHY a standing stop has not finished; the pg twin's rule verbatim. Written
+   * `sibling_lapse` by the release pass when a fresh claim carries this install's id under a
+   * nonce it never wrote (a restored image or clone); NULL everywhere else, cleared wherever
+   * {@link releaseRequestedAt} is spent, cancelled or re-made. DECLARED LAST for 0111's
+   * reason: SQLite's ADD COLUMN appends, so the newest migration's column sits after every
+   * column that predates it, and the declaration is compared to the built store in order.
+   */
+  releaseRefusal: text("release_refusal"),
 }, (t) => ({
   ixIdAccount: uniqueIndex("mailboxes_id_account_uq").on(t.id, t.accountId),
   // ONE ACTIVE MAILBOX PER ADDRESS (mail 0021). PARTIAL, because `delete` is a soft delete to
@@ -909,7 +911,7 @@ export const auditLog = sqliteTable("audit_log", {
 export const accountSyncState = sqliteTable("account_sync_state", {
   accountId: text("account_id").primaryKey(),           // one row per account; the seq source of truth
   nextSeq: int64("next_seq").notNull().default(sql`0`),
-  // mail 0120's twin — the retention floor `seqBounds` reads on every resuming /sync. No
+  // mail 0122's twin — the retention floor `seqBounds` reads on every resuming /sync. No
   // retention pass runs on a device, so it rests at 0; carried for the reader's arithmetic.
   prunedThroughSeq: int64("pruned_through_seq").notNull().default(sql`0`),
 });

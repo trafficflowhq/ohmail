@@ -574,7 +574,7 @@ export interface MailboxDTO {
    */
   releaseRequestedAt: ISODateTime | null;
   /**
-   * WHY the standing ask above has not finished, or `null` (mail 0120). The one value is
+   * WHY the standing ask above has not finished, or `null` (mail 0121). The one value is
    * `sibling_lapse`: the release was refused because a FRESH claim carries this install's id
    * under a nonce it never wrote — a restored image or clone — and the request stands until that
    * claim lapses. Without the discriminator a pane cannot tell this refusal from an ordinary

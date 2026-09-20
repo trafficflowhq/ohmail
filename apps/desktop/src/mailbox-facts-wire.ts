@@ -87,7 +87,7 @@ interface MailboxWire {
   organizerReleasedAt?: string | null;
   /** The standing "stop organizing here" ask, pending until the engine's pass confirms it. */
   releaseRequestedAt?: string | null;
-  /** Why that ask has not finished — `sibling_lapse` is a clone's live claim (mail 0120). */
+  /** Why that ask has not finished — `sibling_lapse` is a clone's live claim (mail 0121). */
   releaseRefusal?: "sibling_lapse" | null;
   /** The standing "organize here" press, spent by the gate's next pass. */
   takeoverAuthorizedAt?: string | null;
@@ -234,7 +234,7 @@ export async function readMailboxFactsVia(
     // THE TWO PENDING ASKS, forwarded by the same `in` spread: absent is an engine that predates
     // the columns and withholds the pending sentence, which is what such an engine reports.
     ...("releaseRequestedAt" in m ? { releaseRequestedAt: m.releaseRequestedAt } : {}),
-    // The refusal rides only with its request (mail 0120): absent is an engine that predates the
+    // The refusal rides only with its request (mail 0121): absent is an engine that predates the
     // column, and the pending sentence stands — which is what such an engine can truthfully say.
     ...("releaseRefusal" in m ? { releaseRefusal: m.releaseRefusal } : {}),
     ...("takeoverAuthorizedAt" in m ? { takeoverAuthorizedAt: m.takeoverAuthorizedAt } : {}),

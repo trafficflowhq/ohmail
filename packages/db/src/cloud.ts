@@ -134,7 +134,7 @@ export {
   type ApiFaultInput, type ApiFaultArm, type ApiFaultRouteCount,
 } from "./api-faults.js";
 
-/* Retention (mail 0120 / cloud 0040). CLOUD-ONLY: the prunes are the hosted worker's, and the
+/* Retention (mail 0122). CLOUD-ONLY: the prunes are the hosted worker's, and the
  * module names `auth_events`, which a local install does not have. */
 export {
   changeLogHorizon, pruneChangeLogForAccount, retentionAccountsAfter,

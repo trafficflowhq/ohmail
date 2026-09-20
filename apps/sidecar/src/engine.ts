@@ -760,7 +760,7 @@ const LOCAL_IMAP_ADMISSION = {
  * `try`/`catch` at a call site collapses them: a number is how many of ours were removed (`0` is a
  * complete answer); `null` is COULD NOT LOOK (a refused search, a short walk, a folder over its
  * ceiling — swallowing it once told a person the mailbox was let go while the claim stood in
- * `ohmail/_meta`); and `"sibling"` (mail 0120) is a release that accomplished nothing because a
+ * `ohmail/_meta`); and `"sibling"` (mail 0121) is a release that accomplished nothing because a
  * FRESH claim carries this install's id under a nonce it never wrote — a restored image or clone,
  * a fact the pane owes a sentence, not a "could not look". The sibling arm is tested BEFORE the
  * catch-all: widening a helper without moving the order makes the new class dead code.
@@ -4002,7 +4002,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
               releasedByLapse = true;
             }
           }
-          /* ── THE SIBLING REFUSAL IS ITS OWN ANSWER, AND THE ROW RECORDS IT (mail 0120) ──
+          /* ── THE SIBLING REFUSAL IS ITS OWN ANSWER, AND THE ROW RECORDS IT (mail 0121) ──
              A fresh claim under this install's id and a nonce it never wrote is a restored image
              or clone, and the lease's own rule decides what happens: the request STANDS until the
              sibling's claim lapses (the stale term then releases it on an ordinary poll), and the
@@ -4113,7 +4113,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                 // a release that left a becoming authorized would be promoted straight back by the
                 // very next poll — the control undoing itself.
                 releaseRequestedAt: null,
-                // Mail 0120 — the refusal explains a STANDING request; a recorded release leaves
+                // Mail 0121 — the refusal explains a STANDING request; a recorded release leaves
                 // nothing standing to explain.
                 releaseRefusal: null,
                 takeoverAuthorizedAt: null,
@@ -5874,7 +5874,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                  claim "is given back rather than left to age out". Its two siblings on this door
                  both gate on the count; this one did not, and it is the arm that runs on the
                  detach a person's removal triggers, which is exactly when the sentence gets read.
-                 A sibling refusal is not a count either: nothing was given back (mail 0120). */
+                 A sibling refusal is not a count either: nothing was given back (mail 0121). */
               if (typeof released === "number" && released > 0) {
                 log("organizer_claim_released_on_detach", {
                   mailboxId: mb.id,
@@ -6570,7 +6570,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
             );
             /* A sibling refusal at a hand-back is a COMPLETE answer that none of this runtime's
                claims stand (`0`), not a "could not look": the record it saw is a clone's, live,
-               and not this install's to remove (mail 0120). The release ROUTE is where that refusal
+               and not this install's to remove (mail 0121). The release ROUTE is where that refusal
                earns the row's `release_refusal`; a hand-back neither makes nor spends a stop. */
             const released = releasedAnswer === "sibling" ? 0 : releasedAnswer;
             if (released !== null && released > 0) {
@@ -7751,7 +7751,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                     + "install connecting this mailbox stands itself down against a claim "
                     + "nothing holds",
                 );
-                /* A sibling refusal fails the promise too (mail 0120): "nothing of ours is left
+                /* A sibling refusal fails the promise too (mail 0121): "nothing of ours is left
                    holding it" is false while a live claim carries this install's id, whichever
                    copy of this computer wrote it — the other machine will stand down against it. */
                 if (released === null || released === "sibling") claimReleased = false;

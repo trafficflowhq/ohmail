@@ -1636,7 +1636,7 @@ export class MailboxService {
          * stopped organizing it.
          */
         releaseRequestedAt: null,
-        // Mail 0120 — a tombstone explains nothing; the refusal goes with the request.
+        // Mail 0121 — a tombstone explains nothing; the refusal goes with the request.
         releaseRefusal: null,
         organizerReleasedAt: null,
         // ── AND THE SYNC BLOCK, FOR THE IDENTICAL REASON (mail 0029) ─────────────────────
@@ -1783,7 +1783,7 @@ export class MailboxService {
           // itself says — and it would leave a live claim standing in `ohmail/_meta` under a row
           // that denies it.
           releaseRequestedAt: ctx.now(),
-          // Mail 0120 — a FRESH ask has no refusal yet; the release pass writes one if it earns it.
+          // Mail 0121 — a FRESH ask has no refusal yet; the release pass writes one if it earns it.
           releaseRefusal: null,
           // The block is this process's report about the worker's relationship to the mailbox, and
           // this request invalidates it in both directions — `update` and `organizeHere` apply the
@@ -2222,7 +2222,7 @@ export class MailboxService {
          * mailbox somebody just asked to organize here is not a released one.
          */
         releaseRequestedAt: null,
-        // Mail 0120 — the refusal goes with the request it explains.
+        // Mail 0121 — the refusal goes with the request it explains.
         releaseRefusal: null,
         organizerReleasedAt: null,
         // The block is this process's report about the worker's relationship to the mailbox, and
@@ -2811,7 +2811,7 @@ export class MailboxService {
          provider, where the release retried for a whole session with the row reading as an
          ordinary organized mailbox. */
       releaseRequestedAt: m.releaseRequestedAt ? m.releaseRequestedAt.toISOString() : null,
-      /* WHY that ask has not finished (mail 0120) — COERCED to the closed set, never projected
+      /* WHY that ask has not finished (mail 0121) — COERCED to the closed set, never projected
          verbatim, and only beside the request it explains: a refusal on a row whose request is
          gone is residue, not a state. */
       releaseRefusal:

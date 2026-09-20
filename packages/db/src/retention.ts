@@ -10,7 +10,7 @@ import type { Tx } from "./change-log.js";
  * the floor the pass keeps each live entity's FIRST row (creation order preserves the FK apply
  * order; the delta materializes CURRENT state) plus the ohbox-tidy user-wins moves, and deletes
  * churn, tombstones and dead entities. The floor (`account_sync_state.pruned_through_seq`,
- * mail 0120) is raised BEFORE any delete; `getChanges` 410s an untagged cursor below it and the
+ * mail 0122) is raised BEFORE any delete; `getChanges` 410s an untagged cursor below it and the
  * client re-bootstraps. `audit_log`/`auth_events` age out on the fixed horizons stated below.
  */
 

@@ -1622,7 +1622,7 @@ describe("a standing stop request is on the row, and the pane's notes end when t
   });
 
   /**
-   * THE SIBLING-LAPSE REFUSAL SAYS ITS OWN SENTENCE (mail 0120). A stop refused because a
+   * THE SIBLING-LAPSE REFUSAL SAYS ITS OWN SENTENCE (mail 0121). A stop refused because a
    * live claim carries this install's id under a nonce it never wrote — a restored image or
    * clone — used to wear the ordinary pending sentence for ever: a false "in progress" at
    * exactly the moment a person is fighting a clone. The DTO's `releaseRefusal` discriminates,

@@ -1527,7 +1527,7 @@ export function DesktopMailboxes(
               ? (stopQueued
                 ? t("stopOrganizingQueued")
                 : m.releaseRequestedAt
-                  /* ── WHY the stop stands, when the wire can say (mail 0120) ─────────
+                  /* ── WHY the stop stands, when the wire can say (mail 0121) ─────────
                      A refused release against a live same-id sibling — a restored image or
                      clone — used to wear the ordinary pending sentence for ever, a false
                      "in progress" at exactly the moment a person is fighting a clone. The

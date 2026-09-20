@@ -83,7 +83,7 @@ describe("the desktop's refusing api-client stub", () => {
     /* The desktop stub predates these members; each was added to the real wire by a later lane
        and none is read by the shared shell on this tier. They are listed so the away wire's
        parity — the one this case was written for — is a checked claim rather than a hope. */
-    /* `releaseRefusal` (mail 0120) rides beside the request it explains: the desktop tier reads
+    /* `releaseRefusal` (mail 0121) rides beside the request it explains: the desktop tier reads
        both through `mailbox-facts-wire.ts`, never through this stub, exactly like its two
        pinned neighbours. */
     MailboxDTO: ["organizedByThisInstall", "releaseRequestedAt", "releaseRefusal", "takeoverAuthorizedAt"],
