@@ -76,6 +76,7 @@ import { Copy } from "../copy";
 import { blobToBase64 } from "../mail/blob-base64";
 import { logAttachmentRefusal } from "../engine/engine-log";
 import { refuse, type Refusal, type RefusalArg } from "../refusal";
+import { ACCESS_REFUSED_CODE } from "../net/access-lock";
 import { folderLeafOf, folderUnreadCounts } from "./folders";
 import type { ScreeningAnswer } from "../net/consent";
 import type { ServerWaitingSender } from "../net/screener";
@@ -2519,9 +2520,13 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     const out = await engine.listTrash({ limit: TRASH_PAGE_LIMIT, ...(cursor ? { cursor } : {}) });
     if (out.state === "unavailable") return { state: "unavailable" };
     if (out.state === "failed") {
-      // The webapp's allowlist, kept by value: only the spend gate's sentence is written for
-      // the person holding the mailbox; every other server message is a log line and withheld.
-      return { state: "failed", say: out.code === "payment_required" ? out.error : null };
+      /* THE CODE, NOT THE REASON. This read `"payment_required"`, which is the 402's `details.reason`
+         — the gate's ENVELOPE code has always been `subscription_required`, so the arm matched
+         nothing and the one server sentence written for the person holding the mailbox was
+         withheld on every refusal. The wall owns this fact now (`net/access-lock.ts` raises it from
+         the same answer), so this is the sentence in the frame before the wall paints; every other
+         server message is still a log line and withheld. */
+      return { state: "failed", say: out.code === ACCESS_REFUSED_CODE ? out.error : null };
     }
     return { state: "ready", items: out.items.map(toTrashRow), nextCursor: out.nextCursor };
   };

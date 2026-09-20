@@ -25,6 +25,7 @@ import {
 import type { ReopenOutcome, StandaloneEngine } from "../engine/standalone-door";
 import { ServerProfileStore, type ServerProfile } from "../state/servers";
 import { BearerManagerRN, type FetchLike, type RefreshVault } from "./bearer";
+import { withAccessLock } from "./access-lock";
 import {
   canPin, isNotTls, isPinFailure, pin as installPin, unpin, unreachableClause,
 } from "./host-pinning";
@@ -1273,6 +1274,14 @@ async function buildSession(
       reason: refuse("pairEndedRefused"),
     };
   }
+  /**
+   * THE WALL'S ONE SINK, composed HERE and nowhere else — on the PAIRED door's transport, which
+   * every authenticated request this session makes rides: the engine's adapter below and the
+   * app's own reads through {@link ConnectedSession.fetch} alike. The standalone door has no
+   * plane and no gate to refuse it, so it is not wrapped and cannot raise a wall — the property
+   * `access-lock.ts` states, held by construction rather than by a check.
+   */
+  const paired = withAccessLock(bearer.fetch);
   const boot = await bootEngine(env.engineDeps, {
     origin: profile.origin,
     // WHERE THIS SERVER'S `/sync` FAMILY ANSWERS — measured at pairing time and stored on the
@@ -1285,7 +1294,7 @@ async function buildSession(
     // a repair that runs, persists, and changes nothing until the launch after.
     apiBase,
     accountId: profile.accountId,
-    auth: { headers: () => bearer.headers(), fetch: bearer.fetch },
+    auth: { headers: () => bearer.headers(), fetch: paired },
   });
   if (boot.kind === "refused") return { kind: "refused", reason: boot.reason };
   // The boot makes NO request any more (boot-from-local, `engine/boot.ts`), so the bearer
@@ -1302,8 +1311,8 @@ async function buildSession(
       profile,
       bearer,
       /* THE MANAGER'S OWN TRANSPORT — the same function the adapter above rides, so the app's reads
-         and the drain's pages carry one credential and one rotation. */
-      fetch: bearer.fetch,
+         and the drain's pages carry one credential and one rotation, and one wall. */
+      fetch: paired,
       engine: boot.engine,
       store: boot.store,
       ownerKey: mirrorOwnerKey(profile.origin, profile.accountId),

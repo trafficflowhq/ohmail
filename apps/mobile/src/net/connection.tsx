@@ -19,6 +19,7 @@ import {
   takeConsentPress, sayOrganizerRestricted, standaloneHere, standaloneLaunchGeneration,
 } from "../engine/organizer-session";
 import { consoleEngineLogSink } from "../engine/engine-log";
+import { clearAccessLock } from "./access-lock";
 import { decidedState, type DecidedState } from "./decided";
 import { deathRefusal } from "./session-death";
 import {
@@ -373,6 +374,13 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
       // Whatever the PREVIOUS session left standing — a failure sentence, a disowned round —
       // is not this session's status. Idempotent; the teardown path already disowned.
       runner.disown();
+      /* THE WALL COMES DOWN HERE AND NOWHERE ELSE. A later 200 never clears it (the browser
+         shell's rule, `net/access-lock.ts`): a refused account's own doors keep answering, and a
+         cached page behind the wall would flicker the app back for somebody whose account is
+         closed. Establishing a session IS this phone's "sign in again" — pairing, a switch, a
+         reconnect — so it is the one gesture that clears. A cold launch reaches this with the
+         slot already empty, and the first refused request puts the wall straight back. */
+      clearAccessLock();
       offDead.current?.();
       /* NO DEAD SIGNAL ON THE STANDALONE DOOR, and `null` rather than a subscription that can never
          fire: the engine in this process mints its own bearer per launch, so there is no family for
