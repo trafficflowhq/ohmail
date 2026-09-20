@@ -164,6 +164,19 @@ export async function runAccountLifecyclePass(
           }
 
           if (erasureDue(lc, now())) {
+            // THE VERDICT IS RE-READ AT THE ERASURE DOOR. The page's read can be minutes old on a
+            // long run, and somebody who subscribed again in between must keep their data. The
+            // re-read sits AHEAD of the money stop so a skip touches nothing at all — a released
+            // subscription is not recoverable by returning early.
+            const fresh = (await deps.port.access(id)).lifecycle;
+            if (!fresh || !erasureDue(fresh, now())) {
+              log.info("account_erasure_skipped_reactivated", {
+                accountId: id,
+                reason: "the verdict read at the erasure door no longer asks for erasure — the " +
+                  "account was reactivated or its retention moved; nothing was released or erased",
+              });
+              return;
+            }
             // STOP THE MONEY first, exactly as `DELETE /account` does; a cancel failure does not
             // block erasure — the port answers rather than throwing, and the outcome is logged.
             const outcome = await deps.port.releaseAccount(id);
