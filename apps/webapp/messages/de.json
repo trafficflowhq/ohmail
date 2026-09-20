@@ -1486,6 +1486,7 @@
     "search": "Alles durchsuchen",
     "newMessage": "Neue Nachricht",
     "openSettings": "Einstellungen öffnen",
+    "settingsPane": "Einstellungen: {name}",
     "tagToggle": "Tag: {name} …",
     "goTag": "Zum Tag: {name}",
     "themeLight": "Erscheinungsbild: Hell",

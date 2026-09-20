@@ -1486,6 +1486,7 @@
     "search": "Search everything",
     "newMessage": "New message",
     "openSettings": "Open Settings",
+    "settingsPane": "Settings: {name}",
     "tagToggle": "Tag: {name}…",
     "goTag": "Go to tag: {name}",
     "themeLight": "Theme: Light",

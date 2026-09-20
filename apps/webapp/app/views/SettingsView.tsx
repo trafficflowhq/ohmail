@@ -56,6 +56,7 @@ import {
 } from "../shell/notification-settings";
 import { isDemoOwned, storageOwner } from "../shell/storage-owner";
 import { useZoneNav } from "../shell/zone-nav";
+import { settingsPanes } from "./settings-panes";
 import { RulesView, type RuleOutcome } from "./RulesView";
 
 /* Re-exported so every caller that LINKS to a pane keeps its import — `AppShell`, and through it
@@ -839,68 +840,29 @@ export function SettingsView({
     screeningSection || dormancySection || autoSuggestSection || autoUnsubscribeSection
       || seedSection,
   );
-  const panes: Array<[PaneId, string]> = [
-    ["general", t("general")],
-    ["notifications", t("notifications")],
-    // MAILBOXES — the connections this install opens. Host-supplied on every surface and named
-    // for its mode inside the pane; present IFF the shell wired the node. There is no mirror
-    // fallback: a surface with no host source gets no pane rather than the empty one the mirror
-    // list always was for a real account. See {@link mailboxSection}.
-    ...(mailboxSection ? [["mailboxes", t("mailboxes")] as [PaneId, string]] : []),
-    // Directly after Mailboxes, because everything in it — the posture, the dormancy dial, the
-    // auto-suggest opt-in and the door back to the sent-mail review — is about the mail a connected
-    // mailbox brings. Present IFF the shell wired any of its nodes; the demo passes none, so the
-    // pane does not exist there, structurally, rather than rendering empty.
-    ...(screenerPane ? [["screener", t("screener")] as [PaneId, string]] : []),
-    // THE AWAY RESPONDER, immediately after the Screener and before Rules. It is the one control
-    // in the product that makes the app SEND MAIL on its own, so it gets a name in the menu rather
-    // than a row at the foot of a neighbouring pane — and it stands next to the Screener because
-    // its one live decision is about the senders the Screener is holding. Present IFF the shell
-    // wired the node, which is the whole of the Cloud-only rule: a standalone install has no hosted
-    // worker to send the reply, so there is no entry rather than an entry onto a dead control.
-    /* AI after the Screener and before the responder: all three are about what happens to mail
-       without the reader pressing anything. Present IFF the host wired it — see {@link aiSection}. */
-    ...(aiSection ? [["ai", t("ai")] as [PaneId, string]] : []),
-    ...(awaySection ? [["away", t("away")] as [PaneId, string]] : []),
-    // BEFORE Tags. A tag is something the user chose to make; a rule is something the
-    // product made on their behalf while they were deciding about a sender, and that is the
-    // one that has to be findable. Present only where the shell wired it — a nav entry
-    // leading to an empty list on an account that HAS rules is the defect, not the fix.
-    ...(rules ? [["rules", t("rules")] as [PaneId, string]] : []),
-    ["tags", t("tags")],
-    // FOLDERS — directly after Tags, as in the rail (the feature's whole placement argument:
-    // under Tags, subordinate, optional). Present IFF the shell wired the node.
-    ...(foldersSection ? [["folders", t("folders.nav")] as [PaneId, string]] : []),
-    // SIGNATURES — with the mail-plumbing group, after Folders: per-mailbox text every outgoing
-    // message offers. Present IFF the shell wired the node (a consent row it can reach).
-    ...(signaturesSection ? [["signatures", t("signatures.nav")] as [PaneId, string]] : []),
-    // THIS INSTALL. Present only in a build that has a native shell behind it, which is the
-    // desktop app — a browser tab passes no node and gets no entry. It opens the account
-    // administration group because on that surface it IS the account: the door, the mailbox
-    // and the sign-out live here rather than in the three panes below, which need a server.
-    ...(desktopSection ? [["desktop", desktopSection.label] as [PaneId, string]] : []),
-    // DEVICES — pairing and the signed-in device list, in the account-administration group. On
-    // the desktop it sits directly after the install it serves from (host mode); on the Cloud
-    // client `desktopSection` is absent and it opens the group instead. Present IFF the shell
-    // wired it — the desktop's standalone door, or a Cloud client whose server announces
-    // `features.pairing`. See {@link devicesSection}.
-    ...(devicesSection ? [["devices", t("devices")] as [PaneId, string]] : []),
-    // Account administration. Only where there is something to bill: Desktop is free and standalone,
-    // and a Subscription pane there would offer to sell what the tier already gives away.
-    ...(billingSection ? [["billing", t("billing")] as [PaneId, string]] : []),
-    // INVITES — who else may join this server. Opens the account-administration group there,
-    // exactly where Subscription sits on managed: both answer "who else is on this server /
-    // this plan". Present IFF the host wired it, which only the self-host Cloud client does.
-    ...(invitesSection ? [["invites", t("invites")] as [PaneId, string]] : []),
-    // Only where there is an account to act on. Security before Account, and both after the panes
-    // that organise mail: a destructive control belongs near the bottom, where a mis-click is not
-    // one row away from a mail setting.
-    ...(securitySection ? [["security", t("security")] as [PaneId, string]] : []),
-    ...(accountSection ? [["account", t("account")] as [PaneId, string]] : []),
-    // LAST. Facts about the running build and who publishes it — nothing here is a control, so it
-    // is the safe place to end. About-below-Account is harmless: unlike Account it acts on nothing.
-    ...(aboutSection ? [["about", t("about")] as [PaneId, string]] : []),
-  ];
+  /* THE TAB LIST — one source with the ⌘K palette (`settings-panes.ts`), answered here from
+     node presence: an absent node is no pane, structurally, exactly as before. The placement
+     arguments (why Away sits by the Screener, why Rules precedes Tags, why About ends the list)
+     stay on the section docblocks above. */
+  const panes: Array<[PaneId, string]> = settingsPanes(
+    {
+      mailboxes: Boolean(mailboxSection),
+      screener: screenerPane,
+      ai: Boolean(aiSection),
+      away: Boolean(awaySection),
+      rules: Boolean(rules),
+      folders: Boolean(foldersSection),
+      signatures: Boolean(signaturesSection),
+      desktop: desktopSection ? desktopSection.label : null,
+      devices: Boolean(devicesSection),
+      billing: Boolean(billingSection),
+      invites: Boolean(invitesSection),
+      security: Boolean(securitySection),
+      account: Boolean(accountSection),
+      about: Boolean(aboutSection),
+    },
+    t,
+  );
 
   /* WHICH PANE ACTUALLY RENDERS — the request, clamped to what THIS surface offers.
      `initialPaneFromUrl` validates `?settings=<pane>` against the GLOBAL id list, but which panes

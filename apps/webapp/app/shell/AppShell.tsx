@@ -230,6 +230,7 @@ import { OrganizerNotice, type OrganizerNoticeTransport } from "./OrganizerNotic
 import type { NotificationHost } from "./notification-settings";
 import { ViewBoundary } from "./ViewBoundary";
 import { ViewFailCard } from "./ViewFailCard";
+import { settingsPanes, type WiredPanes } from "../views/settings-panes";
 import {
   formatRecipientChips,
   optionsFromFacts,
@@ -6661,6 +6662,30 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
   ];
   useKeyBindings(globalKeys, "global");
 
+  /* ── which settings panes this surface offers — one list with the nav (`settings-panes.ts`).
+     The flags mirror the `SettingsView` section props below (search `mailboxSection=`): a node
+     the props withhold is a pane the palette must not name. `WiredPanes` is total, so a pane
+     added to `settingsPanes` refuses to compile here until this record answers for it. ── */
+  const settingsWired: WiredPanes = useMemo(() => ({
+    mailboxes: !demo && mailboxSection != null,
+    // Non-demo always: the pane's default node is built into the props (`?? <ScreeningSection />`).
+    screener: !demo,
+    ai: !demo && aiSection != null,
+    away: !demo && awaySupported,
+    // The rules prop is always handed over (engine mutations, demo included) — the pane always exists.
+    rules: true,
+    folders: !demo && consent.known && consent.foldersStorable,
+    signatures: !demo && consent.signaturesKnown && facts != null && facts.length > 0,
+    desktop: desktopSection ? desktopSection.label : null,
+    devices: !demo && devicesSection != null,
+    billing: !demo && billingSection != null,
+    invites: !demo && invitesSection != null,
+    security: !demo && securitySection != null,
+    account: !demo && accountSection != null,
+    // The demo gets its own About node (two true sentences about the fixture world).
+    about: demo || aboutSection != null,
+  }), [demo, mailboxSection, aiSection, awaySupported, consent.known, consent.foldersStorable, consent.signaturesKnown, facts, desktopSection, devicesSection, billingSection, invitesSection, securitySection, accountSection, aboutSection]);
+
   /* ── the palette command map (every command from the prototype) ── */
   const commands: Command[] = useMemo(() => {
     const list: Command[] = [
@@ -6700,6 +6725,17 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
         run: () => go("trash"),
       },
       { id: "settings", label: t("palette.openSettings"), run: () => go("settings") },
+      /* EVERY SETTINGS TAB, from the settings' own list — a new pane added to `settingsPanes`
+         reaches the palette by construction (see `settingsWired` above). The fastest path to
+         any setting becomes typed, and only panes this surface offers are named: a row onto a
+         pane that would clamp away is a false affordance, not a shortcut. */
+      ...settingsPanes(settingsWired, (key) => t(`settings.${key}`)).map(
+        ([paneId, name]): Command => ({
+          id: `set-${paneId}`,
+          label: t("palette.settingsPane", { name }),
+          run: () => goSettings(paneId),
+        }),
+      ),
     ];
     /* THE TWO ROWS THAT ACT ON THE OPEN MESSAGE, and they say so when there is none.
        Both bodies were already `if (selectedOhbox)`, so with nothing open the row ran and
@@ -6747,7 +6783,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, hostConnection, se
       },
     });
     return list;
-  }, [t, tags, selectedOhbox, toggleTag, theme, onMessageAction, startFR, engine]);
+  }, [t, tags, selectedOhbox, toggleTag, theme, onMessageAction, startFR, engine, settingsWired, goSettings]);
 
   /**
    * THE ONE NUMBER A NATIVE SHELL IS TOLD — see `AppShell`'s `onUnread`.
